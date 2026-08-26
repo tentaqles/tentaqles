@@ -1,0 +1,38 @@
+name: test
+on: [push, pull_request]
+jobs:
+  go:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - run: go vet ./...
+      - run: go test ./... -count=1
+      - run: go build -o tq ./cmd/tq
+      - name: smoke (bash hook)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GIT_CONFIG_NOSYSTEM: 1
+        run: |
+          export TQ_HOME=$(mktemp -d) HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=$HOME/.gitconfig
+          mkdir -p $HOME/work && ./tq init $HOME/work && ./tq add acme --git-email a@acme.com
+          eval "$(./tq activate bash)"; cd $HOME/work/acme; test "$TQ_WS" = acme
+          cd /; test -z "${TQ_WS:-}"
+      - name: smoke (pwsh hook)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GIT_CONFIG_NOSYSTEM: 1
+        run: |
+          $env:TQ_HOME = Join-Path $env:RUNNER_TEMP "tqh"; $env:USERPROFILE = Join-Path $env:RUNNER_TEMP "home"
+          $env:GIT_CONFIG_GLOBAL = "$env:USERPROFILE\.gitconfig"
+          New-Item -ItemType Directory -Force "$env:USERPROFILE\work" | Out-Null
+          .\tq.exe init "$env:USERPROFILE\work"; .\tq.exe add acme --git-email a@acme.com
+          .\tq.exe activate pwsh | Out-String | Invoke-Expression
+          Set-Location "$env:USERPROFILE\work\acme"; prompt | Out-Null; if ($env:TQ_WS -ne 'acme') { throw "hook failed: $env:TQ_WS" }
+          Set-Location \; prompt | Out-Null; if ($env:TQ_WS) { throw "unset failed" }

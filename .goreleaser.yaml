@@ -1,0 +1,21 @@
+version: 2
+project_name: tq
+builds:
+  - main: ./cmd/tq
+    binary: tq
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags: ["-s -w -X github.com/tentaqles/tentaqles/cli/internal/cmd.Version={{.Version}}"]
+archives:
+  - format_overrides: [{ goos: windows, format: zip }]
+checksum: { name_template: checksums.txt }
+release: { github: { owner: tentaqles, name: tentaqles } }
+brews:
+  - repository: { owner: tentaqles, name: homebrew-tap }
+    homepage: https://tentaqles.ai
+    description: One terminal identity per workspace folder
+scoops:
+  - repository: { owner: tentaqles, name: scoop-bucket }
+    homepage: https://tentaqles.ai
+    description: One terminal identity per workspace folder
