@@ -26,6 +26,9 @@ func sample() envplan.Ops {
 
 func TestEmit_Golden(t *testing.T) {
 	for _, sh := range Shells {
+		if sh == "cmd" {
+			continue
+		}
 		t.Run(sh, func(t *testing.T) {
 			got, err := Emit(sh, sample())
 			if err != nil {
@@ -43,6 +46,38 @@ func TestEmit_Golden(t *testing.T) {
 				t.Fatalf("golden mismatch for %s:\n--- got\n%s\n--- want\n%s", sh, got, want)
 			}
 		})
+	}
+}
+
+func TestEmit_Cmd_RejectsUnquotableValue(t *testing.T) {
+	_, err := Emit("cmd", sample())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "WEIRD") {
+		t.Fatalf("error should mention WEIRD: %v", err)
+	}
+}
+
+func TestEmit_Cmd_Golden(t *testing.T) {
+	ops := envplan.Ops{
+		Changed: true,
+		Set: map[string]string{
+			"CLAUDE_CONFIG_DIR": `C:\Users\re nato\it's\claude`,
+			"TQ_WS":             "acme",
+		},
+		Unset: []string{"AZURE_CONFIG_DIR", "GH_CONFIG_DIR"},
+	}
+	got, err := Emit("cmd", ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "cmd.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(want) {
+		t.Fatalf("golden mismatch for cmd:\n--- got\n%s\n--- want\n%s", got, want)
 	}
 }
 

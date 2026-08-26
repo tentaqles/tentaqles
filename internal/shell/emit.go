@@ -40,6 +40,13 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 	if !ops.Changed {
 		return "", nil
 	}
+	if sh == "cmd" {
+		for k, v := range ops.Set {
+			if strings.ContainsAny(v, "\"\r\n%!") {
+				return "", fmt.Errorf("cmd: value for %s contains a character cmd.exe cannot quote", k)
+			}
+		}
+	}
 	var b strings.Builder
 	for _, k := range ops.Unset {
 		b.WriteString(unset(k) + "\n")
