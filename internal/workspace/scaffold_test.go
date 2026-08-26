@@ -14,7 +14,11 @@ import (
 
 func fakeGit(...string) (string, error) { return "", nil }
 
-func TestAdd_ScaffoldsEverything(t *testing.T) {
+// isolateHome creates a temp dir and points TQ_HOME/HOME (or USERPROFILE on
+// Windows) at it, so gitcfg.Sync/EnsureGlobal never touch the real developer
+// home directory. Returns the temp home dir.
+func isolateHome(t *testing.T) string {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	if runtime.GOOS == "windows" {
@@ -22,6 +26,11 @@ func TestAdd_ScaffoldsEverything(t *testing.T) {
 	} else {
 		t.Setenv("HOME", home)
 	}
+	return home
+}
+
+func TestAdd_ScaffoldsEverything(t *testing.T) {
+	home := isolateHome(t)
 	base := t.TempDir()
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
@@ -53,7 +62,7 @@ func TestAdd_ScaffoldsEverything(t *testing.T) {
 }
 
 func TestAdd_RejectsBadNameAndDuplicate(t *testing.T) {
-	t.Setenv("TQ_HOME", t.TempDir())
+	isolateHome(t)
 	base := t.TempDir()
 	if _, err := Add(AddOptions{Base: base, Name: "Bad Name", GitEmail: "x@y", RunGit: fakeGit}); err == nil {
 		t.Fatal("bad name accepted")
@@ -63,5 +72,22 @@ func TestAdd_RejectsBadNameAndDuplicate(t *testing.T) {
 	}
 	if _, err := Add(AddOptions{Base: base, Name: "ok", GitEmail: "x@y", RunGit: fakeGit}); err == nil {
 		t.Fatal("duplicate accepted")
+	}
+}
+
+func TestAdd_RejectsControlCharsInGitFields(t *testing.T) {
+	isolateHome(t)
+	base := t.TempDir()
+	if _, err := Add(AddOptions{Base: base, Name: "evil", GitEmail: "a@b\n[core]\n\tsshCommand = evil", RunGit: fakeGit}); err == nil {
+		t.Fatal("expected error for control chars in git-email")
+	}
+	if _, statErr := os.Stat(filepath.Join(base, "evil")); statErr == nil {
+		t.Fatal("workspace dir must not be created when git fields are invalid")
+	}
+	if _, err := Add(AddOptions{Base: base, Name: "evil2", GitEmail: "a@b", GitName: "Bad\nName", RunGit: fakeGit}); err == nil {
+		t.Fatal("expected error for control chars in git-name")
+	}
+	if _, statErr := os.Stat(filepath.Join(base, "evil2")); statErr == nil {
+		t.Fatal("workspace dir must not be created when git fields are invalid")
 	}
 }

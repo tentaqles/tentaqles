@@ -32,6 +32,12 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if o.GitEmail == "" {
 		return nil, fmt.Errorf("--git-email is required")
 	}
+	if err := gitcfg.ValidateValue(o.GitEmail); err != nil {
+		return nil, err
+	}
+	if err := gitcfg.ValidateValue(o.GitName); err != nil {
+		return nil, err
+	}
 	if len(o.Identities) == 0 {
 		o.Identities = []string{"claude", "gh"}
 	}

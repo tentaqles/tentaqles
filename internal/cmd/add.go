@@ -19,7 +19,11 @@ func newAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			o.Name = args[0]
-			o.Identities = strings.Split(strings.ReplaceAll(ids, " ", ""), ",")
+			for _, id := range strings.Split(strings.ReplaceAll(ids, " ", ""), ",") {
+				if id != "" {
+					o.Identities = append(o.Identities, id)
+				}
+			}
 			o.RunGit = gitcfg.RunGit
 			if o.Base == "" {
 				cfg, err := registry.Load()

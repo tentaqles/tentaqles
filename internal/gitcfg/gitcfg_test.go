@@ -89,3 +89,21 @@ func TestEnsureGlobal_AddsOnceAndSetsUseConfigOnly(t *testing.T) {
 		t.Fatalf("%v", calls)
 	}
 }
+
+func TestWriteWorkspace_RejectsNewline(t *testing.T) {
+	root := t.TempDir()
+	err := WriteWorkspace(root, "Maria", "a@b\n[core]\n\tsshCommand = evil")
+	if err == nil {
+		t.Fatal("expected error for newline in email")
+	}
+	if _, statErr := os.Stat(WorkspaceFile(root)); statErr == nil {
+		t.Fatal("workspace file must not be created on validation failure")
+	}
+}
+
+func TestSync_RejectsNewlineRoot(t *testing.T) {
+	home(t)
+	if err := Sync([]string{"/tmp/ok", "/tmp/evil\n[core]\n\tsshCommand = evil"}); err == nil {
+		t.Fatal("expected error for newline in root")
+	}
+}

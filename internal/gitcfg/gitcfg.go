@@ -12,6 +12,17 @@ import (
 
 const managedName = ".gitconfig-tentaqles"
 
+// ValidateValue rejects control characters (including newlines) that could be
+// used to inject extra keys/sections into a git config file.
+func ValidateValue(v string) error {
+	for _, r := range v {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("git config value %q contains control characters", v)
+		}
+	}
+	return nil
+}
+
 func IncludeFile() string {
 	h, err := os.UserHomeDir()
 	if err != nil {
@@ -23,6 +34,12 @@ func IncludeFile() string {
 func WorkspaceFile(root string) string { return filepath.Join(root, managedName) }
 
 func WriteWorkspace(root, name, email string) error {
+	if err := ValidateValue(name); err != nil {
+		return err
+	}
+	if err := ValidateValue(email); err != nil {
+		return err
+	}
 	body := fmt.Sprintf("# managed by tq\n[user]\n\tname = %s\n\temail = %s\n\tuseConfigOnly = true\n", name, email)
 	return os.WriteFile(WorkspaceFile(root), []byte(body), 0o644)
 }
@@ -31,6 +48,9 @@ func WriteWorkspace(root, name, email string) error {
 func Sync(roots []string) error {
 	rs := append([]string(nil), roots...)
 	for i := range rs {
+		if err := ValidateValue(rs[i]); err != nil {
+			return err
+		}
 		rs[i] = filepath.ToSlash(filepath.Clean(rs[i]))
 	}
 	sort.Strings(rs)
