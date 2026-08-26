@@ -66,7 +66,7 @@ echo '{"cwd": ".", "event": "touch", "data": {"node_id": "test.py", "action": "e
 ## Dependencies
 
 Core (auto-installed by `bootstrap.py`): `pyyaml`, `pathspec`, `fastembed`, `numpy`
-Transitive: `networkx` (via embeddings/graphify_hook.py)
+Semantic search degrades gracefully (writes still succeed, `embedding` stored as NULL) when `fastembed` is missing.
 Optional: `graphifyy` (graph engine), `tree-sitter` (native graph), `docling` (PDF/PPTX parsing)
 
 ## Git

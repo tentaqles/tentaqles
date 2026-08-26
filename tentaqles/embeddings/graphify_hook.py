@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import numpy as np
-import networkx as nx
 from pathlib import Path
 from typing import Sequence
 

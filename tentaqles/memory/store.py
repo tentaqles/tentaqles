@@ -156,10 +156,20 @@ class MemoryStore:
             self._emb = EmbeddingService()
         return self._emb
 
-    def _embed(self, text: str) -> bytes:
-        emb = self._get_emb()
-        vec = emb.embed([text])[0]
-        return vec.tobytes()
+    def _embed(self, text: str) -> bytes | None:
+        """Embed text for semantic search.
+
+        Returns None when the embedding backend (fastembed) is unavailable so
+        that writes still succeed — every semantic query already filters on
+        ``embedding IS NOT NULL``. Never raise from here: this runs inside
+        SessionEnd / PostToolUse hooks and must not break the session.
+        """
+        try:
+            emb = self._get_emb()
+            vec = emb.embed([text])[0]
+            return vec.tobytes()
+        except Exception:
+            return None
 
     def _vec_from_blob(self, blob: bytes) -> np.ndarray:
         return np.frombuffer(blob, dtype=np.float32)
@@ -452,7 +462,10 @@ class MemoryStore:
     def search_memory(self, query: str, limit: int = 5) -> list[dict]:
         """Semantic search over session summaries and decisions."""
         emb = self._get_emb()
-        query_vec = emb.embed([query])[0]
+        try:
+            query_vec = emb.embed([query])[0]
+        except Exception:
+            return []  # embedding backend unavailable — no semantic results
         query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-10)
 
         results = []

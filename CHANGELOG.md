@@ -15,6 +15,7 @@ Full cross-platform compatibility for macOS, Linux, and Windows. Fixes plugin br
 
 ### Fixed
 
+- **Duplicate hooks load error.** `plugin.json` no longer declares `"hooks": "./hooks/hooks.json"` — Claude Code auto-loads `hooks/hooks.json`, and the explicit reference caused `Failed to load hooks ... Duplicate hooks file detected`, disabling every hook. Version fields in `plugin.json`, `marketplace.json`, and `pyproject.toml` now all read 0.3.1.
 - **macOS compatibility.** Hooks now use `bash tq_run.sh` instead of bare `python` (which doesn't exist on macOS Catalina+). The interpreter probe finds `python3` automatically.
 - **POSIX shell compatibility.** Removed `${BASH_SOURCE[0]}` array subscript (breaks dash/sh on Ubuntu/Debian). Uses `$BASH_SOURCE` without subscript, guarded by `$BASH_VERSION` check, with glob fallback for non-bash shells.
 - **Windows Store Python.** `bootstrap.py` detects the `WindowsApps/` stub executable and resolves the real interpreter via the `py` launcher before calling `pip install --target`.
