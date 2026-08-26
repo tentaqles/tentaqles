@@ -12,6 +12,8 @@ import (
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
 )
 
+var exitFunc = os.Exit
+
 func newDoctorCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
@@ -25,7 +27,9 @@ func newDoctorCmd() *cobra.Command {
 			cwd, _ := os.Getwd()
 			fs := doctor.Run(cfg, doctor.Deps{Env: os.LookupEnv, Cwd: cwd, RunGit: gitcfg.RunGit, LookPath: exec.LookPath})
 			if asJSON {
-				json.NewEncoder(c.OutOrStdout()).Encode(fs)
+				if err := json.NewEncoder(c.OutOrStdout()).Encode(fs); err != nil {
+					return err
+				}
 			} else {
 				for _, f := range fs {
 					line := fmt.Sprintf("[%s] %s", f.Level, f.Msg)
@@ -39,7 +43,7 @@ func newDoctorCmd() *cobra.Command {
 				}
 			}
 			if doctor.Exit(fs) != 0 {
-				os.Exit(1)
+				exitFunc(1)
 			}
 			return nil
 		},
