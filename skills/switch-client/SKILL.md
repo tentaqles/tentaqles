@@ -12,9 +12,10 @@ The core safety principle: never let the user accidentally run commands against 
 ## Load Workspace Registry
 
 ```bash
-python -c "
-import sys, os, json
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+"$TENTAQLES_PY" -c "
+import json
 
 workspaces = {}
 # Try metagraph config
@@ -64,9 +65,9 @@ If `$ARGUMENTS` contains a client name (e.g., the user said `/tentaqles:switch-c
 For the target client, load its manifest and run all checks:
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+"$TENTAQLES_PY" -c "
 from tentaqles.manifest.loader import load_manifest, get_client_context, run_preflight_checks, format_context_summary
 
 manifest = load_manifest('{client_root_path}')
@@ -103,9 +104,9 @@ git config user.email
 After running fix commands, re-run the preflight checks to confirm everything is green:
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+"$TENTAQLES_PY" -c "
 from tentaqles.manifest.loader import load_manifest, run_preflight_checks
 manifest = load_manifest('{client_root_path}')
 checks = run_preflight_checks(manifest)

@@ -43,8 +43,15 @@ def setup_paths() -> tuple[str, str]:
     # Find plugin data dir (where bootstrap installs pip deps)
     plugin_data = os.environ.get("CLAUDE_PLUGIN_DATA", "")
     if not plugin_data:
-        # Fall back: ~/.tentaqles for standalone use
-        plugin_data = str(Path.home() / ".tentaqles")
+        # Platform-appropriate fallback for standalone use
+        if sys.platform == "darwin":
+            plugin_data = str(Path.home() / "Library" / "Application Support" / "tentaqles")
+        elif sys.platform != "win32":
+            xdg = os.environ.get("XDG_DATA_HOME", "")
+            base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+            plugin_data = str(base / "tentaqles")
+        else:
+            plugin_data = str(Path.home() / ".tentaqles")
 
     # Add plugin data lib dir FIRST (bootstrap-installed deps take priority)
     lib_dir = os.path.join(plugin_data, "lib")

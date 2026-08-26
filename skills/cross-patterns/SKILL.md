@@ -12,9 +12,10 @@ triggers:
 Loads and displays detected recurring decision patterns from all registered workspaces.
 
 ```bash
-python -c "
-import sys, json, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', os.path.join(os.path.dirname(os.path.abspath('.')), '')))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+"$TENTAQLES_PY" -c "
+import json
 from tentaqles.memory.pattern_detector import CrossWorkspacePatternDetector
 
 detector = CrossWorkspacePatternDetector.__new__(CrossWorkspacePatternDetector)

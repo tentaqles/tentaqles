@@ -8,7 +8,10 @@ description: Launch the Tentaqles real-time dashboard showing all workspaces, se
 Launch the Tentaqles dashboard at http://localhost:8765 (or next available port).
 
 ```bash
-python -c "
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -c "
 import urllib.request
 import subprocess
 import sys

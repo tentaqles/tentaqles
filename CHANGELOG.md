@@ -2,6 +2,34 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.3.1] — 2026-04-16 — "Portable Runtime"
+
+Full cross-platform compatibility for macOS, Linux, and Windows. Fixes plugin breakage on machines where `python` doesn't exist (macOS), resolves to a broken venv shim, or points to a Windows Store stub.
+
+### Added
+
+- **`scripts/tq_env.sh`** — POSIX-compatible runtime bootstrap. Resolves `CLAUDE_PLUGIN_ROOT` (env var → `$BASH_SOURCE` → filesystem search), finds a working Python interpreter (`py -3` → `python3` → `python`, validated via `sys.executable`), exports `PYTHONPATH`, and runs `bootstrap.py` if core deps are missing. Works in bash, zsh, and dash.
+- **`scripts/tq_run.sh`** — thin wrapper: sources `tq_env.sh`, then exec's the target script with the resolved interpreter. Used by all hooks and skills.
+- **`.gitattributes`** — forces LF line endings on `*.sh`, `*.py`, `*.json`, `*.md` to prevent CRLF "bad interpreter" errors when cloning from Windows to Unix.
+- **Touch event acknowledgment.** The `touch` handler in `memory-bridge.py` now prints `{"touch_id": "..."}` on success, matching `decision` and `pending` handler behavior.
+
+### Fixed
+
+- **Duplicate hooks load error.** `plugin.json` no longer declares `"hooks": "./hooks/hooks.json"` — Claude Code auto-loads `hooks/hooks.json`, and the explicit reference caused `Failed to load hooks ... Duplicate hooks file detected`, disabling every hook. Version fields in `plugin.json`, `marketplace.json`, and `pyproject.toml` now all read 0.3.1.
+- **macOS compatibility.** Hooks now use `bash tq_run.sh` instead of bare `python` (which doesn't exist on macOS Catalina+). The interpreter probe finds `python3` automatically.
+- **POSIX shell compatibility.** Removed `${BASH_SOURCE[0]}` array subscript (breaks dash/sh on Ubuntu/Debian). Uses `$BASH_SOURCE` without subscript, guarded by `$BASH_VERSION` check, with glob fallback for non-bash shells.
+- **Windows Store Python.** `bootstrap.py` detects the `WindowsApps/` stub executable and resolves the real interpreter via the `py` launcher before calling `pip install --target`.
+- **Plugin cache discovery.** Skill preludes now check `.claude-plugin/plugin.json` (not `plugin.json` at root) and use a marketplace-agnostic glob (`*/tentaqles/*/` instead of `tentaqles/tentaqles/*/`).
+- **`session_end` without prior `session_start`.** `MemoryStore.end_session()` auto-creates a session if none is active (lazy upsert).
+- **Naive/aware datetime mixing.** `end_session` now treats legacy naive timestamps as UTC, preventing `TypeError` on databases migrated from pre-v0.3 versions.
+- **XDG-compliant data paths.** Fallback plugin data dir uses `~/Library/Application Support/tentaqles` on macOS and `~/.local/share/tentaqles` on Linux (was `~/.tentaqles` everywhere).
+- **Executable permissions.** `.sh` files are committed with `+x` bit so they work on macOS/Linux without manual `chmod`.
+- All 17 skills updated: `"$TENTAQLES_PY"` instead of bare `python`, `PYTHONPATH` instead of `sys.path.insert` hacks.
+
+### Breaking
+
+None. All changes are backward compatible.
+
 ## [0.3.0] — 2026-04-13 — "Memory Matures"
 
 Six architectural features that deepen how the plugin remembers, reasons about, and shares knowledge across workspaces.

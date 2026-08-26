@@ -12,9 +12,11 @@ The goal is to make the user's future self — or the next Claude session — ab
 ## Detect Client Workspace
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -c "
+import os
 from tentaqles.manifest.loader import load_manifest
 manifest = load_manifest(os.getcwd())
 if manifest:
@@ -55,7 +57,10 @@ Don't over-interview. If the user just said "thanks, done", infer the summary fr
 ### Save session end
 
 ```bash
-echo '{"cwd": "{client_root}", "event": "session_end", "data": {"summary": "{summary}", "tags": ["{relevant_tags}"]}}' | python "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+echo '{"cwd": "{client_root}", "event": "session_end", "data": {"summary": "{summary}", "tags": ["{relevant_tags}"]}}' | "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
 ```
 
 The summary should be 1-3 sentences. Tags should be lowercase keywords (e.g., "auth", "bugfix", "refactor", "api").
@@ -63,7 +68,10 @@ The summary should be 1-3 sentences. Tags should be lowercase keywords (e.g., "a
 ### Save decisions (for each one)
 
 ```bash
-echo '{"cwd": "{client_root}", "event": "decision", "data": {"chosen": "{what was chosen}", "rationale": "{why}", "node_ids": ["{affected_files_or_modules}"], "rejected": ["{alternatives_considered}"], "confidence": "{low|medium|high}", "tags": ["{tags}"]}}' | python "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+echo '{"cwd": "{client_root}", "event": "decision", "data": {"chosen": "{what was chosen}", "rationale": "{why}", "node_ids": ["{affected_files_or_modules}"], "rejected": ["{alternatives_considered}"], "confidence": "{low|medium|high}", "tags": ["{tags}"]}}' | "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
 ```
 
 Only record decisions that would be useful in a future session. "Chose tabs over spaces" is not worth saving. "Chose RS256 over HS256 for JWT signing because our microservice architecture needs public key verification" is.
@@ -71,7 +79,10 @@ Only record decisions that would be useful in a future session. "Chose tabs over
 ### Save pending items (for each one)
 
 ```bash
-echo '{"cwd": "{client_root}", "event": "pending", "data": {"description": "{what needs to be done}", "priority": "{low|medium|high|critical}", "node_ids": ["{related_files}"]}}' | python "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+echo '{"cwd": "{client_root}", "event": "pending", "data": {"description": "{what needs to be done}", "priority": "{low|medium|high|critical}", "node_ids": ["{related_files}"]}}' | "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
 ```
 
 ### Record file touches
@@ -79,7 +90,10 @@ echo '{"cwd": "{client_root}", "event": "pending", "data": {"description": "{wha
 For each significant file that was edited or created during the session:
 
 ```bash
-echo '{"cwd": "{client_root}", "event": "touch", "data": {"node_id": "{relative_file_path}", "node_type": "file", "action": "{edit|create|debug|review}", "weight": 1.0}}' | python "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py" 2>/dev/null || true
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+echo '{"cwd": "{client_root}", "event": "touch", "data": {"node_id": "{relative_file_path}", "node_type": "file", "action": "{edit|create|debug|review}", "weight": 1.0}}' | "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py" 2>/dev/null || true
 ```
 
 Use `weight: 2.0` for files that were debugged extensively or were the main focus. Use `weight: 0.5` for files that were only glanced at.
@@ -122,7 +136,10 @@ For each detected correction:
 3. **Emit the event** via memory-bridge:
 
    ```bash
-   echo '{"cwd": "{client_root}", "event": "skill_correction", "data": {"skill_name": "SKILL_NAME", "correction": "CORRECTION_TEXT"}}' | python "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
+   # Load tentaqles runtime
+   _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+   echo '{"cwd": "{client_root}", "event": "skill_correction", "data": {"skill_name": "SKILL_NAME", "correction": "CORRECTION_TEXT"}}' | "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
    ```
 
    Where:
@@ -154,7 +171,10 @@ For each detected correction:
 After saving, display the updated context summary so the user can verify:
 
 ```bash
-echo '{"cwd": "{client_root}", "event": "context", "data": {}}' | python "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+echo '{"cwd": "{client_root}", "event": "context", "data": {}}' | "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
 ```
 
 This shows: last session summary, hot nodes, open pending items, recent decisions.

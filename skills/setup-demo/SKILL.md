@@ -9,7 +9,10 @@ Create two mock client workspaces with sample Python code, documentation, and `.
 
 Run the demo setup:
 ```bash
-python -m tentaqles.cli demo "${ARGUMENTS:-./tentaqles-demo}"
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -m tentaqles.cli demo "${ARGUMENTS:-./tentaqles-demo}"
 ```
 
 After creation, tell the user:

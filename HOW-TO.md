@@ -281,10 +281,10 @@ Everything goes through the privacy filter, then into the workspace's `memory.db
 **Recording a decision mid-session** via the bridge directly:
 
 ```bash
-echo '{"cwd": "'$PWD'", "event": "decision", "data": {"chosen": "RS256", "rationale": "allows public key verification in microservice arch", "rejected": ["HS256", "ES256"], "node_ids": ["src/auth.py"]}}' | python "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py"
+echo '{"cwd": "'$PWD'", "event": "decision", "data": {"chosen": "RS256", "rationale": "allows public key verification in microservice arch", "rejected": ["HS256", "ES256"], "node_ids": ["src/auth.py"]}}' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh" memory-bridge.py
 ```
 
-The skill is easier, but this is handy in scripts.
+The skill is easier, but this is handy in scripts. `tq_run.sh` resolves the right Python interpreter automatically — never use bare `python` directly.
 
 ---
 
@@ -354,7 +354,7 @@ Not: casual questions, reformulations, or polite disagreement that doesn't set a
 
 1. **Check the YAML syntax**:
    ```bash
-   python -c "import yaml; yaml.safe_load(open('.tentaqles.yaml'))"
+   python3 -c "import yaml; yaml.safe_load(open('.tentaqles.yaml'))"
    ```
    If it prints an error, fix the syntax (common issues: unescaped colons, missing quotes, wrong indentation).
 
@@ -677,16 +677,16 @@ Runs 4-tier consolidation and Ebbinghaus decay across all registered workspaces.
 **Run manually**:
 
 ```bash
-python scripts/compaction-cron.py
+bash scripts/tq_run.sh compaction-cron.py
 ```
 
 **Schedule with cron (Linux/macOS)**:
 
 ```
-0 3 * * * cd /path/to/tentaqles-plugin && python scripts/compaction-cron.py >> ~/.claude/logs/compaction.log 2>&1
+0 3 * * * cd /path/to/tentaqles-plugin && bash scripts/tq_run.sh compaction-cron.py >> ~/.claude/logs/compaction.log 2>&1
 ```
 
-**Schedule with Task Scheduler (Windows)**: point the action to `python` with argument `C:\path\to\scripts\compaction-cron.py`.
+**Schedule with Task Scheduler (Windows)**: point the action to `sh` with arguments `C:\path\to\scripts\tq_run.sh compaction-cron.py`. The runner resolves the correct Python automatically.
 
 **Recommended cadence**: daily, during off-hours. Running it more often is safe but not useful.
 
@@ -697,7 +697,7 @@ Loads decisions from all registered workspaces (read-only), clusters them, and w
 **Run manually**:
 
 ```bash
-python scripts/pattern-cron.py
+bash scripts/tq_run.sh pattern-cron.py
 ```
 
 **Recommended cadence**: weekly. Pattern detection is computationally heavier (embeddings for every decision across all workspaces) — running it daily is fine but rarely produces meaningfully different output.

@@ -10,9 +10,11 @@ View and modify any field in the current client's `.tentaqles.yaml` manifest. Th
 ## Detect Current Client
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -c "
+import os
 from tentaqles.manifest.loader import load_manifest
 manifest = load_manifest(os.getcwd())
 if manifest:
@@ -70,9 +72,11 @@ Parse the user's request and map it to the manifest field. Common patterns:
 Read the current `.tentaqles.yaml`, modify the relevant field(s), write it back. Use Python with PyYAML to preserve structure:
 
 ```bash
-python -c "
-import sys, os, yaml
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -c "
+import os, yaml
 from tentaqles.manifest.loader import find_manifest
 
 manifest_path = find_manifest(os.getcwd())
@@ -133,9 +137,11 @@ If git email or provider changed, update `.claude/rules/identity.md` to match:
 Run preflight checks to verify the new settings work:
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -c "
+import os
 from tentaqles.manifest.loader import load_manifest, run_preflight_checks, format_context_summary, get_client_context
 manifest = load_manifest(os.getcwd())
 ctx = get_client_context(os.getcwd())

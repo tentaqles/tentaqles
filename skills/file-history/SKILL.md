@@ -13,7 +13,10 @@ Show all Tentaqles records about the file at `$ARGUMENTS`.
 2. Run the file history script:
 
    ```bash
-   python "${CLAUDE_PLUGIN_ROOT}/scripts/file_history.py" "$ARGUMENTS"
+   # Load tentaqles runtime
+   _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+   "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/file_history.py" "$ARGUMENTS"
    ```
 
 3. Present the output to the user. Highlight:

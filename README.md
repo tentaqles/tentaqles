@@ -54,9 +54,11 @@ claude --plugin-dir /path/to/tentaqles-plugin
 On the first session after installing, the plugin's bootstrap hook automatically installs Python dependencies (`pyyaml`, `pathspec`, `fastembed`, `numpy`) into the plugin's data directory (`${CLAUDE_PLUGIN_DATA}/lib`). This is isolated from your system Python and only happens once.
 
 **Requirements:**
-- **Python 3.10+** on PATH
+- **Python 3.10+** available via `py -3` (Windows launcher), `python3`, or `python`
 - **pip** available (`python -m pip --version`)
 - **git** and, optionally, **gh**, **az**, **aws**, **doctl** — whichever CLIs your client manifests use for preflight checks
+
+The plugin never uses bare `python` directly. All hooks and skills go through `scripts/tq_env.sh`, which probes interpreter candidates in order (`py -3` → `python3` → `python`), validates each via `sys.executable` to filter out broken venv shims, and resolves the absolute path. This means the plugin works even when the current directory has a `.venv/` with a broken or incomplete Python — the bootstrap finds a working system interpreter automatically.
 
 If the auto-install fails (no network, pip issues), the plugin runs in degraded mode and prints the manual install command:
 
@@ -229,6 +231,8 @@ All hooks are automatic and run silently.
 | `PostToolUse` | After Bash/Edit/Write | `knowledge-capture.py` — scan output for decisions, record file touches |
 | `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory |
 
+All hooks and skills use `tq_run.sh` → `tq_env.sh` to resolve a working Python interpreter, bypassing broken venv shims and machines where only `python3` exists (macOS). POSIX-compatible, tested on Windows (Git Bash), macOS, and Linux.
+
 ## CLI
 
 ```bash
@@ -242,7 +246,7 @@ tentaqles init           # Initialize Tentaqles in current workspace
 Launch with `/tentaqles:dashboard` or:
 
 ```bash
-python -m tentaqles.dashboard.server
+python3 -m tentaqles.dashboard.server
 ```
 
 Opens at `http://localhost:8765` (falls back to 8766-8770 if port is busy). Shows a live grid of all known workspaces with:

@@ -21,8 +21,10 @@ from pathlib import Path
 # Ensure UTF-8 stdout/stderr on Windows
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        import io
+        if hasattr(sys.stdout, "buffer"):
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
     except Exception:
         pass
 
@@ -57,11 +59,32 @@ def _check_core_available(lib_dir: Path) -> bool:
     return True
 
 
+def _resolve_executable() -> str:
+    """Resolve the real Python executable, bypassing Windows Store stubs."""
+    exe = sys.executable
+    if sys.platform == "win32" and "WindowsApps" in exe:
+        # Windows Store Python uses an app-execution alias stub that breaks pip --target.
+        # Try the py launcher which resolves to the real interpreter.
+        import shutil
+        py = shutil.which("py")
+        if py:
+            import subprocess as _sp
+            try:
+                real = _sp.run([py, "-3", "-c", "import sys; print(sys.executable)"],
+                               capture_output=True, text=True, timeout=10).stdout.strip()
+                if real and Path(real).is_file():
+                    return real
+            except Exception:
+                pass
+    return exe
+
+
 def _run_pip_install(target_dir: Path, packages: list[str]) -> bool:
     """Install packages into target_dir using pip --target. Returns True on success."""
     target_dir.mkdir(parents=True, exist_ok=True)
+    exe = _resolve_executable()
     cmd = [
-        sys.executable,
+        exe,
         "-m", "pip", "install",
         "--quiet",
         "--disable-pip-version-check",

@@ -12,9 +12,11 @@ Create a new project folder inside the current client workspace with inherited c
 First, find the parent client:
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -c "
+import os
 from tentaqles.manifest.loader import load_manifest
 manifest = load_manifest(os.getcwd())
 if manifest:
@@ -144,7 +146,10 @@ If the client root IS a git repo (mono-repo pattern), skip init — the project 
 ### 5. Record the touch in memory
 
 ```bash
-echo '{"cwd": "{client_root}", "event": "touch", "data": {"node_id": "{project-slug}", "node_type": "module", "action": "create", "weight": 2.0}}' | python "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py" 2>/dev/null || true
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+echo '{"cwd": "{client_root}", "event": "touch", "data": {"node_id": "{project-slug}", "node_type": "module", "action": "create", "weight": 2.0}}' | "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/memory-bridge.py" 2>/dev/null || true
 ```
 
 ### 6. Report

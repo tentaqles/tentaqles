@@ -156,10 +156,20 @@ class MemoryStore:
             self._emb = EmbeddingService()
         return self._emb
 
-    def _embed(self, text: str) -> bytes:
-        emb = self._get_emb()
-        vec = emb.embed([text])[0]
-        return vec.tobytes()
+    def _embed(self, text: str) -> bytes | None:
+        """Embed text for semantic search.
+
+        Returns None when the embedding backend (fastembed) is unavailable so
+        that writes still succeed — every semantic query already filters on
+        ``embedding IS NOT NULL``. Never raise from here: this runs inside
+        SessionEnd / PostToolUse hooks and must not break the session.
+        """
+        try:
+            emb = self._get_emb()
+            vec = emb.embed([text])[0]
+            return vec.tobytes()
+        except Exception:
+            return None
 
     def _vec_from_blob(self, blob: bytes) -> np.ndarray:
         return np.frombuffer(blob, dtype=np.float32)
@@ -179,12 +189,16 @@ class MemoryStore:
     def end_session(self, summary: str, tags: list[str] | None = None) -> dict:
         sid = self._active_session_id
         if not sid:
-            return {"error": "no active session"}
+            # Lazy upsert: allow end_session without a prior start_session
+            # (first-run wrap-up, orphaned session after compact, etc.)
+            sid = self.start_session(tags=tags, metadata={})
         now = _now()
         row = self._conn.execute("SELECT started_at, tags FROM sessions WHERE id = ?", (sid,)).fetchone()
         if not row:
             return {"error": "session not found"}
         started = datetime.fromisoformat(row[0])
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
         duration = int((datetime.now(timezone.utc) - started).total_seconds())
         existing_tags = json.loads(row[1] or "[]")
         all_tags = list(set(existing_tags + (tags or [])))
@@ -448,7 +462,10 @@ class MemoryStore:
     def search_memory(self, query: str, limit: int = 5) -> list[dict]:
         """Semantic search over session summaries and decisions."""
         emb = self._get_emb()
-        query_vec = emb.embed([query])[0]
+        try:
+            query_vec = emb.embed([query])[0]
+        except Exception:
+            return []  # embedding backend unavailable — no semantic results
         query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-10)
 
         results = []

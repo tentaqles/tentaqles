@@ -15,12 +15,12 @@ Answer "why did we change X?" by searching decisions semantically and traversing
 The user's query / topic is: $ARGUMENTS
 
 ```bash
-python -c "
-import sys, json
-sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}')
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+"$TENTAQLES_PY" -c "
+import sys, json, os
 from tentaqles.manifest.loader import load_manifest
 from tentaqles.memory.store import MemoryStore
-import os
 
 cwd = os.getcwd()
 manifest = load_manifest(cwd)

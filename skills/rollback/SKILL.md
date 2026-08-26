@@ -20,7 +20,10 @@ Restore the workspace `.tentaqles.yaml` to a previously captured snapshot.
 2. List available snapshots:
 
    ```bash
-   python "${CLAUDE_PLUGIN_ROOT}/scripts/snapshot.py" list "<workspace_path>"
+   # Load tentaqles runtime
+   _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+   "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/snapshot.py" list "<workspace_path>"
    ```
 
    The output is a JSON array sorted newest-first. Each entry has:
@@ -34,7 +37,10 @@ Restore the workspace `.tentaqles.yaml` to a previously captured snapshot.
 4. Once the user picks a snapshot, get its manifest dict:
 
    ```bash
-   python "${CLAUDE_PLUGIN_ROOT}/scripts/snapshot.py" restore "<workspace_path>" "<timestamp_prefix>"
+   # Load tentaqles runtime
+   _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+   "$TENTAQLES_PY" "${CLAUDE_PLUGIN_ROOT}/scripts/snapshot.py" restore "<workspace_path>" "<timestamp_prefix>"
    ```
 
    Use the `captured_at` value (or the filename stem) as the `<timestamp_prefix>`.

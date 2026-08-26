@@ -145,12 +145,14 @@ def _dispatch(
         print(json.dumps(result))
 
     elif event == "touch":
+        node_id = data.get("node_id", "unknown")
         store.touch(
-            data.get("node_id", "unknown"),
+            node_id,
             data.get("node_type", "file"),
             data.get("action", "edit"),
             data.get("weight", 1.0),
         )
+        print(json.dumps({"touch_id": node_id}))
 
     elif event == "decision":
         try:

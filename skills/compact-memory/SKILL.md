@@ -8,8 +8,7 @@ description: Manually trigger memory consolidation — extract semantic facts fr
 Consolidate episodic session summaries into semantic facts, detect repeated workflow patterns (procedural memory), and evict stale entries below the Ebbinghaus decay threshold.
 
 ```python
-import sys, os
-sys.path.insert(0, os.environ.get("CLAUDE_PLUGIN_ROOT", os.path.join(os.path.dirname(__file__), "..", "..")))
+import os
 from tentaqles.manifest.loader import load_manifest, get_client_context
 from tentaqles.memory.store import MemoryStore
 from tentaqles.memory.consolidator import MemoryConsolidator

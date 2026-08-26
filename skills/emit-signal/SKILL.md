@@ -14,9 +14,10 @@ Arguments: `$ARGUMENTS` — expected format: `<target_workspace_id> <event_type>
 ## Step 1: Detect current workspace
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+"$TENTAQLES_PY" -c "
+import os
 from tentaqles.manifest.loader import load_manifest
 manifest = load_manifest(os.getcwd())
 if manifest:
@@ -43,9 +44,9 @@ If any field is missing, ask the user for the missing value before proceeding.
 ## Step 3: Emit the signal
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+"$TENTAQLES_PY" -c "
 from tentaqles.memory.signals import SignalBus
 
 bus = SignalBus()

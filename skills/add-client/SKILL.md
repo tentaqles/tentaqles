@@ -163,9 +163,10 @@ Write `CLAUDE.md` at the workspace root:
 ### 5. Register in metagraph
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -c "
 from tentaqles.metagraph.config import register_workspace
 register_workspace('{slug}', '{full_path}', '{display_name}')
 print('Registered in metagraph')
@@ -183,9 +184,10 @@ git config user.name "{user_display_name}"
 ### 7. Run preflight checks
 
 ```bash
-python -c "
-import sys, os
-sys.path.insert(0, os.environ.get('CLAUDE_PLUGIN_ROOT', '.'))
+# Load tentaqles runtime
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+
+"$TENTAQLES_PY" -c "
 from tentaqles.manifest.loader import load_manifest, run_preflight_checks, format_context_summary, get_client_context
 manifest = load_manifest('{full_path}')
 ctx = get_client_context('{full_path}')
