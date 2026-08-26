@@ -26,7 +26,7 @@ func newLoginCmd() *cobra.Command {
 				return fmt.Errorf("no login flow for identity %q", args[1])
 			}
 			fmt.Fprintf(c.ErrOrStderr(), "tq: running `%s %v` with %s's private config\n", p.LoginCmd, p.LoginArgs, ws.Name)
-			return execIn(ws, p.LoginCmd, p.LoginArgs, func(s string) { fmt.Fprintln(c.ErrOrStderr(), "warning:", s) })
+			return execIn(ws, p.LoginCmd, p.LoginArgs, false, func(s string) { fmt.Fprintln(c.ErrOrStderr(), "warning:", s) })
 		},
 	}
 }

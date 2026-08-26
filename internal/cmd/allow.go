@@ -7,7 +7,18 @@ import (
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
 	"github.com/tentaqles/tentaqles/cli/internal/resolve"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
+	"github.com/tentaqles/tentaqles/cli/internal/workspace"
 )
+
+// syncGitIncludes rewrites the managed git include file so it lists exactly the
+// currently-trusted workspaces. Called after every trust change.
+func syncGitIncludes() error {
+	cfg, err := registry.Load()
+	if err != nil {
+		return err
+	}
+	return workspace.SyncGit(cfg)
+}
 
 func findWorkspace(name string) (*resolve.Workspace, error) {
 	cfg, err := registry.Load()
@@ -38,6 +49,9 @@ func newAllowCmd() *cobra.Command {
 			if err := trust.Allow(ws.Hash); err != nil {
 				return err
 			}
+			if err := syncGitIncludes(); err != nil {
+				return err
+			}
 			fmt.Fprintf(c.OutOrStdout(), "Trusted %s (%s)\n", ws.Name, ws.Hash[:12])
 			if bypass {
 				if err := trust.AllowBypass(ws.Hash); err != nil {
@@ -66,6 +80,9 @@ func newDenyCmd() *cobra.Command {
 				return err
 			}
 			if err := trust.Deny(ws.Hash); err != nil {
+				return err
+			}
+			if err := syncGitIncludes(); err != nil {
 				return err
 			}
 			fmt.Fprintf(c.OutOrStdout(), "Denied %s\n", ws.Name)

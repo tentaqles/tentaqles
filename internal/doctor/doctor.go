@@ -52,8 +52,11 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
 			add("warn", "bypass-cloud", w.Name, "permission_mode bypass with a cloud identity: Claude may run cloud CLIs unattended", "")
 		}
-		if _, err := os.Stat(gitcfg.WorkspaceFile(w.Root)); err != nil {
-			add("error", "git-ws-file-missing", w.Name, "missing "+gitcfg.WorkspaceFile(w.Root), "tq add would have created it; re-run tq allow after restoring")
+		wf := gitcfg.WorkspaceFile(w.Root)
+		if raw, err := os.ReadFile(wf); err != nil {
+			add("error", "git-ws-file-missing", w.Name, "missing "+wf, "tq add would have created it; re-run tq allow after restoring")
+		} else if bad := tamperReason(string(raw)); bad != "" {
+			add("error", "git-ws-file-tampered", w.Name, wf+": "+bad, "delete it and re-run tq add, or restore the tq-managed contents")
 		}
 		for _, id := range w.Manifest.IdentityNames() {
 			dir := paths.IdentityDir(w.Name, id)
@@ -72,13 +75,17 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			}
 		}
 	}
-	// git global
-	inc, _ := d.RunGit("config", "--global", "--get-all", "include.path")
-	if !strings.Contains(filepath.ToSlash(inc), filepath.ToSlash(gitcfg.IncludeFile())) {
-		add("error", "git-include-missing", "", "~/.gitconfig does not include "+gitcfg.IncludeFile(), "tq init <base>")
-	}
-	if v, _ := d.RunGit("config", "--global", "user.useConfigOnly"); strings.TrimSpace(v) != "true" {
-		add("error", "git-useconfigonly", "", "global user.useConfigOnly is not true (commits outside workspaces will use a guessed identity)", "tq init <base>")
+	// git global — only meaningful if git is actually installed.
+	if _, err := d.LookPath("git"); err != nil {
+		add("error", "git-missing", "", "git not found on PATH: tq cannot enforce per-workspace git identity", "install git, then re-run tq doctor")
+	} else {
+		inc, _ := d.RunGit("config", "--global", "--get-all", "include.path")
+		if !strings.Contains(filepath.ToSlash(inc), filepath.ToSlash(gitcfg.IncludeFile())) {
+			add("error", "git-include-missing", "", "~/.gitconfig does not include "+gitcfg.IncludeFile(), "tq init <base>")
+		}
+		if v, _ := d.RunGit("config", "--global", "user.useConfigOnly"); strings.TrimSpace(v) != "true" {
+			add("error", "git-useconfigonly", "", "global user.useConfigOnly is not true (commits outside workspaces will use a guessed identity)", "tq init <base>")
+		}
 	}
 	// env vs cwd
 	res := resolve.Resolve(d.Cwd, cfg)
@@ -106,4 +113,25 @@ func Exit(fs []Finding) int {
 		}
 	}
 	return 0
+}
+
+// tamperReason returns a non-empty explanation when a workspace's
+// .gitconfig-tentaqles no longer looks like the file tq writes. tq only ever
+// writes a "# managed by tq" header and a [user] section; anything else (e.g.
+// [core] sshCommand, [alias], [include]) would be executed-as-config by git for
+// every repo under that root.
+func tamperReason(body string) string {
+	if !strings.HasPrefix(body, "# managed by tq") {
+		return "does not start with the tq header (hand-edited or replaced)"
+	}
+	for _, line := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, "[") {
+			continue
+		}
+		if t != "[user]" {
+			return "contains unexpected git config section " + t
+		}
+	}
+	return ""
 }

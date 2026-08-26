@@ -97,25 +97,22 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err := cfg.Save(); err != nil {
 		return nil, err
 	}
-	all, _ := resolve.ListWorkspaces(cfg)
-	roots := make([]string, 0, len(all)+1)
-	for _, w := range all {
-		roots = append(roots, w.Root)
-	}
-	if err := gitcfg.Sync(roots); err != nil {
-		return nil, err
-	}
-	if o.RunGit != nil {
-		if err := gitcfg.EnsureGlobal(o.RunGit); err != nil {
-			return nil, err
-		}
-	}
+	// Trust first, then sync: SyncGit only wires trusted workspaces into git's
+	// include chain, so the new workspace must be trusted before it can appear.
 	h, err := trust.HashFile(mp)
 	if err != nil {
 		return nil, err
 	}
 	if err := trust.Allow(h); err != nil {
 		return nil, err
+	}
+	if err := SyncGit(cfg); err != nil {
+		return nil, err
+	}
+	if o.RunGit != nil {
+		if err := gitcfg.EnsureGlobal(o.RunGit); err != nil {
+			return nil, err
+		}
 	}
 	res := resolve.Resolve(root, cfg)
 	if res.Workspace == nil {
