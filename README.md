@@ -59,7 +59,8 @@ that workspace. `cd` back out, and none of it follows you.
 
 `tq env` is the workhorse: given the current directory, it prints the shell
 commands needed to set or clear the workspace-scoped environment (`TQ_WS`,
-`GIT_CONFIG_GLOBAL`, per-CLI config-home vars, etc.). The shell hook installed
+`TQ_WS_ROOT`, and one config-home variable per isolated CLI, e.g.
+`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`, `AZURE_CONFIG_DIR`). The shell hook installed
 by `tq activate` calls `tq env` on every prompt and evaluates its output,
 using an internal `__TQ_STATE` marker to know what it set last time so it can
 cleanly unset those variables when you leave the workspace — no leftover env
@@ -72,10 +73,19 @@ the hook fail closed and export nothing for it, rather than silently loading
 identity from a file that could have been tampered with. `tq deny` revokes
 trust at any time.
 
-Git identity is enforced the same way: each workspace gets its own git config
-file, and until that workspace is trusted, `tq` will not point git at it —
-commands that would touch git fail closed instead of falling back to your
-global identity.
+Git identity follows the same trust boundary. Each workspace gets its own
+`.gitconfig-tentaqles` next to its manifest, and `tq` maintains
+`~/.gitconfig-tentaqles` as a list of `includeIf` blocks — one per workspace.
+**Only trusted workspaces are wired into that include chain**: an untrusted or
+newly-tampered workspace is left out entirely, so git never reads a config
+file `tq` has not vouched for. `tq allow` and `tq deny` rewrite the include
+list immediately.
+
+`tq init` also sets global `user.useConfigOnly=true`. That is what makes the
+setup fail closed: inside a trusted workspace git picks up that workspace's
+name and email through the include, and anywhere else git refuses to guess an
+identity, so a commit made outside any trusted workspace fails rather than
+being attributed to the wrong person.
 
 ## Commands
 
@@ -83,31 +93,43 @@ global identity.
 |---|---|
 | `tq version` | Print the tq version. |
 | `tq init <base-folder>` | Register a base folder; each first-level subfolder becomes a terminal identity. |
-| `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. |
-| `tq allow <name>` | Trust a workspace's current manifest so it can export env. |
+| `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. Flags: `--base`, `--git-email` (required), `--git-name`, `--display-name`, `--color`, `--identities`, `--permission-mode`. |
+| `tq allow <name>` | Trust a workspace's current manifest so it can export env. `--bypass` additionally allows `permission_mode: bypass`. |
 | `tq deny <name>` | Revoke trust for a workspace. |
-| `tq list` | List workspaces under all registered bases. |
-| `tq env` | Print the env changes for the current directory (used by the shell hook). |
-| `tq activate <shell>` | Print the hook to add to your shell profile, e.g. `eval "$(tq activate bash)"`. |
+| `tq list` | List workspaces under all registered bases. `--json` for machine-readable output. |
+| `tq env` | Print the env changes for the current directory (used by the shell hook). `--shell <name>`, `--json`. |
+| `tq activate <shell>` | Print the hook to add to your shell profile, e.g. `eval "$(tq activate bash)"`. Shells: `bash`, `zsh`, `fish`, `pwsh`, `powershell`, `cmd`. |
 | `tq login <workspace> <identity>` | Run a CLI's own login flow inside the workspace's private config home. |
 | `tq run <workspace> -- <command> [args...]` | Run a command with a workspace's identity without cd-ing into it. |
-| `tq doctor` | Verify hooks, trust, git and env against the manifests (never mutates). |
+| `tq doctor` | Verify hooks, trust, git and env against the manifests (never mutates). `--json` for machine-readable findings. |
 
 ## Where things live
 
-All `tq` state lives under `~/.tentaqles/`:
+Machine-wide state lives under `~/.tentaqles/` (override with `$TQ_HOME`):
 
-- `~/.tentaqles/config.json` — registered base folders.
-- `~/.tentaqles/workspaces/<name>/manifest.json` — a workspace's identity
-  definition (git email, allowed env, trust hash).
-- `~/.tentaqles/workspaces/<name>/home/` — the private config home used for
-  `tq login` / `tq run`, so CLI credentials for one workspace never mix with
-  another's `~/.config` or `~/.aws`.
-- `~/.tentaqles/workspaces/<name>/git/` — the workspace-scoped git config.
+- `~/.tentaqles/config.yaml` — the list of registered base folders.
+- `~/.tentaqles/trust/<sha256>` — one empty marker file per trusted manifest,
+  named after the manifest's SHA-256. A `.bypass` suffix marks a manifest
+  additionally allowed to run Claude with `--dangerously-skip-permissions`.
+- `~/.tentaqles/identities/<workspace>/<cli>/` — the private config home for
+  one CLI in one workspace (`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`,
+  `AZURE_CONFIG_DIR`, …), so credentials that `tq login` causes a CLI to write
+  never mix with another workspace's.
+- `~/.tentaqles/audit.jsonl` — append-only log of identity switches.
 
-Nothing under `~/.tentaqles/` is meant to be edited by hand while a workspace
-is trusted — editing the manifest invalidates trust and `tq allow` must be
-run again.
+Per-workspace state lives in the workspace folder itself:
+
+- `<base>/<workspace>/.tentaqles.yaml` — the manifest: workspace name, git
+  name/email, which CLI identities to isolate, Claude permission mode. Names
+  only, never secrets.
+- `<base>/<workspace>/.gitconfig-tentaqles` — generated by `tq add`; the
+  `[user]` block git uses inside this workspace.
+- `~/.gitconfig-tentaqles` — generated; the `includeIf` blocks pointing git at
+  each **trusted** workspace's file. Both generated files are rewritten by
+  `tq`; do not hand-edit them (`tq doctor` flags tampering).
+
+Editing a manifest changes its hash and therefore revokes trust — `tq allow`
+must be run again before that workspace exports anything.
 
 ## Limitations
 
@@ -115,9 +137,9 @@ run again.
   identity switch does not work there. Use `tq run <workspace> -- <command>`
   to run a single command under a workspace's identity, or invoke the
   generated hook file directly from a `cmd.exe` script.
-- The macOS Keychain integration path for storing CLI credentials referenced
-  by `tq login` has not been independently verified on real Keychain-backed
-  CLIs — treat it as best-effort until confirmed on your setup.
+- `tq` isolates CLIs by pointing them at a private config directory. A CLI
+  that keeps its credentials in the OS keychain instead of on disk is not
+  isolated by that mechanism.
 
 ## Security
 

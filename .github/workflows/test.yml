@@ -13,6 +13,11 @@ jobs:
       - run: go vet ./...
       - run: go test ./... -count=1
       - run: go build -o tq ./cmd/tq
+      - name: goreleaser config check
+        if: runner.os == 'Linux'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          args: check
       - name: smoke (bash hook)
         if: runner.os != 'Windows'
         shell: bash
