@@ -38,6 +38,12 @@ func norm(p string) string {
 // Resolve is fail-closed: any doubt returns a nil Workspace with a Reason.
 func Resolve(cwd string, cfg *registry.Config) Result {
 	c := norm(cwd)
+	// Case-preserving (but symlink-resolved) form of cwd, used only to recover the
+	// on-disk-cased workspace name/root — never for the containment comparison.
+	cOrig, err := registry.Normalize(cwd)
+	if err != nil {
+		cOrig = filepath.Clean(cwd)
+	}
 	for _, base := range cfg.Bases {
 		b := norm(base)
 		if c == b {
@@ -46,7 +52,10 @@ func Resolve(cwd string, cfg *registry.Config) Result {
 		if !strings.HasPrefix(c, b+string(filepath.Separator)) {
 			continue
 		}
-		rel := strings.TrimPrefix(c, b+string(filepath.Separator))
+		// base is already case-preserving (registry.Normalize, not lowercased), and
+		// cOrig has the same length as c modulo case, so slice by length rather than
+		// TrimPrefix to avoid mixing lowercase/original casing.
+		rel := strings.TrimPrefix(cOrig[len(base):], string(filepath.Separator))
 		name := strings.SplitN(rel, string(filepath.Separator), 2)[0]
 		root := filepath.Join(base, name)
 		return load(base, root, name)

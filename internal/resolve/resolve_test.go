@@ -119,6 +119,18 @@ func TestResolve_CaseInsensitiveOnWindows(t *testing.T) {
 	}
 }
 
+func TestResolve_PreservesOnDiskCasing(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows only")
+	}
+	base, cfg := setup(t)
+	root := mkws(t, base, "Acme", true)
+	r := Resolve(strings.ToLower(root), cfg)
+	if r.Workspace == nil || r.Workspace.Name != "Acme" || filepath.Base(r.Workspace.Root) != "Acme" {
+		t.Fatalf("%+v", r)
+	}
+}
+
 func TestListWorkspaces(t *testing.T) {
 	base, cfg := setup(t)
 	mkws(t, base, "a", true)
