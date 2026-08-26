@@ -1,0 +1,5 @@
+set -e AZURE_CONFIG_DIR
+set -e GH_CONFIG_DIR
+set -gx CLAUDE_CONFIG_DIR 'C:\\Users\\re nato\\it\'s\\claude'
+set -gx TQ_WS 'acme'
+set -gx WEIRD 'a"b$c`d'

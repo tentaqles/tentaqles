@@ -1,0 +1,5 @@
+unset AZURE_CONFIG_DIR
+unset GH_CONFIG_DIR
+export CLAUDE_CONFIG_DIR='C:\Users\re nato\it'\''s\claude'
+export TQ_WS='acme'
+export WEIRD='a"b$c`d'

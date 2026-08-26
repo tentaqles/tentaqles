@@ -1,0 +1,2 @@
+# tq shell hook (nushell)
+$env.config = ($env.config | upsert hooks.env_change.PWD { |c| ($c.hooks.env_change.PWD? | default []) ++ [{ |before, after| ^'{{.Bin}}' env --shell nu | lines | each { |l| $l } | str join "\n" | if ($in | is-empty) { null } else { $in | nu -c $in } }] })

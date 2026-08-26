@@ -1,0 +1,5 @@
+# tq shell hook (fish)
+function __tq_hook --on-variable PWD
+    "{{.Bin}}" env --shell fish 2>/dev/null | source
+end
+__tq_hook

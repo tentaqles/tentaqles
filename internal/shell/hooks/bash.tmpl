@@ -1,0 +1,4 @@
+# tq shell hook (bash)
+__tq_hook() { local __o; __o="$("{{.Bin}}" env --shell bash 2>/dev/null)"; [ -n "$__o" ] && eval "$__o"; }
+case ";${PROMPT_COMMAND:-};" in *";__tq_hook;"*) ;; *) PROMPT_COMMAND="__tq_hook${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac
+__tq_hook

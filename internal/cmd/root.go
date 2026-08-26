@@ -13,6 +13,6 @@ func NewRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd())
+	root.AddCommand(newVersionCmd(), newEnvCmd(), newActivateCmd())
 	return root
 }

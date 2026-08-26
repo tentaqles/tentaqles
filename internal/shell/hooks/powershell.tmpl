@@ -1,0 +1,5 @@
+# tq shell hook (powershell)
+if (-not (Test-Path Variable:global:__tq_prev_prompt)) { $global:__tq_prev_prompt = $function:prompt }
+function global:__tq_hook { $o = (& '{{.Bin}}' env --shell powershell 2>$null | Out-String); if ($o.Trim()) { Invoke-Expression $o } }
+function global:prompt { __tq_hook; & $global:__tq_prev_prompt }
+__tq_hook

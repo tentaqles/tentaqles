@@ -1,0 +1,5 @@
+Remove-Item -ErrorAction SilentlyContinue Env:AZURE_CONFIG_DIR
+Remove-Item -ErrorAction SilentlyContinue Env:GH_CONFIG_DIR
+$env:CLAUDE_CONFIG_DIR = 'C:\Users\re nato\it''s\claude'
+$env:TQ_WS = 'acme'
+$env:WEIRD = 'a"b$c`d'

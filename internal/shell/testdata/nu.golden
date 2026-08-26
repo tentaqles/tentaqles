@@ -1,0 +1,5 @@
+hide-env -i AZURE_CONFIG_DIR
+hide-env -i GH_CONFIG_DIR
+$env.CLAUDE_CONFIG_DIR = 'C:\Users\re nato\it'\''s\claude'
+$env.TQ_WS = 'acme'
+$env.WEIRD = 'a"b$c`d'

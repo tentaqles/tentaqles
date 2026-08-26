@@ -1,0 +1,2 @@
+@rem tq shell hook (cmd.exe): call this after every cd, or use `tq shell <ws>` to launch a preconfigured window.
+@for /f "usebackq delims=" %%L in (`"{{.Bin}}" env --shell cmd`) do @%%L
