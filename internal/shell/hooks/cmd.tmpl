@@ -1,2 +1,3 @@
-@rem tq shell hook (cmd.exe): call this after every cd, or use `tq shell <ws>` to launch a preconfigured window.
+@rem tq shell hook (cmd.exe): call this after every cd, or use `tq run <ws> -- <cmd>` to run one command under a workspace identity.
+@rem The %%L form below is for .bat/.cmd files; type %L (single percent) when pasting interactively.
 @for /f "usebackq delims=" %%L in (`"{{.Bin}}" env --shell cmd`) do @%%L

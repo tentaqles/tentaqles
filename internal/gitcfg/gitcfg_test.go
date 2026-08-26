@@ -46,8 +46,12 @@ func TestSync_IdempotentAndPrunes(t *testing.T) {
 	if string(first) != string(second) {
 		t.Fatalf("not idempotent/sorted:\n%s\n---\n%s", first, second)
 	}
-	if !strings.Contains(string(first), `[includeIf "gitdir:`+filepath.ToSlash(a)+`/"]`) {
-		t.Fatalf("missing includeIf for a:\n%s", first)
+	prefix := "gitdir:"
+	if runtime.GOOS == "windows" {
+		prefix = "gitdir/i:"
+	}
+	if !strings.Contains(string(first), `[includeIf "`+prefix+filepath.ToSlash(a)+`/"]`) {
+		t.Fatalf("missing includeIf for a (prefix %s):\n%s", prefix, first)
 	}
 	Sync([]string{a})
 	third, _ := os.ReadFile(IncludeFile())

@@ -141,3 +141,28 @@ func TestListWorkspaces(t *testing.T) {
 		t.Fatalf("%+v %v", ws, errs)
 	}
 }
+
+// A hand-edited config.yaml can hold a base with a trailing separator (AddBase
+// would have cleaned it). Resolution must still work and must never slice cwd
+// with the raw, longer base length.
+func TestResolve_BaseWithTrailingSeparatorInConfig(t *testing.T) {
+	t.Setenv("TQ_HOME", t.TempDir())
+	base := t.TempDir()
+	cfg := &registry.Config{Bases: []string{base + string(filepath.Separator)}}
+	root := mkws(t, base, "acme", true)
+
+	r := Resolve(filepath.Join(root, "repo", "src"), cfg)
+	if r.Workspace == nil || r.Workspace.Name != "acme" {
+		t.Fatalf("%+v", r)
+	}
+	if !registry.SamePath(r.Workspace.Root, root) {
+		t.Fatalf("root %q != %q", r.Workspace.Root, root)
+	}
+	// The base itself and a sibling outside it must not panic either.
+	if r := Resolve(base, cfg); r.Workspace != nil || r.Reason != "at base root" {
+		t.Fatalf("%+v", r)
+	}
+	if r := Resolve(t.TempDir(), cfg); r.Workspace != nil {
+		t.Fatalf("%+v", r)
+	}
+}

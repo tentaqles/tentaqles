@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -54,10 +55,16 @@ func Sync(roots []string) error {
 		rs[i] = filepath.ToSlash(filepath.Clean(rs[i]))
 	}
 	sort.Strings(rs)
+	// Windows paths are case-insensitive on disk, so use git's case-insensitive
+	// gitdir/i matcher there; a case-sensitive match would silently miss repos.
+	prefix := "gitdir:"
+	if runtime.GOOS == "windows" {
+		prefix = "gitdir/i:"
+	}
 	var b strings.Builder
 	b.WriteString("# managed by tq — do not edit; run `tq doctor` / `tq add`\n")
 	for _, r := range rs {
-		fmt.Fprintf(&b, "[includeIf \"gitdir:%s/\"]\n\tpath = %s/%s\n", r, r, managedName)
+		fmt.Fprintf(&b, "[includeIf \"%s%s/\"]\n\tpath = %s/%s\n", prefix, r, r, managedName)
 	}
 	return os.WriteFile(IncludeFile(), []byte(b.String()), 0o644)
 }

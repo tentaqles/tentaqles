@@ -9,9 +9,9 @@ import (
 	"github.com/tentaqles/tentaqles/cli/internal/envplan"
 )
 
-var Shells = []string{"bash", "zsh", "fish", "pwsh", "powershell", "nu", "cmd"}
+var Shells = []string{"bash", "zsh", "fish", "pwsh", "powershell", "cmd"}
 
-func sq(s string) string    { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" } // POSIX + nu
+func sq(s string) string    { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" } // POSIX
 func psq(s string) string   { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 func fishq(s string) string { return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'" }
 
@@ -28,9 +28,6 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 	case "pwsh", "powershell":
 		set = func(k, v string) string { return "$env:" + k + " = " + psq(v) }
 		unset = func(k string) string { return "Remove-Item -ErrorAction SilentlyContinue Env:" + k }
-	case "nu":
-		set = func(k, v string) string { return "$env." + k + " = " + sq(v) }
-		unset = func(k string) string { return "hide-env -i " + k }
 	case "cmd":
 		set = func(k, v string) string { return `set "` + k + "=" + v + `"` }
 		unset = func(k string) string { return `set "` + k + `="` }

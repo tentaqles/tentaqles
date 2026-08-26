@@ -45,20 +45,33 @@ func Resolve(cwd string, cfg *registry.Config) Result {
 		cOrig = filepath.Clean(cwd)
 	}
 	for _, base := range cfg.Bases {
-		b := norm(base)
+		// Normalize the base exactly once. cfg.Bases normally holds normalized
+		// paths (AddBase normalizes), but a hand-edited config.yaml can hold a
+		// raw or trailing-separator path, and the raw length must never be used
+		// to slice cOrig.
+		nb, err := registry.Normalize(base)
+		if err != nil {
+			nb = filepath.Clean(base)
+		}
+		b := nb
+		if runtime.GOOS == "windows" {
+			b = strings.ToLower(b)
+		}
 		if c == b {
 			return Result{Reason: "at base root"}
 		}
 		if !strings.HasPrefix(c, b+string(filepath.Separator)) {
 			continue
 		}
-		// base is already case-preserving (registry.Normalize, not lowercased), and
-		// cOrig has the same length as c modulo case, so slice by length rather than
-		// TrimPrefix to avoid mixing lowercase/original casing.
-		rel := strings.TrimPrefix(cOrig[len(base):], string(filepath.Separator))
+		// c and cOrig differ only by case, so they have the same length; slice
+		// cOrig by the normalized base length to recover on-disk casing.
+		if len(cOrig) < len(nb) {
+			continue
+		}
+		rel := strings.TrimPrefix(cOrig[len(nb):], string(filepath.Separator))
 		name := strings.SplitN(rel, string(filepath.Separator), 2)[0]
-		root := filepath.Join(base, name)
-		return load(base, root, name)
+		root := filepath.Join(nb, name)
+		return load(nb, root, name)
 	}
 	return Result{Reason: "outside any base"}
 }

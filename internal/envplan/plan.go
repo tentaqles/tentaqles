@@ -98,7 +98,6 @@ func Diff(desired map[string]string, current func(string) (string, bool), prev S
 			ops.Set[k] = v
 		}
 	}
-	sort.Strings(ops.Unset)
 	ops.Changed = len(ops.Set)+len(ops.Unset) > 0
 	if !ops.Changed {
 		return ops, next
@@ -109,5 +108,7 @@ func Diff(desired map[string]string, current func(string) (string, bool), prev S
 	} else {
 		ops.Set[StateVar] = next.Encode()
 	}
+	// Sorted last so StateVar is ordered with the rest, keeping output stable.
+	sort.Strings(ops.Unset)
 	return ops, next
 }
