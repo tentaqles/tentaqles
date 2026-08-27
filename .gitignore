@@ -2,3 +2,13 @@
 /tq
 /tq.exe
 *.test
+
+# legacy sidecar runtime
+legacy/sidecar/.venv/
+legacy/sidecar/build/
+legacy/sidecar/**/__pycache__/
+legacy/sidecar/.pytest_cache/
+legacy/sidecar/.ruff_cache/
+# plugin runtime
+plugin/**/__pycache__/
+plugin/.venv/

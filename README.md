@@ -1,3 +1,9 @@
+# tentaqles
+
+Terminal-identity orchestration for developers working across several clients: one base folder, one identity per subfolder, the right CLIs/agents/plugins per identity. This monorepo holds the `tq` CLI (`cmd/tq`, `internal/`), the Claude Code plugin (`plugin/`), the provider catalog and desktop setup app (planned: `providers/`, `desktop/`), and a legacy Python MCP sidecar (`legacy/sidecar/`, being retired).
+
+---
+
 # tq
 
 ## What it is
