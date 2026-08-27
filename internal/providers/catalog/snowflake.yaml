@@ -10,8 +10,7 @@ install:
     winget: "Snowflake.SnowflakeCLI"
     pip: "snowflake-cli"
   macos:
-    brew: "snowflake-cli"
-    note: "brew tap snowflakedb/snowflake-cli"
+    brew: "snowflakedb/snowflake-cli/snowflake-cli"
     pip: "snowflake-cli"
   linux:
     pip: "snowflake-cli"

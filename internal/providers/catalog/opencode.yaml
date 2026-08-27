@@ -1,20 +1,21 @@
+# OPENCODE_CONFIG_DIR unverified
 id: opencode
 name: opencode
 category: agent
-docs: https://opencode.ai
+docs: https://opencode.ai/docs/config/
 cli:
   command: opencode
   version_args: ["--version"]
 install:
   windows:
     url: https://opencode.ai/install
-    note: unverified package id
+    note: "OPENCODE_CONFIG_DIR unverified — confirm against opencode docs"
   macos:
     url: https://opencode.ai/install
-    note: unverified package id
+    note: "OPENCODE_CONFIG_DIR unverified — confirm against opencode docs"
   linux:
     url: https://opencode.ai/install
-    note: unverified package id
+    note: "OPENCODE_CONFIG_DIR unverified — confirm against opencode docs"
 identity:
   env:
     OPENCODE_CONFIG_DIR: "{dir}"

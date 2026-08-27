@@ -187,6 +187,10 @@ func (c *Catalog) Get(id string) (Provider, bool) {
 }
 
 // All returns every provider sorted by category then id.
+// All returns every provider, sorted by category then id. The returned
+// Providers share pointer fields (CLI, Login, Verify) and maps (Identity.Env)
+// with the cached catalog; callers must treat them as read-only and must not
+// mutate them.
 func (c *Catalog) All() []Provider {
 	out := make([]Provider, 0, len(c.byID))
 	for _, id := range c.order {

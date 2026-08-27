@@ -27,6 +27,8 @@ type Deps struct {
 	LookPath func(string) (string, error)
 	Run      func(ctx context.Context, name string, args ...string) (string, error)
 	GOOS     string
+	// Timeout bounds a single version probe. Zero means DefaultTimeout.
+	Timeout time.Duration
 }
 
 // DefaultDeps returns Deps backed by the real OS and exec package.
@@ -34,14 +36,21 @@ func DefaultDeps() Deps {
 	return Deps{
 		LookPath: exec.LookPath,
 		Run: func(ctx context.Context, name string, args ...string) (string, error) {
-			out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+			cmd := exec.CommandContext(ctx, name, args...)
+			// A surviving grandchild (common with Windows .cmd shims) keeps the
+			// output pipes open; WaitDelay stops that blocking us past the deadline.
+			cmd.WaitDelay = 2 * time.Second
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
-		GOOS: runtime.GOOS,
+		GOOS:    runtime.GOOS,
+		Timeout: DefaultTimeout,
 	}
 }
 
-const versionTimeout = 5 * time.Second
+// DefaultTimeout bounds one CLI version probe. Some CLIs (cloud SDKs behind
+// shims) are genuinely slow to start on a cold cache.
+const DefaultTimeout = 15 * time.Second
 
 // firstLine returns the first non-empty trimmed line of s.
 func firstLine(s string) string {
@@ -72,7 +81,11 @@ func Check(p providers.Provider, d Deps) Result {
 	r.Path = path
 	r.Installed = true
 
-	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
+	timeout := d.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	out, err := d.Run(ctx, path, p.CLI.VersionArgs...)

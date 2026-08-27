@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"sync"
 
 	"github.com/tentaqles/tentaqles/cli/internal/providers"
 	"gopkg.in/yaml.v3"
@@ -19,10 +20,21 @@ var (
 	ErrSecretLike        = errors.New("manifest contains a secret-looking value; manifests hold names only")
 )
 
+var (
+	knownIdentitiesOnce sync.Once
+	knownIdentities     []string
+)
+
 // KnownIdentities are the CLI providers tq can isolate, derived from the
 // provider catalog (internal/providers). Keep in sync with envplan.Providers,
-// which is built from the same catalog.
-var KnownIdentities = providers.MustLoad().IDs()
+// which is built from the same catalog. It is loaded lazily and memoized so
+// that importing this package does not read the user's home directory.
+func KnownIdentities() []string {
+	knownIdentitiesOnce.Do(func() {
+		knownIdentities = providers.MustLoad().IDs()
+	})
+	return knownIdentities
+}
 
 var PermissionModes = []string{"", "default", "acceptEdits", "plan", "bypass"}
 
@@ -100,8 +112,9 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: 'client' is required", path)
 	}
 	for name := range m.Identities {
-		if !contains(KnownIdentities, name) {
-			return nil, fmt.Errorf("%s: unknown identity %q (known: %v)", path, name, KnownIdentities)
+		known := KnownIdentities()
+		if !contains(known, name) {
+			return nil, fmt.Errorf("%s: unknown identity %q (known: %v)", path, name, known)
 		}
 	}
 	if !contains(PermissionModes, m.Claude.PermissionMode) {

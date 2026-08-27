@@ -7,12 +7,11 @@ cli:
   version_args: ["--version"]
 install:
   windows:
-    pip: "databricks-cli"
+    winget: "Databricks.DatabricksCLI"
   macos:
     brew: "databricks"
-    pip: "databricks-cli"
   linux:
-    pip: "databricks-cli"
+    url: https://docs.databricks.com/dev-tools/cli/install.html
 identity:
   env:
     DATABRICKS_CONFIG_FILE: "{dir}/databrickscfg"

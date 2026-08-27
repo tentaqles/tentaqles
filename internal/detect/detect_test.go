@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/cli/internal/providers"
 )
@@ -114,7 +115,8 @@ func TestCheck_Timeout(t *testing.T) {
 			<-ctx.Done()
 			return "", ctx.Err()
 		},
-		GOOS: "linux",
+		GOOS:    "linux",
+		Timeout: 20 * time.Millisecond,
 	}
 
 	r := Check(p, d)
@@ -256,5 +258,33 @@ func TestDefaultDeps(t *testing.T) {
 	d := DefaultDeps()
 	if d.LookPath == nil || d.Run == nil || d.GOOS == "" {
 		t.Fatalf("DefaultDeps returned incomplete Deps: %+v", d)
+	}
+}
+
+func TestCheck_ProbeFailedSurfacesErr(t *testing.T) {
+	p := providers.Provider{ID: "foo", CLI: &providers.CLI{Command: "foo", VersionArgs: []string{"--version"}}}
+	d := Deps{
+		LookPath: func(string) (string, error) { return "/bin/foo", nil },
+		Run: func(context.Context, string, ...string) (string, error) {
+			return "", errors.New("exit status 127")
+		},
+		GOOS: "linux",
+	}
+
+	r := Check(p, d)
+	if !r.Installed {
+		t.Fatalf("expected Installed=true")
+	}
+	if r.Version != "" {
+		t.Fatalf("expected empty version, got %q", r.Version)
+	}
+	if r.Err == "" {
+		t.Fatal("expected Err to be populated when the probe fails")
+	}
+}
+
+func TestDefaultDeps_Timeout(t *testing.T) {
+	if got := DefaultDeps().Timeout; got != DefaultTimeout {
+		t.Fatalf("DefaultDeps().Timeout = %v, want %v", got, DefaultTimeout)
 	}
 }
