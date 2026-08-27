@@ -145,3 +145,11 @@ func TestWriteUser_RoundTrip(t *testing.T) {
 		t.Fatalf("Name = %q", got.Name)
 	}
 }
+
+func TestMustLoad_Cached(t *testing.T) {
+	c1 := MustLoad()
+	c2 := MustLoad()
+	if c1 != c2 {
+		t.Fatalf("expected MustLoad to return the same cached *Catalog pointer, got %p and %p", c1, c2)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tentaqles/tentaqles/cli/internal/paths"
 	"gopkg.in/yaml.v3"
@@ -122,9 +123,23 @@ func Load() (*Catalog, error) {
 	return c, nil
 }
 
+var (
+	mustLoadOnce sync.Once
+	mustLoadC    *Catalog
+)
+
 // MustLoad loads the catalog and panics only on embedded-catalog errors,
-// which indicate a build defect.
+// which indicate a build defect. The result is memoized: the first call
+// parses the catalog, later calls return the same cached *Catalog. Callers
+// that must see fresh user files (e.g. after WriteUser) should use Load().
 func MustLoad() *Catalog {
+	mustLoadOnce.Do(func() {
+		mustLoadC = mustLoadUncached()
+	})
+	return mustLoadC
+}
+
+func mustLoadUncached() *Catalog {
 	c, err := loadEmbedded()
 	if err != nil {
 		panic(fmt.Sprintf("providers: embedded catalog error: %v", err))
