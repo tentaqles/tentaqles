@@ -71,6 +71,13 @@ type Manifest struct {
 
 var secretRe = regexp.MustCompile(`(?i)\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9\-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,})`)
 
+// LooksLikeSecret reports whether s contains a token-shaped value (API key,
+// bearer token, JWT, etc). Exported for use by other packages (e.g. the
+// bundle catalog) that need the same heuristic outside a manifest file.
+func LooksLikeSecret(s string) bool {
+	return secretRe.MatchString(s)
+}
+
 func Load(path string) (*Manifest, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
