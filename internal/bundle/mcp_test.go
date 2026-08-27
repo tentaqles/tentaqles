@@ -1,8 +1,10 @@
 package bundle
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSyncMCP_MergesAndPrunesOwnedOnly(t *testing.T) {
@@ -30,8 +32,8 @@ func TestSyncMCP_MergesAndPrunesOwnedOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SyncMCP: %v", err)
 	}
-	if len(changed) != 1 || changed[0] != "github" {
-		t.Fatalf("changed = %v, want [github]", changed)
+	if len(changed) != 2 || changed[0] != "-old" || changed[1] != "github" {
+		t.Fatalf("changed = %v, want [-old github]", changed)
 	}
 
 	result, err := ReadJSONMap(path)
@@ -98,5 +100,80 @@ func TestSyncMCP_CreatesMcpServersWhenAbsent(t *testing.T) {
 	}
 	if _, ok := servers["github"]; !ok {
 		t.Fatalf("github missing: %v", servers)
+	}
+}
+
+func TestSyncMCP_SecondRunNoChangeAndNoRewrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+
+	d := Desired{MCP: map[string]MCPServer{"github": {"command": "gh"}}}
+	st := &State{}
+	if _, err := SyncMCP(dir, d, st); err != nil {
+		t.Fatalf("first SyncMCP: %v", err)
+	}
+
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	st2 := &State{MCP: st.MCP}
+	changed, err := SyncMCP(dir, d, st2)
+	if err != nil {
+		t.Fatalf("second SyncMCP: %v", err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("changed = %v, want empty on unchanged second run", changed)
+	}
+
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Fatalf(".claude.json was rewritten: before=%v after=%v", before.ModTime(), after.ModTime())
+	}
+}
+
+func TestSyncMCP_ReportsRemovals(t *testing.T) {
+	dir := t.TempDir()
+
+	d := Desired{MCP: map[string]MCPServer{"github": {"command": "gh"}}}
+	st := &State{}
+	if _, err := SyncMCP(dir, d, st); err != nil {
+		t.Fatalf("first SyncMCP: %v", err)
+	}
+
+	d2 := Desired{MCP: map[string]MCPServer{}}
+	st2 := &State{MCP: st.MCP}
+	changed, err := SyncMCP(dir, d2, st2)
+	if err != nil {
+		t.Fatalf("second SyncMCP: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != "-github" {
+		t.Fatalf("changed = %v, want [-github]", changed)
+	}
+	if len(st2.MCP) != 0 {
+		t.Fatalf("st2.MCP = %v, want empty", st2.MCP)
+	}
+
+	result, err := ReadJSONMap(filepath.Join(dir, ".claude.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers, _ := result["mcpServers"].(map[string]any)
+	if _, ok := servers["github"]; ok {
+		t.Fatalf("github should have been removed: %v", servers)
+	}
+}
+
+func TestSyncMCP_RejectsInvalidName(t *testing.T) {
+	dir := t.TempDir()
+	d := Desired{MCP: map[string]MCPServer{"": {"command": "gh"}}}
+	st := &State{}
+	if _, err := SyncMCP(dir, d, st); err == nil {
+		t.Fatalf("expected error for invalid (empty) mcp server name")
 	}
 }

@@ -65,6 +65,10 @@ func Compute(b *manifest.Bundle, cat *Catalog) (Desired, []error) {
 	}
 
 	for _, s := range b.Skills {
+		if !validName(s) {
+			errs = append(errs, fmt.Errorf("invalid skill name: %q", s))
+			continue
+		}
 		sk, ok := cat.Skills[s]
 		if !ok {
 			errs = append(errs, fmt.Errorf("unknown skill %q", s))
@@ -74,6 +78,10 @@ func Compute(b *manifest.Bundle, cat *Catalog) (Desired, []error) {
 	}
 
 	for _, m := range b.MCP {
+		if !validName(m) {
+			errs = append(errs, fmt.Errorf("invalid mcp server name: %q", m))
+			continue
+		}
 		srv, ok := cat.MCP[m]
 		if !ok {
 			errs = append(errs, fmt.Errorf("unknown mcp server %q", m))
