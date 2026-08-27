@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 
+	"github.com/tentaqles/tentaqles/cli/internal/providers"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,8 +19,10 @@ var (
 	ErrSecretLike        = errors.New("manifest contains a secret-looking value; manifests hold names only")
 )
 
-// KnownIdentities are the CLI providers tq can isolate. Keep in sync with envplan.providers.
-var KnownIdentities = []string{"claude", "codex", "gemini", "cursor", "gh", "az", "aws", "gcloud", "kube", "npm"}
+// KnownIdentities are the CLI providers tq can isolate, derived from the
+// provider catalog (internal/providers). Keep in sync with envplan.Providers,
+// which is built from the same catalog.
+var KnownIdentities = providers.MustLoad().IDs()
 
 var PermissionModes = []string{"", "default", "acceptEdits", "plan", "bypass"}
 
