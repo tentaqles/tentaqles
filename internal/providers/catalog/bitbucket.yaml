@@ -1,0 +1,5 @@
+id: bitbucket
+name: Bitbucket
+category: vcs
+docs: https://bitbucket.org
+cli: null

@@ -1,0 +1,17 @@
+id: gemini
+name: Gemini CLI
+category: agent
+docs: https://github.com/google-gemini/gemini-cli
+cli:
+  command: gemini
+  version_args: ["--version"]
+install:
+  windows:
+    npm: "@google/gemini-cli"
+  macos:
+    npm: "@google/gemini-cli"
+  linux:
+    npm: "@google/gemini-cli"
+identity:
+  env:
+    GEMINI_CLI_HOME: "{dir}"

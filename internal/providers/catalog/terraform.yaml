@@ -1,0 +1,17 @@
+id: terraform
+name: Terraform
+category: deploy
+docs: https://developer.hashicorp.com/terraform/cli
+cli:
+  command: terraform
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "HashiCorp.Terraform"
+  macos:
+    brew: "terraform"
+  linux:
+    apt: "terraform"
+identity:
+  env:
+    TF_CLI_CONFIG_FILE: "{dir}/terraformrc"

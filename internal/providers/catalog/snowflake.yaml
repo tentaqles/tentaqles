@@ -1,0 +1,22 @@
+id: snowflake
+name: Snowflake
+category: data
+docs: https://docs.snowflake.com/en/developer-guide/snowflake-cli
+cli:
+  command: snow
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "Snowflake.SnowflakeCLI"
+    pip: "snowflake-cli"
+  macos:
+    brew: "snowflake-cli"
+    note: "brew tap snowflakedb/snowflake-cli"
+    pip: "snowflake-cli"
+  linux:
+    pip: "snowflake-cli"
+identity:
+  env:
+    SNOWFLAKE_HOME: "{dir}"
+login:
+  args: ["connection", "add"]

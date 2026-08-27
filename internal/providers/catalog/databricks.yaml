@@ -1,0 +1,20 @@
+id: databricks
+name: Databricks
+category: data
+docs: https://docs.databricks.com/en/dev-tools/cli/index.html
+cli:
+  command: databricks
+  version_args: ["--version"]
+install:
+  windows:
+    pip: "databricks-cli"
+  macos:
+    brew: "databricks"
+    pip: "databricks-cli"
+  linux:
+    pip: "databricks-cli"
+identity:
+  env:
+    DATABRICKS_CONFIG_FILE: "{dir}/databrickscfg"
+login:
+  args: ["configure"]

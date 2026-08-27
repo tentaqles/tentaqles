@@ -1,0 +1,5 @@
+id: jira
+name: Jira
+category: pm
+docs: https://developer.atlassian.com/cloud/acli/
+cli: null

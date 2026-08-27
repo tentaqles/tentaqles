@@ -1,0 +1,20 @@
+id: az
+name: Azure
+category: cloud
+docs: https://learn.microsoft.com/cli/azure
+cli:
+  command: az
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "Microsoft.AzureCLI"
+  macos:
+    brew: "azure-cli"
+  linux:
+    apt: "azure-cli"
+    note: "curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash"
+identity:
+  env:
+    AZURE_CONFIG_DIR: "{dir}"
+login:
+  args: ["login"]

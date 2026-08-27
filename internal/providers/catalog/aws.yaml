@@ -1,0 +1,22 @@
+id: aws
+name: AWS
+category: cloud
+docs: https://docs.aws.amazon.com/cli
+cli:
+  command: aws
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "Amazon.AWSCLI"
+    url: "https://awscli.amazonaws.com/AWSCLIV2.msi"
+  macos:
+    url: "https://awscli.amazonaws.com/AWSCLIV2.pkg"
+  linux:
+    apt: "awscli"
+    url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+identity:
+  env:
+    AWS_CONFIG_FILE: "{dir}/config"
+    AWS_SHARED_CREDENTIALS_FILE: "{dir}/credentials"
+login:
+  args: ["configure"]

@@ -1,0 +1,16 @@
+id: vercel
+name: Vercel
+category: deploy
+docs: https://vercel.com/docs/cli
+cli:
+  command: vercel
+  version_args: ["--version"]
+install:
+  windows:
+    npm: "vercel"
+  macos:
+    npm: "vercel"
+  linux:
+    npm: "vercel"
+login:
+  args: ["login"]

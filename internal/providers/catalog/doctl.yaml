@@ -1,0 +1,17 @@
+id: doctl
+name: DigitalOcean
+category: cloud
+docs: https://docs.digitalocean.com/reference/doctl
+cli:
+  command: doctl
+  version_args: ["version"]
+install:
+  windows:
+    winget: "DigitalOcean.Doctl"
+  macos:
+    brew: "doctl"
+  linux:
+    apt: "doctl"
+    note: "snap install doctl"
+login:
+  args: ["auth", "init"]

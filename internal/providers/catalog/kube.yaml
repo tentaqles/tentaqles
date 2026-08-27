@@ -1,0 +1,17 @@
+id: kube
+name: Kubernetes
+category: deploy
+docs: https://kubernetes.io/docs/reference/kubectl
+cli:
+  command: kubectl
+  version_args: ["version", "--client"]
+install:
+  windows:
+    winget: "Kubernetes.kubectl"
+  macos:
+    brew: "kubectl"
+  linux:
+    apt: "kubectl"
+identity:
+  env:
+    KUBECONFIG: "{dir}/config"

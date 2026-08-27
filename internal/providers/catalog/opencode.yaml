@@ -1,0 +1,20 @@
+id: opencode
+name: opencode
+category: agent
+docs: https://opencode.ai
+cli:
+  command: opencode
+  version_args: ["--version"]
+install:
+  windows:
+    url: https://opencode.ai/install
+    note: unverified package id
+  macos:
+    url: https://opencode.ai/install
+    note: unverified package id
+  linux:
+    url: https://opencode.ai/install
+    note: unverified package id
+identity:
+  env:
+    OPENCODE_CONFIG_DIR: "{dir}"

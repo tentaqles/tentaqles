@@ -1,0 +1,22 @@
+id: gh
+name: GitHub
+category: vcs
+docs: https://cli.github.com
+cli:
+  command: gh
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "GitHub.cli"
+    scoop: "gh"
+  macos:
+    brew: "gh"
+  linux:
+    apt: "gh"
+identity:
+  env:
+    GH_CONFIG_DIR: "{dir}"
+login:
+  args: ["auth", "login"]
+verify:
+  args: ["auth", "status"]

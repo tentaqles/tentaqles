@@ -1,0 +1,17 @@
+id: supabase
+name: Supabase
+category: data
+docs: https://supabase.com/docs/guides/local-development/cli/getting-started
+cli:
+  command: supabase
+  version_args: ["--version"]
+install:
+  windows:
+    npm: "supabase"
+  macos:
+    brew: "supabase/tap/supabase"
+    npm: "supabase"
+  linux:
+    npm: "supabase"
+login:
+  args: ["login"]

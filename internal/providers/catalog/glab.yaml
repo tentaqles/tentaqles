@@ -1,0 +1,22 @@
+id: glab
+name: GitLab
+category: vcs
+docs: https://gitlab.com/gitlab-org/cli
+cli:
+  command: glab
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "GLab.GLab"
+    scoop: "glab"
+  macos:
+    brew: "glab"
+  linux:
+    apt: "glab"
+identity:
+  env:
+    GLAB_CONFIG_DIR: "{dir}"
+login:
+  args: ["auth", "login"]
+verify:
+  args: ["auth", "status"]

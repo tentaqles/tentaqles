@@ -1,0 +1,20 @@
+id: gcloud
+name: Google Cloud
+category: cloud
+docs: https://cloud.google.com/sdk/gcloud
+cli:
+  command: gcloud
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "Google.CloudSDK"
+    url: "https://cloud.google.com/sdk/docs/install"
+  macos:
+    url: "https://cloud.google.com/sdk/docs/install"
+  linux:
+    url: "https://cloud.google.com/sdk/docs/install"
+identity:
+  env:
+    CLOUDSDK_CONFIG: "{dir}"
+login:
+  args: ["auth", "login"]

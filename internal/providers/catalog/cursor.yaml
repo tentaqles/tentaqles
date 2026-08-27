@@ -1,0 +1,19 @@
+id: cursor
+name: Cursor
+category: agent
+docs: https://docs.cursor.com
+cli:
+  command: agent
+  version_args: ["--version"]
+install:
+  windows:
+    url: https://cursor.com/download
+  macos:
+    url: https://cursor.com/download
+  linux:
+    url: https://cursor.com/download
+identity:
+  env:
+    CURSOR_CONFIG_DIR: "{dir}"
+login:
+  args: ["login"]

@@ -1,0 +1,9 @@
+id: azure-devops
+name: Azure DevOps
+category: pm
+docs: https://learn.microsoft.com/azure/devops/cli
+cli:
+  command: az
+  version_args: ["--version"]
+login:
+  args: ["devops", "login"]

@@ -1,0 +1,14 @@
+id: postgres
+name: PostgreSQL
+category: data
+docs: https://www.postgresql.org/docs/current/app-psql.html
+cli:
+  command: psql
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "PostgreSQL.PostgreSQL"
+  macos:
+    brew: "libpq"
+  linux:
+    apt: "postgresql-client"

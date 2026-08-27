@@ -1,0 +1,19 @@
+id: npm
+name: npm
+category: other
+docs: https://docs.npmjs.com/cli
+cli:
+  command: npm
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "OpenJS.NodeJS"
+  macos:
+    brew: "node"
+  linux:
+    apt: "nodejs"
+identity:
+  env:
+    NPM_CONFIG_USERCONFIG: "{dir}/npmrc"
+login:
+  args: ["login"]

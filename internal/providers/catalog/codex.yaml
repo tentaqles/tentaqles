@@ -1,0 +1,19 @@
+id: codex
+name: Codex CLI
+category: agent
+docs: https://developers.openai.com/codex/cli
+cli:
+  command: codex
+  version_args: ["--version"]
+install:
+  windows:
+    npm: "@openai/codex"
+  macos:
+    npm: "@openai/codex"
+  linux:
+    npm: "@openai/codex"
+identity:
+  env:
+    CODEX_HOME: "{dir}"
+login:
+  args: ["login"]

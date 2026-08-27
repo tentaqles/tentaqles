@@ -1,0 +1,22 @@
+id: claude
+name: Claude Code
+category: agent
+docs: https://docs.claude.com/claude-code
+cli:
+  command: claude
+  version_args: ["--version"]
+install:
+  windows:
+    url: https://claude.ai/install
+    note: native installer
+  macos:
+    url: https://claude.ai/install
+    note: native installer
+  linux:
+    url: https://claude.ai/install
+    note: native installer
+identity:
+  env:
+    CLAUDE_CONFIG_DIR: "{dir}"
+login:
+  args: ["/login"]
