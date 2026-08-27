@@ -1,0 +1,71 @@
+package bundle
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// ReadJSONMap reads path as a JSON object. A missing file yields an empty
+// map, not an error.
+func ReadJSONMap(path string) (map[string]any, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return map[string]any{}, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	return m, nil
+}
+
+// WriteJSONAtomic writes m to path as indented JSON via a temp file + rename,
+// so readers never observe a partially-written file.
+func WriteJSONAtomic(path string, m map[string]any) error {
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+	}
+
+	tmp := fmt.Sprintf("%s.tmp-%d", path, os.Getpid())
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		if errors.Is(err, os.ErrExist) || os.IsExist(err) {
+			if rmErr := os.Remove(path); rmErr != nil {
+				os.Remove(tmp)
+				return rmErr
+			}
+			if err := os.Rename(tmp, path); err != nil {
+				os.Remove(tmp)
+				return err
+			}
+			return nil
+		}
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
