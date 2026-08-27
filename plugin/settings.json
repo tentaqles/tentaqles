@@ -1,0 +1,12 @@
+{
+  "userConfig": {
+    "workspaces_root": {
+      "description": "Root directory containing your client workspaces (e.g., ~/repos or C:\\repos)",
+      "sensitive": false
+    },
+    "graph_engine": {
+      "description": "Knowledge graph engine: 'graphify' (external, pip install graphifyy) or 'native' (built-in, pip install tentaqles[graph]). Leave empty to auto-detect.",
+      "sensitive": false
+    }
+  }
+}

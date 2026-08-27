@@ -1,0 +1,16 @@
+{
+  "name": "tentaqles",
+  "owner": {
+    "name": "Tentaqles",
+    "email": "reach@tentaqles.ai",
+    "url": "https://github.com/tentaqles"
+  },
+  "plugins": [
+    {
+      "name": "tentaqles",
+      "source": "./",
+      "description": "Multi-workspace orchestration for developers working across multiple clients. Identity isolation, temporal memory with decay, knowledge graphs, cross-workspace pattern detection, time-travel snapshots, and inter-workspace signals.",
+      "version": "0.3.1"
+    }
+  ]
+}

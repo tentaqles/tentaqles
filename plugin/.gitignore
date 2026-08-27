@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+*.db
+*.npz
+tentaqles-demo/
+
+# Local planning docs (not distributed)
+.planning/
+ROADMAP.md

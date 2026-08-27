@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tentaqles"
+version = "0.3.1"
+description = "Multi-workspace orchestration for AI coding assistants"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml",
+    "pathspec",
+    "fastembed",
+    "numpy",
+]
+
+[project.optional-dependencies]
+graphify = ["graphifyy"]
+graph = [
+    "networkx",
+    "tree-sitter>=0.23.0",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-go",
+    "tree-sitter-rust",
+    "tree-sitter-java",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-ruby",
+    "tree-sitter-c-sharp",
+    "tree-sitter-kotlin",
+    "tree-sitter-scala",
+    "tree-sitter-php",
+    "tree-sitter-swift",
+    "tree-sitter-lua",
+    "pathspec",
+]
+docling = ["docling"]
+all = [
+    "graphifyy",
+    "networkx",
+    "docling",
+]
+
+[project.scripts]
+tentaqles = "tentaqles.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tentaqles*"]
