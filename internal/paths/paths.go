@@ -23,3 +23,6 @@ func TrustDir() string                  { return filepath.Join(Home(), "trust") 
 func Audit() string                     { return filepath.Join(Home(), "audit.jsonl") }
 func IdentitiesRoot() string            { return filepath.Join(Home(), "identities") }
 func IdentityDir(ws, cli string) string { return filepath.Join(IdentitiesRoot(), ws, cli) }
+
+func BundlesDir() string { return filepath.Join(Home(), "bundles") }
+func Catalog() string    { return filepath.Join(BundlesDir(), "catalog.yaml") }

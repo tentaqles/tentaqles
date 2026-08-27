@@ -39,7 +39,18 @@ type Identity struct {
 }
 
 type Claude struct {
-	PermissionMode string `yaml:"permission_mode"`
+	PermissionMode string  `yaml:"permission_mode"`
+	Bundle         *Bundle `yaml:"bundle"`
+}
+
+// Bundle lists the catalog entries this workspace's Claude identity dir
+// should have materialized (plugins, skills, user-scope MCP servers).
+// Nil means tq does not manage bundles for this workspace.
+type Bundle struct {
+	Marketplaces []string `yaml:"marketplaces"`
+	Plugins      []string `yaml:"plugins"`
+	Skills       []string `yaml:"skills"`
+	MCP          []string `yaml:"mcp"`
 }
 
 type Manifest struct {

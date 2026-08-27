@@ -104,3 +104,28 @@ func TestLoad_UnknownIdentity_Rejected(t *testing.T) {
 		t.Fatal("expected error for unknown identity provider")
 	}
 }
+
+func TestLoad_ClaudeBundle(t *testing.T) {
+	m, err := Load(write(t, `
+schema: tentaqles-client-v2
+client: uplabs
+claude:
+  permission_mode: acceptEdits
+  bundle:
+    marketplaces: [claude-plugins-official, aws]
+    plugins: [superpowers, aws-core@aws]
+    skills: [snowflake-snowpark-patterns]
+    mcp: [github, snowflake]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := m.Claude.Bundle
+	if b == nil || len(b.Plugins) != 2 || b.Plugins[1] != "aws-core@aws" || b.MCP[1] != "snowflake" {
+		t.Fatalf("%+v", b)
+	}
+	m2, _ := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"))
+	if m2.Claude.Bundle != nil {
+		t.Fatal("bundle must be nil when absent")
+	}
+}
