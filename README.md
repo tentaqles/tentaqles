@@ -112,6 +112,22 @@ being attributed to the wrong person.
 | `tq bundle diff <workspace>` | Show drift between a workspace's `claude.bundle` and what's actually on disk, without changing anything. Exits 1 if any drift is found. `--json`. |
 | `tq bundle capture [workspace]` | Reconstruct a `claude.bundle` manifest fragment (printed to stdout) and catalog entries from an existing Claude identity dir. `--dir <path>` to capture from an arbitrary dir instead of a workspace's own. `--write-catalog` upserts the captured entries into the catalog (never overwrites an existing name). |
 | `tq bundle catalog` | Print the catalog's path, entry counts, and any `Validate()` warnings. |
+| `tq providers list` | List providers in the catalog. `--category <c>` to filter, `--json` for machine-readable output. |
+| `tq providers show <id>` | Print a provider's full definition as YAML. |
+| `tq providers check [<id>...]` | Probe whether provider CLIs are installed. `--all` (default with no ids), `--workspace <ws>` to check only that workspace's identities, `--json`. Exits 1 if any provider with a CLI is missing. |
+| `tq providers add <id>` | Add or override a provider as a user file under `providers/`. Flags: `--name`, `--category` (required), `--command`, `--version-args`, `--env KEY=VALUE` (repeatable), `--login "args..."`, `--verify "args..."`, `--docs`, `--force` to overwrite an embedded or existing user provider. |
+
+## Providers
+
+`tq` resolves each identity (`gh`, `aws`, `claude`, ...) to a CLI, its
+install hints, and the env vars that point it at a private per-workspace
+config directory, via a provider catalog: built-in YAML embedded in the
+binary, plus user overrides/additions under `~/.tentaqles/providers/`
+(`$TQ_HOME/providers/` if set). Use `tq providers list` to see what's
+registered, `tq providers check` (wired into `tq doctor`'s `cli-missing`
+hints too) to see what's actually installed, and `tq providers add` to add a
+custom provider or override a built-in one. See
+[`docs/PROVIDERS.md`](docs/PROVIDERS.md) for the full schema.
 
 ## Bundles
 

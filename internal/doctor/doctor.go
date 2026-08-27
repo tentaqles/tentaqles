@@ -2,6 +2,7 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/cli/internal/bundle"
+	"github.com/tentaqles/tentaqles/cli/internal/detect"
 	"github.com/tentaqles/tentaqles/cli/internal/envplan"
 	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/cli/internal/paths"
+	"github.com/tentaqles/tentaqles/cli/internal/providers"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
 	"github.com/tentaqles/tentaqles/cli/internal/resolve"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
@@ -45,7 +48,13 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		add("error", "manifest-invalid", "", e.Error(), "fix the manifest, then tq allow <name>")
 	}
 	provs := envplan.Providers()
+	provCat := providers.MustLoad()
 	seenCLI := map[string]bool{}
+	detectDeps := detect.Deps{
+		LookPath: d.LookPath,
+		Run:      func(context.Context, string, ...string) (string, error) { return "", nil },
+		GOOS:     runtime.GOOS,
+	}
 	var cat *bundle.Catalog
 	catalogWarned := false
 	for _, w := range all {
@@ -101,8 +110,16 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			}
 			if p, ok := provs[id]; ok && p.LoginCmd != "" && !seenCLI[p.LoginCmd] {
 				seenCLI[p.LoginCmd] = true
-				if _, err := d.LookPath(p.LoginCmd); err != nil {
-					add("warn", "cli-missing", "", p.LoginCmd+" not found on PATH", "install it or drop the identity from the manifest")
+				fix := "install it or drop the identity from the manifest"
+				if cp, ok := provCat.Get(id); ok && cp.CLI != nil {
+					if r := detect.Check(cp, detectDeps); !r.Installed {
+						if hints := detect.Hints(cp, runtime.GOOS); len(hints) > 0 {
+							fix = hints[0]
+						}
+						add("warn", "cli-missing", "", p.LoginCmd+" not found on PATH", fix)
+					}
+				} else if _, err := d.LookPath(p.LoginCmd); err != nil {
+					add("warn", "cli-missing", "", p.LoginCmd+" not found on PATH", fix)
 				}
 			}
 		}

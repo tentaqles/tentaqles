@@ -126,23 +126,31 @@ func Load() (*Catalog, error) {
 var (
 	mustLoadOnce sync.Once
 	mustLoadC    *Catalog
+	mustLoadErr  error
 )
 
 // MustLoad loads the catalog and panics only on embedded-catalog errors,
 // which indicate a build defect. The result is memoized: the first call
 // parses the catalog, later calls return the same cached *Catalog. Callers
 // that must see fresh user files (e.g. after WriteUser) should use Load().
+//
+// If the embedded catalog fails to load, the failure is cached and every
+// subsequent call panics again (sync.Once alone would swallow the panic on
+// calls after the first, since Do treats a panicking f as having "returned").
 func MustLoad() *Catalog {
 	mustLoadOnce.Do(func() {
-		mustLoadC = mustLoadUncached()
+		mustLoadC, mustLoadErr = mustLoadUncached()
 	})
+	if mustLoadErr != nil {
+		panic(fmt.Sprintf("providers: embedded catalog error: %v", mustLoadErr))
+	}
 	return mustLoadC
 }
 
-func mustLoadUncached() *Catalog {
+func mustLoadUncached() (*Catalog, error) {
 	c, err := loadEmbedded()
 	if err != nil {
-		panic(fmt.Sprintf("providers: embedded catalog error: %v", err))
+		return nil, err
 	}
 	// Best-effort merge of user overrides; ignore errors here since MustLoad
 	// must not panic on user data. Callers wanting user-error visibility
@@ -169,7 +177,7 @@ func mustLoadUncached() *Catalog {
 			c.byID[p.ID] = p
 		}
 	}
-	return c
+	return c, nil
 }
 
 // Get returns the provider with the given id.
