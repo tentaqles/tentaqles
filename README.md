@@ -102,6 +102,57 @@ being attributed to the wrong person.
 | `tq login <workspace> <identity>` | Run a CLI's own login flow inside the workspace's private config home. |
 | `tq run <workspace> -- <command> [args...]` | Run a command with a workspace's identity without cd-ing into it. |
 | `tq doctor` | Verify hooks, trust, git and env against the manifests (never mutates). `--json` for machine-readable findings. |
+| `tq bundle sync <workspace>` | Materialize a workspace's `claude.bundle` into its Claude identity dir (settings, skills, MCP servers). Refuses untrusted workspaces. `--force` to sync while Claude appears to be running there, `--json` for machine-readable output. |
+| `tq bundle diff <workspace>` | Show drift between a workspace's `claude.bundle` and what's actually on disk, without changing anything. Exits 1 if any drift is found. `--json`. |
+| `tq bundle capture [workspace]` | Reconstruct a `claude.bundle` manifest fragment (printed to stdout) and catalog entries from an existing Claude identity dir. `--dir <path>` to capture from an arbitrary dir instead of a workspace's own. `--write-catalog` upserts the captured entries into the catalog (never overwrites an existing name). |
+| `tq bundle catalog` | Print the catalog's path, entry counts, and any `Validate()` warnings. |
+
+## Bundles
+
+Two or more workspaces often want the same Claude plugins, skills, and MCP
+servers. Instead of repeating that config in every manifest, `tq` keeps a
+single shared **catalog** of named marketplaces/skills/MCP servers, and each
+workspace's manifest just lists which catalog names it wants under
+`claude.bundle`. `tq bundle sync` then materializes that into the workspace's
+private Claude identity dir.
+
+Catalog (`~/.tentaqles/bundles/catalog.yaml`):
+
+```yaml
+marketplaces:
+  acme-internal:
+    source: github
+    repo: acme/claude-plugins
+skills:
+  snowflake-patterns:
+    path: /repos/shared/skills/snowflake-patterns
+mcp:
+  github:
+    command: gh-mcp
+```
+
+Manifest (`<workspace>/.tentaqles.yaml`):
+
+```yaml
+claude:
+  bundle:
+    marketplaces: [acme-internal]
+    plugins: [some-plugin@acme-internal]
+    skills: [snowflake-patterns]
+    mcp: [github]
+```
+
+Commands: `tq bundle sync <workspace>` to apply, `tq bundle diff <workspace>`
+to see what's out of sync, `tq bundle capture <workspace> --write-catalog`
+to reverse-engineer a bundle from a Claude config dir that already has
+plugins/skills/MCP servers configured by hand, and `tq bundle catalog` to
+inspect the catalog itself.
+
+Editing `claude.bundle` in a manifest changes its hash, so re-run
+`tq allow <workspace>` after editing a manifest before syncing. Also close
+any Claude sessions using that workspace's identity dir before running
+`tq bundle sync` (it refuses to sync into a config dir Claude appears to be
+using) — or pass `--force` if you're sure it's safe.
 
 ## Where things live
 

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/tentaqles/tentaqles/cli/internal/bundle"
 	"github.com/tentaqles/tentaqles/cli/internal/envplan"
 	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/cli/internal/paths"
@@ -45,9 +46,40 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	}
 	provs := envplan.Providers()
 	seenCLI := map[string]bool{}
+	var cat *bundle.Catalog
+	catalogWarned := false
 	for _, w := range all {
-		if !trust.IsTrusted(w.Hash) {
+		trusted := trust.IsTrusted(w.Hash)
+		if !trusted {
 			add("warn", "untrusted", w.Name, "manifest not trusted", "tq allow "+w.Name)
+		}
+		if trusted && w.Manifest.Claude.Bundle != nil {
+			if cat == nil {
+				c, err := bundle.LoadCatalog()
+				if err != nil {
+					add("error", "bundle-catalog-error", w.Name, err.Error(), "")
+				} else {
+					cat = c
+				}
+			}
+			if cat != nil {
+				ww := w
+				if drifts, err := bundle.Diff(&ww, cat); err != nil {
+					add("error", "bundle-diff-error", w.Name, err.Error(), "")
+				} else if len(drifts) > 0 {
+					parts := make([]string, len(drifts))
+					for i, dr := range drifts {
+						parts[i] = dr.Kind + ":" + dr.Name
+					}
+					add("warn", "bundle-drift", w.Name, "bundle drift: "+strings.Join(parts, ", "), "tq bundle sync "+w.Name)
+				}
+				if !catalogWarned {
+					catalogWarned = true
+					for _, cw := range cat.Validate() {
+						add("warn", "bundle-catalog-warning", "", cw, "")
+					}
+				}
+			}
 		}
 		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
 			add("warn", "bypass-cloud", w.Name, "permission_mode bypass with a cloud identity: Claude may run cloud CLIs unattended", "")

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/cli/internal/bundle"
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
@@ -127,5 +128,34 @@ func TestRun_GitWorkspaceFileTampered(t *testing.T) {
 	os.WriteFile(wf, []byte("[user]\n\temail = a@b\n"), 0o644)
 	if fs := Run(cfg, deps(nil, root, nil)); !has(fs, "git-ws-file-tampered") {
 		t.Fatalf("expected git-ws-file-tampered for missing header: %+v", fs)
+	}
+}
+
+func TestRun_BundleDrift(t *testing.T) {
+	t.Setenv("TQ_HOME", t.TempDir())
+	base := t.TempDir()
+	cfg := &registry.Config{}
+	cfg.AddBase(base)
+	root := filepath.Join(base, "acme")
+	os.MkdirAll(root, 0o755)
+	mp := filepath.Join(root, manifest.FileName)
+	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@acme.com }\nidentities: { claude: {} }\nclaude: { bundle: { mcp: [github] } }\n"), 0o600)
+	h, _ := trust.HashFile(mp)
+	trust.Allow(h)
+
+	cat := &bundle.Catalog{
+		Marketplaces: map[string]bundle.Marketplace{},
+		Skills:       map[string]bundle.Skill{},
+		MCP: map[string]bundle.MCPServer{
+			"github": {"command": "gh-mcp"},
+		},
+	}
+	if err := cat.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	fs := Run(cfg, deps(map[string]string{}, root, map[string]string{"user.useConfigOnly": "true"}))
+	if !has(fs, "bundle-drift") {
+		t.Fatalf("expected bundle-drift, got %+v", fs)
 	}
 }
