@@ -49,6 +49,40 @@ func TestCompute_ResolvesAndErrors(t *testing.T) {
 	}
 }
 
+func TestCompute_MCPIsDeepCopied(t *testing.T) {
+	cat := &Catalog{
+		Marketplaces: map[string]Marketplace{},
+		Skills:       map[string]Skill{},
+		MCP: map[string]MCPServer{
+			"github": {
+				"command": "gh-mcp",
+				"env":     map[string]any{"TOKEN": "${env:GH_TOKEN}"},
+			},
+		},
+	}
+
+	b := &manifest.Bundle{MCP: []string{"github"}}
+
+	d, errs := Compute(b, cat)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	env, ok := d.MCP["github"]["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected env map in Desired.MCP[github], got %v", d.MCP["github"])
+	}
+	env["X"] = "y"
+
+	catEnv, ok := cat.MCP["github"]["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected env map in catalog entry, got %v", cat.MCP["github"])
+	}
+	if _, mutated := catEnv["X"]; mutated {
+		t.Fatalf("mutating Desired.MCP entry mutated the catalog entry: %v", catEnv)
+	}
+}
+
 func TestSyncSettings_PreservesOtherKeys(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")
@@ -134,11 +168,6 @@ func TestWriteJSONAtomic_NoPartialFile(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
-	}
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) == ".tmp" || (len(e.Name()) > 4 && e.Name()[len(e.Name())-4:] != ".json" && e.Name() != "settings.json") {
-			// crude leftover-tmp check
-		}
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected settings.json to exist: %v", err)

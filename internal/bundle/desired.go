@@ -40,17 +40,15 @@ func Compute(b *manifest.Bundle, cat *Catalog) (Desired, []error) {
 		d.Marketplaces[mkt] = mp.ToKnownMarketplace()
 	}
 
+	bundleMkts := make(map[string]bool, len(b.Marketplaces))
+	for _, m := range b.Marketplaces {
+		bundleMkts[m] = true
+	}
+
 	for _, p := range b.Plugins {
 		if idx := strings.Index(p, "@"); idx >= 0 {
 			mkt := p[idx+1:]
-			inBundle := false
-			for _, m := range b.Marketplaces {
-				if m == mkt {
-					inBundle = true
-					break
-				}
-			}
-			if !inBundle {
+			if !bundleMkts[mkt] {
 				errs = append(errs, fmt.Errorf("plugin %q: marketplace %q not listed in bundle.marketplaces", p, mkt))
 				continue
 			}
@@ -81,7 +79,7 @@ func Compute(b *manifest.Bundle, cat *Catalog) (Desired, []error) {
 			errs = append(errs, fmt.Errorf("unknown mcp server %q", m))
 			continue
 		}
-		d.MCP[m] = srv
+		d.MCP[m] = MCPServer(deepCopy(map[string]any(srv)).(map[string]any))
 	}
 
 	return d, errs

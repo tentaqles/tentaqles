@@ -8,6 +8,33 @@ import (
 	"path/filepath"
 )
 
+// deepCopy recursively clones maps and slices so the result shares no
+// mutable state with v. Scalars are returned as-is.
+func deepCopy(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, vv := range val {
+			out[k] = deepCopy(vv)
+		}
+		return out
+	case MCPServer:
+		out := make(map[string]any, len(val))
+		for k, vv := range val {
+			out[k] = deepCopy(vv)
+		}
+		return out
+	case []any:
+		out := make([]any, len(val))
+		for i, vv := range val {
+			out[i] = deepCopy(vv)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
 // ReadJSONMap reads path as a JSON object. A missing file yields an empty
 // map, not an error.
 func ReadJSONMap(path string) (map[string]any, error) {
