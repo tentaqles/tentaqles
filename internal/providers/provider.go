@@ -72,6 +72,35 @@ var Categories = []string{"cloud", "vcs", "data", "deploy", "pm", "agent", "othe
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
+// EnvKeyRe is the set of environment-variable names tq is willing to emit.
+// Anything outside it could break out of a shell assignment (e.g. "X;curl x|sh").
+var EnvKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// hasControlChars reports whether s contains an ASCII control character.
+func hasControlChars(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateEnvPair checks a single identity env key/value for injection-unsafe
+// content. It is used by Validate and by "tq providers add".
+func ValidateEnvPair(k, v string) error {
+	if !EnvKeyRe.MatchString(k) {
+		return fmt.Errorf("identity.env key %q is not a valid environment variable name (must match %s)", k, EnvKeyRe.String())
+	}
+	if hasControlChars(v) {
+		return fmt.Errorf("identity.env[%s] must not contain control characters", k)
+	}
+	if strings.Contains(v, "..") {
+		return fmt.Errorf("identity.env[%s] must not contain \"..\"", k)
+	}
+	return nil
+}
+
 // Validate checks the provider's structural rules.
 func (p Provider) Validate() error {
 	if !idRe.MatchString(p.ID) {
@@ -94,8 +123,8 @@ func (p Provider) Validate() error {
 		return fmt.Errorf("provider %q: cli.command is required when cli is set", p.ID)
 	}
 	for k, v := range p.Identity.Env {
-		if strings.Contains(v, "..") {
-			return fmt.Errorf("provider %q: identity.env[%s] must not contain \"..\"", p.ID, k)
+		if err := ValidateEnvPair(k, v); err != nil {
+			return fmt.Errorf("provider %q: %w", p.ID, err)
 		}
 	}
 	return nil

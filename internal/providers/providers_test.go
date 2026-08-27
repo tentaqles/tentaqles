@@ -153,3 +153,42 @@ func TestMustLoad_Cached(t *testing.T) {
 		t.Fatalf("expected MustLoad to return the same cached *Catalog pointer, got %p and %p", c1, c2)
 	}
 }
+
+func TestValidate_RejectsBadEnvKeys(t *testing.T) {
+	for _, key := range []string{"X;id", "", "FOO BAR", "1X", "X;curl x|sh", "X=Y"} {
+		p := Provider{
+			ID:       "widget",
+			Name:     "Widget",
+			Category: "other",
+			Identity: Identity{Env: map[string]string{key: "{dir}"}},
+		}
+		if err := p.Validate(); err == nil {
+			t.Errorf("expected env key %q to be rejected", key)
+		}
+	}
+	for _, key := range []string{"CLAUDE_CONFIG_DIR", "_X", "TQ_WS", "TQ_WS_ROOT", "__TQ_STATE", "A1"} {
+		p := Provider{
+			ID:       "widget",
+			Name:     "Widget",
+			Category: "other",
+			Identity: Identity{Env: map[string]string{key: "{dir}"}},
+		}
+		if err := p.Validate(); err != nil {
+			t.Errorf("expected env key %q to be accepted, got %v", key, err)
+		}
+	}
+}
+
+func TestValidate_RejectsControlCharsInValues(t *testing.T) {
+	for _, val := range []string{"{dir}\n", "{dir}\r", "a\x00b", "a\x7fb", "\tx"} {
+		p := Provider{
+			ID:       "widget",
+			Name:     "Widget",
+			Category: "other",
+			Identity: Identity{Env: map[string]string{"WIDGET_HOME": val}},
+		}
+		if err := p.Validate(); err == nil {
+			t.Errorf("expected value %q to be rejected", val)
+		}
+	}
+}

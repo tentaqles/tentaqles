@@ -112,3 +112,36 @@ func TestHook_Pwsh_WrapsPromptOnce(t *testing.T) {
 		t.Fatalf("pwsh hook must wrap existing prompt:\n%s", h)
 	}
 }
+
+func TestEmit_RejectsHostileKey(t *testing.T) {
+	for _, sh := range []string{"bash", "pwsh", "fish", "cmd"} {
+		ops := envplan.Ops{
+			Changed: true,
+			Set:     map[string]string{`X;curl x|sh`: "value"},
+		}
+		if _, err := Emit(sh, ops); err == nil {
+			t.Errorf("%s: expected an error for a hostile Set key", sh)
+		}
+		ops = envplan.Ops{Changed: true, Unset: []string{`X;curl x|sh`}}
+		if _, err := Emit(sh, ops); err == nil {
+			t.Errorf("%s: expected an error for a hostile Unset key", sh)
+		}
+		ops = envplan.Ops{Changed: true, Set: map[string]string{"OK_VAR": "a\nexport EVIL=1"}}
+		if _, err := Emit(sh, ops); err == nil {
+			t.Errorf("%s: expected an error for a value containing a newline", sh)
+		}
+	}
+}
+
+func TestEmit_AcceptsStateVars(t *testing.T) {
+	ops := envplan.Ops{
+		Changed: true,
+		Set:     map[string]string{"__TQ_STATE": "x", "TQ_WS": "acme", "TQ_WS_ROOT": `C:\repos\acme`},
+		Unset:   []string{"__TQ_STATE", "TQ_WS", "TQ_WS_ROOT"},
+	}
+	for _, sh := range Shells {
+		if _, err := Emit(sh, ops); err != nil {
+			t.Errorf("%s: unexpected error: %v", sh, err)
+		}
+	}
+}

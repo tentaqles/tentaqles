@@ -3,6 +3,7 @@ package shell
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -14,6 +15,30 @@ var Shells = []string{"bash", "zsh", "fish", "pwsh", "powershell", "cmd"}
 func sq(s string) string    { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" } // POSIX
 func psq(s string) string   { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 func fishq(s string) string { return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'" }
+
+// envKeyRe mirrors providers.EnvKeyRe. Emit re-checks keys as defence in
+// depth: nothing that reaches a user's shell should be able to break out of an
+// assignment, whatever produced it.
+var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// checkOps rejects env keys that are not valid variable names and values that
+// carry line breaks or NUL, which no shell can quote safely.
+func checkOps(ops envplan.Ops) error {
+	for _, k := range ops.Unset {
+		if !envKeyRe.MatchString(k) {
+			return fmt.Errorf("refusing to emit: %q is not a valid environment variable name", k)
+		}
+	}
+	for k, v := range ops.Set {
+		if !envKeyRe.MatchString(k) {
+			return fmt.Errorf("refusing to emit: %q is not a valid environment variable name", k)
+		}
+		if strings.ContainsAny(v, "\r\n\x00") {
+			return fmt.Errorf("refusing to emit: value for %s contains a line break or NUL", k)
+		}
+	}
+	return nil
+}
 
 func Emit(sh string, ops envplan.Ops) (string, error) {
 	var set func(k, v string) string
@@ -33,6 +58,9 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 		unset = func(k string) string { return `set "` + k + `="` }
 	default:
 		return "", fmt.Errorf("unknown shell %q (known: %s)", sh, strings.Join(Shells, ", "))
+	}
+	if err := checkOps(ops); err != nil {
+		return "", err
 	}
 	if !ops.Changed {
 		return "", nil
