@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
@@ -315,4 +316,101 @@ func TestCapture_FromExistingDir(t *testing.T) {
 	}
 
 	sort.Strings(c.Bundle.Plugins) // sanity: no panic on already-sorted slice
+}
+
+func TestDiff_CleanWithNumericField(t *testing.T) {
+	isolateHome(t)
+
+	skillSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(skillSrc, "SKILL.md"), []byte("# my skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cat := testCatalog(t, t.TempDir(), skillSrc)
+	// int here, float64 once round-tripped through .claude.json
+	cat.MCP["github"] = MCPServer{"command": "gh-mcp", "timeout": 30000}
+
+	ws, _ := setupWorkspace(t, &manifest.Bundle{
+		Marketplaces: []string{"mymkt"},
+		Skills:       []string{"myskill"},
+		MCP:          []string{"github"},
+	})
+
+	if _, err := Sync(ws, cat, Options{}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	drifts, err := Diff(ws, cat)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	for _, dr := range drifts {
+		if dr.Kind == "mcp-missing" || dr.Kind == "mcp-extra" {
+			t.Fatalf("unexpected mcp drift: %+v (all: %+v)", dr, drifts)
+		}
+	}
+}
+
+func TestSync_StateSavedAfterSkillsWhenMCPFails(t *testing.T) {
+	isolateHome(t)
+
+	skillSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(skillSrc, "SKILL.md"), []byte("# my skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cat := testCatalog(t, t.TempDir(), skillSrc)
+
+	ws, _ := setupWorkspace(t, &manifest.Bundle{
+		Marketplaces: []string{"mymkt"},
+		Skills:       []string{"myskill"},
+		MCP:          []string{"github"},
+	})
+
+	// Make .claude.json a directory so SyncMCP cannot read/write it.
+	dir := identityDirForTest(ws)
+	if err := os.MkdirAll(filepath.Join(dir, ".claude.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Sync(ws, cat, Options{})
+	if err == nil {
+		t.Fatal("expected Sync to fail on MCP step")
+	}
+	if len(rep.Skills) != 1 || rep.Skills[0] != "myskill" {
+		t.Fatalf("partial report Skills = %v, want [myskill]", rep.Skills)
+	}
+
+	st := LoadState(dir)
+	if len(st.Skills) != 1 || st.Skills[0] != "myskill" {
+		t.Fatalf("state Skills = %v, want [myskill]", st.Skills)
+	}
+}
+
+func TestSync_WarnsWhenNoSessionsDir(t *testing.T) {
+	isolateHome(t)
+
+	skillSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(skillSrc, "SKILL.md"), []byte("# my skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat := testCatalog(t, t.TempDir(), skillSrc)
+
+	ws, _ := setupWorkspace(t, &manifest.Bundle{
+		Skills: []string{"myskill"},
+	})
+
+	rep, err := Sync(ws, cat, Options{})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	found := false
+	for _, w := range rep.Warnings {
+		if strings.Contains(w, "in-use check skipped") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected sessions warning, got %v", rep.Warnings)
+	}
 }

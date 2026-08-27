@@ -110,6 +110,10 @@ func Capture(dir string) (Captured, error) {
 			if !e.IsDir() {
 				continue
 			}
+			if !validName(e.Name()) {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("skill %q: invalid name, skipped", e.Name()))
+				continue
+			}
 			names = append(names, e.Name())
 			c.Catalog.Skills[e.Name()] = Skill{Path: filepath.Join(skillsRoot, e.Name())}
 		}
@@ -117,16 +121,38 @@ func Capture(dir string) (Captured, error) {
 		c.Bundle.Skills = names
 	}
 
-	// mcp servers from .claude.json
-	claudeJSON, err := ReadJSONMap(filepath.Join(dir, ".claude.json"))
-	if err != nil {
-		return c, err
-	}
-	if raw, ok := claudeJSON["mcpServers"].(map[string]any); ok {
-		var names []string
+	// mcp servers: <dir>/.claude.json, else (for the default profile only)
+	// <home>/.claude.json, plus <dir>/.mcp.json. Earlier sources win.
+	sources, srcWarnings := mcpSourceFiles(dir)
+	c.Warnings = append(c.Warnings, srcWarnings...)
+
+	servers := map[string]any{}
+	for _, path := range sources {
+		root, err := ReadJSONMap(path)
+		if err != nil {
+			return c, err
+		}
+		raw, ok := root["mcpServers"].(map[string]any)
+		if !ok {
+			continue
+		}
 		for name, spec := range raw {
+			if _, exists := servers[name]; exists {
+				continue // earlier source wins
+			}
+			servers[name] = spec
+		}
+	}
+
+	if len(servers) > 0 {
+		var names []string
+		for name, spec := range servers {
 			specMap, ok := spec.(map[string]any)
 			if !ok {
+				continue
+			}
+			if !validName(name) {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("mcp server %q: invalid name, skipped", name))
 				continue
 			}
 			names = append(names, name)
@@ -137,6 +163,65 @@ func Capture(dir string) (Captured, error) {
 	}
 
 	return c, nil
+}
+
+// mcpSourceFiles returns, in precedence order, the files Capture reads
+// mcpServers from for dir, along with warnings naming each file used and
+// each candidate that was absent.
+func mcpSourceFiles(dir string) ([]string, []string) {
+	var sources, warnings []string
+
+	dirClaudeJSON := filepath.Join(dir, ".claude.json")
+	if fileExists(dirClaudeJSON) {
+		sources = append(sources, dirClaudeJSON)
+		warnings = append(warnings, fmt.Sprintf("mcp: read %s", dirClaudeJSON))
+	} else {
+		warnings = append(warnings, fmt.Sprintf("mcp: %s absent", dirClaudeJSON))
+		if home, err := os.UserHomeDir(); err == nil && isDefaultClaudeDir(dir, home) {
+			homeClaudeJSON := filepath.Join(home, ".claude.json")
+			if fileExists(homeClaudeJSON) {
+				sources = append(sources, homeClaudeJSON)
+				warnings = append(warnings, fmt.Sprintf("mcp: read %s", homeClaudeJSON))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("mcp: %s absent", homeClaudeJSON))
+			}
+		}
+	}
+
+	dotMCP := filepath.Join(dir, ".mcp.json")
+	if fileExists(dotMCP) {
+		sources = append(sources, dotMCP)
+		warnings = append(warnings, fmt.Sprintf("mcp: read %s", dotMCP))
+	} else {
+		warnings = append(warnings, fmt.Sprintf("mcp: %s absent", dotMCP))
+	}
+
+	return sources, warnings
+}
+
+// isDefaultClaudeDir reports whether dir resolves to <home>/.claude.
+func isDefaultClaudeDir(dir, home string) bool {
+	want := filepath.Join(home, ".claude")
+	a, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	b, err := filepath.Abs(want)
+	if err != nil {
+		return false
+	}
+	if ra, err := filepath.EvalSymlinks(a); err == nil {
+		a = ra
+	}
+	if rb, err := filepath.EvalSymlinks(b); err == nil {
+		b = rb
+	}
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // marketplaceFromSource maps a known_marketplaces.json source object into a

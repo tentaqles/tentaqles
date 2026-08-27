@@ -177,3 +177,44 @@ func TestSyncMCP_RejectsInvalidName(t *testing.T) {
 		t.Fatalf("expected error for invalid (empty) mcp server name")
 	}
 }
+
+func TestSyncMCP_IdempotentWithNumericField(t *testing.T) {
+	dir := t.TempDir()
+
+	// timeout arrives from YAML as an int, but round-trips through the
+	// JSON file as a float64.
+	d := Desired{MCP: map[string]MCPServer{
+		"x": {"command": "x", "timeout": 30000},
+	}}
+	st := &State{}
+
+	changed, err := SyncMCP(dir, d, st)
+	if err != nil {
+		t.Fatalf("SyncMCP: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != "x" {
+		t.Fatalf("first sync changed = %v, want [x]", changed)
+	}
+
+	path := filepath.Join(dir, ".claude.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := info.ModTime()
+
+	changed, err = SyncMCP(dir, d, st)
+	if err != nil {
+		t.Fatalf("second SyncMCP: %v", err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("second sync changed = %v, want []", changed)
+	}
+	info, err = os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(before) {
+		t.Fatalf("file was rewritten: mtime %v -> %v", before, info.ModTime())
+	}
+}

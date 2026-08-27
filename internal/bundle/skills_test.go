@@ -2,9 +2,11 @@ package bundle
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -217,5 +219,94 @@ func TestCopyDir_FollowsSymlinkedDir(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(dst, "linked", "file.txt"))
 	if err != nil || string(got) != "via symlink" {
 		t.Fatalf("expected symlinked dir contents copied: %v %q", err, got)
+	}
+}
+
+// linkDir creates dir as a link to target, returning false if the platform
+// or privileges don't allow it.
+func linkDir(t *testing.T, target, link string) bool {
+	t.Helper()
+	if err := os.Symlink(target, link); err == nil {
+		return true
+	}
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", link, target)
+	if err := cmd.Run(); err != nil {
+		t.Logf("mklink /J failed: %v", err)
+		return false
+	}
+	return true
+}
+
+func TestSyncSkills_RefusesSymlinkedRoot(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "identity")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	shared := filepath.Join(root, "shared-skills")
+	writeFile(t, filepath.Join(shared, "handwritten", "SKILL.md"), "precious")
+
+	skillsRoot := filepath.Join(dir, "skills")
+	if !linkDir(t, shared, skillsRoot) {
+		t.Skip("cannot create a directory link on this platform without privilege")
+	}
+
+	srcA := filepath.Join(root, "src", "alpha")
+	writeFile(t, filepath.Join(srcA, "SKILL.md"), "alpha content")
+
+	d := Desired{Skills: map[string]string{"alpha": srcA}}
+	st := &State{}
+
+	_, err := SyncSkills(dir, d, st)
+	if err == nil {
+		t.Fatal("expected SyncSkills to refuse a linked skills dir")
+	}
+	if !strings.Contains(err.Error(), "refusing to manage a shared skills directory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(shared, "handwritten", "SKILL.md"))
+	if err != nil || string(got) != "precious" {
+		t.Fatalf("shared dir was disturbed: %v %q", err, got)
+	}
+	if entries, err := os.ReadDir(shared); err != nil || len(entries) != 1 {
+		t.Fatalf("shared dir contents changed: %v %v", err, entries)
+	}
+}
+
+func TestSyncSkills_MissingSourceKeepsExistingCopy(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "identity")
+
+	srcA := filepath.Join(root, "src", "alpha")
+	writeFile(t, filepath.Join(srcA, "SKILL.md"), "alpha content")
+
+	d := Desired{Skills: map[string]string{"alpha": srcA}}
+	st := &State{}
+	if _, err := SyncSkills(dir, d, st); err != nil {
+		t.Fatalf("initial SyncSkills: %v", err)
+	}
+
+	dst := filepath.Join(dir, "skills", "alpha")
+	if _, err := os.Stat(filepath.Join(dst, "SKILL.md")); err != nil {
+		t.Fatalf("initial copy missing: %v", err)
+	}
+
+	// Catalog now points at a path that doesn't exist.
+	d2 := Desired{Skills: map[string]string{"alpha": filepath.Join(root, "src", "gone")}}
+	if _, err := SyncSkills(dir, d2, st); err == nil {
+		t.Fatal("expected an error for a missing source dir")
+	}
+
+	got, err := os.ReadFile(filepath.Join(dst, "SKILL.md"))
+	if err != nil || string(got) != "alpha content" {
+		t.Fatalf("existing managed copy was destroyed: %v %q", err, got)
+	}
+	if _, err := os.Stat(filepath.Join(dst, skillMarkerName)); err != nil {
+		t.Fatalf("marker missing after failed sync: %v", err)
 	}
 }

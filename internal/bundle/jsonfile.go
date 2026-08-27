@@ -96,3 +96,19 @@ func WriteJSONAtomic(path string, m map[string]any) error {
 	}
 	return nil
 }
+
+// normalizeJSON round-trips v through JSON so that values originating from
+// YAML (int, int64, map[string]any with typed scalars) compare equal via
+// reflect.DeepEqual to the same values read back from a JSON file (float64,
+// map[string]any). Returns v unchanged if it can't be round-tripped.
+func normalizeJSON(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return v
+	}
+	return out
+}

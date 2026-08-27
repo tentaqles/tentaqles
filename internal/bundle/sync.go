@@ -48,6 +48,14 @@ func Sync(ws *resolve.Workspace, cat *Catalog, o Options) (Report, error) {
 		return rep, err
 	}
 
+	// Collected up front so they're reported even when a later step fails.
+	rep.Warnings = cat.Validate()
+
+	if _, err := os.Stat(filepath.Join(dir, "sessions")); err != nil {
+		rep.Warnings = append(rep.Warnings,
+			fmt.Sprintf("no sessions/ dir under %s; in-use check skipped", dir))
+	}
+
 	if !o.Force && InUse(dir) {
 		return rep, fmt.Errorf("claude appears to be running with this config dir; close it or use --force")
 	}
@@ -66,6 +74,13 @@ func Sync(ws *resolve.Workspace, cat *Catalog, o Options) (Report, error) {
 	}
 	rep.Skills = skillsChanged
 
+	// Persist skill ownership before touching MCP: if SyncMCP fails, the
+	// skills tq just installed are still recorded as ours.
+	st.SyncedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := st.Save(dir); err != nil {
+		return rep, err
+	}
+
 	mcpChanged, err := SyncMCP(dir, d, &st)
 	if err != nil {
 		return rep, err
@@ -76,8 +91,6 @@ func Sync(ws *resolve.Workspace, cat *Catalog, o Options) (Report, error) {
 	if err := st.Save(dir); err != nil {
 		return rep, err
 	}
-
-	rep.Warnings = cat.Validate()
 
 	return rep, nil
 }
@@ -191,7 +204,7 @@ func Diff(ws *resolve.Workspace, cat *Catalog) ([]Drift, error) {
 			drifts = append(drifts, Drift{Kind: "mcp-missing", Name: name, Detail: "not present"})
 			continue
 		}
-		if !reflect.DeepEqual(got, want) {
+		if !reflect.DeepEqual(normalizeJSON(got), normalizeJSON(want)) {
 			drifts = append(drifts, Drift{Kind: "mcp-missing", Name: name, Detail: "content differs"})
 		}
 	}

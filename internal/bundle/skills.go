@@ -28,6 +28,10 @@ const skillMarkerName = ".tq-managed"
 func SyncSkills(dir string, d Desired, st *State) ([]string, error) {
 	skillsRoot := filepath.Join(dir, "skills")
 
+	if err := checkSkillsRoot(dir, skillsRoot); err != nil {
+		return nil, err
+	}
+
 	var changed []string
 	names := make([]string, 0, len(d.Skills))
 	for name := range d.Skills {
@@ -66,9 +70,9 @@ func SyncSkills(dir string, d Desired, st *State) ([]string, error) {
 			if ok && existingSha == sum {
 				continue // up to date, no write
 			}
-			if err := os.RemoveAll(dst); err != nil {
-				return nil, err
-			}
+			// no pre-emptive removal here: copySkillAtomic replaces dst
+			// only once the fresh copy is fully staged, so a failed copy
+			// leaves the existing managed copy intact.
 		}
 
 		if err := copySkillAtomic(src, dst, sum); err != nil {
@@ -121,8 +125,44 @@ func copySkillAtomic(src, dst, sum string) error {
 		return err
 	}
 	if err := os.Rename(tmp, dst); err != nil {
-		os.RemoveAll(tmp)
+		// Keep tmp: it holds a complete, verified copy, and dst may have
+		// already been removed. Name it so the user can recover manually.
+		return fmt.Errorf("rename %s -> %s: %w (staged copy left at %s)", tmp, dst, err, tmp)
+	}
+	return nil
+}
+
+// checkSkillsRoot refuses to manage a skills dir that is a symlink,
+// junction, or other reparse point, or that otherwise resolves outside
+// dir. Writing through such a link would silently mutate a directory
+// shared with another profile.
+func checkSkillsRoot(dir, skillsRoot string) error {
+	lst, err := os.Lstat(skillsRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
+	}
+	if lst.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		target, rerr := filepath.EvalSymlinks(skillsRoot)
+		if rerr != nil {
+			target = "<unresolvable>"
+		}
+		return fmt.Errorf("skills dir %s is a link to %s; refusing to manage a shared skills directory", skillsRoot, target)
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(skillsRoot)
+	if err != nil {
+		return nil
+	}
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil
+	}
+	rel, err := filepath.Rel(resolvedDir, resolvedRoot)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("skills dir %s is a link to %s; refusing to manage a shared skills directory", skillsRoot, resolvedRoot)
 	}
 	return nil
 }

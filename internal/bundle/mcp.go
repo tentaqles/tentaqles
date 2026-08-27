@@ -68,7 +68,7 @@ func SyncMCP(dir string, d Desired, st *State) ([]string, error) {
 
 	for _, name := range names {
 		desired := deepCopy(d.MCP[name])
-		if reflect.DeepEqual(servers[name], desired) {
+		if reflect.DeepEqual(normalizeJSON(servers[name]), normalizeJSON(desired)) {
 			continue
 		}
 		servers[name] = desired

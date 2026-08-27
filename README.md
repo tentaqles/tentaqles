@@ -142,6 +142,16 @@ claude:
     mcp: [github]
 ```
 
+Two things to know about `sync`:
+
+- `enabledPlugins` in the identity dir's `settings.json` is replaced wholesale
+  from the bundle, so any entry there set to `false` is dropped rather than
+  preserved. List a plugin under `claude.bundle.plugins` if you want it kept.
+- If the identity dir's `skills/` is a symlink (or a Windows junction/reparse
+  point), or otherwise resolves outside the identity dir, `sync` refuses to
+  touch it rather than writing through the link into a shared skills
+  directory.
+
 Commands: `tq bundle sync <workspace>` to apply, `tq bundle diff <workspace>`
 to see what's out of sync, `tq bundle capture <workspace> --write-catalog`
 to reverse-engineer a bundle from a Claude config dir that already has
