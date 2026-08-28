@@ -13,26 +13,34 @@ export default function Preview() {
   const [confirming, setConfirming] = useState(false)
   const [applying, setApplying] = useState(false)
 
-  async function refresh() {
+  async function refresh(cancelled?: () => boolean) {
     setLoading(true)
     try {
-      setChanges((await api.preview(state.plan)) ?? [])
-      setError('')
+      const c = (await api.preview(state.plan)) ?? []
+      if (!cancelled?.()) {
+        setChanges(c)
+        setError('')
+      }
     } catch (e) {
-      setError(api.errorText(e))
+      if (!cancelled?.()) setError(api.errorText(e))
     } finally {
-      setLoading(false)
+      if (!cancelled?.()) setLoading(false)
     }
     try {
-      setHooks((await api.hooksStatus()) ?? [])
+      const h = (await api.hooksStatus()) ?? []
+      if (!cancelled?.()) setHooks(h)
     } catch {
-      setHooks([])
+      if (!cancelled?.()) setHooks([])
     }
   }
 
   useEffect(() => {
-    void refresh()
+    let cancelled = false
+    void refresh(() => cancelled)
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   async function runApply() {

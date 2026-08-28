@@ -23,21 +23,27 @@ function InstallBanner() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  async function check() {
+  async function check(cancelled: () => boolean) {
     try {
-      setVersion(await api.tqVersion())
+      const v = await api.tqVersion()
+      if (!cancelled()) setVersion(v)
     } catch {
-      setVersion('')
+      if (!cancelled()) setVersion('')
     }
     try {
-      setBundled(await api.bundledTQPath())
+      const b = await api.bundledTQPath()
+      if (!cancelled()) setBundled(b)
     } catch {
-      setBundled('')
+      if (!cancelled()) setBundled('')
     }
   }
 
   useEffect(() => {
-    void check()
+    let cancelled = false
+    void check(() => cancelled)
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   async function install() {

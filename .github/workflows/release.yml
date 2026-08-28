@@ -17,3 +17,100 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  desktop:
+    needs: goreleaser
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: install wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+
+      - name: linux deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: install nsis (windows)
+        if: runner.os == 'Windows'
+        run: choco install nsis -y
+
+      - name: download tq release asset (linux/macos)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.os }}" = "macOS" ]; then osname=darwin; else osname=linux; fi
+          gh release download "$GITHUB_REF_NAME" -p "tq_*_${osname}_amd64.*" -D /tmp/tqdl --clobber
+          cd /tmp/tqdl
+          archive=$(ls tq_*_${osname}_amd64.* | head -n1)
+          tar -xzf "$archive" 2>/dev/null || unzip -o "$archive"
+          mkdir -p "$GITHUB_WORKSPACE/desktop/build/bin"
+          cp tq "$GITHUB_WORKSPACE/desktop/build/bin/tq"
+          chmod +x "$GITHUB_WORKSPACE/desktop/build/bin/tq"
+
+      - name: download tq release asset (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\tqdl" | Out-Null
+          gh release download "$env:GITHUB_REF_NAME" -p "tq_*_windows_amd64.*" -D "$env:RUNNER_TEMP\tqdl" --clobber
+          $archive = Get-ChildItem "$env:RUNNER_TEMP\tqdl\tq_*_windows_amd64.*" | Select-Object -First 1
+          Expand-Archive -Path $archive.FullName -DestinationPath "$env:RUNNER_TEMP\tqdl" -Force
+          New-Item -ItemType Directory -Force -Path "desktop\build\bin" | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\tqdl\tq.exe" "desktop\build\bin\tq.exe"
+
+      - name: build (windows)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: wails build -nsis
+
+      - name: build (macos)
+        if: runner.os == 'macOS'
+        working-directory: desktop
+        run: |
+          wails build
+          hdiutil create -volname "Tentaqles Setup" -srcfolder build/bin/tentaqles-setup.app -ov -format UDZO build/bin/tentaqles-setup.dmg
+
+      - name: build (linux)
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: |
+          wails build
+          curl -L -o /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          rm -rf build/AppDir
+          mkdir -p build/AppDir/usr/bin
+          cp build/bin/tentaqles-setup build/AppDir/usr/bin/tentaqles-setup
+          cp build/bin/tq build/AppDir/usr/bin/tq
+          cp build/appicon.png build/AppDir/tentaqles-setup.png
+          cat > build/AppDir/tentaqles-setup.desktop <<'EOF'
+          [Desktop Entry]
+          Name=Tentaqles Setup
+          Exec=tentaqles-setup
+          Icon=tentaqles-setup
+          Type=Application
+          Categories=Development;
+          EOF
+          cp build/AppDir/tentaqles-setup.desktop build/AppDir/
+          ARCH=x86_64 /tmp/appimagetool build/AppDir build/bin/tentaqles-setup.AppImage
+
+      - name: upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            desktop/build/bin/*-installer.exe
+            desktop/build/bin/*.dmg
+            desktop/build/bin/*.AppImage

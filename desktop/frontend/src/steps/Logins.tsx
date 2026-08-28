@@ -36,6 +36,10 @@ export default function Logins() {
         subtitle="Setup is applied. Sign each company into its services, then check everything with doctor."
       />
 
+      <p className="mb-4 text-sm text-[var(--tq-muted)]">
+        Note: the new terminal must have <code>tq</code> on PATH (open a fresh terminal after installing).
+      </p>
+
       {report?.Warnings?.length ? (
         <Card className="mb-4">
           <h2 className="mb-2 text-sm font-semibold text-[#f28c28]">Warnings</h2>

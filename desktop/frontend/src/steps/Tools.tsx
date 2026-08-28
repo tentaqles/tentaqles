@@ -57,22 +57,29 @@ export default function Tools() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  async function recheck() {
+  async function recheck(cancelled?: () => boolean) {
     setLoading(true)
     try {
-      setResults((await api.toolCheck(state.plan)) ?? {})
-      setError('')
+      const r = (await api.toolCheck(state.plan)) ?? {}
+      if (!cancelled?.()) {
+        setResults(r)
+        setError('')
+      }
     } catch (e) {
-      setError(api.errorText(e))
+      if (!cancelled?.()) setError(api.errorText(e))
     } finally {
-      setLoading(false)
+      if (!cancelled?.()) setLoading(false)
     }
   }
 
   useEffect(() => {
-    void recheck()
+    let cancelled = false
+    void recheck(() => cancelled)
     // Probing once per visit is enough; "Re-check" re-runs on demand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const missing = countMissing(results)

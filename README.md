@@ -150,6 +150,10 @@ shell session, without needing to uninstall anything.
 See [`docs/SETUP.md`](docs/SETUP.md) for the full plan YAML schema and field
 reference.
 
+Prefer a GUI? The `tentaqles-setup` desktop app wraps the same setup flow in
+a wizard — see [`docs/DESKTOP.md`](docs/DESKTOP.md) for install (incl.
+unsigned-app steps) and the dev loop.
+
 ## Commands
 
 | Command | Description |
