@@ -2,6 +2,7 @@
 /tq
 /tq.exe
 *.test
+.env
 
 # legacy sidecar runtime
 legacy/sidecar/.venv/
