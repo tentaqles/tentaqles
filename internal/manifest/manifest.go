@@ -45,6 +45,9 @@ type Git struct {
 	User         string `yaml:"user"`
 	Host         string `yaml:"host"`
 	ExpectedUser string `yaml:"expected_user"`
+	// BlockedCommands are extra command prefixes the guard refuses for this
+	// workspace, unioned with Manifest.BlockedCommands and cloud.blocked_commands.
+	BlockedCommands []string `yaml:"blocked_commands"`
 }
 
 type Identity struct {
