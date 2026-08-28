@@ -49,6 +49,18 @@ jobs:
           Set-Location "$env:USERPROFILE\work\acme"; prompt | Out-Null; if ($env:TQ_WS -ne 'acme') { throw "hook failed: $env:TQ_WS" }
           Set-Location \; prompt | Out-Null; if ($env:TQ_WS) { throw "unset failed" }
 
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pyyaml pytest
+      - name: pytest
+        env:
+          PYTHONPATH: ${{ github.workspace }}/plugin
+        run: python -m pytest plugin/tests -q
+
   desktop:
     runs-on: ubuntu-latest
     steps:
