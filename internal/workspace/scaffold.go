@@ -16,18 +16,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+// NameRe is the pattern workspace names must match: lowercase alphanumerics,
+// dots, underscores, and hyphens, starting with an alphanumeric.
+var NameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type AddOptions struct {
-	Base, Name, GitName, GitEmail, DisplayName, Color string
-	Identities                                        []string
-	PermissionMode                                    string
-	RunGit                                            func(args ...string) (string, error)
+	Base, Name, GitName, GitEmail, GitUser, DisplayName, Color string
+	Identities                                                 []string
+	PermissionMode                                             string
+	RunGit                                                     func(args ...string) (string, error)
 }
 
 func Add(o AddOptions) (*resolve.Workspace, error) {
-	if !nameRe.MatchString(o.Name) {
-		return nil, fmt.Errorf("workspace name %q must match %s", o.Name, nameRe)
+	if !NameRe.MatchString(o.Name) {
+		return nil, fmt.Errorf("workspace name %q must match %s", o.Name, NameRe)
 	}
 	if o.GitEmail == "" {
 		return nil, fmt.Errorf("--git-email is required")
@@ -55,7 +57,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	}
 	m := manifest.Manifest{
 		Schema: "tentaqles-client-v2", Client: o.Name, DisplayName: o.DisplayName, Color: o.Color,
-		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail},
+		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail, User: o.GitUser},
 		Identities: map[string]manifest.Identity{},
 		Claude:     manifest.Claude{PermissionMode: o.PermissionMode},
 	}
