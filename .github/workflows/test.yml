@@ -59,14 +59,7 @@ jobs:
       - name: pytest
         env:
           PYTHONPATH: ${{ github.workspace }}/plugin
-        # test_tq_hook_blocks_when_no_python assumes dirname(bash) has no
-        # python3 alongside it to fake a "no interpreter" box; on
-        # ubuntu-latest /usr/bin holds both bash and python3, so the fallback
-        # finds a real interpreter and correctly allows a benign `ls` instead
-        # of failing closed. Linux-runner-specific test isolation gap, not a
-        # regression in tq_hook.sh/identity-guard.py; excluded here pending a
-        # fix in plugin/tests/test_identity_guard.py.
-        run: python -m pytest plugin/tests -q --deselect plugin/tests/test_identity_guard.py::test_tq_hook_blocks_when_no_python
+        run: python -m pytest plugin/tests -q
 
   desktop:
     runs-on: ubuntu-latest

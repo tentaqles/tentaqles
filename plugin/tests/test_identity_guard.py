@@ -145,7 +145,26 @@ def test_tq_hook_session_start_fallback_message(tmp_path):
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
 def test_tq_hook_blocks_when_no_python(tmp_path):
-    """No tq and no interpreter -> fail CLOSED, not open."""
+    """No tq and no interpreter -> fail CLOSED, not open.
+
+    Rather than trying to scrub every real interpreter off PATH (fragile: on
+    Linux CI runners bash and the system python3 live in the same directory,
+    e.g. /usr/bin, so dropping python's own dir from PATH doesn't remove it),
+    shadow every name tq_hook.sh probes (python3, python, py) with executable
+    shims that always fail. The shims sit first on PATH, so `command -v`
+    finds them before any real interpreter; each one exits nonzero on the
+    `-c "import sys"` probe tq_hook.sh runs to validate a candidate, so every
+    candidate is rejected and the hook falls through to its fail-closed path
+    regardless of what is actually installed on the box.
+    """
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    shim_body = "#!/bin/sh" + chr(10) + "exit 1" + chr(10)
+    for name in ("python3", "python", "py"):
+        shim = shims / name
+        shim.write_text(shim_body)
+        shim.chmod(0o755)
+
     env = hook_env(
         tmp_path,
         with_python=False,
@@ -155,6 +174,10 @@ def test_tq_hook_blocks_when_no_python(tmp_path):
         USERPROFILE=str(tmp_path),
         CLAUDE_PLUGIN_ROOT=str(ROOT),
     )
+    env["PATH"] = os.pathsep.join(
+        [str(shims), os.path.dirname(BASH), os.path.dirname(sys.executable)]
+    )
+    env.pop("TENTAQLES_PY", None)
     payload = json.dumps({"cwd": str(tmp_path), "tool_input": {"command": "ls"}})
     p = subprocess.run(
         [BASH, str(HOOK), "pre-tool-use"],
