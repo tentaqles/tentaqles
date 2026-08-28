@@ -93,12 +93,73 @@ name and email through the include, and anywhere else git refuses to guess an
 identity, so a commit made outside any trusted workspace fails rather than
 being attributed to the wrong person.
 
+## Setup
+
+For onboarding more than one company at once (or scripting a fresh machine),
+`tq setup` scaffolds several workspaces — plus shell hooks — from a single
+declarative plan, instead of running `tq add` and `tq activate` by hand for
+each one.
+
+Run it with no flags for the interactive wizard, which walks through eight
+steps: welcome/consent, base folder (offering to create it), a repeatable
+company loop (name, display name, color, git name/email/user, providers,
+permission mode), a tool-check summary of what's installed vs. missing, shell
+hook selection, a full preview of every change, and a final confirmation
+before anything is applied. The wizard refuses to finish with zero companies
+— it re-prompts, and if you decline twice it aborts with an error rather than
+applying an empty plan.
+
+For non-interactive or repeatable setups, drive it from a YAML plan instead:
+
+```sh
+tq setup --example > setup.yaml       # write a two-company sample plan
+tq setup --from setup.yaml --dry-run  # preview + tool-check, write nothing
+tq setup --from setup.yaml --yes      # apply without an interactive prompt
+```
+
+Both the wizard and `--from` runs accept `--json` for machine-readable
+output (preview, tool-check results, and — once applied — the report), and
+`--write-plan <path>` to also save the wizard's answers as a plan file you
+can replay later (the wizard always additionally saves its answers to
+`~/.tentaqles/last-setup.yaml`). Without `--yes`, `tq setup --from` on a
+non-interactive stdin refuses to apply rather than silently doing nothing.
+
+Setup plan files carry git identity metadata, so `tq setup`/the wizard write
+them with owner-only permissions (`0600`, containing directory `0700`) on
+platforms that enforce POSIX permission bits.
+
+Shell hooks — the `eval "$(tq activate <shell>)"` (or equivalent) line that
+makes `cd` switch identities automatically — can also be managed on their
+own:
+
+```sh
+tq hooks status              # installed / present (unmanaged) / missing / no profile, per shell
+tq hooks install <shell...>  # or: --all-detected
+tq hooks remove <shell...>   # or: --all-detected
+```
+
+`tq init --install-hook` runs the same install step right after registering
+a base folder. Either way, if you already have your own activation line in a
+profile file, `tq` detects it as "present (unmanaged)" and leaves it alone —
+hand-installed hook lines are never duplicated.
+
+The installed hook line respects a kill switch: setting `TQ_ENABLED=0` in
+your environment makes the hook skip calling `tq activate` entirely for that
+shell session, without needing to uninstall anything.
+
+See [`docs/SETUP.md`](docs/SETUP.md) for the full plan YAML schema and field
+reference.
+
 ## Commands
 
 | Command | Description |
 |---|---|
 | `tq version` | Print the tq version. |
-| `tq init <base-folder>` | Register a base folder; each first-level subfolder becomes a terminal identity. |
+| `tq init <base-folder>` | Register a base folder; each first-level subfolder becomes a terminal identity. `--install-hook` also installs the shell activation hook into detected shell profiles. |
+| `tq setup` | Interactive wizard that scaffolds one or more companies (workspaces) plus shell hooks from a single flow. `--example` prints a sample plan YAML; `--from <file>` loads a plan instead of prompting (`--dry-run` to preview only, `--yes` to apply without confirming); `--write-plan <path>` also saves the wizard's answers as a plan file; `--json` for machine-readable output. See [`docs/SETUP.md`](docs/SETUP.md). |
+| `tq hooks status` | Show install status (`installed`, `present (unmanaged)`, `missing`, `no profile`) for each known shell. |
+| `tq hooks install <shell...>` | Install tq's activation block into shell profile(s). `--all-detected` targets every detected shell. |
+| `tq hooks remove <shell...>` | Remove tq's activation block from shell profile(s). `--all-detected` targets every detected shell. |
 | `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. Flags: `--base`, `--git-email` (required), `--git-name`, `--display-name`, `--color`, `--identities`, `--permission-mode`. |
 | `tq allow <name>` | Trust a workspace's current manifest so it can export env. `--bypass` additionally allows `permission_mode: bypass`. |
 | `tq deny <name>` | Revoke trust for a workspace. |

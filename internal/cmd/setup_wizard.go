@@ -223,6 +223,74 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 		}
 	}
 
+	if len(companies) == 0 {
+		declined := false
+		for attempt := 0; attempt < 2 && len(companies) == 0; attempt++ {
+			var addOne bool
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewNote().Title("Add at least one company"),
+				huh.NewConfirm().Title("Add a company now?").Value(&addOne),
+			)).Run(); err != nil {
+				return nil, err
+			}
+			if !addOne {
+				if declined {
+					return nil, fmt.Errorf("at least one company is required")
+				}
+				declined = true
+				continue
+			}
+
+			ca := companyAnswers{}
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewInput().Title("Company name (short id)").Value(&ca.Name).
+					Validate(func(s string) error {
+						if !workspace.NameRe.MatchString(s) {
+							return fmt.Errorf("must match %s", workspace.NameRe.String())
+						}
+						return nil
+					}),
+				huh.NewInput().Title("Display name").Value(&ca.DisplayName),
+				huh.NewInput().Title("Color (optional)").Value(&ca.Color),
+				huh.NewInput().Title("Git name").Value(&ca.GitName).
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("git name is required")
+						}
+						return nil
+					}),
+				huh.NewInput().Title("Git email").Value(&ca.GitEmail).
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" || !strings.Contains(s, "@") {
+							return fmt.Errorf("a valid email is required")
+						}
+						return nil
+					}),
+				huh.NewInput().Title("Git user (optional, e.g. GitHub username)").Value(&ca.GitUser),
+			)).Run(); err != nil {
+				return nil, err
+			}
+
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Providers for " + ca.Name).
+					Options(buildProviderOptions(cat)...).
+					Value(&ca.Identities),
+				huh.NewSelect[string]().
+					Title("Permission mode for " + ca.Name).
+					Options(permissionModeOptions()...).
+					Value(&ca.PermissionMode),
+			)).Run(); err != nil {
+				return nil, err
+			}
+
+			companies = append(companies, ca)
+		}
+		if len(companies) == 0 {
+			return nil, fmt.Errorf("at least one company is required")
+		}
+	}
+
 	// Tool check: build a provisional plan so ToolCheck can run against it.
 	toolCheckPlan := planFromAnswers(wizardAnswers{Base: base, Companies: companies})
 	tc := setup.ToolCheck(toolCheckPlan, cat, detect.DefaultDeps())

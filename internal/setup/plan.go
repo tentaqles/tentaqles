@@ -7,6 +7,7 @@ package setup
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/providers"
@@ -73,21 +74,32 @@ func LoadPlan(path string) (*SetupPlan, error) {
 	return &SetupPlan{Base: r.Base, Companies: r.Companies, Hooks: r.Hooks, Trust: trust}, nil
 }
 
-// Save writes p as YAML to path.
+// Save writes p as YAML to path. The plan may contain git identity
+// metadata (name/email), so it is written with owner-only permissions
+// (0600, dir 0700) rather than the world-readable default.
 func (p *SetupPlan) Save(path string) error {
 	raw, err := yaml.Marshal(p)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, raw, 0o644)
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, raw, 0o600)
 }
 
-// Validate checks structural rules on the plan: a base is set, company
-// names match the workspace naming rule and are unique, identities are
-// known to cat, and permission modes are valid.
+// Validate checks structural rules on the plan: a base is set, at least
+// one company is present, company names match the workspace naming rule
+// and are unique, identities are known to cat, and permission modes are
+// valid.
 func (p *SetupPlan) Validate(cat *providers.Catalog) error {
 	if p.Base == "" {
 		return fmt.Errorf("base is required")
+	}
+	if len(p.Companies) == 0 {
+		return fmt.Errorf("plan has no companies")
 	}
 	seen := map[string]bool{}
 	for _, c := range p.Companies {

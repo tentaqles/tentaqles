@@ -136,6 +136,49 @@ func TestValidate_Errors(t *testing.T) {
 	})
 }
 
+func TestValidate_RequiresCompany(t *testing.T) {
+	cat := testCatalog(t)
+	p := &SetupPlan{Base: "/repos"}
+	err := p.Validate(cat)
+	if err == nil {
+		t.Fatal("expected error for plan with no companies")
+	}
+	if err.Error() != "plan has no companies" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSave_RestrictsPermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "plan.yaml")
+
+	if err := Example().Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS == "windows" {
+		// Windows does not enforce POSIX permission bits; just confirm the
+		// file was written.
+		return
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("file mode = %o, want 0600", got)
+	}
+
+	dirInfo, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("dir mode = %o, want 0700", got)
+	}
+}
+
 func TestPreview_ReportsSkipsForExisting(t *testing.T) {
 	base := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(base, "acme"), 0755); err != nil {
