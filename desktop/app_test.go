@@ -1,0 +1,107 @@
+package main
+
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// isolateHome points HOME/USERPROFILE (and TQ_HOME, if the cli honors it)
+// at a fresh temp dir so tests never touch the real user's environment.
+func isolateHome(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TQ_HOME", dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	return dir
+}
+
+func TestApp_ProvidersAndDefaultBase(t *testing.T) {
+	home := isolateHome(t)
+
+	app := NewApp()
+
+	providers, err := app.Providers()
+	if err != nil {
+		t.Fatalf("Providers() error = %v", err)
+	}
+	if len(providers) == 0 {
+		t.Fatal("Providers() returned no providers")
+	}
+
+	base := app.DefaultBase()
+	if base == "" {
+		t.Fatal("DefaultBase() returned empty string")
+	}
+	want := filepath.Join(home, "work")
+	if base != want {
+		t.Errorf("DefaultBase() = %q, want %q", base, want)
+	}
+}
+
+func TestOpenTerminal_ArgsWindows(t *testing.T) {
+	name, args := terminalCommand("windows", "tq login myws work")
+
+	if name != "cmd" {
+		t.Fatalf("name = %q, want cmd", name)
+	}
+	want := []string{"/c", "start", "", "cmd", "/k", "tq login myws work"}
+	if len(args) != len(want) {
+		t.Fatalf("args = %v, want %v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %q, want %q", i, args[i], want[i])
+		}
+	}
+
+	// The command must arrive as a single argv element, never concatenated
+	// into a shell line that could be reinterpreted.
+	for _, a := range args[:len(args)-1] {
+		if strings.Contains(a, "login myws work") {
+			t.Fatalf("command leaked into an earlier arg: %q", a)
+		}
+	}
+}
+
+func TestOpenTerminal_ArgsDarwin(t *testing.T) {
+	name, args := terminalCommand("darwin", `tq login "my ws" work`)
+
+	if name != "osascript" {
+		t.Fatalf("name = %q, want osascript", name)
+	}
+	if len(args) != 2 || args[0] != "-e" {
+		t.Fatalf("args = %v, want [-e, <script>]", args)
+	}
+	if !strings.Contains(args[1], `tell application "Terminal" to do script`) {
+		t.Fatalf("script = %q, missing Terminal do script", args[1])
+	}
+}
+
+func TestOpenTerminal_ArgsLinux(t *testing.T) {
+	name, args := terminalCommand("linux", "tq login myws work")
+
+	if name != "x-terminal-emulator" {
+		t.Fatalf("name = %q, want x-terminal-emulator", name)
+	}
+	want := []string{"-e", "sh", "-c", "tq login myws work; exec sh"}
+	if len(args) != len(want) {
+		t.Fatalf("args = %v, want %v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %q, want %q", i, args[i], want[i])
+		}
+	}
+}
+
+func TestBundledTQPath_EnvFallback(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "not-a-real-tq")
+	// No file exists yet: env fallback should not resolve to a missing path.
+	t.Setenv("TQ_BUNDLED_PATH", fake)
+	if got := bundledTQPath(); got == fake {
+		t.Fatalf("bundledTQPath() = %q, want \"\" for nonexistent file", got)
+	}
+}
