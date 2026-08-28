@@ -74,15 +74,111 @@ func newClaudeHookCmd() *cobra.Command {
 	return c
 }
 
-// newSessionStartCmd is a no-op stub so the hook can already be wired into
-// settings.json.
-// TODO(task4): emit the session-start identity context.
+// newSessionStartCmd prints the identity preamble Claude Code shows at the
+// start of a session. It never fails: any internal error is reported on
+// stdout and the command still exits 0, because a SessionStart hook must
+// never block the session from starting.
 func newSessionStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "session-start",
-		Short: "SessionStart hook (stub)",
-		RunE:  func(*cobra.Command, []string) error { return nil },
+		Short: "SessionStart hook: print the workspace identity preamble",
+		RunE: func(c *cobra.Command, _ []string) error {
+			p, _ := readHookPayload(c.InOrStdin())
+			cwd := strings.TrimSpace(p.Cwd)
+			if cwd == "" {
+				cwd, _ = os.Getwd()
+			}
+			cfg, err := registry.Load()
+			if err != nil {
+				fmt.Fprintf(c.OutOrStdout(), "Tentaqles: tq could not resolve this workspace (%s)\n", err)
+				return nil
+			}
+			rep := doctor.RunForCwd(cfg, doctor.Deps{
+				Env:      os.LookupEnv,
+				Cwd:      cwd,
+				RunGit:   gitcfg.RunGit,
+				RunGitIn: gitcfg.RunGitIn,
+				LookPath: exec.LookPath,
+			})
+			expectedDir := ""
+			if rep.Result.Workspace != nil {
+				expectedDir = envplan.Desired(rep.Result.Workspace)["CLAUDE_CONFIG_DIR"]
+			}
+			fmt.Fprint(c.OutOrStdout(), renderSessionStart(rep, expectedDir))
+			return nil
+		},
 	}
+}
+
+// renderSessionStart is the pure formatter behind session-start: given the
+// cwd doctor report and the expected CLAUDE_CONFIG_DIR for a resolved
+// workspace, it renders the exact preamble text (see task-4-brief.md).
+func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
+	res := rep.Result
+	ws := res.Workspace
+	if ws == nil {
+		ws = res.Untrusted
+	}
+	if ws == nil {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Client: none (neutral cwd: %s)\n\n", res.Reason)
+		b.WriteString("Rules: remote git, gh and cloud CLI commands are blocked here until you cd into a trusted workspace (tq allow <name>).\n")
+		return b.String()
+	}
+
+	m := ws.Manifest
+	display := m.DisplayName
+	if display == "" {
+		display = m.Client
+	}
+	lang := m.Language
+	if lang == "" {
+		lang = "en"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Client: %s (%s)\n", display, lang)
+
+	gitHost := m.Git.Host
+	if gitHost == "" {
+		gitHost = m.Git.Provider
+	}
+	if gitHost != "" || m.Git.User != "" || m.Git.Email != "" {
+		fmt.Fprintf(&b, "Git: %s as %s (%s)\n", gitHost, m.Git.User, m.Git.Email)
+	}
+
+	cloudProvider := cloudString(m.Cloud, "provider")
+	cloudSub := cloudString(m.Cloud, "subscription_name")
+	if cloudProvider != "" || cloudSub != "" {
+		fmt.Fprintf(&b, "Cloud: %s (%s subscription)\n", cloudProvider, cloudSub)
+	}
+
+	permMode := m.Claude.PermissionMode
+	if permMode == "" {
+		permMode = "default"
+	}
+	identity := "Identity: " + ws.Name
+	if expectedDir != "" {
+		identity += " · CLAUDE_CONFIG_DIR=" + expectedDir
+	}
+	identity += " · permission_mode=" + permMode
+	b.WriteString(identity + "\n")
+
+	b.WriteString("\ntq doctor:\n")
+	if len(rep.Findings) == 0 {
+		b.WriteString("- [ok] all checks passed\n")
+	} else {
+		for _, f := range rep.Findings {
+			line := fmt.Sprintf("- [%s] %s: %s", f.Level, f.Code, f.Msg)
+			if f.Fix != "" {
+				line += " (→ " + f.Fix + ")"
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+
+	b.WriteString("\nRules: tq blocks git/gh/cloud commands on identity drift (exit 2). Run `tq doctor` for details.\n")
+	return b.String()
 }
 
 func newPreToolUseCmd() *cobra.Command {

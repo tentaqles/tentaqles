@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/cli/internal/doctor"
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
+	"github.com/tentaqles/tentaqles/cli/internal/resolve"
 	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
 )
@@ -196,11 +198,49 @@ func TestPreToolUse_JSONAllowStillExitsZero(t *testing.T) {
 	}
 }
 
-func TestSessionStartStubExitsZero(t *testing.T) {
+func TestSessionStart_Workspace(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "display_name: Acme\ngit:\n  host: github.com\n  user: acme-bot\n  email: dev@acme.com\n")
+	code, out, errOut := runHook(t, []string{"claude-hook", "session-start"}, hookPayloadFor(t, ws, ""))
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	lines := strings.SplitN(out, "\n", 2)
+	if lines[0] != "Client: Acme (en)" {
+		t.Fatalf("first line = %q, want %q", lines[0], "Client: Acme (en)")
+	}
+	if !strings.Contains(out, "Identity: acme") {
+		t.Fatalf("missing Identity: acme in %q", out)
+	}
+	if !strings.Contains(out, "tq doctor:") {
+		t.Fatalf("missing tq doctor: block in %q", out)
+	}
+}
+
+func TestSessionStart_Neutral(t *testing.T) {
 	isolateHome(t)
-	code, out, errOut := runHook(t, []string{"claude-hook", "session-start"}, `{}`)
-	if code != 0 || out != "" || errOut != "" {
-		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
+	code, out, errOut := runHook(t, []string{"claude-hook", "session-start"}, hookPayloadFor(t, testutil.TempDir(t), ""))
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	lines := strings.SplitN(out, "\n", 2)
+	want := "Client: none (neutral cwd: outside any base)"
+	if lines[0] != want {
+		t.Fatalf("first line = %q, want %q", lines[0], want)
+	}
+}
+
+func TestSessionStart_NeverFails(t *testing.T) {
+	home := isolateHome(t)
+	cfgPath := filepath.Join(home, ".tentaqles", "config.yaml")
+	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runHook(t, []string{"claude-hook", "session-start"}, hookPayloadFor(t, testutil.TempDir(t), ""))
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	if !strings.HasPrefix(out, "Tentaqles: tq could not") {
+		t.Fatalf("out=%q", out)
 	}
 }
 
@@ -233,6 +273,51 @@ func TestGHEnv_NoWorkspaceDirKeepsBase(t *testing.T) {
 	got := ghEnv(base, map[string]string{})
 	if len(got) != len(base) || !containsStr(got, "GH_TOKEN=ambient") {
 		t.Fatalf("got %v, want base unchanged", got)
+	}
+}
+
+func TestRenderSessionStart_Neutral(t *testing.T) {
+	rep := doctor.CwdReport{Result: resolve.Result{Reason: "outside any base"}}
+	got := renderSessionStart(rep, "")
+	want := "Client: none (neutral cwd: outside any base)\n\nRules: remote git, gh and cloud CLI commands are blocked here until you cd into a trusted workspace (tq allow <name>).\n"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderSessionStart_Workspace(t *testing.T) {
+	ws := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{
+		Client:      "acme",
+		DisplayName: "Acme",
+		Git:         manifest.Git{Host: "github.com", User: "acme-bot", Email: "dev@acme.com"},
+		Cloud:       map[string]any{"provider": "azure", "subscription_name": "acme-prod"},
+	}}
+	rep := doctor.CwdReport{Result: resolve.Result{Workspace: ws}}
+	got := renderSessionStart(rep, "/home/acme/.tentaqles/identities/acme/claude")
+	want := "Client: Acme (en)\n" +
+		"Git: github.com as acme-bot (dev@acme.com)\n" +
+		"Cloud: azure (acme-prod subscription)\n" +
+		"Identity: acme · CLAUDE_CONFIG_DIR=/home/acme/.tentaqles/identities/acme/claude · permission_mode=default\n" +
+		"\ntq doctor:\n" +
+		"- [ok] all checks passed\n" +
+		"\nRules: tq blocks git/gh/cloud commands on identity drift (exit 2). Run `tq doctor` for details.\n"
+	if got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestRenderSessionStart_UntrustedWithFindings(t *testing.T) {
+	ws := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{Client: "acme"}}
+	rep := doctor.CwdReport{
+		Result:   resolve.Result{Untrusted: ws},
+		Findings: []doctor.Finding{{Level: "warn", Code: "untrusted", Workspace: "acme", Msg: "manifest not trusted", Fix: "tq allow acme"}},
+	}
+	got := renderSessionStart(rep, "")
+	if !strings.Contains(got, "- [warn] untrusted: manifest not trusted (→ tq allow acme)") {
+		t.Fatalf("missing untrusted bullet: %q", got)
+	}
+	if !strings.HasPrefix(got, "Client: acme (en)\n") {
+		t.Fatalf("first line wrong: %q", got)
 	}
 }
 
