@@ -59,6 +59,7 @@ func loadProviderCatalog(errw func(format string, a ...any)) *providers.Catalog 
 func newSetupCmd() *cobra.Command {
 	var example bool
 	var from string
+	var writePlan string
 	var dryRun, yes, asJSON bool
 
 	c := &cobra.Command{
@@ -72,20 +73,40 @@ func newSetupCmd() *cobra.Command {
 				return nil
 			}
 
-			if from == "" {
-				fmt.Fprintln(c.ErrOrStderr(), "error: interactive wizard arrives in the next task; use --from <file> or --example")
-				exitFunc(1)
-				return nil
-			}
-
-			plan, err := setup.LoadPlan(from)
-			if err != nil {
-				return err
-			}
-
 			cat := loadProviderCatalog(func(format string, a ...any) {
 				fmt.Fprintf(c.ErrOrStderr(), format, a...)
 			})
+
+			var plan *setup.SetupPlan
+
+			if from == "" {
+				if !setupIsTTY() {
+					fmt.Fprintln(c.ErrOrStderr(), "error: the interactive wizard needs a terminal; use --from <file> or --example")
+					exitFunc(1)
+					return nil
+				}
+				wizardPlan, err := runWizard(cat, hooks.ProfilesFn())
+				if err != nil {
+					return err
+				}
+				plan = wizardPlan
+				if err := saveWizardPlan(plan, writePlan); err != nil {
+					fmt.Fprintf(c.ErrOrStderr(), "warning: failed to save plan: %v\n", err)
+				}
+				applyReport, err := setup.Apply(plan, cat, setup.ApplyOptions{RunGit: setupRunGit, Profiles: hooks.ProfilesFn()})
+				printReport(out, applyReport)
+				if err != nil {
+					fmt.Fprintf(c.ErrOrStderr(), "error: %v\n", err)
+					exitFunc(1)
+				}
+				return nil
+			}
+
+			loadedPlan, err := setup.LoadPlan(from)
+			if err != nil {
+				return err
+			}
+			plan = loadedPlan
 
 			if err := plan.Validate(cat); err != nil {
 				return err
@@ -143,6 +164,7 @@ func newSetupCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&example, "example", false, "print an example setup plan YAML")
 	c.Flags().StringVar(&from, "from", "", "load a setup plan YAML from this file")
+	c.Flags().StringVar(&writePlan, "write-plan", "", "also save the wizard's answers as a setup plan YAML to this path")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview only; never write anything")
 	c.Flags().BoolVar(&yes, "yes", false, "apply without prompting for confirmation")
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")

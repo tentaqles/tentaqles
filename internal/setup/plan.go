@@ -161,8 +161,8 @@ func ExampleYAML() string {
 	}
 	header := "" +
 		"# tq setup plan — edit this file, then run:\n" +
-		"#   tq setup preview <this file>\n" +
-		"#   tq setup apply <this file>\n" +
+		"#   tq setup --from <this file> --dry-run\n" +
+		"#   tq setup --from <this file> --yes\n" +
 		"#\n" +
 		"# base: the folder each company gets a subdirectory under.\n" +
 		"# companies: one entry per client; git_name/git_email are required.\n" +
