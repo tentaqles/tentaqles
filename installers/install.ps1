@@ -2,7 +2,10 @@ $ErrorActionPreference = 'Stop'
 $repo = 'tentaqles/tentaqles'
 $binDir = if ($env:TQ_BIN_DIR) { $env:TQ_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'tentaqles\bin' }
 $arch = if ([Environment]::Is64BitOperatingSystem -and $env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
-$rel = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest"
+# /releases/latest ignores pre-releases; fall back to the newest release of any kind.
+try { $rel = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" }
+catch { $rel = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=1")[0] }
+if (-not $rel) { throw "no releases found for $repo" }
 $ver = $rel.tag_name.TrimStart('v')
 $url = "https://github.com/$repo/releases/download/$($rel.tag_name)/tq_${ver}_windows_${arch}.zip"
 New-Item -ItemType Directory -Force $binDir | Out-Null
