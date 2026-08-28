@@ -1,0 +1,25 @@
+{
+  "_doc": "Canonical guard suite. Consumed by internal/guard/guard_test.go and plugin/tests/test_identity_guard.py. Keep 20 cases.",
+  "cases": [
+    {"name":"plain ls allowed","command":"ls -la","client":"acme","expect":{"tq":{"block":false},"fallback":{"block":false}}},
+    {"name":"blocked exact","command":"gh pr merge 12","client":"acme","blocked":["gh "],"expect":{"tq":{"block":true,"rule":"blocked-command"},"fallback":{"block":true}}},
+    {"name":"blocked phrase after &&","command":"go test ./... && git push --force","client":"acme","blocked":["git push --force"],"expect":{"tq":{"block":true,"rule":"blocked-command"},"fallback":{"block":true}}},
+    {"name":"no substring match (github != git)","command":"echo github","client":"acme","blocked":["git"],"expect":{"tq":{"block":false},"fallback":{"block":false}}},
+    {"name":"blocked after pipe","command":"cat x | az login","client":"acme","blocked":["az login"],"expect":{"tq":{"block":true,"rule":"blocked-command"},"fallback":{"block":true}}},
+    {"name":"wrong cloud aws on azure ws","command":"aws s3 ls","client":"acme","cloud_provider":"azure","expect":{"tq":{"block":true,"rule":"wrong-cloud"},"fallback":{"block":true}}},
+    {"name":"right cloud az on azure ws","command":"az account show","client":"acme","cloud_provider":"azure","expect":{"tq":{"block":false},"fallback":{"block":true}}},
+    {"name":"gcloud family bq on gcp ws","command":"bq ls","client":"acme","cloud_provider":"gcp","expect":{"tq":{"block":false},"fallback":{"block":true}}},
+    {"name":"cloud cli with no provider allowed by tq","command":"aws sts get-caller-identity","client":"acme","expect":{"tq":{"block":false},"fallback":{"block":true}}},
+    {"name":"git email drift blocks commit","command":"git commit -m x","client":"acme","expected_email":"dev@acme.com","actual_email":"me@other.com","expect":{"tq":{"block":true,"rule":"git-email-drift"},"fallback":{"block":false}}},
+    {"name":"git email drift case-insensitive equal","command":"git commit -m x","client":"acme","expected_email":"Dev@Acme.com","actual_email":"dev@acme.com","expect":{"tq":{"block":false},"fallback":{"block":false}}},
+    {"name":"read-only git exempt from email drift","command":"git status","client":"acme","expected_email":"dev@acme.com","actual_email":"me@other.com","expect":{"tq":{"block":false},"fallback":{"block":false}}},
+    {"name":"git log with flags exempt","command":"git --no-pager log -3","client":"acme","expected_email":"dev@acme.com","actual_email":"me@other.com","expect":{"tq":{"block":false},"fallback":{"block":false}}},
+    {"name":"unknown actual email allowed","command":"git commit -m x","client":"acme","expected_email":"dev@acme.com","actual_email":"","expect":{"tq":{"block":false},"fallback":{"block":false}}},
+    {"name":"gh user mismatch","command":"gh repo create x","client":"acme","expected_gh_user":"acme-bot","actual_gh_user":"renatond","expect":{"tq":{"block":true,"rule":"gh-user"},"fallback":{"block":true}}},
+    {"name":"gh user match","command":"gh pr list","client":"acme","expected_gh_user":"acme-bot","actual_gh_user":"ACME-BOT","expect":{"tq":{"block":false},"fallback":{"block":true}}},
+    {"name":"neutral cwd blocks push","command":"git push origin main","neutral":true,"neutral_reason":"outside any base","expect":{"tq":{"block":true,"rule":"neutral-remote"},"fallback":{"block":true}}},
+    {"name":"neutral cwd allows local git","command":"git status","neutral":true,"neutral_reason":"outside any base","expect":{"tq":{"block":false},"fallback":{"block":false}}},
+    {"name":"env drift blocks git","command":"git commit -m x","client":"acme","findings":["env-drift"],"expect":{"tq":{"block":true,"rule":"env-drift"},"fallback":{"block":false}}},
+    {"name":"untrusted blocks git but not ls","command":"git commit -m x","client":"acme","findings":["untrusted"],"expect":{"tq":{"block":true,"rule":"untrusted"},"fallback":{"block":false}}}
+  ]
+}
