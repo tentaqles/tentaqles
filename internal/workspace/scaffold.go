@@ -25,6 +25,10 @@ type AddOptions struct {
 	Identities                                                 []string
 	PermissionMode                                             string
 	RunGit                                                     func(args ...string) (string, error)
+	// Trust says whether the workspace should be trusted (and wired into
+	// git's include chain) after scaffolding. When false, Add still creates
+	// everything on disk but leaves the workspace untrusted.
+	Trust bool
 }
 
 func Add(o AddOptions) (*resolve.Workspace, error) {
@@ -68,12 +72,9 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(mp, append([]byte("# tentaqles workspace manifest — names only, never secrets\n"), raw...), 0o644); err != nil {
-		return nil, err
-	}
-	if _, err := manifest.Load(mp); err != nil {
-		return nil, err
-	}
+	// Scaffold everything else BEFORE the manifest: the manifest is what makes
+	// a directory look like a workspace, so writing it last means an
+	// interrupted run never leaves a half-created workspace behind.
 	for _, id := range o.Identities {
 		d := paths.IdentityDir(o.Name, id)
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -89,6 +90,13 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err := gitcfg.WriteWorkspace(root, o.GitName, o.GitEmail); err != nil {
 		return nil, err
 	}
+	if err := os.WriteFile(mp, append([]byte("# tentaqles workspace manifest — names only, never secrets\n"), raw...), 0o644); err != nil {
+		return nil, err
+	}
+	loaded, err := manifest.Load(mp)
+	if err != nil {
+		return nil, err
+	}
 	cfg, err := registry.Load()
 	if err != nil {
 		return nil, err
@@ -99,22 +107,29 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err := cfg.Save(); err != nil {
 		return nil, err
 	}
-	// Trust first, then sync: SyncGit only wires trusted workspaces into git's
-	// include chain, so the new workspace must be trusted before it can appear.
 	h, err := trust.HashFile(mp)
 	if err != nil {
 		return nil, err
 	}
-	if err := trust.Allow(h); err != nil {
-		return nil, err
-	}
-	if err := SyncGit(cfg); err != nil {
-		return nil, err
+	if o.Trust {
+		// Trust first, then sync: SyncGit only wires trusted workspaces into git's
+		// include chain, so the new workspace must be trusted before it can appear.
+		if err := trust.Allow(h); err != nil {
+			return nil, err
+		}
+		if err := SyncGit(cfg); err != nil {
+			return nil, err
+		}
 	}
 	if o.RunGit != nil {
 		if err := gitcfg.EnsureGlobal(o.RunGit); err != nil {
 			return nil, err
 		}
+	}
+	if !o.Trust {
+		return &resolve.Workspace{
+			Name: o.Name, Root: root, Base: base, ManifestPath: mp, Hash: h, Manifest: loaded,
+		}, nil
 	}
 	res := resolve.Resolve(root, cfg)
 	if res.Workspace == nil {

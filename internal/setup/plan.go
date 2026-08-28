@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/providers"
@@ -57,6 +58,23 @@ func effectiveIdentities(c Company) []string {
 	return c.Identities
 }
 
+// ExpandHome expands a leading "~" (alone, or followed by a separator) to
+// the current user's home directory. Anything else is returned unchanged.
+func ExpandHome(p string) string {
+	if p == "~" {
+		if h, err := os.UserHomeDir(); err == nil {
+			return h
+		}
+		return p
+	}
+	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		if h, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(h, p[2:])
+		}
+	}
+	return p
+}
+
 // LoadPlan reads and parses a setup plan YAML file at path.
 func LoadPlan(path string) (*SetupPlan, error) {
 	raw, err := os.ReadFile(path)
@@ -71,7 +89,7 @@ func LoadPlan(path string) (*SetupPlan, error) {
 	if r.Trust != nil {
 		trust = *r.Trust
 	}
-	return &SetupPlan{Base: r.Base, Companies: r.Companies, Hooks: r.Hooks, Trust: trust}, nil
+	return &SetupPlan{Base: ExpandHome(r.Base), Companies: r.Companies, Hooks: r.Hooks, Trust: trust}, nil
 }
 
 // Save writes p as YAML to path. The plan may contain git identity

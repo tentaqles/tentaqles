@@ -49,7 +49,7 @@ func setupWorkspace(t *testing.T, b *manifest.Bundle) (*resolve.Workspace, *regi
 
 	ws, err := workspace.Add(workspace.AddOptions{
 		Base: base, Name: "acme", GitEmail: "a@acme.com",
-		Identities: []string{"claude"}, RunGit: fakeGit,
+		Identities: []string{"claude"}, RunGit: fakeGit, Trust: true,
 	})
 	if err != nil {
 		t.Fatal(err)

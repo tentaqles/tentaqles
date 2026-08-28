@@ -5,12 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/cli/internal/detect"
+	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/cli/internal/hooks"
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/cli/internal/trust"
 )
 
 func fakeGit(...string) (string, error) { return "", nil }
@@ -336,5 +339,103 @@ func TestApply_ContinuesOnCompanyError(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(base, "goodco", manifest.FileName)); err != nil {
 		t.Fatalf("goodco should have been scaffolded: %v", err)
+	}
+}
+
+func TestApply_TrustFalse(t *testing.T) {
+	isolateHome(t)
+	cat := testCatalog(t)
+	base := t.TempDir()
+
+	p := &SetupPlan{
+		Base:  base,
+		Trust: false,
+		Companies: []Company{
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}, PermissionMode: "default"},
+		},
+	}
+	report, err := Apply(p, cat, ApplyOptions{RunGit: fakeGit, Profiles: hooks.Profiles{}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v; warnings=%v", err, report.Warnings)
+	}
+	root := filepath.Join(base, "acme")
+	mp := filepath.Join(root, manifest.FileName)
+	if _, err := os.Stat(mp); err != nil {
+		t.Fatalf("manifest should still be scaffolded: %v", err)
+	}
+	h, err := trust.HashFile(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trust.IsTrusted(h) {
+		t.Fatal("trust: false must not auto-trust the new workspace")
+	}
+	inc, err := os.ReadFile(gitcfg.IncludeFile())
+	if err == nil && strings.Contains(string(inc), root) {
+		t.Fatalf("untrusted root leaked into include file:\n%s", inc)
+	}
+	for _, ch := range report.Changes {
+		if ch.Kind == "trust" {
+			t.Fatal("no trust change should be reported when trust is false")
+		}
+	}
+}
+
+func TestLoadPlan_ExpandsTilde(t *testing.T) {
+	home := isolateHome(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plan.yaml")
+	if err := os.WriteFile(path, []byte("base: ~/work\ncompanies: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadPlan(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, "work")
+	if loaded.Base != want {
+		t.Fatalf("base = %q, want %q", loaded.Base, want)
+	}
+	if strings.HasPrefix(loaded.Base, "~") {
+		t.Fatalf("tilde not expanded: %q", loaded.Base)
+	}
+}
+
+func TestApply_SkipDetectsHalfCreated(t *testing.T) {
+	isolateHome(t)
+	cat := testCatalog(t)
+	base := t.TempDir()
+
+	p := &SetupPlan{
+		Base:  base,
+		Trust: false,
+		Companies: []Company{
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}, PermissionMode: "default"},
+		},
+	}
+	// First run scaffolds but never trusts: a half-created workspace.
+	if _, err := Apply(p, cat, ApplyOptions{RunGit: fakeGit, Profiles: hooks.Profiles{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run sees the manifest and must flag it rather than count it.
+	report, err := Apply(p, cat, ApplyOptions{RunGit: fakeGit, Profiles: hooks.Profiles{}})
+	if err == nil {
+		t.Fatal("expected an error: the only company could not be applied")
+	}
+	var skip *Change
+	for i := range report.Changes {
+		if report.Changes[i].Kind == "workspace-skip" {
+			skip = &report.Changes[i]
+		}
+	}
+	if skip == nil {
+		t.Fatalf("expected a workspace-skip change, got %+v", report.Changes)
+	}
+	if !strings.Contains(skip.Detail, "not trusted") {
+		t.Fatalf("detail = %q, want it to mention trust", skip.Detail)
+	}
+	if len(report.Warnings) == 0 {
+		t.Fatal("expected a warning for the half-created workspace")
 	}
 }

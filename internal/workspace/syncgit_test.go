@@ -25,7 +25,7 @@ func TestSyncGit_ExcludesUntrusted(t *testing.T) {
 	}
 
 	// Trusted: created (and allowed) through Add.
-	good, err := Add(AddOptions{Base: base, Name: "good", GitEmail: "g@x.io", RunGit: fakeGit})
+	good, err := Add(AddOptions{Base: base, Name: "good", GitEmail: "g@x.io", RunGit: fakeGit, Trust: true})
 	if err != nil {
 		t.Fatal(err)
 	}

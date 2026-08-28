@@ -25,6 +25,7 @@ func newAddCmd() *cobra.Command {
 				}
 			}
 			o.RunGit = gitcfg.RunGit
+			o.Trust = true
 			if o.Base == "" {
 				cfg, err := registry.Load()
 				if err != nil {
