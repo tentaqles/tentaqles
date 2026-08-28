@@ -28,19 +28,19 @@ stop leaking one client's git email or API key into another client's repo.
 macOS / Linux:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/tentaqles/tentaqles/main/cli/installers/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/tentaqles/tentaqles/main/installers/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/tentaqles/tentaqles/main/cli/installers/install.ps1 | iex
+irm https://raw.githubusercontent.com/tentaqles/tentaqles/main/installers/install.ps1 | iex
 ```
 
-From source (requires Go 1.22+):
+From source (requires Go 1.26+):
 
 ```sh
-go install github.com/tentaqles/tentaqles/cli/cmd/tq@latest
+go install github.com/tentaqles/tentaqles/cmd/tq@latest
 ```
 
 ## Quick start
