@@ -30,6 +30,39 @@ func TestHooksStatus_Command(t *testing.T) {
 	}
 }
 
+func TestHooksStatus_NoProfileForAbsentFile(t *testing.T) {
+	dir := t.TempDir()
+	prev := hooks.ProfilesFn
+	hooks.ProfilesFn = func() hooks.Profiles {
+		return hooks.Profiles{"zsh": filepath.Join(dir, "nonexistent-zshrc")}
+	}
+	t.Cleanup(func() { hooks.ProfilesFn = prev })
+
+	root := NewRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"hooks", "status"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	found := false
+	for _, l := range lines {
+		if strings.HasPrefix(l, "zsh") {
+			found = true
+			if !strings.Contains(l, "no profile") {
+				t.Fatalf("expected zsh line to report 'no profile' for a nonexistent path, got: %q", l)
+			}
+			if strings.Contains(l, "missing") {
+				t.Fatalf("did not expect 'missing' for a nonexistent path, got: %q", l)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a zsh line in output: %s", out.String())
+	}
+}
+
 func TestHooksInstallAndRemove_Command(t *testing.T) {
 	dir := t.TempDir()
 	prev := hooks.ProfilesFn

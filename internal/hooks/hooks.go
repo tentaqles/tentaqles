@@ -127,7 +127,11 @@ func StatusOf(sh Shell, p Profiles) Status {
 	st := Status{Shell: sh, Profile: profile}
 	data, err := os.ReadFile(profile)
 	if err != nil {
-		st.State = "missing"
+		if os.IsNotExist(err) {
+			st.State = "no profile"
+		} else {
+			st.State = "missing"
+		}
 		return st
 	}
 	content := string(data)
@@ -147,15 +151,16 @@ func StatusOf(sh Shell, p Profiles) Status {
 // the file if needed. It is idempotent: if already installed or present
 // unmanaged, it leaves the file untouched and returns the current status.
 func Install(sh Shell, p Profiles) (Status, error) {
-	st := StatusOf(sh, p)
-	if st.State == "no profile" {
-		return st, nil
+	profile, ok := p[sh]
+	if !ok || profile == "" {
+		return Status{Shell: sh, State: "no profile"}, nil
 	}
+
+	st := StatusOf(sh, p)
 	if st.State == "installed" || st.State == "present (unmanaged)" {
 		return st, nil
 	}
 
-	profile := p[sh]
 	if err := os.MkdirAll(filepath.Dir(profile), 0755); err != nil {
 		return st, err
 	}
@@ -165,14 +170,29 @@ func Install(sh Shell, p Profiles) (Status, error) {
 		existing = data
 	}
 
+	// Match the existing file's line ending: if it already uses CRLF, write
+	// our block with CRLF too so we don't introduce a mixed-ending file.
 	block := Block(sh)
+	if strings.Contains(string(existing), "\r\n") {
+		block = strings.ReplaceAll(block, "\r\n", "\n")
+		block = strings.ReplaceAll(block, "\n", "\r\n")
+	}
+
 	var newContent string
 	if len(existing) == 0 {
 		newContent = block
 	} else if strings.HasSuffix(string(existing), "\n") {
-		newContent = string(existing) + "\n" + block
+		sep := "\n"
+		if strings.Contains(string(existing), "\r\n") {
+			sep = "\r\n"
+		}
+		newContent = string(existing) + sep + block
 	} else {
-		newContent = string(existing) + "\n\n" + block
+		sep := "\n\n"
+		if strings.Contains(string(existing), "\r\n") {
+			sep = "\r\n\r\n"
+		}
+		newContent = string(existing) + sep + block
 	}
 
 	if err := os.WriteFile(profile, []byte(newContent), 0644); err != nil {

@@ -174,10 +174,45 @@ func TestStatusOf_NoProfile(t *testing.T) {
 	}
 }
 
-func TestStatusOf_MissingFile(t *testing.T) {
+func TestStatusOf_NoProfileForAbsentFile(t *testing.T) {
 	p := tempProfiles(t, "bash")
 	st := StatusOf("bash", p)
+	if st.State != "no profile" {
+		t.Fatalf("expected no profile for a profile path that does not exist on disk, got %s", st.State)
+	}
+}
+
+func TestStatusOf_MissingWhenFileExistsWithoutBlock(t *testing.T) {
+	p := tempProfiles(t, "bash")
+	if err := os.WriteFile(p["bash"], []byte("export FOO=bar\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	st := StatusOf("bash", p)
 	if st.State != "missing" {
-		t.Fatalf("expected missing, got %s", st.State)
+		t.Fatalf("expected missing for an existing file without our block, got %s", st.State)
+	}
+}
+
+func TestInstall_MatchesCRLF(t *testing.T) {
+	p := tempProfiles(t, "pwsh")
+	if err := os.WriteFile(p["pwsh"], []byte("Write-Host 'hi'\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Install("pwsh", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != "installed" {
+		t.Fatalf("expected installed, got %s", st.State)
+	}
+	data, err := os.ReadFile(p["pwsh"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "\r\n") {
+		t.Fatal("expected CRLF-preserving write")
+	}
+	if strings.Count(string(data), "\r\n") < strings.Count(string(data), "\n") {
+		t.Fatalf("expected all newlines in written content to be CRLF, got: %q", string(data))
 	}
 }
