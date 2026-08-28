@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/cli/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/hooks"
 )
 
 func shellArgs(args []string, allDetected bool, profiles hooks.Profiles) []hooks.Shell {

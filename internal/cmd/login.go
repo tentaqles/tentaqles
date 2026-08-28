@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/cli/internal/envplan"
-	"github.com/tentaqles/tentaqles/cli/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func newLoginCmd() *cobra.Command {

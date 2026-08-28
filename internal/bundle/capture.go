@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"gopkg.in/yaml.v3"
 )
 

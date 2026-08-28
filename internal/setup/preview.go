@@ -4,9 +4,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tentaqles/tentaqles/cli/internal/hooks"
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
-	"github.com/tentaqles/tentaqles/cli/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/registry"
 )
 
 // Change describes one action Apply would take (or skip). Kind is one of:

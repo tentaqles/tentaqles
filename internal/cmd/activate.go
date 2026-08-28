@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/cli/internal/shell"
+	"github.com/tentaqles/tentaqles/internal/shell"
 )
 
 func newActivateCmd() *cobra.Command {

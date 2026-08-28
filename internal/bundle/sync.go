@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/tentaqles/tentaqles/cli/internal/paths"
-	"github.com/tentaqles/tentaqles/cli/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
 // Report summarizes what Sync changed.

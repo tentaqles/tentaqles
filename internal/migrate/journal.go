@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
-	"github.com/tentaqles/tentaqles/cli/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 // OpKind names a recorded mutation. Every kind has exactly one inverse, applied

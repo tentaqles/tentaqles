@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
 // Result is the outcome of checking a single provider's CLI.

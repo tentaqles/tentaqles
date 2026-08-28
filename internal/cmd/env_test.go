@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/envplan"
 )
 
 // chdir moves into dir for the duration of the test. env.go reads os.Getwd, so

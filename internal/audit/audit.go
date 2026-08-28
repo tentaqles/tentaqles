@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/tentaqles/tentaqles/cli/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 type Event struct {

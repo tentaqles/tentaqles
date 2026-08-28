@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
-	"github.com/tentaqles/tentaqles/cli/internal/workspace"
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/workspace"
 	"gopkg.in/yaml.v3"
 )
 

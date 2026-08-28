@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
-	"github.com/tentaqles/tentaqles/cli/internal/registry"
-	"github.com/tentaqles/tentaqles/cli/internal/resolve"
-	"github.com/tentaqles/tentaqles/cli/internal/testutil"
-	"github.com/tentaqles/tentaqles/cli/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/testutil"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // isolateHome points TQ_HOME and the OS home at temp dirs so tests never touch

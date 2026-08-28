@@ -7,8 +7,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/cli/internal/detect"
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/detect"
+	"github.com/tentaqles/tentaqles/internal/providers"
 	"gopkg.in/yaml.v3"
 )
 

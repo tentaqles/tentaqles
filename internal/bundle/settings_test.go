@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/manifest"
 )
 
 func TestCompute_ResolvesAndErrors(t *testing.T) {

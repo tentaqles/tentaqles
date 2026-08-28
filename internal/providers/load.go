@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tentaqles/tentaqles/cli/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"gopkg.in/yaml.v3"
 )
 

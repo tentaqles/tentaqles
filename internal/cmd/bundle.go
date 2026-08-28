@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/cli/internal/bundle"
-	"github.com/tentaqles/tentaqles/cli/internal/paths"
-	"github.com/tentaqles/tentaqles/cli/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/bundle"
+	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func newBundleCmd() *cobra.Command {

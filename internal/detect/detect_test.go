@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
 func TestCheck_Installed(t *testing.T) {

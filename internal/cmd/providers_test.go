@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
 func TestProvidersAdd_WritesUserFile(t *testing.T) {

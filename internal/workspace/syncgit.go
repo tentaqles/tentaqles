@@ -1,10 +1,10 @@
 package workspace
 
 import (
-	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
-	"github.com/tentaqles/tentaqles/cli/internal/registry"
-	"github.com/tentaqles/tentaqles/cli/internal/resolve"
-	"github.com/tentaqles/tentaqles/cli/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // SyncGit rewrites ~/.gitconfig-tentaqles so that ONLY trusted workspaces are

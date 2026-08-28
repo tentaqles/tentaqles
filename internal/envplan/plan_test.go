@@ -6,8 +6,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
-	"github.com/tentaqles/tentaqles/cli/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
 func env(m map[string]string) func(string) (string, bool) {

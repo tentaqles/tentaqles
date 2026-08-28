@@ -3,7 +3,7 @@ module github.com/tentaqles/tentaqles/desktop
 go 1.26.7
 
 require (
-	github.com/tentaqles/tentaqles/cli v0.0.0
+	github.com/tentaqles/tentaqles v0.0.0
 	github.com/wailsapp/wails/v2 v2.15.0
 )
 
@@ -39,4 +39,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/tentaqles/tentaqles/cli => ../
+replace github.com/tentaqles/tentaqles => ../

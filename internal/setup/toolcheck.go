@@ -1,8 +1,8 @@
 package setup
 
 import (
-	"github.com/tentaqles/tentaqles/cli/internal/detect"
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/detect"
+	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
 // ToolCheck probes each company's identities' CLI tools, deduplicating

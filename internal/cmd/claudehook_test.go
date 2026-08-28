@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/doctor"
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
-	"github.com/tentaqles/tentaqles/cli/internal/registry"
-	"github.com/tentaqles/tentaqles/cli/internal/resolve"
-	"github.com/tentaqles/tentaqles/cli/internal/testutil"
-	"github.com/tentaqles/tentaqles/cli/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/doctor"
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/testutil"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 type hookExitSentinel struct{}

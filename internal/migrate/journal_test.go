@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/testutil"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 // tqHome points TQ_HOME (and HOME/USERPROFILE, so nothing can escape to the

@@ -1,7 +1,7 @@
 package integration
 
 import (
-	"github.com/tentaqles/tentaqles/cli/internal/testutil"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
 )
 
 func git(t *testing.T, dir string, args ...string) (string, error) {

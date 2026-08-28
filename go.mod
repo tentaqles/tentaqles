@@ -1,4 +1,4 @@
-module github.com/tentaqles/tentaqles/cli
+module github.com/tentaqles/tentaqles
 
 go 1.26.7
 

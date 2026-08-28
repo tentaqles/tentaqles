@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tentaqles/tentaqles/cli/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 func HashFile(path string) (string, error) {

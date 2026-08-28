@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tentaqles/tentaqles/cli/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/envplan"
 )
 
 var Shells = []string{"bash", "zsh", "fish", "pwsh", "powershell", "cmd"}

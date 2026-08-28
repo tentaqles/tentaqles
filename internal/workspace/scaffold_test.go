@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
-	"github.com/tentaqles/tentaqles/cli/internal/paths"
-	"github.com/tentaqles/tentaqles/cli/internal/registry"
-	"github.com/tentaqles/tentaqles/cli/internal/resolve"
-	"github.com/tentaqles/tentaqles/cli/internal/testutil"
-	"github.com/tentaqles/tentaqles/cli/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/testutil"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func fakeGit(...string) (string, error) { return "", nil }

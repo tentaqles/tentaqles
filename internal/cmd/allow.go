@@ -4,10 +4,10 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/cli/internal/registry"
-	"github.com/tentaqles/tentaqles/cli/internal/resolve"
-	"github.com/tentaqles/tentaqles/cli/internal/trust"
-	"github.com/tentaqles/tentaqles/cli/internal/workspace"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
 // syncGitIncludes rewrites the managed git include file so it lists exactly the

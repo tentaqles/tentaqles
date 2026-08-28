@@ -6,9 +6,9 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
-	"github.com/tentaqles/tentaqles/cli/internal/hooks"
-	"github.com/tentaqles/tentaqles/cli/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/registry"
 )
 
 func newInitCmd() *cobra.Command {

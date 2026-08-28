@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/envplan"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")

@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/testutil"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 func TestMakeLinkIsLinkRemoveLink(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tentaqles/tentaqles/cli/internal/cmd"
+	"github.com/tentaqles/tentaqles/internal/cmd"
 )
 
 func main() {

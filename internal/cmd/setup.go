@@ -9,11 +9,11 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/cli/internal/detect"
-	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
-	"github.com/tentaqles/tentaqles/cli/internal/hooks"
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
-	"github.com/tentaqles/tentaqles/cli/internal/setup"
+	"github.com/tentaqles/tentaqles/internal/detect"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/setup"
 )
 
 // setupRunGit is the seam tests use to fake git for `tq setup --from --yes`.

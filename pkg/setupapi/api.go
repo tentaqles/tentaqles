@@ -15,15 +15,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tentaqles/tentaqles/cli/internal/detect"
-	"github.com/tentaqles/tentaqles/cli/internal/doctor"
-	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
-	"github.com/tentaqles/tentaqles/cli/internal/hooks"
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
-	"github.com/tentaqles/tentaqles/cli/internal/registry"
-	"github.com/tentaqles/tentaqles/cli/internal/resolve"
-	"github.com/tentaqles/tentaqles/cli/internal/setup"
-	"github.com/tentaqles/tentaqles/cli/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/detect"
+	"github.com/tentaqles/tentaqles/internal/doctor"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/setup"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // ---- facade types -----------------------------------------------------

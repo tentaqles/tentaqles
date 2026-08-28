@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/manifest"
 )
 
 // Desired is the fully-resolved set of catalog entries a workspace's bundle

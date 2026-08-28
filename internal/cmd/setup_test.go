@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/hooks"
 )
 
 // isolateSetupHome mirrors internal/setup's isolateHome helper: it points

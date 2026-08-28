@@ -9,7 +9,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/providers"
 	"gopkg.in/yaml.v3"
 )
 

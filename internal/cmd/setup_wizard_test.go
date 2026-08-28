@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/paths"
-	"github.com/tentaqles/tentaqles/cli/internal/providers"
-	"github.com/tentaqles/tentaqles/cli/internal/setup"
+	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/setup"
 )
 
 func TestBuildProviderOptions_GroupsAndLabels(t *testing.T) {

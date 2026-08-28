@@ -1,6 +1,6 @@
 package envplan
 
-import "github.com/tentaqles/tentaqles/cli/internal/providers"
+import "github.com/tentaqles/tentaqles/internal/providers"
 
 // Provider describes how one CLI is pointed at a private config home.
 type Provider struct {

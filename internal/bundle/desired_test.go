@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/manifest"
 )
 
 func TestCompute_RejectsInvalidNames(t *testing.T) {

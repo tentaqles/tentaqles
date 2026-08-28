@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/hooks"
 )
 
 func TestHooksStatus_Command(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/cli/internal/testutil"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 func TestLoad_Missing_IsEmpty(t *testing.T) {

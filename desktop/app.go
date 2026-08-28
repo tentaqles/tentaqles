@@ -6,7 +6,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/tentaqles/tentaqles/cli/pkg/setupapi"
+	"github.com/tentaqles/tentaqles/pkg/setupapi"
 )
 
 // App struct binds the setupapi facade to the Wails frontend.
