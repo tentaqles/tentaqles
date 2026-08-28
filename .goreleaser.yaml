@@ -10,12 +10,26 @@ builds:
 archives:
   - format_overrides: [{ goos: windows, formats: [zip] }]
 checksum: { name_template: checksums.txt }
-release: { github: { owner: tentaqles, name: tentaqles } }
+release:
+  github: { owner: tentaqles, name: tentaqles }
+  prerelease: auto   # tags with a pre-release suffix (v0.1.0-rc1) are marked pre-release
+# Tap/bucket publishing needs the repos tentaqles/homebrew-tap and tentaqles/scoop-bucket
+# to exist AND a token that can push to them (GITHUB_TOKEN cannot). skip_upload: auto
+# skips the push for pre-releases; for a stable tag create the repos first and set a
+# HOMEBREW_TAP_GITHUB_TOKEN / SCOOP_BUCKET_GITHUB_TOKEN secret, then remove `auto`.
 brews:
-  - repository: { owner: tentaqles, name: homebrew-tap }
+  - repository:
+      owner: tentaqles
+      name: homebrew-tap
+      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
+    skip_upload: auto
     homepage: https://tentaqles.ai
     description: One terminal identity per workspace folder
 scoops:
-  - repository: { owner: tentaqles, name: scoop-bucket }
+  - repository:
+      owner: tentaqles
+      name: scoop-bucket
+      token: '{{ envOrDefault "SCOOP_BUCKET_GITHUB_TOKEN" "" }}'
+    skip_upload: auto
     homepage: https://tentaqles.ai
     description: One terminal identity per workspace folder
