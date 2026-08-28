@@ -92,10 +92,15 @@ manifest_path = find_manifest(os.getcwd())
 with open(manifest_path, 'r') as f:
     data = yaml.safe_load(f)
 
-# Apply the change — examples:
-# data['git']['email'] = 'new@email.com'
-# data['cloud']['provider'] = 'aws'
+# Apply the change — examples (non-identity fields only):
 # data['stack'].append('fastapi')
+# data['cloud']['provider'] = 'aws'
+# data['language'] = 'pt-BR'
+#
+# Do NOT hand-edit identity fields here (git.email, git.user,
+# git.expected_user, git.provider/host): they are tq-owned. Change them with
+# `tq add` / `tq doctor`, then re-trust with `tq allow <name>` — a hand-edit
+# changes the manifest hash and leaves the workspace untrusted.
 
 with open(manifest_path, 'w') as f:
     yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)

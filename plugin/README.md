@@ -26,7 +26,7 @@ Working across multiple clients with an AI coding assistant creates failure mode
 
 **Learned workspace profiles.** Each workspace grows an auto-generated profile — hot files, session frequency, top concepts — that is injected into the SessionStart preamble. No manual tagging required. Regenerates when stale (>7 days) or on demand via `/tentaqles:profile-refresh`.
 
-**Time-travel snapshots.** Before every identity auto-switch and every write to `.tentaqles.yaml`, the plugin captures an append-only JSON snapshot (manifest, memory stats, git identity). The last 30 are kept and pruned automatically. Restore any prior state interactively with `/tentaqles:rollback`.
+**Time-travel snapshots.** Before every identity switch (tq switches identity via its shell hook; the plugin verifies and records it) and every write to `.tentaqles.yaml`, the plugin captures an append-only JSON snapshot (manifest, memory stats, git identity). The last 30 are kept and pruned automatically. Restore any prior state interactively with `/tentaqles:rollback`.
 
 **Inter-workspace signals (opt-in pub/sub).** A small global table lets Workspace A emit a message to Workspace B that appears in B's next session preamble. 48-hour TTL, acknowledge-once, workspace-level payloads only (deploy failed, CI passed, PR merged) — never code or credentials. Opt-in per workspace via a `signals:` block in the manifest.
 

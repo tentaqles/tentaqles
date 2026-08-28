@@ -56,5 +56,5 @@ Restore the workspace `.tentaqles.yaml` to a previously captured snapshot.
 ## Notes
 
 - If the user wants to preview what changed before restoring, you can compare two snapshots manually (read both JSON files and diff the `manifest` keys).
-- The `auto-switch` reason means an identity switch triggered the snapshot automatically — this is the most common restore target.
+- The `auto-switch` reason means an identity switch triggered the snapshot automatically (tq switches the identity via its shell hook; the plugin verifies it and records the snapshot) — this is the most common restore target.
 - The `manifest-edit` reason means a Write to `.tentaqles.yaml` triggered the snapshot — useful for undoing accidental edits.

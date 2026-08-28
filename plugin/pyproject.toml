@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tentaqles"
-version = "0.3.1"
+version = "0.4.0"
 description = "Multi-workspace orchestration for AI coding assistants"
 readme = "README.md"
 license = { text = "MIT" }

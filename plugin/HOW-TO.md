@@ -102,7 +102,7 @@ Git: github as globex-dev (dev@globex.io)
 PM: jira
 Stack: python, fastapi, snowflake
 
-Auto-switch:
+Identity (switched by tq's shell hook, verified by the plugin):
   * gh: acme-dev -> globex-dev
   * aws: profile -> globex
 ```
@@ -331,14 +331,22 @@ Not: casual questions, reformulations, or polite disagreement that doesn't set a
 
 3. **Manual fix patterns**:
 
+   Identity is tq-owned in 0.4.0+ — do not set it by hand with `git config`,
+   `gh auth switch` or `az account set`. Every fix below goes through `tq`,
+   which writes into the workspace's own private config home:
+
    | Mismatch | Fix |
    |----------|-----|
-   | Git email wrong | `cd {client_root} && git config user.email "expected@email.com"` (or, better, verify `includeIf` is set up globally) |
-   | gh account wrong | `gh auth switch --user expected-user` |
-   | gh user not authenticated | `gh auth login` then switch |
-   | Azure sub wrong | `az account set --subscription "expected-sub"` |
-   | AWS profile wrong | `export AWS_PROFILE=expected-profile` (env var, must be set in shell) |
-   | DO context wrong | `doctl auth switch --context expected` |
+   | Git email wrong | `tq doctor` (re-applies the manifest's git identity; re-run `tq add` if the manifest itself is wrong) |
+   | gh account wrong / not authenticated | `tq login {workspace} gh` |
+   | Azure sub / account wrong | `tq login {workspace} az` |
+   | AWS profile wrong | `tq login {workspace} aws` |
+   | Any other CLI identity | `tq login {workspace} <identity>` (`tq login --help`; the identity must exist in the workspace's `identities:` block) |
+   | Workspace reported untrusted (manifest edited) | `tq allow {workspace}` |
+   | Shell still on the old identity | `eval "$(tq env --shell <shell>)"`, or open a new shell |
+
+   `tq login <workspace> <identity>` runs the CLI's own login flow inside that
+   workspace's config dir, so it never touches your other clients' logins.
 
 4. **Persistent mismatch across sessions**: Your `.tentaqles.yaml` might have the wrong `expected_user`. Common mistake: putting the email in `expected_user` instead of the username. Fix:
    ```
@@ -503,7 +511,7 @@ chain = store.get_decision_lineage("dec_b7c1")
 **What snapshots contain**: Each snapshot is an append-only JSON file at `{workspace}/.claude/snapshots/{utc_iso}.json`. It captures the manifest contents, memory stats (session/decision/touch counts per tier), and the active git identity at the moment it was taken. It does NOT contain source code or full memory contents.
 
 **When snapshots fire automatically**:
-1. On every identity auto-switch at session start.
+1. On every identity switch at session start (tq switches the identity via its shell hook; the plugin verifies it and snapshots).
 2. On any Write to `.tentaqles.yaml` (via the `scripts/snapshot-guard.py` PreToolUse hook).
 
 The last 30 snapshots per workspace are retained. Older ones are pruned automatically on each write.
@@ -536,7 +544,7 @@ Snapshots for: acme (30 available)
 **Gotchas**:
 - Snapshots are gitignored by default (`.claude/snapshots/` is in the default `.gitignore` scaffold).
 - Restoring a manifest snapshot does not undo `memory.db` changes. If you need to roll back memory, use the backup approach in section 12.
-- The snapshot directory is created lazily on first write — it will not exist until the first auto-switch or manifest edit.
+- The snapshot directory is created lazily on first write — it will not exist until the first identity switch or manifest edit.
 
 ---
 
