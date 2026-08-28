@@ -3,7 +3,6 @@ package doctor
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,9 +28,12 @@ type Finding struct {
 }
 
 type Deps struct {
-	Env      func(string) (string, bool)
-	Cwd      string
-	RunGit   func(args ...string) (string, error)
+	Env    func(string) (string, bool)
+	Cwd    string
+	RunGit func(args ...string) (string, error)
+	// RunGitIn runs git inside dir. Optional; nil falls back to RunGit, which
+	// runs in the process cwd.
+	RunGitIn func(dir string, args ...string) (string, error)
 	LookPath func(string) (string, error)
 }
 
@@ -136,18 +138,14 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			add("error", "git-useconfigonly", "", "global user.useConfigOnly is not true (commits outside workspaces will use a guessed identity)", "tq init <base>")
 		}
 	}
-	// env vs cwd
-	res := resolve.Resolve(d.Cwd, cfg)
-	envWS, _ := d.Env("TQ_WS")
-	_, hasState := d.Env(envplan.StateVar)
-	switch {
-	case res.Workspace != nil && envWS != res.Workspace.Name:
-		add("error", "env-drift", res.Workspace.Name, fmt.Sprintf("cwd resolves to %s but TQ_WS=%q", res.Workspace.Name, envWS), "open a new shell or run: eval \"$(tq env --shell <shell>)\"")
-	case res.Workspace == nil && envWS != "":
-		add("error", "env-drift", "", fmt.Sprintf("cwd is neutral (%s) but TQ_WS=%q is still set", res.Reason, envWS), "eval \"$(tq env --shell <shell>)\"")
-	}
-	if !hasState && envWS == "" && res.Reason != "outside any base" {
-		add("warn", "hook-missing", "", "inside a base but no tq state in this shell: is the hook installed?", "tq init prints the profile line")
+	// env vs cwd — shared with tq claude-hook so both agree.
+	cwd := RunForCwd(cfg, d)
+	for _, f := range cwd.Findings {
+		// Run already reports untrusted once per workspace.
+		if f.Code == "untrusted" {
+			continue
+		}
+		fs = append(fs, f)
 	}
 	if len(fs) == 0 {
 		add("ok", "ok", "", "all checks passed", "")

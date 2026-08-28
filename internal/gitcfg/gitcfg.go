@@ -75,6 +75,16 @@ func RunGit(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// RunGitIn executes git with dir as the working directory and returns trimmed
+// stdout. It is RunGit scoped to a directory, so per-workspace includeIf rules
+// apply.
+func RunGitIn(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
 // EnsureGlobal makes ~/.gitconfig include our file and refuse guessed identities.
 func EnsureGlobal(run func(args ...string) (string, error)) error {
 	inc := filepath.ToSlash(IncludeFile())
