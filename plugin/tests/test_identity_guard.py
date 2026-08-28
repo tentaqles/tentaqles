@@ -44,10 +44,19 @@ def run_guard(command: str, cwd: str = None) -> subprocess.CompletedProcess:
     )
 
 
-def hook_env(tmp_path, **extra):
-    """PATH keeping bash (and its coreutils) resolvable, plus tmp_path."""
-    path = os.path.dirname(BASH) + os.pathsep + str(tmp_path)
-    env = dict(os.environ, PATH=path, TENTAQLES_PY=sys.executable)
+def hook_env(tmp_path, with_python=True, **extra):
+    """PATH keeping bash (and its coreutils) resolvable, plus tmp_path.
+
+    with_python=True also puts the running interpreter's directory on PATH so
+    the fallback guard can be launched; with_python=False simulates a box with
+    no Python at all.
+    """
+    parts = [os.path.dirname(BASH)]
+    if with_python:
+        parts.append(os.path.dirname(sys.executable))
+    parts.append(str(tmp_path))
+    env = dict(os.environ, PATH=os.pathsep.join(parts))
+    env.pop("TENTAQLES_PY", None)
     env.update(extra)
     return env
 
@@ -132,6 +141,66 @@ def test_tq_hook_session_start_fallback_message(tmp_path):
     )
     assert p.returncode == 0
     assert "fallback mode" in p.stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_tq_hook_blocks_when_no_python(tmp_path):
+    """No tq and no interpreter -> fail CLOSED, not open."""
+    env = hook_env(
+        tmp_path,
+        with_python=False,
+        TQ_BIN=str(tmp_path / "nope"),
+        HOME=str(tmp_path),
+        LOCALAPPDATA=str(tmp_path),
+        USERPROFILE=str(tmp_path),
+        CLAUDE_PLUGIN_ROOT=str(ROOT),
+    )
+    payload = json.dumps({"cwd": str(tmp_path), "tool_input": {"command": "ls"}})
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert p.returncode == 2
+    assert "no python interpreter was found" in p.stderr
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_tq_hook_unknown_event_blocks(tmp_path):
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))
+    p = subprocess.run(
+        [BASH, str(HOOK), "bogus"], input="{}", capture_output=True, text=True, env=env
+    )
+    assert p.returncode == 2
+    assert "unknown event 'bogus'" in p.stderr
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_tq_hook_falls_through_when_tq_not_executable(tmp_path):
+    """A resolved-but-unrunnable tq (exit 126/127) must fall back, not pass."""
+    broken = tmp_path / "tq"
+    broken.write_text("not-an-executable" + chr(10))
+    broken.chmod(0o755)
+    env = hook_env(
+        tmp_path,
+        TQ_BIN=str(broken),
+        HOME=str(tmp_path),
+        LOCALAPPDATA=str(tmp_path),
+        USERPROFILE=str(tmp_path),
+        CLAUDE_PLUGIN_ROOT=str(ROOT),
+    )
+    payload = json.dumps({"cwd": str(tmp_path), "tool_input": {"command": "git push"}})
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert p.returncode == 2
+    assert "tq is not installed" in p.stderr
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
