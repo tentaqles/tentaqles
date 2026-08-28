@@ -114,7 +114,10 @@ func (a *App) PickFolder() (string, error) {
 
 // OpenTerminal opens a new terminal window and runs command in it.
 func (a *App) OpenTerminal(command string) error {
-	name, args := terminalCommand(goos(), command)
+	name, args, err := resolveTerminal(goos(), command)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(name, args...)
 	return cmd.Start()
 }

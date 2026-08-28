@@ -127,6 +127,49 @@ func (p Provider) Validate() error {
 			return fmt.Errorf("provider %q: %w", p.ID, err)
 		}
 	}
+	for _, osHints := range []struct {
+		name string
+		os   InstallOS
+	}{
+		{"windows", p.Install.Windows},
+		{"macos", p.Install.Macos},
+		{"linux", p.Install.Linux},
+	} {
+		if err := osHints.os.validate(); err != nil {
+			return fmt.Errorf("provider %q: install.%s.%w", p.ID, osHints.name, err)
+		}
+	}
+	return nil
+}
+
+// installMetachars are the shell metacharacters an install hint must never
+// contain. Install hints are surfaced verbatim to the user and can be run by
+// the desktop app's "Install" button, so a hint like
+// "winget install x & calc" must not be able to smuggle in a second command.
+const installMetachars = "&|;^<>$`\n\r\"'"
+
+// validate checks the runnable install hints for shell metacharacters. URL is
+// exempt entirely (it is opened, never executed, and legitimately contains
+// characters like "&" in query strings) and Note is free-form prose.
+func (o InstallOS) validate() error {
+	for _, f := range []struct {
+		field string
+		value string
+	}{
+		{"winget", o.Winget},
+		{"scoop", o.Scoop},
+		{"brew", o.Brew},
+		{"apt", o.Apt},
+		{"pip", o.Pip},
+		{"npm", o.Npm},
+	} {
+		if i := strings.IndexAny(f.value, installMetachars); i >= 0 {
+			return fmt.Errorf("%s: must not contain the shell metacharacter %q", f.field, string(f.value[i]))
+		}
+		if hasControlChars(f.value) {
+			return fmt.Errorf("%s: must not contain control characters", f.field)
+		}
+	}
 	return nil
 }
 

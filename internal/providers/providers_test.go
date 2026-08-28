@@ -192,3 +192,67 @@ func TestValidate_RejectsControlCharsInValues(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_RejectsMetacharsInInstallHints(t *testing.T) {
+	base := func(o InstallOS) Provider {
+		return Provider{ID: "widget", Name: "Widget", Category: "other", Install: Install{Windows: o}}
+	}
+
+	bad := []string{
+		"winget install x & calc",
+		"winget install x | calc",
+		"winget install x; calc",
+		"winget install x ^ y",
+		"winget install x > out",
+		"winget install x < in",
+		"winget install $(calc)",
+		"winget install `calc`",
+		"winget install \"x\"",
+		"winget install 'x'",
+		"winget install x\ncalc",
+		"winget install x\rcalc",
+	}
+	for _, v := range bad {
+		if err := base(InstallOS{Winget: v}).Validate(); err == nil {
+			t.Errorf("expected install hint %q to be rejected", v)
+		}
+	}
+
+	// Every runnable field is checked, not just winget.
+	for _, p := range []Provider{
+		base(InstallOS{Scoop: "scoop install x && calc"}),
+		base(InstallOS{Brew: "brew install x; calc"}),
+		base(InstallOS{Apt: "apt install x | sh"}),
+		base(InstallOS{Pip: "pip install $X"}),
+		base(InstallOS{Npm: "npm i -g x `id`"}),
+	} {
+		if err := p.Validate(); err == nil {
+			t.Errorf("expected install hint in %+v to be rejected", p.Install.Windows)
+		}
+	}
+	// macOS and Linux hints are checked too.
+	mac := Provider{ID: "widget", Name: "Widget", Category: "other",
+		Install: Install{Macos: InstallOS{Brew: "brew install x & calc"}}}
+	if err := mac.Validate(); err == nil {
+		t.Error("expected macos install hint to be rejected")
+	}
+	lin := Provider{ID: "widget", Name: "Widget", Category: "other",
+		Install: Install{Linux: InstallOS{Apt: "apt install x & calc"}}}
+	if err := lin.Validate(); err == nil {
+		t.Error("expected linux install hint to be rejected")
+	}
+
+	// Plain hints stay valid, and URL/Note are exempt.
+	ok := Provider{ID: "widget", Name: "Widget", Category: "other", Install: Install{
+		Windows: InstallOS{
+			Winget: "winget install --id Foo.Bar -e",
+			Scoop:  "scoop install foo",
+			Npm:    "npm install -g @foo/bar",
+			URL:    "https://example.com/dl?os=win&arch=amd64",
+			Note:   "Requires PowerShell 7+; see $PROFILE and `Get-Help`.",
+		},
+	}}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("expected clean install hints to be accepted, got %v", err)
+	}
+}
