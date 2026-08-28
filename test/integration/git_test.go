@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,9 @@ func TestGitIdentity_InsideWorkspaceUsesEmail_OutsideRefused(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	home := t.TempDir()
+	// Resolve symlinks / 8.3 short names (macOS /var, Windows RUNNER~1) so the
+	// includeIf gitdir written by gitcfg matches git's canonical gitdir.
+	home := testutil.TempDir(t)
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
 	}
