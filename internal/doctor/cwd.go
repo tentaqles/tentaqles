@@ -41,13 +41,19 @@ func RunForCwd(cfg *registry.Config, d Deps) CwdReport {
 	envWS, _ := d.Env("TQ_WS")
 	_, hasState := d.Env(envplan.StateVar)
 
+	envDrift := false
 	switch {
 	case res.Workspace != nil && envWS != res.Workspace.Name:
+		envDrift = true
 		add("error", "env-drift", res.Workspace.Name, fmt.Sprintf("cwd resolves to %s but TQ_WS=%q", res.Workspace.Name, envWS), "open a new shell or run: eval \"$(tq env --shell <shell>)\"")
 	case res.Workspace == nil && envWS != "":
+		envDrift = true
 		add("error", "env-drift", "", fmt.Sprintf("cwd is neutral (%s) but TQ_WS=%q is still set", res.Reason, envWS), "eval \"$(tq env --shell <shell>)\"")
 	}
-	if !hasState && envWS == "" && res.Reason != "outside any base" {
+	// hook-missing is suppressed when env-drift already fired for this cwd:
+	// both describe the same stale shell, and the plan says not to
+	// double-report. env-drift is the actionable one (same fix).
+	if !envDrift && !hasState && envWS == "" && res.Reason != "outside any base" {
 		add("warn", "hook-missing", "", "inside a base but no tq state in this shell: is the hook installed?", "tq init prints the profile line")
 	}
 	if res.Workspace == nil {

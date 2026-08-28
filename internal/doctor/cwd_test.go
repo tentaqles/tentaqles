@@ -231,3 +231,20 @@ func TestRunForCwd_UntrustedIsStructural(t *testing.T) {
 		t.Fatalf("codes %v", r.Codes())
 	}
 }
+
+// Fix round 2, finding 9: env-drift and hook-missing describe the same stale
+// shell, so hook-missing is suppressed once env-drift fired for the same cwd.
+func TestRunForCwd_HookMissingSuppressedByEnvDrift(t *testing.T) {
+	cfg, ws := setupTrustedWorkspace(t, "acme", "dev@acme.com")
+	d := Deps{Cwd: ws,
+		Env:      func(string) (string, bool) { return "", false },
+		RunGitIn: func(string, ...string) (string, error) { return "dev@acme.com", nil },
+		LookPath: func(string) (string, error) { return "/usr/bin/git", nil }}
+	r := RunForCwd(cfg, d)
+	if !contains(r.Codes(), "env-drift") {
+		t.Fatalf("expected env-drift: %v", r.Codes())
+	}
+	if contains(r.Codes(), "hook-missing") {
+		t.Fatalf("hook-missing must not double-report alongside env-drift: %v", r.Codes())
+	}
+}
