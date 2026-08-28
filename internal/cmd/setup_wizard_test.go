@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/cli/internal/paths"
 	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/cli/internal/setup"
 )
 
 func TestBuildProviderOptions_GroupsAndLabels(t *testing.T) {
@@ -87,5 +92,50 @@ func TestPlanFromAnswers_NoCompanies(t *testing.T) {
 	}
 	if len(plan.Companies) != 0 {
 		t.Errorf("expected no companies, got %d", len(plan.Companies))
+	}
+}
+
+func TestPlanFromAnswers_DuplicateNamesRejectedByValidate(t *testing.T) {
+	cat := providers.MustLoad()
+	plan := planFromAnswers(wizardAnswers{
+		Base: "C:/repos",
+		Companies: []companyAnswers{
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}, PermissionMode: "default"},
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@other.com", Identities: []string{"claude"}, PermissionMode: "default"},
+		},
+	})
+	err := plan.Validate(cat)
+	if err == nil {
+		t.Fatal("expected Validate to reject duplicate company names")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("error = %v, want it to mention a duplicate", err)
+	}
+}
+
+func TestSaveWizardPlan_WritesBothFiles(t *testing.T) {
+	isolateSetupHome(t)
+	dir := t.TempDir()
+	extra := filepath.Join(dir, "nested", "my-plan.yaml")
+
+	plan := planFromAnswers(wizardAnswers{
+		Base:      dir,
+		Companies: []companyAnswers{{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}, PermissionMode: "default"}},
+	})
+	if err := saveWizardPlan(plan, extra); err != nil {
+		t.Fatal(err)
+	}
+	last := filepath.Join(paths.Home(), "last-setup.yaml")
+	for _, p := range []string{last, extra} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("expected %s to exist: %v", p, err)
+		}
+	}
+	loaded, err := setup.LoadPlan(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Companies) != 1 || loaded.Companies[0].Name != "acme" {
+		t.Fatalf("round trip mismatch: %+v", loaded)
 	}
 }

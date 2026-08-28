@@ -95,22 +95,6 @@ func planFromAnswers(a wizardAnswers) *setup.SetupPlan {
 	}
 }
 
-// expandHome expands a leading "~" to the current user's home directory.
-func expandHome(p string) string {
-	if p == "~" {
-		if h, err := os.UserHomeDir(); err == nil {
-			return h
-		}
-		return p
-	}
-	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
-		if h, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(h, p[2:])
-		}
-	}
-	return p
-}
-
 // runWizard drives the interactive `tq setup` flow described in the task
 // brief: welcome, base folder, company loop (providers + permission mode),
 // tool check, hooks, preview, and apply.
@@ -147,7 +131,7 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 	)).Run(); err != nil {
 		return nil, err
 	}
-	base = expandHome(strings.TrimSpace(base))
+	base = setup.ExpandHome(strings.TrimSpace(base))
 
 	if _, err := os.Stat(base); os.IsNotExist(err) {
 		var create bool
@@ -174,6 +158,11 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 					if !workspace.NameRe.MatchString(s) {
 						return fmt.Errorf("must match %s", workspace.NameRe.String())
 					}
+					for _, prev := range companies {
+						if prev.Name == s {
+							return fmt.Errorf("company %q was already added", s)
+						}
+					}
 					return nil
 				}),
 			huh.NewInput().Title("Display name").Value(&ca.DisplayName),
@@ -199,11 +188,11 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("Providers for " + ca.Name).
+				Title("Providers for "+ca.Name).
 				Options(buildProviderOptions(cat)...).
 				Value(&ca.Identities),
 			huh.NewSelect[string]().
-				Title("Permission mode for " + ca.Name).
+				Title("Permission mode for "+ca.Name).
 				Options(permissionModeOptions()...).
 				Value(&ca.PermissionMode),
 		)).Run(); err != nil {
@@ -220,74 +209,6 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 		}
 		if !another {
 			break
-		}
-	}
-
-	if len(companies) == 0 {
-		declined := false
-		for attempt := 0; attempt < 2 && len(companies) == 0; attempt++ {
-			var addOne bool
-			if err := huh.NewForm(huh.NewGroup(
-				huh.NewNote().Title("Add at least one company"),
-				huh.NewConfirm().Title("Add a company now?").Value(&addOne),
-			)).Run(); err != nil {
-				return nil, err
-			}
-			if !addOne {
-				if declined {
-					return nil, fmt.Errorf("at least one company is required")
-				}
-				declined = true
-				continue
-			}
-
-			ca := companyAnswers{}
-			if err := huh.NewForm(huh.NewGroup(
-				huh.NewInput().Title("Company name (short id)").Value(&ca.Name).
-					Validate(func(s string) error {
-						if !workspace.NameRe.MatchString(s) {
-							return fmt.Errorf("must match %s", workspace.NameRe.String())
-						}
-						return nil
-					}),
-				huh.NewInput().Title("Display name").Value(&ca.DisplayName),
-				huh.NewInput().Title("Color (optional)").Value(&ca.Color),
-				huh.NewInput().Title("Git name").Value(&ca.GitName).
-					Validate(func(s string) error {
-						if strings.TrimSpace(s) == "" {
-							return fmt.Errorf("git name is required")
-						}
-						return nil
-					}),
-				huh.NewInput().Title("Git email").Value(&ca.GitEmail).
-					Validate(func(s string) error {
-						if strings.TrimSpace(s) == "" || !strings.Contains(s, "@") {
-							return fmt.Errorf("a valid email is required")
-						}
-						return nil
-					}),
-				huh.NewInput().Title("Git user (optional, e.g. GitHub username)").Value(&ca.GitUser),
-			)).Run(); err != nil {
-				return nil, err
-			}
-
-			if err := huh.NewForm(huh.NewGroup(
-				huh.NewMultiSelect[string]().
-					Title("Providers for " + ca.Name).
-					Options(buildProviderOptions(cat)...).
-					Value(&ca.Identities),
-				huh.NewSelect[string]().
-					Title("Permission mode for " + ca.Name).
-					Options(permissionModeOptions()...).
-					Value(&ca.PermissionMode),
-			)).Run(); err != nil {
-				return nil, err
-			}
-
-			companies = append(companies, ca)
-		}
-		if len(companies) == 0 {
-			return nil, fmt.Errorf("at least one company is required")
 		}
 	}
 
@@ -387,6 +308,10 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 		return nil, fmt.Errorf("setup cancelled before apply")
 	}
 
+	if err := plan.Validate(cat); err != nil {
+		return nil, err
+	}
+
 	return plan, nil
 }
 
@@ -394,7 +319,7 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 // when writePlanPath is non-empty, to that path as well.
 func saveWizardPlan(plan *setup.SetupPlan, writePlanPath string) error {
 	lastPath := filepath.Join(paths.Home(), "last-setup.yaml")
-	if err := os.MkdirAll(filepath.Dir(lastPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(lastPath), 0o700); err != nil {
 		return err
 	}
 	if err := plan.Save(lastPath); err != nil {

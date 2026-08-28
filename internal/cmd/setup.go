@@ -47,6 +47,15 @@ type setupOutput struct {
 	Report    *setup.Report              `json:"report,omitempty"`
 }
 
+// declinedOutput is what --json prints when the user declines the
+// confirmation prompt: the same preview/toolcheck plus an explicit
+// applied:false, so a caller never has to infer it from a missing report.
+type declinedOutput struct {
+	Preview   []setup.Change             `json:"preview"`
+	ToolCheck map[string][]detect.Result `json:"toolcheck"`
+	Applied   bool                       `json:"applied"`
+}
+
 func loadProviderCatalog(errw func(format string, a ...any)) *providers.Catalog {
 	cat, err := providers.Load()
 	if err != nil {
@@ -140,6 +149,9 @@ func newSetupCmd() *cobra.Command {
 					return err
 				}
 				if !ok {
+					if asJSON {
+						return json.NewEncoder(out).Encode(declinedOutput{Preview: changes, ToolCheck: toolcheck, Applied: false})
+					}
 					return nil
 				}
 			}
