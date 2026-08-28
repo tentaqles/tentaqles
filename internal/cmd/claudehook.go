@@ -35,15 +35,37 @@ var lookupGHUser = func(env map[string]string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, "gh", "api", "user", "--jq", ".login")
-	c.Env = os.Environ()
-	if v := env["GH_CONFIG_DIR"]; v != "" {
-		c.Env = append(c.Env, "GH_CONFIG_DIR="+v)
-	}
+	c.Env = ghEnv(os.Environ(), env)
 	out, err := c.Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// ghEnv builds the child env for `gh`. When the workspace pins a GH_CONFIG_DIR
+// we must also strip the ambient token/host vars: gh prefers GH_TOKEN /
+// GITHUB_TOKEN over the config dir, so an inherited token would report the
+// shell's login instead of the workspace's identity.
+func ghEnv(base []string, ws map[string]string) []string {
+	dir := ws["GH_CONFIG_DIR"]
+	if dir == "" {
+		return base
+	}
+	drop := map[string]bool{
+		"GH_TOKEN": true, "GITHUB_TOKEN": true, "GH_HOST": true,
+		"GH_ENTERPRISE_TOKEN": true, "GITHUB_ENTERPRISE_TOKEN": true,
+		"GH_CONFIG_DIR": true,
+	}
+	out := make([]string, 0, len(base)+1)
+	for _, kv := range base {
+		k, _, ok := strings.Cut(kv, "=")
+		if ok && drop[k] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "GH_CONFIG_DIR="+dir)
 }
 
 func newClaudeHookCmd() *cobra.Command {
@@ -105,7 +127,9 @@ func newPreToolUseCmd() *cobra.Command {
 // which the caller treats as allow: tq never blocks on its own parse errors.
 func readHookPayload(r io.Reader) (hookPayload, string) {
 	var p hookPayload
-	raw, err := io.ReadAll(r)
+	// Bound stdin: the hook payload is small, and a runaway producer must not
+	// make tq allocate without limit.
+	raw, err := io.ReadAll(io.LimitReader(r, 1<<20))
 	if err != nil {
 		return p, ""
 	}
@@ -145,6 +169,8 @@ func toolInputCommand(raw json.RawMessage) string {
 // gh login.
 func gatherGuardInput(cwd, cmdline string) (guard.Input, error) {
 	if strings.TrimSpace(cwd) == "" {
+		// If Getwd also fails, cwd stays empty: resolve finds no workspace, the
+		// input is neutral, and the guard fails closed for remote mutations.
 		cwd, _ = os.Getwd()
 	}
 	cfg, err := registry.Load()
@@ -184,7 +210,11 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, error) {
 		expectedGH = strings.TrimSpace(m.Git.ExpectedUser)
 	}
 	in.ExpectedGHUser = expectedGH
-	if expectedGH != "" && guard.StartsWith(cmdline, "gh") {
+	// Only look up the real gh login for a TRUSTED workspace: on the untrusted
+	// path there is no env plan to point gh at the workspace config dir, so the
+	// lookup would compare the ambient login against an untrusted manifest.
+	// Untrusted workspaces are judged by the untrusted/neutral rules alone.
+	if expectedGH != "" && rep.Result.Workspace != nil && guard.StartsWith(cmdline, "gh") {
 		in.ActualGHUser = lookupGHUser(envplan.Desired(rep.Result.Workspace))
 	}
 	return in, nil

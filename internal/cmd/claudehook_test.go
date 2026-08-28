@@ -203,3 +203,83 @@ func TestSessionStartStubExitsZero(t *testing.T) {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
 	}
 }
+
+func TestGHEnv_StripsAmbientTokens(t *testing.T) {
+	base := []string{"PATH=/bin", "GH_TOKEN=ambient", "GITHUB_TOKEN=ambient", "GH_HOST=ghe.example.com", "GH_ENTERPRISE_TOKEN=x", "GITHUB_ENTERPRISE_TOKEN=y", "GH_CONFIG_DIR=/ambient/gh"}
+	got := ghEnv(base, map[string]string{"GH_CONFIG_DIR": "/ws/gh"})
+	for _, kv := range got {
+		k, _, _ := strings.Cut(kv, "=")
+		switch k {
+		case "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN":
+			t.Fatalf("%s survived: %v", k, got)
+		}
+	}
+	var dirs []string
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "GH_CONFIG_DIR=") {
+			dirs = append(dirs, kv)
+		}
+	}
+	if len(dirs) != 1 || dirs[0] != "GH_CONFIG_DIR=/ws/gh" {
+		t.Fatalf("GH_CONFIG_DIR = %v, want exactly [GH_CONFIG_DIR=/ws/gh]", dirs)
+	}
+	if !containsStr(got, "PATH=/bin") {
+		t.Fatalf("PATH dropped: %v", got)
+	}
+}
+
+func TestGHEnv_NoWorkspaceDirKeepsBase(t *testing.T) {
+	base := []string{"PATH=/bin", "GH_TOKEN=ambient"}
+	got := ghEnv(base, map[string]string{})
+	if len(got) != len(base) || !containsStr(got, "GH_TOKEN=ambient") {
+		t.Fatalf("got %v, want base unchanged", got)
+	}
+}
+
+func containsStr(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPreToolUse_UntrustedWorkspaceSkipsGHLookup(t *testing.T) {
+	ws := mkUntrustedWithManifest(t, "acme", "git:\n  user: acme-bot\n")
+	prev := lookupGHUser
+	called := false
+	lookupGHUser = func(map[string]string) string { called = true; return "someone" }
+	t.Cleanup(func() { lookupGHUser = prev })
+
+	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "gh pr list"))
+	if called {
+		t.Fatal("lookupGHUser called for an untrusted workspace")
+	}
+	if code != 0 {
+		t.Fatalf("code=%d (gh in an untrusted ws is judged by untrusted/neutral rules only)", code)
+	}
+}
+
+// mkUntrustedWithManifest is setupTrustedWorkspaceWithManifest without the trust step.
+func mkUntrustedWithManifest(t *testing.T, name, body string) string {
+	t.Helper()
+	isolateHome(t)
+	base := testutil.TempDir(t)
+	cfg := &registry.Config{}
+	if _, err := cfg.AddBase(base); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(base, name)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := "schema: tentaqles-client-v2\nclient: " + name + "\nidentities: { gh: {} }\n" + body
+	if err := os.WriteFile(filepath.Join(root, manifest.FileName), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
