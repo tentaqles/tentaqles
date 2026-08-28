@@ -1,3 +1,4 @@
+import {useEffect, useState} from 'react'
 import * as api from './api'
 import {STEPS, StateProvider, usePlan} from './state'
 import {Button, ErrorList, Placeholder} from './ui'
@@ -5,6 +6,75 @@ import Welcome from './steps/Welcome'
 import Base from './steps/Base'
 import Companies from './steps/Companies'
 import Services from './steps/Services'
+import Tools from './steps/Tools'
+import Bundles from './steps/Bundles'
+import Preview from './steps/Preview'
+import Logins from './steps/Logins'
+
+const CURL = 'curl -fsSL https://tentaqles.ai/install.sh | sh'
+const IRM = 'irm https://tentaqles.ai/install.ps1 | iex'
+
+// InstallBanner shows on first run when no tq binary is on PATH. It installs
+// the binary bundled next to the app when there is one, and otherwise falls
+// back to the published one-liners.
+function InstallBanner() {
+  const [version, setVersion] = useState<string | null>(null)
+  const [bundled, setBundled] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function check() {
+    try {
+      setVersion(await api.tqVersion())
+    } catch {
+      setVersion('')
+    }
+    try {
+      setBundled(await api.bundledTQPath())
+    } catch {
+      setBundled('')
+    }
+  }
+
+  useEffect(() => {
+    void check()
+  }, [])
+
+  async function install() {
+    setBusy(true)
+    try {
+      await api.installTQ(bundled)
+      setVersion(await api.tqVersion())
+      setError('')
+    } catch (e) {
+      setError(api.errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (version === null || version !== '') return null
+
+  return (
+    <div className="border-b border-[#f28c28] bg-[#f28c28]/10 px-8 py-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="font-medium text-[#f28c28]">tq is not installed</span>
+        {bundled ? (
+          <Button onClick={() => void install()} disabled={busy}>
+            {busy ? 'Installing…' : 'Install tq'}
+          </Button>
+        ) : (
+          <span className="text-[var(--tq-muted)]">
+            bundled binary not found — install via{' '}
+            <code className="select-all">{CURL}</code> or{' '}
+            <code className="select-all">{IRM}</code>
+          </span>
+        )}
+      </div>
+      {error ? <p className="mt-2 text-[#e0432f]">{error}</p> : null}
+    </div>
+  )
+}
 
 function StepBody({step}: {step: number}) {
   switch (step) {
@@ -16,6 +86,14 @@ function StepBody({step}: {step: number}) {
       return <Companies />
     case 3:
       return <Services />
+    case 4:
+      return <Tools />
+    case 5:
+      return <Bundles />
+    case 6:
+      return <Preview />
+    case 7:
+      return <Logins />
     default:
       return <Placeholder title={STEPS[step]} />
   }
@@ -70,6 +148,7 @@ function Shell() {
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <InstallBanner />
         <main className="flex-1 overflow-auto p-8">
           <StepBody step={state.step} />
         </main>

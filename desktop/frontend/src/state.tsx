@@ -1,5 +1,5 @@
 import React, {createContext, useContext, useEffect, useMemo, useReducer} from 'react'
-import type {Company, Plan} from './api'
+import type {Company, Plan, Report} from './api'
 import * as api from './api'
 
 export const STEPS = [
@@ -17,6 +17,7 @@ export interface State {
   plan: Plan
   step: number
   errors: string[]
+  report?: Report
 }
 
 export type Action =
@@ -31,6 +32,7 @@ export type Action =
   | {type: 'back'}
   | {type: 'goto'; step: number}
   | {type: 'setErrors'; errors: string[]}
+  | {type: 'setReport'; report: Report}
 
 export function emptyPlan(): Plan {
   return {Base: '', Companies: [], Hooks: [], Trust: true}
@@ -99,6 +101,8 @@ export function reducer(state: State, action: Action): State {
       return {...state, step: Math.min(Math.max(action.step, 0), STEPS.length - 1), errors: []}
     case 'setErrors':
       return {...state, errors: action.errors}
+    case 'setReport':
+      return {...state, report: action.report}
     default:
       return state
   }

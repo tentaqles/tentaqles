@@ -2,6 +2,7 @@
 // makes goes through here so the screens never import wailsjs directly.
 import * as App from '../wailsjs/go/main/App'
 import {setupapi} from '../wailsjs/go/models'
+import {BrowserOpenURL} from '../wailsjs/runtime'
 
 // The generated models are classes (they carry a convertValues helper), which
 // makes them awkward to build and spread in a reducer. The UI works with these
@@ -70,6 +71,9 @@ export const addCustomProvider = (
   command: string,
   env: Record<string, string>,
 ): Promise<string> => App.AddCustomProvider(id, name, category, command, env)
+
+// openURL hands a link to the user's default browser.
+export const openURL = (url: string): void => BrowserOpenURL(url)
 
 // errorText normalises whatever a rejected binding throws into a string.
 export function errorText(e: unknown): string {

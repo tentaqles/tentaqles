@@ -1,4 +1,5 @@
 import {describe, expect, it} from 'vitest'
+import type {Report} from './api'
 import {initialState, newCompany, reducer, STEPS, type State} from './state'
 
 function withCompanies(names: string[]): State {
@@ -78,5 +79,29 @@ describe('reducer', () => {
 
     expect(reducer(s, {type: 'goto', step: 99}).step).toBe(STEPS.length - 1)
     expect(reducer(s, {type: 'goto', step: -5}).step).toBe(0)
+  })
+})
+
+describe('setReport', () => {
+  it('stores the apply report and leaves the plan alone', () => {
+    const report = {
+      Changes: [{Kind: 'create', Target: 'C:/work/acme', Detail: ''}],
+      Logins: ['tq login acme aws'],
+      Warnings: ['aws CLI not found'],
+    } as unknown as Report
+    const s = reducer(initialState, {type: 'setReport', report})
+    expect(s.report).toBe(report)
+    expect(s.plan).toBe(initialState.plan)
+    expect(initialState.report).toBeUndefined()
+  })
+
+  it('replaces a previous report', () => {
+    const first = {Changes: [], Logins: [], Warnings: []} as unknown as Report
+    const second = {Changes: [], Logins: ['tq login acme gh'], Warnings: []} as unknown as Report
+    const s = reducer(reducer(initialState, {type: 'setReport', report: first}), {
+      type: 'setReport',
+      report: second,
+    })
+    expect(s.report?.Logins).toEqual(['tq login acme gh'])
   })
 })
