@@ -40,7 +40,10 @@ jobs:
 
       - name: install nsis (windows)
         if: runner.os == 'Windows'
-        run: choco install nsis -y
+        run: |
+          choco install nsis -y
+          # choco updates the machine PATH, but this job's PATH is already resolved; add it explicitly
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files (x86)\NSIS'
 
       - name: download tq release asset (linux/macos)
         if: runner.os != 'Windows'
@@ -80,7 +83,10 @@ jobs:
       - name: build (windows)
         if: runner.os == 'Windows'
         working-directory: desktop
-        run: wails build -nsis
+        run: |
+          makensis /VERSION
+          wails build -nsis
+          if (-not (Get-ChildItem build/bin -Filter '*-installer.exe' -ErrorAction SilentlyContinue)) { throw 'NSIS installer was not produced' }
 
       - name: build (macos)
         if: runner.os == 'macOS'

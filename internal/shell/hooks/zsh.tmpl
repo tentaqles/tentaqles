@@ -1,5 +1,5 @@
 # tq shell hook (zsh)
-__tq_hook() { local __o; __o="$("{{.Bin}}" env --shell zsh 2>/dev/null)"; [ -n "$__o" ] && eval "$__o"; }
+__tq_hook() { local __o; __o="$("{{.Bin}}" env --shell zsh 2>/dev/null)"; if [ -n "$__o" ]; then eval "$__o"; fi; return 0; }
 autoload -Uz add-zsh-hook 2>/dev/null
 if (( ${precmd_functions[(I)__tq_hook]} == 0 )); then precmd_functions+=(__tq_hook); fi
 __tq_hook
