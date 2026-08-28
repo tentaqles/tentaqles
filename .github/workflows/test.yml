@@ -26,8 +26,10 @@ jobs:
         run: |
           export TQ_HOME=$(mktemp -d) HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=$HOME/.gitconfig
           mkdir -p $HOME/work && ./tq init $HOME/work && ./tq add acme --git-email a@acme.com
-          eval "$(./tq activate bash)"; cd $HOME/work/acme; test "$TQ_WS" = acme
-          cd /; test -z "${TQ_WS:-}"
+          eval "$(./tq activate bash)"
+          # PROMPT_COMMAND only fires at an interactive prompt; call the hook explicitly after each cd
+          cd $HOME/work/acme; __tq_hook; test "$TQ_WS" = acme
+          cd /; __tq_hook; test -z "${TQ_WS:-}"
       - name: smoke (pwsh hook)
         if: runner.os == 'Windows'
         shell: pwsh
