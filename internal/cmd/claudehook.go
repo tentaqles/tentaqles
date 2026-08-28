@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -60,12 +61,23 @@ func ghEnv(base []string, ws map[string]string) []string {
 	out := make([]string, 0, len(base)+1)
 	for _, kv := range base {
 		k, _, ok := strings.Cut(kv, "=")
-		if ok && drop[k] {
+		if ok && dropKey(drop, k) {
 			continue
 		}
 		out = append(out, kv)
 	}
 	return append(out, "GH_CONFIG_DIR="+dir)
+}
+
+// dropKey matches env var names case-insensitively: Windows env names are
+// case-insensitive, so an inherited "Gh_Token" must be dropped too.
+func dropKey(drop map[string]bool, k string) bool {
+	for name := range drop {
+		if strings.EqualFold(name, k) {
+			return true
+		}
+	}
+	return false
 }
 
 func newClaudeHookCmd() *cobra.Command {
@@ -83,7 +95,13 @@ func newSessionStartCmd() *cobra.Command {
 		Use:   "session-start",
 		Short: "SessionStart hook: print the workspace identity preamble",
 		RunE: func(c *cobra.Command, _ []string) error {
-			p, _ := readHookPayload(c.InOrStdin())
+			// session-start must never block a session: an oversized payload
+			// is reported as "could not resolve" and still exits 0.
+			p, _, perr := readHookPayload(c.InOrStdin())
+			if perr != nil {
+				fmt.Fprintf(c.OutOrStdout(), "Tentaqles: tq could not resolve this workspace (%s)\n", perr)
+				return nil
+			}
 			cwd := strings.TrimSpace(p.Cwd)
 			if cwd == "" {
 				cwd, _ = os.Getwd()
@@ -187,7 +205,12 @@ func newPreToolUseCmd() *cobra.Command {
 		Use:   "pre-tool-use",
 		Short: "Allow (exit 0) or block (exit 2) the Bash command in the PreToolUse payload",
 		RunE: func(c *cobra.Command, _ []string) error {
-			p, cmdline := readHookPayload(c.InOrStdin())
+			p, cmdline, perr := readHookPayload(c.InOrStdin())
+			if perr != nil {
+				fmt.Fprintln(c.ErrOrStderr(), "BLOCKED: "+perr.Error())
+				exitFunc(2)
+				return nil
+			}
 			if cmdline == "" {
 				return nil
 			}
@@ -218,24 +241,36 @@ func newPreToolUseCmd() *cobra.Command {
 	return c
 }
 
+// maxHookPayload bounds stdin: the hook payload is small, and a runaway
+// producer must not make tq allocate without limit.
+const maxHookPayload = 1 << 20
+
+// errPayloadTooLarge is returned when stdin exceeds maxHookPayload. Truncating
+// silently would make the JSON unparseable and therefore "allow"; an oversized
+// payload is a protocol violation and pre-tool-use fails closed on it.
+var errPayloadTooLarge = errors.New("hook payload exceeds 1 MiB")
+
 // readHookPayload decodes the hook JSON and extracts the Bash command. Any
 // protocol problem (malformed JSON, non-Bash tool, no command) yields "",
 // which the caller treats as allow: tq never blocks on its own parse errors.
-func readHookPayload(r io.Reader) (hookPayload, string) {
+// The one exception is an oversized payload, reported as errPayloadTooLarge so
+// the caller can fail closed instead of allowing a command it never read.
+func readHookPayload(r io.Reader) (hookPayload, string, error) {
 	var p hookPayload
-	// Bound stdin: the hook payload is small, and a runaway producer must not
-	// make tq allocate without limit.
-	raw, err := io.ReadAll(io.LimitReader(r, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(r, maxHookPayload+1))
 	if err != nil {
-		return p, ""
+		return p, "", nil
+	}
+	if len(raw) > maxHookPayload {
+		return p, "", errPayloadTooLarge
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return p, ""
+		return p, "", nil
 	}
 	if p.ToolName != "Bash" {
-		return p, ""
+		return p, "", nil
 	}
-	return p, toolInputCommand(p.ToolInput)
+	return p, toolInputCommand(p.ToolInput), nil
 }
 
 // toolInputCommand reads {"command":...} out of tool_input, which arrives as an

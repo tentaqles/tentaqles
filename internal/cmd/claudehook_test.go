@@ -368,3 +368,61 @@ func mkUntrustedWithManifest(t *testing.T, name, body string) string {
 	}
 	return root
 }
+
+// Fix round 2, finding 1: an oversized payload is a protocol violation.
+// pre-tool-use must fail closed instead of silently truncating (which would
+// make the JSON unparseable and therefore "allow").
+func TestPreToolUse_OversizedPayloadFailsClosed(t *testing.T) {
+	isolateHome(t)
+	pad := strings.Repeat("x", maxHookPayload)
+	payload := `{"tool_name":"Bash","pad":"` + pad + `","tool_input":{"command":"ls"}}`
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, payload)
+	if code != 2 {
+		t.Fatalf("code=%d want 2 (err=%q)", code, errOut)
+	}
+	if !strings.Contains(errOut, "BLOCKED: hook payload exceeds 1 MiB") {
+		t.Fatalf("stderr=%q", errOut)
+	}
+}
+
+func TestPreToolUse_PayloadAtLimitStillParsed(t *testing.T) {
+	isolateHome(t)
+	head := `{"tool_name":"Bash","pad":"`
+	tail := `","tool_input":{"command":"git push"}}`
+	payload := head + strings.Repeat("x", maxHookPayload-len(head)-len(tail)) + tail
+	if len(payload) != maxHookPayload {
+		t.Fatalf("payload len=%d", len(payload))
+	}
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, payload)
+	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED:") || strings.Contains(errOut, "exceeds") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+// session-start must never block: an oversized payload still exits 0.
+func TestSessionStart_OversizedPayloadExitsZero(t *testing.T) {
+	isolateHome(t)
+	payload := `{"pad":"` + strings.Repeat("x", maxHookPayload) + `"}`
+	code, out, _ := runHook(t, []string{"claude-hook", "session-start"}, payload)
+	if code != 0 {
+		t.Fatalf("code=%d", code)
+	}
+	if !strings.Contains(out, "could not resolve this workspace") {
+		t.Fatalf("stdout=%q", out)
+	}
+}
+
+// Fix round 2, finding 11: dropped gh env keys match case-insensitively.
+func TestGHEnv_DropsKeysCaseInsensitively(t *testing.T) {
+	base := []string{"Gh_Token=t", "github_token=t2", "gH_HoSt=h", "PATH=/bin"}
+	got := ghEnv(base, map[string]string{"GH_CONFIG_DIR": "/cfg"})
+	for _, kv := range got {
+		l := strings.ToLower(kv)
+		if strings.HasPrefix(l, "gh_token=") || strings.HasPrefix(l, "github_token=") || strings.HasPrefix(l, "gh_host=") {
+			t.Fatalf("ambient var survived: %q (env=%v)", kv, got)
+		}
+	}
+	if len(got) != 2 || got[0] != "PATH=/bin" || got[1] != "GH_CONFIG_DIR=/cfg" {
+		t.Fatalf("env=%v", got)
+	}
+}
