@@ -32,6 +32,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" session-start",
+            "timeout": 15
+          },
+          {
+            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" session-preamble.py"
           }
         ]
@@ -43,7 +48,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" identity-guard.py"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" pre-tool-use",
+            "timeout": 10
           }
         ]
       },
