@@ -99,7 +99,7 @@ jobs:
         working-directory: desktop
         run: |
           set -euo pipefail
-          wails build
+          wails build -tags webkit2_41
           curl -L -o /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /tmp/appimagetool
           rm -rf build/AppDir

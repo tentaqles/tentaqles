@@ -17,7 +17,7 @@ release:
 # to exist AND a token that can push to them (GITHUB_TOKEN cannot). skip_upload: auto
 # skips the push for pre-releases; for a stable tag create the repos first and set a
 # HOMEBREW_TAP_GITHUB_TOKEN / SCOOP_BUCKET_GITHUB_TOKEN secret, then remove `auto`.
-brews:
+homebrew_casks:
   - repository:
       owner: tentaqles
       name: homebrew-tap
