@@ -102,7 +102,8 @@ func resolveTerminal(goos, command string) (string, []string, error) {
 }
 
 // quoteSingle wraps s in single quotes, escaping any single quote inside it
-// using the POSIX '\” idiom, so the result is a single shell word.
+// using the POSIX '\'' idiom (close quote, escaped quote, reopen quote),
+// so the result is a single shell word.
 func quoteSingle(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
