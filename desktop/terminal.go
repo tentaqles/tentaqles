@@ -1,6 +1,9 @@
 package main
 
-import "runtime"
+import (
+	"runtime"
+	"strings"
+)
 
 // defaultGOOS is the real GOOS seam, overridden in tests.
 func defaultGOOS() string { return runtime.GOOS }
@@ -21,9 +24,18 @@ func terminalCommand(goos, command string) (string, []string) {
 		script := `tell application "Terminal" to do script "` + escapeAppleScript(command) + `"`
 		return "osascript", []string{"-e", script}
 	default:
-		// linux and other unix-likes
-		return "x-terminal-emulator", []string{"-e", "sh", "-c", command + "; exec sh"}
+		// linux and other unix-likes. The command has to live inside a shell
+		// line here (so the shell stays open afterwards), so it is wrapped in
+		// single quotes with any embedded quote escaped — otherwise a command
+		// containing ";" or "'" would be reinterpreted by the outer shell.
+		return "x-terminal-emulator", []string{"-e", "sh", "-c", "sh -c " + quoteSingle(command) + "; exec sh"}
 	}
+}
+
+// quoteSingle wraps s in single quotes, escaping any single quote inside it
+// using the POSIX '\'' idiom, so the result is a single shell word.
+func quoteSingle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // escapeAppleScript escapes double quotes and backslashes for safe

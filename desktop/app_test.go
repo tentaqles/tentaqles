@@ -85,7 +85,7 @@ func TestOpenTerminal_ArgsLinux(t *testing.T) {
 	if name != "x-terminal-emulator" {
 		t.Fatalf("name = %q, want x-terminal-emulator", name)
 	}
-	want := []string{"-e", "sh", "-c", "tq login myws work; exec sh"}
+	want := []string{"-e", "sh", "-c", "sh -c 'tq login myws work'; exec sh"}
 	if len(args) != len(want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}
@@ -93,6 +93,24 @@ func TestOpenTerminal_ArgsLinux(t *testing.T) {
 		if args[i] != want[i] {
 			t.Fatalf("args[%d] = %q, want %q", i, args[i], want[i])
 		}
+	}
+}
+
+func TestOpenTerminal_ArgsLinuxEscapes(t *testing.T) {
+	_, args := terminalCommand("linux", `tq login '; rm -rf /; '`)
+
+	line := args[len(args)-1]
+
+	// Every single quote from the command must be neutralised with the
+	// POSIX '\'' idiom, leaving the injected text inside one quoted word.
+	want := `sh -c 'tq login '\''; rm -rf /; '\'''; exec sh`
+	if line != want {
+		t.Fatalf("line = %q, want %q", line, want)
+	}
+
+	// The injected "rm -rf /" must never sit outside single quotes.
+	if strings.Contains(line, `'; rm -rf /`) && !strings.Contains(line, `'\''; rm -rf /`) {
+		t.Fatalf("command escaped its quoting: %q", line)
 	}
 }
 
