@@ -37,7 +37,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" session-preamble.py"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" session-preamble.py --memory-only"
           }
         ]
       }

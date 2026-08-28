@@ -7,7 +7,6 @@ working directory, providing client context for Claude Code sessions.
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -39,7 +38,7 @@ def load_manifest(cwd: str | Path) -> dict | None:
             data = yaml.safe_load(f)
         if not isinstance(data, dict):
             return None
-        if data.get("schema") != "tentaqles-client-v1":
+        if data.get("schema") not in ("tentaqles-client-v1", "tentaqles-client-v2"):
             return None
         data["_manifest_path"] = str(path)
         data["_client_root"] = str(path.parent)
@@ -56,7 +55,9 @@ def _extract_section(manifest: dict, key: str) -> dict:
 
 def get_client_context(cwd: str | Path) -> dict:
     """
-    Build a rich client context dict from the manifest or registry fallback.
+    Build a rich client context dict from the manifest.
+
+    Returns an empty context (client "unknown") when no manifest is found.
     """
     manifest = load_manifest(cwd)
 
@@ -79,13 +80,6 @@ def get_client_context(cwd: str | Path) -> dict:
             },
         }
 
-    # Fallback: try client-registry.json
-    return _fallback_from_registry(cwd)
-
-
-def _fallback_from_registry(cwd: str | Path) -> dict:
-    """Try to match cwd against client-registry.json entries."""
-    registry_path = Path.home() / ".claude" / "tentaqles" / "client-registry.json"
     empty: dict[str, Any] = {
         "client": "unknown",
         "display_name": "Unknown",
@@ -97,42 +91,8 @@ def _fallback_from_registry(cwd: str | Path) -> dict:
         "git": {},
         "project_management": {},
         "stack": [],
+        "signals": {"enabled": False, "subscribe_to": []},
     }
-
-    try:
-        with open(registry_path, "r", encoding="utf-8") as f:
-            registry = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return empty
-
-    if not isinstance(registry, dict):
-        return empty
-
-    cwd_resolved = str(Path(cwd).resolve()).replace("\\", "/").lower()
-    clients = registry.get("clients", registry)
-
-    for client_id, entry in clients.items():
-        if not isinstance(entry, dict):
-            continue
-        paths = entry.get("paths", [])
-        if isinstance(paths, str):
-            paths = [paths]
-        for p in paths:
-            normalized = str(Path(p).resolve()).replace("\\", "/").lower()
-            if cwd_resolved.startswith(normalized):
-                return {
-                    "client": client_id,
-                    "display_name": entry.get("display_name", client_id),
-                    "language": entry.get("language", "en"),
-                    "manifest_path": "",
-                    "client_root": str(Path(p).resolve()),
-                    "cloud": entry.get("cloud", {}),
-                    "database": entry.get("database", {}),
-                    "git": entry.get("git", {}),
-                    "project_management": entry.get("project_management", {}),
-                    "stack": entry.get("stack", []),
-                }
-
     return empty
 
 
