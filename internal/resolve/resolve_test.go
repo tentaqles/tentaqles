@@ -167,3 +167,28 @@ func TestResolve_BaseWithTrailingSeparatorInConfig(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestResolve_UntrustedPopulatesUntrustedWorkspace(t *testing.T) {
+	t.Setenv("TQ_HOME", t.TempDir())
+	base := testutil.TempDir(t)
+	cfg := &registry.Config{}
+	cfg.AddBase(base)
+	root := filepath.Join(base, "acme")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(root, manifest.FileName)
+	if err := os.WriteFile(p, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@acme.com }\nidentities: { claude: {} }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := Resolve(root, cfg)
+	if r.Workspace != nil {
+		t.Fatalf("untrusted must stay fail-closed: %+v", r.Workspace)
+	}
+	if r.Untrusted == nil || r.Untrusted.Name != "acme" || r.Untrusted.Manifest == nil {
+		t.Fatalf("expected Untrusted to name the workspace, got %+v", r.Untrusted)
+	}
+	if !strings.HasPrefix(r.Reason, "untrusted") {
+		t.Fatalf("reason %q", r.Reason)
+	}
+}

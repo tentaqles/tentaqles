@@ -22,6 +22,11 @@ type Workspace struct {
 type Result struct {
 	Workspace *Workspace
 	Reason    string
+	// Untrusted is set (with Workspace still nil) when cwd maps to a workspace
+	// whose manifest loads and hashes fine but is not trusted. It exists so
+	// callers can name the workspace without parsing Reason; every fail-closed
+	// caller that only looks at Workspace is unaffected.
+	Untrusted *Workspace
 }
 
 func norm(p string) string {
@@ -91,7 +96,7 @@ func load(base, root, name string) Result {
 	}
 	ws := &Workspace{Name: name, Root: root, Base: base, ManifestPath: mp, Hash: h, Manifest: m}
 	if !trust.IsTrusted(h) {
-		return Result{Reason: fmt.Sprintf("untrusted (run: tq allow %s)", name)}
+		return Result{Reason: fmt.Sprintf("untrusted (run: tq allow %s)", name), Untrusted: ws}
 	}
 	return Result{Workspace: ws}
 }

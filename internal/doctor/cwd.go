@@ -51,8 +51,8 @@ func RunForCwd(cfg *registry.Config, d Deps) CwdReport {
 		add("warn", "hook-missing", "", "inside a base but no tq state in this shell: is the hook installed?", "tq init prints the profile line")
 	}
 	if res.Workspace == nil {
-		if name, ok := untrustedWorkspace(res.Reason); ok {
-			add("warn", "untrusted", name, "manifest not trusted", "tq allow "+name)
+		if res.Untrusted != nil {
+			add("warn", "untrusted", res.Untrusted.Name, "manifest not trusted", "tq allow "+res.Untrusted.Name)
 		}
 		return rep
 	}
@@ -61,9 +61,9 @@ func RunForCwd(cfg *registry.Config, d Deps) CwdReport {
 	// git email drift — only meaningful when the manifest pins one and git exists.
 	if want := strings.TrimSpace(ws.Manifest.Git.Email); want != "" {
 		if _, err := d.LookPath("git"); err == nil {
-			rep.ActualEmail = strings.TrimSpace(runGitIn(d, ws.Root, "config", "user.email"))
+			rep.ActualEmail = strings.TrimSpace(runGitIn(d, d.Cwd, "config", "user.email"))
 			if rep.ActualEmail != "" && !strings.EqualFold(rep.ActualEmail, want) {
-				add("error", "git-email-drift", ws.Name, fmt.Sprintf("git user.email in %s is %q but the manifest pins %q", ws.Root, rep.ActualEmail, want), "tq doctor / re-run tq add to restore .gitconfig-tentaqles")
+				add("error", "git-email-drift", ws.Name, fmt.Sprintf("git user.email in %s is %q but the manifest pins %q", d.Cwd, rep.ActualEmail, want), "tq doctor / re-run tq add to restore .gitconfig-tentaqles")
 			}
 		}
 	}
@@ -101,20 +101,12 @@ func runGitIn(d Deps, dir string, args ...string) string {
 	return out
 }
 
+// samePath compares lexically: filepath.Clean plus a case-fold on Windows.
+// Symlinks, junctions and 8.3 short names are not resolved.
 func samePath(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
-}
-
-// untrustedWorkspace extracts the name out of resolve's untrusted reason,
-// which reads: untrusted (run: tq allow <name>).
-func untrustedWorkspace(reason string) (string, bool) {
-	const pfx = "untrusted (run: tq allow "
-	if !strings.HasPrefix(reason, pfx) {
-		return "", false
-	}
-	return strings.TrimSuffix(strings.TrimPrefix(reason, pfx), ")"), true
 }

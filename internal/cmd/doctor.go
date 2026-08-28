@@ -25,7 +25,7 @@ func newDoctorCmd() *cobra.Command {
 				return err
 			}
 			cwd, _ := os.Getwd()
-			fs := doctor.Run(cfg, doctor.Deps{Env: os.LookupEnv, Cwd: cwd, RunGit: gitcfg.RunGit, LookPath: exec.LookPath})
+			fs := doctor.Run(cfg, doctor.Deps{Env: os.LookupEnv, Cwd: cwd, RunGit: gitcfg.RunGit, RunGitIn: gitcfg.RunGitIn, LookPath: exec.LookPath})
 			if asJSON {
 				if err := json.NewEncoder(c.OutOrStdout()).Encode(fs); err != nil {
 					return err

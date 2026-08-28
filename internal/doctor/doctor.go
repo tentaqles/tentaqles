@@ -140,11 +140,18 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	}
 	// env vs cwd — shared with tq claude-hook so both agree.
 	cwd := RunForCwd(cfg, d)
+	// Run already walks every workspace, so a cwd finding may repeat one it
+	// emitted (untrusted, notably). Dedupe on code+workspace.
+	seen := make(map[[2]string]bool, len(fs))
+	for _, f := range fs {
+		seen[[2]string{f.Code, f.Workspace}] = true
+	}
 	for _, f := range cwd.Findings {
-		// Run already reports untrusted once per workspace.
-		if f.Code == "untrusted" {
+		k := [2]string{f.Code, f.Workspace}
+		if seen[k] {
 			continue
 		}
+		seen[k] = true
 		fs = append(fs, f)
 	}
 	if len(fs) == 0 {
