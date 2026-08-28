@@ -11,6 +11,7 @@ import (
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
 	"github.com/tentaqles/tentaqles/cli/internal/resolve"
+	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
 )
 
@@ -18,7 +19,7 @@ import (
 // the real developer home (in particular ~/.gitconfig-tentaqles).
 func isolateHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := testutil.TempDir(t)
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
@@ -33,7 +34,7 @@ func isolateHome(t *testing.T) string {
 func mkUntrusted(t *testing.T, name string) string {
 	t.Helper()
 	isolateHome(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	if _, err := cfg.AddBase(base); err != nil {
 		t.Fatal(err)

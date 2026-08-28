@@ -13,6 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/cli/internal/hooks"
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/providers"
+	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
 )
 
@@ -23,7 +24,7 @@ func fakeGit(...string) (string, error) { return "", nil }
 // and gitcfg operations never touch the real developer home directory.
 func isolateHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := testutil.TempDir(t)
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
@@ -183,7 +184,7 @@ func TestSave_RestrictsPermissions(t *testing.T) {
 }
 
 func TestPreview_ReportsSkipsForExisting(t *testing.T) {
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	if err := os.MkdirAll(filepath.Join(base, "acme"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +264,7 @@ func TestToolCheck_DedupsPerCompany(t *testing.T) {
 func TestApply_EndToEnd(t *testing.T) {
 	isolateHome(t)
 	cat := testCatalog(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 
 	p := &SetupPlan{
 		Base:  base,
@@ -316,7 +317,7 @@ func TestApply_EndToEnd(t *testing.T) {
 func TestApply_ContinuesOnCompanyError(t *testing.T) {
 	isolateHome(t)
 	cat := testCatalog(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 
 	p := &SetupPlan{
 		Base:  base,
@@ -345,7 +346,7 @@ func TestApply_ContinuesOnCompanyError(t *testing.T) {
 func TestApply_TrustFalse(t *testing.T) {
 	isolateHome(t)
 	cat := testCatalog(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 
 	p := &SetupPlan{
 		Base:  base,
@@ -404,7 +405,7 @@ func TestLoadPlan_ExpandsTilde(t *testing.T) {
 func TestApply_SkipDetectsHalfCreated(t *testing.T) {
 	isolateHome(t)
 	cat := testCatalog(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 
 	p := &SetupPlan{
 		Base:  base,

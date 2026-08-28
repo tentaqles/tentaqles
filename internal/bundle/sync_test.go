@@ -12,6 +12,7 @@ import (
 	"github.com/tentaqles/tentaqles/cli/internal/paths"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
 	"github.com/tentaqles/tentaqles/cli/internal/resolve"
+	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
 	"github.com/tentaqles/tentaqles/cli/internal/workspace"
 	"gopkg.in/yaml.v3"
@@ -22,7 +23,7 @@ import (
 // Copied from internal/workspace/scaffold_test.go per the task-5 brief.
 func isolateHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := testutil.TempDir(t)
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
@@ -38,7 +39,7 @@ func fakeGit(...string) (string, error) { return "", nil }
 // bundle set on its manifest, returning the resolved workspace.
 func setupWorkspace(t *testing.T, b *manifest.Bundle) (*resolve.Workspace, *registry.Config) {
 	t.Helper()
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	if _, err := cfg.AddBase(base); err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 	"github.com/tentaqles/tentaqles/cli/internal/paths"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
 	"github.com/tentaqles/tentaqles/cli/internal/resolve"
+	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
 )
 
@@ -22,7 +23,7 @@ func fakeGit(...string) (string, error) { return "", nil }
 // home directory. Returns the temp home dir.
 func isolateHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := testutil.TempDir(t)
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
@@ -34,7 +35,7 @@ func isolateHome(t *testing.T) string {
 
 func TestAdd_ScaffoldsEverything(t *testing.T) {
 	home := isolateHome(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
 	cfg.Save()
@@ -66,7 +67,7 @@ func TestAdd_ScaffoldsEverything(t *testing.T) {
 
 func TestAdd_RejectsBadNameAndDuplicate(t *testing.T) {
 	isolateHome(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	if _, err := Add(AddOptions{Base: base, Name: "Bad Name", GitEmail: "x@y", RunGit: fakeGit, Trust: true}); err == nil {
 		t.Fatal("bad name accepted")
 	}
@@ -80,7 +81,7 @@ func TestAdd_RejectsBadNameAndDuplicate(t *testing.T) {
 
 func TestAdd_RejectsControlCharsInGitFields(t *testing.T) {
 	isolateHome(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	if _, err := Add(AddOptions{Base: base, Name: "evil", GitEmail: "a@b\n[core]\n\tsshCommand = evil", RunGit: fakeGit, Trust: true}); err == nil {
 		t.Fatal("expected error for control chars in git-email")
 	}
@@ -100,7 +101,7 @@ func TestAdd_RejectsControlCharsInGitFields(t *testing.T) {
 // chain.
 func TestAdd_TrustFalseLeavesUntrusted(t *testing.T) {
 	isolateHome(t)
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
 	cfg.Save()

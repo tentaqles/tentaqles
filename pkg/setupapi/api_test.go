@@ -1,6 +1,7 @@
 package setupapi
 
 import (
+	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,7 +13,7 @@ import (
 // gitcfg operations never touch the real developer home directory.
 func isolateHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := testutil.TempDir(t)
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)

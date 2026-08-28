@@ -107,11 +107,15 @@ func ListWorkspaces(cfg *registry.Config) ([]Workspace, []error) {
 			errs = append(errs, err)
 			continue
 		}
+		nb, err := registry.Normalize(base)
+		if err != nil {
+			nb = filepath.Clean(base)
+		}
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
 			}
-			root := filepath.Join(base, e.Name())
+			root := filepath.Join(nb, e.Name())
 			mp := filepath.Join(root, manifest.FileName)
 			if _, err := os.Stat(mp); err != nil {
 				continue

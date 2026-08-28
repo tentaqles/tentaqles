@@ -8,6 +8,7 @@ import (
 	"github.com/tentaqles/tentaqles/cli/internal/bundle"
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
+	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
 )
 
@@ -47,7 +48,7 @@ func TestRun_NoBases(t *testing.T) {
 
 func TestRun_UntrustedAndDriftAndBypassCloud(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
 	root := filepath.Join(base, "acme")
@@ -74,7 +75,7 @@ func TestRun_UntrustedAndDriftAndBypassCloud(t *testing.T) {
 
 func TestRun_HookMissing(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
 	fs := Run(cfg, deps(map[string]string{}, filepath.Join(base, "x"), map[string]string{"user.useConfigOnly": "true"}))
@@ -85,7 +86,7 @@ func TestRun_HookMissing(t *testing.T) {
 
 func TestRun_GitMissing_SkipsGitConfigChecks(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
 	d := deps(map[string]string{}, base, nil)
@@ -101,7 +102,7 @@ func TestRun_GitMissing_SkipsGitConfigChecks(t *testing.T) {
 
 func TestRun_GitWorkspaceFileTampered(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
 	root := filepath.Join(base, "acme")
@@ -133,7 +134,7 @@ func TestRun_GitWorkspaceFileTampered(t *testing.T) {
 
 func TestRun_BundleDrift(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
 	root := filepath.Join(base, "acme")

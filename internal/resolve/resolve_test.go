@@ -9,13 +9,14 @@ import (
 
 	"github.com/tentaqles/tentaqles/cli/internal/manifest"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
+	"github.com/tentaqles/tentaqles/cli/internal/testutil"
 	"github.com/tentaqles/tentaqles/cli/internal/trust"
 )
 
 func setup(t *testing.T) (base string, cfg *registry.Config) {
 	t.Helper()
 	t.Setenv("TQ_HOME", t.TempDir())
-	base = t.TempDir()
+	base = testutil.TempDir(t)
 	cfg = &registry.Config{}
 	if _, err := cfg.AddBase(base); err != nil {
 		t.Fatal(err)
@@ -147,7 +148,7 @@ func TestListWorkspaces(t *testing.T) {
 // with the raw, longer base length.
 func TestResolve_BaseWithTrailingSeparatorInConfig(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
-	base := t.TempDir()
+	base := testutil.TempDir(t)
 	cfg := &registry.Config{Bases: []string{base + string(filepath.Separator)}}
 	root := mkws(t, base, "acme", true)
 

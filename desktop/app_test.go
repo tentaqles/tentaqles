@@ -9,9 +9,17 @@ import (
 
 // isolateHome points HOME/USERPROFILE (and TQ_HOME, if the cli honors it)
 // at a fresh temp dir so tests never touch the real user's environment.
+//
+// The dir is symlink-resolved: on macOS, t.TempDir() lives under
+// /var/folders/..., and /var is itself a symlink to /private/var, so any
+// path later normalized (filepath.EvalSymlinks) elsewhere would stop
+// matching the raw string returned by t.TempDir().
 func isolateHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
 	t.Setenv("TQ_HOME", dir)
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)

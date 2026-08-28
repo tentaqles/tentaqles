@@ -43,15 +43,49 @@ func (c *Config) Save() error {
 }
 
 // Normalize returns an absolute, cleaned, symlink-resolved path.
+//
+// If the path itself doesn't exist (e.g. a not-yet-created child of a
+// workspace base), EvalSymlinks on the full path fails and would silently
+// leave it un-resolved. That's a problem when a sibling path DOES get fully
+// resolved (e.g. a stored base) and the two are later compared for equality
+// or prefix-containment: on macOS, a temp dir under /var/folders/... resolves
+// to /private/var/folders/..., so an existing base normalizes to the
+// /private/... form while a nonexistent child of it would not. To keep both
+// sides consistent, resolve the longest existing prefix of the path via
+// EvalSymlinks and re-append whatever tail doesn't exist yet.
 func Normalize(dir string) (string, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}
-	if r, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = r
-	}
+	abs = resolveExistingPrefix(abs)
 	return filepath.Clean(abs), nil
+}
+
+// resolveExistingPrefix walks up p from the full path towards its root,
+// resolving the first (longest) prefix for which EvalSymlinks succeeds, and
+// re-joins the remaining (possibly nonexistent) suffix onto the result. If no
+// prefix can be resolved (e.g. EvalSymlinks fails even at the root, which
+// should not normally happen), p is returned unchanged.
+func resolveExistingPrefix(p string) string {
+	cur := filepath.Clean(p)
+	var suffix []string
+	for {
+		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			resolved := r
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return resolved
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			// Reached the root without resolving anything; give up.
+			return p
+		}
+		suffix = append(suffix, filepath.Base(cur))
+		cur = parent
+	}
 }
 
 // SamePath compares paths case-insensitively on Windows.
