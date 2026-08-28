@@ -96,6 +96,12 @@ Section
 
     !insertmacro wails.files
 
+    # Bundle the tq CLI next to the app so the wizard's "Install tq" button
+    # has a binary to copy. Path is relative to this .nsi file, matching how
+    # OutFile / ${ARG_WAILS_AMD64_BINARY} are resolved. /nonfatal keeps local
+    # builds working when desktop/build/bin/tq.exe has not been staged.
+    File /nonfatal "..\..\bin\tq.exe"
+
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 
@@ -109,6 +115,8 @@ Section "uninstall"
     !insertmacro wails.setShellContext
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+
+    Delete "$INSTDIR\tq.exe"
 
     RMDir /r $INSTDIR
 

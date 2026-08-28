@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
+        with: { go-version: '1.26' }
       - uses: goreleaser/goreleaser-action@v6
         with:
           args: release --clean
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
+        with: { go-version: '1.26' }
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
       - name: install wails
@@ -49,10 +49,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if [ "${{ runner.os }}" = "macOS" ]; then osname=darwin; else osname=linux; fi
-          gh release download "$GITHUB_REF_NAME" -p "tq_*_${osname}_amd64.*" -D /tmp/tqdl --clobber
+          # Linux installers are amd64-only; on macOS we ship the runner's
+          # native architecture so the bundled tq matches the app binary.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            if [ "$(uname -m)" = "arm64" ]; then target=darwin_arm64; else target=darwin_amd64; fi
+          else
+            target=linux_amd64
+          fi
+          gh release download "$GITHUB_REF_NAME" -p "tq_*_${target}.*" -D /tmp/tqdl --clobber
           cd /tmp/tqdl
-          archive=$(ls tq_*_${osname}_amd64.* | head -n1)
+          archive=$(ls tq_*_${target}.* | head -n1)
           tar -xzf "$archive" 2>/dev/null || unzip -o "$archive"
           mkdir -p "$GITHUB_WORKSPACE/desktop/build/bin"
           cp tq "$GITHUB_WORKSPACE/desktop/build/bin/tq"
@@ -80,13 +86,19 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: desktop
         run: |
+          set -euo pipefail
           wails build
+          # BundledTQPath() looks next to the running executable, which for a
+          # .app bundle is Contents/MacOS.
+          cp build/bin/tq build/bin/tentaqles-setup.app/Contents/MacOS/tq
+          chmod +x build/bin/tentaqles-setup.app/Contents/MacOS/tq
           hdiutil create -volname "Tentaqles Setup" -srcfolder build/bin/tentaqles-setup.app -ov -format UDZO build/bin/tentaqles-setup.dmg
 
       - name: build (linux)
         if: runner.os == 'Linux'
         working-directory: desktop
         run: |
+          set -euo pipefail
           wails build
           curl -L -o /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /tmp/appimagetool
@@ -94,6 +106,7 @@ jobs:
           mkdir -p build/AppDir/usr/bin
           cp build/bin/tentaqles-setup build/AppDir/usr/bin/tentaqles-setup
           cp build/bin/tq build/AppDir/usr/bin/tq
+          chmod +x build/AppDir/usr/bin/tentaqles-setup build/AppDir/usr/bin/tq
           cp build/appicon.png build/AppDir/tentaqles-setup.png
           cat > build/AppDir/tentaqles-setup.desktop <<'EOF'
           [Desktop Entry]
@@ -103,7 +116,11 @@ jobs:
           Type=Application
           Categories=Development;
           EOF
-          cp build/AppDir/tentaqles-setup.desktop build/AppDir/
+          cat > build/AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          exec "$(dirname "$0")/usr/bin/tentaqles-setup" "$@"
+          EOF
+          chmod +x build/AppDir/AppRun
           ARCH=x86_64 /tmp/appimagetool build/AppDir build/bin/tentaqles-setup.AppImage
 
       - name: upload release assets

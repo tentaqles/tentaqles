@@ -4,3 +4,4 @@ frontend/dist
 
 /desktop.exe
 /tentaqles-setup.exe
+build/windows/installer/tmp
