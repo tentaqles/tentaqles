@@ -108,3 +108,87 @@ func TestRemoteMutationChainedAndWrapped(t *testing.T) {
 		}
 	}
 }
+
+// Fix round 2, finding 2: the single `&` (background) is a separator too.
+func TestSingleAmpersandIsSeparator(t *testing.T) {
+	for _, c := range []struct {
+		cmd, prefix string
+		want        bool
+	}{
+		{"sleep 0 & git push", "git", true},
+		{"sleep 0 & gh pr list", "gh", true},
+		{"sleep 0 && git push", "git", true},
+		{"echo a&b", "b", true},
+		{"echo grand", "and", false},
+	} {
+		if got := StartsWith(c.cmd, c.prefix); got != c.want {
+			t.Errorf("StartsWith(%q,%q)=%v want %v", c.cmd, c.prefix, got, c.want)
+		}
+	}
+	if !IsRemoteMutation("sleep 0 & git push") {
+		t.Error("`sleep 0 & git push` must be a remote mutation")
+	}
+	if !IsRemoteMutation("sleep 0 & gh api user") {
+		t.Error("`sleep 0 & gh api user` must be a remote mutation")
+	}
+	if IsReadOnlyGit("git status & git push") {
+		t.Error("`git status & git push` must not be read-only")
+	}
+}
+
+// Fix round 2, finding 3: inline identity overrides are blocked outright.
+func TestInlineIdentityOverride(t *testing.T) {
+	for _, c := range []string{
+		"git -c user.email=x@y.z commit -m x",
+		"git -c user.name=Someone commit -m x",
+		"git --config-env=user.email=EMAIL commit -m x",
+		"git --config-env=user.name=NAME commit -m x",
+		"git -c User.Email=x@y.z commit -m x",
+		"echo hi && git -c user.email=x@y.z push",
+		"git -c user.email=x@y.z status",
+	} {
+		if !HasInlineIdentityOverride(c) {
+			t.Errorf("%q should be an inline identity override", c)
+		}
+		d := Decide(Input{Command: c, Client: "acme", ExpectedEmail: "dev@acme.com"})
+		if !d.Block || d.Rule != "git-email-drift" {
+			t.Errorf("Decide(%q) = %+v, want block git-email-drift", c, d)
+		}
+	}
+	for _, c := range []string{
+		"git -c core.pager=cat log",
+		"git -C repo commit -m x",
+		"git commit -m 'user.email=x'",
+		"gh -c user.email=x api user",
+	} {
+		if HasInlineIdentityOverride(c) {
+			t.Errorf("%q should NOT be an inline identity override", c)
+		}
+	}
+	// Blocks regardless of ActualEmail, and only when the workspace pins one.
+	if d := Decide(Input{Command: "git -c user.email=x@y.z commit", Client: "acme", ExpectedEmail: "dev@acme.com", ActualEmail: "dev@acme.com"}); !d.Block {
+		t.Error("inline override must block even when the configured email matches")
+	}
+	if d := Decide(Input{Command: "git -c user.email=x@y.z commit", Client: "acme"}); d.Block {
+		t.Error("no expected email: nothing to protect, must not block")
+	}
+	// It is not a remote mutation, so the fallback guard leaves it alone.
+	if IsRemoteMutation("git -c user.email=x@y.z commit -m x") {
+		t.Error("`git -c user.email=... commit` is not a remote mutation")
+	}
+}
+
+// Fix round 2, finding 8: read-only git is exempt from env-drift/untrusted too.
+func TestReadOnlyGitExemptFromEnvDriftAndUntrusted(t *testing.T) {
+	for _, finding := range []string{"env-drift", "untrusted"} {
+		if d := Decide(Input{Command: "git status", Client: "acme", Findings: []string{finding}}); d.Block {
+			t.Errorf("%s: `git status` must be allowed, got %+v", finding, d)
+		}
+		if d := Decide(Input{Command: "git commit -m x", Client: "acme", Findings: []string{finding}}); !d.Block || d.Rule != finding {
+			t.Errorf("%s: `git commit` must block with that rule, got %+v", finding, d)
+		}
+		if d := Decide(Input{Command: "git status && git commit -m x", Client: "acme", Findings: []string{finding}}); !d.Block || d.Rule != finding {
+			t.Errorf("%s: chained mutating git must block, got %+v", finding, d)
+		}
+	}
+}

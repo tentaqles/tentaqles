@@ -40,11 +40,14 @@ type Decision struct {
 
 // sepPattern is the single shared definition of what separates one shell
 // "segment" from another for our purposes: the classic command separators
-// (&& || ; |), line breaks, and the common command-substitution/grouping
+// (&& || ; | &), line breaks, and the common command-substitution/grouping
 // tokens ($( ` ( { ) }) that can otherwise hide a command from a naive
 // prefix check. StartsWith and the git segment splitter both use this so
-// they never drift apart.
-const sepPattern = `&&|\|\||;|\||\n|\r|\$\(|` + "`" + `|\(|\)|\{|\}`
+// they never drift apart. `&&` is listed before the single `&` so the
+// two-character form wins the alternation; the single `&` (background
+// operator) is a separator too, otherwise `sleep 0 & git push` would hide
+// the push from a naive prefix check.
+const sepPattern = `&&|\|\||;|\||&|\n|\r|\$\(|` + "`" + `|\(|\)|\{|\}`
 
 var sepRegexp = regexp.MustCompile(sepPattern)
 
@@ -184,6 +187,37 @@ func IsRemoteMutation(c string) bool {
 	return false
 }
 
+// isIdentityAssign reports whether a git -c/--config-env assignment sets the
+// committer identity (user.email / user.name).
+func isIdentityAssign(s string) bool {
+	l := strings.ToLower(s)
+	return strings.HasPrefix(l, "user.email=") || strings.HasPrefix(l, "user.name=")
+}
+
+// HasInlineIdentityOverride reports whether any git invocation in command
+// carries an inline identity override: `-c user.email=...`, `-c user.name=...`
+// or `--config-env=user.email=...` / `--config-env=user.name=...`. Such a
+// command supplies its own identity for that one invocation, so comparing the
+// configured email tells us nothing - tq blocks it outright instead.
+func HasInlineIdentityOverride(c string) bool {
+	for _, seg := range sepRegexp.Split(c, -1) {
+		f := strings.Fields(seg)
+		if len(f) == 0 || f[0] != "git" {
+			continue
+		}
+		for i := 1; i < len(f); i++ {
+			a := f[i]
+			if a == "-c" && i+1 < len(f) && isIdentityAssign(f[i+1]) {
+				return true
+			}
+			if rest, ok := strings.CutPrefix(a, "--config-env="); ok && isIdentityAssign(rest) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func has(fs []string, code string) bool {
 	for _, f := range fs {
 		if f == code {
@@ -194,9 +228,11 @@ func has(fs []string, code string) bool {
 }
 
 // Decide applies the rule precedence documented in the task brief:
-// blocked-command -> wrong-cloud -> neutral-remote -> untrusted (git only) ->
-// env-drift (git only) -> claude-config-drift (git push / gh only) ->
-// git-email-drift (non-read-only git only, both emails known) ->
+// blocked-command -> wrong-cloud -> neutral-remote ->
+// untrusted (non-read-only git only) -> env-drift (non-read-only git only) ->
+// claude-config-drift (git push / gh only) ->
+// git-email-drift (inline -c user.email/--config-env override on any git, or
+// non-read-only git with both emails known) ->
 // gh-user (gh only, both users known).
 func Decide(in Input) Decision {
 	block := func(rule, msg string) Decision { return Decision{Block: true, Rule: rule, Reason: "BLOCKED: " + msg} }
@@ -226,16 +262,23 @@ func Decide(in Input) Decision {
 		return Decision{}
 	}
 	git := IsGit(in.Command)
-	if git && has(in.Findings, "untrusted") {
+	// Read-only git (status/log/diff/...) is exempt from the identity rules:
+	// it neither writes history nor touches a remote, so a stale shell or an
+	// untrusted manifest is no reason to refuse it. Mutating git stays blocked.
+	readOnlyGit := git && IsReadOnlyGit(in.Command)
+	if git && !readOnlyGit && has(in.Findings, "untrusted") {
 		return block("untrusted", fmt.Sprintf("workspace %s is not trusted; git is refused until you run: tq allow %s", client, client))
 	}
-	if git && has(in.Findings, "env-drift") {
+	if git && !readOnlyGit && has(in.Findings, "env-drift") {
 		return block("env-drift", "shell identity (TQ_WS) does not match cwd; open a new shell or run: eval \"$(tq env --shell <shell>)\"")
 	}
 	if (IsRemoteMutation(in.Command)) && has(in.Findings, "claude-config-drift") {
 		return block("claude-config-drift", fmt.Sprintf("this Claude session is not running under the %s identity dir (CLAUDE_CONFIG_DIR drift).\n  Fix: start Claude from a tq-activated shell in the workspace, or: tq run %s -- claude", client, client))
 	}
-	if git && !IsReadOnlyGit(in.Command) && in.ExpectedEmail != "" && in.ActualEmail != "" && !strings.EqualFold(in.ExpectedEmail, in.ActualEmail) {
+	if git && in.ExpectedEmail != "" && HasInlineIdentityOverride(in.Command) {
+		return block("git-email-drift", "inline git identity override (-c user.email/--config-env) is not allowed; identity is managed by tq")
+	}
+	if git && !readOnlyGit && in.ExpectedEmail != "" && in.ActualEmail != "" && !strings.EqualFold(in.ExpectedEmail, in.ActualEmail) {
 		return block("git-email-drift", fmt.Sprintf("Git email mismatch.\n  Expected: %s\n  Actual:   %s\n  Fix: tq doctor (identity is managed by tq; do not set user.email by hand)", in.ExpectedEmail, in.ActualEmail))
 	}
 	if StartsWith(in.Command, "gh") && in.ExpectedGHUser != "" && in.ActualGHUser != "" && !strings.EqualFold(in.ExpectedGHUser, in.ActualGHUser) {

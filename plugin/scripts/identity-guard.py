@@ -25,7 +25,7 @@ INSTALL_URL = "https://github.com/tentaqles/tentaqles#install"
 
 # Mirrors internal/guard/guard.go sepPattern: classic separators, line breaks,
 # and command-substitution/grouping openers.
-_SEP = r"&&|\|\||;|\||\n|\r|\$\(|`|\(|\)|\{|\}"
+_SEP = r"&&|&|\|\||;|\||\n|\r|\$\(|`|\(|\)|\{|\}"
 _SEP_RE = re.compile(_SEP)
 
 CLOUD_CLIS = ("az", "aws", "gcloud", "gsutil", "bq", "doctl")
