@@ -12,7 +12,7 @@ Working across multiple clients with an AI coding assistant creates failure mode
 
 ## Features
 
-**Identity isolation.** Prevents pushing code with the wrong git email, running CLI commands against the wrong cloud subscription, or querying the wrong database. Preflight checks run automatically before every external operation, and the right account is auto-switched on session start (git via `includeIf`, gh via `auth switch`, Azure via `account set`, DigitalOcean via `doctl auth switch`).
+**Identity isolation.** Prevents pushing code with the wrong git email, running CLI commands against the wrong cloud subscription, or querying the wrong database. Identity switching is owned by `tq` — the `tq` shell hook swaps git identity, env vars, and per-workspace CLI config dirs on `cd`. The plugin does not switch anything itself: `PreToolUse` calls `tq claude-hook pre-tool-use` to verify the Bash command matches the active workspace's identity and blocks it (exit 2) on drift or an untrusted workspace. If `tq` isn't installed, the hook falls back to a dependency-free Python guard that still blocks remote git/gh/cloud commands (fail-closed); if no Python interpreter can be found either, every Bash command is blocked until `tq` or Python is installed.
 
 **Persistent temporal memory.** Tracks sessions, touches, decisions, and pending work per client in a local SQLite database. Survives terminal close, Ctrl+C, `/exit`, and context auto-compaction via a `PreCompact` hook that re-injects critical state.
 
@@ -142,19 +142,22 @@ When a Claude Code session starts, Tentaqles walks up from the current directory
   project-b/               <- also inherits
 ```
 
-### Auto-switching identity
+### Identity is managed by `tq`, not the plugin
 
-On every session start, Tentaqles reads the manifest and ensures:
-- **git email** — configured via `git includeIf` so any repo under the client root uses the right email automatically
-- **gh account** — switched with `gh auth switch --user` if the active account doesn't match
-- **Azure subscription** — switched with `az account set` if on Azure
-- **DigitalOcean context** — switched with `doctl auth switch` if using DO
+`tq` — the companion CLI, not this plugin — owns identity switching: its
+shell hook sets git email (via `includeIf`), the active `gh`/`az`/`aws`
+CLI config, and `CLAUDE_CONFIG_DIR` when you `cd` into a workspace. The
+plugin's `SessionStart` hook calls `tq claude-hook session-start`, which
+only *reports* the resolved identity (client, git identity, cloud
+subscription, `tq doctor` findings) — it does not switch anything.
 
-If a required account isn't authenticated yet, the preamble prints a clear instruction (e.g., `gh auth login`).
+If a required account isn't authenticated yet, `tq doctor` prints a clear
+instruction (e.g., `gh auth login`).
 
-### Preflight checks
+### Preflight / enforcement checks
 
-Before any git, cloud CLI, or database operation, Tentaqles verifies:
+Before any git, gh, or cloud CLI command, the plugin's `PreToolUse` hook
+calls `tq claude-hook pre-tool-use`, which verifies:
 
 | Operation | Check | Blocked if wrong |
 |-----------|-------|-----------------|
@@ -225,8 +228,8 @@ All hooks are automatic and run silently.
 
 | Hook | Fires on | What it does |
 |------|----------|-------------|
-| `SessionStart` | Session begins | `bootstrap.py` (one-time deps install), then `session-preamble.py` (detect workspace, auto-switch identity, inject context + memory) |
-| `PreToolUse` | Before Bash commands | `identity-guard.py` — verify git/gh/az/aws identity, block wrong-context operations |
+| `SessionStart` | Session begins | `bootstrap.py` (one-time deps install), `tq_hook.sh session-start` → `tq claude-hook session-start` (report resolved identity + `tq doctor`; no switching), then `session-preamble.py --memory-only` (inject memory context) |
+| `PreToolUse` | Before Bash commands | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest, block on drift (exit 2). Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. MCP tool calls are not gated in 0.4.0. |
 | `PreCompact` | Before context auto-compaction | `pre-compact.py` — re-inject critical state (decisions, hot nodes, open pending) |
 | `PostToolUse` | After Bash/Edit/Write | `knowledge-capture.py` — scan output for decisions, record file touches |
 | `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory |

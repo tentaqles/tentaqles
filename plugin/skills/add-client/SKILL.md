@@ -5,137 +5,57 @@ description: Create a new client workspace with identity configuration, cloud/da
 
 # Add Client
 
-Create a new client workspace with a `.tentaqles.yaml` manifest, identity rules, and CLAUDE.md skeleton. This is the entry point for any new client — everything else (projects, graphs, memory) builds on top of it.
+Create a new client workspace by running `tq add`, which writes the
+`.tentaqles.yaml` manifest, sets up the per-workspace git identity, and
+creates the identity dirs for each requested CLI. `tq` — not this skill — is
+the source of truth for identity/git/claude config; this skill just gathers
+the answers and drives the CLI.
 
 ## Gather Information
 
-Collect the following from the user. Client name is required; everything else has sensible defaults. If the user provides partial info (e.g., "new client Acme, they use AWS"), fill in what you can and ask only about the gaps.
+Collect the following from the user. Client name is required; everything
+else has sensible defaults. If the user provides partial info (e.g., "new
+client Acme, they use AWS"), fill in what you can and ask only about the
+gaps.
 
 | Field | Required | Example | Notes |
 |-------|----------|---------|-------|
-| Client name | Yes | "Acme Corp" | Used for display |
-| Client slug | Auto | `acme-corp` | Lowercase, hyphens, derived from name |
-| Cloud provider | No | azure, aws, digitalocean, none | Default: none |
-| Database provider | No | postgresql, snowflake, databricks, supabase, none | Default: none |
-| Git provider | Yes | github, gitlab, azure-devops | No default — must know this |
-| Git email | Yes | dev@acme.com | The email for commits in this workspace |
-| Git username | Depends | acme-dev | Required for github/gitlab, not for azure-devops |
-| Language | No | en, pt-BR | Default: en |
-| PM tool | No | asana, jira, github-projects, azure-devops, none | Default: none |
-| Workspaces root | No | ~/repos | Where client dirs live. Ask if not obvious from cwd. |
+| Client name / slug | Yes | `acme-corp` | Lowercase, hyphens; becomes the workspace folder name |
+| Base folder | No | `C:\repos` | Where client folders live. Ask if not obvious from cwd; must already be registered with `tq init` |
+| Git email | Yes | dev@acme.com | Passed to `--git-email` |
+| Git name | No | Acme Dev | Passed to `--git-name` |
+| Identities | No | `claude,gh` | Comma list: `claude,codex,gemini,cursor,gh,az,aws,gcloud,kube,npm` (default `claude,gh`) |
+| Display name | No | "Acme Corp" | Passed to `--display-name` |
+| Permission mode | No | default | `default\|acceptEdits\|plan\|bypass`, passed to `--permission-mode` |
 
-## Determine Workspaces Root
-
-Check if the user is already inside a known workspaces root by looking at cwd. If cwd looks like `~/repos/` or `C:\repos\`, use that. Otherwise, check plugin config:
-
-```bash
-echo $CLAUDE_PLUGIN_OPTION_workspaces_root
-```
-
-If still unknown, ask: "Where do your client workspaces live? (e.g., ~/repos or C:\repos)"
+Cloud, database, and PM-tool preferences are still useful context for the
+client's `CLAUDE.md`, but `tq add` does not manage those sections — capture
+them in the CLAUDE.md skeleton (below), not in `.tentaqles.yaml`.
 
 ## Create the Workspace
 
-### 1. Create directory structure
+Run `tq add` with the gathered answers:
 
 ```bash
-mkdir -p "{workspaces_root}/{slug}"
-mkdir -p "{workspaces_root}/{slug}/.claude/rules"
+tq add {slug} --base "{base_folder}" --git-email "{git_email}" --git-name "{git_name}" --identities claude,gh[,az|aws|...] --display-name "{display_name}"
 ```
 
-### 2. Generate `.tentaqles.yaml`
+`tq add` creates the workspace folder, writes `.tentaqles.yaml` (this file
+is generated and owned by `tq` — see note below), configures the workspace
+git identity, and creates a private config dir per requested identity.
 
-Write the manifest file. Map the user's choices to the correct preflight commands:
+## What `tq add` Wrote
 
-**Preflight commands by provider:**
+`.tentaqles.yaml`'s `git`, `identities`, and `claude` sections are written
+and maintained by `tq` (`tq add`, `tq doctor`, `tq allow`). Don't hand-edit
+those sections — if you need to change them, use `tq` commands or
+`/tentaqles:client-settings`, which knows the boundary between fields `tq`
+owns and fields you can edit by hand.
 
-| Provider | Preflight command | `expected_user` value |
-|----------|------------------|---------------------|
-| github | `gh auth status --active` | GitHub **username** (e.g. `alice-dev`) — NEVER the email |
-| gitlab | `glab auth status` | GitLab **username** — NEVER the email |
-| azure-devops | `git config user.email` | (leave `expected_user` unset — use email check only) |
-| azure (cloud) | `az account show --query name -o tsv` | — (use `cloud.expected: {subscription_name}`) |
-| aws (cloud) | `aws sts get-caller-identity --query Account --output text` | — (use `cloud.expected: {account_id}`) |
-| digitalocean | `doctl account get --format Email --no-header` | — (use `cloud.expected: {email}`) |
+## Create CLAUDE.md skeleton
 
-**CRITICAL**: For `github` and `gitlab`, `expected_user` must be the CLI username returned by `gh auth status --active` (parsed from `account <name>`). It is NOT the email and NOT a display name. The auto-switch hook uses this value in `gh auth switch --user <expected_user>`. If you put the email here, the switch will always fail because no such account name exists.
-
-When asking the user for git identity, ask separately:
-  - "What's your git email?" → `git.email`
-  - "What's your GitHub/GitLab username?" → `git.user` AND `git.expected_user` (set both to the same value)
-
-**Blocked commands by provider** (safe defaults):
-
-- github: `["gh repo delete", "git push --force main", "git push --force master"]`
-- gitlab: `["git push --force main", "git push --force master"]`
-- azure-devops: `["git push --force main", "git push --force master"]`
-- azure (cloud): `["az group delete", "az keyvault delete", "az storage delete"]`
-- aws (cloud): `["aws iam delete", "aws s3 rb"]`
-
-Write the file:
-
-```yaml
-# Tentaqles client manifest — {display_name}
-# Generated by /tentaqles:add-client
-schema: tentaqles-client-v1
-client: {slug}
-display_name: "{display_name}"
-language: {language}
-
-cloud:
-  provider: {cloud_provider}
-  # subscription_name: ""     # fill in after cloud login
-  # subscription_id: ""
-  preflight: "{cloud_preflight_cmd}"
-  expected: "{cloud_expected}"
-  blocked_commands: {cloud_blocked}
-
-database:
-  provider: {db_provider}
-  dialect: {db_dialect}
-  host: {db_host}
-  access: mcp
-  mcp_server: {db_mcp}
-
-git:
-  provider: {git_provider}
-  email: "{git_email}"
-  user: {git_username}
-  host: {git_host}
-  preflight: "{git_preflight_cmd}"
-  expected_user: {git_expected}
-  blocked_commands: {git_blocked}
-
-project_management:
-  provider: {pm_provider}
-  workspace: {slug}
-
-stack: []  # add technologies as projects are created
-```
-
-For fields the user didn't provide (like cloud subscription_name), leave them commented out with instructions to fill in later.
-
-### 3. Create identity rules
-
-Write `.claude/rules/identity.md`:
-
-```markdown
-# Identity — {display_name}
-
-- Git commits MUST use email: {git_email}
-- Before any git push/commit, verify: `git config user.email` returns `{git_email}`
-- Git provider: {git_provider}
-{if cloud_provider != 'none':}
-- Cloud provider: {cloud_provider}. Verify subscription before any cloud CLI operations.
-{endif}
-{if language == 'pt-BR':}
-- Documentation and commit messages in Portuguese (pt-BR)
-{endif}
-```
-
-### 4. Create CLAUDE.md skeleton
-
-Write `CLAUDE.md` at the workspace root:
+Write `CLAUDE.md` at the workspace root (still done by this skill, not by
+`tq`):
 
 ```markdown
 # {display_name}
@@ -147,66 +67,48 @@ Write `CLAUDE.md` at the workspace root:
 <!-- Will be updated as projects are added -->
 
 ## Conventions
-- Language: {language}
-- Git: {git_provider} ({git_email})
-{if cloud_provider != 'none':}
+- Git: {git_email}
+{if cloud_provider given:}
 - Cloud: {cloud_provider}
 {endif}
-{if db_provider != 'none':}
-- Database: {db_provider} ({db_dialect} dialect)
+{if db_provider given:}
+- Database: {db_provider}
 {endif}
 
 ## Development
 <!-- Add build commands, test commands, deployment notes as you learn them -->
 ```
 
-### 5. Register in metagraph
+## Verify with `tq doctor`
 
 ```bash
-# Load tentaqles runtime
-_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
-
-"$TENTAQLES_PY" -c "
-from tentaqles.metagraph.config import register_workspace
-register_workspace('{slug}', '{full_path}', '{display_name}')
-print('Registered in metagraph')
-"
+tq doctor
 ```
 
-### 6. Configure git identity
+Show the result to the user. `tq doctor` never mutates — it only reports
+what's wrong (untrusted manifest, git identity drift, missing hooks, etc.).
 
-```bash
-cd "{workspaces_root}/{slug}"
-git config user.email "{git_email}"
-git config user.name "{user_display_name}"
-```
+## Ask Before Trusting
 
-### 7. Run preflight checks
+`tq add` does not trust the workspace automatically, and neither does this
+skill. **Always ask the user first**: "Run `tq allow {slug}` to trust this
+workspace so it can export its identity? (Needed before you `cd` in and get
+the right git/CLI identity.)"
 
-```bash
-# Load tentaqles runtime
-_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+Only run `tq allow {slug}` after the user confirms. Never auto-trust a new
+workspace.
 
-"$TENTAQLES_PY" -c "
-from tentaqles.manifest.loader import load_manifest, run_preflight_checks, format_context_summary, get_client_context
-manifest = load_manifest('{full_path}')
-ctx = get_client_context('{full_path}')
-checks = run_preflight_checks(manifest or ctx)
-print(format_context_summary(ctx, checks))
-"
-```
-
-### 8. Report
+## Report
 
 Summarize what was created:
 - Workspace path
-- Files created (`.tentaqles.yaml`, `.claude/rules/identity.md`, `CLAUDE.md`)
-- Preflight check results (what passed, what needs fixing)
+- `tq add` output (identities configured)
+- `tq doctor` results
+- Whether the user asked you to run `tq allow`
 - Next steps: "Create your first project with `/tentaqles:add-project`"
-- Any manual setup needed (cloud login, git config, etc.)
 
 ## Error Handling
 
-- If the directory already exists and has a `.tentaqles.yaml`, warn: "This workspace already exists. Do you want to overwrite the manifest?"
-- If Python modules aren't available, create the files manually without the metagraph registration step, and note that the user should run `pip install tentaqles` later.
-- If the workspaces root doesn't exist, create it (after confirming with the user).
+- If `tq add` fails because the base folder isn't registered, tell the user to run `tq init <base>` first.
+- If the workspace already exists, `tq add` will report that — ask the user whether they want to edit settings instead via `/tentaqles:client-settings`.
+- If `tq` is not installed or not on PATH, tell the user to install it (see the repo README) — this skill cannot create a properly-managed workspace without `tq`.

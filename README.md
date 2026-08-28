@@ -1,6 +1,13 @@
 # tentaqles
 
-Terminal-identity orchestration for developers working across several clients: one base folder, one identity per subfolder, the right CLIs/agents/plugins per identity. This monorepo holds the `tq` CLI (`cmd/tq`, `internal/`), the Claude Code plugin (`plugin/`), the provider catalog and desktop setup app (planned: `providers/`, `desktop/`), and a legacy Python MCP sidecar (`legacy/sidecar/`, being retired).
+Terminal-identity orchestration for developers working across several clients: one base folder, one identity per subfolder, the right CLIs/agents/plugins per identity. This monorepo holds the `tq` CLI (`cmd/tq`, `internal/`), the Claude Code plugin (`plugin/`), and the provider catalog and desktop setup app (planned: `providers/`, `desktop/`).
+
+## Claude Code plugin
+
+`plugin/` wires `tq` into Claude Code: its `SessionStart` and `PreToolUse`
+hooks shell out to `tq claude-hook` for identity reporting and enforcement.
+See [docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md) for the hook protocol, rule
+precedence, and how to test it by hand.
 
 ---
 

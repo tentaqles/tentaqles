@@ -54,7 +54,7 @@ After you answer, it:
 2. Generates `.tentaqles.yaml` with all your answers + the right preflight commands for your chosen providers
 3. Creates `.claude/rules/identity.md` with git identity enforcement rules
 4. Creates a `CLAUDE.md` skeleton at the client root
-5. Configures git identity (via `git includeIf` in your global config, so any repo under that path inherits the right email automatically)
+5. Configures git identity via `tq add` (`git includeIf` in your global config, so any repo under that path inherits the right email automatically — this is owned and verified by `tq`, not the plugin)
 6. Registers the workspace in the Tentaqles meta-graph config
 7. Runs initial preflight checks so you know what's already correct and what needs manual setup (e.g., `gh auth login`, `az login`)
 
@@ -92,7 +92,7 @@ Then it creates:
 
 **Scenario**: You've been working on Acme (Azure) and need to switch to Globex (AWS + Snowflake).
 
-**Option A — automatic**: Just `cd` to the Globex workspace and open Claude Code there. The `SessionStart` hook auto-switches git identity, gh account, cloud CLI, etc. You'll see a summary in the session preamble like:
+**Option A — automatic**: Just `cd` to the Globex workspace and open Claude Code there. `tq`'s shell hook (installed via `tq hooks install` / `tq activate`) switches git identity, the active CLI config dirs, and `CLAUDE_CONFIG_DIR` on the `cd` itself — the plugin doesn't do the switching, it only reports what `tq` resolved. You'll see a summary in the session preamble like:
 
 ```
 Client: Globex Inc (en)
@@ -316,7 +316,7 @@ Not: casual questions, reformulations, or polite disagreement that doesn't set a
 
 **Symptom**: Your git push fails, or `gh pr create` errors out, or `az` says you're in the wrong subscription.
 
-**Most of the time**, the `SessionStart` hook auto-switches these for you. If it didn't:
+**Most of the time**, `tq`'s shell hook already switched these for you on `cd`. If it didn't (e.g., you're on `cmd.exe`, which has no `cd` hook — use `tq run <workspace> -- <command>` instead):
 
 1. **Check what Tentaqles thinks is correct**:
    ```

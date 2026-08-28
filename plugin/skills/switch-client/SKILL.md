@@ -5,130 +5,88 @@ description: Show all registered client workspaces with their identity status an
 
 # Switch Client
 
-Show all registered workspaces with their identity/cloud/database status, and help the user switch safely by running preflight checks and providing fix commands for any mismatches.
+Show all registered workspaces with their identity status, and help the
+user switch safely. `tq` owns identity switching — this skill's job is to
+surface `tq`'s own view (`tq list`, `tq doctor`) and tell the user how to
+move between workspaces.
 
-The core safety principle: never let the user accidentally run commands against the wrong client's infrastructure. This skill exists to make context switching explicit and verified.
+The core safety principle: never let the user accidentally run commands
+against the wrong client's infrastructure. `tq claude-hook pre-tool-use`
+(wired into the `PreToolUse` hook) already blocks that at the Bash-command
+level; this skill is about visibility and voluntary switching.
 
-## Load Workspace Registry
-
-```bash
-# Load tentaqles runtime
-_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
-"$TENTAQLES_PY" -c "
-import json
-
-workspaces = {}
-# Try metagraph config
-try:
-    from tentaqles.metagraph.config import list_workspaces
-    workspaces = list_workspaces()
-except Exception:
-    pass
-
-# Try cross-workspace memory
-memory_ctx = ''
-try:
-    from tentaqles.memory.meta import MetaMemory
-    m = MetaMemory()
-    memory_ctx = m.get_cross_workspace_context()
-    m.close()
-except Exception:
-    pass
-
-print('WORKSPACES=' + json.dumps(workspaces))
-print('---MEMORY---')
-print(memory_ctx)
-"
-```
-
-If no workspaces are registered, tell the user: "No client workspaces registered yet. Run `/tentaqles:add-client` to set up your first one."
-
-## Display Workspace Overview
-
-Show a table with all workspaces:
-
-| Client | Cloud | Database | Git Identity | Last Active |
-|--------|-------|----------|-------------|-------------|
-| Acme Corp | azure | postgresql | dev@acme.com (github) | 2 hours ago |
-| Globex | aws | snowflake | dev@globex.io (gitlab) | 3 days ago |
-
-Also show the cross-workspace memory summary if available (recent activity, hot nodes per workspace).
-
-Highlight the **current workspace** (detected from cwd) if you're inside one.
-
-## Target Client Check
-
-If `$ARGUMENTS` contains a client name (e.g., the user said `/tentaqles:switch-client acme`), focus on that specific client. Otherwise, show all workspaces and ask which one they want to switch to.
-
-## Run Preflight Checks
-
-For the target client, load its manifest and run all checks:
+## List Workspaces
 
 ```bash
-# Load tentaqles runtime
-_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
-"$TENTAQLES_PY" -c "
-from tentaqles.manifest.loader import load_manifest, get_client_context, run_preflight_checks, format_context_summary
-
-manifest = load_manifest('{client_root_path}')
-ctx = get_client_context('{client_root_path}')
-checks = run_preflight_checks(manifest or ctx)
-print(format_context_summary(ctx, checks))
-"
+tq list --json
 ```
+
+Render the JSON as a table:
+
+| Client | Base | Trusted | Git Identity |
+|--------|------|---------|-------------|
+| acme-corp | C:\repos | yes | dev@acme.com |
+| globex | C:\repos | no | dev@globex.io |
+
+If the list is empty: "No client workspaces registered yet. Run
+`/tentaqles:add-client` to set up your first one."
+
+Highlight the **current workspace** (detected from cwd) if the user is
+inside one.
+
+## Switching
+
+`tq` does not have a `cd`-replacing shell command in this release — actual
+identity switching happens via the shell activation hook (`tq activate`,
+installed by `tq hooks install`) that fires on every `cd`. So switching is:
+
+1. **cd into the folder.** The `tq` shell hook (from `tq activate`) detects
+   the directory change and switches the exported identity env vars
+   (`CLAUDE_CONFIG_DIR`, git identity, etc.) automatically. On `cmd.exe`
+   (no hook support), use `tq run <workspace> -- <command>` to run a single
+   command under that workspace's identity instead.
+2. **Verify with `tq doctor`** after cd'ing, to confirm everything lines up.
+
+## Run Preflight / Status Checks
+
+For the target client:
+
+```bash
+tq doctor
+```
+
+Or, for scripting / structured output:
+
+```bash
+tq doctor --json
+```
+
+`tq doctor` never mutates — it reports whether hooks are installed, the
+workspace is trusted, git identity matches the manifest, and env vars are
+consistent with cwd.
 
 ## Provide Fix Commands
 
-For each failing check, provide the exact command to fix it:
+For common `tq doctor` findings:
 
-| Check | Fix Command |
-|-------|------------|
-| Git email mismatch | `git config user.email "{expected_email}"` |
-| GitHub user wrong | `gh auth switch --user {expected_user}` |
-| Azure subscription wrong | `az account set --subscription "{expected_sub}"` |
-| AWS profile wrong | `export AWS_PROFILE={expected_profile}` |
-| GitLab user wrong | `glab auth login` |
+| Finding | Fix |
+|---------|-----|
+| Workspace untrusted | `tq allow <name>` (ask the user before running this — see add-client's rule: never auto-trust) |
+| Git identity drift | `tq doctor` explains the mismatch; identity is managed by `tq`, don't hand-edit `git config user.email` |
+| Env drift (TQ_WS stale) | Open a new shell, or `eval "$(tq env --shell <shell>)"` |
+| Claude config dir drift | Start Claude from a tq-activated shell in the workspace, or `tq run <name> -- claude` |
 
-Present these clearly and ask: "Want me to run these fix commands?"
-
-If the user says yes, run each fix command one at a time, confirming success after each:
-
-```bash
-git config user.email "{expected}"
-# Then verify:
-git config user.email
-```
-
-## Re-verify After Fixes
-
-After running fix commands, re-run the preflight checks to confirm everything is green:
-
-```bash
-# Load tentaqles runtime
-_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
-"$TENTAQLES_PY" -c "
-from tentaqles.manifest.loader import load_manifest, run_preflight_checks
-manifest = load_manifest('{client_root_path}')
-checks = run_preflight_checks(manifest)
-all_pass = all(c['passed'] for c in checks)
-for c in checks:
-    status = 'PASS' if c['passed'] else 'FAIL'
-    print(f'  [{status}] {c[\"section\"]}: {c[\"expected\"]}')
-if all_pass:
-    print('All checks passed — safe to work.')
-else:
-    print('Some checks still failing.')
-"
-```
+Present these clearly and ask before running anything that changes trust
+state.
 
 ## Report
 
-If all checks pass: "You're now set up for **{client name}**. All identities verified. `cd {client_root}` to start working."
-
-If some checks still fail: list what's still wrong and what the user needs to do manually (some things like cloud logins require interactive auth that Claude can't do — suggest `! az login` or `! gh auth login`).
+If `tq doctor` is clean: "You're set up for **{client name}**. All checks
+passed." If issues remain, list them with the fix commands above and note
+which ones require manual login (e.g., `gh auth login`, `az login` — `tq`
+can't do interactive auth for you).
 
 ## Error Handling
 
-- If a workspace root path no longer exists on disk: note it and suggest removing it from the registry.
-- If Python modules aren't available: fall back to running the preflight commands directly (git config, gh auth status, az account show) and comparing manually.
-- If a preflight command times out (e.g., az account show when not logged in): report "not logged in" rather than a cryptic error.
+- If a workspace's folder no longer exists on disk, `tq list`/`tq doctor` will flag it — tell the user and suggest they remove or recreate it.
+- If `tq` is not installed or not on PATH: fall back to running `git config user.email`, `gh auth status`, etc. directly and comparing manually, and tell the user identity enforcement is running in fallback mode until `tq` is installed.

@@ -2,6 +2,12 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.4.0] — 2026-08-28
+
+tq is the source of truth: hooks call `tq claude-hook`; Python guard is
+fallback-only; preamble no longer switches gh/az/git; client-registry.json
+removed; requires tq ≥ 0.1.0.
+
 ## [0.3.1] — 2026-04-16 — "Portable Runtime"
 
 Full cross-platform compatibility for macOS, Linux, and Windows. Fixes plugin breakage on machines where `python` doesn't exist (macOS), resolves to a broken venv shim, or points to a Windows Store stub.

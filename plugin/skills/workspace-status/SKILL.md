@@ -5,31 +5,38 @@ description: Show current workspace detection, client context, and preflight che
 
 # Workspace Status
 
-Detect the current client workspace and run all preflight checks.
+Detect the current client workspace and show `tq`'s view of its health —
+`tq` is the source of truth for identity, trust, and hook state.
 
 ```bash
-# Load tentaqles runtime
-_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
-"$TENTAQLES_PY" -c "
-import os
-from tentaqles.manifest.loader import load_manifest, get_client_context, run_preflight_checks, format_context_summary
-
-cwd = os.getcwd()
-manifest = load_manifest(cwd)
-ctx = get_client_context(cwd)
-checks = run_preflight_checks(manifest or ctx)
-print(format_context_summary(ctx, checks))
-
-# Show memory stats if available
-try:
-    from tentaqles.memory.store import MemoryStore
-    store = MemoryStore(ctx.get('client_root', cwd))
-    stats = store.stats()
-    print(f'\nMemory: {stats[\"sessions\"]} sessions, {stats[\"touches\"]} touches, {stats[\"active_decisions\"]} decisions, {stats[\"open_pending\"]} pending')
-    store.close()
-except Exception:
-    print('\nMemory: not initialized')
-"
+tq doctor --json
 ```
 
-Report the results clearly to the user.
+Render the JSON result: workspace name, trust state, whether hooks are
+installed, git identity match/mismatch, and any drift codes
+(`untrusted`, `env-drift`, `claude-config-drift`, `git-email-drift`, ...).
+
+Also show bundle drift — whether the workspace's `claude.bundle` (plugins,
+skills, MCP servers) matches what's actually materialized in its Claude
+identity dir:
+
+```bash
+tq bundle diff <workspace> --json
+```
+
+If there's drift, mention it and point to `tq bundle sync <workspace>` to
+reconcile it (don't run `sync` without the user's go-ahead — it writes to
+the workspace's Claude identity dir).
+
+## Report
+
+Summarize in plain language:
+- Which client workspace (if any) the cwd resolves to
+- Whether it's trusted (`tq allow <name>` if not — ask before running)
+- Any `tq doctor` findings and their one-line fixes
+- Any `tq bundle diff` drift and whether `tq bundle sync` would fix it
+
+## Error Handling
+
+- If cwd is outside any registered base, `tq doctor` reports a neutral/untrusted result — tell the user they're not inside a tq workspace.
+- If `tq` is not installed or not on PATH: tell the user identity enforcement is running in fallback mode (the plugin's Python guard) until `tq` is installed, and that bundle status isn't available without `tq`.
