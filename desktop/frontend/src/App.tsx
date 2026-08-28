@@ -11,8 +11,8 @@ import Bundles from './steps/Bundles'
 import Preview from './steps/Preview'
 import Logins from './steps/Logins'
 
-const CURL = 'curl -fsSL https://tentaqles.ai/install.sh | sh'
-const IRM = 'irm https://tentaqles.ai/install.ps1 | iex'
+const CURL = 'curl -fsSL https://raw.githubusercontent.com/tentaqles/tentaqles/main/installers/install.sh | sh'
+const IRM = 'irm https://raw.githubusercontent.com/tentaqles/tentaqles/main/installers/install.ps1 | iex'
 
 // InstallBanner shows on first run when no tq binary is on PATH. It installs
 // the binary bundled next to the app when there is one, and otherwise falls

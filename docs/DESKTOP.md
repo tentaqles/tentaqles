@@ -20,8 +20,11 @@ copies it into `tq`'s per-user install directory. Otherwise the banner falls
 back to the published one-liner installers (`curl ... | sh` / `irm ... |
 iex`).
 
-<!-- TODO(release): tentaqles.ai/install.sh, tentaqles.ai/install.ps1 and the
-     GitHub release URLs below are placeholders until the first public tag. -->
+The one-liners fetch `installers/install.sh` / `installers/install.ps1`
+straight from this repository's `main` branch and download the matching
+`tq` archive from the latest GitHub release. Both need the repository to be
+public (or a `GITHUB_TOKEN`-authenticated client) — while it is private,
+use the bundled binary or a downloaded release archive instead.
 
 ### How `tq` is bundled
 
