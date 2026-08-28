@@ -127,7 +127,9 @@ jobs:
           exec "$(dirname "$0")/usr/bin/tentaqles-setup" "$@"
           EOF
           chmod +x build/AppDir/AppRun
-          ARCH=x86_64 /tmp/appimagetool build/AppDir build/bin/tentaqles-setup.AppImage
+          # --appimage-extract-and-run avoids needing FUSE (libfuse2) on the runner
+          ARCH=x86_64 /tmp/appimagetool --appimage-extract-and-run build/AppDir build/bin/tentaqles-setup.AppImage
+          test -s build/bin/tentaqles-setup.AppImage
 
       - name: upload release assets
         uses: softprops/action-gh-release@v2
