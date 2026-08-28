@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 func tempProfiles(t *testing.T, shells ...Shell) Profiles {
@@ -214,5 +215,211 @@ func TestInstall_MatchesCRLF(t *testing.T) {
 	}
 	if strings.Count(string(data), "\r\n") < strings.Count(string(data), "\n") {
 		t.Fatalf("expected all newlines in written content to be CRLF, got: %q", string(data))
+	}
+}
+
+func TestInstall_CreatesBackupOnce(t *testing.T) {
+	p := tempProfiles(t, "bash")
+	original := "export FOO=1\n"
+	if err := os.WriteFile(p["bash"], []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install("bash", p); err != nil {
+		t.Fatal(err)
+	}
+	bak := p["bash"] + ".tq-backup"
+	got, err := os.ReadFile(bak)
+	if err != nil {
+		t.Fatalf("no backup created: %v", err)
+	}
+	if string(got) != original {
+		t.Fatalf("backup = %q, want %q", got, original)
+	}
+
+	// A later modification must not overwrite the pristine backup.
+	if _, err := Remove("bash", p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install("bash", p); err != nil {
+		t.Fatal(err)
+	}
+	got2, err := os.ReadFile(bak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got2) != original {
+		t.Fatalf("backup overwritten: %q, want %q", got2, original)
+	}
+}
+
+func TestInstall_NoTmpLeftover(t *testing.T) {
+	p := tempProfiles(t, "bash")
+	if _, err := Install("bash", p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p["bash"] + ".tq-tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file left behind (err=%v)", err)
+	}
+	if _, err := Remove("bash", p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p["bash"] + ".tq-tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file left behind after remove (err=%v)", err)
+	}
+}
+
+func TestStatusOf_CorruptSingleMarker(t *testing.T) {
+	for _, marker := range []string{"# >>> tq >>>", "# <<< tq <<<"} {
+		p := tempProfiles(t, "bash")
+		if err := os.WriteFile(p["bash"], []byte("export FOO=1\n"+marker+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if st := StatusOf("bash", p); st.State != "corrupt" {
+			t.Fatalf("marker %q: state = %q, want corrupt", marker, st.State)
+		}
+		if _, err := Install("bash", p); err == nil {
+			t.Fatalf("marker %q: Install should refuse a corrupt profile", marker)
+		}
+	}
+}
+
+func TestRemove_RepairsSingleMarker(t *testing.T) {
+	// Only the start marker: everything from it to EOF goes.
+	p := tempProfiles(t, "bash")
+	if err := os.WriteFile(p["bash"], []byte("export FOO=1\n# >>> tq >>>\nsome tq line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Remove("bash", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != "repaired" {
+		t.Fatalf("state = %q, want repaired", st.State)
+	}
+	data, err := os.ReadFile(p["bash"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "tq") {
+		t.Fatalf("partial block not removed:\n%s", data)
+	}
+	if !strings.Contains(string(data), "export FOO=1") {
+		t.Fatalf("user content lost:\n%s", data)
+	}
+
+	// Only the end marker: just that line goes.
+	p2 := tempProfiles(t, "zsh")
+	if err := os.WriteFile(p2["zsh"], []byte("export A=1\n# <<< tq <<<\nexport B=2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st2, err := Remove("zsh", p2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st2.State != "repaired" {
+		t.Fatalf("state = %q, want repaired", st2.State)
+	}
+	data2, err := os.ReadFile(p2["zsh"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data2), "<<< tq") {
+		t.Fatalf("end marker not removed:\n%s", data2)
+	}
+	if !strings.Contains(string(data2), "export A=1") || !strings.Contains(string(data2), "export B=2") {
+		t.Fatalf("user content lost:\n%s", data2)
+	}
+}
+
+// utf16le encodes s as UTF-16 little-endian with a BOM, the way Windows
+// PowerShell 5.1 writes $PROFILE.
+func utf16le(s string) []byte {
+	out := []byte{0xFF, 0xFE}
+	for _, c := range utf16.Encode([]rune(s)) {
+		out = append(out, byte(c), byte(c>>8))
+	}
+	return out
+}
+
+func TestInstall_UTF16LEProfile(t *testing.T) {
+	p := tempProfiles(t, "powershell")
+	original := "Write-Host hi\r\n"
+	if err := os.WriteFile(p["powershell"], utf16le(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Install("powershell", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != "installed" {
+		t.Fatalf("state = %q, want installed", st.State)
+	}
+	raw, err := os.ReadFile(p["powershell"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) < 2 || raw[0] != 0xFF || raw[1] != 0xFE {
+		t.Fatalf("UTF-16LE BOM not preserved: % x", raw[:min(4, len(raw))])
+	}
+	decoded, enc := decodeProfile(raw)
+	if enc != encUTF16LE {
+		t.Fatalf("encoding = %v, want UTF-16LE", enc)
+	}
+	if !strings.Contains(decoded, "# >>> tq >>>") || !strings.Contains(decoded, "# <<< tq <<<") {
+		t.Fatalf("block missing from decoded profile:\n%q", decoded)
+	}
+	if !strings.Contains(decoded, "Write-Host hi") {
+		t.Fatalf("user content lost:\n%q", decoded)
+	}
+
+	// And removing gets us back to the original bytes.
+	if _, err := Remove("powershell", p); err != nil {
+		t.Fatal(err)
+	}
+	raw2, err := os.ReadFile(p["powershell"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec2, enc2 := decodeProfile(raw2)
+	if enc2 != encUTF16LE {
+		t.Fatalf("encoding after remove = %v, want UTF-16LE", enc2)
+	}
+	if strings.Contains(dec2, "tq >>>") {
+		t.Fatalf("block not removed:\n%q", dec2)
+	}
+}
+
+func TestInstall_PreservesUTF8BOM(t *testing.T) {
+	p := tempProfiles(t, "bash")
+	raw := append([]byte{0xEF, 0xBB, 0xBF}, []byte("export FOO=1\n")...)
+	if err := os.WriteFile(p["bash"], raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install("bash", p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(p["bash"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 3 || got[0] != 0xEF || got[1] != 0xBB || got[2] != 0xBF {
+		t.Fatalf("UTF-8 BOM not preserved: % x", got[:min(4, len(got))])
+	}
+	if strings.Count(string(got), "\xEF\xBB\xBF") != 1 {
+		t.Fatalf("BOM duplicated or lost:\n% x", got)
+	}
+	if !strings.Contains(string(got), "# >>> tq >>>") {
+		t.Fatalf("block not written:\n%s", got)
+	}
+}
+
+func TestDetect_SkipsShellsWithNoProfileMapping(t *testing.T) {
+	// Only bash has a mapping; every shell resolves via lookPath, so any
+	// unmapped shell that shows up came from the missing-mapping path.
+	p := tempProfiles(t, "bash")
+	always := func(string) (string, error) { return "/usr/bin/x", nil }
+	got := Detect(p, always)
+	if len(got) != 1 || got[0] != "bash" {
+		t.Fatalf("Detect = %v, want [bash]", got)
 	}
 }

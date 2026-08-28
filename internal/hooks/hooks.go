@@ -3,11 +3,13 @@
 package hooks
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf16"
 )
 
 // Shell identifies a supported shell.
@@ -23,6 +25,9 @@ type Profiles map[Shell]string
 const (
 	startMarker = "# >>> tq >>>"
 	endMarker   = "# <<< tq <<<"
+
+	tmpSuffix    = ".tq-tmp"
+	backupSuffix = ".tq-backup"
 )
 
 // DefaultProfiles returns the real, per-OS shell profile paths.
@@ -83,24 +88,169 @@ func Block(sh Shell) string {
 	return startMarker + "\n" + body + "\n" + endMarker + "\n"
 }
 
+// encoding records how a profile file was stored on disk so a rewrite can
+// reproduce it byte-for-byte (BOM and endianness included).
+type encoding int
+
+const (
+	encUTF8 encoding = iota
+	encUTF8BOM
+	encUTF16LE
+	encUTF16BE
+)
+
+var (
+	bomUTF8    = []byte{0xEF, 0xBB, 0xBF}
+	bomUTF16LE = []byte{0xFF, 0xFE}
+	bomUTF16BE = []byte{0xFE, 0xFF}
+)
+
+// decodeProfile turns raw profile bytes into UTF-8 text plus the encoding
+// needed to write it back out unchanged.
+func decodeProfile(raw []byte) (string, encoding) {
+	switch {
+	case len(raw) >= 3 && string(raw[:3]) == string(bomUTF8):
+		return string(raw[3:]), encUTF8BOM
+	case len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE:
+		return decodeUTF16(raw[2:], true), encUTF16LE
+	case len(raw) >= 2 && raw[0] == 0xFE && raw[1] == 0xFF:
+		return decodeUTF16(raw[2:], false), encUTF16BE
+	default:
+		return string(raw), encUTF8
+	}
+}
+
+func decodeUTF16(b []byte, little bool) string {
+	u := make([]uint16, 0, len(b)/2)
+	for i := 0; i+1 < len(b); i += 2 {
+		if little {
+			u = append(u, uint16(b[i])|uint16(b[i+1])<<8)
+		} else {
+			u = append(u, uint16(b[i])<<8|uint16(b[i+1]))
+		}
+	}
+	return string(utf16.Decode(u))
+}
+
+// encodeProfile is the inverse of decodeProfile.
+func encodeProfile(content string, e encoding) []byte {
+	switch e {
+	case encUTF8BOM:
+		return append(append([]byte(nil), bomUTF8...), content...)
+	case encUTF16LE:
+		return append(append([]byte(nil), bomUTF16LE...), encodeUTF16(content, true)...)
+	case encUTF16BE:
+		return append(append([]byte(nil), bomUTF16BE...), encodeUTF16(content, false)...)
+	default:
+		return []byte(content)
+	}
+}
+
+func encodeUTF16(s string, little bool) []byte {
+	u := utf16.Encode([]rune(s))
+	out := make([]byte, 0, len(u)*2)
+	for _, c := range u {
+		if little {
+			out = append(out, byte(c), byte(c>>8))
+		} else {
+			out = append(out, byte(c>>8), byte(c))
+		}
+	}
+	return out
+}
+
+// readProfile reads path and returns its decoded text, its encoding and its
+// file mode. A missing file yields empty text, encUTF8 and ok == false.
+func readProfile(path string) (content string, e encoding, mode os.FileMode, ok bool, err error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", encUTF8, 0o644, false, nil
+		}
+		return "", encUTF8, 0o644, false, err
+	}
+	mode = os.FileMode(0o644)
+	if fi, serr := os.Stat(path); serr == nil {
+		mode = fi.Mode().Perm()
+	}
+	content, e = decodeProfile(raw)
+	return content, e, mode, true, nil
+}
+
+// backupProfile copies path to "<path>.tq-backup" the first time tq is
+// about to modify it. A backup that already exists is left alone, so the
+// backup always reflects the file as it was before tq ever touched it.
+func backupProfile(path string) error {
+	bak := path + backupSuffix
+	if _, err := os.Stat(bak); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	return os.WriteFile(bak, raw, mode)
+}
+
+// writeProfile writes data to path atomically: it writes a sibling
+// "<path>.tq-tmp" first and renames it over the destination, so a crash
+// mid-write can never leave a truncated shell profile behind.
+func writeProfile(path string, data []byte, mode os.FileMode) error {
+	if mode == 0 {
+		mode = 0o644
+	}
+	tmp := path + tmpSuffix
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		// Windows refuses to rename over an existing file; drop the
+		// destination and retry once.
+		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+			_ = os.Remove(tmp)
+			return err
+		}
+		if err2 := os.Rename(tmp, path); err2 != nil {
+			_ = os.Remove(tmp)
+			return err2
+		}
+	}
+	return os.Chmod(path, mode)
+}
+
 // Status describes the hook state for a shell.
 type Status struct {
 	Shell   Shell
 	Profile string
-	State   string // "installed" | "present (unmanaged)" | "missing" | "no profile"
+	// State is one of: "installed", "present (unmanaged)", "missing",
+	// "no profile", "corrupt" (exactly one marker present), "unreadable",
+	// or "repaired" (returned by Remove after fixing a corrupt block).
+	State string
 }
 
-// Detect returns the shells to offer: those whose profile file exists, or
-// whose executable is found via lookPath.
+// Detect returns the shells to offer: those with a profile mapping whose
+// file exists, or whose executable is found via lookPath. Shells with no
+// profile path mapping are skipped entirely — tq has nowhere to install a
+// hook for them.
 func Detect(p Profiles, lookPath func(string) (string, error)) []Shell {
 	var out []Shell
 	for _, sh := range Shells {
 		profile, ok := p[sh]
-		if ok {
-			if _, err := os.Stat(profile); err == nil {
-				out = append(out, sh)
-				continue
-			}
+		if !ok || profile == "" {
+			continue
+		}
+		if _, err := os.Stat(profile); err == nil {
+			out = append(out, sh)
+			continue
 		}
 		if lookPath != nil {
 			if _, err := lookPath(string(sh)); err == nil {
@@ -125,31 +275,35 @@ func StatusOf(sh Shell, p Profiles) Status {
 		return Status{Shell: sh, State: "no profile"}
 	}
 	st := Status{Shell: sh, Profile: profile}
-	data, err := os.ReadFile(profile)
+	content, _, _, exists, err := readProfile(profile)
 	if err != nil {
-		if os.IsNotExist(err) {
-			st.State = "no profile"
-		} else {
-			st.State = "missing"
-		}
+		st.State = "unreadable"
 		return st
 	}
-	content := string(data)
-	if strings.Contains(content, startMarker) && strings.Contains(content, endMarker) {
+	if !exists {
+		st.State = "no profile"
+		return st
+	}
+	hasStart := strings.Contains(content, startMarker)
+	hasEnd := strings.Contains(content, endMarker)
+	switch {
+	case hasStart && hasEnd:
 		st.State = "installed"
-		return st
-	}
-	if strings.Contains(content, "tq activate "+string(sh)) {
+	case hasStart != hasEnd:
+		st.State = "corrupt"
+	case strings.Contains(content, "tq activate "+string(sh)):
 		st.State = "present (unmanaged)"
-		return st
+	default:
+		st.State = "missing"
 	}
-	st.State = "missing"
 	return st
 }
 
 // Install appends the tq block to sh's profile, creating parent dirs and
 // the file if needed. It is idempotent: if already installed or present
 // unmanaged, it leaves the file untouched and returns the current status.
+// A profile with only one of the two markers is refused rather than
+// silently appended to.
 func Install(sh Shell, p Profiles) (Status, error) {
 	profile, ok := p[sh]
 	if !ok || profile == "" {
@@ -160,86 +314,133 @@ func Install(sh Shell, p Profiles) (Status, error) {
 	if st.State == "installed" || st.State == "present (unmanaged)" {
 		return st, nil
 	}
+	if st.State == "corrupt" {
+		return st, fmt.Errorf("%s: %s contains a partial tq block; run: tq hooks remove %s", sh, profile, sh)
+	}
+	if st.State == "unreadable" {
+		return st, fmt.Errorf("%s: cannot read %s", sh, profile)
+	}
 
 	if err := os.MkdirAll(filepath.Dir(profile), 0755); err != nil {
 		return st, err
 	}
 
-	var existing []byte
-	if data, err := os.ReadFile(profile); err == nil {
-		existing = data
+	existing, enc, mode, exists, err := readProfile(profile)
+	if err != nil {
+		return st, err
 	}
 
 	// Match the existing file's line ending: if it already uses CRLF, write
 	// our block with CRLF too so we don't introduce a mixed-ending file.
 	block := Block(sh)
-	if strings.Contains(string(existing), "\r\n") {
+	if strings.Contains(existing, "\r\n") {
 		block = strings.ReplaceAll(block, "\r\n", "\n")
 		block = strings.ReplaceAll(block, "\n", "\r\n")
 	}
 
 	var newContent string
-	if len(existing) == 0 {
+	switch {
+	case existing == "":
 		newContent = block
-	} else if strings.HasSuffix(string(existing), "\n") {
+	case strings.HasSuffix(existing, "\n"):
 		sep := "\n"
-		if strings.Contains(string(existing), "\r\n") {
+		if strings.Contains(existing, "\r\n") {
 			sep = "\r\n"
 		}
-		newContent = string(existing) + sep + block
-	} else {
+		newContent = existing + sep + block
+	default:
 		sep := "\n\n"
-		if strings.Contains(string(existing), "\r\n") {
+		if strings.Contains(existing, "\r\n") {
 			sep = "\r\n\r\n"
 		}
-		newContent = string(existing) + sep + block
+		newContent = existing + sep + block
 	}
 
-	if err := os.WriteFile(profile, []byte(newContent), 0644); err != nil {
+	if exists {
+		if err := backupProfile(profile); err != nil {
+			return st, err
+		}
+	}
+	if err := writeProfile(profile, encodeProfile(newContent, enc), mode); err != nil {
 		return st, err
 	}
 	return StatusOf(sh, p), nil
 }
 
 // Remove deletes tq's marker-delimited block (and one preceding blank line,
-// if present) from sh's profile. Removing when absent is a no-op.
+// if present) from sh's profile. Removing when absent is a no-op. A
+// profile that kept only one of the two markers is repaired: everything
+// from that marker to the next marker (or EOF) is dropped, and the returned
+// Status reports State "repaired".
 func Remove(sh Shell, p Profiles) (Status, error) {
 	st := StatusOf(sh, p)
-	if st.State != "installed" {
+	if st.State != "installed" && st.State != "corrupt" {
 		return st, nil
 	}
+	repairing := st.State == "corrupt"
 
 	profile := p[sh]
-	data, err := os.ReadFile(profile)
+	content, enc, mode, _, err := readProfile(profile)
 	if err != nil {
 		return st, err
 	}
-	lines := strings.Split(string(data), "\n")
+	lines := strings.Split(content, "\n")
+
+	isMarker := func(l string) bool {
+		t := strings.TrimSpace(strings.TrimSuffix(l, "\r"))
+		return t == startMarker || t == endMarker
+	}
+	trimmed := func(l string) string { return strings.TrimSpace(strings.TrimSuffix(l, "\r")) }
 
 	startIdx, endIdx := -1, -1
 	for i, l := range lines {
-		if strings.TrimSpace(l) == startMarker {
+		if trimmed(l) == startMarker && startIdx == -1 {
 			startIdx = i
+			continue
 		}
-		if strings.TrimSpace(l) == endMarker && startIdx != -1 && endIdx == -1 {
+		if trimmed(l) == endMarker && endIdx == -1 {
 			endIdx = i
-			break
+			if startIdx != -1 {
+				break
+			}
 		}
 	}
-	if startIdx == -1 || endIdx == -1 {
+
+	switch {
+	case startIdx != -1 && endIdx != -1 && endIdx > startIdx:
+		// well-formed block
+	case startIdx != -1:
+		// Only a start marker: drop from it to the next marker, or to EOF.
+		endIdx = len(lines) - 1
+		for i := startIdx + 1; i < len(lines); i++ {
+			if isMarker(lines[i]) {
+				endIdx = i
+				break
+			}
+		}
+	case endIdx != -1:
+		// Only an end marker: drop just that line.
+		startIdx = endIdx
+	default:
 		return st, nil
 	}
 
 	removeFrom := startIdx
-	if removeFrom > 0 && strings.TrimSpace(lines[removeFrom-1]) == "" {
+	if removeFrom > 0 && trimmed(lines[removeFrom-1]) == "" {
 		removeFrom--
 	}
 
 	newLines := append(append([]string{}, lines[:removeFrom]...), lines[endIdx+1:]...)
 	newContent := strings.Join(newLines, "\n")
 
-	if err := os.WriteFile(profile, []byte(newContent), 0644); err != nil {
+	if err := backupProfile(profile); err != nil {
 		return st, err
+	}
+	if err := writeProfile(profile, encodeProfile(newContent, enc), mode); err != nil {
+		return st, err
+	}
+	if repairing {
+		return Status{Shell: sh, Profile: profile, State: "repaired"}, nil
 	}
 	return StatusOf(sh, p), nil
 }
