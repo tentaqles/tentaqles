@@ -15,10 +15,34 @@ changes, applying them, running doctor — is exactly what `tq setup` and
 the same `tq` state and are safe to mix.
 
 On first run, if `tq` isn't found on your `PATH`, the app shows a banner to
-install it. If a `tq` binary is bundled next to the app (the release
-installers ship one), clicking "Install tq" copies it into `tq`'s per-user
-install directory. Otherwise the banner falls back to the published
-one-liner installers (`curl ... | sh` / `irm ... | iex`).
+install it. If a `tq` binary is bundled with the app, clicking "Install tq"
+copies it into `tq`'s per-user install directory. Otherwise the banner falls
+back to the published one-liner installers (`curl ... | sh` / `irm ... |
+iex`).
+
+<!-- TODO(release): tentaqles.ai/install.sh, tentaqles.ai/install.ps1 and the
+     GitHub release URLs below are placeholders until the first public tag. -->
+
+### How `tq` is bundled
+
+Each installer ships the matching `tq` binary and puts it where the app
+looks for it — next to the running executable, or under `$APPDIR/usr/bin`
+on Linux:
+
+| Platform | Installer            | Bundled `tq` lands in                   |
+| -------- | -------------------- | --------------------------------------- |
+| Windows  | NSIS `.exe` (amd64)  | `$INSTDIR\tq.exe`, beside the app        |
+| macOS    | `.dmg` (native arch) | `tentaqles-setup.app/Contents/MacOS/tq` |
+| Linux    | `.AppImage` (amd64)  | `usr/bin/tq` inside the AppDir          |
+
+The Windows and Linux installers are **amd64 only**. The macOS `.dmg` is
+built for the release runner's **native architecture** (`arm64` on Apple
+silicon runners, `amd64` otherwise), and the bundled `tq` is downloaded to
+match.
+
+If a build is produced without staging a `tq` binary into
+`desktop/build/bin/`, the app still works — the banner simply falls back to
+the one-liner installers.
 
 ## Install
 
@@ -67,7 +91,7 @@ wails dev
 ```
 
 This runs the frontend dev server with hot reload and the Go backend
-together. Requires Go 1.22+, Node 22, and the Wails CLI
+together. Requires Go 1.26+, Node 22, and the Wails CLI
 (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0`). On Linux
 you'll also need `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` (or
 `libwebkit2gtk-4.0-dev` on older distros).
@@ -80,11 +104,20 @@ wails build
 ```
 
 To reproduce the Windows installer locally you also need NSIS
-(`choco install nsis`) and a `tq(.exe)` binary copied into
-`desktop/build/bin/` before building, so `wails build -nsis` bundles it
-alongside the app (this is what the release CI does automatically, pulling
-the matching `tq` binary from the `goreleaser` job's GitHub release
-assets).
+(`choco install nsis`) and a `tq.exe` copied into `desktop/build/bin/`
+before building. `desktop/build/windows/installer/project.nsi` picks it up
+with a `File /nonfatal "..\..\bin\tq.exe"` line, so `wails build -nsis`
+installs it beside the app. This is what the release CI does automatically,
+pulling the matching `tq` binary from the `goreleaser` job's GitHub release
+assets. To confirm it made it in:
+
+```powershell
+& "C:\Program Files\7-Zip\7z.exe" l build\bin\tentaqles-setup-amd64-installer.exe
+```
+
+The frontend must be built (`npm run build` in `desktop/frontend`) before
+any Go build or test in `desktop/`, because `main.go` uses
+`//go:embed all:frontend/dist`.
 
 ## Tests
 

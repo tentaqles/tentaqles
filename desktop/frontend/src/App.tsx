@@ -109,6 +109,13 @@ function Shell() {
   const {state, dispatch} = usePlan()
 
   async function next() {
+    // The Welcome step collects nothing, so there is nothing to validate yet —
+    // validating there would surface errors about fields the user hasn't seen.
+    if (state.step === 0) {
+      dispatch({type: 'setErrors', errors: []})
+      dispatch({type: 'next'})
+      return
+    }
     try {
       await api.validatePlan(state.plan)
       dispatch({type: 'next'})
@@ -130,6 +137,7 @@ function Shell() {
                 <button
                   onClick={() => dispatch({type: 'goto', step: i})}
                   disabled={i > state.step}
+                  aria-current={active ? 'step' : undefined}
                   className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left disabled:cursor-default disabled:opacity-40 ${
                     active
                       ? 'bg-[var(--tq-accent)]/15 font-medium text-[var(--tq-accent)]'

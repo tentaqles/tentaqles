@@ -94,6 +94,12 @@ export default function Services() {
         </Card>
       ) : null}
 
+      {chosen.length === 0 ? (
+        <p className="mb-3 text-sm text-[var(--tq-muted)]">
+          No services selected — <code>claude</code> and <code>gh</code> will be used by default.
+        </p>
+      ) : null}
+
       <Card>
         <div className="space-y-5">
           {grouped.map((g) => (
@@ -151,6 +157,12 @@ function CustomProviderForm({onDone, onCancel}: {onDone: () => void; onCancel: (
       setError('Id and name are required')
       return
     }
+    // This is the binary tq invokes, not a shell line — whitespace would mean
+    // arguments, which belong in the provider's login/verify commands.
+    if (/\s/.test(command.trim())) {
+      setError('CLI command must be a single binary name, with no spaces or arguments')
+      return
+    }
     const envMap: Record<string, string> = {}
     for (const row of env) {
       if (row.key.trim() !== '') envMap[row.key.trim()] = row.value
@@ -187,7 +199,7 @@ function CustomProviderForm({onDone, onCancel}: {onDone: () => void; onCancel: (
             ))}
           </Select>
         </Field>
-        <Field label="Login command">
+        <Field label="CLI command (binary name)">
           <Input value={command} spellCheck={false} onChange={(e) => setCommand(e.target.value)} />
         </Field>
       </div>

@@ -18,7 +18,7 @@ function StatusPill({status}: {status: ToolStatus}) {
   )
 }
 
-function Hints({hints}: {hints: string[]}) {
+function Hints({hints, onError}: {hints: string[]; onError: (msg: string) => void}) {
   if (hints.length === 0) return <span className="text-[var(--tq-muted)]">—</span>
   return (
     <ul className="space-y-1">
@@ -40,7 +40,17 @@ function Hints({hints}: {hints: string[]}) {
           <li key={i} className="flex items-center gap-2">
             <code className="text-xs">{h}</code>
             {isCommandHint(h) ? (
-              <Button className="!px-2 !py-0.5 text-xs" onClick={() => void api.openTerminal(h)}>
+              <Button
+                className="!px-2 !py-0.5 text-xs"
+                onClick={async () => {
+                  try {
+                    await api.openTerminal(h)
+                    onError('')
+                  } catch (e) {
+                    onError(api.errorText(e))
+                  }
+                }}
+              >
                 Install
               </Button>
             ) : null}
@@ -147,7 +157,7 @@ export default function Tools() {
                           <td className="py-2 pr-3 text-[var(--tq-muted)]">{r.Version || '—'}</td>
                           <td className="py-2 pr-3">
                             {status === 'missing' ? (
-                              <Hints hints={r.Hints ?? []} />
+                              <Hints hints={r.Hints ?? []} onError={setError} />
                             ) : (
                               <span className="break-all text-[var(--tq-muted)]">
                                 {r.Path || r.Err || '—'}

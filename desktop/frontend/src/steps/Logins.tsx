@@ -40,6 +40,12 @@ export default function Logins() {
         Note: the new terminal must have <code>tq</code> on PATH (open a fresh terminal after installing).
       </p>
 
+      {error ? (
+        <Card className="mb-4">
+          <p className="text-sm text-[#e0432f]">{error}</p>
+        </Card>
+      ) : null}
+
       {report?.Warnings?.length ? (
         <Card className="mb-4">
           <h2 className="mb-2 text-sm font-semibold text-[#f28c28]">Warnings</h2>
@@ -66,7 +72,17 @@ export default function Logins() {
             {report.Logins.map((cmd) => (
               <li key={cmd} className="flex items-center justify-between gap-3">
                 <code className="break-all text-sm">{cmd}</code>
-                <Button className="shrink-0" onClick={() => void api.openTerminal(cmd)}>
+                <Button
+                  className="shrink-0"
+                  onClick={async () => {
+                    try {
+                      await api.openTerminal(cmd)
+                      setError('')
+                    } catch (e) {
+                      setError(api.errorText(e))
+                    }
+                  }}
+                >
                   Open terminal
                 </Button>
               </li>
@@ -82,7 +98,6 @@ export default function Logins() {
             {running ? 'Running…' : 'Run doctor'}
           </Button>
         </div>
-        {error ? <p className="text-sm text-[#e0432f]">{error}</p> : null}
         {findings === null ? (
           <p className="text-sm text-[var(--tq-muted)]">
             Doctor checks each workspace's identity, git config, and trust state.

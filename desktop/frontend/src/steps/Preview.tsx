@@ -59,6 +59,16 @@ export default function Preview() {
     }
   }
 
+  // Escape closes the confirm dialog, but never while an apply is in flight.
+  useEffect(() => {
+    if (!confirming) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !applying) setConfirming(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirming, applying])
+
   const summary = summarizeChanges(changes)
 
   return (
@@ -135,8 +145,15 @@ export default function Preview() {
 
       {confirming ? (
         <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-6">
-          <div className="w-full max-w-md rounded-lg border border-[var(--tq-border)] bg-[var(--tq-panel)] p-5">
-            <h3 className="text-lg font-semibold">Apply this plan?</h3>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="apply-dialog-title"
+            className="w-full max-w-md rounded-lg border border-[var(--tq-border)] bg-[var(--tq-panel)] p-5"
+          >
+            <h3 id="apply-dialog-title" className="text-lg font-semibold">
+              Apply this plan?
+            </h3>
             <p className="mt-2 text-sm text-[var(--tq-muted)]">
               tq will write to {state.plan.Base} and to your shell profiles.
             </p>
