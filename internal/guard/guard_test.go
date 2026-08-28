@@ -76,6 +76,10 @@ func TestStartsWith(t *testing.T) {
 		{"gh", "gh", true},
 		{"git push --force", "git push --force", true},
 		{"git push --force-with-lease", "git push --force", false},
+		// Fix round 1 addendum: separators must also catch newlines and
+		// common command-substitution/grouping wrappers.
+		{"echo x\ngit push", "git", true},
+		{"$(gh api user)", "gh", true},
 	}
 	for _, c := range cases {
 		if got := StartsWith(c.cmd, c.prefix); got != c.want {
@@ -85,14 +89,22 @@ func TestStartsWith(t *testing.T) {
 }
 
 func TestReadOnlyGit(t *testing.T) {
-	for _, c := range []string{"git status", "git --no-pager log -3", "git -C x diff", "git remote -v", "git branch -a"} {
+	for _, c := range []string{"git status", "git --no-pager log -3", "git -C x diff", "git remote -v", "git branch -a", "git status; git log"} {
 		if !IsReadOnlyGit(c) {
 			t.Errorf("%q should be read-only", c)
 		}
 	}
-	for _, c := range []string{"git commit -m x", "git push", "git branch -D x", "git remote add o u", "ls"} {
+	for _, c := range []string{"git commit -m x", "git push", "git branch -D x", "git remote add o u", "ls", "git status && git commit -m x"} {
 		if IsReadOnlyGit(c) {
 			t.Errorf("%q should NOT be read-only", c)
+		}
+	}
+}
+
+func TestRemoteMutationChainedAndWrapped(t *testing.T) {
+	for _, c := range []string{"git status && git push origin main", "(git push)"} {
+		if !IsRemoteMutation(c) {
+			t.Errorf("%q should be a remote mutation", c)
 		}
 	}
 }

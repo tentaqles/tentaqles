@@ -1,11 +1,19 @@
 // Package guard decides whether a shell command Claude wants to run is allowed
 // in the current workspace. It is pure: callers gather every fact first.
+//
+// Command splitting/prefix-matching here is defense-in-depth string
+// heuristics, not a shell parser: it recognizes common separators
+// (&& || ; | newline/CR) and common command-substitution/grouping openers
+// ($( ` ( { ) } ) so an obvious wrapper like "(git push)" or "$(gh api user)"
+// doesn't slip past the guard, but it makes no attempt to fully parse shell
+// quoting, escaping, or nesting.
 package guard
 
 import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // Input is everything Decide needs; callers do all I/O.
@@ -30,12 +38,41 @@ type Decision struct {
 	Reason string // multi-line message for stderr (starts with "BLOCKED: ")
 }
 
+// sepPattern is the single shared definition of what separates one shell
+// "segment" from another for our purposes: the classic command separators
+// (&& || ; |), line breaks, and the common command-substitution/grouping
+// tokens ($( ` ( { ) }) that can otherwise hide a command from a naive
+// prefix check. StartsWith and the git segment splitter both use this so
+// they never drift apart.
+const sepPattern = `&&|\|\||;|\||\n|\r|\$\(|` + "`" + `|\(|\)|\{|\}`
+
+var sepRegexp = regexp.MustCompile(sepPattern)
+
+// startsWithCache memoizes the compiled per-prefix regexp built by
+// StartsWith: the set of distinct prefixes in a process (manifest blocked
+// commands, cloud CLI names, "git", "gh") is small and fixed, so a cache
+// avoids recompiling the same pattern on every call.
+var startsWithCache sync.Map // map[string]*regexp.Regexp
+
 // StartsWith reports whether command starts with prefix as a whole word, at the
-// start of the command or after && || ; |. Port of the Python
-// _command_starts_with: (?:^|&&|\|\||;|\|)\s*<prefix>(?:\s|$)
+// start of the command or after a separator (see sepPattern). Port of the
+// Python _command_starts_with, extended to also treat command substitution
+// and grouping openers as separators.
 func StartsWith(command, prefix string) bool {
-	p := `(?:^|&&|\|\||;|\|)\s*` + regexp.QuoteMeta(strings.TrimSpace(prefix)) + `(?:\s|$)`
-	return regexp.MustCompile(p).MatchString(command)
+	// TrimSpace(prefix): callers pass manifest entries like "gh " (trailing
+	// space) meant to match "gh pr list" etc. Since matching is now
+	// whole-word (not substring), the trailing space in the source data
+	// would otherwise require a literal double space in the command; trim
+	// it here so "gh " still matches "gh pr list".
+	key := strings.TrimSpace(prefix)
+	var re *regexp.Regexp
+	if v, ok := startsWithCache.Load(key); ok {
+		re = v.(*regexp.Regexp)
+	} else {
+		re = regexp.MustCompile(`(?:^|` + sepPattern + `)\s*` + regexp.QuoteMeta(key) + `(?:\s|$)`)
+		startsWithCache.Store(key, re)
+	}
+	return re.MatchString(command)
 }
 
 // CloudCLIs maps cloud CLI binary names to the provider they belong to.
@@ -48,11 +85,17 @@ func IsGit(c string) bool { return StartsWith(c, "git") }
 
 var readOnlySub = map[string]bool{"status": true, "log": true, "diff": true, "show": true, "rev-parse": true, "ls-files": true, "branch": true, "remote": true}
 
-// gitSubcommand returns the first git sub-word after global flags (-C x, --no-pager, -c k=v, --git-dir=…)
-// and the args after it. Handles only the FIRST git invocation in the command.
-func gitSubcommand(c string) (sub string, rest []string) {
-	// find the segment that starts with git
-	for _, seg := range regexp.MustCompile(`&&|\|\||;|\|`).Split(c, -1) {
+type gitInvocation struct {
+	sub  string
+	rest []string
+}
+
+// gitSegments returns every git invocation found in command (split on
+// sepPattern), each with its sub-word after global flags (-C x, -c k=v, …)
+// and the args following it.
+func gitSegments(c string) []gitInvocation {
+	var out []gitInvocation
+	for _, seg := range sepRegexp.Split(c, -1) {
 		f := strings.Fields(seg)
 		if len(f) == 0 || f[0] != "git" {
 			continue
@@ -68,16 +111,16 @@ func gitSubcommand(c string) (sub string, rest []string) {
 				i++
 				continue
 			}
-			return a, f[i+1:]
+			out = append(out, gitInvocation{sub: a, rest: f[i+1:]})
+			break
 		}
-		return "", nil
+		// If the loop exhausts f without hitting the default case (e.g. a
+		// bare "git" or "git --no-pager"), there is no sub-word to record.
 	}
-	return "", nil
+	return out
 }
 
-// IsReadOnlyGit reports whether command is a git invocation known to be read-only.
-func IsReadOnlyGit(c string) bool {
-	sub, rest := gitSubcommand(c)
+func isReadOnlySegment(sub string, rest []string) bool {
 	if !readOnlySub[sub] {
 		return false
 	}
@@ -105,8 +148,24 @@ func IsReadOnlyGit(c string) bool {
 	return true
 }
 
-// IsRemoteMutation reports whether command touches a remote: git push/fetch/pull/clone,
-// any gh invocation, or any cloud CLI invocation.
+// IsReadOnlyGit reports whether command is a git invocation known to be
+// read-only. A command with multiple chained git invocations is read-only
+// only if EVERY git segment in it is read-only.
+func IsReadOnlyGit(c string) bool {
+	segs := gitSegments(c)
+	if len(segs) == 0 {
+		return false
+	}
+	for _, s := range segs {
+		if !isReadOnlySegment(s.sub, s.rest) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsRemoteMutation reports whether command touches a remote: git push/fetch/pull/clone
+// (in ANY chained git segment), any gh invocation, or any cloud CLI invocation.
 func IsRemoteMutation(c string) bool {
 	if StartsWith(c, "gh") {
 		return true
@@ -116,10 +175,11 @@ func IsRemoteMutation(c string) bool {
 			return true
 		}
 	}
-	sub, _ := gitSubcommand(c)
-	switch sub {
-	case "push", "fetch", "pull", "clone":
-		return true
+	for _, s := range gitSegments(c) {
+		switch s.sub {
+		case "push", "fetch", "pull", "clone":
+			return true
+		}
 	}
 	return false
 }
