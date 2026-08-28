@@ -13,23 +13,24 @@ checksum: { name_template: checksums.txt }
 release:
   github: { owner: tentaqles, name: tentaqles }
   prerelease: auto   # tags with a pre-release suffix (v0.1.0-rc1) are marked pre-release
-# Tap/bucket publishing needs the repos tentaqles/homebrew-tap and tentaqles/scoop-bucket
-# to exist AND a token that can push to them (GITHUB_TOKEN cannot). skip_upload: auto
-# skips the push for pre-releases; for a stable tag create the repos first and set a
-# HOMEBREW_TAP_GITHUB_TOKEN / SCOOP_BUCKET_GITHUB_TOKEN secret, then remove `auto`.
+# Tap/bucket publishing pushes over SSH with per-repo deploy keys (write access on
+# tentaqles/homebrew-tap and tentaqles/scoop-bucket), stored as the repository secrets
+# HOMEBREW_TAP_DEPLOY_KEY / SCOOP_BUCKET_DEPLOY_KEY. GITHUB_TOKEN cannot push cross-repo.
 homebrew_casks:
   - repository:
       owner: tentaqles
       name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
-    skip_upload: auto
+      git:
+        url: git@github.com:tentaqles/homebrew-tap.git
+        private_key: '{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}'
     homepage: https://tentaqles.ai
     description: One terminal identity per workspace folder
 scoops:
   - repository:
       owner: tentaqles
       name: scoop-bucket
-      token: '{{ envOrDefault "SCOOP_BUCKET_GITHUB_TOKEN" "" }}'
-    skip_upload: auto
+      git:
+        url: git@github.com:tentaqles/scoop-bucket.git
+        private_key: '{{ .Env.SCOOP_BUCKET_DEPLOY_KEY }}'
     homepage: https://tentaqles.ai
     description: One terminal identity per workspace folder
