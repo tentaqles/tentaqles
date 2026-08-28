@@ -6,11 +6,13 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/cli/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/cli/internal/hooks"
 	"github.com/tentaqles/tentaqles/cli/internal/registry"
 )
 
 func newInitCmd() *cobra.Command {
-	return &cobra.Command{
+	var installHook bool
+	cmd := &cobra.Command{
 		Use:   "init <base-folder>",
 		Short: "Register a base folder; each first-level subfolder becomes a terminal identity",
 		Args:  cobra.ExactArgs(1),
@@ -44,8 +46,24 @@ func newInitCmd() *cobra.Command {
 				fmt.Fprintln(w, `  pwsh  ($PROFILE):                     tq activate pwsh | Out-String | Invoke-Expression`)
 				fmt.Fprintln(w, `  PS5.1 ($PROFILE):                     tq activate powershell | Out-String | Invoke-Expression`)
 			}
+
+			if installHook {
+				profiles := hooks.ProfilesFn()
+				shells := hooks.Detect(profiles, hooks.LookPath)
+				fmt.Fprintln(w, "\nInstalling shell hooks:")
+				for _, sh := range shells {
+					st, err := hooks.Install(sh, profiles)
+					if err != nil {
+						return err
+					}
+					fmt.Fprintf(w, "  %-12s %-24s %s\n", sh, st.Profile, st.State)
+				}
+			}
+
 			fmt.Fprintln(w, "\nNext: tq add <name> --git-email you@client.com --identities claude,gh")
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&installHook, "install-hook", false, "install tq's activation hook into detected shell profiles")
+	return cmd
 }
