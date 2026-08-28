@@ -201,9 +201,19 @@ func backupProfile(path string) error {
 	return os.WriteFile(bak, raw, mode)
 }
 
+// renameFn is the seam writeProfile uses for os.Rename; tests override it to
+// simulate rename failures.
+var renameFn = os.Rename
+
 // writeProfile writes data to path atomically: it writes a sibling
 // "<path>.tq-tmp" first and renames it over the destination, so a crash
 // mid-write can never leave a truncated shell profile behind.
+//
+// On Windows, os.Rename cannot replace an existing destination. In that case
+// the destination is moved aside to "<path>.tq-prev" (never deleted) before
+// retrying the rename: on success the ".tq-prev" is removed; on failure it is
+// restored to path and an error naming the surviving tmp file is returned, so
+// the original content is never lost.
 func writeProfile(path string, data []byte, mode os.FileMode) error {
 	if mode == 0 {
 		mode = 0o644
@@ -212,18 +222,32 @@ func writeProfile(path string, data []byte, mode os.FileMode) error {
 	if err := os.WriteFile(tmp, data, mode); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		// Windows refuses to rename over an existing file; drop the
-		// destination and retry once.
-		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
-			_ = os.Remove(tmp)
-			return err
-		}
-		if err2 := os.Rename(tmp, path); err2 != nil {
-			_ = os.Remove(tmp)
-			return err2
-		}
+	err := renameFn(tmp, path)
+	if err == nil {
+		return os.Chmod(path, mode)
 	}
+
+	if runtime.GOOS != "windows" {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+
+	prev := path + ".tq-prev"
+	if err := renameFn(path, prev); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writeProfile: could not move aside existing %s: %w", path, err)
+	}
+	if err := renameFn(tmp, path); err != nil {
+		if restoreErr := renameFn(prev, path); restoreErr != nil {
+			return fmt.Errorf("writeProfile: rename failed (%v) and restoring original from %s also failed (%v); new content left at %s for manual recovery", err, prev, restoreErr, tmp)
+		}
+		return fmt.Errorf("writeProfile: rename failed (%w); original restored; new content left at %s for manual recovery", err, tmp)
+	}
+	_ = os.Remove(prev)
 	return os.Chmod(path, mode)
 }
 

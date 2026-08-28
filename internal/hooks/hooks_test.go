@@ -3,6 +3,7 @@ package hooks
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -421,5 +422,95 @@ func TestDetect_SkipsShellsWithNoProfileMapping(t *testing.T) {
 	got := Detect(p, always)
 	if len(got) != 1 || got[0] != "bash" {
 		t.Fatalf("Detect = %v, want [bash]", got)
+	}
+}
+
+func TestWriteProfile_ReplacesExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profile")
+	if err := os.WriteFile(path, []byte("old content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeProfile(path, []byte("new content"), 0o644); err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new content" {
+		t.Errorf("path content = %q, want %q", got, "new content")
+	}
+
+	if _, err := os.Stat(path + tmpSuffix); !os.IsNotExist(err) {
+		t.Errorf("tmp file should not remain, stat err = %v", err)
+	}
+	if _, err := os.Stat(path + ".tq-prev"); !os.IsNotExist(err) {
+		t.Errorf(".tq-prev file should not remain, stat err = %v", err)
+	}
+}
+
+func TestWriteProfile_RestoresOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profile")
+	if err := os.WriteFile(path, []byte("original content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origGOOS := runtime.GOOS
+	_ = origGOOS
+	origRename := renameFn
+	defer func() { renameFn = origRename }()
+
+	tmp := path + tmpSuffix
+	prev := path + ".tq-prev"
+
+	callCount := 0
+	renameFn = func(oldpath, newpath string) error {
+		callCount++
+		switch {
+		case oldpath == tmp && newpath == path && callCount == 1:
+			// Simulate Windows: first rename attempt fails because dest exists.
+			return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: os.ErrExist}
+		case oldpath == path && newpath == prev:
+			return os.Rename(oldpath, newpath)
+		case oldpath == tmp && newpath == path:
+			// Second rename attempt (after moving dest aside) also fails.
+			return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: os.ErrExist}
+		case oldpath == prev && newpath == path:
+			return os.Rename(oldpath, newpath)
+		default:
+			return os.Rename(oldpath, newpath)
+		}
+	}
+
+	if runtime.GOOS != "windows" {
+		// Force the Windows branch to run under test regardless of host OS
+		// by only proceeding if a destination exists; the writeProfile
+		// windows-only guard is bypassed via GOOS check inside the function,
+		// so this test is only meaningful on windows. Skip elsewhere.
+		t.Skip("writeProfile fallback path is windows-only")
+	}
+
+	err := writeProfile(path, []byte("new content"), 0o644)
+	if err == nil {
+		t.Fatal("expected error from writeProfile, got nil")
+	}
+	if !strings.Contains(err.Error(), tmp) {
+		t.Errorf("error should name tmp path %q, got: %v", tmp, err)
+	}
+
+	got, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(got) != "original content" {
+		t.Errorf("path content = %q, want original content restored", got)
+	}
+
+	if _, serr := os.Stat(tmp); serr != nil {
+		t.Errorf("tmp file should still exist for manual recovery, stat err = %v", serr)
 	}
 }
