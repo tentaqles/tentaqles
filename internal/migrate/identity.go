@@ -3,6 +3,7 @@ package migrate
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -260,8 +261,12 @@ func processIsCLI(line, id string) bool {
 	id = strings.ToLower(id)
 	for i, f := range strings.Fields(line) {
 		f = strings.Trim(f, "\"'")
-		slashed := filepath.ToSlash(f)
-		base := strings.ToLower(filepath.Base(slashed))
+		// Normalise both separators by hand rather than with filepath: a
+		// Windows command line is parsed the same way whatever OS the parsing
+		// runs on, and filepath.Base on Linux does not split on a backslash,
+		// so C:\...\claude.exe would come back whole and never match.
+		slashed := strings.ReplaceAll(f, `\`, "/")
+		base := strings.ToLower(path.Base(slashed))
 		hadExt := false
 		for _, ext := range cliExts {
 			if strings.HasSuffix(base, ext) {
