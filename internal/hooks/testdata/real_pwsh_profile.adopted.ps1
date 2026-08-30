@@ -1,4 +1,4 @@
-﻿# >>> tq-legacy >>>  (kept verbatim by tq migrate; remove with: tq migrate --finalize)
+﻿# >>> tq-legacy >>>  (your pre-tq setup, kept verbatim by tq migrate; delete this block by hand when you no longer need TQ_ENABLED=0)
 if ($env:TQ_ENABLED -eq '0') {
     # --- Tentaqles multi-identity launcher (managed; backup: *.bak-pre-dbi) ---
     $ClaudeExe = "$env:USERPROFILE\.local\bin\claude.exe"

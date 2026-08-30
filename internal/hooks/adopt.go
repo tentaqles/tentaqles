@@ -35,12 +35,15 @@ const (
 	LegacyHeaderPrefix = "# --- tq (managed by Tentaqles"
 
 	// LegacyStartMarker and LegacyEndMarker delimit the preserved legacy
-	// branch inside an adopted profile. `tq migrate --finalize` removes
-	// everything between them.
+	// branch inside an adopted profile. Nothing removes it automatically:
+	// it is the user's pre-tq fallback, and it is theirs to delete once
+	// they are confident they no longer need TQ_ENABLED=0.
 	LegacyStartMarker = "# >>> tq-legacy >>>"
 	LegacyEndMarker   = "# <<< tq-legacy <<<"
 
-	legacyNote = "  (kept verbatim by tq migrate; remove with: tq migrate --finalize)"
+	// legacyNote must not promise a command that does not exist: it is
+	// written into the user's real profile and outlives this release.
+	legacyNote = "  (your pre-tq setup, kept verbatim by tq migrate; delete this block by hand when you no longer need TQ_ENABLED=0)"
 
 	// CarryComment introduces a shell function carried over verbatim from the
 	// hand-installed block.
