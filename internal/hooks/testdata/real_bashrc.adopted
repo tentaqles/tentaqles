@@ -1,0 +1,9 @@
+alias claude='claude --dangerously-skip-permissions'
+
+# Fix terminal sizing for Obsidian terminal plugin (MINGW64 doesn't set these)
+export COLUMNS=$(tput cols 2>/dev/null || echo 220)
+export LINES=$(tput lines 2>/dev/null || echo 50)
+
+# >>> tq >>>
+if [ "${TQ_ENABLED:-1}" != "0" ] && command -v tq >/dev/null 2>&1; then eval "$(tq activate bash)"; fi
+# <<< tq <<<

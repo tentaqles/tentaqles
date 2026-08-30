@@ -1,0 +1,11 @@
+alias claude='claude --dangerously-skip-permissions'
+
+# Fix terminal sizing for Obsidian terminal plugin (MINGW64 doesn't set these)
+export COLUMNS=$(tput cols 2>/dev/null || echo 220)
+export LINES=$(tput lines 2>/dev/null || echo 50)
+
+# --- tq (managed by Tentaqles; TQ_ENABLED=0 disables) ---
+if [ "${TQ_ENABLED:-1}" != "0" ]; then
+  case ":$PATH:" in *"/tentaqles/bin:"*) ;; *) PATH="$PATH:$LOCALAPPDATA/tentaqles/bin";; esac
+  command -v tq >/dev/null 2>&1 && eval "$(tq activate bash)"
+fi
