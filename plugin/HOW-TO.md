@@ -337,7 +337,7 @@ Not: casual questions, reformulations, or polite disagreement that doesn't set a
 
    | Mismatch | Fix |
    |----------|-----|
-   | Git email wrong | `tq doctor` (re-applies the manifest's git identity; re-run `tq add` if the manifest itself is wrong) |
+   | Git email wrong | `tq doctor` only *reports* the mismatch and names the fix — it never writes. If the workspace's `.gitconfig-tentaqles` is missing or hand-edited, re-run `tq add`; if the manifest itself is wrong, fix it first (`/tentaqles:client-settings`), then `tq add` and `tq allow {workspace}`. On a machine set up before `tq`, run `tq migrate --steps git` (see `docs/MIGRATE.md`). |
    | gh account wrong / not authenticated | `tq login {workspace} gh` |
    | Azure sub / account wrong | `tq login {workspace} az` |
    | AWS profile wrong | `tq login {workspace} aws` |

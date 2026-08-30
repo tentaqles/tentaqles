@@ -8,6 +8,7 @@ One repo, one installer: terminal-identity orchestration for developers who work
 - `desktop/` — (planned) Wails v2 setup app sharing `internal/`.
 - `plugin/` — the Claude Code plugin (Python): hooks shell out to `tq claude-hook` for identity reporting/enforcement, plus memory/graph/dashboard. Installed via `/plugin marketplace add tentaqles/tentaqles-plugin` today; will move to this repo's marketplace.
 - `installers/`, `.goreleaser.yaml`, `.github/workflows/` — CLI release + CI.
+- `docs/` — user-facing docs: `SETUP.md`, `CLAUDE-HOOK.md`, `PROVIDERS.md`, `DESKTOP.md`, and `MIGRATE.md` (`tq migrate` steps, the journal, `tq uninstall --restore`, the `TQ_ENABLED=0` kill switch).
 - Docs live in the workspace: `../docs/plans/*.md` (spec + plans), `../docs/superpowers/plans/*.md` (task plans).
 
 ## Rules

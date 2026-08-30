@@ -180,6 +180,8 @@ unsigned-app steps) and the dev loop.
 | `tq login <workspace> <identity>` | Run a CLI's own login flow inside the workspace's private config home. |
 | `tq run <workspace> -- <command> [args...]` | Run a command with a workspace's identity without cd-ing into it. |
 | `tq doctor` | Verify hooks, trust, git and env against the manifests (never mutates). `--json` for machine-readable findings. |
+| `tq migrate` | Move a setup built by hand before `tq` under `tq`'s management: identity dirs, global git config, shell hooks, and (opt-in) the `cmd.exe` AutoRun hook. Dry run unless `--apply`; `--steps identity,git,shell,cmd`, `--force`, `--json`. Every mutation is journalled first. See [`docs/MIGRATE.md`](docs/MIGRATE.md). |
+| `tq uninstall --restore [<ts>\|latest]` | Undo a migration by replaying its journal backwards. Lists what it would undo and does nothing until you add `--yes`. See [`docs/MIGRATE.md`](docs/MIGRATE.md). |
 | `tq bundle sync <workspace>` | Materialize a workspace's `claude.bundle` into its Claude identity dir (settings, skills, MCP servers). Refuses untrusted workspaces. `--force` to sync while Claude appears to be running there, `--json` for machine-readable output. |
 | `tq bundle diff <workspace>` | Show drift between a workspace's `claude.bundle` and what's actually on disk, without changing anything. Exits 1 if any drift is found. `--json`. |
 | `tq bundle capture [workspace]` | Reconstruct a `claude.bundle` manifest fragment (printed to stdout) and catalog entries from an existing Claude identity dir. `--dir <path>` to capture from an arbitrary dir instead of a workspace's own. `--write-catalog` upserts the captured entries into the catalog (never overwrites an existing name). |
@@ -271,6 +273,10 @@ Machine-wide state lives under `~/.tentaqles/` (override with `$TQ_HOME`):
   `AZURE_CONFIG_DIR`, …), so credentials that `tq login` causes a CLI to write
   never mix with another workspace's.
 - `~/.tentaqles/audit.jsonl` — append-only log of identity switches.
+- `~/.tentaqles/backups/<ts>/` — one `tq migrate --apply` journal: every
+  mutation it made, plus byte-exact copies of every file it overwrote.
+  `tq uninstall --restore <ts>` replays it backwards — see
+  [`docs/MIGRATE.md`](docs/MIGRATE.md).
 
 Per-workspace state lives in the workspace folder itself:
 
