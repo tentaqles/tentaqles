@@ -241,23 +241,39 @@ var cliExts = []string{".exe", ".cmd", ".bat", ".ps1", ".js"}
 
 // processIsCLI reports whether a process line looks like the CLI named id.
 //
-// Each whitespace-separated field is treated as a possible executable path and
-// compared on its base name with any launcher suffix removed, so both a bare
-// `claude.exe` (a name-only process list) and a full
-// `C:\...\node.exe C:\...\claude.js` command line are recognised, while a
-// directory merely *named* claude-something is not.
+// A line is "<name> <command line>", so the first field is the executable name
+// and is matched directly. Every later field only counts when it actually looks
+// like an executable -- it carries a path separator or a launcher suffix -- so
+// `C:\...\node.exe C:\...\claude.js` is recognised while a bare mention of the
+// word in an argument is not.
+//
+// That distinction is load-bearing: a plain token match blocks the identity
+// step for any process whose command line merely says "claude" (a shell echoing
+// the word is enough), and because moving identity directories under a live CLI
+// is exactly what this check exists to prevent, the documented answer to a
+// false positive is never --force. An unclearable refusal would leave the step
+// permanently unusable.
 func processIsCLI(line, id string) bool {
 	if id == "" {
 		return false
 	}
 	id = strings.ToLower(id)
-	for _, f := range strings.Fields(line) {
+	for i, f := range strings.Fields(line) {
 		f = strings.Trim(f, "\"'")
-		base := strings.ToLower(filepath.Base(filepath.ToSlash(f)))
+		slashed := filepath.ToSlash(f)
+		base := strings.ToLower(filepath.Base(slashed))
+		hadExt := false
 		for _, ext := range cliExts {
+			if strings.HasSuffix(base, ext) {
+				hadExt = true
+			}
 			base = strings.TrimSuffix(base, ext)
 		}
-		if base == id {
+		if base != id {
+			continue
+		}
+		// The process name, or something that spells itself out as a program.
+		if i == 0 || hadExt || strings.Contains(slashed, "/") {
 			return true
 		}
 	}

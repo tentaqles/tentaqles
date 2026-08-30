@@ -661,6 +661,15 @@ func TestProcessIsCLI_MatchesTheExecutableNotASubstring(t *testing.T) {
 		{"claudia.exe", "claude", false},
 		{"ghost.exe", "gh", false},
 		{"explorer.exe", "claude", false},
+		// A bare mention of the word in an argument is not the CLI either.
+		// Anything less strict blocks the identity step for a shell that merely
+		// echoes "claude", and --force is not an acceptable answer here.
+		{`powershell.exe -Command "echo === claude processes ==="`, "claude", false},
+		{"bash.exe -lc 'which claude'", "claude", false},
+		{"code.exe notes-about-gh.md", "gh", false},
+		// ...but a real launcher in a later field still counts.
+		{`cmd.exe /c C:\bin\claude.cmd --resume`, "claude", true},
+		{"sh -c /usr/local/bin/claude", "claude", true},
 	} {
 		if got := processIsCLI(tc.line, tc.id); got != tc.want {
 			t.Errorf("processIsCLI(%q, %q) = %v, want %v", tc.line, tc.id, got, tc.want)
