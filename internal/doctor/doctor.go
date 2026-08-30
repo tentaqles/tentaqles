@@ -59,6 +59,10 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	}
 	var cat *bundle.Catalog
 	catalogWarned := false
+	// Registered workspaces' .gitconfig-tentaqles paths, so the global-config
+	// section below can tell a hand-written includeIf that duplicates tq's
+	// managed include file from an unrelated one.
+	wsGitFile := map[string]string{}
 	for _, w := range all {
 		trusted := trust.IsTrusted(w.Hash)
 		if !trusted {
@@ -96,6 +100,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			add("warn", "bypass-cloud", w.Name, "permission_mode bypass with a cloud identity: Claude may run cloud CLIs unattended", "")
 		}
 		wf := gitcfg.WorkspaceFile(w.Root)
+		wsGitFile[normPath(wf)] = w.Name
 		if raw, err := os.ReadFile(wf); err != nil {
 			add("error", "git-ws-file-missing", w.Name, "missing "+wf, "tq add would have created it; re-run tq allow after restoring")
 		} else if bad := tamperReason(string(raw)); bad != "" {
@@ -103,6 +108,13 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 		for _, id := range w.Manifest.IdentityNames() {
 			dir := paths.IdentityDir(w.Name, id)
+			if tgt, linked := linkTarget(dir); linked {
+				msg := dir + " is a link"
+				if tgt != "" {
+					msg += " to " + tgt
+				}
+				add("warn", "identity-dir-linked", w.Name, msg+": the identity data lives outside tq", "tq migrate --steps identity")
+			}
 			if _, err := os.Stat(dir); err != nil {
 				add("warn", "identity-dir-missing", w.Name, "missing "+dir, "mkdir it or re-run tq add")
 			} else if id == "claude" && runtime.GOOS != "darwin" {
@@ -137,6 +149,37 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		if v, _ := d.RunGit("config", "--global", "user.useConfigOnly"); strings.TrimSpace(v) != "true" {
 			add("error", "git-useconfigonly", "", "global user.useConfigOnly is not true (commits outside workspaces will use a guessed identity)", "tq init <base>")
 		}
+		// Drift that `tq migrate --steps git` formalizes.
+		if email, present, _ := gitcfg.GetGlobal(d.RunGit, "user.email"); present {
+			add("error", "global-email-set", "", "global user.email is set: commits outside workspaces will silently use "+email, "tq migrate --steps git")
+		}
+		includeIfs, _ := gitcfg.ListIncludeIf(d.RunGit)
+		for _, inc := range includeIfs {
+			if ws, ok := wsGitFile[normPath(gitcfg.ExpandPath(inc.Path))]; ok {
+				add("warn", "includeif-unmanaged", ws, "~/.gitconfig has a hand-written includeIf \""+inc.Cond+"\" → "+inc.Path+", which tq's include file already covers", "tq migrate --steps git")
+			}
+		}
+		includes, _ := gitcfg.ListIncludes(d.RunGit)
+		for _, inc := range includeIfs {
+			includes = append(includes, inc.Path)
+		}
+		seenInc := map[string]bool{}
+		for _, p := range includes {
+			ep := gitcfg.ExpandPath(p)
+			if ep == "" || seenInc[normPath(ep)] {
+				continue
+			}
+			seenInc[normPath(ep)] = true
+			if _, err := os.Stat(ep); err != nil {
+				add("warn", "include-orphan", "", "global git config includes "+p+", which does not exist", "tq migrate --steps git")
+			}
+		}
+	}
+	// The pre-tq shell branch is active, so nothing tq sets is in effect here.
+	if d.Env != nil {
+		if v, ok := d.Env("TQ_ENABLED"); ok && strings.TrimSpace(v) == "0" {
+			add("warn", "legacy-active", "", "TQ_ENABLED=0: this shell runs the legacy pre-tq identity branch, not tq", "unset TQ_ENABLED and open a new shell")
+		}
 	}
 	// env vs cwd — shared with tq claude-hook so both agree.
 	cwd := RunForCwd(cfg, d)
@@ -167,6 +210,37 @@ func Exit(fs []Finding) int {
 		}
 	}
 	return 0
+}
+
+// linkTarget reports whether path is a symlink or (on Windows) a directory
+// junction, and where it points. A path that does not exist, or is a plain
+// file or directory, reports false.
+//
+// os.Readlink resolves both symlinks and junctions, so it is the check rather
+// than the mode bits, which have not carried os.ModeSymlink for junctions on
+// every Go version. This duplicates a little of migrate.IsLink on purpose:
+// doctor must not import internal/migrate, whose own tests assert against
+// doctor.Run and would form an import cycle.
+func linkTarget(path string) (string, bool) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return "", false
+	}
+	if tgt, err := os.Readlink(path); err == nil {
+		// Reparse points sometimes carry the NT object-namespace prefix.
+		return strings.TrimPrefix(tgt, `\??\`), true
+	}
+	return "", fi.Mode()&os.ModeSymlink != 0
+}
+
+// normPath makes two spellings of the same path comparable as map keys:
+// cleaned, forward slashes, case-folded on Windows.
+func normPath(p string) string {
+	p = filepath.ToSlash(filepath.Clean(strings.TrimSpace(p)))
+	if runtime.GOOS == "windows" {
+		p = strings.ToLower(p)
+	}
+	return p
 }
 
 // tamperReason returns a non-empty explanation when a workspace's
