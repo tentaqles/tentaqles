@@ -8,114 +8,75 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 )
 
-// fileAttributeReparsePoint is Windows' FILE_ATTRIBUTE_REPARSE_POINT. It is
-// spelled out here rather than taken from the syscall package so this file
-// stays buildable on every GOOS.
-const fileAttributeReparsePoint = 0x400
-
 // IsLink reports whether path is a symlink or (on Windows) a directory
 // junction, and returns the target it points at.
 //
-// On Windows a junction is a reparse point. Depending on the Go version it may
-// or may not carry os.ModeSymlink, so the reparse-point attribute is checked as
-// well. The target is read with os.Readlink; if that fails on a junction we
-// fall back to parsing `cmd /c dir /AL <parent>`, which prints the target in
-// brackets after the entry name.
+// On Windows the reparse point is read directly with
+// DeviceIoControl(FSCTL_GET_REPARSE_POINT), so only the two tags that actually
+// mean "link" report true: IO_REPARSE_TAG_MOUNT_POINT (junctions, which is what
+// MakeLink creates) and IO_REPARSE_TAG_SYMLINK. Every other reparse point --
+// OneDrive/cloud-file placeholders, AppExec aliases, dedup stubs, WIM/WOF
+// backing -- is an ordinary file or directory as far as tq is concerned;
+// reporting one as a link would let RemoveLink delete real data.
 //
 // A path that does not exist, or is a plain file or directory, reports false.
+// A link whose target cannot be read reports (true, ""); callers that act on
+// the target must check for the empty string rather than trusting it.
 func IsLink(path string) (bool, string) {
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return false, ""
 	}
-	isLink := fi.Mode()&os.ModeSymlink != 0
-	if !isLink && runtime.GOOS == "windows" && hasReparsePoint(fi) {
-		isLink = true
+	if runtime.GOOS == "windows" {
+		return windowsIsLink(path, fi)
 	}
-	if !isLink {
+	if fi.Mode()&os.ModeSymlink == 0 {
 		return false, ""
 	}
-	if tgt, err := os.Readlink(path); err == nil && tgt != "" {
-		return true, normalizeTarget(tgt)
+	tgt, err := os.Readlink(path)
+	if err != nil || tgt == "" {
+		return true, ""
 	}
-	if runtime.GOOS == "windows" {
-		if tgt, err := linkTargetViaDir(path); err == nil && tgt != "" {
-			return true, normalizeTarget(tgt)
-		}
-	}
-	// It is a link, but we could not read where it points.
-	return true, ""
+	return true, normalizeTarget(tgt)
 }
 
 // normalizeTarget strips the Windows NT object-namespace prefix that reparse
-// points sometimes carry, so targets compare equal to ordinary paths.
+// points carry, so targets compare equal to ordinary paths.
 func normalizeTarget(t string) string {
 	t = strings.TrimPrefix(t, `\??\`)
-	return strings.TrimSuffix(t, string(os.PathSeparator))
+	if len(t) > 3 {
+		t = strings.TrimSuffix(t, string(os.PathSeparator))
+	}
+	return t
 }
 
-// hasReparsePoint reads FILE_ATTRIBUTE_REPARSE_POINT off a Windows FileInfo.
-// fi.Sys() is a *syscall.Win32FileAttributeData there, a type that does not
-// exist on other platforms, so the field is read reflectively to keep this
-// file free of build tags. It always returns false off Windows.
-func hasReparsePoint(fi os.FileInfo) bool {
-	if runtime.GOOS != "windows" {
-		return false
+// samePath compares two filesystem paths for equality, case-insensitively on
+// Windows. It is used to tell "the state tq recorded" from "someone else's
+// state" during a restore, so it must not report two different directories as
+// the same one.
+func samePath(a, b string) bool {
+	a = filepath.Clean(normalizeTarget(a))
+	b = filepath.Clean(normalizeTarget(b))
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
 	}
-	v := reflect.ValueOf(fi.Sys())
-	if !v.IsValid() {
-		return false
-	}
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return false
-		}
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return false
-	}
-	f := v.FieldByName("FileAttributes")
-	if !f.IsValid() || !f.CanUint() {
-		return false
-	}
-	return f.Uint()&fileAttributeReparsePoint != 0
+	return a == b
 }
 
-// linkTargetViaDir recovers a junction's target by parsing `dir /AL` output,
-// which renders reparse entries as `<JUNCTION>  name [C:\real\target]`.
-func linkTargetViaDir(path string) (string, error) {
-	parent := filepath.Dir(path)
-	base := filepath.Base(path)
-	out, err := exec.Command("cmd", "/c", "dir", "/AL", parent).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("dir /AL %s: %w (%s)", parent, err, strings.TrimSpace(string(out)))
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(strings.ToLower(line), strings.ToLower(base)) {
-			continue
+// checkNoQuote rejects a path containing a double quote. The Windows helpers
+// build a cmd.exe command line by wrapping each path in quotes (see
+// runCmdLine), and a path carrying a quote of its own would break out of that
+// quoting. No legal Windows path contains one.
+func checkNoQuote(who string, paths ...string) error {
+	for _, p := range paths {
+		if strings.Contains(p, `"`) {
+			return fmt.Errorf("%s: refusing to use %q: a path containing a double quote cannot be passed to cmd.exe safely", who, p)
 		}
-		open := strings.LastIndex(line, "[")
-		closeIdx := strings.LastIndex(line, "]")
-		if open >= 0 && closeIdx > open {
-			return strings.TrimSpace(line[open+1 : closeIdx]), nil
-		}
-	}
-	return "", fmt.Errorf("dir /AL %s: no reparse entry for %s", parent, base)
-}
-
-// mklinkJ creates a Windows directory junction at link pointing at target.
-func mklinkJ(link, target string) error {
-	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("mklink /J %s %s: %w (%s)", link, target, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -123,9 +84,32 @@ func mklinkJ(link, target string) error {
 // MakeLink creates a link at path pointing at target. On Windows it creates a
 // directory junction (which, unlike a symlink, needs no elevation); elsewhere
 // it creates a symlink.
+//
+// target must be an existing directory: an empty or missing target would
+// produce a link into nowhere (or, worse, into whatever later appears at that
+// name), and IsLink legitimately reports (true, "") for a link whose target it
+// could not read, so callers can reach here with an empty target by accident.
 func MakeLink(path, target string) error {
+	if path == "" {
+		return fmt.Errorf("MakeLink: empty path")
+	}
+	if target == "" {
+		return fmt.Errorf("MakeLink: refusing to create %s with an empty target", path)
+	}
+	if err := checkNoQuote("MakeLink", path, target); err != nil {
+		return err
+	}
+	fi, err := os.Stat(target)
+	if err != nil {
+		return fmt.Errorf("MakeLink: target %s: %w", target, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("MakeLink: target %s is not a directory", target)
+	}
 	if _, err := os.Lstat(path); err == nil {
 		return fmt.Errorf("MakeLink: %s already exists", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("MakeLink: %s: %w", path, err)
 	}
 	if runtime.GOOS == "windows" {
 		return mklinkJ(path, target)
@@ -146,9 +130,12 @@ func RemoveLink(path string) error {
 //
 // It refuses to move a path that is itself a link (callers remove links
 // first), refuses to overwrite an existing destination, and never falls back to
-// a copy: a rename that fails because the two paths are on different volumes is
-// returned as an error, because copying an identity directory would duplicate
-// credentials rather than move them.
+// a copy: copying an identity directory would duplicate credentials rather than
+// move them. A rename that fails because the two paths are on different volumes
+// says so; any other failure is reported as the operating system reported it,
+// because the usual cause is a sharing violation from a process still holding
+// the directory open, and telling the user to move it by hand in that case
+// would be dangerous advice.
 func MoveDir(from, to string) error {
 	if ok, _ := IsLink(from); ok {
 		return fmt.Errorf("MoveDir: %s is a link, not a directory (remove the link first)", from)
@@ -165,7 +152,10 @@ func MoveDir(from, to string) error {
 		return fmt.Errorf("MoveDir: creating parent of %s: %w", to, err)
 	}
 	if err := os.Rename(from, to); err != nil {
-		return fmt.Errorf("MoveDir: renaming %s to %s failed (cross-volume moves are not supported; move the directory manually and re-run): %w", from, to, err)
+		if isCrossDevice(err) {
+			return fmt.Errorf("MoveDir: %s and %s are on different volumes; tq does not copy identity directories (that would duplicate credentials instead of moving them). Move it yourself and re-run: %w", from, to, err)
+		}
+		return fmt.Errorf("MoveDir: renaming %s to %s: %w (if this is a sharing violation, close anything still using the directory -- an editor, a shell, a running agent -- and re-run)", from, to, err)
 	}
 	return nil
 }
