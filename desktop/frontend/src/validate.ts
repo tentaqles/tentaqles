@@ -58,3 +58,33 @@ export function validateCompany(
   }
   return errors
 }
+
+// Step indices, mirroring STEPS in state.tsx.
+export const STEP_WELCOME = 0
+export const STEP_BASE = 1
+export const STEP_COMPANIES = 2
+
+// localStepError checks only what the CURRENT step is responsible for.
+//
+// A wizard must never refuse to advance because of something a LATER step
+// collects. The full plan validator quite correctly rejects a plan with no
+// companies -- but on the Work folder step there are no companies yet, because
+// the Companies step comes next. Running it there blocks the user on step 2
+// with "plan has no companies" and no way to reach the screen that would add
+// one.
+export function localStepError(
+  step: number,
+  plan: {Base: string},
+): string | null {
+  if (step === STEP_BASE && plan.Base.trim() === '') {
+    return 'Choose a work folder to continue'
+  }
+  return null
+}
+
+// needsFullValidation reports whether the whole plan can be judged yet. From
+// the Companies step onward it can: "no companies" is a real error to show
+// someone standing on the Companies screen.
+export function needsFullValidation(step: number): boolean {
+  return step >= STEP_COMPANIES
+}

@@ -2,6 +2,7 @@ import {useEffect, useState} from 'react'
 import * as api from './api'
 import {STEPS, StateProvider, usePlan} from './state'
 import {Button, ErrorList, Placeholder} from './ui'
+import {localStepError, needsFullValidation} from './validate'
 import Welcome from './steps/Welcome'
 import Base from './steps/Base'
 import Companies from './steps/Companies'
@@ -123,9 +124,16 @@ function Shell() {
   const {state, dispatch} = usePlan()
 
   async function next() {
-    // The Welcome step collects nothing, so there is nothing to validate yet —
-    // validating there would surface errors about fields the user hasn't seen.
-    if (state.step === 0) {
+    // Only judge what the user has actually been asked for so far. The full
+    // plan validator is right that a plan with no companies is invalid, but on
+    // the Work folder step the Companies screen has not happened yet, and
+    // reporting it there strands the user on step 2.
+    const local = localStepError(state.step, state.plan)
+    if (local) {
+      dispatch({type: 'setErrors', errors: [local]})
+      return
+    }
+    if (!needsFullValidation(state.step)) {
       dispatch({type: 'setErrors', errors: []})
       dispatch({type: 'next'})
       return
