@@ -40,9 +40,14 @@ irm https://raw.githubusercontent.com/tentaqles/tentaqles/main/installers/instal
 Homebrew or Scoop:
 
 ```sh
-brew install --no-quarantine tentaqles/tap/tq   # macOS / Linux
+brew install --cask --no-quarantine tentaqles/tap/tq   # macOS / Linux
 scoop bucket add tentaqles https://github.com/tentaqles/scoop-bucket && scoop install tq
 ```
+
+`--cask` is required for `--no-quarantine` to be accepted at all: it is a
+cask-only option, and `brew install --no-quarantine ...` fails with
+`invalid option`. If it is already installed, use `brew reinstall --cask
+--no-quarantine tentaqles/tap/tq`.
 
 `--no-quarantine` is not optional on macOS today. `tq` is not signed with an
 Apple Developer certificate, so Homebrew's default quarantine makes Gatekeeper
