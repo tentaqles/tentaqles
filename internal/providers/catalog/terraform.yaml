@@ -15,3 +15,12 @@ install:
 identity:
   env:
     TF_CLI_CONFIG_FILE: "{dir}/terraformrc"
+  # Verified by running the CLI: with TF_CLI_CONFIG_FILE pointed at a scratch
+  # path, `terraform login -help` still reports it will write credentials to
+  # the shared terraform.d directory under APPDATA. The variable moves settings,
+  # provider mirrors and any hand-written credentials block -- but not the
+  # token `terraform login` stores, and no TF_* variable moves terraform.d.
+  caveat: >-
+    settings and provider mirrors are isolated, but the token from
+    `terraform login` is not: it goes to the shared terraform.d directory
+    regardless of TF_CLI_CONFIG_FILE

@@ -16,6 +16,12 @@ install:
   linux:
     url: https://opencode.ai/install
     note: "OPENCODE_CONFIG_DIR unverified — confirm against opencode docs"
-identity:
-  env:
-    OPENCODE_CONFIG_DIR: "{dir}"
+# OPENCODE_CONFIG_DIR is real, and its own documentation says what it covers:
+# "a custom config directory ... for agents, commands, modes, and plugins."
+# Credentials are not in that list -- the CLI docs put auth in
+# ~/.local/share/opencode/auth.json, the XDG DATA directory, which no
+# OPENCODE_*CONFIG* variable moves.
+#
+# Setting it per workspace separated agent definitions and left every provider
+# credential shared. XDG_DATA_HOME would move auth.json, but it is a generic
+# variable that would relocate unrelated tools, so it is not an option here.

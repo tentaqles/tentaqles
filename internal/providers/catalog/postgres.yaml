@@ -12,3 +12,11 @@ install:
     brew: "libpq"
   linux:
     apt: "postgresql-client"
+identity:
+  # libpq's own environment-variable documentation. PGPASSFILE holds the
+  # credentials; PGSERVICEFILE holds the named connection services. The entry
+  # previously declared no identity at all, so psql was catalogued but never
+  # isolated.
+  env:
+    PGPASSFILE: "{dir}/pgpass"
+    PGSERVICEFILE: "{dir}/pg_service.conf"

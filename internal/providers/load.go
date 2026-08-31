@@ -98,6 +98,9 @@ func Load() (*Catalog, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if cerr := c.checkEnvCollisions(); cerr != nil {
+				return nil, cerr
+			}
 			return c, nil
 		}
 		return nil, err
@@ -119,6 +122,9 @@ func Load() (*Catalog, error) {
 			c.order = append(c.order, p.ID)
 		}
 		c.byID[p.ID] = p
+	}
+	if err := c.checkEnvCollisions(); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
@@ -244,4 +250,36 @@ func WriteUser(p Provider) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// checkEnvCollisions refuses a catalog where two providers claim the same
+// identity variable.
+//
+// envplan.Desired flattens every enabled provider's variables into one map, so
+// a shared key means the alphabetically-last provider silently wins and the
+// other reads its directory. Nothing errors, nothing warns, and the losing
+// provider looks isolated while sharing an identity -- the exact failure this
+// project exists to prevent.
+//
+// It is a real risk rather than a theoretical one: several CLIs are
+// configurable only through generic variables like XDG_CONFIG_HOME, and
+// cataloguing two of those would collide on the first workspace that enabled
+// both.
+func (c *Catalog) checkEnvCollisions() error {
+	owner := map[string]string{}
+	ids := make([]string, 0, len(c.byID))
+	for id := range c.byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		for k := range c.byID[id].Identity.Env {
+			if prev, taken := owner[k]; taken {
+				return fmt.Errorf("providers %q and %q both set identity.env[%s]: "+
+					"one would silently overwrite the other for any workspace enabling both", prev, id, k)
+			}
+			owner[k] = id
+		}
+	}
+	return nil
 }

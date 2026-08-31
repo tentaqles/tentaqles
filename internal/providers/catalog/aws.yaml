@@ -15,6 +15,12 @@ install:
     apt: "awscli"
     url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 identity:
+  # Static-key profiles isolate cleanly. The SSO and CLI token caches under
+  # ~/.aws/sso/cache and ~/.aws/cli/cache are not moved by either variable, so
+  # workspaces sharing an SSO start URL share that cache.
+  caveat: >-
+    static credentials are isolated, but `aws sso login` tokens are cached in
+    the shared ~/.aws/sso/cache and are not
   env:
     AWS_CONFIG_FILE: "{dir}/config"
     AWS_SHARED_CREDENTIALS_FILE: "{dir}/credentials"

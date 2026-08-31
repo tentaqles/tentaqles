@@ -13,5 +13,16 @@ install:
   linux:
     apt: "doctl"
     note: "snap install doctl"
+identity:
+  # DIGITALOCEAN_CONFIG is real and redirects the file holding access-token and
+  # auth-contexts -- proven by running doctl 1.167.0 against a sentinel config,
+  # not merely read from source. It works through viper's SetEnvPrefix
+  # ("DIGITALOCEAN") + AutomaticEnv over the "config" key.
+  #
+  # It is UNDOCUMENTED: DigitalOcean's own docs mention only the --config flag.
+  # So it could regress without a changelog entry, and `tq doctor` proving the
+  # account is right matters more here than for a documented variable.
+  env:
+    DIGITALOCEAN_CONFIG: "{dir}/config.yaml"
 login:
   args: ["auth", "init"]

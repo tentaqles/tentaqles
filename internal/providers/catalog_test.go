@@ -43,8 +43,9 @@ func TestCatalog_ExpectedIDs(t *testing.T) {
 	legacy := map[string]map[string]string{
 		"claude": {"CLAUDE_CONFIG_DIR": "{dir}"},
 		"codex":  {"CODEX_HOME": "{dir}"},
-		"gemini": {"GEMINI_CLI_HOME": "{dir}"},
-		"cursor": {"CURSOR_CONFIG_DIR": "{dir}"},
+		// GEMINI_CLI_HOME alone moves the displayed account and leaves the
+		// OAuth token in a shared keychain entry, so the pair is required.
+		"gemini": {"GEMINI_CLI_HOME": "{dir}", "GEMINI_FORCE_FILE_STORAGE": "true"},
 		"gh":     {"GH_CONFIG_DIR": "{dir}"},
 		"az":     {"AZURE_CONFIG_DIR": "{dir}"},
 		"aws": {

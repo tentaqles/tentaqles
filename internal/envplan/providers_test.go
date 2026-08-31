@@ -26,8 +26,7 @@ func TestProviders_MatchesLegacyTable(t *testing.T) {
 	legacy := map[string]legacyProvider{
 		"claude": {Vars: map[string]string{"CLAUDE_CONFIG_DIR": dir}, LoginCmd: "claude", LoginArgs: []string{"auth", "login"}},
 		"codex":  {Vars: map[string]string{"CODEX_HOME": dir}, LoginCmd: "codex", LoginArgs: []string{"login"}},
-		"gemini": {Vars: map[string]string{"GEMINI_CLI_HOME": dir}, LoginCmd: "gemini", LoginArgs: nil},
-		"cursor": {Vars: map[string]string{"CURSOR_CONFIG_DIR": dir}, LoginCmd: "agent", LoginArgs: []string{"login"}},
+		"gemini": {Vars: map[string]string{"GEMINI_CLI_HOME": dir, "GEMINI_FORCE_FILE_STORAGE": "true"}, LoginCmd: "gemini", LoginArgs: nil},
 		"gh":     {Vars: map[string]string{"GH_CONFIG_DIR": dir}, LoginCmd: "gh", LoginArgs: []string{"auth", "login"}},
 		"az":     {Vars: map[string]string{"AZURE_CONFIG_DIR": dir}, LoginCmd: "az", LoginArgs: []string{"login"}},
 		"gcloud": {Vars: map[string]string{"CLOUDSDK_CONFIG": dir}, LoginCmd: "gcloud", LoginArgs: []string{"auth", "login"}},
@@ -65,7 +64,7 @@ func TestProviders_MatchesLegacyTable(t *testing.T) {
 // that carry identity env vars show up in Providers().
 func TestProviders_IncludesNewIdentities(t *testing.T) {
 	got := Providers()
-	for _, id := range []string{"glab", "snowflake", "databricks", "opencode", "terraform"} {
+	for _, id := range []string{"glab", "snowflake", "databricks", "postgres", "terraform"} {
 		if _, ok := got[id]; !ok {
 			t.Errorf("Providers() missing new identity %q", id)
 		}
@@ -76,7 +75,10 @@ func TestProviders_IncludesNewIdentities(t *testing.T) {
 // identity env vars (informational-only providers) are excluded.
 func TestProviders_ExcludesInformational(t *testing.T) {
 	got := Providers()
-	for _, id := range []string{"jira", "asana", "linear", "bitbucket", "vercel", "supabase", "postgres", "azure-devops"} {
+	// cursor and opencode moved here: their config-dir variables are real but
+	// cover settings, not credentials, so claiming them as identities told the
+	// user each workspace had its own login when they all shared one.
+	for _, id := range []string{"jira", "asana", "linear", "bitbucket", "vercel", "supabase", "cursor", "opencode", "azure-devops"} {
 		if _, ok := got[id]; ok {
 			t.Errorf("Providers() should not include informational id %q", id)
 		}

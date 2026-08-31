@@ -38,6 +38,16 @@ type Install struct {
 // config home. Values may contain the literal placeholder "{dir}".
 type Identity struct {
 	Env map[string]string `yaml:"env"`
+	// Caveat records that the isolation is PARTIAL, in one sentence, shown
+	// wherever tq claims a provider is isolated.
+	//
+	// This category is real and was expensive to discover: terraform's
+	// TF_CLI_CONFIG_FILE moves settings and provider mirrors but not the
+	// credentials `terraform login` writes; AWS_CONFIG_FILE moves static-key
+	// profiles but not the SSO token cache. A provider that silently isolates
+	// everything except the credential is worse than one that admits it cannot
+	// isolate at all, because only the first kind gets trusted.
+	Caveat string `yaml:"caveat,omitempty"`
 }
 
 // Cmd is a command plus arguments. Command defaults to the provider's

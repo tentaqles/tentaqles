@@ -12,8 +12,14 @@ install:
     url: https://cursor.com/download
   linux:
     url: https://cursor.com/download
-identity:
-  env:
-    CURSOR_CONFIG_DIR: "{dir}"
+# CURSOR_CONFIG_DIR is a real, documented variable -- but it relocates
+# cli-config.json, which holds CLI settings and tool permissions, NOT the
+# credential. Cursor's changelog documents AGENT_CLI_CREDENTIAL_STORE=file as
+# the way to stop using the OS keychain, which means the keychain is the
+# default and no config-dir variable reaches it.
+#
+# Declaring it here would have told the user this CLI was isolated per
+# workspace while every workspace shared one login. No identity block is the
+# honest answer until someone confirms where the file store actually lands.
 login:
   args: ["login"]

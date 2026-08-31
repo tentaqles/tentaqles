@@ -13,5 +13,20 @@ install:
   linux:
     npm: "@google/gemini-cli"
 identity:
+  # GEMINI_CLI_HOME alone is the most misleading variable found in this audit.
+  # It overrides the CLI's notion of HOME, so it moves settings.json AND
+  # google_accounts.json -- the file holding the account the CLI DISPLAYS. The
+  # OAuth token does not move: it is a single OS-keychain entry (service
+  # "gemini-cli-oauth", account "main-account") shared by every value of the
+  # variable.
+  #
+  # Two workspaces would therefore show two different emails and authenticate
+  # with one shared token. GEMINI_FORCE_FILE_STORAGE moves the credential into
+  # the directory, so the pair is required; the variable alone is worse than
+  # nothing.
+  caveat: >-
+    both variables are required together; GEMINI_CLI_HOME on its own moves the
+    displayed account but leaves the OAuth token in a shared keychain entry
   env:
     GEMINI_CLI_HOME: "{dir}"
+    GEMINI_FORCE_FILE_STORAGE: "true"
