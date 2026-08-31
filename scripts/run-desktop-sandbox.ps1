@@ -35,8 +35,14 @@ if ($Real) {
 
 $scratch = Join-Path $env:TEMP ("tq-desktop-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $sHome = Join-Path $scratch 'home'
-$sWork = Join-Path $scratch 'repos'
-New-Item -ItemType Directory -Force -Path $sHome, $sWork | Out-Null
+# DefaultBase() suggests $HOME/work, so create exactly that: the app's own
+# default should be usable without typing anything.
+$sWork = Join-Path $sHome 'work'
+# Windows' folder picker resolves %USERPROFILE%\Desktop and friends, and pops
+# "Location is not available" when they are missing. A redirected home needs
+# the standard shell folders or the dialog fails before it opens.
+New-Item -ItemType Directory -Force -Path $sHome, $sWork,
+    (Join-Path $sHome 'Desktop'), (Join-Path $sHome 'Documents'), (Join-Path $sHome 'Downloads') | Out-Null
 '' | Out-File (Join-Path $sHome '.gitconfig') -Encoding utf8
 
 $env:TQ_HOME = Join-Path $scratch 'tentaqles'
@@ -48,7 +54,7 @@ foreach ($n in @('__TQ_STATE', 'TQ_WS', 'TQ_WS_ROOT', 'CLAUDE_CONFIG_DIR', 'GH_C
 }
 
 Write-Host "Sandbox:      $scratch"
-Write-Host "Suggest this as the work folder when it asks: $sWork"
+Write-Host "Work folder:  $sWork   (the app should offer this already)"
 Write-Host ""
 Write-Host "Everything the app writes lands in the sandbox. Click through as far"
 Write-Host "as you like, Apply included."
