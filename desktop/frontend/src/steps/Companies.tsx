@@ -1,5 +1,6 @@
-import {useState} from 'react'
-import type {Company} from '../api'
+import {useEffect, useState} from 'react'
+import * as api from '../api'
+import type {Company, FolderCandidate} from '../api'
 import {Badge, Button, Card, ColorSwatches, Field, Input, Select, StepHeader} from '../ui'
 import {newCompany, usePlan} from '../state'
 import {COLORS, PERMISSION_MODES, validateCompany} from '../validate'
@@ -10,8 +11,45 @@ export default function Companies() {
   const [editing, setEditing] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [confirming, setConfirming] = useState<string | null>(null)
+  const [found, setFound] = useState<FolderCandidate[]>([])
 
   const companies = state.plan.Companies
+
+  // Most people arrive with the folders already made -- personal, one per
+  // client, each full of repositories -- and tq can adopt a folder as it
+  // stands. Offering them beats asking for names that have to match the
+  // directories character for character.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .baseFolders(state.plan.Base)
+      .then((f) => {
+        if (!cancelled) setFound(f ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setFound([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [state.plan.Base])
+
+  // Adopt a folder: prefill from what its repositories already use, so the
+  // identity carries over instead of being retyped.
+  function adopt(f: FolderCandidate) {
+    setEditing(null)
+    setErrors({})
+    setForm({
+      ...newCompany(),
+      Name: f.name,
+      GitName: f.gitName,
+      GitEmail: f.gitEmail,
+    })
+  }
+
+  const takenNames = companies.map((c) => c.Name)
+  const adoptable = found.filter((f) => !f.managed && !takenNames.includes(f.name))
+  const alreadyManaged = found.filter((f) => f.managed)
 
   function startAdd() {
     setEditing(null)
@@ -43,6 +81,43 @@ export default function Companies() {
         title="Companies"
         subtitle="One entry per client or employer. Each gets its own folder, git identity, and agent permission mode."
       />
+
+      {adoptable.length > 0 || alreadyManaged.length > 0 ? (
+        <Card>
+          <div className="mb-2 text-xs uppercase text-[var(--tq-muted)]">
+            Already in {state.plan.Base}
+          </div>
+          {adoptable.length === 0 ? (
+            <p className="text-[var(--tq-muted)]">
+              Every folder here is already set up with tq.
+            </p>
+          ) : (
+            <table className="w-full text-left">
+              <tbody>
+                {adoptable.map((f) => (
+                  <tr key={f.path} className="border-t border-[var(--tq-border)] first:border-0">
+                    <td className="py-2">{f.name}</td>
+                    <td className="py-2 text-sm text-[var(--tq-muted)]">
+                      {f.repos > 0 ? `${f.repos} repo${f.repos === 1 ? '' : 's'}` : 'no repos'}
+                    </td>
+                    <td className="py-2 font-mono text-sm text-[var(--tq-muted)]">
+                      {f.gitEmail || '—'}
+                    </td>
+                    <td className="py-2 text-right">
+                      <Button onClick={() => adopt(f)}>Add as company</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {alreadyManaged.length > 0 ? (
+            <p className="mt-3 text-sm text-[var(--tq-muted)]">
+              Already managed by tq: {alreadyManaged.map((f) => f.name).join(', ')}
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
 
       <Card>
         {companies.length === 0 ? (

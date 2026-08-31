@@ -1,4 +1,4 @@
-# Run the desktop setup app against a throwaway environment.
+﻿# Run the desktop setup app against a throwaway environment.
 #
 # The app's last step APPLIES a plan: it creates workspace folders, writes
 # manifests, and installs hooks into shell profiles. That is the point of it,
@@ -16,6 +16,9 @@
 # you mean to change something.
 param(
     [switch]$Real,
+    # Populate the sandbox work folder with folders that already exist and have
+    # never seen tq -- the situation almost every real user arrives in.
+    [switch]$Populate,
     [string]$Exe = "$PSScriptRoot\..\desktop\build\bin\tentaqles-setup.exe"
 )
 
@@ -51,6 +54,28 @@ $env:USERPROFILE = $sHome
 $env:GIT_CONFIG_GLOBAL = Join-Path $sHome '.gitconfig'
 foreach ($n in @('__TQ_STATE', 'TQ_WS', 'TQ_WS_ROOT', 'CLAUDE_CONFIG_DIR', 'GH_CONFIG_DIR')) {
     Remove-Item "env:$n" -ErrorAction SilentlyContinue
+}
+
+if ($Populate) {
+    $seed = @(
+        @{ Name = 'personal';  Repos = @('dotfiles', 'blog');      Who = 'Renato';       Mail = 'me@personal.test' },
+        @{ Name = 'acme';      Repos = @('api', 'web', 'infra');   Who = 'Renato (Acme)'; Mail = 'renato@acme.test' },
+        @{ Name = 'globex';    Repos = @('platform');              Who = 'R. Domingues'; Mail = 'rd@globex.test' }
+    )
+    foreach ($c in $seed) {
+        foreach ($r in $c.Repos) {
+            $g = Join-Path $sWork (Join-Path $c.Name (Join-Path $r '.git'))
+            New-Item -ItemType Directory -Force -Path $g | Out-Null
+            @(
+                '[core]'
+                "`tbare = false"
+                '[user]'
+                "`tname = $($c.Who)"
+                "`temail = $($c.Mail)"
+            ) -join "`n" | ForEach-Object { [IO.File]::WriteAllText((Join-Path $g 'config'), $_, (New-Object Text.UTF8Encoding $false)) }
+        }
+    }
+    Write-Host "Seeded:       personal, acme, globex (with repos and git identities)"
 }
 
 Write-Host "Sandbox:      $scratch"

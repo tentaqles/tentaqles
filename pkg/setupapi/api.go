@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/doctor"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -506,4 +508,119 @@ func AddCustomProvider(id, name, category, command string, env map[string]string
 		return "", err
 	}
 	return providers.WriteUser(p)
+}
+
+// FolderCandidate is a first-level folder under the work folder that could
+// become a company.
+type FolderCandidate struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	// Managed is true when the folder is already a tq workspace.
+	Managed bool `json:"managed"`
+	// Repos counts child directories that look like git repositories, which is
+	// what makes a folder recognisable as "the place I keep this client's work".
+	Repos int `json:"repos"`
+	// GitName and GitEmail are the identity the repositories in this folder
+	// actually use today, read from the first one found. Empty when there is
+	// nothing to read. Offering these back is the difference between adopting
+	// a folder and retyping what it already knew.
+	GitName  string `json:"gitName"`
+	GitEmail string `json:"gitEmail"`
+}
+
+// BaseFolders lists what is already sitting in the work folder.
+//
+// Someone adopting tq usually has the folders already -- personal, one per
+// client, each full of repositories -- and being made to retype their names
+// into an empty form is both tedious and a chance to typo a name that has to
+// match the directory exactly. This is what lets the UI offer them instead.
+func BaseFolders(base string) ([]FolderCandidate, error) {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // not yet created is not an error to show anyone
+		}
+		return nil, err
+	}
+	var out []FolderCandidate
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		root := filepath.Join(base, e.Name())
+		c := FolderCandidate{Name: e.Name(), Path: root}
+		if _, err := os.Stat(filepath.Join(root, manifest.FileName)); err == nil {
+			c.Managed = true
+		}
+		c.Repos, c.GitName, c.GitEmail = scanRepos(root)
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// scanRepos counts git repositories directly under root and reads the identity
+// the first one uses. It reads .git/config rather than shelling out to git:
+// this runs for every folder in the work directory while someone waits on a
+// screen, and a process per folder is not worth the precision here.
+func scanRepos(root string) (count int, name, email string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0, "", ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, e.Name(), ".git")); err != nil {
+			continue
+		}
+		count++
+		if name == "" && email == "" {
+			name, email = userFromGitConfig(filepath.Join(root, e.Name(), ".git", "config"))
+		}
+	}
+	return count, name, email
+}
+
+// userFromGitConfig reads name and email from a [user] section. It is a
+// deliberately small parser: anything it cannot read simply yields no
+// suggestion, which is the same as not offering one.
+func userFromGitConfig(path string) (name, email string) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	inUser := false
+	for i, line := range strings.Split(string(raw), "\n") {
+		t := strings.TrimSpace(line)
+		if i == 0 {
+			// A config written by a Windows tool can carry a UTF-8 BOM, which
+			// would make the first section header unrecognisable and silently
+			// yield no suggestion at all.
+			t = strings.TrimPrefix(t, "")
+		}
+		if strings.HasPrefix(t, "[") {
+			inUser = strings.HasPrefix(strings.ToLower(t), "[user")
+			continue
+		}
+		if !inUser {
+			continue
+		}
+		k, v, ok := strings.Cut(t, "=")
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "name":
+			name = strings.TrimSpace(v)
+		case "email":
+			email = strings.TrimSpace(v)
+		}
+	}
+	return name, email
 }

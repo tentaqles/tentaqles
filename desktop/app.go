@@ -46,6 +46,13 @@ func (a *App) DefaultBase() string {
 }
 
 // ExistingWorkspaces lists every workspace under every registered base.
+// BaseFolders lists the folders already sitting in the work folder, so the
+// Companies step can offer them instead of asking the user to retype names
+// that have to match the directories exactly.
+func (a *App) BaseFolders(base string) ([]setupapi.FolderCandidate, error) {
+	return setupapi.BaseFolders(base)
+}
+
 func (a *App) ExistingWorkspaces() ([]setupapi.Workspace, error) {
 	return setupapi.ExistingWorkspaces()
 }

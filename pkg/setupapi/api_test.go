@@ -283,3 +283,103 @@ func TestTQPath_FallsBackToTheInstallDirectory(t *testing.T) {
 		t.Fatalf("TQPath() = %q, want the install-dir copy %q", got, want)
 	}
 }
+
+// Someone adopting tq usually has the folders already. Making them retype the
+// names into an empty form is tedious and invites a typo in a name that has to
+// match the directory exactly.
+func TestBaseFolders_OffersWhatIsAlreadyThere(t *testing.T) {
+	base := t.TempDir()
+	mk := func(parts ...string) string {
+		p := filepath.Join(append([]string{base}, parts...)...)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// A client folder with two repos, the first carrying an identity.
+	mk("acme", "api", ".git")
+	mk("acme", "web", ".git")
+	if err := os.WriteFile(filepath.Join(base, "acme", "api", ".git", "config"),
+		[]byte("[core]\n\tbare = false\n[user]\n\tname = Acme Dev\n\temail = dev@acme.test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A folder that is already a tq workspace.
+	mk("managed")
+	if err := os.WriteFile(filepath.Join(base, "managed", manifestFileNameForTest()), []byte("client: managed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A plain folder with no repos, and a dotfolder that should be ignored.
+	mk("empty")
+	mk(".hidden")
+
+	got, err := BaseFolders(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]FolderCandidate{}
+	for _, c := range got {
+		byName[c.Name] = c
+	}
+	if _, ok := byName[".hidden"]; ok {
+		t.Error("dotfolders are not companies")
+	}
+	if len(got) != 3 {
+		t.Fatalf("want acme, empty, managed; got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "acme" || got[1].Name != "empty" || got[2].Name != "managed" {
+		t.Errorf("want them sorted, got %v %v %v", got[0].Name, got[1].Name, got[2].Name)
+	}
+
+	acme := byName["acme"]
+	if acme.Repos != 2 {
+		t.Errorf("acme repos = %d, want 2", acme.Repos)
+	}
+	if acme.GitName != "Acme Dev" || acme.GitEmail != "dev@acme.test" {
+		t.Errorf("acme identity = %q/%q, want the one its repos already use", acme.GitName, acme.GitEmail)
+	}
+	if acme.Managed {
+		t.Error("acme is not a tq workspace yet")
+	}
+	if !byName["managed"].Managed {
+		t.Error("a folder with a manifest is already managed and must be marked so")
+	}
+	if byName["empty"].Repos != 0 || byName["empty"].GitEmail != "" {
+		t.Errorf("empty folder should suggest nothing: %+v", byName["empty"])
+	}
+}
+
+func TestBaseFolders_MissingBaseIsNotAnError(t *testing.T) {
+	got, err := BaseFolders(filepath.Join(t.TempDir(), "not-created-yet"))
+	if err != nil {
+		t.Fatalf("a work folder that does not exist yet is normal: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want none, got %+v", got)
+	}
+	if got, err := BaseFolders("  "); err != nil || len(got) != 0 {
+		t.Errorf("empty base: %+v %v", got, err)
+	}
+}
+
+func manifestFileNameForTest() string { return ".tentaqles.yaml" }
+
+// A .git/config written by a Windows tool can carry a UTF-8 BOM, which would
+// make the first section header unrecognisable and silently suggest nothing.
+func TestBaseFolders_ToleratesABOMInGitConfig(t *testing.T) {
+	base := t.TempDir()
+	g := filepath.Join(base, "acme", "api", ".git")
+	if err := os.MkdirAll(g, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "[user]\n\tname = Acme Dev\n\temail = dev@acme.test\n"
+	if err := os.WriteFile(filepath.Join(g, "config"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := BaseFolders(base)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if got[0].GitEmail != "dev@acme.test" {
+		t.Errorf("email = %q, want it read despite the BOM", got[0].GitEmail)
+	}
+}

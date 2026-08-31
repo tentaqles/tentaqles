@@ -7,6 +7,16 @@ import {BrowserOpenURL} from '../wailsjs/runtime'
 // The generated models are classes (they carry a convertValues helper), which
 // makes them awkward to build and spread in a reducer. The UI works with these
 // plain structural equivalents and converts at the binding boundary.
+// FolderCandidate is a folder already present in the work folder.
+export interface FolderCandidate {
+  name: string
+  path: string
+  managed: boolean
+  repos: number
+  gitName: string
+  gitEmail: string
+}
+
 export interface Company {
   Name: string
   DisplayName: string
@@ -49,6 +59,8 @@ export const defaultBase = (): Promise<string> => App.DefaultBase()
 export const detectShells = (): Promise<string[]> => App.DetectShells()
 export const hooksStatus = (): Promise<HookStatus[]> => App.HooksStatus()
 export const existingWorkspaces = (): Promise<Workspace[]> => App.ExistingWorkspaces()
+export const baseFolders = (base: string): Promise<FolderCandidate[]> =>
+  App.BaseFolders(base)
 export const providers = (): Promise<Provider[]> => App.Providers()
 export const pickFolder = (): Promise<string> => App.PickFolder()
 export const tqVersion = (): Promise<string> => App.TQVersion()
