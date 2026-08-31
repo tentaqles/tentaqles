@@ -51,7 +51,16 @@ type Git struct {
 }
 
 type Identity struct {
-	ShareCapabilities    *bool  `yaml:"share_capabilities"`
+	ShareCapabilities *bool `yaml:"share_capabilities"`
+	// ExpectedAccount is the account this identity must be logged in as --
+	// an email for Claude, a username for gh. Declaring it is what lets
+	// `tq doctor` tell a correctly wired workspace signed into the wrong
+	// client from a correct one; leaving it empty means that identity is
+	// never verified, and costs nothing.
+	//
+	// For a git-provider identity it falls back to Git.ExpectedUser, which
+	// predates this field and is already enforced inside Claude sessions.
+	ExpectedAccount      string `yaml:"expected_account,omitempty"`
 	ExpectedSubscription string `yaml:"expected_subscription"`
 	Profile              string `yaml:"profile"`
 }

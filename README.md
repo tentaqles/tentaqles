@@ -204,7 +204,7 @@ unsigned-app steps) and the dev loop.
 | `tq activate <shell>` | Print the hook to add to your shell profile, e.g. `eval "$(tq activate bash)"`. Shells: `bash`, `zsh`, `fish`, `pwsh`, `powershell`, `cmd`. |
 | `tq login <workspace> <identity>` | Run a CLI's own login flow inside the workspace's private config home. |
 | `tq run <workspace> -- <command> [args...]` | Run a command with a workspace's identity without cd-ing into it. |
-| `tq doctor` | Verify hooks, trust, git and env against the manifests (never mutates). `--json` for machine-readable findings. |
+| `tq doctor` | Verify hooks, trust, git and env against the manifests (never mutates). `--json` for machine-readable findings. `--verify auto\|all\|off` controls whether it asks each CLI which account is signed in -- see [Checking the account, not just the folder](#checking-the-account-not-just-the-folder). |
 | `tq migrate` | Move a setup built by hand before `tq` under `tq`'s management: identity dirs, global git config, shell hooks, and (opt-in) the `cmd.exe` AutoRun hook. Dry run unless `--apply`; `--steps identity,git,shell,cmd`, `--force`, `--json`. Every mutation is journalled first. See [`docs/MIGRATE.md`](docs/MIGRATE.md). |
 | `tq uninstall --restore [<ts>\|latest]` | Undo a migration by replaying its journal backwards. Lists what it would undo and does nothing until you add `--yes`. See [`docs/MIGRATE.md`](docs/MIGRATE.md). |
 | `tq bundle sync <workspace>` | Materialize a workspace's `claude.bundle` into its Claude identity dir (settings, skills, MCP servers). Refuses untrusted workspaces. `--force` to sync while Claude appears to be running there, `--json` for machine-readable output. |
@@ -215,6 +215,48 @@ unsigned-app steps) and the dev loop.
 | `tq providers show <id>` | Print a provider's full definition as YAML. |
 | `tq providers check [<id>...]` | Probe whether provider CLIs are installed. `--all` (default with no ids), `--workspace <ws>` to check only that workspace's identities, `--json`. Exits 1 if any provider with a CLI is missing. |
 | `tq providers add <id>` | Add or override a provider as a user file under `providers/`. Flags: `--name`, `--category` (required), `--command`, `--version-args`, `--env KEY=VALUE` (repeatable), `--login "args..."`, `--verify "args..."`, `--docs`, `--force` to overwrite an embedded or existing user provider. |
+
+## Checking the account, not just the folder
+
+Pointing a CLI at a private config directory routes the tool. It does not
+prove the right account is inside it. A workspace can be wired up perfectly --
+correct directory, correct variables, `tq doctor` otherwise clean -- and still
+be signed in as the wrong client, because nothing was ever asked.
+
+Declare what you expect and `tq doctor` will ask:
+
+```yaml
+git:
+  provider: github
+  expected_user: rndomingues      # the account `gh` must be signed in as
+identities:
+  claude:
+    expected_account: dev@acme.test
+    expected_subscription: max
+```
+
+```
+[error] acme: gh is signed in as someone-else, but this workspace expects rndomingues
+[error] acme: claude is on the team plan here, but this workspace expects max
+[warn]  acme: gh is not signed in for this workspace
+```
+
+`expected_user` applies to the CLI for the workspace's `git.provider` (`gh` for
+GitHub, `glab` for GitLab), so a workspace on Azure DevOps whose
+`expected_user` is an email address is not compared against a GitHub username.
+
+**What it costs.** These checks run the CLI's own status command, which takes
+hundreds of milliseconds and sometimes a network call. So the default
+(`--verify auto`) only runs one where it can answer a question you actually
+asked: an expectation declared in the manifest, or a login state `tq` has no
+cheaper way to observe -- Claude on macOS keeps credentials in the Keychain
+rather than in a file, so asking the CLI is the only way to tell. Declare
+nothing and you pay nothing. `--verify all` checks every identity that has a
+verify command; `--verify off` skips them entirely.
+
+The identity checks never run on `tq`'s hot paths -- the per-prompt env diff
+and the plugin's pre-tool-use hook -- because a subprocess there would be felt
+on every command.
 
 ## Providers
 

@@ -47,6 +47,36 @@ type Cmd struct {
 	Args    []string `yaml:"args"`
 }
 
+// Field says how to pull one value out of a verify command's output.
+//
+// JSON names a key, optionally dotted for nesting (`user.name`), and is tried
+// first when the output parses as a JSON object. Regex is the fallback for
+// CLIs that print prose, and takes the first capture group. Declaring both is
+// deliberate: `az account show` is JSON, `gh auth status` is a sentence, and
+// a provider may change which it emits between versions.
+type Field struct {
+	JSON  string `yaml:"json,omitempty"`
+	Regex string `yaml:"regex,omitempty"`
+}
+
+// VerifyCmd asks a CLI who it is currently logged in as, inside whichever
+// config home the environment points it at.
+//
+// This is the difference between tq routing a CLI at the right config
+// directory and tq knowing the right account is actually in it: a workspace
+// can be perfectly wired up and still be logged into the wrong client.
+//
+// LoggedOutWhen is a regexp; when it matches the output, the CLI is logged
+// out and Account/Subscription are not read. Everything is optional -- a
+// verify with only Args still answers "did this command succeed", and a
+// provider that declares nothing is simply never checked.
+type VerifyCmd struct {
+	Cmd           `yaml:",inline"`
+	LoggedOutWhen string `yaml:"logged_out_when,omitempty"`
+	Account       *Field `yaml:"account,omitempty"`
+	Subscription  *Field `yaml:"subscription,omitempty"`
+}
+
 // Provider is one entry in the catalog.
 type Provider struct {
 	ID       string `yaml:"id"`
@@ -54,11 +84,11 @@ type Provider struct {
 	Category string `yaml:"category"`
 	Docs     string `yaml:"docs"`
 
-	CLI      *CLI     `yaml:"cli"`
-	Install  Install  `yaml:"install"`
-	Identity Identity `yaml:"identity"`
-	Login    *Cmd     `yaml:"login"`
-	Verify   *Cmd     `yaml:"verify"`
+	CLI      *CLI       `yaml:"cli"`
+	Install  Install    `yaml:"install"`
+	Identity Identity   `yaml:"identity"`
+	Login    *Cmd       `yaml:"login"`
+	Verify   *VerifyCmd `yaml:"verify"`
 
 	BlockedSuggested []string `yaml:"blocked_commands_suggested"`
 

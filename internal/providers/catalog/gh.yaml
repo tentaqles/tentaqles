@@ -20,3 +20,15 @@ login:
   args: ["auth", "login"]
 verify:
   args: ["auth", "status"]
+  # gh prints prose, and exits non-zero when logged out -- so logged_out_when
+  # has to catch that before the exit code is read:
+  #   "✓ Logged in to github.com account rndomingues (keyring)"
+  #   "You are not logged into any GitHub hosts."
+  logged_out_when: 'not logged in|You are not logged'
+  # A gh config can hold several accounts for one host and prints them all;
+  # only one is active, marked on the FOLLOWING line. Taking the first match
+  # would report a signed-in-but-inactive account as the current identity.
+  # The second alternative is the fallback for gh versions that print no
+  # active marker; Extract takes the first non-empty group.
+  account:
+    regex: 'account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)[^\n]*\n\s*- Active account: true|account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)'

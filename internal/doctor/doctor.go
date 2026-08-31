@@ -38,6 +38,19 @@ type Deps struct {
 	// ReadFile reads a file the checks need to inspect (a PATH shim, say).
 	// Optional; nil falls back to os.ReadFile.
 	ReadFile func(string) ([]byte, error)
+	// RunCLI runs a provider's verify command with the workspace's identity
+	// in env. Optional; nil disables account verification entirely.
+	//
+	// This shells out, so it MUST stay off tq's hot paths: RunForCwd backs
+	// the pre-tool-use hook that fires on every Bash command an agent runs,
+	// and a subprocess there would be felt on every keystroke of work.
+	RunCLI func(ctx context.Context, env []string, name string, args []string) (string, error)
+	// Environ builds the child environment carrying a workspace's identity.
+	// Optional; nil falls back to the real process environment plus the
+	// workspace's variables.
+	Environ func(*resolve.Workspace) []string
+	// VerifyMode is VerifyAuto (default), VerifyAll or VerifyOff.
+	VerifyMode string
 }
 
 func Run(cfg *registry.Config, d Deps) []Finding {
@@ -66,6 +79,12 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	// section below can tell a hand-written includeIf that duplicates tq's
 	// managed include file from an unrelated one.
 	wsGitFile := map[string]string{}
+	mode := d.VerifyMode
+	if mode == "" {
+		mode = VerifyAuto
+	}
+	var verifyJobs []verifyJob
+	verifyCovers := map[string]bool{}
 	for _, w := range all {
 		trusted := trust.IsTrusted(w.Hash)
 		if !trusted {
@@ -109,6 +128,16 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		} else if bad := tamperReason(string(raw)); bad != "" {
 			add("error", "git-ws-file-tampered", w.Name, wf+": "+bad, "delete it and re-run tq add, or restore the tq-managed contents")
 		}
+		if trusted && d.RunCLI != nil {
+			jobs := planVerify(mode, &w, w.Manifest.IdentityNames(), provCat, environFor(d, &w))
+			for _, j := range jobs {
+				if _, err := os.Stat(paths.IdentityDir(w.Name, j.job.Identity)); err != nil {
+					continue // nothing to sign in to yet; identity-dir-missing covers it
+				}
+				verifyJobs = append(verifyJobs, j)
+				verifyCovers[j.job.Key()] = true
+			}
+		}
 		for _, id := range w.Manifest.IdentityNames() {
 			dir := paths.IdentityDir(w.Name, id)
 			if tgt, linked := linkTarget(dir); linked {
@@ -120,7 +149,11 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			}
 			if _, err := os.Stat(dir); err != nil {
 				add("warn", "identity-dir-missing", w.Name, "missing "+dir, "mkdir it or re-run tq add")
-			} else if id == "claude" && runtime.GOOS != "darwin" {
+			} else if id == "claude" && runtime.GOOS != "darwin" && !verifyCovers[w.Name+"/"+id] {
+				// Cheap fallback for when nobody asked for a verify: the
+				// credentials file is enough to answer "signed in?" off macOS.
+				// Skipped when a verify run will answer the same question
+				// better, so the two cannot both report it.
 				if _, err := os.Stat(filepath.Join(dir, ".credentials.json")); err != nil {
 					add("warn", "claude-not-logged-in", w.Name, "no Claude credentials in "+dir, "tq login "+w.Name+" claude")
 				}
@@ -195,7 +228,13 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			add("warn", "legacy-active", "", "TQ_ENABLED=0: this shell runs the legacy pre-tq identity branch, not tq", "unset TQ_ENABLED and open a new shell")
 		}
 	}
-	// env vs cwd — shared with tq claude-hook so both agree.
+	// Account verification runs here, after every cheap check: it forks a
+	// process per identity and several of those CLIs make a network call, so
+	// it is the one part of doctor that can be slow or offline-sensitive.
+	fs = append(fs, runVerify(d, verifyJobs)...)
+
+	// env vs cwd — shared with tq claude-hook so both agree. RunForCwd is the
+	// hook path; it deliberately does not verify.
 	cwd := RunForCwd(cfg, d)
 	// Run already walks every workspace, so a cwd finding may repeat one it
 	// emitted (untrusted, notably). Dedupe on code+workspace.

@@ -231,7 +231,7 @@ func newProvidersAddCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				p.Verify = &providers.Cmd{Args: fields}
+				p.Verify = &providers.VerifyCmd{Cmd: providers.Cmd{Args: fields}}
 			}
 
 			path, err := providers.WriteUser(p)
