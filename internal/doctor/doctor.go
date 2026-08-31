@@ -35,6 +35,9 @@ type Deps struct {
 	// runs in the process cwd.
 	RunGitIn func(dir string, args ...string) (string, error)
 	LookPath func(string) (string, error)
+	// ReadFile reads a file the checks need to inspect (a PATH shim, say).
+	// Optional; nil falls back to os.ReadFile.
+	ReadFile func(string) ([]byte, error)
 }
 
 func Run(cfg *registry.Config, d Deps) []Finding {
@@ -134,6 +137,17 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 					}
 				} else if _, err := d.LookPath(p.LoginCmd); err != nil {
 					add("warn", "cli-missing", "", p.LoginCmd+" not found on PATH", fix)
+				}
+				// A script earlier on PATH than the real CLI can overwrite the
+				// identity tq just exported, which makes `tq run` and
+				// `tq login` act on the wrong workspace without saying so.
+				if resolved, err := d.LookPath(p.LoginCmd); err == nil {
+					if why, shadowed := shimShadow(resolved, identityVars(p), d.ReadFile); shadowed {
+						add("warn", "cli-shadowed", "",
+							p.LoginCmd+" on PATH resolves to "+resolved+", and "+why+
+								": that overrides the identity tq exports, so tq run and tq login can act on the wrong workspace",
+							"put the real "+p.LoginCmd+" ahead of "+filepath.Dir(resolved)+" on PATH, or remove that directory")
+					}
 				}
 			}
 		}

@@ -461,12 +461,26 @@ Applying the default steps is expected to clear these `tq doctor` codes:
 
 What will *not* change: `~/.claude-personal` and `~/.claude-work` are still
 there, the `booster` and `author.ai` workspace directories are still gone,
-global `user.name` is still `Renato Domingues`, the temp-directory
-`include.path` is still in `~/.gitconfig`, and the two `claude`-credential
-and bundle-drift warnings are still open — they are `tq login` and
-`tq bundle sync` jobs, not migration ones.
+global `user.name` is still `Renato Domingues`, and the two
+`claude`-credential and bundle-drift warnings are still open — they are
+`tq login` and `tq bundle sync` jobs, not migration ones. The
+temp-directory `include.path` was left alone by the `git` step (its file
+still existed, so it was not an orphan) and was removed by hand
+afterwards.
 
 ## Known rough edges
+
+- **Retiring `AutoRun` does not retire the shims.** The `cmd` step clears the
+  registry entry that ran your shim script, but if the shim *directory* is
+  still on `PATH`, `claude`, `gh` and `az` keep resolving to those scripts in
+  any shell that does not define a function of the same name -- Command
+  Prompt, and anything started without your PowerShell profile. That matters
+  because a shim typically recomputes the identity from the current
+  directory, which silently overrides the workspace `tq run <ws> --` and
+  `tq login <ws>` just exported: the command then acts on the wrong account
+  and nothing says so. `tq doctor` reports this as `cli-shadowed`. The fix is
+  to take the shim directory off `PATH`, or to put the real binary ahead of
+  it.
 
 - **The preserved legacy branch is never removed for you.** Delete it by
   hand once you are confident you no longer need `TQ_ENABLED=0`.
