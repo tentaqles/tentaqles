@@ -6,6 +6,8 @@ export function AddCustomProvider(arg1:string,arg2:string,arg3:string,arg4:strin
 
 export function Apply(arg1:setupapi.Plan):Promise<setupapi.Report>;
 
+export function BaseFolders(arg1:string):Promise<Array<setupapi.FolderCandidate>>;
+
 export function BundledTQPath():Promise<string>;
 
 export function DefaultBase():Promise<string>;

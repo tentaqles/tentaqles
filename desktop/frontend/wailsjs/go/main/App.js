@@ -10,6 +10,10 @@ export function Apply(arg1) {
   return window['go']['main']['App']['Apply'](arg1);
 }
 
+export function BaseFolders(arg1) {
+  return window['go']['main']['App']['BaseFolders'](arg1);
+}
+
 export function BundledTQPath() {
   return window['go']['main']['App']['BundledTQPath']();
 }

@@ -62,6 +62,28 @@ export namespace setupapi {
 	        this.Fix = source["Fix"];
 	    }
 	}
+	export class FolderCandidate {
+	    name: string;
+	    path: string;
+	    managed: boolean;
+	    repos: number;
+	    gitName: string;
+	    gitEmail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FolderCandidate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.managed = source["managed"];
+	        this.repos = source["repos"];
+	        this.gitName = source["gitName"];
+	        this.gitEmail = source["gitEmail"];
+	    }
+	}
 	export class HookStatus {
 	    Shell: string;
 	    Profile: string;
