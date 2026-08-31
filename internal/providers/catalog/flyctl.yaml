@@ -1,0 +1,26 @@
+# Generated from verified research; edit deliberately.
+id: flyctl
+name: "Fly.io"
+category: cloud
+docs: https://fly.io/docs/flyctl/
+cli:
+  command: flyctl
+  version_args: ["version"]
+install:
+  windows:
+    winget: "Fly-io.flyctl"
+    scoop: "flyctl"
+  macos:
+    brew: "flyctl"
+  linux:
+    brew: "flyctl"
+# config.yml under the directory holds access_token; no keychain.
+identity:
+  env:
+    FLY_CONFIG_DIR: "{dir}"
+login:
+  args: ["auth", "login"]
+verify:
+  args: ["auth", "whoami", "--json"]
+  logged_out_when: 'no access token available|not logged in'
+  account: { json: email }

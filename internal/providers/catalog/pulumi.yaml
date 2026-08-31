@@ -1,0 +1,24 @@
+# Generated from verified research; edit deliberately.
+id: pulumi
+name: "Pulumi"
+category: deploy
+docs: https://www.pulumi.com/docs/iac/cli/environment-variables/
+cli:
+  command: pulumi
+  version_args: ["version"]
+install:
+  windows:
+    winget: "Pulumi.Pulumi"
+  macos:
+    brew: "pulumi"
+  linux:
+    brew: "pulumi"
+# Documented as holding plugins, workspaces, templates and the credentials file.
+identity:
+  env:
+    PULUMI_HOME: "{dir}"
+login:
+  args: ["login"]
+verify:
+  args: ["whoami", "--json"]
+  account: { json: user }

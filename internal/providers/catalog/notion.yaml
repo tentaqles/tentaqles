@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: notion
+name: "Notion"
+category: pm
+docs: https://developers.notion.com/
+cli:
+  command: ntn
+# NOT isolatable by an environment variable, deliberately:
+# NOTION_HOME plus NOTION_KEYRING=0 reportedly isolates credentials, but that pairing was reported by a research agent and never executed. Left unisolated until someone runs it.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

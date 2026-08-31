@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: neon
+name: "Neon"
+category: data
+docs: https://neon.com/docs/reference/neon-cli
+cli:
+  command: neon
+# NOT isolatable by an environment variable, deliberately:
+# DISPUTED: one source reads the CLI's argument parser and finds --config-dir has no environment binding; another reads a paths module and finds NEON_CONFIG_DIR. Left unisolated until someone runs it, because the losing reading ships isolation that does not work.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

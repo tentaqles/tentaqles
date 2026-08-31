@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: sentry
+name: "Sentry"
+category: deploy
+docs: https://docs.sentry.io/cli/
+cli:
+  command: sentry-cli
+# NOT isolatable by an environment variable, deliberately:
+# No SENTRY_CONFIG_* variable exists. Real isolation is per-directory: a .sentryclirc in the workspace.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

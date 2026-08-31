@@ -1,0 +1,26 @@
+# Generated from verified research; edit deliberately.
+id: scw
+name: "Scaleway"
+category: cloud
+docs: https://www.scaleway.com/en/docs/scaleway-cli/
+cli:
+  command: scw
+  version_args: ["version"]
+install:
+  windows:
+    winget: "Scaleway.cli"
+    scoop: "scaleway-cli"
+  macos:
+    brew: "scw"
+  linux:
+    brew: "scw"
+# config.yaml holds access_key/secret_key per profile. SCW_CLI_CONFIG_PATH is a different, non-secret file -- do not use it.
+identity:
+  caveat: >-
+    `scw info` reports what the config says rather than checking the credential with Scaleway, so it cannot detect a revoked key
+  env:
+    SCW_CONFIG_PATH: "{dir}/config.yaml"
+login:
+  args: ["login"]
+verify:
+  args: ["info", "-o", "json"]

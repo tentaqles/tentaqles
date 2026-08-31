@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: vultr-cli
+name: "Vultr"
+category: cloud
+docs: https://github.com/vultr/vultr-cli
+cli:
+  command: vultr-cli
+# NOT isolatable by an environment variable, deliberately:
+# The config path is a flag bound to viper with no env binding. Auth is VULTR_API_KEY, a secret.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

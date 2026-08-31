@@ -1,0 +1,21 @@
+# Generated from verified research; edit deliberately.
+id: influx
+name: "InfluxDB"
+category: data
+docs: https://docs.influxdata.com/influxdb/v2/reference/cli/influx/config/
+cli:
+  command: influx
+  version_args: ["version"]
+install:
+  macos:
+    brew: "influxdb-cli"
+  linux:
+    url: "https://docs.influxdata.com/influxdb/v2/tools/influx-cli/"
+# The configs file holds an API token per named connection.
+identity:
+  env:
+    INFLUX_CONFIGS_PATH: "{dir}/configs"
+login:
+  args: ["config", "create"]
+verify:
+  args: ["config", "list"]

@@ -1,0 +1,24 @@
+# Generated from verified research; edit deliberately.
+id: oci
+name: "Oracle Cloud"
+category: cloud
+docs: https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cliconcepts.htm
+cli:
+  command: oci
+  version_args: ["--version"]
+install:
+  windows:
+    winget: "Oracle.OCI-CLI"
+    scoop: "oci-cli"
+  macos:
+    brew: "oci-cli"
+  linux:
+    pip: "oci-cli"
+# No verify: `oci session validate` reports only whether a session-token profile is still valid, prints to stderr, and names no account.
+identity:
+  caveat: >-
+    the config file moves, but the private key and session token stay wherever key_file and security_token_file point -- `oci session authenticate` defaults those to the shared ~/.oci/sessions unless --token-location is passed
+  env:
+    OCI_CLI_CONFIG_FILE: "{dir}/config"
+login:
+  args: ["session", "authenticate"]

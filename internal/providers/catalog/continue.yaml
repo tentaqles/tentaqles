@@ -1,0 +1,21 @@
+# Generated from verified research; edit deliberately.
+id: continue
+name: "Continue"
+category: agent
+docs: https://docs.continue.dev/cli
+cli:
+  command: cn
+  version_args: ["--version"]
+install:
+  windows:
+    npm: "@continuedev/cli"
+  macos:
+    npm: "@continuedev/cli"
+  linux:
+    npm: "@continuedev/cli"
+# auth.json follows the variable. No verify: the CLI has no whoami.
+identity:
+  env:
+    CONTINUE_GLOBAL_DIR: "{dir}"
+login:
+  args: ["login"]

@@ -1,0 +1,23 @@
+# Generated from verified research; edit deliberately.
+id: twilio
+name: "Twilio"
+category: deploy
+docs: https://www.twilio.com/docs/twilio-cli/general-usage/profiles
+cli:
+  command: twilio
+  version_args: ["--version"]
+install:
+  macos:
+    brew: "twilio/brew/twilio"
+  linux:
+    apt: "twilio"
+# config.json holds apiKey and apiSecret in cleartext; the keytar dependency was removed.
+identity:
+  caveat: >-
+    `twilio profiles:list` prints nothing and exits 0 when no profile exists, so an empty result means logged out rather than an error
+  env:
+    TWILIO_CONFIG_DIR: "{dir}"
+login:
+  args: ["login"]
+verify:
+  args: ["profiles:list", "-o", "json"]

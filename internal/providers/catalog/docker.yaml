@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: docker
+name: "Docker"
+category: deploy
+docs: https://docs.docker.com/reference/cli/docker/
+cli:
+  command: docker
+# NOT isolatable by an environment variable, deliberately:
+# DOCKER_CONFIG moves config.json -- settings, contexts, the registry list -- but NOT credentials: a default Windows or macOS install uses a compiled-in credential helper (wincred, osxkeychain, desktop). Settings-isolated, identity-shared.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

@@ -1,0 +1,23 @@
+# Generated from verified research; edit deliberately.
+id: render
+name: "Render"
+category: cloud
+docs: https://render.com/docs/cli
+cli:
+  command: render
+  version_args: ["--version"]
+install:
+  macos:
+    brew: "render"
+  linux:
+    brew: "render"
+# cli.yaml holds api.key and the refresh token. The legacy RENDER_CLI_CONFIG_PATH moves the file but not state/.
+identity:
+  env:
+    RENDER_CLI_CONFIG_DIR: "{dir}"
+login:
+  args: ["login"]
+verify:
+  args: ["whoami"]
+  logged_out_when: 'run `render login`|not authenticated'
+  account: { regex: '^Email:\s*(\S+)' }

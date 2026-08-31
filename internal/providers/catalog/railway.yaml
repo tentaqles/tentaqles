@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: railway
+name: "Railway"
+category: deploy
+docs: https://docs.railway.com/guides/cli
+cli:
+  command: railway
+# NOT isolatable by an environment variable, deliberately:
+# The config path is hardcoded to ~/.railway/config.json with no environment override anywhere in the resolver.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

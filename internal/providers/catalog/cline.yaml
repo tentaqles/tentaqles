@@ -1,0 +1,21 @@
+# Generated from verified research; edit deliberately.
+id: cline
+name: "Cline"
+category: agent
+docs: https://github.com/cline/cline
+cli:
+  command: cline
+  version_args: ["--version"]
+install:
+  windows:
+    npm: "cline"
+  macos:
+    npm: "cline"
+  linux:
+    npm: "cline"
+# Secrets land in $CLINE_DIR/data/secrets.json with mode 0600. Use CLINE_DIR, not the narrower CLINE_DATA_DIR. No verify: `cline config` is an interactive TUI.
+identity:
+  env:
+    CLINE_DIR: "{dir}"
+login:
+  args: ["auth"]

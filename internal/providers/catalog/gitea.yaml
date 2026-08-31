@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: gitea
+name: "Gitea / Forgejo / Codeberg"
+category: vcs
+docs: https://gitea.com/gitea/tea
+cli:
+  command: tea
+# NOT isolatable by an environment variable, deliberately:
+# Isolatable only through the generic XDG_CONFIG_HOME, and a legacy ~/.tea/tea.yml is read outside XDG and would silently defeat it. Codeberg is this provider pointed at codeberg.org. Note the Debian package named tea is a text editor.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: stripe
+name: "Stripe"
+category: deploy
+docs: https://docs.stripe.com/stripe-cli
+cli:
+  command: stripe
+# NOT isolatable by an environment variable, deliberately:
+# Isolatable only through the generic XDG_CONFIG_HOME, which would relocate unrelated tools, so tq does not set it. The CLI has its own --project-name for multiple accounts.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

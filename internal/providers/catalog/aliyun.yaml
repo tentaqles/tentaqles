@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: aliyun
+name: "Alibaba Cloud"
+category: cloud
+docs: https://www.alibabacloud.com/help/en/cli
+cli:
+  command: aliyun
+# NOT isolatable by an environment variable, deliberately:
+# GetConfigPath is hardcoded to $HOME/.aliyun; --config-path is flag-only. ALIBABA_CLOUD_PROFILE selects a profile inside the shared file.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

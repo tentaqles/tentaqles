@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: firebase
+name: "Firebase"
+category: deploy
+docs: https://firebase.google.com/docs/cli
+cli:
+  command: firebase
+# NOT isolatable by an environment variable, deliberately:
+# Isolatable only through the generic XDG_CONFIG_HOME, which would relocate every other tool using the same convention. Note `firebase login:list --json` embeds live tokens, so its output must never be logged.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

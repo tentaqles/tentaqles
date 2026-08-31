@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: planetscale
+name: "PlanetScale"
+category: data
+docs: https://planetscale.com/docs/reference/planetscale-cli
+cli:
+  command: pscale
+# NOT isolatable by an environment variable, deliberately:
+# The config directory is hardcoded and the token lives in the OS keyring. PLANETSCALE_CONFIG looks like the right variable and is a trap: it moves pscale.yml, which holds org, database and branch, while the token stays shared.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

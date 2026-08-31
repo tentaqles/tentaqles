@@ -1,0 +1,24 @@
+# Generated from verified research; edit deliberately.
+id: linode-cli
+name: "Linode / Akamai"
+category: cloud
+docs: https://techdocs.akamai.com/cloud-computing/docs/cli
+cli:
+  command: linode-cli
+  version_args: ["--version"]
+install:
+  windows:
+    pip: "linode-cli"
+  macos:
+    brew: "linode-cli"
+  linux:
+    pip: "linode-cli"
+# INI file, one section per user, each holding a token. --skip-config keeps show-users from blocking on stdin.
+identity:
+  env:
+    LINODE_CLI_CONFIG: "{dir}/linode-cli"
+login:
+  args: ["configure"]
+verify:
+  args: ["--skip-config", "show-users"]
+  account: { regex: '^\*\s+(\S+)' }

@@ -1,0 +1,23 @@
+# Generated from verified research; edit deliberately.
+id: turso
+name: "Turso"
+category: data
+docs: https://docs.turso.tech/cli/installation
+cli:
+  command: turso
+  version_args: ["--version"]
+install:
+  macos:
+    brew: "tursodatabase/tap/turso"
+  linux:
+    url: "https://docs.turso.tech/cli/installation"
+# settings.json under the folder holds the token. Note the core brew formula named turso is a DIFFERENT tool (the SQL shell); the tap is required.
+identity:
+  caveat: >-
+    the variable is read from source rather than documented, so it could change without notice
+  env:
+    TURSO_CONFIG_FOLDER: "{dir}"
+login:
+  args: ["auth", "login"]
+verify:
+  args: ["auth", "whoami"]

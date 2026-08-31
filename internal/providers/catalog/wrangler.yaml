@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: wrangler
+name: "Cloudflare"
+category: deploy
+docs: https://developers.cloudflare.com/workers/wrangler/
+cli:
+  command: wrangler
+# NOT isolatable by an environment variable, deliberately:
+# WRANGLER_HOME does not exist -- the source carries a TODO saying so. Config resolves through XDG_CONFIG_HOME, but ONLY when ~/.wrangler is absent: if that directory exists the legacy path silently wins and the variable is ignored. Auth is CLOUDFLARE_API_TOKEN, a secret.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

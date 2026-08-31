@@ -1,0 +1,22 @@
+# Generated from verified research; edit deliberately.
+id: ibmcloud
+name: "IBM Cloud"
+category: cloud
+docs: https://cloud.ibm.com/docs/cli?topic=cli-ibmcloud_env_var
+cli:
+  command: ibmcloud
+  version_args: ["version"]
+install:
+  windows:
+    winget: "IBM.Cloud.CLI"
+    scoop: "ibmcloud-cli"
+  macos:
+    brew: "ibm-cloud-cli"
+  linux:
+    url: "https://clis.cloud.ibm.com/install"
+# config.json under $IBMCLOUD_HOME/.ibmcloud holds the IAM access and refresh tokens; plugins follow it. No verify: `ibmcloud target --output json` is documented but its shape was never confirmed against a real run.
+identity:
+  env:
+    IBMCLOUD_HOME: "{dir}"
+login:
+  args: ["login"]

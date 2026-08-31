@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: hostinger
+name: "Hostinger"
+category: deploy
+docs: https://github.com/hostinger/api-cli
+cli:
+  command: hostinger
+# NOT isolatable by an environment variable, deliberately:
+# The config path comes from a --config flag only; the HOSTINGER_ env prefix maps config keys, not the path. Auth is HOSTINGER_API_TOKEN, a secret.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

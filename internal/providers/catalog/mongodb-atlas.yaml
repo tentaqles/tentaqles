@@ -1,0 +1,12 @@
+# Generated from verified research; edit deliberately.
+id: mongodb-atlas
+name: "MongoDB Atlas"
+category: data
+docs: https://www.mongodb.com/docs/atlas/cli/
+cli:
+  command: atlas
+# NOT isolatable by an environment variable, deliberately:
+# config.toml does hold credentials, but its location is XDG on Linux and platform-specific on Windows and macOS, so no single variable moves it.
+# Catalogued so tq can detect whether it is installed and a workspace can
+# record that a client uses it -- but with no identity block, because
+# claiming one tq cannot honour is worse than claiming none.

@@ -1,0 +1,20 @@
+# Generated from verified research; edit deliberately.
+id: copilot
+name: "GitHub Copilot CLI"
+category: agent
+docs: https://docs.github.com/en/copilot/reference/copilot-cli-reference
+cli:
+  command: copilot
+install:
+  windows:
+    winget: "GitHub.Copilot"
+    npm: "@github/copilot"
+  macos:
+    brew: "copilot-cli"
+    npm: "@github/copilot"
+  linux:
+    npm: "@github/copilot"
+# config.json stores internal state including authentication data. Login happens with /login inside the session, so there is no login argv and no documented whoami.
+identity:
+  env:
+    COPILOT_HOME: "{dir}"

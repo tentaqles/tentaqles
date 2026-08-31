@@ -1,0 +1,22 @@
+# Generated from verified research; edit deliberately.
+id: goose
+name: "Goose"
+category: agent
+docs: https://block.github.io/goose/docs/guides/config-file
+cli:
+  command: goose
+  version_args: ["--version"]
+install:
+  macos:
+    brew: "block-goose-cli"
+  linux:
+    url: "https://block.github.io/goose/"
+# With the keyring disabled, secrets land in $GOOSE_PATH_ROOT/config/secrets.yaml. The winget package named Pressly.Goose is a DIFFERENT tool (a database migration utility).
+identity:
+  caveat: >-
+    both variables are required together; GOOSE_PATH_ROOT alone moves settings while secrets stay in the shared OS keyring
+  env:
+    GOOSE_PATH_ROOT: "{dir}"
+    GOOSE_DISABLE_KEYRING: "1"
+login:
+  args: ["configure"]

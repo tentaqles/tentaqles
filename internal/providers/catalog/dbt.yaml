@@ -1,0 +1,22 @@
+# Generated from verified research; edit deliberately.
+id: dbt
+name: "dbt"
+category: data
+docs: https://docs.getdbt.com/docs/core/connect-data-platform/connection-profiles
+cli:
+  command: dbt
+  version_args: ["--version"]
+install:
+  windows:
+    pip: "dbt-core"
+  macos:
+    pip: "dbt-core"
+  linux:
+    pip: "dbt-core"
+# profiles.yml holds host, user and password per target. No login: credentials are written into that file by hand. There is no brew formula named dbt.
+identity:
+  env:
+    DBT_PROFILES_DIR: "{dir}"
+verify:
+  args: ["debug"]
+  logged_out_when: 'profiles\.yml file \[ERROR not found\]'

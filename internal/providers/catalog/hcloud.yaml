@@ -1,0 +1,27 @@
+# Generated from verified research; edit deliberately.
+id: hcloud
+name: "Hetzner Cloud"
+category: cloud
+docs: https://github.com/hetznercloud/cli
+cli:
+  command: hcloud
+  version_args: ["version"]
+install:
+  windows:
+    winget: "HetznerCloud.CLI"
+    scoop: "hcloud"
+  macos:
+    brew: "hcloud"
+  linux:
+    brew: "hcloud"
+    apt: "hcloud-cli"
+# cli.toml holds the per-context token. --version is not accepted; use the version subcommand.
+identity:
+  caveat: >-
+    `hcloud context active` prints nothing and exits 0 when no context is set, so an empty result means logged out rather than an error
+  env:
+    HCLOUD_CONFIG: "{dir}/cli.toml"
+login:
+  args: ["context", "create"]
+verify:
+  args: ["context", "active"]

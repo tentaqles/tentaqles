@@ -1,0 +1,15 @@
+# Generated from verified research; edit deliberately.
+id: cockroach
+name: "CockroachDB"
+category: data
+docs: https://www.cockroachlabs.com/docs/stable/connection-parameters
+cli:
+  command: cockroach
+  version_args: ["version"]
+install:
+  linux:
+    url: "https://www.cockroachlabs.com/docs/stable/install-cockroachdb"
+# Client key and certificate live in the certs directory. Auth is certificate-based, so there is no login flow and no whoami.
+identity:
+  env:
+    COCKROACH_CERTS_DIR: "{dir}/certs"

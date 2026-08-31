@@ -1,0 +1,22 @@
+# Generated from verified research; edit deliberately.
+id: helm
+name: "Helm"
+category: deploy
+docs: https://helm.sh/docs/helm/helm/
+cli:
+  command: helm
+  version_args: ["version"]
+install:
+  windows:
+    winget: "Helm.Helm"
+    scoop: "helm"
+  macos:
+    brew: "helm"
+  linux:
+    brew: "helm"
+# registry/config.json holds OCI registry auth; no keychain. No verify: helm has no whoami.
+identity:
+  env:
+    HELM_CONFIG_HOME: "{dir}"
+login:
+  args: ["registry", "login"]
