@@ -247,3 +247,39 @@ func TestAddCustomProvider(t *testing.T) {
 		t.Fatal("expected an error for an invalid provider id")
 	}
 }
+
+// InstallTQ updates the persistent user PATH, which an already-running process
+// never sees. A PATH-only lookup therefore reports "not installed" right after
+// a successful install -- the first thing a new user does.
+func TestTQPath_FallsBackToTheInstallDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Setenv("LOCALAPPDATA", dir)
+	} else {
+		t.Setenv("HOME", dir)
+	}
+	// Nothing on PATH, nothing installed yet.
+	t.Setenv("PATH", filepath.Join(dir, "definitely-empty"))
+	if got := TQPath(); got != "" {
+		t.Fatalf("with no tq anywhere, want empty, got %q", got)
+	}
+
+	destDir, err := installDestDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "tq"
+	if runtime.GOOS == "windows" {
+		name = "tq.exe"
+	}
+	want := filepath.Join(destDir, name)
+	if err := os.WriteFile(want, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := TQPath(); got != want {
+		t.Fatalf("TQPath() = %q, want the install-dir copy %q", got, want)
+	}
+}

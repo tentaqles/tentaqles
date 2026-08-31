@@ -22,13 +22,23 @@ function InstallBanner() {
   const [bundled, setBundled] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [probeError, setProbeError] = useState('')
 
   async function check(cancelled: () => boolean) {
     try {
       const v = await api.tqVersion()
-      if (!cancelled()) setVersion(v)
-    } catch {
-      if (!cancelled()) setVersion('')
+      if (!cancelled()) {
+        setVersion(v)
+        setProbeError('')
+      }
+    } catch (e) {
+      // tq was found and would not run. Reporting that as "not installed"
+      // sends someone off to install what they already have, so the banner
+      // says what actually went wrong instead.
+      if (!cancelled()) {
+        setVersion('')
+        setProbeError(api.errorText(e))
+      }
     }
     try {
       const b = await api.bundledTQPath()
@@ -64,8 +74,12 @@ function InstallBanner() {
   return (
     <div className="border-b border-[#f28c28] bg-[#f28c28]/10 px-8 py-3 text-sm">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="font-medium text-[#f28c28]">tq is not installed</span>
-        {bundled ? (
+        <span className="font-medium text-[#f28c28]">
+          {probeError ? 'tq could not be run' : 'tq is not installed'}
+        </span>
+        {probeError ? (
+          <span className="text-[var(--tq-muted)]">{probeError}</span>
+        ) : bundled ? (
           <Button onClick={() => void install()} disabled={busy}>
             {busy ? 'Installing…' : 'Install tq'}
           </Button>

@@ -363,9 +363,42 @@ func LoginCommand(ws, id string) string {
 
 // TQVersion runs "tq version" if tq is on PATH, returning its trimmed
 // output. It returns "" (no error) when tq is not found.
-func TQVersion() (string, error) {
-	path, err := exec.LookPath("tq")
+// TQPath finds the tq binary: PATH first, then the directory this app installs
+// into.
+//
+// That second lookup matters more than it sounds. InstallTQ writes the binary
+// and updates the PERSISTENT user PATH, which does not reach an already
+// running process -- so a PATH-only check reports "tq is not installed"
+// immediately after installing it successfully, which is the first thing a new
+// user would do.
+func TQPath() string {
+	if p, err := exec.LookPath("tq"); err == nil {
+		return p
+	}
+	dir, err := installDestDir()
 	if err != nil {
+		return ""
+	}
+	name := "tq"
+	if runtime.GOOS == "windows" {
+		name = "tq.exe"
+	}
+	p := filepath.Join(dir, name)
+	if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+		return p
+	}
+	return ""
+}
+
+// TQVersion returns the installed tq's version string.
+//
+// An empty string with a nil error means tq is genuinely absent. A non-nil
+// error means it was found and would not run, which is a different problem
+// with a different fix -- reporting both as "not installed" sends someone off
+// to install something they already have.
+func TQVersion() (string, error) {
+	path := TQPath()
+	if path == "" {
 		return "", nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -373,7 +406,14 @@ func TQVersion() (string, error) {
 	cmd := exec.CommandContext(ctx, path, "version")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("tq version: %w", err)
+		detail := strings.TrimSpace(string(out))
+		if i := strings.IndexAny(detail, "\r\n"); i >= 0 {
+			detail = detail[:i]
+		}
+		if detail != "" {
+			detail = ": " + detail
+		}
+		return "", fmt.Errorf("found tq at %s but could not run it: %w%s", path, err, detail)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
