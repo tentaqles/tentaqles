@@ -467,15 +467,29 @@ func InstallTQ(fromPath string) (string, error) {
 
 	if _, err := os.Stat(dest); err == nil && filesIdentical(fromPath, dest) {
 		// Already installed and byte-identical: no-op.
+	} else if existing, err := os.Stat(dest); err == nil && !existing.IsDir() {
+		// A different tq is already installed. Refuse rather than overwrite.
+		//
+		// This is not hypothetical caution: a stale bundled copy replaced a
+		// working install here and silently removed a subcommand the Claude
+		// Code plugin depends on, so every session in every workspace began
+		// erroring on each command. Whoever is installing may well have the
+		// older binary, and an install button is not the place to find out.
+		have, herr := runTQVersion(dest)
+		want, werr := runTQVersion(fromPath)
+		switch {
+		case herr != nil || werr != nil:
+			return "", fmt.Errorf("%s already exists and could not be identified; remove it first if you mean to replace it", dest)
+		case have == want:
+			// Same version, different bytes (a rebuild). Replacing is safe.
+			if err := copyExecutable(fromPath, dest); err != nil {
+				return "", err
+			}
+		default:
+			return "", fmt.Errorf("%s is already %s and this would install %s; remove it first if you mean to replace it", dest, have, want)
+		}
 	} else {
-		data, err := os.ReadFile(fromPath)
-		if err != nil {
-			return "", err
-		}
-		if err := os.WriteFile(dest, data, 0o755); err != nil {
-			return "", err
-		}
-		if err := os.Chmod(dest, 0o755); err != nil {
+		if err := copyExecutable(fromPath, dest); err != nil {
 			return "", err
 		}
 	}
@@ -625,4 +639,28 @@ func userFromGitConfig(path string) (name, email string) {
 		}
 	}
 	return name, email
+}
+
+// copyExecutable copies src over dst and makes it executable.
+func copyExecutable(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(dst, data, 0o755); err != nil {
+		return err
+	}
+	return os.Chmod(dst, 0o755)
+}
+
+// runTQVersion asks a tq binary what it is. Used to avoid replacing one
+// version with another without saying so.
+func runTQVersion(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "version").CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

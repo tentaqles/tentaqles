@@ -52,6 +52,14 @@ $env:TQ_HOME = Join-Path $scratch 'tentaqles'
 $env:HOME = $sHome
 $env:USERPROFILE = $sHome
 $env:GIT_CONFIG_GLOBAL = Join-Path $sHome '.gitconfig'
+# LOCALAPPDATA matters as much as the rest: installDestDir() resolves the
+# install directory through it, so the app's "Install tq" button writes to
+# the tentaqles bin directory beneath it. Leaving it pointed at the real profile let
+# that one button reach straight past this sandbox and replace the live
+# binary -- which is exactly what it did, with a stale bundled copy.
+$env:LOCALAPPDATA = Join-Path $sHome 'AppData\Local'
+$env:APPDATA = Join-Path $sHome 'AppData\Roaming'
+New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA, $env:APPDATA | Out-Null
 foreach ($n in @('__TQ_STATE', 'TQ_WS', 'TQ_WS_ROOT', 'CLAUDE_CONFIG_DIR', 'GH_CONFIG_DIR')) {
     Remove-Item "env:$n" -ErrorAction SilentlyContinue
 }
@@ -81,8 +89,9 @@ if ($Populate) {
 Write-Host "Sandbox:      $scratch"
 Write-Host "Work folder:  $sWork   (the app should offer this already)"
 Write-Host ""
-Write-Host "Everything the app writes lands in the sandbox. Click through as far"
-Write-Host "as you like, Apply included."
+Write-Host "Everything the app writes lands in the sandbox: workspaces, hooks,"
+Write-Host "and anything the Install button copies. Click through as far as you"
+Write-Host "like, Apply included."
 Write-Host ""
 
 & $Exe

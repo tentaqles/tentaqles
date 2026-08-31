@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -381,5 +382,49 @@ func TestBaseFolders_ToleratesABOMInGitConfig(t *testing.T) {
 	}
 	if got[0].GitEmail != "dev@acme.test" {
 		t.Errorf("email = %q, want it read despite the BOM", got[0].GitEmail)
+	}
+}
+
+// A stale bundled tq replaced a working install on the development machine and
+// silently removed a subcommand the Claude Code plugin depends on, so every
+// session in every workspace began erroring on each command. An install button
+// must not be able to do that quietly.
+func TestInstallTQ_RefusesToReplaceADifferentVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs an executable script; the shell shim differs on Windows")
+	}
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	destDir, err := installDestDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := func(path, version string) {
+		body := "#!/bin/sh\necho '" + version + "'\n"
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	installed := filepath.Join(destDir, "tq")
+	fake(installed, "tq 0.9.9")
+	incoming := filepath.Join(dir, "tq")
+	fake(incoming, "tq 0.1.0")
+
+	_, err = InstallTQ(incoming)
+	if err == nil {
+		t.Fatal("installing a different version over an existing one must be refused")
+	}
+	for _, want := range []string{"0.9.9", "0.1.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error should name both versions so the user can judge; got: %v", err)
+		}
+	}
+	// and the installed binary must be untouched
+	got, _ := os.ReadFile(installed)
+	if !strings.Contains(string(got), "0.9.9") {
+		t.Error("the existing binary must not have been replaced")
 	}
 }
