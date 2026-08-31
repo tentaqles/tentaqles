@@ -37,6 +37,26 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/tentaqles/tentaqles/main/installers/install.ps1 | iex
 ```
 
+Homebrew or Scoop:
+
+```sh
+brew install --no-quarantine tentaqles/tap/tq   # macOS / Linux
+scoop bucket add tentaqles https://github.com/tentaqles/scoop-bucket && scoop install tq
+```
+
+`--no-quarantine` is not optional on macOS today. `tq` is not signed with an
+Apple Developer certificate, so Homebrew's default quarantine makes Gatekeeper
+refuse it with *"Apple could not verify tq is free of malware"*. The `curl`
+installer above has no such problem -- files fetched with `curl` are never
+quarantined. If you already installed it and hit the block:
+
+```sh
+xattr -dr com.apple.quarantine "$(brew --prefix)/Caskroom/tq"
+```
+
+The desktop setup app is unsigned for the same reason: right-click it and
+choose *Open* rather than double-clicking it.
+
 From source (requires Go 1.26+):
 
 ```sh
