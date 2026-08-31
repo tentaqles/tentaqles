@@ -324,8 +324,14 @@ must be run again before that workspace exports anything.
   to run a single command under a workspace's identity, or invoke the
   generated hook file directly from a `cmd.exe` script.
 - `tq` isolates CLIs by pointing them at a private config directory. A CLI
-  that keeps its credentials in the OS keychain instead of on disk is not
-  isolated by that mechanism.
+  that keeps its credentials in the OS keychain is only isolated if it
+  namespaces that keychain entry per config directory. Measured on macOS
+  26.6: Claude Code does — two accounts on different subscription tiers were
+  logged in simultaneously under two `CLAUDE_CONFIG_DIR` values, and an empty
+  config directory reports logged-out even though a `Claude Code-credentials`
+  keychain item exists. `tq` therefore never has to store a token itself. A
+  CLI that does *not* namespace would need its own mechanism; none of the
+  ones in the catalog are currently known to behave that way.
 
 ## Security
 
