@@ -18,5 +18,11 @@ install:
 identity:
   env:
     CLAUDE_CONFIG_DIR: "{dir}"
+# `claude /login` would pass /login as the first prompt of an interactive
+# session, so the session authenticates and then runs the slash command --
+# the user is asked to log in twice. `claude auth login` is the real
+# subcommand and matches every other provider here.
 login:
-  args: ["/login"]
+  args: ["auth", "login"]
+verify:
+  args: ["auth", "status"]

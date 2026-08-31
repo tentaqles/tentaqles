@@ -24,7 +24,7 @@ type legacyProvider struct {
 func TestProviders_MatchesLegacyTable(t *testing.T) {
 	dir := filepath.FromSlash("/x")
 	legacy := map[string]legacyProvider{
-		"claude": {Vars: map[string]string{"CLAUDE_CONFIG_DIR": dir}, LoginCmd: "claude", LoginArgs: []string{"/login"}},
+		"claude": {Vars: map[string]string{"CLAUDE_CONFIG_DIR": dir}, LoginCmd: "claude", LoginArgs: []string{"auth", "login"}},
 		"codex":  {Vars: map[string]string{"CODEX_HOME": dir}, LoginCmd: "codex", LoginArgs: []string{"login"}},
 		"gemini": {Vars: map[string]string{"GEMINI_CLI_HOME": dir}, LoginCmd: "gemini", LoginArgs: nil},
 		"cursor": {Vars: map[string]string{"CURSOR_CONFIG_DIR": dir}, LoginCmd: "agent", LoginArgs: []string{"login"}},
