@@ -42,24 +42,53 @@ redact() {
     -e 's/(gh[pousr]_[A-Za-z0-9]{6})[A-Za-z0-9_]*/\1<REDACTED>/g' \
     -e 's/(sk-[A-Za-z0-9]{4})[A-Za-z0-9_-]*/\1<REDACTED>/g' \
     -e 's/("(access_token|refresh_token|oauth_token|token)" *: *")[^"]*/\1<REDACTED>/g' \
-    -e 's/(oauth_token: *).*/\1<REDACTED>/'
+    -e 's/(oauth_token: *).*/\1<REDACTED>/' \
+    -e 's/("(email|orgName)" *: *")[^"]*/\1<REDACTED>/g' \
+    -e 's/("orgId" *: *")[^"]*/\1<REDACTED>/g'
+}
+# loggedIn, authMethod and subscriptionType are deliberately NOT redacted --
+# they are the answer this spike exists to produce. Whose account it is, and
+# which organisation, is not: on a client machine that is precisely the thing
+# this project exists to stop leaking somewhere it does not belong, and the
+# output is meant to be pasted into a conversation.
+
+# logged_in classifies a status output: 0 = logged in, 1 = not, 2 = unknown.
+logged_in() {
+  out=$1
+  printf '%s' "$out" | grep -Eqi '"loggedIn" *: *true|Logged in to|✓ Logged in' && return 0
+  printf '%s' "$out" | grep -Eqi '"loggedIn" *: *false|not logged in|no accounts|You are not' && return 1
+  return 2
 }
 
-# verdict_of reads a CLI's status output and decides logged-in vs not.
-verdict_of() {
-  out=$1
-  if printf '%s' "$out" | grep -Eqi '"loggedIn" *: *true|Logged in to|✓ Logged in'; then
-    say "  RESULT: reports LOGGED IN from an empty config dir"
-    say "  => credentials are NOT isolated by config dir (shared Keychain)"
-    return 1
+# compare runs the control (your real config) and the test (an empty config
+# dir) and only draws a conclusion when the control proves there is a login
+# to isolate in the first place. Without that control an empty dir reports
+# "not logged in" whether isolation works or the CLI was simply never used,
+# and those two look identical.
+compare() {
+  ctl=$1; tst=$2
+  logged_in "$ctl"; c=$?
+  logged_in "$tst"; t=$?
+  if [ "$c" = "1" ]; then
+    say "  CONTROL: you are NOT logged in with your normal config either."
+    say "  => INCONCLUSIVE. Log in on this machine first, then re-run."
+    return 3
   fi
-  if printf '%s' "$out" | grep -Eqi '"loggedIn" *: *false|not logged in|no accounts|You are not'; then
-    say "  RESULT: reports NOT logged in from an empty config dir"
-    say "  => credentials ARE isolated by config dir; tq's mechanism works"
-    return 0
+  if [ "$c" = "2" ]; then
+    say "  CONTROL: could not classify your normal status; see raw output."
+    return 2
   fi
-  say "  RESULT: could not classify the output; raw output below"
-  return 2
+  say "  CONTROL: logged in with your normal config (good, there is something to isolate)"
+  case "$t" in
+    0) say "  TEST:    ALSO reports logged in from an empty config dir"
+       say "  => credentials are NOT isolated by config dir (shared Keychain)"
+       return 1 ;;
+    1) say "  TEST:    reports NOT logged in from an empty config dir"
+       say "  => credentials ARE isolated by config dir; tq's mechanism works"
+       return 0 ;;
+    *) say "  TEST:    could not classify; see raw output."
+       return 2 ;;
+  esac
 }
 
 hr
@@ -80,8 +109,13 @@ say "1. Claude Code — the question this spike exists for"
 hr
 if command -v claude >/dev/null 2>&1; then
   mkdir -p "$SCRATCH/claude-empty"
+  CTL=$(claude auth status 2>&1 | redact)
   OUT=$(CLAUDE_CONFIG_DIR="$SCRATCH/claude-empty" claude auth status 2>&1 | redact)
-  verdict_of "$OUT"; CLAUDE_RC=$?
+  compare "$CTL" "$OUT"; CLAUDE_RC=$?
+  say ""
+  say "  --- raw output (your normal config) ---"
+  printf '%s
+' "$CTL" | sed 's/^/  /'
   say ""
   say "  --- raw output (empty CLAUDE_CONFIG_DIR) ---"
   printf '%s\n' "$OUT" | sed 's/^/  /'
@@ -189,6 +223,8 @@ case "${CLAUDE_RC:-3}" in
      say "        through config dirs alone. tq needs the Keychain fallback"
      say "        (store a per-workspace token, export CLAUDE_CODE_OAUTH_TOKEN)." ;;
   2) say "Claude: inconclusive — paste the raw output above." ;;
+  3) say "Claude: INCONCLUSIVE — not logged in on this machine at all."
+     say "        Run `claude` once and log in, then re-run this spike." ;;
   *) say "Claude: not tested (CLI not installed)." ;;
 esac
 case "${GH_RC:-3}" in
