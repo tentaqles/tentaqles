@@ -73,6 +73,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" stop-capture.py",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }

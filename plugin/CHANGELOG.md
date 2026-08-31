@@ -2,6 +2,32 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.5.0] — 2026-08-31
+
+### Added
+
+- **Decisions are captured without being asked for.** Sessions and pending items
+  were already recorded automatically at session end; decisions were written
+  only when the `session-wrap` skill ran, which needs somebody to remember to
+  say "done" before closing the terminal. In practice that produced nineteen
+  days in which every session was logged and not one reason for anything was —
+  the what recorded, the why lost.
+
+  A new `Stop` hook asks the model to record what was decided, once per
+  session, while it still holds the context. It fires only after a session has
+  done real work, writes a marker so a conversation is never asked twice, and
+  respects `stop_hook_active` — ignoring that flag is how a stop hook becomes an
+  infinite loop.
+
+- **A fallback for terminals that are simply closed.** `session-end.py` now also
+  scans the transcript for decisions, the same way it already scans for open
+  threads. It matches only text explicitly labelled as a decision, so it
+  usually finds nothing. That is deliberate: an earlier version matched
+  directives like "use X instead of Y" and, run against two real transcripts,
+  stored mid-sentence fragments as decisions. Writing that into a store people
+  rely on is worse than writing nothing. Anything it does capture is marked
+  `confidence: low` and tagged `auto`.
+
 ## [0.4.0] — 2026-08-28
 
 tq is the source of truth: hooks call `tq claude-hook`; Python guard is

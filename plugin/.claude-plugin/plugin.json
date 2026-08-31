@@ -1,6 +1,6 @@
 {
   "name": "tentaqles",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Multi-workspace orchestration for developers working across multiple clients. Identity isolation, temporal memory with decay, knowledge graphs, cross-workspace pattern detection, time-travel snapshots, and inter-workspace signals.",
   "author": {
     "name": "Tentaqles",

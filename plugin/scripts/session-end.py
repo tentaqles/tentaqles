@@ -37,6 +37,12 @@ except ImportError:
     detect_open_threads = None
     deduplicate_pending = None
 
+try:
+    from tentaqles.decisions import detect_decisions, deduplicate_decisions
+except Exception:
+    detect_decisions = None
+    deduplicate_decisions = None
+
 
 
 def parse_transcript(transcript_path: str) -> dict:
@@ -277,6 +283,38 @@ def main():
                             pass
             except Exception:
                 pass  # Never crash session end because of thread detection
+
+        # Decisions stated outright in the transcript (F-auto). The Stop hook
+        # asks the model to record decisions properly while it still has the
+        # context; this is the fallback for a terminal closed before that
+        # happened -- killed window, lost connection, /exit mid-thought. It
+        # captures only explicitly labelled decisions, so it usually finds
+        # nothing, which is the intended trade.
+        if (
+            transcript_path
+            and Path(transcript_path).exists()
+            and detect_decisions is not None
+            and deduplicate_decisions is not None
+        ):
+            try:
+                candidates = detect_decisions(transcript_path)
+                if candidates:
+                    try:
+                        existing = store.get_recent_decisions(days=30)
+                    except Exception:
+                        existing = []
+                    for d in deduplicate_decisions(candidates, existing):
+                        try:
+                            store.record_decision(
+                                chosen=d["chosen"],
+                                rationale=d.get("rationale", ""),
+                                confidence=d.get("confidence", "low"),
+                                tags=d.get("tags"),
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                pass  # Never crash session end because of decision detection
 
         # End session with summary
         store.end_session(summary, tags=[reason, client_name])
