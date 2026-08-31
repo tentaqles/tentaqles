@@ -114,8 +114,7 @@ if command -v claude >/dev/null 2>&1; then
   compare "$CTL" "$OUT"; CLAUDE_RC=$?
   say ""
   say "  --- raw output (your normal config) ---"
-  printf '%s
-' "$CTL" | sed 's/^/  /'
+  printf '%s\n' "$CTL" | sed 's/^/  /'
   say ""
   say "  --- raw output (empty CLAUDE_CONFIG_DIR) ---"
   printf '%s\n' "$OUT" | sed 's/^/  /'
@@ -133,9 +132,13 @@ say "2. GitHub CLI — same test, for comparison"
 hr
 if command -v gh >/dev/null 2>&1; then
   mkdir -p "$SCRATCH/gh-empty"
+  CTL=$(gh auth status 2>&1 | redact)
   OUT=$(GH_CONFIG_DIR="$SCRATCH/gh-empty" gh auth status 2>&1 | redact)
-  verdict_of "$OUT"; GH_RC=$?
+  compare "$CTL" "$OUT"; GH_RC=$?
   say ""
+  say "  --- your normal config ---"
+  printf '%s\n' "$CTL" | sed 's/^/  /'
+  say "  --- empty GH_CONFIG_DIR ---"
   printf '%s\n' "$OUT" | sed 's/^/  /'
 else
   say "  gh not installed — skipping"
@@ -169,6 +172,31 @@ security dump-keychain 2>/dev/null \
   | grep -Eio '"(svce|labl)"<blob>="[^"]*(claude|anthropic|github|gh|azure)[^"]*"' \
   | sed -E 's/.*="(.*)"/  - \1/' | sort -u | head -20
 say "  (an empty list here usually means nothing matched, not that none exist)"
+
+hr
+say "4b. How many Claude credential items are there, and what separates them?"
+hr
+say "  Section 1 proves an EMPTY config dir does not inherit a login. It does"
+say "  NOT prove two config dirs can hold two DIFFERENT logins at once. If"
+say "  every config dir writes to one shared Keychain item, logging into a"
+say "  second account would overwrite the first, and section 1 would still"
+say "  have said 'isolated'. This looks for that."
+say ""
+if command -v security >/dev/null 2>&1; then
+  N=$(security dump-keychain 2>/dev/null | grep -c '"svce"<blob>="Claude Code-credentials"' || true)
+  say "  Keychain items with service \"Claude Code-credentials\": ${N:-0}"
+  say "  Their account attributes (the field that would namespace them):"
+  security dump-keychain 2>/dev/null \
+    | awk '/^keychain: /{if (b ~ /Claude Code-credentials/) print b; b=""} {b=b $0 "\n"} END{if (b ~ /Claude Code-credentials/) print b}' \
+    | grep -E '"acct"|"svce"' | sed 's/^/    /' | head -20
+  say ""
+  say "  Reading: one item with a generic account => a second login very likely"
+  say "  overwrites the first, and per-workspace Claude accounts need the"
+  say "  Keychain fallback. One item PER account, or an account attribute that"
+  say "  varies, => genuine isolation."
+else
+  say "  security(1) not available — skipping"
+fi
 
 # ------------------------------------------------------------ contained ----
 if [ "$FULL" = "1" ]; then
@@ -216,8 +244,11 @@ hr
 say "VERDICT"
 hr
 case "${CLAUDE_RC:-3}" in
-  0) say "Claude: credentials ARE isolated by CLAUDE_CONFIG_DIR."
-     say "        macOS behaves like Windows. No Keychain work needed." ;;
+  0) say "Claude: an empty config dir does NOT inherit your login, so the"
+     say "        config dir is at least part of how Claude finds credentials."
+     say "        NOT YET PROVEN: that two config dirs can hold two DIFFERENT"
+     say "        accounts at the same time. See 4b, and run the two-account"
+     say "        test before trusting this on a multi-subscription machine." ;;
   1) say "Claude: credentials are NOT isolated by CLAUDE_CONFIG_DIR."
      say "        Multiple Claude accounts per workspace does NOT work on macOS"
      say "        through config dirs alone. tq needs the Keychain fallback"
