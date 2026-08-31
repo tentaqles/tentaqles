@@ -24,6 +24,7 @@ export interface Company {
   GitName: string
   GitEmail: string
   GitUser: string
+  GitProvider: string
   Identities: string[]
   PermissionMode: string
 }

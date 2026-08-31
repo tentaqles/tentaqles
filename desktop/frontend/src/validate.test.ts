@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest'
-import {validateCompany, validateEmail, validateName, localStepError, needsFullValidation, STEP_WELCOME, STEP_BASE, STEP_COMPANIES} from './validate'
+import {validateCompany, validateEmail, validateName, localStepError, needsFullValidation, STEP_WELCOME, STEP_BASE, STEP_COMPANIES, normalizeGitProvider, OTHER_PENDING, GIT_PROVIDERS, NAMED_GIT_PROVIDERS} from './validate'
 
 describe('validateName', () => {
   it('accepts lowercase slugs', () => {
@@ -86,5 +86,33 @@ describe('step gating', () => {
 
   it('asks nothing of the Welcome step, which collects nothing', () => {
     expect(localStepError(STEP_WELCOME, {Base: ''})).toBeNull()
+  })
+})
+
+describe('git host selection', () => {
+  it('treats "Other" with nothing typed as not applicable', () => {
+    // Better an empty field than a placeholder that reads like a host name.
+    expect(normalizeGitProvider(OTHER_PENDING)).toBe('')
+  })
+
+  it('keeps a typed host, trimmed', () => {
+    expect(normalizeGitProvider('  gitea.internal  ')).toBe('gitea.internal')
+    expect(normalizeGitProvider('github')).toBe('github')
+  })
+
+  it('keeps not-applicable empty', () => {
+    expect(normalizeGitProvider('')).toBe('')
+  })
+
+  it('offers not-applicable and other alongside the named hosts', () => {
+    const values = GIT_PROVIDERS.map((p) => p.value)
+    expect(values).toContain('')
+    expect(values).toContain('other')
+    expect(NAMED_GIT_PROVIDERS).toContain('github')
+    expect(NAMED_GIT_PROVIDERS).toContain('gitlab')
+    expect(NAMED_GIT_PROVIDERS).toContain('azure-devops')
+    // control values are not hosts
+    expect(NAMED_GIT_PROVIDERS).not.toContain('')
+    expect(NAMED_GIT_PROVIDERS).not.toContain('other')
   })
 })

@@ -24,6 +24,7 @@ type Company struct {
 	GitName        string   `yaml:"git_name"`
 	GitEmail       string   `yaml:"git_email"`
 	GitUser        string   `yaml:"git_user,omitempty"`
+	GitProvider    string   `yaml:"git_provider,omitempty"`
 	Identities     []string `yaml:"identities,omitempty"`
 	PermissionMode string   `yaml:"permission_mode,omitempty"`
 }

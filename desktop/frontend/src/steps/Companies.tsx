@@ -3,7 +3,15 @@ import * as api from '../api'
 import type {Company, FolderCandidate} from '../api'
 import {Badge, Button, Card, ColorSwatches, Field, Input, Select, StepHeader} from '../ui'
 import {newCompany, usePlan} from '../state'
-import {COLORS, PERMISSION_MODES, validateCompany} from '../validate'
+import {
+  COLORS,
+  GIT_PROVIDERS,
+  NAMED_GIT_PROVIDERS,
+  normalizeGitProvider,
+  OTHER_PENDING,
+  PERMISSION_MODES,
+  validateCompany,
+} from '../validate'
 
 export default function Companies() {
   const {state, dispatch} = usePlan()
@@ -66,11 +74,12 @@ export default function Companies() {
   function save() {
     if (!form) return
     const taken = companies.filter((c) => c.Name !== editing).map((c) => c.Name)
-    const errs = validateCompany(form, taken)
+    const saved = {...form, GitProvider: normalizeGitProvider(form.GitProvider)}
+    const errs = validateCompany(saved, taken)
     setErrors(errs)
     if (Object.keys(errs).length > 0) return
-    if (editing) dispatch({type: 'updateCompany', name: editing, company: form})
-    else dispatch({type: 'addCompany', company: form})
+    if (editing) dispatch({type: 'updateCompany', name: editing, company: saved})
+    else dispatch({type: 'addCompany', company: saved})
     setForm(null)
     setEditing(null)
   }
@@ -218,6 +227,40 @@ export default function Companies() {
                 spellCheck={false}
                 onChange={(e) => setForm({...form, GitEmail: e.target.value})}
               />
+            </Field>
+            <Field label="Git host">
+              <Select
+                value={
+                  form.GitProvider === '' || NAMED_GIT_PROVIDERS.includes(form.GitProvider)
+                    ? form.GitProvider
+                    : 'other'
+                }
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    // 'other' is a control value, not a host: it clears the
+                    // field so the free-text box below starts empty.
+                    GitProvider: e.target.value === 'other' ? OTHER_PENDING : e.target.value,
+                  })
+                }
+              >
+                {GIT_PROVIDERS.map((p) => (
+                  <option key={p.value || 'na'} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </Select>
+              {form.GitProvider !== '' && !NAMED_GIT_PROVIDERS.includes(form.GitProvider) ? (
+                <Input
+                  className="mt-2"
+                  placeholder="Name the host, e.g. gitea.internal"
+                  spellCheck={false}
+                  value={form.GitProvider === OTHER_PENDING ? '' : form.GitProvider}
+                  onChange={(e) =>
+                    setForm({...form, GitProvider: e.target.value || OTHER_PENDING})
+                  }
+                />
+              ) : null}
             </Field>
             <Field label="Git user (optional)">
               <Input

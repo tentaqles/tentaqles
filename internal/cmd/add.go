@@ -53,6 +53,7 @@ func newAddCmd() *cobra.Command {
 	c.Flags().StringVar(&o.GitName, "git-name", "", "git user.name")
 	c.Flags().StringVar(&o.DisplayName, "display-name", "", "human name")
 	c.Flags().StringVar(&o.Color, "color", "", "tab color hint, e.g. #e0432f")
+	c.Flags().StringVar(&o.GitProvider, "git-provider", "", "git host: github|gitlab|azure-devops|bitbucket (decides which CLI an expected_user is checked against)")
 	c.Flags().StringVar(&ids, "identities", "claude,gh", "comma list: claude,codex,gemini,cursor,gh,az,aws,gcloud,kube,npm")
 	c.Flags().StringVar(&o.PermissionMode, "permission-mode", "", "claude permission_mode: default|acceptEdits|plan|bypass")
 	return c

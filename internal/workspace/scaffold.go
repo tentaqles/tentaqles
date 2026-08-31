@@ -22,9 +22,14 @@ var NameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type AddOptions struct {
 	Base, Name, GitName, GitEmail, GitUser, DisplayName, Color string
-	Identities                                                 []string
-	PermissionMode                                             string
-	RunGit                                                     func(args ...string) (string, error)
+	// GitProvider names the git host (github, gitlab, azure-devops, ...). It
+	// decides which CLI an expected_user is checked against, so an empty value
+	// on a GitLab workspace would have tq comparing a GitLab handle to whatever
+	// gh reports.
+	GitProvider    string
+	Identities     []string
+	PermissionMode string
+	RunGit         func(args ...string) (string, error)
 	// Trust says whether the workspace should be trusted (and wired into
 	// git's include chain) after scaffolding. When false, Add still creates
 	// everything on disk but leaves the workspace untrusted.
@@ -61,7 +66,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	}
 	m := manifest.Manifest{
 		Schema: "tentaqles-client-v2", Client: o.Name, DisplayName: o.DisplayName, Color: o.Color,
-		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail, User: o.GitUser},
+		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail, User: o.GitUser, Provider: o.GitProvider},
 		Identities: map[string]manifest.Identity{},
 		Claude:     manifest.Claude{PermissionMode: o.PermissionMode},
 	}

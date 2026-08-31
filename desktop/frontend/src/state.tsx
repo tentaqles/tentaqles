@@ -46,6 +46,7 @@ export function newCompany(name = ''): Company {
     GitName: '',
     GitEmail: '',
     GitUser: '',
+    GitProvider: '',
     Identities: [],
     PermissionMode: 'default',
   }

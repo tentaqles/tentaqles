@@ -111,6 +111,7 @@ func Apply(p *SetupPlan, cat *providers.Catalog, o ApplyOptions) (Report, error)
 			GitName:        c.GitName,
 			GitEmail:       c.GitEmail,
 			GitUser:        c.GitUser,
+			GitProvider:    c.GitProvider,
 			DisplayName:    c.DisplayName,
 			Color:          c.Color,
 			Identities:     ids,

@@ -88,3 +88,40 @@ export function localStepError(
 export function needsFullValidation(step: number): boolean {
   return step >= STEP_COMPANIES
 }
+
+// GIT_PROVIDERS are the hosts tq knows how to check an expected_user against.
+// The value is what lands in the manifest's git.provider.
+//
+// '' means not applicable -- plenty of workspaces have a git identity without
+// a hosting account to verify -- and 'other' reveals a free-text field, so an
+// answer that is not on the list is recorded rather than forced into the
+// nearest wrong one.
+export const GIT_PROVIDERS: {value: string; label: string}[] = [
+  {value: '', label: 'Not applicable'},
+  {value: 'github', label: 'GitHub'},
+  {value: 'gitlab', label: 'GitLab'},
+  {value: 'azure-devops', label: 'Azure DevOps'},
+  {value: 'bitbucket', label: 'Bitbucket'},
+  {value: 'gitea', label: 'Gitea / Forgejo'},
+  {value: 'other', label: 'Other…'},
+]
+
+// The values above that are a real, named host rather than a control option.
+export const NAMED_GIT_PROVIDERS = GIT_PROVIDERS.map((p) => p.value).filter(
+  (v) => v !== '' && v !== 'other',
+)
+
+// OTHER_PENDING marks "Other…" chosen but not yet typed. It has to be
+// distinguishable from both a real host and from "not applicable", or picking
+// Other would snap the select straight back to Not applicable and the text box
+// would never appear.
+export const OTHER_PENDING = 'other:'
+
+// normalizeGitProvider turns the form's working value into what belongs in the
+// manifest. "Other…" chosen but never filled in is the same as not applicable:
+// better an empty field than a placeholder that looks like a host name.
+export function normalizeGitProvider(v: string): string {
+  const t = v.trim()
+  if (t === OTHER_PENDING) return ''
+  return t
+}

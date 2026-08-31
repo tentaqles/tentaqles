@@ -1,7 +1,11 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: light dark;
+  /* Naming both schemes lets the platform draw a native dropdown in whichever
+     it picks -- but each block below then commits to one, because "light dark"
+     alone had Windows drawing a LIGHT popup while the options inherited the
+     page's near-white text: white on pale grey, unreadable. */
+  color-scheme: light;
   --tq-bg: #f7f7f8;
   --tq-panel: #ffffff;
   --tq-text: #16181d;
@@ -12,6 +16,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     --tq-bg: #16181d;
     --tq-panel: #1e2128;
     --tq-text: #e9eaee;
@@ -36,4 +41,12 @@ body {
 input, select, button, textarea {
   font: inherit;
   color: inherit;
+}
+
+/* The dropdown list is drawn by the platform and does not inherit the panel
+   styling, so state it outright. Without this the options take the page's text
+   colour onto a default-coloured popup. */
+option {
+  background-color: var(--tq-panel);
+  color: var(--tq-text);
 }

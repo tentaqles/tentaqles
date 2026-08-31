@@ -23,6 +23,7 @@ export namespace setupapi {
 	    GitName: string;
 	    GitEmail: string;
 	    GitUser: string;
+	    GitProvider: string;
 	    Identities: string[];
 	    PermissionMode: string;
 	
@@ -38,6 +39,7 @@ export namespace setupapi {
 	        this.GitName = source["GitName"];
 	        this.GitEmail = source["GitEmail"];
 	        this.GitUser = source["GitUser"];
+	        this.GitProvider = source["GitProvider"];
 	        this.Identities = source["Identities"];
 	        this.PermissionMode = source["PermissionMode"];
 	    }

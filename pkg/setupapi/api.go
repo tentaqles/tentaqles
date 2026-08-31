@@ -49,6 +49,7 @@ type Company struct {
 	GitName        string
 	GitEmail       string
 	GitUser        string
+	GitProvider    string
 	Identities     []string
 	PermissionMode string
 }
@@ -157,6 +158,7 @@ func (c Company) toInternal() setup.Company {
 		GitName:        c.GitName,
 		GitEmail:       c.GitEmail,
 		GitUser:        c.GitUser,
+		GitProvider:    c.GitProvider,
 		Identities:     c.Identities,
 		PermissionMode: c.PermissionMode,
 	}
