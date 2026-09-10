@@ -65,8 +65,9 @@ echo '{"cwd": ".", "event": "touch", "data": {"node_id": "test.py", "action": "e
 
 ## Dependencies
 
-Core (auto-installed by `bootstrap.py`): `pyyaml`, `pathspec`, `fastembed`, `numpy`
-Semantic search degrades gracefully (writes still succeed, `embedding` stored as NULL) when `fastembed` is missing.
+Required (`[project].dependencies`): `pyyaml`, `pathspec`, `numpy`
+Optional: `fastembed` — lives in the `embeddings` extra, but `bootstrap.py` installs it anyway so semantic search works out of the box.
+Semantic search degrades gracefully (writes still succeed, `embedding` stored as NULL) when `fastembed` is missing. That degradation is pinned by `tests/test_embeddings_optional.py`, and CI never installs `fastembed` — so it stays genuinely optional rather than optional-in-theory.
 Optional: `graphifyy` (graph engine), `tree-sitter` (native graph), `docling` (PDF/PPTX parsing)
 
 ## Git

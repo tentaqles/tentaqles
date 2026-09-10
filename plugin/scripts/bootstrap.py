@@ -29,6 +29,10 @@ if sys.platform == "win32":
         pass
 
 
+# Installed for real users on first run. fastembed is included deliberately
+# even though it is optional at runtime (it lives in the `embeddings` extra in
+# pyproject.toml): bootstrap is where the plugin can afford to fetch it once,
+# so semantic search works out of the box.
 REQUIRED_DEPS = [
     "pyyaml",
     "pathspec",
@@ -37,9 +41,9 @@ REQUIRED_DEPS = [
 ]
 
 # Core packages that must be importable for the plugin to work at all.
+# fastembed is not among them: every write path degrades to a NULL embedding
+# without it (pinned by tests/test_embeddings_optional.py).
 CORE_IMPORTS = ["yaml", "pathspec", "numpy"]
-# fastembed is heavy — check separately and fail more gracefully
-OPTIONAL_IMPORTS = ["fastembed"]
 
 
 def _log(msg: str) -> None:

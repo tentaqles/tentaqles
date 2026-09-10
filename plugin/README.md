@@ -63,10 +63,15 @@ The plugin never uses bare `python` directly. All hooks and skills go through `s
 If the auto-install fails (no network, pip issues), the plugin runs in degraded mode and prints the manual install command:
 
 ```bash
-pip install pyyaml pathspec fastembed numpy
+pip install pyyaml pathspec numpy   # required
+pip install fastembed               # optional — enables semantic search
 ```
 
+Without `fastembed` everything still works: memory writes succeed and the
+`embedding` column is stored as NULL, so only semantic search is unavailable.
+
 **Optional extras:**
+- `pip install tentaqles[embeddings]` — semantic search (adds fastembed)
 - `pip install tentaqles[graph]` — native knowledge graph engine (adds tree-sitter)
 - `pip install graphifyy` — use graphify as the graph engine instead
 - `pip install docling` — rich PPTX/PDF parsing
@@ -278,8 +283,8 @@ See [HOW-TO.md](HOW-TO.md) for detailed walkthroughs:
 
 - Python 3.10+
 - Claude Code
-- Required deps: `pyyaml`, `pathspec`, `fastembed`, `numpy` (auto-installed)
-- Optional: `graphifyy` or `tentaqles[graph]` for knowledge graphs, `docling` for rich doc parsing
+- Required deps: `pyyaml`, `pathspec`, `numpy` (auto-installed)
+- Optional: `fastembed` or `tentaqles[embeddings]` for semantic search (auto-installed by bootstrap), `graphifyy` or `tentaqles[graph]` for knowledge graphs, `docling` for rich doc parsing
 
 ## License
 
