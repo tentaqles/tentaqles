@@ -31,6 +31,8 @@ except ImportError:
     def redact_text(text):
         return text, []
 
+from tentaqles.transcript import build_summary, parse_transcript
+
 try:
     from tentaqles.threads import detect_open_threads, deduplicate_pending
 except ImportError:
@@ -43,145 +45,6 @@ except Exception:
     detect_decisions = None
     deduplicate_decisions = None
 
-
-
-def parse_transcript(transcript_path: str) -> dict:
-    """Parse the JSONL transcript to extract session activity.
-
-    Returns:
-        {
-            "files_edited": ["src/auth.py", ...],
-            "files_read": ["src/config.py", ...],
-            "files_created": ["tests/test_auth.py", ...],
-            "commands_run": ["git status", ...],
-            "duration_s": 1234,
-            "turn_count": 15,
-            "summary_hints": ["Fixed auth bug", ...]
-        }
-    """
-    files_edited = set()
-    files_read = set()
-    files_created = set()
-    commands_run = []
-    timestamps = []
-    summary_hints = []
-    turn_count = 0
-
-    try:
-        with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                # Track timestamps for duration
-                ts = entry.get("timestamp")
-                if ts:
-                    timestamps.append(ts)
-
-                # Count turns
-                if entry.get("type") == "assistant":
-                    turn_count += 1
-
-                # Extract tool use
-                tool_name = entry.get("tool_name", "")
-                tool_input = entry.get("tool_input", {})
-
-                if not isinstance(tool_input, dict):
-                    continue
-
-                if tool_name == "Edit":
-                    fp = tool_input.get("file_path", "")
-                    if fp:
-                        files_edited.add(fp)
-
-                elif tool_name == "Write":
-                    fp = tool_input.get("file_path", "")
-                    if fp:
-                        files_created.add(fp)
-
-                elif tool_name == "Read":
-                    fp = tool_input.get("file_path", "")
-                    if fp:
-                        files_read.add(fp)
-
-                elif tool_name == "Bash":
-                    cmd = tool_input.get("command", "")
-                    if cmd and len(cmd) < 200:
-                        commands_run.append(cmd)
-
-                # Look for user messages that hint at what was accomplished
-                if entry.get("type") == "human":
-                    text = ""
-                    content = entry.get("content", "")
-                    if isinstance(content, str):
-                        text = content
-                    elif isinstance(content, list):
-                        text = " ".join(
-                            c.get("text", "") for c in content
-                            if isinstance(c, dict) and c.get("type") == "text"
-                        )
-                    # Capture the first substantive user message as a hint
-                    if text and len(text) > 20 and len(summary_hints) < 3:
-                        # Skip common non-substantive messages
-                        if not re.match(r"^(yes|no|ok|sure|thanks|done|y|n)\b", text.lower()):
-                            summary_hints.append(text[:150])
-
-    except (OSError, PermissionError):
-        pass
-
-    # Calculate duration
-    duration_s = 0
-    if len(timestamps) >= 2:
-        try:
-            first = datetime.fromisoformat(timestamps[0].replace("Z", "+00:00"))
-            last = datetime.fromisoformat(timestamps[-1].replace("Z", "+00:00"))
-            duration_s = int((last - first).total_seconds())
-        except (ValueError, TypeError):
-            pass
-
-    return {
-        "files_edited": sorted(files_edited),
-        "files_read": sorted(files_read - files_edited - files_created),
-        "files_created": sorted(files_created),
-        "commands_run": commands_run[-10:],  # last 10
-        "duration_s": duration_s,
-        "turn_count": turn_count,
-        "summary_hints": summary_hints,
-    }
-
-
-def build_summary(activity: dict) -> str:
-    """Build a concise session summary from parsed activity."""
-    parts = []
-
-    edited = activity["files_edited"]
-    created = activity["files_created"]
-    total_files = len(edited) + len(created)
-
-    if total_files > 0:
-        file_names = [Path(f).name for f in (edited + created)[:5]]
-        parts.append(f"Worked on {total_files} file(s): {', '.join(file_names)}")
-
-    if activity["summary_hints"]:
-        # Use the first user message as context
-        hint = activity["summary_hints"][0]
-        if len(hint) > 100:
-            hint = hint[:97] + "..."
-        parts.append(f"Context: {hint}")
-
-    if not parts:
-        parts.append("Session with no file changes")
-
-    dur = activity["duration_s"]
-    if dur > 60:
-        parts.append(f"Duration: {dur // 60}m")
-
-    return ". ".join(parts)
 
 
 def main():

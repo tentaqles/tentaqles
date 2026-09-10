@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+from tentaqles.transcript import entry_role, entry_text
+
 try:
     from tentaqles.privacy import redact_text as _redact_text
 except Exception:  # pragma: no cover - graceful fallback
@@ -53,9 +55,12 @@ PRIORITY_BUMP_PATTERNS: list[re.Pattern] = [
 def _extract_human_text(transcript_path: str) -> list[tuple[int, str]]:
     """Parse JSONL transcript, return list of (turn_index, text) from human messages only.
 
-    Handles two content formats:
-    - entry['content'] as a string
-    - entry['content'] as a list of {type, text} dicts
+    Entry shape handling lives in `tentaqles.transcript` — it covers both the
+    nested form Claude Code writes (message.content[] blocks) and the legacy
+    flat form. Tool results are excluded: they are tool output, not something
+    the human typed, and would otherwise turn any tool that printed "TODO"
+    into a pending item.
+
     Skips malformed JSON lines silently. Returns [] if file is missing/unreadable.
     """
     path = Path(transcript_path)
@@ -78,22 +83,9 @@ def _extract_human_text(transcript_path: str) -> list[tuple[int, str]]:
             continue
         if not isinstance(entry, dict):
             continue
-        if entry.get("type") != "human":
+        if entry_role(entry) != "user":
             continue
-        content = entry.get("content", "")
-        text = ""
-        if isinstance(content, str):
-            text = content
-        elif isinstance(content, list):
-            parts: list[str] = []
-            for block in content:
-                if isinstance(block, dict):
-                    t = block.get("text")
-                    if isinstance(t, str):
-                        parts.append(t)
-                elif isinstance(block, str):
-                    parts.append(block)
-            text = "\n".join(parts)
+        text = entry_text(entry)
         if text:
             out.append((idx, text))
     return out
