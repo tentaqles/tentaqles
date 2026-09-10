@@ -50,6 +50,12 @@ def _make_counting_shims(bindir: Path, counter: Path) -> None:
             'if [ "$1" = "-c" ] && [ "$2" = "import sys; print(sys.executable)" ]; then\n'
             f'  echo "{shim.as_posix()}"; exit 0\n'
             "fi\n"
+            # Answer the dependency probe successfully regardless of what is
+            # installed on this machine. These tests are about caching, not
+            # about whether yaml/pathspec happen to be importable — without
+            # this the stamp is never written on a runner that lacks them and
+            # the tests fail for an unrelated reason.
+            'case "$2" in "import yaml, pathspec"*) exit 0 ;; esac\n'
             f'exec "{real}" "$@"\n',
             encoding="utf-8",
         )
