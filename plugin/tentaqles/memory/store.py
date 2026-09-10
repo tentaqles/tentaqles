@@ -213,6 +213,23 @@ class MemoryStore:
 
     # --- Recording ---
 
+    def _resolve_session_id(self) -> str:
+        """Return the session id to stamp on a child row.
+
+        When no session is active this falls back to the shared ``untracked``
+        placeholder — and creates that sessions row first, so a touch,
+        decision or pending item can never reference a session that does not
+        exist. Every write that stores a session id must go through here.
+        """
+        sid = self._active_session_id
+        if sid:
+            return sid
+        self._conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, started_at) VALUES (?, ?)",
+            ("untracked", _now()),
+        )
+        return "untracked"
+
     def touch(
         self,
         node_id: str,
@@ -220,13 +237,7 @@ class MemoryStore:
         action: Literal["read", "edit", "create", "delete", "debug", "review"] = "edit",
         weight: float = 1.0,
     ) -> None:
-        sid = self._active_session_id or "untracked"
-        if sid == "untracked":
-            # Create a placeholder session if none active
-            self._conn.execute(
-                "INSERT OR IGNORE INTO sessions (id, started_at) VALUES (?, ?)",
-                ("untracked", _now()),
-            )
+        sid = self._resolve_session_id()
         safe_node_id = _redact(node_id)
         self._conn.execute(
             "INSERT INTO touches (session_id, node_id, node_type, touched_at, action, weight) VALUES (?, ?, ?, ?, ?, ?)",
@@ -253,7 +264,7 @@ class MemoryStore:
             "INSERT INTO decisions (id, session_id, created_at, node_ids, chosen, rejected, rationale, confidence, embedding, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 did,
-                self._active_session_id or "untracked",
+                self._resolve_session_id(),
                 _now(),
                 json.dumps(node_ids or []),
                 safe_chosen,
@@ -378,7 +389,7 @@ class MemoryStore:
         safe_description = _redact(description)
         self._conn.execute(
             "INSERT INTO pending (id, session_id, created_at, description, node_ids, priority) VALUES (?, ?, ?, ?, ?, ?)",
-            (pid, self._active_session_id or "untracked", _now(), safe_description, json.dumps(node_ids or []), priority),
+            (pid, self._resolve_session_id(), _now(), safe_description, json.dumps(node_ids or []), priority),
         )
         self._conn.commit()
         return pid
@@ -386,7 +397,7 @@ class MemoryStore:
     def resolve_pending(self, item_id: str) -> None:
         self._conn.execute(
             "UPDATE pending SET resolved_at=?, resolved_by=? WHERE id=?",
-            (_now(), self._active_session_id or "untracked", item_id),
+            (_now(), self._resolve_session_id(), item_id),
         )
         self._conn.commit()
 

@@ -154,3 +154,99 @@ def test_find_similar_pending_low_jaccard(store):
 
 def test_find_similar_pending_empty_store(store):
     assert store.find_similar_pending("anything at all") == []
+
+
+# ---------------------------------------------------------------------------
+# Untracked-session fallback: child rows must never dangle
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sessionless_store(tmp_path, monkeypatch):
+    """A store with no active session — exercises the "untracked" fallback."""
+    monkeypatch.setattr(MemoryStore, "_embed", lambda self, text: b"\x00" * 4)
+    s = MemoryStore(tmp_path)
+    assert s._active_session_id is None
+    yield s
+    s.close()
+
+
+def _dangling(conn) -> dict:
+    """Count child rows whose session reference is not in sessions."""
+    return {
+        (table, col): conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {col} IS NOT NULL "
+            f"AND {col} NOT IN (SELECT id FROM sessions)"
+        ).fetchone()[0]
+        for table, col in (
+            ("touches", "session_id"),
+            ("decisions", "session_id"),
+            ("pending", "session_id"),
+            ("pending", "resolved_by"),
+        )
+    }
+
+
+def test_record_decision_without_session_creates_placeholder(sessionless_store):
+    store = sessionless_store
+    store.record_decision(chosen="ship it", rationale="deadline")
+    sid = store._conn.execute("SELECT session_id FROM decisions").fetchone()[0]
+    assert sid == "untracked"
+    assert store._conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE id = ?", (sid,)
+    ).fetchone()[0] == 1
+
+
+def test_add_pending_without_session_creates_placeholder(sessionless_store):
+    store = sessionless_store
+    store.add_pending(description="write the migration")
+    sid = store._conn.execute("SELECT session_id FROM pending").fetchone()[0]
+    assert sid == "untracked"
+    assert store._conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE id = ?", (sid,)
+    ).fetchone()[0] == 1
+
+
+def test_resolve_pending_without_session_creates_placeholder(sessionless_store):
+    store = sessionless_store
+    pid = store.add_pending(description="close the loop")
+    store.resolve_pending(pid)
+    resolved_by = store._conn.execute(
+        "SELECT resolved_by FROM pending WHERE id = ?", (pid,)
+    ).fetchone()[0]
+    assert resolved_by == "untracked"
+    assert store._conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE id = ?", (resolved_by,)
+    ).fetchone()[0] == 1
+
+
+def test_no_child_row_references_a_missing_session(sessionless_store):
+    store = sessionless_store
+    # Recorded with no session active, and without touch() — which has always
+    # created the placeholder and would mask a dangling reference written by
+    # the other writers.
+    store.record_decision(chosen="use sqlite", rationale="simple")
+    pid = store.add_pending(description="benchmark it")
+    store.resolve_pending(pid)
+    assert _dangling(store._conn) == {
+        ("touches", "session_id"): 0,
+        ("decisions", "session_id"): 0,
+        ("pending", "session_id"): 0,
+        ("pending", "resolved_by"): 0,
+    }
+
+    # And again with touch() plus a real session, and after that session ends.
+    store.touch("a.py", action="edit")
+    store.start_session()
+    store.touch("b.py", action="edit")
+    store.record_decision(chosen="use duckdb", rationale="analytics")
+    pid2 = store.add_pending(description="revisit later")
+    store.resolve_pending(pid2)
+    store.end_session(summary="did things")
+    store.record_decision(chosen="post-session call", rationale="after end")
+    assert _dangling(store._conn) == {
+        ("touches", "session_id"): 0,
+        ("decisions", "session_id"): 0,
+        ("pending", "session_id"): 0,
+        ("pending", "resolved_by"): 0,
+    }

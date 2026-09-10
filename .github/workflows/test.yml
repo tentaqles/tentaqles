@@ -55,9 +55,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      # Keep in step with the runtime dependencies in plugin/pyproject.toml.
-      # fastembed is deliberately omitted: it is heavy and semantic search
-      # degrades gracefully without it (embeddings stored as NULL).
+      # Keep in step with [project].dependencies in plugin/pyproject.toml.
+      # fastembed is not among them — it lives in the `embeddings` extra, and
+      # memory writes degrade to a NULL embedding without it. Leaving it
+      # uninstalled here is what keeps that degradation honestly tested
+      # (see plugin/tests/test_embeddings_optional.py).
       - run: pip install pyyaml pathspec pytest numpy
       - name: pytest
         env:

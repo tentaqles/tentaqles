@@ -12,11 +12,14 @@ requires-python = ">=3.10"
 dependencies = [
     "pyyaml",
     "pathspec",
-    "fastembed",
     "numpy",
 ]
 
 [project.optional-dependencies]
+# fastembed is optional at runtime: it is heavy (pulls onnxruntime and downloads
+# model weights on first use) and every write path degrades to a NULL embedding
+# without it. bootstrap.py still installs it for real users.
+embeddings = ["fastembed"]
 graphify = ["graphifyy"]
 graph = [
     "networkx",
@@ -40,6 +43,7 @@ graph = [
 ]
 docling = ["docling"]
 all = [
+    "fastembed",
     "graphifyy",
     "networkx",
     "docling",
