@@ -2,6 +2,25 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`SessionEnd` no longer loses the session to Claude Code's exit budget.**
+  Claude Code aborts every SessionEnd hook still running after 1500ms and
+  reports it as `Hook cancelled`; the `timeout` a plugin declares in
+  `hooks.json` does not raise that. The save takes about that long on its own
+  for a large transcript, before counting the launcher, so sessions were being
+  dropped or left started-but-never-ended.
+
+  `session-end.py` now hands its payload to a detached copy of itself
+  (`--worker`) and returns. The hook is back in roughly 0.6s; the save lands a
+  second or two later, after Claude Code has gone. If the worker cannot be
+  started the hook saves inline, as before.
+
+  One consequence: after `/clear`, the next session's preamble can run before
+  the worker has finished, so "last session" may lag by one.
+
 ## [0.5.0] — 2026-08-31
 
 ### Added

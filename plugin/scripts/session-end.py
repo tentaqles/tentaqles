@@ -8,6 +8,10 @@ a basic summary. Writes to the client's memory.db via MemoryStore.
 This is the guaranteed baseline — runs silently with zero user interaction.
 The /tentaqles:session-wrap skill adds richer context (decisions, rationale,
 pending items) when the user explicitly triggers it.
+
+The hook itself only hands the payload to a detached copy of this script
+(`--worker`) and exits. Claude Code aborts SessionEnd hooks after 1500ms, and
+the save — transcript parse, embedding, consolidation — has no such bound.
 """
 
 import os
@@ -15,6 +19,7 @@ import sys
 
 # Bootstrap sys.path for plugin imports (tentaqles.* + bootstrapped deps)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _detach import spawn_detached
 from _path import setup_paths
 setup_paths()
 
@@ -47,15 +52,21 @@ except Exception:
 
 
 
-def main():
-    # Read hook input
+def main(raw=None, fallback_cwd=None):
+    """Save the session described by the hook payload.
+
+    raw is the payload as Claude Code wrote it (UTF-8 JSON bytes); read from
+    stdin when not given. fallback_cwd stands in for a payload without `cwd` — the
+    worker's own working directory is deliberately not the session's.
+    """
     try:
-        raw = sys.stdin.read()
+        if raw is None:
+            raw = sys.stdin.buffer.read()
         data = json.loads(raw) if raw.strip() else {}
-    except (json.JSONDecodeError, EOFError):
+    except (ValueError, EOFError):
         data = {}
 
-    cwd = data.get("cwd", os.getcwd())
+    cwd = data.get("cwd") or fallback_cwd or os.getcwd()
     session_id = data.get("session_id", "unknown")
     transcript_path = data.get("transcript_path", "")
     reason = data.get("reason", "unknown")
@@ -237,5 +248,20 @@ def main():
         pass
 
 
+def run_hook(raw: bytes) -> None:
+    """Hand the payload to a detached worker; save inline only if that fails."""
+    try:
+        spawn_detached(
+            [sys.executable, os.path.abspath(__file__), "--worker", os.getcwd()],
+            stdin_data=raw,
+        )
+    except Exception:
+        # Better a slow hook that may be cut short than a session not saved.
+        main(raw)
+
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["--worker"]:
+        main(fallback_cwd=sys.argv[2] if len(sys.argv) > 2 else None)
+    else:
+        run_hook(sys.stdin.buffer.read())
