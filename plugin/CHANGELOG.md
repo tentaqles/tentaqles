@@ -2,7 +2,29 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] — 2026-10-01
+
+Session saving at exit was failing far more often than it appeared to, in
+several independent ways. This release fixes them and adds a tool to recover
+what was already lost.
+
+### Added
+
+- **`scripts/repair-sessions.py` backfills half-written session rows.** Sessions
+  whose `SessionEnd` hook was killed part-way left rows with a start time but no
+  end and no summary. The script re-reads the transcript each row names, through
+  the same parser the hook uses, and fills them in. It is a dry run by default;
+  `--apply` writes, after copying each database to `.pre-repair`. `--prune`
+  deletes empty rows nothing else references. Run it with
+  `bash "$CLAUDE_PLUGIN_ROOT/scripts/tq_run.sh" repair-sessions.py --all`.
+
+### Changed
+
+- **`fastembed` is an optional dependency.** It moved from the required
+  dependencies to an `embeddings` extra, so `pip install tentaqles` no longer
+  pulls onnxruntime and model downloads. Memory writes without it store a NULL
+  embedding and otherwise succeed. Nothing changes for plugin installs:
+  `bootstrap.py` still installs it, so semantic search works out of the box.
 
 ### Fixed
 
@@ -20,6 +42,26 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
   One consequence: after `/clear`, the next session's preamble can run before
   the worker has finished, so "last session" may lag by one.
+
+- **The hook launcher no longer re-discovers Python on every hook.**
+  `tq_env.sh` probed for an interpreter and re-checked dependencies on each
+  invocation, two interpreter startups before the hook script began. Both
+  answers are now cached in the plugin data directory and revalidated cheaply,
+  so a warm run spawns nothing. The cache is invalidated by a plugin upgrade, a
+  missing interpreter, or a deleted `lib` directory.
+
+- **Session summaries reflect the work that was done.** Two transcript readers
+  assumed a flat entry shape Claude Code never writes, so they matched nothing:
+  every automatic summary read "Session with no file changes", no file touches
+  were recorded at session end, and no open threads were detected. Parsing now
+  lives in `tentaqles/transcript.py` and reads tool calls and user text from
+  where they actually are. Tool output and model reasoning are not treated as
+  something the user said.
+
+- **No memory row references a session that does not exist.** With no active
+  session, decisions and pending items were stamped with the shared `untracked`
+  session id without that row being created. Every writer now goes through one
+  helper that creates the placeholder first.
 
 ## [0.5.0] — 2026-08-31
 
