@@ -16,6 +16,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/guard"
+	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -203,7 +204,18 @@ func newPreToolUseCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "pre-tool-use",
-		Short: "Allow (exit 0) or block (exit 2) the Bash command in the PreToolUse payload",
+		Short: "Allow (exit 0), ask (JSON on stdout) or block (exit 2) the tool call in the PreToolUse payload",
+		Long: `Reads a Claude Code PreToolUse payload on stdin and decides:
+
+  1. identity: Bash/PowerShell commands go through the workspace identity
+     guard (git email, gh user, cloud CLI, blocked commands, trust);
+  2. policy: every tool call (shell, file read/edit, MCP) goes through the
+     rule set - tq built-ins, the manifest's guard section, and any
+     .claude/tq-rules.yaml - plus a secret scan of what a git commit would
+     record and a cross-client MCP check.
+
+Deny exits 2 with the reason on stderr. Ask prints the PreToolUse
+permissionDecision JSON so Claude Code asks the user.`,
 		RunE: func(c *cobra.Command, _ []string) error {
 			p, cmdline, perr := readHookPayload(c.InOrStdin())
 			if perr != nil {
@@ -211,34 +223,71 @@ func newPreToolUseCmd() *cobra.Command {
 				exitFunc(2)
 				return nil
 			}
-			if cmdline == "" {
+			if p.ToolName == "" {
 				return nil
 			}
-			in, err := gatherGuardInput(p.Cwd, cmdline)
-			if err != nil {
-				// Registry/resolve failure: treat cwd as neutral, which fails
-				// closed only for remote mutations.
-				in = guard.Input{Command: cmdline, Neutral: true, NeutralReason: "tq error: " + err.Error()}
+			cwd := strings.TrimSpace(p.Cwd)
+			if cwd == "" {
+				cwd, _ = os.Getwd()
 			}
-			d := guard.Decide(in)
-			if asJSON {
-				if err := json.NewEncoder(c.OutOrStdout()).Encode(struct {
-					Block  bool   `json:"block"`
-					Rule   string `json:"rule"`
-					Reason string `json:"reason"`
-				}{d.Block, d.Rule, d.Reason}); err != nil {
-					return err
+			call := toolCallFrom(p, cwd)
+
+			var ws *resolve.Workspace
+			var cfg *registry.Config
+			if cmdline != "" {
+				in, gws, gcfg, err := gatherGuardInput(cwd, cmdline)
+				if err != nil {
+					// Registry/resolve failure: treat cwd as neutral, which fails
+					// closed only for remote mutations.
+					in = guard.Input{Command: cmdline, Neutral: true, NeutralReason: "tq error: " + err.Error()}
 				}
+				ws, cfg = gws, gcfg
+				if d := guard.Decide(in); d.Block {
+					emitDecision(c, asJSON, true, d.Rule, d.Reason)
+					exitFunc(2)
+					return nil
+				}
+			} else {
+				ws, cfg = resolveTrusted(cwd)
 			}
-			if d.Block {
-				fmt.Fprintln(c.ErrOrStderr(), d.Reason)
+
+			d := policyDecision(cwd, ws, cfg, call)
+			switch d.Action {
+			case policy.Deny:
+				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
 				exitFunc(2)
+			case policy.Ask:
+				if asJSON {
+					emitDecision(c, asJSON, false, d.Matched[0].ID, d.Reason())
+					return nil
+				}
+				return writeAsk(c.OutOrStdout(), d.Reason())
+			default:
+				if asJSON {
+					emitDecision(c, asJSON, false, "", "")
+				}
 			}
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "print the decision as JSON")
 	return c
+}
+
+// emitDecision reports a decision: the --json object on stdout when asked
+// for, and for blocks the reason on stderr (Claude Code shows stderr of an
+// exit-2 hook to the model).
+func emitDecision(c *cobra.Command, asJSON, block bool, rule, reason string) {
+	if asJSON {
+		_ = json.NewEncoder(c.OutOrStdout()).Encode(struct {
+			Block  bool   `json:"block"`
+			Rule   string `json:"rule"`
+			Reason string `json:"reason"`
+		}{block, rule, reason})
+	}
+	if block {
+		fmt.Fprintln(c.ErrOrStderr(), reason)
+	}
 }
 
 // maxHookPayload bounds stdin: the hook payload is small, and a runaway
@@ -250,7 +299,8 @@ const maxHookPayload = 1 << 20
 // payload is a protocol violation and pre-tool-use fails closed on it.
 var errPayloadTooLarge = errors.New("hook payload exceeds 1 MiB")
 
-// readHookPayload decodes the hook JSON and extracts the Bash command. Any
+// readHookPayload decodes the hook JSON and extracts the shell command
+// (Bash or PowerShell). Any
 // protocol problem (malformed JSON, non-Bash tool, no command) yields "",
 // which the caller treats as allow: tq never blocks on its own parse errors.
 // The one exception is an oversized payload, reported as errPayloadTooLarge so
@@ -267,7 +317,7 @@ func readHookPayload(r io.Reader) (hookPayload, string, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return p, "", nil
 	}
-	if p.ToolName != "Bash" {
+	if !isShellTool(p.ToolName) {
 		return p, "", nil
 	}
 	return p, toolInputCommand(p.ToolInput), nil
@@ -298,7 +348,7 @@ func toolInputCommand(raw json.RawMessage) string {
 // gatherGuardInput does all the I/O the guard needs: registry + cwd resolution,
 // doctor findings, manifest facts and (only when the command is gh) the actual
 // gh login.
-func gatherGuardInput(cwd, cmdline string) (guard.Input, error) {
+func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *registry.Config, error) {
 	if strings.TrimSpace(cwd) == "" {
 		// If Getwd also fails, cwd stays empty: resolve finds no workspace, the
 		// input is neutral, and the guard fails closed for remote mutations.
@@ -306,7 +356,7 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, error) {
 	}
 	cfg, err := registry.Load()
 	if err != nil {
-		return guard.Input{}, err
+		return guard.Input{}, nil, nil, err
 	}
 	rep := doctor.RunForCwd(cfg, doctor.Deps{
 		Env:      os.LookupEnv,
@@ -327,7 +377,7 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, error) {
 	if ws == nil {
 		in.Neutral = true
 		in.NeutralReason = rep.Result.Reason
-		return in, nil
+		return in, nil, cfg, nil
 	}
 
 	m := ws.Manifest
@@ -348,7 +398,9 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, error) {
 	if expectedGH != "" && rep.Result.Workspace != nil && guard.StartsWith(cmdline, "gh") {
 		in.ActualGHUser = lookupGHUser(envplan.Desired(rep.Result.Workspace))
 	}
-	return in, nil
+	// Policy layers come only from a TRUSTED workspace: an untrusted
+	// manifest must not be able to disable built-in rules.
+	return in, rep.Result.Workspace, cfg, nil
 }
 
 // effectiveBlocked is the union of the manifest's top-level, git and cloud

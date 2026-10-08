@@ -286,3 +286,20 @@ func Decide(in Input) Decision {
 	}
 	return Decision{}
 }
+
+// GitInvocation is one git call found in a command: its sub-command (after
+// global flags such as -C/-c) and the arguments that follow it.
+type GitInvocation struct {
+	Sub  string
+	Args []string
+}
+
+// GitInvocations returns every git call in command, in order.
+func GitInvocations(c string) []GitInvocation {
+	segs := gitSegments(c)
+	out := make([]GitInvocation, 0, len(segs))
+	for _, s := range segs {
+		out = append(out, GitInvocation{Sub: s.sub, Args: s.rest})
+	}
+	return out
+}

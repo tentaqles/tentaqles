@@ -144,9 +144,17 @@ func newBundleCaptureCmd() *cobra.Command {
 					}
 				}
 				for name, srv := range captured.Catalog.MCP {
-					if _, exists := cat.MCP[name]; !exists {
-						cat.MCP[name] = srv
+					if _, exists := cat.MCP[name]; exists {
+						continue
 					}
+					// New entries never carry a literal secret into the
+					// catalog: it is copied into every identity whose
+					// manifest lists the server.
+					clean, vars := bundle.Placeholderize(name, srv)
+					if len(vars) > 0 {
+						fmt.Fprintf(c.ErrOrStderr(), "warning: mcp %q: secret values replaced by ${VAR} references; set %s in the environment of the identities that use it\n", name, strings.Join(vars, ", "))
+					}
+					cat.MCP[name] = clean
 				}
 				if err := cat.Save(); err != nil {
 					return err

@@ -8,7 +8,7 @@ plugin's Python code no longer switches gh/az/git identity itself.
 ## Subcommands
 
 - `tq claude-hook session-start` — prints a short identity/status preamble. Never blocks (always exits 0).
-- `tq claude-hook pre-tool-use` — decides whether to allow or block a Bash command. Exits 0 (allow) or 2 (block).
+- `tq claude-hook pre-tool-use` — decides whether to allow, ask about, or block a tool call: shell commands (Bash, PowerShell), file reads and edits, and MCP tool calls. Exits 0 (allow, or ask via JSON on stdout) or 2 (block).
 
 Both subcommands read a single JSON payload from stdin — the same shape
 Claude Code sends its own hooks.
@@ -30,12 +30,16 @@ Both subcommands accept the hook JSON Claude Code provides. The fields
 }
 ```
 
-- `tool_name` — must be `"Bash"` for `pre-tool-use` to inspect anything.
-  Any other tool is allowed unconditionally.
+- `tool_name` — `Bash` and `PowerShell` go through the identity guard *and*
+  the policy rules; every other tool (Read, Edit, Write, MultiEdit,
+  NotebookEdit, Grep, `mcp__*`) goes through the policy rules only. A
+  payload without `tool_name` is allowed.
 - `cwd` — the directory to resolve a workspace from. Falls back to the
   process's actual working directory if omitted or empty.
-- `tool_input.command` — the Bash command about to run. Only read by
-  `pre-tool-use`; ignored by `session-start`.
+- `tool_input` — `command` for shell tools; `file_path` / `notebook_path` /
+  `path` plus `content` / `new_string` / `edits[].new_string` /
+  `new_source` for file tools; the whole object (as JSON text) for MCP
+  tools. Ignored by `session-start`.
 
 Any other fields in the payload (session id, etc.) are ignored.
 
@@ -48,8 +52,17 @@ while `session-start` prints its "could not resolve" line and exits 0.
 
 | Code | Meaning |
 |------|---------|
-| `0` | Allow. `session-start` always exits 0 (it never blocks a session). |
+| `0` | Allow — or **ask**, when stdout carries the PreToolUse decision JSON below. `session-start` always exits 0 (it never blocks a session). |
 | `2` | Block (`pre-tool-use` only). A `BLOCKED: ...` message is written to **stderr**; stdout is not used for the block message. |
+
+An **ask** is printed to stdout so Claude Code shows the user a
+confirmation prompt with the reason:
+
+```json
+{"hookSpecificOutput": {"hookEventName": "PreToolUse",
+  "permissionDecision": "ask",
+  "permissionDecisionReason": "CONFIRM [tq/gh-admin-merge]: --admin bypasses branch protection (source: builtin)"}}
+```
 
 `session-start` writes its preamble to **stdout** and always returns 0,
 even when it can't resolve a workspace — a hook that fails a session start
@@ -70,8 +83,13 @@ usual stderr message and exit code.
 ```
 
 - `block` — `true` when the command is refused (the process also exits 2).
-- `rule` — the rule that matched (`""` when `block` is false).
-- `reason` — the full multi-line stderr message (`""` when `block` is false).
+- `rule` — the rule that matched: an identity rule (`git-email-drift`, …)
+  or a policy rule id (`tq/env-dump`, …). For an ask, `block` is `false`
+  and `rule`/`reason` name the rule; `""` when the call is simply allowed.
+- `reason` — the full multi-line message (`""` when allowed).
+
+With `--json`, an ask is reported in this object instead of the
+`hookSpecificOutput` JSON, so the flag is for scripts, not for the hook.
 
 `session-start` has no `--json` flag: its output is the fixed preamble
 format described below.
@@ -194,9 +212,13 @@ If no `tq` binary can be found or run:
   `pip install` and blow the `PreToolUse` timeout.
 - **If no Python interpreter can be found either** (checked via `py -3` on
   Windows, then `python3`, then `python`), `pre-tool-use` blocks (exit 2)
-  outright: on a box with neither `tq` nor Python, **every Bash command is
-  blocked** until one of them is installed. This is intentional — it is
-  the only way to guarantee no unverified remote command slips through.
+  outright: on a box with neither `tq` nor Python, **every Bash and
+  PowerShell command is blocked** until one of them is installed. This is
+  intentional — it is the only way to guarantee no unverified remote
+  command slips through. Payloads that clearly name another tool (Read,
+  Edit, an MCP tool, …) are let through, since the widened `PreToolUse`
+  matcher would otherwise block every file read too.
+- The fallback has **no policy rules**: those live in the `tq` binary.
 
 ## Hand-testing
 
@@ -212,9 +234,14 @@ From PowerShell:
 '{"tool_name":"Bash","cwd":"' + ($PWD.Path -replace '\\','\\\\') + '","tool_input":{"command":"git push"}}' | tq claude-hook pre-tool-use; $LASTEXITCODE
 ```
 
-`"tool_name":"Bash"` is required: `pre-tool-use` only inspects Bash tool
-calls and exits 0 for anything else, so a payload without it always looks
-like an allow.
+`"tool_name"` is required: a payload without it always looks like an
+allow. The JSON must be valid — a mistyped backslash in a Windows path
+makes the payload unparseable, which is also an allow. To test a policy
+rule on a file tool:
+
+```sh
+echo '{"tool_name":"Read","cwd":"'$PWD'","tool_input":{"file_path":"'$PWD'/.env"}}' | tq claude-hook pre-tool-use --json
+```
 
 A block prints `BLOCKED: ...` to stderr and the exit code is `2`; an
 allowed command prints nothing and exits `0`.
@@ -225,9 +252,89 @@ To test `session-start`:
 echo '{"tool_name":"Bash","cwd":"'$PWD'"}' | tq claude-hook session-start
 ```
 
-## Not gated in 0.4.0
+## Policy rules (`pre-tool-use`)
 
-MCP tool calls are **not** gated by `tq claude-hook` in this release — only
-the `PreToolUse` hook's `Bash` matcher is wired up. A workspace's
-blocked-command list, cloud checks, and identity drift checks apply only
-to Bash commands Claude runs, not to MCP server tool invocations.
+After the identity guard (shell tools only), every call is checked against
+a rule set. The strictest matching rule wins: **deny** (exit 2) beats
+**ask** (JSON on stdout) beats allow. Every matching rule at that level is
+listed in the reason.
+
+### Layers
+
+| Layer | Where | Trusted? | Can do |
+|---|---|---|---|
+| Built-in | compiled into `tq` (`internal/policy/builtin.go`) | yes | default rules, ids `tq/...` |
+| Manifest | `guard:` in `.tentaqles.yaml` (hash-pinned by `tq allow`) | yes | add rules, **disable** built-ins by id |
+| Project | every `.claude/tq-rules.yaml` from cwd up to the workspace root | no (repo content) | **add** rules only |
+
+Nothing in a repository can loosen the guard: a project file's `disable`
+key is ignored, and an untrusted manifest contributes no rules at all. A
+rule that fails to compile is skipped; the other rules still apply.
+
+### Rule format
+
+```yaml
+# .tentaqles.yaml
+guard:
+  disable: [tq/mcp-n8n-write]        # this client's n8n is a sandbox
+  rules:
+    - id: acme/no-prod-host
+      action: deny                   # deny | ask
+      command: 'prod-db\.acme\.internal'
+      reason: never touch the prod database host from an agent
+```
+
+Matchers (all regexes, case-insensitive; every one present must match):
+
+- `tool` — the tool name, anchored (`Edit|Write`, `mcp__.*n8n.*__.*`).
+- `command` — the shell command (Bash/PowerShell only).
+- `path` — the file path, with `\` normalized to `/`, so one rule works on
+  Windows and POSIX.
+- `content` — the text being written (Write `content`, Edit `new_string`,
+  MultiEdit edits) or an MCP call's input JSON.
+- `except` — cut out of each subject before matching, e.g. exempt
+  `.env.example` without exempting a `.env` in the same command.
+- `existing_only: true` — only when the path already exists (edits to a
+  migration that was already written).
+
+### Built-in rules
+
+| id | action | catches |
+|---|---|---|
+| `tq/secret-store-read`, `tq/secret-store-shell` | deny | SSH private keys, `~/.aws/credentials`, `.git-credentials`, `.netrc`, docker/gh/azure token files, the tq catalog |
+| `tq/env-file-read`, `tq/env-file-shell` | ask | reading or printing `.env*` (templates such as `.env.example` exempt) |
+| `tq/env-dump` | deny | `printenv`, bare `env`/`set`, `Get-ChildItem Env:` |
+| `tq/force-push-main` | deny | any force push (incl. `--force-with-lease`, `+main`) to main/master |
+| `tq/force-push` | ask | plain `--force`/`-f` push elsewhere (`--force-with-lease` is fine) |
+| `tq/gh-admin-merge` | ask | `gh pr merge --admin` |
+| `tq/gh-repo-delete` | deny | `gh repo delete` |
+| `tq/cloud-delete`, `tq/iac-destroy` | ask | `az/aws/gcloud/doctl/databricks … delete/rm/purge/…`, `terraform/cdk/pulumi destroy` |
+| `tq/registry-write` | ask | `reg add/delete`, registry writes from PowerShell |
+| `tq/sql-destructive-shell` | ask | DROP/TRUNCATE/ALTER/DELETE/UPDATE/GRANT through psql, sqlcmd, snowsql, supabase db, bq, … |
+| `tq/migration-edit` | ask | editing an existing file under a migrations directory |
+| `tq/mcp-sql-write`, `tq/mcp-apply-migration` | ask | write/DDL statements or migration/branch operations through a database MCP server |
+| `tq/mcp-n8n-write` | ask | creating, updating, publishing, executing or deleting n8n workflows/agents |
+| `tq/mcp-github-write`, `tq/mcp-hosting-exec` | ask | GitHub writes and hosting-provider operations through MCP |
+| `tq/gha-unpinned`, `tq/gha-pr-target` | ask | workflow actions pinned to `@main/@master/@latest`; `pull_request_target` |
+
+Two more checks need I/O and are not regex rules (both can be disabled by
+id in the manifest):
+
+- `tq/commit-secret` (deny) — before a `git commit` runs, scans what it
+  would record: the staged diff, plus the working tree and untracked files
+  when the command also runs `git add` or `commit -a`, so
+  `git add -A && git commit` is covered. Committing a `.env`, private key
+  or `.pem` is refused by name. The reason lists `file:line (pattern)`
+  and never the value. A known-fake fixture line can carry
+  `tq:allow-secret` (or `gitleaks:allow`).
+- `tq/cross-client-mcp` (deny) — an MCP server that another client's
+  bundle declares, and this workspace's bundle does not, is refused.
+
+### Limits
+
+- The policy reads tool input as text. Like the identity guard it catches
+  honest mistakes, not an adversary: `python -c "open('.env').read()"`
+  is not a `cat`.
+- A command that runs `git -C other-repo commit` is scanned in the hook's
+  cwd, not in `other-repo`.
+- A malformed payload is allowed; only an oversized one fails closed.

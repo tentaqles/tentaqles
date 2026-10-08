@@ -190,6 +190,60 @@ def test_tq_hook_blocks_when_no_python(tmp_path):
     assert "no python interpreter was found" in p.stderr
 
 
+def _no_python_env(tmp_path):
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    for name in ("python3", "python", "py"):
+        shim = shims / name
+        shim.write_text("#!/bin/sh" + chr(10) + "exit 1" + chr(10))
+        shim.chmod(0o755)
+    env = hook_env(
+        tmp_path,
+        with_python=False,
+        TQ_BIN=str(tmp_path / "nope"),
+        HOME=str(tmp_path),
+        LOCALAPPDATA=str(tmp_path),
+        USERPROFILE=str(tmp_path),
+        CLAUDE_PLUGIN_ROOT=str(ROOT),
+    )
+    env["PATH"] = os.pathsep.join(
+        [str(shims), os.path.dirname(BASH), os.path.dirname(sys.executable)]
+    )
+    env.pop("TENTAQLES_PY", None)
+    return env
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize(
+    "tool,expected",
+    [("Read", 0), ("mcp__n8n__get_workflow_details", 0), ("PowerShell", 2), ("Bash", 2)],
+)
+def test_tq_hook_no_python_only_blocks_shell_tools(tmp_path, tool, expected):
+    """The widened matcher must not turn a missing tq+python into blocking reads."""
+    env = _no_python_env(tmp_path)
+    payload = json.dumps(
+        {"tool_name": tool, "cwd": str(tmp_path), "tool_input": {"command": "ls", "file_path": "x"}}
+    )
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input=payload, capture_output=True, text=True, env=env
+    )
+    assert p.returncode == expected, p.stderr
+
+
+def test_hooks_json_pretooluse_matcher_covers_shell_file_and_mcp_tools():
+    import re
+
+    hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    entry = next(
+        e for e in hooks["hooks"]["PreToolUse"] if "tq_hook.sh" in e["hooks"][0]["command"]
+    )
+    rx = re.compile(entry["matcher"])
+    for tool in ("Bash", "PowerShell", "Read", "Edit", "Write", "MultiEdit", "Grep", "mcp__n8n__x"):
+        assert rx.search(tool), tool
+    for tool in ("Glob", "TodoWrite", "Agent", "WebFetch"):
+        assert not rx.search(tool), tool
+
+
 @pytest.mark.skipif(BASH is None, reason="needs bash")
 def test_tq_hook_unknown_event_blocks(tmp_path):
     env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))
