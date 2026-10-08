@@ -2,7 +2,7 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0] — 2026-10-08
 
 ### Changed
 
@@ -16,8 +16,8 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
   force-pushes to main, ask before cloud deletes, `--admin` merges, n8n
   publishes, database writes through MCP, and edits to existing
   migrations, and refuse a `git commit` that would record a secret. See
-  `docs/CLAUDE-HOOK.md` → "Policy rules". Requires the matching `tq`
-  release; with an older `tq` the extra tools are simply allowed.
+  `docs/CLAUDE-HOOK.md` → "Policy rules". Requires `tq` 0.2.0 or
+  later; with an older `tq` the extra tools are simply allowed.
 - **Fallback with neither `tq` nor Python only blocks shell tools.**
   `tq_hook.sh` still fails closed for Bash/PowerShell, but lets Read,
   Edit and MCP payloads through instead of blocking every file read.
