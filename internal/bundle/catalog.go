@@ -131,7 +131,7 @@ func walkTokenLike(ctx string, v any, warnings *[]string) {
 	switch val := v.(type) {
 	case string:
 		if manifest.LooksLikeSecret(val) {
-			*warnings = append(*warnings, fmt.Sprintf("%s: value looks like a token/secret", ctx))
+			*warnings = append(*warnings, fmt.Sprintf("%s: value looks like a token/secret (replace it with a ${VAR} reference; `tq secrets audit` lists every copy)", ctx))
 		}
 	case map[string]any:
 		for k, vv := range val {

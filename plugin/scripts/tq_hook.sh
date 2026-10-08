@@ -143,6 +143,16 @@ if [ -z "$PY" ]; then
 fi
 
 if [ -z "$PY" ]; then
+  # The PreToolUse matcher also covers file and MCP tools; only a shell
+  # command can carry an identity-sensitive remote mutation, so a payload
+  # that clearly names another tool is let through. A payload whose tool is
+  # unknown or unreadable still fails closed.
+  _payload="$(cat)"
+  _tool="$(printf '%s' "$_payload" | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  case "$_tool" in
+    ""|Bash|PowerShell) ;;
+    *) exit 0 ;;
+  esac
   echo "BLOCKED: tq is not installed and no python interpreter was found; refusing without a verified identity. Install tq: $INSTALL_URL" >&2
   exit 2
 fi

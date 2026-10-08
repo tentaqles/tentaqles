@@ -9,6 +9,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"gopkg.in/yaml.v3"
 )
@@ -80,6 +81,14 @@ type Bundle struct {
 	MCP          []string `yaml:"mcp"`
 }
 
+// Guard tunes the tool-call policy (internal/policy) for this workspace. The
+// manifest is hash-pinned by `tq allow`, so it is the one layer trusted to
+// switch built-in rules off; project files can only add rules.
+type Guard struct {
+	Disable []string      `yaml:"disable"`
+	Rules   []policy.Rule `yaml:"rules"`
+}
+
 type Manifest struct {
 	Schema          string              `yaml:"schema"`
 	Client          string              `yaml:"client"`
@@ -93,6 +102,7 @@ type Manifest struct {
 	Cloud           map[string]any      `yaml:"cloud"`
 	Database        map[string]any      `yaml:"database"`
 	Stack           []string            `yaml:"stack"`
+	Guard           Guard               `yaml:"guard"`
 	Path            string              `yaml:"-"`
 }
 

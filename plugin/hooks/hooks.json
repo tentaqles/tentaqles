@@ -44,7 +44,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "^(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|Grep)$|^mcp__",
         "hooks": [
           {
             "type": "command",

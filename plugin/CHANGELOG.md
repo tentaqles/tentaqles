@@ -2,6 +2,26 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **The `PreToolUse` hook now covers PowerShell, file tools and MCP calls,
+  not just Bash.** The matcher is
+  `^(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|Grep)$|^mcp__`.
+  `tq claude-hook pre-tool-use` runs the identity guard on PowerShell
+  commands too (a `git push` through the PowerShell tool used to skip it)
+  and applies tq's policy rules to every call: deny reading SSH keys and
+  credential stores, ask before reading `.env`, deny `printenv` dumps and
+  force-pushes to main, ask before cloud deletes, `--admin` merges, n8n
+  publishes, database writes through MCP, and edits to existing
+  migrations, and refuse a `git commit` that would record a secret. See
+  `docs/CLAUDE-HOOK.md` → "Policy rules". Requires the matching `tq`
+  release; with an older `tq` the extra tools are simply allowed.
+- **Fallback with neither `tq` nor Python only blocks shell tools.**
+  `tq_hook.sh` still fails closed for Bash/PowerShell, but lets Read,
+  Edit and MCP payloads through instead of blocking every file read.
+
 ## [0.6.0] — 2026-10-01
 
 Session saving at exit was failing far more often than it appeared to, in
