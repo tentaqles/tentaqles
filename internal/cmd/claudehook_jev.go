@@ -102,12 +102,13 @@ func jevDecision(ws *resolve.Workspace, call policy.ToolCall) policy.Decision {
 	return d
 }
 
-// routeAgent applies subagent model routing to an Agent launch. It writes
-// nothing (Claude Code proceeds unchanged) unless the policy enforces and
-// every guardrail holds, in which case it returns the original input plus
-// a model, as updatedInput.
-func routeAgent(w io.Writer, cwd string, p hookPayload) error {
-	ws, _ := resolveTrusted(cwd)
+// routeAgent applies subagent model routing to an Agent launch the policy
+// already allowed. It writes nothing (Claude Code proceeds unchanged) unless
+// the policy enforces and every guardrail holds, in which case it returns
+// the original input plus a model as updatedInput — with no
+// permissionDecision, so routing never approves anything a permission rule
+// would have prompted for.
+func routeAgent(w io.Writer, ws *resolve.Workspace, p hookPayload) error {
 	if ws == nil || ws.Manifest == nil || !ws.Manifest.Decision.Routing() {
 		return nil
 	}
@@ -148,10 +149,9 @@ func routeAgent(w io.Writer, cwd string, p hookPayload) error {
 	input["model"] = plan.Pick
 	return json.NewEncoder(w).Encode(map[string]any{
 		"hookSpecificOutput": map[string]any{
-			"hookEventName":            "PreToolUse",
-			"permissionDecision":       "allow",
-			"permissionDecisionReason": fmt.Sprintf("tq: routed this subagent to %s (Jev confidence %.2f; parent %s)", plan.Pick, plan.Confidence, plan.Parent),
-			"updatedInput":             input,
+			"hookEventName":     "PreToolUse",
+			"updatedInput":      input,
+			"additionalContext": fmt.Sprintf("tq routed this subagent to %s (Jev confidence %.2f; parent %s)", plan.Pick, plan.Confidence, plan.Parent),
 		},
 	})
 }

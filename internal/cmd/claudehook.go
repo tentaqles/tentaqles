@@ -232,11 +232,6 @@ permissionDecision JSON so Claude Code asks the user.`,
 			if cwd == "" {
 				cwd, _ = os.Getwd()
 			}
-			if p.ToolName == "Agent" {
-				// Subagent launches are not tool calls the policy judges; the
-				// only thing tq does to them is (optionally) route the model.
-				return routeAgent(c.OutOrStdout(), cwd, p)
-			}
 			call := toolCallFrom(p, cwd)
 
 			var ws *resolve.Workspace
@@ -277,6 +272,12 @@ permissionDecision JSON so Claude Code asks the user.`,
 			default:
 				if asJSON {
 					emitDecision(c, asJSON, false, "", "")
+					return nil
+				}
+				if p.ToolName == "Agent" {
+					// Only a launch the policy allows is routed, and routing
+					// never grants permission: it only rewrites the model.
+					return routeAgent(c.OutOrStdout(), ws, p)
 				}
 			}
 			return nil

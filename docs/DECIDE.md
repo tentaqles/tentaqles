@@ -167,3 +167,10 @@ sets the launch's `model`. It only does so when all of these hold:
 Otherwise the launch is untouched. Shadow mode logs the pick (`kind: route`
 in `judgments.jsonl`) without applying it. Turn routing off with
 `route: false`.
+
+Routing runs only after the policy rules allowed the launch (a `tool: Agent`
+rule can still deny or ask), and its output carries `updatedInput` with no
+`permissionDecision`: it rewrites the model, it never approves anything.
+Before switching a workspace to `mode: enforce`, confirm in a live session
+that a routed launch actually runs on the picked model (the shadow log shows
+what it would pick; the subagent's transcript shows what ran).

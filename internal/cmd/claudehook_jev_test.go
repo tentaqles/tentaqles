@@ -125,7 +125,8 @@ func TestJev_RouteSetsCheaperModel(t *testing.T) {
 			Input    map[string]any `json:"updatedInput"`
 		} `json:"hookSpecificOutput"`
 	}
-	if code != 0 || json.Unmarshal([]byte(out), &v) != nil || v.H.Decision != "allow" {
+	// Routing rewrites the input but never grants permission.
+	if code != 0 || json.Unmarshal([]byte(out), &v) != nil || v.H.Decision != "" || v.H.Input == nil {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	if v.H.Input["model"] != "haiku" || v.H.Input["prompt"] != "List every file that imports the logger" || v.H.Input["subagent_type"] != "general-purpose" {
@@ -142,5 +143,19 @@ func TestJev_RouteLeavesExplicitModelAlone(t *testing.T) {
 	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, agentPayload(t, ws, opusTranscript(t), in))
 	if code != 0 || out != "" || calls.Load() != 0 {
 		t.Fatalf("explicit model touched: code=%d out=%q calls=%d", code, out, calls.Load())
+	}
+}
+
+func TestJev_AgentStillGoesThroughPolicy(t *testing.T) {
+	url, calls := fakeJev(t, func(map[string]any) map[string]any {
+		return map[string]any{"tier": map[string]any{"choice": "haiku", "confidence": 0.99}}
+	}, 0)
+	t.Setenv("TYPESAFE_API_KEY", "test-key")
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "decision:\n  backend: typesafe\n  mode: enforce\n  base_url: "+url+"/v1/systemone\n"+
+		"guard:\n  rules:\n    - id: acme/no-prod-agents\n      action: deny\n      tool: Agent\n      content: 'prod-db'\n      reason: no subagents on the prod database\n")
+	in := `{"prompt":"run the cleanup against prod-db","subagent_type":"general-purpose"}`
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, agentPayload(t, ws, opusTranscript(t), in))
+	if code != 2 || !strings.Contains(errOut, "acme/no-prod-agents") || out != "" || calls.Load() != 0 {
+		t.Fatalf("policy skipped for Agent: code=%d out=%q err=%q calls=%d", code, out, errOut, calls.Load())
 	}
 }
