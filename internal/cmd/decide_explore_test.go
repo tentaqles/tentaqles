@@ -70,7 +70,7 @@ func TestExplorePrefilter(t *testing.T) {
 		".git/config":         "fluxgate\n",
 		"scratch/fluxgate.go": "fluxgate\n",
 	})
-	hits, _, err := exploreHits(root, []string{"fluxgate"})
+	hits, _, err := exploreHits(root, []string{"fluxgate"}, exploreOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestExploreNeverFollowsSymlinksOutOfRoot(t *testing.T) {
 	symlinkOrSkip(t, filepath.Join(outside, "secret.go"), filepath.Join(root, "link.go"))
 	symlinkOrSkip(t, filepath.Join(outside, "repo"), filepath.Join(root, "linkdir"))
 
-	hits, _, err := exploreHits(root, []string{"fluxgate"})
+	hits, _, err := exploreHits(root, []string{"fluxgate"}, exploreOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestExploreNeverFollowsSymlinksOutOfRoot(t *testing.T) {
 	// Paths that reach the reader from elsewhere get the same checks: a
 	// linked file, a file under a linked directory, and a ".." escape.
 	for _, rel := range []string{"link.go", "linkdir/stolen.go", "../" + filepath.Base(outside) + "/secret.go"} {
-		if raw, ok := readExploreFile(root, rel); ok {
+		if raw, ok := readExploreFile(root, rel, exploreOpts{}); ok {
 			t.Errorf("read %s: %q", rel, raw)
 		}
 		fc := &fileCache{root: root, lines: map[string][]string{}}
@@ -171,7 +171,7 @@ func TestExploreNeverFollowsSymlinksOutOfRoot(t *testing.T) {
 			t.Errorf("span text for %s", rel)
 		}
 	}
-	if _, ok := readExploreFile(root, "own/fluxgate.go"); !ok {
+	if _, ok := readExploreFile(root, "own/fluxgate.go", exploreOpts{}); !ok {
 		t.Fatal("regular file inside root was refused")
 	}
 }
@@ -190,14 +190,14 @@ func TestExploreNeverFollowsJunctions(t *testing.T) {
 	if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(root, "junction"), outside).CombinedOutput(); err != nil {
 		t.Skipf("mklink /J: %v %s", err, out)
 	}
-	hits, _, err := exploreHits(root, []string{"fluxgate"})
+	hits, _, err := exploreHits(root, []string{"fluxgate"}, exploreOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := hitPaths(hits); strings.Join(got, ",") != "own/fluxgate.go" {
 		t.Fatalf("walk followed a junction: %v", got)
 	}
-	if raw, ok := readExploreFile(root, "junction/stolen.go"); ok {
+	if raw, ok := readExploreFile(root, "junction/stolen.go", exploreOpts{}); ok {
 		t.Fatalf("read through a junction: %q", raw)
 	}
 }
@@ -212,7 +212,7 @@ func TestExploreRootThroughSymlinkStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hits, _, _ := exploreHits(root, []string{"fluxgate"})
+	hits, _, _ := exploreHits(root, []string{"fluxgate"}, exploreOpts{})
 	if len(hits) != 1 {
 		t.Fatalf("hits = %v", hits)
 	}

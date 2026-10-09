@@ -14,12 +14,14 @@ import (
 // Every file here is read as text; nothing is executed, and git is never
 // run. Where git would pick one source over another (GIT_CONFIG_GLOBAL
 // replacing ~/.gitconfig, core.excludesFile replacing the XDG default),
-// the union is used instead: more exclusion, never less.
+// the union is used instead.
 //
-// Fail closed: a source that does not exist is fine, but one that exists
-// and cannot be loaded (unreadable, a directory, a dangling or disallowed
-// link, oversized, not UTF-8, unparsable, an unresolvable path, an include
-// chain too deep) is an error, and callers skip whatever it governs.
+// Errors are reported, not guessed around: a source that does not exist is
+// simply absent, but one that exists and cannot be loaded (unreadable, a
+// directory, a dangling or disallowed link, oversized, not UTF-8,
+// unparsable, an unresolvable path, an include chain too deep) comes back
+// as an error so the caller can count it and move on. This package is
+// relevance filtering, not a security boundary.
 
 // maxSourceBytes caps any config or ignore file read.
 const maxSourceBytes = 1 << 20
@@ -233,9 +235,10 @@ func systemConfigs() []string {
 // core.excludesFile from the system config, GIT_CONFIG_GLOBAL,
 // ~/.gitconfig, the XDG config and the repo configs (following [include]
 // and every [includeIf]), plus the XDG default $XDG_CONFIG_HOME/git/ignore.
-// An error means some config that exists could not be fully read: its
-// excludes may be missing, so the caller must fail closed.
-func GlobalExcludeFiles(repoConfigs ...string) ([]string, error) {
+// It is best-effort: a config that exists but cannot be read or parsed is
+// reported in problems (its remaining excludes are lost) and the others
+// are still used.
+func GlobalExcludeFiles(repoConfigs ...string) (files []string, problems []error) {
 	var configs []string
 	if os.Getenv("GIT_CONFIG_NOSYSTEM") == "" {
 		configs = append(configs, systemConfigs()...)
@@ -258,13 +261,13 @@ func GlobalExcludeFiles(repoConfigs ...string) ([]string, error) {
 	}
 	seen := map[string]bool{}
 	for _, c := range configs {
-		files, err := excludesFromConfig(c, 0, seen)
+		got, err := excludesFromConfig(c, 0, seen)
 		if err != nil {
-			return nil, err
+			problems = append(problems, err)
 		}
-		out = append(out, files...)
+		out = append(out, got...)
 	}
-	return dedupe(out), nil
+	return dedupe(out), problems
 }
 
 func dedupe(in []string) []string {
@@ -307,7 +310,7 @@ func excludesFromConfig(path string, depth int, seen map[string]bool) ([]string,
 		if line[0] == '[' {
 			end := strings.LastIndex(line, "]")
 			if end < 0 {
-				return nil, unusable(path, fmt.Sprintf("line %d: malformed section header", n+1))
+				return out, unusable(path, fmt.Sprintf("line %d: malformed section header", n+1))
 			}
 			name := line[1:end]
 			if i := strings.IndexAny(name, " \t\""); i >= 0 {
@@ -329,7 +332,7 @@ func excludesFromConfig(path string, depth int, seen map[string]bool) ([]string,
 		}
 		val, err := configValue(v)
 		if err != nil {
-			return nil, unusable(path, fmt.Sprintf("line %d: %v", n+1, err))
+			return out, unusable(path, fmt.Sprintf("line %d: %v", n+1, err))
 		}
 		switch {
 		case section == "core" && k == "excludesfile":
@@ -338,7 +341,7 @@ func excludesFromConfig(path string, depth int, seen map[string]bool) ([]string,
 			}
 			p, err := expandPath(val, base)
 			if err != nil {
-				return nil, unusable(path, fmt.Sprintf("line %d: core.excludesFile: %v", n+1, err))
+				return out, unusable(path, fmt.Sprintf("line %d: core.excludesFile: %v", n+1, err))
 			}
 			out = append(out, p)
 		case (section == "include" || section == "includeif") && k == "path":
@@ -347,11 +350,11 @@ func excludesFromConfig(path string, depth int, seen map[string]bool) ([]string,
 			}
 			p, err := expandPath(val, base)
 			if err != nil {
-				return nil, unusable(path, fmt.Sprintf("line %d: include.path: %v", n+1, err))
+				return out, unusable(path, fmt.Sprintf("line %d: include.path: %v", n+1, err))
 			}
 			more, err := excludesFromConfig(p, depth+1, seen)
 			if err != nil {
-				return nil, err
+				return out, err
 			}
 			out = append(out, more...)
 		}

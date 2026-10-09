@@ -26,11 +26,17 @@ func isolateGitConfig(t *testing.T) string {
 	return home
 }
 
-// walked lists every file walkFiles would read, plus its stats.
+// walked lists every file walkFiles would read (default options), plus its
+// stats.
 func walked(t *testing.T, root string) ([]string, walkStats) {
 	t.Helper()
+	return walkedWith(t, root, exploreOpts{})
+}
+
+func walkedWith(t *testing.T, root string, o exploreOpts) ([]string, walkStats) {
+	t.Helper()
 	var out []string
-	stats, err := walkFiles(root, func(rel string, _ []byte) bool {
+	stats, err := walkFiles(root, o, func(rel string, _ string) bool {
 		out = append(out, rel)
 		return true
 	})
@@ -144,8 +150,8 @@ func TestExploreIgnoreNeverLessThanGit(t *testing.T) {
 	}
 
 	got, stats := walked(t, root)
-	if stats.Skipped != 0 {
-		t.Fatalf("fixture should parse cleanly; skipped %d", stats.Skipped)
+	if stats.IgnoreSkipped != 0 {
+		t.Fatalf("fixture should parse cleanly; skipped %d", stats.IgnoreSkipped)
 	}
 	yielded := map[string]bool{}
 	for _, f := range got {
@@ -171,7 +177,10 @@ func TestExploreIgnoreNeverLessThanGit(t *testing.T) {
 	t.Logf("git ignored %d of %d; walker excluded %d more (by design): %v", len(gitIgnored), len(files), len(extra), extra)
 }
 
-func TestExploreIgnoreFailsClosed(t *testing.T) {
+// TestExploreIgnoreBestEffort: ignore files are relevance filtering only. A
+// source that cannot be parsed is skipped and counted; the walk goes on and
+// the hard rules (allowlist, deny-list, redaction) still decide.
+func TestExploreIgnoreBestEffort(t *testing.T) {
 	cases := []struct {
 		name    string
 		tree    map[string]string
@@ -179,30 +188,30 @@ func TestExploreIgnoreFailsClosed(t *testing.T) {
 		skipped int
 	}{
 		{
-			name: "bad nested .gitignore skips only its subtree",
+			name: "bad nested .gitignore is skipped, siblings still apply",
 			tree: map[string]string{
 				"top.go":         "x\n",
 				"sub/.gitignore": "ok.txt\n[unclosed\n",
+				"sub/.ignore":    "skipme.go\n",
 				"sub/a.go":       "x\n",
-				"sub/deep/b.go":  "x\n",
-				"other/c.go":     "x\n",
+				"sub/skipme.go":  "x\n",
 			},
-			want: []string{"other/c.go", "top.go"}, skipped: 1,
+			want: []string{"sub/a.go", "top.go"}, skipped: 1,
 		},
 		{
-			name: "bad root .gitignore skips everything",
+			name: "bad root .gitignore",
 			tree: map[string]string{".gitignore": "[[:alpha:]]\n", "a.go": "x\n"},
-			want: nil, skipped: 1,
+			want: []string{"a.go"}, skipped: 1,
 		},
 		{
-			name: "bad .ignore counts too",
-			tree: map[string]string{"sub/.ignore": "trailing\\\n", "sub/a.go": "x\n", "b.go": "x\n"},
-			want: []string{"b.go"}, skipped: 1,
-		},
-		{
-			name: "bad info/exclude skips everything",
+			name: "bad info/exclude",
 			tree: map[string]string{".git/info/exclude": "[z-a]\n", "a.go": "x\n"},
-			want: nil, skipped: 1,
+			want: []string{"a.go"}, skipped: 1,
+		},
+		{
+			name: ".gitignore is a directory",
+			tree: map[string]string{"sub/.gitignore/x": "", "sub/a.go": "x\n"},
+			want: []string{"sub/a.go"}, skipped: 1,
 		},
 	}
 	for _, c := range cases {
@@ -211,19 +220,22 @@ func TestExploreIgnoreFailsClosed(t *testing.T) {
 			root := testutil.TempDir(t)
 			writeTree(t, root, c.tree)
 			got, stats := walked(t, root)
-			if strings.Join(got, ",") != strings.Join(c.want, ",") || stats.Skipped != c.skipped {
-				t.Fatalf("got %v skipped=%d, want %v skipped=%d", got, stats.Skipped, c.want, c.skipped)
+			if strings.Join(got, ",") != strings.Join(c.want, ",") || stats.IgnoreSkipped != c.skipped {
+				t.Fatalf("got %v skipped=%d, want %v skipped=%d", got, stats.IgnoreSkipped, c.want, c.skipped)
 			}
 		})
 	}
 
-	t.Run("bad global excludes file skips everything", func(t *testing.T) {
+	t.Run("bad global config and excludes file are counted", func(t *testing.T) {
 		home := isolateGitConfig(t)
-		writeTree(t, home, map[string]string{".config/git/ignore": "[oops\n"})
+		writeTree(t, home, map[string]string{
+			".config/git/ignore": "[oops\n",
+			".gitconfig":         "[include]\n\tpath = ~someoneelse/x\n",
+		})
 		root := testutil.TempDir(t)
 		writeTree(t, root, map[string]string{"a.go": "x\n"})
-		if got, stats := walked(t, root); len(got) != 0 || stats.Skipped != 1 {
-			t.Fatalf("got %v skipped=%d", got, stats.Skipped)
+		if got, stats := walked(t, root); strings.Join(got, ",") != "a.go" || stats.IgnoreSkipped != 2 {
+			t.Fatalf("got %v skipped=%d", got, stats.IgnoreSkipped)
 		}
 	})
 
@@ -232,17 +244,13 @@ func TestExploreIgnoreFailsClosed(t *testing.T) {
 		isolateHome(t)
 		root := testutil.TempDir(t)
 		writeTree(t, root, map[string]string{
-			"a/fluxgate.go":                  "fluxgate\n",
-			"prod-keys-backup/.gitignore":    "[broken\n",
-			"prod-keys-backup/fluxgate.conf": "fluxgate\n",
+			"a/fluxgate.go":                "fluxgate\n",
+			"prod-keys-backup/.gitignore":  "[broken\n",
+			"prod-keys-backup/fluxgate.md": "fluxgate\n",
 		})
 		_, text := runExplore(t, "fluxgate", "--path", root, "--no-jev")
-		if !strings.Contains(text, "skipped 1 subtree") || strings.Contains(text, "prod-keys-backup") {
+		if !strings.Contains(text, "1 ignore source(s) could not be read or parsed") || strings.Contains(text, "prod-keys-backup/.gitignore") {
 			t.Fatalf("footer: %s", text)
-		}
-		v, _ := runExplore(t, "fluxgate", "--path", root, "--no-jev", "--json")
-		if len(v.Results) != 1 {
-			t.Fatalf("results = %+v", v.Results)
 		}
 	})
 }
@@ -252,37 +260,32 @@ func TestExploreIgnoreHonoursAncestorsAndGlobal(t *testing.T) {
 	writeTree(t, home, map[string]string{
 		".gitconfig":         "[includeIf \"gitdir:~/x/\"]\n\tpath = ~/.gitconfig-client\n",
 		".gitconfig-client":  "[core]\n\texcludesfile = ~/client-ignore\n",
-		"client-ignore":      "*.client\n",
-		".config/git/ignore": "*.xdg\n",
+		"client-ignore":      "*_client.go\n",
+		".config/git/ignore": "*_xdg.go\n",
 	})
 	repo := testutil.TempDir(t)
 	writeTree(t, repo, map[string]string{
-		".git/HEAD":         "ref: refs/heads/main\n",
-		".gitignore":        "*.fromtop\n/svc/anchored.txt\n",
-		"svc/.gitignore":    "*.fromsvc\n",
-		"svc/api/a.go":      "x\n",
-		"svc/api/b.fromtop": "x\n",
-		"svc/api/c.fromsvc": "x\n",
-		"svc/api/d.client":  "x\n",
-		"svc/api/e.xdg":     "x\n",
-		"svc/anchored.txt":  "x\n",
+		".git/HEAD":            "ref: refs/heads/main\n",
+		".gitignore":           "*_fromtop.go\n/svc/anchored.txt\n",
+		"svc/.gitignore":       "*_fromsvc.go\n",
+		"svc/api/a.go":         "x\n",
+		"svc/api/b_fromtop.go": "x\n",
+		"svc/api/c_fromsvc.go": "x\n",
+		"svc/api/d_client.go":  "x\n",
+		"svc/api/e_xdg.go":     "x\n",
+		"svc/anchored.txt":     "x\n",
 	})
-	all, _ := walked(t, filepath.Join(repo, "svc"))
-	var got []string
-	for _, f := range all {
-		if filepath.Base(f) != ".gitignore" { // ignore files themselves are plain text
-			got = append(got, f)
-		}
-	}
+	got, _ := walked(t, filepath.Join(repo, "svc"))
 	if strings.Join(got, ",") != "api/a.go" {
 		t.Fatalf("got %v", got)
 	}
-	// An unparseable ancestor .gitignore blocks a walk rooted below it.
+	// A broken ancestor .gitignore is skipped (counted); the rest applies.
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("[bad\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, stats := walked(t, filepath.Join(repo, "svc")); len(got) != 0 || stats.Skipped != 1 {
-		t.Fatalf("got %v skipped=%d", got, stats.Skipped)
+	got, stats := walked(t, filepath.Join(repo, "svc"))
+	if strings.Join(got, ",") != "anchored.txt,api/a.go,api/b_fromtop.go" || stats.IgnoreSkipped != 1 {
+		t.Fatalf("got %v skipped=%d", got, stats.IgnoreSkipped)
 	}
 }
 

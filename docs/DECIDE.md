@@ -178,7 +178,7 @@ what it would pick; the subagent's transcript shows what ran).
 ## Explore: find the code that answers a question
 
 ```
-tq decide explore "where does the breaker trip after a jev failure" [--path DIR] [--top 5] [--candidates 30] [--json] [--no-jev]
+tq decide explore "where does the breaker trip after a jev failure" [--path DIR] [--top 5] [--candidates 30] [--json] [--no-jev] [--include-config]
 ```
 
 The goal is to have an agent read 5 ranges instead of 50 files. It runs in two stages:
@@ -187,47 +187,46 @@ The goal is to have an agent read 5 ranges instead of 50 files. It runs in two s
    - identifiers and words of 3+ letters, minus stopwords;
    - camelCase and snake_case names also contribute their parts.
 
-   It walks the tree in Go (`internal/ignore`). The matcher errs toward exclusion: what it lets through may be sent to Jev, so anything git would ignore is never read.
-   - **Sources, all read as text:**
-     - every `.gitignore`, `.ignore` and `.rgignore`, each applying below its own directory, including those in ancestors of `--path` up to the repo top;
-     - `.git/info/exclude`, resolved through linked worktrees;
-     - every global excludes file git could use. That is `core.excludesFile` from `GIT_CONFIG_GLOBAL`, `~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`, the system config and the repo config, following `[include]` and every `[includeIf]` regardless of its condition, plus `~/.config/git/ignore`. Where git picks one source, explore takes the union.
-   - **Syntax:**
-     - `*`, `?` and `[...]` classes with ranges and `!`/`^`;
-     - `**` in leading, middle and trailing position;
-     - leading and middle `/` anchoring, and trailing `/` for directories only;
-     - `\#` and `\!` escapes, and trailing spaces.
-   - **Matching is case-insensitive.**
-   - **Negations (`!pattern`) are dropped.** They can only un-ignore, so dropping them excludes more.
-   - **Fail closed.** A source that does not exist is fine. A source that exists but cannot be applied makes explore skip the whole subtree that source governs. For a repo-wide, global or parent-folder source, that is the whole walk. This covers:
-     - a pattern the parser is not sure about (a POSIX class, an unterminated class, a trailing backslash…);
-     - a file that is unreadable, a directory, an in-tree symlink, a dangling link, over 1 MB, or not UTF-8;
-     - a git config that is unreadable or unparsable (a bad section header, a line continuation, an unknown escape);
-     - an `[include]` chain deeper than git's limit of 10;
-     - an `excludesFile` or include path explore cannot resolve (`~user`, `%(prefix)`, `~` with no home);
-     - a `.git` file whose `gitdir:` or `commondir` points nowhere;
-     - a directory the walk cannot list.
+   It walks the tree in Go and reads only files that pass every rule below. Each hit becomes a ~40-line window. Overlapping windows in one file merge, up to 60 lines. Spans are ranked by distinct terms, then hit count, with a bonus for a term in the file name and a small penalty for test files. The best `--candidates` are kept.
+2. **Jev re-rank.** For each span it asks one noul question: "Is the code span data.spans.sN relevant to answering this question: …?"
+   - All questions go in one call. The call is split only when the spans would exceed the ~80 KB request cap, with at most 3 requests in parallel.
+   - The span text is clipped to 4 KB, then redacted and framed like every other Jev state.
 
-     The output ends with `note: skipped N subtree(s)…`, which gives a count, never a path. After an internal error, the matcher never defaults to "not ignored".
-   - **Nested repos are not entered.** A directory below `--path` that holds its own `.git` (directory or `gitdir:` file) is skipped, because its rules differ and it is often another project or client. The footer counts these (`skipped N nested repo(s)`). To search one, point `--path` inside it.
-   - **Tested against git.** A differential test builds a repo with a rich ignore set and asserts that no file `git check-ignore` reports as ignored is ever yielded.
+### What explore may read and send
 
-   It also skips `.git`, `node_modules`, `vendor`, `dist` and binaries. An always-deny list applies whatever the ignore files say:
+These are the security controls. Each holds on its own, and none depends on ignore files.
+
+1. **Allowlist.** Explore reads source and docs files only:
+   - code: `.go .py .ts .tsx .js .jsx .mjs .cjs .java .kt .cs .rb .php .rs .swift .c .h .cpp .hpp .scala .sql .sh .ps1 .vue .svelte .astro`;
+   - docs: `.md .mdx .rst .txt`, plus `Makefile` and `Dockerfile`.
+
+   Config formats commonly hold secrets: `.json .yaml .yml .toml .ini .properties .xml .tfvars`. They are read only with `--include-config`, and are still deny-listed and redacted. Everything else is never read.
+2. **Deny-list**, whatever the allowlist, `--include-config` or ignore files say:
    - `.env*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.kdbx` and `id_*`;
    - any name containing `credentials` or `secret`, and `*.tfstate*`;
    - `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials` and `.pgpass`;
    - dumps: `*.sqlite`, `*.db`, `*.dump`, `*.sql.gz` and `*.bak`;
-   - anything under `.aws/`, `.ssh/` or `.gnupg/`;
+   - anything under `.aws/`, `.ssh/`, `.gnupg/` or `.git/`;
    - lockfiles.
+3. **Redaction.** Every file is redacted line by line with `internal/secrets` before it is matched or turned into a span, so line numbers never shift. Whole PEM private-key blocks are blanked, because the pattern alone only catches the `BEGIN` line. tq redacts the request again before sending.
+4. **Containment.**
+   - No symlinks, Windows junctions or other reparse points.
+   - Every path component must be a plain directory, and the file a regular file whose resolved path stays inside the resolved `--path`.
+   - Nested repos are not entered: a directory below `--path` with its own `.git` (directory or `gitdir:` file) is skipped and counted (`skipped N nested repo(s)`). It is often another project or client. To search one, point `--path` inside it.
+   - Files over 1 MB and binaries are skipped.
+5. **No git process.** `git grep` in a cloned repo reads that repo's `.git/config`, and `core.fsmonitor`, `core.pager`, `diff.external` or a textconv driver there can run any program.
 
-   It deliberately runs no `git` process. `git grep` in a cloned repo reads that repo's `.git/config`, and `core.fsmonitor`, `core.pager`, `diff.external` or a textconv driver there can run any program.
+### Ignore files only reduce noise
 
-   It never follows a link. Symlinks, Windows junctions and other reparse points are skipped in the walk. Before any file is read, every path component is checked to be a plain directory, the file must be a regular file, and its resolved path must stay inside the resolved `--path`. So a link can never pull in `~/.ssh/id_rsa` or another client's repo.
+Explore also honours ignore files (`internal/ignore`) to skip build output, vendored and generated code. This is relevance filtering, **not** a security control: a file the rules above admit is safe to read whether or not an ignore file lists it. Explore makes no attempt at exact git parity.
 
-   Each hit becomes a ~40-line window. Overlapping windows in one file merge, up to 60 lines. Spans are ranked by distinct terms, then hit count, with a bonus for a term in the file name and a small penalty for test files. The best `--candidates` are kept.
-2. **Jev re-rank.** For each span it asks one noul question: "Is the code span data.spans.sN relevant to answering this question: …?"
-   - All questions go in one call. The call is split only when the spans would exceed the ~80 KB request cap, with at most 3 requests in parallel.
-   - The span text is clipped to 4 KB, then redacted and framed like every other Jev state.
+- **Sources, all read as text:**
+  - every `.gitignore`, `.ignore` and `.rgignore`, including those in ancestors of `--path` up to the repo top;
+  - `.git/info/exclude`, resolved through linked worktrees;
+  - `core.excludesFile` from the git configs it can find (system, global, XDG, repo; following includes), plus `~/.config/git/ignore`.
+- **Syntax:** `*`, `?`, `[...]`, `**`, `/` anchoring, trailing `/`, `\#`/`\!` escapes and trailing spaces. Matching is case-insensitive, and negations are dropped.
+- **Best effort.** A source that cannot be read or parsed is skipped and counted: `note: N ignore source(s) could not be read or parsed and were not applied`. This means a little more noise, not a leak.
+- **Tested against git.** A differential test checks that on a rich fixture nothing `git check-ignore` reports is yielded. It guards relevance quality, not safety.
 
 The output is the top `--top` ranges as `score  path:start-end  [terms]`. The header says which ranking you got:
 
@@ -239,7 +238,7 @@ The output is the top `--top` ranges as `score  path:start-end  [terms]`. The he
 
   A partial set of Jev answers is never mixed with keyword scores.
 
-Jev only re-orders what the keyword stage found. It never adds a file. `.env*` files, private keys (`.pem`, `.key`, `id_rsa*`…) and lockfiles are never read, so their content can never reach Jev. The policy comes from the workspace holding `--path`. Explore is a ranking, not a gate, so it runs in shadow and enforce mode alike. Calls appear in `log.jsonl` with `purpose: explore`.
+Jev only re-orders what the keyword stage found. It never adds a file. The policy comes from the workspace holding `--path`. Explore is a ranking, not a gate, so it runs in shadow and enforce mode alike. Calls appear in `log.jsonl` with `purpose: explore`.
 
 The plugin's `explore` skill (`/tentaqles:explore`) tells agents to run this first and then read only the printed ranges with `offset`/`limit`.
 

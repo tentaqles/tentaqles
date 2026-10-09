@@ -149,9 +149,9 @@ func TestGlobalExcludeFiles(t *testing.T) {
 	repoCfg := filepath.Join(home, "repo", ".git", "config")
 	write(t, repoCfg, "[core] excludesfile = rel-ignore\n")
 
-	files, err := GlobalExcludeFiles(repoCfg)
-	if err != nil {
-		t.Fatal(err)
+	files, problems := GlobalExcludeFiles(repoCfg)
+	if len(problems) > 0 {
+		t.Fatal(problems)
 	}
 	got := strings.Join(files, "|")
 	for _, want := range []string{
@@ -171,15 +171,15 @@ func TestGlobalExcludeFilesIncludeCycleIsFine(t *testing.T) {
 	home := isolatedHome(t)
 	write(t, filepath.Join(home, ".gitconfig"), "[include]\n\tpath = b.cfg\n")
 	write(t, filepath.Join(home, "b.cfg"), "[core]\n\texcludesfile = ~/cyc\n[include]\n\tpath = .gitconfig\n")
-	files, err := GlobalExcludeFiles()
-	if err != nil || !strings.Contains(strings.Join(files, "|"), filepath.Join(home, "cyc")) {
-		t.Fatalf("files=%v err=%v", files, err)
+	files, problems := GlobalExcludeFiles()
+	if len(problems) > 0 || !strings.Contains(strings.Join(files, "|"), filepath.Join(home, "cyc")) {
+		t.Fatalf("files=%v problems=%v", files, problems)
 	}
 }
 
-// TestGlobalExcludeFilesFailClosed: every way a config can exist but not
-// be fully applied is an error, never a silently shorter list.
-func TestGlobalExcludeFilesFailClosed(t *testing.T) {
+// TestGlobalExcludeFilesReportsProblems: every way a config can exist but not
+// be fully applied is reported, never silently dropped.
+func TestGlobalExcludeFilesReportsProblems(t *testing.T) {
 	deep := func(home string) {
 		for i := 0; i < 13; i++ {
 			write(t, filepath.Join(home, "inc"+string(rune('a'+i))+".cfg"), "[include]\n\tpath = inc"+string(rune('a'+i+1))+".cfg\n")
@@ -223,7 +223,7 @@ func TestGlobalExcludeFilesFailClosed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			home := isolatedHome(t)
 			setup(home)
-			if files, err := GlobalExcludeFiles(); err == nil {
+			if files, problems := GlobalExcludeFiles(); len(problems) == 0 {
 				t.Fatalf("accepted: %v", files)
 			}
 		})
@@ -237,7 +237,7 @@ func TestGlobalExcludeFilesFailClosed(t *testing.T) {
 		t.Setenv("USERPROFILE", "")
 		t.Setenv("XDG_CONFIG_HOME", "")
 		t.Setenv("home", "")
-		if _, err := GlobalExcludeFiles(); err == nil {
+		if _, problems := GlobalExcludeFiles(); len(problems) == 0 {
 			t.Fatal("unresolvable ~ accepted")
 		}
 	})

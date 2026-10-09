@@ -277,9 +277,11 @@ type ExploreResult struct {
 	Fallback   string `json:"fallback,omitempty"`
 	Candidates int    `json:"candidates"`
 	Batches    int    `json:"batches,omitempty"`
-	// SkippedSubtrees counts subtrees the keyword stage left out because an
-	// ignore file governing them could not be parsed (fail closed).
-	SkippedSubtrees int `json:"skipped_subtrees,omitempty"`
+	// IgnoreSourcesSkipped counts ignore files/configs that could not be
+	// read or parsed and so were not applied (noise filtering only).
+	IgnoreSourcesSkipped int `json:"ignore_sources_skipped,omitempty"`
+	// UnreadableDirs counts directories that could not be listed.
+	UnreadableDirs int `json:"unreadable_dirs,omitempty"`
 	// NestedRepos counts repositories below the root that were not entered.
 	NestedRepos int    `json:"nested_repos,omitempty"`
 	Results     []Span `json:"results"`

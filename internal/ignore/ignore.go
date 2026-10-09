@@ -1,13 +1,17 @@
 // Package ignore matches paths against gitignore-syntax rules without
-// running git. It is built to err toward exclusion, because what it lets
-// through may be sent off the machine (tq decide explore):
+// running git. It is relevance filtering for tq decide explore (skip build
+// output, vendored and generated files), NOT a security control: what
+// explore may read or send is decided by its allowlist, deny-list,
+// redaction and containment rules, which do not depend on this package.
 //
-//   - negation lines ("!pattern") are dropped: they can only un-ignore, so
-//     dropping them excludes more, never less;
+// Choices:
+//
+//   - negation lines ("!pattern") are dropped (simpler; it only means a few
+//     more files are skipped);
 //   - matching is case-insensitive (git on Windows/macOS defaults to
-//     core.ignorecase; elsewhere this only excludes more);
-//   - a line the parser is not sure about is an error, and callers treat a
-//     file with any error as "ignore everything this file governs".
+//     core.ignorecase);
+//   - a line the parser is not sure about is an error rather than a guess;
+//     callers skip that source and count it.
 //
 // Supported syntax: blank lines and "#" comments, "\#" and "\!" escapes,
 // trailing spaces (stripped unless escaped), leading "/" and middle "/"
