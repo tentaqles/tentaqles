@@ -1,0 +1,20 @@
+[project]
+name = "rag-starter"
+version = "0.1.0"
+description = "RAG starter for Supabase/pgvector: hybrid search + RRF, rerankers (Jev/Cohere), record manager, evals"
+requires-python = ">=3.11"
+dependencies = []  # core is stdlib-only
+
+[project.optional-dependencies]
+pg = ["psycopg[binary]>=3.1"]
+test = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rag_starter*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
