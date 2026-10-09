@@ -48,7 +48,8 @@ fi
 export CLAUDE_PLUGIN_DATA
 
 # --- 3. Find a working Python interpreter ---
-# Probe in order: py -3 (Windows launcher), python3 (Unix standard), python (legacy)
+# Probe in order: python3 (Unix standard), python (legacy), py -3 (Windows
+# launcher, last: it prefers the newest install, often the Store Python)
 # Each candidate is validated by asking it to print sys.executable,
 # which resolves broken venv shims (they fail the -c check).
 #
@@ -64,6 +65,12 @@ if [ -r "$_py_cache" ]; then
   read -r _cached < "$_py_cache" 2>/dev/null || _cached=""
   # A cached path is only trusted while it still points at something runnable
   # (interpreter upgraded, venv deleted, drive unmounted → fall through).
+  # A WindowsApps path is the Microsoft Store Python or its alias: it can
+  # hang or fail with "Permission denied" when the Store package changes
+  # under it, which stalled every hook. Never trust one from the cache.
+  case "$_cached" in
+    *[Ww]indows[Aa]pps*) _cached="" ;;
+  esac
   if [ -n "$_cached" ] && [ -x "$_cached" ]; then
     TENTAQLES_PY="$_cached"
   fi
@@ -71,13 +78,23 @@ if [ -r "$_py_cache" ]; then
 fi
 
 if [ -z "$TENTAQLES_PY" ]; then
-  for _probe in py python3 python; do
+  # Each probe is bounded (timeout(1) when present) so a hanging interpreter
+  # costs seconds, not the hook's whole budget.
+  _tq_to=""
+  command -v timeout >/dev/null 2>&1 && _tq_to="timeout 5"
+  for _probe in python3 python py; do
     case "$_probe" in
       py)
         # "py -3" is two words — handle explicitly to avoid word-splitting issues
-        _exe=$(py -3 -c "import sys; print(sys.executable)" 2>/dev/null) || continue ;;
+        _exe=$($_tq_to py -3 -c "import sys; print(sys.executable)" 2>/dev/null) || continue ;;
       *)
-        _exe=$("$_probe" -c "import sys; print(sys.executable)" 2>/dev/null) || continue ;;
+        case "$(command -v "$_probe" 2>/dev/null)" in
+          *[Ww]indows[Aa]pps*) continue ;;  # Store alias: see the cache note above
+        esac
+        _exe=$($_tq_to "$_probe" -c "import sys; print(sys.executable)" 2>/dev/null) || continue ;;
+    esac
+    case "$_exe" in
+      *[Ww]indows[Aa]pps*) continue ;;
     esac
     if [ -n "$_exe" ]; then
       TENTAQLES_PY="$_exe"

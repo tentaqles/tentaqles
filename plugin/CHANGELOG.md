@@ -2,6 +2,20 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.8.1] — 2026-10-08
+
+### Fixed
+
+- **Hooks no longer stall when the Microsoft Store Python breaks.** The
+  interpreter resolver probed `py -3` first with no time limit; when the
+  launcher picked a broken Store Python it hung, and every hook waited on it.
+  Probes now run `python3`, `python`, then `py`, each bounded to 5 s, and any
+  `WindowsApps` path (Store Python or its alias) is skipped, including one
+  already in the interpreter cache.
+- **`snapshot-guard` and `knowledge-capture` have timeouts (10 s).** They had
+  none, so a stuck run held the tool call for Claude Code's 10-minute default.
+  `knowledge-capture` also runs async: it records, it never blocks.
+
 ## [0.8.0] — 2026-10-08
 
 Hook diet and reliability: fewer, cheaper hook interruptions, and memory

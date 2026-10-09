@@ -48,7 +48,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" snapshot-guard.py"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" snapshot-guard.py",
+            "timeout": 10
           }
         ]
       }
@@ -59,7 +60,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" knowledge-capture.py"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" knowledge-capture.py",
+            "timeout": 10,
+            "async": true
           }
         ]
       }
