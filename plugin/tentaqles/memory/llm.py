@@ -33,6 +33,21 @@ import tempfile
 from typing import Callable
 
 DEFAULT_MODEL = "haiku"
+
+# The prompt carries transcript text: web pages, tool output, file contents
+# -- untrusted input that may try to steer the model. The child therefore
+# gets no tools at all, no MCP servers, no skills/slash commands, and a
+# permission mode that refuses anything not explicitly allowed, so the most
+# an injected instruction can do is change the returned text.
+HEADLESS_ARGS = (
+    "-p",
+    "--output-format", "json",
+    "--tools", "",
+    "--permission-mode", "dontAsk",
+    "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+    "--disable-slash-commands",
+    "--no-session-persistence",
+)
 DEFAULT_TIMEOUT = 60
 
 _OFF_VALUES = {"0", "false", "no", "off"}
@@ -91,7 +106,7 @@ def claude_cli_complete(
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         proc = subprocess.run(
-            [exe, "-p", "--model", model, "--output-format", "json"],
+            [exe, *HEADLESS_ARGS, "--model", model],
             input=_redact(prompt).encode("utf-8"),
             capture_output=True,
             timeout=timeout,

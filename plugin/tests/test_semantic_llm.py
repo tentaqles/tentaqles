@@ -70,7 +70,13 @@ def test_cli_call_shape_identity_and_redaction(fake_run, monkeypatch):
     assert out == FACTS
 
     (call,) = calls
-    assert call["argv"] == ["/fake/bin/claude", "-p", "--model", "haiku", "--output-format", "json"]
+    argv = call["argv"]
+    assert argv[0] == "/fake/bin/claude"
+    assert argv[argv.index("--model") + 1] == "haiku"
+    # The child runs untrusted transcript text: no tools, no MCP, no prompts.
+    assert argv[argv.index("--tools") + 1] == ""
+    assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+    assert "--strict-mcp-config" in argv and "--disable-slash-commands" in argv
     assert call["timeout"] == 60
     sent = call["input"].decode("utf-8")
     assert FAKE_AWS_ID not in sent and "REDACTED" in sent
@@ -228,7 +234,9 @@ def test_session_end_worker_extracts_facts_via_cli(tmp_path):
     facts = _facts(ws / ".claude" / "memory.db")
     assert any("SQLite" in f for f in facts), facts
     (call,) = [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines()]
-    assert call["argv"] == ["-p", "--model", "haiku", "--output-format", "json"]
+    argv = call["argv"]
+    assert argv[0] == "-p" and argv[argv.index("--model") + 1] == "haiku"
+    assert argv[argv.index("--tools") + 1] == "" and "--strict-mcp-config" in argv
     assert call["config"] == str(tmp_path / "identity-config")
 
 
