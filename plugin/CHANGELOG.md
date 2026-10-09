@@ -2,6 +2,45 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.10.0] — 2026-10-09
+
+Phase 5–7 of the workflow upgrade. Every Jev feature starts in shadow mode
+(it logs, never acts) and needs tq >= 0.6.0.
+
+### Added
+
+- **Hooks:** `Stop` runs `tq claude-hook stop` (completion-evidence check:
+  catches "all tests pass" with no successful test run after the last
+  edit; evidence comes only from tool records) and `UserPromptSubmit` runs
+  `tq claude-hook prompt-submit` (skill picker, log-only). Both have short
+  timeouts and always exit 0 when tq is missing or older.
+- **Skills:** `ship`, `babysit-pr`, `wrap`, `n8n-triage`, `db-migration`,
+  `index-advisor`, `ci-pipeline` (ratchet gate), `auth-security`,
+  `system-design-review`, `grill-me`, `explore` (`tq decide explore`),
+  `build` (gated spec -> plan -> tests -> implement -> review orchestrator)
+  and `loop` (overnight improvement runner). Agents: `build-planner`,
+  `build-critic` (read-only tools), `build-fixer`.
+- **Shadow Jev memory gates:** capture and recall decisions are judged by
+  Jev in a detached worker and logged; behaviour is unchanged. Opt out with
+  `TENTAQLES_JEV_MEMORY=0`.
+
+### Fixed
+
+- **`knowledge-capture` recorded nothing.** It opened `MemoryStore` with
+  the database file path instead of the workspace root, so PostToolUse
+  file touches were never saved. They are now.
+- **Private keys are redacted as whole blocks** (PEM, PGP, SSH2, PuTTY),
+  not just the header line, before anything is stored.
+- `emit-signal`'s frontmatter is valid YAML.
+
+### Notes
+
+- `/tentaqles:build`'s gate checks are string heuristics like tq's guard,
+  not an OS sandbox: treat a passed gate as advisory and keep CI + PR
+  review as the proof. `/tentaqles:loop`'s runner re-verifies every round
+  itself (score, tests, changed paths, pinned hashes) and discards
+  mismatches.
+
 ## [0.9.0] — 2026-10-09
 
 ### Added

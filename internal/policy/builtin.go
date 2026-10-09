@@ -109,7 +109,7 @@ func Builtin() []Rule {
 		// --- automation / outward-facing MCP -----------------------------------
 		{
 			ID: "tq/mcp-n8n-write", Action: Ask,
-			Tool:   `mcp__.*n8n.*__(create|update|publish|unpublish|archive|delete|execute|test|restore|mutate|revert|rename|add|move|call)_.*`,
+			Tool:   `mcp__.*n8n.*__(?:\w*?_)?(create|update|publish|unpublish|archive|delete|execute|test|restore|mutate|revert|rename|add|move|call)(?:_.*)?`,
 			Reason: "changing or running an n8n workflow/agent (it may be production)",
 		},
 		{

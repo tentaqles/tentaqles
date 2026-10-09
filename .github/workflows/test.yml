@@ -66,6 +66,18 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/plugin
         run: python -m pytest plugin/tests -q
 
+  templates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      # Each template is self-contained; tests use fakes (no network, no DB).
+      - run: pip install pytest pandas -e templates/rag-starter -e templates/pandas-jev-labeller
+      - run: python -m pytest templates/n8n-jev-decision/tests -q
+      - run: python -m pytest templates/rag-starter/tests -q
+      - run: python -m pytest templates/pandas-jev-labeller/tests -q
+
   desktop:
     runs-on: ubuntu-latest
     steps:
