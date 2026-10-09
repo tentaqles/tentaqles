@@ -9,6 +9,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/tentaqles/tentaqles/internal/decide"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"gopkg.in/yaml.v3"
@@ -116,7 +117,10 @@ type Manifest struct {
 	Database        map[string]any      `yaml:"database"`
 	Stack           []string            `yaml:"stack"`
 	Guard           Guard               `yaml:"guard"`
-	Path            string              `yaml:"-"`
+	// Decision configures the Jev decision layer (internal/decide). Off
+	// unless backend is set; shadow mode unless mode is enforce.
+	Decision decide.Policy `yaml:"decision"`
+	Path     string        `yaml:"-"`
 }
 
 var secretRe = regexp.MustCompile(`(?i)\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9\-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,})`)
@@ -154,6 +158,9 @@ func Load(path string) (*Manifest, error) {
 	}
 	if !contains(PermissionModes, m.Claude.PermissionMode) {
 		return nil, fmt.Errorf("%s: claude.permission_mode must be one of default|acceptEdits|plan|auto|dontAsk|bypass", path)
+	}
+	if err := m.Decision.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Path = path
 	return &m, nil
