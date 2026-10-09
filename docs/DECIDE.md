@@ -209,8 +209,18 @@ asked only when that check passes:
   and the final message, and the claim counts at or above `block_threshold`.
 - **evidence** comes **only from tool records**. It is a Bash/PowerShell
   `tool_use` after the last edit whose `tool_result` is not an error and
-  whose command looks like a test, build, lint or type-check run (`go test`,
-  `pytest`, `npm test`, `cargo check`, `tsc`, `ruff`, `Invoke-Pester`, ...).
+  whose command runs a test, build, lint or type-check tool. The command
+  is split on unquoted `&&`, `||`, `;`, `|`, `&` and newlines, with
+  comments and heredoc bodies dropped. A segment counts only when its
+  **first command word** is a known runner, after `VAR=val`, `env`, `time`,
+  `npx`, `uv run` and `poetry run` prefixes. Known runners include
+  `go test|vet|build`, `npm test`, `npm|pnpm|yarn|bun run test|lint|build|typecheck|check`,
+  `pytest`, `python -m pytest`, `cargo test|clippy|build|check`,
+  `make test|check|lint`, `tsc`, `eslint`, `ruff`, `mypy`,
+  `dotnet test|build`, `mvn test`, `gradle test` and `Invoke-Pester`.
+  A runner name that only shows up in an `echo`/`printf`/`Write-Host`, a
+  `grep` pattern, a quoted string or a comment never counts. Neither does
+  a runner whose failure is hidden with `|| …`.
   If there is no such command, evidence is 0 and Jev is not asked. If there
   is, Jev is asked whether one of **those commands only** is a real check.
   That call never sees the final message. Evidence counts as missing at or
@@ -230,6 +240,20 @@ final message, the request and command strings:
 
 So a Jev answer can only add a block. It can never suppress one that the
 deterministic signals call for.
+
+**Residual limit.** This is an advisory check built from string
+heuristics, not a shell parser. Some commands can still slip past it and
+count as evidence when they verified nothing:
+
+- a test that a real runner runs but that checks nothing;
+- a pipe that hides the runner's exit status (`go test | tail`);
+- a script that only calls itself `test`;
+- a soft claim that Jev misreads.
+
+Getting past the check gives exactly the same result as running with Jev
+off: no block, and Claude ends its turn as it would have anyway. It never
+approves, allows or skips anything else, and the deterministic guard rules
+are not involved.
 
 - **Shadow mode** logs a `kind: "stop"` line to `judgments.jsonl`. It holds
   the two probabilities, what Jev would do, and counts of edits and commands,

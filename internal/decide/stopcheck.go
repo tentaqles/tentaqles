@@ -247,9 +247,6 @@ const (
 	stopEvidenceQuestion = "Is at least one of these commands a real test, build, lint or type-check run of the project (not an echo, print, or no-op)?"
 )
 
-// verifyCommand pre-selects commands that can count as evidence.
-var verifyCommand = regexp.MustCompile(`(?i)\b(go\s+(test|build|vet)|pytest|tox|nox|unittest|jest|vitest|mocha|playwright|cargo\s+(test|build|check|clippy)|(npm|pnpm|yarn|bun|npx)\s+(run\s+)?(test|build|lint|check|typecheck|tsc)|make|tsc|eslint|ruff|mypy|pyright|flake8|golangci-lint|dotnet\s+(test|build)|mvn|gradle|ctest|rspec|phpunit|invoke-pester|shellcheck|staticcheck)\b`)
-
 // plainClaim matches an explicit verification claim in the final message.
 var plainClaim = regexp.MustCompile(`(?i)\b(all\s+)?(tests?|specs?|build|lint(er)?|type-?checks?|ci|checks)\s+(now\s+|all\s+|are\s+|is\s+)*(pass(es|ed|ing)?|green|succeed(s|ed)?|clean)\b`)
 
@@ -265,7 +262,7 @@ func StopQuestions() (claims, evidence map[string]Question) {
 func (s StopState) VerificationCommands() []StopCommand {
 	var out []StopCommand
 	for _, c := range s.Commands {
-		if c.Status == "ok" && verifyCommand.MatchString(c.Command) {
+		if c.Status == "ok" && IsVerificationCommand(c.Command) {
 			out = append(out, c)
 		}
 	}
