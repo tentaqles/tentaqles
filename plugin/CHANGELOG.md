@@ -2,6 +2,17 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.8.2] — 2026-10-09
+
+### Fixed
+
+- **A Python change no longer silently breaks memory features.** The
+  bootstrapped lib dir holds compiled packages (numpy) built for one Python;
+  under another they fail to import, but the dependency check only imported
+  pure-Python packages and its stamp ignored the interpreter. The stamp now
+  includes `TENTAQLES_PY`, the check imports numpy, and `bootstrap.py`
+  passes `--upgrade` so a mismatched lib is replaced instead of skipped.
+
 ## [0.8.1] — 2026-10-08
 
 ### Fixed
