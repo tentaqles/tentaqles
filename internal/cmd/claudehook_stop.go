@@ -106,8 +106,9 @@ func stopCheck(r io.Reader, w io.Writer) {
 		br.Reset()
 	}
 	j := decide.Judgment{Workspace: ws.Name, Kind: "stop", Mode: policyMode(pol),
-		P:     map[string]float64{},
-		Extra: map[string]string{"edits": fmt.Sprint(len(st.Edited)), "commands": fmt.Sprint(len(st.Commands))}}
+		P: map[string]float64{},
+		Extra: map[string]string{"edits": fmt.Sprint(len(st.Edited)), "commands": fmt.Sprint(len(st.Commands)),
+			"verify_cmds": fmt.Sprint(len(st.VerificationCommands())), "plain_claim": fmt.Sprint(v.PlainClaim)}}
 	if v.Err != nil {
 		j.Error = v.Err.Error()
 	} else {
@@ -131,6 +132,8 @@ func stopCheck(r io.Reader, w io.Writer) {
 	if !v.Apply {
 		return
 	}
+	// The reason is a fixed template with numbers only: no transcript text
+	// (request, final message, commands, file names) is ever echoed back.
 	reason := fmt.Sprintf("tq completion check: your final message says the work is verified (tests, build or lint pass), "+
 		"but the transcript shows no successful verification command after the last edit. "+
 		"Run the relevant check now and report its result, or say plainly that the change is unverified. "+

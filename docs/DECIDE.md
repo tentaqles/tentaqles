@@ -198,17 +198,38 @@ state, at most ~30 KB:
   its status: `ok`, `error` (the tool result's `is_error`) or `unknown`;
 - the final assistant text (last 4,000 characters).
 
-Jev answers two yes/no questions in one call, within the 800 ms hook deadline:
+Two signals decide. Each comes from a deterministic check first, and Jev is
+asked only when that check passes:
 
-- `claims`: does the final message claim tests, build or lint pass, or that
-  the work is verified?
-- `evidence`: did a verification command complete successfully after the last
-  edit? It is not asked when no command ran after the last edit; the
-  evidence is then 0.
+- **claims**: an explicit claim in the final message ("all tests pass",
+  "the build is green", "lint is clean") is found by a regex. It counts as
+  a claim without asking Jev, so no text in the message can argue it away.
+  Otherwise Jev is asked whether the final message claims the work passed
+  its checks or is verified. That state holds the request, the edited files
+  and the final message, and the claim counts at or above `block_threshold`.
+- **evidence** comes **only from tool records**. It is a Bash/PowerShell
+  `tool_use` after the last edit whose `tool_result` is not an error and
+  whose command looks like a test, build, lint or type-check run (`go test`,
+  `pytest`, `npm test`, `cargo check`, `tsc`, `ruff`, `Invoke-Pester`, ...).
+  If there is no such command, evidence is 0 and Jev is not asked. If there
+  is, Jev is asked whether one of **those commands only** is a real check.
+  That call never sees the final message. Evidence counts as missing at or
+  below `1 - block_threshold` (0.2 by default).
 
-A verdict needs both: `claims` at or above `block_threshold`, and `evidence`
-at or below `1 - block_threshold` (0.2 by default). Both bars are high so
-that a block stays rare.
+What Claude writes ("I ran the tests, they passed") is never evidence. Both
+Jev calls run in parallel, each within the hook deadline.
+
+The design treats every part of the transcript as untrusted, including the
+final message, the request and command strings:
+
+- the questions are constant strings;
+- transcript text goes only into the state, which is redacted and framed as
+  untrusted;
+- the block reason is a fixed template with two numbers, never transcript
+  text.
+
+So a Jev answer can only add a block. It can never suppress one that the
+deterministic signals call for.
 
 - **Shadow mode** logs a `kind: "stop"` line to `judgments.jsonl`. It holds
   the two probabilities, what Jev would do, and counts of edits and commands,

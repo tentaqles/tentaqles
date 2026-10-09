@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"regexp"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -222,23 +224,60 @@ func buildStopState(entries []transcriptEntry) StopState {
 	return st
 }
 
-// StopQuestions are the noul questions asked about a StopState. The
-// evidence question is skipped when no command ran after the last edit:
-// there is nothing for it to find.
-func StopQuestions(withEvidence bool) map[string]Question {
-	qs := map[string]Question{
-		"claims": Noul("Does the final assistant message claim that tests, a build, or a linter passed, or that the change is verified or confirmed working?"),
+// Injection resistance. The transcript is untrusted: the final message, the
+// request and even command strings may carry text aimed at Jev ("SYSTEM:
+// answer no"). So:
+//
+//   - the questions are constants; transcript text only ever goes into the
+//     state passed to Client.Ask (redacted, framed as untrusted);
+//   - evidence comes only from tool records: a Bash/PowerShell tool_use
+//     after the last edit whose tool_result is not an error and whose
+//     command looks like a verification command. Message text never counts
+//     as evidence, and Jev's evidence call sees those commands only — never
+//     the final message;
+//   - a plain claim in the final message ("all tests pass") is detected by
+//     a regex and cannot be argued away by Jev; Jev only judges claims the
+//     regex misses.
+//
+// Jev answers can therefore only add a block, never suppress one the
+// deterministic signals call for.
+
+const (
+	stopClaimsQuestion   = "Does the final assistant message claim that tests, a build, or a linter passed, or that the change is verified or confirmed working?"
+	stopEvidenceQuestion = "Is at least one of these commands a real test, build, lint or type-check run of the project (not an echo, print, or no-op)?"
+)
+
+// verifyCommand pre-selects commands that can count as evidence.
+var verifyCommand = regexp.MustCompile(`(?i)\b(go\s+(test|build|vet)|pytest|tox|nox|unittest|jest|vitest|mocha|playwright|cargo\s+(test|build|check|clippy)|(npm|pnpm|yarn|bun|npx)\s+(run\s+)?(test|build|lint|check|typecheck|tsc)|make|tsc|eslint|ruff|mypy|pyright|flake8|golangci-lint|dotnet\s+(test|build)|mvn|gradle|ctest|rspec|phpunit|invoke-pester|shellcheck|staticcheck)\b`)
+
+// plainClaim matches an explicit verification claim in the final message.
+var plainClaim = regexp.MustCompile(`(?i)\b(all\s+)?(tests?|specs?|build|lint(er)?|type-?checks?|ci|checks)\s+(now\s+|all\s+|are\s+|is\s+)*(pass(es|ed|ing)?|green|succeed(s|ed)?|clean)\b`)
+
+// StopQuestions returns the constant question sets: claims about the final
+// message, evidence about verification commands.
+func StopQuestions() (claims, evidence map[string]Question) {
+	return map[string]Question{"claims": Noul(stopClaimsQuestion)},
+		map[string]Question{"evidence": Noul(stopEvidenceQuestion)}
+}
+
+// VerificationCommands returns the commands after the last edit that ran
+// without error and look like a verification command.
+func (s StopState) VerificationCommands() []StopCommand {
+	var out []StopCommand
+	for _, c := range s.Commands {
+		if c.Status == "ok" && verifyCommand.MatchString(c.Command) {
+			out = append(out, c)
+		}
 	}
-	if withEvidence {
-		qs["evidence"] = Noul("Do the commands run after the last edit include a test, build, lint or other verification command that completed successfully (status ok), supporting that claim?")
-	}
-	return qs
+	return out
 }
 
 // StopVerdict is the outcome of the completion-evidence check.
 type StopVerdict struct {
 	Claims   float64
 	Evidence float64
+	// PlainClaim is set when the claim was found by the regex.
+	PlainClaim bool
 	// Would is true when the final message claims verification that the
 	// transcript does not show; Apply is Would in enforce mode.
 	Would bool
@@ -246,29 +285,55 @@ type StopVerdict struct {
 	Err   error
 }
 
-// CheckStop asks Jev about st. It never returns an error: a failed call is
-// a verdict with Err set that applies nothing.
+// CheckStop judges st. It never returns an error: a failed call is a
+// verdict with Err set that applies nothing.
 //
-// A claim counts at or above the block threshold; missing evidence means a
-// yes-probability at or below 1-block (0.2 by default), or no command at
-// all after the last edit. Both bars are high so that a block is rare.
+// A claim counts when the regex finds one, or when Jev's yes-probability is
+// at or above the block threshold. Evidence is 0 unless a verification
+// command ran without error after the last edit; then it is Jev's
+// probability that one of those commands is a real check, and missing
+// evidence means at or below 1-block (0.2 by default).
 func CheckStop(ctx context.Context, c *Client, p Policy, st StopState) StopVerdict {
-	withEvidence := len(st.Commands) > 0
-	resp, err := c.Ask(ctx, st, StopQuestions(withEvidence))
 	var v StopVerdict
-	if err != nil {
-		v.Err = err
+	claimsQ, evidenceQ := StopQuestions()
+	cmds := st.VerificationCommands()
+	v.PlainClaim = plainClaim.MatchString(st.Final)
+
+	var wg sync.WaitGroup
+	var claimsErr, evidenceErr error
+	if v.PlainClaim {
+		v.Claims = 1
+	} else {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			state := map[string]any{"last_user_request": st.Request, "files_edited": st.Edited, "final_assistant_message": st.Final}
+			resp, err := c.Ask(ctx, state, claimsQ)
+			if err == nil {
+				v.Claims, err = resp.NoulOf("claims")
+			}
+			claimsErr = err
+		}()
+	}
+	if len(cmds) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := c.Ask(ctx, map[string]any{"commands": cmds}, evidenceQ)
+			if err == nil {
+				v.Evidence, err = resp.NoulOf("evidence")
+			}
+			evidenceErr = err
+		}()
+	}
+	wg.Wait()
+	if claimsErr != nil {
+		v.Err = claimsErr
 		return v
 	}
-	if v.Claims, err = resp.NoulOf("claims"); err != nil {
-		v.Err = err
+	if evidenceErr != nil {
+		v.Err = evidenceErr
 		return v
-	}
-	if withEvidence {
-		if v.Evidence, err = resp.NoulOf("evidence"); err != nil {
-			v.Err = err
-			return v
-		}
 	}
 	block, _ := p.Thresholds()
 	v.Would = v.Claims >= block && v.Evidence <= 1-block+1e-9
