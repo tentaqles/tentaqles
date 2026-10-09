@@ -19,7 +19,7 @@ It writes the tq-owned part of each identity's `settings.json`:
 | `permissions.defaultMode` | the manifest's `claude.permission_mode`. Empty means `auto`; `bypass` becomes `bypassPermissions` only after `tq allow --bypass <ws>`, otherwise `acceptEdits` (same rule as `tq run`) |
 | `permissions.allow` | common read-only commands (git status/diff/log, gh pr view/checks, ls/cat/grep/rg, test runners, …) so auto mode does not stop on them |
 | `permissions.deny` | credential stores (SSH keys, cloud/git credentials, the tq catalog), `printenv`, `gh repo delete` — a second layer behind the PreToolUse guard |
-| `env` | `ENABLE_STOP_REVIEW=0` and `SECURITY_REVIEW_MODEL=claude-sonnet-5-5`: the security-guidance plugin keeps its commit/push review but stops running a headless Opus review after every turn |
+| `env` | `ENABLE_STOP_REVIEW=0`, `SECURITY_REVIEW_MODEL=claude-sonnet-5-5` and `SG_AGENTIC_MODEL=claude-sonnet-5-5`: the security-guidance plugin keeps its commit/push review (on Sonnet; its agentic path reads `SG_AGENTIC_MODEL`) but stops running a headless Opus review after every turn |
 | `statusLine` | `tq statusline`, but only when there is none, it is an unpinned `npx …@latest` / ccstatusline, or tq set it before. A custom script is left alone. |
 
 `skipDangerousModePermissionPrompt` is removed: tq manages the permission

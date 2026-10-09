@@ -181,3 +181,18 @@ func TestBaselineAllowIsReadOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestBaselineEnvKeepsReviewsOffOpus pins the security-guidance knobs: the
+// commit/push review reads SG_AGENTIC_MODEL, the other paths
+// SECURITY_REVIEW_MODEL, and the per-turn Stop review stays off.
+func TestBaselineEnvKeepsReviewsOffOpus(t *testing.T) {
+	for k, want := range map[string]string{
+		"ENABLE_STOP_REVIEW":    "0",
+		"SECURITY_REVIEW_MODEL": "claude-sonnet-5-5",
+		"SG_AGENTIC_MODEL":      "claude-sonnet-5-5",
+	} {
+		if got := baselineEnv[k]; got != want {
+			t.Errorf("baselineEnv[%s] = %q, want %q", k, got, want)
+		}
+	}
+}

@@ -73,10 +73,13 @@ var baselineDeny = []string{
 
 // baselineEnv tunes plugins that otherwise cost a lot: the security-guidance
 // plugin's Stop review ran a headless Opus session after every file-changing
-// turn (373 in 90 days). Commit/push reviews stay on.
+// turn (373 in 90 days). Commit/push reviews stay on, on Sonnet: they use the
+// plugin's agentic path, which reads SG_AGENTIC_MODEL (default Opus), not
+// SECURITY_REVIEW_MODEL (tq insights showed 90 of 92 daily reviews on Opus).
 var baselineEnv = map[string]string{
 	"ENABLE_STOP_REVIEW":    "0",
 	"SECURITY_REVIEW_MODEL": "claude-sonnet-5-5",
+	"SG_AGENTIC_MODEL":      "claude-sonnet-5-5",
 }
 
 // ModeFor maps a manifest permission_mode to the settings.json value.
