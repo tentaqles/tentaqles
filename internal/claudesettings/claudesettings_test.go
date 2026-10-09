@@ -39,7 +39,7 @@ func TestDesiredManifestAdditionsAndDenyWins(t *testing.T) {
 	m := man("")
 	m.Claude.Permissions = &manifest.Permissions{Allow: []string{"Bash(make:*)", "Bash(cat:*)"}, Deny: []string{"Bash(cat:*)"}, Ask: []string{"Bash(az webapp deploy:*)"}}
 	m.Claude.Env = map[string]string{"FOO": "1"}
-	d := Desired(m, false, "C:\\tq\\tq.exe")
+	d := Desired(m, false, filepath.Join("opt", "tq", "tq.exe"))
 	if contains(d.Allow, "Bash(cat:*)") {
 		t.Error("deny did not win over allow")
 	}
