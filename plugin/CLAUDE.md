@@ -20,7 +20,9 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
   jev-memory-gate.py    Detached worker for the shadow Jev memory gates (tentaqles/memory/jev_gate.py)
-skills/                 28 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
+skills/                 30 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
+agents/                 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer)
+tentaqles/workflow/     stdlib-only: build gate (gate.py), overnight loop (loop.py, loopguard.py)
 hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)
 .claude-plugin/         Plugin manifest (plugin.json)
 tests/                  pytest suite
@@ -60,6 +62,8 @@ tests/                  pytest suite
 - **PreCompact stdout never reaches the model.** Context that must survive compaction is printed by the SessionStart hook when `source == "compact"` (`tentaqles.memory.compact_context`).
 
 - **Headless child guard**: `TENTAQLES_HEADLESS_CHILD=1` marks the plugin's own `claude -p` subprocess; hooks that save or prompt (SessionEnd, Stop) must exit early when it is set.
+
+- **Skill-owned hooks stay out of `hooks.json`**: `/tentaqles:build` installs its gate per project (`build-gate.py setup` → `.claude/settings.local.json`, 20 s timeout), and the loop passes its guard to its child via `--settings`. Both hook scripts are stdlib-only and never touch the network.
 
 - **No cross-client data**: each workspace has its own `memory.db`. The global `meta.db` stores only display names, stats, and signals — never code or decisions.
 

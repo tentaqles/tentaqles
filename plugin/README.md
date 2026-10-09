@@ -244,6 +244,8 @@ Stack-aware guidance that triggers on the work itself (no workspace state needed
 | `/tentaqles:profile-refresh` | Regenerate the learned workspace profile from `memory.db` |
 | `/tentaqles:cross-patterns` | Display cross-workspace patterns detected by the pattern cron job |
 | `/tentaqles:emit-signal` | Emit an inter-workspace signal to one or more registered workspaces |
+| `/tentaqles:build` | Build a feature through gated checkpoints in its own worktree: spec, approved plan, locked tests, an evidence-based test gate tied to the code on disk, risk-triaged read-only review, fixer loop (agents `build-planner`, `build-critic`, `build-fixer`) |
+| `/tentaqles:loop` | Overnight Karpathy-style loop on one feature: approve locked checks by day; at night a runner keeps or undoes one headless round at a time in a worktree, under dollar/token/time/round budgets with MCP and network off; morning summary + signal |
 
 ## Hooks
 
@@ -257,6 +259,8 @@ All hooks are automatic and run silently.
 | `Stop` | Claude finishes a turn | `stop-capture.py` — once per session, if the conversation weighed alternatives, ask Claude to record the decisions; once per session, if the context passes ~350k tokens, suggest `/compact` or session-wrap (non-blocking); `tq_hook.sh stop` → `tq claude-hook stop` — Jev completion-evidence check (only with a `decision:` block; shadow mode logs, enforce mode sends Claude back once per session when it claims verification the transcript does not show) |
 | `UserPromptSubmit` | You send a prompt | `tq_hook.sh prompt-submit` → `tq claude-hook prompt-submit` — Jev skill picker (only with a `decision:` block; logs the pick, and in enforce mode adds a one-line "Skill that may fit" hint; never blocks) |
 | `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory; the detached worker also extracts semantic facts with `claude -p --model haiku` (opt out: `TENTAQLES_SEMANTIC_FACTS=0`) |
+
+`/tentaqles:build` and `/tentaqles:loop` bring their own hooks without touching `hooks.json`: `build-gate.py setup` writes the checkpoint gate into the project's `.claude/settings.local.json` (removed by `build-gate.py finish`), and `loop-runner.py` passes its guard to the headless child through `--settings`.
 
 All hooks and skills use `tq_run.sh` → `tq_env.sh` to resolve a working Python interpreter, bypassing broken venv shims and machines where only `python3` exists (macOS). POSIX-compatible, tested on Windows (Git Bash), macOS, and Linux.
 
