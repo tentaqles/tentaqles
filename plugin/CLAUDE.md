@@ -19,10 +19,11 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib); installs in a detached --worker
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
-skills/                 19 skill directories, each with SKILL.md
+  jev-memory-gate.py    Detached worker for the shadow Jev memory gates (tentaqles/memory/jev_gate.py)
+skills/                 30 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
 agents/                 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer)
 tentaqles/workflow/     stdlib-only: build gate (gate.py), overnight loop (loop.py, loopguard.py)
-hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, PreToolUse, PostToolUse, Stop)
+hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)
 .claude-plugin/         Plugin manifest (plugin.json)
 tests/                  pytest suite
 ```
@@ -53,6 +54,8 @@ tests/                  pytest suite
 - **Every hook in hooks.json declares a short `timeout`**; capture-only hooks are `async`. A hook without one waits up to 10 minutes when something hangs.
 
 - **Hooks never wait on the network or a model.** Anything slow (pip installs, session saving, `claude -p` fact extraction) goes to a detached worker via `_detach.spawn_detached`. Model calls go through `tentaqles.memory.llm` only, from detached/background code, and honour `TENTAQLES_SEMANTIC_FACTS=0`.
+
+- **Jev calls** (`tq decide ask`) follow the same rule: hooks only spawn `scripts/jev-memory-gate.py` detached; the gates are shadow-only (log via `tq decide log`, never change behaviour) and honour `TENTAQLES_JEV_MEMORY=0`.
 
 - **Text a hook hands to the model must not use `$CLAUDE_PLUGIN_ROOT`**: it is expanded in hooks.json commands but not set in the Bash tool. Embed the absolute path resolved from `__file__` (forward slashes).
 

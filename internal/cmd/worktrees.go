@@ -137,7 +137,11 @@ func short(s string, n int) string {
 
 // scanWorktrees finds git repos at the root of each workspace and one level
 // below it, and lists their linked worktrees.
-func scanWorktrees() ([]worktree, error) {
+func scanWorktrees() ([]worktree, error) { return scanWorktreesIn(nil) }
+
+// scanWorktreesIn is scanWorktrees limited to the workspaces keep accepts
+// (nil keeps every workspace).
+func scanWorktreesIn(keep func(ws string) bool) ([]worktree, error) {
 	cfg, err := registry.Load()
 	if err != nil {
 		return nil, err
@@ -146,6 +150,9 @@ func scanWorktrees() ([]worktree, error) {
 	seen := map[string]bool{}
 	var out []worktree
 	for _, ws := range wss {
+		if keep != nil && !keep(ws.Name) {
+			continue
+		}
 		cands := []string{ws.Root}
 		if ents, err := os.ReadDir(ws.Root); err == nil {
 			for _, e := range ents {

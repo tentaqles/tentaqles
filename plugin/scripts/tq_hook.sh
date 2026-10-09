@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Tentaqles Claude Code hook bridge.
 #
-# Usage: bash tq_hook.sh <session-start|pre-tool-use>
+# Usage: bash tq_hook.sh <session-start|pre-tool-use|stop|prompt-submit>
 #
 # Resolves the `tq` binary and runs `tq claude-hook <event>` (stdin passes
 # straight through, exit status is propagated). If no binary is found, falls
 # back to the dependency-free Python guard next to this script
 # (pre-tool-use) or prints an install notice (session-start).
+#
+# stop and prompt-submit are advisory (Jev completion check / skill hint):
+# they always exit 0, whatever tq returns (an older tq without the
+# subcommand exits 1), and without tq they do nothing at all.
 #
 # The fallback deliberately does NOT go through tq_run.sh/tq_env.sh: that path
 # can synchronously pip-install plugin deps, which would blow the PreToolUse
@@ -33,10 +37,18 @@ INSTALL_URL="https://github.com/tentaqles/tentaqles#install"
 
 _event="${1:-}"
 case "$_event" in
-  session-start|pre-tool-use) ;;
+  session-start|pre-tool-use|stop|prompt-submit) ;;
   *)
     echo "tq_hook.sh: unknown event '${_event}'" >&2
     exit 2
+    ;;
+esac
+
+# The plugin's own headless `claude -p` child must never be sent back by the
+# completion check or handed skill hints.
+case "$_event" in
+  stop|prompt-submit)
+    [ "${TENTAQLES_HEADLESS_CHILD:-}" = "1" ] && exit 0
     ;;
 esac
 
@@ -105,12 +117,18 @@ fi
 if [ -n "$TQ" ]; then
   "$TQ" claude-hook "$_event"
   _status=$?
+  case "$_event" in
+    stop|prompt-submit) exit 0 ;;
+  esac
   if [ "$_status" != "126" ] && [ "$_status" != "127" ]; then
     exit "$_status"
   fi
 fi
 
 # --- Fallback: tq is not installed (or could not be executed) ---
+case "$_event" in
+  stop|prompt-submit) exit 0 ;;
+esac
 if [ "$_event" != "pre-tool-use" ]; then
   echo "Tentaqles: tq is not installed — identity enforcement is in fallback mode (remote git/gh/cloud commands are blocked). Install: $INSTALL_URL"
   exit 0

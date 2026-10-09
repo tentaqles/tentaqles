@@ -67,3 +67,45 @@ func TestRedact(t *testing.T) {
 		t.Fatalf("unexpected redaction: %q", out)
 	}
 }
+
+func TestRedactRemovesWholePEMBlock(t *testing.T) {
+	begin, end := "-----BEGIN "+"PRIVATE KEY-----", "-----END "+"PRIVATE KEY-----"
+	body := "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw\nggSjAgEAAoIBAQC7VJTUt9Us8cKjMzEfYyji\n"
+	cases := map[string]string{
+		"multiline":    "before\n" + begin + "\n" + body + end + "\nafter",
+		"json escaped": `{"private_key": "` + begin + `\n` + strings.ReplaceAll(body, "\n", `\n`) + end + `\n", "x": 1}`,
+		"unterminated": "before\n" + begin + "\n" + body,
+	}
+	for name, in := range cases {
+		out := Redact(in)
+		if strings.Contains(out, "MIIEvQ") || strings.Contains(out, "ggSjAg") {
+			t.Errorf("%s: key body survived: %q", name, out)
+		}
+		if !strings.Contains(out, "[REDACTED:private_key]") || !strings.HasPrefix(strings.TrimPrefix(out, `{"private_key": "`), "before") && name != "json escaped" {
+			t.Errorf("%s: unexpected output %q", name, out)
+		}
+	}
+	if out := Redact(cases["multiline"]); !strings.HasSuffix(out, "\nafter") {
+		t.Errorf("text after the block must survive: %q", out)
+	}
+}
+
+func TestRedactOtherPrivateKeyFormats(t *testing.T) {
+	body := "\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw\nggSjAgEAAoIBAQC7VJTUt9Us8cKjMzEfYyji\n"
+	cases := map[string]string{
+		"pgp":    "-----BEGIN PGP " + "PRIVATE KEY BLOCK-----" + body + "-----END PGP PRIVATE KEY BLOCK-----",
+		"ec":     "-----BEGIN EC " + "PRIVATE KEY-----" + body + "-----END EC PRIVATE KEY-----",
+		"ssh2":   "---- BEGIN SSH2 ENCRYPTED " + "PRIVATE KEY ----" + body + "---- END SSH2 ENCRYPTED PRIVATE KEY ----",
+		"putty":  "PuTTY-User-" + "Key-File-3: ssh-rsa\nEncryption: none\nPrivate-Lines: 2" + body + "Private-MAC: 0a1b2c3d4e",
+		"no-end": "-----BEGIN OPENSSH " + "PRIVATE KEY-----" + body,
+	}
+	for name, key := range cases {
+		out := Redact("start\n" + key + "\nend")
+		if strings.Contains(out, "MIIEvQ") || strings.Contains(out, "ggSjAg") || !strings.Contains(out, "[REDACTED:private_key]") {
+			t.Errorf("%s: %q", name, out)
+		}
+		if !strings.HasPrefix(out, "start\n") {
+			t.Errorf("%s: text before the key lost: %q", name, out)
+		}
+	}
+}

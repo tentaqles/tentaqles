@@ -34,7 +34,13 @@ var Patterns = []Pattern{
 	{"jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`)},
 	{"bearer_token", regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._\-+/=]{16,}`)},
 	{"connection_string", regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|mssql|sqlserver|amqp|amqps)://[^\s:/@]+:[^\s/@]+@[^\s/]+`)},
-	{"private_key", regexp.MustCompile(`-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY-----`)},
+	// Whole private-key blocks, not just their header: any PEM "... PRIVATE
+	// KEY" / "PRIVATE KEY BLOCK" (RSA, EC, DSA, OPENSSH, ENCRYPTED, PGP, ...),
+	// SSH2 ("---- BEGIN SSH2 ... PRIVATE KEY ----") and PuTTY .ppk files.
+	// An unterminated block is redacted to the end of the text.
+	{"private_key", regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:.*?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|.*)` +
+		`|---- BEGIN SSH2 [A-Z ]*PRIVATE KEY ----(?:.*?---- END SSH2 [A-Z ]*PRIVATE KEY ----|.*)` +
+		`|PuTTY-User-Key-File-\d+:(?:.*?Private-MAC: *[0-9a-fA-F]+|.*)`)},
 	{"api_key_assignment", regexp.MustCompile(`(?i)\b[a-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|pwd|credential)s?\b["']?\s*[:=]\s*["']?[A-Za-z0-9_\-./+=!@#$%^&*]{12,}`)},
 }
 

@@ -123,10 +123,35 @@ def _get_temporal_context(cwd: str, context: dict) -> str:
         except Exception:
             pass
 
+        _shadow_recall_gate(cwd, store)
+
         store.close()
         return summary
     except Exception:
         return ""
+
+
+def _shadow_recall_gate(cwd: str, store) -> bool:
+    """Let a detached worker ask Jev how it would rank the surfaced memory.
+
+    Shadow only: the summary printed above is unchanged. Only local reads
+    happen here (a few SQLite queries); the Jev call is in the worker, so
+    this hook never waits on the network. Returns True when a worker started.
+    """
+    try:
+        from tentaqles.memory import jev_gate
+        from tentaqles.manifest.loader import load_manifest
+
+        if not jev_gate.should_gate(load_manifest(cwd)):
+            return False
+        payload = jev_gate.recall_payload(cwd, store)
+        if payload is None:
+            return False
+        from _detach import spawn_detached
+
+        return jev_gate.spawn(payload, spawn_detached)
+    except Exception:
+        return False
 
 
 def main() -> None:

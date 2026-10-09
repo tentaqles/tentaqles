@@ -31,6 +31,11 @@ type hookPayload struct {
 	ToolInput     json.RawMessage `json:"tool_input"`
 	// TranscriptPath lets the subagent router read the parent's model.
 	TranscriptPath string `json:"transcript_path"`
+	// StopHookActive is set on a Stop event that a Stop hook already
+	// continued; the completion check then does nothing (no loops).
+	StopHookActive bool `json:"stop_hook_active"`
+	// Prompt is the UserPromptSubmit prompt (skill picker).
+	Prompt string `json:"prompt"`
 }
 
 // lookupGHUser resolves the gh login active for the workspace env. It is a
@@ -85,7 +90,7 @@ func dropKey(drop map[string]bool, k string) bool {
 
 func newClaudeHookCmd() *cobra.Command {
 	c := &cobra.Command{Use: "claude-hook", Short: "Claude Code hook adapter (reads the hook JSON on stdin)"}
-	c.AddCommand(newPreToolUseCmd(), newSessionStartCmd())
+	c.AddCommand(newPreToolUseCmd(), newSessionStartCmd(), newStopCmd(), newPromptSubmitCmd())
 	return c
 }
 
