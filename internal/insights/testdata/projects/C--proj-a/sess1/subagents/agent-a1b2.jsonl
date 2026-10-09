@@ -1,0 +1,3 @@
+{"type":"user","timestamp":"2026-10-01T10:30:00Z","isSidechain":true,"message":{"role":"user","content":"Find the failing test"}}
+{"type":"assistant","timestamp":"2026-10-01T10:30:05Z","isSidechain":true,"message":{"id":"msg_s1","model":"claude-sonnet-5-5","usage":{"input_tokens":1000,"output_tokens":1000},"content":[{"type":"tool_use","id":"tu9","name":"Bash","input":{}}]}}
+{"type":"user","timestamp":"2026-10-01T10:30:06Z","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu9","is_error":true,"content":"This agent is isolated in the worktree /tmp/wt, but this command is too complex to verify."}]}}

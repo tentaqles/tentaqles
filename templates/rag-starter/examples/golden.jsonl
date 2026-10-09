@@ -1,0 +1,10 @@
+{"id": "refund-window", "question": "How many days do customers have to request a refund?", "relevant": ["refund-policy"], "tags": ["billing"]}
+{"id": "refund-arrival", "question": "When will the refunded money arrive?", "relevant": ["refund-policy"], "tags": ["billing"]}
+{"id": "team-price", "question": "How much does the Team plan cost per month?", "relevant": ["pricing-plans"], "tags": ["billing"]}
+{"id": "sso-plan", "question": "Which plan includes SSO and how do I configure SAML?", "relevant": ["pricing-plans", "sso-setup"], "tags": ["multi-doc"]}
+{"id": "sso-okta", "question": "Is Okta supported as an identity provider?", "relevant": ["sso-setup"]}
+{"id": "trash", "question": "Can I restore a deleted project?", "relevant": ["data-retention"]}
+{"id": "audit-logs", "question": "How long are audit logs retained?", "relevant": ["data-retention"]}
+{"id": "rate-limit", "question": "What happens when I exceed the API rate limit?", "relevant": ["api-rate-limits"], "filters": {"document_type": "article"}, "tags": ["filter-fallback"]}
+{"id": "bulk", "question": "How many records can a bulk endpoint accept?", "relevant": ["api-rate-limits"]}
+{"id": "out-of-corpus", "question": "Do you offer an on-premise installation?", "relevant": [], "tags": ["unanswerable"]}

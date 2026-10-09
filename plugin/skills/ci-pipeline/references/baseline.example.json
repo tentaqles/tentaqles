@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "metrics": {
+    "complex_functions": {
+      "value": 14,
+      "direction": "lower"
+    },
+    "coverage_pct": {
+      "value": 71.4,
+      "direction": "higher",
+      "tolerance": 0.1
+    },
+    "duplication_pct": {
+      "value": 3.2,
+      "direction": "lower"
+    },
+    "largest_file_lines": {
+      "value": 812,
+      "direction": "lower"
+    },
+    "lint_errors": {
+      "value": 37,
+      "direction": "lower"
+    },
+    "lint_warnings": {
+      "value": 120,
+      "direction": "lower"
+    }
+  }
+}

@@ -1,0 +1,85 @@
+# CI + ratchet quality gate for Node / TypeScript.
+# Copy to .github/workflows/ci.yml, ratchet.py and baseline.json to .github/quality/.
+# Action SHAs are pinned; the trailing comment is the release they point to.
+# Update them with Dependabot/Renovate (github-actions ecosystem), not by hand to a tag.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege for every job. Grant more per job only where needed.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc # or: node-version: 22
+          cache: npm
+
+      - name: Install (lockfile only)
+        run: npm ci
+
+      - name: Audit (critical blocks)
+        run: npm audit --audit-level=critical
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # ESLint exits 1 when it finds problems (the ratchet judges those) and 2
+      # when it crashes or the config is broken (that must fail the job).
+      - name: Lint report
+        run: npx eslint . -f json -o eslint.json || [ $? -eq 1 ]
+
+      # Tests must pass outright; only coverage is ratcheted.
+      # Vitest shown; Jest: npx jest --coverage --coverageReporters=json-summary --coverageReporters=text
+      - name: Tests with coverage
+        run: npx vitest run --coverage --coverage.reporter=json-summary --coverage.reporter=text
+
+      - name: Duplication report
+        run: npx --yes jscpd@4.0.5 --silent --reporters json --output jscpd --ignore "**/node_modules/**,**/dist/**,**/coverage/**" src
+
+      - name: Build
+        run: npm run build
+
+      - name: Collect metrics
+        run: >
+          python3 .github/quality/ratchet.py collect --out current.json
+          --eslint eslint.json
+          --coverage-summary coverage/coverage-summary.json
+          --jscpd jscpd/jscpd-report.json
+
+      - name: Ratchet gate
+        run: >
+          python3 .github/quality/ratchet.py compare
+          --baseline .github/quality/baseline.json
+          --current current.json
+          --report ratchet-report.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      # Uploaded even on failure so an agent can read why the gate failed.
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-reports
+          path: |
+            ratchet-report.json
+            current.json
+            eslint.json
+          retention-days: 14
+          if-no-files-found: ignore

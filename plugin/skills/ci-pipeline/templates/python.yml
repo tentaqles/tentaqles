@@ -1,0 +1,84 @@
+# CI + ratchet quality gate for Python (uv project with ruff, pytest, pytest-cov
+# in the dev dependency group). Copy to .github/workflows/ci.yml, ratchet.py and
+# baseline.json to .github/quality/.
+# Action SHAs are pinned; the trailing comment is the release they point to.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      # pip/poetry projects: replace with `pip install -r requirements-dev.txt`
+      # and drop the `uv run` prefixes below.
+      - name: Install (lockfile only)
+        run: |
+          python -m pip install "uv==0.12.0"
+          uv sync --frozen
+
+      # Audits the locked project dependencies, not the tool's own environment.
+      - name: Dependency audit
+        run: |
+          uv export --frozen --no-emit-project --format requirements-txt > requirements.lock.txt
+          uvx --from "pip-audit==2.9.0" pip-audit -r requirements.lock.txt --disable-pip --no-deps
+
+      # ruff exits 1 on violations (judged by the ratchet), 2 on errors (fail).
+      - name: Lint report
+        run: uv run ruff check --output-format json -o ruff.json . || [ $? -eq 1 ]
+
+      - name: Tests with coverage
+        run: uv run pytest -q --cov --cov-report=xml --cov-report=term
+
+      - name: Complexity report
+        run: uvx --from "radon==6.0.1" radon cc -j . > radon.json
+
+      - name: Duplication report
+        run: npx --yes jscpd@4.0.5 --silent --reporters json --output jscpd --format python --ignore "**/.venv/**,**/tests/**" .
+
+      - name: Collect metrics
+        run: >
+          python .github/quality/ratchet.py collect --out current.json
+          --ruff ruff.json
+          --cobertura coverage.xml
+          --radon-cc radon.json
+          --jscpd jscpd/jscpd-report.json
+
+      - name: Ratchet gate
+        run: >
+          python .github/quality/ratchet.py compare
+          --baseline .github/quality/baseline.json
+          --current current.json
+          --report ratchet-report.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-reports
+          path: |
+            ratchet-report.json
+            current.json
+            ruff.json
+          retention-days: 14
+          if-no-files-found: ignore

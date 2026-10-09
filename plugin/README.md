@@ -227,6 +227,19 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:compact-memory` | Manually trigger 4-tier memory consolidation and decay eviction |
 | `/tentaqles:decision-history` | Surface the supersession chain for a topic; show contradiction scores |
 | `/tentaqles:rollback` | List snapshots, preview one, and restore it interactively |
+
+### Engineering-practice skills
+
+Stack-aware guidance that triggers on the work itself (no workspace state needed):
+
+| Skill | What it does |
+|-------|-------------|
+| `/tentaqles:db-migration` | Safe schema changes for Postgres/Supabase and SQL Server: expand/contract, lock-safe DDL, up/down, pre-flight and rollback plan |
+| `/tentaqles:index-advisor` | Read EXPLAIN / execution plans, find missing FK, unused and duplicate indexes, output lock-safe DDL plus how to verify it |
+| `/tentaqles:ci-pipeline` | GitHub Actions templates (Node/TS, Python, Go) with pinned SHAs and a ratchet quality gate (`baseline.json` never gets worse) |
+| `/tentaqles:auth-security` | IdP vs own auth, argon2id, sessions vs JWT, refresh rotation, CSRF, rate limits, MFA, RLS, secrets, ASVS-style checklist |
+| `/tentaqles:system-design-review` | Review a design/RFC across SLOs, data, failure modes, idempotency, observability, security, cost, rollback; ranked findings |
+| `/tentaqles:grill-me` | Interview the user on every business-rule branch before coding; write the spec and a "verifier first" test list |
 | `/tentaqles:profile-refresh` | Regenerate the learned workspace profile from `memory.db` |
 | `/tentaqles:cross-patterns` | Display cross-workspace patterns detected by the pattern cron job |
 | `/tentaqles:emit-signal` | Emit an inter-workspace signal to one or more registered workspaces |
