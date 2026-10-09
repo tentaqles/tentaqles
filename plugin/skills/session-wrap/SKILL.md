@@ -9,6 +9,8 @@ Save the current session's context to temporal memory so the next session starts
 
 The goal is to make the user's future self — or the next Claude session — able to pick up exactly where this one left off.
 
+This skill is the memory step and stays quick and offline. For a full end-of-day wrap (what landed per git/gh, open PRs and CI state, a daily note), use the `wrap` skill: it gathers those facts and then runs this skill to save them.
+
 ## Detect Client Workspace
 
 ```bash

@@ -215,6 +215,10 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:switch-client` | Show all clients, verify identity, switch context safely |
 | `/tentaqles:workspace-status` | Show current client context + preflight check results |
 | `/tentaqles:session-wrap` | End-of-session save: summary, decisions, pending items, corrections |
+| `/tentaqles:wrap` | End-of-day wrap: what landed (git/gh), open PRs + CI state, memory via session-wrap, a daily note |
+| `/tentaqles:ship` | Working tree → PR: identity, branch, `tq decide triage` review depth, tests, commit, `gh pr create` |
+| `/tentaqles:babysit-pr` | Loop a PR to green: watch checks, fix failures from logs, answer review threads; never `--admin` |
+| `/tentaqles:n8n-triage` | Diagnose a failing n8n workflow read-only, fix a draft copy, promote only with confirmation |
 | `/tentaqles:build-graph` | Build the knowledge graph for the current workspace + embed nodes |
 | `/tentaqles:query-memory` | Semantic search over memory and knowledge graphs |
 | `/tentaqles:file-history` | Show everything Tentaqles has recorded about a specific file |
@@ -224,6 +228,19 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:compact-memory` | Manually trigger 4-tier memory consolidation and decay eviction |
 | `/tentaqles:decision-history` | Surface the supersession chain for a topic; show contradiction scores |
 | `/tentaqles:rollback` | List snapshots, preview one, and restore it interactively |
+
+### Engineering-practice skills
+
+Stack-aware guidance that triggers on the work itself (no workspace state needed):
+
+| Skill | What it does |
+|-------|-------------|
+| `/tentaqles:db-migration` | Safe schema changes for Postgres/Supabase and SQL Server: expand/contract, lock-safe DDL, up/down, pre-flight and rollback plan |
+| `/tentaqles:index-advisor` | Read EXPLAIN / execution plans, find missing FK, unused and duplicate indexes, output lock-safe DDL plus how to verify it |
+| `/tentaqles:ci-pipeline` | GitHub Actions templates (Node/TS, Python, Go) with pinned SHAs and a ratchet quality gate (`baseline.json` never gets worse) |
+| `/tentaqles:auth-security` | IdP vs own auth, argon2id, sessions vs JWT, refresh rotation, CSRF, rate limits, MFA, RLS, secrets, ASVS-style checklist |
+| `/tentaqles:system-design-review` | Review a design/RFC across SLOs, data, failure modes, idempotency, observability, security, cost, rollback; ranked findings |
+| `/tentaqles:grill-me` | Interview the user on every business-rule branch before coding; write the spec and a "verifier first" test list |
 | `/tentaqles:profile-refresh` | Regenerate the learned workspace profile from `memory.db` |
 | `/tentaqles:cross-patterns` | Display cross-workspace patterns detected by the pattern cron job |
 | `/tentaqles:emit-signal` | Emit an inter-workspace signal to one or more registered workspaces |
@@ -237,7 +254,8 @@ All hooks are automatic and run silently.
 | `SessionStart` | Session begins (and after compaction) | `bootstrap.py` (one-time deps install, started in the background — never blocks), `tq_hook.sh session-start` → `tq claude-hook session-start` (report resolved identity + `tq doctor`; no switching), then `session-preamble.py --memory-only` (inject memory context; after a compaction, re-inject decisions, hot nodes and open pending instead) |
 | `PreToolUse` | Before Bash commands | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest, block on drift (exit 2). Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. MCP tool calls are not gated in 0.4.0. |
 | `PostToolUse` | After Bash/Edit/Write | `knowledge-capture.py` — scan output for decisions, record file touches |
-| `Stop` | Claude finishes a turn | `stop-capture.py` — once per session, if the conversation weighed alternatives, ask Claude to record the decisions; once per session, if the context passes ~350k tokens, suggest `/compact` or session-wrap (non-blocking) |
+| `Stop` | Claude finishes a turn | `stop-capture.py` — once per session, if the conversation weighed alternatives, ask Claude to record the decisions; once per session, if the context passes ~350k tokens, suggest `/compact` or session-wrap (non-blocking); `tq_hook.sh stop` → `tq claude-hook stop` — Jev completion-evidence check (only with a `decision:` block; shadow mode logs, enforce mode sends Claude back once per session when it claims verification the transcript does not show) |
+| `UserPromptSubmit` | You send a prompt | `tq_hook.sh prompt-submit` → `tq claude-hook prompt-submit` — Jev skill picker (only with a `decision:` block; logs the pick, and in enforce mode adds a one-line "Skill that may fit" hint; never blocks) |
 | `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory; the detached worker also extracts semantic facts with `claude -p --model haiku` (opt out: `TENTAQLES_SEMANTIC_FACTS=0`) |
 
 All hooks and skills use `tq_run.sh` → `tq_env.sh` to resolve a working Python interpreter, bypassing broken venv shims and machines where only `python3` exists (macOS). POSIX-compatible, tested on Windows (Git Bash), macOS, and Linux.

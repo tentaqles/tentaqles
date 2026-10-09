@@ -1,0 +1,6 @@
+{"ts":"2026-08-01T00:00:00Z","ws":"acme","purpose":"guard","model":"jev-1.13.0","questions":1,"ms":9000,"cost_usd":1}
+{"ts":"2026-10-01T00:00:00Z","ws":"acme","purpose":"guard","model":"jev-1.13.0","questions":1,"ms":100,"input_tokens":300,"cost_usd":0.00001}
+{"ts":"2026-10-01T00:01:00Z","ws":"acme","purpose":"guard","model":"jev-1.13.0","questions":1,"ms":5,"cached":true}
+{"ts":"2026-10-01T00:02:00Z","ws":"acme","purpose":"route","model":"jev-1.13.0","questions":1,"ms":300,"error":"jev: timeout"}
+{"ts":"2026-10-01T00:03:00Z","ws":"acme","purpose":"triage","model":"jev-1.13.0","questions":11,"ms":200,"input_tokens":600,"cost_usd":0.00002}
+{"ts":"2026-10-01T00:04:00Z","ws":"other","purpose":"guard","model":"jev-1.13.0","questions":1,"ms":50,"cost_usd":0.5}

@@ -1,6 +1,6 @@
 ---
 name: emit-signal
-description: Broadcast a named signal from the current workspace to another registered workspace. Use when the user says "send signal", "broadcast to workspace", "notify workspace", or "/tentaqles:signal". Arguments: target workspace ID, event type, message.
+description: 'Broadcast a named signal from the current workspace to another registered workspace. Use when the user says "send signal", "broadcast to workspace", "notify workspace", or "/tentaqles:signal". Arguments: target workspace ID, event type, message.'
 ---
 
 # Emit Signal

@@ -73,10 +73,18 @@ REDACTION_PATTERNS: list[tuple[str, re.Pattern]] = [
             r"://[^\s:/@]+:[^\s/@]+@[^\s/]+"
         ),
     ),
-    # PEM private key header (RSA / EC / OPENSSH / generic)
+    # Whole private-key blocks: any PEM "... PRIVATE KEY" / "PRIVATE KEY BLOCK",
+    # SSH2 and PuTTY .ppk. Unterminated blocks are redacted to the end of the
+    # text. Mirrors internal/secrets in tq.
     (
         "private_key",
-        re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY-----"),
+        re.compile(
+            r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"
+            r"(?:.*?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|.*)"
+            r"|---- BEGIN SSH2 [A-Z ]*PRIVATE KEY ----(?:.*?---- END SSH2 [A-Z ]*PRIVATE KEY ----|.*)"
+            r"|PuTTY-User-Key-File-\d+:(?:.*?Private-MAC: *[0-9a-fA-F]+|.*)",
+            re.S,
+        ),
     ),
     # Generic API key / secret / token assignment: KEY=value or "key": "value"
     # Intentionally last so specific vendors above win first.

@@ -20,8 +20,8 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
   jev-memory-gate.py    Detached worker for the shadow Jev memory gates (tentaqles/memory/jev_gate.py)
-skills/                 18 skill directories, each with SKILL.md
-hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, PreToolUse, PostToolUse, Stop)
+skills/                 28 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
+hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)
 .claude-plugin/         Plugin manifest (plugin.json)
 tests/                  pytest suite
 ```
