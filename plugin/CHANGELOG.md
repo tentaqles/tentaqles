@@ -2,6 +2,15 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.11.0] — 2026-10-09
+
+### Added
+
+- **`guard` skill.** Lists tq's guard rules and turns them off or on, or
+  changes ask/deny, for one workspace or for all, through `tq guard`
+  (tq >= 0.7.0). Every change asks you to confirm; the skill never edits
+  guard files by hand.
+
 ## [0.10.0] — 2026-10-09
 
 Phase 5–7 of the workflow upgrade. Every Jev feature starts in shadow mode

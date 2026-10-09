@@ -223,6 +223,7 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:query-memory` | Semantic search over memory and knowledge graphs |
 | `/tentaqles:file-history` | Show everything Tentaqles has recorded about a specific file |
 | `/tentaqles:explore` | Run `tq decide explore` to find the few file:line ranges that answer a question, then read only those |
+| `/tentaqles:guard` | See which tq guard rules are on, switch them off or on, or change ask/deny, for one workspace or all (you confirm each change) |
 | `/tentaqles:dashboard` | Launch the real-time dashboard at localhost:8765 |
 | `/tentaqles:setup-demo` | Create mock client workspaces to explore the plugin safely |
 | `/tentaqles:compact-memory` | Manually trigger 4-tier memory consolidation and decay eviction |

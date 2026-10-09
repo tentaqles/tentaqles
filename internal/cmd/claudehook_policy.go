@@ -10,6 +10,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/commitscan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -154,30 +155,26 @@ func loadProjectRules(cwd string, ws *resolve.Workspace) ([]policy.Rule, []error
 // policyDecision evaluates every layer of rules plus the two checks that need
 // I/O: the commit secret scan and the cross-client MCP check.
 func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall) policy.Decision {
-	layers := policy.Layers{Builtin: policy.Builtin()}
+	eff := effectiveGuard(ws)
+	layers := policy.Layers{Builtin: policy.Builtin(), Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
 	if ws != nil {
 		layers.Manifest = ws.Manifest.Guard.Rules
 		for i := range layers.Manifest {
 			layers.Manifest[i].Source = ws.ManifestPath
 		}
-		layers.Disable = ws.Manifest.Guard.Disable
 	}
 	layers.Project, _ = loadProjectRules(cwd, ws)
 	set, _ := policy.Build(layers)
 	d := set.Evaluate(call)
 
-	off := map[string]bool{}
-	for _, id := range layers.Disable {
-		off[strings.TrimSpace(id)] = true
-	}
-	if call.IsShell() && !off["tq/commit-secret"] {
+	if call.IsShell() && !eff.Off("tq/commit-secret") {
 		if hits := commitscan.Scan(cwd, call.Command, gitcfg.RunGitIn); len(hits) > 0 {
-			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/commit-secret", commitReason(hits)))
+			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits)))
 		}
 	}
-	if call.IsMCP() && !off["tq/cross-client-mcp"] {
+	if call.IsMCP() && !eff.Off("tq/cross-client-mcp") {
 		if other := mcpOwner(ws, cfg, call.MCPServer()); other != "" {
-			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/cross-client-mcp",
+			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/cross-client-mcp", policy.Deny), "tq/cross-client-mcp",
 				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other)))
 		}
 	}
@@ -236,4 +233,13 @@ func writeAsk(w io.Writer, reason string) error {
 			"permissionDecisionReason": reason,
 		},
 	})
+}
+
+// effectiveGuard merges the user's global guard file with the workspace
+// manifest (nil ws: the global file alone).
+func effectiveGuard(ws *resolve.Workspace) guardcfg.Effective {
+	if ws == nil || ws.Manifest == nil {
+		return guardcfg.Resolve(nil, "")
+	}
+	return guardcfg.Resolve(ws.Manifest, ws.Name)
 }

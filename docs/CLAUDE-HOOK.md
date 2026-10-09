@@ -361,3 +361,38 @@ stderr. The agent only ever writes `$NAME`. Templates (`.env.example`,
 `.sample`, `.template`, …) stay readable. `tq dotenv run` runs an arbitrary
 command, so it is never pre-approved: it goes through the permission mode
 like the command it wraps.
+
+## Turning rules on and off
+
+Every rule has an id (`tq guard list` shows them all with their current
+state). Change them with `tq guard`, or ask Claude with the `guard` skill:
+
+```
+tq guard list [--ws NAME]
+tq guard off tq/cloud-delete --all              # every workspace
+tq guard on  tq/cloud-delete --ws acme          # back on, for acme only
+tq guard set tq/force-push deny --ws acme       # ask -> deny
+tq guard set tq/force-push default --ws acme    # remove the override
+```
+
+Three trusted layers decide, most specific last:
+
+1. tq's built-in rules (including the Jev `jev/*` rules);
+2. `~/.tentaqles/guard.yaml`, written by `--all`: `disable`, `actions`
+   (`ask`/`deny` per id) and extra `rules`, for every workspace;
+3. the workspace manifest's `guard` block, written by `--ws`: `disable`,
+   `enable` (switches back on what the global file turned off), `actions`
+   and `rules`. It wins over the global file.
+
+A repo's `.claude/tq-rules.yaml` is not a layer here. It is repo content,
+so it can only add rules and can never turn one off.
+
+`--ws` edits only a manifest that is currently trusted, checks that the
+result still loads, and re-trusts it; a manifest with unreviewed edits is
+refused. A global file that does not parse is ignored as a whole, so every
+rule it changed is back to its default.
+
+The guard protects its own settings: `tq guard off|on|set`, `tq allow` and
+`tq deny` ask before they run (`tq/guard-change`), and direct edits to
+`guard.yaml` from file tools or the shell are denied
+(`tq/guard-file-write`). An agent can propose a change; you confirm it.
