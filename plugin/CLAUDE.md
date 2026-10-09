@@ -19,7 +19,7 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib); installs in a detached --worker
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
-skills/                 23 skill directories, each with SKILL.md (some with references/, scripts/, templates/)
+skills/                 27 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
 hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, PreToolUse, PostToolUse, Stop)
 .claude-plugin/         Plugin manifest (plugin.json)
 tests/                  pytest suite
