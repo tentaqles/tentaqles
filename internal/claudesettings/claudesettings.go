@@ -42,21 +42,21 @@ type Owned struct {
 	StatusLine bool     `json:"status_line,omitempty"`
 }
 
-// baselineAllow are read-only commands seen most often in real sessions.
-// They skip the auto-mode classifier; tq's PreToolUse guard still runs first,
-// so e.g. `cat .env` keeps asking.
+// baselineAllow are commands that only read. They skip the auto-mode
+// classifier, so nothing here may write files, run repo-defined code, or
+// take an argument that turns it into one that does: no find (-exec,
+// -delete), no sed (w/e commands), no test or build runners (package
+// scripts can do anything), no npx (fetches and runs packages). Those stay
+// with the classifier. tq's PreToolUse guard still runs first, so e.g.
+// `cat .env` keeps asking.
 var baselineAllow = []string{
 	"Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
-	"Bash(git branch:*)", "Bash(git rev-parse:*)", "Bash(git ls-files:*)", "Bash(git remote -v)",
-	"Bash(git worktree list:*)", "Bash(git fetch:*)",
+	"Bash(git rev-parse:*)", "Bash(git ls-files:*)", "Bash(git remote -v)",
+	"Bash(git worktree list:*)",
 	"Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr checks:*)", "Bash(gh pr diff:*)",
 	"Bash(gh run view:*)", "Bash(gh run list:*)", "Bash(gh issue view:*)", "Bash(gh issue list:*)",
 	"Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)",
-	"Bash(rg:*)", "Bash(find:*)", "Bash(sed -n:*)", "Bash(jq:*)", "Bash(which:*)", "Bash(pwd)",
-	"Bash(go test:*)", "Bash(go vet:*)", "Bash(go build:*)", "Bash(gofmt -l:*)",
-	"Bash(npm test:*)", "Bash(npm run test:*)", "Bash(npm run lint:*)", "Bash(npm run build:*)",
-	"Bash(pnpm test:*)", "Bash(pnpm lint:*)", "Bash(npx tsc:*)", "Bash(npx vitest:*)",
-	"Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(uv run pytest:*)", "Bash(ruff check:*)",
+	"Bash(rg:*)", "Bash(which:*)", "Bash(pwd)",
 	"Bash(tq doctor:*)", "Bash(tq list:*)", "Bash(tq version)", "Bash(tq secrets audit:*)",
 	"Bash(az account show:*)", "Bash(aws sts get-caller-identity:*)",
 	"PowerShell(Get-ChildItem:*)", "PowerShell(Get-Content:*)", "PowerShell(Test-Path:*)",

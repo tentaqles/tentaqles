@@ -303,3 +303,27 @@ func GitInvocations(c string) []GitInvocation {
 	}
 	return out
 }
+
+var heredocStart = regexp.MustCompile(`<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)['"]?`)
+
+// StripHeredocs removes heredoc bodies (the lines between `<<WORD` and the
+// closing WORD line) from a shell command, so text a command feeds to an
+// interpreter or writes to a file is not mistaken for commands to run.
+func StripHeredocs(c string) string {
+	lines := strings.Split(c, "\n")
+	var out []string
+	var ends []string
+	for _, l := range lines {
+		if len(ends) > 0 {
+			if strings.TrimSpace(l) == ends[0] {
+				ends = ends[1:]
+			}
+			continue
+		}
+		out = append(out, l)
+		for _, m := range heredocStart.FindAllStringSubmatch(l, -1) {
+			ends = append(ends, m[2])
+		}
+	}
+	return strings.Join(out, "\n")
+}

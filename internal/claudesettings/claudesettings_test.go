@@ -164,3 +164,19 @@ func contains(xs []string, s string) bool {
 	}
 	return false
 }
+
+// Allow rules skip the auto-mode classifier, so a prefix that can write,
+// delete, or run repo-defined/fetched code must never be in the baseline.
+func TestBaselineAllowIsReadOnly(t *testing.T) {
+	risky := []string{"find", "sed", "awk", "xargs", "npm", "pnpm", "yarn", "npx", "go test", "go build", "go run",
+		"pytest", "python", "uv run", "make", "git fetch", "git branch", "git checkout", "git push", "gh pr merge",
+		"rm", "mv", "cp", "tee", "curl", "wget", "bash", "sh ", "pwsh", "Invoke-", "Set-", "Remove-"}
+	for _, entry := range baselineAllow {
+		inner := strings.TrimSuffix(entry[strings.Index(entry, "(")+1:], ")")
+		for _, r := range risky {
+			if strings.HasPrefix(inner, r) {
+				t.Errorf("baseline allow %q starts with risky prefix %q", entry, r)
+			}
+		}
+	}
+}

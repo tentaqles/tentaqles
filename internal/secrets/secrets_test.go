@@ -34,6 +34,10 @@ func TestScanLine(t *testing.T) {
 		{"windows var placeholder", "postgresql://app:%DB_PASS%@db.x:5432/d", ""},
 		{"max tokens not a secret", "max_tokens: 4096", ""},
 		{"tokenizer word ok", "tokenizer = load_tokenizer_from_disk_cache()", ""},
+		{"dotted code reference", "this.apiKey = options.apiKey ?? fallback", ""},                                  // tq:allow-secret
+		{"env lookup elsewhere on line", "this.apiKey = options.apiKey ?? process.env.TYPESAFE_API_KEY ?? ''", ""}, // tq:allow-secret
+		{"arn template", `SEC_KEY="arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:x/private-key"`, ""},         // tq:allow-secret
+		{"vendor token beside a var still caught", j("GH=${X} gh", "p_", strings.Repeat("a", 36)), "github_token"},
 		{"portuguese text", "senha do usuário não é exibida 🔒", ""},
 	}
 	for _, c := range cases {

@@ -67,13 +67,31 @@ func ScanLine(line string) string {
 			continue
 		}
 		if p.Name == "api_key_assignment" || p.Name == "connection_string" || p.Name == "bearer_token" {
-			if placeholderRe.MatchString(line[loc[0]:loc[1]]) {
+			// Generic patterns: a reference anywhere on the line (an env
+			// lookup, ${VAR}, a template) means the value is wired in, not
+			// written down. Vendor-format tokens are always reported.
+			if placeholderRe.MatchString(line) {
 				continue
 			}
+		}
+		if p.Name == "api_key_assignment" && codeReference(line[loc[0]:loc[1]]) {
+			continue
 		}
 		return p.Name
 	}
 	return ""
+}
+
+// assignValueRe pulls the value out of an api_key_assignment match.
+var assignValueRe = regexp.MustCompile(`[:=]\s*["']?([^"'\s]+)`)
+
+// identRefRe is a code reference rather than a literal: options.apiKey,
+// this.config.token, cfg.Secret().
+var identRefRe = regexp.MustCompile(`^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)+(\(\))?[,;)]?$`)
+
+func codeReference(match string) bool {
+	m := assignValueRe.FindStringSubmatch(match)
+	return m != nil && identRefRe.MatchString(m[1])
 }
 
 // Scan reports every line of text that holds a secret-shaped value.

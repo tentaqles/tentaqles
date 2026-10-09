@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -24,9 +25,12 @@ func TestPlanFor(t *testing.T) {
 		{`git add -A && git commit -m x`, Plan{Commits: true, WorkingDir: true, Untracked: true}},
 		{`git -C repo add . ; git -C repo commit -m x`, Plan{Commits: true, WorkingDir: true, Untracked: true}},
 		{`git commit --amend --no-edit`, Plan{Commits: true}},
+		{`git add internal docs/x.md && git commit -m x`, Plan{Commits: true, WorkingDir: true, Untracked: true, AddPaths: []string{"internal", "docs/x.md"}}},
+		{"python - <<'EOF'\nprint('git add -A && git commit -m x')\nEOF", Plan{}},
+		{"cat > f.sh <<EOF\ngit commit -m x\nEOF\ngit status", Plan{}},
 	}
 	for _, c := range cases {
-		if got := PlanFor(c.cmd); got != c.want {
+		if got := PlanFor(c.cmd); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("PlanFor(%q) = %+v, want %+v", c.cmd, got, c.want)
 		}
 	}
@@ -95,6 +99,16 @@ func TestScanRealRepo(t *testing.T) {
 	hits = Scan(dir, `git add -A && git commit -m x`, gitcfg.RunGitIn)
 	if len(hits) == 0 {
 		t.Fatal("add -A && commit missed an untracked secret")
+	}
+
+	// A path-specific add only scans those paths: the untracked secret
+	// elsewhere is not part of this commit.
+	write(t, dir, "docs/ok.md", "fine\n")
+	if hits := Scan(dir, "git add docs && git commit -m docs", gitcfg.RunGitIn); len(hits) != 0 {
+		t.Fatalf("path-specific add scanned other untracked files: %+v", hits)
+	}
+	if hits := Scan(dir, "git add app && git commit -m app", gitcfg.RunGitIn); len(hits) == 0 {
+		t.Fatal("path-specific add missed a secret in the added path")
 	}
 
 	// A new .env is refused by name; .env.example is fine.
