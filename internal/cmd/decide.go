@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -36,7 +37,8 @@ The state is redacted before it is sent and framed as untrusted data. Calls
 are cached and logged (cost, latency; never the state) under
 $TQ_HOME/decide/.`,
 	}
-	c.AddCommand(newDecideStatusCmd(), newDecideAskCmd(), newDecideEvalCmd(), newDecideTriageCmd())
+	c.AddCommand(newDecideStatusCmd(), newDecideAskCmd(), newDecideEvalCmd(), newDecideTriageCmd(),
+		newDecideExploreCmd(), newDecideLogCmd())
 	return c
 }
 
@@ -46,6 +48,11 @@ func decideClient(purpose string, timeout time.Duration) (*decide.Client, decide
 	if err != nil {
 		return nil, decide.Policy{}, nil, err
 	}
+	return decideClientAt(cwd, purpose, timeout)
+}
+
+// decideClientAt builds a client from the policy of the workspace holding dir.
+func decideClientAt(cwd, purpose string, timeout time.Duration) (*decide.Client, decide.Policy, *resolve.Workspace, error) {
 	cfg, err := registry.Load()
 	if err != nil {
 		return nil, decide.Policy{}, nil, err
@@ -110,6 +117,7 @@ func newDecideAskCmd() *cobra.Command {
 	var qs []string
 	var asJSON bool
 	var timeout time.Duration
+	var purpose string
 	c := &cobra.Command{
 		Use:   "ask",
 		Short: "Ask one batch of questions about a state",
@@ -155,7 +163,7 @@ question (id, answer), or the raw answers with --json.`,
 			if len(questions) == 0 {
 				return errors.New("at least one --q or --questions-file is required")
 			}
-			cl, _, _, err := decideClient("cli", timeout)
+			cl, _, _, err := decideClient(purposeLabel(purpose), timeout)
 			if err != nil {
 				return err
 			}
@@ -194,8 +202,20 @@ question (id, answer), or the raw answers with --json.`,
 	c.Flags().String("questions-file", "", "JSON object of id -> native Jev question")
 	c.Flags().BoolVar(&asJSON, "json", false, "print raw answers as JSON")
 	c.Flags().DurationVar(&timeout, "timeout", decide.BatchTimeout, "request deadline")
+	c.Flags().StringVar(&purpose, "purpose", "cli", "label for the cost log (e.g. memory-capture)")
 	return c
 }
+
+// purposeLabel keeps a caller-supplied log label short and plain, so the
+// cost log never carries free text.
+func purposeLabel(s string) string {
+	if !labelRe.MatchString(s) {
+		return "cli"
+	}
+	return s
+}
+
+var labelRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 // readStateFile returns the file as a JSON value when it parses, else text.
 func readStateFile(path string) (any, error) {

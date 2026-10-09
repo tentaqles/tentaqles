@@ -218,6 +218,7 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:build-graph` | Build the knowledge graph for the current workspace + embed nodes |
 | `/tentaqles:query-memory` | Semantic search over memory and knowledge graphs |
 | `/tentaqles:file-history` | Show everything Tentaqles has recorded about a specific file |
+| `/tentaqles:explore` | Run `tq decide explore` to find the few file:line ranges that answer a question, then read only those |
 | `/tentaqles:dashboard` | Launch the real-time dashboard at localhost:8765 |
 | `/tentaqles:setup-demo` | Create mock client workspaces to explore the plugin safely |
 | `/tentaqles:compact-memory` | Manually trigger 4-tier memory consolidation and decay eviction |

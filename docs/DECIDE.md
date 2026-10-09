@@ -174,3 +174,71 @@ rule can still deny or ask), and its output carries `updatedInput` with no
 Before switching a workspace to `mode: enforce`, confirm in a live session
 that a routed launch actually runs on the picked model (the shadow log shows
 what it would pick; the subagent's transcript shows what ran).
+
+## Explore: find the code that answers a question
+
+```
+tq decide explore "where does the breaker trip after a jev failure" [--path DIR] [--top 5] [--candidates 30] [--json] [--no-jev]
+```
+
+The goal is to have an agent read 5 ranges instead of 50 files. It runs in two stages:
+
+1. **Keyword pre-filter (local, deterministic).** It takes up to 8 terms from the question:
+   - identifiers and words of 3+ letters, minus stopwords;
+   - camelCase and snake_case names also contribute their parts.
+
+   Inside a git work tree it runs `git grep -n -I -i -F --untracked`, which covers tracked files plus untracked files that are not ignored. Elsewhere it walks the tree, honouring the root `.gitignore` and skipping `node_modules`, `vendor`, `dist` and binaries.
+
+   Each hit becomes a ~40-line window. Overlapping windows in one file merge, up to 60 lines. Spans are ranked by distinct terms, then hit count, with a bonus for a term in the file name and a small penalty for test files. The best `--candidates` are kept.
+2. **Jev re-rank.** For each span it asks one noul question: "Is the code span data.spans.sN relevant to answering this question: …?"
+   - All questions go in one call. The call is split only when the spans would exceed the ~80 KB request cap, with at most 3 requests in parallel.
+   - The span text is clipped to 4 KB, then redacted and framed like every other Jev state.
+
+The output is the top `--top` ranges as `score  path:start-end  [terms]`. The header says which ranking you got:
+
+- `jev ranked N candidate spans (k request(s))`: the scores are Jev's relevance probabilities.
+- `keyword ranking … (jev unavailable: …)`: the scores are keyword scores normalized to [0, 1]. You get this fallback when:
+  - the backend is off, there is no key, or the directory is not in a trusted workspace;
+  - any request fails, or any answer is missing;
+  - you pass `--no-jev`.
+
+  A partial set of Jev answers is never mixed with keyword scores.
+
+Jev only re-orders what the keyword stage found. It never adds a file. `.env*` files, private keys (`.pem`, `.key`, `id_rsa*`…) and lockfiles are never read, so their content can never reach Jev. The policy comes from the workspace holding `--path`. Explore is a ranking, not a gate, so it runs in shadow and enforce mode alike. Calls appear in `log.jsonl` with `purpose: explore`.
+
+The plugin's `explore` skill (`/tentaqles:explore`) tells agents to run this first and then read only the printed ranges with `offset`/`limit`.
+
+## Memory gates (shadow)
+
+The plugin decides what memory keeps and what it surfaces in two places. Each can ask Jev the same question and log the answer. Neither changes what the plugin does.
+
+| gate | where | plugin decision today | Jev question (noul) | logged as |
+|---|---|---|---|---|
+| capture | `knowledge-capture.py` (PostToolUse) | a regex (`decided to`, `root cause`, …) matches, and the files mentioned are touched | does this text record a decision, root cause, workaround or discovery worth remembering? | `kind: memory-capture`; `would.worth` = keep/drop; `p.worth`; `extra` = tool, number of paths |
+| recall | `session-preamble.py` (SessionStart) | the top 5 semantic facts by strength and the 3 newest decisions are printed | per candidate (up to 15 facts and 10 decisions): is this useful context for the next session, given the last session summary and hot files? | `kind: memory-recall`; `p` per item, keyed by its current rank (`f0`…, `d0`…); `extra.facts_overlap` = how many of today's top 5 Jev would also pick; `would.facts` = same/reorder |
+
+How they run:
+
+- **Never on the hook's critical path.** The hook does only local work: the regex, and a few SQLite reads for recall. It then hands a payload to `scripts/jev-memory-gate.py` through `_detach.spawn_detached` and returns.
+  - The detached worker runs `tq decide ask --json` with a 5 s request deadline and an 8 s process timeout, then `tq decide log`.
+  - If the spawn fails, the gate is skipped. It never runs inline.
+- **Only where Jev is on.** The hook checks the manifest's `decision.backend: typesafe` first, so other workspaces never start a worker. tq still enforces trust, policy and the key.
+  - "Backend off", "not trusted" and "no key" are not logged.
+  - Other errors are logged as `error`, with no decision.
+  - The recall gate is skipped when every candidate is already printed, since nothing could be re-ranked.
+- **Opt out** with `TENTAQLES_JEV_MEMORY=0` (also `false`, `no`, `off`). The gates also stay off inside the plugin's own headless `claude -p` child.
+- **No content on command lines or in logs.**
+  - The text goes to tq in a temp state file that is deleted after the call. The plugin redacts it, and tq redacts it again.
+  - `tq decide log` accepts only short plain tokens as keys and values (ids, actions, counts) and refuses anything that looks like text.
+
+```
+tq decide log --kind memory-capture --p worth=0.82 --would worth=keep --extra tool=Bash
+```
+
+Both gates are shadow-only by design: there is no enforce switch yet. Before Jev may drop a capture or reorder the preamble:
+
+1. Label a sample of `memory-capture` lines (was the regex hit worth keeping?).
+2. Run them through `tq decide eval`.
+3. Check that recall overlap is stable across a few weeks of sessions.
+
+Even then, the gates may only filter or re-rank what the deterministic code produced, and on any error they fall back to it.
