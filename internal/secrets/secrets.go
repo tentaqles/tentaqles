@@ -89,9 +89,13 @@ var assignValueRe = regexp.MustCompile(`[:=]\s*["']?([^"'\s]+)`)
 // this.config.token, cfg.Secret().
 var identRefRe = regexp.MustCompile(`^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)+(\(\))?[,;)]?$`)
 
+// plainIdentRe is a bare identifier (token_budget, maxTokens): real
+// credentials essentially always carry digits or symbols.
+var plainIdentRe = regexp.MustCompile(`^[A-Za-z_]+[,;)]?$`)
+
 func codeReference(match string) bool {
 	m := assignValueRe.FindStringSubmatch(match)
-	return m != nil && identRefRe.MatchString(m[1])
+	return m != nil && (identRefRe.MatchString(m[1]) || plainIdentRe.MatchString(m[1]))
 }
 
 // Scan reports every line of text that holds a secret-shaped value.

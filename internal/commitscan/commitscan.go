@@ -41,6 +41,7 @@ var envTemplateRe = regexp.MustCompile(`(?i)\.env\.(example|sample|template|dist
 type Plan struct {
 	Commits    bool // the command runs git commit
 	WorkingDir bool // tracked, unstaged changes get committed too (commit -a, or a chained git add)
+	CommitAll  bool // commit -a/--all: every tracked change, regardless of AddPaths
 	Untracked  bool // new files get committed too (a chained git add)
 	// AddPaths limits the working-tree/untracked scan to what a chained
 	// `git add <paths>` stages. Empty with Untracked set means everything
@@ -63,6 +64,10 @@ func PlanFor(command string) Plan {
 				case a == "-A" || a == "--all" || a == "." || a == ":/" || a == "*" || a == "--no-ignore-removal":
 					addAll = true
 				case strings.HasPrefix(a, "-"):
+				case strings.ContainsAny(a, "*?[$`:"):
+					// globs, magic pathspecs and substitutions: cannot be
+					// resolved here, so scan everything
+					addAll = true
 				default:
 					paths = append(paths, strings.Trim(a, `"'`))
 				}
@@ -75,6 +80,7 @@ func PlanFor(command string) Plan {
 			for _, a := range inv.Args {
 				if a == "--all" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "a")) {
 					p.WorkingDir = true
+					p.CommitAll = true
 				}
 			}
 		}
@@ -129,7 +135,7 @@ func Scan(dir, command string, run Runner) []Hit {
 	if p.WorkingDir {
 		wd := []string{"diff", "--no-color", "--no-ext-diff", "-U0"}
 		wn := []string{"diff", "--name-only"}
-		if len(p.AddPaths) > 0 {
+		if len(p.AddPaths) > 0 && !p.CommitAll {
 			wd = append(append(wd, "--"), p.AddPaths...)
 			wn = append(append(wn, "--"), p.AddPaths...)
 		}

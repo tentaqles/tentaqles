@@ -38,6 +38,8 @@ func TestScanLine(t *testing.T) {
 		{"env lookup elsewhere on line", "this.apiKey = options.apiKey ?? process.env.TYPESAFE_API_KEY ?? ''", ""}, // tq:allow-secret
 		{"arn template", `SEC_KEY="arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:x/private-key"`, ""},         // tq:allow-secret
 		{"vendor token beside a var still caught", j("GH=${X} gh", "p_", strings.Repeat("a", 36)), "github_token"},
+		{"identifier value", "max_tokens=token_budget_limit", ""}, // tq:allow-secret
+		{"letters-and-digits password still caught", j("DB_PASSWORD=", "hunter2hunter2x"), "api_key_assignment"},
 		{"portuguese text", "senha do usuário não é exibida 🔒", ""},
 	}
 	for _, c := range cases {

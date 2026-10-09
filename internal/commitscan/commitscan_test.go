@@ -20,8 +20,11 @@ func TestPlanFor(t *testing.T) {
 	}{
 		{"git status", Plan{}},
 		{`git commit -m "fix a bug"`, Plan{Commits: true}},
-		{`git commit -am "x"`, Plan{Commits: true, WorkingDir: true}},
-		{`git commit --all -m x`, Plan{Commits: true, WorkingDir: true}},
+		{`git commit -am "x"`, Plan{Commits: true, WorkingDir: true, CommitAll: true}},
+		{`git commit --all -m x`, Plan{Commits: true, WorkingDir: true, CommitAll: true}},
+		{`git add docs; git commit -a -m x`, Plan{Commits: true, WorkingDir: true, Untracked: true, CommitAll: true, AddPaths: []string{"docs"}}},
+		{`git add '*.py' && git commit -m x`, Plan{Commits: true, WorkingDir: true, Untracked: true}},
+		{"git add $(git ls-files -o) && git commit -m x", Plan{Commits: true, WorkingDir: true, Untracked: true}},
 		{`git add -A && git commit -m x`, Plan{Commits: true, WorkingDir: true, Untracked: true}},
 		{`git -C repo add . ; git -C repo commit -m x`, Plan{Commits: true, WorkingDir: true, Untracked: true}},
 		{`git commit --amend --no-edit`, Plan{Commits: true}},
@@ -110,6 +113,17 @@ func TestScanRealRepo(t *testing.T) {
 	if hits := Scan(dir, "git add app && git commit -m app", gitcfg.RunGitIn); len(hits) == 0 {
 		t.Fatal("path-specific add missed a secret in the added path")
 	}
+
+	// commit -a records every tracked change even after a path-specific add.
+	write(t, dir, "app/config.py", "a = 1\n")
+	gitcfg.RunGitIn(dir, "add", "app/config.py")
+	gitcfg.RunGitIn(dir, "commit", "-qm", "track")
+	write(t, dir, "app/config.py", "a = 2\n"+fakeKey()+"\n")
+	if hits := Scan(dir, "git add docs; git commit -a -m x", gitcfg.RunGitIn); len(hits) == 0 {
+		t.Fatal("commit -a after a path-specific add missed a tracked secret")
+	}
+	gitcfg.RunGitIn(dir, "rm", "-q", "--cached", "app/config.py")
+	gitcfg.RunGitIn(dir, "commit", "-qm", "untrack")
 
 	// A new .env is refused by name; .env.example is fine.
 	os.Remove(filepath.Join(dir, "app", "config.py"))
