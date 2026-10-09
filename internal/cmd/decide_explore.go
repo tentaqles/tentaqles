@@ -376,9 +376,25 @@ func insideDir(dir, p string) bool {
 
 // hasDotGit reports whether dir holds its own .git entry (a nested repo).
 // An entry that cannot even be checked is treated as one.
-func hasDotGit(dir string) bool {
+func hasDotGit(dir string) bool { return dotGitState(dir) != dotGitAbsent }
+
+type dotGit int
+
+const (
+	dotGitAbsent dotGit = iota
+	dotGitPresent
+	dotGitUnknown // the check failed: callers must treat it as "skip"
+)
+
+func dotGitState(dir string) dotGit {
 	_, err := os.Lstat(filepath.Join(dir, ".git"))
-	return err == nil || !(errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR))
+	switch {
+	case err == nil:
+		return dotGitPresent
+	case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
+		return dotGitAbsent
+	}
+	return dotGitUnknown
 }
 
 // --- ignore files: relevance filtering only --------------------------------
@@ -504,8 +520,14 @@ func walkFiles(root string, o exploreOpts, visit func(rel, text string) bool) (w
 			if exploreSkipDirs[strings.ToLower(d.Name())] {
 				return filepath.SkipDir
 			}
-			if hasDotGit(p) {
+			switch dotGitState(p) {
+			case dotGitPresent:
 				stats.NestedRepos++
+				return filepath.SkipDir
+			case dotGitUnknown:
+				// Cannot tell (e.g. the directory is not readable): skip it,
+				// counted as unreadable rather than as a nested repo.
+				stats.UnreadableDirs++
 				return filepath.SkipDir
 			}
 			if ign.ignored(p, true) {
