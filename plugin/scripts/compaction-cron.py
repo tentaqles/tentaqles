@@ -45,6 +45,14 @@ def run(every_n: int = 10) -> None:
     log_path = data_dir() / "compaction.log"
     workspaces = list_workspaces()
 
+    # Semantic tier: headless `claude -p` (None when disabled/unavailable,
+    # in which case consolidation runs without fact extraction as before).
+    try:
+        from tentaqles.memory.llm import get_semantic_llm
+        llm_fn = get_semantic_llm()
+    except Exception:
+        llm_fn = None
+
     if not workspaces:
         msg = f"{_now_iso()} [compaction-cron] no workspaces registered — nothing to compact"
         print(msg)
@@ -61,7 +69,7 @@ def run(every_n: int = 10) -> None:
 
         try:
             store = MemoryStore(root_path)
-            consolidator = MemoryConsolidator(store)
+            consolidator = MemoryConsolidator(store, llm_fn=llm_fn)
             result = consolidator.maybe_compact(every_n_sessions=every_n)
             store.close()
 
