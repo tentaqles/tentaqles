@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-02T09:00:00Z","entrypoint":"sdk-py","message":{"role":"user","content":[{"type":"text","text":"Review this change for security vulnerabilities. Report only real issues."}]}}
+{"type":"assistant","timestamp":"2026-10-02T09:01:00Z","message":{"id":"msg_r1","model":"claude-opus-4-7","usage":{"input_tokens":2000,"output_tokens":100},"content":[{"type":"text","text":"No issues."}]}}
