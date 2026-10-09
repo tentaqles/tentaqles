@@ -159,6 +159,7 @@ Tell the user:
 - The inherited client context (cloud, database, git — so they know it's connected)
 - Git configuration (email set to match client manifest)
 - Next steps: "You can start coding, or run `/tentaqles:build-graph` after you have some files to analyze."
+- If the stack is Node/TypeScript, Python or Go, offer to add CI with a ratchet quality gate via `/tentaqles:ci-pipeline` (cheapest now, while the baseline is zero). Do not add it without a yes.
 
 ## Error Handling
 

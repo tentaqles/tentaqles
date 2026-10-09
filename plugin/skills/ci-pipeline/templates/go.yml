@@ -1,0 +1,78 @@
+# CI + ratchet quality gate for Go. Copy to .github/workflows/ci.yml,
+# ratchet.py and baseline.json to .github/quality/.
+# Action SHAs are pinned; the trailing comment is the release they point to.
+# Tool versions are pinned with @vX; pick a staticcheck release that supports
+# the Go version in go.mod.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Tests with coverage
+        run: |
+          go test -race -coverprofile=cover.out ./...
+          go tool cover -func=cover.out > cover.txt
+
+      # staticcheck and gocyclo exit 1 when they report findings; any other
+      # non-zero code is a crash and must fail the job.
+      - name: Lint report (one JSON issue per line)
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 -f json ./... > staticcheck.json || [ $? -eq 1 ]
+
+      - name: Complexity report
+        run: go run github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0 -over 15 -ignore "_test|vendor/" . > gocyclo.txt || [ $? -eq 1 ]
+
+      - name: Duplication report
+        run: npx --yes jscpd@4.0.5 --silent --reporters json --output jscpd --format go --ignore "**/vendor/**,**/*_test.go" .
+
+      - name: Collect metrics
+        run: >
+          python3 .github/quality/ratchet.py collect --out current.json
+          --go-cover cover.txt
+          --count-lines lint_errors=staticcheck.json
+          --count-lines complex_functions=gocyclo.txt
+          --jscpd jscpd/jscpd-report.json
+
+      - name: Ratchet gate
+        run: >
+          python3 .github/quality/ratchet.py compare
+          --baseline .github/quality/baseline.json
+          --current current.json
+          --report ratchet-report.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-reports
+          path: |
+            ratchet-report.json
+            current.json
+            staticcheck.json
+          retention-days: 14
+          if-no-files-found: ignore
