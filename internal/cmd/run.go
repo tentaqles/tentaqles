@@ -25,7 +25,7 @@ func claudeArgs(ws *resolve.Workspace, args []string, warn func(string)) []strin
 		return append([]string{"--permission-mode", "acceptEdits"}, args...)
 	default:
 		// Invariant: manifest.Load allowlists permission_mode, so only
-		// "acceptEdits" and "plan" can reach this arm.
+		// "acceptEdits", "plan", "auto" and "dontAsk" can reach this arm.
 		return append([]string{"--permission-mode", mode}, args...)
 	}
 }
