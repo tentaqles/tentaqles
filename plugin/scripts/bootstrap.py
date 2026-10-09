@@ -119,6 +119,9 @@ def _run_pip_install(target_dir: Path, packages: list[str]) -> bool:
         "-m", "pip", "install",
         "--quiet",
         "--disable-pip-version-check",
+        # --upgrade lets pip replace packages already in target_dir; without
+        # it a lib built for another Python (wrong compiled ABI) never heals.
+        "--upgrade",
         "--target", str(target_dir),
         *packages,
     ]

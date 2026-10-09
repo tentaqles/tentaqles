@@ -145,7 +145,7 @@ def test_dep_stamp_invalidated_when_lib_dir_disappears(tmp_path: Path) -> None:
     stamp = data_dir / ".deps-ok"
     assert stamp.exists(), "expected a dependency stamp after a successful check"
     stamped = stamp.read_text(encoding="utf-8").strip()
-    assert stamped.endswith("|lib"), f"stamp should record the lib-dir state, got {stamped!r}"
+    assert "|lib|" in stamped, f"stamp should record the lib-dir state, got {stamped!r}"
 
     # Warm run with lib still present: no re-check.
     counter.write_text("", encoding="utf-8")
