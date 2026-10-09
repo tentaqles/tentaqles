@@ -1,0 +1,11 @@
+{"ts":"2026-08-01T00:00:00Z","ws":"acme","kind":"guard","mode":"enforce","p":{"jev/old":0.99},"would":{"jev/old":"deny"},"applied":{"jev/old":"deny"}}
+{"ts":"2026-10-01T00:00:00Z","ws":"acme","kind":"guard","mode":"shadow","tool":"Bash","p":{"jev/destructive-sql":0.95,"jev/rls-weakened":0.1},"would":{"jev/destructive-sql":"deny"}}
+{"ts":"2026-10-01T00:01:00Z","ws":"acme","kind":"guard","mode":"enforce","tool":"Edit","p":{"jev/destructive-sql":0.7},"would":{"jev/destructive-sql":"ask"},"applied":{"jev/destructive-sql":"ask"}}
+{"ts":"2026-10-01T00:02:00Z","ws":"acme","kind":"guard","mode":"shadow","tool":"Bash","error":"jev: timeout"}
+{"ts":"2026-10-01T00:03:00Z","ws":"acme","kind":"route","mode":"shadow","tool":"Agent","extra":{"parent":"opus","pick":"sonnet","confidence":"0.91","applied":"false"}}
+{"ts":"2026-10-01T00:04:00Z","ws":"acme","kind":"route","mode":"enforce","tool":"Agent","extra":{"parent":"opus","pick":"haiku","confidence":"0.97","applied":"true"}}
+{"ts":"2026-10-01T00:05:00Z","ws":"acme","kind":"route","mode":"shadow","tool":"Agent","extra":{"parent":"sonnet","pick":"opus","confidence":"0.80","applied":"false"}}
+{"ts":"2026-10-01T00:06:00Z","ws":"acme","kind":"triage","mode":"shadow","p":{"auth":0.1},"extra":{"risk":"low","flags":""}}
+{"ts":"2026-10-01T00:07:00Z","ws":"acme","kind":"triage","mode":"shadow","p":{"auth":0.9,"secrets":0.8},"extra":{"risk":"high","flags":"auth,secrets"}}
+{"ts":"2026-10-01T00:08:00Z","ws":"acme","kind":"stop","mode":"shadow","p":{"jev/stop-evidence":0.8},"would":{"jev/stop-evidence":"ask"}}
+{"ts":"2026-10-01T00:09:00Z","ws":"other","kind":"guard","mode":"enforce","p":{"jev/other":0.99},"would":{"jev/other":"deny"},"applied":{"jev/other":"deny"}}
