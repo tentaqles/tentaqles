@@ -192,3 +192,21 @@ func TestReadOnlyGitExemptFromEnvDriftAndUntrusted(t *testing.T) {
 		}
 	}
 }
+
+func TestStripHeredocs(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"python - <<'EOF'\nprint('git commit')\nEOF\ngit status", "python - <<'EOF'\ngit status"},
+		{"cat <<EOF > f\nx\nEOF", "cat <<EOF > f"},
+		// quoted << is not a heredoc: the next line still runs
+		{"echo \"<<EOF\"\ngit commit -m x\nEOF", "echo \"<<EOF\"\ngit commit -m x\nEOF"},
+		// unterminated: keep everything
+		{"cat <<EOF\ngit commit -m x", "cat <<EOF\ngit commit -m x"},
+		// arithmetic shift is not a heredoc word
+		{"echo $((1<<2))\ngit commit -m x", "echo $((1<<2))\ngit commit -m x"},
+	}
+	for _, c := range cases {
+		if got := StripHeredocs(c.in); got != c.want {
+			t.Errorf("StripHeredocs(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

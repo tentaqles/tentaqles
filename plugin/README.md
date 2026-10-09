@@ -14,7 +14,7 @@ Working across multiple clients with an AI coding assistant creates failure mode
 
 **Identity isolation.** Prevents pushing code with the wrong git email, running CLI commands against the wrong cloud subscription, or querying the wrong database. Identity switching is owned by `tq` — the `tq` shell hook swaps git identity, env vars, and per-workspace CLI config dirs on `cd`. The plugin does not switch anything itself: `PreToolUse` calls `tq claude-hook pre-tool-use` to verify the Bash command matches the active workspace's identity and blocks it (exit 2) on drift or an untrusted workspace. If `tq` isn't installed, the hook falls back to a dependency-free Python guard that still blocks remote git/gh/cloud commands (fail-closed); if no Python interpreter can be found either, every Bash command is blocked until `tq` or Python is installed.
 
-**Persistent temporal memory.** Tracks sessions, touches, decisions, and pending work per client in a local SQLite database. Survives terminal close, Ctrl+C, `/exit`, and context auto-compaction via a `PreCompact` hook that re-injects critical state.
+**Persistent temporal memory.** Tracks sessions, touches, decisions, and pending work per client in a local SQLite database. Survives terminal close, Ctrl+C, `/exit`, and context compaction: right after a compaction the `SessionStart` hook (`source: compact`) re-injects critical state.
 
 **Four-tier memory with decay.** Brain-inspired tiers — Working → Episodic → Semantic → Procedural — with Ebbinghaus decay and auto-eviction. Sessions auto-promote to Episodic on close; important facts climb over time via the `/tentaqles:compact-memory` skill or the `compaction-cron.py` script.
 
@@ -182,7 +182,7 @@ Each client workspace gets a SQLite database tracking:
 
 Activity scores use exponential decay (30-day half-life). Files touched today score 1.0, a month ago 0.5, six months ago ~0.015.
 
-Memory survives session end regardless of how the session ends — clean exit, Ctrl+C, terminal close, or auto-compaction (via a `PreCompact` hook that re-injects critical state).
+Memory survives session end regardless of how the session ends — clean exit, Ctrl+C, terminal close, or compaction (the `SessionStart` hook re-injects critical state when `source` is `compact`).
 
 ### Knowledge graphs
 
@@ -233,11 +233,11 @@ All hooks are automatic and run silently.
 
 | Hook | Fires on | What it does |
 |------|----------|-------------|
-| `SessionStart` | Session begins | `bootstrap.py` (one-time deps install), `tq_hook.sh session-start` → `tq claude-hook session-start` (report resolved identity + `tq doctor`; no switching), then `session-preamble.py --memory-only` (inject memory context) |
+| `SessionStart` | Session begins (and after compaction) | `bootstrap.py` (one-time deps install, started in the background — never blocks), `tq_hook.sh session-start` → `tq claude-hook session-start` (report resolved identity + `tq doctor`; no switching), then `session-preamble.py --memory-only` (inject memory context; after a compaction, re-inject decisions, hot nodes and open pending instead) |
 | `PreToolUse` | Before Bash commands | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest, block on drift (exit 2). Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. MCP tool calls are not gated in 0.4.0. |
-| `PreCompact` | Before context auto-compaction | `pre-compact.py` — re-inject critical state (decisions, hot nodes, open pending) |
 | `PostToolUse` | After Bash/Edit/Write | `knowledge-capture.py` — scan output for decisions, record file touches |
-| `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory |
+| `Stop` | Claude finishes a turn | `stop-capture.py` — once per session, if the conversation weighed alternatives, ask Claude to record the decisions; once per session, if the context passes ~350k tokens, suggest `/compact` or session-wrap (non-blocking) |
+| `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory; the detached worker also extracts semantic facts with `claude -p --model haiku` (opt out: `TENTAQLES_SEMANTIC_FACTS=0`) |
 
 All hooks and skills use `tq_run.sh` → `tq_env.sh` to resolve a working Python interpreter, bypassing broken venv shims and machines where only `python3` exists (macOS). POSIX-compatible, tested on Windows (Git Bash), macOS, and Linux.
 

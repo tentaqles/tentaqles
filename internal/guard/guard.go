@@ -303,3 +303,71 @@ func GitInvocations(c string) []GitInvocation {
 	}
 	return out
 }
+
+var heredocStart = regexp.MustCompile(`<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)['"]?`)
+
+// StripHeredocs removes heredoc bodies (the lines between `<<WORD` and the
+// closing WORD line) from a shell command, so text a command feeds to an
+// interpreter or writes to a file is not mistaken for commands to run.
+//
+// It fails toward keeping text: a `<<` inside quotes, or a heredoc whose
+// closing line never appears, is left in place, because the shell would run
+// what follows it.
+func StripHeredocs(c string) string {
+	lines := strings.Split(c, "\n")
+	keep := make([]bool, len(lines))
+	for i := range keep {
+		keep[i] = true
+	}
+	for i := 0; i < len(lines); i++ {
+		if !keep[i] {
+			continue
+		}
+		pos := i + 1
+		for _, loc := range heredocStart.FindAllStringSubmatchIndex(lines[i], -1) {
+			if quotedAt(lines[i], loc[0]) {
+				continue
+			}
+			word := lines[i][loc[4]:loc[5]]
+			end := -1
+			for j := pos; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == word {
+					end = j
+					break
+				}
+			}
+			if end < 0 {
+				return c // unterminated: do not guess
+			}
+			for j := pos; j <= end; j++ {
+				keep[j] = false
+			}
+			pos = end + 1
+		}
+	}
+	var out []string
+	for i, l := range lines {
+		if keep[i] {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// quotedAt reports whether byte offset i of line falls inside a '…' or "…"
+// string (a simple quote-parity scan; escapes inside "…" are honoured).
+func quotedAt(line string, i int) bool {
+	var q byte
+	for k := 0; k < i && k < len(line); k++ {
+		ch := line[k]
+		switch {
+		case q == 0 && (ch == '\'' || ch == '"'):
+			q = ch
+		case q == '"' && ch == '\\':
+			k++
+		case q != 0 && ch == q:
+			q = 0
+		}
+	}
+	return q != 0
+}

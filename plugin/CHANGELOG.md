@@ -2,6 +2,67 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.8.0] — 2026-10-08
+
+Hook diet and reliability: fewer, cheaper hook interruptions, and memory
+features that actually run.
+
+### Fixed
+
+- **The Stop hook's "record decisions" command works.** Its instruction told
+  the model to run `bash "$CLAUDE_PLUGIN_ROOT/scripts/tq_run.sh" memory-bridge.py`,
+  but `CLAUDE_PLUGIN_ROOT` is only expanded in hooks.json — it is not set in
+  the Bash tool — so the command failed with exit 127. The instruction now
+  embeds the plugin's absolute path (forward slashes) and a properly quoted
+  JSON payload.
+- **Compaction context reaches the model.** PreCompact hook output is never
+  shown to the model, so the state block `pre-compact.py` printed was dropped.
+  `session-preamble.py` now prints it (recent decisions, hot nodes, open
+  pending) when SessionStart fires with `source: "compact"`. The `PreCompact`
+  registration is removed (it saved no state); `pre-compact.py` remains as a
+  manual/debug entry point. The block is only built when the workspace's
+  `memory.db` already exists, so reading it never creates one.
+- **First-run dependency install no longer blocks session start.** The
+  SessionStart `bootstrap.py` hook used to run `pip install` (fastembed
+  included) inline with a 600s timeout. It now starts a detached
+  `bootstrap.py --worker` (via `_detach.py`), prints one notice line and
+  returns; a `.bootstrap.lock` in the data dir (stale after 20 minutes) stops
+  concurrent sessions from installing twice, and the worker logs to
+  `bootstrap.log`. The hook timeout drops from 600s to 30s. `tq_env.sh`
+  discards the notice when it runs bootstrap itself so it cannot corrupt
+  another hook's JSON output.
+
+### Changed
+
+- **The decision prompt fires far less often.** Besides once per session
+  (markers now live in `$CLAUDE_PLUGIN_DATA/stop-capture/<session>.done`,
+  pruned after 30 days), never when `stop_hook_active`, and at least 12 tool
+  calls, it now also requires the conversation itself — user prompts and
+  assistant prose, never tool output — to show a choice between alternatives
+  ("instead of", "rather than", "trade-off", "decided", "vs", "option A",
+  "em vez de", "decidimos", "optei", ...). Sessions that only did work are no
+  longer interrupted.
+- **Session-size nudge.** When the last assistant turn's context
+  (`input_tokens + cache_read_input_tokens + cache_creation_input_tokens`)
+  exceeds 350k tokens, the Stop hook shows a one-time, non-blocking
+  `systemMessage` suggesting `/compact` or the session-wrap skill. Override
+  the threshold with `TENTAQLES_CONTEXT_NUDGE_TOKENS` (`0` disables).
+- The SessionStart `session-preamble.py` hook now declares a 30s timeout.
+
+### Added
+
+- **Semantic facts are extracted.** The fact-extraction step in memory
+  consolidation never ran because no model was passed. The detached
+  session-end worker and `compaction-cron.py` now use
+  `tentaqles.memory.llm.get_semantic_llm()`, which runs
+  `claude -p --model haiku --output-format json` (prompt on stdin, redacted
+  with `privacy.redact_text`, 60s timeout) under the current environment, so
+  `CLAUDE_CONFIG_DIR` — the active identity — is respected. Missing `claude`,
+  errors and timeouts yield no facts rather than failures. Never runs in a
+  foreground hook. Opt out with `TENTAQLES_SEMANTIC_FACTS=0`. The headless
+  child runs with `TENTAQLES_HEADLESS_CHILD=1`, which the plugin's own
+  SessionEnd and Stop hooks honour by doing nothing.
+
 ## [0.7.0] — 2026-10-08
 
 ### Changed

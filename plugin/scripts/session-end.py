@@ -52,12 +52,14 @@ except Exception:
 
 
 
-def main(raw=None, fallback_cwd=None):
+def main(raw=None, fallback_cwd=None, use_llm=False):
     """Save the session described by the hook payload.
 
     raw is the payload as Claude Code wrote it (UTF-8 JSON bytes); read from
     stdin when not given. fallback_cwd stands in for a payload without `cwd` — the
     worker's own working directory is deliberately not the session's.
+    use_llm lets consolidation extract semantic facts with a headless
+    `claude -p` call; only the detached worker sets it, never the hook itself.
     """
     try:
         if raw is None:
@@ -193,10 +195,18 @@ def main(raw=None, fallback_cwd=None):
         # End session with summary
         store.end_session(summary, tags=[reason, client_name])
 
-        # F7: memory consolidation
+        # F7: memory consolidation. The semantic tier needs a model; it gets
+        # one only here in the detached worker (see tentaqles.memory.llm).
         try:
             from tentaqles.memory.consolidator import MemoryConsolidator
-            MemoryConsolidator(store).maybe_compact()
+            llm_fn = None
+            if use_llm:
+                try:
+                    from tentaqles.memory.llm import get_semantic_llm
+                    llm_fn = get_semantic_llm()
+                except Exception:
+                    llm_fn = None
+            MemoryConsolidator(store, llm_fn=llm_fn).maybe_compact()
         except Exception:
             pass
 
@@ -261,7 +271,11 @@ def run_hook(raw: bytes) -> None:
 
 
 if __name__ == "__main__":
+    if os.environ.get("TENTAQLES_HEADLESS_CHILD") == "1":
+        # The headless `claude -p` the plugin itself started for semantic
+        # facts: not a user session, nothing to save.
+        sys.exit(0)
     if sys.argv[1:2] == ["--worker"]:
-        main(fallback_cwd=sys.argv[2] if len(sys.argv) > 2 else None)
+        main(fallback_cwd=sys.argv[2] if len(sys.argv) > 2 else None, use_llm=True)
     else:
         run_hook(sys.stdin.buffer.read())

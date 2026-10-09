@@ -37,7 +37,7 @@ func KnownIdentities() []string {
 	return knownIdentities
 }
 
-var PermissionModes = []string{"", "default", "acceptEdits", "plan", "bypass"}
+var PermissionModes = []string{"", "default", "acceptEdits", "plan", "auto", "dontAsk", "bypass"}
 
 type Git struct {
 	Name         string `yaml:"name"`
@@ -67,8 +67,21 @@ type Identity struct {
 }
 
 type Claude struct {
-	PermissionMode string  `yaml:"permission_mode"`
-	Bundle         *Bundle `yaml:"bundle"`
+	PermissionMode string       `yaml:"permission_mode"`
+	Bundle         *Bundle      `yaml:"bundle"`
+	Permissions    *Permissions `yaml:"permissions"`
+	// Env is merged into the identity's settings.json env by
+	// `tq settings render`. Values are checked like the rest of the manifest:
+	// a secret-shaped value makes the manifest fail to load.
+	Env map[string]string `yaml:"env"`
+}
+
+// Permissions are extra settings.json permission rules for this workspace,
+// added on top of tq's baseline by `tq settings render`.
+type Permissions struct {
+	Allow []string `yaml:"allow"`
+	Deny  []string `yaml:"deny"`
+	Ask   []string `yaml:"ask"`
 }
 
 // Bundle lists the catalog entries this workspace's Claude identity dir
@@ -140,7 +153,7 @@ func Load(path string) (*Manifest, error) {
 		}
 	}
 	if !contains(PermissionModes, m.Claude.PermissionMode) {
-		return nil, fmt.Errorf("%s: claude.permission_mode must be one of default|acceptEdits|plan|bypass", path)
+		return nil, fmt.Errorf("%s: claude.permission_mode must be one of default|acceptEdits|plan|auto|dontAsk|bypass", path)
 	}
 	m.Path = path
 	return &m, nil

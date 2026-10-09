@@ -41,22 +41,46 @@ var envTemplateRe = regexp.MustCompile(`(?i)\.env\.(example|sample|template|dist
 type Plan struct {
 	Commits    bool // the command runs git commit
 	WorkingDir bool // tracked, unstaged changes get committed too (commit -a, or a chained git add)
-	Untracked  bool // new files get committed too (a chained git add -A / . / <path>)
+	CommitAll  bool // commit -a/--all: every tracked change, regardless of AddPaths
+	Untracked  bool // new files get committed too (a chained git add)
+	// AddPaths limits the working-tree/untracked scan to what a chained
+	// `git add <paths>` stages. Empty with Untracked set means everything
+	// (git add -A / --all / . / :/).
+	AddPaths []string
 }
 
 // PlanFor inspects command. A command without git commit yields Commits=false.
+// Heredoc bodies are data, not commands, so they are ignored.
 func PlanFor(command string) Plan {
 	var p Plan
-	sawAdd := false
-	for _, inv := range guard.GitInvocations(command) {
+	sawAdd, addAll := false, false
+	var paths []string
+	for _, inv := range guard.GitInvocations(guard.StripHeredocs(command)) {
 		switch inv.Sub {
 		case "add", "stage":
 			sawAdd = true
+			for _, a := range inv.Args {
+				switch {
+				case a == "-A" || a == "--all" || a == "." || a == ":/" || a == "*" || a == "--no-ignore-removal":
+					addAll = true
+				case strings.HasPrefix(a, "-"):
+				case strings.ContainsAny(a, "*?[$`:"):
+					// globs, magic pathspecs and substitutions: cannot be
+					// resolved here, so scan everything
+					addAll = true
+				default:
+					paths = append(paths, strings.Trim(a, `"'`))
+				}
+			}
+			if len(inv.Args) == 0 {
+				addAll = true
+			}
 		case "commit":
 			p.Commits = true
 			for _, a := range inv.Args {
 				if a == "--all" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "a")) {
 					p.WorkingDir = true
+					p.CommitAll = true
 				}
 			}
 		}
@@ -64,8 +88,26 @@ func PlanFor(command string) Plan {
 	if p.Commits && sawAdd {
 		p.WorkingDir = true
 		p.Untracked = true
+		if !addAll {
+			p.AddPaths = paths
+		}
 	}
 	return p
+}
+
+// inScope reports whether a repo-relative file is covered by AddPaths.
+func (p Plan) inScope(f string) bool {
+	if len(p.AddPaths) == 0 {
+		return true
+	}
+	f = filepath.ToSlash(f)
+	for _, a := range p.AddPaths {
+		a = strings.TrimSuffix(filepath.ToSlash(a), "/")
+		if a == "" || f == a || strings.HasPrefix(f, a+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 const maxFileBytes = 1 << 20
@@ -91,8 +133,14 @@ func Scan(dir, command string, run Runner) []Hit {
 	diffs := [][]string{{"diff", "--cached", "--no-color", "--no-ext-diff", "-U0"}}
 	names := [][]string{{"diff", "--cached", "--name-only"}}
 	if p.WorkingDir {
-		diffs = append(diffs, []string{"diff", "--no-color", "--no-ext-diff", "-U0"})
-		names = append(names, []string{"diff", "--name-only"})
+		wd := []string{"diff", "--no-color", "--no-ext-diff", "-U0"}
+		wn := []string{"diff", "--name-only"}
+		if len(p.AddPaths) > 0 && !p.CommitAll {
+			wd = append(append(wd, "--"), p.AddPaths...)
+			wn = append(append(wn, "--"), p.AddPaths...)
+		}
+		diffs = append(diffs, wd)
+		names = append(names, wn)
 	}
 	for _, args := range names {
 		out, err := run(dir, args...)
@@ -118,6 +166,9 @@ func Scan(dir, command string, run Runner) []Hit {
 		out, err := run(dir, "ls-files", "--others", "--exclude-standard")
 		if err == nil {
 			for _, f := range splitLines(out) {
+				if !p.inScope(f) {
+					continue
+				}
 				if bannedFile(f) {
 					add(Hit{File: f, Pattern: "secret_file"})
 					continue

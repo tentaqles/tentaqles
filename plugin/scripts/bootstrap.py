@@ -6,8 +6,16 @@ sentinel file exists and bails immediately on subsequent runs. Installs
 dependencies into ${CLAUDE_PLUGIN_DATA}/lib so they're isolated from the
 user's global Python environment.
 
-On failure, prints a warning to stderr explaining the manual install
-command. Never blocks session start.
+Never blocks session start. A pip install (fastembed alone is a large
+download) used to run inside the hook with a 600s timeout, so a first session
+could sit frozen for minutes. When deps are missing the hook now hands the
+install to a detached copy of this script (`--worker`, via
+_detach.spawn_detached), prints one line saying so, and returns. A lock file
+(`.bootstrap.lock` in the data dir) keeps two sessions from installing at
+once; a lock older than LOCK_STALE_SECONDS is treated as abandoned.
+
+The worker logs to ${CLAUDE_PLUGIN_DATA}/bootstrap.log, including the manual
+install command if pip fails.
 """
 
 from __future__ import annotations
@@ -16,10 +24,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-# Ensure UTF-8 stdout/stderr on Windows
-if sys.platform == "win32":
+def _utf8_stdio() -> None:
+    """Ensure UTF-8 stdout/stderr on Windows (only when run as a script)."""
+    if sys.platform != "win32":
+        return
     try:
         import io
         if hasattr(sys.stdout, "buffer"):
@@ -44,6 +55,22 @@ REQUIRED_DEPS = [
 # fastembed is not among them: every write path degrades to a NULL embedding
 # without it (pinned by tests/test_embeddings_optional.py).
 CORE_IMPORTS = ["yaml", "pathspec", "numpy"]
+
+LOCK_NAME = ".bootstrap.lock"
+LOG_NAME = "bootstrap.log"
+
+# A worker holds the lock for at most pip's own timeout (600s) plus slack;
+# anything older belongs to a worker that died without cleaning up.
+LOCK_STALE_SECONDS = 20 * 60
+
+# One notice for "just started" and "already running": when the hook goes
+# through tq_run.sh, tq_env.sh has usually started the worker a moment earlier.
+NOTICE = (
+    "Tentaqles: installing Python dependencies in the background (first run); "
+    "memory features switch on once it finishes, usually within a few minutes."
+)
+NOTICE_STARTED = NOTICE
+NOTICE_RUNNING = NOTICE
 
 
 def _log(msg: str) -> None:
@@ -114,46 +141,143 @@ def _run_pip_install(target_dir: Path, packages: list[str]) -> bool:
         return False
 
 
-def main() -> None:
-    # Read hook payload (we don't actually use it, just consume stdin)
-    try:
-        sys.stdin.read()
-    except Exception:
-        pass
-
+def _plugin_data() -> Path:
     plugin_data = os.environ.get("CLAUDE_PLUGIN_DATA", "")
     if not plugin_data:
         # Fall back to ~/.tentaqles when running outside the plugin harness
         plugin_data = str(Path.home() / ".tentaqles")
+    return Path(plugin_data)
 
-    lib_dir = Path(plugin_data) / "lib"
-    sentinel = Path(plugin_data) / ".bootstrap-complete"
 
-    # Fast path: sentinel exists and core imports work
-    if sentinel.is_file() and _check_core_available(lib_dir):
-        return
+def _acquire_lock(lock: Path) -> bool:
+    """Create the lock atomically. False if a live install already holds it."""
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age = time.time() - lock.stat().st_mtime
+            except OSError:
+                continue  # vanished between the two calls: try again
+            if age < LOCK_STALE_SECONDS:
+                return False
+            try:
+                lock.unlink()
+            except OSError:
+                return False
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"pid": os.getpid(), "started": time.time()}))
+        return True
+    return False
 
-    # Check if core deps are already available from system Python
-    if _check_core_available(lib_dir):
-        sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text("system", encoding="utf-8")
-        return
 
-    # Need to install
-    _log(f"installing dependencies into {lib_dir} (first run, may take a few minutes)")
+def _release_lock(lock: Path) -> None:
+    try:
+        lock.unlink()
+    except OSError:
+        pass
+
+
+def _spawn_worker() -> None:
+    """Start `bootstrap.py --worker` detached. Raises OSError on failure."""
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from _detach import spawn_detached
+
+    spawn_detached([sys.executable, os.path.abspath(__file__), "--worker"])
+
+
+def _manual_hint(lib_dir: Path) -> None:
+    _log("Automatic install failed. Please run manually:")
+    _log(f"  pip install --target \"{lib_dir}\" pyyaml pathspec fastembed numpy")
+    _log("Or install globally:")
+    _log("  pip install pyyaml pathspec fastembed numpy")
+
+
+def install(plugin_data: Path) -> bool:
+    """Do the actual install (worker side). Returns True on success."""
+    lib_dir = plugin_data / "lib"
+    sentinel = plugin_data / ".bootstrap-complete"
+    _log(f"installing dependencies into {lib_dir}")
     ok = _run_pip_install(lib_dir, REQUIRED_DEPS)
     if ok:
         sentinel.parent.mkdir(parents=True, exist_ok=True)
         sentinel.write_text("installed", encoding="utf-8")
         _log("bootstrap complete")
     else:
-        _log("")
-        _log("Automatic install failed. Please run manually:")
-        _log(f"  pip install --target \"{lib_dir}\" pyyaml pathspec fastembed numpy")
-        _log("")
-        _log("Or install globally:")
-        _log("  pip install pyyaml pathspec fastembed numpy")
+        _manual_hint(lib_dir)
+    return ok
+
+
+def _redirect_log(plugin_data: Path) -> None:
+    """The detached worker has no console worth writing to: log to a file."""
+    try:
+        plugin_data.mkdir(parents=True, exist_ok=True)
+        sys.stderr = open(plugin_data / LOG_NAME, "a", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def run_worker() -> bool:
+    """Detached side: install, then always release the lock."""
+    plugin_data = _plugin_data()
+    lock = plugin_data / LOCK_NAME
+    try:
+        _redirect_log(plugin_data)
+        return install(plugin_data)
+    finally:
+        _release_lock(lock)
+
+
+def run_hook() -> str:
+    """Hook side: never installs inline. Returns the notice to print (or "")."""
+    plugin_data = _plugin_data()
+    lib_dir = plugin_data / "lib"
+    sentinel = plugin_data / ".bootstrap-complete"
+
+    # Fast path: sentinel exists and core imports work
+    if sentinel.is_file() and _check_core_available(lib_dir):
+        return ""
+
+    # Check if core deps are already available from system Python
+    if _check_core_available(lib_dir):
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text("system", encoding="utf-8")
+        return ""
+
+    lock = plugin_data / LOCK_NAME
+    if not _acquire_lock(lock):
+        return NOTICE_RUNNING
+
+    try:
+        _spawn_worker()
+    except Exception as exc:
+        _release_lock(lock)
+        _log(f"could not start the background install: {exc}")
+        _manual_hint(lib_dir)
+        return ""
+    return NOTICE_STARTED
+
+
+def main() -> None:
+    if sys.argv[1:2] == ["--worker"]:
+        run_worker()
+        return
+
+    # Read hook payload (we don't actually use it, just consume stdin)
+    try:
+        sys.stdin.read()
+    except Exception:
+        pass
+
+    notice = run_hook()
+    if notice:
+        print(notice)
 
 
 if __name__ == "__main__":
+    _utf8_stdio()
     main()

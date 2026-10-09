@@ -83,6 +83,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	if mode == "" {
 		mode = VerifyAuto
 	}
+	pythonStoreAlias(d.LookPath, runtime.GOOS, add)
 	var verifyJobs []verifyJob
 	verifyCovers := map[string]bool{}
 	for _, w := range all {
@@ -117,6 +118,9 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 					}
 				}
 			}
+		}
+		if trusted {
+			claudeChecks(&w, add)
 		}
 		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
 			add("warn", "bypass-cloud", w.Name, "permission_mode bypass with a cloud identity: Claude may run cloud CLIs unattended", "")
@@ -250,6 +254,11 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		seen[k] = true
 		fs = append(fs, f)
 	}
+	var names []string
+	for _, w := range all {
+		names = append(names, w.Name)
+	}
+	pluginSkew(names, add)
 	if len(fs) == 0 {
 		add("ok", "ok", "", "all checks passed", "")
 	}

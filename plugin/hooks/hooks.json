@@ -11,24 +11,13 @@
         ]
       }
     ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" pre-compact.py",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" bootstrap.py",
-            "timeout": 600
+            "timeout": 30
           },
           {
             "type": "command",
@@ -37,7 +26,8 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" session-preamble.py --memory-only"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" session-preamble.py --memory-only",
+            "timeout": 30
           }
         ]
       }
