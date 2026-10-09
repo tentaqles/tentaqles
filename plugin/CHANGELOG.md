@@ -2,6 +2,17 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.9.0] — 2026-10-09
+
+### Added
+
+- **Subagent launches go through tq.** The PreToolUse matcher now includes
+  `Agent`, so `tq claude-hook pre-tool-use` (tq >= 0.5.0) can route a
+  general-purpose subagent to a cheaper model when the workspace's
+  `decision` policy enforces it and Jev is confident. In shadow mode (the
+  default) it only logs the pick. Older tq versions allow `Agent` calls
+  unchanged.
+
 ## [0.8.2] — 2026-10-09
 
 ### Fixed

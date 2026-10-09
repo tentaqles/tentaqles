@@ -33,6 +33,16 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		call.Content = string(raw)
 		return call
 	}
+	if p.ToolName == "Agent" {
+		// The task prompt is what content rules can judge on a launch.
+		var in struct {
+			Prompt      string `json:"prompt"`
+			Description string `json:"description"`
+		}
+		_ = json.Unmarshal(raw, &in)
+		call.Content = strings.Join(nonEmpty([]string{in.Description, in.Prompt}), "\n")
+		return call
+	}
 	var in struct {
 		Command      string `json:"command"`
 		FilePath     string `json:"file_path"`

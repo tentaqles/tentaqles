@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/decide"
-	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -36,7 +36,7 @@ The state is redacted before it is sent and framed as untrusted data. Calls
 are cached and logged (cost, latency; never the state) under
 $TQ_HOME/decide/.`,
 	}
-	c.AddCommand(newDecideStatusCmd(), newDecideAskCmd(), newDecideEvalCmd())
+	c.AddCommand(newDecideStatusCmd(), newDecideAskCmd(), newDecideEvalCmd(), newDecideTriageCmd())
 	return c
 }
 
@@ -55,18 +55,13 @@ func decideClient(purpose string, timeout time.Duration) (*decide.Client, decide
 		return nil, decide.Policy{}, nil, errors.New("not in a trusted workspace (decision policy comes from the manifest)")
 	}
 	pol := ws.Manifest.Decision
-	cl, err := pol.Client(filepath.Dir(ws.ManifestPath), timeout)
+	cl, err := jevClientFor(ws, purpose, timeout)
 	if errors.Is(err, decide.ErrDisabled) {
 		return nil, pol, ws, fmt.Errorf("decision backend is off for %s (set decision.backend: typesafe in %s)", ws.Name, ws.ManifestPath)
 	}
 	if err != nil {
 		return nil, pol, ws, err
 	}
-	dir := filepath.Join(paths.Home(), "decide")
-	cl.Cache = decide.NewCache(filepath.Join(dir, "cache"))
-	cl.Log = &decide.Log{Path: filepath.Join(dir, "log.jsonl")}
-	cl.Purpose = purpose
-	cl.Workspace = ws.Name
 	return cl, pol, ws, nil
 }
 
@@ -264,5 +259,75 @@ listed by id so the cases file can be corrected or the question reworded.`,
 		},
 	}
 	c.Flags().IntVar(&workers, "workers", 4, "parallel requests")
+	return c
+}
+
+func newDecideTriageCmd() *cobra.Command {
+	var staged, asJSON bool
+	var rng string
+	c := &cobra.Command{
+		Use:   "triage",
+		Short: "Classify a diff as low or high risk to pick the review depth",
+		Long: `Asks Jev a fixed set of yes/no risk questions (auth, money, schema, data
+loss, migrations, RLS, secrets, public API, shared state, destructive
+commands, n8n credentials) about a diff:
+
+  low   every answer below the warn threshold: one light review pass
+  high  any flag raised, the diff was truncated, or Jev failed: full review
+
+The diff is the working tree (default), --staged, or --range A..B. Exit
+code is 0 for low and 3 for high, so scripts can branch on it.`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			args := []string{"diff", "--no-color"}
+			switch {
+			case rng != "":
+				args = append(args, rng)
+			case staged:
+				args = append(args, "--cached")
+			}
+			cwd, _ := os.Getwd()
+			diff, err := gitcfg.RunGitIn(cwd, args...)
+			if err != nil {
+				return fmt.Errorf("git diff: %w", err)
+			}
+			out := c.OutOrStdout()
+			if strings.TrimSpace(diff) == "" {
+				fmt.Fprintln(out, "low (empty diff)")
+				return nil
+			}
+			cl, pol, ws, err := decideClient("triage", decide.BatchTimeout)
+			res := decide.TriageResult{Risk: "high"}
+			if err != nil {
+				res.Error = err.Error()
+			} else {
+				res = decide.Triage(context.Background(), cl, pol, diff)
+				judgmentLog().Write(decide.Judgment{Workspace: ws.Name, Kind: "triage", Mode: policyMode(pol), P: res.P,
+					Error: res.Error, Extra: map[string]string{"risk": res.Risk, "flags": strings.Join(res.Flags, ",")}})
+			}
+			if asJSON {
+				_ = json.NewEncoder(out).Encode(res)
+			} else {
+				line := res.Risk
+				if len(res.Flags) > 0 {
+					line += " (" + strings.Join(res.Flags, ", ") + ")"
+				}
+				if res.Truncated {
+					line += " [diff truncated]"
+				}
+				if res.Error != "" {
+					line += " [jev unavailable: full review]"
+				}
+				fmt.Fprintln(out, line)
+			}
+			if res.Risk != "low" {
+				exitFunc(3)
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&staged, "staged", false, "triage the staged diff")
+	c.Flags().StringVar(&rng, "range", "", "triage a commit range, e.g. main..HEAD")
+	c.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON")
 	return c
 }

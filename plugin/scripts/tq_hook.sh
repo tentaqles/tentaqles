@@ -121,25 +121,34 @@ PY=""
 PY_LAUNCHER=0
 
 if [ -n "${TENTAQLES_PY:-}" ] && [ -x "${TENTAQLES_PY}" ]; then
-  if "$TENTAQLES_PY" -c "import sys" >/dev/null 2>&1; then
+  if timeout 5 "$TENTAQLES_PY" -c "import sys" >/dev/null 2>&1 || { ! command -v timeout >/dev/null 2>&1 && "$TENTAQLES_PY" -c "import sys" >/dev/null 2>&1; }; then
     PY="$TENTAQLES_PY"
   fi
 fi
 
-if [ -z "$PY" ] && [ "$_win" = "1" ]; then
-  if py -3 -c "import sys" >/dev/null 2>&1; then
-    PY="py"
-    PY_LAUNCHER=1
-  fi
-fi
-
+# Every probe is bounded and Store-Python (WindowsApps) paths are skipped:
+# a broken Store Python hangs instead of failing, and an unbounded probe
+# here stalls every tool call. `py -3` goes last for the same reason (the
+# launcher prefers the newest install, often the Store one).
+_to=""
+command -v timeout >/dev/null 2>&1 && _to="timeout 5"
 if [ -z "$PY" ]; then
   for _probe in python3 python; do
-    if command -v "$_probe" >/dev/null 2>&1 && "$_probe" -c "import sys" >/dev/null 2>&1; then
+    case "$(command -v "$_probe" 2>/dev/null)" in
+      ""|*[Ww]indows[Aa]pps*) continue ;;
+    esac
+    if $_to "$_probe" -c "import sys" >/dev/null 2>&1; then
       PY="$_probe"
       break
     fi
   done
+fi
+
+if [ -z "$PY" ] && [ "$_win" = "1" ]; then
+  if $_to py -3 -c "import sys" >/dev/null 2>&1; then
+    PY="py"
+    PY_LAUNCHER=1
+  fi
 fi
 
 if [ -z "$PY" ]; then

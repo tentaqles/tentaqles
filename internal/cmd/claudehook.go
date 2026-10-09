@@ -29,6 +29,8 @@ type hookPayload struct {
 	HookEventName string          `json:"hook_event_name"`
 	ToolName      string          `json:"tool_name"`
 	ToolInput     json.RawMessage `json:"tool_input"`
+	// TranscriptPath lets the subagent router read the parent's model.
+	TranscriptPath string `json:"transcript_path"`
 }
 
 // lookupGHUser resolves the gh login active for the workspace env. It is a
@@ -252,6 +254,11 @@ permissionDecision JSON so Claude Code asks the user.`,
 			}
 
 			d := policyDecision(cwd, ws, cfg, call)
+			if d.Action != policy.Deny {
+				// Jev can only add strictness, so it is skipped when the
+				// deterministic rules already deny.
+				d = policy.Merge(d, jevDecision(ws, call))
+			}
 			switch d.Action {
 			case policy.Deny:
 				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
@@ -265,6 +272,12 @@ permissionDecision JSON so Claude Code asks the user.`,
 			default:
 				if asJSON {
 					emitDecision(c, asJSON, false, "", "")
+					return nil
+				}
+				if p.ToolName == "Agent" {
+					// Only a launch the policy allows is routed, and routing
+					// never grants permission: it only rewrites the model.
+					return routeAgent(c.OutOrStdout(), ws, p)
 				}
 			}
 			return nil

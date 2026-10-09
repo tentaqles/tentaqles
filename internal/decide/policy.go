@@ -28,7 +28,16 @@ type Policy struct {
 	EnvFile string `yaml:"env_file"`
 	// TimeoutMS overrides the 800ms hook deadline.
 	TimeoutMS int `yaml:"timeout_ms"`
+	// Rules adds judgment rules to tq's built-ins; Disable drops rules by id
+	// (built-in or added).
+	Rules   []JudgeRule `yaml:"rules"`
+	Disable []string    `yaml:"disable"`
+	// Route enables subagent model routing (default on when the backend is).
+	Route *bool `yaml:"route"`
 }
+
+// Routing reports whether subagent launches go through the router.
+func (p Policy) Routing() bool { return p.Enabled() && (p.Route == nil || *p.Route) }
 
 // Enabled reports whether Jev may be called at all.
 func (p Policy) Enabled() bool { return p.Backend == "typesafe" }
@@ -69,6 +78,12 @@ func (p Policy) Validate() error {
 	if p.BaseURL != "" {
 		if err := CheckBaseURL(p.BaseURL); err != nil {
 			return fmt.Errorf("decision.base_url: %w", err)
+		}
+	}
+	for _, r := range p.Rules {
+		r := r
+		if err := r.compile(); err != nil {
+			return fmt.Errorf("decision.rules: %w", err)
 		}
 	}
 	// env_file is read for one key; limiting it to dotenv files keeps a
