@@ -45,6 +45,28 @@ func Builtin() []Rule {
 			Command: `(^|[;&|\n(]\s*)(printenv|env|set|export\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)])`,
 			Reason:  "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or run the command with `tq dotenv run -- <command>`",
 		},
+		// --- the guard's own settings -------------------------------------------
+		// The agent must not be able to switch the guard off by itself: changes
+		// go through tq (and the user confirms them), never by editing files.
+		{
+			ID: "tq/guard-change", Action: Ask,
+			Command: `(^|[;&|\n(]\s*|\s)(\S*[/\\])?tq(\.exe)?\s+(guard\s+(off|on|set)|allow|deny)\b`,
+			Reason:  "this changes what tq's guard checks or trusts; confirm it is what you want",
+		},
+		{
+			ID: "tq/guard-file-write", Action: Deny,
+			Tool:   "Edit|Write|MultiEdit|NotebookEdit",
+			Path:   `(^|/)\.tentaqles/guard\.yaml$`,
+			Reason: "the global guard file is changed with `tq guard off|on|set --all`, not edited directly",
+		},
+		{
+			ID: "tq/guard-file-write", Action: Deny,
+			// No exception for tq itself: `tq guard` never names the file, and
+			// an exception would also cover a redirect in the same command
+			// (`tq guard list > ~/.tentaqles/guard.yaml`).
+			Command: `\.tentaqles[/\\]+guard\.yaml`,
+			Reason:  "the global guard file is changed with `tq guard off|on|set --all`, not from the shell",
+		},
 		// --- git ---------------------------------------------------------------
 		{
 			ID: "tq/force-push-main", Action: Deny,

@@ -57,7 +57,14 @@ func jevDecision(ws *resolve.Workspace, call policy.ToolCall) policy.Decision {
 		return policy.Decision{}
 	}
 	pol := ws.Manifest.Decision
-	set := decide.BuildJudgeSet(pol.Rules, pol.Disable)
+	eff := effectiveGuard(ws)
+	set := decide.BuildJudgeSet(pol.Rules, eff.Disable)
+	for _, r := range set.Rules {
+		// `tq guard set jev/<id> deny|ask` sets how far the rule may go.
+		if a, ok := eff.Actions[r.ID]; ok {
+			r.Max = decide.Action(a)
+		}
+	}
 	sub := decide.Subject{Tool: call.Tool, Path: call.Path, Command: call.Command, Content: call.Content}
 	rules := set.Candidates(sub)
 	if len(rules) == 0 {

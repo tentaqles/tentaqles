@@ -162,10 +162,16 @@ type Set struct {
 
 // Layers are the raw inputs to Build.
 type Layers struct {
-	Builtin  []Rule
+	Builtin []Rule
+	// Global rules come from the user's ~/.tentaqles/guard.yaml (trusted:
+	// it lives in the user's home, not in a repo). They may be disabled.
+	Global   []Rule
 	Manifest []Rule   // trusted: may add rules
-	Disable  []string // trusted: built-in ids to switch off
-	Project  []Rule   // untrusted: may only add rules
+	Disable  []string // trusted: built-in / global ids to switch off
+	// Actions overrides the action of built-in, global and manifest rules by
+	// id (ask <-> deny). Project rules are never overridden.
+	Actions map[string]Action
+	Project []Rule // untrusted: may only add rules
 }
 
 // Build compiles the layers into a Set. A rule that fails to compile is
@@ -187,6 +193,9 @@ func Build(l Layers) (*Set, []error) {
 			if canDisable && off[r.ID] {
 				continue
 			}
+			if a, ok := l.Actions[r.ID]; ok && src != "project" && (a == Ask || a == Deny) {
+				r.Action = a
+			}
 			if err := r.Compile(); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", r.Source, err))
 				continue
@@ -195,6 +204,7 @@ func Build(l Layers) (*Set, []error) {
 		}
 	}
 	add(l.Builtin, "builtin", true)
+	add(l.Global, "global", true)
 	add(l.Manifest, "manifest", false)
 	add(l.Project, "project", false)
 	return s, errs

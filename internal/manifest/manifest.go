@@ -99,8 +99,14 @@ type Bundle struct {
 // manifest is hash-pinned by `tq allow`, so it is the one layer trusted to
 // switch built-in rules off; project files can only add rules.
 type Guard struct {
-	Disable []string      `yaml:"disable"`
-	Rules   []policy.Rule `yaml:"rules"`
+	Disable []string `yaml:"disable"`
+	// Enable switches a rule back on for this workspace when the user's
+	// global guard file (~/.tentaqles/guard.yaml) turned it off.
+	Enable []string `yaml:"enable,omitempty"`
+	// Actions overrides a rule's action (ask|deny) for this workspace; it
+	// wins over the global file.
+	Actions map[string]policy.Action `yaml:"actions,omitempty"`
+	Rules   []policy.Rule            `yaml:"rules"`
 }
 
 type Manifest struct {
@@ -158,6 +164,11 @@ func Load(path string) (*Manifest, error) {
 	}
 	if !contains(PermissionModes, m.Claude.PermissionMode) {
 		return nil, fmt.Errorf("%s: claude.permission_mode must be one of default|acceptEdits|plan|auto|dontAsk|bypass", path)
+	}
+	for id, a := range m.Guard.Actions {
+		if a != policy.Ask && a != policy.Deny {
+			return nil, fmt.Errorf("%s: guard.actions[%s] must be ask or deny, got %q", path, id, a)
+		}
 	}
 	if err := m.Decision.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
