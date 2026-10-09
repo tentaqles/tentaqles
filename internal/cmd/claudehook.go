@@ -199,6 +199,9 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 	}
 
 	b.WriteString("\nRules: tq blocks git/gh/cloud commands on identity drift (exit 2). Run `tq doctor` for details.\n")
+	b.WriteString("Secrets: never print a .env file or the environment (cat/type/Get-Content/grep .env, printenv, echo $TOKEN) - it lands in the transcript and asks the user. " +
+		"Use `tq dotenv keys [file]` to list names, `tq dotenv keys --require NAME` to check one is set, and `tq dotenv run --file <file> -- <cmd>` to run with it loaded (values masked). " +
+		"In code, read variables by name (os.Getenv, process.env.NAME) and never log them.\n")
 	return b.String()
 }
 

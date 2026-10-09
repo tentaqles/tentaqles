@@ -338,3 +338,26 @@ id in the manifest):
 - A command that runs `git -C other-repo commit` is scanned in the hook's
   cwd, not in `other-repo`.
 - A malformed payload is allowed; only an oversized one fails closed.
+
+## Using a .env without printing it
+
+The `tq/env-file-read` and `tq/env-file-shell` rules ask before a `.env` is
+read or printed, because whatever is printed lands in the session
+transcript. Instead of asking you, the agent can use commands that never
+print values. The session-start message tells it to, and the ask reasons
+repeat it:
+
+```
+tq dotenv keys [FILE...]                  # names only, set/empty, duplicates
+tq dotenv keys --require DB_URL           # exit 1 if DB_URL is missing or empty
+tq dotenv run --file .env -- npm run dev  # run with it loaded; values masked
+```
+
+`tq dotenv run` loads the file into the child process only (variables
+already in the environment win unless `--override`). It replaces every
+loaded value of 6+ characters with `[REDACTED:NAME]` in the command's stdout
+and stderr, including values split across writes. It runs the command
+directly; use `bash -c` or `pwsh -Command` for pipelines.
+
+`tq settings render` pre-approves `tq dotenv keys`, which only reads. `tq dotenv
+run` runs an arbitrary command, so it stays with the permission mode.

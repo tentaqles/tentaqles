@@ -32,18 +32,18 @@ func Builtin() []Rule {
 			Tool:   "Read|Grep|NotebookRead",
 			Path:   `(^|/)\.env(\.[^/]*)?$`,
 			Except: envExcept,
-			Reason: "reading a .env file puts its secrets in the transcript; confirm this is needed",
+			Reason: "reading a .env file puts its secrets in the transcript. Instead, use `tq dotenv keys <file>` to see which names are set, or `tq dotenv run --file <file> -- <cmd>` to run a command with it loaded (values are masked in the output).",
 		},
 		{
 			ID: "tq/env-file-shell", Action: Ask,
 			Command: readVerbs + seg + `(^|[\s/\\'"=])\.env(\.[a-z0-9_-]+)?\b`,
 			Except:  envExcept,
-			Reason:  "printing a .env file puts its secrets in the transcript; confirm this is needed",
+			Reason:  "printing a .env file puts its secrets in the transcript. Instead, use `tq dotenv keys <file>` to see which names are set, or `tq dotenv run --file <file> -- <cmd>` to run a command with it loaded (values are masked in the output).",
 		},
 		{
 			ID: "tq/env-dump", Action: Deny,
 			Command: `(^|[;&|\n(]\s*)(printenv|env|set|export\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)])`,
-			Reason:  "dumping the whole environment prints every token in it; read the one variable you need instead",
+			Reason:  "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or use `tq dotenv keys` for a .env file",
 		},
 		// --- git ---------------------------------------------------------------
 		{
