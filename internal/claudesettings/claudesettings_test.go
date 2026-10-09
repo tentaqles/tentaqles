@@ -170,7 +170,8 @@ func contains(xs []string, s string) bool {
 func TestBaselineAllowIsReadOnly(t *testing.T) {
 	risky := []string{"find", "sed", "awk", "xargs", "npm", "pnpm", "yarn", "npx", "go test", "go build", "go run",
 		"pytest", "python", "uv run", "make", "git fetch", "git branch", "git checkout", "git push", "gh pr merge",
-		"rm", "mv", "cp", "tee", "curl", "wget", "bash", "sh ", "pwsh", "Invoke-", "Set-", "Remove-"}
+		"rm", "mv", "cp", "tee", "curl", "wget", "bash", "sh ", "pwsh", "Invoke-", "Set-", "Remove-",
+		"tq dotenv run"} // runs an arbitrary command: never pre-approved
 	for _, entry := range baselineAllow {
 		inner := strings.TrimSuffix(entry[strings.Index(entry, "(")+1:], ")")
 		for _, r := range risky {

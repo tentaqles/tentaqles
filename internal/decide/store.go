@@ -1,13 +1,14 @@
 package decide
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tentaqles/tentaqles/internal/dotenv"
 )
 
 // Cache stores raw Jev responses on disk, one file per request hash. The
@@ -119,37 +120,9 @@ func ResolveKey(envFiles ...string) string {
 		if f == "" {
 			continue
 		}
-		if v := dotenvValue(f, KeyName); v != "" {
+		if v := dotenv.Lookup(f, KeyName); v != "" {
 			return v
 		}
-	}
-	return ""
-}
-
-// dotenvValue reads KEY=VALUE from a dotenv file: `export ` prefixes, quotes
-// and trailing comments on unquoted values are handled.
-func dotenvValue(path, key string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		line = strings.TrimPrefix(line, "export ")
-		k, v, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(k) != key {
-			continue
-		}
-		v = strings.TrimSpace(v)
-		if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
-			return v[1 : len(v)-1]
-		}
-		if i := strings.Index(v, " #"); i >= 0 {
-			v = strings.TrimSpace(v[:i])
-		}
-		return v
 	}
 	return ""
 }

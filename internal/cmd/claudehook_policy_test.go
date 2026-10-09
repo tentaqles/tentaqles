@@ -35,13 +35,13 @@ func askReason(t *testing.T, out string) string {
 	return v.H.Reason
 }
 
-func TestPolicy_ReadEnvAsks_WindowsPath(t *testing.T) {
+func TestPolicy_ReadEnvDenied_WindowsPath(t *testing.T) {
 	isolateHome(t)
 	dir := testutil.TempDir(t)
 	in := `{"file_path":` + jsonPath(t, filepath.Join(dir, ".env")) + `}`
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, dir, "Read", in))
-	if code != 0 || !strings.Contains(askReason(t, out), "tq/env-file-read") {
-		t.Fatalf("code=%d out=%q", code, out)
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, dir, "Read", in))
+	if code != 2 || !strings.Contains(errOut, "tq dotenv run") {
+		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }
 

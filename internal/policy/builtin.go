@@ -28,22 +28,22 @@ func Builtin() []Rule {
 			Reason:  "credential stores (SSH keys, cloud/git credentials, the tq catalog) are never printed into the conversation",
 		},
 		{
-			ID: "tq/env-file-read", Action: Ask,
+			ID: "tq/env-file-read", Action: Deny,
 			Tool:   "Read|Grep|NotebookRead",
 			Path:   `(^|/)\.env(\.[^/]*)?$`,
 			Except: envExcept,
-			Reason: "reading a .env file puts its secrets in the transcript; confirm this is needed",
+			Reason: "reading a .env file puts its secrets in the transcript. Use `tq dotenv run -- <command>` instead and reference the variable as $NAME (use `tq dotenv run -- bash -c '...'` when the command needs $NAME expansion); values are masked in its output.",
 		},
 		{
-			ID: "tq/env-file-shell", Action: Ask,
+			ID: "tq/env-file-shell", Action: Deny,
 			Command: readVerbs + seg + `(^|[\s/\\'"=])\.env(\.[a-z0-9_-]+)?\b`,
 			Except:  envExcept,
-			Reason:  "printing a .env file puts its secrets in the transcript; confirm this is needed",
+			Reason:  "printing a .env file puts its secrets in the transcript. Use `tq dotenv run -- <command>` instead and reference the variable as $NAME (use `tq dotenv run -- bash -c '...'` when the command needs $NAME expansion); values are masked in its output.",
 		},
 		{
 			ID: "tq/env-dump", Action: Deny,
 			Command: `(^|[;&|\n(]\s*)(printenv|env|set|export\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)])`,
-			Reason:  "dumping the whole environment prints every token in it; read the one variable you need instead",
+			Reason:  "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or run the command with `tq dotenv run -- <command>`",
 		},
 		// --- git ---------------------------------------------------------------
 		{

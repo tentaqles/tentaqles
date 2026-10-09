@@ -301,8 +301,12 @@ func TestRenderSessionStart_Workspace(t *testing.T) {
 		"\ntq doctor:\n" +
 		"- [ok] all checks passed\n" +
 		"\nRules: tq blocks git/gh/cloud commands on identity drift (exit 2). Run `tq doctor` for details.\n"
-	if got != want {
-		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	if !strings.HasPrefix(got, want) {
+		t.Fatalf("got:\n%q\nwant prefix:\n%q", got, want)
+	}
+	// The secrets line teaches the agent the .env-safe verbs.
+	if rest := got[len(want):]; !strings.HasPrefix(rest, "Secrets: ") || !strings.Contains(rest, "tq dotenv run") {
+		t.Fatalf("missing secrets guidance: %q", rest)
 	}
 }
 

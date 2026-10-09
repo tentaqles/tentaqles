@@ -338,3 +338,24 @@ id in the manifest):
 - A command that runs `git -C other-repo commit` is scanned in the hook's
   cwd, not in `other-repo`.
 - A malformed payload is allowed; only an oversized one fails closed.
+
+## Using a .env without printing it
+
+Reading or printing a `.env` puts its secrets in the session transcript, so
+`tq/env-file-read` (the Read and Grep tools) and `tq/env-file-shell` (`cat`,
+`type`, `Get-Content`, `grep`, … on a `.env`) **deny** it. The refusal tells
+the agent what to do instead, and so does the session-start message, so it
+retries without asking you:
+
+```
+tq dotenv run -- npm run dev
+tq dotenv run --file .env.local -- bash -c 'psql "$DATABASE_URL" -c "select 1"'
+```
+
+`tq dotenv run` loads the file into that one command's environment
+(variables already set win unless `--override`) and replaces every loaded
+value of 6+ characters with `[REDACTED:NAME]` in the command's stdout and
+stderr. The agent only ever writes `$NAME`. Templates (`.env.example`,
+`.sample`, `.template`, …) stay readable. `tq dotenv run` runs an arbitrary
+command, so it is never pre-approved: it goes through the permission mode
+like the command it wraps.
