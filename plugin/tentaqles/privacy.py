@@ -73,14 +73,16 @@ REDACTION_PATTERNS: list[tuple[str, re.Pattern]] = [
             r"://[^\s:/@]+:[^\s/@]+@[^\s/]+"
         ),
     ),
-    # PEM private key: the whole block, not just its header (redacting only the
-    # BEGIN line left the base64 key body). Unterminated blocks are redacted to
-    # the end of the text. Mirrors internal/secrets in tq.
+    # Whole private-key blocks: any PEM "... PRIVATE KEY" / "PRIVATE KEY BLOCK",
+    # SSH2 and PuTTY .ppk. Unterminated blocks are redacted to the end of the
+    # text. Mirrors internal/secrets in tq.
     (
         "private_key",
         re.compile(
-            r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY-----"
-            r"(?:.*?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY-----|.*)",
+            r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"
+            r"(?:.*?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|.*)"
+            r"|---- BEGIN SSH2 [A-Z ]*PRIVATE KEY ----(?:.*?---- END SSH2 [A-Z ]*PRIVATE KEY ----|.*)"
+            r"|PuTTY-User-Key-File-\d+:(?:.*?Private-MAC: *[0-9a-fA-F]+|.*)",
             re.S,
         ),
     ),

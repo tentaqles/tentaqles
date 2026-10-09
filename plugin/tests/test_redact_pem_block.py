@@ -30,3 +30,15 @@ def test_unterminated_block_redacts_to_end():
     out, _ = redact_text("before\n" + BEGIN + "\n" + BODY)
     _assert_hidden(out)
     assert out.startswith("before\n")
+
+
+def test_other_private_key_formats():
+    cases = {
+        "pgp": "-----BEGIN PGP " + "PRIVATE KEY BLOCK-----\n" + BODY + "-----END PGP PRIVATE KEY BLOCK-----",
+        "ssh2": "---- BEGIN SSH2 ENCRYPTED " + "PRIVATE KEY ----\n" + BODY + "---- END SSH2 ENCRYPTED PRIVATE KEY ----",
+        "putty": "PuTTY-User-" + "Key-File-3: ssh-rsa\nEncryption: none\n" + BODY + "Private-MAC: 0a1b2c3d4e",
+    }
+    for name, key in cases.items():
+        out, _ = redact_text("start\n" + key + "\nend")
+        _assert_hidden(out)
+        assert out.startswith("start\n"), name
