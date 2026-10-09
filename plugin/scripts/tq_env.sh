@@ -145,7 +145,11 @@ if [ -n "$CLAUDE_PLUGIN_ROOT" ] && [ "$_dep_seen" != "$_dep_key" ]; then
     # Portable null device
     _null=/dev/null
     [ -e "$_null" ] || _null=NUL
-    "$TENTAQLES_PY" "$CLAUDE_PLUGIN_ROOT/scripts/bootstrap.py" <"$_null" 2>"$_null" || true
+    # bootstrap.py never installs inline: it starts a detached background
+    # install and returns at once. Its one-line notice goes to stdout, which
+    # here would land in the calling hook's output (and corrupt a JSON
+    # response), so it is discarded; the SessionStart bootstrap hook shows it.
+    "$TENTAQLES_PY" "$CLAUDE_PLUGIN_ROOT/scripts/bootstrap.py" <"$_null" >"$_null" 2>"$_null" || true
     # Re-add lib dir if bootstrap just created it
     if [ -d "$_lib" ]; then
       case ":${PYTHONPATH:-}:" in

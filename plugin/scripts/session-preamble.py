@@ -8,7 +8,9 @@ Identity enforcement (git/gh/az/doctl) is owned by the Go CLI
 (`tq claude-hook session-start`); this script NEVER mutates any identity.
 
 With --memory-only (how the hook invokes it) only the memory/temporal
-context is printed. Without the flag the client header + preflight
+context is printed. When the payload's `source` is "compact" (the session was
+just compacted) the compact state block -- recent decisions, hot nodes, open
+pending -- is printed instead. Without the flag the client header + preflight
 warnings are printed too, for direct/legacy invocation.
 """
 
@@ -141,6 +143,20 @@ def main() -> None:
         payload = {}
 
     cwd = payload.get("cwd", os.getcwd())
+
+    # After compaction the earlier preamble was summarized away. Re-inject the
+    # compact state block here: SessionStart output reaches the model, while
+    # PreCompact output (where this used to be printed) never did.
+    if payload.get("source") == "compact":
+        try:
+            from tentaqles.memory.compact_context import build_compact_block
+
+            block = build_compact_block(cwd)
+        except Exception:
+            block = ""
+        if block:
+            print(block)
+        return
 
     try:
         from tentaqles.manifest.loader import (
