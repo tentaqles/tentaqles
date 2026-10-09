@@ -49,7 +49,7 @@ func TestDesiredManifestAdditionsAndDenyWins(t *testing.T) {
 	if d.Env["ENABLE_STOP_REVIEW"] != "0" {
 		t.Error("baseline env missing")
 	}
-	if cmd := d.StatusLine["command"].(string); cmd != `"C:/tq/tq.exe" statusline` {
+	if cmd := d.StatusLine["command"].(string); cmd != `"opt/tq/tq.exe" statusline` {
 		t.Errorf("status line command = %s", cmd)
 	}
 }
