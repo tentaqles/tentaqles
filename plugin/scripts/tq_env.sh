@@ -148,14 +148,17 @@ export PYTHONPATH="$_pp"
 # or from the interpreter itself — so deleting the lib dir invalidates the
 # stamp and bootstrap.py self-heals, as it did before the stamp existed.
 _dep_stamp="$CLAUDE_PLUGIN_DATA/.deps-ok"
-if [ -d "$_lib" ]; then _dep_key="$CLAUDE_PLUGIN_ROOT|lib"; else _dep_key="$CLAUDE_PLUGIN_ROOT|sys"; fi
+# The interpreter is part of the key: compiled deps (numpy) built for one
+# Python fail to import under another, so a changed TENTAQLES_PY re-checks.
+if [ -d "$_lib" ]; then _dep_key="$CLAUDE_PLUGIN_ROOT|lib|$TENTAQLES_PY"; else _dep_key="$CLAUDE_PLUGIN_ROOT|sys|$TENTAQLES_PY"; fi
 _dep_seen=""
 if [ -r "$_dep_stamp" ]; then
   read -r _dep_seen < "$_dep_stamp" 2>/dev/null || _dep_seen=""
 fi
 
 if [ -n "$CLAUDE_PLUGIN_ROOT" ] && [ "$_dep_seen" != "$_dep_key" ]; then
-  if "$TENTAQLES_PY" -c "import yaml, pathspec" >/dev/null 2>&1; then
+  # numpy is the compiled one: importing it is what catches an ABI mismatch.
+  if "$TENTAQLES_PY" -c "import yaml, pathspec, numpy" >/dev/null 2>&1; then
     mkdir -p "$CLAUDE_PLUGIN_DATA" 2>/dev/null || true
     printf '%s\n' "$_dep_key" > "$_dep_stamp" 2>/dev/null || true
   else
