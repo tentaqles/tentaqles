@@ -251,7 +251,7 @@ type JudgmentLog struct {
 type Judgment struct {
 	Time      time.Time          `json:"ts"`
 	Workspace string             `json:"ws,omitempty"`
-	Kind      string             `json:"kind"` // guard | route | triage
+	Kind      string             `json:"kind"` // guard | route | triage | stop | skill
 	Mode      string             `json:"mode"`
 	Tool      string             `json:"tool,omitempty"`
 	Path      string             `json:"path,omitempty"`
