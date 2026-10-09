@@ -17,20 +17,27 @@ except reads: a loop with no guard must not run.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
 from pathlib import Path
 
 from tentaqles.workflow._common import (
-    WRITE_PLAIN,
+    INTERPRETERS,
+    ShellParseError,
+    canon_text,
+    command_word,
+    file_sha256,
     glob_match,
+    has_expansion,
+    is_null_target,
+    is_write_segment,
+    lex_shell,
     norm,
     read_json,
     read_stdin_json,
     rel_to,
-    segments,
+    resolve_word,
     utf8_stdio,
 )
 
@@ -48,16 +55,14 @@ ENV_FILE = re.compile(r"(?:^|[\s/\\\"'=])\.env(?:\.[\w-]+)?\b(?!\.?(?:example|sa
 ENV_TEMPLATE = re.compile(r"\.env\.(?:example|sample|template|dist)\b", re.IGNORECASE)
 ENV_DUMP = re.compile(r"^\s*(?:printenv|env|set|export\s+-p|get-childitem\s+env:|gci\s+env:|dir\s+env:|ls\s+env:)\s*$",
                       re.IGNORECASE)
-ALWAYS_LOCKED = (".claude/**", ".git/**", ".scores/**")
+ALWAYS_LOCKED = (".claude/**", ".git/**", ".git", ".scores/**", "node_modules/**", ".venv/**", "venv/**",
+                 "**/sitecustomize.py", "**/usercustomize.py", "**/*.pth", "**/pytest.py", "**/_pytest/**")
 
 
 class Blocked(Exception):
     pass
 
 
-def _git_sub(seg: str) -> str | None:
-    m = re.match(r"\s*(?:\S*[/\\])?git(?:\.exe)?\s+((?:-[Cc]\s+\S+\s+|--?[\w-]+(?:=\S+)?\s+)*)([\w-]+)", seg)
-    return m.group(2).lower() if m else None
 
 
 def _is_env_file_mention(text: str) -> bool:
@@ -65,29 +70,80 @@ def _is_env_file_mention(text: str) -> bool:
     return bool(ENV_FILE.search(cleaned))
 
 
+def _temp_dirs() -> list[str]:
+    import tempfile
+
+    out = []
+    for d in {tempfile.gettempdir(), "/tmp", os.environ.get("TEMP", ""), os.environ.get("TMP", "")}:
+        if d:
+            c = canon_text(os.path.normpath(d))
+            out.append(c.rstrip("/"))
+    return out
+
+
+def _protected_mentions(canon: str, cfg: dict) -> list[str]:
+    """Absolute runner paths (guard config, settings, run dir, plugin code, the
+    main repo's .git) named anywhere in the normalised text."""
+    hits = []
+    for p in cfg.get("protect") or []:
+        c = canon_text(p).rstrip("/")
+        if c and c in canon:
+            hits.append(p)
+    return hits
+
+
 def check_shell(cmd: str, cfg: dict) -> None:
-    text = norm(cmd)
+    """Lex once; fail closed on anything unparseable. Writes stay inside the
+    worktree, never touch locked paths, and never name the runner's own files."""
+    root = Path(cfg["root"])
     locked = list(cfg.get("locked") or []) + list(ALWAYS_LOCKED)
-    for seg in segments(text):
-        sub = _git_sub(seg)
-        if sub is not None and sub not in READ_ONLY_GIT:
-            raise Blocked(f"`git {sub}` is not allowed in the loop: the runner commits or undoes each round itself.")
-        if not cfg.get("allow_network") and NETWORK.search(seg):
+    try:
+        segs = lex_shell(cmd)
+    except ShellParseError as e:
+        raise Blocked(f"can't parse this command ({e}); the loop fails closed.")
+    temps = _temp_dirs()
+    for seg in segs:
+        raw = seg.raw
+        name, args = command_word(seg.argv)
+        if name == "git":
+            sub, k = "", 0
+            while k < len(args):
+                if args[k] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace"):
+                    k += 2
+                    continue
+                if args[k].startswith("-"):
+                    k += 1
+                    continue
+                sub = args[k]
+                break
+            if sub.lower() not in READ_ONLY_GIT:
+                raise Blocked(f"`git {sub}` is not allowed in the loop: the runner commits or undoes each round itself.")
+        if not cfg.get("allow_network") and NETWORK.search(raw):
             raise Blocked("network and package-manager commands are off in the overnight loop (no new dependencies).")
-        if ENV_DUMP.match(seg):
+        if ENV_DUMP.match(raw.strip()):
             raise Blocked("dumping the environment is not allowed (it can print secrets).")
-        if _is_env_file_mention(seg):
+        if _is_env_file_mention(raw):
             raise Blocked("`.env` files are off limits in the loop. Code reads config from the environment.")
-        if WRITE_PLAIN.search(seg):
-            for word in re.findall(r"[\w./\\*-]+", seg):
-                w = norm(word).strip("'\"")
-                if not w or w.startswith("-"):
+        canon = canon_text(raw)
+        writes = is_write_segment(seg)
+        if _protected_mentions(canon, cfg) and (writes or name in INTERPRETERS):
+            raise Blocked("the loop's guard, settings, budgets and runner files are off limits.")
+        if not writes:
+            continue
+        for w in seg.redirects + seg.argv[1:]:
+            if is_null_target(w) or w.startswith("-") and "=" not in w:
+                continue
+            if has_expansion(w):
+                raise Blocked("this command writes with a path built from a variable; use a literal path.")
+            rel, absn = resolve_word(root, w)
+            if rel is None:
+                if any(absn.lower().startswith(t + "/") for t in temps):
                     continue
-                rel = rel_to(Path(cfg["root"]), w) if cfg.get("root") else w
-                if rel is None:
-                    continue
-                if glob_match(rel, locked) or glob_match(rel.rstrip("/") + "/x", locked):
-                    raise Blocked(f"{rel} is locked (scorer, checks or test config). Change the app, not the checks.")
+                if w in seg.redirects or name not in INTERPRETERS:
+                    raise Blocked(f"{w} is outside the loop's worktree; writes stay inside it.")
+                continue
+            if glob_match(rel, locked) or glob_match(rel.rstrip("/") + "/x", locked):
+                raise Blocked(f"{rel} is locked (scorer, checks or test config). Change the app, not the checks.")
 
 
 def check_file(tool: str, inp: dict, cfg: dict) -> None:
@@ -96,6 +152,8 @@ def check_file(tool: str, inp: dict, cfg: dict) -> None:
         return
     root = Path(cfg["root"])
     rel = rel_to(root, raw)
+    if tool not in ("Read", "Grep", "Glob") and _protected_mentions(canon_text(raw), cfg):
+        raise Blocked("the loop's guard, settings, budgets and runner files are off limits.")
     if tool in ("Read", "Grep", "Glob"):
         if _is_env_file_mention("/" + norm(raw).split("/")[-1]):
             raise Blocked("`.env` files are off limits in the loop.")
@@ -135,6 +193,12 @@ def main() -> int:
     data = read_stdin_json()
     path = os.environ.get("TQ_LOOP_GUARD")
     cfg = read_json(path) if path else None
+    # The runner pins the config's hash in the child's environment, which the
+    # agent can't change: an edited or replaced config blocks everything.
+    want = os.environ.get("TQ_LOOP_GUARD_SHA")
+    if cfg is not None and (not want or file_sha256(path) != want):
+        print("loop-guard: guard config changed or unpinned; blocking.", file=sys.stderr)
+        return 2
     try:
         code, msg = decide(data, cfg if isinstance(cfg, dict) else None)
     except Exception as e:  # a crash must not open the gate in a loop: block

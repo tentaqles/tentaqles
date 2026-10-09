@@ -316,3 +316,240 @@ WRITE_STRICT = re.compile(
     _WRITE_VERBS + r"|\b(?:python[0-9.]*|py|node|deno|bun|ruby|perl|php|jq|awk|pwsh|powershell)\b",
     re.IGNORECASE,
 )
+
+
+# ---------------------------------------------------------------------------
+# Shell lexer: one normalisation pass shared by the gate and the loop guard.
+#
+# Splits compound commands outside quotes (&& || ; | & newline, subshells,
+# $(...) and backticks become their own segments), records redirect targets,
+# strips quotes. Backslash is literal outside double quotes so Windows paths
+# survive; inside double quotes it escapes " \ $ `. Unclosed quotes raise
+# ShellParseError, and callers fail closed.
+# ---------------------------------------------------------------------------
+
+
+class ShellParseError(ValueError):
+    pass
+
+
+class Segment:
+    __slots__ = ("argv", "redirects", "raw")
+
+    def __init__(self):
+        self.argv: list[str] = []
+        self.redirects: list[str] = []
+        self.raw = ""
+
+    def __repr__(self):  # pragma: no cover - debugging aid
+        return f"Segment(argv={self.argv!r}, redirects={self.redirects!r})"
+
+
+_DQ_ESCAPES = '"\\$`'
+
+
+def lex_shell(cmd: str) -> list[Segment]:
+    text = cmd or ""
+    segs: list[Segment] = []
+    state = {"cur": Segment(), "word": [], "have": False, "redir": False, "start": 0}
+
+    def end_word():
+        if state["have"]:
+            w = "".join(state["word"])
+            if state["redir"]:
+                state["cur"].redirects.append(w)
+                state["redir"] = False
+            else:
+                state["cur"].argv.append(w)
+        state["word"], state["have"] = [], False
+
+    def end_segment(upto):
+        end_word()
+        cur = state["cur"]
+        cur.raw = text[state["start"]:upto]
+        if cur.argv or cur.redirects:
+            segs.append(cur)
+        state["cur"] = Segment()
+        state["redir"] = False
+
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "'":
+            j = text.find("'", i + 1)
+            if j < 0:
+                raise ShellParseError("unclosed single quote")
+            state["word"].append(text[i + 1:j])
+            state["have"] = True
+            i = j + 1
+            continue
+        if c == '"':
+            j, buf = i + 1, []
+            while j < n and text[j] != '"':
+                if text[j] == "\\" and j + 1 < n and text[j + 1] in _DQ_ESCAPES:
+                    buf.append(text[j + 1])
+                    j += 2
+                    continue
+                buf.append(text[j])
+                j += 1
+            if j >= n:
+                raise ShellParseError("unclosed double quote")
+            state["word"].append("".join(buf))
+            state["have"] = True
+            i = j + 1
+            continue
+        if c in " \t":
+            end_word()
+            i += 1
+            continue
+        if text.startswith("$(", i) or c in "`()":
+            end_segment(i)
+            i += 2 if text.startswith("$(", i) else 1
+            state["start"] = i
+            continue
+        if c == "&" and text.startswith("&>", i):
+            end_word()
+            state["redir"] = True
+            i += 3 if text.startswith("&>>", i) else 2
+            continue
+        if c == "&" and i > 0 and text[i - 1] == ">":
+            # `>&N` duplicates a descriptor: not a file write
+            state["redir"] = False
+            i += 1
+            while i < n and text[i].isdigit():
+                i += 1
+            continue
+        if c in ";\r\n|&":
+            end_segment(i)
+            i += 2 if text[i:i + 2] in ("&&", "||") else 1
+            state["start"] = i
+            continue
+        if c in "<>":
+            if state["have"] and "".join(state["word"]).isdigit():
+                state["word"], state["have"] = [], False  # fd prefix such as 2>
+            end_word()
+            if c == ">":
+                state["redir"] = True
+                i += 1
+                while i < n and text[i] in ">|":
+                    i += 1
+            else:
+                i += 1  # input redirect: the next word is read, not written
+            continue
+        state["word"].append(c)
+        state["have"] = True
+        i += 1
+    end_segment(n)
+    return segs
+
+
+_NULL_TARGETS = {"/dev/null", "nul", "$null", "nul:"}
+
+
+def is_null_target(t: str) -> bool:
+    return norm(t).lower() in _NULL_TARGETS
+
+
+def has_expansion(t: str) -> bool:
+    """A word whose value the lexer can't know (variables, substitution, ~)."""
+    return bool(re.search(r"\$|`|%[A-Za-z_]+%|^~", t or "")) and not is_null_target(t)
+
+
+def canon_text(text: str) -> str:
+    """Normalised command text for substring checks: / separators, no ./ or //,
+    `x/../` collapsed, case-folded (folding only makes checks stricter)."""
+    t = norm(text)
+    t = re.sub(r"/+", "/", t)
+    t = re.sub(r"(?:(?<=/)|^)\./", "", t)
+    prev = None
+    while prev != t:
+        prev = t
+        t = re.sub(r"[^/\s\"'=]+/\.\./", "", t)
+    return t.lower()
+
+
+def resolve_word(root, word: str) -> tuple[str | None, str]:
+    """(path relative to root or None when outside, canonical absolute path).
+
+    Strips an `--opt=` prefix and quotes, normalises separators, resolves `..`,
+    folds case on Windows.
+    """
+    w = word
+    if w.startswith("-") and "=" in w:
+        w = w.split("=", 1)[1]
+    w = norm(w).strip("'\"")
+    p = Path(w)
+    if not p.is_absolute() and not re.match(r"^[A-Za-z]:/", w):
+        p = Path(norm(root)) / w
+    absn = norm(os.path.normpath(norm(p)))
+    rel = rel_to(Path(root), absn)
+    if IS_WINDOWS:
+        absn = absn.lower()
+        rel = rel.lower() if rel is not None else None
+    return rel, absn
+
+
+WRITE_COMMANDS = {
+    "mv", "cp", "rm", "rmdir", "unlink", "truncate", "dd", "install", "ln", "touch", "chmod",
+    "chown", "shred", "tee", "mkdir", "rsync", "tar", "unzip", "patch",
+    "set-content", "add-content", "out-file", "new-item", "remove-item", "move-item", "copy-item",
+    "rename-item", "clear-content", "set-itemproperty", "export-csv", "export-clixml",
+    "sc", "ac", "ni", "ri", "mi", "cpi", "rni", "del", "erase", "ren", "move", "copy", "xcopy",
+    "robocopy", "rd", "md",
+}
+INTERPRETERS = {
+    "python", "py", "node", "deno", "bun", "ruby", "perl", "php", "pwsh", "powershell",
+    "bash", "sh", "zsh", "cmd", "jq", "awk", "gawk", "sed", "osascript", "lua", "tclsh",
+}
+GIT_WRITE_SUBS = {"checkout", "restore", "rm", "mv", "reset", "stash", "apply", "am", "clean",
+                  "update-index", "update-ref", "config", "switch", "worktree", "filter-branch",
+                  "replace", "read-tree", "checkout-index"}
+_WRAPPERS = {"env", "sudo", "command", "exec", "nohup", "time", "xargs", "nice", "timeout", "."}
+
+
+def command_word(argv: list[str]) -> tuple[str, list[str]]:
+    """Base command name (lower, no .exe, python3.12 -> python) after env
+    assignments and wrappers such as env/sudo/xargs."""
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", a):
+            i += 1
+            continue
+        base = norm(a).rsplit("/", 1)[-1].lower()
+        if base.endswith(".exe"):
+            base = base[:-4]
+        if base in _WRAPPERS:
+            i += 1
+            while i < len(argv) and (argv[i].startswith("-") or argv[i].isdigit()):
+                i += 1
+            continue
+        if re.match(r"^python[0-9.]*$", base):
+            base = "python"
+        return base, argv[i + 1:]
+    return "", []
+
+
+_CODE_WRITE = re.compile(
+    r"writealltext|writeallbytes|appendalltext|\[(?:system\.)?io\.file\]|open\s*\(|\.write|"
+    r"writefile|appendfile|unlink|rmtree|os\.remove|os\.rename|shutil|fs\.|copyfile|rename\(",
+    re.IGNORECASE,
+)
+
+
+def is_write_segment(seg: Segment) -> bool:
+    """Does this segment write files (verb, redirect, in-place flag, inline code)?"""
+    if any(not is_null_target(t) for t in seg.redirects):
+        return True
+    cmd, args = command_word(seg.argv)
+    if cmd in WRITE_COMMANDS:
+        return True
+    if cmd in ("sed", "perl") and any(re.match(r"^-[a-z]*i", a) or a == "--in-place" for a in args):
+        return True
+    if cmd == "git":
+        sub = next((a for a in args if not a.startswith("-")), "")
+        if sub.lower() in GIT_WRITE_SUBS:
+            return True
+    if cmd in INTERPRETERS and _CODE_WRITE.search(seg.raw):
+        return True
+    return False

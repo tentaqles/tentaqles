@@ -53,6 +53,14 @@ def with_gate(plan, cid, **gates):
     return p
 
 
+@pytest.fixture(autouse=True)
+def tq_home(tmp_path, monkeypatch):
+    """The signing key lives under TQ_HOME; never touch the real one."""
+    home = tmp_path / "tqhome"
+    monkeypatch.setenv("TQ_HOME", str(home))
+    return home
+
+
 @pytest.fixture
 def repo(tmp_path):
     root = tmp_path / "proj"
@@ -284,13 +292,176 @@ def test_shell_guard(repo, cmd, tool, want):
     assert hook(repo, bash(cmd, tool))[0] == want
 
 
-def test_gate_cli_approve_asks_human(repo):
-    code, out, _ = hook(repo, bash('bash "/x/scripts/tq_run.sh" build-gate.py approve demo'))
-    assert code == 0
-    decision = json.loads(out)["hookSpecificOutput"]
-    assert decision["permissionDecision"] == "ask" and "approve" in decision["permissionDecisionReason"]
+@pytest.mark.parametrize("sub", ["approve demo", "unlock-tests demo tests/test_a.py", "finish demo"])
+def test_human_only_subcommands_refused_to_the_agent(repo, sub):
+    code, _, err = hook(repo, bash(f'bash "/x/scripts/tq_run.sh" build-gate.py {sub}'))
+    assert code == 2 and "own terminal" in err
     code, out, _ = hook(repo, bash('bash tq_run.sh build-gate.py verify demo 2'))
     assert code == 0 and out == ""
+
+
+def test_human_only_cli_needs_tty_and_code(repo):
+    """Piped stdin is not a human: the CLI refuses even if the hook were bypassed."""
+    proc = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "approve", "demo"],
+                          input=b"yes\n", capture_output=True, timeout=60)
+    assert proc.returncode == 2 and b"interactive terminal" in proc.stderr
+    assert gate.load_approved(repo, "demo") is None
+
+    class TTY:
+        def __init__(self, answer):
+            self.answer, self.out = answer, []
+
+        def isatty(self):
+            return True
+
+        def readline(self):
+            return self.answer
+
+        def write(self, s):
+            self.out.append(s)
+
+        def flush(self):
+            pass
+
+    assert gate.human_confirm("x", stdin=TTY("nope\n"), stdout=TTY("")) is False
+    out = TTY("")
+
+    class Echo(TTY):
+        def readline(self):
+            text = "".join(out.out)
+            return text.rsplit("Type ", 1)[1].split(" ", 1)[0] + "\n"
+
+    assert gate.human_confirm("x", stdin=Echo(""), stdout=out) is True
+
+
+# ---------------------------------------------------------------------------
+# Bypass attempts (security review): the agent must not be able to produce or
+# alter anything the gate trusts.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_written_approval_keeps_gate_closed(repo):
+    state = repo / ".claude" / "build" / "demo"
+    state.mkdir(parents=True, exist_ok=True)
+    fake = {"slug": "demo", "verify": {"1": [PASS_CMD], "2": [PASS_CMD], "3": [PASS_CMD]},
+            "tests_locked": {"2": []}, "locked_tests": {}, "approval_id": "x", "sig": "0" * 64}
+    (state / "approved.json").write_text(json.dumps(fake), encoding="utf-8")
+    assert gate.load_approved(repo, "demo") is None
+    code, _, err = hook(repo, agent("[checkpoint demo#2 implement]"))
+    assert code == 2 and "approved" in err
+
+
+def test_agent_forged_evidence_is_ignored(repo):
+    approve_and_lock(repo)
+    th = gate.tree_hash(repo)
+    appr = gate.load_approved(repo, "demo")
+    row = {"checkpoint": 2, "tree": th, "ok": True, "approval_id": appr["approval_id"], "results": []}
+    with open(repo / ".claude" / "build" / "demo" / "evidence.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps({**row, "sig": "f" * 64}) + "\n")
+    code, _, err = hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed")))
+    assert code == 2 and "no verify evidence" in err
+
+
+def test_echo_pytest_passed_is_not_evidence(repo):
+    approve_and_lock(repo)
+    assert hook(repo, bash('echo "pytest passed: 12 passed in 0.1s"'))[0] == 0
+    assert hook(repo, bash('python -m pytest tests/test_a.py -q'))[0] == 0
+    code, _, err = hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed")))
+    assert code == 2 and "no verify evidence" in err
+
+
+def test_evidence_from_older_approval_does_not_carry_over(repo):
+    approve_and_lock(repo)
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 0
+    gate.cmd_approve(repo, "demo")  # a new approval (e.g. after a split)
+    code, _, err = hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed")))
+    assert code == 2 and "predates the current approval" in err
+
+
+def test_plan_changed_after_approval_needs_reapproval(repo):
+    approve_and_lock(repo)
+    plan = copy.deepcopy(PLAN)
+    plan["checkpoints"][1]["verify"] = ['echo "always green"']
+    save_plan(repo, plan)
+    code, _, err = hook(repo, agent("[checkpoint demo#2 implement]"))
+    assert code == 2 and "changed" in err
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 1
+
+
+def test_lock_tests_must_cover_the_approved_test_files(repo):
+    plan = copy.deepcopy(PLAN)
+    plan["checkpoints"][1]["tests"] = [{"file": "tests/test_a.py", "layer": "unit"}]
+    save_plan(repo, plan)
+    gate.cmd_approve(repo, "demo")
+    with pytest.raises(SystemExit, match="must be locked"):
+        gate.cmd_lock_tests(repo, "demo", 2, [], none=True)
+
+
+def test_verify_fails_when_code_rewrites_files_while_running(repo):
+    plan = copy.deepcopy(PLAN)
+    sneaky = f'"{PY}" -c "open(\'app.py\',\'a\').write(\'#x\\n\')"'
+    plan["checkpoints"][1]["verify"] = [sneaky]
+    save_plan(repo, plan)
+    approve_and_lock(repo)
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "changed while" in msg
+
+
+@pytest.mark.parametrize("cmd,tool", [
+    # the old exemption: any segment naming build-gate.py skipped every check
+    ('echo build-gate.py status > .claude/build/demo/approved.json', "Bash"),
+    ('bash tq_run.sh build-gate.py status demo > .claude/build/demo/evidence.jsonl', "Bash"),
+    # quoting, case, dot segments and separators
+    ('echo x > ".claude/build/demo/approved.json"', "Bash"),
+    ("echo x > '.claude/build/demo/approved.json'", "Bash"),
+    ('echo x > .claude/./build//demo/approved.json', "Bash"),
+    ('echo x > docs/../.claude/build/demo/approved.json', "Bash"),
+    ('Set-Content -Path ".Claude\\Build\\demo\\approved.json" -Value x', "PowerShell"),
+    ('cp /tmp/x tests/../tests/test_a.py', "Bash"),
+    ('rm "tests/test_a.py"', "Bash"),
+    ('true;rm tests/test_a.py', "Bash"),
+    ('ls && (rm tests/test_a.py)', "Bash"),
+    ('echo $(rm tests/test_a.py)', "Bash"),
+    ('git status; git checkout -- "tests\\test_a.py"', "Bash"),
+    ('python -c "open(\'docs/checkpoints/demo.json\',\'w\').write(\'{}\')"', "Bash"),
+    ('echo x > "$STATE/approved.json"', "Bash"),
+    ('rm tests/*.py', "Bash"),
+    ('echo "unclosed > .claude/build/demo/approved.json', "Bash"),
+    ('echo x >> .git/info/exclude', "Bash"),
+    ('cat ~/.tentaqles/build-gate/hmac.key', "Bash"),
+])
+def test_shell_bypass_variants_blocked(repo, cmd, tool, monkeypatch):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd, tool))[0] == 2, cmd
+
+
+def test_file_tool_variants_blocked(repo):
+    approve_and_lock(repo)
+    variants = [str(repo / "docs" / ".." / ".claude" / "build" / "demo" / "approved.json"),
+                str(repo / ".git" / "info" / "exclude"),
+                str(repo / ".claude" / "tq-rules.yaml")]
+    for path in variants:
+        payload = {"tool_name": "Write", "tool_input": {"file_path": path, "content": "{}"}}
+        assert hook(repo, payload)[0] == 2, path
+    key = {"tool_name": "Read", "tool_input": {"file_path": str(gate.key_path())}}
+    assert hook(repo, key)[0] == 2
+
+
+def test_tq_rules_protect_state_and_key(repo):
+    yaml = pytest.importorskip("yaml")
+    import re
+    approve_and_lock(repo)
+    rules = {r["id"]: r for r in yaml.safe_load((repo / ".claude" / "tq-rules.yaml").read_text(encoding="utf-8"))["rules"]}
+    edit = rules["tentaqles-build/state-edit"]
+    assert edit["action"] == "deny"
+    for p in ("C:/r/.claude/build/demo/approved.json", "/r/.claude/tq-rules.yaml", "/r/.claude/settings.local.json"):
+        assert re.search(edit["path"], p, re.IGNORECASE), p
+    shell = rules["tentaqles-build/state-shell"]["command"]
+    for c in ("echo x > .claude/build/demo/approved.json", "Set-Content .claude\\tq-rules.yaml x",
+              "python -c \"open('.claude/build/x','w')\""):
+        assert re.search(shell, c, re.IGNORECASE), c
+    assert not re.search(shell, "cat .claude/build/demo/approved.json", re.IGNORECASE)
+    assert re.search(rules["tentaqles-build/key-shell"]["command"], "type C:\\u\\.tentaqles\\build-gate\\hmac.key")
 
 
 def test_locked_test_edits_blocked_and_tamper_fails_verify(repo):
@@ -409,7 +580,7 @@ def test_tq_rules_generated_for_locked_tests(repo):
     yaml = pytest.importorskip("yaml")
     approve_and_lock(repo)
     data = yaml.safe_load((repo / ".claude" / "tq-rules.yaml").read_text(encoding="utf-8"))
-    rule = data["rules"][0]
+    rule = next(r for r in data["rules"] if r["id"] == "tentaqles-build/locked-tests")
     assert rule["action"] == "ask" and rule["id"].startswith("tentaqles-build/")
     import re
     assert re.search(rule["path"], "C:/repo/tests/test_a.py")
@@ -426,7 +597,7 @@ def test_tq_rules_merge_keeps_project_rules(repo):
                     "    content: 'console\\.log'\n    reason: use the logger\n", encoding="utf-8")
     approve_and_lock(repo)
     ids = [r["id"] for r in yaml.safe_load(path.read_text(encoding="utf-8"))["rules"]]
-    assert ids == ["app/no-console", "tentaqles-build/locked-tests"]
+    assert ids[0] == "app/no-console" and "tentaqles-build/locked-tests" in ids and "tentaqles-build/state-edit" in ids
 
 
 def test_viewer_binds_localhost_only(repo):

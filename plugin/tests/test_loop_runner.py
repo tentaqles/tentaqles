@@ -41,6 +41,12 @@ def _git(root, *args):
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout
 
 
+@pytest.fixture(autouse=True)
+def tq_home(tmp_path, monkeypatch):
+    """Approvals are signed with a key under TQ_HOME; never touch the real one."""
+    monkeypatch.setenv("TQ_HOME", str(tmp_path / "tqhome"))
+
+
 @pytest.fixture
 def repo(tmp_path):
     root = tmp_path / "app"
@@ -146,7 +152,7 @@ def test_commit_stages_explicit_paths_never_secrets(repo, tmp_path, monkeypatch)
 def test_tamper_with_checks_is_undone(repo, tmp_path, monkeypatch):
     approve(repo)
     cheat = "def test_positive():\n    pass\n\n\ndef test_zero():\n    pass\n\n\ndef test_negative():\n    pass\n"
-    s = go(repo, tmp_path, monkeypatch, [
+    go(repo, tmp_path, monkeypatch, [
         {"write": {"checks/test_add.py": cheat}, "cost": 0.1, "idea": "simplify tests"},
         {"write": {"conftest.py": "collect_ignore = ['checks']\n"}, "cost": 0.1, "idea": "skip"},
         {"write": {"app.py": FULL}, "cost": 0.1},
@@ -273,6 +279,88 @@ def test_tq_missing_is_a_preflight_failure(repo, tmp_path, monkeypatch):
     s = loop.run_loop(repo, "add", workspace="acme", use_tq=True, run_id="t2", worktree_dir=tmp_path / "wt2")
     assert s["stop_reason"].startswith("preflight") and s["rounds"] == 0
     assert not (tmp_path / "wt2").exists()
+
+
+# ---------------------------------------------------------------------------
+# Integrity (security review): the runner re-derives everything it trusts
+# ---------------------------------------------------------------------------
+
+
+def test_agent_editing_its_guard_aborts_the_run(repo, tmp_path, monkeypatch):
+    approve(repo)
+    s = go(repo, tmp_path, monkeypatch, [
+        {"write": {"app.py": FULL}, "tamper_guard": True, "cost": 0.1},
+        {"write": {"app.py": FULL}, "cost": 0.1},
+    ])
+    assert s["stop_reason"] == "config-tamper" and s["rounds"] == 1 and s["kept"] == 0
+    assert (tmp_path / "wt" / "app.py").read_text(encoding="utf-8") == STUB  # round discarded
+    assert any("guard/config" in n for n in s["notes"])
+
+
+def test_head_moved_by_agent_is_discarded(repo, tmp_path, monkeypatch):
+    approve(repo)
+    s = go(repo, tmp_path, monkeypatch, [{"write": {"app.py": FULL}, "git_commit": True, "cost": 0.1}],
+           budget=Budget(rounds=1, score_timeout=120))
+    assert s["kept"] == 0 and s["best"] != "3/3"
+    wt = tmp_path / "wt"
+    assert "sneaky" not in _git(wt, "log", "--format=%s")  # reset to the runner's last good commit
+    assert (wt / "app.py").read_text(encoding="utf-8") == STUB
+
+
+def test_planted_ignored_settings_are_tamper_and_removed(repo, tmp_path, monkeypatch):
+    (repo / ".gitignore").write_text(".claude/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-q", "-m", "ignore")
+    approve(repo)
+    s = go(repo, tmp_path, monkeypatch, [
+        {"write": {"app.py": FULL, ".claude/settings.local.json": '{"disableAllHooks": true}'}, "cost": 0.1},
+    ], budget=Budget(rounds=1, score_timeout=120))
+    assert s["kept"] == 0
+    assert not (tmp_path / "wt" / ".claude" / "settings.local.json").exists()
+
+
+def test_child_never_loads_worktree_settings(repo, tmp_path, monkeypatch):
+    approve(repo)
+    go(repo, tmp_path, monkeypatch, [{"write": {"app.py": FULL}, "cost": 0.1}])
+    argv = calls(tmp_path)[0]["argv"]
+    assert argv[argv.index("--setting-sources") + 1] == "user"
+    disallowed = argv[argv.index("--disallowedTools") + 1]
+    assert "Edit(checks/test_add.py)" in disallowed and "loop/runs" in disallowed
+    settings = json.loads(Path(argv[argv.index("--settings") + 1]).read_text(encoding="utf-8"))
+    assert settings["disableAllHooks"] is False
+
+
+def test_agent_written_or_edited_approval_is_refused(repo, tmp_path):
+    data = approve(repo)
+    path = repo / ".claude" / "loop" / "approved" / "add.json"
+    edited = {**data, "expected_total": 1, "locked": []}
+    path.write_text(json.dumps(edited), encoding="utf-8")
+    with pytest.raises(SystemExit, match="no valid approval"):
+        loop.run_loop(repo, "add", use_tq=False, claude_cmd=[sys.executable, str(FAKE)])
+    unsigned = {k: v for k, v in data.items() if k != "sig"}
+    path.write_text(json.dumps(unsigned), encoding="utf-8")
+    assert loop.load_approval(repo, "add") is None
+
+
+def test_approve_cli_is_human_only(repo):
+    script = Path(__file__).resolve().parents[1] / "scripts" / "loop-runner.py"
+    proc = subprocess.run([sys.executable, str(script), "--repo", str(repo), "approve", "--feature", "add",
+                           "--checks", "checks/test_add.py", "--score-cmd", SCORE_CMD],
+                          input=b"y\n", capture_output=True, timeout=120)
+    assert proc.returncode == 2 and b"interactive terminal" in proc.stderr
+    assert loop.load_approval(repo, "add") is None
+
+
+def test_approval_pins_test_names(repo):
+    data = approve(repo)
+    assert len(data["names"]) == 3 and all("::test_" in n for n in data["names"])
+
+
+def test_stdout_score_only_from_the_last_line():
+    assert loop.parse_stdout_score("score: 9/9\nreal output\nscore: 1/9\n")[:2] == (1, 9)
+    # a test printing a fake score is not the scorer's verdict
+    assert loop.parse_stdout_score("score: 9/9\nsomething after\n") is None
+    assert loop.parse_stdout_score('echo "pytest passed"') is None
 
 
 def test_parse_helpers():

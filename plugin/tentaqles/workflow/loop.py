@@ -100,6 +100,7 @@ class Score:
     crashed: bool = False
     timed_out: bool = False
     failing: list = field(default_factory=list)
+    names: list = field(default_factory=list)
 
     def text(self) -> str:
         if self.timed_out:
@@ -117,23 +118,33 @@ _DECODE = {"quot": '"', "amp": "&", "lt": "<", "gt": ">", "apos": "'", "#39": "'
 
 
 def parse_junit(xml: str) -> tuple[int, int, list[str]]:
+    passed, total, failing, _ = parse_junit_names(xml)
+    return passed, total, failing
+
+
+def parse_junit_names(xml: str) -> tuple[int, int, list[str], list[str]]:
     cases = re.findall(r"<testcase\b([^>]*?)(?:/>|>([\s\S]*?)</testcase>)", xml or "")
-    passed, failing = 0, []
+    passed, failing, names = 0, [], []
     for attrs, body in cases:
         m = re.search(r'\bname="([^"]*)"', attrs)
         name = re.sub(r"&(quot|amp|lt|gt|apos|#39);", lambda x: _DECODE[x.group(1)], m.group(1)) if m else "?"
+        c = re.search(r'\bclassname="([^"]*)"', attrs)
+        names.append(f"{c.group(1) if c else ''}::{name}")
         if re.search(r"<(failure|error|skipped)\b", body or ""):
             failing.append(name)
         else:
             passed += 1
-    return passed, len(cases), failing
+    return passed, len(cases), failing, names
 
 
 def parse_stdout_score(text: str) -> tuple[int, int, list[str]] | None:
-    found = re.findall(r"score:\s*(\d+)\s*/\s*(\d+)", text or "")
-    if not found:
+    """Kit-compatible `score: X/Y`. Only the scorer's own LAST line counts, so a
+    test that prints a fake score line mid-run can't set the result."""
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    m_last = re.fullmatch(r"\s*score:\s*(\d+)\s*/\s*(\d+)\s*", lines[-1]) if lines else None
+    if not m_last:
         return None
-    x, y = found[-1]
+    x, y = m_last.group(1), m_last.group(2)
     failing = []
     m = re.findall(r"still failing:\s*(.+)", text or "")
     if m:
@@ -169,14 +180,18 @@ def run_scorer(root: Path, scorer: dict, xml_path: Path, timeout: float) -> Scor
     code, out, err, timed_out = run(shell_argv(cmd), cwd=root, env=env, timeout=timeout)
     if timed_out:
         return Score(timed_out=True, crashed=True)
+    names: list = []
     if scorer.get("kind") == "stdout":
         parsed = parse_stdout_score(out)
     else:
-        parsed = parse_junit(read_text(xml_path)) if xml_path.exists() else None
+        parsed = None
+        if xml_path.exists():
+            p_, t_, f_, names = parse_junit_names(read_text(xml_path))
+            parsed = (p_, t_, f_)
     if not parsed or parsed[1] == 0:
         return Score(crashed=True)
     passed, total, failing = parsed
-    return Score(passed=passed, total=total, failing=failing)
+    return Score(passed=passed, total=total, failing=failing, names=names)
 
 
 # ---------------------------------------------------------------------------
@@ -204,13 +219,32 @@ def changed_paths(wt: Path) -> list[str]:
     return paths
 
 
-def tampered(wt: Path, commit: str, locked) -> list[str]:
+def ignored_entries(wt: Path) -> set[str]:
+    """Ignored, untracked paths (directories collapsed): files `git clean -fd` leaves."""
+    code, out = git(wt, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory")
+    return {ln.strip() for ln in out.splitlines() if ln.strip()} if code == 0 else set()
+
+
+ALWAYS_TAMPER = (".claude/**", ".claude", "**/sitecustomize.py", "**/usercustomize.py", "**/*.pth",
+                 "**/pytest.py", "**/_pytest/**", "**/conftest.py")
+
+
+def tampered(wt: Path, commit: str, locked, ignored_baseline: set | None = None) -> list[str]:
+    """Locked paths changed since `commit`, judged by the runner's own git calls:
+    tracked diffs, untracked files, and new ignored files (which `git status`
+    hides) such as a planted sitecustomize.py or .claude/settings.local.json."""
     code, out = git(wt, "diff", "--name-only", commit)
     names = set(out.splitlines()) if code == 0 else set()
     code, out = git(wt, "ls-files", "--others", "--exclude-standard")
     if code == 0:
         names |= set(out.splitlines())
-    return sorted(n for n in names if n and glob_match(n, locked) and not glob_match(n, JUNK))
+    bad = {n for n in names if n and glob_match(n, locked) and not glob_match(n, JUNK)}
+    if ignored_baseline is not None:
+        for n in ignored_entries(wt) - ignored_baseline:
+            stem = n.rstrip("/")
+            if glob_match(stem, list(locked) + list(ALWAYS_TAMPER)) or glob_match(stem + "/x", list(locked) + list(ALWAYS_TAMPER)):
+                bad.add(n)
+    return sorted(bad)
 
 
 def skip_for_commit(wt: Path, rel: str) -> str | None:
@@ -234,12 +268,31 @@ def current_branch(wt: Path) -> str:
     return out.strip() if code == 0 else ""
 
 
-def undo(wt: Path, branch: str) -> None:
+def undo(wt: Path, branch: str, target: str = "HEAD", ignored_baseline: set | None = None) -> None:
+    """Back to the runner's last kept commit (never to whatever HEAD the agent left)."""
+    if branch in ("main", "master") or not branch.startswith("loop/"):
+        raise RuntimeError(f"refusing to reset: '{branch}' is not a loop branch")
     cur = current_branch(wt)
-    if cur != branch or cur in ("main", "master", "HEAD", ""):
-        raise RuntimeError(f"refusing to reset: worktree is on '{cur}', not the loop branch '{branch}'")
-    git(wt, "reset", "-q", "--hard", "HEAD", timeout=120)
+    if cur != branch:
+        if cur in ("main", "master") and target == "HEAD":
+            raise RuntimeError(f"refusing to reset: worktree is on '{cur}', not the loop branch '{branch}'")
+        code, out = git(wt, "checkout", "-q", "-f", branch, timeout=120)
+        if code != 0 or current_branch(wt) != branch:
+            raise RuntimeError(f"refusing to reset: worktree is on '{cur}', not the loop branch '{branch}'")
+    git(wt, "reset", "-q", "--hard", target, timeout=120)
     git(wt, "clean", "-fdq", timeout=120)
+    if ignored_baseline is not None:
+        for n in ignored_entries(wt) - ignored_baseline:
+            stem = n.rstrip("/")
+            if glob_match(stem, ALWAYS_TAMPER) or glob_match(stem + "/x", ALWAYS_TAMPER):
+                target_path = wt / stem
+                if target_path.is_dir():
+                    shutil.rmtree(target_path, ignore_errors=True)
+                else:
+                    try:
+                        target_path.unlink()
+                    except OSError:
+                        pass
 
 
 def tq_commit_scan(wt: Path, tq: str | None) -> str | None:
@@ -258,12 +311,19 @@ def tq_commit_scan(wt: Path, tq: str | None) -> str | None:
     return None
 
 
-def commit_round(wt: Path, branch: str, message: str, prefix: list[str], tq: str | None) -> tuple[str | None, list[str], str]:
-    """Stage changed paths by name and commit. Returns (sha|None, skipped, error)."""
+def commit_round(wt: Path, branch: str, message: str, prefix: list[str], tq: str | None,
+                 locked=(), base: str | None = None) -> tuple[str | None, list[str], str]:
+    """Stage verified changed paths by name and commit. Returns (sha|None, skipped, error)."""
     if current_branch(wt) != branch:
         return None, [], "not on the loop branch"
+    if base:
+        code, head = git(wt, "rev-parse", "HEAD")
+        if head.strip() != base:
+            return None, [], "HEAD moved; refusing to commit"
     paths, skipped = [], []
     for rel in changed_paths(wt):
+        if locked and glob_match(rel, list(locked)) and not glob_match(rel, JUNK):
+            return None, skipped, f"refusing to commit a locked path: {rel}"
         why = skip_for_commit(wt, rel)
         if why == "build by-product":
             continue
@@ -357,12 +417,24 @@ def approve(repo: Path, feature: str, checks: list[str], scorer_cmd: str, kind: 
         "scorer": scorer,
         "expected_total": total,
         "baseline": asdict(baseline),
+        # names pin WHICH tests count, not just how many (empty when the baseline crashed)
+        "names": sorted(baseline.names) if not baseline.crashed and baseline.total == total else [],
         "spec_file": norm(spec_file) if spec_file else None,
         "notes": notes,
     }
+    from tentaqles.workflow.gate import sign
+
+    data = sign(data)  # HMAC with the per-user key outside the repo: an agent-written approval fails
     write_json(approval_path(repo, feature), data)
     git_exclude(repo, f"/{STATE}/")
     return data
+
+
+def load_approval(repo: Path, feature: str) -> dict | None:
+    from tentaqles.workflow.gate import verified
+
+    data = read_json(approval_path(repo, feature))
+    return data if verified(data) else None
 
 
 # ---------------------------------------------------------------------------
@@ -438,14 +510,42 @@ def idea_from(result: str) -> str:
     return idea[:100]
 
 
-def write_settings(run_dir: Path, wt: Path, locked: list[str], allow_network: bool, guard_cfg: Path) -> tuple[Path, Path]:
+PINNED_PLUGIN_FILES = ("tentaqles/workflow/loopguard.py", "tentaqles/workflow/_common.py",
+                       "tentaqles/workflow/__init__.py", "scripts/loop-guard.py", "scripts/tq_run.sh",
+                       "scripts/tq_env.sh", "scripts/_path.py")
+
+
+def plugin_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def protected_paths(run_dir: Path, repo: Path) -> list[str]:
+    """Absolute paths the child must never write: its own guard/settings/budget
+    files, the runner's state, the plugin code, the main repo's .git."""
+    out = [run_dir, state_root(repo), plugin_root(), repo / ".git"]
+    return [norm(os.path.normpath(str(p))) for p in out]
+
+
+def _abs_rule(tool: str, p: str) -> str:
+    # Claude Code: `//path` is an absolute path rule
+    return f"{tool}(//{p.lstrip('/')}/**)"
+
+
+def write_settings(run_dir: Path, wt: Path, repo: Path, locked: list[str], allow_network: bool,
+                   guard_cfg: Path) -> tuple[Path, Path, list[str]]:
     tools = list(TOOLS) + (list(NET_TOOLS) if allow_network else [])
-    runner = norm(Path(__file__).resolve().parents[2] / "scripts" / "tq_run.sh")
-    deny = ["Bash(git push:*)", "Bash(git commit:*)", "Bash(git reset:*)", "Bash(git checkout:*)"]
+    runner = norm(plugin_root() / "scripts" / "tq_run.sh")
+    protect = protected_paths(run_dir, repo)
+    deny = ["Bash(git push:*)", "Bash(git commit:*)", "Bash(git reset:*)", "Bash(git checkout:*)",
+            "Bash(git config:*)"]
     if not allow_network:
         deny += list(NET_TOOLS)
-    deny += [f"Edit({p})" for p in locked]
+    for pat in locked:
+        deny += [f"Edit({pat})", f"Write({pat})"]
+    for pth in protect:
+        deny += [_abs_rule("Edit", pth), _abs_rule("Write", pth)]
     settings = {
+        "disableAllHooks": False,
         "permissions": {"allow": tools, "deny": deny},
         "hooks": {"PreToolUse": [{"matcher": ".*", "hooks": [
             {"type": "command", "command": f'bash "{runner}" loop-guard.py', "timeout": 10}]}]},
@@ -454,19 +554,33 @@ def write_settings(run_dir: Path, wt: Path, locked: list[str], allow_network: bo
     write_json(settings_path, settings)
     mcp_path = run_dir / "mcp-empty.json"
     write_json(mcp_path, {"mcpServers": {}})
-    write_json(guard_cfg, {"root": norm(wt), "locked": locked, "allow_network": allow_network})
-    return settings_path, mcp_path
+    write_json(guard_cfg, {"root": norm(wt), "locked": locked, "allow_network": allow_network,
+                           "protect": protect})
+    return settings_path, mcp_path, deny
+
+
+def pin_files(paths: list[Path]) -> dict[str, str | None]:
+    return {norm(p): file_sha256(p) for p in paths}
+
+
+def changed_pins(pins: dict[str, str | None]) -> list[str]:
+    return [p for p, h in pins.items() if file_sha256(p) != h]
 
 
 def claude_argv(claude: list[str], settings: Path, mcp: Path, round_usd: float, budget: Budget,
-                allow_network: bool) -> list[str]:
+                allow_network: bool, disallowed: list[str] | None = None) -> list[str]:
     tools = ",".join(list(TOOLS) + (list(NET_TOOLS) if allow_network else []))
     argv = [*claude, "-p", "--output-format", "json", "--permission-mode", "dontAsk",
             "--tools", tools, "--allowedTools", tools,
+            # project/local settings in the worktree are never loaded: the agent
+            # could otherwise plant .claude/settings.local.json with disableAllHooks
+            "--setting-sources", "user",
             "--strict-mcp-config", "--mcp-config", norm(mcp),
             "--settings", norm(settings),
             "--max-budget-usd", f"{max(round_usd, 0.01):.2f}",
             "--no-session-persistence"]
+    if disallowed:
+        argv += ["--disallowedTools", ",".join(disallowed)]
     if budget.max_turns:
         argv += ["--max-turns", str(budget.max_turns)]
     return argv
@@ -492,9 +606,10 @@ def run_loop(repo: Path, feature: str, *, workspace: str | None = None, budget: 
     budget = budget or Budget()
     start = clock()
     deadline = start + budget.hours * 3600
-    approved = read_json(approval_path(repo, feature))
-    if not isinstance(approved, dict):
-        raise SystemExit(f"no approval for '{feature}'. Run `loop-runner approve` during the day first.")
+    approved = load_approval(repo, feature)
+    if approved is None:
+        raise SystemExit(f"no valid approval for '{feature}' (missing, edited or not signed). "
+                         "The human runs `loop-runner approve` during the day.")
     run_id = run_id or datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
     run_dir = state_root(repo) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -550,7 +665,7 @@ def run_loop(repo: Path, feature: str, *, workspace: str | None = None, budget: 
     summary["branch"], summary["worktree"] = branch, norm(wt)
     locked = list(approved.get("locked") or DEFAULT_LOCKED)
     guard_cfg = run_dir / "guard.json"
-    settings, mcp = write_settings(run_dir, wt, locked, allow_network, guard_cfg)
+    settings, mcp, disallowed = write_settings(run_dir, wt, repo, locked, allow_network, guard_cfg)
     spec = ""
     if approved.get("spec_file"):
         code, spec = git(repo, "show", f"{commit}:{approved['spec_file']}")
@@ -558,93 +673,156 @@ def run_loop(repo: Path, feature: str, *, workspace: str | None = None, budget: 
     xml = run_dir / "score.xml"
     check_cmd = approved["scorer"]["command"].replace("{xml}", norm(run_dir / "check.xml")).replace(
         "{python}", resolve_python(wt))
-    expected = int(approved.get("expected_total") or 0)
-
+    # Everything the runner trusts is hashed now, before any round, and checked
+    # by the runner after every round.
+    pins = pin_files([guard_cfg, settings, mcp] + [plugin_root() / f for f in PINNED_PLUGIN_FILES])
+    ctx = Ctx(
+        wt=wt, branch=branch, feature=feature, approved=approved, spec=spec, check_cmd=check_cmd,
+        expected=int(approved.get("expected_total") or 0), names=set(approved.get("names") or []),
+        budget=budget, deadline=deadline, clock=clock, prefix=prefix, claude_cmd=claude_cmd,
+        settings=settings, mcp=mcp, disallowed=disallowed, allow_network=allow_network, xml=xml, tsv=tsv,
+        summary=summary, commit=commit, locked=locked, tq=tq, pins=pins,
+        ignored0=ignored_entries(wt), last_good=commit,
+        env={**os.environ, "TENTAQLES_HEADLESS_CHILD": "1", "TQ_LOOP": "1", "TQ_LOOP_GUARD": norm(guard_cfg),
+             "TQ_LOOP_GUARD_SHA": file_sha256(guard_cfg) or "", "PYTHONDONTWRITEBYTECODE": "1"},
+    )
     best = run_scorer(wt, approved["scorer"], xml, budget.score_timeout)
     _log(tsv, 0, "baseline", best, best, 0.0, 0, 0.0, "baseline", "")
     summary["baseline"] = best.text()
-    history: list[dict] = []
-    env = {**os.environ, "TENTAQLES_HEADLESS_CHILD": "1", "TQ_LOOP": "1", "TQ_LOOP_GUARD": norm(guard_cfg),
-           "PYTHONDONTWRITEBYTECODE": "1"}
-
     try:
-        reason, best = _rounds(wt, branch, feature, approved, spec, best, history, check_cmd, expected,
-                               budget, deadline, clock, prefix, claude_cmd, settings, mcp, allow_network,
-                               env, xml, tsv, summary, commit, locked, tq)
+        reason, best = _rounds(ctx, best)
     except Exception as e:  # a crash at 3 a.m. still leaves a summary behind
         reason = f"error: {e}"
+        try:
+            undo(wt, branch, ctx.last_good, ctx.ignored0)
+        except Exception:
+            pass
     best = summary.pop("_best", best)
     summary["best"] = best.text()
     summary["failing"] = best.failing[:30]
     return finish(reason)
 
 
-def _rounds(wt, branch, feature, approved, spec, best, history, check_cmd, expected, budget, deadline,
-            clock, prefix, claude_cmd, settings, mcp, allow_network, env, xml, tsv, summary, commit,
-            locked, tq):
+@dataclass
+class Ctx:
+    wt: Path
+    branch: str
+    feature: str
+    approved: dict
+    spec: str
+    check_cmd: str
+    expected: int
+    names: set
+    budget: Budget
+    deadline: float
+    clock: object
+    prefix: list
+    claude_cmd: list
+    settings: Path
+    mcp: Path
+    disallowed: list
+    allow_network: bool
+    xml: Path
+    tsv: Path
+    summary: dict
+    commit: str
+    locked: list
+    tq: str | None
+    pins: dict
+    ignored0: set
+    last_good: str
+    env: dict
+
+
+def verify_round(c: Ctx, score_fn) -> tuple[str, Score, str]:
+    """Everything the runner trusts, re-derived by the runner after the agent ran:
+    pinned files, HEAD, diff scope, then the scorer. Returns (status, score, note)."""
+    moved = changed_pins(c.pins)
+    if moved:
+        return "config-tamper", Score(crashed=True), f"guard/config/runner files changed: {moved[:3]}"
+    code, head = git(c.wt, "rev-parse", "HEAD")
+    if code != 0 or head.strip() != c.last_good or current_branch(c.wt) != c.branch:
+        return "tamper", Score(crashed=True), "HEAD or branch moved during the round"
+    bad = tampered(c.wt, c.commit, c.locked, c.ignored0)
+    if bad:
+        return "tamper", Score(crashed=True), f"touched locked paths {bad[:5]}"
+    score = score_fn()
+    if changed_pins(c.pins):
+        return "config-tamper", Score(crashed=True), "guard/config files changed while scoring"
+    if tampered(c.wt, c.commit, c.locked, c.ignored0):
+        return "tamper", Score(crashed=True), "the scorer run changed locked paths"
+    if score.timed_out:
+        return "score-timeout", score, ""
+    if score.crashed:
+        return "crash", score, ""
+    if c.expected and score.total != c.expected:
+        return "count-changed", score, f"test count {score.total} != approved {c.expected}"
+    if c.names and set(score.names) != c.names:
+        return "count-changed", score, "the set of test names differs from the approved checks"
+    return "scored", score, ""
+
+
+def _rounds(c: Ctx, best: Score) -> tuple[str, Score]:
+    b, summary = c.budget, c.summary
+    history: list[dict] = []
     reason = "max-rounds"
-    for rnd in range(1, budget.rounds + 1):
-        if not best.crashed and expected and best.passed >= expected:
+    for rnd in range(1, b.rounds + 1):
+        if not best.crashed and c.expected and best.passed >= c.expected:
             reason = "done"
             break
-        if summary["cost_usd"] >= budget.usd - 0.005:
+        if summary["cost_usd"] >= b.usd - 0.005:
             reason = "budget-usd"
             break
-        if summary["tokens"] >= budget.tokens:
+        if summary["tokens"] >= b.tokens:
             reason = "budget-tokens"
             break
-        remaining = deadline - clock()
-        if remaining < budget.score_timeout + 60:
+        remaining = c.deadline - c.clock()
+        if remaining < b.score_timeout + 60:
             reason = "budget-time"
             break
-        round_usd = min(budget.per_round_usd, budget.usd - summary["cost_usd"])
-        prompt = build_prompt(feature, approved, spec, best, history, check_cmd)
-        argv = [*prefix, *claude_argv(claude_cmd, settings, mcp, round_usd, budget, allow_network)]
-        t0 = clock()
-        code, out, err, timed_out = run(argv, cwd=wt, env=env, input_text=prompt,
-                                        timeout=min(budget.round_timeout, remaining - budget.score_timeout))
+        round_usd = min(b.per_round_usd, b.usd - summary["cost_usd"])
+        prompt = build_prompt(c.feature, c.approved, c.spec, best, history, c.check_cmd)
+        argv = [*c.prefix, *claude_argv(c.claude_cmd, c.settings, c.mcp, round_usd, b, c.allow_network,
+                                        c.disallowed)]
+        t0 = c.clock()
+        code, out, err, timed_out = run(argv, cwd=c.wt, env=c.env, input_text=prompt,
+                                        timeout=min(b.round_timeout, remaining - b.score_timeout))
+        # cost/tokens come from the CLI's own JSON result, never from a file in the worktree
         cost, tokens, result = round_usage(None if timed_out else parse_claude_json(out), round_usd)
         summary["cost_usd"] = round(summary["cost_usd"] + cost, 4)
         summary["tokens"] += tokens
         summary["rounds"] = rnd
         idea = "(round timed out)" if timed_out else idea_from(result)
-        bad = tampered(wt, commit, locked)
+        status, score, note = verify_round(c, lambda: run_scorer(c.wt, c.approved["scorer"], c.xml, b.score_timeout))
+        if note:
+            summary["notes"].append(f"r{rnd}: {note}; undone")
         sha = ""
-        if bad:
-            status, score = "tamper", Score(crashed=True)
-            summary["notes"].append(f"r{rnd}: touched locked paths {bad[:5]}; undone")
-        else:
-            score = run_scorer(wt, approved["scorer"], xml, budget.score_timeout)
-            if not score.crashed and expected and score.total != expected:
-                status = "count-changed"
-                summary["notes"].append(f"r{rnd}: test count {score.total} != approved {expected}; undone")
-            elif score.timed_out:
-                status = "score-timeout"
-            elif score.crashed:
-                status = "crash"
-            elif score.passed > (0 if best.crashed else best.passed):
-                status = "keep"
-            else:
-                status = "undo"
+        if status == "scored":
+            status = "keep" if score.passed > (0 if best.crashed else best.passed) else "undo"
         if status == "keep":
-            msg = f"loop({feature}) r{rnd}: {score.text()} {idea}"
-            sha, skipped, error = commit_round(wt, branch, msg, prefix, tq)
+            msg = f"loop({c.feature}) r{rnd}: {score.text()} {idea}"
+            sha, skipped, error = commit_round(c.wt, c.branch, msg, c.prefix, c.tq,
+                                               locked=c.locked, base=c.last_good)
             if skipped:
                 summary["notes"].append(f"r{rnd}: not committed: {skipped[:5]}")
             if sha:
                 best = score
+                c.last_good = sha
                 summary["_best"] = best
                 summary["kept"] += 1
             else:
                 status = "commit-failed"
                 summary["notes"].append(f"r{rnd}: {error}")
         if status != "keep":
-            undo(wt, branch)
+            undo(c.wt, c.branch, c.last_good, c.ignored0)
             summary["undone"] += 1
         history.append({"round": rnd, "status": status, "score": score.text(), "idea": idea})
-        _log(tsv, rnd, status, score, best, cost, tokens, clock() - t0, idea, sha or "")
+        _log(c.tsv, rnd, status, score, best, cost, tokens, c.clock() - t0, idea, sha or "")
+        if status == "config-tamper":
+            reason = "config-tamper"
+            break
     else:
-        if not best.crashed and expected and best.passed >= expected:
+        if not best.crashed and c.expected and best.passed >= c.expected:
             reason = "done"
     return reason, best
 
@@ -733,6 +911,10 @@ def main(argv: list[str] | None = None) -> int:
         print("loop-runner: not inside a git repository", file=sys.stderr)
         return 1
     if args.cmd == "approve":
+        from tentaqles.workflow.gate import human_confirm
+
+        if not human_confirm(f"approve the checks of '{args.feature}' for unattended runs"):
+            return 2
         try:
             data = approve(repo, args.feature, args.checks, args.score_cmd, args.kind, args.expect,
                            args.lock, args.spec_file, args.notes)

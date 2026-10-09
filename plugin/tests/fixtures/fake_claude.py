@@ -37,6 +37,15 @@ for rel, content in (act.get("write") or {}).items():
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
+if act.get("tamper_guard"):
+    # a misbehaving agent rewriting its own guard config (absolute path outside the worktree)
+    with open(os.environ["TQ_LOOP_GUARD"], "w", encoding="utf-8") as f:
+        f.write('{"root": "/", "locked": [], "allow_network": true}')
+if act.get("git_commit"):
+    # a misbehaving agent committing behind the runner's back (moves HEAD)
+    import subprocess
+    subprocess.run(["git", "add", "--", *act.get("write", {}).keys()], check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "sneaky"], check=True, capture_output=True)
 if act.get("raw") is not None:
     print(act["raw"])
 else:

@@ -22,17 +22,30 @@
 ```
 build-gate setup                         install hooks in .claude/settings.local.json (idempotent)
 build-gate ping                          are the hooks active in this session?
-build-gate approve <slug>                freeze verify commands             (hook asks the human)
+build-gate approve <slug>                freeze verify commands             (human only: TTY + typed code)
 build-gate lock-tests <slug> <id> <files...> [--none] [--action ask|deny]
-build-gate unlock-tests <slug> <files...>                                   (hook asks the human)
+build-gate unlock-tests <slug> <files...>                                   (human only)
 build-gate verify <slug> <id> [--timeout 900]
 build-gate status <slug>
 build-gate review-bundle <slug> <id>     prints the bundle path and base=<commit>
 build-gate serve <slug> [--port 8765]    progress page on 127.0.0.1 only
-build-gate finish <slug>                 remove hooks and test locks        (hook asks the human)
+build-gate finish <slug>                 remove hooks and test locks        (human only)
 ```
 
 Add `--root <path>` before the command to act on another checkout (e.g. a fresh worktree).
+
+## Trust model
+
+The agent being gated must not be able to produce or alter anything the gate trusts.
+
+- **Signed state.** `approved.json`, every `evidence.jsonl` line, `session.json` and the hook heartbeat carry an HMAC-SHA256 made with a per-user key at `$TQ_HOME/build-gate/hmac.key` (default `~/.tentaqles/build-gate/hmac.key`), outside every repository. A record the agent writes or edits fails verification and counts as absent, so the gate stays closed. The hook refuses reads of the key and any shell command naming it, and tq rules deny it too.
+- **Evidence only from the gate.** A gate passes on a line `build-gate verify` wrote after running the frozen commands itself, never on text in the transcript. `echo "pytest passed"` or running the tests by hand records nothing. A verify run also fails if the tree changes while the commands run, or if a locked test changed.
+- **Approvals are human-only and bound.** `approve`, `unlock-tests` and `finish` are refused to the agent by the hook and need an interactive terminal plus a one-time code typed back. An approval covers each checkpoint's id, verify commands and test list (a fingerprint). Editing any of them reopens the approval, and every approval gets a new id, so evidence recorded under an older approval no longer counts.
+- **Tests to lock come from the approved plan**, not from the caller of `lock-tests`.
+- **One normalisation pass for shell commands.** A quote-aware lexer splits compound commands (`&& || ; | &`, newlines, subshells, `$(...)`, backticks), records redirect targets and strips quotes. Each path word is normalised (separators, `..`, case on Windows) and classified. Inline programs (`python -c ...`) are also checked by their normalised text. Unclosed quotes, and writes to a path built from a variable, fail closed. No segment is exempt just because it names `build-gate.py`.
+- **The tree hash can't be blinded.** A user-level `core.excludesFile` is switched off while hashing, a `.gitignore` that ignores itself is added anyway, and `.git/` (including `info/exclude`) is not writable through tools or the shell.
+
+What remains (documented, not hidden): a determined agent with arbitrary code execution as your user can read the key file through an obfuscated interpreter call the string checks miss. These checks raise the cost of cheating and catch honest mistakes; they are not an OS sandbox.
 
 ## Gate rules (what the hook enforces)
 

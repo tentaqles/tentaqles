@@ -50,7 +50,7 @@ Below, `build-gate <cmd>` means that second line with `<cmd>`. Use the Bash tool
 1. **Spec:** if the user gave a spec path, use it. Otherwise write `docs/specs/<slug>.md`: problem, users, behavior, acceptance criteria, out of scope. Fill gaps from the codebase and `CLAUDE.md`; record each gap you filled as an assumption.
 2. **Plan:** launch the `build-planner` agent with the spec path and the slug. It writes `docs/checkpoints/<slug>.json`. If it returns questions, answer them yourself from the spec and the code, re-run it, and log the answers as `assumptions`.
 3. **Human stop 1.** Use `AskUserQuestion` to show: the plain summary; one plain line per checkpoint; each checkpoint's `verify` commands (they define "passing", and are frozen on approval); the test files and layers; `assumptions`; `new_dependencies`. Offer **Approve**, **Edit** (re-run the planner with the feedback, ask again), **Stop**. Optional live view: `build-gate serve <slug>` in the background, then http://127.0.0.1:8765/ (it binds to localhost only).
-4. **On approve:** run `build-gate approve <slug>`. The hook asks the human to confirm this one command; that confirmation is part of the same approval. Commit: `git add docs/specs/<slug>.md docs/checkpoints/<slug>.json` then `git commit -m "plan(<slug>): checkpoints"`.
+4. **On approve:** the human freezes the plan themselves. You can't: the hook refuses `approve`, `unlock-tests` and `finish` from the agent, and the CLI needs an interactive terminal plus a one-time code typed back. Print the exact command with absolute paths (run `echo "$TENTAQLES_PY" "$_tqe/scripts/build-gate.py"` after the prefix to get them), e.g. `"<python>" "<plugin>/scripts/build-gate.py" --root "<worktree>" approve <slug>`, ask the user to run it in their own terminal (PowerShell, Windows Terminal or a macOS/Linux terminal; in Git Bash's mintty, prefix it with `winpty`), and wait. Then run `build-gate status <slug>` to confirm `approved=yes`. Commit: `git add docs/specs/<slug>.md docs/checkpoints/<slug>.json` then `git commit -m "plan(<slug>): checkpoints"`.
 
 ## Phase 2: Checkpoint loop
 
@@ -60,7 +60,7 @@ For each checkpoint in `id` order, only after the previous one is `passed`:
 ```
 build-gate lock-tests <slug> <id> <test files...>      # or: --none
 ```
-This records their hashes and mirrors them into `.claude/tq-rules.yaml`, so tq's own guard also asks before any edit to them (see `reference.md`). Commit the tests (`test(<slug>#<id>): failing tests`).
+This records their hashes and mirrors them into `.claude/tq-rules.yaml`, so tq's own guard also asks before any edit to them (see `reference.md`). Every test file the approved plan lists for the checkpoint must be in the list; `--none` is refused when the plan names test files. Commit the tests (`test(<slug>#<id>): failing tests`).
 
 **b. Implement.** One `general-purpose` subagent (`[checkpoint <slug>#<id> implement]`) with the goal, tasks, files, acceptance and the test files to turn green. It must not edit tests (the hook blocks it; it reports a wrong test instead). Record its changed files in the plan as `changed_files`. Commit (`feat(<slug>#<id>): <title>`).
 
@@ -79,7 +79,7 @@ This records their hashes and mirrors them into `.claude/tq-rules.yaml`, so tq's
 1. Edit the plan: that gate `"failed"`, `attempts + 1`, its findings stored.
 2. A **fresh** `build-fixer` (`[checkpoint <slug>#<id> fix]`) gets only the findings and `changed_files`. Append its ROOT CAUSE / FIX / LESSON to `docs/LEARNINGS.md` (create it if missing), even if a later attempt fails.
 3. Re-run from step c.
-4. **Three failed attempts** on one gate: run `build-planner` to split this checkpoint, then `build-gate approve <slug>` again (new checkpoints need frozen verify commands; the hook asks the human).
+4. **Three failed attempts** on one gate: run `build-planner` to split this checkpoint, then ask the human to re-run the approve command in their terminal (new checkpoints need frozen verify commands; old evidence stops counting).
 5. **Circuit breaker:** a checkpoint that came from a split also fails three times: set the top-level `"halted": {"reason": "<gate> failed 3x after split", "checkpoint": <id>}` in the plan, commit `wip(<slug>#<id>): needs human`, and stop with the last findings. On resume, remove `halted` first.
 
 The Stop hook blocks ending your turn while a started checkpoint is unproven, once; the next stop goes through, so a human is never trapped. Don't lean on that: finish the checkpoint or set `halted`.
@@ -91,8 +91,8 @@ One `general-purpose` subagent runs the project's full test suite, lint and buil
 ## Phase 4: Human stop 2
 
 `AskUserQuestion`: what to try and how, checkpoint summary (retries per gate, light/full reviews, test counts per layer), deferred MINOR findings. Offer **Approve**, **Request changes**, **Stop here**.
-- **Request changes:** log the feedback in `docs/LEARNINGS.md` (something every gate missed; say which gate should have caught it), append new checkpoints, approve them (`build-gate approve`), and loop Phase 2 to 3.
-- **Approve:** run `build-gate finish <slug>` (removes the gate hooks and the tq rule; the hook asks the human), commit what's outstanding, and report the branch `build/<slug>` and worktree path. Push or open a PR only if the user asks. The worktree can be removed later with `tq worktrees prune`.
+- **Request changes:** log the feedback in `docs/LEARNINGS.md` (something every gate missed; say which gate should have caught it), append new checkpoints, have the human approve them (the approve command, in their terminal), and loop Phase 2 to 3.
+- **Approve:** ask the human to run `build-gate finish <slug>` in their terminal (it removes the gate hooks and the tq rules; human-only like approve), commit what's outstanding, and report the branch `build/<slug>` and worktree path. Push or open a PR only if the user asks. The worktree can be removed later with `tq worktrees prune`.
 - **Stop here:** commit what's outstanding and leave the branch.
 
 ## Commits

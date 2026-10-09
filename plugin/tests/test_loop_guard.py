@@ -97,13 +97,74 @@ def test_missing_config_blocks_all_but_reads():
     assert decide({"tool_name": "Read", "tool_input": {"file_path": "x"}}, None)[0] == 0
 
 
+def _guard(path, env, cmd):
+    return subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(sh(cmd)).encode("utf-8"),
+                          capture_output=True, env=env, timeout=60)
+
+
 def test_script_entry(cfg, tmp_path):
+    from tentaqles.workflow._common import file_sha256
+
     path = tmp_path / "guard.json"
     path.write_text(json.dumps(cfg), encoding="utf-8")
-    env = {**os.environ, "TQ_LOOP_GUARD": str(path)}
-    proc = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(sh("git push")).encode("utf-8"),
-                          capture_output=True, env=env, timeout=60)
+    env = {**os.environ, "TQ_LOOP_GUARD": str(path), "TQ_LOOP_GUARD_SHA": file_sha256(path)}
+    proc = _guard(path, env, "git push")
     assert proc.returncode == 2 and b"loop-guard" in proc.stderr
-    proc = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(sh("git status")).encode("utf-8"),
-                          capture_output=True, env=env, timeout=60)
-    assert proc.returncode == 0
+    assert _guard(path, env, "git status").returncode == 0
+
+
+def test_edited_guard_config_blocks_everything(cfg, tmp_path):
+    """The agent rewriting its own guard config (e.g. emptying `locked`) disables nothing:
+    the hash pinned in the child's environment no longer matches."""
+    from tentaqles.workflow._common import file_sha256
+
+    path = tmp_path / "guard.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    env = {**os.environ, "TQ_LOOP_GUARD": str(path), "TQ_LOOP_GUARD_SHA": file_sha256(path)}
+    path.write_text(json.dumps({**cfg, "locked": [], "allow_network": True}), encoding="utf-8")
+    proc = _guard(path, env, "git status")
+    assert proc.returncode == 2 and b"changed" in proc.stderr
+    unpinned = {k: v for k, v in env.items() if k != "TQ_LOOP_GUARD_SHA"}
+    assert _guard(path, unpinned, "git status").returncode == 2
+
+
+@pytest.fixture
+def pcfg(cfg, tmp_path):
+    run_dir = tmp_path / "repo" / ".claude" / "loop" / "runs" / "r1"
+    run_dir.mkdir(parents=True)
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    cfg["protect"] = [str(run_dir).replace("\\", "/"), str(plugin).replace("\\", "/")]
+    return cfg
+
+
+def test_guard_files_and_runner_out_of_reach(pcfg):
+    run_dir, plugin = pcfg["protect"]
+    cmds = [
+        f'rm "{run_dir}/guard.json"',
+        f"echo '{{}}' > {run_dir}/guard.json",
+        f'python -c "open(\'{run_dir}/settings.json\',\'w\')"',
+        f"Set-Content {run_dir.replace('/', chr(92))}\\guard.json x",
+        f"cp evil.py {plugin}/tentaqles/workflow/loopguard.py",
+        f"sed -i s/2/0/ {plugin}/tentaqles/workflow/loopguard.py",
+        "echo x > C:/Users/Public/outside.txt" if os.name == "nt" else "echo x > /var/outside.txt",
+        "cp app.py /c/Windows/x.py" if os.name == "nt" else "cp app.py /etc/x.py",
+        'echo x > "$HOME/.bashrc"',
+        'echo "unclosed',
+        "true; (rm -rf checks)",
+        "echo $(rm checks/test_add.py)",
+    ]
+    for c in cmds:
+        assert decide(sh(c), pcfg)[0] == 2, c
+    for path in (f"{run_dir}/guard.json", f"{plugin}/scripts/loop-guard.py"):
+        assert decide(edit(path, "Write"), pcfg)[0] == 2, path
+    # reading them is harmless, and writing temp files is fine
+    assert decide(sh(f"cat {run_dir}/summary.md"), pcfg)[0] == 0
+    import tempfile
+    assert decide(sh(f"echo x > {tempfile.gettempdir().replace(chr(92), '/')}/scratch.txt"), pcfg)[0] == 0
+
+
+def test_shadowing_the_test_runner_is_locked(cfg):
+    root = cfg["root"]
+    for rel in ("pytest.py", "sitecustomize.py", "lib/x.pth", ".venv/lib/site.py", "node_modules/vitest/index.js"):
+        assert decide(edit(os.path.join(root, rel), "Write"), cfg)[0] == 2, rel

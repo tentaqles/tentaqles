@@ -26,6 +26,7 @@ it is the same before and after a commit of the same content.
 
 from __future__ import annotations
 
+import fnmatch
 import html
 import json
 import os
@@ -38,9 +39,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tentaqles.workflow._common import (
-    WRITE_PLAIN,
-    WRITE_STRICT,
+    WRITE_COMMANDS,
+    ShellParseError,
     append_jsonl,
+    canon_text,
+    command_word,
+    has_expansion,
+    is_null_target,
+    is_write_segment,
+    lex_shell,
+    resolve_word,
     file_sha256,
     find_bash,
     find_git_root,
@@ -51,7 +59,6 @@ from tentaqles.workflow._common import (
     redact,
     rel_to,
     run,
-    segments,
     tail,
     write_json,
 )
@@ -104,18 +111,77 @@ def load_plan(root: Path, slug: str):
     return data
 
 
+# Every record the gate trusts (approval, evidence, session) carries an HMAC made
+# with a per-user key that lives outside the repository. A file the agent writes
+# or edits fails verification and counts as absent, so the gate stays closed.
+
+
+def key_dir() -> Path:
+    base = os.environ.get("TQ_HOME") or str(Path.home() / ".tentaqles")
+    return Path(base) / "build-gate"
+
+
+def key_path() -> Path:
+    return key_dir() / "hmac.key"
+
+
+def _key(create: bool = False) -> bytes | None:
+    p = key_path()
+    try:
+        return p.read_bytes()
+    except OSError:
+        if not create:
+            return None
+    import secrets
+
+    p.parent.mkdir(parents=True, exist_ok=True)
+    k = secrets.token_bytes(32)
+    fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(k)
+    return k
+
+
+def _mac(data: dict, key: bytes) -> str:
+    import hashlib
+    import hmac
+
+    body = json.dumps({k: v for k, v in data.items() if k != "sig"}, sort_keys=True,
+                      ensure_ascii=False, separators=(",", ":"))
+    return hmac.new(key, body.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def sign(data: dict) -> dict:
+    out = {k: v for k, v in data.items() if k != "sig"}
+    out["sig"] = _mac(out, _key(create=True))
+    return out
+
+
+def verified(data) -> bool:
+    import hmac
+
+    if not isinstance(data, dict) or not isinstance(data.get("sig"), str):
+        return False
+    key = _key()
+    return bool(key) and hmac.compare_digest(data["sig"], _mac(data, key))
+
+
 def load_approved(root: Path, slug: str) -> dict | None:
     data = read_json(state_dir(root, slug) / "approved.json")
-    return data if isinstance(data, dict) else None
+    return data if verified(data) else None
+
+
+def save_approved(root: Path, slug: str, data: dict) -> None:
+    write_json(state_dir(root, slug) / "approved.json", sign(data))
 
 
 def load_session(root: Path, slug: str) -> dict:
     data = read_json(state_dir(root, slug) / "session.json", {})
-    return data if isinstance(data, dict) else {}
+    return data if verified(data) else {}
 
 
 def save_session(root: Path, slug: str, data: dict) -> None:
-    write_json(state_dir(root, slug) / "session.json", data)
+    write_json(state_dir(root, slug) / "session.json", sign(data))
 
 
 def evidence(root: Path, slug: str) -> list[dict]:
@@ -125,9 +191,29 @@ def evidence(root: Path, slug: str) -> list[dict]:
             row = json.loads(line)
         except ValueError:
             continue
-        if isinstance(row, dict):
+        if verified(row):
             rows.append(row)
     return rows
+
+
+def plan_fingerprint(cp: dict) -> str:
+    """What an approval of one checkpoint covers: its id, verify commands, tests."""
+    import hashlib
+
+    body = json.dumps({"id": cp.get("id"), "verify": cp.get("verify") or [], "tests": cp.get("tests") or []},
+                      sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def checkpoint_approved(approved: dict | None, cp: dict) -> tuple[bool, str]:
+    if not approved:
+        return False, "the plan isn't approved"
+    cid = str(cp.get("id"))
+    if cid not in (approved.get("verify") or {}):
+        return False, f"#{cid} was added after approval"
+    if (approved.get("fingerprints") or {}).get(cid) != plan_fingerprint(cp):
+        return False, f"#{cid} changed (verify commands or tests) since the human approved it"
+    return True, ""
 
 
 def latest_evidence(root: Path, slug: str, cid: int) -> dict | None:
@@ -183,9 +269,18 @@ def tree_hash(root: Path) -> str | None:
             shutil.copyfile(idx_path, tmp_idx)
         env = {**os.environ, "GIT_INDEX_FILE": tmp_idx}
         excludes = [f":(exclude){p}" for p in HASH_EXCLUDES]
-        code, out = git(root, "add", "--all", "--", ".", *excludes, env=env, timeout=60)
+        # Only tracked .gitignore files and .git/info/exclude (both protected) may hide
+        # files: a user-level excludesFile is switched off, and a .gitignore that
+        # ignores itself is added anyway, so ignoring new code changes the hash.
+        noglobal = ["-c", "core.excludesFile="]
+        code, out = git(root, *noglobal, "add", "--all", "--", ".", *excludes, env=env, timeout=60)
         if code != 0:
             return None
+        code, ign = git(root, *noglobal, "ls-files", "--others", "--ignored", "--exclude-standard",
+                        "--", ":(glob)**/.gitignore", env=env)
+        hidden = [f for f in ign.splitlines() if f.strip()] if code == 0 else []
+        if hidden:
+            git(root, "add", "-f", "--", *hidden, env=env)
         # Drop anything under the excluded paths that the real index already tracked.
         git(root, "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *HASH_EXCLUDES, env=env)
         code, out = git(root, "write-tree", env=env)
@@ -211,6 +306,9 @@ def evidence_fresh(root: Path, slug: str, cid: int, th: TreeHash) -> tuple[bool,
     ev = latest_evidence(root, slug, cid)
     if ev is None:
         return False, f"no verify evidence for #{cid}"
+    approved = load_approved(root, slug) or {}
+    if not approved.get("approval_id") or ev.get("approval_id") != approved.get("approval_id"):
+        return False, f"the evidence for #{cid} predates the current approval"
     if not ev.get("ok"):
         return False, f"the last verify run for #{cid} failed ({ev.get('summary', 'see build-gate status')})"
     current = th.get()
@@ -283,10 +381,9 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
             continue
         if approved is None:
             approved = load_approved(root, slug) or {}
-        if not approved:
-            raise Block(f"#{cid}: the plan isn't approved yet. Ask the human, then run `build-gate approve {slug}`.")
-        if str(cid) not in (approved.get("verify") or {}):
-            raise Block(f"#{cid} has no frozen verify commands (added after approval). Re-run `build-gate approve {slug}` so the human sees them.")
+        ok, why = checkpoint_approved(approved, cp)
+        if not ok:
+            raise Block(f"#{cid}: {why}. The human approves in their own terminal: `build-gate approve {slug}`.")
         ok, why = evidence_fresh(root, slug, cid, th)
         if not ok:
             raise Block(f"#{cid}: can't mark {', '.join(rising)} passed: {why}. Run `build-gate verify {slug} {cid}` and only then update the plan.")
@@ -315,24 +412,78 @@ def _build_active(root: Path) -> bool:
 
 
 PROTECTED_CONFIG = (".claude/settings.json", ".claude/settings.local.json", ".claude/tq-rules.yaml")
+HUMAN_ONLY = {"approve": "freezes the plan's verify commands (what 'passing' means)",
+              "unlock-tests": "unlocks test files the implementer must not edit",
+              "finish": "removes the gate's hooks and test locks"}
+
+
+def _key_dir_canon() -> str:
+    k = norm(os.path.normpath(str(key_dir())))
+    return k.lower() if os.name == "nt" else k
+
+
+def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool) -> str | None:
+    """The protection class of one resolved path, or None.
+
+    Classes: key (the HMAC key, outside the repo), git (any .git internals, also
+    the shared .git of a worktree), state, config, plan, locked:<slug>.
+    """
+    a = absn.lower() if os.name == "nt" else absn
+    kd = _key_dir_canon()
+    if a == kd or a.startswith(kd + "/"):
+        return "key"
+    if "/.git/" in a + "/" and not a.endswith("/.gitignore"):
+        return "git"
+    if rel is None:
+        return None
+    r = rel.lower() if os.name == "nt" else rel
+    if r == STATE_DIR or r.startswith(STATE_DIR + "/"):
+        return "state"
+    if r in PROTECTED_CONFIG and active:
+        return "config"
+    if re.match(re.escape(PLAN_DIR) + r"/[^/]+\.json$", r, re.IGNORECASE):
+        return "plan"
+    for lk, slug in locked.items():
+        if (lk.lower() if os.name == "nt" else lk) == r:
+            return f"locked:{slug}"
+    return None
+
+
+_MESSAGES = {
+    "key": "the build gate's signing key is off limits to the agent",
+    "git": "git internals (.git/) can't be written directly; use git commands",
+    "state": f"{STATE_DIR}/ is hook-owned evidence; only the build-gate commands write it",
+    "config": "the gate's settings and tq rules are locked while a build is active",
+    "plan": f"{PLAN_DIR}/*.json changes only through Edit/Write, so the gate rules run",
+}
+
+
+def _msg(cls: str, rel: str) -> str:
+    if cls.startswith("locked:"):
+        slug = cls.split(":", 1)[1]
+        return (f"{rel} is a locked test of build '{slug}'. If the test itself is wrong, report it; "
+                f"the human can run `build-gate unlock-tests {slug} {rel}` in their own terminal.")
+    return _MESSAGES[cls]
 
 
 def check_file(tool: str, inp: dict, root: Path, th: TreeHash) -> None:
     raw = inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or ""
-    rel = rel_to(root, raw)
+    if not raw:
+        return
+    rel, absn = resolve_word(root, raw)
+    cls = classify(root, rel, absn, _locked_paths(root), _build_active(root))
+    if tool in ("Read", "Grep", "Glob"):
+        if cls == "key":
+            raise Block(_msg("key", rel or absn))
+        return
+    if cls and cls != "plan":
+        raise Block(_msg(cls, rel or absn))
     if rel is None:
         return
-    rel_l = rel.lower() if os.name == "nt" else rel
-    if rel_l == STATE_DIR or rel_l.startswith(STATE_DIR + "/"):
-        raise Block(f"{STATE_DIR}/ is hook-owned evidence. Use the build-gate commands; never write it directly.")
-    if rel_l in PROTECTED_CONFIG and _build_active(root):
-        raise Block(f"{rel} is locked while a build is active (it holds the gate's hooks and test locks). Run `build-gate finish <slug>` first.")
-    locked = _locked_paths(root)
-    key = rel_l if os.name != "nt" else next((k for k in locked if k.lower() == rel_l), rel_l)
-    if key in locked:
-        raise Block(f"{rel} is a locked test of build '{locked[key]}'. If the test itself is wrong, report it; the human can run `build-gate unlock-tests {locked[key]} {rel}`.")
     m = re.match(re.escape(PLAN_DIR) + r"/([^/]+)\.json$", rel, re.IGNORECASE)
     if not m or tool not in ("Write", "Edit", "MultiEdit"):
+        if m:
+            raise Block(_msg("plan", rel))
         return
     slug = m.group(1)
     full = root / rel
@@ -350,36 +501,98 @@ def check_file(tool: str, inp: dict, root: Path, th: TreeHash) -> None:
     check_plan(new_text, old_text, root, slug, th)
 
 
-_GATE_CLI = re.compile(r"build-gate(?:\.py)?[\"']?\s+([a-z-]+)", re.IGNORECASE)
-_ASK_SUBCOMMANDS = {"approve": "freezes the plan's verify commands (what 'passing' means)",
-                    "unlock-tests": "unlocks test files the implementer must not edit",
-                    "finish": "removes the gate's hooks and test locks"}
+def _gate_invocation(seg) -> tuple[str | None, list[str]]:
+    """(subcommand, its arguments) when this segment runs the gate CLI, else (None, [])."""
+    for i, w in enumerate(seg.argv):
+        if norm(w).rsplit("/", 1)[-1].lower() == "build-gate.py":
+            rest = seg.argv[i + 1:]
+            while rest and rest[0].startswith("--root"):
+                rest = rest[2:] if rest[0] == "--root" else rest[1:]
+            return ((rest[0].lower() if rest else "") or "help"), rest
+    return None, []
+
+
+def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[tuple[str, str]]:
+    """Protected paths named anywhere in the (normalised) command text, e.g. inside
+    a quoted `python -c` program, where the lexer can't see a path word."""
+    hits = []
+    kd = _key_dir_canon().lower()
+    if kd in canon or "build-gate/hmac.key" in canon:
+        hits.append(("key", "the signing key"))
+    if re.search(r"(^|[\s\"'=/])\.git/", canon):
+        hits.append(("git", ".git/"))
+    if STATE_DIR in canon:
+        hits.append(("state", STATE_DIR))
+    if active and any(p in canon for p in PROTECTED_CONFIG):
+        hits.append(("config", ".claude/settings / tq-rules"))
+    if re.search(re.escape(PLAN_DIR) + r"/[^\s/\"']+\.json", canon):
+        hits.append(("plan", PLAN_DIR))
+    for lk, slug in locked.items():
+        if lk and lk.lower() in canon:
+            hits.append((f"locked:{slug}", lk))
+    return hits
 
 
 def check_shell(cmd: str, root: Path) -> None:
-    text = norm(cmd)
-    asks = []
+    """Normalise once (lexer + canonical paths), then decide per segment."""
     locked = _locked_paths(root)
-    for seg in segments(text):
-        m = _GATE_CLI.search(seg)
-        if m:
-            sub = m.group(1).lower()
-            if sub in _ASK_SUBCOMMANDS:
-                asks.append(f"`build-gate {sub}` {_ASK_SUBCOMMANDS[sub]}")
-            continue  # the gate's own CLI writes its state itself
-        low = seg.lower()
-        if STATE_DIR in low and WRITE_STRICT.search(seg):
-            raise Block(f"don't modify {STATE_DIR}/ from the shell; it is hook-owned evidence.")
-        if re.search(re.escape(PLAN_DIR) + r"/[^\s/\"']+\.json", seg, re.IGNORECASE) and WRITE_STRICT.search(seg) \
-                and not re.match(r"\s*git\s+(?:add|commit|diff|log|show|status)\b", seg):
-            raise Block(f"don't modify {PLAN_DIR}/*.json from the shell. Use Edit or Write so the gate rules are checked.")
-        for rel in locked:
-            if rel and rel.lower() in low and WRITE_PLAIN.search(seg):
-                raise Block(f"{rel} is a locked test; the shell can't change it either. Report a wrong test instead.")
-        if _build_active(root) and any(p in low for p in PROTECTED_CONFIG) and WRITE_STRICT.search(seg):
-            raise Block("the gate's settings and tq-rules are locked while a build is active.")
-    if asks:
-        raise Ask("tentaqles build: " + "; ".join(asks) + ". Approve only if you reviewed it.")
+    active = _build_active(root)
+    canon_all = canon_text(cmd)
+    try:
+        segs = lex_shell(cmd)
+    except ShellParseError as e:
+        if _text_mentions(root, canon_all, locked, active):
+            raise Block(f"can't parse this command ({e}) and it names a protected path; failing closed.")
+        return
+    for seg in segs:
+        sub, sub_args = _gate_invocation(seg)
+        writes = is_write_segment(seg)
+        canon = canon_text(seg.raw)
+        word_hits = []
+        for w in seg.argv[1:] + seg.redirects:
+            if is_null_target(w):
+                continue
+            rel, absn = resolve_word(root, w)
+            cls = classify(root, rel, absn, locked, active)
+            if cls:
+                word_hits.append((cls, rel or absn))
+        text_hits = _text_mentions(root, canon, locked, active)
+        for cls, what in word_hits + text_hits:
+            if cls == "key":
+                raise Block(_msg("key", what))
+        if sub is not None:
+            if sub in HUMAN_ONLY:
+                raise Block(f"`build-gate {sub}` {HUMAN_ONLY[sub]}, so only the human runs it, in their own "
+                            f"terminal (it asks for a typed confirmation). Ask them to run: "
+                            f"build-gate {' '.join(sub_args)}")
+            if any(not is_null_target(t) for t in seg.redirects):
+                raise Block("don't redirect the gate CLI's output into files.")
+            if any(c in ("state", "git", "plan", "config") for c, _ in word_hits):
+                raise Block("the gate CLI never takes its own state paths as arguments.")
+            continue  # the gate writes its own (signed) state
+        if not writes:
+            continue
+        # Fail closed on write targets the lexer can't resolve.
+        targets = seg.redirects + seg.argv[1:]
+        if any(has_expansion(t) for t in seg.redirects if not is_null_target(t)):
+            raise Block("this command writes to a path built from a variable; use a literal path.")
+        cmd_name, _ = command_word(seg.argv)
+        if cmd_name in WRITE_COMMANDS and any(has_expansion(t) for t in targets[len(seg.redirects):] if not t.startswith("-")) \
+                and (text_hits or locked):
+            raise Block("this command writes to a path built from a variable while protected paths exist; use a literal path.")
+        globbed = [t for t in targets if re.search(r"[*?\[]", t)]
+        for g in globbed:
+            pat = canon_text(g if os.path.isabs(norm(g)) else f"{norm(root)}/{g}")
+            for lk, slug in locked.items():
+                if fnmatch.fnmatch(canon_text(f"{norm(root)}/{lk}"), pat):
+                    raise Block(_msg(f"locked:{slug}", lk))
+        hits = word_hits + text_hits
+        if cmd_name == "git":
+            # git itself manages .git/ and the plan file (add/commit); history-changing
+            # subcommands on locked tests are still refused
+            hits = [(c, w) for c, w in hits if c.startswith("locked:")]
+        for cls, what in hits:
+            raise Block(_msg(cls, what))
 
 
 def check_agent(prompt: str, root: Path, session_id: str) -> None:
@@ -402,10 +615,9 @@ def check_agent(prompt: str, root: Path, session_id: str) -> None:
     if cp.get("status") == "passed":
         raise Block(f"#{cid} already passed. Reopen it in the plan (set the failing gate to \"failed\", status to \"pending\") first.")
     approved = load_approved(root, slug)
-    if not approved:
-        raise Block(f"plan '{slug}' isn't approved. Show it to the human, then run `build-gate approve {slug}`.")
-    if str(cid) not in (approved.get("verify") or {}):
-        raise Block(f"#{cid} was added after approval. Re-run `build-gate approve {slug}`.")
+    ok, why = checkpoint_approved(approved, cp)
+    if not ok:
+        raise Block(f"#{cid}: {why}. Show the plan to the human; they approve in their own terminal: `build-gate approve {slug}`.")
     if stage in LOCKED_STAGES and str(cid) not in (approved.get("tests_locked") or {}):
         raise Block(f"#{cid}: lock its tests before {stage}: `build-gate lock-tests {slug} {cid} <test files>` (no files: `--none`).")
     if stage == "review":
@@ -509,13 +721,21 @@ def _heartbeat(root: Path) -> None:
     d = root / STATE_DIR
     if d.is_dir():
         try:
-            (d / HEARTBEAT).write_text(now_iso(), encoding="utf-8")
+            write_json(d / HEARTBEAT, sign({"ts": time.time()}))
         except OSError:
             pass
 
 
 def hook(data: dict) -> tuple[int, str, str]:
     """Pure-ish dispatcher: returns (exit_code, stdout, stderr)."""
+    inp0 = data.get("tool_input") or {}
+    fp = inp0.get("file_path") or inp0.get("notebook_path") or inp0.get("path")
+    if fp and data.get("hook_event_name") != "Stop":
+        _, absn = resolve_word(Path(data.get("cwd") or os.getcwd()), str(fp))
+        kd = _key_dir_canon()
+        a = absn.lower() if os.name == "nt" else absn
+        if a == kd or a.startswith(kd + "/"):
+            return 2, "", f"build-gate: {_MESSAGES['key']}"
     root = _root_for(data)
     if root is None or not ((root / STATE_DIR).is_dir() or (root / PLAN_DIR).is_dir()):
         return 0, "", ""
@@ -560,26 +780,32 @@ def cmd_approve(root: Path, slug: str) -> str:
     plan = load_plan(root, slug)
     if plan is None:
         raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
-    verify = {}
+    verify, fingerprints = {}, {}
     for cp in plan["checkpoints"]:
         cmds = [c for c in (cp.get("verify") or []) if isinstance(c, str) and c.strip()]
         if not cmds:
             raise SystemExit(f"#{cp.get('id')} has no verify commands; every checkpoint needs at least one.")
         verify[str(cp.get("id"))] = cmds
+        fingerprints[str(cp.get("id"))] = plan_fingerprint(cp)
     prev = load_approved(root, slug) or {}
     code, head = git(root, "rev-parse", "HEAD")
+    import secrets
+
     approved = {
         "slug": slug,
         "approved_at": now_iso(),
+        "approval_id": secrets.token_hex(8),  # evidence from an older approval no longer counts
         "base": head.strip() if code == 0 else None,
         "verify": verify,
+        "fingerprints": fingerprints,
         "locked_tests": prev.get("locked_tests", {}),
         "tests_locked": prev.get("tests_locked", {}),
     }
-    write_json(state_dir(root, slug) / "approved.json", approved)
+    save_approved(root, slug, approved)
     sess = load_session(root, slug)
     sess.pop("finished", None)
     save_session(root, slug, sess)
+    write_tq_rules(root)
     lines = [f"approved '{slug}': {len(verify)} checkpoint(s), verify commands frozen"]
     for cid, cmds in verify.items():
         lines += [f"  #{cid}: {c}" for c in cmds]
@@ -593,6 +819,20 @@ def cmd_lock_tests(root: Path, slug: str, cid: int, paths: list[str], none: bool
         raise SystemExit(f"plan '{slug}' isn't approved yet (build-gate approve {slug}).")
     if not paths and not none:
         raise SystemExit("name the test files to lock, or pass --none for a checkpoint without test files.")
+    plan = load_plan(root, slug) or {"checkpoints": []}
+    cp = next((c for c in plan["checkpoints"] if c.get("id") == cid), None)
+    if cp is None:
+        raise SystemExit(f"#{cid} isn't in the plan.")
+    ok, why = checkpoint_approved(approved, cp)
+    if not ok:
+        raise SystemExit(f"#{cid}: {why}.")
+    # The approved plan decides which files must be locked, not the caller.
+    required = {norm(t.get("file", "")).lstrip("./") for t in (cp.get("tests") or [])
+                if isinstance(t, dict) and t.get("file")}
+    given = {rel_to(root, p) for p in paths}
+    missing = sorted(r for r in required if r not in given)
+    if missing:
+        raise SystemExit(f"#{cid}: the approved plan lists test files that must be locked too: {', '.join(missing)}")
     locked = approved.setdefault("locked_tests", {})
     added = []
     for p in paths:
@@ -607,7 +847,7 @@ def cmd_lock_tests(root: Path, slug: str, cid: int, paths: list[str], none: bool
         locked[rel] = h
         added.append(rel)
     approved.setdefault("tests_locked", {})[str(cid)] = added
-    write_json(state_dir(root, slug) / "approved.json", approved)
+    save_approved(root, slug, approved)
     msg = write_tq_rules(root, action)
     return f"locked {len(added)} test file(s) for #{cid}" + (f"\n{msg}" if msg else "")
 
@@ -623,7 +863,7 @@ def cmd_unlock_tests(root: Path, slug: str, paths: list[str]) -> str:
         if rel in locked:
             locked.pop(rel)
             gone.append(rel)
-    write_json(state_dir(root, slug) / "approved.json", approved)
+    save_approved(root, slug, approved)
     write_tq_rules(root)
     return f"unlocked: {', '.join(gone) or 'nothing'}"
 
@@ -644,7 +884,13 @@ def cmd_verify(root: Path, slug: str, cid: int, timeout: float = 900) -> tuple[i
     cmds = (approved.get("verify") or {}).get(str(cid))
     if not cmds:
         return 1, f"#{cid} has no frozen verify commands."
+    plan = load_plan(root, slug) or {"checkpoints": []}
+    cp = next((c for c in plan["checkpoints"] if c.get("id") == cid), None)
+    ok_appr, why = checkpoint_approved(approved, cp or {"id": cid})
+    if not ok_appr:
+        return 1, f"#{cid}: {why}; the human re-approves in their own terminal."
     results, out_lines, ok = [], [], True
+    before = tree_hash(root)
     tampered = tests_intact(root, approved)
     if tampered:
         ok = False
@@ -664,10 +910,15 @@ def cmd_verify(root: Path, slug: str, cid: int, timeout: float = 900) -> tuple[i
     tree = tree_hash(root)
     summary = ("all verify commands passed" if ok else
                ("locked tests changed" if tampered else f"exit {results[-1]['exit']}: {results[-1]['cmd']}"))
-    append_jsonl(state_dir(root, slug) / "evidence.jsonl", {
+    if ok and (tree is None or tree != before or tests_intact(root, approved)):
+        # code under test rewrote files (or the locked tests) while it ran
+        ok, summary = False, "files changed while the verify commands ran"
+        out_lines.append("FAIL: " + summary)
+    append_jsonl(state_dir(root, slug) / "evidence.jsonl", sign({
         "checkpoint": cid, "ts": now_iso(), "tree": tree, "ok": ok,
+        "approval_id": approved.get("approval_id"),
         "results": results, "tampered": tampered, "summary": summary,
-    })
+    }))
     head = f"#{cid} {'PASS' if ok else 'FAIL'} (tree {str(tree)[:12]})"
     return (0 if ok else 1), "\n".join([head, *out_lines])
 
@@ -729,11 +980,8 @@ def cmd_review_bundle(root: Path, slug: str, cid: int, max_bytes: int = 200_000)
 
 
 def cmd_ping(root: Path, max_age: float = 30) -> tuple[int, str]:
-    hb = root / STATE_DIR / HEARTBEAT
-    try:
-        age = time.time() - hb.stat().st_mtime
-    except OSError:
-        age = None
+    hb = read_json(root / STATE_DIR / HEARTBEAT)
+    age = time.time() - float(hb["ts"]) if verified(hb) else None
     if age is not None and age <= max_age:
         return 0, "build-gate hooks are active"
     return 1, ("build-gate hooks are NOT active in this session. Hooks are read at session start: "
@@ -756,7 +1004,7 @@ def cmd_setup(root: Path) -> str:
     settings = read_json(settings_path, {}) or {}
     hooks = settings.setdefault("hooks", {})
     entry_cmd = {"type": "command", "command": hook_command(), "timeout": 20}
-    for event, matcher in (("PreToolUse", "^(Agent|Task|Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit)$"),
+    for event, matcher in (("PreToolUse", "^(Agent|Task|Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob)$"),
                            ("Stop", None)):
         groups = [g for g in hooks.get(event, [])
                   if not any(SETTINGS_TAG in (h.get("command") or "") for h in g.get("hooks", []))]
@@ -767,6 +1015,7 @@ def cmd_setup(root: Path) -> str:
         hooks[event] = groups
     write_json(settings_path, settings)
     excluded = _git_exclude(root, [f"/{STATE_DIR}/", "/.claude/settings.local.json"])
+    _key(create=True)
     return (f"hooks written to {norm(settings_path)}\n"
             f"git-excluded: {', '.join(excluded) or 'already excluded'}\n"
             "Next: run `build-gate ping`. If it says inactive, open /hooks (or restart the session).")
@@ -797,6 +1046,32 @@ def _yaml_str(s: str) -> str:
     return json.dumps(s)  # a JSON string is a valid YAML double-quoted scalar
 
 
+_STATE_PATHS_RX = r"\.claude[\\/]+(?:build(?:[\\/]|$)|tq-rules\.yaml|settings(?:\.local)?\.json)"
+_KEY_RX = r"build-gate[\\/]+hmac\.key"
+_SHELL_WRITE_RX = (r"(?:>|\btee\b|\b(?:cp|mv|rm|dd|truncate|install|ln|touch|sed|perl)\b|set-content|add-content|out-file"
+                   r"|new-item|remove-item|move-item|copy-item|rename-item|clear-content|\bpython[0-9.]*\b|\bpy\b"
+                   r"|\bnode\b|\bpwsh\b|\bpowershell\b|writealltext|\bopen\()")
+
+
+def state_rules() -> list[dict]:
+    """tq guard rules protecting the gate's own state, rules file, settings and key.
+
+    Project rules can only add, so these hold even if the gate's hook is inactive.
+    """
+    return [
+        {"id": RULE_ID_PREFIX + "state-edit", "action": "deny",
+         "tool": "Edit|Write|MultiEdit|NotebookEdit", "path": "(^|/)" + _STATE_PATHS_RX.replace("[\\\\/]+", "/"),
+         "reason": "the build gate's approvals, evidence, hooks and rules are not editable by the agent"},
+        {"id": RULE_ID_PREFIX + "state-shell", "action": "deny", "tool": "Bash|PowerShell",
+         "command": f"(?:{_SHELL_WRITE_RX}).*{_STATE_PATHS_RX}|{_STATE_PATHS_RX}.*(?:{_SHELL_WRITE_RX})",
+         "reason": "the build gate's approvals, evidence, hooks and rules are not writable from the shell"},
+        {"id": RULE_ID_PREFIX + "key", "action": "deny", "tool": ".*", "path": _KEY_RX.replace("[\\\\/]+", "/"),
+         "reason": "the build gate's signing key is off limits"},
+        {"id": RULE_ID_PREFIX + "key-shell", "action": "deny", "tool": "Bash|PowerShell", "command": _KEY_RX,
+         "reason": "the build gate's signing key is off limits"},
+    ]
+
+
 def write_tq_rules(root: Path, action: str = "ask") -> str:
     """Mirror every locked test into .claude/tq-rules.yaml (second, tq-enforced layer)."""
     if action not in ("ask", "deny"):
@@ -805,6 +1080,8 @@ def write_tq_rules(root: Path, action: str = "ask") -> str:
     path = root / ".claude" / "tq-rules.yaml"
     existing = read_text(path)
     rules = []
+    if _build_active(root) or locked:
+        rules += state_rules()
     if locked:
         alt = "|".join(re.escape(p) for p in locked)
         rules.append({
@@ -823,8 +1100,9 @@ def write_tq_rules(root: Path, action: str = "ask") -> str:
     lines = [TQ_RULES_HEADER.rstrip("\n"), "rules:"]
     for r in rules:
         lines.append(f"  - id: {_yaml_str(r['id'])}")
-        for k in ("action", "tool", "path", "reason"):
-            lines.append(f"    {k}: {_yaml_str(r[k])}")
+        for k in ("action", "tool", "path", "command", "reason"):
+            if k in r:
+                lines.append(f"    {k}: {_yaml_str(r[k])}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     _git_exclude(root, ["/.claude/tq-rules.yaml"])
@@ -860,7 +1138,7 @@ def cmd_finish(root: Path, slug: str) -> str:
     approved = load_approved(root, slug)
     if approved:
         approved["locked_tests"] = {}
-        write_json(state_dir(root, slug) / "approved.json", approved)
+        save_approved(root, slug, approved)
     msg = write_tq_rules(root) or "tq rule removed"
     if not _build_active(root):
         settings_path = root / ".claude" / "settings.local.json"
@@ -920,6 +1198,31 @@ def make_server(root: Path, slug: str, port: int = 8765):
 # ---------------------------------------------------------------------------
 
 
+def human_confirm(action: str, stdin=None, stdout=None) -> bool:
+    """Approvals are a human step: an interactive terminal plus a one-time code.
+
+    The agent's Bash tool has no TTY, and its hook refuses these subcommands
+    anyway; the code stops a piped or scripted "yes".
+    """
+    import secrets
+
+    stdin = stdin or sys.stdin
+    stdout = stdout or sys.stdout
+    if not (stdin.isatty() and stdout.isatty()):
+        print("build-gate: this step needs a human at an interactive terminal (PowerShell, Windows Terminal, "
+              "macOS/Linux terminal; in Git Bash's mintty prefix the command with `winpty`). Refusing.",
+              file=sys.stderr)
+        return False
+    code = secrets.token_hex(2)
+    stdout.write(f"\nAbout to {action}.\nType {code} to confirm: ")
+    stdout.flush()
+    answer = (stdin.readline() or "").strip()
+    if answer != code:
+        print("build-gate: not confirmed.", file=sys.stderr)
+        return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -977,10 +1280,15 @@ def main(argv: list[str] | None = None) -> int:
         print(msg)
         return code
     elif a.cmd == "approve":
+        print(cmd_status(root, a.slug))
+        if not human_confirm(f"approve the plan '{a.slug}' and freeze its verify commands"):
+            return 2
         print(cmd_approve(root, a.slug))
     elif a.cmd == "status":
         print(cmd_status(root, a.slug))
     elif a.cmd == "finish":
+        if not human_confirm(f"finish '{a.slug}' and remove its hooks and test locks"):
+            return 2
         print(cmd_finish(root, a.slug))
     elif a.cmd == "verify":
         code, msg = cmd_verify(root, a.slug, a.id, a.timeout)
@@ -989,6 +1297,8 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "lock-tests":
         print(cmd_lock_tests(root, a.slug, a.id, a.paths, a.none, a.action))
     elif a.cmd == "unlock-tests":
+        if not human_confirm(f"unlock {', '.join(a.paths)} in '{a.slug}'"):
+            return 2
         print(cmd_unlock_tests(root, a.slug, a.paths))
     elif a.cmd == "review-bundle":
         print(cmd_review_bundle(root, a.slug, a.id))
