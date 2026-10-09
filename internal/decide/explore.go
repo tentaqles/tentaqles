@@ -279,8 +279,10 @@ type ExploreResult struct {
 	Batches    int    `json:"batches,omitempty"`
 	// SkippedSubtrees counts subtrees the keyword stage left out because an
 	// ignore file governing them could not be parsed (fail closed).
-	SkippedSubtrees int    `json:"skipped_subtrees,omitempty"`
-	Results         []Span `json:"results"`
+	SkippedSubtrees int `json:"skipped_subtrees,omitempty"`
+	// NestedRepos counts repositories below the root that were not entered.
+	NestedRepos int    `json:"nested_repos,omitempty"`
+	Results     []Span `json:"results"`
 }
 
 func exploreQuestion(id, question string) Question {

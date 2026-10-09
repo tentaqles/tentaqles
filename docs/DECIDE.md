@@ -199,7 +199,17 @@ The goal is to have an agent read 5 ranges instead of 50 files. It runs in two s
      - `\#` and `\!` escapes, and trailing spaces.
    - **Matching is case-insensitive.**
    - **Negations (`!pattern`) are dropped.** They can only un-ignore, so dropping them excludes more.
-   - **Fail closed.** A pattern the parser is not sure about (a POSIX class, an unterminated class, a trailing backslash…) makes explore skip the whole subtree that file governs. For a repo-wide or global source, that is the whole walk. The output ends with `note: skipped N subtree(s)…`, which gives a count, never a path.
+   - **Fail closed.** A source that does not exist is fine. A source that exists but cannot be applied makes explore skip the whole subtree that source governs. For a repo-wide, global or parent-folder source, that is the whole walk. This covers:
+     - a pattern the parser is not sure about (a POSIX class, an unterminated class, a trailing backslash…);
+     - a file that is unreadable, a directory, an in-tree symlink, a dangling link, over 1 MB, or not UTF-8;
+     - a git config that is unreadable or unparsable (a bad section header, a line continuation, an unknown escape);
+     - an `[include]` chain deeper than git's limit of 10;
+     - an `excludesFile` or include path explore cannot resolve (`~user`, `%(prefix)`, `~` with no home);
+     - a `.git` file whose `gitdir:` or `commondir` points nowhere;
+     - a directory the walk cannot list.
+
+     The output ends with `note: skipped N subtree(s)…`, which gives a count, never a path. After an internal error, the matcher never defaults to "not ignored".
+   - **Nested repos are not entered.** A directory below `--path` that holds its own `.git` (directory or `gitdir:` file) is skipped, because its rules differ and it is often another project or client. The footer counts these (`skipped N nested repo(s)`). To search one, point `--path` inside it.
    - **Tested against git.** A differential test builds a repo with a rich ignore set and asserts that no file `git check-ignore` reports as ignored is ever yielded.
 
    It also skips `.git`, `node_modules`, `vendor`, `dist` and binaries. An always-deny list applies whatever the ignore files say:

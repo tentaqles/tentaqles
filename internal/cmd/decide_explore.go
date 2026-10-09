@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/decide"
@@ -79,6 +80,7 @@ never read or sent.`,
 				}
 			}
 			res.SkippedSubtrees = stats.Skipped
+			res.NestedRepos = stats.NestedRepos
 			return printExplore(c, res, asJSON)
 		},
 	}
@@ -101,7 +103,10 @@ func printExplore(c *cobra.Command, res decide.ExploreResult, asJSON bool) error
 	// that was left out (its name may itself look like a secret).
 	footer := func() {
 		if res.SkippedSubtrees > 0 {
-			fmt.Fprintf(out, "note: skipped %d subtree(s) whose ignore file has a pattern explore cannot parse (fail closed)\n", res.SkippedSubtrees)
+			fmt.Fprintf(out, "note: skipped %d subtree(s) governed by an ignore source or directory explore could not load or parse (fail closed)\n", res.SkippedSubtrees)
+		}
+		if res.NestedRepos > 0 {
+			fmt.Fprintf(out, "note: skipped %d nested repo(s); run explore with --path inside one to search it\n", res.NestedRepos)
 		}
 	}
 	if res.Candidates == 0 {
@@ -151,9 +156,14 @@ func exploreRoot(dir string) (string, error) {
 
 // walkStats reports what the walk refused to look at.
 type walkStats struct {
-	// Skipped counts subtrees left out because an ignore file governing
-	// them had a pattern the matcher could not parse (fail closed).
+	// Skipped counts subtrees left out because an ignore source governing
+	// them exists but could not be loaded or parsed, or the directory
+	// itself could not be read (fail closed).
 	Skipped int
+	// NestedRepos counts repositories below the root (a .git dir or
+	// gitdir: file) that were not entered: their own ignore rules differ,
+	// and they are often other projects or other clients' code.
+	NestedRepos int
 }
 
 // exploreHits runs the keyword pre-filter. Paths come back slash-separated
@@ -284,83 +294,75 @@ func insideDir(dir, p string) bool {
 // ripgrep/fd conventions; honouring them only excludes more).
 var perDirIgnoreFiles = []string{".gitignore", ".ignore", ".rgignore"}
 
-// ignoreSet holds every ignore source that governs the walk.
+// ignoreSet holds every ignore source that governs the walk. Every way a
+// source can be present but not applied is an error that blocks what it
+// governs; nothing defaults to "not ignored" after an error.
 type ignoreSet struct {
 	top   string                  // repo work tree top, or the walk root
 	rules map[string]ignore.Rules // per directory (absolute OS path)
-	// global holds .git/info/exclude and the global excludes files; their
+	// global holds info/exclude and the global excludes files; their
 	// patterns are relative to top.
 	global ignore.Rules
-	// blocked: a source governing the whole walk failed to parse.
+	// blocked: a source governing the whole walk could not be applied.
 	blocked bool
 }
 
 // newIgnoreSet loads the sources that apply before the walk starts: the
-// repo-wide ones and the .gitignore files of root's ancestors up to the
-// repo top. Any parse error there blocks the whole walk.
+// repo (resolved through gitdir:/commondir), info/exclude, every config's
+// core.excludesFile, and the ignore files of root's ancestors up to the
+// repo top. Any failure there blocks the whole walk.
 func newIgnoreSet(root string) *ignoreSet {
 	s := &ignoreSet{top: root, rules: map[string]ignore.Rules{}}
-	repoConfig := ""
-	if top, _, common, ok := ignore.FindRepo(root); ok {
-		s.top = top
-		if common != "" {
-			repoConfig = filepath.Join(common, "config")
-			if !s.addGlobal(filepath.Join(common, "info", "exclude")) {
-				s.blocked = true
-			}
-		}
+	var repoConfigs []string
+	repo, found, err := ignore.FindRepo(root)
+	if err != nil {
+		s.blocked = true
+		return s
 	}
-	for _, f := range ignore.GlobalExcludeFiles(repoConfig) {
-		if !s.addGlobal(f) {
-			s.blocked = true
-		}
+	if found {
+		s.top = repo.Top
+		repoConfigs = []string{filepath.Join(repo.CommonDir, "config"), filepath.Join(repo.GitDir, "config.worktree")}
+		s.addGlobal(filepath.Join(repo.CommonDir, "info", "exclude"))
 	}
-	// Ancestors between the repo top and root (exclusive of root, which the
-	// walk loads itself).
-	var ancestors []string
-	for d := filepath.Dir(root); insideDir(s.top, d) && d != root; d = filepath.Dir(d) {
-		ancestors = append(ancestors, d)
-		if d == s.top || filepath.Dir(d) == d {
-			break
-		}
+	files, err := ignore.GlobalExcludeFiles(repoConfigs...)
+	if err != nil {
+		s.blocked = true
+		return s
 	}
-	for _, d := range ancestors {
+	for _, f := range files {
+		s.addGlobal(f)
+	}
+	// Ancestors between the repo top and root (root itself is loaded by
+	// the walk).
+	for d := filepath.Dir(root); d != root && insideDir(s.top, d); d = filepath.Dir(d) {
 		if !s.loadDir(d) {
 			s.blocked = true
+		}
+		if d == s.top || filepath.Dir(d) == d {
+			break
 		}
 	}
 	return s
 }
 
-// addGlobal parses one repo-wide source; false means it failed to parse.
-func (s *ignoreSet) addGlobal(path string) bool {
-	text, ok := ignore.ReadText(path)
-	if !ok {
-		return true // absent: nothing to honour
-	}
-	r, err := ignore.Parse(text)
+// addGlobal loads one repo-wide source; absent is fine, anything else that
+// keeps it from applying blocks the walk.
+func (s *ignoreSet) addGlobal(path string) {
+	r, err := ignore.LoadRules(path, false)
 	if err != nil {
-		return false
+		s.blocked = true
+		return
 	}
 	s.global.Patterns = append(s.global.Patterns, r.Patterns...)
-	return true
 }
 
-// loadDir reads dir's own ignore files (never through a link). false means
-// one failed to parse: the caller must skip everything dir governs.
+// loadDir reads dir's own ignore files. Symlinked ignore files are not
+// followed (an error, like an unreadable or unparsable one). false means
+// the caller must skip everything dir governs.
 func (s *ignoreSet) loadDir(dir string) bool {
 	var all ignore.Rules
 	for _, name := range perDirIgnoreFiles {
-		p := filepath.Join(dir, name)
-		fi, err := os.Lstat(p)
-		if err != nil || !fi.Mode().IsRegular() {
-			continue
-		}
-		text, ok := ignore.ReadText(p)
-		if !ok {
-			return false // present but unreadable or oversized: fail closed
-		}
-		r, err := ignore.Parse(text)
+		r, err := ignore.LoadRules(filepath.Join(dir, name), true)
 		if err != nil {
 			return false
 		}
@@ -373,28 +375,34 @@ func (s *ignoreSet) loadDir(dir string) bool {
 }
 
 // ignored checks an absolute path against the global rules and the rules
-// of every directory from its parent up to the repo top.
+// of every directory from its parent up to the repo top. A path it cannot
+// relate to a rule's base counts as ignored.
 func (s *ignoreSet) ignored(abs string, isDir bool) bool {
-	rel := func(base string) string {
-		r, err := filepath.Rel(base, abs)
-		if err != nil {
-			return ""
+	match := func(base string, r ignore.Rules) bool {
+		rel, err := filepath.Rel(base, abs)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			return true // cannot evaluate: exclude
 		}
-		return filepath.ToSlash(r)
+		return r.Match(filepath.ToSlash(rel), isDir)
 	}
-	if r := rel(s.top); r != "" && s.global.Match(r, isDir) {
+	if len(s.global.Patterns) > 0 && match(s.top, s.global) {
 		return true
 	}
 	for d := filepath.Dir(abs); ; d = filepath.Dir(d) {
-		if rules, ok := s.rules[d]; ok {
-			if r := rel(d); r != "" && rules.Match(r, isDir) {
-				return true
-			}
+		if rules, ok := s.rules[d]; ok && match(d, rules) {
+			return true
 		}
 		if d == s.top || !insideDir(s.top, d) || filepath.Dir(d) == d {
 			return false
 		}
 	}
+}
+
+// nestedRepo reports whether dir (below the root) holds its own .git entry.
+// An entry that cannot even be checked is treated as one.
+func nestedRepo(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, ".git"))
+	return err == nil || !(errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR))
 }
 
 // walkFiles visits every file explore may read under root, in walk order,
@@ -412,10 +420,17 @@ func walkFiles(root string, visit func(rel string, raw []byte) bool) (walkStats,
 			return filepath.SkipAll
 		}
 		if err != nil {
-			if d != nil && d.IsDir() && p != root {
+			// A directory that cannot be listed (or vanished) is not
+			// entered; its rules may be unreadable too. Nothing under it is
+			// read, and the skip is counted.
+			if d == nil || d.IsDir() || p == root {
+				stats.Skipped++
+				if p == root {
+					return filepath.SkipAll
+				}
 				return filepath.SkipDir
 			}
-			return nil
+			return nil // a file that cannot be stat'ed is simply not read
 		}
 		// WalkDir never descends into a symlinked directory (it reports
 		// the link itself); links and reparse points are skipped here and
@@ -427,12 +442,20 @@ func walkFiles(root string, visit func(rel string, raw []byte) bool) (walkStats,
 		if p != root {
 			r, rerr := filepath.Rel(root, p)
 			if rerr != nil {
+				if d.IsDir() {
+					stats.Skipped++
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			rel = filepath.ToSlash(r)
 		}
 		if d.IsDir() {
 			if p != root && (exploreSkipDirs[strings.ToLower(d.Name())] || ign.ignored(p, true)) {
+				return filepath.SkipDir
+			}
+			if p != root && nestedRepo(p) {
+				stats.NestedRepos++
 				return filepath.SkipDir
 			}
 			if !ign.loadDir(p) {
