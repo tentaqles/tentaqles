@@ -305,7 +305,7 @@ func TestRenderSessionStart_Workspace(t *testing.T) {
 		t.Fatalf("got:\n%q\nwant prefix:\n%q", got, want)
 	}
 	// The secrets line teaches the agent the .env-safe verbs.
-	if rest := got[len(want):]; !strings.HasPrefix(rest, "Secrets: ") || !strings.Contains(rest, "tq dotenv keys") || !strings.Contains(rest, "tq dotenv run") {
+	if rest := got[len(want):]; !strings.HasPrefix(rest, "Secrets: ") || !strings.Contains(rest, "tq dotenv run") {
 		t.Fatalf("missing secrets guidance: %q", rest)
 	}
 }

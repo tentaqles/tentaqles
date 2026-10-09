@@ -57,7 +57,7 @@ var baselineAllow = []string{
 	"Bash(gh run view:*)", "Bash(gh run list:*)", "Bash(gh issue view:*)", "Bash(gh issue list:*)",
 	"Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)",
 	"Bash(rg:*)", "Bash(which:*)", "Bash(pwd)",
-	"Bash(tq doctor:*)", "Bash(tq list:*)", "Bash(tq version)", "Bash(tq secrets audit:*)", "Bash(tq dotenv keys:*)",
+	"Bash(tq doctor:*)", "Bash(tq list:*)", "Bash(tq version)", "Bash(tq secrets audit:*)",
 	"Bash(az account show:*)", "Bash(aws sts get-caller-identity:*)",
 	"PowerShell(Get-ChildItem:*)", "PowerShell(Get-Content:*)", "PowerShell(Test-Path:*)",
 	"PowerShell(Select-String:*)", "PowerShell(Get-Location)",

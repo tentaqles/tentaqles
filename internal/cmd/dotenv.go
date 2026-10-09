@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/dotenv"
@@ -16,79 +14,16 @@ func newDotenvCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "dotenv",
 		Short: "Use a .env file without printing its values",
-		Long: `Agent-safe .env access. Printing a .env (cat, Get-Content, grep) puts its
-secrets in the session transcript; these commands never do:
+		Long: `Agent-safe .env access. Printing a .env (cat, Get-Content, grep, Read)
+puts its secrets in the session transcript, so tq's guard refuses it and
+points here instead:
 
-  tq dotenv keys [FILE...]              names only, and whether each is set
-  tq dotenv keys --require A --require B   exit 1 if any is missing or empty
-  tq dotenv run [--file F]... -- CMD    run CMD with the file loaded; every
-                                        loaded value is masked in its output
+  tq dotenv run [--file F]... -- CMD [ARGS...]
 
-FILE defaults to .env in the current directory.`,
+CMD runs with the file's variables in its environment; reference them as
+$NAME. Every loaded value is masked in CMD's output.`,
 	}
-	c.AddCommand(newDotenvKeysCmd(), newDotenvRunCmd())
-	return c
-}
-
-func dotenvFiles(args []string) ([]string, error) {
-	if len(args) == 0 {
-		return []string{".env"}, nil
-	}
-	for _, f := range args {
-		if !dotenv.IsEnvFile(f) {
-			return nil, fmt.Errorf("%s is not a .env file (.env, .env.<name> or <name>.env)", f)
-		}
-	}
-	return args, nil
-}
-
-func newDotenvKeysCmd() *cobra.Command {
-	var require []string
-	c := &cobra.Command{
-		Use:   "keys [FILE...]",
-		Short: "List the variable names in .env files (never the values)",
-		RunE: func(c *cobra.Command, args []string) error {
-			out := c.OutOrStdout()
-			state := map[string]string{} // key -> set|empty (last file wins)
-			files, err := dotenvFiles(args)
-			if err != nil {
-				return err
-			}
-			for _, f := range files {
-				es, err := dotenv.Parse(f)
-				if err != nil {
-					return err
-				}
-				fmt.Fprintf(out, "# %s (%d keys)\n", f, len(es))
-				seen := map[string]int{}
-				for _, e := range es {
-					s := "set"
-					if e.Value == "" {
-						s = "empty"
-					}
-					if prev, dup := seen[e.Key]; dup {
-						s += fmt.Sprintf(" (duplicate of line %d; this one wins)", prev)
-					}
-					seen[e.Key] = e.Line
-					state[e.Key] = strings.Fields(s)[0]
-					fmt.Fprintf(out, "%s\t%s\n", e.Key, s)
-				}
-			}
-			var missing []string
-			for _, k := range require {
-				if state[k] != "set" {
-					missing = append(missing, k)
-				}
-			}
-			if len(missing) > 0 {
-				sort.Strings(missing)
-				fmt.Fprintf(c.ErrOrStderr(), "missing or empty: %s\n", strings.Join(missing, ", "))
-				exitFunc(1)
-			}
-			return nil
-		},
-	}
-	c.Flags().StringArrayVar(&require, "require", nil, "fail (exit 1) unless this key is set (repeatable)")
+	c.AddCommand(newDotenvRunCmd())
 	return c
 }
 
@@ -103,16 +38,20 @@ Variables already set in the environment win unless --override. Every
 loaded value of 6+ characters is replaced by [REDACTED:NAME] in CMD's
 stdout and stderr, so a command that echoes a secret does not leak it.
 
-CMD is run directly, not through a shell; use bash -c / pwsh -Command for
-pipelines.`,
+CMD is run directly, not through a shell; use bash -c / pwsh -Command when
+the command needs $NAME expansion or a pipeline:
+
+  tq dotenv run -- bash -c 'psql "$DATABASE_URL" -c "select 1"'`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			files, err := dotenvFiles(files)
-			if err != nil {
-				return err
+			if len(files) == 0 {
+				files = []string{".env"}
 			}
 			loaded := map[string]string{}
 			for _, f := range files {
+				if !dotenv.IsEnvFile(f) {
+					return fmt.Errorf("%s is not a .env file (.env, .env.<name> or <name>.env)", f)
+				}
 				es, err := dotenv.Parse(f)
 				if err != nil {
 					return err

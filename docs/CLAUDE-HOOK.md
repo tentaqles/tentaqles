@@ -341,23 +341,21 @@ id in the manifest):
 
 ## Using a .env without printing it
 
-The `tq/env-file-read` and `tq/env-file-shell` rules ask before a `.env` is
-read or printed, because whatever is printed lands in the session
-transcript. Instead of asking you, the agent can use commands that never
-print values. The session-start message tells it to, and the ask reasons
-repeat it:
+Reading or printing a `.env` puts its secrets in the session transcript, so
+`tq/env-file-read` (the Read and Grep tools) and `tq/env-file-shell` (`cat`,
+`type`, `Get-Content`, `grep`, … on a `.env`) **deny** it. The refusal tells
+the agent what to do instead, and so does the session-start message, so it
+retries without asking you:
 
 ```
-tq dotenv keys [FILE...]                  # names only, set/empty, duplicates
-tq dotenv keys --require DB_URL           # exit 1 if DB_URL is missing or empty
-tq dotenv run --file .env -- npm run dev  # run with it loaded; values masked
+tq dotenv run -- npm run dev
+tq dotenv run --file .env.local -- bash -c 'psql "$DATABASE_URL" -c "select 1"'
 ```
 
-`tq dotenv run` loads the file into the child process only (variables
-already in the environment win unless `--override`). It replaces every
-loaded value of 6+ characters with `[REDACTED:NAME]` in the command's stdout
-and stderr, including values split across writes. It runs the command
-directly; use `bash -c` or `pwsh -Command` for pipelines.
-
-`tq settings render` pre-approves `tq dotenv keys`, which only reads. `tq dotenv
-run` runs an arbitrary command, so it stays with the permission mode.
+`tq dotenv run` loads the file into that one command's environment
+(variables already set win unless `--override`) and replaces every loaded
+value of 6+ characters with `[REDACTED:NAME]` in the command's stdout and
+stderr. The agent only ever writes `$NAME`. Templates (`.env.example`,
+`.sample`, `.template`, …) stay readable. `tq dotenv run` runs an arbitrary
+command, so it is never pre-approved: it goes through the permission mode
+like the command it wraps.

@@ -75,15 +75,7 @@ func TestMaskerLongLineChunking(t *testing.T) {
 	}
 }
 
-func TestParseNeverTreatsKeyMaterialAsAName(t *testing.T) {
-	// Lines of a PEM/base64 blob end in "=", which looks like NAME= .
-	b64 := "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSj" + "AgEAAoIBAQC7VJTUt9Us8cKj+MzEfYyjiWA4R4="
-	pem := "-----BEGIN " + "PRIVATE KEY-----\n" // split so secret scanners skip the fixture
-	p := writeEnv(t, pem+b64+"\nAbC1234567890xyzAbC1234567890xyz=\nGOOD_NAME=1\n")
-	es, _ := Parse(p)
-	if len(es) != 1 || es[0].Key != "GOOD_NAME" {
-		t.Fatalf("entries = %+v", es)
-	}
+func TestIsEnvFile(t *testing.T) {
 	for _, ok := range []string{".env", "x/.env.local", "prod.env", ".ENV.example"} {
 		if !IsEnvFile(ok) {
 			t.Errorf("%s should be an env file", ok)
@@ -93,5 +85,38 @@ func TestParseNeverTreatsKeyMaterialAsAName(t *testing.T) {
 		if IsEnvFile(bad) {
 			t.Errorf("%s accepted as an env file", bad)
 		}
+	}
+}
+
+func TestParseMultilineQuotedValue(t *testing.T) {
+	pem := "-----BEGIN " + "PRIVATE KEY-----"
+	// base64url-ish body lines contain '_' and end in '=', so a line-by-line
+	// parser would read them as NAME= entries.
+	body := "abc_DEF_ghi_JKL_mno_PQR_stu_VWX=\nzz_YY_xx_WW_vv_UU="
+	p := writeEnv(t, "A=1\nKEY=\""+pem+"\n"+body+"\n-----END "+"PRIVATE KEY-----\"\nB=2\nOPEN='never closed\nabc_DEF_ghi_JKL=\n")
+	es, err := Parse(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, e := range es {
+		keys = append(keys, e.Key)
+	}
+	if strings.Join(keys, ",") != "A,KEY,B,OPEN" {
+		t.Fatalf("keys = %v (body lines must never become names)", keys)
+	}
+	if !strings.Contains(es[1].Value, "zz_YY_xx_WW_vv_UU=") || !strings.HasSuffix(es[1].Value, "PRIVATE KEY-----") {
+		t.Fatalf("multiline value = %q", es[1].Value)
+	}
+}
+
+func TestMaskerMasksEachLineOfMultilineValue(t *testing.T) {
+	v := "first-line-QQQ111\nsecond-line-ZZZ222"
+	var out bytes.Buffer
+	m := NewMasker(&out, map[string]string{"PEM": v})
+	m.Write([]byte("dump:\n" + v + "\nend\n"))
+	m.Close()
+	if strings.Contains(out.String(), "QQQ111") || strings.Contains(out.String(), "ZZZ222") {
+		t.Fatalf("multiline value leaked: %q", out.String())
 	}
 }

@@ -1,7 +1,7 @@
 // Package dotenv reads .env files and masks their values in output, so an
 // agent can use a .env without its secrets ever reaching the transcript:
-// `tq dotenv keys` lists names only, and `tq dotenv run` loads the file into
-// a child process and masks every loaded value in what it prints.
+// `tq dotenv run` loads the file into one child process and masks every
+// loaded value in what that process prints.
 package dotenv
 
 import (
@@ -49,6 +49,35 @@ func Parse(path string) ([]Entry, error) {
 			continue
 		}
 		v = strings.TrimSpace(v)
+		start := n
+		if len(v) >= 1 && (v[0] == '"' || v[0] == '\'') && (len(v) == 1 || v[len(v)-1] != v[0]) {
+			// A quoted value that spans lines (a PEM key pasted into a .env).
+			// Its lines belong to the value: consume them here so none is
+			// ever read as a NAME=... line and echoed back as a "name".
+			q := v[0]
+			var b strings.Builder
+			b.WriteString(v[1:])
+			closed := false
+			for sc.Scan() {
+				n++
+				l := sc.Text()
+				b.WriteString("\n")
+				if t := strings.TrimRight(l, " \t\r"); strings.HasSuffix(t, string(q)) {
+					b.WriteString(t[:len(t)-1])
+					closed = true
+					break
+				}
+				b.WriteString(l)
+			}
+			if !closed {
+				// Unterminated: the rest of the file was the value. Report
+				// the key, never anything after it.
+				out = append(out, Entry{Key: k, Value: b.String(), Line: start})
+				break
+			}
+			out = append(out, Entry{Key: k, Value: b.String(), Line: start})
+			continue
+		}
 		if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
 			v = v[1 : len(v)-1]
 		} else if i := strings.Index(v, " #"); i >= 0 {
@@ -59,41 +88,15 @@ func Parse(path string) ([]Entry, error) {
 	return out, sc.Err()
 }
 
-// keyRe is what an environment variable name looks like. Anything else on
-// the left of "=" (a base64 line of a private key ends in "=") is not a key
-// and must never be echoed back as one.
+// keyRe is what an environment variable name looks like; other lines are
+// not entries.
 var keyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]{0,127}$`)
 
-// ValidKey reports whether k looks like an environment variable name. A
-// long token mixing upper case, lower case and digits with no underscore is
-// rejected too: that is the shape of key material (a base64 line of a PEM
-// key pasted into a .env), not of a variable name.
-func ValidKey(k string) bool {
-	if !keyRe.MatchString(k) {
-		return false
-	}
-	if len(k) >= 16 && !strings.Contains(k, "_") {
-		var up, low, dig bool
-		for _, r := range k {
-			switch {
-			case r >= 'A' && r <= 'Z':
-				up = true
-			case r >= 'a' && r <= 'z':
-				low = true
-			case r >= '0' && r <= '9':
-				dig = true
-			}
-		}
-		if up && low && dig {
-			return false
-		}
-	}
-	return true
-}
+// ValidKey reports whether k looks like an environment variable name.
+func ValidKey(k string) bool { return keyRe.MatchString(k) }
 
 // IsEnvFile reports whether path names a dotenv file: .env, .env.<x>, or
-// <x>.env. Commands that read "any" file are limited to these so they cannot
-// be pointed at keys, credentials or other secret stores.
+// <x>.env. `tq dotenv run --file` only loads these.
 func IsEnvFile(path string) bool {
 	b := strings.ToLower(filepath.Base(path))
 	return b == ".env" || strings.HasPrefix(b, ".env.") || strings.HasSuffix(b, ".env")
@@ -135,8 +138,12 @@ func NewMasker(w io.Writer, values map[string]string) *Masker {
 	type kv struct{ k, v string }
 	var pairs []kv
 	for k, v := range values {
-		if len(v) >= MinMaskLen {
-			pairs = append(pairs, kv{k, v})
+		// The masker works line by line, so a multi-line value (a PEM key)
+		// is masked one line at a time as well as whole.
+		for _, part := range append([]string{v}, strings.Split(v, "\n")...) {
+			if part = strings.TrimRight(part, "\r"); len(part) >= MinMaskLen {
+				pairs = append(pairs, kv{k, part})
+			}
 		}
 	}
 	// Longest first, so a value containing another is masked whole.
