@@ -30,11 +30,16 @@ FILE defaults to .env in the current directory.`,
 	return c
 }
 
-func dotenvFiles(args []string) []string {
+func dotenvFiles(args []string) ([]string, error) {
 	if len(args) == 0 {
-		return []string{".env"}
+		return []string{".env"}, nil
 	}
-	return args
+	for _, f := range args {
+		if !dotenv.IsEnvFile(f) {
+			return nil, fmt.Errorf("%s is not a .env file (.env, .env.<name> or <name>.env)", f)
+		}
+	}
+	return args, nil
 }
 
 func newDotenvKeysCmd() *cobra.Command {
@@ -45,7 +50,11 @@ func newDotenvKeysCmd() *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			out := c.OutOrStdout()
 			state := map[string]string{} // key -> set|empty (last file wins)
-			for _, f := range dotenvFiles(args) {
+			files, err := dotenvFiles(args)
+			if err != nil {
+				return err
+			}
+			for _, f := range files {
 				es, err := dotenv.Parse(f)
 				if err != nil {
 					return err
@@ -98,8 +107,9 @@ CMD is run directly, not through a shell; use bash -c / pwsh -Command for
 pipelines.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			if len(files) == 0 {
-				files = []string{".env"}
+			files, err := dotenvFiles(files)
+			if err != nil {
+				return err
 			}
 			loaded := map[string]string{}
 			for _, f := range files {

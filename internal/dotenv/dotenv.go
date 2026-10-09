@@ -9,6 +9,8 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -43,7 +45,7 @@ func Parse(path string) ([]Entry, error) {
 		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
 		k, v, ok := strings.Cut(line, "=")
 		k = strings.TrimSpace(k)
-		if !ok || k == "" || strings.ContainsAny(k, " \t") {
+		if !ok || !ValidKey(k) {
 			continue
 		}
 		v = strings.TrimSpace(v)
@@ -55,6 +57,46 @@ func Parse(path string) ([]Entry, error) {
 		out = append(out, Entry{Key: k, Value: v, Line: n})
 	}
 	return out, sc.Err()
+}
+
+// keyRe is what an environment variable name looks like. Anything else on
+// the left of "=" (a base64 line of a private key ends in "=") is not a key
+// and must never be echoed back as one.
+var keyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]{0,127}$`)
+
+// ValidKey reports whether k looks like an environment variable name. A
+// long token mixing upper case, lower case and digits with no underscore is
+// rejected too: that is the shape of key material (a base64 line of a PEM
+// key pasted into a .env), not of a variable name.
+func ValidKey(k string) bool {
+	if !keyRe.MatchString(k) {
+		return false
+	}
+	if len(k) >= 16 && !strings.Contains(k, "_") {
+		var up, low, dig bool
+		for _, r := range k {
+			switch {
+			case r >= 'A' && r <= 'Z':
+				up = true
+			case r >= 'a' && r <= 'z':
+				low = true
+			case r >= '0' && r <= '9':
+				dig = true
+			}
+		}
+		if up && low && dig {
+			return false
+		}
+	}
+	return true
+}
+
+// IsEnvFile reports whether path names a dotenv file: .env, .env.<x>, or
+// <x>.env. Commands that read "any" file are limited to these so they cannot
+// be pointed at keys, credentials or other secret stores.
+func IsEnvFile(path string) bool {
+	b := strings.ToLower(filepath.Base(path))
+	return b == ".env" || strings.HasPrefix(b, ".env.") || strings.HasSuffix(b, ".env")
 }
 
 // Lookup returns key's value from a dotenv file, or "".

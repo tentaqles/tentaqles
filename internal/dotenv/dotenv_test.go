@@ -74,3 +74,24 @@ func TestMaskerLongLineChunking(t *testing.T) {
 		t.Fatalf("chunked output = %q", out.String())
 	}
 }
+
+func TestParseNeverTreatsKeyMaterialAsAName(t *testing.T) {
+	// Lines of a PEM/base64 blob end in "=", which looks like NAME= .
+	b64 := "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSj" + "AgEAAoIBAQC7VJTUt9Us8cKj+MzEfYyjiWA4R4="
+	pem := "-----BEGIN " + "PRIVATE KEY-----\n" // split so secret scanners skip the fixture
+	p := writeEnv(t, pem+b64+"\nAbC1234567890xyzAbC1234567890xyz=\nGOOD_NAME=1\n")
+	es, _ := Parse(p)
+	if len(es) != 1 || es[0].Key != "GOOD_NAME" {
+		t.Fatalf("entries = %+v", es)
+	}
+	for _, ok := range []string{".env", "x/.env.local", "prod.env", ".ENV.example"} {
+		if !IsEnvFile(ok) {
+			t.Errorf("%s should be an env file", ok)
+		}
+	}
+	for _, bad := range []string{"id_rsa", "credentials", "catalog.yaml", ".envrc", "env.json"} {
+		if IsEnvFile(bad) {
+			t.Errorf("%s accepted as an env file", bad)
+		}
+	}
+}

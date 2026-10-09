@@ -62,3 +62,20 @@ func TestPolicy_EnvAskSuggestsSafeVerbs(t *testing.T) {
 		t.Fatalf("tq dotenv keys must not ask: code=%d out=%q", code, out)
 	}
 }
+
+func TestDotenvRefusesNonEnvFiles(t *testing.T) {
+	isolateHome(t)
+	key := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(key, []byte("AbC1234567890xyzAbC1234567890xyz=\n"), 0o600)
+	for _, args := range [][]string{{"dotenv", "keys", key}, {"dotenv", "run", "--file", key, "--", "true"}} {
+		var out strings.Builder
+		root := NewRoot()
+		root.SetArgs(args)
+		root.SetOut(&out)
+		root.SetErr(&out)
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "not a .env file") || strings.Contains(out.String(), "AbC123") {
+			t.Errorf("%v: err=%v out=%q", args, err, out.String())
+		}
+	}
+}
