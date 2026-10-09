@@ -34,7 +34,10 @@ var Patterns = []Pattern{
 	{"jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}`)},
 	{"bearer_token", regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._\-+/=]{16,}`)},
 	{"connection_string", regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|mssql|sqlserver|amqp|amqps)://[^\s:/@]+:[^\s/@]+@[^\s/]+`)},
-	{"private_key", regexp.MustCompile(`-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY-----`)},
+	// The whole PEM block, not just its header: redacting only the BEGIN line
+	// left the base64 key body in the text. An unterminated block is redacted
+	// to the end of the text (when in doubt, hide more).
+	{"private_key", regexp.MustCompile(`(?s)-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY-----(?:.*?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY-----|.*)`)},
 	{"api_key_assignment", regexp.MustCompile(`(?i)\b[a-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|pwd|credential)s?\b["']?\s*[:=]\s*["']?[A-Za-z0-9_\-./+=!@#$%^&*]{12,}`)},
 }
 
