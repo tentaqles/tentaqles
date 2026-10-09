@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/secrets"
@@ -138,10 +139,12 @@ func redactValue(v any) any {
 	case string:
 		return secrets.Redact(x)
 	case map[string]any:
+		// Keys are redacted too: a secret can arrive as a JSON key.
+		out := make(map[string]any, len(x))
 		for k, vv := range x {
-			x[k] = redactValue(vv)
+			out[secrets.Redact(k)] = redactValue(vv)
 		}
-		return x
+		return out
 	case []any:
 		for i, vv := range x {
 			x[i] = redactValue(vv)
@@ -170,18 +173,27 @@ func (c *Client) ask(ctx context.Context, state any, questions map[string]Questi
 	if c.APIKey == "" {
 		return nil, ErrNoKey
 	}
+	if err := CheckBaseURL(c.BaseURL); err != nil {
+		return nil, err
+	}
 	framed, err := PrepareState(state)
 	if err != nil {
 		return nil, err
 	}
-	body, err := json.Marshal(request{Model: c.Model, State: framed, Questions: questions})
+	qs, err := redactQuestions(questions)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(request{Model: c.Model, State: framed, Questions: qs})
 	if err != nil {
 		return nil, err
 	}
 	if len(body) > MaxStateBytes {
 		return nil, fmt.Errorf("%w (%d bytes > %d)", ErrTooLarge, len(body), MaxStateBytes)
 	}
-	key := cacheKey(body)
+	// The endpoint is part of the key: answers from one backend (a local
+	// laya-serve, say) are never served to a client of another.
+	key := cacheKey(append([]byte(c.BaseURL+"\n"), body...))
 	if r := c.Cache.get(key); r != nil {
 		r.Cached = true
 		return r, nil
@@ -223,11 +235,74 @@ func (c *Client) ask(ctx context.Context, state any, questions map[string]Questi
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("jev: malformed response: %w", err)
 	}
-	if len(out.Answers) == 0 {
-		return nil, ErrNoAnswers
+	if err := out.validate(); err != nil {
+		return nil, err
 	}
 	c.Cache.put(key, raw)
 	return &out, nil
+}
+
+// redactQuestions redacts instruction and criteria text: a question can be
+// built from the same untrusted content as the state.
+func redactQuestions(qs map[string]Question) (map[string]Question, error) {
+	out := make(map[string]Question, len(qs))
+	for id, q := range qs {
+		q.Instructions = secrets.Redact(q.Instructions)
+		if q.Criteria != nil {
+			raw, err := json.Marshal(q.Criteria)
+			if err != nil {
+				return nil, err
+			}
+			var v any
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return nil, err
+			}
+			q.Criteria = redactValue(v)
+		}
+		out[id] = q
+	}
+	return out, nil
+}
+
+// validate rejects an empty answer set and any probability outside [0,1],
+// so neither a bad response nor a tampered cache file can steer a decision.
+func (r *Response) validate() error {
+	if len(r.Answers) == 0 {
+		return ErrNoAnswers
+	}
+	in01 := func(f float64) bool { return f >= 0 && f <= 1 }
+	for id, a := range r.Answers {
+		if a.Noul != nil && !in01(*a.Noul) {
+			return fmt.Errorf("jev: answer %q out of range", id)
+		}
+		if a.Confidence != 0 && !in01(a.Confidence) {
+			return fmt.Errorf("jev: answer %q confidence out of range", id)
+		}
+		for _, p := range a.Probabilities {
+			if !in01(p) {
+				return fmt.Errorf("jev: answer %q probability out of range", id)
+			}
+		}
+	}
+	return nil
+}
+
+// CheckBaseURL allows only the TypeSafe API over https, or a backend on
+// this machine (a local laya-serve). The API key is sent as a Bearer token,
+// so an arbitrary base_url in a manifest would hand it to that host.
+func CheckBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("jev: base_url: %w", err)
+	}
+	host := u.Hostname()
+	switch {
+	case u.Scheme == "https" && host == "api.typesafe.ai":
+		return nil
+	case (u.Scheme == "http" || u.Scheme == "https") && (host == "localhost" || host == "127.0.0.1" || host == "::1"):
+		return nil
+	}
+	return fmt.Errorf("jev: base_url %q is not allowed (https://api.typesafe.ai or a localhost backend only)", u.Redacted())
 }
 
 func cacheKey(body []byte) string {

@@ -22,7 +22,7 @@ decision:
   warn_threshold: 0.5    # >= this -> ask
   env_file: ../shared/.env   # dotenv with TYPESAFE_API_KEY (relative to the manifest)
   # model: jev-1.13.0    # pinned by default; change only after re-running eval
-  # base_url: ...        # a local laya-serve or gateway speaking the same protocol
+  # base_url: http://127.0.0.1:8080/v1/systemone  # only https://api.typesafe.ai or localhost
   # timeout_ms: 800      # hook deadline
 ```
 
@@ -56,7 +56,11 @@ Every call:
 - **frames** the state as untrusted data (`{"note": ..., "data": <state>}`),
   because prompt injection is Jev's documented weak spot;
 - refuses a request larger than ~80 KB (~20k tokens);
-- has a hard deadline: 800 ms from hooks, 15 s from the CLI.
+- has a hard deadline: 800 ms from hooks, 15 s from the CLI;
+- sends the key only to `https://api.typesafe.ai` or a localhost backend,
+  and reads it only from a `.env*` file named by the trusted manifest;
+- trusts a cached or live answer only when every probability is in [0, 1];
+  the cache key includes the endpoint.
 
 The direct TypeSafe API is US-hosted and has no zero-retention option on
 standard plans. Redaction is what keeps credentials out; keep that in mind

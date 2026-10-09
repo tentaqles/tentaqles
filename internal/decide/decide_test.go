@@ -296,3 +296,71 @@ func TestSeedCasesParseAndHoldNoSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactsKeysAndQuestions(t *testing.T) {
+	f := newFake(t, answerAll(0.5))
+	state := map[string]any{fakeSecret(): "value as key"}
+	q := map[string]Question{"q": {Type: "choice", Instructions: "Is " + fakeSecret() + " live?", Criteria: map[string]any{"yes": fakeSecret()}}}
+	if _, err := client(f).Ask(context.Background(), state, q); err != nil {
+		t.Fatal(err)
+	}
+	if sent := f.last.Load().(string); strings.Contains(sent, "z9z9") {
+		t.Fatalf("secret in a key or question left the machine: %s", sent)
+	}
+}
+
+func TestBaseURLAllowList(t *testing.T) {
+	for _, ok := range []string{DefaultBaseURL, "http://127.0.0.1:8080/v1/systemone", "http://localhost/v1"} {
+		if err := CheckBaseURL(ok); err != nil {
+			t.Errorf("%s rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"http://api.typesafe.ai/v1/systemone", "https://evil.example/v1", "https://api.typesafe.ai.evil.example/", "file:///etc/passwd"} {
+		if CheckBaseURL(bad) == nil {
+			t.Errorf("%s allowed", bad)
+		}
+	}
+	// A client pointed elsewhere never sends the key.
+	f := newFake(t, answerAll(0.5))
+	c := New("test-key", time.Second)
+	c.BaseURL = strings.Replace(f.srv.URL, "127.0.0.1", "127.0.0.2", 1)
+	if _, err := c.Ask(context.Background(), "x", map[string]Question{"q": Noul("?")}); err == nil || f.calls.Load() != 0 {
+		t.Fatalf("disallowed host was called: err=%v calls=%d", err, f.calls.Load())
+	}
+	if (Policy{Backend: "typesafe", BaseURL: "https://evil.example"}).Validate() == nil {
+		t.Error("manifest base_url not validated")
+	}
+	if (Policy{Backend: "typesafe", EnvFile: "../.ssh/id_rsa"}).Validate() == nil {
+		t.Error("env_file outside .env* accepted")
+	}
+}
+
+func TestCacheIsPerEndpointAndValidated(t *testing.T) {
+	dir := t.TempDir()
+	cache := NewCache(dir)
+	a := newFake(t, answerAll(0.9))
+	b := newFake(t, answerAll(0.1))
+	q := map[string]Question{"q": Noul("?")}
+	ca, cb := client(a), client(b)
+	ca.Cache, cb.Cache = cache, cache
+	ra, _ := ca.Ask(context.Background(), "s", q)
+	rb, err := cb.Ask(context.Background(), "s", q)
+	if err != nil || rb.Cached {
+		t.Fatalf("second endpoint served from the first's cache: %v", err)
+	}
+	if pa, _ := ra.NoulOf("q"); pa != 0.9 {
+		t.Fatal(pa)
+	}
+	// A tampered cache file with an out-of-range answer is ignored.
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		os.WriteFile(filepath.Join(dir, e.Name()), []byte(`{"answers":{"q":{"noul":7}}}`), 0o600)
+	}
+	if r, err := ca.Ask(context.Background(), "s", q); err != nil || r.Cached {
+		t.Fatalf("tampered cache was trusted: cached=%v err=%v", r != nil && r.Cached, err)
+	}
+	bad := newFake(t, func(w http.ResponseWriter, _ map[string]any) { _, _ = w.Write([]byte(`{"answers":{"q":{"noul":-1}}}`)) })
+	if _, err := client(bad).Ask(context.Background(), "s", q); err == nil {
+		t.Error("out-of-range answer accepted")
+	}
+}

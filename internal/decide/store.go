@@ -34,7 +34,7 @@ func (c *Cache) get(key string) *Response {
 		return nil
 	}
 	var r Response
-	if json.Unmarshal(raw, &r) != nil || len(r.Answers) == 0 {
+	if json.Unmarshal(raw, &r) != nil || r.validate() != nil {
 		return nil
 	}
 	return &r

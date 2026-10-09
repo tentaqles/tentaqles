@@ -3,6 +3,7 @@ package decide
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -65,6 +66,16 @@ func (p Policy) Validate() error {
 	if p.BlockThreshold < 0 || p.BlockThreshold > 1 || p.WarnThreshold < 0 || p.WarnThreshold > 1 {
 		return fmt.Errorf("decision thresholds must be between 0 and 1")
 	}
+	if p.BaseURL != "" {
+		if err := CheckBaseURL(p.BaseURL); err != nil {
+			return fmt.Errorf("decision.base_url: %w", err)
+		}
+	}
+	// env_file is read for one key; limiting it to dotenv files keeps a
+	// manifest from pointing tq at arbitrary files.
+	if p.EnvFile != "" && !strings.HasPrefix(filepath.Base(p.EnvFile), ".env") {
+		return fmt.Errorf("decision.env_file must be a .env* file, got %q", p.EnvFile)
+	}
 	return nil
 }
 
@@ -84,6 +95,9 @@ func (p Policy) Client(manifestDir string, timeout time.Duration, fallbackEnvFil
 	if !p.Enabled() {
 		return nil, ErrDisabled
 	}
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
 	key := ResolveKey(append([]string{p.EnvFilePath(manifestDir)}, fallbackEnvFiles...)...)
 	if key == "" {
 		return nil, ErrNoKey
@@ -96,6 +110,9 @@ func (p Policy) Client(manifestDir string, timeout time.Duration, fallbackEnvFil
 		c.Model = p.Model
 	}
 	if p.BaseURL != "" {
+		if err := CheckBaseURL(p.BaseURL); err != nil {
+			return nil, err
+		}
 		c.BaseURL = p.BaseURL
 	}
 	return c, nil
