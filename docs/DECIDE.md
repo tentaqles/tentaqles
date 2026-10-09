@@ -174,3 +174,89 @@ rule can still deny or ask), and its output carries `updatedInput` with no
 Before switching a workspace to `mode: enforce`, confirm in a live session
 that a routed launch actually runs on the picked model (the shadow log shows
 what it would pick; the subagent's transcript shows what ran).
+
+## Completion-evidence check at Stop
+
+The plugin's Stop hook runs `tq claude-hook stop`. It catches a turn that
+ends with "all tests pass" when no test ran after the last edit.
+
+It does nothing at all when:
+
+- `stop_hook_active` is set (Claude is already continuing because of a Stop
+  hook, so there are no loops);
+- the workspace has no `decision:` block with `backend: typesafe`, or no key;
+- the turn (everything after the last message the user typed) edited no
+  file with Edit, Write, MultiEdit or NotebookEdit;
+- the breaker is open, or any error or timeout happens.
+
+Otherwise it reads the transcript tail (at most 2 MiB) and builds a compact
+state, at most ~30 KB:
+
+- the last user request (first 2,000 characters);
+- the files edited in the turn (up to 30);
+- the last 15 Bash/PowerShell commands run **after the last edit**, each with
+  its status: `ok`, `error` (the tool result's `is_error`) or `unknown`;
+- the final assistant text (last 4,000 characters).
+
+Jev answers two yes/no questions in one call, within the 800 ms hook deadline:
+
+- `claims`: does the final message claim tests, build or lint pass, or that
+  the work is verified?
+- `evidence`: did a verification command complete successfully after the last
+  edit? It is not asked when no command ran after the last edit; the
+  evidence is then 0.
+
+A verdict needs both: `claims` at or above `block_threshold`, and `evidence`
+at or below `1 - block_threshold` (0.2 by default). Both bars are high so
+that a block stays rare.
+
+- **Shadow mode** logs a `kind: "stop"` line to `judgments.jsonl`. It holds
+  the two probabilities, what Jev would do, and counts of edits and commands,
+  never the transcript.
+- **Enforce mode** prints `{"decision":"block","reason":"..."}`, which sends
+  Claude back to run the check and report the result, or to say plainly that
+  the change is unverified. This happens **at most once per session**: a
+  marker at `$TQ_HOME/decide/stop/<session_id>` is written first, and if it
+  cannot be written, nothing is blocked. With the marker present, later
+  Stops in that session skip Jev entirely.
+
+The hook entry has a 10 s timeout. `tq_hook.sh stop` always exits 0, also
+when tq is missing or too old for the subcommand. It does nothing for the
+plugin's own headless `claude -p` child (`TENTAQLES_HEADLESS_CHILD=1`).
+
+## Skill picker at UserPromptSubmit
+
+The plugin's UserPromptSubmit hook runs `tq claude-hook prompt-submit`. Jev
+picks which installed skill, if any, fits the prompt. It is **log-only**
+unless the policy enforces, and it **never blocks** a prompt.
+
+The skill index comes from SKILL.md frontmatter (`name`, `description`) in:
+
+- `<cwd>/.claude/skills/*/SKILL.md` (project);
+- `$CLAUDE_CONFIG_DIR/skills/*/SKILL.md` (user; `~/.claude` when unset);
+- `skills/*/SKILL.md` under each `installPath` in
+  `$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json`, named
+  `<plugin>:<skill>`.
+
+At most 60 skills are indexed (in that order, first name wins), and each
+description is cut to 200 characters. The index is cached at
+`$TQ_HOME/decide/skills-<hash>.json`, keyed on config dir and cwd. It is
+rebuilt only when the size or mtime of `installed_plugins.json`, a skills
+directory, or any SKILL.md changes, so a prompt costs a few `stat` calls,
+not a rescan.
+
+Jev gets one `choice` question. The options are the skill names plus
+`none`, and the state is the prompt (redacted, first 4,000 characters).
+Prompts that start with `/` are skipped, because a slash command already
+names what to run.
+
+- Every pick is logged as `kind: "skill"`, with the pick, its confidence,
+  the skill count and the prompt (redacted, then cut to 80 characters).
+- **Shadow mode** prints nothing.
+- **Enforce mode** adds one line of context when the pick is a real skill
+  and the confidence is at least `block_threshold`:
+  `hookSpecificOutput.additionalContext` = `Skill that may fit: <name>`.
+  A pick that names no indexed skill is treated as an error.
+
+The hook entry has a 5 s timeout. Errors trip the shared breaker like
+every other Jev call, and `tq_hook.sh prompt-submit` always exits 0.

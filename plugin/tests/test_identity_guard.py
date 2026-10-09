@@ -297,3 +297,66 @@ def test_tq_hook_execs_tq_when_present(tmp_path):
     assert p.returncode == 0
     assert "argv:claude-hook session-start" in p.stdout
     assert "{}" in p.stdout
+
+
+def _tq_hook_entries(event):
+    hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    return [
+        h
+        for group in hooks["hooks"].get(event, [])
+        for h in group["hooks"]
+        if "tq_hook.sh" in h["command"]
+    ]
+
+
+@pytest.mark.parametrize(
+    "event,arg,max_timeout",
+    [("Stop", "stop", 10), ("UserPromptSubmit", "prompt-submit", 5)],
+)
+def test_hooks_json_registers_jev_hooks_with_short_timeouts(event, arg, max_timeout):
+    entries = _tq_hook_entries(event)
+    assert len(entries) == 1, entries
+    assert entries[0]["command"].endswith("tq_hook.sh\" " + arg)
+    assert 0 < entries[0]["timeout"] <= max_timeout
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize("event", ["stop", "prompt-submit"])
+def test_tq_hook_advisory_events_without_tq_do_nothing(tmp_path, event):
+    """No tq installed: the Stop/UserPromptSubmit hooks exit 0 with no output."""
+    env = _no_python_env(tmp_path)
+    p = subprocess.run(
+        [BASH, str(HOOK), event], input="{}", capture_output=True, text=True, env=env
+    )
+    assert p.returncode == 0, p.stderr
+    assert p.stdout == ""
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize("event", ["stop", "prompt-submit"])
+def test_tq_hook_advisory_events_pass_through_and_never_fail(tmp_path, event):
+    """tq runs with the event and stdin; a non-zero exit (older tq) becomes 0."""
+    fake = tmp_path / "tq"
+    fake.write_text('#!/bin/sh\necho "argv:$*"; cat; exit 1\n')
+    fake.chmod(0o755)
+    env = hook_env(tmp_path, TQ_BIN=str(fake), CLAUDE_PLUGIN_ROOT=str(ROOT))
+    env.pop("TENTAQLES_HEADLESS_CHILD", None)
+    p = subprocess.run(
+        [BASH, str(HOOK), event], input='{"x":1}', capture_output=True, text=True, env=env
+    )
+    assert p.returncode == 0
+    assert "argv:claude-hook " + event in p.stdout
+    assert '{"x":1}' in p.stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_tq_hook_stop_skips_headless_child(tmp_path):
+    fake = tmp_path / "tq"
+    fake.write_text('#!/bin/sh\necho ran\n')
+    fake.chmod(0o755)
+    env = hook_env(
+        tmp_path, TQ_BIN=str(fake), CLAUDE_PLUGIN_ROOT=str(ROOT), TENTAQLES_HEADLESS_CHILD="1"
+    )
+    p = subprocess.run([BASH, str(HOOK), "stop"], input="{}", capture_output=True, text=True, env=env)
+    assert p.returncode == 0
+    assert p.stdout == ""

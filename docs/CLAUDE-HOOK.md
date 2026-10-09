@@ -9,6 +9,8 @@ plugin's Python code no longer switches gh/az/git identity itself.
 
 - `tq claude-hook session-start` — prints a short identity/status preamble. Never blocks (always exits 0).
 - `tq claude-hook pre-tool-use` — decides whether to allow, ask about, or block a tool call: shell commands (Bash, PowerShell), file reads and edits, and MCP tool calls. Exits 0 (allow, or ask via JSON on stdout) or 2 (block).
+- `tq claude-hook stop` — Stop hook: the Jev completion-evidence check. Always exits 0; in enforce mode it may print `{"decision":"block","reason":...}` once per session. See `docs/DECIDE.md`.
+- `tq claude-hook prompt-submit` — UserPromptSubmit hook: the Jev skill picker. Always exits 0 and never blocks; in enforce mode it may add a one-line `additionalContext` hint. See `docs/DECIDE.md`.
 
 Both subcommands read a single JSON payload from stdin — the same shape
 Claude Code sends its own hooks.
