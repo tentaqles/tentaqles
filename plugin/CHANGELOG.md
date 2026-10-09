@@ -2,7 +2,7 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
-## [Unreleased]
+## [0.8.0] — 2026-10-08
 
 Hook diet and reliability: fewer, cheaper hook interruptions, and memory
 features that actually run.
