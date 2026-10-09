@@ -17,7 +17,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" bootstrap.py",
-            "timeout": 600
+            "timeout": 30
           },
           {
             "type": "command",
