@@ -127,7 +127,7 @@ func TestGuardProtectsItsOwnSettings(t *testing.T) {
 	if code != 2 || !strings.Contains(errOut, "tq/guard-file-write") {
 		t.Errorf("Write to guard.yaml: code=%d err=%q", code, errOut)
 	}
-	for _, cmd := range []string{"echo 'disable: [tq/env-dump]' > ~/.tentaqles/guard.yaml", `Set-Content $HOME\.tentaqles\guard.yaml 'x'`, "rm ~/.tentaqles/guard.yaml"} {
+	for _, cmd := range []string{"echo 'disable: [tq/env-dump]' > ~/.tentaqles/guard.yaml", `Set-Content $HOME\.tentaqles\guard.yaml 'x'`, "rm ~/.tentaqles/guard.yaml", "tq guard list > ~/.tentaqles/guard.yaml", "tq guard list --json $(cp x ~/.tentaqles/guard.yaml)"} {
 		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, ws, "Bash", `{"command":`+jsonPath(t, cmd)+`}`))
 		if code != 2 || !strings.Contains(errOut, "tq/guard-file-write") {
 			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)

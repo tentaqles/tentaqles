@@ -61,8 +61,10 @@ func Builtin() []Rule {
 		},
 		{
 			ID: "tq/guard-file-write", Action: Deny,
+			// No exception for tq itself: `tq guard` never names the file, and
+			// an exception would also cover a redirect in the same command
+			// (`tq guard list > ~/.tentaqles/guard.yaml`).
 			Command: `\.tentaqles[/\\]+guard\.yaml`,
-			Except:  `(\S*[/\\])?tq(\.exe)?\s+guard\b[^;&|\n]*`,
 			Reason:  "the global guard file is changed with `tq guard off|on|set --all`, not from the shell",
 		},
 		// --- git ---------------------------------------------------------------
