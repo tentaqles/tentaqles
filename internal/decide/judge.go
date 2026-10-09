@@ -82,7 +82,7 @@ func BuiltinJudgeRules() []JudgeRule {
 		},
 		{
 			// Live n8n writes only: reads and exports are not judged.
-			ID: "jev/n8n-inline-credentials", Tool: `mcp__n8n[^_]*__(create|update|publish|restore|execute|test)\w*`,
+			ID: "jev/n8n-inline-credentials", Tool: `mcp__.*n8n.*__(?:\w*?_)?(create|update|publish|restore|execute|test)\w*`,
 			Content:  `authorization|bearer|api[_-]?key|password|token|secret|connectionString`,
 			Question: "Does this n8n node embed a credential directly in its parameters instead of using an n8n credential reference?",
 			Reason:   "Jev judged this n8n change as inlining a credential",

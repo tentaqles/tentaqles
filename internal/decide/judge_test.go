@@ -35,6 +35,8 @@ func TestJudgePrefilter(t *testing.T) {
 		{Subject{Tool: "Write", Path: "server/app.py", Content: "SERVICE_ROLE_KEY = os.environ[...]"}, ""},
 		{Subject{Tool: "mcp__n8n__get_workflow_details", Content: `{"token":"x"}`}, ""},
 		{Subject{Tool: "mcp__n8n__update_workflow", Content: `{"headers":{"Authorization":"Bearer x"}}`}, "jev/n8n-inline-credentials"},
+		{Subject{Tool: "mcp__n8n-mcp__n8n_create_workflow", Content: `{"headers":{"Authorization":"Bearer x"}}`}, "jev/n8n-inline-credentials"},
+		{Subject{Tool: "mcp__n8n-mcp__n8n_get_workflow", Content: `{"token":"x"}`}, ""},
 		{Subject{Tool: "Edit", Path: "supabase/m.sql", Content: "CREATE POLICY p ON t USING (true)"}, "jev/rls-weakened"},
 	}
 	for _, c := range cases {

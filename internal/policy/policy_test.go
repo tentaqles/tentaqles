@@ -72,6 +72,9 @@ func TestBuiltinDecisions(t *testing.T) {
 		{"supabase apply migration", ToolCall{Tool: "mcp__plugin_supabase_supabase__apply_migration", Content: `{}`}, Ask, "tq/mcp-apply-migration"},
 		// automation
 		{"n8n publish", ToolCall{Tool: "mcp__n8n__publish_workflow", Content: `{"id":"1"}`}, Ask, "tq/mcp-n8n-write"},
+		{"n8n prefixed tool", ToolCall{Tool: "mcp__n8n-mcp__n8n_create_workflow", Content: `{}`}, Ask, "tq/mcp-n8n-write"},
+		{"n8n plugin server", ToolCall{Tool: "mcp__plugin_n8n_n8n__n8n_update_partial_workflow", Content: `{}`}, Ask, "tq/mcp-n8n-write"},
+		{"n8n read stays allowed", ToolCall{Tool: "mcp__n8n-mcp__n8n_get_workflow", Content: `{}`}, Allow, ""},
 		{"n8n get ok", ToolCall{Tool: "mcp__n8n__get_workflow_details", Content: `{"id":"1"}`}, Allow, ""},
 		{"github merge", ToolCall{Tool: "mcp__github__merge_pull_request", Content: `{}`}, Ask, "tq/mcp-github-write"},
 		{"github read ok", ToolCall{Tool: "mcp__github__get_pull_request", Content: `{}`}, Allow, ""},
