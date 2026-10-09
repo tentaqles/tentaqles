@@ -30,9 +30,9 @@ tests/                  pytest suite
 **Both hooks and skills** invoke Python through `tq_run.sh` → `tq_env.sh`. Hooks use `bash "${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh"` (not `sh` — that causes "cannot execute binary file" on Windows; not bare `python` — that doesn't exist on macOS). The bootstrap chain:
 
 1. `tq_env.sh` resolves `CLAUDE_PLUGIN_ROOT` (env → `$BASH_SOURCE` → filesystem search)
-2. Probes interpreters: `py -3` → `python3` → `python`, validated via `sys.executable`
+2. Probes interpreters: `python3` → `python` → `py -3`, each bounded to 5 s, validated via `sys.executable`; any `WindowsApps` (Store Python) path is skipped, also from the cache
 3. Exports `PYTHONPATH` = `$CLAUDE_PLUGIN_ROOT` + `$CLAUDE_PLUGIN_DATA/lib`
-4. Runs `bootstrap.py` if core deps (`yaml`, `pathspec`) are missing
+4. Runs `bootstrap.py` if core deps (`yaml`, `pathspec`, `numpy`) fail to import; the deps stamp is keyed on plugin root + interpreter
 
 ## Key conventions
 
@@ -47,6 +47,8 @@ tests/                  pytest suite
 - **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`.
 
 - **Lazy session**: `MemoryStore.end_session()` auto-starts a session if none is active. Don't assume `start_session()` was called.
+
+- **Every hook in hooks.json declares a short `timeout`**; capture-only hooks are `async`. A hook without one waits up to 10 minutes when something hangs.
 
 - **Hooks never wait on the network or a model.** Anything slow (pip installs, session saving, `claude -p` fact extraction) goes to a detached worker via `_detach.spawn_detached`. Model calls go through `tentaqles.memory.llm` only, from detached/background code, and honour `TENTAQLES_SEMANTIC_FACTS=0`.
 

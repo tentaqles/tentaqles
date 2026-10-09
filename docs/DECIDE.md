@@ -95,3 +95,75 @@ shadow mode. Misclassified cases are listed by id.
 families, English and Portuguese, with prompt-injection attempts). Grow each
 family to ~100 cases — paraphrases, Portuguese, injection, near-misses —
 before trusting its threshold, then watch two weeks of shadow logs.
+
+## Judgment rules in the guard
+
+With `backend: typesafe`, `tq claude-hook pre-tool-use` asks Jev about tool
+calls that a judgment rule's regex pre-filter selects. Built-in rules:
+
+| id | looks at | question |
+|---|---|---|
+| `jev/destructive-sql` | edits, shell, MCP with `DROP TABLE`/`TRUNCATE`/`DELETE FROM`/`ALTER … DROP` | does it destroy existing data? |
+| `jev/rls-weakened` | edits and MCP touching policies, grants, RLS | does it weaken row-level security? |
+| `jev/service-role-client` | edits to `.ts/.tsx/.js/.jsx/.vue/.svelte/.astro` mentioning service-role/secret/admin keys | does it expose a server credential to client code? |
+| `jev/n8n-inline-credentials` | n8n MCP create/update/publish/execute calls mentioning auth material | does a node inline a credential? |
+
+How it runs:
+
+- **After the deterministic rules**, and not at all when they already deny.
+- **One batched call** per tool call for every matching rule, with the
+  800 ms hook deadline. Most tool calls match no rule and never reach Jev.
+- **A breaker** skips Jev for one minute after any failure, so an outage
+  costs one slow call per minute instead of one per tool call.
+- **Shadow mode** (the default) applies nothing and logs to
+  `$TQ_HOME/decide/judgments.jsonl`: rule ids, probabilities, what Jev would
+  do. Never the content.
+- **Enforce mode** turns a probability at or above `warn_threshold` into an
+  ask. Built-in rules are capped at ask; a manifest rule can set
+  `max: deny` to allow a deny at or above `block_threshold`.
+
+Add or disable rules in the manifest:
+
+```yaml
+decision:
+  backend: typesafe
+  disable: [jev/n8n-inline-credentials]
+  rules:
+    - id: acme/pii-to-index
+      tool: Edit|Write
+      path: 'rag/.*\.py$'
+      content: 'upsert|add_documents'
+      question: Does this send personal data (names, emails, CPF) into a search index without redaction?
+      max: ask
+      reason: Jev judged this as indexing unredacted personal data
+```
+
+## Review triage
+
+```
+tq decide triage            # working tree; --staged; --range main..HEAD
+```
+
+It asks 11 yes/no risk questions about the diff:
+- auth, money, schema, data loss, migrations, RLS, secrets
+- public API, shared state, destructive commands, n8n credentials
+
+It prints `low` or `high (flags…)` and exits 0 for low, 3 for high:
+- **low:** one light review pass
+- **high:** the full review. Triage is also high when the diff was truncated or Jev was unreachable: when in doubt, review more.
+
+## Subagent model routing
+
+The plugin's PreToolUse hook also sees `Agent` launches. When the policy
+enforces, tq asks Jev which tier (haiku / sonnet / opus) the task needs and
+sets the launch's `model`. It only does so when all of these hold:
+
+- the caller set no model, and the subagent type has none of its own (only
+  general-purpose launches);
+- the pick is strictly cheaper than the parent session's model (read from
+  the transcript);
+- Jev's confidence is at least `block_threshold`.
+
+Otherwise the launch is untouched. Shadow mode logs the pick (`kind: route`
+in `judgments.jsonl`) without applying it. Turn routing off with
+`route: false`.
