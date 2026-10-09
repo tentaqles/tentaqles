@@ -46,6 +46,7 @@ func hitPaths(hits []decide.Hit) []string {
 }
 
 func TestExplorePrefilter(t *testing.T) {
+	isolateGitConfig(t)
 	root := testutil.TempDir(t)
 	writeTree(t, root, map[string]string{
 		"src/fluxgate.go":       "package src\n\nfunc OpenFluxgate() {}\n",
@@ -69,7 +70,7 @@ func TestExplorePrefilter(t *testing.T) {
 		".git/config":         "fluxgate\n",
 		"scratch/fluxgate.go": "fluxgate\n",
 	})
-	hits, err := exploreHits(root, []string{"fluxgate"})
+	hits, _, err := exploreHits(root, []string{"fluxgate"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +88,7 @@ func TestExplorePrefilter(t *testing.T) {
 // TestExploreNeverRunsRepoConfig: explore runs no git process, so a hostile
 // repo's core.fsmonitor (or pager, diff driver, textconv…) never executes.
 func TestExploreNeverRunsRepoConfig(t *testing.T) {
+	isolateGitConfig(t)
 	git, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git not installed")
@@ -140,6 +142,7 @@ func symlinkOrSkip(t *testing.T, target, link string) {
 }
 
 func TestExploreNeverFollowsSymlinksOutOfRoot(t *testing.T) {
+	isolateGitConfig(t)
 	outside := testutil.TempDir(t)
 	writeTree(t, outside, map[string]string{
 		"secret.go":      "fluxgate other-client secret\n",
@@ -150,7 +153,7 @@ func TestExploreNeverFollowsSymlinksOutOfRoot(t *testing.T) {
 	symlinkOrSkip(t, filepath.Join(outside, "secret.go"), filepath.Join(root, "link.go"))
 	symlinkOrSkip(t, filepath.Join(outside, "repo"), filepath.Join(root, "linkdir"))
 
-	hits, err := exploreHits(root, []string{"fluxgate"})
+	hits, _, err := exploreHits(root, []string{"fluxgate"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +179,7 @@ func TestExploreNeverFollowsSymlinksOutOfRoot(t *testing.T) {
 // TestExploreNeverFollowsJunctions: on Windows a directory junction needs no
 // privilege, so it is the realistic way a repo points outside itself.
 func TestExploreNeverFollowsJunctions(t *testing.T) {
+	isolateGitConfig(t)
 	if runtime.GOOS != "windows" {
 		t.Skip("junctions are Windows-only")
 	}
@@ -186,7 +190,7 @@ func TestExploreNeverFollowsJunctions(t *testing.T) {
 	if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(root, "junction"), outside).CombinedOutput(); err != nil {
 		t.Skipf("mklink /J: %v %s", err, out)
 	}
-	hits, err := exploreHits(root, []string{"fluxgate"})
+	hits, _, err := exploreHits(root, []string{"fluxgate"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +203,7 @@ func TestExploreNeverFollowsJunctions(t *testing.T) {
 }
 
 func TestExploreRootThroughSymlinkStillWorks(t *testing.T) {
+	isolateGitConfig(t)
 	real := testutil.TempDir(t)
 	writeTree(t, real, map[string]string{"a/fluxgate.go": "fluxgate\n"})
 	link := filepath.Join(testutil.TempDir(t), "ws")
@@ -207,7 +212,7 @@ func TestExploreRootThroughSymlinkStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hits, _ := exploreHits(root, []string{"fluxgate"})
+	hits, _, _ := exploreHits(root, []string{"fluxgate"})
 	if len(hits) != 1 {
 		t.Fatalf("hits = %v", hits)
 	}
@@ -261,6 +266,7 @@ func runExplore(t *testing.T, args ...string) (exploreJSON, string) {
 }
 
 func TestExploreCLI_JevReranks(t *testing.T) {
+	isolateGitConfig(t)
 	// Jev prefers the span for c/, the last in keyword order (ties break
 	// by path), so the top result proves the re-rank.
 	url, calls := fakeJev(t, func(qs map[string]any) map[string]any {
@@ -291,6 +297,7 @@ func TestExploreCLI_JevReranks(t *testing.T) {
 }
 
 func TestExploreCLI_FallsBackWhenJevIsDown(t *testing.T) {
+	isolateGitConfig(t)
 	url, _ := fakeJev(t, nil, 503)
 	ws := jevWorkspace(t, url, "shadow")
 	exploreRepo(t, ws)
@@ -305,6 +312,7 @@ func TestExploreCLI_FallsBackWhenJevIsDown(t *testing.T) {
 }
 
 func TestExploreCLI_NoWorkspaceStillAnswers(t *testing.T) {
+	isolateGitConfig(t)
 	isolateHome(t)
 	root := testutil.TempDir(t)
 	exploreRepo(t, root)

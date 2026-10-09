@@ -44,7 +44,11 @@ Locate the code that answers `$ARGUMENTS` with as little reading as possible.
 ## Notes
 
 - Jev only re-ranks what the keyword stage found; it never adds files.
-- The keyword stage respects `.gitignore` and never reads `.env*` files or
-  key material; span text sent to Jev is redacted by tq first.
+- The keyword stage honours every git ignore source (and fails closed on
+  patterns it cannot parse: a `note: skipped N subtree(s)` line), never
+  reads `.env*`, key material, credential files or dumps, and never follows
+  symlinks; span text sent to Jev is redacted by tq first.
+- If the code you need sits in an ignored or skipped area, read it directly
+  instead; explore will not surface it by design.
 - Explore is enabled per workspace by the manifest's `decision:` block
   (`backend: typesafe`); without it you get the keyword ranking.

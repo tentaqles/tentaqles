@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/decide"
+	"github.com/tentaqles/tentaqles/internal/ignore"
 )
 
 func newDecideExploreCmd() *cobra.Command {
@@ -53,7 +54,7 @@ never read or sent.`,
 			if len(terms) == 0 {
 				return errors.New("no searchable terms in the question: name an identifier, file or concept")
 			}
-			hits, err := exploreHits(root, terms)
+			hits, stats, err := exploreHits(root, terms)
 			if err != nil {
 				return err
 			}
@@ -77,6 +78,7 @@ never read or sent.`,
 					res.Fallback = "jev unavailable: " + cerr.Error()
 				}
 			}
+			res.SkippedSubtrees = stats.Skipped
 			return printExplore(c, res, asJSON)
 		},
 	}
@@ -95,10 +97,19 @@ func printExplore(c *cobra.Command, res decide.ExploreResult, asJSON bool) error
 		enc.SetIndent("", "  ")
 		return enc.Encode(res)
 	}
+	// The footer gives a count only: never the path of a file or directory
+	// that was left out (its name may itself look like a secret).
+	footer := func() {
+		if res.SkippedSubtrees > 0 {
+			fmt.Fprintf(out, "note: skipped %d subtree(s) whose ignore file has a pattern explore cannot parse (fail closed)\n", res.SkippedSubtrees)
+		}
+	}
 	if res.Candidates == 0 {
 		fmt.Fprintf(out, "no keyword hits for: %s\nTry an identifier, file name or error text from the code.\n", strings.Join(res.Terms, ", "))
+		footer()
 		return nil
 	}
+	defer footer()
 	if res.Mode == "jev" {
 		fmt.Fprintf(out, "jev ranked %d candidate spans (%d request(s)); terms: %s\n", res.Candidates, res.Batches, strings.Join(res.Terms, ", "))
 	} else {
@@ -138,42 +149,83 @@ func exploreRoot(dir string) (string, error) {
 	return root, nil
 }
 
-// exploreHits runs the keyword pre-filter: a walk of root that honours
-// .gitignore files and .git/info/exclude. Paths come back slash-separated
+// walkStats reports what the walk refused to look at.
+type walkStats struct {
+	// Skipped counts subtrees left out because an ignore file governing
+	// them had a pattern the matcher could not parse (fail closed).
+	Skipped int
+}
+
+// exploreHits runs the keyword pre-filter. Paths come back slash-separated
 // and relative to root.
 //
 // It deliberately does not shell out to git. `git grep` in a repo the user
 // merely cloned reads that repo's .git/config, and core.fsmonitor,
 // core.pager, diff.external, textconv drivers and similar settings run
 // arbitrary programs; flag-by-flag hardening has to keep up with every new
-// such key. A walk in Go executes nothing. The cost is a simpler ignore
-// matcher (no negations), which only affects which spans are candidates.
-func exploreHits(root string, terms []string) ([]decide.Hit, error) {
-	return walkHits(root, terms)
+// such key. The walk executes nothing and reads git's ignore sources as
+// text (internal/ignore), erring toward exclusion: anything git would
+// ignore is never read.
+func exploreHits(root string, terms []string) ([]decide.Hit, walkStats, error) {
+	var hits []decide.Hit
+	stats, err := walkFiles(root, func(rel string, raw []byte) bool {
+		for i, line := range strings.Split(string(raw), "\n") {
+			low := strings.ToLower(line)
+			for _, t := range terms {
+				if strings.Contains(low, t) {
+					hits = append(hits, decide.Hit{Path: rel, Line: i + 1, Text: clipLine(line)})
+					break
+				}
+			}
+		}
+		return len(hits) < maxExploreHits
+	})
+	return hits, stats, err
 }
 
-// exploreSkipDirs are never walked.
+// exploreSkipDirs are never walked: VCS internals, dependency and build
+// output, and credential stores.
 var exploreSkipDirs = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "dist": true, "build": true, ".venv": true,
 	"venv": true, "__pycache__": true, ".next": true, ".cache": true, "target": true, ".idea": true,
+	".aws": true, ".ssh": true, ".gnupg": true, ".azure": true, ".kube": true, ".docker": true,
 }
 
-// skipExplorePath drops files whose content must never be read or sent
-// (dotenv files, private keys) and lockfiles that only add noise.
+// denyNames are credential files by exact (lowercase) name.
+var denyNames = map[string]bool{
+	".npmrc": true, ".pypirc": true, ".netrc": true, "_netrc": true, ".git-credentials": true,
+	".pgpass": true, ".htpasswd": true,
+	"package-lock.json": true, "go.sum": true, "pnpm-lock.yaml": true, "yarn.lock": true,
+}
+
+// denyExts are key material, credential stores and data dumps.
+var denyExts = map[string]bool{
+	".pem": true, ".key": true, ".p12": true, ".pfx": true, ".jks": true, ".kdbx": true, ".keystore": true,
+	".sqlite": true, ".sqlite3": true, ".db": true, ".dump": true, ".bak": true,
+	".lock": true, ".map": true,
+}
+
+// skipExplorePath is the always-deny list, applied whatever the ignore
+// files say: secrets, key material, dumps (never read or sent), and
+// lockfiles/minified bundles (noise).
 func skipExplorePath(p string) bool {
-	base := strings.ToLower(path.Base(p))
-	switch {
-	case strings.HasPrefix(base, ".env"):
-		return true
-	case strings.HasPrefix(base, "id_rsa"), strings.HasPrefix(base, "id_ed25519"), strings.HasPrefix(base, "id_ecdsa"):
-		return true
-	case base == "package-lock.json", base == "go.sum", base == "pnpm-lock.yaml", base == "yarn.lock", strings.HasSuffix(base, ".lock"):
-		return true
-	case strings.HasSuffix(base, ".min.js"), strings.HasSuffix(base, ".map"):
-		return true
+	low := strings.ToLower(p)
+	for _, seg := range strings.Split(low, "/") {
+		if seg == ".aws" || seg == ".ssh" || seg == ".gnupg" || seg == ".git" {
+			return true
+		}
 	}
-	switch path.Ext(base) {
-	case ".pem", ".key", ".p12", ".pfx", ".jks", ".kdbx", ".keystore":
+	base := path.Base(low)
+	switch {
+	case denyNames[base], denyExts[path.Ext(base)]:
+		return true
+	case strings.HasPrefix(base, ".env"), strings.HasPrefix(base, "id_"):
+		return true
+	case strings.Contains(base, "credentials"), strings.Contains(base, "secret"):
+		return true
+	case strings.Contains(base, ".tfstate"), strings.HasSuffix(base, ".sql.gz"):
+		return true
+	case strings.HasSuffix(base, ".min.js"):
 		return true
 	}
 	return false
@@ -228,163 +280,183 @@ func insideDir(dir, p string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }
 
-// ignoreRules is the subset of gitignore the walk honours: basename and
-// anchored globs, trailing "/" for directories, one rule set per directory
-// that has a .gitignore (plus .git/info/exclude at the root). Negations are
-// ignored (a file they would re-include is simply skipped).
-type ignoreRules struct{ pats []ignorePat }
+// perDirIgnoreFiles are read in every directory (the last two are the
+// ripgrep/fd conventions; honouring them only excludes more).
+var perDirIgnoreFiles = []string{".gitignore", ".ignore", ".rgignore"}
 
-type ignorePat struct {
-	glob     string
-	dirOnly  bool
-	anchored bool
+// ignoreSet holds every ignore source that governs the walk.
+type ignoreSet struct {
+	top   string                  // repo work tree top, or the walk root
+	rules map[string]ignore.Rules // per directory (absolute OS path)
+	// global holds .git/info/exclude and the global excludes files; their
+	// patterns are relative to top.
+	global ignore.Rules
+	// blocked: a source governing the whole walk failed to parse.
+	blocked bool
 }
 
-func parseIgnore(raw string) ignoreRules {
-	var r ignoreRules
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
-			continue
-		}
-		p := ignorePat{}
-		if strings.HasSuffix(line, "/") {
-			p.dirOnly = true
-			line = strings.TrimSuffix(line, "/")
-		}
-		line = strings.TrimPrefix(line, "**/")
-		if strings.Contains(line, "/") {
-			p.anchored = true
-			line = strings.TrimPrefix(line, "/")
-		}
-		p.glob = line
-		r.pats = append(r.pats, p)
-	}
-	return r
-}
-
-// match checks rel, relative to the directory owning these rules.
-func (r ignoreRules) match(rel string, isDir bool) bool {
-	base := path.Base(rel)
-	for _, p := range r.pats {
-		if p.dirOnly && !isDir {
-			continue
-		}
-		target := base
-		if p.anchored {
-			target = rel
-		}
-		if ok, _ := path.Match(p.glob, target); ok {
-			return true
-		}
-	}
-	return false
-}
-
-// ignoreTree holds the rule sets found so far, keyed by directory ("" is
-// the root).
-type ignoreTree map[string]ignoreRules
-
-// load reads dir's .gitignore (dir relative to root) without following a
-// symlinked one.
-func (t ignoreTree) load(root, dir string) {
-	files := []string{".gitignore"}
-	if dir == "" {
-		files = append(files, ".git/info/exclude")
-	}
-	var all ignoreRules
-	for _, f := range files {
-		rel := path.Join(dir, f)
-		p := filepath.Join(root, filepath.FromSlash(rel))
-		fi, err := os.Lstat(p)
-		if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxExploreFile {
-			continue
-		}
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		all.pats = append(all.pats, parseIgnore(string(raw)).pats...)
-	}
-	if len(all.pats) > 0 {
-		t[dir] = all
-	}
-}
-
-// ignored checks rel against the rules of every ancestor directory.
-func (t ignoreTree) ignored(rel string, isDir bool) bool {
-	dir := path.Dir(rel)
-	for {
-		if dir == "." {
-			dir = ""
-		}
-		if r, ok := t[dir]; ok {
-			sub := rel
-			if dir != "" {
-				sub = strings.TrimPrefix(rel, dir+"/")
+// newIgnoreSet loads the sources that apply before the walk starts: the
+// repo-wide ones and the .gitignore files of root's ancestors up to the
+// repo top. Any parse error there blocks the whole walk.
+func newIgnoreSet(root string) *ignoreSet {
+	s := &ignoreSet{top: root, rules: map[string]ignore.Rules{}}
+	repoConfig := ""
+	if top, _, common, ok := ignore.FindRepo(root); ok {
+		s.top = top
+		if common != "" {
+			repoConfig = filepath.Join(common, "config")
+			if !s.addGlobal(filepath.Join(common, "info", "exclude")) {
+				s.blocked = true
 			}
-			if r.match(sub, isDir) {
+		}
+	}
+	for _, f := range ignore.GlobalExcludeFiles(repoConfig) {
+		if !s.addGlobal(f) {
+			s.blocked = true
+		}
+	}
+	// Ancestors between the repo top and root (exclusive of root, which the
+	// walk loads itself).
+	var ancestors []string
+	for d := filepath.Dir(root); insideDir(s.top, d) && d != root; d = filepath.Dir(d) {
+		ancestors = append(ancestors, d)
+		if d == s.top || filepath.Dir(d) == d {
+			break
+		}
+	}
+	for _, d := range ancestors {
+		if !s.loadDir(d) {
+			s.blocked = true
+		}
+	}
+	return s
+}
+
+// addGlobal parses one repo-wide source; false means it failed to parse.
+func (s *ignoreSet) addGlobal(path string) bool {
+	text, ok := ignore.ReadText(path)
+	if !ok {
+		return true // absent: nothing to honour
+	}
+	r, err := ignore.Parse(text)
+	if err != nil {
+		return false
+	}
+	s.global.Patterns = append(s.global.Patterns, r.Patterns...)
+	return true
+}
+
+// loadDir reads dir's own ignore files (never through a link). false means
+// one failed to parse: the caller must skip everything dir governs.
+func (s *ignoreSet) loadDir(dir string) bool {
+	var all ignore.Rules
+	for _, name := range perDirIgnoreFiles {
+		p := filepath.Join(dir, name)
+		fi, err := os.Lstat(p)
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		text, ok := ignore.ReadText(p)
+		if !ok {
+			return false // present but unreadable or oversized: fail closed
+		}
+		r, err := ignore.Parse(text)
+		if err != nil {
+			return false
+		}
+		all.Patterns = append(all.Patterns, r.Patterns...)
+	}
+	if len(all.Patterns) > 0 {
+		s.rules[dir] = all
+	}
+	return true
+}
+
+// ignored checks an absolute path against the global rules and the rules
+// of every directory from its parent up to the repo top.
+func (s *ignoreSet) ignored(abs string, isDir bool) bool {
+	rel := func(base string) string {
+		r, err := filepath.Rel(base, abs)
+		if err != nil {
+			return ""
+		}
+		return filepath.ToSlash(r)
+	}
+	if r := rel(s.top); r != "" && s.global.Match(r, isDir) {
+		return true
+	}
+	for d := filepath.Dir(abs); ; d = filepath.Dir(d) {
+		if rules, ok := s.rules[d]; ok {
+			if r := rel(d); r != "" && rules.Match(r, isDir) {
 				return true
 			}
 		}
-		if dir == "" {
+		if d == s.top || !insideDir(s.top, d) || filepath.Dir(d) == d {
 			return false
 		}
-		dir = path.Dir(dir)
 	}
 }
 
-func walkHits(root string, terms []string) ([]decide.Hit, error) {
-	ign := ignoreTree{}
-	ign.load(root, "")
-	var hits []decide.Hit
+// walkFiles visits every file explore may read under root, in walk order,
+// with its content. visit returns false to stop.
+func walkFiles(root string, visit func(rel string, raw []byte) bool) (walkStats, error) {
+	var stats walkStats
+	ign := newIgnoreSet(root)
+	if ign.blocked {
+		stats.Skipped = 1
+		return stats, nil
+	}
+	stop := false
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || len(hits) >= maxExploreHits {
+		if stop {
+			return filepath.SkipAll
+		}
+		if err != nil {
 			if d != nil && d.IsDir() && p != root {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if p == root {
-			return nil
-		}
-		rel, rerr := filepath.Rel(root, p)
-		if rerr != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
 		// WalkDir never descends into a symlinked directory (it reports
-		// the link itself, with ModeSymlink); links of any kind are skipped
-		// here and again in readExploreFile.
+		// the link itself); links and reparse points are skipped here and
+		// again in readExploreFile.
 		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
-			return nil // a link, or a Windows junction / other reparse point
+			return nil
+		}
+		rel := "."
+		if p != root {
+			r, rerr := filepath.Rel(root, p)
+			if rerr != nil {
+				return nil
+			}
+			rel = filepath.ToSlash(r)
 		}
 		if d.IsDir() {
-			if exploreSkipDirs[strings.ToLower(d.Name())] || ign.ignored(rel, true) {
+			if p != root && (exploreSkipDirs[strings.ToLower(d.Name())] || ign.ignored(p, true)) {
 				return filepath.SkipDir
 			}
-			ign.load(root, rel)
+			if !ign.loadDir(p) {
+				stats.Skipped++
+				if p == root {
+					return filepath.SkipAll
+				}
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		if !d.Type().IsRegular() || ign.ignored(rel, false) {
+		if !d.Type().IsRegular() || ign.ignored(p, false) {
 			return nil
 		}
 		raw, ok := readExploreFile(root, rel)
 		if !ok {
 			return nil
 		}
-		for i, line := range strings.Split(string(raw), "\n") {
-			low := strings.ToLower(line)
-			for _, t := range terms {
-				if strings.Contains(low, t) {
-					hits = append(hits, decide.Hit{Path: rel, Line: i + 1, Text: clipLine(line)})
-					break
-				}
-			}
+		if !visit(rel, raw) {
+			stop = true
 		}
 		return nil
 	})
-	return hits, err
+	return stats, err
 }
 
 func clipLine(s string) string {

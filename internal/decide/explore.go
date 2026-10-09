@@ -277,7 +277,10 @@ type ExploreResult struct {
 	Fallback   string `json:"fallback,omitempty"`
 	Candidates int    `json:"candidates"`
 	Batches    int    `json:"batches,omitempty"`
-	Results    []Span `json:"results"`
+	// SkippedSubtrees counts subtrees the keyword stage left out because an
+	// ignore file governing them could not be parsed (fail closed).
+	SkippedSubtrees int    `json:"skipped_subtrees,omitempty"`
+	Results         []Span `json:"results"`
 }
 
 func exploreQuestion(id, question string) Question {

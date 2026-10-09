@@ -187,7 +187,28 @@ The goal is to have an agent read 5 ranges instead of 50 files. It runs in two s
    - identifiers and words of 3+ letters, minus stopwords;
    - camelCase and snake_case names also contribute their parts.
 
-   It walks the tree in Go. It honours every `.gitignore` (each applies below its own directory) and `.git/info/exclude`, without negations, and skips `.git`, `node_modules`, `vendor`, `dist` and binaries.
+   It walks the tree in Go (`internal/ignore`). The matcher errs toward exclusion: what it lets through may be sent to Jev, so anything git would ignore is never read.
+   - **Sources, all read as text:**
+     - every `.gitignore`, `.ignore` and `.rgignore`, each applying below its own directory, including those in ancestors of `--path` up to the repo top;
+     - `.git/info/exclude`, resolved through linked worktrees;
+     - every global excludes file git could use. That is `core.excludesFile` from `GIT_CONFIG_GLOBAL`, `~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`, the system config and the repo config, following `[include]` and every `[includeIf]` regardless of its condition, plus `~/.config/git/ignore`. Where git picks one source, explore takes the union.
+   - **Syntax:**
+     - `*`, `?` and `[...]` classes with ranges and `!`/`^`;
+     - `**` in leading, middle and trailing position;
+     - leading and middle `/` anchoring, and trailing `/` for directories only;
+     - `\#` and `\!` escapes, and trailing spaces.
+   - **Matching is case-insensitive.**
+   - **Negations (`!pattern`) are dropped.** They can only un-ignore, so dropping them excludes more.
+   - **Fail closed.** A pattern the parser is not sure about (a POSIX class, an unterminated class, a trailing backslash…) makes explore skip the whole subtree that file governs. For a repo-wide or global source, that is the whole walk. The output ends with `note: skipped N subtree(s)…`, which gives a count, never a path.
+   - **Tested against git.** A differential test builds a repo with a rich ignore set and asserts that no file `git check-ignore` reports as ignored is ever yielded.
+
+   It also skips `.git`, `node_modules`, `vendor`, `dist` and binaries. An always-deny list applies whatever the ignore files say:
+   - `.env*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.kdbx` and `id_*`;
+   - any name containing `credentials` or `secret`, and `*.tfstate*`;
+   - `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials` and `.pgpass`;
+   - dumps: `*.sqlite`, `*.db`, `*.dump`, `*.sql.gz` and `*.bak`;
+   - anything under `.aws/`, `.ssh/` or `.gnupg/`;
+   - lockfiles.
 
    It deliberately runs no `git` process. `git grep` in a cloned repo reads that repo's `.git/config`, and `core.fsmonitor`, `core.pager`, `diff.external` or a textconv driver there can run any program.
 
