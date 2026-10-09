@@ -1,0 +1,7 @@
+ticket_id,subject,body
+1001,Charged twice,I was billed twice for my March invoice. Please refund the duplicate charge.
+1002,Cannot log in,The SSO login loops back to the sign-in page since this morning.
+1003,Feature idea,Would love a dark mode for the dashboard.
+1004,Invoice copy,Can you send me a PDF copy of last month's invoice?
+1005,API 429,Our integration keeps getting HTTP 429 errors after 600 requests per minute.
+1006,Cancel plan,Please cancel our Team plan at the end of this billing cycle.

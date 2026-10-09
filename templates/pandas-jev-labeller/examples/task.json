@@ -1,0 +1,12 @@
+{
+  "name": "topic",
+  "instructions": "What is this support ticket mainly about?",
+  "columns": ["subject", "body"],
+  "choices": {
+    "billing": "charges, refunds, invoices, cancellations, plan changes",
+    "access": "login, SSO, passwords, permissions",
+    "technical": "API errors, bugs, integrations, performance",
+    "feedback": "feature requests, praise, general suggestions"
+  },
+  "context": "Support inbox of a B2B SaaS product."
+}
