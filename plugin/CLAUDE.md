@@ -16,10 +16,11 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   tq_env.sh             Runtime bootstrap — resolves interpreter + PYTHONPATH
   tq_run.sh             Wrapper: sources tq_env.sh then exec's target script
   memory-bridge.py      Stdin JSON → MemoryStore dispatch (touch, decision, session_end, etc.)
-  bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib)
+  bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib); installs in a detached --worker
   _path.py              sys.path setup via __file__ (used by all Python scripts)
+  _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
 skills/                 17 skill directories, each with SKILL.md
-hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, PreToolUse, PostToolUse, PreCompact)
+hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, PreToolUse, PostToolUse, Stop)
 .claude-plugin/         Plugin manifest (plugin.json)
 tests/                  pytest suite
 ```
@@ -46,6 +47,14 @@ tests/                  pytest suite
 - **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`.
 
 - **Lazy session**: `MemoryStore.end_session()` auto-starts a session if none is active. Don't assume `start_session()` was called.
+
+- **Hooks never wait on the network or a model.** Anything slow (pip installs, session saving, `claude -p` fact extraction) goes to a detached worker via `_detach.spawn_detached`. Model calls go through `tentaqles.memory.llm` only, from detached/background code, and honour `TENTAQLES_SEMANTIC_FACTS=0`.
+
+- **Text a hook hands to the model must not use `$CLAUDE_PLUGIN_ROOT`**: it is expanded in hooks.json commands but not set in the Bash tool. Embed the absolute path resolved from `__file__` (forward slashes).
+
+- **PreCompact stdout never reaches the model.** Context that must survive compaction is printed by the SessionStart hook when `source == "compact"` (`tentaqles.memory.compact_context`).
+
+- **Headless child guard**: `TENTAQLES_HEADLESS_CHILD=1` marks the plugin's own `claude -p` subprocess; hooks that save or prompt (SessionEnd, Stop) must exit early when it is set.
 
 - **No cross-client data**: each workspace has its own `memory.db`. The global `meta.db` stores only display names, stats, and signals — never code or decisions.
 
