@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -45,7 +46,8 @@ func hitPaths(hits []decide.Hit) []string {
 }
 
 func TestExplorePrefilter(t *testing.T) {
-	files := map[string]string{
+	root := testutil.TempDir(t)
+	writeTree(t, root, map[string]string{
 		"src/fluxgate.go":       "package src\n\nfunc OpenFluxgate() {}\n",
 		"src/other.go":          "package src\n\nfunc Unrelated() {}\n",
 		"ignored/fluxgate.go":   "fluxgate\n",
@@ -57,62 +59,158 @@ func TestExplorePrefilter(t *testing.T) {
 		"bin/blob.dat":          "fluxgate\x00\x01",
 		".gitignore":            "ignored/\n*.log\n",
 		"docs/notes/README.txt": "the FLUXGATE opens at dawn\n",
-	}
-	want := []string{"docs/notes/README.txt", "src/fluxgate.go"}
-
-	t.Run("walk outside a repo", func(t *testing.T) {
-		root := testutil.TempDir(t)
-		t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(root))
-		writeTree(t, root, files)
-		if isGitWorkTree(root) {
-			t.Skip("temp dir is inside a git work tree")
-		}
-		hits, err := exploreHits(root, []string{"fluxgate"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := hitPaths(hits); strings.Join(got, ",") != strings.Join(want, ",") {
-			t.Fatalf("hits in %v, want %v", got, want)
-		}
+		// A nested .gitignore applies below its own directory only.
+		"pkg/.gitignore":       "generated.go\n",
+		"pkg/generated.go":     "fluxgate\n",
+		"pkg/fluxgate_impl.go": "fluxgate\n",
+		"generated.go":         "fluxgate\n",
+		// .git/info/exclude is honoured; .git itself is never walked.
+		".git/info/exclude":   "scratch/\n",
+		".git/config":         "fluxgate\n",
+		"scratch/fluxgate.go": "fluxgate\n",
 	})
-
-	t.Run("git grep inside a repo", func(t *testing.T) {
-		if _, err := exec.LookPath("git"); err != nil {
-			t.Skip("git not installed")
+	hits, err := exploreHits(root, []string{"fluxgate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"docs/notes/README.txt", "generated.go", "pkg/fluxgate_impl.go", "src/fluxgate.go"}
+	if got := hitPaths(hits); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("hits in %v, want %v", got, want)
+	}
+	for _, h := range hits {
+		if h.Path == "src/fluxgate.go" && h.Line != 3 {
+			t.Fatalf("line = %d, want 3", h.Line)
 		}
-		root := testutil.TempDir(t)
-		writeTree(t, root, files)
-		cmd := exec.Command("git", "init", "-q")
+	}
+}
+
+// TestExploreNeverRunsRepoConfig: explore runs no git process, so a hostile
+// repo's core.fsmonitor (or pager, diff driver, textconv…) never executes.
+func TestExploreNeverRunsRepoConfig(t *testing.T) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	isolateHome(t)
+	root := testutil.TempDir(t)
+	marker := filepath.Join(testutil.TempDir(t), "pwned")
+	hook := filepath.Join(testutil.TempDir(t), "fsmonitor.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho x > '"+filepath.ToSlash(marker)+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, root, map[string]string{"a/fluxgate.go": "package a\n// fluxgate\n"})
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "core.fsmonitor", filepath.ToSlash(hook)},
+		{"config", "core.pager", "sh '" + filepath.ToSlash(hook) + "'"},
+		{"config", "diff.external", filepath.ToSlash(hook)},
+	} {
+		cmd := exec.Command(git, args...)
 		cmd.Dir = root
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %v %s", err, out)
+			t.Fatalf("git %v: %v %s", args, err, out)
 		}
-		// Untracked files count too: nothing is committed here. The .env
-		// files are not ignored, so only the explore skip list keeps them out.
-		hits, err := exploreHits(root, []string{"fluxgate"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		// git grep -I skips the binary; node_modules is not ignored in this
-		// repo, so git finds it (a real repo ignores it).
-		got := hitPaths(hits)
-		for _, p := range got {
-			if strings.HasPrefix(p, ".env") || strings.HasSuffix(p, ".pem") || strings.HasPrefix(p, "ignored/") ||
-				strings.HasSuffix(p, ".log") || strings.HasSuffix(p, ".dat") {
-				t.Fatalf("pre-filter returned %s: %v", p, got)
-			}
-		}
-		for _, w := range want {
-			if !contains(got, w) {
-				t.Fatalf("missing %s in %v", w, got)
-			}
-		}
-		for _, h := range hits {
-			if h.Path == "src/fluxgate.go" && h.Line != 3 {
-				t.Fatalf("line = %d, want 3", h.Line)
-			}
-		}
+	}
+	v, _ := runExplore(t, "where is the fluxgate", "--path", root, "--json", "--no-jev")
+	if len(v.Results) != 1 || v.Results[0].Path != "a/fluxgate.go" {
+		t.Fatalf("results = %+v", v.Results)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("explore ran the repo's configured program")
+	}
+	// Control: git itself does run the trap, so the test proves something.
+	cmd := exec.Command(git, "status")
+	cmd.Dir = root
+	_ = cmd.Run()
+	if _, err := os.Stat(marker); err != nil {
+		t.Logf("control: git status did not fire the fsmonitor hook on this platform")
+	}
+}
+
+// symlinkOrSkip creates a link, or skips where the OS refuses (Windows
+// without developer mode or the privilege).
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+}
+
+func TestExploreNeverFollowsSymlinksOutOfRoot(t *testing.T) {
+	outside := testutil.TempDir(t)
+	writeTree(t, outside, map[string]string{
+		"secret.go":      "fluxgate other-client secret\n",
+		"repo/stolen.go": "fluxgate other-client code\n",
 	})
+	root := testutil.TempDir(t)
+	writeTree(t, root, map[string]string{"own/fluxgate.go": "fluxgate here\n"})
+	symlinkOrSkip(t, filepath.Join(outside, "secret.go"), filepath.Join(root, "link.go"))
+	symlinkOrSkip(t, filepath.Join(outside, "repo"), filepath.Join(root, "linkdir"))
+
+	hits, err := exploreHits(root, []string{"fluxgate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hitPaths(hits); strings.Join(got, ",") != "own/fluxgate.go" {
+		t.Fatalf("walk followed a link: %v", got)
+	}
+	// Paths that reach the reader from elsewhere get the same checks: a
+	// linked file, a file under a linked directory, and a ".." escape.
+	for _, rel := range []string{"link.go", "linkdir/stolen.go", "../" + filepath.Base(outside) + "/secret.go"} {
+		if raw, ok := readExploreFile(root, rel); ok {
+			t.Errorf("read %s: %q", rel, raw)
+		}
+		fc := &fileCache{root: root, lines: map[string][]string{}}
+		if fc.text(rel, 1, 40) != "" {
+			t.Errorf("span text for %s", rel)
+		}
+	}
+	if _, ok := readExploreFile(root, "own/fluxgate.go"); !ok {
+		t.Fatal("regular file inside root was refused")
+	}
+}
+
+// TestExploreNeverFollowsJunctions: on Windows a directory junction needs no
+// privilege, so it is the realistic way a repo points outside itself.
+func TestExploreNeverFollowsJunctions(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("junctions are Windows-only")
+	}
+	outside := testutil.TempDir(t)
+	writeTree(t, outside, map[string]string{"stolen.go": "fluxgate other-client code\n"})
+	root := testutil.TempDir(t)
+	writeTree(t, root, map[string]string{"own/fluxgate.go": "fluxgate here\n"})
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(root, "junction"), outside).CombinedOutput(); err != nil {
+		t.Skipf("mklink /J: %v %s", err, out)
+	}
+	hits, err := exploreHits(root, []string{"fluxgate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hitPaths(hits); strings.Join(got, ",") != "own/fluxgate.go" {
+		t.Fatalf("walk followed a junction: %v", got)
+	}
+	if raw, ok := readExploreFile(root, "junction/stolen.go"); ok {
+		t.Fatalf("read through a junction: %q", raw)
+	}
+}
+
+func TestExploreRootThroughSymlinkStillWorks(t *testing.T) {
+	real := testutil.TempDir(t)
+	writeTree(t, real, map[string]string{"a/fluxgate.go": "fluxgate\n"})
+	link := filepath.Join(testutil.TempDir(t), "ws")
+	symlinkOrSkip(t, real, link)
+	root, err := exploreRoot(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits, _ := exploreHits(root, []string{"fluxgate"})
+	if len(hits) != 1 {
+		t.Fatalf("hits = %v", hits)
+	}
 }
 
 func contains(list []string, s string) bool {

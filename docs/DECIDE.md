@@ -187,7 +187,11 @@ The goal is to have an agent read 5 ranges instead of 50 files. It runs in two s
    - identifiers and words of 3+ letters, minus stopwords;
    - camelCase and snake_case names also contribute their parts.
 
-   Inside a git work tree it runs `git grep -n -I -i -F --untracked`, which covers tracked files plus untracked files that are not ignored. Elsewhere it walks the tree, honouring the root `.gitignore` and skipping `node_modules`, `vendor`, `dist` and binaries.
+   It walks the tree in Go. It honours every `.gitignore` (each applies below its own directory) and `.git/info/exclude`, without negations, and skips `.git`, `node_modules`, `vendor`, `dist` and binaries.
+
+   It deliberately runs no `git` process. `git grep` in a cloned repo reads that repo's `.git/config`, and `core.fsmonitor`, `core.pager`, `diff.external` or a textconv driver there can run any program.
+
+   It never follows a link. Symlinks, Windows junctions and other reparse points are skipped in the walk. Before any file is read, every path component is checked to be a plain directory, the file must be a regular file, and its resolved path must stay inside the resolved `--path`. So a link can never pull in `~/.ssh/id_rsa` or another client's repo.
 
    Each hit becomes a ~40-line window. Overlapping windows in one file merge, up to 60 lines. Spans are ranked by distinct terms, then hit count, with a bonus for a term in the file name and a small penalty for test files. The best `--candidates` are kept.
 2. **Jev re-rank.** For each span it asks one noul question: "Is the code span data.spans.sN relevant to answering this question: …?"

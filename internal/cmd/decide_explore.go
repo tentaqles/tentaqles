@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,10 +8,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -28,9 +25,10 @@ func newDecideExploreCmd() *cobra.Command {
 		Short: "Find the few file:line ranges that answer a question about the code",
 		Long: `Two stages, so an agent reads 5 ranges instead of 50 files:
 
-  1. keyword pre-filter: git grep (or a .gitignore-aware walk outside a repo)
-     for terms taken from the question; hits become ~40-line spans, grouped
-     per file, best --candidates kept.
+  1. keyword pre-filter: a .gitignore-aware walk (no git process, so a
+     repo's config can never run anything) for terms taken from the
+     question; hits become ~40-line spans, grouped per file, best
+     --candidates kept. Symlinks are never followed.
   2. one batched Jev call asks, per span, "is this relevant to answering the
      question?" and re-ranks them (split only to stay under the size cap).
 
@@ -47,12 +45,9 @@ never read or sent.`,
 			if dir == "" {
 				dir, _ = os.Getwd()
 			}
-			root, err := filepath.Abs(dir)
+			root, err := exploreRoot(dir)
 			if err != nil {
 				return err
-			}
-			if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-				return fmt.Errorf("--path %s: not a directory", dir)
 			}
 			terms := decide.ExploreTerms(question, 8)
 			if len(terms) == 0 {
@@ -123,72 +118,41 @@ const maxExploreHits = 20_000
 // maxExploreFile skips generated blobs and data dumps in the walk.
 const maxExploreFile = 1 << 20
 
-// exploreHits runs the keyword pre-filter: git grep inside a work tree, a
-// .gitignore-aware walk elsewhere. Paths come back slash-separated and
-// relative to root. Secret-bearing files are dropped either way.
-func exploreHits(root string, terms []string) ([]decide.Hit, error) {
-	if isGitWorkTree(root) {
-		hits, err := gitGrepHits(root, terms)
-		if err == nil {
-			return hits, nil
-		}
+// exploreRoot resolves --path to an absolute, symlink-free directory: every
+// file explore reads must resolve inside it.
+func exploreRoot(dir string) (string, error) {
+	if dir == "" {
+		dir, _ = os.Getwd()
 	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	root, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("--path %s: %w", dir, err)
+	}
+	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("--path %s: not a directory", dir)
+	}
+	return root, nil
+}
+
+// exploreHits runs the keyword pre-filter: a walk of root that honours
+// .gitignore files and .git/info/exclude. Paths come back slash-separated
+// and relative to root.
+//
+// It deliberately does not shell out to git. `git grep` in a repo the user
+// merely cloned reads that repo's .git/config, and core.fsmonitor,
+// core.pager, diff.external, textconv drivers and similar settings run
+// arbitrary programs; flag-by-flag hardening has to keep up with every new
+// such key. A walk in Go executes nothing. The cost is a simpler ignore
+// matcher (no negations), which only affects which spans are candidates.
+func exploreHits(root string, terms []string) ([]decide.Hit, error) {
 	return walkHits(root, terms)
 }
 
-func isGitWorkTree(dir string) bool {
-	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	return err == nil && strings.TrimSpace(string(out)) == "true"
-}
-
-func gitGrepHits(root string, terms []string) ([]decide.Hit, error) {
-	args := []string{"-c", "core.quotepath=off", "grep", "-n", "-I", "-i", "-F", "--null", "--no-color", "--untracked"}
-	for _, t := range terms {
-		args = append(args, "-e", t)
-	}
-	args = append(args, "--", ".")
-	cmd := exec.Command("git", args...)
-	cmd.Dir = root
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && ee.ExitCode() == 1 && stderr.Len() == 0 {
-			return nil, nil // no match
-		}
-		return nil, fmt.Errorf("git grep: %v: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	var hits []decide.Hit
-	sc := bufio.NewScanner(&stdout)
-	sc.Buffer(make([]byte, 64*1024), 4<<20)
-	for sc.Scan() && len(hits) < maxExploreHits {
-		parts := strings.SplitN(sc.Text(), "\x00", 3)
-		if len(parts) < 3 {
-			continue
-		}
-		n, err := strconv.Atoi(parts[1])
-		if err != nil {
-			continue
-		}
-		p := path.Clean(filepath.ToSlash(parts[0]))
-		if skipExplorePath(p) {
-			continue
-		}
-		hits = append(hits, decide.Hit{Path: p, Line: n, Text: clipLine(parts[2])})
-	}
-	return hits, nil
-}
-
-func clipLine(s string) string {
-	if len(s) > 500 {
-		return s[:500]
-	}
-	return s
-}
-
-// exploreSkipDirs are never walked outside a repo.
+// exploreSkipDirs are never walked.
 var exploreSkipDirs = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "dist": true, "build": true, ".venv": true,
 	"venv": true, "__pycache__": true, ".next": true, ".cache": true, "target": true, ".idea": true,
@@ -215,9 +179,59 @@ func skipExplorePath(p string) bool {
 	return false
 }
 
-// ignoreRules is the subset of .gitignore the walk honours: one root
-// file, basename and anchored path globs, trailing "/" for directories.
-// Negations are ignored (a file they would re-include is simply skipped).
+// readExploreFile reads rel (slash-separated, relative to root) only when it
+// is a regular file — not a symlink, device or pipe — that resolves inside
+// root, so a link (or a linked parent directory) can never pull in
+// ~/.ssh/id_rsa or another client's repo. root must be symlink-free
+// (exploreRoot). ok is false when the file must not be read.
+func readExploreFile(root, rel string) (raw []byte, ok bool) {
+	if skipExplorePath(rel) {
+		return nil, false
+	}
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if !insideDir(root, p) {
+		return nil, false
+	}
+	// Every directory between root and the file must be a plain directory:
+	// this rejects symlinked parents and Windows junctions, which Lstat
+	// does not report as symlinks and EvalSymlinks may not resolve.
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	cur := root
+	for _, part := range parts[:len(parts)-1] {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if err != nil || !fi.IsDir() || fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return nil, false
+		}
+	}
+	fi, err := os.Lstat(p)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxExploreFile {
+		return nil, false
+	}
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil || !insideDir(root, real) {
+		return nil, false
+	}
+	raw, err = os.ReadFile(real)
+	if err != nil || isBinary(raw) {
+		return nil, false
+	}
+	return raw, true
+}
+
+// insideDir reports whether p is dir or below it (both absolute, clean).
+func insideDir(dir, p string) bool {
+	rel, err := filepath.Rel(dir, p)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
+}
+
+// ignoreRules is the subset of gitignore the walk honours: basename and
+// anchored globs, trailing "/" for directories, one rule set per directory
+// that has a .gitignore (plus .git/info/exclude at the root). Negations are
+// ignored (a file they would re-include is simply skipped).
 type ignoreRules struct{ pats []ignorePat }
 
 type ignorePat struct {
@@ -226,13 +240,9 @@ type ignorePat struct {
 	anchored bool
 }
 
-func loadIgnore(root string) ignoreRules {
-	raw, err := os.ReadFile(filepath.Join(root, ".gitignore"))
-	if err != nil {
-		return ignoreRules{}
-	}
+func parseIgnore(raw string) ignoreRules {
 	var r ignoreRules
-	for _, line := range strings.Split(string(raw), "\n") {
+	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
 			continue
@@ -253,7 +263,8 @@ func loadIgnore(root string) ignoreRules {
 	return r
 }
 
-func (r ignoreRules) ignored(rel string, isDir bool) bool {
+// match checks rel, relative to the directory owning these rules.
+func (r ignoreRules) match(rel string, isDir bool) bool {
 	base := path.Base(rel)
 	for _, p := range r.pats {
 		if p.dirOnly && !isDir {
@@ -270,8 +281,62 @@ func (r ignoreRules) ignored(rel string, isDir bool) bool {
 	return false
 }
 
+// ignoreTree holds the rule sets found so far, keyed by directory ("" is
+// the root).
+type ignoreTree map[string]ignoreRules
+
+// load reads dir's .gitignore (dir relative to root) without following a
+// symlinked one.
+func (t ignoreTree) load(root, dir string) {
+	files := []string{".gitignore"}
+	if dir == "" {
+		files = append(files, ".git/info/exclude")
+	}
+	var all ignoreRules
+	for _, f := range files {
+		rel := path.Join(dir, f)
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		fi, err := os.Lstat(p)
+		if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxExploreFile {
+			continue
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		all.pats = append(all.pats, parseIgnore(string(raw)).pats...)
+	}
+	if len(all.pats) > 0 {
+		t[dir] = all
+	}
+}
+
+// ignored checks rel against the rules of every ancestor directory.
+func (t ignoreTree) ignored(rel string, isDir bool) bool {
+	dir := path.Dir(rel)
+	for {
+		if dir == "." {
+			dir = ""
+		}
+		if r, ok := t[dir]; ok {
+			sub := rel
+			if dir != "" {
+				sub = strings.TrimPrefix(rel, dir+"/")
+			}
+			if r.match(sub, isDir) {
+				return true
+			}
+		}
+		if dir == "" {
+			return false
+		}
+		dir = path.Dir(dir)
+	}
+}
+
 func walkHits(root string, terms []string) ([]decide.Hit, error) {
-	ign := loadIgnore(root)
+	ign := ignoreTree{}
+	ign.load(root, "")
 	var hits []decide.Hit
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || len(hits) >= maxExploreHits {
@@ -288,21 +353,24 @@ func walkHits(root string, terms []string) ([]decide.Hit, error) {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		// WalkDir never descends into a symlinked directory (it reports
+		// the link itself, with ModeSymlink); links of any kind are skipped
+		// here and again in readExploreFile.
+		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return nil // a link, or a Windows junction / other reparse point
+		}
 		if d.IsDir() {
 			if exploreSkipDirs[strings.ToLower(d.Name())] || ign.ignored(rel, true) {
 				return filepath.SkipDir
 			}
+			ign.load(root, rel)
 			return nil
 		}
-		if !d.Type().IsRegular() || skipExplorePath(rel) || ign.ignored(rel, false) {
+		if !d.Type().IsRegular() || ign.ignored(rel, false) {
 			return nil
 		}
-		fi, err := d.Info()
-		if err != nil || fi.Size() > maxExploreFile {
-			return nil
-		}
-		raw, err := os.ReadFile(p)
-		if err != nil || isBinary(raw) {
+		raw, ok := readExploreFile(root, rel)
+		if !ok {
 			return nil
 		}
 		for i, line := range strings.Split(string(raw), "\n") {
@@ -319,6 +387,13 @@ func walkHits(root string, terms []string) ([]decide.Hit, error) {
 	return hits, err
 }
 
+func clipLine(s string) string {
+	if len(s) > 500 {
+		return s[:500]
+	}
+	return s
+}
+
 func isBinary(raw []byte) bool {
 	n := len(raw)
 	if n > 8000 {
@@ -327,7 +402,8 @@ func isBinary(raw []byte) bool {
 	return bytes.IndexByte(raw[:n], 0) >= 0
 }
 
-// fileCache reads each candidate file once, for line counts and span text.
+// fileCache reads each candidate file once, for line counts and span text,
+// through readExploreFile (same symlink and containment checks).
 type fileCache struct {
 	root  string
 	lines map[string][]string
@@ -338,10 +414,8 @@ func (f *fileCache) get(rel string) []string {
 		return l
 	}
 	var l []string
-	if !skipExplorePath(rel) {
-		if raw, err := os.ReadFile(filepath.Join(f.root, filepath.FromSlash(rel))); err == nil && len(raw) <= 4*maxExploreFile {
-			l = strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-		}
+	if raw, ok := readExploreFile(f.root, rel); ok {
+		l = strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
 	}
 	f.lines[rel] = l
 	return l
