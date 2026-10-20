@@ -1,0 +1,2126 @@
+# Security and Privacy Pack, part 1 (tq CLI) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Give `tq` the deterministic data-protection and security controls of the development process: the manifest `data:` block, `tq redact` (output masking for personal and financial data), the new guard rules (classified reads, PII fixture dumps, IaC apply, remote migrations, settings widening, branch-pinned actions, commit messages), two new triage flags, and a doctor check for repositories that handle PII without a `data:` block.
+
+**Architecture:** Everything here is Go inside the existing layers. The manifest gains a validated `Data` struct (`internal/manifest`), consumed by three places: a new `internal/redact` package behind `tq redact` (regex detectors with check-digit and Luhn validation, class-selectable, a streaming writer like `dotenv.Masker`), the PreToolUse hook (`internal/cmd/claudehook_policy.go`), where two code rules use the manifest's classified paths and tables and the regex rules live in `internal/policy/builtin.go`, and `tq decide triage`, which adds a deterministic `classified_data` flag next to a new Jev question `agentic`. Masking of classified reads follows the proven `tq dotenv run` mechanism (deny the raw read, tell the agent to run through `tq redact run -- <cmd>`) rather than rewriting the command with `updatedInput`: a rewrite that auto-allows a shell command would widen permissions, and a rewrite that is not honoured fails open. `tq doctor` warns on PII-looking schema columns without a `data:` block.
+
+**Tech Stack:** Go 1.23+, cobra, `gopkg.in/yaml.v3`, `go test`; the existing `internal/secrets`, `internal/policy`, `internal/guardcfg`, `internal/decide`, `internal/doctor`, `internal/commitscan` packages.
+
+**Spec:** `C:\repos\tentaqles\docs\superpowers\specs\2026-10-20-development-process-design.md` §8.2, §9 (triage), §11.1, §11.2, §11.3; §14 assumptions corrected below. Companion plans: `2026-10-20-dev-process-spine.md` (engine, skills), `2026-10-20-dev-process-security-privacy-plugin.md` (templates, reviewer agents, security skills; it consumes `tq redact`, the `data:` block and the triage flags from this plan).
+
+All paths are relative to `C:\repos\tentaqles\tentaqles`.
+
+## Global Constraints
+
+- The guard fails closed: new deny rules are regex or code checks that run before any Jev call; a hook error allows only the way today's hook does (malformed payload), never because a new check panicked. Wrap manifest-dependent checks so a nil manifest means "rule does not apply".
+- Hook latency: no new I/O beyond what exists (`commitscan` already runs git). The classified-table check reads only the manifest already loaded; `commit-message` with `-F` reads one small file (cap 64 KiB).
+- Manifests hold names only: `data.incident.contact` is validated with `manifest.LooksLikeSecret`; the whole file still fails `Load` on any secret-shaped value.
+- `tq redact` never writes what it read anywhere but stdout; findings are counted by pattern name, values are never logged.
+- Rule ids are stable and documented in `docs/CLAUDE-HOOK.md`; every new rule has a `Reason` that tells the agent the safe alternative.
+- Deviation from spec §14 assumption 3 (recorded): masking is deny-plus-instruction (`tq redact run`), not `updatedInput`. Deviation from §8.2 `tq/config-change`: implemented as PreToolUse rules on settings files (`tq/settings-widen`, `tq/settings-shell-write`) because the `ConfigChange` hook event cannot be verified from this plan; a follow-up may add the event when the installed Claude Code lists it. Deviation from §8.2 `tq/iac-apply` "deny when no environment variable names the target": the hook cannot see the Bash tool's environment, so the rule asks and its reason requires the target to be named in the command.
+- Conventional commits; `go test ./...` green after every task; git identity `reach@tentaqles.ai`.
+
+## Review Focus
+
+1. **A CPF-shaped number that is not a CPF** (11 digits failing the check digits, such as a phone number without separators or an order id) must not be redacted; and a valid CPF with or without separators must be. Pinned in Task 2 (`TestCPF`).
+2. **A `data:` block with a path glob written with backslashes** (Windows user) must still match slash-normalised tool paths. Pinned in Task 1 (`TestData_ClassifiedMatchesNormalisedPaths`).
+3. **`git commit -F msg.txt` whose file is not under cwd or is missing** must ask (the message cannot be checked) rather than allow or crash. Pinned in Task 5 (`TestCommitMessage_FileMissingAsks`).
+4. **`tq redact run -- psql ...` itself** must not be denied by `tq/classified-read` (otherwise the safe alternative is unreachable), while `cat data/customers.csv | tq redact` (redaction after the read already left the shell) is still denied. Pinned in Task 4 (`TestClassifiedRead_RedactRunIsAllowed`, `TestClassifiedRead_PipeIntoRedactStillDenied`).
+5. **A repository with PII-looking columns only in test fixtures** should still get the doctor warning (fixtures are exactly where PII leaks), but a repository whose only hit is a `.env.example` key name (`EMAIL_FROM`) should not. Pinned in Task 7 (`TestDataBlockMissing_*`).
+
+---
+
+## File structure
+
+| Path | Responsibility |
+|---|---|
+| `internal/manifest/manifest.go` | `Data`, `DataPath`, `Incident`, `Prompts` structs; validation in `Load`; `Data.Classified(path)`, `Data.Tables()`, `Data.Enabled()` |
+| `internal/manifest/data_test.go` | manifest data tests |
+| `internal/redact/redact.go`, `redact_test.go` | detectors (cpf, cnpj, email, phone, card, iban) with validation; `Classes`, `Redact(text, classes)`, `NewWriter` |
+| `internal/cmd/redact.go`, `redact_test.go` | `tq redact [--classes] [--file]`, `tq redact run [--classes] -- CMD` |
+| `internal/policy/builtin.go`, `policy_test.go` | regex rules `tq/iac-apply`, `tq/remote-migration`, `tq/settings-widen`, `tq/settings-shell-write`, `tq/gha-branch-ref`; `tq/gha-unpinned` narrowed |
+| `internal/cmd/claudehook_policy.go`, `claudehook_data.go`, `claudehook_data_test.go` | code rules `tq/classified-read`, `tq/pii-fixture-dump`, `tq/commit-message` wired into `policyDecision` |
+| `internal/guardcfg/guardcfg.go` | `HookRules` entries for the three code rules |
+| `internal/commitmsg/commitmsg.go`, `commitmsg_test.go` | Conventional Commits check of a `git commit` command |
+| `internal/decide/triage.go`, `triage_test.go` | `agentic` question; `ClassifiedFlag(files, data)` |
+| `internal/cmd/decide.go` | triage adds `classified_data` from `git diff --name-only` |
+| `internal/doctor/data.go`, `data_test.go` | `dataBlockMissing` check |
+| `docs/CLAUDE-HOOK.md`, `docs/DECIDE.md`, `docs/CLAUDE-SETTINGS.md`, `docs/SETUP.md` | docs |
+
+---
+
+### Task 1: Manifest `data:` block
+
+**Files:**
+- Modify: `internal/manifest/manifest.go`
+- Create: `internal/manifest/data_test.go`
+
+**Interfaces:**
+- Produces:
+
+```go
+var DataClasses = []string{"public", "internal", "pii", "sensitive", "financial", "children", "secrets"}
+
+type DataPath struct {
+    Path    string   `yaml:"path,omitempty"`  // repo-relative glob, slash or backslash
+    Table   string   `yaml:"table,omitempty"` // schema.table or table
+    Classes []string `yaml:"classes"`
+}
+type Prompts  struct{ Allow []string `yaml:"allow"` }
+type Incident struct{ Authority, Contact string }
+type Data struct {
+    Classes          []string   `yaml:"classes"`
+    Regions          []string   `yaml:"regions"`
+    Prompts          Prompts    `yaml:"prompts"`
+    Paths            []DataPath `yaml:"paths"`
+    RetentionDefault string     `yaml:"retention_default"`
+    Incident         Incident   `yaml:"incident"`
+}
+func (d Data) Enabled() bool                       // len(Classes) > 0
+func (d Data) Classified(path string) []string     // classes of every DataPath glob matching the slash-normalised repo-relative path; nil when none
+func (d Data) Tables() map[string][]string         // lower-cased table name (with and without schema) -> classes
+func (d Data) Validate() error
+```
+- `Manifest` gains `Data Data \`yaml:"data"\``; `Load` calls `m.Data.Validate()`.
+- Glob matching: `**` matches any number of segments, `*` one segment, via a helper `globMatch(pattern, path string) bool` exported from the manifest package as `GlobMatch` (the doctor and hook reuse it).
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+// internal/manifest/data_test.go
+package manifest
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+const dataManifest = `
+schema: tentaqles-client-v2
+client: acme
+data:
+  classes: [pii, financial]
+  regions: [BR]
+  prompts: { allow: [public, internal] }
+  paths:
+    - { path: "db/schema/customers.sql", classes: [pii] }
+    - { path: "data\\exports\\**", classes: [pii, financial] }
+    - { table: public.payments, classes: [financial] }
+  retention_default: 24m
+  incident: { authority: ANPD, contact: dpo@example.test }
+`
+
+func TestData_ParsesAndEnables(t *testing.T) {
+	m, err := Load(write(t, dataManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Data.Enabled() || m.Data.RetentionDefault != "24m" || m.Data.Incident.Authority != "ANPD" {
+		t.Fatalf("%+v", m.Data)
+	}
+	if got := m.Data.Tables()["public.payments"]; !reflect.DeepEqual(got, []string{"financial"}) {
+		t.Fatalf("tables %v", m.Data.Tables())
+	}
+	if got := m.Data.Tables()["payments"]; !reflect.DeepEqual(got, []string{"financial"}) {
+		t.Fatalf("bare table name must resolve too: %v", m.Data.Tables())
+	}
+}
+
+func TestData_ClassifiedMatchesNormalisedPaths(t *testing.T) {
+	m, err := Load(write(t, dataManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string][]string{
+		"db/schema/customers.sql":           {"pii"},
+		`db\schema\customers.sql`:           {"pii"},
+		"data/exports/2026/q3.csv":          {"financial", "pii"},
+		"data/exports/x.csv":                {"financial", "pii"},
+		"db/schema/orders.sql":              nil,
+		"src/data/exports/x.csv":            nil, // anchored at the repo root
+	}
+	for p, want := range cases {
+		if got := m.Data.Classified(p); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: got %v want %v", p, got, want)
+		}
+	}
+}
+
+func TestData_EmptyBlockIsDisabled(t *testing.T) {
+	m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"))
+	if err != nil || m.Data.Enabled() || m.Data.Classified("anything") != nil {
+		t.Fatalf("%v %+v", err, m.Data)
+	}
+}
+
+func TestData_Validation(t *testing.T) {
+	bad := map[string]string{
+		"unknown class":        "data: { classes: [pii, private] }",
+		"allow not in set":     "data: { classes: [pii], prompts: { allow: [pii] } }",
+		"path and table":       "data: { classes: [pii], paths: [ { path: a, table: b, classes: [pii] } ] }",
+		"path without classes": "data: { classes: [pii], paths: [ { path: a } ] }",
+		"bad retention":        "data: { classes: [pii], retention_default: forever }",
+		"bad authority":        "data: { classes: [pii], incident: { authority: FBI } }",
+		"region not ISO":       "data: { classes: [pii], regions: [Brazil] }",
+	}
+	for name, body := range bad {
+		_, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"+body+"\n"))
+		if err == nil || !strings.Contains(err.Error(), "data.") {
+			t.Errorf("%s: want a data.* validation error, got %v", name, err)
+		}
+	}
+	ok := "schema: tentaqles-client-v2\nclient: x\ndata: { classes: [pii], retention_default: 30d, regions: [BR, EU], incident: { authority: GDPR } }\n"
+	if _, err := Load(write(t, ok)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGlobMatch(t *testing.T) {
+	cases := []struct {
+		pat, path string
+		want      bool
+	}{
+		{"src/core/**", "src/core/a/b.go", true},
+		{"src/core/**", "src/core", true},
+		{"src/*/x.go", "src/a/x.go", true},
+		{"src/*/x.go", "src/a/b/x.go", false},
+		{"**/migrations/*.sql", "db/migrations/1.sql", true},
+		{"*.sql", "db/1.sql", false},
+	}
+	for _, c := range cases {
+		if got := GlobMatch(c.pat, c.path); got != c.want {
+			t.Errorf("GlobMatch(%q,%q)=%v", c.pat, c.path, got)
+		}
+	}
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test ./internal/manifest/ -run 'TestData|TestGlobMatch' -v`
+Expected: compile errors (`m.Data undefined`, `GlobMatch undefined`).
+
+- [ ] **Step 3: Implement**
+
+Append to `internal/manifest/manifest.go` (and add `Data Data \`yaml:"data"\`` to `Manifest`, plus the `Validate` call in `Load` right after `m.Decision.Validate()`):
+
+```go
+// DataClasses are the classification labels a manifest may use (spec §11.1).
+var DataClasses = []string{"public", "internal", "pii", "sensitive", "financial", "children", "secrets"}
+
+// DataPath classifies a repository path glob or a database table.
+type DataPath struct {
+	Path    string   `yaml:"path,omitempty"`
+	Table   string   `yaml:"table,omitempty"`
+	Classes []string `yaml:"classes"`
+}
+
+type Prompts struct {
+	Allow []string `yaml:"allow"`
+}
+
+type Incident struct {
+	Authority string `yaml:"authority"` // ANPD | GDPR | none
+	Contact   string `yaml:"contact"`
+}
+
+// Data is the manifest's data-protection block. Empty means "not classified".
+type Data struct {
+	Classes          []string   `yaml:"classes"`
+	Regions          []string   `yaml:"regions"`
+	Prompts          Prompts    `yaml:"prompts"`
+	Paths            []DataPath `yaml:"paths"`
+	RetentionDefault string     `yaml:"retention_default"`
+	Incident         Incident   `yaml:"incident"`
+}
+
+var (
+	retentionRe = regexp.MustCompile(`^\d{1,4}[dmy]$`)
+	regionRe    = regexp.MustCompile(`^[A-Z]{2}$`)
+)
+
+func (d Data) Enabled() bool { return len(d.Classes) > 0 }
+
+// Validate rejects unknown classes, inconsistent paths and malformed values so
+// a typo cannot silently leave data unclassified.
+func (d Data) Validate() error {
+	if !d.Enabled() && (len(d.Paths) > 0 || len(d.Prompts.Allow) > 0) {
+		return fmt.Errorf("data.classes is required when data.paths or data.prompts are set")
+	}
+	for _, c := range d.Classes {
+		if !contains(DataClasses, c) {
+			return fmt.Errorf("data.classes: unknown class %q (known: %v)", c, DataClasses)
+		}
+	}
+	for _, c := range d.Prompts.Allow {
+		if c != "public" && c != "internal" && !contains(d.Classes, c) {
+			return fmt.Errorf("data.prompts.allow: %q is not one of the declared classes", c)
+		}
+	}
+	for i, p := range d.Paths {
+		if (p.Path == "") == (p.Table == "") {
+			return fmt.Errorf("data.paths[%d]: exactly one of path or table is required", i)
+		}
+		if len(p.Classes) == 0 {
+			return fmt.Errorf("data.paths[%d]: classes is required", i)
+		}
+		for _, c := range p.Classes {
+			if !contains(DataClasses, c) {
+				return fmt.Errorf("data.paths[%d].classes: unknown class %q", i, c)
+			}
+		}
+	}
+	if d.RetentionDefault != "" && !retentionRe.MatchString(d.RetentionDefault) {
+		return fmt.Errorf("data.retention_default: use <n>d, <n>m or <n>y, got %q", d.RetentionDefault)
+	}
+	for _, r := range d.Regions {
+		if !regionRe.MatchString(r) {
+			return fmt.Errorf("data.regions: %q is not a two-letter ISO country code", r)
+		}
+	}
+	switch d.Incident.Authority {
+	case "", "ANPD", "GDPR", "none":
+	default:
+		return fmt.Errorf("data.incident.authority must be ANPD, GDPR or none, got %q", d.Incident.Authority)
+	}
+	if LooksLikeSecret(d.Incident.Contact) {
+		return fmt.Errorf("data.incident.contact looks like a secret")
+	}
+	return nil
+}
+
+// Classified returns the sorted, de-duplicated classes of every path glob
+// matching the repo-relative path (slash or backslash), or nil.
+func (d Data) Classified(path string) []string {
+	rel := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(path), `\`, "/"), "./")
+	set := map[string]bool{}
+	for _, p := range d.Paths {
+		if p.Path == "" {
+			continue
+		}
+		if GlobMatch(strings.ReplaceAll(p.Path, `\`, "/"), rel) {
+			for _, c := range p.Classes {
+				set[c] = true
+			}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for c := range set {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Tables maps lower-cased table names (with and without their schema) to classes.
+func (d Data) Tables() map[string][]string {
+	out := map[string][]string{}
+	for _, p := range d.Paths {
+		if p.Table == "" {
+			continue
+		}
+		name := strings.ToLower(strings.Trim(p.Table, `"`))
+		out[name] = append(out[name], p.Classes...)
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			out[name[i+1:]] = append(out[name[i+1:]], p.Classes...)
+		}
+	}
+	return out
+}
+
+// GlobMatch matches a slash path against a glob where * is one segment and
+// ** any number of segments (including none). Both are anchored at the root.
+func GlobMatch(pattern, path string) bool {
+	pattern = strings.Trim(pattern, "/")
+	path = strings.Trim(path, "/")
+	return globSegs(strings.Split(pattern, "/"), strings.Split(path, "/"))
+}
+
+func globSegs(pat, segs []string) bool {
+	for len(pat) > 0 {
+		if pat[0] == "**" {
+			for i := 0; i <= len(segs); i++ {
+				if globSegs(pat[1:], segs[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(segs) == 0 {
+			return false
+		}
+		if ok, _ := filepath.Match(pat[0], segs[0]); !ok {
+			return false
+		}
+		pat, segs = pat[1:], segs[1:]
+	}
+	return len(segs) == 0
+}
+```
+
+Add `"path/filepath"`, `"sort"`, `"regexp"`, `"strings"` to the imports as needed (`regexp` and `strings` may already be there).
+
+- [ ] **Step 4: Run the tests**
+
+Run: `go test ./internal/manifest/ -v`
+Expected: all pass. Note `GlobMatch("src/core/**", "src/core")` is true because `**` matches zero segments.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/manifest/manifest.go internal/manifest/data_test.go
+git commit -m "feat(manifest): data classification block (classes, paths, tables, retention, incident authority)"
+```
+
+---
+
+### Task 2: `internal/redact` detectors
+
+**Files:**
+- Create: `internal/redact/redact.go`, `internal/redact/redact_test.go`
+
+**Interfaces:**
+- Produces:
+
+```go
+// Classes selects detectors: "pii" (cpf, email, phone), "financial" (card, cnpj, iban),
+// "secrets" (internal/secrets.Redact), "all". Unknown classes are an error from ParseClasses.
+func ParseClasses(csv string) ([]string, error)
+func Redact(text string, classes []string) string           // [REDACTED:<name>] per match
+func Count(text string, classes []string) map[string]int    // findings per detector, no values
+func NewWriter(w io.Writer, classes []string) *Writer        // line-buffered; Close flushes the tail
+```
+
+- Detectors: `cpf` (11 digits, optional `.`/`-` separators, check digits valid, not all-same digits), `cnpj` (14 digits with optional `./-`, check digits valid), `email` (RFC-ish local@domain.tld), `phone` (`+NN` E.164 up to 15 digits, or Brazilian `(DD) 9NNNN-NNNN` / `DD 9NNNNNNNN` forms), `card` (13 to 19 digits with optional spaces or dashes, Luhn valid, first digit 3 to 6), `iban` (two letters, two digits, 11 to 30 alphanumerics, mod-97 valid).
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+// internal/redact/redact_test.go
+package redact
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
+
+func TestCPF(t *testing.T) {
+	valid := []string{"529.982.247-25", "52998224725"}
+	for _, v := range valid {
+		if got := Redact("cpf "+v+" ok", []string{"pii"}); !strings.Contains(got, "[REDACTED:cpf]") || strings.Contains(got, v) {
+			t.Errorf("valid CPF %s not redacted: %q", v, got)
+		}
+	}
+	invalid := []string{"123.456.789-00", "11111111111", "52998224726", "4002-8922-0001"} // wrong check digits, repeated, order id
+	for _, v := range invalid {
+		if got := Redact("x "+v+" y", []string{"pii"}); strings.Contains(got, "[REDACTED:cpf]") {
+			t.Errorf("non-CPF %s redacted: %q", v, got)
+		}
+	}
+}
+
+func TestCNPJAndCard(t *testing.T) {
+	if got := Redact("cnpj 11.222.333/0001-81", []string{"financial"}); !strings.Contains(got, "[REDACTED:cnpj]") {
+		t.Fatalf("%q", got)
+	}
+	if got := Redact("cnpj 11.222.333/0001-82", []string{"financial"}); strings.Contains(got, "REDACTED") {
+		t.Fatalf("bad check digit redacted: %q", got)
+	}
+	if got := Redact("card 4111 1111 1111 1111", []string{"financial"}); !strings.Contains(got, "[REDACTED:card]") {
+		t.Fatalf("%q", got)
+	}
+	if got := Redact("id 4111111111111112", []string{"financial"}); strings.Contains(got, "REDACTED") {
+		t.Fatalf("Luhn-invalid redacted: %q", got)
+	}
+	if got := Redact("iban GB82 WEST 1234 5698 7654 32", []string{"financial"}); !strings.Contains(got, "[REDACTED:iban]") {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestEmailAndPhone(t *testing.T) {
+	got := Redact("mail ana.silva@example.com.br, tel +55 11 91234-5678 and (21) 98765-4321", []string{"pii"})
+	for _, tok := range []string{"[REDACTED:email]", "[REDACTED:phone]"} {
+		if !strings.Contains(got, tok) {
+			t.Fatalf("%q lacks %s", got, tok)
+		}
+	}
+	if strings.Contains(got, "ana.silva") || strings.Contains(got, "91234") || strings.Contains(got, "98765") {
+		t.Fatalf("value survived: %q", got)
+	}
+	if got := Redact("version 1.2.3 built 2026-10-20 port 8080", []string{"pii"}); strings.Contains(got, "REDACTED") {
+		t.Fatalf("false positive: %q", got)
+	}
+}
+
+func TestClassesSelectDetectorsAndSecrets(t *testing.T) {
+	text := "cpf 529.982.247-25 key sk-ant-abcdefghijklmnopqrstuvwxyz0123"
+	if got := Redact(text, []string{"financial"}); strings.Contains(got, "REDACTED") {
+		t.Fatalf("financial must not redact a CPF: %q", got)
+	}
+	got := Redact(text, []string{"pii", "secrets"})
+	if !strings.Contains(got, "[REDACTED:cpf]") || !strings.Contains(got, "[REDACTED:anthropic_key]") {
+		t.Fatalf("%q", got)
+	}
+	if _, err := ParseClasses("pii,bogus"); err == nil {
+		t.Fatal("unknown class accepted")
+	}
+	cls, err := ParseClasses("all")
+	if err != nil || len(cls) < 3 {
+		t.Fatalf("%v %v", cls, err)
+	}
+	if n := Count(text, []string{"all"}); n["cpf"] != 1 || n["anthropic_key"] != 1 {
+		t.Fatalf("%v", n)
+	}
+}
+
+func TestWriterMasksAcrossChunks(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf, []string{"pii"})
+	for _, chunk := range []string{"row: 529.98", "2.247-25 end\nnext ", "line\n", "tail ana@x.io"} {
+		if _, err := w.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "row: [REDACTED:cpf] end\nnext line\ntail [REDACTED:email]") {
+		t.Fatalf("%q", out)
+	}
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test ./internal/redact/ -v`
+Expected: `no Go files` / undefined errors.
+
+- [ ] **Step 3: Implement**
+
+```go
+// Package redact masks personal and financial data (CPF, CNPJ, e-mail, phone,
+// card numbers, IBAN) and secrets in text, by data class. Detection is
+// heuristic but validated where a checksum exists (CPF and CNPJ check digits,
+// Luhn for cards, mod-97 for IBAN), so plain numbers of the same length are
+// left alone. Values are never logged; Count reports names only.
+package redact
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/secrets"
+)
+
+type detector struct {
+	name  string
+	re    *regexp.Regexp
+	valid func(string) bool
+}
+
+var (
+	cpfRe   = regexp.MustCompile(`\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b`)
+	cnpjRe  = regexp.MustCompile(`\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b`)
+	emailRe = regexp.MustCompile(`(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b`)
+	phoneRe = regexp.MustCompile(`(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,3}\)|\b\d{2,3})[\s.-]?\d{4,5}[\s.-]?\d{4}\b|\+\d{8,15}\b`)
+	cardRe  = regexp.MustCompile(`\b[3-6](?:\d[ -]?){12,18}\b`)
+	ibanRe  = regexp.MustCompile(`\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b`)
+)
+
+func digits(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteByte(byte(r))
+		}
+	}
+	return b.String()
+}
+
+func allSame(d string) bool {
+	for i := 1; i < len(d); i++ {
+		if d[i] != d[0] {
+			return false
+		}
+	}
+	return true
+}
+
+func validCPF(s string) bool {
+	d := digits(s)
+	if len(d) != 11 || allSame(d) {
+		return false
+	}
+	for _, n := range []int{9, 10} {
+		sum := 0
+		for i := 0; i < n; i++ {
+			sum += int(d[i]-'0') * (n + 1 - i)
+		}
+		r := (sum * 10) % 11
+		if r == 10 {
+			r = 0
+		}
+		if r != int(d[n]-'0') {
+			return false
+		}
+	}
+	return true
+}
+
+func validCNPJ(s string) bool {
+	d := digits(s)
+	if len(d) != 14 || allSame(d) {
+		return false
+	}
+	w1 := []int{5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}
+	w2 := []int{6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}
+	check := func(w []int, n int) bool {
+		sum := 0
+		for i, x := range w {
+			sum += int(d[i]-'0') * x
+		}
+		r := sum % 11
+		exp := 0
+		if r >= 2 {
+			exp = 11 - r
+		}
+		return exp == int(d[n]-'0')
+	}
+	return check(w1, 12) && check(w2, 13)
+}
+
+func luhn(s string) bool {
+	d := digits(s)
+	if len(d) < 13 || len(d) > 19 {
+		return false
+	}
+	sum, alt := 0, false
+	for i := len(d) - 1; i >= 0; i-- {
+		n := int(d[i] - '0')
+		if alt {
+			n *= 2
+			if n > 9 {
+				n -= 9
+			}
+		}
+		sum += n
+		alt = !alt
+	}
+	return sum%10 == 0
+}
+
+func validIBAN(s string) bool {
+	s = strings.ReplaceAll(strings.ToUpper(s), " ", "")
+	if len(s) < 15 || len(s) > 34 {
+		return false
+	}
+	r := s[4:] + s[:4]
+	mod := 0
+	for _, c := range r {
+		var v int
+		switch {
+		case c >= '0' && c <= '9':
+			v = int(c - '0')
+		case c >= 'A' && c <= 'Z':
+			v = int(c-'A') + 10
+		default:
+			return false
+		}
+		if v >= 10 {
+			mod = (mod*100 + v) % 97
+		} else {
+			mod = (mod*10 + v) % 97
+		}
+	}
+	return mod == 1
+}
+
+func validPhone(s string) bool {
+	d := digits(s)
+	return len(d) >= 10 && len(d) <= 15 && !allSame(d)
+}
+
+var byClass = map[string][]detector{
+	"pii": {
+		{"cpf", cpfRe, validCPF},
+		{"email", emailRe, func(string) bool { return true }},
+		{"phone", phoneRe, validPhone},
+	},
+	"financial": {
+		{"card", cardRe, luhn},
+		{"cnpj", cnpjRe, validCNPJ},
+		{"iban", ibanRe, validIBAN},
+	},
+}
+
+// Known lists the selectable classes.
+var Known = []string{"pii", "financial", "sensitive", "children", "secrets", "all"}
+
+// ParseClasses parses a comma-separated list; "sensitive" and "children" use
+// the pii detectors; "all" selects everything including secrets.
+func ParseClasses(csv string) ([]string, error) {
+	var out []string
+	for _, c := range strings.Split(csv, ",") {
+		c = strings.ToLower(strings.TrimSpace(c))
+		if c == "" {
+			continue
+		}
+		ok := false
+		for _, k := range Known {
+			if k == c {
+				ok = true
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("unknown data class %q (known: %s)", c, strings.Join(Known, ", "))
+		}
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no data class given")
+	}
+	return out, nil
+}
+
+func detectors(classes []string) ([]detector, bool) {
+	var ds []detector
+	withSecrets := false
+	seen := map[string]bool{}
+	for _, c := range classes {
+		switch c {
+		case "all":
+			return append(append([]detector{}, byClass["pii"]...), byClass["financial"]...), true
+		case "secrets":
+			withSecrets = true
+		case "sensitive", "children":
+			c = "pii"
+		}
+		for _, d := range byClass[c] {
+			if !seen[d.name] {
+				seen[d.name] = true
+				ds = append(ds, d)
+			}
+		}
+	}
+	return ds, withSecrets
+}
+
+// Redact replaces every validated match with [REDACTED:<detector>].
+func Redact(text string, classes []string) string {
+	ds, withSecrets := detectors(classes)
+	for _, d := range ds {
+		text = d.re.ReplaceAllStringFunc(text, func(m string) string {
+			if d.valid(m) {
+				return "[REDACTED:" + d.name + "]"
+			}
+			return m
+		})
+	}
+	if withSecrets {
+		text = secrets.Redact(text)
+	}
+	return text
+}
+
+// Count reports findings per detector without the values.
+func Count(text string, classes []string) map[string]int {
+	out := map[string]int{}
+	ds, withSecrets := detectors(classes)
+	for _, d := range ds {
+		for _, m := range d.re.FindAllString(text, -1) {
+			if d.valid(m) {
+				out[d.name]++
+			}
+		}
+	}
+	if withSecrets {
+		for _, f := range secrets.Scan(text) {
+			out[f.Pattern]++
+		}
+	}
+	return out
+}
+
+// Writer masks a stream line by line; a partial last line is held until the
+// next newline or Close, so a value split across writes is still caught.
+type Writer struct {
+	w       io.Writer
+	classes []string
+	buf     bytes.Buffer
+}
+
+func NewWriter(w io.Writer, classes []string) *Writer { return &Writer{w: w, classes: classes} }
+
+func (m *Writer) Write(p []byte) (int, error) {
+	m.buf.Write(p)
+	for {
+		i := bytes.IndexByte(m.buf.Bytes(), '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		line := m.buf.Next(i + 1)
+		if _, err := io.WriteString(m.w, Redact(string(line), m.classes)); err != nil {
+			return len(p), err
+		}
+	}
+}
+
+func (m *Writer) Close() error {
+	if m.buf.Len() == 0 {
+		return nil
+	}
+	_, err := io.WriteString(m.w, Redact(m.buf.String(), m.classes))
+	m.buf.Reset()
+	return err
+}
+
+var _ = bufio.NewWriter // keep bufio available for a buffered stdout in the CLI
+```
+
+(Remove the trailing `bufio` line if the CLI does not use it; keep imports clean.)
+
+- [ ] **Step 4: Run the tests**
+
+Run: `go test ./internal/redact/ -v`
+Expected: all pass. If `TestEmailAndPhone` flags `2026-10-20`, tighten `phoneRe` by requiring the first group to be preceded by `+`, `(` or a word boundary and the whole match to have 10 to 15 digits (`validPhone` already enforces the digit count; a date has 8 digits and fails it).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/redact
+git commit -m "feat(redact): validated detectors for CPF, CNPJ, e-mail, phone, card and IBAN by data class"
+```
+
+---
+
+### Task 3: `tq redact` command
+
+**Files:**
+- Create: `internal/cmd/redact.go`, `internal/cmd/redact_test.go`
+- Modify: `internal/cmd/root.go` (register `newRedactCmd()`), `docs/CLAUDE-HOOK.md` (section "Using classified data without printing it")
+
+**Interfaces:**
+- `tq redact [--classes pii,financial] [--file F]...` reads stdin (or files) and writes masked text to stdout; `--count` prints findings per detector only.
+- `tq redact run [--classes C] -- CMD [ARGS...]` runs CMD with stdout and stderr masked, propagating its exit code (same shape as `tq dotenv run`). Default classes: the trusted workspace manifest's `data.classes` minus `prompts.allow`, plus `secrets`; when no workspace or no block: `all`.
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+// internal/cmd/redact_test.go
+package cmd
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/testutil"
+)
+
+func runRedact(t *testing.T, stdin string, args ...string) (string, error) {
+	t.Helper()
+	root := NewRoot()
+	var out bytes.Buffer
+	root.SetIn(strings.NewReader(stdin))
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs(append([]string{"redact"}, args...))
+	err := root.Execute()
+	return out.String(), err
+}
+
+func TestRedact_StdinDefaultAll(t *testing.T) {
+	isolateHome(t)
+	out, err := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111\n")
+	if err != nil || strings.Contains(out, "529") || !strings.Contains(out, "[REDACTED:cpf]") || !strings.Contains(out, "[REDACTED:card]") {
+		t.Fatalf("%q %v", out, err)
+	}
+}
+
+func TestRedact_ClassesAndCount(t *testing.T) {
+	isolateHome(t)
+	out, _ := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111\n", "--classes", "financial")
+	if !strings.Contains(out, "529.982.247-25") || !strings.Contains(out, "[REDACTED:card]") {
+		t.Fatalf("%q", out)
+	}
+	out, _ = runRedact(t, "cpf 529.982.247-25\n", "--count")
+	if strings.Contains(out, "529") || !strings.Contains(out, "cpf: 1") {
+		t.Fatalf("%q", out)
+	}
+	if _, err := runRedact(t, "x", "--classes", "bogus"); err == nil {
+		t.Fatal("unknown class accepted")
+	}
+}
+
+func TestRedact_FileAndRun(t *testing.T) {
+	isolateHome(t)
+	dir := testutil.TempDir(t)
+	f := filepath.Join(dir, "export.csv")
+	if err := os.WriteFile(f, []byte("ana@x.io,529.982.247-25\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRedact(t, "", "--file", f)
+	if err != nil || strings.Contains(out, "ana@") {
+		t.Fatalf("%q %v", out, err)
+	}
+	sh, flag := "sh", "-c"
+	if runtime.GOOS == "windows" {
+		sh, flag = "cmd", "/c"
+	}
+	out, err = runRedact(t, "", "run", "--classes", "pii", "--", sh, flag, "echo mail ana@x.io")
+	if err != nil || strings.Contains(out, "ana@") || !strings.Contains(out, "[REDACTED:email]") {
+		t.Fatalf("%q %v", out, err)
+	}
+}
+
+func TestRedact_DefaultClassesFromManifest(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "data:\n  classes: [financial]\n  prompts: { allow: [] }\n")
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(ws); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111 key ghp_abcdefghijklmnopqrstuvwxyz0123\n")
+	// financial from the manifest, secrets always; pii is not declared, so the CPF stays
+	if !strings.Contains(out, "529.982.247-25") || !strings.Contains(out, "[REDACTED:card]") || !strings.Contains(out, "[REDACTED:github_token]") {
+		t.Fatalf("%q", out)
+	}
+}
+```
+
+Read `setupTrustedWorkspaceWithManifest` in `claudehook_test.go` to confirm it appends `body` to a valid manifest and trusts it; adjust the data YAML indentation to what it expects.
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test ./internal/cmd/ -run TestRedact -v`
+Expected: `unknown command "redact"`.
+
+- [ ] **Step 3: Implement**
+
+```go
+// internal/cmd/redact.go
+package cmd
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"sort"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/redact"
+)
+
+// defaultRedactClasses are the manifest's declared classes minus prompts.allow,
+// plus secrets; "all" outside a classified workspace.
+func defaultRedactClasses(cwd string) []string {
+	ws, _ := resolveTrusted(cwd)
+	if ws == nil || ws.Manifest == nil || !ws.Manifest.Data.Enabled() {
+		return []string{"all"}
+	}
+	allow := map[string]bool{}
+	for _, c := range ws.Manifest.Data.Prompts.Allow {
+		allow[c] = true
+	}
+	var out []string
+	for _, c := range ws.Manifest.Data.Classes {
+		if !allow[c] && c != "public" && c != "internal" {
+			out = append(out, c)
+		}
+	}
+	return append(out, "secrets")
+}
+
+func newRedactCmd() *cobra.Command {
+	var classesFlag string
+	var files []string
+	var count bool
+	c := &cobra.Command{
+		Use:   "redact [--classes C] [--file F]... [--count]",
+		Short: "Mask personal, financial and secret values in text (stdin or files) by data class",
+		Long: `Reads stdin (or --file) and writes the text with CPF, CNPJ, e-mail, phone,
+card and IBAN values (validated by checksum where one exists) and secrets
+replaced by [REDACTED:<kind>]. Classes default to the workspace manifest's
+data.classes minus data.prompts.allow, plus secrets; outside a classified
+workspace every detector runs.
+
+  tq redact --classes pii < export.csv
+  tq redact run --classes pii,financial -- psql "$DATABASE_URL" -c "select * from customers limit 5"
+
+The guard refuses to print classified paths or query classified tables
+directly (tq/classified-read); run the command through "tq redact run".`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			cwd, _ := os.Getwd()
+			classes, err := resolveClasses(classesFlag, cwd)
+			if err != nil {
+				return err
+			}
+			var in io.Reader = c.InOrStdin()
+			if len(files) > 0 {
+				var rs []io.Reader
+				for _, f := range files {
+					fh, err := os.Open(f)
+					if err != nil {
+						return err
+					}
+					defer fh.Close()
+					rs = append(rs, fh)
+				}
+				in = io.MultiReader(rs...)
+			}
+			raw, err := io.ReadAll(in)
+			if err != nil {
+				return err
+			}
+			if count {
+				n := redact.Count(string(raw), classes)
+				keys := make([]string, 0, len(n))
+				for k := range n {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					fmt.Fprintf(c.OutOrStdout(), "%s: %d\n", k, n[k])
+				}
+				if len(keys) == 0 {
+					fmt.Fprintln(c.OutOrStdout(), "no findings")
+				}
+				return nil
+			}
+			_, err = io.WriteString(c.OutOrStdout(), redact.Redact(string(raw), classes))
+			return err
+		},
+	}
+	c.Flags().StringVar(&classesFlag, "classes", "", "comma-separated data classes: pii, financial, sensitive, children, secrets, all")
+	c.Flags().StringArrayVar(&files, "file", nil, "file to read instead of stdin (repeatable)")
+	c.Flags().BoolVar(&count, "count", false, "print findings per detector instead of the masked text")
+	c.AddCommand(newRedactRunCmd())
+	return c
+}
+
+func resolveClasses(flag, cwd string) ([]string, error) {
+	if strings.TrimSpace(flag) != "" {
+		return redact.ParseClasses(flag)
+	}
+	return defaultRedactClasses(cwd), nil
+}
+
+func newRedactRunCmd() *cobra.Command {
+	var classesFlag string
+	c := &cobra.Command{
+		Use:   "run [--classes C] -- CMD [ARGS...]",
+		Short: "Run a command with its stdout and stderr masked by data class",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			classes, err := resolveClasses(classesFlag, cwd)
+			if err != nil {
+				return err
+			}
+			path, err := exec.LookPath(args[0])
+			if err != nil {
+				return err
+			}
+			stdout := redact.NewWriter(c.OutOrStdout(), classes)
+			stderr := redact.NewWriter(c.ErrOrStderr(), classes)
+			cmd := exec.Command(path, args[1:]...)
+			cmd.Stdin = c.InOrStdin()
+			cmd.Stdout = stdout
+			cmd.Stderr = stderr
+			runErr := cmd.Run()
+			_ = stdout.Close()
+			_ = stderr.Close()
+			var exit *exec.ExitError
+			if errors.As(runErr, &exit) {
+				exitFunc(exit.ExitCode())
+				return nil
+			}
+			return runErr
+		},
+	}
+	c.Flags().StringVar(&classesFlag, "classes", "", "comma-separated data classes (default: from the manifest, plus secrets)")
+	c.Flags().SetInterspersed(false)
+	return c
+}
+```
+
+Register in `root.go`: add `newRedactCmd()` to `root.AddCommand(...)`.
+
+Docs: in `docs/CLAUDE-HOOK.md` after "Using a .env without printing it" add a section `## Using classified data without printing it` describing the manifest `data:` block (one example), `tq redact`, `tq redact run`, default classes, and that `tq/classified-read` points here.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `go test ./internal/cmd/ -run 'TestRedact' -v && go test ./...`
+Expected: pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/cmd/redact.go internal/cmd/redact_test.go internal/cmd/root.go docs/CLAUDE-HOOK.md
+git commit -m "feat(tq): redact command and redact run (class-selected masking of command output)"
+```
+
+---
+
+### Task 4: Code guard rules using the manifest: classified reads and PII fixture dumps
+
+**Files:**
+- Create: `internal/cmd/claudehook_data.go`, `internal/cmd/claudehook_data_test.go`
+- Modify: `internal/cmd/claudehook_policy.go` (`policyDecision`), `internal/guardcfg/guardcfg.go` (`HookRules`)
+
+**Interfaces:**
+- Produces:
+
+```go
+// classifiedReadDecision: Deny when a Read/Grep/NotebookRead targets a classified path,
+// or a shell command prints a classified path (readVerbs) or queries a classified table
+// (psql|mysql|sqlite3|sqlcmd|snowsql|bq|databricks ... select ... from <table>), unless the
+// whole command is already wrapped in `tq redact run`. Returns (decision, matched).
+func classifiedReadDecision(ws *resolve.Workspace, call policy.ToolCall) (policy.Decision, bool)
+// piiFixtureDumpDecision: Deny when a shell command names a classified table or path AND
+// writes (redirect, -o/--output/--file, \copy ... to, COPY ... TO, pg_dump -f) into a path
+// under tests/, test/, fixtures/, __fixtures__/, seeds/, seed/, testdata/.
+func piiFixtureDumpDecision(ws *resolve.Workspace, call policy.ToolCall) (policy.Decision, bool)
+```
+- Rule ids `tq/classified-read` (Deny) and `tq/pii-fixture-dump` (Deny), both listed in `guardcfg.HookRules` so the manifest can disable them or change the action.
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+// internal/cmd/claudehook_data_test.go
+package cmd
+
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const dataBlock = `data:
+  classes: [pii, financial]
+  paths:
+    - { path: "data/exports/**", classes: [pii] }
+    - { path: "db/schema/customers.sql", classes: [pii] }
+    - { table: public.customers, classes: [pii] }
+    - { table: payments, classes: [financial] }
+`
+
+func TestClassifiedRead_ReadToolDenied(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	in := `{"file_path":` + jsonPath(t, filepath.Join(ws, "data", "exports", "q3.csv")) + `}`
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, ws, "Read", in))
+	if code != 2 || !strings.Contains(errOut, "tq/classified-read") || !strings.Contains(errOut, "tq redact run") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+func TestClassifiedRead_ShellPrintAndQueryDenied(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	for _, cmd := range []string{
+		"head -n 5 data/exports/q3.csv",
+		`psql "$DATABASE_URL" -c "select * from public.customers limit 5"`,
+		`psql "$DATABASE_URL" -c "SELECT email FROM customers"`,
+		"sqlite3 app.db 'select * from payments'",
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 2 || !strings.Contains(errOut, "tq/classified-read") {
+			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
+		}
+	}
+}
+
+func TestClassifiedRead_RedactRunIsAllowed(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	cmd := `tq redact run --classes pii -- psql "$DATABASE_URL" -c "select * from customers limit 5"`
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+	if code != 0 || strings.Contains(out, "classified-read") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+}
+
+func TestClassifiedRead_PipeIntoRedactStillDenied(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "cat data/exports/q3.csv | tq redact"))
+	if code != 2 || !strings.Contains(errOut, "tq/classified-read") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+func TestClassifiedRead_UnclassifiedAndNoBlockAllowed(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "head README.md")); code != 0 {
+		t.Fatal("unclassified path denied")
+	}
+	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `psql -c "select * from orders"`)); code != 0 {
+		t.Fatal("unclassified table denied")
+	}
+	plain := setupTrustedWorkspaceWithManifest(t, "beta", "")
+	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, plain, "head data/exports/q3.csv")); code != 0 {
+		t.Fatal("workspace without a data block must not be affected")
+	}
+}
+
+func TestPiiFixtureDump_Denied(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	for _, cmd := range []string{
+		`psql "$DATABASE_URL" -c "\copy (select * from customers limit 100) to 'tests/fixtures/customers.csv' csv"`,
+		`pg_dump "$DATABASE_URL" -t public.customers --data-only -f seeds/customers.sql`,
+		`psql -c "select * from payments" > tests/payments.txt`,
+		`cp data/exports/q3.csv tests/fixtures/q3.csv`,
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 2 || !strings.Contains(errOut, "tq/pii-fixture-dump") || !strings.Contains(errOut, "synthetic") {
+			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
+		}
+	}
+}
+
+func TestPiiFixtureDump_AllowedCases(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	for _, cmd := range []string{
+		`psql -c "select * from orders" > tests/orders.txt`,                 // unclassified table
+		`pg_dump "$DATABASE_URL" -t customers -f backups/customers.sql`,     // not a fixture dir (classified-read may still apply to a print; pg_dump is not a read verb)
+		`python scripts/make_fixtures.py --faker --out tests/fixtures/`,     // synthetic generator
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if strings.Contains(errOut, "tq/pii-fixture-dump") {
+			t.Errorf("%s: wrongly denied (code=%d): %q", cmd, code, errOut)
+		}
+	}
+}
+
+func TestDataRules_CanBeDisabledInManifest(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock+"guard:\n  disable: [tq/classified-read]\n")
+	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "head data/exports/q3.csv"))
+	if code != 0 {
+		t.Fatal("disable by id must work for the code rule")
+	}
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test ./internal/cmd/ -run 'TestClassifiedRead|TestPiiFixtureDump|TestDataRules' -v`
+Expected: FAIL (calls allowed, code 0).
+
+- [ ] **Step 3: Implement**
+
+`internal/cmd/claudehook_data.go`:
+
+```go
+package cmd
+
+import (
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/resolve"
+)
+
+// Data-protection rules that need the manifest's data: block (spec §8.2,
+// §11.2, §11.3). They run after the regex rules, like tq/commit-secret.
+
+var (
+	// a print verb followed by something in the same shell segment
+	readVerbRe = regexp.MustCompile(`(?i)(^|[;&|\n(]\s*)(cat|type|more|less|head|tail|bat|nl|strings|xxd|od|grep|rg|findstr|gc|get-content|select-string|sls)\b`)
+	sqlClientRe = regexp.MustCompile(`(?i)\b(psql|sqlcmd|mysql|sqlite3|snowsql|snow\s+sql|bq\s+query|databricks\s+sql|supabase\s+db\s+(execute|query))\b`)
+	fromTableRe = regexp.MustCompile(`(?i)\b(from|join|into|table|update)\s+("?[a-z_][\w]*"?(\."?[a-z_][\w]*"?)?)`)
+	redactRunRe = regexp.MustCompile(`(?i)^\s*(\S*[/\\])?tq(\.exe)?\s+redact\s+run\b`)
+	fixtureDirRe = regexp.MustCompile(`(?i)(^|[\s'"=])\.?/?((tests?|fixtures|__fixtures__|seeds?|testdata)/)`)
+	writeTargetRe = regexp.MustCompile(`(?i)(>{1,2}\s*|\s(-o|-f|--out|--output|--file)[\s=]|\bto\s+'?)([^\s'";&|]+)`)
+	copyToRe = regexp.MustCompile(`(?i)\\?copy\b[^;]*\bto\s+'?([^\s'";]+)`)
+	pgDumpRe = regexp.MustCompile(`(?i)\bpg_dump\b`)
+)
+
+// shellSegments splits on ; & | and newlines (quote-unaware; the guard catches
+// honest mistakes, see docs/CLAUDE-HOOK.md Limits).
+func shellSegments(cmd string) []string {
+	return regexp.MustCompile(`[;&|\n]+`).Split(cmd, -1)
+}
+
+// pathWords returns slash-normalised words of a segment that look like paths.
+func pathWords(seg string) []string {
+	var out []string
+	for _, w := range strings.Fields(seg) {
+		w = strings.Trim(w, `"'`)
+		if strings.ContainsAny(w, `/\`) || strings.Contains(w, ".") {
+			out = append(out, strings.ReplaceAll(w, `\`, "/"))
+		}
+	}
+	return out
+}
+
+func classesOf(data manifest.Data, seg string) (classes []string, what string) {
+	set := map[string]bool{}
+	for _, w := range pathWords(seg) {
+		for _, c := range data.Classified(w) {
+			set[c] = true
+			what = "path " + w
+		}
+	}
+	tables := data.Tables()
+	for _, m := range fromTableRe.FindAllStringSubmatch(seg, -1) {
+		name := strings.ToLower(strings.ReplaceAll(m[2], `"`, ""))
+		if cs, ok := tables[name]; ok {
+			for _, c := range cs {
+				set[c] = true
+			}
+			what = "table " + name
+		}
+	}
+	for c := range set {
+		classes = append(classes, c)
+	}
+	sort.Strings(classes)
+	return classes, what
+}
+
+func classifiedReadDecision(ws *resolve.Workspace, call policy.ToolCall) (policy.Decision, bool) {
+	if ws == nil || ws.Manifest == nil || !ws.Manifest.Data.Enabled() {
+		return policy.Decision{}, false
+	}
+	data := ws.Manifest.Data
+	reason := func(classes []string, what string) policy.Decision {
+		return ruleDecision(policy.Deny, "tq/classified-read",
+			fmt.Sprintf("%s is classified %s: its values must not enter the transcript unmasked. Run the command through "+
+				"`tq redact run --classes %s -- <command>` (values are replaced by [REDACTED:kind]), or query aggregates instead of rows.",
+				what, strings.Join(classes, ","), strings.Join(classes, ",")))
+	}
+	switch {
+	case call.Tool == "Read" || call.Tool == "Grep" || call.Tool == "NotebookRead":
+		rel := relToRoot(ws, call.Path)
+		if cs := data.Classified(rel); cs != nil {
+			return reason(cs, "path "+rel), true
+		}
+		return policy.Decision{}, false
+	case call.IsShell():
+		if redactRunRe.MatchString(call.Command) && len(shellSegments(call.Command)) == 1 {
+			return policy.Decision{}, false // the safe alternative itself
+		}
+		for _, seg := range shellSegments(call.Command) {
+			if !readVerbRe.MatchString(seg) && !sqlClientRe.MatchString(seg) {
+				continue
+			}
+			if cs, what := classesOf(data, seg); cs != nil {
+				return reason(cs, what), true
+			}
+		}
+	}
+	return policy.Decision{}, false
+}
+
+func piiFixtureDumpDecision(ws *resolve.Workspace, call policy.ToolCall) (policy.Decision, bool) {
+	if ws == nil || ws.Manifest == nil || !ws.Manifest.Data.Enabled() || !call.IsShell() {
+		return policy.Decision{}, false
+	}
+	data := ws.Manifest.Data
+	cs, what := classesOf(data, call.Command)
+	if cs == nil {
+		return policy.Decision{}, false
+	}
+	var targets []string
+	for _, m := range writeTargetRe.FindAllStringSubmatch(call.Command, -1) {
+		targets = append(targets, m[3])
+	}
+	for _, m := range copyToRe.FindAllStringSubmatch(call.Command, -1) {
+		targets = append(targets, m[1])
+	}
+	if strings.HasPrefix(strings.TrimSpace(call.Command), "cp ") || strings.HasPrefix(strings.TrimSpace(call.Command), "copy ") {
+		f := strings.Fields(call.Command)
+		if len(f) >= 3 {
+			targets = append(targets, f[len(f)-1])
+		}
+	}
+	if pgDumpRe.MatchString(call.Command) {
+		for _, m := range regexp.MustCompile(`(?i)\s(-f|--file)[\s=]([^\s'"]+)`).FindAllStringSubmatch(call.Command, -1) {
+			targets = append(targets, m[2])
+		}
+	}
+	for _, tgt := range targets {
+		if fixtureDirRe.MatchString(" " + strings.ReplaceAll(tgt, `\`, "/")) {
+			return ruleDecision(policy.Deny, "tq/pii-fixture-dump",
+				fmt.Sprintf("this copies rows from %s (classified %s) into %s. Fixtures and seeds must be synthetic: generate them "+
+					"(Faker or a factory) or pseudonymise through a script that never writes real values. See docs/privacy.md.",
+					what, strings.Join(cs, ","), tgt)), true
+		}
+	}
+	return policy.Decision{}, false
+}
+
+// relToRoot makes an absolute tool path repo-relative to the workspace root
+// when it lies inside it; other paths are returned slash-normalised.
+func relToRoot(ws *resolve.Workspace, p string) string {
+	n := policy.NormalizePath(p)
+	root := strings.TrimRight(policy.NormalizePath(ws.Root), "/") + "/"
+	if strings.HasPrefix(strings.ToLower(n), strings.ToLower(root)) {
+		return n[len(root):]
+	}
+	return n
+}
+```
+
+Wire into `policyDecision` (after the commit-secret block):
+
+```go
+	if !eff.Off("tq/classified-read") {
+		if cd, ok := classifiedReadDecision(ws, call); ok {
+			cd.Matched[0].Action = eff.ActionFor("tq/classified-read", policy.Deny)
+			cd.Action = cd.Matched[0].Action
+			d = policy.Merge(d, cd)
+		}
+	}
+	if !eff.Off("tq/pii-fixture-dump") {
+		if fd, ok := piiFixtureDumpDecision(ws, call); ok {
+			fd.Matched[0].Action = eff.ActionFor("tq/pii-fixture-dump", policy.Deny)
+			fd.Action = fd.Matched[0].Action
+			d = policy.Merge(d, fd)
+		}
+	}
+```
+
+(Check how `ruleDecision` builds the decision: it takes the action as its first argument, so the cleaner form is to pass `eff.ActionFor(...)` into `ruleDecision` inside the two functions by giving them an `action policy.Action` parameter. Prefer that over mutating `Matched[0]`.)
+
+In `guardcfg.HookRules` add:
+
+```go
+	"tq/classified-read":  "printing a classified path or querying a classified table unmasked (use tq redact run)",
+	"tq/pii-fixture-dump": "copying rows from classified data into tests/, fixtures/ or seeds/",
+```
+
+- [ ] **Step 4: Run the tests**
+
+Run: `go test ./internal/cmd/ ./internal/guardcfg/ -v -run 'TestClassifiedRead|TestPiiFixtureDump|TestDataRules|TestGuard'`
+Expected: pass. Then `go test ./...`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/cmd/claudehook_data.go internal/cmd/claudehook_data_test.go internal/cmd/claudehook_policy.go internal/guardcfg/guardcfg.go
+git commit -m "feat(guard): deny unmasked reads of classified data and PII dumps into fixtures (manifest data block)"
+```
+
+---
+
+### Task 5: Regex guard rules and the commit-message check
+
+**Files:**
+- Modify: `internal/policy/builtin.go`, `internal/policy/policy_test.go`
+- Create: `internal/commitmsg/commitmsg.go`, `internal/commitmsg/commitmsg_test.go`
+- Modify: `internal/cmd/claudehook_policy.go`, `internal/cmd/claudehook_policy_test.go`, `internal/guardcfg/guardcfg.go`
+
+**Interfaces:**
+- New regex rules (ids, actions): `tq/iac-apply` (Ask), `tq/remote-migration` (Ask), `tq/settings-widen` (Deny, Edit/Write/MultiEdit on settings files with widening content), `tq/settings-shell-write` (Deny, shell redirect or write verb targeting settings files), `tq/gha-branch-ref` (Deny, `uses: x@main|master`); `tq/gha-unpinned` keeps Ask for `@latest|@head` only.
+- `commitmsg.Check(command, cwd string) (Result)` with `Result{Checked bool; OK bool; Why string}`; `Checked` false when the command has no `git commit` with `-m`/`-F` (editor, `--amend --no-edit`, `--fixup`, `--squash`, merge).
+- Code rule `tq/commit-message` (Ask) in `policyDecision`, listed in `HookRules`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to the `cases` table in `TestBuiltinDecisions` (`internal/policy/policy_test.go`):
+
+```go
+		// IaC apply and remote migrations
+		{"terraform apply asks", ToolCall{Tool: "Bash", Command: "terraform apply -auto-approve"}, Ask, "tq/iac-apply"},
+		{"pulumi up asks", ToolCall{Tool: "Bash", Command: "pulumi up --yes --stack prod"}, Ask, "tq/iac-apply"},
+		{"az deployment asks", ToolCall{Tool: "Bash", Command: "az deployment group create -g rg -f main.bicep"}, Ask, "tq/iac-apply"},
+		{"cfn deploy asks", ToolCall{Tool: "Bash", Command: "aws cloudformation deploy --stack-name x --template-file t.yml"}, Ask, "tq/iac-apply"},
+		{"terraform plan ok", ToolCall{Tool: "Bash", Command: "terraform plan"}, Allow, ""},
+		{"prisma migrate deploy asks", ToolCall{Tool: "Bash", Command: "npx prisma migrate deploy"}, Ask, "tq/remote-migration"},
+		{"supabase db push linked asks", ToolCall{Tool: "Bash", Command: "supabase db push --linked"}, Ask, "tq/remote-migration"},
+		{"alembic upgrade asks", ToolCall{Tool: "Bash", Command: "alembic upgrade head"}, Ask, "tq/remote-migration"},
+		{"alembic upgrade localhost ok", ToolCall{Tool: "Bash", Command: "DATABASE_URL=postgres://u:p@localhost/db alembic upgrade head"}, Allow, ""},
+		{"supabase db reset local ok", ToolCall{Tool: "Bash", Command: "supabase db reset --local"}, Allow, ""},
+		// settings widening
+		{"settings bash star denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"allow": ["Bash(*)"]`}, Deny, "tq/settings-widen"},
+		{"settings bypass denied", ToolCall{Tool: "Write", Path: `C:\r\x\.claude\settings.local.json`, Content: `{"permissions": {"defaultMode": "bypassPermissions"}}`}, Deny, "tq/settings-widen"},
+		{"settings disable hooks denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"disableAllHooks": true`}, Deny, "tq/settings-widen"},
+		{"settings harmless edit ok", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"theme": "dark"`}, Allow, ""},
+		{"settings shell redirect denied", ToolCall{Tool: "Bash", Command: `echo '{}' > .claude/settings.local.json`}, Deny, "tq/settings-shell-write"},
+		{"settings powershell write denied", ToolCall{Tool: "PowerShell", Command: `Set-Content .claude\settings.json '{}'`}, Deny, "tq/settings-shell-write"},
+		{"settings cat ok", ToolCall{Tool: "Bash", Command: "cat .claude/settings.json"}, Allow, ""},
+		// actions pinned to branches
+		{"uses main denied", ToolCall{Tool: "Edit", Path: "/r/.github/workflows/ci.yml", Content: "uses: actions/checkout@main"}, Deny, "tq/gha-branch-ref"},
+		{"uses master denied", ToolCall{Tool: "Write", Path: "/r/.github/workflows/ci.yml", Content: "- uses: foo/bar@master"}, Deny, "tq/gha-branch-ref"},
+		{"uses latest asks", ToolCall{Tool: "Edit", Path: "/r/.github/workflows/ci.yml", Content: "uses: foo/bar@latest"}, Ask, "tq/gha-unpinned"},
+		{"uses sha ok", ToolCall{Tool: "Edit", Path: "/r/.github/workflows/ci.yml", Content: "uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2"}, Allow, ""},
+```
+
+`internal/commitmsg/commitmsg_test.go`:
+
+```go
+package commitmsg
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestCheck(t *testing.T) {
+	cases := []struct {
+		name, cmd string
+		checked   bool
+		ok        bool
+	}{
+		{"conventional", `git commit -m "feat(api): add export endpoint"`, true, true},
+		{"conventional no scope", `git commit -m 'fix: handle empty email'`, true, true},
+		{"breaking with body", `git commit -m "feat!: drop v1" -m "BREAKING CHANGE: v1 endpoints removed"`, true, true},
+		{"breaking without body", `git commit -m "feat!: drop v1"`, true, false},
+		{"free text", `git commit -m "updated stuff"`, true, false},
+		{"capitalised type", `git commit -m "Feat: x"`, true, false},
+		{"unknown type", `git commit -m "feature: x"`, true, false},
+		{"chained with add", `git add a.go && git commit -m "refactor(core): split loader"`, true, true},
+		{"amend no edit", `git commit --amend --no-edit`, false, true},
+		{"fixup", `git commit --fixup HEAD~1`, false, true},
+		{"editor", `git commit`, false, true},
+		{"not a commit", `git log --oneline`, false, true},
+		{"attribution trailer ok", "git commit -m \"docs: readme\" -m \"Co-Authored-By: X <x@y.z>\"", true, true},
+	}
+	for _, c := range cases {
+		r := Check(c.cmd, t.TempDir())
+		if r.Checked != c.checked || r.OK != c.ok {
+			t.Errorf("%s: got checked=%v ok=%v (%s)", c.name, r.Checked, r.OK, r.Why)
+		}
+	}
+}
+
+func TestCommitMessage_FileMissingAsks(t *testing.T) {
+	r := Check(`git commit -F /nonexistent/msg.txt`, t.TempDir())
+	if !r.Checked || r.OK {
+		t.Fatalf("missing -F file must be checked and not ok: %+v", r)
+	}
+}
+
+func TestCheck_FileMessage(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "msg.txt")
+	if err := os.WriteFile(p, []byte("fix(guard): close the gap\n\nwhy here\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := Check("git commit -F msg.txt", dir); !r.Checked || !r.OK {
+		t.Fatalf("%+v", r)
+	}
+	if r := Check("git commit --file=msg.txt", dir); !r.Checked || !r.OK {
+		t.Fatalf("%+v", r)
+	}
+}
+```
+
+Append to `internal/cmd/claudehook_policy_test.go`:
+
+```go
+func TestPolicy_CommitMessageAsks(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "did things"`))
+	if code != 0 || !strings.Contains(askReason(t, out), "tq/commit-message") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat(x): did things"`))
+	if code != 0 || strings.Contains(out, "commit-message") {
+		t.Fatalf("conventional message must pass: %q", out)
+	}
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test ./internal/policy/ ./internal/commitmsg/ ./internal/cmd/ -run 'TestBuiltinDecisions|TestCheck|TestCommitMessage|TestPolicy_CommitMessage' -v`
+Expected: policy cases fail (Allow where Ask/Deny expected); commitmsg does not compile.
+
+- [ ] **Step 3: Implement**
+
+`internal/policy/builtin.go`: add inside `Builtin()`:
+
+```go
+		// --- infrastructure and remote databases ----------------------------------
+		{
+			ID: "tq/iac-apply", Action: Ask,
+			Command: `\b(terraform\s+apply|tofu\s+apply|pulumi\s+up|cdk\s+deploy|cdktf\s+deploy|az\s+deployment\s+\S+\s+create|aws\s+cloudformation\s+deploy|gcloud\s+deployment-manager\s+deployments\s+(create|update)|sam\s+deploy|serverless\s+deploy|sls\s+deploy|kubectl\s+apply|helm\s+(install|upgrade))\b`,
+			Reason:  "applies infrastructure changes to a live environment; confirm the target environment is the one named in the command (workspace, stack, resource group or kube context) and that a plan was reviewed",
+		},
+		{
+			ID: "tq/remote-migration", Action: Ask,
+			Command: `\b(prisma\s+migrate\s+deploy|alembic\s+upgrade|flyway\s+migrate|liquibase\s+update|dbmate\s+up|goose\s+up|knex\s+migrate:latest|sqitch\s+deploy|dotnet\s+ef\s+database\s+update|supabase\s+db\s+push|supabase\s+migration\s+up|drizzle-kit\s+(push|migrate)|atlas\s+migrate\s+apply|rails\s+db:migrate|php\s+artisan\s+migrate|manage\.py\s+migrate)\b`,
+			Except:  `\b(localhost|127\.0\.0\.1|--local)\b`,
+			Reason:  "runs database migrations against a connection that is not local; confirm the target database and that a backup or rollback path exists (see db-migration)",
+		},
+		// --- Claude Code settings ---------------------------------------------------
+		{
+			ID: "tq/settings-widen", Action: Deny,
+			Tool:    "Edit|MultiEdit|Write",
+			Path:    `(^|/)(\.claude/settings(\.local)?\.json|\.claude\.json|settings(\.local)?\.json)$`,
+			Content: `Bash\(\*\)|bypassPermissions|"disableAllHooks"\s*:\s*true|"hooks"\s*:\s*\{\s*\}|"skipDangerousModePermissionPrompt"\s*:\s*true`,
+			Reason:  "this would widen permissions or switch hooks off from inside the session; permission changes go through `tq settings render` and the manifest",
+		},
+		{
+			ID: "tq/settings-shell-write", Action: Deny,
+			Command: `(>{1,2}\s*|\b(tee|cp|mv|sed\s+-i|set-content|add-content|out-file|copy-item|move-item)\b` + seg + `)\S*\.claude[/\\](settings(\.local)?\.json|tq-rules\.yaml)\b|(>{1,2}\s*|\b(tee|cp|mv|set-content|out-file)\b` + seg + `)\S*[/\\]\.claude\.json\b`,
+			Reason:  "Claude Code settings are not written from the shell; use `tq settings render` (permissions) or the Edit tool, which the guard checks",
+		},
+```
+
+Change the existing `tq/gha-unpinned` content regex to `uses:\s*[^\s@#]+@(latest|head)\b` and add after it:
+
+```go
+		{
+			ID: "tq/gha-branch-ref", Action: Deny,
+			Tool:    "Edit|MultiEdit|Write",
+			Path:    `(^|/)\.github/workflows/[^/]+\.ya?ml$`,
+			Content: `uses:\s*[^\s@#]+@(main|master)\b`,
+			Reason:  "a GitHub Action pinned to a moving branch runs whatever is pushed there; pin a full commit SHA with the version in a comment",
+		},
+```
+
+`internal/commitmsg/commitmsg.go`:
+
+```go
+// Package commitmsg checks the message a `git commit` command will record
+// against Conventional Commits (type(scope)!: summary; a breaking change
+// needs a body or a BREAKING CHANGE footer).
+package commitmsg
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/guard"
+)
+
+// Result of one check. Checked is false when the command carries no message
+// tq can read (editor, --amend --no-edit, --fixup, --squash, no git commit).
+type Result struct {
+	Checked bool
+	OK      bool
+	Why     string
+}
+
+var (
+	headerRe = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^()\s]+\))?(!)?: \S.*$`)
+	maxFile  = 64 << 10
+)
+
+// Check inspects command. cwd resolves a relative -F file.
+func Check(command, cwd string) Result {
+	for _, inv := range guard.GitInvocations(guard.StripHeredocs(command)) {
+		if inv.Sub != "commit" {
+			continue
+		}
+		var msgs []string
+		var file string
+		skip := false
+		args := inv.Args
+		for i := 0; i < len(args); i++ {
+			a := args[i]
+			switch {
+			case a == "--amend", a == "--no-edit", strings.HasPrefix(a, "--fixup"), strings.HasPrefix(a, "--squash"), a == "-C", a == "-c", a == "--reuse-message", a == "--reedit-message":
+				skip = true
+			case a == "-m" || a == "--message":
+				if i+1 < len(args) {
+					msgs = append(msgs, strings.Trim(args[i+1], `"'`))
+					i++
+				}
+			case strings.HasPrefix(a, "-m"):
+				msgs = append(msgs, strings.Trim(a[2:], `"'`))
+			case strings.HasPrefix(a, "--message="):
+				msgs = append(msgs, strings.Trim(strings.TrimPrefix(a, "--message="), `"'`))
+			case a == "-F" || a == "--file":
+				if i+1 < len(args) {
+					file = strings.Trim(args[i+1], `"'`)
+					i++
+				}
+			case strings.HasPrefix(a, "--file="):
+				file = strings.Trim(strings.TrimPrefix(a, "--file="), `"'`)
+			}
+		}
+		if skip && len(msgs) == 0 && file == "" {
+			return Result{}
+		}
+		var text string
+		switch {
+		case file != "":
+			if !filepath.IsAbs(file) {
+				file = filepath.Join(cwd, file)
+			}
+			raw, err := os.ReadFile(file)
+			if err != nil {
+				return Result{Checked: true, OK: false, Why: "the -F message file could not be read; write it inside the repository first"}
+			}
+			if len(raw) > maxFile {
+				raw = raw[:maxFile]
+			}
+			text = string(raw)
+		case len(msgs) > 0:
+			text = strings.Join(msgs, "\n\n")
+		default:
+			return Result{} // editor: nothing to check here
+		}
+		return judge(text)
+	}
+	return Result{}
+}
+
+func judge(text string) Result {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	header := strings.TrimSpace(lines[0])
+	m := headerRe.FindStringSubmatch(header)
+	if m == nil {
+		return Result{Checked: true, OK: false, Why: "the summary is not Conventional Commits: `type(scope): imperative summary` with type one of feat fix docs style refactor perf test build ci chore revert, lower-case"}
+	}
+	if len(header) > 100 {
+		return Result{Checked: true, OK: false, Why: "the summary line is over 100 characters"}
+	}
+	breaking := m[3] == "!" || strings.Contains(text, "BREAKING CHANGE:")
+	if breaking {
+		body := strings.TrimSpace(strings.Join(lines[1:], "\n"))
+		if body == "" {
+			return Result{Checked: true, OK: false, Why: "a breaking change (`!` or BREAKING CHANGE) needs a body that says what breaks and how to migrate (a MAJOR release note)"}
+		}
+	}
+	return Result{Checked: true, OK: true}
+}
+```
+
+Confirm `guard.GitInvocations` and `guard.StripHeredocs` exist and are exported (they are used by `commitscan.PlanFor`); if `Args` keeps quotes, the `strings.Trim` above handles them.
+
+Wire into `policyDecision` after the fixture-dump block:
+
+```go
+	if call.IsShell() && !eff.Off("tq/commit-message") {
+		if r := commitmsg.Check(call.Command, cwd); r.Checked && !r.OK {
+			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-message", policy.Ask), "tq/commit-message", "commit message: "+r.Why))
+		}
+	}
+```
+
+Add to `guardcfg.HookRules`: `"tq/commit-message": "a git commit whose message is not Conventional Commits"`.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `go test ./internal/policy/ ./internal/commitmsg/ ./internal/cmd/ ./internal/guardcfg/`
+Expected: pass. The existing `ci-pipeline` skill text says tq *asks* on `@main`; the plugin plan updates that sentence.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/policy/builtin.go internal/policy/policy_test.go internal/commitmsg internal/cmd/claudehook_policy.go internal/cmd/claudehook_policy_test.go internal/guardcfg/guardcfg.go
+git commit -m "feat(guard): iac-apply, remote-migration, settings-widen, gha-branch-ref rules and the commit-message check"
+```
+
+---
+
+### Task 6: Triage flags `classified_data` and `agentic`
+
+**Files:**
+- Modify: `internal/decide/triage.go`, `internal/decide/triage_test.go` (create if absent)
+- Modify: `internal/cmd/decide.go`, `internal/cmd/decide_triage_test.go` (create)
+- Modify: `docs/DECIDE.md` (Review triage section)
+
+**Interfaces:**
+- `TriageQuestions()` gains `"agentic": "Does this change add or modify LLM calls, prompts, agent tool definitions, MCP servers, RAG or vector indexing, or Claude Code hooks or skills?"`.
+- `func ClassifiedFlag(files []string, data manifest.Data) bool` in `internal/decide` (true when any file is classified).
+- `tq decide triage` computes the diff file list with the same `--staged`/`--range` selection (`git diff --name-only ...`), appends `classified_data` to `Flags` and sets `Risk: "high"` when the flag fires, even when Jev is off or unreachable.
+
+- [ ] **Step 1: Write the failing tests**
+
+```go
+// internal/decide/triage_test.go (append or create)
+package decide
+
+import (
+	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/manifest"
+)
+
+func TestTriageQuestions_IncludeAgentic(t *testing.T) {
+	qs := TriageQuestions()
+	if _, ok := qs["agentic"]; !ok || len(qs) != 12 {
+		t.Fatalf("want 12 questions incl. agentic, got %d", len(qs))
+	}
+}
+
+func TestClassifiedFlag(t *testing.T) {
+	d := manifest.Data{Classes: []string{"pii"}, Paths: []manifest.DataPath{{Path: "db/schema/**", Classes: []string{"pii"}}}}
+	if !ClassifiedFlag([]string{"README.md", "db/schema/customers.sql"}, d) {
+		t.Fatal("classified file not flagged")
+	}
+	if ClassifiedFlag([]string{"README.md"}, d) || ClassifiedFlag([]string{"db/schema/x.sql"}, manifest.Data{}) {
+		t.Fatal("false positive")
+	}
+}
+```
+
+```go
+// internal/cmd/decide_triage_test.go
+package cmd
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestTriage_ClassifiedDataFlagWithoutJev(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "data:\n  classes: [pii]\n  paths:\n    - { path: \"db/schema/**\", classes: [pii] }\n")
+	run := func(args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = ws
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "t")
+	if err := os.MkdirAll(filepath.Join(ws, "db", "schema"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "db", "schema", "customers.sql"), []byte("create table customers(email text);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "db/schema/customers.sql")
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(ws); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	prevExit := exitFunc
+	exitFunc = func(c int) { code = c; panic(hookExitSentinel{}) }
+	t.Cleanup(func() { exitFunc = prevExit })
+	var out bytes.Buffer
+	root := NewRoot()
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"decide", "triage", "--staged"})
+	func() {
+		defer func() { _ = recover() }()
+		_ = root.Execute()
+	}()
+	if code != 3 || !strings.Contains(out.String(), "classified_data") {
+		t.Fatalf("code=%d out=%q", code, out.String())
+	}
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test ./internal/decide/ ./internal/cmd/ -run 'TestTriageQuestions|TestClassifiedFlag|TestTriage_Classified' -v`
+Expected: FAIL (11 questions; `ClassifiedFlag` undefined; triage prints `high ... [jev unavailable]` without the flag).
+
+- [ ] **Step 3: Implement**
+
+In `triage.go` add the question to `TriageQuestions()`:
+
+```go
+		"agentic":     q("Does this change add or modify LLM calls, prompts, agent tool definitions, MCP servers, RAG or vector indexing, or Claude Code hooks or skills?"),
+```
+
+and the helper:
+
+```go
+// ClassifiedFlag reports whether any changed file lies under a path the
+// manifest's data: block classifies. Deterministic: no Jev call.
+func ClassifiedFlag(files []string, data manifest.Data) bool {
+	if !data.Enabled() {
+		return false
+	}
+	for _, f := range files {
+		if data.Classified(f) != nil {
+			return true
+		}
+	}
+	return false
+}
+```
+
+(import `github.com/tentaqles/tentaqles/internal/manifest`; check for an import cycle: `manifest` imports `decide` for `Policy`. If so, move `ClassifiedFlag` to `internal/cmd/decide.go` as an unexported helper taking `manifest.Data`, and keep the decide test for the question count only.)
+
+In `newDecideTriageCmd` (`internal/cmd/decide.go`), after computing `diff` and before the Jev call:
+
+```go
+			nameArgs := append([]string{"diff", "--name-only"}, args[2:]...)
+			names, _ := gitcfg.RunGitIn(cwd, nameArgs...)
+			var changed []string
+			for _, l := range strings.Split(names, "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					changed = append(changed, l)
+				}
+			}
+			classified := false
+			if ws, _ := resolveTrusted(cwd); ws != nil && ws.Manifest != nil {
+				classified = decide.ClassifiedFlag(changed, ws.Manifest.Data)
+			}
+```
+
+and after `res` is set (both the error and success branches):
+
+```go
+			if classified {
+				res.Flags = append(res.Flags, "classified_data")
+				sort.Strings(res.Flags)
+				res.Risk = "high"
+			}
+```
+
+Also move the `if strings.TrimSpace(diff) == ""` early return so that an empty diff still prints `low (empty diff)` (unchanged). Update the command's `Long` text to list `classified data path (from the manifest, no Jev)` and `agentic code` among the questions.
+
+In `docs/DECIDE.md` "Review triage": the list becomes 12 Jev questions plus the deterministic `classified_data` flag; mention that the flags map to the reviewer crew (`security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`) in the build skill.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `go test ./internal/decide/ ./internal/cmd/ -run 'Triage|Classified' -v && go test ./...`
+Expected: pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/decide/triage.go internal/decide/triage_test.go internal/cmd/decide.go internal/cmd/decide_triage_test.go docs/DECIDE.md
+git commit -m "feat(decide): triage flags classified data paths deterministically and asks about agentic code"
+```
+
+---
+
+### Task 7: Doctor check `data-block-missing`
+
+**Files:**
+- Create: `internal/doctor/data.go`, `internal/doctor/data_test.go`
+- Modify: `internal/doctor/doctor.go` (call per trusted workspace), `docs/CLAUDE-SETTINGS.md` (table row)
+
+**Interfaces:**
+- `func dataBlockMissing(ws, root string, data manifest.Data, add func(level, code, ws, msg, fix string))`: when `!data.Enabled()`, walks `root` (skipping `.git`, `node_modules`, `vendor`, `.venv`, `dist`, `build`, at most 3000 files, each at most 256 KiB) looking at schema-like files (`*.sql`, `*.prisma`, `*.dbml`, `schema.rb`, `models.py`, `*.graphql`, `*.proto`, and anything under a `migrations` directory) for column-like identifiers matching `(?i)\b(email|e_mail|cpf|cnpj|rg|ssn|passport|phone|telefone|celular|birth_?date|data_nascimento|dob|address|endereco|cep|zip_?code|card_?number|iban)\b`; emits one `warn` `data-block-missing` naming the count of files and the first three, fix `tq classify: run /tentaqles:classify-data to write the data: block, then tq allow <ws>`. `.env*` files and anything not schema-like are not scanned.
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+// internal/doctor/data_test.go
+package doctor
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/testutil"
+)
+
+func collect(fn func(add func(level, code, ws, msg, fix string))) []Finding {
+	var out []Finding
+	fn(func(level, code, ws, msg, fix string) { out = append(out, Finding{Level: level, Code: code, Workspace: ws, Msg: msg, Fix: fix}) })
+	return out
+}
+
+func write(t *testing.T, root, rel, body string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDataBlockMissing_SchemaWithPIIColumns(t *testing.T) {
+	root := testutil.TempDir(t)
+	write(t, root, "db/schema/customers.sql", "create table customers (id int, email text, cpf char(11));\n")
+	fs := collect(func(add func(string, string, string, string, string)) { dataBlockMissing("acme", root, manifest.Data{}, add) })
+	if len(fs) != 1 || fs[0].Code != "data-block-missing" || !strings.Contains(fs[0].Msg, "customers.sql") || !strings.Contains(fs[0].Fix, "classify-data") {
+		t.Fatalf("%+v", fs)
+	}
+}
+
+func TestDataBlockMissing_FixturesCount(t *testing.T) {
+	root := testutil.TempDir(t)
+	write(t, root, "tests/fixtures/people.sql", "insert into people (email, phone) values ('a@b.c', '1');\n")
+	fs := collect(func(add func(string, string, string, string, string)) { dataBlockMissing("acme", root, manifest.Data{}, add) })
+	if len(fs) != 1 {
+		t.Fatalf("fixtures are where PII leaks; want a finding, got %+v", fs)
+	}
+}
+
+func TestDataBlockMissing_EnvExampleAndPlainCodeIgnored(t *testing.T) {
+	root := testutil.TempDir(t)
+	write(t, root, ".env.example", "EMAIL_FROM=noreply@example.test\n")
+	write(t, root, "src/mailer.go", "func send(email string) {}\n")
+	fs := collect(func(add func(string, string, string, string, string)) { dataBlockMissing("acme", root, manifest.Data{}, add) })
+	if len(fs) != 0 {
+		t.Fatalf("%+v", fs)
+	}
+}
+
+func TestDataBlockMissing_SilentWhenClassified(t *testing.T) {
+	root := testutil.TempDir(t)
+	write(t, root, "db/schema/customers.sql", "create table customers (email text);\n")
+	d := manifest.Data{Classes: []string{"pii"}}
+	fs := collect(func(add func(string, string, string, string, string)) { dataBlockMissing("acme", root, d, add) })
+	if len(fs) != 0 {
+		t.Fatalf("%+v", fs)
+	}
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test ./internal/doctor/ -run TestDataBlockMissing -v`
+Expected: `undefined: dataBlockMissing`.
+
+- [ ] **Step 3: Implement**
+
+```go
+// internal/doctor/data.go
+package doctor
+
+import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/manifest"
+)
+
+const (
+	dataScanMaxFiles = 3000
+	dataScanMaxBytes = 256 << 10
+)
+
+var (
+	piiColumnRe   = regexp.MustCompile(`(?i)\b(email|e_mail|cpf|cnpj|rg|ssn|passport|phone|telefone|celular|birth_?date|data_nascimento|dob|address|endereco|cep|zip_?code|card_?number|iban)\b`)
+	schemaFileRe  = regexp.MustCompile(`(?i)(\.sql|\.prisma|\.dbml|\.graphql|\.proto)$|(^|/)(schema\.rb|models\.py)$`)
+	dataSkipDirs  = map[string]bool{".git": true, "node_modules": true, "vendor": true, ".venv": true, "venv": true, "dist": true, "build": true, ".next": true, "target": true}
+)
+
+// dataBlockMissing warns when a workspace has PII-looking columns in schema or
+// fixture files but no data: block in its manifest (spec §11.1). It never
+// reads .env files or application code.
+func dataBlockMissing(ws, root string, data manifest.Data, add func(level, code, ws, msg, fix string)) {
+	if data.Enabled() {
+		return
+	}
+	var hits []string
+	seen := 0
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if dataSkipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		seen++
+		if seen > dataScanMaxFiles {
+			return filepath.SkipAll
+		}
+		rel := filepath.ToSlash(strings.TrimPrefix(p, root))
+		rel = strings.TrimPrefix(rel, "/")
+		inMigrations := strings.Contains("/"+rel, "/migrations/")
+		if !schemaFileRe.MatchString(rel) && !inMigrations {
+			return nil
+		}
+		fi, err := d.Info()
+		if err != nil || fi.Size() > dataScanMaxBytes {
+			return nil
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		if piiColumnRe.Match(raw) {
+			hits = append(hits, rel)
+		}
+		return nil
+	})
+	if len(hits) == 0 {
+		return
+	}
+	shown := hits
+	if len(shown) > 3 {
+		shown = shown[:3]
+	}
+	add("warn", "data-block-missing", ws,
+		fmt.Sprintf("%d schema or fixture file(s) name personal-data columns (%s) and the manifest has no data: block", len(hits), strings.Join(shown, ", ")),
+		"run /tentaqles:classify-data to write the data: block (classes, paths, retention, incident authority), then tq allow "+ws)
+}
+```
+
+In `doctor.go`'s per-workspace loop, after `memoryStale(...)`: `if trusted { dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add) }`.
+
+In `docs/CLAUDE-SETTINGS.md` doctor table add: `| data-block-missing | schema or fixture files name personal-data columns (email, cpf, phone, …) and the manifest has no data: block; run /tentaqles:classify-data |`.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `go test ./internal/doctor/ -v && go test ./...`
+Expected: pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/doctor/data.go internal/doctor/data_test.go internal/doctor/doctor.go docs/CLAUDE-SETTINGS.md
+git commit -m "feat(doctor): warn when PII-looking columns exist without a manifest data block"
+```
+
+---
+
+### Task 8: Docs for the new rules and verification
+
+**Files:**
+- Modify: `docs/CLAUDE-HOOK.md` (Built-in rules table and the code-rules list), `docs/SETUP.md` (one paragraph on the `data:` block pointing to CLAUDE-HOOK.md)
+
+- [ ] **Step 1: Update the rules table**
+
+Add rows: `tq/iac-apply` ask; `tq/remote-migration` ask (localhost/`--local` exempt); `tq/settings-widen`, `tq/settings-shell-write` deny; `tq/gha-branch-ref` deny (`@main`/`@master`), `tq/gha-unpinned` now ask on `@latest`/`@head` only. Extend the code-rules list with `tq/classified-read` (deny; manifest `data:` paths and tables; `tq redact run` is the alternative), `tq/pii-fixture-dump` (deny; synthetic fixtures), `tq/commit-message` (ask; Conventional Commits; `!` needs a body). Add a short `## Data classification (data: block)` section with the YAML example from spec §11.1 and the sentence "changing the manifest changes its trust hash: run `tq allow <ws>`".
+
+- [ ] **Step 2: Verify**
+
+Run: `go test ./... && go vet ./...`
+Expected: green.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add docs/CLAUDE-HOOK.md docs/SETUP.md
+git commit -m "docs(tq): data classification block, redact, and the new guard rules"
+```
+
+---
+
+## Self-review notes
+
+- Spec coverage: §11.1 (Task 1, 7), §11.2 masking (Tasks 2 to 4; mechanism deviation recorded in Global Constraints), §11.3 fixtures (Task 4), §8.2 rules (Tasks 4, 5; `tq/config-change` as settings rules, `tq/actions-unpinned` as `gha-branch-ref`), §9 triage questions (Task 6), `tq doctor` warning from §11.1 (Task 7).
+- Not in this plan: reviewer agents, templates, `classify-data`, `privacy-review`, `threat-model`, `supply-chain`, `llm-security-review` skills and the plugin-side DoD `privacy` check hookup: the plugin plan.
+- Type consistency: `manifest.Data`, `Data.Classified`, `Data.Tables`, `GlobMatch`, `redact.ParseClasses/Redact/Count/NewWriter`, `decide.ClassifiedFlag`, rule ids as listed; `ruleDecision(action, id, reason)` order as in the existing code.
