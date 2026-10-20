@@ -24,8 +24,10 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
   if [ -n "$_tq_self" ]; then
     CLAUDE_PLUGIN_ROOT="$(cd "$(dirname "$_tq_self")/.." && pwd)"
   else
-    # Search the Claude Code plugin cache (marketplace-agnostic)
-    for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do
+    # Search the Claude Code plugin cache (marketplace-agnostic). Under tq each
+    # identity has its own config dir, and the cache lives there, so it is
+    # searched before the default ~/.claude.
+    for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do
       [ -f "${_d}.claude-plugin/plugin.json" ] && CLAUDE_PLUGIN_ROOT="${_d%/}" && break
     done
   fi

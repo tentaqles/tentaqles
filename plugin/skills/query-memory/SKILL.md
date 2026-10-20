@@ -1,17 +1,17 @@
 ---
 name: query-memory
-description: Search workspace memory and knowledge graphs semantically. Use when the user asks about past work, decisions, or concepts.
+description: Search workspace memory (sessions, decisions, pending items, facts) by full text with recency weighting, plus the knowledge graph. Use when the user asks about past work, decisions, or concepts.
 ---
 
 # Query Memory
 
-Search across temporal memory (sessions, decisions) and knowledge graph nodes using semantic embeddings.
+Search temporal memory (ended sessions, active decisions, open pending items, semantic facts) with SQLite full-text search (BM25), scores boosted for recent rows, then the knowledge graph nodes with embeddings when available.
 
 The user's query is: $ARGUMENTS
 
 ```bash
 # Load tentaqles runtime
-_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
 "$TENTAQLES_PY" -c "
 import os
 from tentaqles.manifest.loader import load_manifest
