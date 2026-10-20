@@ -46,6 +46,7 @@ All paths are relative to `C:\repos\tentaqles\tentaqles`; Python tests run from 
 | `plugin/skills/auth-security/references/asvs-checklist.md` | (new reference used by `security-reviewer`; the skill already exists) |
 | `plugin/skills/ci-pipeline/SKILL.md` | (modify) `@main`/`@master` now deny |
 | `plugin/tests/test_process_templates.py`, `test_agents.py`, `test_process_skills.py` | (extend) |
+| `plugin/tentaqles/privacy.py`, `plugin/tests/test_privacy_pii.py` | PII detectors mirroring `internal/redact`; masking at every memory, vault and model exit |
 | `plugin/CHANGELOG.md`, `plugin/README.md`, `plugin/CLAUDE.md`, `plugin/.claude-plugin/plugin.json`, `plugin/.claude-plugin/marketplace.json` | docs and release |
 
 ---
@@ -411,7 +412,7 @@ try. Skip a category only with a one-line reason.
 |---|---|---|---|
 | public | published or harmless if published | docs, marketing copy | none |
 | internal | business data, not personal | configs, metrics, non-personal logs | may appear in prompts |
-| pii | identifies or relates to a natural person (LGPD Art. 5 I; GDPR Art. 4(1)) | name, e-mail, CPF, phone, address, IP, device id | masked in prompts (`tq redact`), retention, DSAR |
+| pii | identifies or relates to a natural person (LGPD Art. 5 I; GDPR Art. 4(1)) | name, e-mail, CPF, phone, address, IP, device id | may be read and processed locally; never committed, pushed, pasted into PR or issue text, or stored in memory (masked); retention, DSAR |
 | sensitive | special categories (LGPD Art. 5 II; GDPR Art. 9) | health, biometrics, religion, sexual orientation, union, politics, race | Art. 11 / Art. 9 basis, DPIA or RIPD, encryption, strict access |
 | financial | money and payment data | card numbers, bank accounts, CNPJ with billing, invoices | PCI DSS scope if cards, masking, audit |
 | children | data of minors (LGPD Art. 14; GDPR Art. 8) | age, school, guardian consent | consent of a guardian, DPIA |
@@ -801,9 +802,11 @@ argument-hint: [update]
 
 # Classify data
 
-The manifest `data:` block is what makes the guard deterministic: `tq` denies
-unmasked reads of classified paths and tables and dumps into fixtures, `tq
-redact` knows which classes to mask, triage flags classified diffs, and the
+The manifest `data:` block is what makes the guard deterministic. Reading and
+processing personal data locally is allowed; the declared classes decide what
+`tq` refuses to record in commits, pushes and PR or issue text, what the
+plugin masks before memory, the vault or a model call, which tables and paths
+may never be dumped into fixtures, which diffs triage flags, and when the
 definition of done requires `docs/privacy.md` to move with the data. None of
 that works on a block without paths or tables, so this skill never writes one.
 
@@ -846,7 +849,7 @@ data:
   classes: [pii, financial]            # from: public, internal, pii, sensitive, financial, children, secrets
   regions: [BR]                        # ISO country codes of the data subjects
   prompts:
-    allow: [public, internal]          # classes that may appear in model context unmasked
+    allow: [public, internal]          # classes the plugin may store or send to a model unmasked
   paths:                               # at least one path or table per declared class
     - path: db/schema/customers.sql
       classes: [pii]
@@ -1190,7 +1193,252 @@ git commit -m "feat(skills): supply-chain and llm-security-review; ci-pipeline n
 
 ---
 
-### Task 8: Docs, changelog, release 0.12.0
+### Task 8: Personal data never reaches memory, the vault or a model call
+
+**Files:**
+- Modify: `plugin/tentaqles/privacy.py`
+- Modify: `plugin/tentaqles/memory/store.py` (`MemoryStore.__init__`), `plugin/tentaqles/memory/vault_export.py`, `plugin/tentaqles/memory/ingest.py`, `plugin/tentaqles/memory/consolidator.py`, `plugin/tentaqles/memory/jev_gate.py` (every place text leaves for disk or a model goes through `redact_text`)
+- Create: `plugin/tests/test_privacy_pii.py`
+
+**User rule (2026-10-20):** reading and processing personal data is allowed; storing it in memory, the vault, atoms, reference docs, or sending it to a model from a hook is not.
+
+**Interfaces:**
+- `privacy.PII_PATTERNS: list[tuple[str, re.Pattern, callable]]`: `cpf` (check digits), `cnpj` (check digits), `card` (Luhn), `iban` (mod 97), `email`, `phone` (10 to 15 digits), mirroring `internal/redact` in Go.
+- `privacy.CLASS_DETECTORS = {"checksummed": [cpf, cnpj, card, iban], "pii": [cpf, email, phone], "financial": [card, cnpj, iban]}`; `sensitive` and `children` map to `pii`.
+- `privacy.exit_classes(manifest: dict | None) -> list[str]`: `["checksummed"]` without a `data:` block, else `checksummed` plus `pii`/`financial` as the Go `piiClasses` does.
+- `privacy.set_default_classes(classes: list[str]) -> None` and `privacy.redact_text(text, *, classes=None, **kw)`: secrets are always redacted (today's behaviour); personal-data detectors run for `classes` or, when `None`, for the module default (initially `["checksummed"]`). A line containing `tq:allow-pii` is left alone. Output tokens `[REDACTED:cpf]` etc.
+- `MemoryStore.__init__` calls `set_default_classes(exit_classes(load_manifest(root)))` so every write path in the plugin masks by the workspace's declared classes without touching each caller.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# plugin/tests/test_privacy_pii.py
+"""Personal data is masked at the memory exits, by the workspace's declared classes."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from tentaqles import privacy
+from tentaqles.memory.store import MemoryStore
+
+
+@pytest.fixture(autouse=True)
+def _reset():
+    privacy.set_default_classes(["checksummed"])
+    yield
+    privacy.set_default_classes(["checksummed"])
+
+
+def test_checksummed_by_default_leaves_email():
+    out = privacy.redact_text("cpf 529.982.247-25 mail ana@x.io card 4111 1111 1111 1111")
+    assert "[REDACTED:cpf]" in out and "[REDACTED:card]" in out and "ana@x.io" in out
+    assert "529" not in out
+
+
+def test_invalid_checksums_are_not_masked():
+    out = privacy.redact_text("id 52998224726 order 4111111111111112")
+    assert "REDACTED" not in out
+
+
+def test_pii_class_masks_email_and_phone():
+    out = privacy.redact_text("ana.silva@example.com +55 11 91234-5678", classes=["pii"])
+    assert out.count("[REDACTED:") == 2
+
+
+def test_allow_marker_and_secrets_always():
+    text = "row 529.982.247-25 tq:allow-pii\nkey sk-ant-abcdefghijklmnopqrstuvwxyz0123"
+    out = privacy.redact_text(text)
+    assert "529.982.247-25" in out and "[REDACTED:" in out and "sk-ant" not in out
+
+
+def test_exit_classes_from_manifest():
+    assert privacy.exit_classes(None) == ["checksummed"]
+    assert privacy.exit_classes({"data": {"classes": ["pii", "financial"]}}) == ["checksummed", "pii", "financial"]
+    assert privacy.exit_classes({"data": {"classes": ["children"]}}) == ["checksummed", "pii"]
+
+
+def test_store_masks_by_workspace_classes(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(MemoryStore, "_embed", lambda self, text: None)
+    (tmp_path / ".tentaqles.yaml").write_text(
+        "schema: tentaqles-client-v2\nclient: acme\ndata:\n  classes: [pii]\n", encoding="utf-8")
+    s = MemoryStore(tmp_path)
+    try:
+        s.start_session("s1")
+        s.end_session(summary="talked to ana.silva@example.com about CPF 529.982.247-25")
+        rows = s.search_memory("ana")
+        text = " ".join(str(r) for r in rows) + s.get_context_summary()
+        assert "ana.silva" not in text and "529.982" not in text
+    finally:
+        s.close()
+```
+
+Read `MemoryStore.start_session` / `end_session` signatures in `store.py` before writing the last test and adapt the calls.
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `cd plugin && python -m pytest tests/test_privacy_pii.py -q`
+Expected: FAIL (`set_default_classes` missing; e-mail/CPF survive).
+
+- [ ] **Step 3: Implement**
+
+In `privacy.py` add, after `REDACTION_PATTERNS`:
+
+```python
+# --- personal and financial data (mirror of tq's internal/redact) -----------
+
+def _digits(s: str) -> str:
+    return "".join(ch for ch in s if ch.isdigit())
+
+
+def _all_same(d: str) -> bool:
+    return len(set(d)) == 1
+
+
+def _valid_cpf(s: str) -> bool:
+    d = _digits(s)
+    if len(d) != 11 or _all_same(d):
+        return False
+    for n in (9, 10):
+        total = sum(int(d[i]) * (n + 1 - i) for i in range(n))
+        r = (total * 10) % 11
+        if (0 if r == 10 else r) != int(d[n]):
+            return False
+    return True
+
+
+def _valid_cnpj(s: str) -> bool:
+    d = _digits(s)
+    if len(d) != 14 or _all_same(d):
+        return False
+    w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    w2 = [6] + w1
+    for w, n in ((w1, 12), (w2, 13)):
+        r = sum(int(d[i]) * x for i, x in enumerate(w)) % 11
+        if (0 if r < 2 else 11 - r) != int(d[n]):
+            return False
+    return True
+
+
+def _luhn(s: str) -> bool:
+    d = _digits(s)
+    if not 13 <= len(d) <= 19:
+        return False
+    total, alt = 0, False
+    for ch in reversed(d):
+        n = int(ch)
+        if alt:
+            n = n * 2 - 9 if n > 4 else n * 2
+        total += n
+        alt = not alt
+    return total % 10 == 0
+
+
+def _valid_iban(s: str) -> bool:
+    s = s.replace(" ", "").upper()
+    if not 15 <= len(s) <= 34:
+        return False
+    r = s[4:] + s[:4]
+    try:
+        return int("".join(str(int(c, 36)) for c in r)) % 97 == 1
+    except ValueError:
+        return False
+
+
+def _valid_phone(s: str) -> bool:
+    d = _digits(s)
+    return 10 <= len(d) <= 15 and not _all_same(d)
+
+
+PII_PATTERNS = [
+    ("cpf", re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b"), _valid_cpf),
+    ("cnpj", re.compile(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b"), _valid_cnpj),
+    ("card", re.compile(r"\b[3-6](?:\d[ -]?){12,18}\b"), _luhn),
+    ("iban", re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b"), _valid_iban),
+    ("email", re.compile(r"(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b"), lambda s: True),
+    ("phone", re.compile(r"(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,3}\)|\b\d{2,3})[\s.-]?\d{4,5}[\s.-]?\d{4}\b|\+\d{8,15}\b"), _valid_phone),
+]
+_BY_NAME = {name: (rx, ok) for name, rx, ok in PII_PATTERNS}
+CLASS_DETECTORS = {
+    "checksummed": ["cpf", "cnpj", "card", "iban"],
+    "pii": ["cpf", "email", "phone"],
+    "financial": ["card", "cnpj", "iban"],
+}
+ALLOW_PII_MARKER = "tq:allow-pii"
+_default_classes: list[str] = ["checksummed"]
+
+
+def set_default_classes(classes: list[str]) -> None:
+    global _default_classes
+    _default_classes = list(classes) or ["checksummed"]
+
+
+def exit_classes(manifest: dict | None) -> list[str]:
+    out = ["checksummed"]
+    classes = ((manifest or {}).get("data") or {}).get("classes") or []
+    if any(c in ("pii", "sensitive", "children") for c in classes):
+        out.append("pii")
+    if "financial" in classes:
+        out.append("financial")
+    return out
+
+
+def _detectors(classes: list[str]) -> list[str]:
+    names: list[str] = []
+    for c in classes:
+        c = "pii" if c in ("sensitive", "children") else c
+        for n in CLASS_DETECTORS.get(c, []):
+            if n not in names:
+                names.append(n)
+    return names
+
+
+def redact_pii(text: str, classes: list[str] | None = None) -> str:
+    names = _detectors(classes if classes is not None else _default_classes)
+    if not names or not text:
+        return text
+    out = []
+    for line in text.split("\n"):
+        if ALLOW_PII_MARKER in line:
+            out.append(line)
+            continue
+        for name in names:
+            rx, ok = _BY_NAME[name]
+            line = rx.sub(lambda m, n=name, ok=ok: f"[REDACTED:{n}]" if ok(m.group(0)) else m.group(0), line)
+        out.append(line)
+    return "\n".join(out)
+```
+
+and make `redact_text` accept `classes: list[str] | None = None` and end with `return redact_pii(result, classes)` after the secret redaction it does today (keep every existing keyword argument). In `MemoryStore.__init__` (after the root is known): 
+
+```python
+        try:
+            from tentaqles.manifest.loader import load_manifest
+            from tentaqles import privacy as _privacy
+            _privacy.set_default_classes(_privacy.exit_classes(load_manifest(self.root)))
+        except Exception:
+            pass
+```
+
+Then grep the four other modules for text that is written or sent without `redact_text` and route it through (vault export notes, ingest excerpts, consolidator prompts, Jev gate payloads). `test_privacy.py` and `test_vault_export.py` must stay green; adjust any fixture that used a real-looking CPF or card by adding `tq:allow-pii` or using an invalid checksum.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `cd plugin && python -m pytest tests/test_privacy_pii.py tests/test_privacy.py tests/test_store.py tests/test_vault_export.py tests/test_reference_ingest.py tests/test_consolidator.py -q`
+Expected: pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/tentaqles/privacy.py plugin/tentaqles/memory/store.py plugin/tentaqles/memory/vault_export.py plugin/tentaqles/memory/ingest.py plugin/tentaqles/memory/consolidator.py plugin/tentaqles/memory/jev_gate.py plugin/tests/test_privacy_pii.py
+git commit -m "feat(privacy): mask personal and financial data at every memory, vault and model exit by workspace classes"
+```
+
+---
+
+### Task 9: Docs, changelog, release 0.12.0
 
 **Files:**
 - Modify: `plugin/CHANGELOG.md`, `plugin/README.md`, `plugin/CLAUDE.md`, `plugin/.claude-plugin/plugin.json`, `plugin/.claude-plugin/marketplace.json`
@@ -1208,7 +1456,7 @@ Under `## [Unreleased]` (created by the spine plan) add:
   OWASP Top 10:2025, LGPD/GDPR, OWASP LLM 2025 and Agentic 2026, SLSA/SBOM).
   Requires tq with the manifest `data:` block, `tq redact`, the
   `classified_data` and `agentic` triage flags and the new guard rules
-  (`tq/classified-read`, `tq/pii-fixture-dump`, `tq/iac-apply`,
+  (`tq/commit-pii`, `tq/push-pii`, `tq/text-pii`, `tq/pii-fixture-dump`, `tq/iac-apply`,
   `tq/remote-migration`, `tq/settings-widen`, `tq/settings-shell-write`,
   `tq/gha-branch-ref`, `tq/commit-message`).
 ```
@@ -1217,7 +1465,7 @@ Then rename `## [Unreleased]` to `## [0.12.0] — <date>` once both companion pl
 
 - [ ] **Step 2: README and plugin CLAUDE.md**
 
-README skills table: rows for `/tentaqles:threat-model`, `/tentaqles:classify-data`, `/tentaqles:privacy-review`, `/tentaqles:supply-chain`, `/tentaqles:llm-security-review`; the `/tentaqles:build` row names the crew agents. Hooks table: the `PreToolUse` row mentions the data-protection rules and `tq redact run`. `plugin/CLAUDE.md`: list the new agents and the `references/` checklists; add the rule "reviewer agents are read-only; `breaker` is the only agent with Bash and binds to 127.0.0.1".
+README skills table: rows for `/tentaqles:threat-model`, `/tentaqles:classify-data`, `/tentaqles:privacy-review`, `/tentaqles:supply-chain`, `/tentaqles:llm-security-review`; the `/tentaqles:build` row names the crew agents. Hooks table: the `PreToolUse` row mentions the data-protection exit rules (reads allowed; commits, pushes, PR text and fixtures guarded). `plugin/CLAUDE.md`: list the new agents and the `references/` checklists; add the rule "reviewer agents are read-only; `breaker` is the only agent with Bash and binds to 127.0.0.1".
 
 - [ ] **Step 3: Version bump and full verification**
 
@@ -1243,6 +1491,6 @@ Publishing (subtree split to `tentaqles/tentaqles-plugin`, reinstall per identit
 
 ## Self-review notes
 
-- Spec coverage: §4.3 threat model, privacy record, incident playbook (Task 1); §6 rows threat-model, classify-data, privacy-review, supply-chain, llm-security-review (Tasks 4 to 7); §7 rows security-reviewer, privacy-reviewer, llm-security-reviewer, breaker with checklist sources (Tasks 2, 3); §11.3 synthetic fixtures (Task 5); §11.4 (Task 1, 5); §13 release 1 docs and version (Task 8).
+- Spec coverage: §11.2 memory and model exits (Task 8); §4.3 threat model, privacy record, incident playbook (Task 1); §6 rows threat-model, classify-data, privacy-review, supply-chain, llm-security-review (Tasks 4 to 7); §7 rows security-reviewer, privacy-reviewer, llm-security-reviewer, breaker with checklist sources (Tasks 2, 3); §11.3 synthetic fixtures (Task 5); §11.4 (Task 1, 5); §13 release 1 docs and version (Task 8).
 - Open point resolution: `breaker` runs only when a checkpoint is marked `runnable` and Project config has `run` (Task 3, spine Task 7).
 - Type consistency with the spine: reviewer names match gate `REVIEWERS`; verdict grammar matches `templates/process/review-contract.md`; `classified_paths` key matches `project.py`; checklist row prefixes `S`, `P`, `L`, `C`, `B` are distinct from the contract's `F`/`U` rows.

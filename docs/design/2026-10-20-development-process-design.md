@@ -13,7 +13,7 @@ Scope: the process layer tentaqles ships for developers and IT professionals (so
 | Enforcement | Security and data protection fail closed (guard rules, hooks). Quality is evidence-gated with a logged human override. |
 | Bugfix | Reproduce first: a locked failing regression test before any source edit. `hotfix` skips the critic, never the test. |
 | Artifacts | In the repository under `docs/`; the PRD is required for `/kickoff`. |
-| Data protection depth | `data:` classification in the manifest, output masking through tq, PII fixture guard, privacy reviewer, `docs/privacy.md`. |
+| Data protection depth | `data:` classification in the manifest; personal data may be read and processed locally, but is blocked at the exits: memory, commits, pushes, PR and issue text, fixtures, model calls. Privacy reviewer, `docs/privacy.md`. (Revised 2026-10-20 at plan review.) |
 | Phasing | Release 1: spine plus security and privacy. Release 2: data engineering and ML. Release 3: cloud and database. UI gate later. |
 
 "PRG" in the request is read as PRD (product requirements document).
@@ -193,7 +193,9 @@ Missing items block the stop with the list. The human can override by stating so
 | Rule | Event | Action |
 |---|---|---|
 | `tq/pii-fixture-dump` | Bash, SQL MCP | deny copying rows from tables or paths classified `pii`/`sensitive`/`financial` into `tests/`, `fixtures/`, `seeds/` without a pseudonymisation step; synthetic fixtures only |
-| `tq/classified-read-mask` | Bash | rewrite (via `updatedInput`) commands that read classified paths or query classified tables to pipe through `tq redact --classes <from manifest>`, the same mechanism as `tq dotenv run`; values are masked before they enter context |
+| `tq/commit-pii` | Bash `git commit` | deny a commit whose added lines carry personal or financial data (CPF, CNPJ, card, IBAN always; e-mail and phone when the manifest declares `pii`), the same scan as `tq/commit-secret`; fixtures marked synthetic with `tq:allow-pii` pass |
+| `tq/push-pii` | Bash `git push` | deny a push whose unpushed commits carry such data (scan of `@{upstream}..HEAD`); the fix is to rewrite the commits locally |
+| `tq/text-pii` | Bash `gh pr/issue/release …`, `git commit -m`, `git tag -m`, `git notes` | deny when the message, body or `--body-file` carries such data: nothing personal leaves the machine in PR or issue text |
 | `tq/iac-apply` | Bash | ask on `terraform apply`, `pulumi up`, `az deployment`, `aws cloudformation deploy` and similar; deny when the shell has no explicit environment variable naming the target environment |
 | `tq/remote-migration` | Bash, SQL MCP | ask on migrations against non-local connection strings (existing `migration-edit` and `mcp-apply-migration` extended) |
 | `tq/config-change` | ConfigChange hook | deny edits that add `Bash(*)`, `bypassPermissions`, disable hooks, or widen `permissions.allow` outside `tq settings render`; log every settings change |
@@ -243,11 +245,17 @@ data:
 
 `classify-data` writes it; `tq doctor` warns when a repo has PII-looking columns (email, cpf, phone, birth date, address) and no `data:` block.
 
-### 11.2 Masking and context hygiene
+### 11.2 Where personal data may go (revised 2026-10-20)
 
-- `tq redact` masks values matching the configured classes (CPF, CNPJ, e-mail, phone, card numbers, keys) in command output; `tq/classified-read-mask` routes reads through it.
+The user's rule: working with customer data must stay practical. Claude may read files and query tables that hold personal data and run scripts over them. The controls sit at the **exits**, where data would be registered or published:
+
+- **Memory and knowledge**: everything written to `memory.db`, the vault mirror, atoms and reference docs passes a redaction that covers personal and financial data (CPF, CNPJ, e-mail, phone, card, IBAN) as well as secrets, selected by the manifest's `data.classes`.
+- **Model and Jev calls from hooks**: the same redaction before any text leaves the machine (Jev already redacts secrets; PII is added).
+- **Git**: `tq/commit-pii` and `tq/push-pii` deny recording or publishing such data; `tq/pii-fixture-dump` denies copying real rows into `tests/`, `fixtures/`, `seeds/`.
+- **Text that goes to GitHub**: `tq/text-pii` denies PR and issue bodies, comments, release notes, commit and tag messages that carry it.
+- `tq redact` is a helper, not a gate: `tq redact run -- <cmd>` masks a command's output when the user wants a shareable copy (a PR body, a bug report). Nothing forces reads through it.
 - `.env*`, secret stores and environment dumps stay denied (existing rules).
-- Memory ingest (knowledge capture, vault export, Clippings) already redacts before storing; the reviewer confirms no new logging of personal data.
+- Without a `data:` block only the checksum-validated detectors run (CPF, CNPJ, card, IBAN), so a repository with no classification is not flooded with e-mail false positives; declaring `pii` turns e-mail and phone detection on.
 
 ### 11.3 Fixtures and tests
 
@@ -288,7 +296,7 @@ Per workspace and across identities: gate pass rate per gate type; reviewer find
 Assumptions logged by the designer (correct any that are wrong):
 - "PRG" means PRD.
 - Legacy repositories without a PRD may use `/feature` and `/fix`; only `/kickoff` requires one.
-- `tq redact` is a new Go subcommand; masking happens by rewriting the command through `updatedInput`, because hooks cannot alter a tool result after the fact.
+- `tq redact` is a new Go subcommand used as a helper; reads of personal data are not gated (user decision 2026-10-20: controls at the exits, see §11.2).
 - The `ConfigChange` hook event is available in the user's Claude Code version (listed in the current hooks reference).
 - Reviewer model tiers follow the existing Jev routing policy; where routing is off, reviewers use the session's model.
 - The vault export (release shipped today) also mirrors `docs/prd.md` status and open `NEEDS-DECISION` items into `context.md` in a later minor release; not part of release 1.

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give `tq` the deterministic data-protection and security controls of the development process: the manifest `data:` block, `tq redact` (output masking for personal and financial data), the new guard rules (classified reads, PII fixture dumps, IaC apply, remote migrations, settings widening, branch-pinned actions, commit messages), two new triage flags, and a doctor check for repositories that handle PII without a `data:` block.
+**Goal:** Give `tq` the deterministic data-protection and security controls of the development process: the manifest `data:` block, `tq redact` (output masking for personal and financial data), the new guard rules (personal data at the exits: commits, pushes, PR and issue text, fixture dumps; IaC apply, remote migrations, settings widening, branch-pinned actions, commit messages), two new triage flags, and a doctor check for repositories that handle PII without a `data:` block.
 
-**Architecture:** Everything here is Go inside the existing layers. The manifest gains a validated `Data` struct (`internal/manifest`), consumed by three places: a new `internal/redact` package behind `tq redact` (regex detectors with check-digit and Luhn validation, class-selectable, a streaming writer like `dotenv.Masker`), the PreToolUse hook (`internal/cmd/claudehook_policy.go`), where two code rules use the manifest's classified paths and tables and the regex rules live in `internal/policy/builtin.go`, and `tq decide triage`, which adds a deterministic `classified_data` flag next to a new Jev question `agentic`. Masking of classified reads follows the proven `tq dotenv run` mechanism (deny the raw read, tell the agent to run through `tq redact run -- <cmd>`) rather than rewriting the command with `updatedInput`: a rewrite that auto-allows a shell command would widen permissions, and a rewrite that is not honoured fails open. `tq doctor` warns on PII-looking schema columns without a `data:` block.
+**Architecture:** Everything here is Go inside the existing layers. The manifest gains a validated `Data` struct (`internal/manifest`), consumed by three places: a new `internal/redact` package behind `tq redact` (regex detectors with check-digit and Luhn validation, class-selectable, a streaming writer like `dotenv.Masker`), the PreToolUse hook (`internal/cmd/claudehook_policy.go`), where four code rules guard the exits (a commit, a push, PR or issue text, a fixture dump) using the `redact` detectors selected by the manifest's declared classes, the regex rules live in `internal/policy/builtin.go`, and `tq decide triage`, which adds a deterministic `classified_data` flag next to a new Jev question `agentic`. Reads of personal data are not gated (user decision 2026-10-20): Claude may open classified files, query classified tables and run scripts over them; what it may not do is record or publish the values. `tq doctor` warns on PII-looking schema columns without a `data:` block.
 
 **Tech Stack:** Go 1.23+, cobra, `gopkg.in/yaml.v3`, `go test`; the existing `internal/secrets`, `internal/policy`, `internal/guardcfg`, `internal/decide`, `internal/doctor`, `internal/commitscan` packages.
 
@@ -19,7 +19,7 @@ All paths are relative to `C:\repos\tentaqles\tentaqles`.
 - Manifests hold names only: `data.incident.contact` is validated with `manifest.LooksLikeSecret`; the whole file still fails `Load` on any secret-shaped value.
 - `tq redact` never writes what it read anywhere but stdout; findings are counted by pattern name, values are never logged.
 - Rule ids are stable and documented in `docs/CLAUDE-HOOK.md`; every new rule has a `Reason` that tells the agent the safe alternative.
-- Deviation from spec §14 assumption 3 (recorded): masking is deny-plus-instruction (`tq redact run`), not `updatedInput`. Deviation from §8.2 `tq/config-change`: implemented as PreToolUse rules on settings files (`tq/settings-widen`, `tq/settings-shell-write`) because the `ConfigChange` hook event cannot be verified from this plan; a follow-up may add the event when the installed Claude Code lists it. Deviation from §8.2 `tq/iac-apply` "deny when no environment variable names the target": the hook cannot see the Bash tool's environment, so the rule asks and its reason requires the target to be named in the command.
+- Spec §11.2 as revised 2026-10-20 applies: no read gating; `tq redact` is a helper. Deviation from §8.2 `tq/config-change`: implemented as PreToolUse rules on settings files (`tq/settings-widen`, `tq/settings-shell-write`) because the `ConfigChange` hook event cannot be verified from this plan; a follow-up may add the event when the installed Claude Code lists it. Deviation from §8.2 `tq/iac-apply` "deny when no environment variable names the target": the hook cannot see the Bash tool's environment, so the rule asks and its reason requires the target to be named in the command.
 - Conventional commits; `go test ./...` green after every task; git identity `reach@tentaqles.ai`.
 
 ## Review Focus
@@ -27,7 +27,7 @@ All paths are relative to `C:\repos\tentaqles\tentaqles`.
 1. **A CPF-shaped number that is not a CPF** (11 digits failing the check digits, such as a phone number without separators or an order id) must not be redacted; and a valid CPF with or without separators must be. Pinned in Task 2 (`TestCPF`).
 2. **A `data:` block with a path glob written with backslashes** (Windows user) must still match slash-normalised tool paths. Pinned in Task 1 (`TestData_ClassifiedMatchesNormalisedPaths`).
 3. **`git commit -F msg.txt` whose file is not under cwd or is missing** must ask (the message cannot be checked) rather than allow or crash. Pinned in Task 5 (`TestCommitMessage_FileMissingAsks`).
-4. **`tq redact run -- psql ...` itself** must not be denied by `tq/classified-read` (otherwise the safe alternative is unreachable), while `cat data/customers.csv | tq redact` (redaction after the read already left the shell) is still denied. Pinned in Task 4 (`TestClassifiedRead_RedactRunIsAllowed`, `TestClassifiedRead_PipeIntoRedactStillDenied`).
+4. **A push from a branch with no upstream and no `origin/HEAD`** has no range to scan: tq must give no opinion rather than block every first push, while a branch with an upstream is scanned. Pinned in Task 4 (`TestPushPII_UnresolvableRangeAllows`, `TestPushPII_DeniedForUnpushedCommits`).
 5. **A repository with PII-looking columns only in test fixtures** should still get the doctor warning (fixtures are exactly where PII leaks), but a repository whose only hit is a `.env.example` key name (`EMAIL_FROM`) should not. Pinned in Task 7 (`TestDataBlockMissing_*`).
 
 ---
@@ -41,7 +41,8 @@ All paths are relative to `C:\repos\tentaqles\tentaqles`.
 | `internal/redact/redact.go`, `redact_test.go` | detectors (cpf, cnpj, email, phone, card, iban) with validation; `Classes`, `Redact(text, classes)`, `NewWriter` |
 | `internal/cmd/redact.go`, `redact_test.go` | `tq redact [--classes] [--file]`, `tq redact run [--classes] -- CMD` |
 | `internal/policy/builtin.go`, `policy_test.go` | regex rules `tq/iac-apply`, `tq/remote-migration`, `tq/settings-widen`, `tq/settings-shell-write`, `tq/gha-branch-ref`; `tq/gha-unpinned` narrowed |
-| `internal/cmd/claudehook_policy.go`, `claudehook_data.go`, `claudehook_data_test.go` | code rules `tq/classified-read`, `tq/pii-fixture-dump`, `tq/commit-message` wired into `policyDecision` |
+| `internal/cmd/claudehook_policy.go`, `claudehook_pii.go`, `claudehook_pii_test.go` | code rules `tq/commit-pii`, `tq/push-pii`, `tq/text-pii`, `tq/pii-fixture-dump`, `tq/commit-message` wired into `policyDecision` |
+| `internal/commitscan/commitscan.go` | `Added(dir, command, run)`: the lines a commit would add (shared by the secret and PII scans) |
 | `internal/guardcfg/guardcfg.go` | `HookRules` entries for the three code rules |
 | `internal/commitmsg/commitmsg.go`, `commitmsg_test.go` | Conventional Commits check of a `git commit` command |
 | `internal/decide/triage.go`, `triage_test.go` | `agentic` question; `ClassifiedFlag(files, data)` |
@@ -965,8 +966,9 @@ workspace every detector runs.
   tq redact --classes pii < export.csv
   tq redact run --classes pii,financial -- psql "$DATABASE_URL" -c "select * from customers limit 5"
 
-The guard refuses to print classified paths or query classified tables
-directly (tq/classified-read); run the command through "tq redact run".`,
+Reading personal data locally is allowed; the guard refuses to record it in
+commits, pushes and PR or issue text. Use this command to make a shareable
+copy (a bug report, a PR body) without the values.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			cwd, _ := os.Getwd()
@@ -1065,7 +1067,7 @@ func newRedactRunCmd() *cobra.Command {
 
 Register in `root.go`: add `newRedactCmd()` to `root.AddCommand(...)`.
 
-Docs: in `docs/CLAUDE-HOOK.md` after "Using a .env without printing it" add a section `## Using classified data without printing it` describing the manifest `data:` block (one example), `tq redact`, `tq redact run`, default classes, and that `tq/classified-read` points here.
+Docs: in `docs/CLAUDE-HOOK.md` after "Using a .env without printing it" add a section `## Using classified data without printing it` describing the manifest `data:` block (one example), `tq redact`, `tq redact run`, default classes, and the exit rules `tq/commit-pii`, `tq/push-pii`, `tq/text-pii` that point here.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1081,110 +1083,216 @@ git commit -m "feat(tq): redact command and redact run (class-selected masking o
 
 ---
 
-### Task 4: Code guard rules using the manifest: classified reads and PII fixture dumps
+### Task 4: PII exit guards: commits, pushes, GitHub text, fixtures
 
 **Files:**
-- Create: `internal/cmd/claudehook_data.go`, `internal/cmd/claudehook_data_test.go`
+- Modify: `internal/redact/redact.go`, `internal/redact/redact_test.go` (class `checksummed`, `AllowMarker`)
+- Modify: `internal/commitscan/commitscan.go`, `internal/commitscan/commitscan_test.go` (`Added`)
+- Create: `internal/cmd/claudehook_pii.go`, `internal/cmd/claudehook_pii_test.go`
 - Modify: `internal/cmd/claudehook_policy.go` (`policyDecision`), `internal/guardcfg/guardcfg.go` (`HookRules`)
 
+**User rule (2026-10-20):** Claude may read files and tables with personal data and run scripts over them. Nothing personal may be *registered or published*: memory (plugin plan), commits, pushes, PR and issue text, fixtures. These rules guard those exits.
+
 **Interfaces:**
-- Produces:
+- `redact`: new class `checksummed` = detectors `cpf`, `cnpj`, `card`, `iban` (the ones a checksum validates), added to `Known` and `byClass`; `const AllowMarker = "tq:allow-pii"`; `Count` and `Redact` skip a line carrying the marker (same convention as `tq:allow-secret`).
+- `commitscan.Added(dir, command string, run Runner) []AddedLine` with `AddedLine{File string; Line int; Text string}`: every added line the command would commit (staged diff, plus the working tree and untracked files when the command also runs `git add` or `commit -a`), using `PlanFor` and the same git invocations `Scan` uses; binary files skipped. `Scan` keeps its behaviour.
+- `piiClasses(ws *resolve.Workspace) []string`: `["checksummed"]` when there is no workspace or no `data:` block; otherwise `checksummed` plus `pii` when the manifest declares `pii`, `sensitive` or `children`, plus `financial` when it declares `financial`.
+- Code rules, all `Deny`, all in `guardcfg.HookRules`:
+  - `tq/commit-pii`: a `git commit` whose added lines contain a validated PII or financial value (`redact.Count` per line, classes from `piiClasses`), unless the line carries `tq:allow-pii`. Reason lists `file:line (detector)`, never values.
+  - `tq/push-pii`: a `git push` (not `--delete`, not `--dry-run`) whose unpushed commits contain such values in added lines. Range: `@{push}..HEAD`, then `@{upstream}..HEAD`, then `origin/HEAD..HEAD`; when none resolves, no opinion. A diff over 4 MiB is not scanned: `Ask` with the reason "too large to scan; push smaller batches or confirm".
+  - `tq/text-pii`: message or body text that would leave the machine: `git commit -m/-F`, `git tag -m/-F`, `git notes add/append -m/-F`, and `gh pr|issue|release create|edit|comment|review` (the command text plus any `--body-file`, `-F`, `--notes-file`, `--file` file read from cwd, capped at 256 KiB). Reason names the detector and whether it was in the command or the file.
+  - `tq/pii-fixture-dump` (unchanged from the spec): a shell command that names a classified table or path *and* writes into `tests/`, `test/`, `fixtures/`, `__fixtures__/`, `seeds/`, `seed/`, `testdata/` (redirect, `-o/--out/--output/--file`, `\copy … to`, `COPY … TO`, `pg_dump -f`, `cp`/`copy` target). Needs the `data:` block (no block, no rule). Synthetic generators are not matched (they do not name a classified source).
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/redact/redact_test.go`:
 
 ```go
-// classifiedReadDecision: Deny when a Read/Grep/NotebookRead targets a classified path,
-// or a shell command prints a classified path (readVerbs) or queries a classified table
-// (psql|mysql|sqlite3|sqlcmd|snowsql|bq|databricks ... select ... from <table>), unless the
-// whole command is already wrapped in `tq redact run`. Returns (decision, matched).
-func classifiedReadDecision(ws *resolve.Workspace, call policy.ToolCall) (policy.Decision, bool)
-// piiFixtureDumpDecision: Deny when a shell command names a classified table or path AND
-// writes (redirect, -o/--output/--file, \copy ... to, COPY ... TO, pg_dump -f) into a path
-// under tests/, test/, fixtures/, __fixtures__/, seeds/, seed/, testdata/.
-func piiFixtureDumpDecision(ws *resolve.Workspace, call policy.ToolCall) (policy.Decision, bool)
+func TestChecksummedClassAndAllowMarker(t *testing.T) {
+	text := "cpf 529.982.247-25 mail ana@x.io"
+	got := Redact(text, []string{"checksummed"})
+	if !strings.Contains(got, "[REDACTED:cpf]") || !strings.Contains(got, "ana@x.io") {
+		t.Fatalf("checksummed must mask the CPF and leave the e-mail: %q", got)
+	}
+	if n := Count("row 529.982.247-25 # tq:allow-pii", []string{"all"}); len(n) != 0 {
+		t.Fatalf("allow marker ignored: %v", n)
+	}
+	if got := Redact("row 529.982.247-25 # tq:allow-pii", []string{"all"}); strings.Contains(got, "REDACTED") {
+		t.Fatalf("allow marker ignored in Redact: %q", got)
+	}
+}
 ```
-- Rule ids `tq/classified-read` (Deny) and `tq/pii-fixture-dump` (Deny), both listed in `guardcfg.HookRules` so the manifest can disable them or change the action.
 
-- [ ] **Step 1: Write the failing test**
+Append to `internal/commitscan/commitscan_test.go` (read the file first for its existing git fixture helper and reuse it):
 
 ```go
-// internal/cmd/claudehook_data_test.go
+func TestAdded_StagedAndChainedAdd(t *testing.T) {
+	dir := initRepo(t) // the existing helper that creates a repo with one commit
+	write(t, dir, "a.txt", "one\ntwo\n")
+	runGit(t, dir, "add", "a.txt")
+	write(t, dir, "b.txt", "three\n")
+	added := Added(dir, `git commit -m "x"`, RunGit)
+	if len(added) != 2 || added[0].File != "a.txt" || added[1].Line != 2 {
+		t.Fatalf("staged only: %+v", added)
+	}
+	added = Added(dir, `git add b.txt && git commit -m "x"`, RunGit)
+	files := map[string]bool{}
+	for _, a := range added {
+		files[a.File] = true
+	}
+	if !files["a.txt"] || !files["b.txt"] {
+		t.Fatalf("chained add must include the untracked file: %+v", added)
+	}
+	if Added(dir, "git log", RunGit) != nil {
+		t.Fatal("no commit, no lines")
+	}
+}
+```
+
+(`initRepo`, `write`, `runGit`, `RunGit` are whatever the existing test file and package already provide; match their names.)
+
+`internal/cmd/claudehook_pii_test.go`:
+
+```go
 package cmd
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-const dataBlock = `data:
-  classes: [pii, financial]
-  paths:
-    - { path: "data/exports/**", classes: [pii] }
-    - { path: "db/schema/customers.sql", classes: [pii] }
-    - { table: public.customers, classes: [pii] }
-    - { table: payments, classes: [financial] }
-`
+const piiData = "data:\n  classes: [pii, financial]\n  paths:\n    - { path: \"data/exports/**\", classes: [pii] }\n    - { table: public.customers, classes: [pii] }\n"
 
-func TestClassifiedRead_ReadToolDenied(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
-	in := `{"file_path":` + jsonPath(t, filepath.Join(ws, "data", "exports", "q3.csv")) + `}`
-	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, ws, "Read", in))
-	if code != 2 || !strings.Contains(errOut, "tq/classified-read") || !strings.Contains(errOut, "tq redact run") {
-		t.Fatalf("code=%d err=%q", code, errOut)
-	}
-}
-
-func TestClassifiedRead_ShellPrintAndQueryDenied(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
-	for _, cmd := range []string{
-		"head -n 5 data/exports/q3.csv",
-		`psql "$DATABASE_URL" -c "select * from public.customers limit 5"`,
-		`psql "$DATABASE_URL" -c "SELECT email FROM customers"`,
-		"sqlite3 app.db 'select * from payments'",
-	} {
-		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
-		if code != 2 || !strings.Contains(errOut, "tq/classified-read") {
-			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
+func gitRepo(t *testing.T, ws string) func(args ...string) string {
+	t.Helper()
+	run := func(args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = ws
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
 		}
+		return string(out)
 	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(ws, "README.md"), []byte("hi\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "README.md")
+	run("commit", "-q", "-m", "init")
+	return run
 }
 
-func TestClassifiedRead_RedactRunIsAllowed(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
-	cmd := `tq redact run --classes pii -- psql "$DATABASE_URL" -c "select * from customers limit 5"`
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
-	if code != 0 || strings.Contains(out, "classified-read") {
-		t.Fatalf("code=%d out=%q", code, out)
+func stage(t *testing.T, ws, run func(...string) string, name, body string) {
+	t.Helper()
+	p := filepath.Join(ws, name)
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
+	run("add", name)
 }
 
-func TestClassifiedRead_PipeIntoRedactStillDenied(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
-	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "cat data/exports/q3.csv | tq redact"))
-	if code != 2 || !strings.Contains(errOut, "tq/classified-read") {
+func TestCommitPII_DeniedWithCPFEvenWithoutDataBlock(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "seed.sql", "insert into c values ('529.982.247-25');\n")
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: seed"`))
+	if code != 2 || !strings.Contains(errOut, "tq/commit-pii") || !strings.Contains(errOut, "seed.sql:1 (cpf)") || strings.Contains(errOut, "529") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }
 
-func TestClassifiedRead_UnclassifiedAndNoBlockAllowed(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
-	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "head README.md")); code != 0 {
-		t.Fatal("unclassified path denied")
-	}
-	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `psql -c "select * from orders"`)); code != 0 {
-		t.Fatal("unclassified table denied")
-	}
+func TestCommitPII_EmailOnlyWhenPiiDeclared(t *testing.T) {
 	plain := setupTrustedWorkspaceWithManifest(t, "beta", "")
-	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, plain, "head data/exports/q3.csv")); code != 0 {
-		t.Fatal("workspace without a data block must not be affected")
+	run := gitRepo(t, plain)
+	stage(t, plain, run, "users.csv", "ana.silva@example.com\n")
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, plain, `git commit -m "feat: users"`)); code != 0 {
+		t.Fatalf("no data block: e-mail must not be scanned: %q", errOut)
+	}
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run = gitRepo(t, ws)
+	stage(t, ws, run, "users.csv", "ana.silva@example.com\n")
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: users"`))
+	if code != 2 || !strings.Contains(errOut, "(email)") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+func TestCommitPII_AllowMarkerAndCleanCommit(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "tests/fixtures/people.sql", "insert into c values ('529.982.247-25'); -- synthetic, tq:allow-pii\n")
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "test: fixture"`)); code != 0 {
+		t.Fatalf("allow marker: %q", errOut)
+	}
+	stage(t, ws, run, "src/a.go", "package a\n")
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: a"`)); code != 0 {
+		t.Fatalf("clean commit: %q", errOut)
+	}
+}
+
+func TestPushPII_DeniedForUnpushedCommits(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	remote := filepath.Join(testutilTempDir(t), "remote.git")
+	exec.Command("git", "init", "-q", "--bare", "-b", "main", remote).Run()
+	run("remote", "add", "origin", remote)
+	run("push", "-q", "-u", "origin", "main")
+	stage(t, ws, run, "export.csv", "4111 1111 1111 1111\n")
+	run("-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "feat: export")
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push"))
+	if code != 2 || !strings.Contains(errOut, "tq/push-pii") || !strings.Contains(errOut, "export.csv") || !strings.Contains(errOut, "(card)") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push --dry-run")); code != 0 {
+		t.Fatal("dry run must not be scanned")
+	}
+}
+
+func TestPushPII_UnresolvableRangeAllows(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "export.csv", "4111 1111 1111 1111\n")
+	run("-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "feat: export")
+	// no remote at all: tq has no range to scan and gives no opinion (the identity guard still applies)
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push -u origin main"))
+	if strings.Contains(errOut, "tq/push-pii") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+func TestTextPII_CommitMessageAndGhBody(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	gitRepo(t, ws)
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "fix: customer 529.982.247-25 could not log in"`))
+	if code != 2 || !strings.Contains(errOut, "tq/text-pii") || !strings.Contains(errOut, "(cpf)") || strings.Contains(errOut, "529") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	body := filepath.Join(ws, "body.md")
+	if err := os.WriteFile(body, []byte("Reported by ana.silva@example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `gh pr create --title "fix: login" --body-file body.md`))
+	if code != 2 || !strings.Contains(errOut, "tq/text-pii") || !strings.Contains(errOut, "body.md") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `gh pr create --title "fix: login" --body "no personal data here"`)); strings.Contains(errOut, "text-pii") {
+		t.Fatalf("clean body denied: code=%d %q", code, errOut)
 	}
 }
 
 func TestPiiFixtureDump_Denied(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
 	for _, cmd := range []string{
 		`psql "$DATABASE_URL" -c "\copy (select * from customers limit 100) to 'tests/fixtures/customers.csv' csv"`,
 		`pg_dump "$DATABASE_URL" -t public.customers --data-only -f seeds/customers.sql`,
-		`psql -c "select * from payments" > tests/payments.txt`,
+		`psql -c "select * from customers" > tests/customers.txt`,
 		`cp data/exports/q3.csv tests/fixtures/q3.csv`,
 	} {
 		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
@@ -1195,231 +1303,290 @@ func TestPiiFixtureDump_Denied(t *testing.T) {
 }
 
 func TestPiiFixtureDump_AllowedCases(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock)
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
 	for _, cmd := range []string{
-		`psql -c "select * from orders" > tests/orders.txt`,                 // unclassified table
-		`pg_dump "$DATABASE_URL" -t customers -f backups/customers.sql`,     // not a fixture dir (classified-read may still apply to a print; pg_dump is not a read verb)
-		`python scripts/make_fixtures.py --faker --out tests/fixtures/`,     // synthetic generator
+		`head -n 5 data/exports/q3.csv`,                                       // reading is allowed
+		`psql "$DATABASE_URL" -c "select * from customers limit 5"`,           // querying is allowed
+		`psql -c "select * from orders" > tests/orders.txt`,                   // unclassified table
+		`pg_dump "$DATABASE_URL" -t customers -f backups/customers.sql`,       // not a fixture dir
+		`python scripts/make_fixtures.py --faker --out tests/fixtures/`,       // synthetic generator
 	} {
 		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
-		if strings.Contains(errOut, "tq/pii-fixture-dump") {
+		if code != 0 || strings.Contains(errOut, "pii") {
 			t.Errorf("%s: wrongly denied (code=%d): %q", cmd, code, errOut)
 		}
 	}
+	plain := setupTrustedWorkspaceWithManifest(t, "beta", "")
+	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, plain, `cp data/exports/q3.csv tests/fixtures/q3.csv`)); code != 0 {
+		t.Fatal("workspace without a data block must not be affected by the fixture rule")
+	}
 }
 
-func TestDataRules_CanBeDisabledInManifest(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", dataBlock+"guard:\n  disable: [tq/classified-read]\n")
-	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "head data/exports/q3.csv"))
-	if code != 0 {
-		t.Fatal("disable by id must work for the code rule")
+func TestPIIRules_CanBeDisabledInManifest(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData+"guard:\n  disable: [tq/commit-pii]\n")
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "seed.sql", "insert into c values ('529.982.247-25');\n")
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: seed"`)); code != 0 {
+		t.Fatalf("disable by id must work: %q", errOut)
 	}
 }
 ```
 
+`testutilTempDir` is `testutil.TempDir`; import `github.com/tentaqles/tentaqles/internal/testutil` and call it directly. The tests commit with `core.hooksPath=/dev/null` so a user-level hook never runs; on Windows use `NUL`-equivalent by setting `core.hooksPath` to an empty temp dir instead.
+
 - [ ] **Step 2: Run to verify failure**
 
-Run: `go test ./internal/cmd/ -run 'TestClassifiedRead|TestPiiFixtureDump|TestDataRules' -v`
-Expected: FAIL (calls allowed, code 0).
+Run: `go test ./internal/redact/ ./internal/commitscan/ ./internal/cmd/ -run 'TestChecksummed|TestAdded|TestCommitPII|TestPushPII|TestTextPII|TestPiiFixtureDump|TestPIIRules' -v`
+Expected: compile errors (`Added`, `AllowMarker` undefined) and allowed calls where a deny is expected.
 
 - [ ] **Step 3: Implement**
 
-`internal/cmd/claudehook_data.go`:
+`internal/redact/redact.go`: add `"checksummed": {{"cpf", cpfRe, validCPF}, {"cnpj", cnpjRe, validCNPJ}, {"card", cardRe, luhn}, {"iban", ibanRe, validIBAN}}` to `byClass`, add `"checksummed"` to `Known`, `const AllowMarker = "tq:allow-pii"`, and in both `Redact` and `Count` process the text line by line, leaving a line that contains `AllowMarker` untouched.
+
+`internal/commitscan/commitscan.go`: add
+
+```go
+// AddedLine is one line a commit would add.
+type AddedLine struct {
+	File string
+	Line int
+	Text string
+}
+
+// Added returns every added line the command would commit, in the same scope
+// Scan uses (staged diff; plus the working tree and untracked files when the
+// command also runs git add or commit -a). Binary files are skipped.
+func Added(dir, command string, run Runner) []AddedLine
+```
+
+implemented by factoring the diff-gathering loop out of `Scan` into a shared helper that yields `(file, line, text)` for every `+` hunk line and every line of an in-scope untracked file; `Scan` then calls the helper and applies `secrets.ScanLine`. Keep the existing `Scan` tests green.
+
+`internal/cmd/claudehook_pii.go`:
 
 ```go
 package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/commitscan"
+	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/redact"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// Data-protection rules that need the manifest's data: block (spec §8.2,
-// §11.2, §11.3). They run after the regex rules, like tq/commit-secret.
+// Exit guards for personal data (spec §11.2, revised): reading and processing
+// personal data locally is allowed; recording it in git or publishing it in
+// PR and issue text is not. Values never appear in reasons.
 
-var (
-	// a print verb followed by something in the same shell segment
-	readVerbRe = regexp.MustCompile(`(?i)(^|[;&|\n(]\s*)(cat|type|more|less|head|tail|bat|nl|strings|xxd|od|grep|rg|findstr|gc|get-content|select-string|sls)\b`)
-	sqlClientRe = regexp.MustCompile(`(?i)\b(psql|sqlcmd|mysql|sqlite3|snowsql|snow\s+sql|bq\s+query|databricks\s+sql|supabase\s+db\s+(execute|query))\b`)
-	fromTableRe = regexp.MustCompile(`(?i)\b(from|join|into|table|update)\s+("?[a-z_][\w]*"?(\."?[a-z_][\w]*"?)?)`)
-	redactRunRe = regexp.MustCompile(`(?i)^\s*(\S*[/\\])?tq(\.exe)?\s+redact\s+run\b`)
-	fixtureDirRe = regexp.MustCompile(`(?i)(^|[\s'"=])\.?/?((tests?|fixtures|__fixtures__|seeds?|testdata)/)`)
-	writeTargetRe = regexp.MustCompile(`(?i)(>{1,2}\s*|\s(-o|-f|--out|--output|--file)[\s=]|\bto\s+'?)([^\s'";&|]+)`)
-	copyToRe = regexp.MustCompile(`(?i)\\?copy\b[^;]*\bto\s+'?([^\s'";]+)`)
-	pgDumpRe = regexp.MustCompile(`(?i)\bpg_dump\b`)
-)
+const maxPushScan = 4 << 20
+const maxTextFile = 256 << 10
 
-// shellSegments splits on ; & | and newlines (quote-unaware; the guard catches
-// honest mistakes, see docs/CLAUDE-HOOK.md Limits).
-func shellSegments(cmd string) []string {
-	return regexp.MustCompile(`[;&|\n]+`).Split(cmd, -1)
-}
-
-// pathWords returns slash-normalised words of a segment that look like paths.
-func pathWords(seg string) []string {
-	var out []string
-	for _, w := range strings.Fields(seg) {
-		w = strings.Trim(w, `"'`)
-		if strings.ContainsAny(w, `/\`) || strings.Contains(w, ".") {
-			out = append(out, strings.ReplaceAll(w, `\`, "/"))
+func piiClasses(ws *resolve.Workspace) []string {
+	out := []string{"checksummed"}
+	if ws == nil || ws.Manifest == nil || !ws.Manifest.Data.Enabled() {
+		return out
+	}
+	pii, fin := false, false
+	for _, c := range ws.Manifest.Data.Classes {
+		switch c {
+		case "pii", "sensitive", "children":
+			pii = true
+		case "financial":
+			fin = true
 		}
+	}
+	if pii {
+		out = append(out, "pii")
+	}
+	if fin {
+		out = append(out, "financial")
 	}
 	return out
 }
 
-func classesOf(data manifest.Data, seg string) (classes []string, what string) {
-	set := map[string]bool{}
-	for _, w := range pathWords(seg) {
-		for _, c := range data.Classified(w) {
-			set[c] = true
-			what = "path " + w
+// hits formats findings as "file:line (detector)" without values.
+func hits(lines []commitscan.AddedLine, classes []string) []string {
+	var out []string
+	for _, l := range lines {
+		for name := range redact.Count(l.Text, classes) {
+			out = append(out, fmt.Sprintf("%s:%d (%s)", l.File, l.Line, name))
 		}
 	}
-	tables := data.Tables()
-	for _, m := range fromTableRe.FindAllStringSubmatch(seg, -1) {
-		name := strings.ToLower(strings.ReplaceAll(m[2], `"`, ""))
-		if cs, ok := tables[name]; ok {
-			for _, c := range cs {
-				set[c] = true
-			}
-			what = "table " + name
-		}
+	sort.Strings(out)
+	if len(out) > 10 {
+		out = append(out[:10], fmt.Sprintf("… and %d more", len(out)-10))
 	}
-	for c := range set {
-		classes = append(classes, c)
-	}
-	sort.Strings(classes)
-	return classes, what
+	return out
 }
 
-func classifiedReadDecision(ws *resolve.Workspace, call policy.ToolCall) (policy.Decision, bool) {
-	if ws == nil || ws.Manifest == nil || !ws.Manifest.Data.Enabled() {
+func commitPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
+	if !call.IsShell() || !commitscan.PlanFor(call.Command).Commits {
 		return policy.Decision{}, false
 	}
-	data := ws.Manifest.Data
-	reason := func(classes []string, what string) policy.Decision {
-		return ruleDecision(policy.Deny, "tq/classified-read",
-			fmt.Sprintf("%s is classified %s: its values must not enter the transcript unmasked. Run the command through "+
-				"`tq redact run --classes %s -- <command>` (values are replaced by [REDACTED:kind]), or query aggregates instead of rows.",
-				what, strings.Join(classes, ","), strings.Join(classes, ",")))
-	}
-	switch {
-	case call.Tool == "Read" || call.Tool == "Grep" || call.Tool == "NotebookRead":
-		rel := relToRoot(ws, call.Path)
-		if cs := data.Classified(rel); cs != nil {
-			return reason(cs, "path "+rel), true
-		}
+	h := hits(commitscan.Added(cwd, call.Command, gitcfg.RunGitIn), piiClasses(ws))
+	if len(h) == 0 {
 		return policy.Decision{}, false
-	case call.IsShell():
-		if redactRunRe.MatchString(call.Command) && len(shellSegments(call.Command)) == 1 {
-			return policy.Decision{}, false // the safe alternative itself
-		}
-		for _, seg := range shellSegments(call.Command) {
-			if !readVerbRe.MatchString(seg) && !sqlClientRe.MatchString(seg) {
-				continue
-			}
-			if cs, what := classesOf(data, seg); cs != nil {
-				return reason(cs, what), true
-			}
-		}
 	}
-	return policy.Decision{}, false
+	return ruleDecision(action, "tq/commit-pii", "this commit would record personal or financial data: "+strings.Join(h, ", ")+
+		". Keep real values out of the repository (synthetic fixtures, environment variables, external storage); mark a known-synthetic line with `tq:allow-pii`"), true
 }
 
-func piiFixtureDumpDecision(ws *resolve.Workspace, call policy.ToolCall) (policy.Decision, bool) {
-	if ws == nil || ws.Manifest == nil || !ws.Manifest.Data.Enabled() || !call.IsShell() {
+var pushDiffLine = regexp.MustCompile(`^\+\+\+ |^\+`)
+
+func pushPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
+	if !call.IsShell() {
 		return policy.Decision{}, false
 	}
-	data := ws.Manifest.Data
-	cs, what := classesOf(data, call.Command)
-	if cs == nil {
+	isPush := false
+	for _, inv := range guard.GitInvocations(guard.StripHeredocs(call.Command)) {
+		if inv.Sub != "push" {
+			continue
+		}
+		skip := false
+		for _, a := range inv.Args {
+			if a == "--delete" || a == "-d" || a == "--dry-run" || a == "-n" {
+				skip = true
+			}
+		}
+		if !skip {
+			isPush = true
+		}
+	}
+	if !isPush {
 		return policy.Decision{}, false
 	}
-	var targets []string
-	for _, m := range writeTargetRe.FindAllStringSubmatch(call.Command, -1) {
-		targets = append(targets, m[3])
-	}
-	for _, m := range copyToRe.FindAllStringSubmatch(call.Command, -1) {
-		targets = append(targets, m[1])
-	}
-	if strings.HasPrefix(strings.TrimSpace(call.Command), "cp ") || strings.HasPrefix(strings.TrimSpace(call.Command), "copy ") {
-		f := strings.Fields(call.Command)
-		if len(f) >= 3 {
-			targets = append(targets, f[len(f)-1])
+	var diff string
+	for _, rng := range []string{"@{push}..HEAD", "@{upstream}..HEAD", "origin/HEAD..HEAD"} {
+		out, err := gitcfg.RunGitIn(cwd, "diff", "--no-color", "--no-ext-diff", "-U0", rng)
+		if err == nil {
+			diff = out
+			break
 		}
 	}
-	if pgDumpRe.MatchString(call.Command) {
-		for _, m := range regexp.MustCompile(`(?i)\s(-f|--file)[\s=]([^\s'"]+)`).FindAllStringSubmatch(call.Command, -1) {
-			targets = append(targets, m[2])
+	if diff == "" {
+		return policy.Decision{}, false // nothing to compare against: no opinion
+	}
+	if len(diff) > maxPushScan {
+		return ruleDecision(policy.Ask, "tq/push-pii", "the unpushed diff is too large to scan for personal data; push smaller batches or confirm"), true
+	}
+	var lines []commitscan.AddedLine
+	file := ""
+	for _, l := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(l, "+++ b/"):
+			file = strings.TrimPrefix(l, "+++ b/")
+		case strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++"):
+			lines = append(lines, commitscan.AddedLine{File: file, Text: l[1:]})
 		}
 	}
-	for _, tgt := range targets {
-		if fixtureDirRe.MatchString(" " + strings.ReplaceAll(tgt, `\`, "/")) {
-			return ruleDecision(policy.Deny, "tq/pii-fixture-dump",
-				fmt.Sprintf("this copies rows from %s (classified %s) into %s. Fixtures and seeds must be synthetic: generate them "+
-					"(Faker or a factory) or pseudonymise through a script that never writes real values. See docs/privacy.md.",
-					what, strings.Join(cs, ","), tgt)), true
-		}
+	h := hits(lines, piiClasses(ws))
+	if len(h) == 0 {
+		return policy.Decision{}, false
 	}
-	return policy.Decision{}, false
+	// line numbers are not tracked across hunks here; the file and detector are enough
+	for i := range h {
+		h[i] = strings.Replace(h[i], ":0 ", " ", 1)
+	}
+	return ruleDecision(action, "tq/push-pii", "the commits about to be pushed record personal or financial data: "+strings.Join(h, ", ")+
+		". Rewrite those commits locally (remove the values, amend or rebase) before pushing"), true
 }
 
-// relToRoot makes an absolute tool path repo-relative to the workspace root
-// when it lies inside it; other paths are returned slash-normalised.
-func relToRoot(ws *resolve.Workspace, p string) string {
-	n := policy.NormalizePath(p)
-	root := strings.TrimRight(policy.NormalizePath(ws.Root), "/") + "/"
-	if strings.HasPrefix(strings.ToLower(n), strings.ToLower(root)) {
-		return n[len(root):]
+var ghTextRe = regexp.MustCompile(`(?i)\bgh\s+(pr|issue|release)\s+(create|edit|comment|review|merge|close)\b`)
+var textFileFlag = regexp.MustCompile(`(?i)\s(--body-file|--notes-file|--file|-F)[\s=]+("([^"]+)"|'([^']+)'|(\S+))`)
+
+func textPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
+	if !call.IsShell() {
+		return policy.Decision{}, false
 	}
-	return n
+	relevant := ghTextRe.MatchString(call.Command)
+	for _, inv := range guard.GitInvocations(guard.StripHeredocs(call.Command)) {
+		if inv.Sub == "commit" || inv.Sub == "tag" || inv.Sub == "notes" {
+			relevant = true
+		}
+	}
+	if !relevant {
+		return policy.Decision{}, false
+	}
+	classes := piiClasses(ws)
+	var where []string
+	for name := range redact.Count(call.Command, classes) {
+		where = append(where, "command text ("+name+")")
+	}
+	for _, m := range textFileFlag.FindAllStringSubmatch(call.Command, -1) {
+		p := m[3] + m[4] + m[5]
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(cwd, p)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if len(raw) > maxTextFile {
+			raw = raw[:maxTextFile]
+		}
+		for name := range redact.Count(string(raw), classes) {
+			where = append(where, filepath.Base(p)+" ("+name+")")
+		}
+	}
+	if len(where) == 0 {
+		return policy.Decision{}, false
+	}
+	sort.Strings(where)
+	return ruleDecision(action, "tq/text-pii", "this text would publish personal or financial data: "+strings.Join(where, ", ")+
+		". Describe the case without the values (a ticket id, a role, a masked sample)"), true
 }
 ```
 
-Wire into `policyDecision` (after the commit-secret block):
+Keep `piiFixtureDumpDecision` as specified in the previous revision of this task (manifest `classesOf` over paths and tables, write targets under fixture directories), in the same file, with signature `piiFixtureDumpDecision(ws, call, action policy.Action) (policy.Decision, bool)`.
+
+Wire into `policyDecision` after the commit-secret block, each behind `!eff.Off(id)` and with `eff.ActionFor(id, policy.Deny)` passed as `action`:
 
 ```go
-	if !eff.Off("tq/classified-read") {
-		if cd, ok := classifiedReadDecision(ws, call); ok {
-			cd.Matched[0].Action = eff.ActionFor("tq/classified-read", policy.Deny)
-			cd.Action = cd.Matched[0].Action
-			d = policy.Merge(d, cd)
+	for _, r := range []struct {
+		id string
+		fn func(policy.Action) (policy.Decision, bool)
+	}{
+		{"tq/commit-pii", func(a policy.Action) (policy.Decision, bool) { return commitPIIDecision(ws, call, cwd, a) }},
+		{"tq/push-pii", func(a policy.Action) (policy.Decision, bool) { return pushPIIDecision(ws, call, cwd, a) }},
+		{"tq/text-pii", func(a policy.Action) (policy.Decision, bool) { return textPIIDecision(ws, call, cwd, a) }},
+		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, a) }},
+	} {
+		if eff.Off(r.id) {
+			continue
 		}
-	}
-	if !eff.Off("tq/pii-fixture-dump") {
-		if fd, ok := piiFixtureDumpDecision(ws, call); ok {
-			fd.Matched[0].Action = eff.ActionFor("tq/pii-fixture-dump", policy.Deny)
-			fd.Action = fd.Matched[0].Action
-			d = policy.Merge(d, fd)
+		if pd, ok := r.fn(eff.ActionFor(r.id, policy.Deny)); ok {
+			d = policy.Merge(d, pd)
 		}
 	}
 ```
 
-(Check how `ruleDecision` builds the decision: it takes the action as its first argument, so the cleaner form is to pass `eff.ActionFor(...)` into `ruleDecision` inside the two functions by giving them an `action policy.Action` parameter. Prefer that over mutating `Matched[0]`.)
-
-In `guardcfg.HookRules` add:
+`guardcfg.HookRules` entries:
 
 ```go
-	"tq/classified-read":  "printing a classified path or querying a classified table unmasked (use tq redact run)",
+	"tq/commit-pii":       "a git commit that would record personal or financial data",
+	"tq/push-pii":         "a git push whose commits record personal or financial data",
+	"tq/text-pii":         "a commit, tag or GitHub PR/issue/release text that carries personal or financial data",
 	"tq/pii-fixture-dump": "copying rows from classified data into tests/, fixtures/ or seeds/",
 ```
 
 - [ ] **Step 4: Run the tests**
 
-Run: `go test ./internal/cmd/ ./internal/guardcfg/ -v -run 'TestClassifiedRead|TestPiiFixtureDump|TestDataRules|TestGuard'`
-Expected: pass. Then `go test ./...`.
+Run: `go test ./internal/redact/ ./internal/commitscan/ ./internal/cmd/ ./internal/guardcfg/` then `go test ./...`
+Expected: pass. The `tq/commit-secret` tests in `claudehook_policy_test.go` stay green (same scan scope).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/cmd/claudehook_data.go internal/cmd/claudehook_data_test.go internal/cmd/claudehook_policy.go internal/guardcfg/guardcfg.go
-git commit -m "feat(guard): deny unmasked reads of classified data and PII dumps into fixtures (manifest data block)"
+git add internal/redact internal/commitscan internal/cmd/claudehook_pii.go internal/cmd/claudehook_pii_test.go internal/cmd/claudehook_policy.go internal/guardcfg/guardcfg.go
+git commit -m "feat(guard): deny personal data at the exits (commits, pushes, PR and issue text, fixtures)"
 ```
 
 ---
@@ -2103,7 +2270,7 @@ git commit -m "feat(doctor): warn when PII-looking columns exist without a manif
 
 - [ ] **Step 1: Update the rules table**
 
-Add rows: `tq/iac-apply` ask; `tq/remote-migration` ask (localhost/`--local` exempt); `tq/settings-widen`, `tq/settings-shell-write` deny; `tq/gha-branch-ref` deny (`@main`/`@master`), `tq/gha-unpinned` now ask on `@latest`/`@head` only. Extend the code-rules list with `tq/classified-read` (deny; manifest `data:` paths and tables; `tq redact run` is the alternative), `tq/pii-fixture-dump` (deny; synthetic fixtures), `tq/commit-message` (ask; Conventional Commits; `!` needs a body). Add a short `## Data classification (data: block)` section with the YAML example from spec §11.1 and the sentence "changing the manifest changes its trust hash: run `tq allow <ws>`".
+Add rows: `tq/iac-apply` ask; `tq/remote-migration` ask (localhost/`--local` exempt); `tq/settings-widen`, `tq/settings-shell-write` deny; `tq/gha-branch-ref` deny (`@main`/`@master`), `tq/gha-unpinned` now ask on `@latest`/`@head` only. Extend the code-rules list with `tq/commit-pii`, `tq/push-pii`, `tq/text-pii` (deny; personal and financial data at the exits; `tq:allow-pii` marks synthetic lines; checksum detectors always, e-mail and phone when the manifest declares `pii`), `tq/pii-fixture-dump` (deny; synthetic fixtures), `tq/commit-message` (ask; Conventional Commits; `!` needs a body). State plainly that reading and querying personal data locally is allowed. Add a short `## Data classification (data: block)` section with the YAML example from spec §11.1 and the sentence "changing the manifest changes its trust hash: run `tq allow <ws>`".
 
 - [ ] **Step 2: Verify**
 
@@ -2121,6 +2288,6 @@ git commit -m "docs(tq): data classification block, redact, and the new guard ru
 
 ## Self-review notes
 
-- Spec coverage: §11.1 (Task 1, 7), §11.2 masking (Tasks 2 to 4; mechanism deviation recorded in Global Constraints), §11.3 fixtures (Task 4), §8.2 rules (Tasks 4, 5; `tq/config-change` as settings rules, `tq/actions-unpinned` as `gha-branch-ref`), §9 triage questions (Task 6), `tq doctor` warning from §11.1 (Task 7).
+- Spec coverage: §11.1 (Task 1, 7), §11.2 exits (Tasks 2 to 4), §11.3 fixtures (Task 4), §8.2 rules (Tasks 4, 5; `tq/config-change` as settings rules, `tq/actions-unpinned` as `gha-branch-ref`), §9 triage questions (Task 6), `tq doctor` warning from §11.1 (Task 7).
 - Not in this plan: reviewer agents, templates, `classify-data`, `privacy-review`, `threat-model`, `supply-chain`, `llm-security-review` skills and the plugin-side DoD `privacy` check hookup: the plugin plan.
 - Type consistency: `manifest.Data`, `Data.Classified`, `Data.Tables`, `GlobMatch`, `redact.ParseClasses/Redact/Count/NewWriter`, `decide.ClassifiedFlag`, rule ids as listed; `ruleDecision(action, id, reason)` order as in the existing code.
