@@ -8,7 +8,7 @@ Open-source Claude Code plugin for multi-workspace orchestration. Published at `
 
 ```
 tentaqles/              Python package (identity, memory, embeddings, privacy, graph)
-  memory/store.py       MemoryStore — per-workspace SQLite (sessions, touches, decisions, pending)
+  memory/store.py       MemoryStore — per-workspace SQLite (sessions, touches, decisions, pending, semantic/procedural memories, atoms); FTS5 search
   manifest/loader.py    Walks up from cwd to find .tentaqles.yaml
   privacy.py            Secret redaction before any disk write
   embeddings/           fastembed wrapper + graphify integration
@@ -16,6 +16,7 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   tq_env.sh             Runtime bootstrap — resolves interpreter + PYTHONPATH
   tq_run.sh             Wrapper: sources tq_env.sh then exec's target script
   memory-bridge.py      Stdin JSON → MemoryStore dispatch (touch, decision, session_end, etc.)
+  knowledge-capture.py  PostToolUse: file touches, decision-pattern scan, and fix atoms (failed Bash command + the matching success that followed; classify_bash_result)
   bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib); installs in a detached --worker
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
@@ -56,6 +57,8 @@ tests/                  pytest suite
 - **Hooks never wait on the network or a model.** Anything slow (pip installs, session saving, `claude -p` fact extraction) goes to a detached worker via `_detach.spawn_detached`. Model calls go through `tentaqles.memory.llm` only, from detached/background code, and honour `TENTAQLES_SEMANTIC_FACTS=0`.
 
 - **Jev calls** (`tq decide ask`) follow the same rule: hooks only spawn `scripts/jev-memory-gate.py` detached; the gates are shadow-only (log via `tq decide log`, never change behaviour) and honour `TENTAQLES_JEV_MEMORY=0`.
+
+- **Hook payloads name the tool result `tool_response`** (a dict for Bash: stdout/stderr/interrupted). `tool_output` was never what Claude Code sends; accept it only as a fallback.
 
 - **Text a hook hands to the model must not use `$CLAUDE_PLUGIN_ROOT`**: it is expanded in hooks.json commands but not set in the Bash tool. Embed the absolute path resolved from `__file__` (forward slashes).
 

@@ -16,8 +16,23 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
   row count disagrees with the base tables, so rows written by other hook
   processes are found on the next search. Without FTS5 it falls back to word
   matching. `query-memory` and `decision-history` use it.
+- **Fix atoms.** A Bash command that fails is remembered (latest failure per
+  program, one hour); the next successful command running the same program
+  becomes a `fix` atom: "<error> -- fixed by: <command>". Atoms are indexed by
+  the search above, and the newest three appear at session start under
+  "Recent fixes". Error text is redacted and capped at 400 characters.
+- **Semantic facts carry the question that finds them.** The consolidator
+  asks the model for each fact plus the question a teammate would type to
+  find it (`fact || question`), stores it as `query_hint`, and search indexes
+  both.
 
 ### Fixed
+
+- **PostToolUse capture read the wrong field.** Claude Code hands hooks the
+  tool result as `tool_response`; `knowledge-capture.py` read `tool_output`,
+  so decision-pattern scanning over command output never fired on a real
+  session. It now reads `tool_response` (dict or string) and still accepts
+  `tool_output`.
 
 - **Skills find the plugin under a tq identity.** Every skill bash block
   looked for the plugin only in `~/.claude/plugins/cache`, but when tq

@@ -2,8 +2,10 @@
 """
 PostToolUse hook bridge (Bash|Edit|Write) — captures decisions and file touches.
 
-Reads JSON from stdin (cwd, tool_name, tool_input, tool_output), scans for
-decision patterns, and records file touches in the memory store.
+Reads JSON from stdin (cwd, tool_name, tool_input, tool_response -- the older
+flat tool_output string is still accepted), scans for decision patterns,
+records file touches, and turns a failed Bash command followed by a successful
+one with the same program into a fix atom.
 
 Always exits 0 — never blocks the workflow.
 """
@@ -58,6 +60,71 @@ def _has_decision_pattern(text: str) -> bool:
     return False
 
 
+# Lines that mark a shell result as failed when no exit code is available.
+ERROR_LINE_RE = re.compile(
+    r"^(?:Traceback \(most recent call last\)|[A-Za-z_.]*(?:Error|Exception)\b.*:|error\b|fatal:|FAIL\b|--- FAIL|"
+    r"panic:|.*command not found|.*No such file or directory|.*Permission denied|npm ERR!|ERROR\b)",
+    re.IGNORECASE,
+)
+EXIT_CODE_RE = re.compile(r"^Exit code (\d+)\s*$", re.MULTILINE)
+
+
+def _response_text(resp) -> str:
+    """Flatten a tool result (dict, list or string) to text for scanning."""
+    if resp is None:
+        return ""
+    if isinstance(resp, str):
+        return resp
+    if isinstance(resp, dict):
+        parts = []
+        for key in ("stdout", "stderr", "output", "content", "error"):
+            v = resp.get(key)
+            if isinstance(v, str) and v:
+                parts.append(v)
+            elif isinstance(v, (list, dict)):
+                parts.append(_response_text(v))
+        return "\n".join(parts)
+    if isinstance(resp, list):
+        return "\n".join(_response_text(x) for x in resp)
+    return str(resp)
+
+
+def _first_error_line(text: str) -> str:
+    for line in text.splitlines():
+        line = line.strip()
+        if line and ERROR_LINE_RE.match(line):
+            return line[:400]
+    return ""
+
+
+def classify_bash_result(resp) -> tuple[str, str]:
+    """("failure", excerpt) | ("success", "") | ("unknown", "") for a Bash result.
+
+    An exit code decides when present (a field, or the "Exit code N" line the
+    tool prints). Otherwise stderr/stdout lines that look like errors do. An
+    interrupted command is neither.
+    """
+    if isinstance(resp, dict):
+        if resp.get("interrupted"):
+            return "unknown", ""
+        for key in ("exit_code", "exitCode", "returncode", "code"):
+            v = resp.get(key)
+            if isinstance(v, int) and not isinstance(v, bool):
+                if v == 0:
+                    return "success", ""
+                return "failure", _first_error_line(_response_text(resp)) or f"exit code {v}"
+    text = _response_text(resp)
+    m = EXIT_CODE_RE.search(text)
+    if m:
+        code = int(m.group(1))
+        body = (text[:m.start()] + text[m.end():]).strip()
+        if code == 0:
+            return "success", ""
+        return "failure", _first_error_line(body) or f"exit code {code}"
+    line = _first_error_line(text)
+    return ("failure", line) if line else ("success", "")
+
+
 def _extract_file_paths(text: str) -> list[str]:
     """Extract plausible file paths from text."""
     matches = FILE_PATH_PATTERN.findall(text)
@@ -80,7 +147,8 @@ def main() -> None:
     cwd = payload.get("cwd", os.getcwd())
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input", {})
-    tool_output = payload.get("tool_output", "")
+    tool_response = payload.get("tool_response", payload.get("tool_output", ""))
+    tool_output = _response_text(tool_response)
 
     if isinstance(tool_input, str):
         try:
@@ -139,6 +207,15 @@ def main() -> None:
     if tool_name == "Bash":
         command = tool_input.get("command", "")
         combined_text = command + "\n" + tool_output
+        # Error -> fix atoms: remember a failure, pair the next matching success.
+        try:
+            verdict, excerpt = classify_bash_result(tool_response)
+            if verdict == "failure":
+                store.record_tool_failure(command, excerpt)
+            elif verdict == "success":
+                store.record_tool_success(command)
+        except Exception:
+            pass
     else:
         combined_text = tool_output
 

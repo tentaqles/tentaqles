@@ -141,7 +141,9 @@ class MemoryConsolidator:
         prompt_parts = [
             "You are a memory consolidation assistant. "
             "Extract concise, reusable facts or patterns from these session summaries. "
-            "Return one fact per line. "
+            "Return one fact per line, followed by ' || ' and the question a teammate "
+            "would type to find that fact (for example: "
+            "'Deploys go through a Vercel preview first || how do we deploy'). "
             "Each fact should be self-contained and useful for future sessions. "
             "Do not include session-specific details like exact filenames unless they are architectural.\n"
         ]
@@ -156,17 +158,22 @@ class MemoryConsolidator:
             return []
 
         # Parse response — one fact per non-empty line
-        facts = [line.strip("- •\t ") for line in response.splitlines() if line.strip()]
-        facts = [f for f in facts if len(f) > 10]  # ignore trivially short lines
+        facts: list[tuple[str, str | None]] = []
+        for line in response.splitlines():
+            fact, _, hint = line.strip("- •\t ").partition("||")
+            fact, hint = fact.strip(), hint.strip() or None
+            if len(fact) > 10:  # ignore trivially short lines
+                facts.append((fact, hint))
 
         new_ids: list[str] = []
         source_ids = [s[0] for s in summaries]
-        for fact in facts:
+        for fact, hint in facts:
             try:
                 fid = self._store.record_semantic_fact(
                     fact=fact,
                     source_sessions=source_ids,
                     category="general",
+                    query_hint=hint,
                 )
                 new_ids.append(fid)
             except Exception:

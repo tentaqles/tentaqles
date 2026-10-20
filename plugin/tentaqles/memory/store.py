@@ -12,7 +12,7 @@ import math
 import re
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -75,8 +75,43 @@ _FTS_SOURCES: list[tuple[str, str]] = [
     ("session", "SELECT id, started_at, summary FROM sessions WHERE ended_at IS NOT NULL AND summary IS NOT NULL AND summary != ''"),
     ("decision", "SELECT id, created_at, chosen || ': ' || rationale FROM decisions WHERE status='active'"),
     ("pending", "SELECT id, created_at, description FROM pending WHERE resolved_at IS NULL"),
-    ("semantic", "SELECT id, created_at, fact FROM semantic_memories"),
+    ("semantic", "SELECT id, created_at, fact || COALESCE(' ' || query_hint, '') FROM semantic_memories"),
+    ("fix", "SELECT id, created_at, text FROM atoms WHERE kind='fix'"),
 ]
+
+# A failure older than this is not what the next success fixed.
+_FIX_WINDOW_SECONDS = 60 * 60
+_ERROR_EXCERPT_CHARS = 400
+
+# Command words that only wrap the real executable.
+_WRAPPERS = {"cd", "sudo", "time", "exec", "env", "nohup", "command", "builtin", "nice"}
+_SEGMENT_RE = re.compile(r"&&|\|\||;|\||\n")
+_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _executables(command: str) -> set[str]:
+    """The program names a shell command line runs, one per pipeline segment.
+
+    ``cd plugin && FOO=1 python -m pytest | tee log`` -> {"python", "tee"}.
+    Env assignments and wrappers such as cd/sudo/time are skipped; paths are
+    reduced to their basename so ``./tq.exe`` and ``tq`` compare equal.
+    """
+    out: set[str] = set()
+    for seg in _SEGMENT_RE.split(command or ""):
+        for tok in seg.strip().split():
+            tok = tok.strip("()\"'")
+            if not tok or _ASSIGN_RE.match(tok):
+                continue
+            if tok in _WRAPPERS:
+                if tok == "cd":
+                    break  # the rest of this segment is a directory
+                continue
+            name = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if name.endswith(".exe"):
+                name = name[:-4]
+            out.add(name)
+            break
+    return out
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
@@ -160,12 +195,38 @@ CREATE TABLE IF NOT EXISTS procedural_memories (
     tags             TEXT DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_procedural_strength ON procedural_memories(strength DESC);
+
+-- Atoms: the smallest reusable unit of institutional memory. kind='fix' pairs
+-- an error with the command that made it go away.
+CREATE TABLE IF NOT EXISTS atoms (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT REFERENCES sessions(id),
+    created_at  TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    command     TEXT,
+    error       TEXT,
+    tags        TEXT DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_atoms_kind ON atoms(kind, created_at);
+
+-- Shell commands that failed and have not been followed by a fix yet. Short
+-- lived: consumed by the fix, or pruned after an hour.
+CREATE TABLE IF NOT EXISTS tool_failures (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT REFERENCES sessions(id),
+    created_at  TEXT NOT NULL,
+    executable  TEXT NOT NULL,
+    command     TEXT NOT NULL,
+    error       TEXT NOT NULL
+);
 """
 
 _MIGRATIONS: list[str] = [
     "ALTER TABLE sessions ADD COLUMN memory_tier TEXT DEFAULT 'working'",
     "ALTER TABLE decisions ADD COLUMN contradiction_score REAL DEFAULT NULL",
     "UPDATE sessions SET memory_tier = 'episodic' WHERE ended_at IS NOT NULL AND memory_tier = 'working'",
+    "ALTER TABLE semantic_memories ADD COLUMN query_hint TEXT",
 ]
 
 
@@ -628,6 +689,13 @@ class MemoryStore:
             for p in pending[:5]:
                 lines.append(f"- [{p['priority']}] {p['description']}")
 
+        # Recent fixes (error -> command that resolved it)
+        fixes = self.get_recent_fixes(limit=3)
+        if fixes:
+            lines.append("\n## Recent fixes")
+            for f in fixes:
+                lines.append(f"- {f['error'][:120]} -> {f['command'][:100]}")
+
         # Recent decisions
         decisions = self.get_recent_decisions(days=30)
         if decisions:
@@ -834,14 +902,14 @@ class MemoryStore:
         """Return semantic memories ordered by decayed strength."""
         if category is not None:
             rows = self._conn.execute(
-                "SELECT id, created_at, fact, category, strength, recall_count, last_recalled, tags, source_sessions "
+                "SELECT id, created_at, fact, category, strength, recall_count, last_recalled, tags, source_sessions, query_hint "
                 "FROM semantic_memories WHERE category = ? "
                 "ORDER BY strength DESC, created_at DESC LIMIT ?",
                 (category, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT id, created_at, fact, category, strength, recall_count, last_recalled, tags, source_sessions "
+                "SELECT id, created_at, fact, category, strength, recall_count, last_recalled, tags, source_sessions, query_hint "
                 "FROM semantic_memories ORDER BY strength DESC, created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
@@ -856,9 +924,74 @@ class MemoryStore:
                 "last_recalled": r[6],
                 "tags": json.loads(r[7] or "[]"),
                 "source_sessions": json.loads(r[8] or "[]"),
+                "query_hint": r[9],
             }
             for r in rows
         ]
+
+    # --- Atoms ---
+
+    def record_tool_failure(self, command: str, error: str) -> None:
+        """Remember a failed shell command so the next success can explain it.
+
+        Only the latest failure per executable is kept, and anything older
+        than the fix window is dropped on the way in.
+        """
+        exes = _executables(command)
+        if not exes:
+            return
+        excerpt = _redact((error or "").strip())[:_ERROR_EXCERPT_CHARS]
+        if not excerpt:
+            return
+        sid = self._resolve_session_id()
+        now = _now()
+        self._prune_failures()
+        for exe in exes:
+            self._conn.execute("DELETE FROM tool_failures WHERE executable=?", (exe,))
+            self._conn.execute(
+                "INSERT INTO tool_failures (session_id, created_at, executable, command, error) VALUES (?, ?, ?, ?, ?)",
+                (sid, now, exe, _redact(command)[:_ERROR_EXCERPT_CHARS], excerpt),
+            )
+        self._conn.commit()
+
+    def record_tool_success(self, command: str) -> str | None:
+        """Pair a successful command with an open failure of the same program.
+
+        Returns the new fix atom's id, or None when nothing was waiting.
+        """
+        exes = _executables(command)
+        if not exes:
+            return None
+        self._prune_failures()
+        marks = ",".join("?" * len(exes))
+        row = self._conn.execute(
+            f"SELECT id, executable, error FROM tool_failures WHERE executable IN ({marks}) ORDER BY created_at DESC, id DESC LIMIT 1",
+            tuple(exes),
+        ).fetchone()
+        if row is None:
+            self._conn.commit()
+            return None
+        _, exe, error = row
+        safe_command = _redact(command)
+        aid = _uid()
+        self._conn.execute(
+            "INSERT INTO atoms (id, session_id, created_at, kind, text, command, error) VALUES (?, ?, ?, 'fix', ?, ?, ?)",
+            (aid, self._resolve_session_id(), _now(), f"{exe}: {error} -- fixed by: {safe_command}", safe_command, error),
+        )
+        self._conn.execute(f"DELETE FROM tool_failures WHERE executable IN ({marks})", tuple(exes))
+        self._conn.commit()
+        return aid
+
+    def _prune_failures(self) -> None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_FIX_WINDOW_SECONDS)).isoformat()
+        self._conn.execute("DELETE FROM tool_failures WHERE created_at < ?", (cutoff,))
+
+    def get_recent_fixes(self, limit: int = 5) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, created_at, error, command, text FROM atoms WHERE kind='fix' ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [{"id": r[0], "created_at": r[1], "error": r[2], "command": r[3], "text": r[4]} for r in rows]
 
     def get_procedural_patterns(self, limit: int = 5) -> list[dict]:
         """Return procedural memories ordered by strength."""
@@ -889,14 +1022,20 @@ class MemoryStore:
         category: str = "general",
         tags: list[str] | None = None,
         embedding: bytes | None = None,
+        query_hint: str | None = None,
     ) -> str:
-        """Insert a new semantic memory fact and return its id."""
+        """Insert a new semantic memory fact and return its id.
+
+        ``query_hint`` is the question someone would type to find this fact;
+        search indexes it next to the fact text.
+        """
         fid = uuid.uuid4().hex
         self._conn.execute(
             "INSERT INTO semantic_memories "
-            "(id, created_at, fact, category, strength, recall_count, source_sessions, tags, embedding) "
-            "VALUES (?, ?, ?, ?, 1.0, 0, ?, ?, ?)",
-            (fid, _now(), fact, category, json.dumps(source_sessions), json.dumps(tags or []), embedding),
+            "(id, created_at, fact, category, strength, recall_count, source_sessions, tags, embedding, query_hint) "
+            "VALUES (?, ?, ?, ?, 1.0, 0, ?, ?, ?, ?)",
+            (fid, _now(), fact, category, json.dumps(source_sessions), json.dumps(tags or []), embedding,
+             _redact(query_hint) if query_hint else None),
         )
         self._conn.commit()
         return fid
