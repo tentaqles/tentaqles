@@ -21,6 +21,22 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
   becomes a `fix` atom: "<error> -- fixed by: <command>". Atoms are indexed by
   the search above, and the newest three appear at session start under
   "Recent fixes". Error text is redacted and capped at 400 characters.
+- **Obsidian mirror.** Each workspace's memory is written as Markdown notes
+  under `<vault_dir>/<client>/`: `context.md` (client, stack, providers, hot
+  files, last session), `decisions.md` (active decisions, confirmed),
+  `plan.md` (open items as tasks, proposed), `fixes.md`, and one note per
+  ended session under `sessions/` (written once, never rewritten). Every note
+  has frontmatter (`type`, `client`, `status`, `updated`) for Obsidian Bases.
+  The SessionEnd worker exports after saving; `/tentaqles:export-vault`
+  refreshes on demand. Configure `vault_dir` in `~/.tentaqles/knowledge.yaml`
+  (shared), `<plugin data>/knowledge.yaml` (per identity), a `knowledge:`
+  section in `.tentaqles.yaml`, or `TENTAQLES_VAULT_DIR`; off until set.
+- **Markdown folders as a connector.** `ingest: {<client>: [<folders>]}` in
+  `knowledge.yaml` (or `knowledge.ingest_dirs` in the manifest) indexes every
+  `*.md` under those folders into that client's memory search as `reference`
+  items, keyed by path and mtime so unchanged files cost one stat. The note's
+  own `published`/`ingested_date` is its date for recency weighting. Runs in
+  the SessionEnd worker and in the skill.
 - **Semantic facts carry the question that finds them.** The consolidator
   asks the model for each fact plus the question a teammate would type to
   find it (`fact || question`), stores it as `query_hint`, and search indexes

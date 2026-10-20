@@ -227,6 +227,7 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:dashboard` | Launch the real-time dashboard at localhost:8765 |
 | `/tentaqles:setup-demo` | Create mock client workspaces to explore the plugin safely |
 | `/tentaqles:compact-memory` | Manually trigger 4-tier memory consolidation and decay eviction |
+| `/tentaqles:export-vault` | Write memory as Obsidian notes (context, decisions, plan, fixes, sessions) and ingest configured Markdown folders |
 | `/tentaqles:decision-history` | Surface the supersession chain for a topic; show contradiction scores |
 | `/tentaqles:rollback` | List snapshots, preview one, and restore it interactively |
 

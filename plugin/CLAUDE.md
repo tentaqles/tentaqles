@@ -8,7 +8,10 @@ Open-source Claude Code plugin for multi-workspace orchestration. Published at `
 
 ```
 tentaqles/              Python package (identity, memory, embeddings, privacy, graph)
-  memory/store.py       MemoryStore — per-workspace SQLite (sessions, touches, decisions, pending, semantic/procedural memories, atoms); FTS5 search
+  memory/store.py       MemoryStore — per-workspace SQLite (sessions, touches, decisions, pending, semantic/procedural memories, atoms, reference_docs); FTS5 search
+  memory/vault_export.py Obsidian mirror: <vault>/<client>/{context,decisions,plan,fixes}.md + sessions/ (frontmatter for Bases)
+  memory/ingest.py      Markdown folders -> reference_docs (path+mtime watermark; note's own date)
+  knowledge.py          KnowledgeConfig: manifest knowledge: > <plugin data>/knowledge.yaml > ~/.tentaqles/knowledge.yaml > TENTAQLES_VAULT_DIR
   manifest/loader.py    Walks up from cwd to find .tentaqles.yaml
   privacy.py            Secret redaction before any disk write
   embeddings/           fastembed wrapper + graphify integration
@@ -16,12 +19,13 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   tq_env.sh             Runtime bootstrap — resolves interpreter + PYTHONPATH
   tq_run.sh             Wrapper: sources tq_env.sh then exec's target script
   memory-bridge.py      Stdin JSON → MemoryStore dispatch (touch, decision, session_end, etc.)
+  vault-export.py       On-demand export + ingest (the export-vault skill); SessionEnd's worker does the same automatically
   knowledge-capture.py  PostToolUse: file touches, decision-pattern scan, and fix atoms (failed Bash command + the matching success that followed; classify_bash_result)
   bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib); installs in a detached --worker
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
   jev-memory-gate.py    Detached worker for the shadow Jev memory gates (tentaqles/memory/jev_gate.py)
-skills/                 31 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
+skills/                 32 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
 agents/                 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer)
 tentaqles/workflow/     stdlib-only: build gate (gate.py), overnight loop (loop.py, loopguard.py)
 hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)

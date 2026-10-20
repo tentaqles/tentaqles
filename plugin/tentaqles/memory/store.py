@@ -77,7 +77,19 @@ _FTS_SOURCES: list[tuple[str, str]] = [
     ("pending", "SELECT id, created_at, description FROM pending WHERE resolved_at IS NULL"),
     ("semantic", "SELECT id, created_at, fact || COALESCE(' ' || query_hint, '') FROM semantic_memories"),
     ("fix", "SELECT id, created_at, text FROM atoms WHERE kind='fix'"),
+    ("reference", "SELECT id, created_at, title || char(10) || text FROM reference_docs"),
 ]
+
+# Search results carry a snippet for long reference documents, not the body.
+_SNIPPET_CHARS = 300
+
+
+def _snippet(kind: str, text: str) -> str:
+    if kind != "reference":
+        return text
+    title, _, body = text.partition("\n")
+    body = " ".join(body.split())
+    return (title + ": " + body)[:_SNIPPET_CHARS] if body else title[:_SNIPPET_CHARS]
 
 # A failure older than this is not what the next success fixed.
 _FIX_WINDOW_SECONDS = 60 * 60
@@ -212,6 +224,20 @@ CREATE INDEX IF NOT EXISTS idx_atoms_kind ON atoms(kind, created_at);
 
 -- Shell commands that failed and have not been followed by a fix yet. Short
 -- lived: consumed by the fix, or pruned after an hour.
+-- Reference documents ingested from Markdown folders (an Obsidian vault, a
+-- Clippings dir). path+mtime is the watermark; created_at is the note's own
+-- date so recency weighting ranks by when the source appeared.
+CREATE TABLE IF NOT EXISTS reference_docs (
+    id          TEXT PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    ingested_at TEXT NOT NULL,
+    path        TEXT NOT NULL UNIQUE,
+    mtime       REAL NOT NULL,
+    title       TEXT NOT NULL,
+    url         TEXT,
+    text        TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tool_failures (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id  TEXT REFERENCES sessions(id),
@@ -641,14 +667,14 @@ class MemoryStore:
             ).fetchall()
             for kind, rid, created, text, rank in rows:
                 # bm25() is negative, more negative = better
-                results.append({"type": kind, "id": rid, "text": text, "date": created, "score": -rank * self._recency(created)})
+                results.append({"type": kind, "id": rid, "text": _snippet(kind, text), "date": created, "score": -rank * self._recency(created)})
         else:
             lowered = [w.lower() for w in words]
             for kind, rid, created, text in self._fts_rows():
                 hay = text.lower()
                 hits = sum(1 for w in lowered if w in hay)
                 if hits:
-                    results.append({"type": kind, "id": rid, "text": text, "date": created, "score": float(hits) * self._recency(created)})
+                    results.append({"type": kind, "id": rid, "text": _snippet(kind, text), "date": created, "score": float(hits) * self._recency(created)})
         results.sort(key=lambda r: r["score"], reverse=True)
         return results[:limit]
 
@@ -992,6 +1018,50 @@ class MemoryStore:
             (limit,),
         ).fetchall()
         return [{"id": r[0], "created_at": r[1], "error": r[2], "command": r[3], "text": r[4]} for r in rows]
+
+    # --- Reference documents ---
+
+    def reference_mtime(self, path: str) -> float | None:
+        row = self._conn.execute("SELECT mtime FROM reference_docs WHERE path=?", (path,)).fetchone()
+        return float(row[0]) if row else None
+
+    def upsert_reference(self, path: str, mtime: float, title: str, url: str | None, created_at: str, text: str) -> str:
+        """Insert or refresh one ingested document; returns its id."""
+        safe_title = _redact(title) or path
+        safe_text = _redact(text) or ""
+        row = self._conn.execute("SELECT id FROM reference_docs WHERE path=?", (path,)).fetchone()
+        rid = row[0] if row else _uid()
+        self._conn.execute(
+            "INSERT INTO reference_docs (id, created_at, ingested_at, path, mtime, title, url, text) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(path) DO UPDATE SET created_at=excluded.created_at, ingested_at=excluded.ingested_at, "
+            "mtime=excluded.mtime, title=excluded.title, url=excluded.url, text=excluded.text",
+            (rid, created_at, _now(), path, float(mtime), safe_title, url, safe_text),
+        )
+        self._conn.commit()
+        return rid
+
+    # --- Sessions (read) ---
+
+    def list_sessions(self, limit: int = 500) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, started_at, ended_at, duration_s, summary, tags FROM sessions "
+            "WHERE ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            {"id": r[0], "started_at": r[1], "ended_at": r[2], "duration_s": r[3], "summary": r[4],
+             "tags": json.loads(r[5] or "[]")}
+            for r in rows
+        ]
+
+    def session_files(self, session_id: str, limit: int = 10) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT node_id, action, COUNT(*) AS c FROM touches WHERE session_id=? "
+            "GROUP BY node_id, action ORDER BY c DESC, node_id LIMIT ?",
+            (session_id, limit),
+        ).fetchall()
+        return [{"node_id": r[0], "action": r[1], "count": r[2]} for r in rows]
 
     def get_procedural_patterns(self, limit: int = 5) -> list[dict]:
         """Return procedural memories ordered by strength."""
