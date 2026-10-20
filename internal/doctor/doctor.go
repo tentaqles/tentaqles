@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/bundle"
 	"github.com/tentaqles/tentaqles/internal/detect"
@@ -91,6 +92,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		if !trusted {
 			add("warn", "untrusted", w.Name, "manifest not trusted", "tq allow "+w.Name)
 		}
+		memoryStale(w.Name, w.Root, time.Now(), add)
 		if trusted && w.Manifest.Claude.Bundle != nil {
 			if cat == nil {
 				c, err := bundle.LoadCatalog()
@@ -259,6 +261,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		names = append(names, w.Name)
 	}
 	pluginSkew(names, add)
+	pluginForeignPath(names, add)
 	if len(fs) == 0 {
 		add("ok", "ok", "", "all checks passed", "")
 	}

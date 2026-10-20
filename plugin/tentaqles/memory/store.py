@@ -8,6 +8,8 @@ Activity scores use exponential decay (30-day half-life).
 from __future__ import annotations
 
 import json
+import math
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -34,6 +36,49 @@ def _redact(text):
         return redacted
     except Exception:
         return text
+
+_FTS_PROBED: bool | None = None
+
+
+def _has_fts5() -> bool:
+    """Whether this interpreter's SQLite ships the FTS5 extension.
+
+    Python.org builds and most distro builds do; some embedded or very old
+    ones do not. Probed once per process on an in-memory database.
+    """
+    global _FTS_PROBED
+    if _FTS_PROBED is None:
+        probe = sqlite3.connect(":memory:")
+        try:
+            probe.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+            _FTS_PROBED = True
+        except sqlite3.OperationalError:
+            _FTS_PROBED = False
+        finally:
+            probe.close()
+    return _FTS_PROBED
+
+
+# Full-text index over everything search_memory covers. It is a derived table:
+# rebuilt from the base tables whenever its row count disagrees with theirs
+# (see _sync_fts), so no write path and no trigger has to know about it, and
+# rows written by another process (every hook is its own process) show up on
+# the next search.
+_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+    kind UNINDEXED, ref_id UNINDEXED, created_at UNINDEXED, text
+);
+"""
+
+# What search_memory covers, as (kind, SQL yielding id, created_at, text).
+_FTS_SOURCES: list[tuple[str, str]] = [
+    ("session", "SELECT id, started_at, summary FROM sessions WHERE ended_at IS NOT NULL AND summary IS NOT NULL AND summary != ''"),
+    ("decision", "SELECT id, created_at, chosen || ': ' || rationale FROM decisions WHERE status='active'"),
+    ("pending", "SELECT id, created_at, description FROM pending WHERE resolved_at IS NULL"),
+    ("semantic", "SELECT id, created_at, fact FROM semantic_memories"),
+]
+
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -147,6 +192,10 @@ class MemoryStore:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         apply_migrations(self._conn, _MIGRATIONS)
+        self._fts = _has_fts5()
+        if self._fts:
+            self._conn.executescript(_FTS_SCHEMA)
+            self._conn.commit()
         # Embedding service — lazy loaded
         self._emb = None
 
@@ -470,37 +519,75 @@ class MemoryStore:
             for r in rows
         ]
 
-    def search_memory(self, query: str, limit: int = 5) -> list[dict]:
-        """Semantic search over session summaries and decisions."""
-        emb = self._get_emb()
+    # --- Search ---
+
+    def _fts_rows(self) -> list[tuple[str, str, str, str]]:
+        rows: list[tuple[str, str, str, str]] = []
+        for kind, sql in _FTS_SOURCES:
+            for rid, created, text in self._conn.execute(sql).fetchall():
+                rows.append((kind, rid, created or "", text or ""))
+        return rows
+
+    def _sync_fts(self) -> None:
+        """Rebuild memory_fts when it disagrees with the base tables.
+
+        Four COUNTs and, when needed, one bulk insert: cheap next to a model
+        turn, and it needs no knowledge of who wrote the rows.
+        """
+        want = 0
+        for _, sql in _FTS_SOURCES:
+            want += self._conn.execute(f"SELECT COUNT(*) FROM ({sql})").fetchone()[0]
+        have = self._conn.execute("SELECT COUNT(*) FROM memory_fts").fetchone()[0]
+        if have == want:
+            return
+        self._conn.execute("DELETE FROM memory_fts")
+        self._conn.executemany(
+            "INSERT INTO memory_fts (kind, ref_id, created_at, text) VALUES (?, ?, ?, ?)",
+            self._fts_rows(),
+        )
+        self._conn.commit()
+
+    def _recency(self, created_at: str) -> float:
+        """0.5..1.0: a small boost for recent rows, never a veto on old ones."""
         try:
-            query_vec = emb.embed([query])[0]
-        except Exception:
-            return []  # embedding backend unavailable — no semantic results
-        query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-10)
+            created = datetime.fromisoformat(created_at)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age_days = max(0.0, (datetime.now(timezone.utc) - created).total_seconds() / 86400.0)
+        except (TypeError, ValueError):
+            age_days = 365.0
+        return 0.5 + 0.5 * math.exp(-age_days / self._half_life)
 
-        results = []
+    def search_memory(self, query: str, limit: int = 5) -> list[dict]:
+        """Full-text search over sessions, decisions, pending items and facts.
 
-        # Search sessions
-        rows = self._conn.execute(
-            "SELECT id, summary, embedding, started_at FROM sessions WHERE embedding IS NOT NULL"
-        ).fetchall()
-        for sid, summary, blob, started in rows:
-            vec = self._vec_from_blob(blob)
-            vec_norm = vec / (np.linalg.norm(vec) + 1e-10)
-            score = float(query_norm @ vec_norm)
-            results.append({"type": "session", "id": sid, "text": summary, "date": started, "score": score})
-
-        # Search decisions
-        rows = self._conn.execute(
-            "SELECT id, chosen, rationale, embedding, created_at FROM decisions WHERE embedding IS NOT NULL AND status='active'"
-        ).fetchall()
-        for did, chosen, rationale, blob, created in rows:
-            vec = self._vec_from_blob(blob)
-            vec_norm = vec / (np.linalg.norm(vec) + 1e-10)
-            score = float(query_norm @ vec_norm)
-            results.append({"type": "decision", "id": did, "text": f"{chosen}: {rationale}", "date": created, "score": score})
-
+        BM25 (SQLite FTS5) scores the text; the score is then multiplied by a
+        recency factor so that of two equal matches the newer wins. Falls
+        back to case-insensitive word matching when FTS5 is unavailable.
+        Embeddings are not required.
+        """
+        words = _WORD_RE.findall(query or "")
+        if not words:
+            return []
+        results: list[dict] = []
+        if self._fts:
+            self._sync_fts()
+            match = " OR ".join('"' + w.replace('"', '') + '"' for w in words)
+            rows = self._conn.execute(
+                "SELECT kind, ref_id, created_at, text, bm25(memory_fts) FROM memory_fts "
+                "WHERE memory_fts MATCH ? ORDER BY bm25(memory_fts) LIMIT ?",
+                (match, max(limit * 4, 20)),
+            ).fetchall()
+            for kind, rid, created, text, rank in rows:
+                # bm25() is negative, more negative = better
+                results.append({"type": kind, "id": rid, "text": text, "date": created, "score": -rank * self._recency(created)})
+        else:
+            lowered = [w.lower() for w in words]
+            for kind, rid, created, text in self._fts_rows():
+                hay = text.lower()
+                hits = sum(1 for w in lowered if w in hay)
+                if hits:
+                    results.append({"type": kind, "id": rid, "text": text, "date": created, "score": float(hits) * self._recency(created)})
         results.sort(key=lambda r: r["score"], reverse=True)
         return results[:limit]
 

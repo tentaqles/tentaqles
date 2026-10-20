@@ -84,4 +84,6 @@ are kept; delete those by hand once you have checked them.
 | `settings-drift` | an identity's settings.json differs from what `tq settings render` would write |
 | `unpinned-package` | settings.json or .claude.json runs `npx`/`uvx`/`bunx` with `@latest` or no version |
 | `plugin-version-skew` | the same plugin is installed at different versions in different identities |
+| `plugin-foreign-path` | an identity's `installed_plugins.json` points at another identity's plugin cache or at `~/.claude` (a config dir copied from a sibling); hooks then run another identity's files. Reinstall the plugin inside the identity |
+| `memory-stale` | a workspace's `.claude/memory.db` was last written more than 48 h before its newest Claude transcript: the plugin hooks are not capturing |
 | `python-store-alias` | `python3` is the Microsoft Store alias (slower hook start); set `TENTAQLES_PY` |

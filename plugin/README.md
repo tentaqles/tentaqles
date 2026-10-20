@@ -68,7 +68,7 @@ pip install fastembed               # optional — enables semantic search
 ```
 
 Without `fastembed` everything still works: memory writes succeed and the
-`embedding` column is stored as NULL, so only semantic search is unavailable.
+`embedding` column is stored as NULL; memory search still works (SQLite full-text search with recency weighting), only knowledge-graph similarity search is unavailable.
 
 **Optional extras:**
 - `pip install tentaqles[embeddings]` — semantic search (adds fastembed)
@@ -220,7 +220,7 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:babysit-pr` | Loop a PR to green: watch checks, fix failures from logs, answer review threads; never `--admin` |
 | `/tentaqles:n8n-triage` | Diagnose a failing n8n workflow read-only, fix a draft copy, promote only with confirmation |
 | `/tentaqles:build-graph` | Build the knowledge graph for the current workspace + embed nodes |
-| `/tentaqles:query-memory` | Semantic search over memory and knowledge graphs |
+| `/tentaqles:query-memory` | Full-text, recency-weighted search over memory, plus knowledge graphs |
 | `/tentaqles:file-history` | Show everything Tentaqles has recorded about a specific file |
 | `/tentaqles:explore` | Run `tq decide explore` to find the few file:line ranges that answer a question, then read only those |
 | `/tentaqles:guard` | See which tq guard rules are on, switch them off or on, or change ask/deny, for one workspace or all (you confirm each change) |

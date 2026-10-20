@@ -2,6 +2,34 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.11.1] — 2026-10-20
+
+### Added
+
+- **Memory search works without fastembed and prefers recent rows.**
+  `MemoryStore.search_memory` now uses SQLite FTS5 (BM25) over ended
+  sessions, active decisions, open pending items and semantic facts, with the
+  score multiplied by a recency factor (30-day half-life, never below half)
+  so the newer of two equal matches wins. Before, search was embeddings-only:
+  it returned nothing when fastembed was missing, covered only sessions and
+  decisions, and ignored age. The index is a derived table rebuilt when its
+  row count disagrees with the base tables, so rows written by other hook
+  processes are found on the next search. Without FTS5 it falls back to word
+  matching. `query-memory` and `decision-history` use it.
+
+### Fixed
+
+- **Skills find the plugin under a tq identity.** Every skill bash block
+  looked for the plugin only in `~/.claude/plugins/cache`, but when tq
+  manages the session the cache lives in the identity's own config dir
+  (`$CLAUDE_CONFIG_DIR/plugins/cache`). The search found nothing, sourcing
+  `tq_env.sh` failed silently and the Python that followed died with
+  `ModuleNotFoundError: No module named 'tentaqles'` (seen in
+  `/tentaqles:session-wrap` and other skills). All 27 blocks and the
+  `tq_env.sh` fallback now search `$CLAUDE_CONFIG_DIR` first, then
+  `~/.claude`; `tests/test_skill_bootstrap_snippet.py` runs the snippet under
+  bash and pins the shape of every block.
+
 ## [0.11.0] — 2026-10-09
 
 ### Added

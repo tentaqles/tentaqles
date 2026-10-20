@@ -2,7 +2,7 @@
 
 ## What this is
 
-Open-source Claude Code plugin for multi-workspace orchestration. Published at `github.com/tentaqles/tentaqles-plugin`. Installed users get it at `~/.claude/plugins/cache/tentaqles/tentaqles/<version>/`.
+Open-source Claude Code plugin for multi-workspace orchestration. Published at `github.com/tentaqles/tentaqles-plugin`. Installed users get it at `<config dir>/plugins/cache/tentaqles/tentaqles/<version>/`, where the config dir is `~/.claude` by default and `$CLAUDE_CONFIG_DIR` (one per identity, under `~/.tentaqles/identities/<id>/claude`) when tq manages the session.
 
 ## Architecture
 
@@ -41,9 +41,9 @@ tests/                  pytest suite
 
 - **Skill bash blocks**: every block that calls Python starts with:
   ```bash
-  _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache/tentaqles/tentaqles"/*/; do [ -f "${_d}plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+  _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
   ```
-  Then uses `"$TENTAQLES_PY"` instead of `python`.
+  Then uses `"$TENTAQLES_PY"` instead of `python`. `CLAUDE_PLUGIN_ROOT` is never set inside the Bash tool, so the search is what actually runs; it must look in `$CLAUDE_CONFIG_DIR` first (pinned by `tests/test_skill_bootstrap_snippet.py`).
 
 - **Python scripts** under `scripts/`: start with `from _path import setup_paths; setup_paths()`. Never inline `sys.path.insert` hacks.
 
@@ -84,8 +84,9 @@ echo '{"cwd": ".", "event": "touch", "data": {"node_id": "test.py", "action": "e
 ## Dependencies
 
 Required (`[project].dependencies`): `pyyaml`, `pathspec`, `numpy`
-Optional: `fastembed` — lives in the `embeddings` extra, but `bootstrap.py` installs it anyway so semantic search works out of the box.
-Semantic search degrades gracefully (writes still succeed, `embedding` stored as NULL) when `fastembed` is missing. That degradation is pinned by `tests/test_embeddings_optional.py`, and CI never installs `fastembed` — so it stays genuinely optional rather than optional-in-theory.
+Optional: `fastembed` — lives in the `embeddings` extra, but `bootstrap.py` installs it anyway so graph search works out of the box.
+`MemoryStore.search_memory` is SQLite FTS5 (BM25) with a recency boost over sessions, decisions, pending and semantic facts; it needs no embeddings (`_has_fts5()` falls back to word matching on a SQLite without FTS5; pinned by `tests/test_search_memory.py`). The `memory_fts` table is derived: `_sync_fts()` rebuilds it when its row count disagrees with the base tables, so write paths never touch it.
+Embedding writes degrade gracefully (writes still succeed, `embedding` stored as NULL) when `fastembed` is missing. That degradation is pinned by `tests/test_embeddings_optional.py`, and CI never installs `fastembed` — so it stays genuinely optional rather than optional-in-theory.
 Optional: `graphifyy` (graph engine), `tree-sitter` (native graph), `docling` (PDF/PPTX parsing)
 
 ## Git
