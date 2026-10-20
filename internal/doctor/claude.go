@@ -150,3 +150,76 @@ func pythonStoreAlias(lookPath func(string) (string, error), goos string, add fu
 		}
 	}
 }
+
+// pluginForeignPath reports plugins whose install record points outside the
+// identity's own Claude config dir: into another identity's plugin cache
+// (typically a config dir that was copied from a sibling identity) or into
+// the default ~/.claude. Hooks and skills then run another identity's files,
+// and updating or removing the plugin there silently breaks this identity
+// (seen as SessionStart hooks failing on a path under a different identity).
+// One finding per identity and source keeps the report readable.
+func pluginForeignPath(names []string, add func(level, code, ws, msg, fix string)) {
+	root := strings.TrimRight(normPath(paths.IdentitiesRoot()), "/")
+	for _, n := range names {
+		dir := paths.IdentityDir(n, "claude")
+		raw, err := os.ReadFile(filepath.Join(dir, "plugins", "installed_plugins.json"))
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Plugins map[string][]struct {
+				Version     string `json:"version"`
+				InstallPath string `json:"installPath"`
+			} `json:"plugins"`
+		}
+		if json.Unmarshal(raw, &doc) != nil {
+			continue
+		}
+		own := strings.TrimRight(normPath(dir), "/")
+		var keys []string
+		for p := range doc.Plugins {
+			keys = append(keys, p)
+		}
+		sort.Strings(keys)
+		// source ("" = outside every identity, e.g. ~/.claude) -> plugins
+		groups := map[string][]string{}
+		for _, p := range keys {
+			for _, in := range doc.Plugins[p] {
+				if in.InstallPath == "" {
+					continue
+				}
+				ip := normPath(in.InstallPath)
+				if strings.HasPrefix(ip, own+"/") {
+					continue
+				}
+				src := ""
+				if strings.HasPrefix(ip, root+"/") {
+					if other := strings.SplitN(strings.TrimPrefix(ip, root+"/"), "/", 2)[0]; other != "" && other != n {
+						src = other
+					}
+				}
+				groups[src] = append(groups[src], p+" "+in.Version)
+			}
+		}
+		var srcs []string
+		for src := range groups {
+			if src != "" {
+				srcs = append(srcs, src)
+			}
+		}
+		sort.Strings(srcs)
+		if _, ok := groups[""]; ok {
+			srcs = append(srcs, "")
+		}
+		for _, src := range srcs {
+			where := "outside this identity's config dir (e.g. ~/.claude)"
+			if src != "" {
+				where = "the " + src + " identity's plugin cache"
+			}
+			list := groups[src]
+			add("warn", "plugin-foreign-path", n,
+				fmt.Sprintf("%d plugin(s) installed from %s: %s", len(list), where, strings.Join(list, ", ")),
+				"reinstall each inside the identity: tq run "+n+" -- claude plugin uninstall <plugin>, then tq run "+n+" -- claude plugin install <plugin>")
+		}
+	}
+}

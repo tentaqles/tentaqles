@@ -2,6 +2,69 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [0.11.1] — 2026-10-20
+
+### Added
+
+- **Memory search works without fastembed and prefers recent rows.**
+  `MemoryStore.search_memory` now uses SQLite FTS5 (BM25) over ended
+  sessions, active decisions, open pending items and semantic facts, with the
+  score multiplied by a recency factor (30-day half-life, never below half)
+  so the newer of two equal matches wins. Before, search was embeddings-only:
+  it returned nothing when fastembed was missing, covered only sessions and
+  decisions, and ignored age. The index is a derived table rebuilt when its
+  row count disagrees with the base tables, so rows written by other hook
+  processes are found on the next search. Without FTS5 it falls back to word
+  matching. `query-memory` and `decision-history` use it.
+- **Fix atoms.** A Bash command that fails is remembered (latest failure per
+  program, one hour); the next successful command running the same program
+  becomes a `fix` atom: "<error> -- fixed by: <command>". Atoms are indexed by
+  the search above, and the newest three appear at session start under
+  "Recent fixes". Error text is redacted and capped at 400 characters.
+- **Obsidian mirror.** Each workspace's memory is written as Markdown notes
+  under `<vault_dir>/<client>/`: `context.md` (client, stack, providers, hot
+  files, last session), `decisions.md` (active decisions, confirmed),
+  `plan.md` (open items as tasks, proposed), `fixes.md`, and one note per
+  ended session under `sessions/` (written once, never rewritten). Every note
+  has frontmatter (`type`, `client`, `status`, `updated`) for Obsidian Bases.
+  The SessionEnd worker exports after saving; `/tentaqles:export-vault`
+  refreshes on demand. Configure `vault_dir` in `~/.tentaqles/knowledge.yaml`
+  (shared), `<plugin data>/knowledge.yaml` (per identity), a `knowledge:`
+  section in `.tentaqles.yaml`, or `TENTAQLES_VAULT_DIR`; off until set.
+  A manifest's paths are confined (its `vault_dir` must lie inside the
+  user-configured vault, its `ingest_dirs` inside the workspace), since the
+  manifest travels with the repository; the ingest never follows symlinks out
+  of a folder.
+- **Markdown folders as a connector.** `ingest: {<client>: [<folders>]}` in
+  `knowledge.yaml` (or `knowledge.ingest_dirs` in the manifest) indexes every
+  `*.md` under those folders into that client's memory search as `reference`
+  items, keyed by path and mtime so unchanged files cost one stat. The note's
+  own `published`/`ingested_date` is its date for recency weighting. Runs in
+  the SessionEnd worker and in the skill.
+- **Semantic facts carry the question that finds them.** The consolidator
+  asks the model for each fact plus the question a teammate would type to
+  find it (`fact || question`), stores it as `query_hint`, and search indexes
+  both.
+
+### Fixed
+
+- **PostToolUse capture read the wrong field.** Claude Code hands hooks the
+  tool result as `tool_response`; `knowledge-capture.py` read `tool_output`,
+  so decision-pattern scanning over command output never fired on a real
+  session. It now reads `tool_response` (dict or string) and still accepts
+  `tool_output`.
+
+- **Skills find the plugin under a tq identity.** Every skill bash block
+  looked for the plugin only in `~/.claude/plugins/cache`, but when tq
+  manages the session the cache lives in the identity's own config dir
+  (`$CLAUDE_CONFIG_DIR/plugins/cache`). The search found nothing, sourcing
+  `tq_env.sh` failed silently and the Python that followed died with
+  `ModuleNotFoundError: No module named 'tentaqles'` (seen in
+  `/tentaqles:session-wrap` and other skills). All 27 blocks and the
+  `tq_env.sh` fallback now search `$CLAUDE_CONFIG_DIR` first, then
+  `~/.claude`; `tests/test_skill_bootstrap_snippet.py` runs the snippet under
+  bash and pins the shape of every block.
+
 ## [0.11.0] — 2026-10-09
 
 ### Added

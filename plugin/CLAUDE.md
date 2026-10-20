@@ -2,13 +2,16 @@
 
 ## What this is
 
-Open-source Claude Code plugin for multi-workspace orchestration. Published at `github.com/tentaqles/tentaqles-plugin`. Installed users get it at `~/.claude/plugins/cache/tentaqles/tentaqles/<version>/`.
+Open-source Claude Code plugin for multi-workspace orchestration. Published at `github.com/tentaqles/tentaqles-plugin`. Installed users get it at `<config dir>/plugins/cache/tentaqles/tentaqles/<version>/`, where the config dir is `~/.claude` by default and `$CLAUDE_CONFIG_DIR` (one per identity, under `~/.tentaqles/identities/<id>/claude`) when tq manages the session.
 
 ## Architecture
 
 ```
 tentaqles/              Python package (identity, memory, embeddings, privacy, graph)
-  memory/store.py       MemoryStore — per-workspace SQLite (sessions, touches, decisions, pending)
+  memory/store.py       MemoryStore — per-workspace SQLite (sessions, touches, decisions, pending, semantic/procedural memories, atoms, reference_docs); FTS5 search
+  memory/vault_export.py Obsidian mirror: <vault>/<client>/{context,decisions,plan,fixes}.md + sessions/ (frontmatter for Bases)
+  memory/ingest.py      Markdown folders -> reference_docs (path+mtime watermark; note's own date)
+  knowledge.py          KnowledgeConfig: manifest knowledge: > <plugin data>/knowledge.yaml > ~/.tentaqles/knowledge.yaml > TENTAQLES_VAULT_DIR
   manifest/loader.py    Walks up from cwd to find .tentaqles.yaml
   privacy.py            Secret redaction before any disk write
   embeddings/           fastembed wrapper + graphify integration
@@ -16,11 +19,13 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   tq_env.sh             Runtime bootstrap — resolves interpreter + PYTHONPATH
   tq_run.sh             Wrapper: sources tq_env.sh then exec's target script
   memory-bridge.py      Stdin JSON → MemoryStore dispatch (touch, decision, session_end, etc.)
+  vault-export.py       On-demand export + ingest (the export-vault skill); SessionEnd's worker does the same automatically
+  knowledge-capture.py  PostToolUse: file touches, decision-pattern scan, and fix atoms (failed Bash command + the matching success that followed; classify_bash_result)
   bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib); installs in a detached --worker
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
   jev-memory-gate.py    Detached worker for the shadow Jev memory gates (tentaqles/memory/jev_gate.py)
-skills/                 31 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
+skills/                 32 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
 agents/                 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer)
 tentaqles/workflow/     stdlib-only: build gate (gate.py), overnight loop (loop.py, loopguard.py)
 hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)
@@ -41,9 +46,9 @@ tests/                  pytest suite
 
 - **Skill bash blocks**: every block that calls Python starts with:
   ```bash
-  _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "$HOME/.claude/plugins/cache/tentaqles/tentaqles"/*/; do [ -f "${_d}plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+  _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
   ```
-  Then uses `"$TENTAQLES_PY"` instead of `python`.
+  Then uses `"$TENTAQLES_PY"` instead of `python`. `CLAUDE_PLUGIN_ROOT` is never set inside the Bash tool, so the search is what actually runs; it must look in `$CLAUDE_CONFIG_DIR` first (pinned by `tests/test_skill_bootstrap_snippet.py`).
 
 - **Python scripts** under `scripts/`: start with `from _path import setup_paths; setup_paths()`. Never inline `sys.path.insert` hacks.
 
@@ -56,6 +61,8 @@ tests/                  pytest suite
 - **Hooks never wait on the network or a model.** Anything slow (pip installs, session saving, `claude -p` fact extraction) goes to a detached worker via `_detach.spawn_detached`. Model calls go through `tentaqles.memory.llm` only, from detached/background code, and honour `TENTAQLES_SEMANTIC_FACTS=0`.
 
 - **Jev calls** (`tq decide ask`) follow the same rule: hooks only spawn `scripts/jev-memory-gate.py` detached; the gates are shadow-only (log via `tq decide log`, never change behaviour) and honour `TENTAQLES_JEV_MEMORY=0`.
+
+- **Hook payloads name the tool result `tool_response`** (a dict for Bash: stdout/stderr/interrupted). `tool_output` was never what Claude Code sends; accept it only as a fallback.
 
 - **Text a hook hands to the model must not use `$CLAUDE_PLUGIN_ROOT`**: it is expanded in hooks.json commands but not set in the Bash tool. Embed the absolute path resolved from `__file__` (forward slashes).
 
@@ -84,8 +91,9 @@ echo '{"cwd": ".", "event": "touch", "data": {"node_id": "test.py", "action": "e
 ## Dependencies
 
 Required (`[project].dependencies`): `pyyaml`, `pathspec`, `numpy`
-Optional: `fastembed` — lives in the `embeddings` extra, but `bootstrap.py` installs it anyway so semantic search works out of the box.
-Semantic search degrades gracefully (writes still succeed, `embedding` stored as NULL) when `fastembed` is missing. That degradation is pinned by `tests/test_embeddings_optional.py`, and CI never installs `fastembed` — so it stays genuinely optional rather than optional-in-theory.
+Optional: `fastembed` — lives in the `embeddings` extra, but `bootstrap.py` installs it anyway so graph search works out of the box.
+`MemoryStore.search_memory` is SQLite FTS5 (BM25) with a recency boost over sessions, decisions, pending and semantic facts; it needs no embeddings (`_has_fts5()` falls back to word matching on a SQLite without FTS5; pinned by `tests/test_search_memory.py`). The `memory_fts` table is derived: `_sync_fts()` rebuilds it when its row count disagrees with the base tables, so write paths never touch it.
+Embedding writes degrade gracefully (writes still succeed, `embedding` stored as NULL) when `fastembed` is missing. That degradation is pinned by `tests/test_embeddings_optional.py`, and CI never installs `fastembed` — so it stays genuinely optional rather than optional-in-theory.
 Optional: `graphifyy` (graph engine), `tree-sitter` (native graph), `docling` (PDF/PPTX parsing)
 
 ## Git

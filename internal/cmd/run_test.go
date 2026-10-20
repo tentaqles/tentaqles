@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -26,7 +27,27 @@ func isolateHome(t *testing.T) string {
 	} else {
 		t.Setenv("HOME", home)
 	}
+	// The test binary may itself run inside a tq-managed shell (a Claude Code
+	// session, `tq run`), which carries the state of the last switch in
+	// __TQ_STATE. `tq env` would then "restore" that shell's variables and
+	// emit unsets for a neutral cwd, so start every test from a clean slate.
+	unsetenv(t, envplan.StateVar)
 	return home
+}
+
+// unsetenv removes k from the process environment for the duration of the
+// test (t.Setenv can only set, and an empty value is still "present" to
+// os.LookupEnv).
+func unsetenv(t *testing.T, k string) {
+	t.Helper()
+	v, ok := os.LookupEnv(k)
+	if !ok {
+		return
+	}
+	if err := os.Unsetenv(k); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Setenv(k, v) })
 }
 
 // mkUntrusted registers a base and writes a workspace manifest by hand, without

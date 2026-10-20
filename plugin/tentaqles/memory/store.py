@@ -8,9 +8,11 @@ Activity scores use exponential decay (30-day half-life).
 from __future__ import annotations
 
 import json
+import math
+import re
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -34,6 +36,96 @@ def _redact(text):
         return redacted
     except Exception:
         return text
+
+_FTS_PROBED: bool | None = None
+
+
+def _has_fts5() -> bool:
+    """Whether this interpreter's SQLite ships the FTS5 extension.
+
+    Python.org builds and most distro builds do; some embedded or very old
+    ones do not. Probed once per process on an in-memory database.
+    """
+    global _FTS_PROBED
+    if _FTS_PROBED is None:
+        probe = sqlite3.connect(":memory:")
+        try:
+            probe.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+            _FTS_PROBED = True
+        except sqlite3.OperationalError:
+            _FTS_PROBED = False
+        finally:
+            probe.close()
+    return _FTS_PROBED
+
+
+# Full-text index over everything search_memory covers. It is a derived table:
+# rebuilt from the base tables whenever its row count disagrees with theirs
+# (see _sync_fts), so no write path and no trigger has to know about it, and
+# rows written by another process (every hook is its own process) show up on
+# the next search.
+_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+    kind UNINDEXED, ref_id UNINDEXED, created_at UNINDEXED, text
+);
+"""
+
+# What search_memory covers, as (kind, SQL yielding id, created_at, text).
+_FTS_SOURCES: list[tuple[str, str]] = [
+    ("session", "SELECT id, started_at, summary FROM sessions WHERE ended_at IS NOT NULL AND summary IS NOT NULL AND summary != ''"),
+    ("decision", "SELECT id, created_at, chosen || ': ' || rationale FROM decisions WHERE status='active'"),
+    ("pending", "SELECT id, created_at, description FROM pending WHERE resolved_at IS NULL"),
+    ("semantic", "SELECT id, created_at, fact || COALESCE(' ' || query_hint, '') FROM semantic_memories"),
+    ("fix", "SELECT id, created_at, text FROM atoms WHERE kind='fix'"),
+    ("reference", "SELECT id, created_at, title || char(10) || text FROM reference_docs"),
+]
+
+# Search results carry a snippet for long reference documents, not the body.
+_SNIPPET_CHARS = 300
+
+
+def _snippet(kind: str, text: str) -> str:
+    if kind != "reference":
+        return text
+    title, _, body = text.partition("\n")
+    body = " ".join(body.split())
+    return (title + ": " + body)[:_SNIPPET_CHARS] if body else title[:_SNIPPET_CHARS]
+
+# A failure older than this is not what the next success fixed.
+_FIX_WINDOW_SECONDS = 60 * 60
+_ERROR_EXCERPT_CHARS = 400
+
+# Command words that only wrap the real executable.
+_WRAPPERS = {"cd", "sudo", "time", "exec", "env", "nohup", "command", "builtin", "nice"}
+_SEGMENT_RE = re.compile(r"&&|\|\||;|\||\n")
+_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _executables(command: str) -> set[str]:
+    """The program names a shell command line runs, one per pipeline segment.
+
+    ``cd plugin && FOO=1 python -m pytest | tee log`` -> {"python", "tee"}.
+    Env assignments and wrappers such as cd/sudo/time are skipped; paths are
+    reduced to their basename so ``./tq.exe`` and ``tq`` compare equal.
+    """
+    out: set[str] = set()
+    for seg in _SEGMENT_RE.split(command or ""):
+        for tok in seg.strip().split():
+            tok = tok.strip("()\"'")
+            if not tok or _ASSIGN_RE.match(tok):
+                continue
+            if tok in _WRAPPERS:
+                if tok == "cd":
+                    break  # the rest of this segment is a directory
+                continue
+            name = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if name.endswith(".exe"):
+                name = name[:-4]
+            out.add(name)
+            break
+    return out
+
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -115,12 +207,52 @@ CREATE TABLE IF NOT EXISTS procedural_memories (
     tags             TEXT DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_procedural_strength ON procedural_memories(strength DESC);
+
+-- Atoms: the smallest reusable unit of institutional memory. kind='fix' pairs
+-- an error with the command that made it go away.
+CREATE TABLE IF NOT EXISTS atoms (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT REFERENCES sessions(id),
+    created_at  TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    command     TEXT,
+    error       TEXT,
+    tags        TEXT DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_atoms_kind ON atoms(kind, created_at);
+
+-- Shell commands that failed and have not been followed by a fix yet. Short
+-- lived: consumed by the fix, or pruned after an hour.
+-- Reference documents ingested from Markdown folders (an Obsidian vault, a
+-- Clippings dir). path+mtime is the watermark; created_at is the note's own
+-- date so recency weighting ranks by when the source appeared.
+CREATE TABLE IF NOT EXISTS reference_docs (
+    id          TEXT PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    ingested_at TEXT NOT NULL,
+    path        TEXT NOT NULL UNIQUE,
+    mtime       REAL NOT NULL,
+    title       TEXT NOT NULL,
+    url         TEXT,
+    text        TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_failures (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT REFERENCES sessions(id),
+    created_at  TEXT NOT NULL,
+    executable  TEXT NOT NULL,
+    command     TEXT NOT NULL,
+    error       TEXT NOT NULL
+);
 """
 
 _MIGRATIONS: list[str] = [
     "ALTER TABLE sessions ADD COLUMN memory_tier TEXT DEFAULT 'working'",
     "ALTER TABLE decisions ADD COLUMN contradiction_score REAL DEFAULT NULL",
     "UPDATE sessions SET memory_tier = 'episodic' WHERE ended_at IS NOT NULL AND memory_tier = 'working'",
+    "ALTER TABLE semantic_memories ADD COLUMN query_hint TEXT",
 ]
 
 
@@ -147,6 +279,10 @@ class MemoryStore:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         apply_migrations(self._conn, _MIGRATIONS)
+        self._fts = _has_fts5()
+        if self._fts:
+            self._conn.executescript(_FTS_SCHEMA)
+            self._conn.commit()
         # Embedding service — lazy loaded
         self._emb = None
 
@@ -470,37 +606,75 @@ class MemoryStore:
             for r in rows
         ]
 
-    def search_memory(self, query: str, limit: int = 5) -> list[dict]:
-        """Semantic search over session summaries and decisions."""
-        emb = self._get_emb()
+    # --- Search ---
+
+    def _fts_rows(self) -> list[tuple[str, str, str, str]]:
+        rows: list[tuple[str, str, str, str]] = []
+        for kind, sql in _FTS_SOURCES:
+            for rid, created, text in self._conn.execute(sql).fetchall():
+                rows.append((kind, rid, created or "", text or ""))
+        return rows
+
+    def _sync_fts(self) -> None:
+        """Rebuild memory_fts when it disagrees with the base tables.
+
+        Four COUNTs and, when needed, one bulk insert: cheap next to a model
+        turn, and it needs no knowledge of who wrote the rows.
+        """
+        want = 0
+        for _, sql in _FTS_SOURCES:
+            want += self._conn.execute(f"SELECT COUNT(*) FROM ({sql})").fetchone()[0]
+        have = self._conn.execute("SELECT COUNT(*) FROM memory_fts").fetchone()[0]
+        if have == want:
+            return
+        self._conn.execute("DELETE FROM memory_fts")
+        self._conn.executemany(
+            "INSERT INTO memory_fts (kind, ref_id, created_at, text) VALUES (?, ?, ?, ?)",
+            self._fts_rows(),
+        )
+        self._conn.commit()
+
+    def _recency(self, created_at: str) -> float:
+        """0.5..1.0: a small boost for recent rows, never a veto on old ones."""
         try:
-            query_vec = emb.embed([query])[0]
-        except Exception:
-            return []  # embedding backend unavailable — no semantic results
-        query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-10)
+            created = datetime.fromisoformat(created_at)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age_days = max(0.0, (datetime.now(timezone.utc) - created).total_seconds() / 86400.0)
+        except (TypeError, ValueError):
+            age_days = 365.0
+        return 0.5 + 0.5 * math.exp(-age_days / self._half_life)
 
-        results = []
+    def search_memory(self, query: str, limit: int = 5) -> list[dict]:
+        """Full-text search over sessions, decisions, pending items and facts.
 
-        # Search sessions
-        rows = self._conn.execute(
-            "SELECT id, summary, embedding, started_at FROM sessions WHERE embedding IS NOT NULL"
-        ).fetchall()
-        for sid, summary, blob, started in rows:
-            vec = self._vec_from_blob(blob)
-            vec_norm = vec / (np.linalg.norm(vec) + 1e-10)
-            score = float(query_norm @ vec_norm)
-            results.append({"type": "session", "id": sid, "text": summary, "date": started, "score": score})
-
-        # Search decisions
-        rows = self._conn.execute(
-            "SELECT id, chosen, rationale, embedding, created_at FROM decisions WHERE embedding IS NOT NULL AND status='active'"
-        ).fetchall()
-        for did, chosen, rationale, blob, created in rows:
-            vec = self._vec_from_blob(blob)
-            vec_norm = vec / (np.linalg.norm(vec) + 1e-10)
-            score = float(query_norm @ vec_norm)
-            results.append({"type": "decision", "id": did, "text": f"{chosen}: {rationale}", "date": created, "score": score})
-
+        BM25 (SQLite FTS5) scores the text; the score is then multiplied by a
+        recency factor so that of two equal matches the newer wins. Falls
+        back to case-insensitive word matching when FTS5 is unavailable.
+        Embeddings are not required.
+        """
+        words = _WORD_RE.findall(query or "")
+        if not words:
+            return []
+        results: list[dict] = []
+        if self._fts:
+            self._sync_fts()
+            match = " OR ".join('"' + w.replace('"', '') + '"' for w in words)
+            rows = self._conn.execute(
+                "SELECT kind, ref_id, created_at, text, bm25(memory_fts) FROM memory_fts "
+                "WHERE memory_fts MATCH ? ORDER BY bm25(memory_fts) LIMIT ?",
+                (match, max(limit * 4, 20)),
+            ).fetchall()
+            for kind, rid, created, text, rank in rows:
+                # bm25() is negative, more negative = better
+                results.append({"type": kind, "id": rid, "text": _snippet(kind, text), "date": created, "score": -rank * self._recency(created)})
+        else:
+            lowered = [w.lower() for w in words]
+            for kind, rid, created, text in self._fts_rows():
+                hay = text.lower()
+                hits = sum(1 for w in lowered if w in hay)
+                if hits:
+                    results.append({"type": kind, "id": rid, "text": _snippet(kind, text), "date": created, "score": float(hits) * self._recency(created)})
         results.sort(key=lambda r: r["score"], reverse=True)
         return results[:limit]
 
@@ -540,6 +714,13 @@ class MemoryStore:
             lines.append(f"\n## Open items ({len(pending)})")
             for p in pending[:5]:
                 lines.append(f"- [{p['priority']}] {p['description']}")
+
+        # Recent fixes (error -> command that resolved it)
+        fixes = self.get_recent_fixes(limit=3)
+        if fixes:
+            lines.append("\n## Recent fixes")
+            for f in fixes:
+                lines.append(f"- {f['error'][:120]} -> {f['command'][:100]}")
 
         # Recent decisions
         decisions = self.get_recent_decisions(days=30)
@@ -747,14 +928,14 @@ class MemoryStore:
         """Return semantic memories ordered by decayed strength."""
         if category is not None:
             rows = self._conn.execute(
-                "SELECT id, created_at, fact, category, strength, recall_count, last_recalled, tags, source_sessions "
+                "SELECT id, created_at, fact, category, strength, recall_count, last_recalled, tags, source_sessions, query_hint "
                 "FROM semantic_memories WHERE category = ? "
                 "ORDER BY strength DESC, created_at DESC LIMIT ?",
                 (category, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT id, created_at, fact, category, strength, recall_count, last_recalled, tags, source_sessions "
+                "SELECT id, created_at, fact, category, strength, recall_count, last_recalled, tags, source_sessions, query_hint "
                 "FROM semantic_memories ORDER BY strength DESC, created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
@@ -769,9 +950,118 @@ class MemoryStore:
                 "last_recalled": r[6],
                 "tags": json.loads(r[7] or "[]"),
                 "source_sessions": json.loads(r[8] or "[]"),
+                "query_hint": r[9],
             }
             for r in rows
         ]
+
+    # --- Atoms ---
+
+    def record_tool_failure(self, command: str, error: str) -> None:
+        """Remember a failed shell command so the next success can explain it.
+
+        Only the latest failure per executable is kept, and anything older
+        than the fix window is dropped on the way in.
+        """
+        exes = _executables(command)
+        if not exes:
+            return
+        excerpt = _redact((error or "").strip())[:_ERROR_EXCERPT_CHARS]
+        if not excerpt:
+            return
+        sid = self._resolve_session_id()
+        now = _now()
+        self._prune_failures()
+        for exe in exes:
+            self._conn.execute("DELETE FROM tool_failures WHERE executable=?", (exe,))
+            self._conn.execute(
+                "INSERT INTO tool_failures (session_id, created_at, executable, command, error) VALUES (?, ?, ?, ?, ?)",
+                (sid, now, exe, _redact(command)[:_ERROR_EXCERPT_CHARS], excerpt),
+            )
+        self._conn.commit()
+
+    def record_tool_success(self, command: str) -> str | None:
+        """Pair a successful command with an open failure of the same program.
+
+        Returns the new fix atom's id, or None when nothing was waiting.
+        """
+        exes = _executables(command)
+        if not exes:
+            return None
+        self._prune_failures()
+        marks = ",".join("?" * len(exes))
+        row = self._conn.execute(
+            f"SELECT id, executable, error FROM tool_failures WHERE executable IN ({marks}) ORDER BY created_at DESC, id DESC LIMIT 1",
+            tuple(exes),
+        ).fetchone()
+        if row is None:
+            self._conn.commit()
+            return None
+        _, exe, error = row
+        safe_command = _redact(command)
+        aid = _uid()
+        self._conn.execute(
+            "INSERT INTO atoms (id, session_id, created_at, kind, text, command, error) VALUES (?, ?, ?, 'fix', ?, ?, ?)",
+            (aid, self._resolve_session_id(), _now(), f"{exe}: {error} -- fixed by: {safe_command}", safe_command, error),
+        )
+        self._conn.execute(f"DELETE FROM tool_failures WHERE executable IN ({marks})", tuple(exes))
+        self._conn.commit()
+        return aid
+
+    def _prune_failures(self) -> None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_FIX_WINDOW_SECONDS)).isoformat()
+        self._conn.execute("DELETE FROM tool_failures WHERE created_at < ?", (cutoff,))
+
+    def get_recent_fixes(self, limit: int = 5) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, created_at, error, command, text FROM atoms WHERE kind='fix' ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [{"id": r[0], "created_at": r[1], "error": r[2], "command": r[3], "text": r[4]} for r in rows]
+
+    # --- Reference documents ---
+
+    def reference_mtime(self, path: str) -> float | None:
+        row = self._conn.execute("SELECT mtime FROM reference_docs WHERE path=?", (path,)).fetchone()
+        return float(row[0]) if row else None
+
+    def upsert_reference(self, path: str, mtime: float, title: str, url: str | None, created_at: str, text: str) -> str:
+        """Insert or refresh one ingested document; returns its id."""
+        safe_title = _redact(title) or path
+        safe_text = _redact(text) or ""
+        row = self._conn.execute("SELECT id FROM reference_docs WHERE path=?", (path,)).fetchone()
+        rid = row[0] if row else _uid()
+        self._conn.execute(
+            "INSERT INTO reference_docs (id, created_at, ingested_at, path, mtime, title, url, text) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(path) DO UPDATE SET created_at=excluded.created_at, ingested_at=excluded.ingested_at, "
+            "mtime=excluded.mtime, title=excluded.title, url=excluded.url, text=excluded.text",
+            (rid, created_at, _now(), path, float(mtime), safe_title, url, safe_text),
+        )
+        self._conn.commit()
+        return rid
+
+    # --- Sessions (read) ---
+
+    def list_sessions(self, limit: int = 500) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, started_at, ended_at, duration_s, summary, tags FROM sessions "
+            "WHERE ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            {"id": r[0], "started_at": r[1], "ended_at": r[2], "duration_s": r[3], "summary": r[4],
+             "tags": json.loads(r[5] or "[]")}
+            for r in rows
+        ]
+
+    def session_files(self, session_id: str, limit: int = 10) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT node_id, action, COUNT(*) AS c FROM touches WHERE session_id=? "
+            "GROUP BY node_id, action ORDER BY c DESC, node_id LIMIT ?",
+            (session_id, limit),
+        ).fetchall()
+        return [{"node_id": r[0], "action": r[1], "count": r[2]} for r in rows]
 
     def get_procedural_patterns(self, limit: int = 5) -> list[dict]:
         """Return procedural memories ordered by strength."""
@@ -802,14 +1092,20 @@ class MemoryStore:
         category: str = "general",
         tags: list[str] | None = None,
         embedding: bytes | None = None,
+        query_hint: str | None = None,
     ) -> str:
-        """Insert a new semantic memory fact and return its id."""
+        """Insert a new semantic memory fact and return its id.
+
+        ``query_hint`` is the question someone would type to find this fact;
+        search indexes it next to the fact text.
+        """
         fid = uuid.uuid4().hex
         self._conn.execute(
             "INSERT INTO semantic_memories "
-            "(id, created_at, fact, category, strength, recall_count, source_sessions, tags, embedding) "
-            "VALUES (?, ?, ?, ?, 1.0, 0, ?, ?, ?)",
-            (fid, _now(), fact, category, json.dumps(source_sessions), json.dumps(tags or []), embedding),
+            "(id, created_at, fact, category, strength, recall_count, source_sessions, tags, embedding, query_hint) "
+            "VALUES (?, ?, ?, ?, 1.0, 0, ?, ?, ?, ?)",
+            (fid, _now(), fact, category, json.dumps(source_sessions), json.dumps(tags or []), embedding,
+             _redact(query_hint) if query_hint else None),
         )
         self._conn.commit()
         return fid

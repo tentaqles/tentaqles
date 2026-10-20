@@ -74,6 +74,7 @@ def main(raw=None, fallback_cwd=None, use_llm=False):
     reason = data.get("reason", "unknown")
 
     # Find client workspace
+    manifest = None
     try:
         from tentaqles.manifest.loader import load_manifest
         manifest = load_manifest(cwd)
@@ -228,6 +229,28 @@ def main(raw=None, fallback_cwd=None, use_llm=False):
             if stale:
                 script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pattern-cron.py")
                 subprocess.Popen([_sys.executable, script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+        # Knowledge base: pull configured Markdown folders in, then mirror this
+        # workspace's memory to the Obsidian vault. Both are off unless
+        # configured (tentaqles.knowledge); either failing must not matter.
+        try:
+            from tentaqles.knowledge import load_knowledge_config
+
+            kcfg = load_knowledge_config(manifest if isinstance(manifest, dict) else None)
+            if kcfg.ingest_dirs:
+                from tentaqles.memory.ingest import ingest_markdown_dirs
+
+                ingest_markdown_dirs(store, kcfg.ingest_dirs)
+            if kcfg.vault_dir is not None:
+                from tentaqles.memory.vault_export import export_workspace
+
+                export_workspace(
+                    store,
+                    manifest if isinstance(manifest, dict) else {"client": client_name, "display_name": display_name},
+                    kcfg,
+                )
         except Exception:
             pass
 
