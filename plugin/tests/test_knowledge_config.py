@@ -62,20 +62,48 @@ def test_plugin_data_file_overrides_shared_file(homes):
     assert load_knowledge_config({"client": "acme"}).vault_dir == Path("/identity")
 
 
-def test_manifest_section_wins_over_files(homes):
+def test_manifest_flags_win_but_its_paths_are_confined(homes, tmp_path):
+    """A manifest travels with a repo, so it may not point the plugin at arbitrary paths.
+
+    Its vault_dir is honoured only inside the user-configured vault; its
+    ingest_dirs only inside the workspace itself. Flags are always honoured.
+    """
     _, tq_home = homes
-    (tq_home / "knowledge.yaml").write_text("vault_dir: /shared\ningest:\n  acme: [/shared-clips]\n", encoding="utf-8")
+    shared_vault = tmp_path / "vault"
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (tq_home / "knowledge.yaml").write_text(
+        f"vault_dir: '{shared_vault.as_posix()}'\ningest:\n  acme: ['{(tmp_path / 'shared-clips').as_posix()}']\n",
+        encoding="utf-8",
+    )
     manifest = {
         "client": "acme",
-        "knowledge": {"vault_dir": "/mine", "export_fixes": False, "ingest_dirs": ["/my-clips"]},
+        "_client_root": str(root),
+        "knowledge": {
+            "vault_dir": (shared_vault / "acme-notes").as_posix(),
+            "export_fixes": False,
+            "ingest_dirs": [(root / "docs").as_posix(), "/etc", str(tmp_path / "elsewhere")],
+        },
     }
 
     cfg = load_knowledge_config(manifest)
 
-    assert cfg.vault_dir == Path("/mine")
+    assert cfg.vault_dir == shared_vault / "acme-notes"
     assert cfg.export_fixes is False
-    # manifest dirs come first, shared ones are still included (deduplicated)
-    assert cfg.ingest_dirs == [Path("/my-clips"), Path("/shared-clips")]
+    # the in-repo folder is kept (first), the two outside the workspace are dropped
+    assert cfg.ingest_dirs == [root / "docs", tmp_path / "shared-clips"]
+
+
+def test_manifest_vault_outside_the_shared_vault_is_ignored(homes, tmp_path):
+    (homes[1] / "knowledge.yaml").write_text(f"vault_dir: '{(tmp_path / 'vault').as_posix()}'\n", encoding="utf-8")
+    cfg = load_knowledge_config({"client": "acme", "knowledge": {"vault_dir": str(tmp_path / "ssh")}})
+    assert cfg.vault_dir == tmp_path / "vault"
+
+
+def test_manifest_vault_without_any_user_vault_is_ignored(homes, tmp_path):
+    cfg = load_knowledge_config({"client": "acme", "knowledge": {"vault_dir": str(tmp_path / "anywhere")}})
+    assert cfg.vault_dir is None
+    assert cfg.enabled is False
 
 
 def test_env_var_is_the_last_resort(homes, monkeypatch):

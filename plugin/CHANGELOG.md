@@ -31,6 +31,10 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
   refreshes on demand. Configure `vault_dir` in `~/.tentaqles/knowledge.yaml`
   (shared), `<plugin data>/knowledge.yaml` (per identity), a `knowledge:`
   section in `.tentaqles.yaml`, or `TENTAQLES_VAULT_DIR`; off until set.
+  A manifest's paths are confined (its `vault_dir` must lie inside the
+  user-configured vault, its `ingest_dirs` inside the workspace), since the
+  manifest travels with the repository; the ingest never follows symlinks out
+  of a folder.
 - **Markdown folders as a connector.** `ingest: {<client>: [<folders>]}` in
   `knowledge.yaml` (or `knowledge.ingest_dirs` in the manifest) indexes every
   `*.md` under those folders into that client's memory search as `reference`

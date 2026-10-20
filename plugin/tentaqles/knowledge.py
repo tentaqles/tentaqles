@@ -66,30 +66,53 @@ def _as_paths(value) -> list[Path]:
     return []
 
 
-def load_knowledge_config(manifest: dict | None) -> KnowledgeConfig:
-    client = str((manifest or {}).get("client") or "")
-    layers: list[dict] = []
-    section = (manifest or {}).get("knowledge")
-    if isinstance(section, dict):
-        layers.append(section)
-    for f in config_files():
-        if f.is_file():
-            layers.append(_read_yaml(f))
+def _norm(p) -> str:
+    return os.path.normcase(os.path.normpath(os.path.abspath(str(p))))
 
-    def first(key: str):
-        for layer in layers:
+
+def _within(child, parent) -> bool:
+    """True when child is parent or lies under it (lexically, case-folded on Windows)."""
+    c, p = _norm(child), _norm(parent)
+    return c == p or c.startswith(p.rstrip(os.sep) + os.sep)
+
+
+def load_knowledge_config(manifest: dict | None) -> KnowledgeConfig:
+    """Resolve the settings for one workspace.
+
+    The manifest travels with the repository, so a cloned project could point
+    the plugin at arbitrary paths. Its flags are honoured as the first layer,
+    but its paths are confined: ``vault_dir`` must lie inside the vault the
+    user configured (knowledge.yaml or TENTAQLES_VAULT_DIR), and
+    ``ingest_dirs`` must lie inside the workspace itself. Anything else from
+    the manifest is dropped.
+    """
+    manifest = manifest or {}
+    client = str(manifest.get("client") or "")
+    client_root = manifest.get("_client_root")
+    section = manifest.get("knowledge")
+    manifest_layer: dict = section if isinstance(section, dict) else {}
+    user_layers: list[dict] = [_read_yaml(f) for f in config_files() if f.is_file()]
+    layers = [manifest_layer] + user_layers
+
+    def first(key: str, where: list[dict]):
+        for layer in where:
             if layer.get(key) is not None:
                 return layer[key]
         return None
 
-    vault = first("vault_dir")
+    vault = first("vault_dir", user_layers)
     if vault is None:
         vault = os.environ.get("TENTAQLES_VAULT_DIR") or None
-    sessions = first("export_sessions")
-    fixes = first("export_fixes")
+    own_vault = manifest_layer.get("vault_dir")
+    if vault and own_vault and _within(own_vault, vault):
+        vault = own_vault
+    sessions = first("export_sessions", layers)
+    fixes = first("export_fixes", layers)
 
     dirs: list[Path] = []
-    for layer in layers:
+    if client_root:
+        dirs += [d for d in _as_paths(manifest_layer.get("ingest_dirs")) if _within(d, client_root)]
+    for layer in user_layers:
         dirs += _as_paths(layer.get("ingest_dirs"))
         mapping = layer.get("ingest")
         if isinstance(mapping, dict) and client:

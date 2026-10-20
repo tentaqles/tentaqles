@@ -57,12 +57,23 @@ def ingest_markdown_dirs(store, dirs) -> dict:
         root = Path(d)
         if not root.is_dir():
             continue
+        try:
+            root_real = root.resolve()
+        except OSError:
+            continue
         for f in sorted(root.rglob("*.md")):
+            # Never follow a link out of the folder: a symlinked file or a
+            # symlinked directory could pull anything readable into memory.db.
             try:
+                if f.is_symlink() or not f.is_file():
+                    continue
+                real = f.resolve()
+                if not (real == root_real or root_real in real.parents):
+                    continue
                 mtime = f.stat().st_mtime
             except OSError:
                 continue
-            key = f.resolve().as_posix()
+            key = real.as_posix()
             prev = store.reference_mtime(key)
             if prev is not None and abs(prev - mtime) < 1e-6:
                 result["skipped"] += 1

@@ -17,6 +17,6 @@ Pass `--no-ingest` to only rewrite the notes.
 Report what the script printed: how many notes were written and where, and how many reference documents were added or updated. If it says the export is not configured, show the user the two ways to turn it on:
 
 - shared, for every identity: `~/.tentaqles/knowledge.yaml` with `vault_dir: <folder>` and, per client, `ingest: {<client>: [<folders>]}`;
-- per workspace: a `knowledge:` section in `.tentaqles.yaml` (`vault_dir`, `export_sessions`, `export_fixes`, `ingest_dirs`). Changing the manifest changes its trust hash, so `tq allow <client>` is needed afterwards.
+- per workspace: a `knowledge:` section in `.tentaqles.yaml` (`vault_dir`, `export_sessions`, `export_fixes`, `ingest_dirs`). Because the manifest travels with the repository, its paths are confined: `vault_dir` must be inside the vault the user configured and `ingest_dirs` inside the workspace; anything else is ignored. Changing the manifest changes its trust hash, so `tq allow <client>` is needed afterwards.
 
 Notes under `sessions/` are written once and never rewritten; `context.md`, `decisions.md`, `plan.md` and `fixes.md` are regenerated on every export, so edits belong in Obsidian notes that link to them, not in these files.

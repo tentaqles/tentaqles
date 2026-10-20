@@ -117,6 +117,25 @@ def test_ingest_redacts_secrets_and_caps_size(store, tmp_path):
     assert len(row[4]) <= 60_000
 
 
+def test_symlinks_out_of_the_folder_are_not_followed(store, tmp_path):
+    d = tmp_path / "clips"
+    d.mkdir()
+    secret = tmp_path / "outside" / "id_rsa.md"
+    secret.parent.mkdir()
+    secret.write_text("private material", encoding="utf-8")
+    (d / "inside.md").write_text("# Inside\n\nfine\n", encoding="utf-8")
+    try:
+        os.symlink(secret, d / "link.md")
+        os.symlink(secret.parent, d / "linked-dir", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted on this host")
+
+    ingest_markdown_dirs(store, [d])
+
+    paths = [r[0] for r in _refs(store)]
+    assert len(paths) == 1 and paths[0].endswith("inside.md"), paths
+
+
 def test_missing_directory_is_reported_not_raised(store, tmp_path):
     result = ingest_markdown_dirs(store, [tmp_path / "nope"])
     assert result == {"added": 0, "updated": 0, "skipped": 0}
