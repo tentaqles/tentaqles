@@ -43,8 +43,23 @@ def _note(front: dict, title: str, body_lines: list[str]) -> str:
     return "---\n" + fm + "\n---\n" + MARKER + "\n\n# " + title + "\n\n" + "\n".join(body_lines).rstrip() + "\n"
 
 
-def _write(path: Path, content: str) -> Path:
+class _Escape(Exception):
+    """The target lies outside the client folder once symlinks are resolved."""
+
+
+def _under(path: Path, root_real: Path) -> bool:
+    try:
+        real = path.resolve()
+    except OSError:
+        return False
+    return real == root_real or root_real in real.parents
+
+
+def _write(path: Path, content: str, root_real: Path) -> Path:
+    """Write a note, refusing to go through a symlink or outside root_real."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or not _under(path.parent, root_real):
+        raise _Escape(str(path))
     path.write_text(content, encoding="utf-8", newline="\n")
     return path
 
@@ -77,14 +92,28 @@ def export_workspace(store, manifest: dict, cfg: KnowledgeConfig) -> list[Path]:
         d.update(extra)
         return d
 
+    # The client folder must really be inside the vault: a symlink left there
+    # (by anyone who can write to the vault) must not redirect the export.
+    client_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        vault_real = Path(cfg.vault_dir).resolve()
+        client_real = client_dir.resolve()
+    except OSError:
+        return []
+    if client_dir.is_symlink() or not (client_real == vault_real or vault_real in client_real.parents):
+        return []
+
     written: list[Path] = []
-    written.append(_write(client_dir / "context.md", _context(store, manifest, client, display, front)))
-    written.append(_write(client_dir / "decisions.md", _decisions(store, display, front)))
-    written.append(_write(client_dir / "plan.md", _plan(store, display, front)))
-    if cfg.export_fixes:
-        written.append(_write(client_dir / "fixes.md", _fixes(store, display, front)))
-    if cfg.export_sessions:
-        written.extend(_sessions(store, display, front, client_dir / "sessions"))
+    try:
+        written.append(_write(client_dir / "context.md", _context(store, manifest, client, display, front), client_real))
+        written.append(_write(client_dir / "decisions.md", _decisions(store, display, front), client_real))
+        written.append(_write(client_dir / "plan.md", _plan(store, display, front), client_real))
+        if cfg.export_fixes:
+            written.append(_write(client_dir / "fixes.md", _fixes(store, display, front), client_real))
+        if cfg.export_sessions:
+            written.extend(_sessions(store, display, front, client_dir / "sessions", client_real))
+    except _Escape:
+        pass
     return written
 
 
@@ -172,7 +201,7 @@ def _fixes(store, display: str, front) -> str:
     return _note(front("fixes", "recorded", count=len(rows)), f"{display} — fixes", lines)
 
 
-def _sessions(store, display: str, front, sessions_dir: Path) -> list[Path]:
+def _sessions(store, display: str, front, sessions_dir: Path, root_real: Path) -> list[Path]:
     written: list[Path] = []
     for s in store.list_sessions(limit=500):
         started = str(s.get("started_at") or "")
@@ -189,5 +218,5 @@ def _sessions(store, display: str, front, sessions_dir: Path) -> list[Path]:
         fm = front("session", "ended", session_id=s["id"], date=started[:10], duration=_duration(s.get("duration_s")))
         if tags:
             fm["tags"] = [str(t) for t in tags]
-        written.append(_write(path, _note(fm, f"{display} — session {started[:10]}", lines)))
+        written.append(_write(path, _note(fm, f"{display} — session {started[:10]}", lines), root_real))
     return written

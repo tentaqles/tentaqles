@@ -8,6 +8,7 @@ per client: a manifest lists its own, the shared file maps client -> dirs.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -124,3 +125,20 @@ def test_no_manifest_still_resolves_shared_settings(homes):
     cfg = load_knowledge_config(None)
     assert cfg.vault_dir == Path("/shared")
     assert cfg.ingest_dirs == []
+
+
+def test_confinement_resolves_symlinks(homes, tmp_path):
+    """A link inside the vault pointing elsewhere must not pass the check."""
+    vault = tmp_path / "vault"
+    outside = tmp_path / "outside"
+    vault.mkdir()
+    outside.mkdir()
+    try:
+        os.symlink(outside, vault / "escape", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted on this host")
+    (homes[1] / "knowledge.yaml").write_text(f"vault_dir: '{vault.as_posix()}'\n", encoding="utf-8")
+
+    cfg = load_knowledge_config({"client": "acme", "knowledge": {"vault_dir": str(vault / "escape")}})
+
+    assert cfg.vault_dir == vault

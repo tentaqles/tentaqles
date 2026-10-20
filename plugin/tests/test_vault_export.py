@@ -9,6 +9,7 @@ file the next export will overwrite.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -190,3 +191,21 @@ def test_export_is_idempotent_for_the_rewritten_notes(store, tmp_path):
     after = {p.name: p.read_text(encoding="utf-8") for p in (tmp_path / "vault" / "acme").glob("*.md")}
     strip = lambda t: re.sub(r"^updated: .*$", "", t, flags=re.MULTILINE)
     assert {k: strip(v) for k, v in before.items()} == {k: strip(v) for k, v in after.items()}
+
+
+def test_export_refuses_to_write_through_symlinks(store, tmp_path):
+    """A client folder or note that is a link out of the vault is not written through."""
+    _populate(store)
+    vault = tmp_path / "vault"
+    outside = tmp_path / "outside"
+    vault.mkdir()
+    outside.mkdir()
+    try:
+        os.symlink(outside, vault / "acme", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted on this host")
+
+    written = export_workspace(store, MANIFEST, _cfg(tmp_path))
+
+    assert written == []
+    assert list(outside.iterdir()) == []

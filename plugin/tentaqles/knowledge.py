@@ -67,11 +67,13 @@ def _as_paths(value) -> list[Path]:
 
 
 def _norm(p) -> str:
-    return os.path.normcase(os.path.normpath(os.path.abspath(str(p))))
+    # realpath follows symlinks that exist, so a link planted inside the
+    # vault or the workspace resolves to where it really points.
+    return os.path.normcase(os.path.realpath(str(p)))
 
 
 def _within(child, parent) -> bool:
-    """True when child is parent or lies under it (lexically, case-folded on Windows)."""
+    """True when child is parent or lies under it, after resolving symlinks."""
     c, p = _norm(child), _norm(parent)
     return c == p or c.startswith(p.rstrip(os.sep) + os.sep)
 
