@@ -1,15 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/tentaqles/tentaqles/internal/commitmsg"
 	"github.com/tentaqles/tentaqles/internal/commitscan"
-	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
@@ -154,7 +156,10 @@ func loadProjectRules(cwd string, ws *resolve.Workspace) ([]policy.Rule, []error
 
 // policyDecision evaluates every layer of rules plus the two checks that need
 // I/O: the commit secret scan and the cross-client MCP check.
-func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall) policy.Decision {
+//
+// deadline ends every scan; the hook computes it at entry (start plus the
+// scan budget), so the identity lookups that ran before count against it.
+func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
 	eff := effectiveGuard(ws)
 	layers := policy.Layers{Builtin: policy.Builtin(), Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
 	if ws != nil {
@@ -167,9 +172,43 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	set, _ := policy.Build(layers)
 	d := set.Evaluate(call)
 
-	if call.IsShell() && !eff.Off("tq/commit-secret") {
-		if hits := commitscan.Scan(cwd, call.Command, gitcfg.RunGitIn); len(hits) > 0 {
+	// One budget for every scan in this invocation (commit and push rules).
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	var commitRun commitscan.Runner
+	if call.IsShell() && commitscan.PlanFor(call.Command).Commits {
+		commitRun = commitRunner(ctx)
+	}
+	if commitRun != nil && !eff.Off("tq/commit-secret") {
+		hits, err := commitscan.ScanCtx(ctx, cwd, call.Command, commitRun)
+		switch {
+		case len(hits) > 0:
 			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits)))
+		case err != nil:
+			d = policy.Merge(d, ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err)))
+		}
+	}
+	for _, r := range []struct {
+		id string
+		fn func(policy.Action) (policy.Decision, bool)
+	}{
+		{"tq/commit-pii", func(a policy.Action) (policy.Decision, bool) {
+			return commitPIIDecision(ctx, ws, call, cwd, commitRun, a)
+		}},
+		{"tq/push-pii", func(a policy.Action) (policy.Decision, bool) { return pushPIIDecision(ctx, ws, call, cwd, a) }},
+		{"tq/text-pii", func(a policy.Action) (policy.Decision, bool) { return textPIIDecision(ws, call, cwd, a) }},
+		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, cwd, a) }},
+	} {
+		if eff.Off(r.id) {
+			continue
+		}
+		if pd, ok := r.fn(eff.ActionFor(r.id, policy.Deny)); ok {
+			d = policy.Merge(d, pd)
+		}
+	}
+	if call.IsShell() && !eff.Off("tq/commit-message") {
+		if r := commitmsg.Check(call.Command, cwd); r.Checked && !r.OK {
+			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-message", policy.Ask), "tq/commit-message", "commit message: "+r.Why))
 		}
 	}
 	if call.IsMCP() && !eff.Off("tq/cross-client-mcp") {

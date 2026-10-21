@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/tentaqles/tentaqles/internal/decide"
@@ -126,6 +128,7 @@ type Manifest struct {
 	// Decision configures the Jev decision layer (internal/decide). Off
 	// unless backend is set; shadow mode unless mode is enforce.
 	Decision decide.Policy `yaml:"decision"`
+	Data     Data          `yaml:"data"`
 	Path     string        `yaml:"-"`
 }
 
@@ -171,6 +174,9 @@ func Load(path string) (*Manifest, error) {
 		}
 	}
 	if err := m.Decision.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.Data.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Path = path
@@ -219,4 +225,159 @@ func contains(xs []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// DataClasses are the classification labels a manifest may use (spec §11.1).
+var DataClasses = []string{"public", "internal", "pii", "sensitive", "financial", "children", "secrets"}
+
+// DataPath classifies a repository path glob or a database table.
+type DataPath struct {
+	Path    string   `yaml:"path,omitempty"`
+	Table   string   `yaml:"table,omitempty"`
+	Classes []string `yaml:"classes"`
+}
+
+type Prompts struct {
+	Allow []string `yaml:"allow"`
+}
+
+type Incident struct {
+	Authority string `yaml:"authority"` // ANPD | GDPR | none
+	Contact   string `yaml:"contact"`
+}
+
+// Data is the manifest's data-protection block. Empty means "not classified".
+type Data struct {
+	Classes          []string   `yaml:"classes"`
+	Regions          []string   `yaml:"regions"`
+	Prompts          Prompts    `yaml:"prompts"`
+	Paths            []DataPath `yaml:"paths"`
+	RetentionDefault string     `yaml:"retention_default"`
+	Incident         Incident   `yaml:"incident"`
+}
+
+var (
+	retentionRe = regexp.MustCompile(`^\d{1,4}[dmy]$`)
+	regionRe    = regexp.MustCompile(`^[A-Z]{2}$`)
+)
+
+func (d Data) Enabled() bool { return len(d.Classes) > 0 }
+
+// Validate rejects unknown classes, inconsistent paths and malformed values so
+// a typo cannot silently leave data unclassified.
+func (d Data) Validate() error {
+	if !d.Enabled() && (len(d.Paths) > 0 || len(d.Prompts.Allow) > 0) {
+		return fmt.Errorf("data.classes is required when data.paths or data.prompts are set")
+	}
+	for _, c := range d.Classes {
+		if !contains(DataClasses, c) {
+			return fmt.Errorf("data.classes: unknown class %q (known: %v)", c, DataClasses)
+		}
+	}
+	for _, c := range d.Prompts.Allow {
+		if c != "public" && c != "internal" {
+			return fmt.Errorf("data.prompts.allow: %q is not allowed in prompts (only public or internal)", c)
+		}
+	}
+	for i, p := range d.Paths {
+		if (p.Path == "") == (p.Table == "") {
+			return fmt.Errorf("data.paths[%d]: exactly one of path or table is required", i)
+		}
+		if len(p.Classes) == 0 {
+			return fmt.Errorf("data.paths[%d]: classes is required", i)
+		}
+		for _, c := range p.Classes {
+			if !contains(DataClasses, c) {
+				return fmt.Errorf("data.paths[%d].classes: unknown class %q", i, c)
+			}
+		}
+	}
+	if d.RetentionDefault != "" && !retentionRe.MatchString(d.RetentionDefault) {
+		return fmt.Errorf("data.retention_default: use <n>d, <n>m or <n>y, got %q", d.RetentionDefault)
+	}
+	for _, r := range d.Regions {
+		if !regionRe.MatchString(r) {
+			return fmt.Errorf("data.regions: %q is not a two-letter ISO country code", r)
+		}
+	}
+	switch d.Incident.Authority {
+	case "", "ANPD", "GDPR", "none":
+	default:
+		return fmt.Errorf("data.incident.authority must be ANPD, GDPR or none, got %q", d.Incident.Authority)
+	}
+	if LooksLikeSecret(d.Incident.Contact) {
+		return fmt.Errorf("data.incident.contact looks like a secret")
+	}
+	return nil
+}
+
+// Classified returns the sorted, de-duplicated classes of every path glob
+// matching the repo-relative path (slash or backslash), or nil.
+func (d Data) Classified(path string) []string {
+	rel := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(path), `\`, "/"), "./")
+	set := map[string]bool{}
+	for _, p := range d.Paths {
+		if p.Path == "" {
+			continue
+		}
+		if GlobMatch(strings.ReplaceAll(p.Path, `\`, "/"), rel) {
+			for _, c := range p.Classes {
+				set[c] = true
+			}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for c := range set {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Tables maps lower-cased table names (with and without their schema) to classes.
+func (d Data) Tables() map[string][]string {
+	out := map[string][]string{}
+	for _, p := range d.Paths {
+		if p.Table == "" {
+			continue
+		}
+		name := strings.ToLower(strings.Trim(p.Table, `"`))
+		out[name] = append(out[name], p.Classes...)
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			out[name[i+1:]] = append(out[name[i+1:]], p.Classes...)
+		}
+	}
+	return out
+}
+
+// GlobMatch matches a slash path against a glob where * is one segment and
+// ** any number of segments (including none). Both are anchored at the root.
+func GlobMatch(pattern, path string) bool {
+	pattern = strings.Trim(pattern, "/")
+	path = strings.Trim(path, "/")
+	return globSegs(strings.Split(pattern, "/"), strings.Split(path, "/"))
+}
+
+func globSegs(pat, segs []string) bool {
+	for len(pat) > 0 {
+		if pat[0] == "**" {
+			for i := 0; i <= len(segs); i++ {
+				if globSegs(pat[1:], segs[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(segs) == 0 {
+			return false
+		}
+		if ok, _ := filepath.Match(pat[0], segs[0]); !ok {
+			return false
+		}
+		pat, segs = pat[1:], segs[1:]
+	}
+	return len(segs) == 0
 }

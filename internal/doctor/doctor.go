@@ -123,6 +123,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 		if trusted {
 			claudeChecks(&w, add)
+			dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add)
 		}
 		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
 			add("warn", "bypass-cloud", w.Name, "permission_mode bypass with a cloud identity: Claude may run cloud CLIs unattended", "")

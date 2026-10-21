@@ -228,6 +228,9 @@ func newPreToolUseCmd() *cobra.Command {
 Deny exits 2 with the reason on stderr. Ask prints the PreToolUse
 permissionDecision JSON so Claude Code asks the user.`,
 		RunE: func(c *cobra.Command, _ []string) error {
+			// One scan deadline from hook entry: the gh/git identity
+			// lookups below count against it (hooks must never stall).
+			scanDeadline := time.Now().Add(hookScanBudget())
 			p, cmdline, perr := readHookPayload(c.InOrStdin())
 			if perr != nil {
 				fmt.Fprintln(c.ErrOrStderr(), "BLOCKED: "+perr.Error())
@@ -262,7 +265,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 				ws, cfg = resolveTrusted(cwd)
 			}
 
-			d := policyDecision(cwd, ws, cfg, call)
+			d := policyDecision(cwd, ws, cfg, call, scanDeadline)
 			if d.Action != policy.Deny {
 				// Jev can only add strictness, so it is skipped when the
 				// deterministic rules already deny.

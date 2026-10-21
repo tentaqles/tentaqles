@@ -311,16 +311,22 @@ Matchers (all regexes, case-insensitive; every one present must match):
 | `tq/gh-admin-merge` | ask | `gh pr merge --admin` |
 | `tq/gh-repo-delete` | deny | `gh repo delete` |
 | `tq/cloud-delete`, `tq/iac-destroy` | ask | `az/aws/gcloud/doctl/databricks … delete/rm/purge/…`, `terraform/cdk/pulumi destroy` |
+| `tq/iac-apply` | ask | applying infrastructure to a live environment: `terraform/tofu apply`, `pulumi up`, `cdk/cdktf deploy`, `kubectl apply`, `helm install/upgrade`, `sam/serverless/sls deploy`, CloudFormation, Azure and Deployment Manager deployments (`--dry-run` exempt) |
+| `tq/remote-migration` | ask | running migrations (`prisma migrate deploy`, `alembic upgrade`, `flyway migrate`, `supabase db push`, `rails db:migrate`, `manage.py migrate`, …) against a connection that is not local; a command naming `localhost`, `127.0.0.1` or `--local` is exempt |
+| `tq/settings-widen` | deny | Edit/Write of Claude Code settings (`.claude/settings[.local].json`, `.claude.json`, or a bare `settings[.local].json`) that adds `Bash(*)`, `bypassPermissions`, `disableAllHooks: true`, empty `hooks`, or `skipDangerousModePermissionPrompt: true`; permission changes go through `tq settings render` and the manifest |
+| `tq/settings-shell-write` | deny | writing `.claude/settings[.local].json`, `.claude/tq-rules.yaml` or `.claude.json` from the shell (redirects, `tee`, `sed -i`, `cp`/`mv` onto them) |
 | `tq/registry-write` | ask | `reg add/delete`, registry writes from PowerShell |
 | `tq/sql-destructive-shell` | ask | DROP/TRUNCATE/ALTER/DELETE/UPDATE/GRANT through psql, sqlcmd, snowsql, supabase db, bq, … |
 | `tq/migration-edit` | ask | editing an existing file under a migrations directory |
 | `tq/mcp-sql-write`, `tq/mcp-apply-migration` | ask | write/DDL statements or migration/branch operations through a database MCP server |
 | `tq/mcp-n8n-write` | ask | creating, updating, publishing, executing or deleting n8n workflows/agents |
 | `tq/mcp-github-write`, `tq/mcp-hosting-exec` | ask | GitHub writes and hosting-provider operations through MCP |
-| `tq/gha-unpinned`, `tq/gha-pr-target` | ask | workflow actions pinned to `@main/@master/@latest`; `pull_request_target` |
+| `tq/gha-branch-ref` | deny | workflow actions pinned to a branch: `@main` or `@master` |
+| `tq/gha-unpinned` | ask | workflow actions pinned to `@latest` or `@head` |
+| `tq/gha-pr-target` | ask | `pull_request_target` in a workflow |
 
-Two more checks need I/O and are not regex rules (both can be disabled by
-id in the manifest):
+More checks need I/O and are not regex rules (each can be disabled by id in
+the manifest):
 
 - `tq/commit-secret` (deny) — before a `git commit` runs, scans what it
   would record: the staged diff, plus the working tree and untracked files
@@ -329,6 +335,45 @@ id in the manifest):
   or `.pem` is refused by name. The reason lists `file:line (pattern)`
   and never the value. A known-fake fixture line can carry
   `tq:allow-secret` (or `gitleaks:allow`).
+- `tq/commit-pii`, `tq/push-pii`, `tq/text-pii` (deny) — personal and
+  financial data at the exits. `tq/commit-pii` scans the lines a commit would
+  record (same scope as `tq/commit-secret`); `tq/push-pii` scans the commits a
+  push would publish; `tq/text-pii` scans commit and tag messages and `gh pr`,
+  `issue` and `release` text, including `--body-file`, and `gh api` fields
+  (`-f`, `-F key=@file`, `--input`); text built by a command substitution
+  asks. The reason lists
+  `file:line (detector)` and never the value. Checksum-validated detectors
+  (the `checksummed` class: CPF, CNPJ, card, IBAN) always run; e-mail and
+  phone run only when the manifest's `data.classes` declares `pii`,
+  `sensitive` or `children`. Declaring `financial` adds no detector beyond
+  the checksummed ones. A known-synthetic line carries `tq:allow-pii`, but
+  the marker only counts in test files (`*_test.go`, `test_*.py`,
+  `*_test.py`, `conftest.py`, `*.test.*`, `*.spec.*`) and inside test and
+  fixture directories (`tests/`, `fixtures/`, `seeds/`, `testdata/`, …),
+  never under `docs/` or `migrations/` and never in published text. The
+  scans run in the repository the command acts on (a leading `cd <dir>`,
+  then `git -C <dir>`), cover `git commit <paths>`, and decode UTF-16 files.
+  All of them share one 8 s budget per hook call (`TQ_HOOK_SCAN_BUDGET`, at
+  most 12 s). If a scan cannot finish or vouch for the commit (a directory
+  tq cannot resolve, a text file over 1 MiB, more than 8 MiB in total, the
+  budget running out, an oversized push, unparseable quoting) the rule asks
+  instead of denying. `tq redact` is the helper for a shareable copy; see
+  [Using classified data without printing it](#using-classified-data-without-printing-it).
+- `tq/pii-fixture-dump` (deny) — with a `data:` block in the manifest, a shell
+  command that reads a classified path or table (`data.paths`, matched
+  case-insensitively and in absolute or relative form) and writes into
+  `tests/`, `fixtures/` or `seeds/`, including PowerShell writers
+  (`Set-Content`, `Out-File`, `Export-Csv`, `Copy-Item`, ...). Fixtures must be synthetic. Its message
+  points to `docs/privacy.md`, the per-project record of classified data that
+  the planned development process asks for; tq only points at it.
+- `tq/commit-message` (ask) — a `git commit` whose message (read from `-m`,
+  `-F` or a heredoc) is not Conventional Commits: `type(scope): summary` with
+  a known type, a summary of at most 100 characters, and a body when the
+  change is breaking (`!` or `BREAKING CHANGE`). It also asks when it cannot
+  read the message safely: an unreadable or oversized (over 64 KiB) `-F` file,
+  or an unterminated quote. Commits with no readable message are skipped:
+  the editor, `--amend`, `-C`, `--squash`, `--fixup`, `--no-edit` without
+  `-m`/`-F`, `-F -`, and a message built by a shell substitution.
 - `tq/cross-client-mcp` (deny) — an MCP server that another client's
   bundle declares, and this workspace's bundle does not, is refused.
 
@@ -361,6 +406,72 @@ stderr. The agent only ever writes `$NAME`. Templates (`.env.example`,
 `.sample`, `.template`, …) stay readable. `tq dotenv run` runs an arbitrary
 command, so it is never pre-approved: it goes through the permission mode
 like the command it wraps.
+
+## Data classification (`data:` block)
+
+Reading, querying and processing personal data locally is allowed: Claude can
+read files, query tables and run scripts over data that holds personal
+information. The guards sit at the exits, where data would be recorded or
+published. tq guards commits, pushes, PR and issue text, and fixtures. tq has
+no rule for the memory, vault and model exits; the Claude Code plugin's PII
+redaction for those exits is planned for plugin 0.12.0.
+
+A client workspace declares what it handles in its manifest:
+
+```yaml
+data:
+  classes: [pii, financial]          # public, internal, pii, sensitive, financial, children, secrets
+  regions: [BR]                      # where subjects live (two-letter codes)
+  prompts:
+    allow: [public, internal]        # classes that may appear in model context unmasked
+  paths:                             # where classified data lives
+    - path: db/schema/customers.sql
+      classes: [pii]
+    - table: public.payments
+      classes: [financial]
+  retention_default: 24m
+  incident:
+    authority: ANPD                  # ANPD | GDPR | none
+    contact: dpo@example.test
+```
+
+Each `paths` entry has exactly one of `path` (a glob) or `table`, plus
+`classes`. An unknown class, or `paths`/`prompts` without `classes`, makes the
+manifest fail to load. The block drives which detectors the exit rules run
+(without one, only the checksum-validated detectors run) and
+`tq/pii-fixture-dump`. Changing the manifest changes its trust hash: run
+`tq allow <ws>`. `tq doctor` warns with `data-block-missing` when a repo has
+personal-data columns and no block (see `docs/CLAUDE-SETTINGS.md`).
+
+## Using classified data without printing it
+
+Reading personal data locally is allowed. What the guard refuses is recording
+it: the exit rules `tq/commit-pii`, `tq/push-pii` and `tq/text-pii` (commit
+messages and diffs, pushes, PR and issue text) point here. `tq redact` is the
+helper for making a shareable copy without the values:
+
+```
+tq redact --classes pii < export.csv
+tq redact --count < export.csv
+tq redact --file a.csv --file b.csv
+tq redact run --classes pii,financial -- psql "$DATABASE_URL" -c "select * from customers limit 5"
+```
+
+`tq redact` reads stdin (or each `--file`) and replaces CPF, CNPJ, e-mail,
+phone, card and IBAN values (checksum-validated where one exists) and secrets
+with `[REDACTED:<kind>]`; `--count` prints findings per detector and never
+the values. `tq redact run` runs a command directly (not through a shell) and
+masks its stdout and stderr, propagating its exit code.
+
+Default classes: the trusted workspace manifest's `data.classes` minus
+`data.prompts.allow`, plus `secrets`. Outside a workspace, or without a
+`data:` block, every detector runs (`all`). `--classes` overrides this; an
+unknown class or an empty list is an error. Whatever the classes, the
+checksum-validated detectors (CPF, CNPJ, card, IBAN) always run, exactly as
+in the exit rules, so a copy made with `tq redact` passes `tq/text-pii`:
+`pii`, `sensitive` and `children` add e-mail and phone, `secrets` adds the
+secret patterns, `all` runs everything. A card number followed by its expiry
+(`MM/YY`) or its CVV is still masked.
 
 ## Turning rules on and off
 
