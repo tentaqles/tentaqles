@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -414,7 +415,7 @@ def answer_decision(root: Path, slug: str, decision_id: str, choice: str, note: 
         if rec["kind"] == "result" and choice == "approve":
             try:
                 extra.append(cmd_finish(root, slug))
-            except Exception as e:  # noqa: BLE001
+            except (Exception, SystemExit) as e:  # noqa: BLE001
                 rc = rc or 1
                 extra.append(f"finish did NOT apply: {e}")
         if rec["kind"] == "judge" and choice in ("PASS", "FAIL") and rec.get("reviewer") and rec.get("checkpoint") is not None:
@@ -660,8 +661,76 @@ def _key_dir_canon() -> str:
     return k.lower() if os.name == "nt" else k
 
 
-_SCRATCH_CODE_NAME = re.compile(
-    r"^(conftest\.py|test_.*|.*_test\..*|.*\.spec\..*|.*\.test\..*|.*\.(py|js|ts|mjs|cjs|ini|cfg|toml|pth))$")
+# The breaker's scratch dir holds data files only: a name must end in one of these
+# extensions (an allowlist, so a new runner's config format can't slip through) and must
+# not look like a test or a tool config (`jest.config.json`, `package.json`, `.eslintrc.json`).
+SCRATCH_DATA_EXT = (".sql", ".db", ".db-wal", ".db-shm", "-wal", "-shm", ".log", ".pid", ".json", ".txt",
+                    ".csv", ".tsv", ".dump", ".bak")
+_SCRATCH_NOT_DATA = re.compile(
+    r"^(conftest\..*|test_.*|.*_test\..*|.*\.spec\..*|.*\.test\..*|.*config.*|\..*rc(\..*)?|.*\.pth(\..*)?"
+    r"|package(-lock)?\.json|composer\.json|deno\.jsonc?|project\.json|.*\.(py|js|ts|mjs|cjs|mts|cts)\..*)$")
+SCRATCH_WALK_CAP = 2000  # entries walked under .tq-breaker/ before failing closed
+# Commands that only remove entries or make empty directories: allowed in the scratch dir
+# whatever the name (the agent must be able to delete a stray file the walk complains about).
+_SCRATCH_CLEANERS = {"rm", "rmdir", "unlink", "del", "erase", "rd", "remove-item", "ri", "mkdir", "md"}
+
+
+def scratch_name_ok(name: str) -> bool:
+    n = name.lower()
+    return n.endswith(SCRATCH_DATA_EXT) and not _SCRATCH_NOT_DATA.match(n)
+
+
+def _lstat_is_link(path: str) -> bool:
+    """True for a symlink, a junction or any other reparse point; True when it can't tell."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return True
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    return bool(getattr(st, "st_file_attributes", 0) & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def scratch_problem(root: Path) -> str | None:
+    """Why <root>/.tq-breaker/ can't stand next to recorded evidence, or None.
+
+    The dir is excluded from the tree hash, so it may hold data files only. Bounded walk
+    (SCRATCH_WALK_CAP entries), no link followed, fail closed. Names only the first
+    offending entry, by its file name (never its path)."""
+    base = os.path.join(str(root), BREAKER_DIR)
+    if not os.path.lexists(base):
+        return None
+    if _lstat_is_link(base):
+        return f"{BREAKER_DIR} is a link; the breaker scratch dir must be a plain directory"
+    if not os.path.isdir(base):
+        return f"{BREAKER_DIR} is not a directory"
+    stack, seen = [base], 0
+    while stack:
+        d = stack.pop()
+        try:
+            entries = sorted(os.scandir(d), key=lambda e: e.name)
+        except OSError:
+            return f"can't read {BREAKER_DIR}/; failing closed"
+        for e in entries:
+            seen += 1
+            if seen > SCRATCH_WALK_CAP:
+                return f"{BREAKER_DIR}/ holds too many entries (over {SCRATCH_WALK_CAP}); clear it out"
+            name = redact(e.name)
+            if _lstat_is_link(e.path):
+                return f"{BREAKER_DIR}/ may not hold a link ('{name}'); remove it"
+            try:
+                is_dir = e.is_dir(follow_symlinks=False)
+                is_file = e.is_file(follow_symlinks=False)
+            except OSError:
+                return f"can't read {BREAKER_DIR}/; failing closed"
+            if is_dir:
+                stack.append(e.path)
+            elif not is_file:
+                return f"{BREAKER_DIR}/ may not hold a special file ('{name}'); remove it"
+            elif not scratch_name_ok(e.name):
+                return (f"{BREAKER_DIR}/ holds data files only ({', '.join(x.lstrip('.-') for x in SCRATCH_DATA_EXT)}); "
+                        f"'{name}' is not one. Remove it and run again")
+    return None
 
 
 def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool) -> str | None:
@@ -683,9 +752,9 @@ def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool)
         return "state"
     if r in PROTECTED_CONFIG and active:
         return "config"
-    if r.startswith(BREAKER_DIR + "/") and _SCRATCH_CODE_NAME.match(r.rsplit("/", 1)[-1].lower()) \
+    if r.startswith(BREAKER_DIR + "/") and r.count("/") >= 2 and not scratch_name_ok(r.rsplit("/", 1)[-1]) \
             and (active or slugs(root)):
-        return "scratch"
+        return "scratch"  # .tq-breaker/<slug>/<name>: a data file name, or refused
     if re.match(re.escape(PLAN_DIR) + r"/[^/]+\.json$", r, re.IGNORECASE):
         return "plan"
     for lk, slug in locked.items():
@@ -699,7 +768,8 @@ _MESSAGES = {
     "git": "git internals (.git/) can't be written directly; use git commands",
     "state": f"{STATE_DIR}/ is hook-owned evidence; only the build-gate commands write it",
     "config": "the gate's settings and tq rules are locked while a build is active",
-    "scratch": "scratch dir holds data files only (sql, db, log, pid, json, txt, csv)",
+    "scratch": ("scratch dir holds data files only (sql, db, db-wal, db-shm, log, pid, json, txt, csv, tsv, "
+                "dump, bak; no code, test or config files)"),
     "plan": f"{PLAN_DIR}/*.json changes only through Edit/Write, so the gate rules run",
 }
 
@@ -813,8 +883,9 @@ def _makes_links(seg) -> bool:
 
 
 def _check_links(root: Path, seg) -> None:
-    """Refuse a link whose target or link path lands under .claude/build/ while a build
-    exists. The target is also resolved from the link's own directory."""
+    """Refuse a link whose target or link path lands under .claude/build/, or at or under
+    .tq-breaker/, while a build exists. The target is also resolved from the link's own
+    directory."""
     if not slugs(root) or not _makes_links(seg):
         return
     words = [w for w in seg.argv[1:] + seg.redirects if w and not w.startswith("-")]
@@ -831,6 +902,9 @@ def _check_links(root: Path, seg) -> None:
         if r == STATE_DIR or r.startswith(STATE_DIR + "/") or STATE_DIR in canon_text(c):
             raise Block(f"links can't be created into or out of {STATE_DIR}/ while a build exists "
                         "(a link would let a later write land on the gate's evidence).")
+        if r == BREAKER_DIR or r.startswith(BREAKER_DIR + "/") or BREAKER_DIR in canon_text(c):
+            raise Block(f"links can't be created at or under {BREAKER_DIR}/ while a build exists "
+                        "(`finish` deletes that dir, and it holds plain data files only).")
 
 
 # Options that name a file the command writes. A segment using one counts as a write, so
@@ -924,6 +998,8 @@ def check_shell(cmd: str, root: Path) -> None:
             # git itself manages .git/ and the plan file (add/commit); history-changing
             # subcommands on locked tests are still refused
             hits = [(c, w) for c, w in hits if c.startswith("locked:")]
+        elif cmd_name in _SCRATCH_CLEANERS:
+            hits = [(c, w) for c, w in hits if c != "scratch"]
         for cls, what in hits:
             raise Block(_msg(cls, what))
 
@@ -1242,7 +1318,12 @@ def cmd_verify(root: Path, slug: str, cid: int, timeout: float = 900) -> tuple[i
     results, out_lines, ok = [], [], True
     before = tree_hash(root)
     tampered = tests_intact(root, approved)
-    if tampered:
+    # .tq-breaker/ is outside the tree hash, so it may hold data files only (checked before and after).
+    scratch_bad = scratch_problem(root)
+    if scratch_bad:
+        ok = False
+        out_lines.append("FAIL: " + scratch_bad)
+    elif tampered:
         ok = False
         out_lines.append("locked tests changed since they were locked: " + ", ".join(tampered))
     else:
@@ -1258,8 +1339,14 @@ def cmd_verify(root: Path, slug: str, cid: int, timeout: float = 900) -> tuple[i
                 break
             out_lines.append(f"ok: {c}")
     tree = tree_hash(root)
+    if ok:
+        scratch_bad = scratch_problem(root)
+        if scratch_bad:
+            ok = False
+            out_lines.append("FAIL: " + scratch_bad)
     summary = ("all verify commands passed" if ok else
-               ("locked tests changed" if tampered else f"exit {results[-1]['exit']}: {results[-1]['cmd']}"))
+               (scratch_bad if scratch_bad else
+                ("locked tests changed" if tampered else f"exit {results[-1]['exit']}: {results[-1]['cmd']}")))
     if ok and (tree is None or tree != before or tests_intact(root, approved)):
         # code under test rewrote files (or the locked tests) while it ran
         ok, summary = False, "files changed while the verify commands ran"
@@ -1436,6 +1523,7 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         learning_id = _next_learning_id(read_text(root / "docs" / "LEARNINGS.md"), "D")
         _append_learning(root, f"- `D{learning_id} · {now_iso()[:10]} · {slug} · dod-override · {reason}`")
     before = tree_hash(root)
+    scratch_bad = scratch_problem(root)
     for name in ("test", "lint", "typecheck"):
         c = cmds.get(name)
         cid = "tests" if name == "test" else name
@@ -1446,6 +1534,8 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         add(cid, code == 0, f"exit {code}{' (timed out)' if timed_out else ''}: {c}" + ("" if code == 0 else "\n" + redact(tail(out + "\n" + err, 20))))
     tampered = tests_intact(root, approved)
     add("locked_tests", not tampered, "unchanged" if not tampered else f"{len(tampered)} locked test file(s) changed")
+    scratch_bad = scratch_bad or scratch_problem(root)
+    add("breaker_scratch", not scratch_bad, scratch_bad or f"{BREAKER_DIR}/ holds data files only")
     cps = plan.get("checkpoints") or []
     unpassed = [c.get("id") for c in cps if c.get("status") != "passed"]
     add("checkpoints", not unpassed, f"{len(cps) - len(unpassed)}/{len(cps)} passed" + (f"; open: {unpassed}" if unpassed else ""))
@@ -1692,7 +1782,51 @@ def _merge_foreign_rules(root: Path, path: Path, existing: str, rules: list[dict
     return f"merged the locked-tests rule into the project's {norm(path)} (backup in {STATE_DIR}/)"
 
 
+SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]*")  # the plan slug charset (loop.py uses the same)
+
+
+def _remove_tree(path: str) -> None:
+    """rmtree that never follows a link or junction: a link is removed, not entered."""
+    try:
+        entries = list(os.scandir(path))
+    except OSError:
+        return
+    for e in entries:
+        try:
+            if _lstat_is_link(e.path):
+                try:
+                    os.unlink(e.path)
+                except OSError:
+                    os.rmdir(e.path)  # a directory junction
+            elif e.is_dir(follow_symlinks=False):
+                _remove_tree(e.path)
+            else:
+                os.unlink(e.path)
+        except OSError:
+            pass
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
+def _scratch_deletable(root: Path, slug: str) -> bool:
+    """<root>/.tq-breaker/<slug> may be deleted: both are real directories (no link,
+    no junction, no reparse point) and the slug dir sits directly in the scratch root."""
+    base, scratch = root / BREAKER_DIR, root / BREAKER_DIR / slug
+    if _lstat_is_link(str(base)) or not base.is_dir() or _lstat_is_link(str(scratch)) or not scratch.is_dir():
+        return False
+    try:
+        base_r = base.resolve()
+        return scratch.resolve().parent == base_r and base_r == root.resolve() / BREAKER_DIR
+    except OSError:
+        return False
+
+
 def cmd_finish(root: Path, slug: str) -> str:
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+        log_event(root, "finish-refused", "-", reason="bad-slug")
+        raise SystemExit(f"finish refused: {slug!r} isn't a build slug (lowercase letters, digits and hyphens only).")
     sess = load_session(root, slug)
     sess["finished"] = now_iso()
     save_session(root, slug, sess)
@@ -1714,10 +1848,14 @@ def cmd_finish(root: Path, slug: str) -> str:
             write_json(settings_path, settings)
             msg += "\ngate hooks removed from settings.local.json"
     log_event(root, "finish", slug)
-    scratch = root / BREAKER_DIR / slug
-    if scratch.is_dir() and not scratch.is_symlink():
-        shutil.rmtree(scratch, ignore_errors=True)
-        log_event(root, "breaker-scratch-removed", slug)
+    base, scratch = root / BREAKER_DIR, root / BREAKER_DIR / slug
+    if os.path.lexists(scratch) or (os.path.lexists(base) and _lstat_is_link(str(base))):
+        if _scratch_deletable(root, slug):
+            _remove_tree(str(scratch))
+            log_event(root, "breaker-scratch-removed", slug)
+        else:
+            log_event(root, "breaker-scratch-refused", slug)
+            msg += f"\nbreaker scratch dir left in place: {BREAKER_DIR}/{slug} is a link or not a plain directory"
     _answer_pending(root, slug, "result", "approve", "terminal")
     return f"build '{slug}' finished\n{msg}"
 

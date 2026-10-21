@@ -1634,7 +1634,7 @@ def test_scratch_refuses_code_test_and_config_files(repo, cmd):
     _active_build(repo)
     (repo / "x").write_text("x", encoding="utf-8")
     code, _, err = hook(repo, bash(cmd))
-    assert code == 2 and "scratch dir holds data files only (sql, db, log, pid, json, txt, csv)" in err, cmd
+    assert code == 2 and "scratch dir holds data files only (sql, db, db-wal, db-shm, log, pid, json, txt, csv, tsv, dump, bak" in err, cmd
 
 
 @pytest.mark.parametrize("tool,name", [("Write", "test_a.py"), ("Edit", "conftest.py"), ("Write", "a.ts")])
@@ -1678,3 +1678,177 @@ def test_finish_without_a_scratch_dir_logs_nothing_extra(repo, tq_home):
     gate.cmd_finish(repo, "demo")
     kinds = [json.loads(l)["kind"] for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert kinds == ["finish"]
+
+
+# Final fix wave, I1: `finish` deletes only <root>/.tq-breaker/<slug> for a valid slug,
+# never through a link, and the hook refuses links made at or under .tq-breaker/.
+@pytest.mark.parametrize("slug", ["..", ".", "a/b", "a\\b", "../demo", "Demo", "-x", "", "demo/.."])
+def test_finish_refuses_a_bad_slug_and_deletes_nothing(repo, tq_home, slug):
+    approve_and_lock(repo)
+    d = repo / ".tq-breaker" / "demo"
+    d.mkdir(parents=True)
+    (d / "app.db").write_bytes(b"db")
+    with pytest.raises(SystemExit):
+        gate.cmd_finish(repo, slug)
+    assert (repo / ".git").exists() and (repo / "app.py").exists() and (d / "app.db").exists()
+    assert (repo / ".claude" / "build").exists()
+
+
+def _outside_scratch(tmp_path):
+    outside = tmp_path / "outside"
+    (outside / "demo").mkdir(parents=True)
+    (outside / "demo" / "keep.txt").write_text("keep", encoding="utf-8")
+    return outside
+
+
+def _event_kinds(tq_home):
+    return [json.loads(l)["kind"] for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+def test_finish_does_not_follow_a_link_at_the_scratch_root(repo, tq_home, tmp_path):
+    approve_and_lock(repo)
+    outside = _outside_scratch(tmp_path)
+    _dir_link(outside, repo / ".tq-breaker")
+    gate.cmd_finish(repo, "demo")
+    assert (outside / "demo" / "keep.txt").exists()
+    kinds = _event_kinds(tq_home)
+    assert "breaker-scratch-refused" in kinds and "breaker-scratch-removed" not in kinds
+
+
+def test_finish_does_not_follow_a_link_at_the_slug_dir(repo, tq_home, tmp_path):
+    approve_and_lock(repo)
+    outside = _outside_scratch(tmp_path)
+    (repo / ".tq-breaker").mkdir()
+    _dir_link(outside / "demo", repo / ".tq-breaker" / "demo")
+    gate.cmd_finish(repo, "demo")
+    assert (outside / "demo" / "keep.txt").exists()
+    kinds = _event_kinds(tq_home)
+    assert "breaker-scratch-refused" in kinds and "breaker-scratch-removed" not in kinds
+
+
+@pytest.mark.parametrize("cmd", [
+    "ln -s ../x .tq-breaker/demo/l",
+    "ln -s ../outside .tq-breaker",
+    "ln -sfn /tmp .tq-breaker/demo",
+    "ln app.py .tq-breaker/demo/h.txt",
+    r"cmd /c mklink /J .tq-breaker C:\outside",
+    r"cmd /c mklink /J .tq-breaker\demo C:\outside",
+    r"mklink /D .tq-breaker\demo\d ..\..\lib",
+    "New-Item -ItemType Junction -Path .tq-breaker -Target lib",
+    "New-Item -ItemType SymbolicLink -Path .tq-breaker/demo/l -Target ../../lib",
+    "cp -s app.py .tq-breaker/demo/l.txt",
+    "tar -xf a.tar -C .tq-breaker/demo",
+    "fsutil hardlink create .tq-breaker/demo/h.txt app.py",
+])
+def test_links_at_or_under_the_scratch_dir_are_refused(repo, cmd):
+    _active_build(repo)
+    (repo / "lib").mkdir(exist_ok=True)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+# Final fix wave, I2: scratch holds data files only (extension allowlist), checked on every
+# write target the hook can see and, fail closed, by a bounded walk at verify and dod.
+@pytest.mark.parametrize("cmd", [
+    f"echo x > {_TQB}/jest.config.json",
+    f"echo x > {_TQB}/vitest.config.mts",
+    f"echo x > {_TQB}/package.json",
+    f"echo x > {_TQB}/tsconfig.json",
+    f"echo x > {_TQB}/run.sh",
+    f"echo x > {_TQB}/notes",
+    f"echo x > {_TQB}/a.rb",
+    f"cp x {_TQB}/sub/a.go",
+])
+def test_scratch_refuses_names_outside_the_data_allowlist(repo, cmd):
+    _active_build(repo)
+    (repo / "x").write_text("x", encoding="utf-8")
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "scratch dir holds data files only" in err, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    f"echo 1 > {_TQB}/a.tsv", f"pg_dump -w --file {_TQB}/db.dump app", f"cp app.db {_TQB}/app.db.bak",
+    f"cp app.db {_TQB}/app-wal", f"cp app.db {_TQB}/app-shm", f"mkdir -p {_TQB}", "mkdir -p .tq-breaker",
+])
+def test_scratch_allowlisted_data_names_are_allowed(repo, cmd):
+    _active_build(repo)
+    (repo / "app.db").write_bytes(b"db")
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+# The end state each hook bypass leaves behind (cp into a dir, cp -r, python -c / node -e,
+# git show > file, cd && echo, tar -C, a config named *.json).
+@pytest.mark.parametrize("rel", [
+    "a.test.js",                 # cp src/a.test.js .tq-breaker/demo/
+    "src/a.test.js",             # cp -r src .tq-breaker/demo/
+    "conftest.py",               # python -c "open(...)" / git show HEAD:app.py > ... / cd ... && echo x > ...
+    "logs.txt/x.spec.ts",        # nested under a data-named dir
+    "pkg/mod.py",                # tar -xf a.tar -C .tq-breaker/demo
+    "jest.config.json",
+    "vitest.config.mts",
+    "package.json",
+])
+def test_verify_refuses_code_left_in_the_scratch_dir(repo, rel):
+    approve_and_lock(repo)
+    p = repo / ".tq-breaker" / "demo" / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("x", encoding="utf-8")
+    (repo / ".tq-breaker" / "demo" / "app.log").write_text("log", encoding="utf-8")
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and ".tq-breaker" in msg and p.name in msg, msg
+    assert gate.norm(str(p.parent)) not in gate.norm(msg) and "app.log" not in msg
+    ev = gate.latest_evidence(repo, "demo", 2)
+    assert ev and ev["ok"] is False
+
+
+def test_verify_refuses_a_link_in_the_scratch_dir(repo):
+    approve_and_lock(repo)
+    (repo / ".tq-breaker" / "demo").mkdir(parents=True)
+    _dir_link(repo / "tests", repo / ".tq-breaker" / "demo" / "j")
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "link" in msg
+
+
+def test_verify_refuses_a_linked_scratch_root(repo, tmp_path):
+    approve_and_lock(repo)
+    outside = _outside_scratch(tmp_path)
+    _dir_link(outside, repo / ".tq-breaker")
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "link" in msg
+
+
+def test_verify_fails_closed_when_the_scratch_walk_hits_its_cap(repo, monkeypatch):
+    approve_and_lock(repo)
+    monkeypatch.setattr(gate, "SCRATCH_WALK_CAP", 5)
+    d = repo / ".tq-breaker" / "demo"
+    d.mkdir(parents=True)
+    for i in range(8):
+        (d / f"{i}.log").write_text("x", encoding="utf-8")
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "too many" in msg
+
+
+def test_scratch_walk_cap_is_2000():
+    assert gate.SCRATCH_WALK_CAP == 2000
+
+
+def test_verify_is_unaffected_by_a_data_only_scratch_dir(repo):
+    approve_and_lock(repo)
+    d = repo / ".tq-breaker" / "demo"
+    (d / "logs").mkdir(parents=True)
+    for n in ("db.sql", "app.db", "app.db-wal", "app.db-shm", "x-wal", "x-shm", "logs/app.log", "app.pid",
+              "r.json", "n.txt", "d.csv", "d.tsv", "db.dump", "app.db.bak"):
+        (d / n).write_text("x", encoding="utf-8")
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 0
+
+
+def test_dod_refuses_code_left_in_the_scratch_dir(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    (repo / ".tq-breaker" / "demo").mkdir(parents=True)
+    (repo / ".tq-breaker" / "demo" / "conftest.py").write_text("x", encoding="utf-8")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING breaker_scratch" in out and "conftest.py" in out
+    (repo / ".tq-breaker" / "demo" / "conftest.py").unlink()
+    assert gate.cmd_dod(repo, "demo")[0] == 0
