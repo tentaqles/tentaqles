@@ -217,6 +217,14 @@ check quote only its id, its status and the first line of its `detail` (the
 command and exit code, or the count); never the tail, which can name files or
 rows that hold such data.
 
+**Hub card.** If `TQ_HUB_TASK` is set (the hub launched this run), post the PR link on
+the card. The call is bounded to two seconds and its failure is ignored; type the URL
+`gh pr create` printed:
+
+```bash
+if [ -n "${TQ_HUB_TASK:-}" ]; then tq hub comment --timeout 2s - "PR: <pr-url>" || true; fi
+```
+
 ## 8. Hand off
 
 Report the PR URL and the triage result, then continue with the
