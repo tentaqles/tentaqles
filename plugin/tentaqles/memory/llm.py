@@ -62,12 +62,14 @@ def find_claude() -> str | None:
 
 
 def _redact(text: str) -> str:
-    try:
-        from tentaqles.privacy import redact_text
+    """Last-line mask before the prompt reaches the model. Fails closed.
 
-        return redact_text(text)[0]
-    except Exception:
-        return text
+    The consolidator has already masked the prompt by its workspace's classes;
+    this pass uses the module default (secrets plus checksummed identifiers).
+    """
+    from tentaqles.privacy import redact_str
+
+    return redact_str(text)
 
 
 def _parse_result(stdout: str) -> str:

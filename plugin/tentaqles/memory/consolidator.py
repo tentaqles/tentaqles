@@ -23,6 +23,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
+from tentaqles import privacy
 from tentaqles.memory.decay import ebbinghaus_score
 
 
@@ -41,6 +42,13 @@ class MemoryConsolidator:
         self._store = store
         self._llm_fn = llm_fn
         self._conn: sqlite3.Connection = store._conn
+        # Mask by the store's workspace classes; a store without them (a test
+        # double) gets the strictest set rather than none.
+        classes = getattr(store, "classes", None)
+        self._classes = list(classes) if isinstance(classes, list) and classes else list(privacy.STRICTEST_CLASSES)
+
+    def _redact(self, text):
+        return privacy.redact_str(text, self._classes)
 
     # ------------------------------------------------------------------
     # Public API
@@ -150,7 +158,8 @@ class MemoryConsolidator:
         for sid, summary in summaries:
             prompt_parts.append(f"---\nSession {sid}:\n{summary}")
         prompt_parts.append("---\nFacts:")
-        prompt = "\n".join(prompt_parts)
+        # The prompt leaves for a model: mask rows written before masking existed.
+        prompt = self._redact("\n".join(prompt_parts))
 
         try:
             response = self._llm_fn(prompt)
@@ -204,8 +213,11 @@ class MemoryConsolidator:
         # Group by (token_sig, tags_json)
         groups: dict[tuple[str, str], list[dict]] = {}
         for did, chosen, tags_json, created_at in rows:
+            # Decisions written before masking existed may hold raw personal
+            # data: mask before anything is derived from them.
+            chosen = self._redact(chosen)
             sig = "_".join((chosen or "").lower().split()[:3])
-            norm_tags = tags_json or "[]"
+            norm_tags = self._redact(tags_json or "[]")
             key = (sig, norm_tags)
             groups.setdefault(key, []).append(
                 {"id": did, "chosen": chosen, "created_at": created_at}
@@ -233,8 +245,8 @@ class MemoryConsolidator:
                 if existing:
                     self._conn.execute(
                         "UPDATE procedural_memories "
-                        "SET occurrence_count=?, last_seen=? WHERE id=?",
-                        (occurrence_count, last_seen, existing[0]),
+                        "SET occurrence_count=?, last_seen=?, workflow_name=?, steps=?, tags=? WHERE id=?",
+                        (occurrence_count, last_seen, workflow_name, steps_json, tags, existing[0]),
                     )
                     pid = existing[0]
                 else:
