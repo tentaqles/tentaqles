@@ -206,3 +206,16 @@ func TestScanCtx_DeadlineIsAnError(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+// Round 2 minor (b): a regular file that cannot be opened asks, naming it.
+func TestReadBounded_OpenFailureAsks(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "a.txt", "hello\n")
+	orig := openFile
+	defer func() { openFile = orig }()
+	openFile = func(string) (*os.File, error) { return nil, errors.New("locked") }
+	_, _, err := readBounded(filepath.Join(dir, "a.txt"), "a.txt")
+	if !IsAsk(err) || !strings.Contains(err.Error(), "a.txt") {
+		t.Fatalf("err=%v, want an ask naming a.txt", err)
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -80,25 +81,45 @@ type Plan struct {
 // Heredoc bodies are data, not commands, so they are ignored. It merges every
 // git call regardless of directory; Plans splits them per directory.
 func PlanFor(command string) Plan {
-	return planOf(guard.GitInvocations(guard.StripHeredocs(command)))
+	invs := guard.GitInvocations(guard.StripHeredocs(command))
+	items := make([]planItem, len(invs))
+	for i, inv := range invs {
+		items[i] = planItem{inv: inv}
+	}
+	return planOf(items)
 }
 
-// DirPlan is the plan for the git calls acting on one directory.
+// DirPlan is the plan for the git calls acting on one repository. Dir is the
+// repository's top level, and every path in the plan is relative to it.
 type DirPlan struct {
 	Dir string
 	Plan
 }
 
-// Plans groups the command's add and commit calls by the directory they act
-// on (resolved against cwd) and returns a plan for every directory that
-// commits. A call whose directory cannot be resolved is an AskError.
-func Plans(cwd, command string) ([]DirPlan, error) {
+// planItem is one git call and the directory it runs in, relative to its
+// repository's top level ("" at the top).
+type planItem struct {
+	inv guard.GitInvocation
+	rel string
+}
+
+// Plans groups the command's add and commit calls by the repository they act
+// on (the top level of the directory each one runs in, resolved against cwd)
+// and returns a plan for every repository that commits. `git add -A` in a
+// subdirectory stages the whole repository, and `git -C sub commit` records
+// what a root-level add staged, so grouping by directory would miss both. A
+// call whose directory cannot be resolved is an AskError.
+func Plans(cwd, command string, run Runner) ([]DirPlan, error) {
 	invs := guard.GitInvocations(guard.StripHeredocs(command))
-	if !planOf(invs).Commits {
+	if !PlanFor(command).Commits {
 		return nil, nil
 	}
-	groups := map[string][]guard.GitInvocation{}
-	dirs := map[string]string{}
+	type repo struct {
+		top   string
+		items []planItem
+	}
+	groups := map[string]*repo{}
+	tops := map[string][2]string{} // dir -> {top, prefix}
 	var order []string
 	for _, inv := range invs {
 		switch inv.Sub {
@@ -110,20 +131,56 @@ func Plans(cwd, command string) ([]DirPlan, error) {
 		if err != nil {
 			return nil, &AskError{Reason: "could not tell which repository this commit records in: " + err.Error()}
 		}
-		key := strings.ToLower(filepath.Clean(d))
-		if _, ok := groups[key]; !ok {
-			order = append(order, key)
-			dirs[key] = d
+		tp, ok := tops[d]
+		if !ok {
+			tp = [2]string{d, ""}
+			if out, err := run(d, "rev-parse", "--show-toplevel", "--show-prefix"); err == nil {
+				ls := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+				if t := strings.TrimSpace(ls[0]); t != "" {
+					tp[0] = filepath.FromSlash(t)
+					if len(ls) > 1 {
+						tp[1] = strings.TrimSuffix(strings.TrimSpace(ls[1]), "/")
+					}
+				}
+			}
+			tops[d] = tp
 		}
-		groups[key] = append(groups[key], inv)
+		key := strings.ToLower(filepath.Clean(tp[0]))
+		g, ok := groups[key]
+		if !ok {
+			g = &repo{top: tp[0]}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.items = append(g.items, planItem{inv: inv, rel: tp[1]})
 	}
 	var out []DirPlan
 	for _, k := range order {
-		if p := planOf(groups[k]); p.Commits {
-			out = append(out, DirPlan{Dir: dirs[k], Plan: p})
+		if p := planOf(groups[k].items); p.Commits {
+			out = append(out, DirPlan{Dir: groups[k].top, Plan: p})
 		}
 	}
 	return out, nil
+}
+
+// topPath turns a pathspec given in a directory rel (relative to the top
+// level) into a top-level-relative path. all reports a pathspec that names
+// the whole repository or cannot be bounded here (pathspec magic such as
+// `:/`, a path outside the repository, an absolute path, a substitution).
+func topPath(rel, a string) (p string, all bool) {
+	a = strings.Trim(a, `"'`)
+	if strings.HasPrefix(a, ":") || strings.ContainsAny(a, "$`") {
+		return "", true
+	}
+	a = filepath.ToSlash(a)
+	if strings.HasPrefix(a, "/") || filepath.VolumeName(a) != "" {
+		return "", true
+	}
+	j := path.Clean(path.Join(rel, a))
+	if j == "." || j == ".." || strings.HasPrefix(j, "../") {
+		return "", true
+	}
+	return j, false
 }
 
 // shortValueOpts are git commit's short options that take a value (attached
@@ -173,25 +230,31 @@ func commitArgs(args []string) (all bool, paths []string, ask string) {
 	return all, paths, ask
 }
 
-func planOf(invs []guard.GitInvocation) Plan {
+func planOf(items []planItem) Plan {
 	var p Plan
 	sawAdd, addAll := false, false
 	var paths []string
-	for _, inv := range invs {
+	for _, it := range items {
+		inv := it.inv
 		switch inv.Sub {
 		case "add", "stage":
 			sawAdd = true
 			for _, a := range inv.Args {
 				switch {
-				case a == "-A" || a == "--all" || a == "." || a == ":/" || a == "*" || a == "--no-ignore-removal":
-					addAll = true
+				case a == "-A" || a == "--all" || a == ":/" || a == "*" || a == "--no-ignore-removal":
+					addAll = true // the whole repository, wherever git runs
 				case strings.HasPrefix(a, "-"):
 				case strings.ContainsAny(a, "*?[$`:"):
 					// globs, magic pathspecs and substitutions: cannot be
 					// resolved here, so scan everything
 					addAll = true
 				default:
-					paths = append(paths, strings.Trim(a, `"'`))
+					tp, all := topPath(it.rel, a)
+					if all {
+						addAll = true
+					} else {
+						paths = append(paths, tp)
+					}
 				}
 			}
 			if len(inv.Args) == 0 {
@@ -204,9 +267,18 @@ func planOf(invs []guard.GitInvocation) Plan {
 				p.WorkingDir = true
 				p.CommitAll = true
 			}
-			if len(cps) > 0 {
+			for _, c := range cps {
 				p.WorkingDir = true
-				p.CommitPaths = append(p.CommitPaths, cps...)
+				if strings.ContainsAny(c, "*?[") && !strings.HasPrefix(c, ":") {
+					// a glob: keep it, anchored at the call's directory
+					p.CommitPaths = append(p.CommitPaths, path.Join(it.rel, filepath.ToSlash(c)))
+					continue
+				}
+				if tp, whole := topPath(it.rel, c); whole {
+					p.CommitAll = true
+				} else {
+					p.CommitPaths = append(p.CommitPaths, tp)
+				}
 			}
 			if ask != "" {
 				p.Ask = ask
@@ -269,7 +341,7 @@ func Scan(dir, command string, run Runner) []Hit {
 // narrows the scan, because the commit itself will fail or record nothing;
 // an AskError, an oversized git output or the end of ctx is returned.
 func ScanCtx(ctx context.Context, cwd, command string, run Runner) ([]Hit, error) {
-	plans, err := Plans(cwd, command)
+	plans, err := Plans(cwd, command, run)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +411,7 @@ func Added(dir, command string, run Runner) ([]AddedLine, error) {
 // files are skipped; UTF-16 files with a BOM are decoded. Any git error is
 // returned.
 func AddedCtx(ctx context.Context, cwd, command string, run Runner) ([]AddedLine, error) {
-	plans, err := Plans(cwd, command)
+	plans, err := Plans(cwd, command, run)
 	if err != nil {
 		return nil, err
 	}
@@ -541,22 +613,25 @@ func tooLarge(name string) error {
 // that is not a regular file (a symlink, a FIFO, a device, a directory: git
 // records a link's text, never its target) and for binary content. A text
 // file over the per-file cap is an AskError naming the file.
-func readBounded(path, name string) (text string, ok bool, err error) {
-	fi, err := os.Lstat(path)
+func readBounded(p, name string) (text string, ok bool, err error) {
+	fi, err := os.Lstat(p)
 	if err != nil || !fi.Mode().IsRegular() {
 		return "", false, nil
 	}
-	f, err := os.Open(path)
+	f, err := openFile(p)
 	if err != nil {
-		return "", false, nil
+		return "", false, &AskError{Reason: name + " could not be opened to scan it; check the file and confirm"}
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
 	if err != nil {
-		return "", false, nil
+		return "", false, &AskError{Reason: name + " could not be read to scan it; check the file and confirm"}
 	}
 	return decodeLimited(raw, name)
 }
+
+// openFile opens a file for scanning; tests replace it.
+var openFile = os.Open
 
 // decodeLimited turns raw file bytes into text: UTF-16 LE/BE with a BOM is
 // decoded, a UTF-8 BOM dropped, other NUL-carrying content is binary (ok
@@ -571,6 +646,16 @@ func decodeLimited(raw []byte, name string) (string, bool, error) {
 	}
 	return text, true, nil
 }
+
+// DecodeLimited is decodeLimited for the push rule: UTF-16 with a BOM is
+// decoded, binary is ok=false, text over the per-file cap is an AskError.
+func DecodeLimited(raw []byte, name string) (string, bool, error) { return decodeLimited(raw, name) }
+
+// FileLines splits decoded file text into numbered lines.
+func FileLines(name, text string) []AddedLine { return fileLines(name, text) }
+
+// MaxFileBytes is the per-file cap.
+const MaxFileBytes = maxFileBytes
 
 func decode(raw []byte) (string, bool) {
 	switch {
