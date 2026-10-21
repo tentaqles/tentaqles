@@ -75,3 +75,15 @@ def test_direction_is_read_only_and_uses_the_scorecard() -> None:
     assert "AskUserQuestion` is never called" in body
     assert "report the verdict as your final output and end the turn" in body
     assert "only when the caller passed the slug of an active build run" in body
+
+
+def test_prd_skill_interviews_and_checks_mechanically() -> None:
+    body = _body("prd")
+    for token in ("templates/process/prd.md", "prd-status.py", "NEEDS-DECISION", "you decide", "from existing code",
+                  "planning-ready"):
+        assert token in body, token
+    assert SNIPPET in body
+    assert "AskUserQuestion` is never called" in body
+    assert "report what it needs as its final output and end the turn" in body
+    assert "only when the caller passed the slug of an active build run" in body
+    assert "the grader's exit code decides" in body
