@@ -43,3 +43,16 @@ def test_privacy_review_headless_and_bootstrap() -> None:
     for block in re.findall(r"```bash\n(.*?)```", body, re.S):
         if "$TENTAQLES_PY" in block or "$_tqe" in block:
             assert block.lstrip().startswith(SNIPPET), block[:80]
+
+
+def test_privacy_review_fix_round_1_rules() -> None:
+    body = _body("privacy-review")
+    assert "do not pre-redact" in body
+    assert "remind the user to run `tq allow <workspace>`" in body
+    assert "tq allow`)" not in body
+    assert "[checkpoint <slug>#<id> review]" in body
+    assert "BUILT-BY-ME" in body
+    assert "git add -A" in body and "never `git add -A`" in body
+    assert "git diff <a>..<b>" in body and "git diff HEAD" in body
+    assert "matched" in body and "classified_paths" in body
+    assert "judge flow" in body

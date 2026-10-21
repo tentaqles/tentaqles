@@ -25,7 +25,7 @@ Without a slug, report what needs the human as the final output and end the turn
   events or exports whose fields look personal (e-mail, CPF, phone, address,
   birth date, card). A documentation-only diff that changes only docs/privacy.md
   does not select it.
-- Standalone: on request, over `--staged`, a `--range`, or the working tree.
+- Standalone: on request, over `--staged` (`git diff --staged`), a `--range` (`git diff <a>..<b>`), or the working tree (`git diff HEAD`).
 
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
@@ -46,14 +46,14 @@ memory, fixtures. `tq redact` is for copies that will leave the session (PR
 text, bug reports), never for the reviewer's input. Also pass the list of
 changed files, the spec slice (`data_classes_touched`), the paths
 `docs/privacy.md`, `.tentaqles.yaml`, `CLAUDE.md`, `docs/LEARNINGS.md`, and the
-checklist path. Ask for the review contract output. Never paste `.env*`
+checklist path, and say which changed files matched `classified_paths` or the `data:` block (list them in the bundle). Inside a build, the reviewer prompt starts with the marker `[checkpoint <slug>#<id> review]` (shape required by `skills/build/SKILL.md`; the gate matches it). Ask for the review contract output. Never paste `.env*`
 contents.
 
 ## Record and act
 
 Inside a build (`<slug> <id>` given), the verdict is recorded with the
 reviewer's RESULT line (`RESULT: PASS`, `RESULT: FAIL` or `RESULT: BLOCKED`)
-and its F/U counts:
+and its counts (`--blockers`, `--majors`, `--minors` are the F rows by severity; `--unjudged` is the number of U rows). Inside a build the build orchestrator runs `record-review` (per `skills/build/SKILL.md`); this skill runs it when standalone with a slug:
 
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
@@ -61,15 +61,15 @@ _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR
 ```
 
 Then the engine's fixer loop handles FAIL and the human settles BLOCKED with
-`build-gate judge`. If the reviewer reports `BUILT-BY-ME: yes`, discard the
+`build-gate judge`. Headless BLOCKED: `record-review` first, then `build-gate ask <slug> --kind judge ...`. If the reviewer reports `BUILT-BY-ME: yes`, discard the
 verdict and run a fresh instance.
 
 Standalone (no build slug): nothing is recorded, because `record-review` needs a
 build run. Report the verdict and list the findings with `file:line`, fix the
-code ones, and update `docs/privacy.md` (and the manifest `data:` block, then
-`tq allow`) for the record ones. A `U` row is a question for the DPO or product
+code ones, and update `docs/privacy.md` and the manifest `data:` block for the record ones, then
+remind the user to run `tq allow <workspace>` (the manifest's trust hash changed). Standalone, a `U` row is a question for the DPO or product
 owner: write it as a `NEEDS-DECISION` line under `## Open decisions` in
-`docs/privacy.md`.
+`docs/privacy.md`. Inside a build, U rows go to the judge flow, not to `## Open decisions`.
 
 Never call a change privacy-reviewed in a PR body unless a recorded
 `privacy-reviewer` PASS exists for the current code (or the human's judge).
