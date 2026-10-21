@@ -155,3 +155,31 @@ func TestCheck_FileResolvedInTargetDir(t *testing.T) {
 		t.Errorf("unresolvable dir: got %+v, want not ok", r)
 	}
 }
+
+// Parser parity with guard.GitInvocations: every spelling the commit-pii
+// rule recognises is judged here too.
+func TestCheck_ParserParity(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cwd, "wt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{
+		`& git commit -m "updated stuff"`,
+		`'git' commit -m "updated stuff"`,
+		`C:\x\git.exe commit -m "updated stuff"`,
+		`"C:\Program Files\Git\cmd\git.exe" commit -m "updated stuff"`,
+		`g\it commit -m "updated stuff"`,
+		`git "comm"it -m "updated stuff"`,
+		`git $'commit' -m "updated stuff"`,
+		`git c\ommit -m "updated stuff"`,
+		`git -C wt commit -m "updated stuff"`,
+		`cd wt && git commit -m "updated stuff"`,
+		`sudo -u bob git commit -m "updated stuff"`,
+		`nice -n 5 git commit -m "updated stuff"`,
+		`git commit -m "updated stuff";`,
+	} {
+		if r := Check(c, cwd); !r.Checked || r.OK {
+			t.Errorf("%s: got %+v, want a failed check", c, r)
+		}
+	}
+}

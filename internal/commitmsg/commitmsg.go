@@ -219,8 +219,15 @@ func commands(s string) ([][]string, bool) {
 			}
 		case r == '"' || r == '\'':
 			q, in = r, true
-		case r == '\\' && i+1 < len(rs):
+		case r == '$' && i+1 < len(rs) && (rs[i+1] == '\'' || rs[i+1] == '"'):
 			i++
+			q, in = rs[i], true
+		case r == '\\' && i+1 < len(rs):
+			// the same word rule as guard's reader: a backslash escapes a
+			// quote, a space or a backslash and is otherwise kept
+			if strings.ContainsRune("\"' \\", rs[i+1]) {
+				i++
+			}
 			cur.WriteRune(rs[i])
 			in = true
 		case r == ' ' || r == '\t' || r == '\r':

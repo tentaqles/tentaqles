@@ -41,6 +41,9 @@ var envAssignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 // ending in /git, /git.exe or \git.exe, or any of these quoted.
 func IsGitWord(w string) bool {
 	w = strings.Trim(w, `"'`)
+	if w == `g\it` || strings.ReplaceAll(w, `\`, "") == "git" {
+		return true // g\it: the shell drops the backslash
+	}
 	w = strings.ReplaceAll(w, `\`, "/")
 	w = w[strings.LastIndex(w, "/")+1:]
 	w = strings.ToLower(w)
@@ -108,7 +111,9 @@ func ParseGitWords(f []string) (GitInvocation, bool) {
 			inv.Configs = append(inv.Configs, strings.TrimPrefix(a, "--config-env="))
 		case strings.HasPrefix(a, "-"):
 		default:
-			inv.Sub = a
+			// a sub-command never holds a backslash; the shell drops one
+			// used as an escape (git c\ommit)
+			inv.Sub = strings.ReplaceAll(a, `\`, "")
 			inv.Args = f[i+1:]
 			return inv, true
 		}
@@ -164,9 +169,11 @@ func isSepByte(ch byte) bool {
 	return false
 }
 
-// splitWords splits a simple command into words, removing quotes ('…' is
-// literal; "…" honours \" \\ \$ \`; a backslash outside quotes escapes the
-// next character). An open quote runs to the end.
+// splitWords splits a simple command into words, removing quotes ('…' and
+// $'…' are literal; "…" and $"…" honour \" \\ \$ \`; a backslash outside
+// quotes escapes a quote, a space or a backslash and is otherwise kept, so a
+// Windows path keeps its separators). An open quote runs to the end.
+// commitmsg's tokenizer applies the same word rules.
 func splitWords(s string) []string {
 	var out []string
 	var cur strings.Builder
@@ -194,6 +201,9 @@ func splitWords(s string) []string {
 			}
 		case r == '\'' || r == '"':
 			q, in = r, true
+		case r == '$' && i+1 < len(rs) && (rs[i+1] == '\'' || rs[i+1] == '"'):
+			i++
+			q, in = rs[i], true
 		case r == '\\' && i+1 < len(rs) && rs[i+1] != '\n':
 			// a Windows path such as C:\x\git.exe keeps its backslashes;
 			// only quotes, spaces and backslashes are escaped

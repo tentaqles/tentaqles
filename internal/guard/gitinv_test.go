@@ -208,3 +208,33 @@ func TestInlineIdentityOverride_WrappedForms(t *testing.T) {
 		}
 	}
 }
+
+// Parser differential: shell spellings that run git commit are recognised the
+// same way here and in commitmsg (see commitmsg TestCheck_ParserParity).
+func TestGitInvocations_ShellSpellings(t *testing.T) {
+	for _, c := range []string{
+		`git "comm"it -m x`,
+		`git 'commit' -m x`,
+		`git $'commit' -m x`,
+		`git $"commit" -m x`,
+		`g\it commit -m x`,
+		`git c\ommit -m x`,
+		`git commit;`,
+		`git commit|cat`,
+		`git commit&&true`,
+		`true||git commit`,
+		"echo $(git commit -m x)",
+		"echo `git commit -m x`",
+		`echo "$(git commit -m x)"`,
+	} {
+		found := false
+		for _, inv := range GitInvocations(c) {
+			if inv.Sub == "commit" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: commit not recognised", c)
+		}
+	}
+}
