@@ -127,16 +127,32 @@ func open(workspace string, classes []string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
-	if len(classes) == 0 {
-		classes = []string{"all"}
-	}
-	s := &Store{DB: db, Workspace: workspace, classes: append([]string(nil), classes...), subs: map[int]chan Change{}}
+	s := &Store{DB: db, Workspace: workspace, classes: effectiveClasses(classes), subs: map[int]chan Change{}}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("hub database %s: %w", DBPath(workspace), err)
 	}
 	_ = os.Chmod(DBPath(workspace), 0o600)
 	return s, nil
+}
+
+// effectiveClasses enforces the fail-closed rule: empty means all; otherwise secrets is always included.
+func effectiveClasses(classes []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, c := range classes {
+		if c != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 || seen["all"] {
+		return []string{"all"}
+	}
+	if !seen["secrets"] {
+		out = append(out, "secrets")
+	}
+	return out
 }
 
 func (s *Store) Close() error {

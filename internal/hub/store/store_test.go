@@ -196,3 +196,27 @@ func TestChangeStampMovesOnWrite(t *testing.T) {
 		t.Fatalf("stamp did not move: %q", after)
 	}
 }
+
+func TestOpenAddsSecretsClass(t *testing.T) {
+	isolate(t)
+	s, err := Open("acme", []string{"pii"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if !reflect.DeepEqual(s.Classes(), []string{"pii", "secrets"}) {
+		t.Fatalf("classes %v", s.Classes())
+	}
+	got := s.Mask("token ghp_" + strings.Repeat("a", 36)) // tq:allow-secret
+	if strings.Contains(got, "ghp_aaaa") {
+		t.Fatalf("not masked: %q", got)
+	}
+	s2, err := Open("beta", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	if !reflect.DeepEqual(s2.Classes(), []string{"all"}) {
+		t.Fatalf("nil classes %v", s2.Classes())
+	}
+}

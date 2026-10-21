@@ -54,7 +54,7 @@ func TestParseBudget(t *testing.T) {
 	if err != nil || partial.USD != 3 || partial.Tokens != DefaultBudget.Tokens {
 		t.Fatalf("partial %+v %v", partial, err)
 	}
-	for _, bad := range []string{"tokens", "tokens=-1", "usd=abc", "dollars=3", "rounds=0"} {
+	for _, bad := range []string{"tokens", "tokens=-1", "usd=abc", "dollars=3", "rounds=0", "usd=nan", "usd=inf", "minutes=inf", "minutes=NaN"} {
 		if _, err := ParseBudget(bad, DefaultBudget); err == nil {
 			t.Fatalf("%q accepted", bad)
 		}
@@ -64,5 +64,18 @@ func TestParseBudget(t *testing.T) {
 	}
 	if !strings.Contains(DefaultBudget.String(), "tokens=2000000") {
 		t.Fatal(DefaultBudget.String())
+	}
+}
+
+func TestDefaultBudgetRejectsInvalidStored(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	for _, bad := range []string{`{"tokens":0}`, `{"tokens":-5,"usd":1,"minutes":1,"rounds":1}`, `{"usd":-1}`, `{"rounds":0}`, `not json`} {
+		if err := s.SetSetting(SettingDefaultBudget, bad); err != nil {
+			t.Fatal(err)
+		}
+		if s.DefaultBudget() != DefaultBudget {
+			t.Fatalf("%s accepted: %+v", bad, s.DefaultBudget())
+		}
 	}
 }

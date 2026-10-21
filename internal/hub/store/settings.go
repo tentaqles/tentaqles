@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -28,6 +29,11 @@ const (
 	SettingWebTokenHash   = "web_token_hash"
 	SettingProcessCommand = "process_command" // JSON argv for the process adapter (cards tagged adapter:process)
 )
+
+func (b Budget) valid() bool {
+	ok := func(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) && f > 0 }
+	return b.Tokens > 0 && b.Rounds > 0 && ok(b.USD) && ok(b.Minutes)
+}
 
 func (b Budget) String() string {
 	return fmt.Sprintf("tokens=%d,usd=%s,minutes=%s,rounds=%d", b.Tokens,
@@ -56,13 +62,13 @@ func ParseBudget(spec string, base Budget) (Budget, error) {
 			b.Tokens = n
 		case "usd":
 			f, err := strconv.ParseFloat(v, 64)
-			if err != nil || f <= 0 {
+			if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f <= 0 {
 				return base, fmt.Errorf("budget usd=%q: want a positive number", v)
 			}
 			b.USD = f
 		case "minutes":
 			f, err := strconv.ParseFloat(v, 64)
-			if err != nil || f <= 0 {
+			if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f <= 0 {
 				return base, fmt.Errorf("budget minutes=%q: want a positive number", v)
 			}
 			b.Minutes = f
@@ -114,7 +120,7 @@ func (s *Store) DefaultBudget() Budget {
 		return DefaultBudget
 	}
 	b := DefaultBudget
-	if json.Unmarshal([]byte(v), &b) != nil {
+	if json.Unmarshal([]byte(v), &b) != nil || !b.valid() {
 		return DefaultBudget
 	}
 	return b
