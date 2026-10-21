@@ -782,10 +782,17 @@ _CODE_RUNNERS = {"python", "py", "node", "deno", "bun", "ruby", "perl", "php", "
                  "tclsh", "awk", "gawk", "sed", "jq", "sqlite3", "psql", "mysql", "duckdb", "find", "xargs"}
 # Commands that can create links (or unpack them): never under the carve-out.
 _LINK_MAKERS = {"ln", "link", "mklink", "tar", "unzip", "cpio", "7z"}
-# Copiers whose sources must be existing, link-free files or directories.
-_COPIERS = {"mv", "cp", "rsync", "install"}
-# Every other mover/copier: its sources are not checked, so it never gets the carve-out.
-_OTHER_MOVERS = {"move-item", "mi", "copy-item", "cpi", "rename-item", "rni", "move", "copy",
+# Copiers whose sources must be existing, link-free files or directories. The only
+# source-taking verbs that get the carve-out.
+_COPIERS = {"mv", "cp", "install"}
+# Write verbs that take no source (they write, create or delete only the paths they name).
+# With _COPIERS this is the whole allowlist: any other verb in WRITE_COMMANDS (today's or
+# one added later) gets no carve-out.
+_PLAIN_WRITERS = {"rm", "rmdir", "unlink", "truncate", "touch", "tee", "mkdir", "md", "rd",
+                  "set-content", "add-content", "out-file", "clear-content", "sc", "ac",
+                  "new-item", "ni", "remove-item", "ri", "del", "erase"}
+# Documentation only (the allowlist above decides): other movers/copiers, never carved out.
+_OTHER_MOVERS = {"rsync", "move-item", "mi", "copy-item", "cpi", "rename-item", "rni", "move", "copy",
                  "ren", "rename", "xcopy", "robocopy", "pax", "busybox", "scp", "ditto"}
 _WALK_CAP = 2000
 _lstat = os.lstat  # module attribute so tests can stand in a link
@@ -812,7 +819,7 @@ def _makes_links(seg) -> bool:
             if re.match(r"^-[A-Za-z]*[sl][A-Za-z]*$", a):
                 return True
             opt = a.split("=", 1)[0].lower()
-            if len(opt) >= 4 and ("--link".startswith(opt) or "--symbolic-link".startswith(opt)):
+            if len(opt) >= 3 and ("--link".startswith(opt) or "--symbolic-link".startswith(opt)):
                 return True
     return False
 
@@ -884,12 +891,17 @@ def _clean_source(path: str) -> bool:
 
 
 def _copy_sources(seg) -> list[str]:
-    """Source words of a mv/cp/rsync/install segment: every positional except the
+    """Source words of a mv/cp/install segment: every positional except the
     destination (the last one, or the -t/--target-directory value)."""
+    return _copy_parts(seg)[0]
+
+
+def _copy_parts(seg) -> tuple[list[str], str | None]:
+    """(sources, destination) of a mv/cp/install segment; ([], None) for anything else."""
     bases = _bases(seg)
     i = next((k for k, b in enumerate(bases) if b in _COPIERS), None)
     if i is None:
-        return []
+        return [], None
     args, pos, target, ends = seg.argv[i + 1:], [], None, False
     k = 0
     while k < len(args):
@@ -908,7 +920,21 @@ def _copy_sources(seg) -> list[str]:
         elif bases[i] == "install" and a in ("-m", "-o", "-g", "--mode", "--owner", "--group"):
             k += 1
         k += 1
-    return pos if target is not None else pos[:-1]
+    if target is not None:
+        return pos, target
+    return pos[:-1], (pos[-1] if pos else None)
+
+
+def _shared_file(path) -> bool:
+    """An existing path that is a link (symlink, junction, reparse point) or a
+    non-directory with more than one hard link: a write there lands elsewhere too."""
+    try:
+        st = _lstat(path)
+    except OSError:
+        return False  # doesn't exist yet (or can't be read: realpath still bounds it)
+    if _is_link(st):
+        return True
+    return not stat.S_ISDIR(st.st_mode) and getattr(st, "st_nlink", 1) > 1
 
 
 def _under_breaker(root: Path, rel: str | None, live: set[str]) -> bool:
@@ -921,6 +947,8 @@ def _under_breaker(root: Path, rel: str | None, live: set[str]) -> bool:
         return False
     if parts[2] not in live and not (os.name == "nt" and parts[2].lower() in {x.lower() for x in live}):
         return False
+    if _shared_file(str(root / rel)):
+        return False  # writing through an existing link or hard link inside breaker/
     base = os.path.realpath(root / STATE_DIR / parts[2] / "breaker")
     real = os.path.realpath(root / rel)
     if os.name == "nt":
@@ -945,16 +973,32 @@ def _breaker_only(root: Path, seg) -> bool:
     `.claude/build/<active slug>/breaker/` (the breaker agent's scratch directory:
     backups, logs, notes). Judged on each resolved word, on each unquoted word's
     text and on the raw text; one other state path voids it. Code runners keep the
-    full refusal for their arguments; link makers and movers/copiers outside
-    _COPIERS never get it."""
-    if _makes_links(seg) or any(b in _OTHER_MOVERS for b in _bases(seg)):
+    full refusal for their arguments; link makers never get it, and a write verb
+    gets it only when it is in _COPIERS or _PLAIN_WRITERS (a true allowlist)."""
+    if _makes_links(seg):
         return False
+    allowed = _COPIERS | _PLAIN_WRITERS
+    cmd = command_word(seg.argv)[0]
+    if cmd == "git" or (cmd in WRITE_COMMANDS and cmd not in allowed):
+        return False
+    bases = _bases(seg)
+    head = bases[:bases.index(cmd) + 2] if cmd in bases else bases
+    if any(b in WRITE_COMMANDS and b not in allowed for b in head):
+        return False  # e.g. `busybox rsync`: a multi-call verb off the allowlist
     live = {s for s in slugs(root) if load_approved(root, s) and not load_session(root, s).get("finished")}
     if not live:
         return False
-    for src in _copy_sources(seg):
+    srcs, dest = _copy_parts(seg)
+    for src in srcs:
         if not _clean_source(resolve_word(root, src)[1]):
             return False  # a link (or junction) carried in would redirect later writes
+    if dest and srcs:
+        drel, dabs = resolve_word(root, dest)
+        if os.path.isdir(dabs):
+            for src in srcs:  # each copy lands on <dest>/<basename>: no link or hard link there
+                name = norm(src).strip("'\"").rstrip("/").rsplit("/", 1)[-1]
+                if name and _shared_file(os.path.join(dabs, name)):
+                    return False
     runner = any(b in _CODE_RUNNERS for b in _bases(seg))
     if runner and any(STATE_DIR in canon_text(w) for w in seg.argv):
         return False

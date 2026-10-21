@@ -1590,7 +1590,7 @@ def test_breaker_refuses_copying_a_symlink_in(repo, monkeypatch):
     ("cp missing.db .claude/build/demo/breaker/app.db", 2),
     ("mv missing .claude/build/demo/breaker/m", 2),
     ("install -m 644 app.db .claude/build/demo/breaker/app.db", 0),
-    ("rsync -a fixtures/ .claude/build/demo/breaker/f/", 0),
+    ("rsync -a fixtures/ .claude/build/demo/breaker/f/", 2),  # rsync is off the allowlist (round 5)
 ])
 def test_breaker_copy_sources_must_exist_and_be_link_free(repo, cmd, want):
     _active_build(repo)
@@ -1666,3 +1666,95 @@ def test_breaker_refuses_a_hard_linked_source(repo):
         pytest.skip("can't create a hard link here")
     assert hook(repo, bash(f"mv x2 {_B4}/x2"))[0] == 2
     assert hook(repo, bash(f"cp app.db {_B4}/app2.db"))[0] == 0
+
+
+# Fix round 5: rsync off the allowlist, no writes through an existing hard link or
+# link inside breaker/, a true copier allowlist, and `cp --l` makes links.
+@pytest.mark.parametrize("cmd", [
+    f"rsync -rt --link-dest=.. src/ {_B4}/",
+    f"rsync -rt --link-dest=../ src/ {_B4}/",
+    f"rsync -rt --link-dest ../ src/ {_B4}/",
+    f"rsync -rt --compare-dest=.. src/ {_B4}/",
+    f"rsync -rt --copy-dest=.. src/ {_B4}/",
+    f"rsync x {_B4}/x", f"rsync.exe x {_B4}/x", f"rsync --copy-links x {_B4}/x",
+])
+def test_breaker_no_carve_out_for_rsync(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "approved.json").write_text("z", encoding="utf-8")
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def _hard_link_in_scratch(repo):
+    _active_build(repo)
+    scratch = _scratch_sources(repo)
+    (repo / "plain.txt").write_text("p", encoding="utf-8")
+    try:
+        os.link(repo / "plain.txt", scratch / "hl")
+    except OSError:
+        pytest.skip("can't create a hard link here")
+    (scratch / "reg").write_text("r", encoding="utf-8")
+    return scratch
+
+
+@pytest.mark.parametrize("cmd", [
+    f"echo x > {_B4}/hl", f"echo x >> {_B4}/hl", f"echo x | tee {_B4}/hl", f"echo x | tee -a {_B4}/hl",
+    f"cp x {_B4}/hl", f"cp x {_B4}", f"cp -t {_B4} x hl", f"touch {_B4}/hl", f"truncate -s0 {_B4}/hl",
+    f"Set-Content {_B4}/hl x", f"echo x | Out-File {_B4}/hl",
+])
+def test_breaker_refuses_writes_through_an_existing_hard_link(repo, cmd):
+    scratch = _hard_link_in_scratch(repo)
+    (repo / "hl").write_text("h", encoding="utf-8")  # a source named like the link, for `cp -t`
+    if cmd == f"cp x {_B4}":
+        os.replace(scratch / "hl", scratch / "x")  # the copy would land on the hard link breaker/x
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    f"echo x > {_B4}/reg", f"echo x >> {_B4}/reg", f"echo x | tee {_B4}/reg", f"cp x {_B4}/reg",
+    f"touch {_B4}/reg", f"truncate -s0 {_B4}/reg", f"Set-Content {_B4}/reg x", f"echo x | Out-File {_B4}/reg",
+    f"cp x {_B4}", f"mkdir -p {_B4}/logs",
+])
+def test_breaker_still_allows_writes_to_an_existing_regular_file(repo, cmd):
+    _hard_link_in_scratch(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_breaker_refuses_a_write_onto_an_existing_link_destination(repo, monkeypatch):
+    import stat as _stat
+    _active_build(repo)
+    scratch = _scratch_sources(repo)
+    (scratch / "fl").write_text("f", encoding="utf-8")
+    real = gate._lstat
+
+    class Fake:
+        st_mode = _stat.S_IFLNK | 0o777
+        st_file_attributes = 0
+        st_nlink = 1
+
+    def fake(p):
+        return Fake() if os.path.basename(str(p)).lower() == "fl" else real(p)
+    monkeypatch.setattr(gate, "_lstat", fake)
+    assert hook(repo, bash(f"echo x > {_B4}/fl"))[0] == 2
+    assert hook(repo, bash(f"echo x | tee {_B4}/fl"))[0] == 2
+    assert hook(repo, bash(f"echo x > {_B4}/ok"))[0] == 0
+
+
+def test_breaker_carve_out_is_a_true_allowlist(repo, monkeypatch):
+    from tentaqles.workflow import _common
+    _active_build(repo)
+    _scratch_sources(repo)
+    monkeypatch.setattr(_common, "WRITE_COMMANDS", _common.WRITE_COMMANDS | {"fakecopy"})
+    monkeypatch.setattr(gate, "WRITE_COMMANDS", gate.WRITE_COMMANDS | {"fakecopy"})
+    assert hook(repo, bash(f"fakecopy x {_B4}/x"))[0] == 2
+    assert hook(repo, bash(f"cp x {_B4}/x"))[0] == 0
+    assert hook(repo, bash(f"cp x {_B4}/patch"))[0] == 0  # a file named like a verb is just a file
+
+
+@pytest.mark.parametrize("cmd", [f"cp --l x {_B4}/x", f"cp --li x {_B4}/x", f"cp --lin x {_B4}/x",
+                                 f"cp --l=x x {_B4}/x"])
+def test_breaker_cp_link_abbreviations_make_links(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
