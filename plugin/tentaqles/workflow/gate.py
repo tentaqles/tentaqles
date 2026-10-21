@@ -864,6 +864,34 @@ def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[t
     return hits
 
 
+_GIT_GLOBAL_WITH_ARG = ("-c", "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env")
+
+
+def _check_git(seg, hits: list[tuple[str, str]]) -> None:
+    """git is a writer of the gate's state too: a signed approval staged before the tests
+    are locked can be checked out again afterwards, which drops the locks. So git may not
+    name the state dir (or the key) at all, and the subcommands that reach ignored files
+    without naming them (clean -x/-X, stash --all, add --force of a whole tree) are refused."""
+    if any(c in ("state", "key") for c, _ in hits):
+        raise Block(f"git may not touch {STATE_DIR}/ (hook-owned, signed state) while a build exists; "
+                    "only the build-gate commands write it, and it is never staged, restored or stashed.")
+    args = seg.argv[1:]
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in _GIT_GLOBAL_WITH_ARG else 1
+    sub = args[i].lower() if i < len(args) else ""
+    rest = args[i + 1:]
+    if sub == "clean" and any(re.match(r"^-[A-Za-z]*[xX]", a) for a in rest if not a.startswith("--")):
+        raise Block(f"`git clean -x/-X` deletes ignored files, which include {STATE_DIR}/ (the gate's signed state).")
+    if sub == "stash" and any(a in ("-a", "--all", "--include-ignored") for a in rest):
+        raise Block(f"`git stash --all` takes ignored files, which include {STATE_DIR}/ (the gate's signed state).")
+    if sub == "add" and any(a in ("-f", "--force") or re.match(r"^-[a-z]*f", a) for a in rest if a != "--"):
+        wide = [a for a in rest if not a.startswith("-") and norm(a).rstrip("/") in ("", ".", "*", ":/", ":", "./*")]
+        if wide or not [a for a in rest if not a.startswith("-")]:
+            raise Block(f"`git add --force` of a whole tree stages ignored files, which include {STATE_DIR}/; "
+                        "name the files to force-add.")
+
+
 def check_shell(cmd: str, root: Path) -> None:
     """Normalise once (lexer + canonical paths), then decide per segment."""
     locked = _locked_paths(root)
@@ -910,6 +938,8 @@ def check_shell(cmd: str, root: Path) -> None:
             if any(c in ("state", "git", "plan", "config") for c, _ in word_hits):
                 raise Block("the gate CLI never takes its own state paths as arguments.")
             continue  # the gate writes its own (signed) state
+        if cmd_name == "git":
+            _check_git(seg, word_hits + text_hits)
         if not writes:
             continue
         # Fail closed on write targets the lexer can't resolve.
@@ -1626,7 +1656,7 @@ def _yaml_str(s: str) -> str:
 
 _STATE_PATHS_RX = r"\.claude[\\/]+(?:build(?:[\\/]|$)|tq-rules\.yaml|settings(?:\.local)?\.json)"
 _KEY_RX = r"build-gate[\\/]+hmac\.key"
-_SHELL_WRITE_RX = (r"(?:>|\btee\b|\b(?:cp|mv|rm|dd|truncate|install|ln|touch|sed|perl)\b|set-content|add-content|out-file"
+_SHELL_WRITE_RX = (r"(?:>|\btee\b|\bgit\b|\b(?:cp|mv|rm|dd|truncate|install|ln|touch|sed|perl)\b|set-content|add-content|out-file"
                    r"|new-item|remove-item|move-item|copy-item|rename-item|clear-content|\bpython[0-9.]*\b|\bpy\b"
                    r"|\bnode\b|\bpwsh\b|\bpowershell\b|writealltext|\bopen\()")
 

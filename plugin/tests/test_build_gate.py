@@ -1570,3 +1570,63 @@ def test_writes_under_the_gate_code_are_refused(repo):
 def test_shell_key_reads_and_split_gate_imports_refused(repo, cmd, tool):
     code, _, err = hook(repo, bash(cmd, tool))
     assert code == 2, cmd
+
+
+# C4: git counts as a writer of the gate's state
+
+def test_git_replay_of_signed_state_refused_at_the_first_step(repo):
+    gate.cmd_approve(repo, "demo")
+    code, _, err = hook(repo, bash("git add -f .claude/build/demo/approved.json"))
+    assert code == 2 and ".claude/build" in err
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert hook(repo, bash("git checkout -- .claude/build/demo/approved.json"))[0] == 2
+    assert gate._locked_paths(repo) == {"tests/test_a.py": "demo"}
+
+
+@pytest.mark.parametrize("cmd", [
+    "git add .claude/build/demo/approved.json",
+    "git add -f -- .claude/build",
+    "git add --force .",
+    "git add .claude",
+    "git checkout HEAD~1 -- .claude/build/demo/approved.json",
+    "git restore --source=HEAD~1 -- .claude/build",
+    "git rm --cached .claude/build/demo/approved.json",
+    "git mv .claude/build/demo/approved.json x.json",
+    "git stash push -- .claude/build",
+    "git stash --all",
+    "git stash push --include-ignored",
+    "git update-index --add .claude/build/demo/approved.json",
+    "git apply --directory=.claude/build x.patch",
+    "git clean -fdX",
+    "git clean -fdx",
+    "git -C .claude/build status",
+    "git cat-file -p 0123abc > .claude/build/demo/approved.json",
+    "git show HEAD:.claude/build/demo/approved.json",
+    "rm -rf .claude",
+    "Remove-Item -Recurse .claude",
+])
+def test_git_and_tree_commands_naming_state_refused(repo, cmd):
+    gate.cmd_approve(repo, "demo")
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git add docs/checkpoints/demo.json app.py",
+    "git status",
+    "git commit -m 'feat: x'",
+    "git clean -fd",
+    "git stash",
+    "git diff HEAD -- app.py",
+    "git add -A",
+])
+def test_ordinary_git_still_allowed(repo, cmd):
+    gate.cmd_approve(repo, "demo")
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_tq_state_shell_rule_covers_git(repo):
+    import re
+    rule = next(r for r in gate.state_rules() if r["id"].endswith("state-shell"))["command"]
+    for c in ("git add -f .claude/build/demo/approved.json", "git checkout -- .claude/build/demo/approved.json"):
+        assert re.search(rule, c, re.IGNORECASE), c
+    assert not re.search(rule, "git add docs/checkpoints/demo.json", re.IGNORECASE)
