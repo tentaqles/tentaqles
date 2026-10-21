@@ -33,3 +33,13 @@ def test_ship_never_overrides_the_dod_and_guards_pii() -> None:
     assert "never call `AskUserQuestion`" in body
     assert "you never run `build-gate dod <slug> --override`" in body
     assert "--admin" not in body.replace("never `gh pr merge --admin`", "")
+
+
+def test_ship_pr_body_quotes_only_the_first_line_of_a_check_detail() -> None:
+    raw = _body("ship")
+    body = " ".join(raw.split())
+    assert "first line" in body and "never the tail" in body
+    assert "<detail>" not in raw  # the template has no free multi-line detail placeholder
+    assert "dod_fresh" in body and "build-gate state <slug> --json" in body
+    assert "stale" not in body.lower()
+    assert "Only a `PASS` head line" in body

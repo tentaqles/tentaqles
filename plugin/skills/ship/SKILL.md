@@ -118,18 +118,20 @@ no test suite, say so plainly in the PR body; do not invent one.
 
 **Definition of done.** When this branch came from `/tentaqles:feature`,
 `/tentaqles:fix` or `/tentaqles:kickoff`, the gate wrote
-`.claude/build/<slug>/dod.json`. Read its `ok`, `tree`, `override` and
-`checks` (each `id`, `ok` true, false or null for skip, and `detail`) and quote
-them in the PR body; `build-gate state <slug> --json` shows `dod.ok`,
-`dod.tree` and `dod.override`. The record is evidence only while it is fresh
-(its `tree` is the current code) and `ok` is true. Re-run the plain check,
-`build-gate dod <slug>` (resolve `build-gate` as in `skills/dod/SKILL.md`),
-and read its head line: `PASS`, or `human override still in force`, means
-fresh. If the record is missing, stale or not ok, stop and point to
-`/tentaqles:dod <slug>`. Only the human waives a missing item, in their own
-terminal; you never run `build-gate dod <slug> --override`, and you do not tell
-anyone to run it for you. Headless (`TENTAQLES_HEADLESS=1`): never call
-`AskUserQuestion`; report the stop as your final output, or write it with
+`.claude/build/<slug>/dod.json`. Run `build-gate state <slug> --json`
+(resolve `build-gate` as in `skills/dod/SKILL.md`). If `dod.ok` is true (or
+`dod.override` is set) and `dod_fresh` is true, read `dod.json` (`ok`, `tree`,
+`override`, and `checks` with `id`, `ok` true, false or null for skip, and
+`detail`) and quote it in the PR body without re-running. Otherwise re-run the
+plain check, `build-gate dod <slug>`: it runs the project's frozen commands
+(up to 900 s) and rewrites `dod.json`, so run it in the background or with the
+`Monitor` tool, then read the state again. Only a `PASS` head line, or
+"human override still in force", counts. If the record is missing, not ok or
+not fresh after that, stop and point to `/tentaqles:dod <slug>`. Only the human
+waives a missing item, in their own terminal; you never run
+`build-gate dod <slug> --override`, and you do not tell anyone to run it for
+you. Headless (`TENTAQLES_HEADLESS=1`): never call `AskUserQuestion`; report
+the stop as your final output, or write it with
 `build-gate ask <slug> --kind question --text "<what is missing>" --options stop`
 when a build slug is known.
 
@@ -202,7 +204,7 @@ CI: pending — this PR is not verified until checks are green.
 
 ## Definition of done
 <from dod.json: PASS at tree <12 chars> | OVERRIDDEN: <reason> | not applicable (plain build)>
-- <check id>: <ok|skip|MISSING> — <detail>
+- <check id>: <ok|skip|MISSING> — <first line of its detail>
 Size: <N files, +A −D>; reason if over ~400 lines: <reason>
 
 ## Notes
@@ -210,9 +212,10 @@ Size: <N files, +A −D>; reason if over ~400 lines: <reason>
 ```
 
 The PR body never contains personal data or secrets: the tq hook
-`tq/text-pii` checks `gh pr create` text and denies it when it does. Quote
-check ids and details from `dod.json`, never raw output that could hold such
-data.
+`tq/text-pii` checks `gh pr create` text and denies it when it does. For each
+check quote only its id, its status and the first line of its `detail` (the
+command and exit code, or the count); never the tail, which can name files or
+rows that hold such data.
 
 ## 8. Hand off
 
