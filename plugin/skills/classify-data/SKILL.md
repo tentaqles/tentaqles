@@ -58,8 +58,16 @@ log statements. Grep the column-name signals from
 (repository path or `schema.table`), retention, deletion job. Ask the user one
 question at a time only where the class is unclear (is the phone a business
 line or a person's?) or where retention is a business decision; offer a
-recommended default and record the answer. Headless: see the paragraph at the
-top.
+recommended default and record the answer. Also ask, one question each:
+
+- "Which countries are the data subjects in?" This fills `data.regions`.
+  Default: infer from the PRD's users and markets and log the assumption.
+- "Who receives an incident notice (name or role, and the channel)?" This
+  fills `incident.contact`. Headless: never invent a contact; write a
+  `NEEDS-DECISION` line in `## Open decisions` and do not write the block
+  with a made-up address.
+
+Headless: see the paragraph at the top.
 
 ## 3. Manifest `data:` block
 
@@ -90,23 +98,27 @@ data:
 Rules:
 
 - Every declared class has **at least one** `path` or `table` entry. If none
-  can be found, ask for them; do not write the block.
-- Memory, the vault and hook model calls always mask declared pii and
-  financial classes; `prompts.allow` does not apply to them.
+  can be found, ask for them; headless: write a `NEEDS-DECISION` line, do not
+  write the block, and list it in the report.
+- Memory, the vault and hook model calls always mask declared
+  pii, sensitive, financial, children and secrets classes; `prompts.allow` does not apply to them.
 - `incident.authority` is a single value. The clocks come from `data.regions`
   (BR: ANPD, 3 business days; an EU or EEA country: GDPR, 72 hours). When both
   apply, set `authority` to GDPR, the shorter clock, which governs the first
-  notice; `docs/privacy.md` lists both.
+  notice; `docs/privacy.md` lists both. Regions outside BR and the EU/EEA
+  get `incident.authority: none` and a line in `## Open decisions` asking
+  which authority applies.
 - `tq` validates the block on load and refuses unknown classes, a `path` and a
   `table` on the same entry, or a malformed retention.
 - Changing the manifest changes its trust hash: tell the user to run
   `tq allow <workspace>` and wait for it before relying on the guard rules.
 
-Mirror the `path` entries into `CLAUDE.md`'s `tq-project` block as
-`classified_paths` (same globs; match the existing key) so the build gate's
+Mirror the `path` entries into `CLAUDE.md`'s `tq-project` block (a JSON
+block) as `classified_paths`, a JSON array of the same globs; create the key when it is missing so the build gate's
 definition of done can require `docs/privacy.md` to change with them. For each
 `table:` entry, also add the schema or migration files that define that table
-to `classified_paths`; when you cannot find them, ask. Never add
+to `classified_paths`; when you cannot find them, ask (headless: write a
+`NEEDS-DECISION` line in `## Open decisions`). Never add
 `docs/privacy.md`, or anything under `docs/`, to `classified_paths`: a
 privacy-record edit would then trigger the privacy review that asked for it.
 

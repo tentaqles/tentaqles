@@ -34,3 +34,14 @@ def test_classify_data_rulings() -> None:
                   "tq-project", "_tqe="):  # bootstrap, mirror
         assert token in body, token
     assert "git add -A" not in body and "git add ." not in body
+
+
+def test_classify_data_fix_round_1() -> None:
+    body = _body("classify-data")
+    for token in ("Which countries are the data subjects in", "Who receives an incident notice",
+                  "never invent a contact", "do not write the block",
+                  "pii, sensitive, financial, children and secrets",
+                  "JSON array", "create the key when it is missing",
+                  "`incident.authority: none`",
+                  "stage only the files this\nrun changed, named explicitly"):
+        assert token in body, token
