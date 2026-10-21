@@ -764,3 +764,148 @@ def test_event_workflow_is_sanitised(repo, tq_home):
     gate.cmd_verify(repo, "demo", 2)
     row = json.loads((tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert row["workflow"] == "build"
+
+
+# ---------------------------------------------------------------------------
+# Definition of done
+# ---------------------------------------------------------------------------
+
+PROJECT_BLOCK = ('# Demo\n\n## Project config\n\n```json tq-project\n'
+                 '{"commands": {"test": %s}, "architecture_paths": ["core/**"], "classified_paths": ["data/**"], "changelog": "CHANGELOG.md"}\n'
+                 '```\n')
+
+
+def _project(repo, test_cmd=PASS_CMD):
+    (repo / "CLAUDE.md").write_text(PROJECT_BLOCK % json.dumps(test_cmd), encoding="utf-8")
+    (repo / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
+    _git(repo, "add", "CLAUDE.md", "CHANGELOG.md")
+    _git(repo, "commit", "-q", "-m", "project config")
+
+
+def _all_passed(repo, workflow="feature"):
+    plan = {**PLAN, "workflow": workflow, "spec": "docs/specs/demo.md"}
+    for cid in (2, 3):
+        plan = with_gate(plan, cid, behavior="passed", review="passed", status="passed")
+    save_plan(repo, plan)
+    return plan
+
+
+def _touch_changelog(repo):
+    (repo / "CHANGELOG.md").write_text("# Changelog\n- demo\n", encoding="utf-8")
+
+
+def _dod_checks(repo):
+    rec = gate.read_json(repo / ".claude" / "build" / "demo" / "dod.json")
+    assert gate.verified(rec)
+    return {c["id"]: c for c in rec["checks"]}, rec
+
+
+def test_dod_passes_when_everything_is_recorded(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 0 and out.startswith("DoD demo: PASS")
+    checks, rec = _dod_checks(repo)
+    assert rec["ok"] and checks["tests"]["ok"] and checks["adr"]["ok"] and checks["changelog"]["ok"]
+    assert checks["lint"]["detail"].startswith("skip")
+
+
+def test_dod_fails_on_failing_test_command(repo):
+    _project(repo, FAIL_CMD)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING tests" in out
+
+
+def test_dod_requires_adr_for_architecture_paths(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    (repo / "core").mkdir()
+    (repo / "core" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING adr" in out and "core/x.py" not in out  # no file names in the summary line
+    (repo / "docs" / "adr").mkdir(parents=True)
+    (repo / "docs" / "adr" / "0002-core.md").write_text("# ADR-0002\n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+
+
+def test_dod_requires_changelog_and_privacy_and_migration_plan(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING changelog" in out
+    _touch_changelog(repo)
+    (repo / "data").mkdir()
+    (repo / "data" / "customers.sql").write_text("select 1;\n", encoding="utf-8")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert "MISSING privacy" in out
+    (repo / "docs" / "privacy.md").write_text("# privacy\n", encoding="utf-8")
+    (repo / "migrations").mkdir()
+    (repo / "migrations" / "001.sql").write_text("alter table x add y int;\n", encoding="utf-8")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert "MISSING migration" in out
+    (repo / "docs" / "specs").mkdir(parents=True)
+    (repo / "docs" / "specs" / "demo.md").write_text("# demo\n\n## Migration plan\nexpand/contract\n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+
+
+def test_dod_with_invalid_project_config_is_missing_item(repo):
+    (repo / "CLAUDE.md").write_text("```json tq-project\n{bad json}\n```\n", encoding="utf-8")
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING project_config" in out and "MISSING tests" in out
+
+
+def test_dod_uses_the_frozen_test_command(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    # the agent rewrites CLAUDE.md to a no-op test command after approval
+    (repo / "CLAUDE.md").write_text(PROJECT_BLOCK % json.dumps(FAIL_CMD), encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 0  # frozen PASS_CMD ran, not the edited one
+
+
+def test_dod_override_requires_reason_and_is_logged(repo, tq_home):
+    _project(repo, FAIL_CMD)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    with pytest.raises(SystemExit):
+        gate.cmd_dod(repo, "demo", override="   ")
+    code, out = gate.cmd_dod(repo, "demo", override="release train leaves now; tests fixed in #42")
+    assert code == 0 and "OVERRIDDEN" in out
+    learn = (repo / "docs" / "LEARNINGS.md").read_text(encoding="utf-8")
+    assert "· demo · dod-override · release train leaves now" in learn
+    events = [json.loads(l) for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert events[-1]["kind"] == "dod-override" and "reason" not in events[-1]
+
+
+def test_stop_requires_fresh_dod_for_feature_plans(repo):
+    _project(repo)
+    own(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    code, _, err = stop(repo)
+    assert code == 2 and "build-gate dod demo" in err
+    assert stop(repo)[0] == 0  # blocked once, then through
+    _touch_changelog(repo)
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    assert stop(repo)[0] == 0
+    (repo / "app.py").write_text("def f():\n    return 3\n", encoding="utf-8")  # code changed: DoD stale
+    assert stop(repo)[0] == 2
+
+
+def test_stop_without_workflow_is_unchanged(repo):
+    own(repo)
+    done = with_gate(PLAN, 2, behavior="passed", review="passed", status="passed")
+    done = with_gate(done, 3, behavior="passed", review="passed", status="passed")
+    save_plan(repo, done)
+    assert stop(repo)[0] == 0

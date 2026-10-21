@@ -53,6 +53,7 @@ from tentaqles.workflow._common import (
     find_bash,
     find_git_root,
     git,
+    glob_match,
     norm,
     read_json,
     read_text,
@@ -62,6 +63,7 @@ from tentaqles.workflow._common import (
     tail,
     write_json,
 )
+from tentaqles.workflow.project import load_project_config
 
 GATES = ("behavior", "review")
 OK_STATES = ("passed", "n/a")
@@ -751,6 +753,12 @@ def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
         if started:
             open_gates = ", ".join(f"{g}={s}" for g, s in gates.items() if s not in OK_STATES) or "status"
             problems.append(f"#{cp.get('id')} {cp.get('title', '')}: not proven ({open_gates})")
+    if (plan.get("workflow") or "build") in DOD_WORKFLOWS and not sess.get("finished"):
+        if all(c.get("status") == "passed" for c in plan.get("checkpoints") or []):
+            ok, why = dod_fresh(root, slug, th)
+            if not ok:
+                problems.append(f"definition of done not proven ({why}): run `build-gate dod {slug}` and fix what it lists, "
+                                f"or, when the human has said so, `build-gate dod {slug} --override \"<their reason>\"`")
     return problems
 
 
@@ -891,6 +899,9 @@ def cmd_approve(root: Path, slug: str) -> str:
         "workflow": plan.get("workflow") if plan.get("workflow") in WORKFLOWS else "build",
         "hotfix": plan.get("hotfix") is True,
     }
+    project, pwarn = load_project_config(root)
+    approved["project"] = project
+    approved["project_warning"] = pwarn
     save_approved(root, slug, approved)
     sess = load_session(root, slug)
     sess.pop("finished", None)
@@ -1068,6 +1079,149 @@ def cmd_review_bundle(root: Path, slug: str, cid: int, max_bytes: int = 200_000)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(parts), encoding="utf-8")
     return f"{norm(out)}\nbase={base}"
+
+
+MIGRATION_DIR_RE = re.compile(r"(^|/)(migrations|migrate|alembic/versions|supabase/migrations|prisma/migrations|db/migrate|flyway|sql/migrations)/")
+
+
+def changed_files(root: Path, base: str | None) -> list[str]:
+    files: set[str] = set()
+    if base:
+        code, out = git(root, "diff", "--name-only", base, "--", ".")
+        if code == 0:
+            files.update(out.splitlines())
+    code, out = git(root, "diff", "--name-only", "HEAD", "--", ".")
+    if code == 0:
+        files.update(out.splitlines())
+    code, out = git(root, "ls-files", "--others", "--exclude-standard")
+    if code == 0:
+        files.update(out.splitlines())
+    out_files = []
+    for f in files:
+        f = norm(f).strip()
+        if f and not any(f.startswith(p + "/") or f == p for p in HASH_EXCLUDES):
+            out_files.append(f)
+    return sorted(out_files)
+
+
+def dod_path(root: Path, slug: str) -> Path:
+    return state_dir(root, slug) / "dod.json"
+
+
+def _next_learning_id(text: str, prefix: str) -> int:
+    ids = [int(m) for m in re.findall(rf"^- `?{prefix}(\d+) ·", text, flags=re.MULTILINE)]
+    return (max(ids) + 1) if ids else 1
+
+
+def _append_learning(root: Path, line: str) -> None:
+    path = root / "docs" / "LEARNINGS.md"
+    text = read_text(path)
+    if not text.strip():
+        text = "# Learnings\n\n## Rules\n\n## Log\n"
+    if "## Log" not in text:
+        text = text.rstrip("\n") + "\n\n## Log\n"
+    text = text.rstrip("\n") + "\n" + line + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float = 900) -> tuple[int, str]:
+    """Definition of done (spec §8.1): run the frozen project commands and check the
+    obligations the diff created. Records signed dod.json; the Stop hook reads it."""
+    if override is not None and not override.strip():
+        raise SystemExit("--override needs a reason; it is logged to docs/LEARNINGS.md and counted by tq insights.")
+    plan = load_plan(root, slug)
+    if plan is None:
+        return 1, f"no plan at {PLAN_DIR}/{slug}.json"
+    approved = load_approved(root, slug) or {}
+    if not approved:
+        return 1, f"plan '{slug}' isn't approved (build-gate approve {slug})."
+    project = approved.get("project") or {}
+    checks: list[dict] = []
+
+    def add(cid: str, ok: bool | None, detail: str) -> None:
+        checks.append({"id": cid, "ok": ok, "detail": detail})
+
+    if project:
+        add("project_config", True, "CLAUDE.md tq-project block frozen at approval")
+    else:
+        add("project_config", False, approved.get("project_warning") or "no ```json tq-project block in CLAUDE.md (add one with the test command)")
+    cmds = project.get("commands") or {}
+    before = tree_hash(root)
+    for name in ("test", "lint", "typecheck"):
+        c = cmds.get(name)
+        cid = "tests" if name == "test" else name
+        if not c:
+            add(cid, None if name != "test" else False, "skip: not configured" if name != "test" else "no test command configured")
+            continue
+        code, out, err, timed_out = run(_shell_argv(c), cwd=root, timeout=timeout)
+        add(cid, code == 0, f"exit {code}{' (timed out)' if timed_out else ''}: {c}" + ("" if code == 0 else "\n" + redact(tail(out + "\n" + err, 20))))
+    tampered = tests_intact(root, approved)
+    add("locked_tests", not tampered, "unchanged" if not tampered else f"{len(tampered)} locked test file(s) changed")
+    cps = plan.get("checkpoints") or []
+    unpassed = [c.get("id") for c in cps if c.get("status") != "passed"]
+    add("checkpoints", not unpassed, f"{len(cps) - len(unpassed)}/{len(cps)} passed" + (f"; open: {unpassed}" if unpassed else ""))
+    open_reviews = []
+    for cp in cps:
+        latest: dict[str, dict] = {}
+        for line in read_text(reviews_path(root, slug)).splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if verified(rec) and rec.get("checkpoint") == cp.get("id"):
+                latest[rec["reviewer"]] = rec
+        open_reviews += [f"#{cp.get('id')} {r} {rec['result']}" for r, rec in latest.items() if rec.get("result") != "PASS"]
+    add("reviews", not open_reviews, "no open FAIL/BLOCKED" if not open_reviews else "open: " + ", ".join(open_reviews))
+    files = changed_files(root, approved.get("base"))
+    arch = [f for f in files if glob_match(f, project.get("architecture_paths") or [])]
+    adr_changed = any(f.startswith("docs/adr/") for f in files)
+    add("adr", (not arch) or adr_changed,
+        "no architecture path changed" if not arch else (f"{len(arch)} architecture file(s) changed, ADR " + ("present" if adr_changed else "missing under docs/adr/")))
+    classified = [f for f in files if glob_match(f, project.get("classified_paths") or [])]
+    add("privacy", (not classified) or "docs/privacy.md" in files,
+        "no classified path changed" if not classified else (f"{len(classified)} classified file(s) changed, docs/privacy.md " + ("updated" if "docs/privacy.md" in files else "not updated")))
+    mig = [f for f in files if MIGRATION_DIR_RE.search(f)]
+    spec_rel = plan.get("spec") or f"docs/specs/{slug}.md"
+    has_plan = bool(re.search(r"^##+ .*migration plan", read_text(root / spec_rel), flags=re.IGNORECASE | re.MULTILINE))
+    add("migration", (not mig) or has_plan,
+        "no migration files changed" if not mig else (f"{len(mig)} migration file(s) changed, '## Migration plan' in {spec_rel} " + ("present" if has_plan else "missing")))
+    changelog = project.get("changelog")
+    if changelog and (root / changelog).exists():
+        add("changelog", changelog in files, f"{changelog} " + ("changed" if changelog in files else "not changed"))
+    else:
+        add("changelog", None, "skip: project keeps no changelog")
+    tree = tree_hash(root)
+    if tree != before:
+        add("stable_tree", False, "files changed while the DoD commands ran")
+    ok = all(c["ok"] is not False for c in checks)
+    rec = {"slug": slug, "ok": ok or override is not None, "tree": tree, "ts": now_iso(), "checks": checks,
+           "approval_id": approved.get("approval_id"), "override": (override.strip() if override else None)}
+    write_json(dod_path(root, slug), sign(rec))
+    lines = []
+    for c in checks:
+        tag = "ok  " if c["ok"] else ("skip" if c["ok"] is None else "MISSING")
+        lines.append(f"{tag} {c['id']}: {c['detail']}")
+    if override is not None:
+        n = _next_learning_id(read_text(root / "docs" / "LEARNINGS.md"), "D")
+        _append_learning(root, f"- `D{n} · {now_iso()[:10]} · {slug} · dod-override · {redact(override.strip())}`")
+        log_event(root, "dod-override", slug, ok=ok)
+        head = f"DoD {slug}: OVERRIDDEN by the human (logged as D{n}); {sum(1 for c in checks if c['ok'] is False)} item(s) were missing"
+        return 0, "\n".join([head, *lines])
+    log_event(root, "dod", slug, ok=ok)
+    head = f"DoD {slug}: {'PASS' if ok else 'FAIL'} (tree {str(tree)[:12]})"
+    return (0 if ok else 1), "\n".join([head, *lines])
+
+
+def dod_fresh(root: Path, slug: str, th: TreeHash) -> tuple[bool, str]:
+    rec = read_json(dod_path(root, slug))
+    if not verified(rec):
+        return False, "no definition-of-done record"
+    if not rec.get("ok"):
+        return False, "the last definition-of-done run had missing items"
+    if rec.get("tree") != th.get():
+        return False, "code changed since the last definition-of-done run"
+    return True, ""
 
 
 def cmd_ping(root: Path, max_age: float = 30) -> tuple[int, str]:
@@ -1369,6 +1523,10 @@ def main(argv: list[str] | None = None) -> int:
     jd.add_argument("--reviewer", required=True, choices=REVIEWERS)
     jd.add_argument("--result", required=True, choices=("PASS", "FAIL"))
     jd.add_argument("--note", required=True)
+    dd = sub.add_parser("dod", help="definition of done: run the frozen project commands and check ADR/privacy/migration/changelog obligations")
+    dd.add_argument("slug")
+    dd.add_argument("--override", default=None, help="the human's reason for accepting missing items (logged)")
+    dd.add_argument("--timeout", type=float, default=900)
     sv = sub.add_parser("serve", help="local read-only progress view on 127.0.0.1")
     sv.add_argument("slug")
     sv.add_argument("--port", type=int, default=8765)
@@ -1414,6 +1572,10 @@ def main(argv: list[str] | None = None) -> int:
         if not human_confirm(f"record a human judgement for {a.reviewer} on '{a.slug}' #{a.id}: {a.result}"):
             return 2
         print(cmd_judge(root, a.slug, a.id, a.reviewer, a.result, a.note))
+    elif a.cmd == "dod":
+        code, msg = cmd_dod(root, a.slug, a.override, a.timeout)
+        print(msg)
+        return code
     elif a.cmd == "serve":
         srv = make_server(root, a.slug, a.port)
         print(f"serving http://127.0.0.1:{srv.server_address[1]}/ (Ctrl+C to stop)")
