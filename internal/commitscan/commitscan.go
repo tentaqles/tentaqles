@@ -187,26 +187,97 @@ func bannedFile(f string) bool {
 	return envFileRe.MatchString(f) && !envTemplateRe.MatchString(f)
 }
 
-// scanDiff walks a -U0 unified diff and scans only added lines, mapping them
-// back to their line number in the new file.
-func scanDiff(diff string) []Hit {
-	var hits []Hit
+// AddedLine is one line a commit would add.
+type AddedLine struct {
+	File string
+	Line int
+	Text string
+}
+
+// parseAdded walks a -U0 unified diff and yields every added line with its
+// line number in the new file.
+func parseAdded(diff string) []AddedLine {
+	var out []AddedLine
 	file := ""
 	line := 0
 	for _, l := range strings.Split(diff, "\n") {
 		switch {
 		case strings.HasPrefix(l, "+++ "):
-			file = strings.TrimPrefix(strings.TrimPrefix(l, "+++ "), "b/")
+			file = strings.TrimPrefix(strings.TrimPrefix(strings.TrimRight(l, "\r"), "+++ "), "b/")
 		case strings.HasPrefix(l, "@@"):
 			line = hunkStart(l)
 		case strings.HasPrefix(l, "+"):
-			if name := secrets.ScanLine(l[1:]); name != "" && file != "/dev/null" {
-				hits = append(hits, Hit{File: file, Line: line, Pattern: name})
+			if file != "/dev/null" {
+				out = append(out, AddedLine{File: file, Line: line, Text: strings.TrimRight(l[1:], "\r")})
 			}
 			line++
 		}
 	}
+	return out
+}
+
+// scanDiff scans only added lines, mapping them back to their line number in
+// the new file.
+func scanDiff(diff string) []Hit {
+	var hits []Hit
+	for _, a := range parseAdded(diff) {
+		if name := secrets.ScanLine(a.Text); name != "" {
+			hits = append(hits, Hit{File: a.File, Line: a.Line, Pattern: name})
+		}
+	}
 	return hits
+}
+
+// Added returns every added line the command would commit, in the same scope
+// Scan uses (staged diff; plus the working tree and untracked files when the
+// command also runs git add or commit -a). Binary files are skipped.
+func Added(dir, command string, run Runner) []AddedLine {
+	p := PlanFor(command)
+	if !p.Commits {
+		return nil
+	}
+	diffs := [][]string{{"diff", "--cached", "--no-color", "--no-ext-diff", "-U0"}}
+	if p.WorkingDir {
+		wd := []string{"diff", "--no-color", "--no-ext-diff", "-U0"}
+		if len(p.AddPaths) > 0 && !p.CommitAll {
+			wd = append(append(wd, "--"), p.AddPaths...)
+		}
+		diffs = append(diffs, wd)
+	}
+	var out []AddedLine
+	for _, args := range diffs {
+		o, err := run(dir, args...)
+		if err != nil {
+			continue
+		}
+		out = append(out, parseAdded(o)...)
+	}
+	if p.Untracked {
+		o, err := run(dir, "ls-files", "--others", "--exclude-standard")
+		if err == nil {
+			for _, f := range splitLines(o) {
+				if !p.inScope(f) {
+					continue
+				}
+				path := filepath.Join(dir, filepath.FromSlash(f))
+				fi, err := os.Stat(path)
+				if err != nil || fi.IsDir() || fi.Size() > maxFileBytes {
+					continue
+				}
+				raw, err := os.ReadFile(path)
+				if err != nil || isBinary(raw) {
+					continue
+				}
+				for i, l := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+					if l == "" && i > 0 {
+						continue
+					}
+					out = append(out, AddedLine{File: f, Line: i + 1, Text: l})
+				}
+			}
+		}
+	}
+	return out
 }
 
 var hunkRe = regexp.MustCompile(`\+(\d+)`)

@@ -146,6 +146,12 @@ func validPhone(s string) bool {
 }
 
 var byClass = map[string][]detector{
+	"checksummed": {
+		{"cpf", cpfRe, validCPF},
+		{"cnpj", cnpjRe, validCNPJ},
+		{"card", cardRe, luhn},
+		{"iban", ibanRe, validIBAN},
+	},
 	"pii": {
 		{"cpf", cpfRe, validCPF},
 		{"email", emailRe, func(string) bool { return true }},
@@ -159,7 +165,10 @@ var byClass = map[string][]detector{
 }
 
 // Known lists the selectable classes.
-var Known = []string{"pii", "financial", "sensitive", "children", "secrets", "all"}
+// AllowMarker on a line leaves that line unmasked and uncounted (known-synthetic data).
+const AllowMarker = "tq:allow-pii"
+
+var Known = []string{"checksummed", "pii", "financial", "sensitive", "children", "secrets", "all"}
 
 // ParseClasses parses a comma-separated list; "sensitive" and "children" use
 // the pii detectors; "all" expands to pii, financial and secrets.
@@ -180,7 +189,7 @@ func ParseClasses(csv string) ([]string, error) {
 			return nil, fmt.Errorf("unknown data class %q (known: %s)", c, strings.Join(Known, ", "))
 		}
 		if c == "all" {
-			out = append(out, "pii", "financial", "secrets")
+			out = append(out, "checksummed", "pii", "financial", "secrets")
 			continue
 		}
 		out = append(out, c)
@@ -211,7 +220,7 @@ func detectors(classes []string) ([]detector, bool) {
 			withSecrets = true
 		case "sensitive", "children":
 			c = "pii"
-		case "pii", "financial":
+		case "pii", "financial", "checksummed":
 		default:
 			// Unknown class: fail closed, mask everything.
 			return allDetectors(), true
@@ -228,6 +237,19 @@ func detectors(classes []string) ([]detector, bool) {
 
 // Redact replaces every validated match with [REDACTED:<detector>].
 func Redact(text string, classes []string) string {
+	if !strings.Contains(text, AllowMarker) {
+		return redactText(text, classes)
+	}
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		if !strings.Contains(l, AllowMarker) {
+			lines[i] = redactText(l, classes)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func redactText(text string, classes []string) string {
 	ds, withSecrets := detectors(classes)
 	for _, d := range ds {
 		text = d.re.ReplaceAllStringFunc(text, func(m string) string {
@@ -245,6 +267,22 @@ func Redact(text string, classes []string) string {
 
 // Count reports findings per detector without the values.
 func Count(text string, classes []string) map[string]int {
+	if !strings.Contains(text, AllowMarker) {
+		return countText(text, classes)
+	}
+	out := map[string]int{}
+	for _, l := range strings.Split(text, "\n") {
+		if strings.Contains(l, AllowMarker) {
+			continue
+		}
+		for k, v := range countText(l, classes) {
+			out[k] += v
+		}
+	}
+	return out
+}
+
+func countText(text string, classes []string) map[string]int {
 	out := map[string]int{}
 	ds, withSecrets := detectors(classes)
 	for _, d := range ds {

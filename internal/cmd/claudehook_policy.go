@@ -172,6 +172,22 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits)))
 		}
 	}
+	for _, r := range []struct {
+		id string
+		fn func(policy.Action) (policy.Decision, bool)
+	}{
+		{"tq/commit-pii", func(a policy.Action) (policy.Decision, bool) { return commitPIIDecision(ws, call, cwd, a) }},
+		{"tq/push-pii", func(a policy.Action) (policy.Decision, bool) { return pushPIIDecision(ws, call, cwd, a) }},
+		{"tq/text-pii", func(a policy.Action) (policy.Decision, bool) { return textPIIDecision(ws, call, cwd, a) }},
+		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, a) }},
+	} {
+		if eff.Off(r.id) {
+			continue
+		}
+		if pd, ok := r.fn(eff.ActionFor(r.id, policy.Deny)); ok {
+			d = policy.Merge(d, pd)
+		}
+	}
 	if call.IsMCP() && !eff.Off("tq/cross-client-mcp") {
 		if other := mcpOwner(ws, cfg, call.MCPServer()); other != "" {
 			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/cross-client-mcp", policy.Deny), "tq/cross-client-mcp",

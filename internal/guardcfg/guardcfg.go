@@ -42,6 +42,10 @@ type File struct {
 var HookRules = map[string]string{
 	"tq/commit-secret":    "a git commit that would record a secret",
 	"tq/cross-client-mcp": "an MCP server that belongs to another client",
+	"tq/commit-pii":       "a git commit that would record personal or financial data",
+	"tq/push-pii":         "a git push whose commits record personal or financial data",
+	"tq/text-pii":         "a commit, tag or GitHub PR/issue/release text that carries personal or financial data",
+	"tq/pii-fixture-dump": "copying rows from classified data into tests/, fixtures/ or seeds/",
 }
 
 // Load reads the global file. A missing file is an empty File. A file that

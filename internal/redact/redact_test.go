@@ -8,7 +8,7 @@ import (
 )
 
 func TestCPF(t *testing.T) {
-	valid := []string{"529.982.247-25", "52998224725"}
+	valid := []string{"529.982.247-25", "52998224725"} // tq:allow-pii
 	for _, v := range valid {
 		if got := Redact("cpf "+v+" ok", []string{"pii"}); !strings.Contains(got, "[REDACTED:cpf]") || strings.Contains(got, v) {
 			t.Errorf("valid CPF %s not redacted: %q", v, got)
@@ -29,7 +29,7 @@ func TestCNPJAndCard(t *testing.T) {
 	if got := Redact("cnpj 11.222.333/0001-82", []string{"financial"}); strings.Contains(got, "REDACTED") {
 		t.Fatalf("bad check digit redacted: %q", got)
 	}
-	if got := Redact("card 4111 1111 1111 1111", []string{"financial"}); !strings.Contains(got, "[REDACTED:card]") {
+	if got := Redact("card 4111 1111 1111 1111", []string{"financial"}); !strings.Contains(got, "[REDACTED:card]") { // tq:allow-pii
 		t.Fatalf("%q", got)
 	}
 	if got := Redact("id 4111111111111112", []string{"financial"}); strings.Contains(got, "REDACTED") {
@@ -56,7 +56,7 @@ func TestEmailAndPhone(t *testing.T) {
 }
 
 func TestClassesSelectDetectorsAndSecrets(t *testing.T) {
-	text := "cpf 529.982.247-25 key sk-ant-abcdefghijklmnopqrstuvwxyz0123"
+	text := "cpf 529.982.247-25 key sk-ant-abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii
 	if got := Redact(text, []string{"financial"}); strings.Contains(got, "REDACTED") {
 		t.Fatalf("financial must not redact a CPF: %q", got)
 	}
@@ -102,7 +102,7 @@ func TestPhoneLeavesPlainDigitRuns(t *testing.T) {
 }
 
 func TestEmptyClassListFailsClosed(t *testing.T) {
-	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123"
+	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii
 	for _, cls := range [][]string{nil, {}} {
 		got := Redact(text, cls)
 		if strings.Contains(got, "529.982") || strings.Contains(got, "ghp_abc") {
@@ -113,7 +113,7 @@ func TestEmptyClassListFailsClosed(t *testing.T) {
 		}
 		var buf bytes.Buffer
 		w := NewWriter(&buf, cls)
-		_, _ = w.Write([]byte("cpf 529.982.247-25\n"))
+		_, _ = w.Write([]byte("cpf 529.982.247-25\n")) // tq:allow-pii
 		_ = w.Close()
 		if strings.Contains(buf.String(), "529.982") {
 			t.Fatalf("writer failed open: %q", buf.String())
@@ -122,7 +122,7 @@ func TestEmptyClassListFailsClosed(t *testing.T) {
 }
 
 func TestUnknownClassFailsClosed(t *testing.T) {
-	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123"
+	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii
 	got := Redact(text, []string{"bogus"})
 	if strings.Contains(got, "529.982") || strings.Contains(got, "ghp_abc") {
 		t.Fatalf("unknown class failed open: %q", got)
@@ -133,9 +133,23 @@ func TestUnknownClassFailsClosed(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	w := NewWriter(&buf, []string{"bogus"})
-	_, _ = w.Write([]byte("cpf 529.982.247-25\n"))
+	_, _ = w.Write([]byte("cpf 529.982.247-25\n")) // tq:allow-pii
 	_ = w.Close()
 	if strings.Contains(buf.String(), "529.982") {
 		t.Fatalf("writer failed open: %q", buf.String())
+	}
+}
+
+func TestChecksummedClassAndAllowMarker(t *testing.T) {
+	text := "cpf 529.982.247-25 mail ana@x.io" // tq:allow-pii
+	got := Redact(text, []string{"checksummed"})
+	if !strings.Contains(got, "[REDACTED:cpf]") || !strings.Contains(got, "ana@x.io") {
+		t.Fatalf("checksummed must mask the CPF and leave the e-mail: %q", got)
+	}
+	if n := Count("row 529.982.247-25 # tq:allow-pii", []string{"all"}); len(n) != 0 { // tq:allow-pii
+		t.Fatalf("allow marker ignored: %v", n)
+	}
+	if got := Redact("row 529.982.247-25 # tq:allow-pii", []string{"all"}); strings.Contains(got, "REDACTED") { // tq:allow-pii
+		t.Fatalf("allow marker ignored in Redact: %q", got)
 	}
 }

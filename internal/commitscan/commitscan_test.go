@@ -139,3 +139,25 @@ func TestScanRealRepo(t *testing.T) {
 		t.Fatalf("push scanned: %+v", hits)
 	}
 }
+
+func TestAdded_StagedAndChainedAdd(t *testing.T) {
+	dir := gitRepo(t)
+	write(t, dir, "a.txt", "one\ntwo\n")
+	gitcfg.RunGitIn(dir, "add", "a.txt")
+	write(t, dir, "b.txt", "three\n")
+	added := Added(dir, `git commit -m "x"`, gitcfg.RunGitIn)
+	if len(added) != 2 || added[0].File != "a.txt" || added[1].Line != 2 {
+		t.Fatalf("staged only: %+v", added)
+	}
+	added = Added(dir, `git add b.txt && git commit -m "x"`, gitcfg.RunGitIn)
+	files := map[string]bool{}
+	for _, a := range added {
+		files[a.File] = true
+	}
+	if !files["a.txt"] || !files["b.txt"] {
+		t.Fatalf("chained add must include the untracked file: %+v", added)
+	}
+	if Added(dir, "git log", gitcfg.RunGitIn) != nil {
+		t.Fatal("no commit, no lines")
+	}
+}
