@@ -60,6 +60,10 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
     and the hub trust. Rollback of the signed state is detected by a
     generation record kept with the key, and unknown copy utilities remain a
     documented gap until OS-level key isolation lands.
+    Every signed state file and record (`session.json`, `dod.json`, each
+    `reviews.jsonl` and `decisions.jsonl` line) is bound to its project, slug
+    and approval generation, so one copied from another build or an older
+    generation is ignored, stale or reported as a rollback.
   - The approved checkpoint ids are the source of truth: a plan edit that
     drops or renumbers one is refused unless a plan approval is pending, and
     the DoD, the Stop hook and `state` count a removed checkpoint as not

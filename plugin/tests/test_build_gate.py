@@ -1357,10 +1357,11 @@ def test_stop_message_does_not_tell_agent_to_run_override(repo):
 def test_non_override_wording_question_does_not_waive_dod(repo):
     _dod_ready(repo)
     gate.cmd_dod(repo, "demo")
-    before = (repo / ".claude" / "build" / "demo" / "dod.json").read_text(encoding="utf-8")
+    unbound = lambda r: {k: v for k, v in r.items() if k not in ("gen", "sig")}  # noqa: E731 - the answer re-signs it at the next gen
+    before = unbound(_dod_rec(repo))
     did = gate.cmd_ask(repo, "demo", "question", "Let the env PORT override the default?", ["override", "keep"]).split()[1]
     gate.cmd_answer(repo, "demo", did, "override", "yes, env wins", actor="renato")
-    assert (repo / ".claude" / "build" / "demo" / "dod.json").read_text(encoding="utf-8") == before
+    assert unbound(_dod_rec(repo)) == before and gate.bound(repo, "demo", _dod_rec(repo))
     assert _dod_rec(repo)["override"] is None
     assert "dod-override" not in (repo / "docs" / "LEARNINGS.md").read_text(encoding="utf-8") if (repo / "docs" / "LEARNINGS.md").exists() else True
     assert gate.pending_decisions(repo, "demo") == []
@@ -2605,3 +2606,244 @@ def test_writes_to_a_locked_tests_parent_dir_are_writes_to_the_locked_test(repo,
 def test_ordinary_commands_beside_locked_tests_stay_allowed(repo, cmd):
     approve_and_lock(repo)
     assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+# ---------------------------------------------------------------------------
+# State-file binding: every signed state file and record names its build and generation
+# ---------------------------------------------------------------------------
+
+
+def shutil_copy(src, dst):
+    import shutil
+
+    shutil.copyfile(src, dst)
+
+
+def _state(root, slug="demo"):
+    return root / ".claude" / "build" / slug
+
+
+def _second_build(root, slug):
+    plan = copy.deepcopy(PLAN)
+    plan["slug"] = slug
+    (root / "docs" / "checkpoints" / f"{slug}.json").write_text(json.dumps(plan), encoding="utf-8")
+    gate.cmd_approve(root, slug)
+    gate.cmd_finish(root, slug)
+
+
+def _settings_write(root):
+    return {"tool_name": "Write", "tool_input": {"file_path": str(root / ".claude" / "settings.local.json"),
+                                                 "content": "{}"}}
+
+
+def test_finished_session_from_another_slug_does_not_end_the_build(repo):
+    approve_and_lock(repo)
+    hook(repo, agent("[checkpoint demo#2 implement]"))
+    assert hook(repo, _settings_write(repo))[0] == 2
+    _second_build(repo, "old")
+    assert gate.load_session(repo, "old").get("finished")
+    shutil_copy(_state(repo, "old") / "session.json", _state(repo) / "session.json")
+    assert gate._build_exists(repo) is True
+    assert gate.rolled_back(repo, "demo") is True
+    assert gate.load_session(repo, "demo") == {}
+    assert hook(repo, _settings_write(repo))[0] == 2
+    # Stop blocks once with the re-approval message, whichever session asks
+    code, _, err = stop(repo, session="other")
+    assert code == 2 and "build-gate approve demo" in err
+    assert stop(repo, session="other")[0] == 0
+
+
+def test_finished_session_from_another_project_does_not_end_the_build(repo, tmp_path):
+    approve_and_lock(repo)
+    other = tmp_path / "other"
+    (other / "docs" / "checkpoints").mkdir(parents=True)
+    _git(other, "init", "-q", "-b", "work")
+    (other / "docs" / "checkpoints" / "demo.json").write_text(json.dumps(PLAN), encoding="utf-8")
+    gate.cmd_approve(other, "demo")
+    gate.cmd_finish(other, "demo")
+    shutil_copy(_state(other) / "session.json", _state(repo) / "session.json")
+    assert gate._build_exists(repo) is True and gate.rolled_back(repo, "demo") is True
+    assert hook(repo, _settings_write(repo))[0] == 2
+
+
+def test_session_claiming_finished_against_the_record_is_a_rollback(repo):
+    approve_and_lock(repo)
+    rec = gate._gen_record(repo, "demo")
+    assert rec["finished"] is False
+    # a session the gate itself signed for this build and gen, but claiming finished
+    gate.save_session(repo, "demo", {**gate.load_session(repo, "demo"), "finished": "2026-01-01"})
+    assert gate.rolled_back(repo, "demo") is True and gate._build_exists(repo) is True
+    gate.cmd_approve(repo, "demo")
+    assert gate.rolled_back(repo, "demo") is False
+
+
+def test_finish_is_recorded_in_the_generation_record(repo):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    assert gate._gen_record(repo, "demo")["finished"] is True
+    assert gate._build_exists(repo) is False
+    gate.cmd_approve(repo, "demo")
+    assert gate._gen_record(repo, "demo")["finished"] is False and gate._build_exists(repo) is True
+
+
+def test_an_old_dod_record_copied_back_is_not_fresh(repo):
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_dod(repo, "demo", "the human accepts it")
+    th = gate.TreeHash(repo)
+    assert gate.dod_fresh(repo, "demo", th)[0] is True
+    old = (_state(repo) / "dod.json").read_text(encoding="utf-8")
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert gate.dod_fresh(repo, "demo", gate.TreeHash(repo))[0] is True  # carried to the new gen
+    (_state(repo) / "dod.json").write_text(old, encoding="utf-8")
+    ok, why = gate.dod_fresh(repo, "demo", gate.TreeHash(repo))
+    assert ok is False and "definition-of-done" in why
+
+
+def test_an_old_review_record_is_ignored(repo):
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
+    tree = gate.tree_hash(repo)
+    assert "build-critic" in gate.reviews_for(repo, "demo", 2, tree)
+    old = (_state(repo) / "reviews.jsonl").read_text(encoding="utf-8")
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert "build-critic" in gate.reviews_for(repo, "demo", 2, tree)  # live records follow the gen
+    (_state(repo) / "reviews.jsonl").write_text(old, encoding="utf-8")
+    assert gate.reviews_for(repo, "demo", 2, tree) == {}
+
+
+def test_review_and_decision_records_of_another_slug_are_ignored(repo):
+    _second_build(repo, "old")
+    gate.cmd_approve(repo, "old")
+    gate.cmd_record_review(repo, "old", 2, "build-critic", "PASS", {})
+    gate.cmd_ask(repo, "old", "question", "pick", ["a", "b"])
+    gate.cmd_approve(repo, "demo")
+    for name in ("reviews.jsonl", "decisions.jsonl"):
+        shutil_copy(_state(repo, "old") / name, _state(repo) / name)
+    assert gate.reviews_for(repo, "demo", 2, gate.tree_hash(repo)) == {}
+    assert gate.pending_decisions(repo, "demo") == []
+
+
+def test_an_old_decision_record_is_ignored_and_live_ones_survive_a_transition(repo):
+    gate.cmd_approve(repo, "demo")
+    did = gate.cmd_ask(repo, "demo", "question", "pick", ["a", "b"]).split()[1]
+    old = (_state(repo) / "decisions.jsonl").read_text(encoding="utf-8")
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert [p["id"] for p in gate.pending_decisions(repo, "demo")] == [did]
+    (_state(repo) / "decisions.jsonl").write_text(old, encoding="utf-8")
+    assert gate.pending_decisions(repo, "demo") == []
+
+
+def test_state_records_carry_project_slug_and_gen(repo):
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
+    gate.cmd_ask(repo, "demo", "question", "pick", ["a", "b"])
+    gate.cmd_dod(repo, "demo")
+    g = gate.recorded_gen(repo, "demo")
+    pid = gate.project_id(repo)
+    recs = [json.loads(line) for name in ("reviews.jsonl", "decisions.jsonl")
+            for line in (_state(repo) / name).read_text(encoding="utf-8").splitlines()]
+    recs += [gate.read_json(_state(repo) / "session.json"), gate.read_json(_state(repo) / "dod.json")]
+    for r in recs:
+        assert (r["project_id"], r["slug"], r["gen"]) == (pid, "demo", g)
+
+
+# ---------------------------------------------------------------------------
+# State discovery: builds are found from the plan dir and the generation records too
+# ---------------------------------------------------------------------------
+
+
+def _locked_write(root):
+    return {"tool_name": "Write", "tool_input": {"file_path": str(root / "tests" / "test_a.py"), "content": "x"}}
+
+
+def test_removing_the_state_dir_does_not_hide_a_rollback(repo):
+    import shutil
+
+    approve_and_lock(repo)
+    hook(repo, agent("[checkpoint demo#2 implement]"))
+    shutil.rmtree(_state(repo))
+    assert "demo" in gate.all_slugs(repo) and "demo" in gate.recorded_slugs(repo)
+    assert gate.rolled_back_slugs(repo) == ["demo"]
+    assert gate._build_exists(repo) is True
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "rolled back" in err
+    assert hook(repo, bash("echo x > tests/test_a.py"))[0] == 2
+    code, _, err = stop(repo)
+    assert code == 2 and "build-gate approve demo" in err
+    assert stop(repo)[0] == 0
+    assert stop(repo)[0] == 2  # the next turn is blocked once again
+
+
+def test_a_build_with_only_a_generation_record_is_still_judged(repo):
+    import shutil
+
+    approve_and_lock(repo)
+    shutil.rmtree(_state(repo))
+    shutil.rmtree(repo / "docs" / "checkpoints")
+    assert gate.all_slugs(repo) == ["demo"]
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "rolled back" in err
+    assert stop(repo)[0] == 2
+
+
+def test_a_plan_without_state_or_record_is_not_rolled_back(repo):
+    assert gate.all_slugs(repo) == ["demo"] and gate.rolled_back_slugs(repo) == []
+    assert hook(repo, _locked_write(repo))[0] == 0
+    assert stop(repo)[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Migration: an approval signed by the plugin before generations
+# ---------------------------------------------------------------------------
+
+
+def _legacy_approval(root):
+    plan = gate.load_plan(root, "demo")
+    sha = gate.file_sha256(root / "tests" / "test_a.py")
+    data = {"slug": "demo", "approved_at": "2026-10-01T00:00:00+00:00", "approval_id": "0123456789abcdef",
+            "base": None, "verify": {str(c["id"]): c["verify"] for c in plan["checkpoints"]},
+            "fingerprints": {str(c["id"]): gate.plan_fingerprint(c) for c in plan["checkpoints"]},
+            "locked_tests": {"tests/test_a.py": sha}, "tests_locked": {"2": ["tests/test_a.py"]},
+            "workflow": "build", "hotfix": False}
+    _state(root).mkdir(parents=True, exist_ok=True)
+    gate.write_json(_state(root) / "approved.json", gate.sign(data))
+    gate.write_json(_state(root) / "session.json", gate.sign({"session_id": "s1", "stage": "implement", "checkpoint": 2}))
+
+
+def test_a_legacy_approval_is_reported_and_refused_until_migrated(repo):
+    _legacy_approval(repo)
+    assert not gate._gen_record(repo, "demo")
+    assert gate.load_approved(repo, "demo") is None
+    msg = gate.state_problem(repo, "demo")
+    assert msg == "legacy approval; run `build-gate approve demo` to migrate"
+    assert gate.rolled_back(repo, "demo") is True
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "legacy approval" in err
+    assert hook(repo, _settings_write(repo))[0] == 2
+    code, out = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "legacy approval" in out
+    assert gate.cmd_state(repo, "demo")["rolled_back"] is True
+    code, _, err = stop(repo)
+    assert code == 2 and "legacy approval; run `build-gate approve demo` to migrate" in err
+    assert stop(repo)[0] == 0
+
+
+def test_the_human_approve_migrates_a_legacy_approval_with_its_locks(repo):
+    _legacy_approval(repo)
+    gate.cmd_approve(repo, "demo")
+    a = gate.load_approved(repo, "demo")
+    assert a["gen"] == 1 and gate.state_problem(repo, "demo") is None
+    assert "tests/test_a.py" in a["locked_tests"] and a["tests_locked"] == {"2": ["tests/test_a.py"]}
+    rec = gate._gen_record(repo, "demo")
+    assert "tests/test_a.py" in rec["locked_tests"] and rec["finished"] is False
+    assert gate.load_session(repo, "demo").get("session_id") == "s1"  # the legacy session carries over
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "locked test" in err
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 0
+
+
+def test_a_legacy_format_approval_over_a_recorded_build_is_a_rollback(repo):
+    approve_and_lock(repo)
+    data = {k: v for k, v in gate.load_approved(repo, "demo").items() if k not in ("kind", "gen", "project_id", "sig")}
+    gate.write_json(_approved_path(repo), gate.sign(data))
+    assert gate.state_problem(repo, "demo").startswith("build state was rolled back")
