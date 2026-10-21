@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ const (
 )
 
 var (
-	piiColumnRe  = regexp.MustCompile(`(?i)\b(email|e_mail|cpf|cnpj|rg|ssn|passport|phone|telefone|celular|birth_?date|data_nascimento|dob|address|endereco|cep|zip_?code|card_?number|iban)\b`)
+	piiColumnRe  = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(email|e_mail|cpf|cnpj|rg|ssn|passport|phone|telefone|celular|birth_?date|data_nascimento|dob|address|endereco|cep|zip_?code|card_?number|iban)(?:[^a-z0-9]|$)`)
 	schemaFileRe = regexp.MustCompile(`(?i)(\.sql|\.prisma|\.dbml|\.graphql|\.proto)$|(^|/)(schema\.rb|models\.py)$`)
 	dataSkipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true, ".venv": true, "venv": true, "dist": true, "build": true, ".next": true, "target": true}
 )
@@ -51,14 +52,14 @@ func dataBlockMissing(ws, root string, data manifest.Data, add func(level, code,
 		if !schemaFileRe.MatchString(rel) && !inMigrations {
 			return nil
 		}
+		if d.Type()&fs.ModeType != 0 {
+			return nil
+		}
 		fi, err := d.Info()
 		if err != nil || fi.Size() > dataScanMaxBytes {
 			return nil
 		}
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			return nil
-		}
+		raw := readBounded(p, dataScanMaxBytes)
 		if piiColumnRe.Match(raw) {
 			hits = append(hits, rel)
 		}
@@ -74,4 +75,15 @@ func dataBlockMissing(ws, root string, data manifest.Data, add func(level, code,
 	add("warn", "data-block-missing", ws,
 		fmt.Sprintf("%d schema or fixture file(s) name personal-data columns (%s) and the manifest has no data: block", len(hits), strings.Join(shown, ", ")),
 		"run /tentaqles:classify-data to write the data: block (classes, paths, retention, incident authority), then tq allow "+ws)
+}
+
+// readBounded reads at most max bytes of a regular file; errors yield nil.
+func readBounded(path string, max int64) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	b, _ := io.ReadAll(io.LimitReader(f, max))
+	return b
 }
