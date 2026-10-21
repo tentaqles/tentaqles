@@ -199,16 +199,20 @@ func (s *Store) SaveRun(r Run) error {
 	if len(r.State) > 0 {
 		state = string(r.State)
 	}
-	_, err := s.DB.Exec(`UPDATE runs SET status = ?, worktree = ?, slug = ?, session_id = ?, budget = ?, usage = ?, cost_usd = ?,
+	res, err := s.DB.Exec(`UPDATE runs SET status = ?, worktree = ?, slug = ?, session_id = ?, budget = ?, usage = ?, cost_usd = ?,
 		rounds = ?, seconds = ?, started_at = ?, ended_at = ?, state = ?, stop_reason = ?, not_before = ?, updated_at = ?, phase = ?,
 		retried = ?, relocations = ?, allowed_tools = ?, round_log = ? WHERE id = ?`,
 		r.Status, nullStr(r.Worktree), nullStr(r.Slug), nullStr(r.SessionID), jsonText(r.Budget), jsonText(r.Usage), r.CostUSD,
 		r.Rounds, r.Seconds, nullStr(r.StartedAt), nullStr(r.EndedAt), state, nullStr(s.Mask(r.StopReason)), r.NotBefore, r.UpdatedAt,
 		r.Phase, r.Retried, jsonText(nonNil(r.Relocations)), jsonText(nonNil(r.AllowedTools)), jsonText(r.RoundLog), r.ID)
-	if err == nil {
-		s.Publish(Change{Kind: "run", CardID: r.CardID, RunID: r.ID})
+	if err != nil {
+		return err
 	}
-	return err
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("run %s: %w", r.ID, ErrNotFound)
+	}
+	s.Publish(Change{Kind: "run", CardID: r.CardID, RunID: r.ID})
+	return nil
 }
 
 func nonNil(xs []string) []string {

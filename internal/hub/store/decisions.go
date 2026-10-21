@@ -103,8 +103,8 @@ func (s *Store) UpsertDecision(d Decision) (MirrorResult, error) {
 		if _, err := s.DB.Exec(`INSERT INTO decisions(id, card_id, run_id, slug, kind, checkpoint, reviewer, text, options, status,
 			choice, note, actor, asked_at, answered_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			d.ID, d.CardID, nullStr(d.RunID), nullStr(d.Slug), d.Kind, nullStr(d.Checkpoint), nullStr(d.Reviewer), s.Mask(d.Text),
-			jsonText(d.Options), d.Status, nullStr(d.Choice), nullStr(s.Mask(d.Note)), nullStr(d.Actor), d.AskedAt, nullStr(d.AnsweredAt),
-			jsonText(d.Data)); err != nil {
+			jsonText(d.Options), d.Status, nullStr(s.Mask(d.Choice)), nullStr(s.Mask(d.Note)), nullStr(d.Actor), d.AskedAt, nullStr(d.AnsweredAt),
+			s.Mask(jsonText(d.Data))); err != nil {
 			return MirrorResult{}, err
 		}
 		if err := s.Log(activity.Entry{Actor: "hub", Verb: activity.VerbDecisionAsk, CardID: d.CardID, RunID: d.RunID,
@@ -128,10 +128,10 @@ func (s *Store) UpsertDecision(d Decision) (MirrorResult, error) {
 		d.AnsweredAt = Now()
 	}
 	if _, err := s.DB.Exec(`UPDATE decisions SET status = 'answered', choice = ?, note = ?, actor = ?, answered_at = ? WHERE id = ? AND status = 'pending'`,
-		d.Choice, s.Mask(d.Note), d.Actor, d.AnsweredAt, d.ID); err != nil {
+		s.Mask(d.Choice), s.Mask(d.Note), d.Actor, d.AnsweredAt, d.ID); err != nil {
 		return MirrorResult{}, err
 	}
-	cur.Choice, cur.Actor = d.Choice, d.Actor
+	cur.Choice, cur.Actor = s.Mask(d.Choice), d.Actor
 	if err := s.logAnswer(cur); err != nil {
 		return MirrorResult{}, err
 	}

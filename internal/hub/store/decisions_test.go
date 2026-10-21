@@ -89,3 +89,34 @@ func TestActorKind(t *testing.T) {
 		}
 	}
 }
+
+func TestDecisionDataAndChoiceMasked(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	tok := "ghp_" + strings.Repeat("a1B2", 9) // tq:allow-secret
+	d, err := s.AskHub(c.ID, "r-x", "demo", "allow?", []string{"allow-once", "stop"}, map[string]any{"tool": "Bash(curl -H " + tok + ")"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(jsonText(d.Data), tok) {
+		t.Fatalf("data not masked: %v", d.Data)
+	}
+	got, err := s.AnswerHub(d.ID, "allow-once", "note "+tok, "renato")
+	if err != nil || strings.Contains(got.Note, tok) {
+		t.Fatalf("note not masked: %+v %v", got, err)
+	}
+}
+
+func TestMirroredAnswerMasked(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	tok := "ghp_" + strings.Repeat("a1B2", 9) // tq:allow-secret
+	s.UpsertDecision(Decision{ID: "d9", CardID: c.ID, Kind: KindQuestion, Text: "q", Status: DecisionPending})
+	s.UpsertDecision(Decision{ID: "d9", CardID: c.ID, Kind: KindQuestion, Status: DecisionAnswered, Choice: "x " + tok, Note: "n " + tok, Actor: "terminal"})
+	got, _ := s.Decision("d9")
+	if strings.Contains(got.Choice, tok) || strings.Contains(got.Note, tok) {
+		t.Fatalf("not masked: %+v", got)
+	}
+}

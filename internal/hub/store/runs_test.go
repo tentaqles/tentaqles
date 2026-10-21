@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -107,5 +108,13 @@ func TestLocksReport(t *testing.T) {
 	}
 	if got[c.ID] != StatusFailed || got[c2.ID] != "missing" {
 		t.Fatalf("%v", got)
+	}
+}
+
+func TestSaveRunUnknownIsNotFound(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	if err := s.SaveRun(Run{ID: "r-nonenonenone"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v", err)
 	}
 }
