@@ -1630,3 +1630,69 @@ def test_tq_state_shell_rule_covers_git(repo):
     for c in ("git add -f .claude/build/demo/approved.json", "git checkout -- .claude/build/demo/approved.json"):
         assert re.search(rule, c, re.IGNORECASE), c
     assert not re.search(rule, "git add docs/checkpoints/demo.json", re.IGNORECASE)
+
+
+# C3: the frozen checkpoint ids in the signed approval are the source of truth
+
+def _drop(plan, cid):
+    p = copy.deepcopy(plan)
+    p["checkpoints"] = [c for c in p["checkpoints"] if c["id"] != cid]
+    return p
+
+
+def test_plan_edit_dropping_or_renumbering_a_frozen_id_refused(repo):
+    gate.cmd_approve(repo, "demo")
+    code, _, err = hook(repo, write(plan_file(repo), _drop(PLAN, 3)))
+    assert code == 2 and "#3" in err, err
+    renum = copy.deepcopy(PLAN)
+    renum["checkpoints"][2]["id"] = 4
+    assert hook(repo, write(plan_file(repo), renum))[0] == 2
+    # adding a checkpoint is fine (it needs approval before it can pass)
+    added = copy.deepcopy(PLAN)
+    added["checkpoints"].append(cp(4))
+    assert hook(repo, write(plan_file(repo), added))[0] == 0
+
+
+def test_replan_allowed_once_a_plan_approval_is_pending(repo):
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_ask(repo, "demo", "plan-approval", "split #3 into #3 and #4", ["approve", "edit", "stop"])
+    split = copy.deepcopy(PLAN)
+    split["checkpoints"][2]["id"] = 4
+    split["checkpoints"].insert(2, cp(3, title="first half"))
+    assert hook(repo, write(plan_file(repo), _drop(PLAN, 3)))[0] == 0
+    assert hook(repo, write(plan_file(repo), split))[0] == 0
+
+
+def test_deleted_checkpoint_counts_as_not_passed(repo):
+    _project(repo)
+    own(repo)
+    plan = with_gate({**PLAN, "workflow": "feature"}, 2, behavior="passed", review="passed", status="passed")
+    save_plan(repo, plan)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    save_plan(repo, _drop(plan, 3))           # bypassing the hook, e.g. an older tool
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING checkpoints" in out and "missing from the plan" in out
+    assert "2/3 passed" in out
+    code, _, err = stop(repo)
+    assert code == 2 and "missing from the plan" in err
+    st = gate.cmd_state(repo, "demo")
+    assert [c["id"] for c in st["checkpoints"]] == [1, 2, 3]
+    assert [c for c in st["checkpoints"] if c["id"] == 3][0]["status"] == "missing"
+
+
+def test_all_frozen_passed_still_passes_the_dod(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 0 and "3/3 passed" in out
+
+
+def test_state_reads_workflow_and_hotfix_from_the_approval(repo):
+    save_plan(repo, {**PLAN, "workflow": "feature"})
+    gate.cmd_approve(repo, "demo")
+    save_plan(repo, {**PLAN, "workflow": "build", "hotfix": True})
+    st = gate.cmd_state(repo, "demo")
+    assert st["workflow"] == "feature" and st["hotfix"] is False

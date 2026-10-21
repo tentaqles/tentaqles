@@ -228,6 +228,24 @@ def plan_fingerprint(cp: dict) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def frozen_ids(approved: dict | None) -> list[str]:
+    """The checkpoint ids the human approved, in plan order (the signed source of truth:
+    the plan file is agent-editable, the approval is not)."""
+    return [str(k) for k in ((approved or {}).get("fingerprints") or {})]
+
+
+def _id_label(cid: str):
+    return int(cid) if str(cid).lstrip("-").isdigit() else cid
+
+
+def _ids_by_plan(cps: list) -> dict[str, dict]:
+    return {str(c.get("id")): c for c in cps if isinstance(c, dict)}
+
+
+def _replan_pending(root: Path, slug: str) -> bool:
+    return any(p.get("kind") == "plan-approval" for p in pending_decisions(root, slug))
+
+
 def checkpoint_approved(approved: dict | None, cp: dict) -> tuple[bool, str]:
     if not approved:
         return False, "the plan isn't approved"
@@ -586,6 +604,13 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
     # Hotfix is what the human approved, never what the plan under edit claims.
     approved = load_approved(root, slug) or {} if check_evidence else None
     hotfix = bool(approved) and approved.get("hotfix") is True
+    if approved:
+        present = _ids_by_plan(new)
+        dropped = [f"#{f}" for f in frozen_ids(approved) if f not in present]
+        if dropped and not _replan_pending(root, slug):
+            raise Block(f"approved checkpoint(s) {', '.join(dropped)} can't be removed or renumbered: the human froze them. "
+                        f"To split or re-plan, first record `build-gate ask {slug} --kind plan-approval --text \"<the new plan>\" "
+                        "--options approve,edit,stop`; the human's approval then freezes the new plan.")
     old: dict = {}
     try:
         old = {c["id"]: c for c in json.loads(old_text)["checkpoints"]}
@@ -1035,10 +1060,15 @@ def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
             open_gates = ", ".join(f"{g}={s}" for g, s in gates.items() if s not in OK_STATES) or "status"
             problems.append(f"#{cp.get('id')} {cp.get('title', '')}: not proven ({open_gates})")
     appr = load_approved(root, slug) or {}
+    frozen = frozen_ids(appr)
+    by_id = _ids_by_plan(plan.get("checkpoints") or [])
+    missing = [f"#{f}" for f in frozen if f not in by_id]
+    if missing and not sess.get("finished"):
+        problems.append(f"approved checkpoint(s) {', '.join(missing)} are missing from the plan (the human froze them; "
+                        "a removed checkpoint counts as not passed)")
     if (appr.get("workflow") or "build") in DOD_WORKFLOWS and not sess.get("finished"):
         # Only the checkpoints frozen at approval count; ones added to the plan later need re-approval.
-        frozen = {str(k) for k in (appr.get("fingerprints") or {})}
-        if all(c.get("status") == "passed" for c in plan.get("checkpoints") or [] if str(c.get("id")) in frozen):
+        if all((by_id.get(f) or {}).get("status") == "passed" for f in frozen):
             ok, why = dod_fresh(root, slug, th)
             if not ok:
                 problems.append(f"definition of done not proven ({why}): run `build-gate dod {slug}` and fix what it lists, "
@@ -1368,10 +1398,17 @@ def cmd_state(root: Path, slug: str) -> dict:
         cps.append({"id": cid, "title": cp.get("title", ""), "status": cp.get("status", "pending"),
                     "gates": {g: gate(cp, g) for g in GATES}, "evidence": fresh,
                     "reviews": {r: rec["result"] for r, rec in reviews_for(root, slug, cid, th.get()).items()}})
+    present = {str(c["id"]) for c in cps}
+    for i, fid in enumerate(frozen_ids(approved)):  # approved but removed from the plan: not passed
+        if fid not in present:
+            cps.insert(min(i, len(cps)), {"id": _id_label(fid), "title": "", "status": "missing",
+                                          "gates": {g: "pending" for g in GATES}, "evidence": "-", "reviews": {}})
     dod = read_json(dod_path(root, slug))
     dod_out = {"ok": bool(dod.get("ok")), "tree": dod.get("tree"), "override": dod.get("override")} if verified(dod) else None
-    return {"slug": slug, "feature": plan.get("feature", slug), "workflow": plan.get("workflow") or "build",
-            "hotfix": bool(plan.get("hotfix")), "task": plan.get("task"), "approved": approved is not None,
+    signed = approved if approved is not None else plan  # the hub sees what the human approved
+    return {"slug": slug, "feature": plan.get("feature", slug),
+            "workflow": signed.get("workflow") if signed.get("workflow") in WORKFLOWS else "build",
+            "hotfix": signed.get("hotfix") is True, "task": plan.get("task"), "approved": approved is not None,
             "halted": plan.get("halted"), "finished": bool(sess.get("finished")), "checkpoints": cps, "dod": dod_out,
             "dod_fresh": dod_fresh(root, slug, th)[0],
             "pending_decisions": [{"id": p["id"], "kind": p["kind"], "checkpoint": p.get("checkpoint"),
@@ -1494,8 +1531,13 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
     tampered = tests_intact(root, approved)
     add("locked_tests", not tampered, "unchanged" if not tampered else f"{len(tampered)} locked test file(s) changed")
     cps = plan.get("checkpoints") or []
-    unpassed = [c.get("id") for c in cps if c.get("status") != "passed"]
-    add("checkpoints", not unpassed, f"{len(cps) - len(unpassed)}/{len(cps)} passed" + (f"; open: {unpassed}" if unpassed else ""))
+    by_id = _ids_by_plan(cps)
+    frozen = frozen_ids(approved)
+    ids = frozen + [i for i in by_id if i not in frozen]  # frozen first; later additions need re-approval
+    unpassed = [_id_label(i) for i in ids if (by_id.get(i) or {}).get("status") != "passed"]
+    gone = [_id_label(i) for i in frozen if i not in by_id]
+    add("checkpoints", not unpassed, f"{len(ids) - len(unpassed)}/{len(ids)} passed" + (f"; open: {unpassed}" if unpassed else "")
+        + (f"; approved but missing from the plan: {gone}" if gone else ""))
     open_reviews = []
     for cp in cps:
         latest: dict[str, dict] = {}

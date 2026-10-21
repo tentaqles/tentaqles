@@ -71,6 +71,6 @@ Add `"runnable": true` to a checkpoint (beside `size`) when it produces somethin
 
 `workflow` is one of `build`, `feature`, `fix`, `kickoff`; the orchestrator tells you which, default `build`. `spec` is the spec slice path you planned from. `hotfix` is `true` only when the orchestrator says a fix is a hotfix: then every checkpoint's `gates.review.status` starts at `"n/a"` (the critic is skipped; the locked regression test never is). For `fix` plans write exactly one checkpoint whose first test is the locked regression test named in the fix spec.
 
-**Splitting** (when asked to split checkpoint N after repeated failures): replace N with smaller checkpoints, renumber the later ones, keep the accumulated `findings` as `notes` on the new ones, and say which new checkpoints need fresh approval.
+**Splitting** (when asked to split checkpoint N after repeated failures): replace N with smaller checkpoints, renumber the later ones (the orchestrator has recorded a pending plan approval first; without it the gate refuses removing or renumbering an approved checkpoint), keep the accumulated `findings` as `notes` on the new ones, and say which new checkpoints need fresh approval.
 
 Check the JSON parses (read it back), then reply with the path and one line: `1 xs: … → 2 s: … → …`.
