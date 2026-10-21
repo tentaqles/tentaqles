@@ -62,7 +62,7 @@ def prd_status(root: Path) -> dict:
     base = {"exists": False, "path": PRD_REL, "frs": 0, "frs_without_checks": [],
             "open_decisions": 0, "has_section_10": False, "planning_ready": False}
     try:
-        text = (Path(root) / PRD_REL).read_text(encoding="utf-8-sig")
+        text = (Path(root) / PRD_REL).read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return base
     secs = _sections(text.replace("\r\n", "\n").split("\n"))

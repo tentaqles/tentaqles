@@ -68,7 +68,51 @@ def test_prd_without_section_10_is_not_ready(tmp_path: Path) -> None:
 
 
 def test_tag_in_prose_does_not_count(tmp_path: Path) -> None:
-    assert prd_status(_write(tmp_path, READY))["open_decisions"] == 0
+    text = READY.replace(
+        "## 11. Releases",
+        "Prose mentioning NEEDS-DECISION in a sentence.\n"
+        "- Items are tagged `NEEDS-DECISION` when open\n"
+        "- A bullet that says NEEDS-DECISION later\n## 11. Releases")
+    assert prd_status(_write(tmp_path, text))["open_decisions"] == 0
+
+
+def test_checks_heading_with_only_blanks_counts_as_none(tmp_path: Path) -> None:
+    text = READY.replace("**Acceptance checks**\n- the row is gone after 24h\n", "**Acceptance checks**\n\n\n")
+    st = prd_status(_write(tmp_path, text))
+    assert st["frs_without_checks"] == ["FR-02"] and not st["planning_ready"]
+
+
+def test_prose_interrupting_checks_list_stops_counting(tmp_path: Path) -> None:
+    text = READY.replace("**Acceptance checks**\n- the row is gone after 24h\n",
+                         "**Acceptance checks**\nsome prose first\n- the row is gone after 24h\n")
+    st = prd_status(_write(tmp_path, text))
+    assert st["frs_without_checks"] == ["FR-02"]
+
+
+def test_fr_heading_outside_section_4_is_ignored(tmp_path: Path) -> None:
+    text = READY.replace("## 11. Releases", "## 11. Releases\n### FR-09 Not a requirement\n")
+    st = prd_status(_write(tmp_path, text))
+    assert st["frs"] == 2 and st["frs_without_checks"] == [] and st["planning_ready"]
+
+
+def test_checkbox_items_count_as_checks(tmp_path: Path) -> None:
+    text = READY.replace("- the row is gone after 24h", "- [ ] the row is gone after 24h")
+    st = prd_status(_write(tmp_path, text))
+    assert st["frs_without_checks"] == [] and st["planning_ready"]
+
+
+def test_crlf_and_bom_prd(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "prd.md").write_bytes(b"\xef\xbb\xbf" + READY.replace("\n", "\r\n").encode("utf-8"))
+    st = prd_status(tmp_path)
+    assert st["exists"] and st["frs"] == 2 and st["planning_ready"]
+
+
+def test_non_utf8_prd_is_not_ready_and_does_not_raise(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "prd.md").write_bytes(b"# X\n\n## 1. Problem\ncaf\xe9\n")
+    st = prd_status(tmp_path)
+    assert st["exists"] and not st["planning_ready"]
 
 
 def test_no_prd(tmp_path: Path) -> None:

@@ -11,7 +11,7 @@ import json
 import re
 from pathlib import Path
 
-FENCE_RE = re.compile(r"^```json tq-project[ \t]*\n(.*?)\n```", re.MULTILINE | re.DOTALL)
+FENCE_RE = re.compile(r"^```json tq-project[ \t]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
 _LIST_KEYS = ("architecture_paths", "classified_paths")
 _STR_KEYS = ("changelog",)
 
@@ -24,9 +24,13 @@ def load_project_config(root: Path) -> tuple[dict, str]:
         text = path.read_text(encoding="utf-8-sig")
     except OSError:
         return {}, ""
+    except UnicodeDecodeError:
+        return {}, "CLAUDE.md is not valid UTF-8; save it as UTF-8 so the tq-project block can be read"
     m = FENCE_RE.search(text.replace("\r\n", "\n"))
     if not m:
         return {}, ""
+    if not m.group(1).strip():
+        return {}, "CLAUDE.md tq-project block is empty; add the JSON config or remove the block"
     try:
         raw = json.loads(m.group(1))
     except ValueError as e:

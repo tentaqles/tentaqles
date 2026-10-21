@@ -54,3 +54,16 @@ def test_crlf_and_bom_are_tolerated(tmp_path: Path) -> None:
     (tmp_path / "CLAUDE.md").write_bytes(b"\xef\xbb\xbf# x\r\n```json tq-project\r\n{\"commands\": {\"test\": \"go test ./...\"}}\r\n```\r\n")
     cfg, _ = load_project_config(tmp_path)
     assert cfg["commands"]["test"] == "go test ./..."
+
+
+def test_non_utf8_file_yields_warning(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE.md").write_bytes(b"# caf\xe9\n")
+    cfg, warn = load_project_config(tmp_path)
+    assert cfg == {} and "utf-8" in warn.lower()
+
+
+def test_empty_block_yields_warning(tmp_path: Path) -> None:
+    for body in ("```json tq-project\n```\n", "```json tq-project\n\n```\n"):
+        (tmp_path / "CLAUDE.md").write_text(body, encoding="utf-8")
+        cfg, warn = load_project_config(tmp_path)
+        assert cfg == {} and "empty" in warn.lower() and "tq-project" in warn
