@@ -34,12 +34,13 @@ type Source struct {
 
 // Options configure a run.
 type Options struct {
-	Since      time.Time
-	Until      time.Time // report time; zero means now
-	Workspaces []string  // identity names to include; empty means all
-	Top        int
-	Sources    []Source // nil means DiscoverSources()
-	DecideDir  string   // "" means $TQ_HOME/decide
+	Since        time.Time
+	Until        time.Time // report time; zero means now
+	Workspaces   []string  // identity names to include; empty means all
+	Top          int
+	Sources      []Source // nil means DiscoverSources()
+	DecideDir    string   // "" means $TQ_HOME/decide
+	BuildGateDir string   // "" means $TQ_HOME/build-gate
 }
 
 // SessionRow is one main session in the top lists.
@@ -132,6 +133,7 @@ type Report struct {
 	TopByContext []SessionRow     `json:"top_by_context"`
 	TopByCost    []SessionRow     `json:"top_by_cost"`
 	Jev          JevReport        `json:"jev"`
+	Process      ProcessReport    `json:"process"`
 	Worktrees    *WorktreeCount   `json:"worktrees"`
 	Targets      []Target         `json:"targets"`
 	Pricing      []PriceRow       `json:"-"`
@@ -185,6 +187,9 @@ func Run(o Options) (*Report, error) {
 	}
 	if o.DecideDir == "" {
 		o.DecideDir = filepath.Join(paths.Home(), "decide")
+	}
+	if o.BuildGateDir == "" {
+		o.BuildGateDir = filepath.Join(paths.Home(), "build-gate")
 	}
 	filter := map[string]bool{}
 	for _, w := range o.Workspaces {
@@ -304,6 +309,7 @@ func Run(o Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	rep.Process, _ = ReadProcessEvents(filepath.Join(o.BuildGateDir, "events.jsonl"), o.Since)
 	rep.Targets = Targets(rep)
 	return rep, nil
 }

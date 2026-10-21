@@ -139,6 +139,23 @@ func WriteText(w io.Writer, r *Report) {
 	if j.Triage.Low+j.Triage.High > 0 {
 		fmt.Fprintf(w, "triage: low %d, high %d, flags: %s\n", j.Triage.Low, j.Triage.High, countList(j.Triage.Flags))
 	}
+	pr := r.Process
+	fmt.Fprintln(w, "\n== Process (build gate)")
+	fmt.Fprintf(w, "verify: pass %d, fail %d   dod: pass %d, fail %d, overrides %d (kept %d)   asked %d, answered %d   finished runs %d   by workflow: %s\n",
+		pr.VerifyPass, pr.VerifyFail, pr.DoDPass, pr.DoDFail, pr.DoDOverrides, pr.DoDOverridesKept, pr.Asked, pr.Answered, pr.Finished, countList(pr.ByWorkflow))
+	if len(pr.Other) > 0 {
+		fmt.Fprintf(w, "other events: %s\n", countList(pr.Other))
+	}
+	if len(pr.Reviewers) > 0 {
+		tw = tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "reviewer\tpass\tfail\tblocked\tblockers\tmajors\tminors\tunjudged\thuman judgements")
+		for _, name := range sortedKeys(pr.Reviewers) {
+			s := pr.Reviewers[name]
+			fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", name, s.Pass, s.Fail, s.Blocked, s.Blockers, s.Majors, s.Minors, s.Unjudged, s.HumanJudgements)
+		}
+		tw.Flush()
+		fmt.Fprintf(w, "cannot-judge rate: %s\n", pct(pr.CannotJudgeRate))
+	}
 
 	fmt.Fprintln(w, "\n== Background review sessions")
 	fmt.Fprintf(w, "security-review sessions: %d (%d on Opus), cost $%.2f\n", r.Total.Reviews.Sessions, r.Total.Reviews.Opus, r.Total.Reviews.CostUSD)
