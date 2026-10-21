@@ -33,3 +33,15 @@ def test_kickoff_gate_branch_headless_and_planner_fields() -> None:
     assert "lock-tests" in body
     assert "git add -A" not in body.replace("`git add -A`", "")
     assert "If that skill is not installed" in body and "NEEDS-DECISION" in body
+
+
+def test_kickoff_branches_before_the_prd_and_records_pending_items() -> None:
+    body = _body("kickoff")
+    assert body.index("**The branch.**") < body.index("prd-status.py\" --cwd")
+    assert "`/tentaqles:prd`\ncommits too" in body or "/tentaqles:prd` included" in body
+    for skill in ("threat-model", "classify-data", "supply-chain"):
+        assert f"(settle by: run /tentaqles:{skill} when installed)" in body, skill
+    assert "`docs/prd.md` §10" in body and "settle or explicitly accept before approving" in body
+    assert "`AskUserQuestion` is never called" in body
+    assert "/tentaqles:direction <slug>" in body and "--kind result" in body
+    assert "`tq status`" in body

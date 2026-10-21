@@ -19,7 +19,20 @@ human stop is a decision record written with `build-gate ask <slug>` exactly as
 `skills/build/SKILL.md` ("Headless mode") describes, and the turn ends; the
 `build-gate` prefix is defined there too.
 
-## 1. PRD, planning-ready or nothing
+## 1. Branch, then PRD, planning-ready or nothing
+
+**The branch.** Choose the slug now (kebab-case from the project,
+`billing-portal`). You never commit on `main` or `master`, and `/tentaqles:prd`
+commits too, so open the branch before the PRD check and before anything
+below is written:  run `/tentaqles:build` Phase 0 for the slug (it
+creates the worktree and branch) and do every edit and commit of steps 1 to 5
+inside that worktree, `/tentaqles:prd` included. If Phase 0 asks you to reopen Claude Code in the
+worktree, stop there as it says; in the new session, re-run `/tentaqles:kickoff`
+with the same `$ARGUMENTS`. Phase 0 step 3 sees the worktree already exists, so
+the skill continues at the PRD check below (it is cheap and the files already
+written are kept). `/tentaqles:build resume <slug>` is only for an existing
+plan, which does not exist yet. If a build worktree is not wanted, use
+`git switch -c feat/<slug>` (or switch to the existing branch) instead.
 
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
@@ -34,8 +47,8 @@ line and the `root=` line) at the top of each block.
 Report `prd_exit` and quote the grader's JSON in your reply. The gate is
 strict: only `prd_exit=0` (planning-ready) proceeds.
 
-- `prd_exit=4` (no PRD): run `/tentaqles:prd` with `$ARGUMENTS`, then run the
-  check again. Headless: report that a PRD is needed as your final output and
+- `prd_exit=4` (no PRD): run `/tentaqles:prd` with `$ARGUMENTS` (inside the
+  branch), then run the check again. Headless: report that a PRD is needed as your final output and
   end the turn.
 - `prd_exit=3` (not planning-ready): stop here. List the open `NEEDS-DECISION`
   items and the FRs without acceptance checks, with how each could be settled
@@ -48,18 +61,6 @@ strict: only `prd_exit=0` (planning-ready) proceeds.
 If the repository does not exist yet, create it inside the client workspace
 with `/tentaqles:add-project` first (it inherits the git identity from the
 manifest; verify `git config user.email`).
-
-**The branch.** Choose the slug now (kebab-case from the project,
-`billing-portal`). You never commit on `main` or `master`. Before the first
-commit below, open the branch: run `/tentaqles:build` Phase 0 for the slug (it
-creates the worktree and branch) and do every edit and commit of steps 2 to 5
-inside that worktree. If Phase 0 asks you to reopen Claude Code in the
-worktree, stop there as it says; in the new session, re-run `/tentaqles:kickoff`
-with the same `$ARGUMENTS`. Phase 0 step 3 sees the worktree already exists, so
-the skill continues at this step 1 (the PRD check is cheap and the files already
-written are kept). `/tentaqles:build resume <slug>` is only for an existing
-plan, which does not exist yet. If a build worktree is not wanted, use
-`git switch -c feat/<slug>` (or switch to the existing branch) instead.
 
 ## 2. Project shape
 
@@ -88,8 +89,7 @@ can go wrong, what will we do about it, did we do a good job) per trust
 boundary from PRD §6 with STRIDE; it writes `docs/threat-model.md`. Any
 unmitigated high-risk row becomes an FR (add it to the PRD with acceptance
 checks) or a `NEEDS-DECISION` item for stop 1. If that skill is not installed,
-tell the user, record a `NEEDS-DECISION` item "threat model pending" for stop
-1, and continue.
+tell the user, add the bullet line `- NEEDS-DECISION: threat model pending (settle by: run /tentaqles:threat-model when installed)` to `docs/prd.md` §10 (open questions), and continue.
 
 ## 4. Data classification
 
@@ -98,18 +98,20 @@ block, mirrors its paths into `classified_paths` of the `tq-project` block,
 and writes `docs/privacy.md`. If any class is `pii`, `sensitive`, `financial`
 or `children`, the privacy record must name purpose, legal basis, retention
 and the DSAR path before planning continues. If that skill is not installed,
-tell the user, record a `NEEDS-DECISION` item "data classification pending"
-for stop 1, and continue. Changing `.tentaqles.yaml` changes its trust hash:
-the human runs `tq allow <workspace>` as part of stop 1.
+tell the user, add the bullet line `- NEEDS-DECISION: data classification pending (settle by: run /tentaqles:classify-data when installed)` to `docs/prd.md` §10, and continue. Changing `.tentaqles.yaml` changes its trust hash:
+the human runs `tq allow <workspace>` as part of stop 1 (`<workspace>` is the
+workspace name in `.tentaqles.yaml`, see `tq status`).
 
 ## 5. Guardrails before code
 
 - `/tentaqles:ci-pipeline`: the ratchet with a zero baseline (cheapest now).
 - `/tentaqles:supply-chain`: actions pinned to SHAs, `permissions:` on every
   workflow, lockfiles committed, SBOM on release, secret scanning as a
-  required check. If that skill is not installed, tell the user, record a
-  `NEEDS-DECISION` item "supply-chain guardrails pending" and continue.
-- `tq settings render <workspace>` for deny-first permissions.
+  required check. If that skill is not installed, tell the user, add the bullet line `- NEEDS-DECISION: supply-chain guardrails pending (settle by: run /tentaqles:supply-chain when installed)` to `docs/prd.md` §10, and continue.
+- `tq settings render <workspace>` for deny-first permissions. `<workspace>` is
+  the workspace name in `.tentaqles.yaml` (see `tq status`); the command writes
+  the identity's settings outside the repository, so there is nothing of it to
+  stage.
 - `.gitignore` entries: `.env*` (keep `.env.example`), `.claude/build/`,
   `.claude/settings.local.json`.
 
@@ -142,10 +144,11 @@ starts.
 
 **Human stop 1** shows, in one `AskUserQuestion`: the data classes and the
 privacy record summary, the threat model's accepted risks, the checkpoint plan
-with its verify commands, the assumptions and any pending `NEEDS-DECISION`
-items. On approve, the human runs `build-gate approve <slug>` and
+with its verify commands, the assumptions and every pending `NEEDS-DECISION`
+item of `docs/prd.md` §10, listed as "settle or explicitly accept before approving"; the human's approval note records the acceptance. On approve, the human runs `build-gate approve <slug>` and
 `tq allow <workspace>` in their terminal; you cannot approve. Headless: the
-`plan-approval` record once the plan exists, the final output before.
+`plan-approval` record once the plan exists (its text lists the same pending
+items), the final output before.
 
 ## 7. Engine
 
@@ -155,10 +158,12 @@ and classified paths.
 
 ## 8. Direction, stop 2, ship
 
-Run `/tentaqles:direction`: every release-1 FR graded, unplanned work listed,
+Run `/tentaqles:direction <slug>`, passing the build slug: every release-1 FR graded, unplanned work listed,
 `ON COURSE | DRIFTING | OFF COURSE`. Fix-code items go back into the engine as
 new checkpoints; Update-PRD and Decide items go to the user at **stop 2**
-(engine Phase 4; headless: the `result` record) together with the DoD record
+(engine Phase 4; headless: record the verdict and these items in the `result`
+decision record with `build-gate ask <slug> --kind result`, as the build skill
+describes, and end the turn) together with the DoD record
 (`/tentaqles:dod <slug>`). If a DoD item cannot be fixed, you never run `build-gate dod <slug> --override`:
 the human runs it in their own terminal (the dod skill, step 3). Then `/tentaqles:ship`.
 
