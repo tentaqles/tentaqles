@@ -89,38 +89,8 @@ func IsGit(c string) bool { return StartsWith(c, "git") }
 var readOnlySub = map[string]bool{"status": true, "log": true, "diff": true, "show": true, "rev-parse": true, "ls-files": true, "branch": true, "remote": true}
 
 type gitInvocation struct {
-	sub  string
-	rest []string
-}
-
-// gitSegments returns every git invocation found in command (split on
-// sepPattern), each with its sub-word after global flags (-C x, -c k=v, …)
-// and the args following it.
-func gitSegments(c string) []gitInvocation {
-	var out []gitInvocation
-	for _, seg := range sepRegexp.Split(c, -1) {
-		f := strings.Fields(seg)
-		if len(f) == 0 || f[0] != "git" {
-			continue
-		}
-		i := 1
-		for i < len(f) {
-			a := f[i]
-			switch {
-			case a == "-C" || a == "-c":
-				i += 2
-				continue
-			case strings.HasPrefix(a, "-"):
-				i++
-				continue
-			}
-			out = append(out, gitInvocation{sub: a, rest: f[i+1:]})
-			break
-		}
-		// If the loop exhausts f without hitting the default case (e.g. a
-		// bare "git" or "git --no-pager"), there is no sub-word to record.
-	}
-	return out
+	GitInvocation
+	start int // byte offset of the segment in the command
 }
 
 func isReadOnlySegment(sub string, rest []string) bool {
@@ -160,7 +130,7 @@ func IsReadOnlyGit(c string) bool {
 		return false
 	}
 	for _, s := range segs {
-		if !isReadOnlySegment(s.sub, s.rest) {
+		if !isReadOnlySegment(s.Sub, s.Args) {
 			return false
 		}
 	}
@@ -179,7 +149,7 @@ func IsRemoteMutation(c string) bool {
 		}
 	}
 	for _, s := range gitSegments(c) {
-		switch s.sub {
+		switch s.Sub {
 		case "push", "fetch", "pull", "clone":
 			return true
 		}
@@ -211,6 +181,13 @@ func HasInlineIdentityOverride(c string) bool {
 				return true
 			}
 			if rest, ok := strings.CutPrefix(a, "--config-env="); ok && isIdentityAssign(rest) {
+				return true
+			}
+		}
+	}
+	for _, inv := range gitSegments(c) {
+		for _, kv := range inv.Configs {
+			if isIdentityAssign(kv) {
 				return true
 			}
 		}
@@ -288,10 +265,24 @@ func Decide(in Input) Decision {
 }
 
 // GitInvocation is one git call found in a command: its sub-command (after
-// global flags such as -C/-c) and the arguments that follow it.
+// global flags such as -C/-c) and the arguments that follow it, plus what
+// decides the directory it acts on (see Dir).
 type GitInvocation struct {
-	Sub  string
-	Args []string
+	Sub     string
+	Args    []string
+	Dirs    []string // every -C value, in order
+	Configs []string // every -c / --config-env value
+	// GitDirOverride: --git-dir, --work-tree, GIT_DIR= or GIT_WORK_TREE= is set.
+	GitDirOverride bool
+	// Hidden: found only inside a quoted string or a nested shell, so its
+	// arguments and directory are not reliable.
+	Hidden bool
+	// Base is the directory of a leading `cd <dir>` (the command's first
+	// segment), "" when there is none.
+	Base string
+	// BaseUnknown: another cd-like step runs before this call.
+	BaseUnknown bool
+	envChdir    bool
 }
 
 // GitInvocations returns every git call in command, in order.
@@ -299,7 +290,7 @@ func GitInvocations(c string) []GitInvocation {
 	segs := gitSegments(c)
 	out := make([]GitInvocation, 0, len(segs))
 	for _, s := range segs {
-		out = append(out, GitInvocation{Sub: s.sub, Args: s.rest})
+		out = append(out, s.GitInvocation)
 	}
 	return out
 }

@@ -3,6 +3,7 @@ package commitmsg
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +115,43 @@ func TestCheck_EveryCommitJudged(t *testing.T) {
 	}
 	if r := Check(`git commit -m "feat: a" && git commit -m "fix: b"`, t.TempDir()); !r.Checked || !r.OK {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// C3 / R3: the command-word forms that hid a commit from the other rules.
+func TestCheck_WrappedCommandWords(t *testing.T) {
+	for _, c := range []string{
+		`GIT_AUTHOR_DATE=now git commit -m "updated stuff"`,
+		`"git" commit -m "updated stuff"`,
+		`git.exe commit -m "updated stuff"`,
+		`/usr/bin/git commit -m "updated stuff"`,
+		`command git commit -m "updated stuff"`,
+		`env A=1 git commit -m "updated stuff"`,
+		`git --git-dir .git commit -m "updated stuff"`,
+	} {
+		if r := Check(c, t.TempDir()); !r.Checked || r.OK {
+			t.Errorf("%s: got %+v, want a failed check", c, r)
+		}
+	}
+}
+
+// C1 / R1: a relative -F resolves in the directory the commit runs in.
+func TestCheck_FileResolvedInTargetDir(t *testing.T) {
+	cwd := t.TempDir()
+	wt := filepath.Join(cwd, "wt")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "msg.txt"), []byte("updated stuff\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{`cd wt && git commit -F msg.txt`, `git -C wt commit -F msg.txt`} {
+		r := Check(c, cwd)
+		if !r.Checked || r.OK || !strings.Contains(r.Why, "Conventional") {
+			t.Errorf("%s: got %+v, want the file in wt judged", c, r)
+		}
+	}
+	if r := Check(`git -C missing commit -F msg.txt`, cwd); !r.Checked || r.OK {
+		t.Errorf("unresolvable dir: got %+v, want not ok", r)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/guard"
 )
 
 // Result of one check. Checked is false when the command carries no message
@@ -34,11 +36,11 @@ func Check(command, cwd string) Result {
 	cmds, unterminated := commands(command)
 	res := Result{OK: true}
 	for _, words := range cmds {
-		args, ok := commitArgs(words)
-		if !ok {
+		inv, ok := guard.ParseGitWords(words)
+		if !ok || inv.Sub != "commit" {
 			continue
 		}
-		r := checkOne(args, cwd)
+		r := checkOne(inv.Args, commitDir(command, cwd, inv))
 		if r.Checked && !r.OK {
 			return r // the first failing commit decides
 		}
@@ -54,7 +56,26 @@ func Check(command, cwd string) Result {
 	return res
 }
 
-// checkOne judges the arguments of one git commit.
+// commitDir is the directory a commit runs in (a leading `cd <dir>`, then
+// every -C), or "" when tq cannot tell (see guard.GitInvocation.Dir).
+func commitDir(command, cwd string, inv guard.GitInvocation) string {
+	d, err := guard.BaseDir(cwd, command)
+	if err != nil || inv.GitDirOverride {
+		return ""
+	}
+	for _, c := range inv.Dirs {
+		if d, err = guard.ResolvePath(d, c); err != nil {
+			return ""
+		}
+	}
+	if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+		return ""
+	}
+	return d
+}
+
+// checkOne judges the arguments of one git commit. cwd is "" when the
+// directory the commit runs in is unknown.
 func checkOne(args []string, cwd string) Result {
 	var msgs []string
 	var file string
@@ -92,6 +113,9 @@ func checkOne(args []string, cwd string) Result {
 			return Result{OK: true} // stdin: nothing readable here
 		}
 		if !filepath.IsAbs(file) {
+			if cwd == "" {
+				return Result{Checked: true, OK: false, Why: "the -F message file is relative and tq cannot tell which directory the commit runs in; pass an absolute path"}
+			}
 			file = filepath.Join(cwd, file)
 		}
 		raw, bad := readMessageFile(file)
@@ -147,37 +171,12 @@ func unwrapHeredoc(m string) string {
 	return m
 }
 
-// commitArgs returns the words after `commit` when words is a git commit
-// (leading VAR=x assignments and git's global options are skipped).
-func commitArgs(words []string) ([]string, bool) {
-	i := 0
-	for i < len(words) && strings.Contains(words[i], "=") && !strings.HasPrefix(words[i], "-") {
-		i++
-	}
-	if i >= len(words) || words[i] != "git" {
-		return nil, false
-	}
-	for i++; i < len(words); i++ {
-		a := words[i]
-		switch {
-		case a == "-C" || a == "-c" || a == "--git-dir" || a == "--work-tree" || a == "--namespace":
-			i++
-		case strings.HasPrefix(a, "-"):
-		case a == "commit":
-			return words[i+1:], true
-		default:
-			return nil, false
-		}
-	}
-	return nil, false
-}
-
 // commands splits a shell command into simple commands of unquoted words.
 // Quotes group words and are removed; unquoted ; & | ( ) { } and newlines end
 // a command. An unterminated quote runs to the end of the input.
 //
-// guard.GitInvocations is not used here: it splits on parentheses, ; and &
-// without regard to quotes, which cuts `-m "feat(api): x"` in half.
+// The words of each command are read as a git call by guard.ParseGitWords,
+// the same reader every other commit rule uses.
 func commands(s string) ([][]string, bool) {
 	var out [][]string
 	var words []string
