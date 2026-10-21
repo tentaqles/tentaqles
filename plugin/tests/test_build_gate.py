@@ -1109,6 +1109,19 @@ def test_stop_allowed_while_a_decision_is_pending(repo):
     assert stop(repo)[0] == 0
 
 
+def test_state_reports_dod_freshness(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    assert gate.cmd_state(repo, "demo")["dod_fresh"] is False  # no record yet
+    code, _ = gate.cmd_dod(repo, "demo")
+    assert code == 0
+    assert gate.cmd_state(repo, "demo")["dod_fresh"] is True
+    (repo / "stray.txt").write_text("changed", encoding="utf-8")
+    assert gate.cmd_state(repo, "demo")["dod_fresh"] is False
+
+
 def test_state_json_shape(repo):
     _project(repo)
     save_plan(repo, {**PLAN, "workflow": "feature", "task": {"hub_id": "t-42", "external": {"provider": "linear", "id": "ACME-7", "url": "https://linear.app/x"}}})

@@ -1242,6 +1242,7 @@ def cmd_state(root: Path, slug: str) -> dict:
     return {"slug": slug, "feature": plan.get("feature", slug), "workflow": plan.get("workflow") or "build",
             "hotfix": bool(plan.get("hotfix")), "task": plan.get("task"), "approved": approved is not None,
             "halted": plan.get("halted"), "finished": bool(sess.get("finished")), "checkpoints": cps, "dod": dod_out,
+            "dod_fresh": dod_fresh(root, slug, th)[0],
             "pending_decisions": [{"id": p["id"], "kind": p["kind"], "checkpoint": p.get("checkpoint"),
                                    "reviewer": p.get("reviewer"), "text": p["text"], "options": p["options"], "asked_at": p["asked_at"]}
                                   for p in pending_decisions(root, slug)],
