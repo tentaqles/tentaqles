@@ -3,7 +3,8 @@
 // heuristic but validated where a checksum exists (CPF and CNPJ check digits,
 // Luhn for cards, mod-97 for IBAN), so plain numbers of the same length are
 // left alone. Values are never logged; Count reports names only. An unknown
-// class name fails closed: it is treated as "all", never as no masking.
+// class name or an empty class list fails closed: it is treated as "all",
+// never as no masking.
 package redact
 
 import (
@@ -195,6 +196,10 @@ func allDetectors() []detector {
 }
 
 func detectors(classes []string) ([]detector, bool) {
+	if len(classes) == 0 {
+		// No class given: fail closed, mask everything.
+		return allDetectors(), true
+	}
 	var ds []detector
 	withSecrets := false
 	seen := map[string]bool{}

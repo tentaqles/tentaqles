@@ -101,6 +101,26 @@ func TestPhoneLeavesPlainDigitRuns(t *testing.T) {
 	}
 }
 
+func TestEmptyClassListFailsClosed(t *testing.T) {
+	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123"
+	for _, cls := range [][]string{nil, {}} {
+		got := Redact(text, cls)
+		if strings.Contains(got, "529.982") || strings.Contains(got, "ghp_abc") {
+			t.Fatalf("empty class list failed open: %q", got)
+		}
+		if n := Count(text, cls); n["cpf"] != 1 || len(n) < 2 {
+			t.Fatalf("Count under empty class list: %v", n)
+		}
+		var buf bytes.Buffer
+		w := NewWriter(&buf, cls)
+		_, _ = w.Write([]byte("cpf 529.982.247-25\n"))
+		_ = w.Close()
+		if strings.Contains(buf.String(), "529.982") {
+			t.Fatalf("writer failed open: %q", buf.String())
+		}
+	}
+}
+
 func TestUnknownClassFailsClosed(t *testing.T) {
 	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123"
 	got := Redact(text, []string{"bogus"})
