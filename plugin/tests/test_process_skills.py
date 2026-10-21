@@ -126,7 +126,10 @@ def test_feature_skill_locates_the_fr_and_interviews_first() -> None:
     assert "A feature with no FR is first a PRD change, never code" in flat
     assert "`**Acceptance checks**` heading" in flat and "never guess" in flat
     assert "never commit on `main` or `master`" in flat and "`git switch -c feat/<slug>`" in flat
-    assert "the feature branch" in flat and "/tentaqles:build resume <slug>" in flat
+    assert '"The feature branch" below means this branch.' in flat
+    assert "re-run `/tentaqles:feature` with the same `$ARGUMENTS`" in flat
+    assert "`/tentaqles:build resume <slug>` is only for an existing plan" in flat
+    assert "/tentaqles:build resume <slug>`, then start" not in flat
     assert "names this FR or its goal" in flat and "treat it as touching" in flat
     assert "never write a placeholder as a command" in flat and "leave no `<...>`" in flat
     for crew in ("spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer", "breaker"):
