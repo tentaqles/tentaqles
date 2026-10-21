@@ -361,35 +361,74 @@ def _answer_pending_option(root: Path, slug: str, kind: str, option: str, choice
     if _ANSWERING:
         return
     for p in pending_decisions(root, slug):
-        if p["kind"] == kind and option in p["options"]:
+        if p["kind"] == kind and option in p["options"] and _is_override_question(p):
             _answer(root, slug, p, choice, "", actor)
 
 
-def cmd_answer(root: Path, slug: str, decision_id: str, choice: str, note: str, actor: str) -> str:
+def _is_override_question(rec: dict) -> bool:
+    """Only a question the orchestrator wrote as `override: ...` can waive the DoD."""
+    return (rec.get("kind") == "question" and "override" in (rec.get("options") or [])
+            and str(rec.get("text") or "").strip().lower().startswith("override:"))
+
+
+def answer_consequence(root: Path, slug: str, decision_id: str, choice: str) -> str:
+    """What answering with `choice` will do beyond recording it ('' when nothing)."""
+    rec = next((p for p in pending_decisions(root, slug) if p["id"] == decision_id), None)
+    if rec is None:
+        return ""
+    if _is_override_question(rec) and choice == "override":
+        last = read_json(dod_path(root, slug))
+        missing = [f"{c['id']}: {str(c.get('detail', '')).splitlines()[0][:80]}"
+                   for c in (last.get("checks") or []) if c.get("ok") is False] if verified(last) else []
+        listing = "; ".join(missing) if missing else "no definition-of-done run recorded yet; it runs now and whatever is missing is accepted"
+        return f"this accepts the missing definition-of-done items for {slug}: {listing}"
+    if rec["kind"] == "result" and choice == "approve":
+        return f"this finishes checkpoint/plan {slug} (removes the gate hooks and test locks)"
+    return ""
+
+
+def answer_decision(root: Path, slug: str, decision_id: str, choice: str, note: str, actor: str) -> tuple[int, str]:
     global _ANSWERING
     rec = next((p for p in pending_decisions(root, slug) if p["id"] == decision_id), None)
     if rec is None:
         raise SystemExit(f"no pending decision '{decision_id}' in '{slug}'.")
     if rec["options"] and choice not in rec["options"]:
         raise SystemExit(f"choice must be one of {', '.join(rec['options'])}.")
-    is_override = rec["kind"] == "question" and "override" in rec["options"] and choice == "override"
+    is_override = _is_override_question(rec) and choice == "override"
     if is_override and not (note or "").strip():
         print("build-gate: answering `override` needs a reason in --note (it is logged to docs/LEARNINGS.md).", file=sys.stderr)
         raise SystemExit(2)
+    consequence = answer_consequence(root, slug, decision_id, choice)
+    rc, extra = 0, []
     _ANSWERING = True
     try:
         if rec["kind"] == "plan-approval" and choice == "approve":
             cmd_approve(root, slug)
         if is_override:
-            cmd_dod(root, slug, note, actor=actor)
+            rc, dmsg = cmd_dod(root, slug, note, actor=actor)
+            if rc != 0:
+                extra.append(f"the override did NOT apply: {dmsg.splitlines()[0] if dmsg else 'dod failed'}")
+            else:
+                extra.append(dmsg)
         if rec["kind"] == "result" and choice == "approve":
-            cmd_finish(root, slug)
+            try:
+                extra.append(cmd_finish(root, slug))
+            except Exception as e:  # noqa: BLE001
+                rc = rc or 1
+                extra.append(f"finish did NOT apply: {e}")
         if rec["kind"] == "judge" and choice in ("PASS", "FAIL") and rec.get("reviewer") and rec.get("checkpoint") is not None:
             cmd_judge(root, slug, int(rec["checkpoint"]), rec["reviewer"], choice, note or f"answered by {actor}")
     finally:
         _ANSWERING = False
-    _answer(root, slug, rec, choice, note, actor)
-    return f"decision {decision_id}: {choice} by {actor}"
+    rec_note = note
+    if consequence and actor != "terminal":
+        rec_note = f"[{consequence}] {note}".strip()  # a hub has no prompt: the record carries what the answer did
+    _answer(root, slug, rec, choice, rec_note, actor)
+    return rc, chr(10).join([f"decision {decision_id}: {choice} by {actor}", *extra])
+
+
+def cmd_answer(root: Path, slug: str, decision_id: str, choice: str, note: str, actor: str) -> str:
+    return answer_decision(root, slug, decision_id, choice, note, actor)[1]
 
 
 def review_problems(root: Path, slug: str, cid: int, th: TreeHash) -> str:
@@ -1377,6 +1416,7 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         if (verified(prior) and prior.get("override") and tree is not None and prior.get("tree") == tree
                 and prior.get("approval_id") == approved.get("approval_id")):
             kept = prior["override"]
+            log_event(root, "dod-override-kept", slug, ok=True)
     effective = override.strip() if override else kept
     rec = {"slug": slug, "ok": ok or effective is not None, "tree": tree, "ts": now_iso(), "checks": checks,
            "approval_id": approved.get("approval_id"), "override": effective}
@@ -1817,10 +1857,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"build-gate: --actor '{a.actor}' differs from the hub token's actor '{actor}'. Refusing.", file=sys.stderr)
             return 2
         if not actor:
-            if not human_confirm(f"answer decision {a.id} in '{a.slug}' with '{a.choice}'"):
+            conseq = answer_consequence(root, a.slug, a.id, a.choice)
+            if not human_confirm(f"answer decision {a.id} in '{a.slug}' with '{a.choice}'" + (f" -- {conseq}" if conseq else "")):
                 return 2
             actor = "terminal"
-        print(cmd_answer(root, a.slug, a.id, a.choice, a.note, a.actor or actor))
+        code, msg = answer_decision(root, a.slug, a.id, a.choice, a.note, a.actor or actor)
+        print(msg)
+        return code
     elif a.cmd == "state":
         st = cmd_state(root, a.slug)
         if a.json:

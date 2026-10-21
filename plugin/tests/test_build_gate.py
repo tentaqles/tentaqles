@@ -1336,3 +1336,75 @@ def test_stop_message_does_not_tell_agent_to_run_override(repo):
     code, _, err = stop(repo)
     assert code == 2 and "--override" in err and "human" in err.lower()
     assert "when the human has said so" not in err
+
+
+# --- fix round 2: explicit override questions, visible consequences -------------------------
+
+def test_non_override_wording_question_does_not_waive_dod(repo):
+    _dod_ready(repo)
+    gate.cmd_dod(repo, "demo")
+    before = (repo / ".claude" / "build" / "demo" / "dod.json").read_text(encoding="utf-8")
+    did = gate.cmd_ask(repo, "demo", "question", "Let the env PORT override the default?", ["override", "keep"]).split()[1]
+    gate.cmd_answer(repo, "demo", did, "override", "yes, env wins", actor="renato")
+    assert (repo / ".claude" / "build" / "demo" / "dod.json").read_text(encoding="utf-8") == before
+    assert _dod_rec(repo)["override"] is None
+    assert "dod-override" not in (repo / "docs" / "LEARNINGS.md").read_text(encoding="utf-8") if (repo / "docs" / "LEARNINGS.md").exists() else True
+    assert gate.pending_decisions(repo, "demo") == []
+    # and a terminal override does not sweep such a question up either
+    did2 = gate.cmd_ask(repo, "demo", "question", "Env PORT override?", ["override", "keep"], cid=5).split()[1]
+    gate.cmd_dod(repo, "demo", override="human accepted")
+    assert did2 in [p["id"] for p in gate.pending_decisions(repo, "demo")]
+
+
+def test_override_prefix_is_case_insensitive_and_waives(repo):
+    _dod_ready(repo)
+    did = gate.cmd_ask(repo, "demo", "question", "  OVERRIDE: tests cannot pass", ["override", "stop"]).split()[1]
+    gate.cmd_answer(repo, "demo", did, "override", "accepted", actor="renato")
+    assert _dod_rec(repo)["override"] == "accepted" and _dod_rec(repo)["ok"] is True
+
+
+def test_answer_confirm_names_the_consequence(repo, monkeypatch):
+    _dod_ready(repo)
+    gate.cmd_dod(repo, "demo")  # records the MISSING items (failing tests)
+    did = gate.cmd_ask(repo, "demo", "question", "override: tests cannot pass", ["override", "stop"]).split()[1]
+    seen = []
+    monkeypatch.setattr(gate, "human_confirm", lambda action, *a, **k: seen.append(action) or True)
+    code = gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "override", "--note", "ok"])
+    assert code == 0
+    assert "accepts the missing definition-of-done items for demo" in seen[0] and "tests" in seen[0]
+    did = gate.cmd_ask(repo, "demo", "result", "ship?", ["approve", "stop"]).split()[1]
+    gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "approve"])
+    assert "finishes checkpoint/plan demo" in seen[1]
+
+
+def test_hub_answer_records_the_consequence_in_the_note(repo, monkeypatch):
+    _dod_ready(repo)
+    gate.cmd_dod(repo, "demo")
+    did = gate.cmd_ask(repo, "demo", "question", "override: tests cannot pass", ["override", "stop"]).split()[1]
+    _set_token(monkeypatch, "answer")
+    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "override", "--note", "hub ok"]) == 0
+    ans = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
+    assert "accepts the missing definition-of-done items" in ans["note"] and "hub ok" in ans["note"]
+    assert _dod_rec(repo)["override"] == "hub ok"
+
+
+def test_failed_override_is_recorded_but_exit_nonzero(repo, capsys):
+    _dod_ready(repo)
+    did = gate.cmd_ask(repo, "demo", "question", "override: x", ["override", "stop"]).split()[1]
+    (repo / ".claude" / "build" / "demo" / "approved.json").unlink()  # cmd_dod: plan isn't approved
+    code, msg = gate.answer_decision(repo, "demo", did, "override", "why", "renato")
+    assert code != 0 and "did NOT apply" in msg
+    assert [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]["choice"] == "override"
+    did = gate.cmd_ask(repo, "demo", "question", "override: y", ["override", "stop"], cid=2).split()[1]
+    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "override", "--note", "why"]) in (0, 2)
+
+
+def test_kept_override_logs_an_event(repo, tq_home):
+    _dod_ready(repo)
+    gate.cmd_dod(repo, "demo", override="human accepted")
+    gate.cmd_dod(repo, "demo")
+    events = [json.loads(l) for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    kinds = [e["kind"] for e in events]
+    assert "dod-override-kept" in kinds and kinds[-1] == "dod"
+    kept = [e for e in events if e["kind"] == "dod-override-kept"][0]
+    assert kept["ok"] is True and "reason" not in kept
