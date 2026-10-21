@@ -34,6 +34,9 @@ Write `docs/checkpoints/<slug>.json`:
   "slug": "discount-rules",
   "summary": "One or two sentences on what the finished feature does.",
   "plain_summary": "What people can do when it is finished, in plain words.",
+  "workflow": "build",
+  "hotfix": false,
+  "spec": "docs/specs/<slug>.md",
   "checkpoints": [
     {
       "id": 1,
@@ -63,6 +66,8 @@ Write `docs/checkpoints/<slug>.json`:
 ```
 
 Rules: `id` starts at 1 and increments by 1; `builds_on` is `[id - 1]` after the first; every gate and `status` starts `"pending"`. Only the orchestrator changes them, and a hook refuses any "passed" that has no recorded evidence.
+
+`workflow` is one of `build`, `feature`, `fix`, `kickoff`; the orchestrator tells you which, default `build`. `spec` is the spec slice path you planned from. `hotfix` is `true` only when the orchestrator says a fix is a hotfix: then every checkpoint's `gates.review.status` starts at `"n/a"` (the critic is skipped; the locked regression test never is). For `fix` plans write exactly one checkpoint whose first test is the locked regression test named in the fix spec.
 
 **Splitting** (when asked to split checkpoint N after repeated failures): replace N with smaller checkpoints, renumber the later ones, keep the accumulated `findings` as `notes` on the new ones, and say which new checkpoints need fresh approval.
 
