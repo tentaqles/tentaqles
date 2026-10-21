@@ -29,8 +29,13 @@ func HashToken(token string) string {
 
 func eq(a, b string) bool { return a != "" && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
 
+func (s *Server) headerTokenOK(r *http.Request) bool {
+	v := r.Header.Get(HeaderToken)
+	return v != "" && eq(HashToken(v), s.opts.TokenHash)
+}
+
 func (s *Server) tokenOK(r *http.Request) bool {
-	if v := r.Header.Get(HeaderToken); v != "" && eq(HashToken(v), s.opts.TokenHash) {
+	if s.headerTokenOK(r) {
 		return true
 	}
 	if c, err := r.Cookie(CookieToken); err == nil && eq(HashToken(c.Value), s.opts.TokenHash) {
@@ -39,20 +44,31 @@ func (s *Server) tokenOK(r *http.Request) bool {
 	return false
 }
 
-// sameOrigin: Origin against the request's Host, else Referer, else Sec-Fetch-Site. A request
-// carrying none of them is refused.
-func sameOrigin(r *http.Request) bool {
+// hostAllowed: host is in AllowedHosts (case-insensitive). The request's own Host header is
+// attacker-controlled under DNS rebinding, so it only ever counts when this list names it.
+func (s *Server) hostAllowed(host string) bool {
+	if host == "" {
+		return false
+	}
+	return slices.ContainsFunc(s.opts.AllowedHosts, func(h string) bool { return strings.EqualFold(h, host) })
+}
+
+// sameOrigin: the Origin host, else the Referer host, must be in AllowedHosts; with neither,
+// Sec-Fetch-Site: same-origin counts only when the Host itself is in the list. r.Host alone
+// never vouches for a request.
+func (s *Server) sameOrigin(r *http.Request) bool {
 	if o := r.Header.Get("Origin"); o != "" {
-		return o == "http://"+r.Host
+		u, err := url.Parse(o)
+		return err == nil && u.Scheme == "http" && (u.Path == "" || u.Path == "/") && s.hostAllowed(u.Host)
 	}
 	if ref := r.Header.Get("Referer"); ref != "" {
 		u, err := url.Parse(ref)
-		return err == nil && u.Scheme == "http" && u.Host == r.Host
+		return err == nil && u.Scheme == "http" && s.hostAllowed(u.Host)
 	}
-	return r.Header.Get("Sec-Fetch-Site") == "same-origin"
+	return r.Header.Get("Sec-Fetch-Site") == "same-origin" && s.hostAllowed(r.Host)
 }
 
-// guard: Host check (DNS rebinding), token when configured, same-origin for every write.
+// guard: Host allow-list (DNS rebinding), token when configured, same-origin for every write.
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -60,7 +76,12 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
 		h.Set("X-Frame-Options", "DENY")
-		if len(s.opts.AllowedHosts) > 0 && !slices.Contains(s.opts.AllowedHosts, strings.ToLower(r.Host)) {
+		// Fail closed: with neither a host allow-list nor a token nothing stops DNS rebinding.
+		if len(s.opts.AllowedHosts) == 0 && s.opts.TokenHash == "" {
+			http.Error(w, "this hub was started without a host allow-list; refusing every request", http.StatusMisdirectedRequest)
+			return
+		}
+		if len(s.opts.AllowedHosts) > 0 && !s.hostAllowed(r.Host) {
 			http.Error(w, "unexpected Host header", http.StatusMisdirectedRequest)
 			return
 		}
@@ -69,7 +90,10 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "this hub needs its token: open /login?token=<token> once in this browser, or send "+HeaderToken, http.StatusUnauthorized)
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && !local && !sameOrigin(r) {
+		// A token in the request header cannot come from a cross-site page (a custom header needs a
+		// CORS preflight this server never grants), so it stands in for the origin check.
+		viaHeader := s.opts.TokenHash != "" && s.headerTokenOK(r)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !local && !viaHeader && !s.sameOrigin(r) {
 			http.Error(w, "cross-origin request refused", http.StatusForbidden)
 			return
 		}

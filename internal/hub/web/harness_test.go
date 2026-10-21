@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -116,13 +117,24 @@ func (e *env) server(opts Options) *httptest.Server {
 	if opts.Backend == nil {
 		opts.Backend = e.backend()
 	}
+	ts := httptest.NewUnstartedServer(nil)
+	if opts.AllowedHosts == nil {
+		opts.AllowedHosts = loopbackHosts(ts.Listener.Addr().String())
+	}
 	s, err := New(opts)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	ts := httptest.NewServer(s.Handler())
+	ts.Config.Handler = s.Handler()
+	ts.Start()
 	e.t.Cleanup(ts.Close)
 	return ts
+}
+
+// loopbackHosts is the allow-list a loopback bind gets: the port under each loopback name.
+func loopbackHosts(addr string) []string {
+	_, port, _ := net.SplitHostPort(addr)
+	return []string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port}
 }
 
 // pendingDecision puts a gate decision on a card the way a round would have mirrored it.
