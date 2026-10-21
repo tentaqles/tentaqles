@@ -17,7 +17,15 @@ var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@
 // what is content, so an added line that itself starts with "++ " (a content
 // line "+++ x") stays content of the real file.
 func ParseDiffAdded(diff string) []AddedLine {
-	var out []AddedLine
+	out, _ := ParseDiff(diff)
+	return out
+}
+
+// ParseDiff is ParseDiffAdded that also returns the new-side names of the
+// files git reported as binary ("Binary files a/x and b/x differ"), so the
+// caller can decode a UTF-16 file instead of skipping it. Deleted files are
+// not listed.
+func ParseDiff(diff string) (out []AddedLine, binaries []string) {
 	file := ""
 	sawDiff, sawMinus := false, false
 	oldLeft, newLeft, line := 0, 0, 0
@@ -61,6 +69,14 @@ func ParseDiffAdded(diff string) []AddedLine {
 			}
 			file = name
 			sawMinus = false
+		case sawDiff && strings.HasPrefix(l, "Binary files ") && strings.HasSuffix(strings.TrimRight(l, ""), " differ"):
+			body := strings.TrimSuffix(strings.TrimRight(l, ""), " differ")
+			if i := strings.LastIndex(body, " and "); i >= 0 {
+				name := strings.Trim(body[i+len(" and "):], `"`)
+				if name != "/dev/null" {
+					binaries = append(binaries, strings.TrimPrefix(name, "b/"))
+				}
+			}
 		case strings.HasPrefix(l, "@@"):
 			m := hunkHeaderRe.FindStringSubmatch(l)
 			if m == nil {
@@ -71,7 +87,7 @@ func ParseDiffAdded(diff string) []AddedLine {
 			line, _ = strconv.Atoi(m[2])
 		}
 	}
-	return out
+	return out, binaries
 }
 
 func countOrOne(s string) int {
