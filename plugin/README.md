@@ -270,6 +270,7 @@ Stack-aware guidance that triggers on the work itself (no workspace state needed
 | `/tentaqles:supply-chain` | Pin actions to SHAs, least-privilege workflow permissions, lockfile-only installs, dependency audit, SBOM on release, secret scanning; extends `ci-pipeline` |
 | `/tentaqles:llm-security-review` | Run the `llm-security-reviewer` on a diff that adds LLM calls, prompts, agent tools, MCP servers, RAG or hooks, against OWASP LLM 2025 and Agentic 2026 |
 | `/tentaqles:loop` | Overnight Karpathy-style loop on one feature: approve locked checks by day; at night a runner keeps or undoes one headless round at a time in a worktree, under dollar/token/time/round budgets with MCP and network off; morning summary + signal |
+| `/tentaqles:hub` | See what `tq hub` runs are waiting on, in plain language, add or show cards; prints the `tq hub answer` line for you (answering is yours) |
 
 ## Hooks
 
