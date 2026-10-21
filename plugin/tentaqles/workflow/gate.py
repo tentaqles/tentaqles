@@ -403,7 +403,9 @@ def answer_consequence(root: Path, slug: str, decision_id: str, choice: str) -> 
     if rec["kind"] == "result" and choice == "approve":
         return f"this finishes checkpoint/plan {slug} (removes the gate hooks and test locks)"
     if rec["kind"] == "plan-approval" and choice == "approve":
-        return "this approves the plan and freezes " + approval_summary(root, slug)
+        delta = reapproval_delta(root, slug, load_plan(root, slug) or {"checkpoints": []})
+        note = f" ({'; '.join(delta)})" if delta else ""
+        return f"this approves the plan{note} and freezes " + approval_summary(root, slug)
     return ""
 
 
@@ -1283,12 +1285,41 @@ def _project_command_problem(project: dict, warning: str) -> str:
     return ""
 
 
+def reapproval_delta(root: Path, slug: str, plan: dict) -> list[str]:
+    """Lines for what a re-approval changes against the previous signed approval (its frozen
+    ids and fingerprints): checkpoints removed (with the last status on record), changed, new.
+    Empty on a first approval."""
+    prev = load_approved(root, slug)
+    if not prev or not prev.get("fingerprints"):
+        return []
+    fps = prev.get("fingerprints") or {}
+    by_id = _ids_by_plan(plan.get("checkpoints") or [])
+    removed = []
+    for fid in frozen_ids(prev):
+        if fid in by_id:
+            continue
+        ev = latest_evidence(root, slug, _id_label(fid))
+        removed.append(f"#{fid} ({'passed' if ev and ev.get('ok') else 'not passed'})")
+    changed = [f"#{i}" for i, c in by_id.items() if i in fps and fps[i] != plan_fingerprint(c)]
+    new = [f"#{i}" for i in by_id if i not in fps]
+    out = []
+    if removed:
+        out.append("removed since the last approval: " + ", ".join(removed))
+    if changed:
+        out.append("changed: " + ", ".join(changed))
+    if new:
+        out.append("new: " + ", ".join(new))
+    return out
+
+
 def approval_preview(root: Path, slug: str) -> str:
     """Everything an approval freezes, as the human should read it before confirming:
     each checkpoint's verify commands and the project's definition-of-done config."""
     plan = load_plan(root, slug) or {"checkpoints": []}
     project, pwarn = load_project_config(root)
-    lines = [f"Approving '{slug}' freezes:", "  verify commands (what 'passing' means per checkpoint):"]
+    lines = [f"Approving '{slug}' freezes:"]
+    lines += ["  " + d for d in reapproval_delta(root, slug, plan)]
+    lines.append("  verify commands (what 'passing' means per checkpoint):")
     for cp in plan["checkpoints"]:
         cmds = [c for c in (cp.get("verify") or []) if isinstance(c, str) and c.strip()] or ["(none)"]
         lines += [f"    #{cp.get('id')}: {c}" for c in cmds]

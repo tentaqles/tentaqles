@@ -1894,3 +1894,36 @@ def test_gate_module_references_are_still_refused(repo, content):
 def test_gate_anchored_commands_are_still_refused(repo, cmd):
     approve_and_lock(repo)
     assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+# ---------------------------------------------------------------------------
+# Round 2a item 3: a re-approval shows what was removed and changed, not only what is new
+# ---------------------------------------------------------------------------
+
+
+def _reapproval_plan(repo):
+    gate.cmd_approve(repo, "demo")
+    plan = copy.deepcopy(PLAN)
+    plan["checkpoints"] = [c for c in plan["checkpoints"] if c["id"] != 3]  # #3 removed
+    plan["checkpoints"][1]["verify"] = [FAIL_CMD]                            # #2 changed
+    plan["checkpoints"].append(cp(4))                                        # #4 new
+    save_plan(repo, plan)
+
+
+def test_reapproval_preview_lists_removed_changed_and_new(repo):
+    _reapproval_plan(repo)
+    text = gate.approval_preview(repo, "demo")
+    assert "removed since the last approval: #3 (" in text
+    assert "changed: #2" in text and "new: #4" in text
+
+
+def test_first_approval_preview_has_no_delta_lines(repo):
+    text = gate.approval_preview(repo, "demo")
+    assert "removed since" not in text and "changed:" not in text
+
+
+def test_reapproval_consequence_for_a_hub_actor_lists_removed_and_changed(repo):
+    _reapproval_plan(repo)
+    did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
+    text = gate.answer_consequence(repo, "demo", did, "approve")
+    assert "removed since the last approval: #3 (" in text and "changed: #2" in text
