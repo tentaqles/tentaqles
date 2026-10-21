@@ -6,8 +6,10 @@ argument-hint: '<description | FR-nn> [--headless]'
 
 # Feature
 
-Two human stops: approve the checkpoint plan; accept the result. Everything
-else is decided and logged as an assumption.
+Two human approval stops: approve the checkpoint plan; accept the result. The
+interview and any `NEEDS-DECISION` question are inputs you collect, not stops.
+Anything else the PRD and the user are silent on is decided and logged as an
+assumption in the spec slice.
 
 Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
 `$ARGUMENTS`, `AskUserQuestion` is never called. Before a build slug exists
@@ -33,6 +35,17 @@ line and the `root=` line) at the top of each block.
 
 Report `prd_exit` and quote the grader's JSON in your reply.
 
+**The feature branch.** Choose the slug now (kebab-case from the feature,
+`export-csv`). You never commit on `main` or `master`. Before the first commit
+below, open the feature branch: run `/tentaqles:build` Phase 0 for the slug
+(it creates the worktree and branch) and do every edit and commit of steps 1 to
+3 inside that worktree. If Phase 0 asks you to reopen Claude Code in the
+worktree, stop there as it says; in the new session run
+`/tentaqles:build resume <slug>`, then start this skill again with the same
+`$ARGUMENTS` (the PRD check is cheap and the files already written are kept).
+If a build worktree is not wanted, use `git switch -c feat/<slug>` (or switch
+to the existing branch) instead. "The feature branch" below means this branch.
+
 - `prd_exit` 0 or 3 (a PRD exists): continue, planning-ready or not. Find the
   FR in `$ARGUMENTS` or by reading §4. **A feature with no FR is first a PRD
   change, never code**: add `### FR-nn` with acceptance checks (`-` or `*`
@@ -41,15 +54,22 @@ Report `prd_exit` and quote the grader's JSON in your reply.
   serves, and commit it (`docs(prd): FR-nn <title>`). If the PRD has open
   `NEEDS-DECISION` items that touch this feature, settle them first (ask the
   user, one at a time; headless: report them as your final output and end the
-  turn). Open decisions that do not touch this feature do not block it:
-  `/tentaqles:kickoff` keeps the strict planning-ready gate.
+  turn). An open item touches this feature when it names this FR or its goal,
+  or concerns a rule, role, data class, trust boundary or module the slice
+  lists; when unsure, treat it as touching. Other open decisions do not block
+  it: `/tentaqles:kickoff` keeps the strict planning-ready gate.
 - `prd_exit=4` (legacy repository): continue; the spec slice says
-  `derived_from: no PRD: legacy repository` and you mention once that
-  `/tentaqles:kickoff` can backfill a PRD later. If `CLAUDE.md` has no
-  ```` ```json tq-project ```` block, add one now from
+  `derived_from: no PRD: legacy repository, see kickoff later` and you mention
+  once that `/tentaqles:kickoff` can backfill a PRD later. If `CLAUDE.md` has
+  no ```` ```json tq-project ```` block, add one from
   `templates/process/CLAUDE-project.md` with the real test command (read
-  `package.json`, `pyproject.toml`, `go.mod`, the CI workflow; never guess) so
-  the definition of done can run it.
+  `package.json`, `pyproject.toml`, `go.mod`, the CI workflow; never guess).
+  If no real test command can be found, ask the user (headless: report it as
+  your final output and end the turn); never write a placeholder as a command.
+  Delete every optional key you cannot fill (`lint`, `typecheck`, `build`,
+  `run`), keep `architecture_paths` and `classified_paths` as `[]` unless you
+  know them, and leave no `<...>` in the block. Add `CLAUDE.md` to the spec
+  commit in step 3 so the definition of done can run the command.
 - Any other exit code: report it and the output verbatim and stop.
 
 ## 2. Interview
@@ -57,50 +77,52 @@ Report `prd_exit` and quote the grader's JSON in your reply.
 Run the `grill-me` skill on this feature: business-rule branches, invalid
 states, permissions, time and locale, money, concurrency, failure handling.
 Answers become the rules table and the acceptance checks of the spec slice.
-Anything the user cannot decide is a `NEEDS-DECISION` line in the slice and
-**blocks planning** until settled (offer: ask someone, research, prototype).
-Headless: report the unanswered questions as your final output and end the turn.
+If an answer changes a rule, amend the FR bullets in `docs/prd.md` and commit
+the amendment before planning. Anything the user cannot decide is a
+`NEEDS-DECISION` line in the slice and **blocks planning** until settled
+(offer: ask someone, research, prototype). Headless: report the unanswered
+questions as your final output and end the turn.
 
-## 3. Spec slice and pre-check
+## 3. Spec slice and expected crew
 
-Slug: kebab-case from the feature (`export-csv`). Write `docs/specs/<slug>.md`
-from `"$_tqe/templates/process/spec-slice.md"`: `derived_from: PRD §4 FR-nn`,
-`data_classes_touched` (from the manifest `data:` block; `tq doctor` warns when
-PII-looking columns have no block), `trust_boundaries_crossed` (from
-`docs/threat-model.md`), behaviour, binary acceptance checks, out of scope,
-migration plan when schema files will change.
+Write `docs/specs/<slug>.md` from `"$_tqe/templates/process/spec-slice.md"`:
+`Status: draft`, `derived_from: PRD §4 FR-nn`, `data_classes_touched` (from the
+manifest `data:` block; `tq doctor` warns when PII-looking columns have no
+block), `trust_boundaries_crossed` (from `docs/threat-model.md`), Problem,
+behaviour (the rules table), binary acceptance checks (`- [ ]` bullets), out of
+scope, Open questions (`NEEDS-DECISION`), migration plan when schema files
+will change, Assumptions.
 
-Pre-select the reviewer crew before any code exists, so the plan already lists
-who will review: list the files you expect to touch and run
+Pre-select the reviewer crew now, from the files you expect to touch and the
+slice's data classes, so the plan already lists who will review: `spec-critic`
+always for a feature; `security-reviewer` when the feature touches auth,
+secrets, an API, state, destructive operations, workflows or dependencies, or
+crosses a trust boundary; `privacy-reviewer` when `data_classes_touched` is not
+empty or the expected files match `classified_paths`; `llm-security-reviewer`
+when the feature adds prompts, model calls, tools, MCP servers, hooks or
+skills; `breaker` when the plan will mark a checkpoint `runnable` and Project
+config has a `run` command. Write the expected crew into the slice under
+Assumptions. `tq decide triage` runs later, in build Phase 2, on the real diff
+of each checkpoint, where its flags apply as the build skill describes; it is
+not run now, because the tree holds only documents.
+
+Commit (add `CLAUDE.md` only if you changed it for a legacy repository):
 
 ```bash
-tq decide triage; echo "triage_exit=$?"
-```
-
-on the current tree (the PRD and spec edits), then apply the crew rule from
-the build skill: `spec-critic` always for a feature; `security-reviewer` on
-auth, secrets, api, state, destructive flags, workflow or dependency changes;
-`privacy-reviewer` when `data_classes_touched` is not empty or the files match
-`classified_paths`; `llm-security-reviewer` when the feature adds LLM calls,
-tools, MCP servers, hooks or skills; `breaker` when the plan marks a checkpoint
-`runnable` and Project config has a `run` command. Write the expected crew
-into the spec slice under Assumptions.
-
-Commit (omit `docs/prd.md` if it did not change):
-
-```bash
-git -C "$root" add docs/specs/<slug>.md docs/prd.md
+_tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+git -C "$root" add docs/specs/<slug>.md
 git -C "$root" commit -m "spec(<slug>): slice for FR-nn"
 ```
 
 ## 4. Plan and engine
 
-Hand off to `/tentaqles:build` Phase 0 (worktree) and Phase 1 with the spec
-path and `workflow=feature`. The planner writes top-level `"workflow":
-"feature"`, `"hotfix": false` (`hotfix=no`; a feature is never a hotfix) and
-`"spec": "<path>"` (`spec=<path>`, the slice's path); pass exactly those. The
-planner reads the spec slice; every acceptance check must appear in some
-checkpoint's `tests`. If you write any test before the planner runs, the
+Hand off to `/tentaqles:build` Phase 1 with the spec path and
+`workflow=feature` (Phase 0 is already done). The planner writes top-level
+`"workflow": "feature"`, `"hotfix": false` (`hotfix=no`; a feature is never a
+hotfix) and `"spec": "<path>"` (`spec=<path>`, the slice's path); pass exactly
+those. The planner reads the spec slice; every acceptance check must appear in
+some checkpoint's `tests`. If you write any test before the planner runs, the
 orchestrator adds that test file path to the checkpoint's `tests` in
 `docs/checkpoints/<slug>.json` before the human approves: the gate locks only
 files the approved plan lists, and refuses `lock-tests` until the plan is
@@ -125,6 +147,7 @@ body quotes the DoD record.
 
 ## Never
 
-- write code for a feature that has no FR and no spec slice
+- write code for a feature that has no FR in `docs/prd.md`, or no committed spec slice (on a legacy repository, exit 4, the slice's `derived_from` note stands in for the FR)
+- commit on `main` or `master`
 - mark an acceptance check done without a test the gate ran
 - `git add -A`, `git add .`, `--no-verify`, reading `.env*` (`tq dotenv run -- <cmd>`)

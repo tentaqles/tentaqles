@@ -123,6 +123,19 @@ def test_feature_skill_locates_the_fr_and_interviews_first() -> None:
     assert "`prd_exit` 0 or 3 (a PRD exists): continue" in flat and "touch this feature" in flat
     assert "keeps the strict planning-ready gate" in flat and "Any other exit code: report it" in flat
     assert "point to `/tentaqles:prd`" not in flat and "do not start the feature" not in flat
+    assert "A feature with no FR is first a PRD change, never code" in flat
+    assert "`**Acceptance checks**` heading" in flat and "never guess" in flat
+    assert "never commit on `main` or `master`" in flat and "`git switch -c feat/<slug>`" in flat
+    assert "the feature branch" in flat and "/tentaqles:build resume <slug>" in flat
+    assert "names this FR or its goal" in flat and "treat it as touching" in flat
+    assert "never write a placeholder as a command" in flat and "leave no `<...>`" in flat
+    for crew in ("spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer", "breaker"):
+        assert crew in body, crew
+    assert "runs later, in build Phase 2" in flat
+    assert '"hotfix": false' in flat
+    assert "derived_from: no PRD: legacy repository, see kickoff later" in flat
+    assert "write code for a feature that has no FR in `docs/prd.md`, or no committed spec slice" in flat
+    assert "Status: draft" in flat and "amend the FR" in flat
     assert "`hotfix=no`" in flat and "spec=<path>" in flat
     assert "you never run `build-gate dod" in flat
     assert "lock-tests` right after approval" in flat and "before the human approves" in flat
