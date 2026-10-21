@@ -954,7 +954,7 @@ def test_missing_tree_hash_is_not_fresh(repo, monkeypatch):
     gate.cmd_approve(repo, "demo")
     _touch_changelog(repo)
     assert gate.cmd_dod(repo, "demo")[0] == 0
-    monkeypatch.setattr(gate, "tree_hash", lambda root: None)
+    monkeypatch.setattr(gate, "tree_hash", lambda root, timeout=60: None)
     assert gate.dod_fresh(repo, "demo", gate.TreeHash(repo))[0] is False
     code, out = gate.cmd_dod(repo, "demo")
     assert code == 1 and "MISSING stable_tree" in out
@@ -1421,3 +1421,46 @@ def test_kept_override_logs_an_event(repo, tq_home):
     assert "dod-override-kept" in kinds and kinds[-1] == "dod"
     kept = [e for e in events if e["kind"] == "dod-override-kept"][0]
     assert kept["ok"] is True and "reason" not in kept
+
+
+# --- final fix wave ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def set_up(repo):
+    """A repo after `build-gate setup`, as in a real worktree (state dir git-excluded)."""
+    gate.cmd_setup(repo)
+    return repo
+
+
+def test_tree_hash_works_after_setup_and_a_checkpoint_verifies(set_up):
+    (set_up / ".claude" / "build" / "demo").mkdir(parents=True, exist_ok=True)
+    (set_up / ".claude" / "build" / "demo" / "x.json").write_text("{}", encoding="utf-8")
+    assert gate.tree_hash(set_up) is not None
+    approve_and_lock(set_up)
+    code, msg = gate.cmd_verify(set_up, "demo", 2)
+    assert code == 0 and "PASS" in msg, msg
+    assert hook(set_up, write(plan_file(set_up), with_gate(PLAN, 2, behavior="passed")))[0] == 0
+
+
+def test_tree_hash_ignores_the_state_dir_after_setup(set_up):
+    h1 = gate.tree_hash(set_up)
+    (set_up / ".claude" / "build" / "demo").mkdir(parents=True, exist_ok=True)
+    (set_up / ".claude" / "build" / "demo" / "evidence.jsonl").write_text("x\n", encoding="utf-8")
+    assert gate.tree_hash(set_up) == h1
+    (set_up / "app.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+    assert gate.tree_hash(set_up) != h1
+
+
+def test_stop_path_tree_hash_timeout_is_under_the_hook_timeout(repo, monkeypatch):
+    _project(repo)
+    own(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    seen = []
+    real = gate.tree_hash
+    monkeypatch.setattr(gate, "tree_hash", lambda root, timeout=60: seen.append(timeout) or real(root, timeout=timeout))
+    assert stop(repo)[0] == 0
+    assert seen and max(seen) <= 10

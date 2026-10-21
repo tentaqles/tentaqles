@@ -473,7 +473,10 @@ def active_checkpoint(plan: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def tree_hash(root: Path) -> str | None:
+STOP_GIT_TIMEOUT = 10  # the Stop hook runs under a 20 s hook timeout (cmd_setup)
+
+
+def tree_hash(root: Path, timeout: float = 60) -> str | None:
     """Content id of the working tree, independent of commits.
 
     Copies the real index (keeps git's stat cache, so this is fast on big repos)
@@ -491,21 +494,25 @@ def tree_hash(root: Path) -> str | None:
         if idx_path.exists():
             shutil.copy2(idx_path, tmp_idx)
         env = {**os.environ, "GIT_INDEX_FILE": tmp_idx}
-        excludes = [f":(exclude){p}" for p in HASH_EXCLUDES]
+        # No `:(exclude)` pathspecs here: once `setup` git-excludes the state dir, git 2.55
+        # exits 1 ("paths are ignored") for an exclude pathspec that names an ignored path.
+        # The bookkeeping paths are dropped from the temp index below instead.
         # Only tracked .gitignore files and .git/info/exclude (both protected) may hide
         # files: a user-level excludesFile is switched off, and a .gitignore that
         # ignores itself is added anyway, so ignoring new code changes the hash.
         noglobal = ["-c", "core.excludesFile="]
-        code, out = git(root, *noglobal, "add", "--all", "--", ".", *excludes, env=env, timeout=60)
+        code, out = git(root, *noglobal, "add", "--all", "--", ".", env=env, timeout=timeout)
         if code != 0:
             return None
         code, ign = git(root, *noglobal, "ls-files", "--others", "--ignored", "--exclude-standard",
                         "--", ":(glob)**/.gitignore", env=env)
         hidden = [f for f in ign.splitlines() if f.strip()] if code == 0 else []
         if hidden:
-            git(root, "add", "-f", "--", *hidden, env=env)
-        # Drop anything under the excluded paths that the real index already tracked.
-        git(root, "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *HASH_EXCLUDES, env=env)
+            git(root, "add", "-f", "--", *hidden, env=env, timeout=timeout)
+        # Drop the bookkeeping paths (staged above, or already tracked by the real index).
+        code, _ = git(root, "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *HASH_EXCLUDES, env=env, timeout=timeout)
+        if code != 0:
+            return None
         code, out = git(root, "write-tree", env=env)
         return out.strip() if code == 0 else None
 
@@ -513,14 +520,15 @@ def tree_hash(root: Path) -> str | None:
 class TreeHash:
     """Lazily computed once per hook call."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, timeout: float = 60):
         self.root = root
+        self.timeout = timeout
         self._value = None
         self._done = False
 
     def get(self):
         if not self._done:
-            self._value = tree_hash(self.root)
+            self._value = tree_hash(self.root, timeout=self.timeout)
             self._done = True
         return self._value
 
@@ -931,7 +939,7 @@ def check_stop(data: dict, root: Path) -> None:
     if data.get("stop_hook_active"):
         return  # we already blocked this stop once; never trap the session
     session_id = data.get("session_id") or ""
-    th = TreeHash(root)
+    th = TreeHash(root, timeout=STOP_GIT_TIMEOUT)
     for slug in slugs(root):
         sess = load_session(root, slug)
         if sess.get("finished") or not sess.get("session_id") or sess.get("session_id") != session_id:
