@@ -647,3 +647,18 @@ def test_megabyte_of_groups_is_fast(blob):
 def test_iban_with_unknown_country_is_not_masked():
     # Valid mod-97 shape but "XX" is not an IBAN country.
     assert privacy.redact_text("XX82 WEST 1234 5698 7654 32", classes=["checksummed"])[1] == []
+
+
+def test_ingest_masks_before_truncating(tmp_path: Path):
+    # A CPF cut at the MAX_TEXT_CHARS boundary leaves a digit run no detector matches.
+    from tentaqles.memory.ingest import MAX_TEXT_CHARS
+    s = MemoryStore(_workspace(tmp_path / "ws", "data:\n  classes: [pii]\n"))
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "a.md").write_text("x" * (MAX_TEXT_CHARS - 6) + " " + CPF + " tail", encoding="utf-8")
+    try:
+        assert ingest_markdown_dirs(s, [notes])["added"] == 1
+        (text,) = s._conn.execute("SELECT text FROM reference_docs").fetchone()
+        assert len(text) <= MAX_TEXT_CHARS and "529" not in text
+    finally:
+        s.close()

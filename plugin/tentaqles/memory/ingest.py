@@ -98,7 +98,7 @@ def ingest_markdown_dirs(store, dirs) -> dict:
                 title=privacy.redact_str(title, classes),
                 url=privacy.redact_str(str(url), classes) if url else None,
                 created_at=item_date(meta, mtime),
-                text=privacy.redact_str(text[:MAX_TEXT_CHARS], classes),
+                text=privacy.redact_str(text, classes)[:MAX_TEXT_CHARS],  # mask first: a cut can split an id
             )
             result["added" if prev is None else "updated"] += 1
     return result
