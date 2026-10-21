@@ -99,6 +99,9 @@ func (s *Service) Enqueue(ctx context.Context, cardID, reason string) (store.Run
 
 // Tick polls waiting runs for answers given in the terminal, then starts due queued runs up to the workspace's concurrency limit, oldest first.
 func (s *Service) Tick(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return nil // shutting down: Start's select may pick the ticker after ctx ended
+	}
 	s.tickMu.Lock()
 	defer s.tickMu.Unlock()
 	s.pollWaiting(ctx)
@@ -177,6 +180,9 @@ func decodeState(raw json.RawMessage) *gate.State {
 	return &st
 }
 
+// shutdownStateRead bounds the gate read made while the hub stops.
+const shutdownStateRead = 5 * time.Second
+
 func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 	card, err := s.st.Card(r.CardID)
 	if err != nil {
@@ -236,6 +242,13 @@ func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 		// The hub is stopping: the run goes back to the queue with its lock and resumes on the next start.
 		rec.Outcome = "interrupted"
 		r.RoundLog = append(r.RoundLog, rec)
+		// A plan written during the cut round must make the restart resume it, not re-send the on-ramp.
+		rctx, rcancel := context.WithTimeout(context.Background(), shutdownStateRead)
+		if st := s.readState(rctx, &r, card, start); st != nil {
+			r.State = st.Raw
+			s.mirror(card, r, st)
+		}
+		rcancel()
 		r.Status, r.NotBefore = store.StatusQueued, s.stamp()
 		if r.Slug != "" && len(r.State) > 0 {
 			r.Phase = store.PhaseResume

@@ -221,6 +221,10 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 	return out, nil
 }
 
+func agentLane(kind string) bool {
+	return kind == store.LaneBacklog || kind == store.LaneTodo || kind == store.LaneOther
+}
+
 // Move is a human (or agent) moving a card; system moves inside the runner use moveToKind.
 func (s *Service) Move(ctx context.Context, id, laneName string, cancelRun bool) (MoveOutcome, error) {
 	card, err := s.st.Card(id)
@@ -231,12 +235,13 @@ func (s *Service) Move(ctx context.Context, id, laneName string, cancelRun bool)
 	if err != nil {
 		return MoveOutcome{}, err
 	}
-	if to.Kind == store.LaneDone && IsAgent(ctx) {
-		return MoveOutcome{}, ErrHumanOnly
-	}
 	from, err := s.st.Lane(card.Lane)
 	if err != nil {
 		return MoveOutcome{}, err
+	}
+	// An agent only shuffles planning lanes; it never starts, cancels, reviews or closes work.
+	if IsAgent(ctx) && (!agentLane(from.Kind) || !agentLane(to.Kind)) {
+		return MoveOutcome{}, ErrHumanOnly
 	}
 	out := MoveOutcome{}
 	act, ok, err := s.st.ActiveRun(id)

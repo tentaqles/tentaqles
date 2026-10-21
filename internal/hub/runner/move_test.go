@@ -87,3 +87,33 @@ func TestWaitingCardMayMoveToReviewAndAgentNeverToDone(t *testing.T) {
 		t.Fatalf("agent → done: %v", err)
 	}
 }
+
+func TestAgentMovesOnlyBetweenPlanningLanes(t *testing.T) {
+	h := newHarness(t)
+	agent := WithAgent(context.Background())
+	c := h.card("feature", store.TagAgentReady)
+	if out, err := h.svc.Move(agent, c.ID, "todo", false); err != nil || out.Card.Lane != "todo" {
+		t.Fatalf("agent backlog → todo: %+v %v", out, err)
+	}
+	if _, err := h.svc.Move(agent, c.ID, "in progress", false); !errors.Is(err, ErrHumanOnly) {
+		t.Fatalf("agent todo → in progress: %v", err)
+	}
+	if runs, _ := h.st.RunsForCard(c.ID); len(runs) != 0 {
+		t.Fatalf("a refused agent move created a run: %+v", runs)
+	}
+	in, err := h.svc.Move(context.Background(), c.ID, "in progress", false)
+	if err != nil || in.Enqueued == nil {
+		t.Fatalf("%+v %v", in, err)
+	}
+	if _, err := h.svc.Move(agent, c.ID, "todo", true); !errors.Is(err, ErrHumanOnly) {
+		t.Fatalf("agent in progress → todo: %v", err)
+	}
+	card, _ := h.st.Card(c.ID)
+	if got := h.run(in.Enqueued.ID); got.Status != store.StatusQueued || card.Lane != "in progress" || card.LockedByRun != got.ID {
+		t.Fatalf("a refused agent move touched the run: %+v lane %q", got, card.Lane)
+	}
+	plain := h.card("chore")
+	if _, err := h.svc.Move(agent, plain.ID, "done", false); !errors.Is(err, ErrHumanOnly) {
+		t.Fatalf("agent → done: %v", err)
+	}
+}

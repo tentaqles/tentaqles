@@ -599,3 +599,52 @@ func TestViewsAndAgentBudget(t *testing.T) {
 		t.Fatalf("%+v", items)
 	}
 }
+
+func TestTickWithAnEndedContextStartsNothing(t *testing.T) {
+	h := newHarness(t)
+	c := h.card("feature", store.TagAgentReady)
+	r := h.enqueue(c)
+	ctx, stop := context.WithCancel(context.Background())
+	stop()
+	if err := h.svc.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.Wait()
+	got := h.run(r.ID)
+	if len(h.ad.calls()) != 0 || got.Status != store.StatusQueued || got.StartedAt != "" || got.Rounds != 0 || h.comments(c.ID) != "" {
+		t.Fatalf("a dead-context tick started work: calls %d run %+v comments %q", len(h.ad.calls()), got, h.comments(c.ID))
+	}
+}
+
+func TestHubShutdownDetectsAPlanWrittenDuringTheRound(t *testing.T) {
+	h := newHarness(t)
+	c := h.card("feature", store.TagAgentReady)
+	st := loadState(t, "waiting")
+	st.Task.Hub = c.ID
+	h.gt.slugs[filepath.Join(h.root, "apps", "billing")] = []string{"demo"}
+	started := make(chan struct{})
+	h.ad.steps = []step{
+		func(ctx context.Context, req adapter.RunRequest) (adapter.RunResult, error) {
+			h.gt.set("demo", st) // the on-ramp wrote the plan, then the hub stopped
+			close(started)
+			<-ctx.Done()
+			return adapter.RunResult{ExitCode: -1}, ctx.Err()
+		},
+		result("Waiting for you."),
+	}
+	r := h.enqueue(c)
+	ctx, stop := context.WithCancel(context.Background())
+	h.svc.Tick(ctx)
+	<-started
+	stop()
+	h.svc.Wait()
+	got := h.run(r.ID)
+	if got.Status != store.StatusQueued || got.Slug != "demo" || got.Phase != store.PhaseResume || len(got.State) == 0 {
+		t.Fatalf("%+v", got)
+	}
+	h.tick()
+	calls := h.ad.calls()
+	if len(calls) != 2 || calls[1].Prompt != "/tentaqles:build resume demo --headless" {
+		t.Fatalf("restart re-sent the on-ramp: %d calls, last %q", len(calls), calls[len(calls)-1].Prompt)
+	}
+}
