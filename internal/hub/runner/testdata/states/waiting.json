@@ -1,0 +1,6 @@
+{"slug": "demo", "workflow": "feature", "approved": false, "rolled_back": false, "finished": false, "halted": null,
+ "task": {"hub": "c-abcdefghijkl", "workspace": "acme", "kind": "feature", "external": null},
+ "checkpoints": [{"id": 1, "title": "Parse rows", "status": "pending", "gates": {"behavior": "pending", "review": "pending"}, "evidence": "-", "reviews": {}}],
+ "dod": null, "pending_decisions": [{"id": "d1a2b3c4", "kind": "plan-approval", "checkpoint": null, "reviewer": null,
+   "text": "1 checkpoint: parse rows. verify: python -m pytest -q", "options": ["approve", "edit", "stop"], "asked_at": "2026-10-21T10:00:00+00:00"}],
+ "decisions": [{"id": "d1a2b3c4", "kind": "plan-approval", "status": "pending", "options": ["approve", "edit", "stop"]}]}

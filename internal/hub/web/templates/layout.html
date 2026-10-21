@@ -1,0 +1,45 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} · tq hub</title>
+<link rel="stylesheet" href="/static/hub.css">
+</head>
+<body data-ws="{{.WS}}" data-run="{{.RunID}}">
+<header class="top">
+  <a class="brand" href="/?ws={{.WS}}">tq hub</a>
+  {{if gt (len .Workspaces) 1}}
+  <form class="switch" method="get" action="/">
+    <label>workspace
+      <select name="ws" data-autosubmit>
+        {{range .Workspaces}}<option value="{{.Name}}"{{if eq .Name $.WS}} selected{{end}}{{if not .Available}} disabled{{end}}>{{.Name}}{{if not .Available}} (unavailable: {{.Reason}}){{end}}</option>{{end}}
+      </select>
+    </label>
+    <button class="nojs">Open</button>
+  </form>
+  {{else}}<span class="ws">{{.WS}}</span>{{end}}
+  <nav>
+    <a href="/?ws={{.WS}}">Board</a>
+    <a href="/waiting?ws={{.WS}}">Waiting <span class="count mono" id="waiting-count">{{.WaitingCount}}</span></a>
+    <a href="/activity?ws={{.WS}}">Activity</a>
+  </nav>
+</header>
+{{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+<main id="main">{{end}}
+
+{{define "foot"}}</main>
+<script src="/static/hub.js"></script>
+</body>
+</html>{{end}}
+
+{{define "message"}}{{template "head" .}}{{template "message-main" .}}{{template "foot" .}}{{end}}
+{{define "message-main"}}<section class="message"><h1>{{.Title}}</h1><p>{{.Data}}</p></section>{{end}}
+
+{{define "decision-form"}}{{$d := index . "item"}}
+<form class="decision" method="post" action="/cards/{{index . "card"}}/decisions/{{$d.ID}}/answer?ws={{index . "ws"}}">
+  <p><span class="badge">{{$d.Kind}}</span>{{if $d.Checkpoint}} checkpoint <span class="mono">{{$d.Checkpoint}}</span>{{end}}{{if $d.Reviewer}} · {{$d.Reviewer}}{{end}} <span class="mono muted">{{$d.ID}}</span>{{if $d.AskedAt}} <span class="mono muted">{{when $d.AskedAt}}</span>{{end}}</p>
+  <pre class="text">{{$d.Text}}</pre>
+  <label>Note <input name="note" autocomplete="off"></label>
+  <div class="choices">{{range $d.Options}}<button name="choice" value="{{.}}">{{.}}</button>{{end}}</div>
+</form>{{end}}

@@ -93,6 +93,12 @@ RESULTS = ("PASS", "FAIL", "BLOCKED")
 WORKFLOWS = ("build", "feature", "fix", "kickoff")
 DOD_WORKFLOWS = ("feature", "fix", "kickoff")
 
+# The hub's task block (spec A §13.1): TQ_HUB_TASK copied verbatim into the plan by the on-ramp.
+TASK_KEYS = ("hub", "workspace", "kind", "external")
+TASK_KINDS = ("project", "feature", "fix", "analysis", "hotfix", "chore")
+EXTERNAL_KEYS = ("provider", "id", "url")
+HUB_CARD_RE = re.compile(r"c-[a-z2-7]{12}")
+
 
 class Block(Exception):
     """Refuse the tool call (exit 2, message on stderr)."""
@@ -763,12 +769,56 @@ def unpassed_before(cps: list, cid) -> list:
             and c["id"] < cid and c.get("status") != "passed"]
 
 
+def task_problem(task) -> str:
+    """'' when the plan's `task` block is absent or has the hub's shape, else a one-line reason."""
+    if task is None:
+        return ""
+    if not isinstance(task, dict):
+        return "task must be an object"
+    extra = sorted(set(task) - set(TASK_KEYS))
+    if extra:
+        return f"task has unknown key(s) {', '.join(extra)} (allowed: {', '.join(TASK_KEYS)})"
+    missing = [k for k in TASK_KEYS if k not in task]
+    if missing:
+        return f"task is missing {', '.join(missing)}"
+    if not isinstance(task["hub"], str) or not HUB_CARD_RE.fullmatch(task["hub"]):
+        return "task.hub must be a hub card id (c- and 12 base32 characters)"
+    if not isinstance(task["workspace"], str) or not task["workspace"].strip():
+        return "task.workspace must be a non-empty string"
+    if task["kind"] not in TASK_KINDS:
+        return f"task.kind must be one of {', '.join(TASK_KINDS)}"
+    ext = task["external"]
+    if ext is not None and (not isinstance(ext, dict) or set(ext) != set(EXTERNAL_KEYS)
+                            or not all(isinstance(ext[k], str) for k in EXTERNAL_KEYS)):
+        return "task.external must be null or an object with string provider, id and url"
+    return ""
+
+
+def task_env_problem(task, env_value) -> str:
+    """The hook's check: a task block is written only for a run the hub launched, verbatim."""
+    if task is None:
+        return ""
+    if not (env_value or "").strip():
+        return ("a task block is only written for a run the hub launched (TQ_HUB_TASK is not set): "
+                "remove the top-level task")
+    try:
+        want = json.loads(env_value)
+    except ValueError:
+        return "TQ_HUB_TASK is not valid JSON; remove the top-level task"
+    if task != want:
+        return "task must be TQ_HUB_TASK verbatim"
+    return ""
+
+
 def plan_problem(doc) -> str:
     """'' when the plan document has the shape every lookup relies on, else a one-line
     reason naming the field: checkpoints is a list of dicts with unique int/non-empty-str
     ids, gates (when present) a dict of dicts, tests (when present) a list of str."""
     if not isinstance(doc, dict):
         return "the plan must be a JSON object"
+    bad = task_problem(doc.get("task"))
+    if bad:
+        return bad
     cps = doc.get("checkpoints")
     if not isinstance(cps, list):
         return "checkpoints must be a list"
@@ -916,6 +966,17 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
     bad = plan_problem(doc)
     if bad:
         raise Block(f"invalid plan: {bad}.")
+    if check_evidence:
+        # Only a new or changed task must come from the environment; an unchanged one (a hub-launched
+        # plan resumed in a terminal without TQ_HUB_TASK) is left alone.
+        try:
+            old_task = json.loads(old_text).get("task")
+        except (ValueError, AttributeError):
+            old_task = None
+        if doc.get("task") is None or doc.get("task") != old_task:
+            env_bad = task_env_problem(doc.get("task"), os.environ.get("TQ_HUB_TASK"))
+            if env_bad:
+                raise Block(f"invalid plan: {env_bad}.")
     new = doc["checkpoints"]
     # Hotfix is what the human approved, never what the plan under edit claims.
     if check_evidence and rolled_back(root, slug):
@@ -2552,6 +2613,7 @@ def cmd_approve(root: Path, slug: str) -> str:
         "tests_locked": prev.get("tests_locked", {}),
         "workflow": plan.get("workflow") if plan.get("workflow") in WORKFLOWS else "build",
         "hotfix": plan.get("hotfix") is True,
+        "task": plan.get("task") if not task_problem(plan.get("task")) else None,
     }
     approved["project"] = project
     approved["project_warning"] = pwarn
@@ -2744,6 +2806,55 @@ def _finished_and_cleaned(root: Path, slug: str) -> bool:
     return bool(rec and rec.get("finished")) and not rolled_back(root, slug)
 
 
+def _test_entries(tests) -> list[dict]:
+    out = []
+    for t in tests or []:
+        if isinstance(t, str):
+            out.append({"file": t, "layer": ""})
+        elif isinstance(t, dict):
+            out.append({"file": str(t.get("file") or ""), "layer": str(t.get("layer") or "")})
+    return out
+
+
+def cmd_records(root: Path, slug: str) -> dict:
+    """The gate's own records for the hub's review page (spec A §10): only rows this module signed;
+    plan checkpoints are flagged by whether the human's approval still covers them."""
+    plan = load_plan(root, slug) or {"checkpoints": []}
+    approved = load_approved(root, slug)
+    current = (approved or {}).get("approval_id")
+    plan_out = {"summary": str(plan.get("summary") or ""), "plain_summary": str(plan.get("plain_summary") or ""),
+                "spec": str(plan.get("spec") or ""),
+                "checkpoints": [{"id": cp.get("id"), "title": str(cp.get("title") or ""),
+                                 "approved": checkpoint_approved(approved, cp)[0], "tests": _test_entries(cp.get("tests"))}
+                                for cp in plan.get("checkpoints") or [] if isinstance(cp, dict)]}
+    ev = []
+    for r in evidence(root, slug):
+        ev.append({"checkpoint": r.get("checkpoint"), "ts": r.get("ts"), "tree": r.get("tree"), "ok": bool(r.get("ok")),
+                   "current": bool(current) and r.get("approval_id") == current,
+                   "summary": redact(str(r.get("summary") or ""))[:300],
+                   "results": [{"cmd": str(x.get("cmd") or ""), "exit": x.get("exit"), "seconds": x.get("seconds"),
+                                "timed_out": bool(x.get("timed_out"))}
+                               for x in (r.get("results") or []) if isinstance(x, dict)]})
+    b = _Binding(root, slug)
+    revs = []
+    for line in read_text(reviews_path(root, slug)).splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if b.ok(rec):
+            revs.append({k: rec.get(k) for k in ("checkpoint", "reviewer", "result", "tree", "ts", "human",
+                                                 "blockers", "majors", "minors", "unjudged")})
+    dod = read_json(dod_path(root, slug))
+    dod_out = None
+    if bound(root, slug, dod):
+        dod_out = {"ok": bool(dod.get("ok")), "tree": dod.get("tree"), "ts": dod.get("ts"), "override": dod.get("override"),
+                   "checks": [{"id": str(c.get("id")), "ok": c.get("ok"),
+                               "detail": redact(str(c.get("detail") or "").splitlines()[0] if c.get("detail") else "")[:200]}
+                              for c in (dod.get("checks") or []) if isinstance(c, dict)]}
+    return {"plan": plan_out, "evidence": ev, "reviews": revs, "dod": dod_out}
+
+
 def cmd_state(root: Path, slug: str) -> dict:
     plan = load_plan(root, slug)
     if plan is None and _finished_and_cleaned(root, slug) and load_approved(root, slug) is None:
@@ -2781,7 +2892,8 @@ def cmd_state(root: Path, slug: str) -> dict:
     signed = approved if approved is not None else plan  # the hub sees what the human approved
     return {"slug": slug, "feature": plan.get("feature", slug),
             "workflow": signed.get("workflow") if signed.get("workflow") in WORKFLOWS else "build",
-            "hotfix": signed.get("hotfix") is True, "task": plan.get("task"), "approved": approved is not None,
+            "hotfix": signed.get("hotfix") is True, "task": signed.get("task") if approved is None or "task" in approved else plan.get("task"),
+            "approved": approved is not None,
             "rolled_back": is_rolled_back, "gen": (approved or {}).get("gen"), "cleaned": False,
             "bases": review_bases(root, slug),
             "halted": plan.get("halted"), "finished": bool(sess.get("finished")), "checkpoints": cps, "dod": dod_out,
@@ -3407,6 +3519,7 @@ def main(argv: list[str] | None = None) -> int:
     stt = sub.add_parser("state", help="machine-readable run state for the hub")
     stt.add_argument("slug")
     stt.add_argument("--json", action="store_true")
+    stt.add_argument("--records", action="store_true", help="add the gate's signed records (the hub's review page)")
     tk = sub.add_parser("token", help="human only: mint a hub actor token for one action")
     tk.add_argument("action", choices=HUB_ACTIONS)
     tk.add_argument("slug")
@@ -3480,6 +3593,8 @@ def main(argv: list[str] | None = None) -> int:
         return code
     elif a.cmd == "state":
         st = cmd_state(root, a.slug)
+        if a.records:
+            st["records"] = cmd_records(root, a.slug)
         if a.json:
             print(json.dumps(st, ensure_ascii=False, indent=2))
         else:

@@ -1,0 +1,21 @@
+{{define "run"}}{{template "head" .}}{{template "run-main" .}}{{template "foot" .}}{{end}}
+{{define "run-main"}}{{$ws := .WS}}{{with .Data}}
+<article class="detail">
+  <h1>Run <span class="mono">{{.Run.ID}}</span> <span class="badge st-{{.Run.Status}}">{{.Run.Status}}</span></h1>
+  <p>Card <a href="/cards/{{.Card.ID}}?ws={{$ws}}">{{.Card.Title}}</a> · {{.Run.Adapter}} · on-ramp {{.Run.OnRamp}}{{if .Run.Slug}} · build <span class="mono">{{.Run.Slug}}</span>{{end}}{{if .Run.Worktree}} · <span class="mono">{{.Run.Worktree}}</span>{{end}}</p>
+  {{if .Run.StopReason}}<p><strong>Stop reason:</strong> {{.Run.StopReason}}</p>{{end}}
+  {{if and (eq .Run.Status "running") .GateURL}}<p><a href="{{.GateURL}}">Gate live view</a></p>{{end}}
+  <table><tr><th></th><th>used</th><th>budget</th></tr>
+    <tr><td>tokens</td><td class="mono">{{ktok .Run.Usage.Tokens}}</td><td class="mono">{{ktok .Run.Budget.Tokens}}</td></tr>
+    <tr><td>dollars</td><td class="mono">{{money .Run.CostUSD}}</td><td class="mono">{{money .Run.Budget.USD}}</td></tr>
+    <tr><td>minutes</td><td class="mono">{{minutes .Run.Seconds}}</td><td class="mono">{{.Run.Budget.Minutes}}</td></tr>
+    <tr><td>rounds</td><td class="mono">{{.Run.Rounds}}</td><td class="mono">{{.Run.Budget.Rounds}}</td></tr>
+  </table>
+  <h2>Rounds</h2>
+  <table><tr><th>round</th><th>started</th><th>seconds</th><th>tokens in/out</th><th>cost</th><th>exit</th><th>outcome</th></tr>
+  {{range .Run.RoundLog}}<tr><td class="mono">{{.N}}</td><td class="mono">{{when .StartedAt}}</td><td class="mono">{{printf "%.0f" .Seconds}}</td><td class="mono">{{.Usage.Input}}/{{.Usage.Output}}</td>
+    <td class="mono">{{money .CostUSD}}{{if .CostUnknown}} (cost unknown){{end}}</td><td class="mono">{{.ExitCode}}</td><td>{{.Outcome}}</td></tr>{{end}}</table>
+  <h2>Log</h2>
+  <pre id="log" class="text" data-from="{{.LogSize}}">{{.LogTail}}</pre>
+</article>
+{{end}}{{end}}

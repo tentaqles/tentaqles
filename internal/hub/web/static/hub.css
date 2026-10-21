@@ -1,0 +1,47 @@
+:root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --card: #ffffff; --accent: #2457c5;
+  --queued: #6b6b66; --running: #2457c5; --waiting: #b26b00; --finished: #1f7a3a; --failed: #b3261e; --cancelled: #6b6b66; --over-budget: #8a3ffc; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161615; --fg: #ececea; --muted: #a0a09a; --line: #34342f; --card: #1f1f1d; --accent: #7aa2ff;
+    --queued: #a0a09a; --running: #7aa2ff; --waiting: #f0a640; --finished: #5cc27a; --failed: #ff7a6e; --cancelled: #a0a09a; --over-budget: #b892ff; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--accent); }
+.mono, code, pre, .mono a { font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; font-size: 13px; }
+.muted { color: var(--muted); }
+header.top { display: flex; gap: 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header .brand { font-weight: 700; text-decoration: none; color: var(--fg); }
+header nav { margin-left: auto; display: flex; gap: 14px; }
+header form.switch { display: flex; gap: 6px; align-items: center; }
+header form.switch label { margin: 0; }
+.js .nojs { display: none; }
+.count { background: var(--waiting); color: #fff; border-radius: 9px; padding: 0 6px; }
+main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+.flash { margin: 8px 16px; padding: 8px 12px; border: 1px solid var(--line); background: var(--card); }
+.lanes { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 12px; overflow-x: auto; }
+.lane { background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 200px; }
+.lane.over { outline: 2px dashed var(--accent); }
+.lane h2 { font-size: 14px; margin: 0 0 8px; text-transform: none; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; cursor: grab; }
+.card .title { display: block; font-weight: 600; text-decoration: none; color: var(--fg); margin-bottom: 4px; }
+.meta { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.kind, .tag { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+.badge { border-radius: 4px; padding: 0 6px; font-size: 12px; border: 1px solid currentColor; }
+.st-queued { color: var(--queued); } .st-running { color: var(--running); } .st-waiting { color: var(--waiting); }
+.st-finished { color: var(--finished); } .st-failed { color: var(--failed); } .st-cancelled { color: var(--cancelled); }
+.st-over-budget { color: var(--over-budget); }
+.detail h1 { margin-top: 0; }
+section { margin: 18px 0; }
+pre.text { white-space: pre-wrap; background: var(--card); border: 1px solid var(--line); padding: 8px; border-radius: 6px; }
+form.decision { border: 1px solid var(--waiting); border-radius: 8px; padding: 10px; margin: 10px 0; background: var(--card); }
+.choices { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+button, .button { font: inherit; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; text-decoration: none; display: inline-block; }
+button.danger { border-color: var(--failed); color: var(--failed); }
+.button.primary, button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+form.inline { display: inline-flex; gap: 6px; margin-right: 8px; }
+label { display: block; margin: 6px 0; } label.check { display: flex; gap: 6px; align-items: center; }
+input, textarea, select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--card); color: var(--fg); width: 100%; max-width: 640px; }
+.inline select, .choices input, header select { width: auto; }
+table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.ws-label { font-weight: 600; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
+pre#log { max-height: 60vh; overflow: auto; }

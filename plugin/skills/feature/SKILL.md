@@ -20,6 +20,12 @@ written with `build-gate ask <slug>` exactly as `skills/build/SKILL.md`
 ("Headless mode") describes, and the turn ends; the `build-gate` prefix is
 defined there too.
 
+**Hub task.** When `TQ_HUB_TASK` is set, the hub launched this run for one card. Read it with
+`printf '%s\n' "${TQ_HUB_TASK:-}"` and pass `task=<that JSON>` to the planner together with
+`workflow=feature`; the planner copies it verbatim as the plan's top-level `task`. When
+`TQ_HUB_TASK` is not set, the plan has no `task`: if the planner wrote one anyway,
+reject the plan and re-run the planner without it (the gate refuses such a plan too).
+
 ## 1. Locate it in the PRD
 
 ```bash

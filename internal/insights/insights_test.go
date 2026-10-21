@@ -338,7 +338,7 @@ func TestJSONSchemaStable(t *testing.T) {
 		sort.Strings(ks)
 		return ks
 	}
-	if got, want := keys(m), []string{"generated_at", "identities", "jev", "process", "schema", "since", "targets", "top_by_context", "top_by_cost", "total", "until", "window_days", "worktrees"}; !reflect.DeepEqual(got, want) {
+	if got, want := keys(m), []string{"generated_at", "hub", "identities", "jev", "process", "schema", "since", "targets", "top_by_context", "top_by_cost", "total", "until", "window_days", "worktrees"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("top-level keys = %v", got)
 	}
 	var tot map[string]json.RawMessage

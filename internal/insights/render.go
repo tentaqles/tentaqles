@@ -162,6 +162,40 @@ func WriteText(w io.Writer, r *Report) {
 		fmt.Fprintf(w, "cannot-judge rate: %s\n", pct(pr.CannotJudgeRate))
 	}
 
+	h := r.Hub
+	fmt.Fprintln(w, "\n== Hub (tq hub)")
+	if len(h.Workspaces) == 0 {
+		fmt.Fprintln(w, "(no hub activity)")
+	} else {
+		fmt.Fprintf(w, "workspaces: %s\n", strings.Join(h.Workspaces, ", "))
+		fmt.Fprintf(w, "cards by lane: %s\n", countList(h.CardsByLane))
+		fmt.Fprintf(w, "runs started %d, ended: %s   budget stops %d\n", h.RunsStarted, countList(h.RunsEnded), h.BudgetStops)
+		fmt.Fprintf(w, "decisions answered %d, median wait for the human %s, overrides %d, request-changes %d\n",
+			h.DecisionsAnswered, dur(h.MedianWaitMin), h.Overrides, h.RequestChanges)
+		if len(h.CostByKind) > 0 {
+			var parts []string
+			for _, k := range sortedKeys(h.CostByKind) {
+				parts = append(parts, fmt.Sprintf("%s $%.2f", k, h.CostByKind[k]))
+			}
+			fmt.Fprintf(w, "cost by kind: %s\n", strings.Join(parts, ", "))
+		}
+		if len(h.CostByCard) > 0 {
+			cards := sortedKeys(h.CostByCard)
+			sort.SliceStable(cards, func(i, j int) bool { return h.CostByCard[cards[i]] > h.CostByCard[cards[j]] })
+			if len(cards) > 10 {
+				cards = cards[:10]
+			}
+			tw = tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "card\tcost")
+			for _, c := range cards {
+				fmt.Fprintf(tw, "%s\t$%.2f\n", c, h.CostByCard[c])
+			}
+			tw.Flush()
+		}
+	}
+	if h.ReadError != "" {
+		fmt.Fprintf(w, "note: %s\n", h.ReadError)
+	}
 	fmt.Fprintln(w, "\n== Background review sessions")
 	fmt.Fprintf(w, "security-review sessions: %d (%d on Opus), cost $%.2f\n", r.Total.Reviews.Sessions, r.Total.Reviews.Opus, r.Total.Reviews.CostUSD)
 

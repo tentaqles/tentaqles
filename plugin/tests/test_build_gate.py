@@ -1124,7 +1124,7 @@ def test_state_reports_dod_freshness(repo):
 
 def test_state_json_shape(repo):
     _project(repo)
-    save_plan(repo, {**PLAN, "workflow": "feature", "task": {"hub_id": "t-42", "external": {"provider": "linear", "id": "ACME-7", "url": "https://linear.app/x"}}})
+    save_plan(repo, {**PLAN, "workflow": "feature", "task": {"hub": "c-abcdefghijkl", "workspace": "acme", "kind": "feature", "external": {"provider": "linear", "id": "ACME-7", "url": "https://linear.app/x"}}})
     gate.cmd_approve(repo, "demo")
     gate.cmd_verify(repo, "demo", 2)
     gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})

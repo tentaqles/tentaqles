@@ -50,7 +50,7 @@ Every stop that needs the human to re-approve (after a split, after Request chan
 
 On resume (`/tentaqles:build resume <slug>`), read `build-gate state <slug> --json` first. `decisions` lists the latest record per decision with its `status`, `choice`, `note` and `actor`; `pending_decisions` is the unanswered subset. An answered record means continue from the answer (`plan-approval` `approve` → the plan is already frozen; `edit` → re-run the planner with the note; `result` `approve` → the run is finished (answering it runs `build-gate finish`); `request-changes` → Phase 4's request-changes path with the note; `question` `override` → the DoD override is in force (answering it ran it with the note as the reason); `stop` → commit and end). A pending decision means the human has not answered: end the turn again without working.
 
-In interactive mode you write no decision records: the human stops stay `AskUserQuestion` and the terminal commands (`approve`, `finish`, `judge`, `dod --override`), as before. A pending record suspends the Stop guard, so one that no terminal command answers would switch it off for the rest of the run. The plan's top-level `task` block (hub id, external tracker id) is set by the on-ramp when the hub launched the run; never invent one.
+In interactive mode you write no decision records: the human stops stay `AskUserQuestion` and the terminal commands (`approve`, `finish`, `judge`, `dod --override`), as before. A pending record suspends the Stop guard, so one that no terminal command answers would switch it off for the rest of the run. The plan's top-level `task` block, `{"hub", "workspace", "kind", "external"}`, is copied verbatim from `TQ_HUB_TASK` by the on-ramp when the hub launched the run (the gate refuses a `task` the environment did not set, and the hub finds its build by `task.hub`); never invent one.
 
 ## Phase 0: Worktree and hooks
 
@@ -63,6 +63,8 @@ In interactive mode you write no decision records: the human stops stay `AskUser
    If you are already in a linked worktree, use it.
 4. **Hooks:** run `build-gate --root <worktree path> setup`. It writes the gate's PreToolUse and Stop hooks into the worktree's `.claude/settings.local.json` and git-excludes the gate state (`.claude/build/`).
 5. **Activate:** Claude Code reads hooks when a session starts. If this session isn't running in the worktree, stop here and tell the user, in one message: *open Claude Code in `<worktree>` (with tq: `cd <worktree>` then `claude`, or `tq run <workspace> -- claude` from there) and run `/tentaqles:build resume <slug>`*. That is not one of the two human stops; it happens once. If the session already runs there, run `build-gate ping`; if it reports inactive, ask the user to open `/hooks` to review the new hooks (or restart), then ping again. Don't continue with inactive hooks.
+
+   **Headless** (`TENTAQLES_HEADLESS=1` or `--headless`): there is no user to reopen Claude Code. Instead of the message, end the turn with this exact line as the last line of your final output, nothing after it: `TQ_HUB_RELOCATE <absolute worktree path> <slug>`. Take the path from `git -C "<worktree>" rev-parse --show-toplevel` (a native path on Windows, `C:/...`, not Git Bash's `/c/...`). The hub starts the next round in the worktree with the same on-ramp (or `/tentaqles:build resume <slug> --headless` once the plan exists). Write the line only in headless mode and only once per slug: in the worktree session step 3 finds the linked worktree and this step runs `build-gate ping` instead.
 
 ## Phase 1: Spec and plan
 

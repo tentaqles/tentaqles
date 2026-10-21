@@ -170,6 +170,55 @@ def _prd_context(cwd: str) -> str:
         return ""
 
 
+HUB_READ_BUDGET = 0.3  # seconds: the preamble never waits longer on the hub database (spec A §13.3)
+
+
+def _hub_db_path(context: dict) -> Path | None:
+    """$TQ_HOME/hub/<workspace>/hub.db when it exists; the workspace is TQ_WS, else the client root's name."""
+    ws = (os.environ.get("TQ_WS") or "").strip()
+    if not ws:
+        root = (context or {}).get("client_root") or ""
+        ws = Path(root).name if root else ""
+    if not ws or ws in (".", "..") or any(c in ws for c in "/\\:"):
+        return None
+    home = os.environ.get("TQ_HOME") or str(Path.home() / ".tentaqles")
+    p = Path(home) / "hub" / ws / "hub.db"
+    return p if p.is_file() else None
+
+
+def _count_pending(db: Path, out: list) -> None:
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=HUB_READ_BUDGET)
+        try:
+            out.append(int(conn.execute("SELECT COUNT(*) FROM decisions WHERE status = 'pending'").fetchone()[0]))
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def _hub_context(context: dict) -> str:
+    """One line when decisions wait on the human; a read-only SQLite read, never the network."""
+    try:
+        db = _hub_db_path(context)
+        if db is None:
+            return ""
+        import threading
+
+        out: list = []
+        t = threading.Thread(target=_count_pending, args=(db, out), daemon=True)
+        t.start()
+        t.join(HUB_READ_BUDGET)
+        if t.is_alive() or not out or out[0] <= 0:
+            return ""
+        n = out[0]
+        return f"{n} decision{'s' if n != 1 else ''} waiting on you (tq hub open)"
+    except Exception:
+        return ""
+
+
 def main() -> None:
     memory_only = "--memory-only" in sys.argv[1:]
 
@@ -219,6 +268,9 @@ def main() -> None:
             prd_line = _prd_context(cwd)
             if prd_line:
                 print(prd_line)
+            hub_line = _hub_context(context)
+            if hub_line:
+                print(hub_line)
             temporal = _get_temporal_context(cwd, context)
             if temporal:
                 print(temporal)
@@ -241,6 +293,9 @@ def main() -> None:
         prd_line = _prd_context(cwd)
         if prd_line:
             summary += "\n\n" + prd_line
+        hub_line = _hub_context(context)
+        if hub_line:
+            summary += "\n\n" + hub_line
 
         temporal = _get_temporal_context(cwd, context)
         if temporal:

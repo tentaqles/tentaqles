@@ -4,6 +4,32 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+### Added
+
+- **`/tentaqles:hub`.** Lists the decisions hub runs are waiting on (`tq hub list
+  --waiting --json`, bounded to 2 s), explains them, adds and shows cards, and prints the
+  exact `tq hub answer` line for the user; it never answers itself.
+- **Hub task block.** When `TQ_HUB_TASK` is set, `feature`, `fix` and `kickoff` pass it to
+  the planner, which writes it verbatim as the plan's top-level `task`
+  (`{"hub","workspace","kind","external"}`). The gate validates the shape, refuses a `task`
+  the environment did not set or changed, snapshots it at approval and reports the
+  approved one in `state --json`.
+- **`build-gate state <slug> --json --records`.** Adds the gate's own signed records (plan
+  summary and checkpoints with their approval status, verify evidence, reviewer verdicts,
+  DoD) for the hub's review page.
+- **Headless worktree hand-off.** A headless build ends Phase 0 with the last line
+  `TQ_HUB_RELOCATE <absolute worktree path> <slug>`, once per slug; the hub starts the next
+  round in the worktree.
+- **`ship` posts the PR link** to the hub card (`tq hub comment -`, bounded, failure
+  ignored) when `TQ_HUB_TASK` is set.
+- **Session preamble** prints "N decisions waiting on you (tq hub open)" from a read-only
+  SQLite read bounded to 300 ms.
+
+### Changed
+
+- A plan's `task` block in the old `{"hub_id", "external"}` shape is refused; the hub
+  writes the new shape.
+
 ## [0.12.0] — 2026-10-21
 
 ### Added

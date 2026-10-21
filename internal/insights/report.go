@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/hub/activity"
 	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
@@ -41,6 +42,7 @@ type Options struct {
 	Sources      []Source // nil means DiscoverSources()
 	DecideDir    string   // "" means $TQ_HOME/decide
 	BuildGateDir string   // "" means $TQ_HOME/build-gate
+	HubDir       string   // "" means $TQ_HOME/hub
 }
 
 // SessionRow is one main session in the top lists.
@@ -134,6 +136,7 @@ type Report struct {
 	TopByCost    []SessionRow     `json:"top_by_cost"`
 	Jev          JevReport        `json:"jev"`
 	Process      ProcessReport    `json:"process"`
+	Hub          activity.Report  `json:"hub"`
 	Worktrees    *WorktreeCount   `json:"worktrees"`
 	Targets      []Target         `json:"targets"`
 	Pricing      []PriceRow       `json:"-"`
@@ -190,6 +193,9 @@ func Run(o Options) (*Report, error) {
 	}
 	if o.BuildGateDir == "" {
 		o.BuildGateDir = filepath.Join(paths.Home(), "build-gate")
+	}
+	if o.HubDir == "" {
+		o.HubDir = filepath.Join(paths.Home(), "hub")
 	}
 	filter := map[string]bool{}
 	for _, w := range o.Workspaces {
@@ -313,6 +319,15 @@ func Run(o Options) (*Report, error) {
 	rep.Process, perr = ReadProcessEvents(filepath.Join(o.BuildGateDir, "events.jsonl"), o.Since)
 	if perr != nil {
 		rep.Process.ReadError = "events.jsonl could not be read; process counts are incomplete"
+	}
+	var keepWS func(string) bool
+	if len(filter) > 0 {
+		keepWS = func(ws string) bool { return filter[strings.ToLower(ws)] }
+	}
+	var herr error
+	rep.Hub, herr = activity.ReadAll(o.HubDir, o.Since, keepWS)
+	if herr != nil {
+		rep.Hub.ReadError = "activity.jsonl could not be read; hub counts are incomplete"
 	}
 	rep.Targets = Targets(rep)
 	return rep, nil

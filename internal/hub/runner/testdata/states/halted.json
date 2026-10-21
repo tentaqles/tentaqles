@@ -1,0 +1,4 @@
+{"slug": "demo", "workflow": "feature", "approved": true, "rolled_back": false, "finished": false,
+ "halted": {"reason": "behavior failed 3x after split", "checkpoint": 2},
+ "checkpoints": [{"id": 2, "title": "Write CSV", "status": "pending", "gates": {"behavior": "failed", "review": "pending"}, "evidence": "failing", "reviews": {}}],
+ "dod": null, "pending_decisions": [{"id": "d5", "kind": "question", "text": "?", "options": ["a", "b"]}], "decisions": []}

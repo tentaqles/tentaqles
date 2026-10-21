@@ -87,6 +87,9 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	pythonStoreAlias(d.LookPath, runtime.GOOS, add)
 	var verifyJobs []verifyJob
 	verifyCovers := map[string]bool{}
+	hubUsed := false
+	probe := newHubProbe()
+	defer probe.close()
 	for _, w := range all {
 		trusted := trust.IsTrusted(w.Hash)
 		if !trusted {
@@ -124,6 +127,9 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		if trusted {
 			claudeChecks(&w, add)
 			dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add)
+			if hubChecks(w.Name, probe, add) {
+				hubUsed = true
+			}
 		}
 		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
 			add("warn", "bypass-cloud", w.Name, "permission_mode bypass with a cloud identity: Claude may run cloud CLIs unattended", "")
@@ -228,6 +234,9 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 				add("warn", "include-orphan", "", "global git config includes "+p+", which does not exist", "tq migrate --steps git")
 			}
 		}
+	}
+	if hubUsed {
+		hubPortCheck(cfg.Hub.Port, probe, add)
 	}
 	// The pre-tq shell branch is active, so nothing tq sets is in effect here.
 	if d.Env != nil {
