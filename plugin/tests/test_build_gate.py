@@ -1125,3 +1125,113 @@ def test_state_json_shape(repo):
     assert "app.py" not in json.dumps(st)  # names of checkpoints and reviewers only, no file paths or text
     out = gate.main(["--root", str(repo), "state", "demo", "--json"])
     assert out == 0
+
+
+# --- fix round 1 -----------------------------------------------------------
+
+
+def _set_token(monkeypatch, action, slug="demo", actor="renato", mint_actor=None):
+    monkeypatch.setenv("TQ_BUILD_ACTOR", actor)
+    monkeypatch.setenv("TQ_BUILD_TOKEN", gate.mint_hub_token(action, slug, mint_actor or actor))
+
+
+def test_hub_token_comparison_is_exercised_with_a_key_present(repo, monkeypatch):
+    import hashlib, hmac as _hmac
+    gate._key(create=True)  # a real build has a key; without one hub_actor_ok exits early
+    assert gate._key() is not None
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "mallory")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", _hmac.new(b"guess", b"hub:approve:demo:mallory", hashlib.sha256).hexdigest())
+    assert gate.hub_actor_ok("approve", "demo") is None            # forged
+    _set_token(monkeypatch, "approve", actor="mallory", mint_actor="renato")
+    assert gate.hub_actor_ok("approve", "demo") is None            # token of another actor
+    monkeypatch.setenv("TQ_BUILD_TOKEN", "")
+    assert gate.hub_actor_ok("approve", "demo") is None            # empty
+    _set_token(monkeypatch, "approve")
+    assert gate.hub_actor_ok("approve", "demo") == "renato"        # correct
+
+
+def test_non_ascii_token_fails_closed_without_traceback(repo, monkeypatch, capsys):
+    save_plan(repo, PLAN)
+    gate._key(create=True)
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "renato")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", "é" * 64)
+    assert gate.hub_actor_ok("approve", "demo") is None
+    assert gate.main(["--root", str(repo), "approve", "demo"]) == 2
+    assert gate.load_approved(repo, "demo") is None
+
+
+def test_hub_token_message_is_unambiguous(repo, monkeypatch):
+    tok = gate.mint_hub_token("approve", "demo", "x:y")
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "y")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", tok)
+    assert gate.hub_actor_ok("approve", "demo:x") is None
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "x:y")
+    assert gate.hub_actor_ok("approve", "demo") == "x:y"
+
+
+def test_hub_actor_cannot_be_overwritten_with_actor_flag(repo, monkeypatch):
+    did = gate.cmd_ask(repo, "demo", "question", "ok?", ["yes", "no"]).split()[1]
+    _set_token(monkeypatch, "answer")
+    code = gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "yes", "--actor", "mallory"])
+    assert code == 2 and gate.pending_decisions(repo, "demo")
+    assert not [d for d in _decisions(repo) if d["status"] == "answered"]
+    code = gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "yes", "--actor", "renato"])
+    assert code == 0
+    assert [d for d in _decisions(repo) if d["status"] == "answered"][0]["actor"] == "renato"
+
+
+TOKEN_BRANCHES = [
+    ("approve", ["approve", "demo"]),
+    ("finish", ["finish", "demo"]),
+    ("unlock-tests", ["unlock-tests", "demo", "tests/test_a.py"]),
+    ("judge", ["judge", "demo", "2", "--reviewer", "build-critic", "--result", "PASS", "--note", "n"]),
+    ("answer", ["answer", "demo", "d1", "--choice", "yes"]),
+    ("dod", ["dod", "demo", "--override", "because"]),
+]
+
+
+@pytest.mark.parametrize("action,argv", TOKEN_BRANCHES, ids=[a for a, _ in TOKEN_BRANCHES])
+def test_every_token_branch_checks_its_own_action(repo, monkeypatch, action, argv):
+    save_plan(repo, PLAN)
+    asked = []
+    monkeypatch.setattr(gate, "human_confirm", lambda *a, **k: asked.append(a) or False)
+    for other in {a for a, _ in TOKEN_BRANCHES} - {action}:
+        asked.clear()
+        _set_token(monkeypatch, other)
+        assert gate.main(["--root", str(repo), *argv]) == 2, other   # wrong-action token: falls to the human gate
+        assert asked, other
+    asked.clear()
+    _set_token(monkeypatch, action)
+    try:
+        gate.main(["--root", str(repo), *argv])
+    except SystemExit:
+        pass                                   # the command itself may fail; the human gate must not be asked
+    assert not asked
+
+
+def _active_build(repo):
+    save_plan(repo, PLAN)
+    gate.cmd_approve(repo, "demo")
+
+
+@pytest.mark.parametrize("cmd", [
+    'python -c "from tentaqles.workflow.gate import mint_hub_token"',
+    'python -c "import tentaqles.workflow.gate as g; g.cmd_answer(1,2,3,4,5,6)"',
+    'python -c "from tentaqles.workflow import gate; gate.cmd_approve(1, 2)"',
+    "python plugin/tentaqles/workflow/gate.py approve demo",
+    "python -m tentaqles.workflow.gate approve demo",
+    "echo $TQ_BUILD_TOKEN",
+])
+def test_hook_refuses_in_process_gate_use_while_build_active(repo, cmd):
+    _active_build(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "human" in err.lower()
+
+
+def test_hook_allows_gate_cli_state_and_mentions_without_build(repo):
+    _active_build(repo)
+    assert hook(repo, bash("python scripts/build-gate.py state demo --json"))[0] == 0
+
+
+def test_hook_allows_gate_mentions_when_no_build_is_active(repo):
+    assert hook(repo, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))[0] == 0

@@ -579,6 +579,8 @@ def _build_active(root: Path) -> bool:
     return False
 
 
+GATE_INTERNALS = ("tentaqles.workflow.gate", "workflow/gate", "mint_hub_token", "cmd_answer", "cmd_approve",
+                  "tq_build_token", "tq_build_actor")
 PROTECTED_CONFIG = (".claude/settings.json", ".claude/settings.local.json", ".claude/tq-rules.yaml")
 HUMAN_ONLY = {"approve": "freezes the plan's verify commands (what 'passing' means)",
               "unlock-tests": "unlocks test files the implementer must not edit",
@@ -696,6 +698,9 @@ def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[t
         hits.append(("git", ".git/"))
     if STATE_DIR in canon:
         hits.append(("state", STATE_DIR))
+    if active and (any(m in canon for m in GATE_INTERNALS) or re.search(r"(?<!build-)\bgate\.py", canon)
+                   or re.search(r"workflow\s+import[^\n;]*\bgate\b", canon)):
+        hits.append(("gatemod", "the gate's own code or hub credentials"))
     if active and any(p in canon for p in PROTECTED_CONFIG):
         hits.append(("config", ".claude/settings / tq-rules"))
     if re.search(re.escape(PLAN_DIR) + r"/[^\s/\"']+\.json", canon):
@@ -733,6 +738,10 @@ def check_shell(cmd: str, root: Path) -> None:
         for cls, what in word_hits + text_hits:
             if cls == "key":
                 raise Block(_msg("key", what))
+            if cls == "gatemod":
+                raise Block("the gate's own code, key and hub credentials are human-only: only the human runs the gate "
+                            "steps (approve, answer, judge, token), through `build-gate` in their own terminal. "
+                            "Use the `build-gate` CLI for anything else.")
         if sub is not None:
             if sub == "dod" and any(len(a.split("=", 1)[0]) >= 3 and "--override".startswith(a.split("=", 1)[0].lower()) for a in sub_args[1:]):
                 raise Block("`build-gate dod --override` accepts missing definition-of-done items, so only the human "
@@ -1588,9 +1597,13 @@ def make_server(root: Path, slug: str, port: int = 8765):
 # ---------------------------------------------------------------------------
 
 
+def _hub_mac(key: bytes, action: str, slug: str, actor: str) -> str:
+    msg = json.dumps(["hub", action, slug, actor], ensure_ascii=True, separators=(",", ":"))  # unambiguous fields
+    return hmac.new(key, msg.encode("ascii"), "sha256").hexdigest()
+
+
 def mint_hub_token(action: str, slug: str, actor: str) -> str:
-    key = _key(create=True)
-    return hmac.new(key, f"hub:{action}:{slug}:{actor}".encode("utf-8"), "sha256").hexdigest()
+    return _hub_mac(_key(create=True), action, slug, actor)
 
 
 def hub_actor_ok(action: str, slug: str) -> str | None:
@@ -1599,8 +1612,8 @@ def hub_actor_ok(action: str, slug: str) -> str | None:
     key = _key()
     if not actor or not tok or key is None:
         return None
-    want = hmac.new(key, f"hub:{action}:{slug}:{actor}".encode("utf-8"), "sha256").hexdigest()
-    return actor if hmac.compare_digest(want, tok) else None
+    want = _hub_mac(key, action, slug, actor)
+    return actor if hmac.compare_digest(want.encode("ascii"), tok.encode("utf-8", "replace")) else None
 
 
 def human_confirm(action: str, stdin=None, stdout=None) -> bool:
@@ -1761,6 +1774,9 @@ def main(argv: list[str] | None = None) -> int:
         print(cmd_ask(root, a.slug, a.kind, a.text, a.options.split(","), a.checkpoint, a.reviewer))
     elif a.cmd == "answer":
         actor = hub_actor_ok("answer", a.slug)
+        if actor and a.actor and a.actor != actor:
+            print(f"build-gate: --actor '{a.actor}' differs from the hub token's actor '{actor}'. Refusing.", file=sys.stderr)
+            return 2
         if not actor:
             if not human_confirm(f"answer decision {a.id} in '{a.slug}' with '{a.choice}'"):
                 return 2
