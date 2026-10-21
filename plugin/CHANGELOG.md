@@ -2,6 +2,13 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Manifest `data.classes` also accepts the two detector-group names `checksummed`
+  (CPF, CNPJ, card, IBAN) and `all` (every detector, the strictest set), as tq's `internal/redact.Known` does.
+
 ## [0.11.1] — 2026-10-20
 
 ### Added
