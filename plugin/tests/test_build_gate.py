@@ -1408,3 +1408,23 @@ def test_kept_override_logs_an_event(repo, tq_home):
     assert "dod-override-kept" in kinds and kinds[-1] == "dod"
     kept = [e for e in events if e["kind"] == "dod-override-kept"][0]
     assert kept["ok"] is True and "reason" not in kept
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("mkdir -p .claude/build/demo/breaker", 0),
+    ("pg_dump --clean --if-exists -w --file .claude/build/demo/breaker/db.sql app", 0),
+    ("cp app.db .claude/build/demo/breaker/app.db", 0),
+    ("cp x .claude/build/demo/approved.json", 2),
+    ("echo y > .claude/build/demo/breaker/../approved.json", 2),
+    ("cp .claude/build/demo/approved.json .claude/build/demo/breaker/a", 2),
+    ("cp x .claude/build/demo/breaker/a; cp x .claude/build/demo/evidence.jsonl", 2),
+    ("mkdir -p .claude/build/other/breaker", 2),
+    ("echo x > .claude/build/demo/breaker/a && echo y > .claude/build/demo/state.json", 2),
+])
+def test_breaker_scratch_dir_is_the_only_state_write_allowed(repo, cmd, want):
+    _active_build(repo)
+    assert hook(repo, bash(cmd))[0] == want
+
+
+def test_build_state_dir_stays_excluded_from_the_hash() -> None:
+    assert gate.STATE_DIR in gate.HASH_EXCLUDES

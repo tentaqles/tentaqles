@@ -773,6 +773,26 @@ def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[t
     return hits
 
 
+_STATE_TOKEN = re.compile(r"\.claude/build(?:/[^\s\"'|;&<>()=,]*)?", re.IGNORECASE)
+
+
+def _breaker_only(root: Path, canon: str) -> bool:
+    """True when every `.claude/build` path in the command sits under
+    `.claude/build/<active slug>/breaker/` (the breaker agent's scratch directory:
+    backups, logs, notes). One other state path, or a `..` segment, voids it."""
+    toks = _STATE_TOKEN.findall(canon)
+    if not toks:
+        return False
+    live = {s for s in slugs(root) if load_approved(root, s) and not load_session(root, s).get("finished")}
+    for t in toks:
+        parts = [x for x in t.split("/") if x]  # ['.claude', 'build', slug, 'breaker', ...]
+        if len(parts) < 4 or parts[3].lower() != "breaker" or ".." in parts or "." in parts[4:]:
+            return False
+        if parts[2] not in live and parts[2].lower() not in {x.lower() for x in live}:
+            return False
+    return True
+
+
 def check_shell(cmd: str, root: Path) -> None:
     """Normalise once (lexer + canonical paths), then decide per segment."""
     locked = _locked_paths(root)
@@ -797,6 +817,9 @@ def check_shell(cmd: str, root: Path) -> None:
             if cls:
                 word_hits.append((cls, rel or absn))
         text_hits = _text_mentions(root, canon, locked, active)
+        if _breaker_only(root, canon):
+            word_hits = [h for h in word_hits if h[0] != "state"]
+            text_hits = [h for h in text_hits if h[0] != "state"]
         for cls, what in word_hits + text_hits:
             if cls == "key":
                 raise Block(_msg("key", what))
