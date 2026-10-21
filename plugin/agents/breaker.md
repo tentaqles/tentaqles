@@ -20,7 +20,7 @@ Decide all of this before starting the app. Judge from files you may read (compo
 
 ## Bounds
 
-All scratch files go under `.tq-breaker/<slug>/` at the project root (git-excluded by `build-gate setup`, outside the gate's state directory) and nowhere else. You write only new files there. You never edit source files, tests or config, and you never write under `.claude/build/`: the gate refuses it.
+All scratch files go under `.tq-breaker/<slug>/` at the project root (git-excluded by `build-gate setup`, outside the gate's state directory) and nowhere else. The scratch directory holds data files only (sql, db, log, pid, json, txt, csv), never code, tests or config; the gate refuses anything else, and `build-gate finish` deletes it. You write only new files there. You never edit source files, tests or config, and you never write under `.claude/build/`: the gate refuses it.
 
 - Every command is wrapped in `timeout` (`timeout 120` for backup and restore, `timeout 15` for anything else). Every `curl` uses `--max-time 10`. Every Postgres client uses `-w` (never prompt for a password) and `PGCONNECT_TIMEOUT=5`.
 - Every scratch path below is spelled out in full under `.tq-breaker/<slug>/` (write `<scratch>` for it in your notes, never in a command); never a bare `app.pid` or `backup.sql`, which would land in the repository root.

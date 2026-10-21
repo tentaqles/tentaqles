@@ -660,6 +660,10 @@ def _key_dir_canon() -> str:
     return k.lower() if os.name == "nt" else k
 
 
+_SCRATCH_CODE_NAME = re.compile(
+    r"^(conftest\.py|test_.*|.*_test\..*|.*\.spec\..*|.*\.test\..*|.*\.(py|js|ts|mjs|cjs|ini|cfg|toml|pth))$")
+
+
 def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool) -> str | None:
     """The protection class of one resolved path, or None.
 
@@ -679,6 +683,9 @@ def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool)
         return "state"
     if r in PROTECTED_CONFIG and active:
         return "config"
+    if r.startswith(BREAKER_DIR + "/") and _SCRATCH_CODE_NAME.match(r.rsplit("/", 1)[-1].lower()) \
+            and (active or slugs(root)):
+        return "scratch"
     if re.match(re.escape(PLAN_DIR) + r"/[^/]+\.json$", r, re.IGNORECASE):
         return "plan"
     for lk, slug in locked.items():
@@ -692,6 +699,7 @@ _MESSAGES = {
     "git": "git internals (.git/) can't be written directly; use git commands",
     "state": f"{STATE_DIR}/ is hook-owned evidence; only the build-gate commands write it",
     "config": "the gate's settings and tq rules are locked while a build is active",
+    "scratch": "scratch dir holds data files only (sql, db, log, pid, json, txt, csv)",
     "plan": f"{PLAN_DIR}/*.json changes only through Edit/Write, so the gate rules run",
 }
 
@@ -1706,6 +1714,10 @@ def cmd_finish(root: Path, slug: str) -> str:
             write_json(settings_path, settings)
             msg += "\ngate hooks removed from settings.local.json"
     log_event(root, "finish", slug)
+    scratch = root / BREAKER_DIR / slug
+    if scratch.is_dir() and not scratch.is_symlink():
+        shutil.rmtree(scratch, ignore_errors=True)
+        log_event(root, "breaker-scratch-removed", slug)
     _answer_pending(root, slug, "result", "approve", "terminal")
     return f"build '{slug}' finished\n{msg}"
 

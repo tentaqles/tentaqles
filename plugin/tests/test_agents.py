@@ -94,6 +94,8 @@ def test_breaker_exit_sequence_is_safe_when_the_app_will_not_stop() -> None:
     assert ".claude/build/<slug>/breaker" not in body
     for token in (".tq-breaker/<slug>/backup.sql", ".tq-breaker/<slug>/app.log"):
         assert token in body, token
+    # the scratch directory holds data files only (fix round 7)
+    assert "data files only (sql, db, log, pid, json, txt, csv), never code, tests or config" in body
 
 
 @pytest.mark.parametrize("name,tokens", [

@@ -1613,3 +1613,68 @@ def test_moving_a_junction_into_the_old_scratch_path_is_refused(repo):
                 f"cp -a lib/ {_B4}/", f"cp -r lib {_B4}/", f"Move-Item lib/j {_B4}/j",
                 f"robocopy lib {_B4} /SL /E", f"Copy-Item lib/j {_B4}/j", f"xcopy /B /E lib {_B4}"):
         assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+# Fix round 7: the breaker's scratch directory holds data files only, so nothing there
+# can be collected by the project's own test run.
+@pytest.mark.parametrize("cmd", [
+    f"echo x > {_TQB}/conftest.py",
+    f"echo x > {_TQB}/test_a.py",
+    f"echo x > {_TQB}/a_test.go",
+    f"echo x > {_TQB}/a.spec.ts",
+    f"echo x > {_TQB}/a.test.js",
+    f"echo x > {_TQB}/run.mjs",
+    f"echo x > {_TQB}/pytest.ini",
+    f"echo x > {_TQB}/setup.cfg",
+    f"echo x > {_TQB}/pyproject.toml",
+    f"echo x > {_TQB}/evil.pth",
+    f"cp x {_TQB}/a.cjs",
+])
+def test_scratch_refuses_code_test_and_config_files(repo, cmd):
+    _active_build(repo)
+    (repo / "x").write_text("x", encoding="utf-8")
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "scratch dir holds data files only (sql, db, log, pid, json, txt, csv)" in err, cmd
+
+
+@pytest.mark.parametrize("tool,name", [("Write", "test_a.py"), ("Edit", "conftest.py"), ("Write", "a.ts")])
+def test_scratch_file_tool_refuses_code_files(repo, tool, name):
+    _active_build(repo)
+    p = str(repo / ".tq-breaker" / "demo" / name)
+    payload = {"tool_name": tool, "tool_input": {"file_path": p, "content": "x", "old_string": "a", "new_string": "b"}}
+    code, _, err = hook(repo, payload)
+    assert code == 2 and "scratch dir holds data files only" in err
+
+
+@pytest.mark.parametrize("cmd", [
+    f"pg_dump --file {_TQB}/db.sql app",
+    f"echo 1 > {_TQB}/app.pid",
+    f"echo 1 > {_TQB}/app.log",
+    f"echo 1 > {_TQB}/r.json",
+    f"echo 1 > {_TQB}/n.txt",
+    f"echo 1 > {_TQB}/d.csv",
+    f"cp app.db {_TQB}/app.db-wal",
+    f"cp app.db {_TQB}/app.db-shm",
+])
+def test_scratch_data_files_stay_allowed(repo, cmd):
+    _active_build(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_finish_removes_the_scratch_dir_and_logs(repo, tq_home):
+    approve_and_lock(repo)
+    d = repo / ".tq-breaker" / "demo"
+    d.mkdir(parents=True)
+    (d / "app.db").write_bytes(b"db")
+    (repo / ".tq-breaker" / "other").mkdir()
+    gate.cmd_finish(repo, "demo")
+    assert not d.exists() and (repo / ".tq-breaker" / "other").exists()
+    kinds = [json.loads(l)["kind"] for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert "breaker-scratch-removed" in kinds
+
+
+def test_finish_without_a_scratch_dir_logs_nothing_extra(repo, tq_home):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    kinds = [json.loads(l)["kind"] for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert kinds == ["finish"]
