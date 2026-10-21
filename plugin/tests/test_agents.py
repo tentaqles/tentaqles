@@ -76,3 +76,27 @@ def test_breaker_requires_run_command_and_localhost() -> None:
 def test_reviewers_name_their_checklist(name: str, ref: str) -> None:
     _, body = _fm(name)
     assert ref in body
+
+
+def test_breaker_exit_sequence_is_safe_when_the_app_will_not_stop() -> None:
+    _, body = _fm("breaker")
+    for token in (
+        "setsid", "kill -- -", "pkill -P", "winpid", "//T //F", "MSYS",
+        "-v ON_ERROR_STOP=1", "port stays open", "restore while the app runs",
+        "RESTORED: no — <backup path> — <manual restore command>",
+        "must not be used to override the data store decision",
+    ):
+        assert token in body, token
+    # every scratch path is spelled out under the breaker directory
+    assert not re.search(r"cat app\.pid|-f backup\.sql|\$\(cat app", body)
+    assert ".claude/build/<slug>/breaker/app.pid" in body
+
+
+@pytest.mark.parametrize("name,tokens", [
+    ("security-reviewer", ("cite the file and line, never the secret value",)),
+    ("llm-security-reviewer", ("model-driven HTTP", "markdown", "image URL")),
+])
+def test_reviewers_keep_values_out_and_name_model_exits(name: str, tokens: tuple) -> None:
+    _, body = _fm(name)
+    for token in tokens:
+        assert token in body, (name, token)

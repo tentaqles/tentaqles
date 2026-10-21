@@ -31,4 +31,4 @@ F3 MINOR   <file:line> — <problem> → <concrete fix>   [S-row]
 U1 CANNOT JUDGE — <S-row and text> — <what a human must check and where>
 ```
 
-FAIL on any BLOCKER or MAJOR. Missing authorization, injection, a secret in code or logs, and a weakened "Must not trade off" rule are BLOCKERs. No file:line, no finding. In later rounds rule on earlier findings first (`F<n> resolved|upheld|withdrawn — <why>`).
+FAIL on any BLOCKER or MAJOR. Missing authorization, injection, a secret in code or logs, and a weakened "Must not trade off" rule are BLOCKERs. No file:line, no finding. For a secret, cite the file and line, never the secret value. In later rounds rule on earlier findings first (`F<n> resolved|upheld|withdrawn — <why>`).
