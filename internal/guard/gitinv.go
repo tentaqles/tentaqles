@@ -23,13 +23,42 @@ import (
 //     such as `sh -c 'git commit'`) is reported with Hidden set: it may run,
 //     but its arguments and directory cannot be trusted.
 
-// gitWrappers are words that run the next word as the command.
-var gitWrappers = map[string]bool{"env": true, "command": true, "exec": true, "sudo": true, "doas": true,
-	"nice": true, "nohup": true, "time": true, "&": true}
+// wrapperSpec says how a wrapper command reads its own arguments before the
+// command it runs: the options that take a separate value, and how many
+// positional arguments it consumes (timeout's DURATION).
+type wrapperSpec struct {
+	value      map[string]bool
+	positional int
+	chdir      map[string]bool // options that run the command in another directory
+}
 
-// gitWrapperValueFlags take a separate value after a wrapper (sudo -u bob,
-// nice -n 5, env -u NAME).
-var gitWrapperValueFlags = map[string]bool{"-u": true, "-g": true, "-n": true, "-p": true, "-h": true, "-U": true, "-D": true, "-R": true, "-T": true}
+func flagSet(fs ...string) map[string]bool {
+	m := map[string]bool{}
+	for _, f := range fs {
+		m[f] = true
+	}
+	return m
+}
+
+// gitWrappers are words that run a later word as the command, each with its
+// own option table (one shared table let sudo's -p swallow git in
+// `time -p git`).
+var gitWrappers = map[string]wrapperSpec{
+	"env":     {value: flagSet("-u", "--unset", "-C", "--chdir", "-S", "--split-string"), chdir: flagSet("-C", "--chdir", "-S", "--split-string")},
+	"command": {},
+	"builtin": {},
+	"exec":    {value: flagSet("-a")},
+	"sudo":    {value: flagSet("-u", "-g", "-h", "-p", "-U", "-D", "-R", "-T", "-C", "-r", "-t", "--user", "--group", "--host", "--prompt", "--chdir"), chdir: flagSet("-D", "--chdir")},
+	"doas":    {value: flagSet("-u", "-C")},
+	"nice":    {value: flagSet("-n", "--adjustment")},
+	"nohup":   {},
+	"time":    {value: flagSet("-o", "-f", "--output", "--format")},
+	"timeout": {value: flagSet("-s", "-k", "--signal", "--kill-after"), positional: 1},
+	"xargs": {value: flagSet("-I", "-n", "-L", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs",
+		"--delimiter", "--arg-file", "--max-lines", "--max-chars", "--eof", "--replace")},
+	"stdbuf": {value: flagSet("-i", "-o", "-e")},
+	"&":      {},
+}
 
 // gitGlobalValueOpts are git's global options that take a separate value.
 var gitGlobalValueOpts = map[string]bool{"-C": true, "-c": true, "--git-dir": true, "--work-tree": true,
@@ -72,15 +101,28 @@ func ParseGitWords(f []string) (GitInvocation, bool) {
 			}
 			i++
 			continue
-		case gitWrappers[strings.ToLower(strings.Trim(w, `"'`))]:
+		}
+		if spec, ok := gitWrappers[strings.ToLower(strings.Trim(w, `"'`))]; ok {
 			i++
 			for i < len(f) && strings.HasPrefix(f[i], "-") && len(f[i]) > 1 {
-				if f[i] == "-C" || strings.HasPrefix(f[i], "--chdir") {
-					inv.envChdir = true // env -C dir: another directory
+				opt := f[i]
+				if opt == "--" {
+					i++
+					break
 				}
-				if gitWrapperValueFlags[f[i]] || f[i] == "-C" || f[i] == "--chdir" {
+				name := opt
+				if k := strings.Index(opt, "="); k > 0 && strings.HasPrefix(opt, "--") {
+					name = opt[:k]
+				}
+				if spec.chdir[name] {
+					inv.envChdir = true // env -C / sudo -D: another directory
+				}
+				if spec.value[opt] {
 					i++
 				}
+				i++
+			}
+			for n := 0; n < spec.positional && i < len(f) && !IsGitWord(f[i]); n++ {
 				i++
 			}
 			continue
@@ -113,7 +155,7 @@ func ParseGitWords(f []string) (GitInvocation, bool) {
 		default:
 			// a sub-command never holds a backslash; the shell drops one
 			// used as an escape (git c\ommit)
-			inv.Sub = strings.ReplaceAll(a, `\`, "")
+			inv.Sub = strings.Trim(strings.ReplaceAll(a, `\`, ""), `"'`)
 			inv.Args = f[i+1:]
 			return inv, true
 		}
@@ -274,9 +316,97 @@ func cdTarget(words []string) (dir string, ok bool) {
 	return pos[0], true
 }
 
+// shellWords run their -c (or -Command) string as a command line.
+var shellWords = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true, "ksh": true, "fish": true,
+	"pwsh": true, "powershell": true, "cmd": true, "iex": true, "invoke-expression": true}
+
+// nestedCommand returns the command string a shell, cmd /c or PowerShell's
+// Invoke-Expression would run, when words is such a call.
+func nestedCommand(words []string) (string, bool) {
+	if len(words) == 0 {
+		return "", false
+	}
+	verb := strings.ToLower(strings.TrimSuffix(strings.ToLower(baseWord(words[0])), ".exe"))
+	if !shellWords[verb] {
+		return "", false
+	}
+	switch verb {
+	case "iex", "invoke-expression":
+		for i := 1; i < len(words); i++ {
+			if strings.HasPrefix(strings.ToLower(words[i]), "-c") && i+1 < len(words) {
+				return words[i+1], true
+			}
+			if !strings.HasPrefix(words[i], "-") {
+				return words[i], true
+			}
+		}
+		return "", false
+	case "cmd":
+		for i := 1; i < len(words); i++ {
+			if l := strings.ToLower(words[i]); l == "/c" || l == "/k" || l == "/r" {
+				return strings.Join(words[i+1:], " "), true
+			}
+		}
+		return "", false
+	case "pwsh", "powershell":
+		for i := 1; i < len(words); i++ {
+			l := strings.ToLower(words[i])
+			if (l == "-c" || (len(l) > 2 && strings.HasPrefix("-command", l))) && i+1 < len(words) {
+				return strings.Join(words[i+1:], " "), true
+			}
+		}
+		return "", false
+	}
+	for i := 1; i < len(words); i++ {
+		w := words[i]
+		if strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(w, "c") {
+			for j := i + 1; j < len(words); j++ {
+				if !strings.HasPrefix(words[j], "-") {
+					return words[j], true
+				}
+			}
+			return "", false
+		}
+	}
+	return "", false
+}
+
+func baseWord(w string) string {
+	w = strings.ReplaceAll(strings.Trim(w, `"'`), `\`, "/")
+	return w[strings.LastIndex(w, "/")+1:]
+}
+
+// looseGit is the safety net: a word that names git in a command that is not
+// a git call (`echo git commit`, `Start-Process git -ArgumentList
+// 'commit',...`, `foo --run git commit`). It may run git, so it is reported
+// as a Hidden call whose sub-command is the next non-option word (the first
+// item of a comma list).
+func looseGit(words []string) (GitInvocation, bool) {
+	for k := 1; k < len(words); k++ {
+		if !IsGitWord(words[k]) {
+			continue
+		}
+		for j := k + 1; j < len(words); j++ {
+			w := words[j]
+			if strings.HasPrefix(w, "-") {
+				continue
+			}
+			sub := strings.Trim(strings.TrimSpace(strings.Split(w, ",")[0]), `"'`)
+			if sub == "" {
+				continue
+			}
+			return GitInvocation{Sub: sub, Args: words[j+1:], Hidden: true, Loose: true}, true
+		}
+		return GitInvocation{}, false
+	}
+	return GitInvocation{}, false
+}
+
 // gitSegments returns every git invocation found in command, in order, each
 // annotated with the directory context (leading cd, later cd) it runs in.
-func gitSegments(c string) []gitInvocation {
+func gitSegments(c string) []gitInvocation { return gitSegmentsDepth(c, 0) }
+
+func gitSegmentsDepth(c string, depth int) []gitInvocation {
 	var out []gitInvocation
 	masked := maskQuoted(c)
 	covered := map[int]bool{}
@@ -298,8 +428,28 @@ func gitSegments(c string) []gitInvocation {
 			}
 			continue
 		}
+		if inner, ok := nestedCommand(words); ok {
+			covered[firstNonSpace(c, sp.start)] = true
+			if depth >= 3 {
+				// too deep to read: report an unreadable hidden commit so the
+				// commit and push rules ask
+				out = append(out, gitInvocation{GitInvocation: GitInvocation{Sub: "commit", Hidden: true}, start: sp.start},
+					gitInvocation{GitInvocation: GitInvocation{Sub: "push", Hidden: true}, start: sp.start})
+				continue
+			}
+			for _, n := range gitSegmentsDepth(inner, depth+1) {
+				n.Hidden = true // a nested shell: its directory is not ours to resolve
+				n.start = sp.start
+				out = append(out, n)
+			}
+			continue
+		}
 		inv, ok := ParseGitWords(words)
 		if !ok {
+			if loose, ok := looseGit(words); ok {
+				covered[firstNonSpace(c, sp.start)] = true
+				out = append(out, gitInvocation{GitInvocation: loose, start: sp.start})
+			}
 			continue
 		}
 		covered[firstNonSpace(c, sp.start)] = true

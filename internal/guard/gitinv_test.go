@@ -55,7 +55,6 @@ func TestGitInvocations_CommandWordForms(t *testing.T) {
 	}
 	for _, c := range []string{
 		`gitk commit`,
-		`echo git commit`,
 		`legit commit`,
 		`/usr/bin/gitx commit`,
 	} {
@@ -235,6 +234,63 @@ func TestGitInvocations_ShellSpellings(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s: commit not recognised", c)
+		}
+	}
+}
+
+// Round 2 (N2): per-wrapper flags, nested shells and the hidden-git net.
+func TestGitInvocations_Round2Wrappers(t *testing.T) {
+	for c, hidden := range map[string]bool{
+		`time -p git commit -m x`:                                    false,
+		`command -p git commit -m x`:                                 false,
+		`command -v git commit -m x`:                                 false,
+		`exec -a name git commit -m x`:                               false,
+		`exec -c -l git commit -m x`:                                 false,
+		`timeout 30 git commit -m x`:                                 false,
+		`timeout -s KILL -k 5 30s git commit -m x`:                   false,
+		`timeout --signal=TERM --preserve-status 1m git commit -m x`: false,
+		`xargs git commit -m x`:                                      false,
+		`xargs -0 -n 1 -I {} git commit -m x`:                        false,
+		`sudo -u bob -E git commit -m x`:                             false,
+		`nice -n 5 nohup env A=1 git commit -m x`:                    false,
+		`bash -c "git commit -m seed"`:                               true,
+		`sh -c 'git commit -m "feat: seed"'`:                         true,
+		`bash -lc "git commit -m seed"`:                              true,
+		`zsh -c "git commit"`:                                        true,
+		`pwsh -Command "git commit -m seed"`:                         true,
+		`powershell -c "git commit -m seed"`:                         true,
+		`cmd /c "git commit -m seed"`:                                true,
+		`iex "git commit -m seed"`:                                   true,
+		`Invoke-Expression 'git commit -m seed'`:                     true,
+		`Start-Process git -ArgumentList 'commit','-m','seed' -Wait`: true,
+		`echo git commit`:                                            true,
+		`foo --run git commit`:                                       true,
+	} {
+		var got *GitInvocation
+		for _, inv := range GitInvocations(c) {
+			if inv.Sub == "commit" {
+				inv := inv
+				got = &inv
+			}
+		}
+		if got == nil {
+			t.Errorf("%s: no commit found", c)
+			continue
+		}
+		if got.Hidden != hidden {
+			t.Errorf("%s: Hidden=%v, want %v", c, got.Hidden, hidden)
+		}
+	}
+	// the naive pass strips quotes from a hidden sub-command
+	for _, inv := range GitInvocations(`git commit -m "a; git push"`) {
+		if strings.ContainsAny(inv.Sub, `"'`) {
+			t.Errorf("sub keeps a quote: %q", inv.Sub)
+		}
+	}
+	// prose inside one quoted word is not a git call
+	for _, c := range []string{`grep -r "git commit" docs`, `echo "run git push later"`} {
+		if invs := GitInvocations(c); len(invs) != 0 {
+			t.Errorf("%s: %+v", c, invs)
 		}
 	}
 }

@@ -93,6 +93,18 @@ type gitInvocation struct {
 	start int // byte offset of the segment in the command
 }
 
+// strictSegments are the git calls Decide judges: every one except the
+// loose safety-net matches.
+func strictSegments(c string) []gitInvocation {
+	var out []gitInvocation
+	for _, s := range gitSegments(c) {
+		if !s.Loose {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func isReadOnlySegment(sub string, rest []string) bool {
 	if !readOnlySub[sub] {
 		return false
@@ -125,7 +137,7 @@ func isReadOnlySegment(sub string, rest []string) bool {
 // read-only. A command with multiple chained git invocations is read-only
 // only if EVERY git segment in it is read-only.
 func IsReadOnlyGit(c string) bool {
-	segs := gitSegments(c)
+	segs := strictSegments(c)
 	if len(segs) == 0 {
 		return false
 	}
@@ -148,7 +160,7 @@ func IsRemoteMutation(c string) bool {
 			return true
 		}
 	}
-	for _, s := range gitSegments(c) {
+	for _, s := range strictSegments(c) {
 		switch s.Sub {
 		case "push", "fetch", "pull", "clone":
 			return true
@@ -282,7 +294,11 @@ type GitInvocation struct {
 	Base string
 	// BaseUnknown: another cd-like step runs before this call.
 	BaseUnknown bool
-	envChdir    bool
+	// Loose: the safety net found the word git in a command that is not a
+	// git call (see looseGit). Hidden is set too. The commit and push rules
+	// ask on it; the identity rules in Decide ignore it.
+	Loose    bool
+	envChdir bool
 }
 
 // GitInvocations returns every git call in command, in order.
