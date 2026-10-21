@@ -649,6 +649,17 @@ def _build_active(root: Path) -> bool:
     return False
 
 
+def _build_exists(root: Path) -> bool:
+    """Guards that protect the gate itself hold whenever any build in this root has a
+    plan file or a state dir and is not finished, not only after the first approval
+    (before it, the plan is exactly what the agent would like to approve itself)."""
+    names = set(slugs(root))
+    pd = root / PLAN_DIR
+    if pd.is_dir():
+        names |= {p.stem for p in pd.glob("*.json")}
+    return any(not load_session(root, s).get("finished") for s in names)
+
+
 GATE_INTERNALS = ("tentaqles.workflow.gate", "workflow/gate", "mint_hub_token", "cmd_answer", "cmd_approve",
                   "tq_build_token", "tq_build_actor")
 PROTECTED_CONFIG = (".claude/settings.json", ".claude/settings.local.json", ".claude/tq-rules.yaml")
@@ -667,11 +678,17 @@ def _key_dir_canon() -> str:
     return k.lower() if os.name == "nt" else k
 
 
+def _plugin_root_canon() -> str:
+    k = norm(os.path.normpath(str(plugin_root())))
+    return k.lower() if os.name == "nt" else k
+
+
 def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool) -> str | None:
     """The protection class of one resolved path, or None.
 
     Classes: key (the HMAC key, outside the repo), git (any .git internals, also
-    the shared .git of a worktree), state, config, plan, locked:<slug>.
+    the shared .git of a worktree), gatecode (the gate's own code, while a build
+    exists), state, config, plan, locked:<slug>. `active` means a build exists.
     """
     a = absn.lower() if os.name == "nt" else absn
     kd = _key_dir_canon()
@@ -679,10 +696,14 @@ def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool)
         return "key"
     if "/.git/" in a + "/" and not a.endswith("/.gitignore"):
         return "git"
+    if active:
+        pr = _plugin_root_canon()
+        if "/tentaqles/workflow/" in a.lower() or a == pr or a.startswith(pr + "/"):
+            return "gatecode"
     if rel is None:
         return None
     r = rel.lower() if os.name == "nt" else rel
-    if r == STATE_DIR or r.startswith(STATE_DIR + "/"):
+    if r in (".claude", STATE_DIR) or r.startswith(STATE_DIR + "/"):
         return "state"
     if r in PROTECTED_CONFIG and active:
         return "config"
@@ -698,9 +719,15 @@ _MESSAGES = {
     "key": "the build gate's signing key is off limits to the agent",
     "git": "git internals (.git/) can't be written directly; use git commands",
     "state": f"{STATE_DIR}/ is hook-owned evidence; only the build-gate commands write it",
+    "gatecode": "the gate's own code is off limits to the agent while a build exists",
     "config": "the gate's settings and tq rules are locked while a build is active",
     "plan": f"{PLAN_DIR}/*.json changes only through Edit/Write, so the gate rules run",
 }
+
+
+_GATEMOD_MSG = ("the gate's own code, key and hub credentials are human-only: only the human runs the gate "
+                "steps (approve, answer, judge, token), through `build-gate` in their own terminal. "
+                "Use the `build-gate` CLI for anything else.")
 
 
 def _msg(cls: str, rel: str) -> str:
@@ -711,18 +738,63 @@ def _msg(cls: str, rel: str) -> str:
     return _MESSAGES[cls]
 
 
+MAX_SCAN_BYTES = 2_000_000
+
+
+def _content_after(tool: str, inp: dict, root: Path) -> str:
+    """The text a file tool writes: Write content, notebook cell source, or for
+    Edit/MultiEdit the target file with the edits applied (so a name split across
+    edits is seen whole). Only the target file is read, and only up to MAX_SCAN_BYTES."""
+    if tool == "Write":
+        return str(inp.get("content") or "")
+    if tool == "NotebookEdit":
+        return str(inp.get("new_source") or "")
+    edits = (inp.get("edits") if tool == "MultiEdit" else [inp]) or []
+    news = "\n".join(str(e.get("new_string") or "") for e in edits if isinstance(e, dict))
+    raw = str(inp.get("file_path") or "")
+    try:
+        target = Path(raw) if os.path.isabs(raw) else root / raw
+        if not raw or target.stat().st_size > MAX_SCAN_BYTES:
+            return news
+        text = read_text(target)
+    except OSError:
+        return news
+    for e in edits:
+        if not isinstance(e, dict):
+            continue
+        o, n = str(e.get("old_string") or ""), str(e.get("new_string") or "")
+        if o and o in text:
+            text = text.replace(o, n) if e.get("replace_all") else text.replace(o, n, 1)
+    return text + "\n" + news
+
+
+def check_content(tool: str, inp: dict, root: Path, guarded: bool) -> None:
+    """The shell's gate-module and key checks, run on what a file tool writes: a script
+    that imports the gate or reads the key would otherwise run with `python x.py`."""
+    if tool not in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+        return
+    canon = canon_text(_content_after(tool, inp, root))
+    for cls, what in _text_mentions(root, canon, {}, guarded):
+        if cls == "key":
+            raise Block(_msg("key", what) + " (named in the file content)")
+        if cls == "gatemod":
+            raise Block(_GATEMOD_MSG + " (named in the file content)")
+
+
 def check_file(tool: str, inp: dict, root: Path, th: TreeHash) -> None:
     raw = inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or ""
     if not raw:
         return
     rel, absn = resolve_word(root, raw)
-    cls = classify(root, rel, absn, _locked_paths(root), _build_active(root))
+    guarded = _build_exists(root)
+    cls = classify(root, rel, absn, _locked_paths(root), guarded)
     if tool in ("Read", "Grep", "Glob"):
         if cls == "key":
             raise Block(_msg("key", rel or absn))
         return
     if cls and cls != "plan":
         raise Block(_msg(cls, rel or absn))
+    check_content(tool, inp, root, guarded)
     if rel is None:
         return
     m = re.match(re.escape(PLAN_DIR) + r"/([^/]+)\.json$", rel, re.IGNORECASE)
@@ -757,19 +829,30 @@ def _gate_invocation(seg) -> tuple[str | None, list[str]]:
     return None, []
 
 
+def _squash(canon: str) -> str:
+    """Canonical text with quotes, concatenation and grouping removed, so a name split
+    into pieces ('build-' + 'gate', "hm"ac, $(...)) reads whole again. Textual and bounded:
+    it only makes the substring checks stricter."""
+    return re.sub(r"[\s'\"+`,()\[\]{}$^]", "", canon)
+
+
 def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[tuple[str, str]]:
     """Protected paths named anywhere in the (normalised) command text, e.g. inside
-    a quoted `python -c` program, where the lexer can't see a path word."""
+    a quoted `python -c` program, where the lexer can't see a path word.
+    `active` means a build exists (see _build_exists)."""
     hits = []
     kd = _key_dir_canon().lower()
-    if kd in canon or "build-gate/hmac.key" in canon:
+    sq = _squash(canon)
+    if (kd in canon or kd in sq or "build-gate/hmac.key" in canon or "hmac.key" in sq.replace("/", "")
+            or re.search(r"(?:\.tentaqles|tq_home)/?build-gate(?!\.py)|build-gate/", sq)):
         hits.append(("key", "the signing key"))
     if re.search(r"(^|[\s\"'=/])\.git/", canon):
         hits.append(("git", ".git/"))
     if STATE_DIR in canon:
         hits.append(("state", STATE_DIR))
-    if active and (any(m in canon for m in GATE_INTERNALS) or re.search(r"(?<!build-)\bgate\.py", canon)
-                   or re.search(r"workflow\s+import[^\n;]*\bgate\b", canon)):
+    if active and (any(m in canon or m in sq for m in GATE_INTERNALS) or re.search(r"(?<!build-)\bgate\.py", canon)
+                   or re.search(r"workflow\s+import[^\n;]*\bgate\b", canon)
+                   or (re.search(r"tentaqles[./]workflow", sq) and "gate" in sq.replace("build-gate", ""))):
         hits.append(("gatemod", "the gate's own code or hub credentials"))
     if active and any(p in canon for p in PROTECTED_CONFIG):
         hits.append(("config", ".claude/settings / tq-rules"))
@@ -784,7 +867,7 @@ def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[t
 def check_shell(cmd: str, root: Path) -> None:
     """Normalise once (lexer + canonical paths), then decide per segment."""
     locked = _locked_paths(root)
-    active = _build_active(root)
+    active = _build_exists(root)
     canon_all = canon_text(cmd)
     try:
         segs = lex_shell(cmd)
@@ -794,6 +877,9 @@ def check_shell(cmd: str, root: Path) -> None:
         return
     for seg in segs:
         sub, sub_args = _gate_invocation(seg)
+        cmd_name, _ = command_word(seg.argv)
+        if cmd_name in WRITE_COMMANDS or cmd_name == "git":
+            sub, sub_args = None, []  # `cp x .../build-gate.py` writes the gate script, it doesn't run it
         writes = is_write_segment(seg)
         canon = canon_text(seg.raw)
         word_hits = []
@@ -809,9 +895,7 @@ def check_shell(cmd: str, root: Path) -> None:
             if cls == "key":
                 raise Block(_msg("key", what))
             if cls == "gatemod":
-                raise Block("the gate's own code, key and hub credentials are human-only: only the human runs the gate "
-                            "steps (approve, answer, judge, token), through `build-gate` in their own terminal. "
-                            "Use the `build-gate` CLI for anything else.")
+                raise Block(_GATEMOD_MSG)
         if sub is not None:
             if sub == "dod" and any(len(a.split("=", 1)[0]) >= 3 and "--override".startswith(a.split("=", 1)[0].lower()) for a in sub_args[1:]):
                 raise Block("`build-gate dod --override` accepts missing definition-of-done items, so only the human "
@@ -832,7 +916,6 @@ def check_shell(cmd: str, root: Path) -> None:
         targets = seg.redirects + seg.argv[1:]
         if any(has_expansion(t) for t in seg.redirects if not is_null_target(t)):
             raise Block("this command writes to a path built from a variable; use a literal path.")
-        cmd_name, _ = command_word(seg.argv)
         if cmd_name in WRITE_COMMANDS and any(has_expansion(t) for t in targets[len(seg.redirects):] if not t.startswith("-")) \
                 and (text_hits or locked):
             raise Block("this command writes to a path built from a variable while protected paths exist; use a literal path.")
@@ -1003,6 +1086,16 @@ def hook(data: dict) -> tuple[int, str, str]:
         a = absn.lower() if os.name == "nt" else absn
         if a == kd or a.startswith(kd + "/"):
             return 2, "", f"build-gate: {_MESSAGES['key']}"
+        # The gate's code may live in another git repo (a plugin checkout), where the
+        # root found from the file has no build: judge it by the session's own root.
+        if (data.get("tool_name") or "") not in ("Read", "Grep", "Glob"):
+            here = None
+            for cand in (data.get("cwd"), os.environ.get("CLAUDE_PROJECT_DIR")):
+                here = find_git_root(cand) if cand else None
+                if here:
+                    break
+            if here and classify(here, None, absn, {}, True) == "gatecode" and _build_exists(here):
+                return 2, "", f"build-gate: {_MESSAGES['gatecode']}"
     root = _root_for(data)
     if root is None or not ((root / STATE_DIR).is_dir() or (root / PLAN_DIR).is_dir()):
         return 0, "", ""

@@ -1246,8 +1246,9 @@ def test_hook_allows_gate_cli_state_and_mentions_without_build(repo):
     assert hook(repo, bash("python scripts/build-gate.py state demo --json"))[0] == 0
 
 
-def test_hook_allows_gate_mentions_when_no_build_is_active(repo):
-    assert hook(repo, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))[0] == 0
+def test_hook_refuses_gate_mentions_even_before_approval(repo):
+    # C1 (final review): an unapproved plan is exactly what the agent would approve itself
+    assert hook(repo, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))[0] == 2
 
 
 # --- fix round 1: override lifecycle, answered decisions in state ---------------------------
@@ -1464,3 +1465,108 @@ def test_stop_path_tree_hash_timeout_is_under_the_hook_timeout(repo, monkeypatch
     monkeypatch.setattr(gate, "tree_hash", lambda root, timeout=60: seen.append(timeout) or real(root, timeout=timeout))
     assert stop(repo)[0] == 0
     assert seen and max(seen) <= 10
+
+
+# C1: the gate-module refusal holds before the first approval (plan or state dir exists)
+
+@pytest.mark.parametrize("cmd", [
+    'python -c "from pathlib import Path; from tentaqles.workflow import gate; gate.cmd_approve(Path(\'.\'),\'demo\')"',
+    'python -c "import tentaqles.workflow.gate as g; g.cmd_answer(1,2,3,4,5,6)"',
+    "python -m tentaqles.workflow.gate approve demo",
+])
+def test_gate_module_refused_before_approval(repo, cmd):
+    assert gate.load_approved(repo, "demo") is None
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "human" in err.lower(), err
+    assert gate.load_approved(repo, "demo") is None
+
+
+def test_gate_module_refused_with_only_a_state_dir(tmp_path):
+    root = tmp_path / "p"
+    (root / ".claude" / "build" / "other").mkdir(parents=True)
+    _git(root, "init", "-q")
+    code, _, _ = hook(root, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))
+    assert code == 2
+
+
+def test_gate_mentions_allowed_once_every_build_is_finished(repo):
+    _active_build(repo)
+    gate.cmd_finish(repo, "demo")
+    assert hook(repo, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))[0] == 0
+
+
+# C2: file content and target paths, split strings, key reads by any spelling
+
+GATE_SRC = "from tentaqles.workflow.gate import cmd_approve, mint_hub_token\nprint(mint_hub_token('approve','demo','me'))\n"
+
+
+@pytest.mark.parametrize("approved", [False, True])
+def test_write_of_gate_importing_script_refused(repo, approved):
+    if approved:
+        _active_build(repo)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "x.py"), "content": GATE_SRC}}
+    code, _, err = hook(repo, payload)
+    assert code == 2 and "human" in err.lower()
+
+
+@pytest.mark.parametrize("content", [
+    "import importlib as i\ng = i.import_module('tentaqles.workflow.' + 'ga' + 'te')\n",
+    "g = __import__('tentaqles.workflow', fromlist=['gate'])\n",
+    "import os\nprint(open(os.path.expanduser('~') + '/.tentaqles/build-' + 'gate/hmac.key', 'rb').read())\n",
+    "p = os.path.join(os.environ['TQ_HOME'], 'build-gate', 'hm' 'ac.key')\n",
+])
+def test_write_content_with_split_strings_refused(repo, content):
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "x.py"), "content": content}}
+    assert hook(repo, payload)[0] == 2, content
+
+
+def test_edit_multiedit_notebook_content_scanned(repo):
+    (repo / "x.py").write_text("A = 1\nB = 2\n", encoding="utf-8")
+    edit = {"tool_name": "Edit", "tool_input": {"file_path": str(repo / "x.py"), "old_string": "A = 1",
+                                                 "new_string": "from tentaqles.workflow import gate"}}
+    assert hook(repo, edit)[0] == 2
+    # split across two edits of one MultiEdit: the resulting file text is scanned
+    multi = {"tool_name": "MultiEdit", "tool_input": {"file_path": str(repo / "x.py"), "edits": [
+        {"old_string": "A = 1", "new_string": "import importlib; m = importlib.import_module('tentaqles.workflow.ga"},
+        {"old_string": "B = 2", "new_string": "te')"}]}}
+    assert hook(repo, multi)[0] == 2
+    # an earlier edit left half of it in the file: the next edit completes it
+    (repo / "x.py").write_text("m = 'tentaqles.workflow.ga'\nB = 2\n", encoding="utf-8")
+    edit2 = {"tool_name": "Edit", "tool_input": {"file_path": str(repo / "x.py"), "old_string": "'\nB = 2", "new_string": "' + 'te'"}}
+    assert hook(repo, edit2)[0] == 2
+    nb = {"tool_name": "NotebookEdit", "tool_input": {"notebook_path": str(repo / "n.ipynb"),
+                                                       "new_source": "from tentaqles.workflow.gate import sign"}}
+    assert hook(repo, nb)[0] == 2
+
+
+def test_ordinary_writes_still_allowed(repo):
+    _active_build(repo)
+    ok = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "app.py"), "content": "def f():\n    return 2\n"}}
+    assert hook(repo, ok)[0] == 0
+    doc = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "docs" / "notes.md"),
+                                                 "content": "Run `build-gate verify demo 2`, then `build-gate status demo`.\n"}}
+    assert hook(repo, doc)[0] == 0
+
+
+def test_writes_under_the_gate_code_are_refused(repo):
+    for target in (repo / "plugin" / "tentaqles" / "workflow" / "gate.py",
+                   gate.plugin_root() / "tentaqles" / "workflow" / "gate.py",
+                   gate.plugin_root() / "scripts" / "build-gate.py"):
+        payload = {"tool_name": "Write", "tool_input": {"file_path": str(target), "content": "x = 1\n"}}
+        assert hook(repo, payload)[0] == 2, target
+        assert hook(repo, bash(f'cp /tmp/x "{target}"'))[0] == 2, target
+
+
+@pytest.mark.parametrize("cmd,tool", [
+    ('python -c "import importlib as i; g=i.import_module(\'tentaqles.workflow.\'+\'ga\'+\'te\'); print(g._key())"', "Bash"),
+    ('python -c "print(open(__import__(\'os\').path.expanduser(\'~\')+\'/.tentaqles/build-\'+\'gate/hmac.key\',\'rb\').read())"', "Bash"),
+    ("cat $(echo ~/.tentaqles/build-ga)te/hmac.key", "Bash"),
+    ('cat ~/.tentaqles/build-gate/"hm"ac.key', "Bash"),
+    (r"type %USERPROFILE%\.tentaqles\build-gate\hmac.key", "PowerShell"),
+    (r"Get-Content (Join-Path $HOME '.tentaqles\build-gate\hmac.key')", "PowerShell"),
+    ("Get-Content (Join-Path $env:TQ_HOME 'build-gate' 'hm' + 'ac.key')", "PowerShell"),
+    ("ls ~/.tentaqles/build-gate/", "Bash"),
+])
+def test_shell_key_reads_and_split_gate_imports_refused(repo, cmd, tool):
+    code, _, err = hook(repo, bash(cmd, tool))
+    assert code == 2, cmd
