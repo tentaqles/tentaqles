@@ -27,7 +27,9 @@ import (
 // TQ_HOOK_SCAN_BUDGET (a Go duration, at most 12s) overrides the default.
 var scanBudget = 8 * time.Second
 
-const maxScanBudget = 12 * time.Second
+// maxScanBudget keeps a 5 s margin under the plugin's 15 s PreToolUse
+// timeout for process start, the identity lookups and the Jev call.
+const maxScanBudget = 10 * time.Second
 
 const scanTimedOut = "scan did not finish in time"
 
@@ -92,6 +94,9 @@ func (b *limitBuf) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.buf.Len()+len(p) > b.limit {
+		if room := b.limit - b.buf.Len(); room > 0 && !b.over.Load() {
+			b.buf.Write(p[:room]) // keep the head, so a caller can sniff it
+		}
 		if b.over.CompareAndSwap(false, true) && b.onOver != nil {
 			b.onOver()
 		}
@@ -125,7 +130,7 @@ func runBounded(ctx context.Context, bin, dir string, limit int, args ...string)
 	select {
 	case werr := <-done:
 		if buf.over.Load() {
-			return "", true, nil
+			return buf.String(), true, nil // the first limit bytes
 		}
 		if ctx.Err() != nil {
 			return "", false, ctx.Err()
@@ -137,7 +142,7 @@ func runBounded(ctx context.Context, bin, dir string, limit int, args ...string)
 	case <-inner.Done():
 		_ = c.Process.Kill()
 		if buf.over.Load() && ctx.Err() == nil {
-			return "", true, nil
+			return buf.String(), true, nil
 		}
 		return "", false, ctx.Err()
 	}

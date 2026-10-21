@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/commitmsg"
 	"github.com/tentaqles/tentaqles/internal/commitscan"
@@ -155,7 +156,10 @@ func loadProjectRules(cwd string, ws *resolve.Workspace) ([]policy.Rule, []error
 
 // policyDecision evaluates every layer of rules plus the two checks that need
 // I/O: the commit secret scan and the cross-client MCP check.
-func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall) policy.Decision {
+//
+// deadline ends every scan; the hook computes it at entry (start plus the
+// scan budget), so the identity lookups that ran before count against it.
+func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
 	eff := effectiveGuard(ws)
 	layers := policy.Layers{Builtin: policy.Builtin(), Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
 	if ws != nil {
@@ -169,7 +173,7 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	d := set.Evaluate(call)
 
 	// One budget for every scan in this invocation (commit and push rules).
-	ctx, cancel := context.WithTimeout(context.Background(), hookScanBudget())
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	var commitRun commitscan.Runner
 	if call.IsShell() && commitscan.PlanFor(call.Command).Commits {

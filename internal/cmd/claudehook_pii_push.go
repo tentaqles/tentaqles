@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -177,7 +178,76 @@ func (s *pushScanner) scanRange(rng ...string) ([]commitscan.AddedLine, rangeSta
 		return nil, rangeFailed
 	}
 	s.budget -= len(out)
-	return commitscan.ParseDiffAdded(out), rangeScanned
+	var lines []commitscan.AddedLine
+	for _, c := range splitCommits(out) {
+		added, binaries := commitscan.ParseDiff(c.diff)
+		lines = append(lines, added...)
+		for _, name := range binaries {
+			got, st := s.binaryBlob(c.sha, name)
+			if st != rangeScanned {
+				return nil, st
+			}
+			lines = append(lines, got...)
+		}
+	}
+	return lines, rangeScanned
+}
+
+type commitDiff struct{ sha, diff string }
+
+var shaLineRe = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// splitCommits cuts `git log -p --format=%H` output at its commit lines.
+func splitCommits(out string) []commitDiff {
+	var res []commitDiff
+	var cur *commitDiff
+	var b strings.Builder
+	flush := func() {
+		if cur != nil {
+			cur.diff = b.String()
+			res = append(res, *cur)
+		}
+		b.Reset()
+	}
+	for _, l := range strings.SplitAfter(out, "\n") {
+		if t := strings.TrimRight(l, "\r\n"); shaLineRe.MatchString(t) {
+			flush()
+			cur = &commitDiff{sha: t}
+			continue
+		}
+		b.WriteString(l)
+	}
+	flush()
+	return res
+}
+
+// binaryBlob reads a file `log -p` reported as binary, from the commit that
+// added it, within the push budget: UTF-16 with a BOM is decoded and
+// returned, a real binary yields nothing, and a UTF-16 or text blob over the
+// per-file cap (or the budget) makes the push ask.
+func (s *pushScanner) binaryBlob(sha, name string) ([]commitscan.AddedLine, rangeStatus) {
+	if s.budget <= 0 {
+		return nil, rangeTooBig
+	}
+	limit := commitscan.MaxFileBytes + 1
+	if limit > s.budget {
+		limit = s.budget
+	}
+	raw, big, err := s.git(limit, "cat-file", "-p", sha+":"+name)
+	if err != nil {
+		return nil, rangeFailed
+	}
+	s.budget -= len(raw)
+	text, ok, derr := commitscan.DecodeLimited([]byte(raw), name)
+	switch {
+	case derr != nil:
+		return nil, rangeTooBig
+	case !ok:
+		return nil, rangeScanned // a real binary: nothing to scan
+	case big:
+		return nil, rangeTooBig // text, but only its head was read
+	}
+	return commitscan.FileLines(name, text), rangeScanned
 }
 
 // pushPIIDecision runs under ctx, the invocation's shared scan budget.
