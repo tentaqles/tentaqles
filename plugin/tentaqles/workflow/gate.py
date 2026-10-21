@@ -651,6 +651,10 @@ def check_shell(cmd: str, root: Path) -> None:
             if cls == "key":
                 raise Block(_msg("key", what))
         if sub is not None:
+            if sub == "dod" and any(a.lower().startswith("--override") for a in sub_args[1:]):
+                raise Block("`build-gate dod --override` accepts missing definition-of-done items, so only the human "
+                            "runs it, in their own terminal (it asks for a typed confirmation). "
+                            f"Ask them to run: build-gate {' '.join(sub_args)}")
             if sub in HUMAN_ONLY:
                 raise Block(f"`build-gate {sub}` {HUMAN_ONLY[sub]}, so only the human runs it, in their own "
                             f"terminal (it asks for a typed confirmation). Ask them to run: "
@@ -753,7 +757,7 @@ def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
         if started:
             open_gates = ", ".join(f"{g}={s}" for g, s in gates.items() if s not in OK_STATES) or "status"
             problems.append(f"#{cp.get('id')} {cp.get('title', '')}: not proven ({open_gates})")
-    if (plan.get("workflow") or "build") in DOD_WORKFLOWS and not sess.get("finished"):
+    if ((load_approved(root, slug) or {}).get("workflow") or "build") in DOD_WORKFLOWS and not sess.get("finished"):
         if all(c.get("status") == "passed" for c in plan.get("checkpoints") or []):
             ok, why = dod_fresh(root, slug, th)
             if not ok:
@@ -1087,13 +1091,13 @@ MIGRATION_DIR_RE = re.compile(r"(^|/)(migrations|migrate|alembic/versions|supaba
 def changed_files(root: Path, base: str | None) -> list[str]:
     files: set[str] = set()
     if base:
-        code, out = git(root, "diff", "--name-only", base, "--", ".")
+        code, out = git(root, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base, "--", ".")
         if code == 0:
             files.update(out.splitlines())
-    code, out = git(root, "diff", "--name-only", "HEAD", "--", ".")
+    code, out = git(root, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", "HEAD", "--", ".")
     if code == 0:
         files.update(out.splitlines())
-    code, out = git(root, "ls-files", "--others", "--exclude-standard")
+    code, out = git(root, "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard")
     if code == 0:
         files.update(out.splitlines())
     out_files = []
@@ -1147,6 +1151,12 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
     else:
         add("project_config", False, approved.get("project_warning") or "no ```json tq-project block in CLAUDE.md (add one with the test command)")
     cmds = project.get("commands") or {}
+    learning_id = None
+    if override is not None:
+        # Written before the tree is hashed: the learning line is part of the tree the record signs.
+        reason = re.sub(r"[`\r\n]+", " ", redact(override.strip())).strip()
+        learning_id = _next_learning_id(read_text(root / "docs" / "LEARNINGS.md"), "D")
+        _append_learning(root, f"- `D{learning_id} · {now_iso()[:10]} · {slug} · dod-override · {reason}`")
     before = tree_hash(root)
     for name in ("test", "lint", "typecheck"):
         c = cmds.get(name)
@@ -1182,7 +1192,16 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
     add("privacy", (not classified) or "docs/privacy.md" in files,
         "no classified path changed" if not classified else (f"{len(classified)} classified file(s) changed, docs/privacy.md " + ("updated" if "docs/privacy.md" in files else "not updated")))
     mig = [f for f in files if MIGRATION_DIR_RE.search(f)]
-    spec_rel = plan.get("spec") or f"docs/specs/{slug}.md"
+    spec_rel = plan.get("spec")
+    default_spec = f"docs/specs/{slug}.md"
+    if not isinstance(spec_rel, str) or not spec_rel.strip():
+        spec_rel = default_spec
+    else:
+        sp = norm(spec_rel).strip()
+        if sp.startswith("/") or re.match(r"^[A-Za-z]:", sp) or ".." in sp.split("/"):
+            spec_rel = default_spec
+        else:
+            spec_rel = sp
     has_plan = bool(re.search(r"^##+ .*migration plan", read_text(root / spec_rel), flags=re.IGNORECASE | re.MULTILINE))
     add("migration", (not mig) or has_plan,
         "no migration files changed" if not mig else (f"{len(mig)} migration file(s) changed, '## Migration plan' in {spec_rel} " + ("present" if has_plan else "missing")))
@@ -1192,7 +1211,9 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
     else:
         add("changelog", None, "skip: project keeps no changelog")
     tree = tree_hash(root)
-    if tree != before:
+    if tree is None or before is None:
+        add("stable_tree", False, "could not compute the tree hash (is this a git repo?)")
+    elif tree != before:
         add("stable_tree", False, "files changed while the DoD commands ran")
     ok = all(c["ok"] is not False for c in checks)
     rec = {"slug": slug, "ok": ok or override is not None, "tree": tree, "ts": now_iso(), "checks": checks,
@@ -1203,10 +1224,8 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         tag = "ok  " if c["ok"] else ("skip" if c["ok"] is None else "MISSING")
         lines.append(f"{tag} {c['id']}: {c['detail']}")
     if override is not None:
-        n = _next_learning_id(read_text(root / "docs" / "LEARNINGS.md"), "D")
-        _append_learning(root, f"- `D{n} · {now_iso()[:10]} · {slug} · dod-override · {redact(override.strip())}`")
         log_event(root, "dod-override", slug, ok=ok)
-        head = f"DoD {slug}: OVERRIDDEN by the human (logged as D{n}); {sum(1 for c in checks if c['ok'] is False)} item(s) were missing"
+        head = f"DoD {slug}: OVERRIDDEN by the human (logged as D{learning_id}); {sum(1 for c in checks if c['ok'] is False)} item(s) were missing"
         return 0, "\n".join([head, *lines])
     log_event(root, "dod", slug, ok=ok)
     head = f"DoD {slug}: {'PASS' if ok else 'FAIL'} (tree {str(tree)[:12]})"
@@ -1219,7 +1238,13 @@ def dod_fresh(root: Path, slug: str, th: TreeHash) -> tuple[bool, str]:
         return False, "no definition-of-done record"
     if not rec.get("ok"):
         return False, "the last definition-of-done run had missing items"
-    if rec.get("tree") != th.get():
+    approved = load_approved(root, slug) or {}
+    if rec.get("slug") != slug or not approved.get("approval_id") or rec.get("approval_id") != approved.get("approval_id"):
+        return False, "the definition-of-done record predates the current approval"
+    current = th.get()
+    if current is None or rec.get("tree") is None:
+        return False, "could not compute the tree hash (is this a git repo?)"
+    if rec.get("tree") != current:
         return False, "code changed since the last definition-of-done run"
     return True, ""
 
@@ -1573,6 +1598,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(cmd_judge(root, a.slug, a.id, a.reviewer, a.result, a.note))
     elif a.cmd == "dod":
+        if a.override is not None and not human_confirm(f"accept the missing definition-of-done items for '{a.slug}'"):
+            return 2
         code, msg = cmd_dod(root, a.slug, a.override, a.timeout)
         print(msg)
         return code

@@ -870,7 +870,8 @@ def test_dod_uses_the_frozen_test_command(repo):
     gate.cmd_approve(repo, "demo")
     _touch_changelog(repo)
     # the agent rewrites CLAUDE.md to a no-op test command after approval
-    (repo / "CLAUDE.md").write_text(PROJECT_BLOCK % json.dumps(FAIL_CMD), encoding="utf-8")
+    # different size on purpose: a same-size rewrite inside the index timestamp tick is invisible to git (racy-git)
+    (repo / "CLAUDE.md").write_text(PROJECT_BLOCK % json.dumps(FAIL_CMD) + "<!-- edited -->\n", encoding="utf-8")
     assert gate.cmd_dod(repo, "demo")[0] == 0  # frozen PASS_CMD ran, not the edited one
 
 
@@ -909,3 +910,103 @@ def test_stop_without_workflow_is_unchanged(repo):
     done = with_gate(done, 3, behavior="passed", review="passed", status="passed")
     save_plan(repo, done)
     assert stop(repo)[0] == 0
+
+
+def test_override_then_stop_is_allowed(repo):
+    _project(repo, FAIL_CMD)
+    own(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    assert gate.cmd_dod(repo, "demo", override="human accepted the risk")[0] == 0
+    assert stop(repo)[0] == 0
+    assert stop(repo)[0] == 0
+    # the stop check is satisfied by the record itself, not by the one-block allowance
+    assert stop(repo)[0] == 0
+    learn = (repo / "docs" / "LEARNINGS.md").read_text(encoding="utf-8")
+    assert learn.count("dod-override") == 1
+    assert gate.dod_fresh(repo, "demo", gate.TreeHash(repo))[0]
+
+
+def test_override_reason_is_flattened_in_learnings(repo):
+    _project(repo, FAIL_CMD)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_dod(repo, "demo", override="line one\n- `D99 · fake`")
+    learn = (repo / "docs" / "LEARNINGS.md").read_text(encoding="utf-8")
+    lines = [l for l in learn.splitlines() if "dod-override" in l]
+    assert len(lines) == 1 and "\n" not in lines[0] and lines[0].count("`") == 2
+
+
+def test_agent_cannot_remove_workflow_to_skip_dod(repo):
+    _project(repo)
+    own(repo)
+    plan = _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    stripped = {k: v for k, v in plan.items() if k != "workflow"}
+    save_plan(repo, stripped)
+    code, _, err = stop(repo)
+    assert code == 2 and "definition of done" in err
+
+
+def test_missing_tree_hash_is_not_fresh(repo, monkeypatch):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    monkeypatch.setattr(gate, "tree_hash", lambda root: None)
+    assert gate.dod_fresh(repo, "demo", gate.TreeHash(repo))[0] is False
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING stable_tree" in out
+
+
+def test_dod_record_from_older_approval_is_not_fresh(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    gate.cmd_approve(repo, "demo")  # new approval id
+    assert gate.dod_fresh(repo, "demo", gate.TreeHash(repo))[0] is False
+
+
+def test_changed_files_sees_non_ascii_names_and_moves(repo):
+    _project(repo)
+    _all_passed(repo)
+    (repo / "core").mkdir()
+    (repo / "core" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "core/x.py")
+    _git(repo, "commit", "-q", "-m", "core")
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    (repo / "core" / "café.py").write_text("y = 1\n", encoding="utf-8")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING adr" in out
+    (repo / "core" / "café.py").unlink()
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    (repo / "other").mkdir()
+    _git(repo, "mv", "core/x.py", "other/x.py")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING adr" in out
+
+
+def test_migration_spec_path_is_confined_to_the_repo(repo, tmp_path):
+    _project(repo)
+    outside = tmp_path / "evil.md"
+    outside.write_text("## Migration plan\n", encoding="utf-8")
+    plan = _all_passed(repo)
+    save_plan(repo, {**plan, "spec": str(outside)})
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    (repo / "migrations").mkdir()
+    (repo / "migrations" / "001.sql").write_text("select 1;\n", encoding="utf-8")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING migration" in out
+    save_plan(repo, {**plan, "spec": 7})
+    assert "MISSING migration" in gate.cmd_dod(repo, "demo")[1]
+
+
+def test_hook_refuses_agent_dod_override_but_allows_plain_dod(repo):
+    code, _, err = hook(repo, bash("python build-gate.py dod demo --override x"))
+    assert code == 2 and "human" in err
+    assert hook(repo, bash("python build-gate.py dod demo"))[0] == 0
