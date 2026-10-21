@@ -252,14 +252,19 @@ def append_to_skill(
 # ---------------------------------------------------------------------------
 
 
-def _redact(text: str) -> str:
-    """Route *text* through :func:`tentaqles.privacy.redact_text` if available."""
-    try:
-        from tentaqles.privacy import redact_text  # type: ignore
-    except ImportError:  # pragma: no cover - defensive fallback
-        return text
-    redacted, _events = redact_text(text)
-    return redacted
+def _redact(text: str, client_root: str | Path | None) -> str:
+    """Mask *text* before it is written into a SKILL.md (a file that is committed).
+
+    Masks by the client workspace's data classes; a correction written into
+    the plugin's shared skill (no client) gets the strictest set. Fails closed.
+    """
+    from tentaqles import privacy
+
+    if client_root is None:
+        classes = privacy.STRICTEST_CLASSES
+    else:
+        classes = privacy.workspace_classes(client_root)
+    return privacy.redact_str(text, classes)
 
 
 def record_skill_correction(
@@ -302,7 +307,7 @@ def record_skill_correction(
         shutil.copy2(plugin_path, override)
         resolved = override
 
-    safe_correction = _redact(correction)
+    safe_correction = _redact(correction, client_root)
     appended = append_to_skill(resolved, safe_correction)
 
     return {

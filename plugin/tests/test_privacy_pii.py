@@ -137,7 +137,6 @@ def test_audit_log_context_never_holds_pii(tmp_path: Path):
 def test_exit_classes_from_manifest():
     assert privacy.exit_classes(None) == ["checksummed"]
     assert privacy.exit_classes({}) == ["checksummed"]
-    assert privacy.exit_classes({"data": {"classes": []}}) == ["checksummed"]
     assert privacy.exit_classes({"data": {"classes": ["pii", "financial"]}}) == STRICTEST
     assert privacy.exit_classes({"data": {"classes": ["children"]}}) == ["checksummed", "pii"]
     assert privacy.exit_classes({"data": {"classes": ["sensitive", "secrets"]}}) == ["checksummed", "pii"]
@@ -545,3 +544,106 @@ def test_ingest_masks_before_handing_to_the_store(tmp_path: Path):
     assert call["title"] == "Notes on [REDACTED:email]"
     assert call["url"] == "mailto:[REDACTED:email]"
     assert call["text"] == "CPF [REDACTED:cpf]"
+
+
+# --- fix round 2 ---------------------------------------------------------------
+
+
+def test_empty_class_list_in_manifest_is_strictest():
+    assert privacy.exit_classes({"data": {"classes": []}}) == STRICTEST
+    assert privacy.exit_classes({"data": {}}) == ["checksummed"]
+
+
+def _plugin_skill(root: Path) -> Path:
+    skill = root / "skills" / "x" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: x\n---\n# x\n", encoding="utf-8")
+    return root
+
+
+def test_skill_correction_masks_by_client_classes(tmp_path: Path):
+    from tentaqles.skills import record_skill_correction
+
+    plugin = _plugin_skill(tmp_path / "plugin")
+    client = _workspace(tmp_path / "client", "data:\n  classes: [pii]\n")
+    result = record_skill_correction("x", f"use {CPF} and card {CARD} for {EMAIL}", plugin, client)
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert CPF not in text and CARD not in text and EMAIL not in text
+    assert "[REDACTED:cpf]" in text and "[REDACTED:card]" in text and "[REDACTED:email]" in text
+
+
+def test_skill_correction_into_shared_skill_is_strictest(tmp_path: Path):
+    from tentaqles.skills import record_skill_correction
+
+    plugin = _plugin_skill(tmp_path / "plugin")
+    result = record_skill_correction("x", f"ask {EMAIL}", plugin, None)
+    assert "[REDACTED:email]" in Path(result["path"]).read_text(encoding="utf-8")
+
+
+def test_memory_bridge_skill_correction_masks(tmp_path: Path):
+    import os
+    import subprocess
+    import sys
+
+    plugin = _plugin_skill(tmp_path / "plugin")
+    client = _workspace(tmp_path / "client", "data:\n  classes: [pii]\n")
+    script = Path(__file__).resolve().parent.parent / "scripts" / "memory-bridge.py"
+    package_root = str(script.parent.parent)  # the skill lives in a temp plugin; the code does not
+    env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(plugin), "PYTHONIOENCODING": "utf-8",
+           "PYTHONPATH": os.pathsep.join(filter(None, [package_root, os.environ.get("PYTHONPATH")]))}
+    payload = {"cwd": str(client), "event": "skill_correction",
+               "data": {"skill_name": "x", "correction": f"mail {EMAIL} cpf {CPF}"}}
+    proc = subprocess.run([sys.executable, str(script)], input=json.dumps(payload), capture_output=True,
+                          text=True, env=env, timeout=60)
+    lines = proc.stdout.strip().splitlines()
+    assert lines, proc.stderr
+    result = json.loads(lines[-1])
+    assert "path" in result, result
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert EMAIL not in text and CPF not in text and "[REDACTED:email]" in text
+
+
+def test_repair_sessions_masks_by_workspace(tmp_path: Path):
+    # Run in a child: the script's path setup rewraps sys.stdout.
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "repair-sessions.py"
+    ws = _workspace(tmp_path / "ws", "data:\n  classes: [pii]\n")
+    db = ws / ".claude" / "memory.db"
+    code = (
+        "import importlib.util, json, sys\n"
+        "spec = importlib.util.spec_from_file_location('rs', sys.argv[1])\n"
+        "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
+        "print(json.dumps(mod.mask_summary(sys.argv[3], sys.argv[2])))\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code, str(script), str(db), f"mail {EMAIL} key {GH_TOKEN}"],
+                          capture_output=True, text=True, timeout=60)
+    out = proc.stdout.strip().splitlines()
+    assert out and json.loads(out[-1]) == "mail [REDACTED:email] key [REDACTED:github_pat]", proc.stderr
+
+
+def test_loop_idea_masks_when_classes_given():
+    from tentaqles.workflow import loop
+
+    assert loop.idea_from(f"IDEA: mail {EMAIL}\n") == f"mail {EMAIL}"  # read/display default
+    assert loop.idea_from(f"IDEA: mail {EMAIL}\n", classes=["pii"]) == "mail [REDACTED:email]"
+
+
+@pytest.mark.parametrize("blob", [
+    " ".join(["ab12"] * 200_000),
+    " ".join(["AB12"] * 200_000),
+    " ".join(["de12"] * 200_000),
+    " ".join(f"{i % 65536:04x}" for i in range(200_000)),
+    " ".join(["4111"] * 200_000),
+], ids=["ab12", "AB12", "de12-country", "hexdump", "card-groups"])
+def test_megabyte_of_groups_is_fast(blob):
+    start = time.perf_counter()
+    privacy.redact_text(blob, classes=["checksummed"])
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.0, f"{elapsed:.2f}s"
+
+
+def test_iban_with_unknown_country_is_not_masked():
+    # Valid mod-97 shape but "XX" is not an IBAN country.
+    assert privacy.redact_text("XX82 WEST 1234 5698 7654 32", classes=["checksummed"])[1] == []

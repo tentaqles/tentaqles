@@ -43,11 +43,17 @@ from pathlib import Path
 
 from tentaqles.transcript import build_summary, parse_transcript
 
-try:
-    from tentaqles.privacy import redact_text
-except ImportError:  # pragma: no cover - graceful fallback
-    def redact_text(text):
-        return text, []
+from tentaqles import privacy
+
+
+def mask_summary(summary: str, db_path: str | Path) -> str:
+    """Mask a rebuilt summary by the classes of the workspace owning *db_path*.
+
+    The UPDATE below writes memory.db directly (not through MemoryStore), so
+    it masks the same way the store would: ``<ws>/.claude/memory.db`` gives
+    ``workspace_classes(<ws>)``. Fails closed.
+    """
+    return privacy.redact_str(summary, privacy.workspace_classes(Path(db_path).parent.parent))
 
 
 def find_transcript_roots() -> list[Path]:
@@ -158,10 +164,7 @@ def repair_db(db_path: Path, index: dict[str, Path], apply: bool,
             sid, started_at = keep_sid, keep_started
             activity = parse_transcript(str(transcript))
             summary = build_summary(activity)
-            try:
-                summary, _ = redact_text(summary)
-            except Exception:
-                pass
+            summary = mask_summary(summary, db_path)
 
             duration = activity.get("duration_s", 0)
             if apply:

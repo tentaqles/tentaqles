@@ -27,19 +27,15 @@ if plugin_data:
     sys.path.insert(0, os.path.join(plugin_data, "lib"))
 
 
-try:
-    from tentaqles.privacy import redact_text
-
-    def _redact(text):
-        if text is None:
-            return None
-        try:
-            return redact_text(str(text))[0]
-        except Exception:
-            return text
-except Exception:
-    def _redact(text):
-        return text
+def _redact(text, classes):
+    """Mask *text* by the workspace's classes before it is stored. Fails closed."""
+    if text is None:
+        return None
+    try:
+        from tentaqles.privacy import redact_str
+    except Exception:
+        return "[REDACTED:error]"
+    return redact_str(str(text), classes)
 
 
 def main() -> None:
@@ -104,6 +100,14 @@ def _dispatch(
     client_name: str,
 ) -> None:
     """Route event to the appropriate MemoryStore method."""
+    # Every text this bridge writes (memory.db, SKILL.md) is masked by the
+    # workspace's own data classes, as the store does.
+    try:
+        from tentaqles.privacy import workspace_classes
+
+        classes = workspace_classes(client_root)
+    except Exception:
+        classes = ["checksummed", "pii", "financial"]
 
     if event == "session_start":
         sid = store.start_session(
@@ -113,7 +117,7 @@ def _dispatch(
         print(json.dumps({"session_id": sid}))
 
     elif event == "session_end":
-        summary = _redact(data.get("summary", ""))
+        summary = _redact(data.get("summary", ""), classes)
         tags = data.get("tags")
 
         try:
@@ -157,10 +161,10 @@ def _dispatch(
     elif event == "decision":
         try:
             result = store.record_decision_checked(
-                chosen=_redact(data.get("chosen", "")),
-                rationale=_redact(data.get("rationale", "")),
+                chosen=_redact(data.get("chosen", ""), classes),
+                rationale=_redact(data.get("rationale", ""), classes),
                 node_ids=data.get("node_ids"),
-                rejected=[_redact(r) for r in (data.get("rejected") or [])],
+                rejected=[_redact(r, classes) for r in (data.get("rejected") or [])],
                 confidence=data.get("confidence", "medium"),
                 tags=data.get("tags"),
             )
@@ -191,7 +195,7 @@ def _dispatch(
 
     elif event == "pending":
         pid = store.add_pending(
-            description=_redact(data.get("description", "")),
+            description=_redact(data.get("description", ""), classes),
             node_ids=data.get("node_ids"),
             priority=data.get("priority", "medium"),
         )
@@ -204,7 +208,7 @@ def _dispatch(
     elif event == "skill_correction":
         # Self-improving skills: record a user correction against a SKILL.md file
         skill_name = data.get("skill_name", "")
-        correction = _redact(data.get("correction", ""))
+        correction = _redact(data.get("correction", ""), classes)
         if not skill_name or not correction:
             print(json.dumps({"error": "skill_correction requires skill_name and correction"}), file=sys.stderr)
             return
