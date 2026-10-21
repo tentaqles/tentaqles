@@ -72,7 +72,7 @@ type Options struct {
 	Mode         string        // single | all (shown in /api/ping)
 	TokenHash    string        // sha256 hex of the LAN token; "" on a loopback bind
 	LocalKey     string        // the CLI's key (serveinfo); "" disables it
-	AllowedHosts []string      // Host headers accepted (DNS-rebinding guard); empty accepts any
+	AllowedHosts []string      // Host headers accepted (DNS-rebinding guard); empty gives 421 unless a token is set
 	PollEvery    time.Duration // SSE poll for writes by other processes; 0 → 1 s
 }
 
