@@ -28,6 +28,7 @@ func TriageQuestions() map[string]Question {
 		"state":       q("Does this change alter concurrency, caching, queues, or shared state in a way that could race or go stale?"),
 		"destructive": q("Does this change run or add destructive SQL or shell commands (drop, truncate, rm -rf, force push)?"),
 		"n8n_creds":   q("Does this change put credentials directly into an n8n workflow or automation config?"),
+		"agentic":     q("Does this change add or modify LLM calls, prompts, agent tool definitions, MCP servers, RAG or vector indexing, or Claude Code hooks or skills?"),
 	}
 }
 

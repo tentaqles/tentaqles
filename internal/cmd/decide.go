@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/decide"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -290,7 +291,9 @@ func newDecideTriageCmd() *cobra.Command {
 		Short: "Classify a diff as low or high risk to pick the review depth",
 		Long: `Asks Jev a fixed set of yes/no risk questions (auth, money, schema, data
 loss, migrations, RLS, secrets, public API, shared state, destructive
-commands, n8n credentials) about a diff:
+commands, n8n credentials, agentic code) about a diff, plus one flag computed
+without Jev: classified_data, raised when a changed file lies under a path
+the manifest's data: block classifies:
 
   low   every answer below the warn threshold: one light review pass
   high  any flag raised, the diff was truncated, or Jev failed: full review
@@ -316,6 +319,18 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 				fmt.Fprintln(out, "low (empty diff)")
 				return nil
 			}
+			nameArgs := append([]string{"diff", "--name-only"}, args[2:]...)
+			names, _ := gitcfg.RunGitIn(cwd, nameArgs...)
+			var changed []string
+			for _, l := range strings.Split(names, "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					changed = append(changed, l)
+				}
+			}
+			classified := false
+			if tws, _ := resolveTrusted(cwd); tws != nil && tws.Manifest != nil {
+				classified = classifiedFlag(changed, tws.Manifest.Data)
+			}
 			cl, pol, ws, err := decideClient("triage", decide.BatchTimeout)
 			res := decide.TriageResult{Risk: "high"}
 			if err != nil {
@@ -324,6 +339,11 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 				res = decide.Triage(context.Background(), cl, pol, diff)
 				judgmentLog().Write(decide.Judgment{Workspace: ws.Name, Kind: "triage", Mode: policyMode(pol), P: res.P,
 					Error: res.Error, Extra: map[string]string{"risk": res.Risk, "flags": strings.Join(res.Flags, ",")}})
+			}
+			if classified {
+				res.Flags = append(res.Flags, "classified_data")
+				sort.Strings(res.Flags)
+				res.Risk = "high"
 			}
 			if asJSON {
 				_ = json.NewEncoder(out).Encode(res)
@@ -350,4 +370,19 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 	c.Flags().StringVar(&rng, "range", "", "triage a commit range, e.g. main..HEAD")
 	c.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON")
 	return c
+}
+
+// classifiedFlag reports whether any changed file lies under a path the
+// manifest's data: block classifies. Deterministic: no Jev call. It lives
+// here, not in internal/decide, because manifest imports decide.
+func classifiedFlag(files []string, data manifest.Data) bool {
+	if !data.Enabled() {
+		return false
+	}
+	for _, f := range files {
+		if data.Classified(f) != nil {
+			return true
+		}
+	}
+	return false
 }
