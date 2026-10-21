@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -22,13 +25,20 @@ type Claude struct {
 	Grace time.Duration
 }
 
-func (c Claude) Argv(req RunRequest) []string {
-	args := []string{"-p", req.Prompt, "--output-format", "json"}
-	if req.SessionID != "" {
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// Argv is the command line. The prompt (stdin) and the allowed tools (a --settings file, see
+// Start) never travel on it: on Windows claude is a .cmd shim run through cmd.exe, whose
+// metacharacters Go's quoting does not neutralise.
+func (c Claude) Argv(req RunRequest) []string { return c.argv(req, "") }
+
+func (c Claude) argv(req RunRequest, settingsPath string) []string {
+	args := []string{"-p", "--output-format", "json"}
+	if sessionIDRe.MatchString(req.SessionID) {
 		args = append(args, "--resume", req.SessionID)
 	}
-	if len(req.AllowedTools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(req.AllowedTools, ","))
+	if settingsPath != "" {
+		args = append(args, "--settings", settingsPath)
 	}
 	if c.Args != nil {
 		args = c.Args(args)
@@ -58,9 +68,31 @@ func (c *capped) Write(p []byte) (int, error) {
 }
 
 func (c Claude) Start(ctx context.Context, req RunRequest, log io.Writer) (RunResult, error) {
-	cmd := command(ctx, c.Argv(req), req, c.Grace)
-	out := &capped{max: 16 << 20}
 	lw := &locked{w: log}
+	if req.SessionID != "" && !sessionIDRe.MatchString(req.SessionID) {
+		fmt.Fprintln(lw, "tq hub: ignored malformed session id")
+	}
+	settingsPath := ""
+	if len(req.AllowedTools) > 0 {
+		dir, err := os.MkdirTemp("", "tq-hub-claude-")
+		if err != nil {
+			return RunResult{}, err
+		}
+		defer os.RemoveAll(dir)
+		raw, err := json.Marshal(map[string]any{"permissions": map[string]any{"allow": req.AllowedTools}})
+		if err != nil {
+			return RunResult{}, err
+		}
+		settingsPath = filepath.Join(dir, "settings.json")
+		if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
+			return RunResult{}, err
+		}
+	}
+	done := make(chan struct{})
+	defer close(done)
+	cmd := command(ctx, c.argv(req, settingsPath), req, c.Grace, done)
+	cmd.Stdin = strings.NewReader(req.Prompt)
+	out := &capped{max: 16 << 20}
 	cmd.Stdout = io.MultiWriter(out, lw)
 	cmd.Stderr = lw
 	code, err := exitCode(ctx, cmd.Run())
@@ -72,6 +104,7 @@ func (c Claude) Start(ctx context.Context, req RunRequest, log io.Writer) (RunRe
 type resultDoc struct {
 	Type      string   `json:"type"`
 	Subtype   string   `json:"subtype"`
+	IsError   bool     `json:"is_error"`
 	Result    string   `json:"result"`
 	SessionID string   `json:"session_id"`
 	TotalCost *float64 `json:"total_cost_usd"`
@@ -123,6 +156,9 @@ func ParseResult(out []byte) RunResult {
 		}
 		sort.Strings(models)
 		res.Model = models[0] // several models (subagents): the whole usage is priced at the first; an estimate
+	}
+	if doc.IsError && res.StopReason == "success" {
+		res.StopReason = "error"
 	}
 	switch {
 	case doc.TotalCost != nil:

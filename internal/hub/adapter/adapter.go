@@ -52,14 +52,17 @@ type RunResult struct {
 	PermissionDenials []PermissionDenial
 }
 
-func command(ctx context.Context, argv []string, req RunRequest, grace time.Duration) *exec.Cmd {
+// command builds the process; done must be closed by the caller once cmd.Run has returned, so a
+// late kill never reaches a process that already exited (and whose PID may have been reused).
+func command(ctx context.Context, argv []string, req RunRequest, grace time.Duration, done <-chan struct{}) *exec.Cmd {
 	if grace <= 0 {
 		grace = DefaultGrace
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = req.Dir
 	cmd.Env = req.Env
-	cmd.Cancel = func() error { return terminate(cmd.Process, grace) }
+	prepare(cmd)
+	cmd.Cancel = func() error { return terminate(cmd.Process, grace, done) }
 	cmd.WaitDelay = grace + 5*time.Second
 	return cmd
 }

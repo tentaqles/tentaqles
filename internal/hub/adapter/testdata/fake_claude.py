@@ -19,7 +19,7 @@ prints a result document shaped like Claude Code's JSON output:
                  "raw": null}]}                   # a string: printed instead of the JSON
 
 Rounds past the end repeat the last one. Every call appends what it saw (argv, cwd and the
-hub environment) to argv_log. Standard library only, platform-neutral.
+hub environment, the stdin prompt and the --settings allow list) to argv_log. Standard library only, platform-neutral.
 """
 
 import json
@@ -36,6 +36,11 @@ if os.path.exists(counter):
         n = int(fh.read() or "0")
 with open(counter, "w", encoding="utf-8") as fh:
     fh.write(str(n + 1))
+prompt = sys.stdin.read()
+allowed = None
+if "--settings" in sys.argv:
+    with open(sys.argv[sys.argv.index("--settings") + 1], encoding="utf-8") as fh:
+        allowed = json.load(fh).get("permissions", {}).get("allow")
 with open(script["argv_log"], "a", encoding="utf-8") as fh:
     fh.write(json.dumps({
         "round": n,
@@ -47,6 +52,8 @@ with open(script["argv_log"], "a", encoding="utf-8") as fh:
         "build_token": "TQ_BUILD_TOKEN" in os.environ,
         "hub_task": os.environ.get("TQ_HUB_TASK"),
         "ws": os.environ.get("TQ_WS"),
+        "prompt": prompt,
+        "allowed_tools": allowed,
     }) + "\n")
 rounds = script["rounds"]
 act = rounds[n] if n < len(rounds) else rounds[-1]

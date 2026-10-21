@@ -22,6 +22,7 @@ type fakeClaude struct {
 
 func newFakeClaude(t *testing.T, rounds []map[string]any) fakeClaude {
 	t.Helper()
+	isolate(t)
 	py := testutil.Python(t)
 	dir := t.TempDir()
 	scriptPath, err := filepath.Abs(filepath.Join("testdata", "fake_claude.py")) // the round runs in dir, not here
@@ -67,23 +68,79 @@ func run(t *testing.T, c Claude, req RunRequest) (RunResult, string) {
 }
 
 func TestClaudeArgvAndPermissionWrapper(t *testing.T) {
+	isolate(t)
 	c := Claude{Bin: []string{"claude"}, Args: func(a []string) []string { return append([]string{"--permission-mode", "acceptEdits"}, a...) }}
-	got := c.Argv(RunRequest{Prompt: "/tentaqles:feature x --headless", SessionID: "s1", AllowedTools: []string{"Bash(npm test)", "Edit"}})
-	want := []string{"claude", "--permission-mode", "acceptEdits", "-p", "/tentaqles:feature x --headless", "--output-format", "json",
-		"--resume", "s1", "--allowedTools", "Bash(npm test),Edit"}
+	got := c.Argv(RunRequest{Prompt: "/tentaqles:feature x --headless & echo pwned", SessionID: "s1", AllowedTools: []string{"Bash(npm test)", "Edit"}})
+	want := []string{"claude", "--permission-mode", "acceptEdits", "-p", "--output-format", "json", "--resume", "s1"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("argv\n got %q\nwant %q", got, want)
 	}
+	for _, a := range got {
+		if strings.Contains(a, "pwned") || strings.Contains(a, "npm test") || a == "--allowedTools" {
+			t.Fatalf("free text on argv: %q", got)
+		}
+	}
 	plain := Claude{}.Argv(RunRequest{Prompt: "p"})
-	if !slices.Equal(plain, []string{"claude", "-p", "p", "--output-format", "json"}) || slices.Contains(plain, "--dangerously-skip-permissions") {
+	if !slices.Equal(plain, []string{"claude", "-p", "--output-format", "json"}) || slices.Contains(plain, "--dangerously-skip-permissions") {
 		t.Fatalf("plain argv %q", plain)
+	}
+	for _, bad := range []string{"s1 & calc", "a b", "x\ny", "s1\"", "%PATH%"} {
+		if slices.Contains(Claude{}.Argv(RunRequest{Prompt: "p", SessionID: bad}), "--resume") {
+			t.Fatalf("malformed session id %q reached argv", bad)
+		}
+	}
+}
+
+func TestClaudeMalformedSessionLogged(t *testing.T) {
+	f := newFakeClaude(t, []map[string]any{{"result": "ok"}})
+	_, log := run(t, Claude{Bin: f.bin}, RunRequest{Dir: f.dir, Prompt: "p", SessionID: "bad id & calc", Env: os.Environ()})
+	if !strings.Contains(log, "ignored malformed session id") {
+		t.Fatalf("log %q", log)
+	}
+	if argv, _ := f.calls(t)[0]["argv"].([]any); slices.Contains(argv, any("--resume")) {
+		t.Fatalf("argv %v", argv)
+	}
+}
+
+func TestClaudePromptAndToolsRoundTripVerbatim(t *testing.T) {
+	f := newFakeClaude(t, []map[string]any{{"result": "ok"}})
+	prompt := "do it & echo pwned | more > out.txt %PATH% ^x \"q\"\nsecond line"
+	tools := []string{"Bash(x & echo pwned)", "Edit"}
+	run(t, Claude{Bin: f.bin}, RunRequest{Dir: f.dir, Prompt: prompt, AllowedTools: tools, Env: os.Environ()})
+	call := f.calls(t)[0]
+	if call["prompt"] != prompt {
+		t.Fatalf("prompt %q", call["prompt"])
+	}
+	got, _ := call["allowed_tools"].([]any)
+	if len(got) != 2 || got[0] != tools[0] || got[1] != tools[1] {
+		t.Fatalf("tools %v", call["allowed_tools"])
+	}
+	for _, a := range call["argv"].([]any) {
+		if s, _ := a.(string); strings.Contains(s, "pwned") {
+			t.Fatalf("free text on argv: %v", call["argv"])
+		}
+	}
+}
+
+func TestParseResultIsError(t *testing.T) {
+	r := ParseResult([]byte(`{"type":"result","subtype":"success","is_error":true,"result":"x"}`))
+	if r.StopReason != "error" {
+		t.Fatalf("%+v", r)
+	}
+	r = ParseResult([]byte(`{"type":"result","subtype":"error_max_turns","is_error":true}`))
+	if r.StopReason != "error_max_turns" {
+		t.Fatalf("%+v", r)
+	}
+	r = ParseResult([]byte(`{"type":"result","subtype":"success","is_error":false}`))
+	if r.StopReason != "success" {
+		t.Fatalf("%+v", r)
 	}
 }
 
 func TestClaudeAdapterSuccess(t *testing.T) {
 	f := newFakeClaude(t, []map[string]any{{"result": "done\nall good", "session_id": "s-42", "cost": 0.75, "num_turns": 4,
 		"usage": map[string]any{"input_tokens": 100, "output_tokens": 20, "cache_creation_input_tokens": 5, "cache_read_input_tokens": 1000}}})
-	res, log := run(t, Claude{Bin: f.bin}, RunRequest{Dir: f.dir, Prompt: "/tentaqles:feature x --headless", Env: LaunchEnv(os.Environ(), `{"hub":"c-x"}`)})
+	res, log := run(t, Claude{Bin: f.bin}, RunRequest{Dir: f.dir, Prompt: "/tentaqles:feature x --headless", AllowedTools: []string{"Bash(npm test)"}, Env: LaunchEnv(os.Environ(), `{"hub":"c-x"}`)})
 	if res.ExitCode != 0 || res.SessionID != "s-42" || res.CostUSD != 0.75 || !res.CostKnown || res.StopReason != "success" || res.NumTurns != 4 {
 		t.Fatalf("res %+v", res)
 	}
@@ -94,6 +151,12 @@ func TestClaudeAdapterSuccess(t *testing.T) {
 		t.Fatalf("stderr goes to the log: %q", log)
 	}
 	call := f.calls(t)[0]
+	if call["prompt"] != "/tentaqles:feature x --headless" {
+		t.Fatalf("the prompt arrives on stdin: %v", call["prompt"])
+	}
+	if tools, _ := call["allowed_tools"].([]any); len(tools) != 1 || tools[0] != "Bash(npm test)" {
+		t.Fatalf("allowed tools arrive through --settings: %v", call["allowed_tools"])
+	}
 	if call["headless"] != "1" || call["headless_child"] != false || call["build_token"] != false || call["hub_task"] != `{"hub":"c-x"}` {
 		t.Fatalf("environment seen by claude: %v", call)
 	}
@@ -144,6 +207,7 @@ func TestClaudeAdapterErrorShapes(t *testing.T) {
 }
 
 func TestToolSpec(t *testing.T) {
+	isolate(t)
 	if got := ToolSpec(PermissionDenial{Tool: "WebFetch"}); got != "WebFetch" {
 		t.Fatal(got)
 	}

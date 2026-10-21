@@ -21,7 +21,9 @@ func (p Process) Start(ctx context.Context, req RunRequest, log io.Writer) (RunR
 	}
 	r := req
 	r.Env = append(append([]string(nil), req.Env...), "TQ_HUB_PROMPT="+req.Prompt)
-	cmd := command(ctx, p.Command, r, p.Grace)
+	done := make(chan struct{})
+	defer close(done)
+	cmd := command(ctx, p.Command, r, p.Grace, done)
 	cmd.Stdin = strings.NewReader(req.Prompt)
 	t := &tail{max: 8 << 10}
 	w := &locked{w: io.MultiWriter(log, t)}
