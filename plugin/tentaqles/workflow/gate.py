@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tentaqles.workflow._common import (
+    Segment,
     WRITE_COMMANDS,
     _WRAPPERS,
     ShellParseError,
@@ -1443,6 +1444,65 @@ def _nested_body(cmd_name: str, cargs: list[str]) -> str | None:
     return None
 
 
+_REMOVERS = {"rm", "rmdir", "unlink", "shred", "truncate", "remove-item", "ri", "del", "erase", "rd",
+             "clear-content"}
+_MOVERS = {"mv", "move-item", "mi", "move", "ren", "rename-item", "rni"}
+_COPIERS = {"cp", "install", "rsync", "copy-item", "cpi", "copy", "xcopy", "ln", "scp"}
+_TARGET_OPTS = {"-t", "--target-directory", "-destination", "-dest"}
+
+
+def _dest_words(seg, cmd_name: str, cargs: list[str]) -> set[str]:
+    """The words of a writing segment that name what it writes or removes: redirect targets,
+    every operand of rm/rmdir/mv (sources too: they vanish), the last operand (or -t) of
+    cp/install/rsync, the start dirs of `find -delete/-exec`, the archive (and on extract the
+    directory) of tar, and every operand of other writers. A command that writes only through a
+    redirect (`pytest tests > out.txt`), and echo/printf data, name nothing else."""
+    out = {t for t in seg.redirects if not is_null_target(t)}
+    bare = Segment()
+    bare.argv, bare.raw = seg.argv, seg.raw
+    if cmd_name in ("echo", "printf") or not is_write_segment(bare):
+        return out
+    pos = [a for a in cargs if not a.startswith("-")]
+    low = [a.lower() for a in cargs]
+    if cmd_name in _REMOVERS or cmd_name in _MOVERS:
+        return out | set(pos)
+    if cmd_name == "robocopy":
+        return out | ({pos[1]} if len(pos) > 1 else set(pos))
+    if cmd_name in _COPIERS:
+        for i, a in enumerate(low):
+            if a in _TARGET_OPTS and i + 1 < len(cargs):
+                return out | {cargs[i + 1]}
+            if a.startswith("--target-directory="):
+                return out | {cargs[i]}
+        return out | ({pos[-1]} if pos else set())
+    if cmd_name == "find":
+        starts = []
+        for a in cargs:
+            if a.startswith(("-", "(", "!")):
+                break
+            starts.append(a)
+        return out | set(starts or ["."])
+    if cmd_name in ("tar", "bsdtar", "gtar"):
+        mode = cargs[0] if cargs and not cargs[0].startswith("--") else ""
+        extract = ("x" in mode.lstrip("-") and re.fullmatch(r"-?[A-Za-z]+", mode) is not None) or any(
+            a in ("--extract", "--get") for a in cargs)
+        for i, a in enumerate(cargs):
+            short_f = re.fullmatch(r"-[A-Za-z]*f", a) or (i == 0 and re.fullmatch(r"[A-Za-z]*f", a))
+            if (a == "--file" or short_f) and i + 1 < len(cargs):
+                out.add(cargs[i + 1])
+            elif a.startswith("--file="):
+                out.add(a)
+        if extract:
+            cdirs = [cargs[i + 1] for i, a in enumerate(cargs) if a in ("-C", "--directory") and i + 1 < len(cargs)]
+            cdirs += [a for a in cargs if a.startswith("--directory=")]
+            out |= set(cdirs or ["."])
+        return out
+    if cmd_name == "unzip":
+        d = [cargs[i + 1] for i, a in enumerate(cargs) if a == "-d" and i + 1 < len(cargs)]
+        return out | set(d or ["."])
+    return out | set(pos)
+
+
 class _Cwd:
     """The tracked working directory: candidate absolute paths, or None when unknown."""
 
@@ -1669,8 +1729,11 @@ class _ShellScan:
         redirected = any(not is_null_target(t) for t in seg.redirects)
         key_safe = cmd_name in _KEY_SAFE_VERBS and not redirected
         key_bases = tuple(self.key_bases(cmd_name, cargs, bases))
+        dest = _dest_words(seg, cmd_name, cargs) if writes else set()
         word_hits: list[tuple[str, str]] = []
         for w in words:
+            word_hits.extend(self.word_hits(w, bases, recursive, cmd_name, w in dest, key_safe, key_bases))
+        for w in sorted(dest - set(words)):  # an implied operand: `tar xf a.tar` extracts into "."
             word_hits.extend(self.word_hits(w, bases, recursive, cmd_name, True, key_safe, key_bases))
         raw_forms = [seg.raw, re.sub(r"\\(.)", r"\1", seg.raw, flags=re.DOTALL)]
         text_hits: list[tuple[str, str]] = []

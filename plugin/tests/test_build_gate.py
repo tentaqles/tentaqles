@@ -2932,3 +2932,54 @@ def test_ls_home_is_allowed_when_the_key_is_under_home(repo, tmp_path, monkeypat
     assert hook(repo, bash("ls -la ~"))[0] == 0
     for cmd in ("tar cf t.tar ~", "tar cf t.tar -C ~ .tentaqles", "rsync -a ~/ bk/", "zip -r h.zip $HOME"):
         assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+# ---------------------------------------------------------------------------
+# Locked-test parent dirs: only destination and removal operands count
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cmd", [
+    "pytest tests > out.txt",
+    "ls tests > list.txt",
+    "cp -r . ../bk",
+    "tar czf ../src.tgz .",
+    "echo . > out.txt",
+    "echo tests > out.txt",
+])
+def test_reading_a_locked_tests_parent_dir_is_not_a_write_to_it(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_echo_home_into_a_file_is_allowed_when_the_repo_is_under_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    root = home / "proj"
+    (root / "docs" / "checkpoints").mkdir(parents=True)
+    (root / "tests").mkdir()
+    _git(root, "init", "-q", "-b", "work")
+    (root / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    save_plan(root, PLAN)
+    (root / ".claude" / "build").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    approve_and_lock(root)
+    assert hook(root, bash("echo $HOME > out.txt"))[0] == 0
+    code, _, err = hook(root, bash("rm -rf $HOME/proj/tests"))
+    assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "mv tests tests2",
+    "rm -rf tests",
+    "cp -r src tests",
+    "rsync -a src/ tests/",
+    "find tests -delete",
+    "pytest > tests",
+    "tar xf a.tar",
+    "cp x.py -t tests",
+])
+def test_destination_and_removal_operands_on_a_locked_tests_parent_stay_refused(repo, cmd):
+    approve_and_lock(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "locked test" in err, cmd
