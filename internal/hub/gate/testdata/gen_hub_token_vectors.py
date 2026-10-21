@@ -13,13 +13,13 @@ from tentaqles.workflow.gate import _hub_mac  # noqa: E402
 
 KEY = bytes(range(32))
 CASES = [
-    ("answer", "demo", "hub:renato"),
+    ("answer", "demo", "hub:tester"),
     ("answer", "fix-login", "hub:Jos\u00e9"),
     ("answer", "demo", 'hub:a"b\\c'),
     ("answer", "demo", "hub:<x>&y"),
     ("answer", "demo", "hub:\U0001F600"),
     ("answer", "demo", "hub:tab\there\x7f"),
-    ("approve", "demo", "hub:renato"),
+    ("approve", "demo", "hub:tester"),
 ]
 out = {"key_hex": KEY.hex(), "vectors": [
     {"action": a, "slug": s, "actor": u,

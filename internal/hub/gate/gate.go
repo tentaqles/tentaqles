@@ -333,7 +333,7 @@ func (c *Client) Answer(ctx context.Context, dir, slug, id, choice, note, actor 
 		key[i] = 0
 	}
 	out, err := c.run(ctx, dir, []string{"TQ_BUILD_ACTOR=" + actor, "TQ_BUILD_TOKEN=" + tok},
-		"answer", slug, id, "--choice", choice, "--note", note, "--actor", actor)
+		"answer", slug, id, "--choice="+choice, "--note="+note, "--actor="+actor)
 	return strings.TrimSpace(out), err
 }
 

@@ -173,6 +173,15 @@ func cleanProjectDir(p string) (string, error) {
 	return c, nil
 }
 
+// maskTags masks each tag like any other stored text.
+func (s *Store) maskTags(tags []string) []string {
+	out := make([]string, len(tags))
+	for i, t := range tags {
+		out[i] = s.Mask(t)
+	}
+	return out
+}
+
 func dedupe(tags []string) []string {
 	out := []string{}
 	for _, t := range tags {
@@ -215,7 +224,7 @@ func (s *Store) AddCard(nc NewCard, actor string) (Card, error) {
 	if err != nil {
 		return Card{}, err
 	}
-	tags, _ := json.Marshal(dedupe(nc.Tags))
+	tags, _ := json.Marshal(dedupe(s.maskTags(nc.Tags)))
 	now := Now()
 	id := NewID("c")
 	if _, err := s.DB.Exec(`INSERT INTO cards(id, title, body, lane, kind, tags, parent_id, project_dir, created_at, updated_at)
@@ -303,7 +312,7 @@ func (s *Store) UpdateCard(id string, u CardUpdate, actor string) (Card, error) 
 		fields = append(fields, "project_dir")
 	}
 	if u.Tags != nil {
-		c.Tags = dedupe(*u.Tags)
+		c.Tags = dedupe(s.maskTags(*u.Tags))
 		fields = append(fields, "tags")
 	}
 	tags, _ := json.Marshal(c.Tags)
@@ -454,7 +463,7 @@ func (s *Store) AddAttachment(cardID, p, label string) (Attachment, error) {
 	if _, err := s.Card(cardID); err != nil {
 		return Attachment{}, err
 	}
-	a := Attachment{ID: NewID("a"), CardID: cardID, Path: strings.TrimSpace(p), Label: s.Mask(label), CreatedAt: Now()}
+	a := Attachment{ID: NewID("a"), CardID: cardID, Path: s.Mask(strings.TrimSpace(p)), Label: s.Mask(label), CreatedAt: Now()}
 	_, err := s.DB.Exec(`INSERT INTO attachments(id, card_id, path, label, created_at) VALUES (?, ?, ?, ?, ?)`, a.ID, a.CardID, a.Path, a.Label, a.CreatedAt)
 	if err == nil {
 		s.Publish(Change{Kind: "card", CardID: cardID})

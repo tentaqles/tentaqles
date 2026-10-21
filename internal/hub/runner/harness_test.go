@@ -194,7 +194,7 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) card(kind string, tags ...string) store.Card {
 	h.t.Helper()
-	c, err := h.st.AddCard(store.NewCard{Title: "Export invoices", Body: "CSV per month.", Kind: kind, Tags: tags, ProjectDir: "apps/billing"}, "renato")
+	c, err := h.st.AddCard(store.NewCard{Title: "Export invoices", Body: "CSV per month.", Kind: kind, Tags: tags, ProjectDir: "apps/billing"}, "tester")
 	if err != nil {
 		h.t.Fatal(err)
 	}

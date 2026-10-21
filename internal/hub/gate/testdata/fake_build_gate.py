@@ -7,6 +7,7 @@ the key at $TQ_HOME/build-gate/hmac.key), then moves the decision from pending_d
 decisions. Every call is appended to $FAKE_GATE_DIR/calls.jsonl. Standard library only.
 """
 
+import argparse
 import hashlib
 import hmac
 import json
@@ -41,9 +42,16 @@ def main(argv):
         print(json.dumps(st, ensure_ascii=False, indent=2))
         return 0
     if cmd == "answer":
-        did = argv[2]
-        choice = argv[argv.index("--choice") + 1]
-        note = argv[argv.index("--note") + 1] if "--note" in argv else ""
+        # Parsed like the real build-gate's `answer` subparser, so a value that starts with "-"
+        # must arrive as one --flag=value token.
+        ap = argparse.ArgumentParser(prog="build-gate answer")
+        ap.add_argument("slug")
+        ap.add_argument("id")
+        ap.add_argument("--choice", required=True)
+        ap.add_argument("--note", default="")
+        ap.add_argument("--actor", default=None)
+        args = ap.parse_args(argv[1:])
+        did, choice, note = args.id, args.choice, args.note
         actor = (os.environ.get("TQ_BUILD_ACTOR") or "").strip()
         tok = (os.environ.get("TQ_BUILD_TOKEN") or "").strip()
         home = os.environ.get("TQ_HOME") or os.path.join(os.path.expanduser("~"), ".tentaqles")

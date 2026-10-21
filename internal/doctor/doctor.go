@@ -88,6 +88,8 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	var verifyJobs []verifyJob
 	verifyCovers := map[string]bool{}
 	hubUsed := false
+	probe := newHubProbe()
+	defer probe.close()
 	for _, w := range all {
 		trusted := trust.IsTrusted(w.Hash)
 		if !trusted {
@@ -125,7 +127,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		if trusted {
 			claudeChecks(&w, add)
 			dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add)
-			if hubChecks(w.Name, add) {
+			if hubChecks(w.Name, probe, add) {
 				hubUsed = true
 			}
 		}
@@ -234,7 +236,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 	}
 	if hubUsed {
-		hubPortCheck(cfg.Hub.Port, add)
+		hubPortCheck(cfg.Hub.Port, probe, add)
 	}
 	// The pre-tq shell branch is active, so nothing tq sets is in effect here.
 	if d.Env != nil {

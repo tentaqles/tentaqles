@@ -19,7 +19,7 @@ func newRunFor(t *testing.T, s *Store, c Card) Run {
 func TestCreateAndSaveRun(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	r := newRunFor(t, s, c)
 	if !ValidID("r", r.ID) || r.Status != StatusQueued || r.Budget != s.DefaultBudget() || r.Phase != PhaseStart || r.Workspace != "acme" {
 		t.Fatalf("run %+v", r)
@@ -69,8 +69,8 @@ func TestExceeded(t *testing.T) {
 func TestDueRunsFIFOAndNotBefore(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c1, _ := s.AddCard(NewCard{Title: "a"}, "renato")
-	c2, _ := s.AddCard(NewCard{Title: "b"}, "renato")
+	c1, _ := s.AddCard(NewCard{Title: "a"}, "tester")
+	c2, _ := s.AddCard(NewCard{Title: "b"}, "tester")
 	now := time.Now().UTC()
 	r1, _ := s.CreateRun(Run{CardID: c1.ID, Adapter: AdapterClaude, OnRamp: OnRampFeature, QueuedAt: now.Add(-2 * time.Minute).Format(time.RFC3339)})
 	r2, _ := s.CreateRun(Run{CardID: c2.ID, Adapter: AdapterClaude, OnRamp: OnRampFeature, QueuedAt: now.Add(-1 * time.Minute).Format(time.RFC3339),
@@ -91,12 +91,12 @@ func TestDueRunsFIFOAndNotBefore(t *testing.T) {
 func TestLocksReport(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	r := newRunFor(t, s, c)
 	s.Checkout(c.ID, r.ID)
 	r.Status = StatusFailed
 	s.SaveRun(r)
-	c2, _ := s.AddCard(NewCard{Title: "b"}, "renato")
+	c2, _ := s.AddCard(NewCard{Title: "b"}, "tester")
 	s.Checkout(c2.ID, "r-gonegonegone")
 	locks, err := s.Locks()
 	if err != nil || len(locks) != 2 {

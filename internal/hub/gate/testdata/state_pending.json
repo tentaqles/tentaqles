@@ -21,7 +21,7 @@
     {"id": "d1a2b3c4", "kind": "result", "checkpoint": null, "reviewer": null, "text": "Try: export March. 2 checkpoints passed.", "options": ["approve", "request-changes", "stop"], "asked_at": "2026-10-21T10:00:00+00:00"}
   ],
   "decisions": [
-    {"id": "d0000001", "kind": "plan-approval", "checkpoint": null, "reviewer": null, "status": "answered", "options": ["approve", "edit", "stop"], "choice": "approve", "note": "", "actor": "hub:renato", "asked_at": "2026-10-21T09:00:00+00:00", "answered_at": "2026-10-21T09:05:00+00:00"},
+    {"id": "d0000001", "kind": "plan-approval", "checkpoint": null, "reviewer": null, "status": "answered", "options": ["approve", "edit", "stop"], "choice": "approve", "note": "", "actor": "hub:tester", "asked_at": "2026-10-21T09:00:00+00:00", "answered_at": "2026-10-21T09:05:00+00:00"},
     {"id": "d1a2b3c4", "kind": "result", "checkpoint": null, "reviewer": null, "status": "pending", "options": ["approve", "request-changes", "stop"], "choice": null, "note": null, "actor": null, "asked_at": "2026-10-21T10:00:00+00:00", "answered_at": null}
   ],
   "events_path": "C:/Users/x/.tentaqles/build-gate/events.jsonl",

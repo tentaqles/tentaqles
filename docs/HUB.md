@@ -59,7 +59,8 @@ Lanes: `backlog`, `todo`, `in progress` (kind `active`), `review`, `done`. Kinds
 `project` → `/tentaqles:kickoff`, `feature` / `analysis` / `chore` → `/tentaqles:feature`,
 `fix` → `/tentaqles:fix`, `hotfix` → `/tentaqles:fix --hotfix` (only this kind). The
 prompt is the card's title and body; context comes from the project's `CLAUDE.md`, PRD
-and skills. A run starts when an `agent-ready` card enters an active lane, on
+and skills. A run starts when an `agent-ready` card enters an active lane (moved there, or added
+there by a human), on
 `tq hub run <card>`, or when an answer resumes it. Wakeups coalesce; a card is checked
 out by one run at a time.
 
@@ -112,11 +113,20 @@ first, the hub notices on its next read and resumes.
 
 A `tq hub` command run with `TENTAQLES_HEADLESS=1`, `CLAUDE_PLUGIN_ROOT`, `CLAUDECODE=1` or
 `TQ_HUB_TASK` in its environment (or an API request with `X-TQ-Hub-Agent: 1`) counts as
-an agent session. It may add cards, comment, and move cards between the backlog and todo
-lanes (and lanes of kind `other`). It never starts a run (`tq hub run`, or a move into an
-active lane), cancels one, answers a decision, approves, requests changes, moves a card
-to review or done, or sets a budget; the refusal tells you to run the command in your
+an agent session. It may add cards, but only into backlog or todo lanes (or lanes of kind
+`other`), comment, and move cards between those lanes. It never starts a run (`tq hub run`,
+a move into an active lane, or a card added straight into one), cancels one, answers a
+decision, approves, requests changes, moves a card to review or done, or sets a budget:
+neither `--budget` nor a card body whose front matter has a `budget:` key is accepted from
+an agent. It cannot start `tq hub serve --bind` on a non-loopback address either (that
+hub's token must never reach an agent). The refusal tells you to run the command in your
 own terminal or use the page.
+
+Runs launch with their own workspace's environment only: whatever the shell hook set for
+another workspace (recorded in `__TQ_STATE`) is undone and every provider config variable
+(`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`, cloud config homes and the rest of the catalog) is
+removed before the workspace's own are applied, so `tq hub serve --all` started from one
+client's shell never hands another client's run that client's identity.
 
 ## Review page
 
@@ -135,6 +145,8 @@ work never reaches it (its final text is kept as a card comment). On approval th
 `$TQ_HOME/hub/<workspace>/hub.db` (SQLite, WAL), `runs/<run>.log`, `activity.jsonl`,
 user-only permissions. Every stored text is masked with the workspace's data classes
 (`data.classes` plus secrets; every detector when the workspace is not classified).
+That covers card titles, bodies and tags, attachment labels and paths, comments,
+decision text and notes, run logs and activity data.
 `tq insights` reads `activity.jsonl` for its Hub section.
 
 ## Commands

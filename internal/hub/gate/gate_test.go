@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,14 +114,43 @@ func TestNoPlanIsRecognised(t *testing.T) {
 	}
 }
 
+// TestAnswerNoteThatLooksLikeAFlag: a note starting with "-" reaches the gate as the note, not
+// as an option argparse refuses.
+func TestAnswerNoteThatLooksLikeAFlag(t *testing.T) {
+	f := newFakeGate(t)
+	writeKey(t)
+	if _, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "--force", "hub:tester"); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := f.client.State(context.Background(), f.root, "demo", false)
+	var note string
+	for _, d := range st.Decisions {
+		if d.ID == "d1a2b3c4" {
+			note = d.Note
+		}
+	}
+	if note != "--force" {
+		t.Fatalf("note %q, want --force", note)
+	}
+	calls := f.calls(t)
+	argv, _ := calls[len(calls)-2]["argv"].([]any)
+	var joined []string
+	for _, a := range argv {
+		joined = append(joined, a.(string))
+	}
+	if !slices.Contains(joined, "--note=--force") || !slices.Contains(joined, "--choice=approve") {
+		t.Fatalf("argv %v", joined)
+	}
+}
+
 func TestAnswerSendsAValidToken(t *testing.T) {
 	f := newFakeGate(t)
 	writeKey(t)
-	msg, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "looks right", "hub:renato")
+	msg, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "looks right", "hub:tester")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "decision d1a2b3c4: approve by hub:renato") {
+	if !strings.Contains(msg, "decision d1a2b3c4: approve by hub:tester") {
 		t.Fatalf("message %q", msg)
 	}
 	st, _ := f.client.State(context.Background(), f.root, "demo", false)
@@ -129,7 +159,7 @@ func TestAnswerSendsAValidToken(t *testing.T) {
 	}
 	calls := f.calls(t)
 	last := calls[len(calls)-2] // the answer, before the state read above
-	if last["actor"] != "hub:renato" || last["has_token"] != true {
+	if last["actor"] != "hub:tester" || last["has_token"] != true {
 		t.Fatalf("answer call %v", last)
 	}
 }
@@ -137,7 +167,7 @@ func TestAnswerSendsAValidToken(t *testing.T) {
 func TestAnswerAlreadyAnsweredIsRecognised(t *testing.T) {
 	f := newFakeGate(t)
 	writeKey(t)
-	_, err := f.client.Answer(context.Background(), f.root, "demo", "d9999999", "approve", "", "hub:renato")
+	_, err := f.client.Answer(context.Background(), f.root, "demo", "d9999999", "approve", "", "hub:tester")
 	if !IsNotPending(err) {
 		t.Fatalf("want not-pending, got %v", err)
 	}
@@ -149,14 +179,14 @@ func TestAnswerWithAWrongKeyIsAHumanRefusal(t *testing.T) {
 	c := *f.client
 	c.KeyPath = filepath.Join(t.TempDir(), "other.key")
 	os.WriteFile(c.KeyPath, []byte("not the gate key"), 0o600)
-	if _, err := c.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "", "hub:renato"); !IsHumanRefusal(err) {
+	if _, err := c.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "", "hub:tester"); !IsHumanRefusal(err) {
 		t.Fatalf("want a human-only refusal, got %v", err)
 	}
 }
 
 func TestAnswerWithoutAKeySaysAnswerInTheTerminal(t *testing.T) {
 	f := newFakeGate(t)
-	_, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "", "hub:renato")
+	_, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "", "hub:tester")
 	if err == nil || !strings.Contains(err.Error(), "build-gate answer") {
 		t.Fatalf("err %v", err)
 	}
@@ -188,12 +218,12 @@ func TestUnavailableReturnsItsError(t *testing.T) {
 func TestAnswerRecordedThenFailedReturnsMessageAndError(t *testing.T) {
 	f := newFakeGate(t)
 	writeKey(t)
-	msg, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "!record-fail", "hub:renato")
+	msg, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "!record-fail", "hub:tester")
 	var ge *GateError
 	if !errors.As(err, &ge) || ge.Code != 1 {
 		t.Fatalf("want GateError code 1, got %v", err)
 	}
-	if !strings.Contains(msg, "decision d1a2b3c4: approve by hub:renato") || !strings.Contains(msg, "finish did NOT apply") {
+	if !strings.Contains(msg, "decision d1a2b3c4: approve by hub:tester") || !strings.Contains(msg, "finish did NOT apply") {
 		t.Fatalf("message %q", msg)
 	}
 	st, _ := f.client.State(context.Background(), f.root, "demo", false)
@@ -206,11 +236,11 @@ func TestExitTwoClassification(t *testing.T) {
 	f := newFakeGate(t)
 	writeKey(t)
 	ctx := context.Background()
-	_, err := f.client.Answer(ctx, f.root, "demo", "d1a2b3c4", "approve", "!needs-note", "hub:renato")
+	_, err := f.client.Answer(ctx, f.root, "demo", "d1a2b3c4", "approve", "!needs-note", "hub:tester")
 	if !IsNeedsNote(err) || IsHumanRefusal(err) {
 		t.Fatalf("needs-note misclassified: %v", err)
 	}
-	_, err = f.client.Answer(ctx, f.root, "demo", "d1a2b3c4", "approve", "!actor-mismatch", "hub:renato")
+	_, err = f.client.Answer(ctx, f.root, "demo", "d1a2b3c4", "approve", "!actor-mismatch", "hub:tester")
 	if !IsHumanRefusal(err) || IsNeedsNote(err) {
 		t.Fatalf("actor mismatch misclassified: %v", err)
 	}

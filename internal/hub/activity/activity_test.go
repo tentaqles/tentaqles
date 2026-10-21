@@ -10,10 +10,10 @@ import (
 func TestAppendAndReadSkipOldAndBadLines(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "acme", "activity.jsonl")
-	if err := Append(p, Entry{TS: "2026-01-01T00:00:00Z", Workspace: "acme", Actor: "renato", Verb: VerbCardCreate}); err != nil {
+	if err := Append(p, Entry{TS: "2026-01-01T00:00:00Z", Workspace: "acme", Actor: "tester", Verb: VerbCardCreate}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Append(p, Entry{Workspace: "acme", Actor: "renato", Verb: VerbCardMove, CardID: "c-abcdefghijkl", Data: map[string]any{"from": "backlog", "to": "review"}}); err != nil {
+	if err := Append(p, Entry{Workspace: "acme", Actor: "tester", Verb: VerbCardMove, CardID: "c-abcdefghijkl", Data: map[string]any{"from": "backlog", "to": "review"}}); err != nil {
 		t.Fatal(err)
 	}
 	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o600)

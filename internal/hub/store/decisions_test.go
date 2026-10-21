@@ -10,7 +10,7 @@ import (
 func TestUpsertDecisionMirrorsGateRecords(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	d := Decision{ID: "d1a2b3c4", CardID: c.ID, RunID: "r-x", Slug: "demo", Kind: KindPlanApproval,
 		Text: "approve? reply to ana@example.com", Options: []string{"approve", "edit", "stop"}, Status: DecisionPending, AskedAt: "2026-10-21T10:00:00Z"}
 	res, err := s.UpsertDecision(d)
@@ -58,22 +58,22 @@ func TestUpsertDecisionMirrorsGateRecords(t *testing.T) {
 func TestHubOwnedDecisions(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	d, err := s.AskHub(c.ID, "r-x", "demo", "The run was refused Bash(npm test). Allow it for one round?", []string{"allow-once", "stop"}, map[string]any{"tool": "Bash(npm test)"})
 	if err != nil || !ValidID("d", d.ID) || !d.HubOwned() || d.Kind != KindPermission {
 		t.Fatalf("%+v %v", d, err)
 	}
-	if _, err := s.AnswerHub(d.ID, "approve", "", "renato"); err == nil {
+	if _, err := s.AnswerHub(d.ID, "approve", "", "tester"); err == nil {
 		t.Fatal("a choice outside the options is refused")
 	}
-	got, err := s.AnswerHub(d.ID, "allow-once", "", "renato")
+	got, err := s.AnswerHub(d.ID, "allow-once", "", "tester")
 	if err != nil || got.Status != DecisionAnswered || got.Data["tool"] != "Bash(npm test)" {
 		t.Fatalf("%+v %v", got, err)
 	}
-	if _, err := s.AnswerHub(d.ID, "stop", "", "renato"); err == nil {
+	if _, err := s.AnswerHub(d.ID, "stop", "", "tester"); err == nil {
 		t.Fatal("answering twice is refused")
 	}
-	if _, err := s.AnswerHub("d1a2b3c4", "x", "", "renato"); err == nil {
+	if _, err := s.AnswerHub("d1a2b3c4", "x", "", "tester"); err == nil {
 		t.Fatal("a gate decision cannot be answered as a hub decision")
 	}
 	pend, _ := s.PendingDecisions()
@@ -83,7 +83,7 @@ func TestHubOwnedDecisions(t *testing.T) {
 }
 
 func TestActorKind(t *testing.T) {
-	for in, want := range map[string]string{"hub:renato": "hub", "terminal": "terminal", "renato": "other", "": "other"} {
+	for in, want := range map[string]string{"hub:tester": "hub", "terminal": "terminal", "tester": "other", "": "other"} {
 		if got := ActorKind(in); got != want {
 			t.Fatalf("%q: %q", in, got)
 		}
@@ -93,7 +93,7 @@ func TestActorKind(t *testing.T) {
 func TestDecisionDataAndChoiceMasked(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	tok := "ghp_" + strings.Repeat("a1B2", 9) // tq:allow-secret
 	d, err := s.AskHub(c.ID, "r-x", "demo", "allow?", []string{"allow-once", "stop"}, map[string]any{"tool": "Bash(curl -H " + tok + ")"})
 	if err != nil {
@@ -102,7 +102,7 @@ func TestDecisionDataAndChoiceMasked(t *testing.T) {
 	if strings.Contains(jsonText(d.Data), tok) {
 		t.Fatalf("data not masked: %v", d.Data)
 	}
-	got, err := s.AnswerHub(d.ID, "allow-once", "note "+tok, "renato")
+	got, err := s.AnswerHub(d.ID, "allow-once", "note "+tok, "tester")
 	if err != nil || strings.Contains(got.Note, tok) {
 		t.Fatalf("note not masked: %+v %v", got, err)
 	}
@@ -111,7 +111,7 @@ func TestDecisionDataAndChoiceMasked(t *testing.T) {
 func TestMirroredAnswerMasked(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	tok := "ghp_" + strings.Repeat("a1B2", 9) // tq:allow-secret
 	s.UpsertDecision(Decision{ID: "d9", CardID: c.ID, Kind: KindQuestion, Text: "q", Status: DecisionPending})
 	s.UpsertDecision(Decision{ID: "d9", CardID: c.ID, Kind: KindQuestion, Status: DecisionAnswered, Choice: "x " + tok, Note: "n " + tok, Actor: "terminal"})

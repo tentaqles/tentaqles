@@ -10,7 +10,7 @@ func TestCheckoutIsAtomicAcrossConnections(t *testing.T) {
 	isolate(t)
 	s1 := mustOpen(t, "acme")
 	s2 := mustOpen(t, "acme") // a second process: its own connection pool on the same file
-	c, _ := s1.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s1.AddCard(NewCard{Title: "a"}, "tester")
 	var wins int32
 	var winner atomic.Value
 	var wg sync.WaitGroup

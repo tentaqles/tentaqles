@@ -197,6 +197,10 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 		Short: "Serve the board on 127.0.0.1:7470 for this workspace, or every trusted one with --all",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			// An agent must never be handed the LAN token: refuse before anything starts.
+			if bind != "" && !isLoopback(bind) && hubAgent() {
+				return fmt.Errorf("refusing --bind %s from an agent session: a non-loopback hub needs a token an agent must never see; run tq hub serve --bind in your own terminal", bind)
+			}
 			cfg, err := registry.Load()
 			if err != nil {
 				return err

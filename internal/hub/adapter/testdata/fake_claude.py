@@ -52,6 +52,8 @@ with open(script["argv_log"], "a", encoding="utf-8") as fh:
         "build_token": "TQ_BUILD_TOKEN" in os.environ,
         "hub_task": os.environ.get("TQ_HUB_TASK"),
         "ws": os.environ.get("TQ_WS"),
+        "gh_config_dir": os.environ.get("GH_CONFIG_DIR"),
+        "claude_config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
         "prompt": prompt,
         "allowed_tools": allowed,
     }) + "\n")

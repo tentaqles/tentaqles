@@ -387,3 +387,25 @@ func TestRunHTTPStopsInOrder(t *testing.T) {
 		})
 	}
 }
+
+// TestServeRefusesALANBindFromAnAgent: an agent session is never handed the LAN token, so it
+// cannot start a non-loopback hub; a loopback bind is refused for nothing but the usual reasons.
+func TestServeRefusesALANBindFromAnAgent(t *testing.T) {
+	hubWS(t)
+	t.Setenv("TENTAQLES_HEADLESS", "1")
+	for _, bind := range []string{"0.0.0.0", "192.168.1.20"} {
+		_, out, errOut, err := runTQ(t, "hub", "serve", "--bind", bind, "--port", itoa(freePort(t)), "--no-notify")
+		if err == nil || !strings.Contains(err.Error(), "agent session") || !strings.Contains(err.Error(), "--bind") {
+			t.Fatalf("%s: %v", bind, err)
+		}
+		if strings.Contains(out+errOut, "token") && !strings.Contains(err.Error(), "token") {
+			t.Fatalf("%s: printed %q %q", bind, out, errOut)
+		}
+	}
+	if _, err := os.Stat(store.DBPath("acme")); !os.IsNotExist(err) {
+		t.Fatal("the refused hub opened the store")
+	}
+	if infos := serveinfo.ReadAll(); len(infos) != 0 {
+		t.Fatalf("no serve record: %+v", infos)
+	}
+}

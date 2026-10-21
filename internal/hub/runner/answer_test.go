@@ -116,7 +116,7 @@ func TestApproveFinishesMovesDoneAndCommentsTheParent(t *testing.T) {
 	h := newHarness(t)
 	parent := h.card("project")
 	h.ad.steps = nil
-	child, _ := h.st.AddCard(store.NewCard{Title: "Export invoices", ParentID: parent.ID, ProjectDir: "apps/billing", Tags: []string{store.TagAgentReady}}, "renato")
+	child, _ := h.st.AddCard(store.NewCard{Title: "Export invoices", ParentID: parent.ID, ProjectDir: "apps/billing", Tags: []string{store.TagAgentReady}}, "tester")
 	st := loadState(t, "waiting")
 	st.PendingDecisions[0].Kind = store.KindResult
 	st.PendingDecisions[0].Options = []string{"approve", "request-changes", "stop"}
@@ -235,7 +235,7 @@ func TestRaiseAndResumeStartsANewRun(t *testing.T) {
 func TestFinishApprovedOnlyOnce(t *testing.T) {
 	h := newHarness(t)
 	parent := h.card("project")
-	child, _ := h.st.AddCard(store.NewCard{Title: "Export invoices", ParentID: parent.ID, ProjectDir: "apps/billing", Tags: []string{store.TagAgentReady}}, "renato")
+	child, _ := h.st.AddCard(store.NewCard{Title: "Export invoices", ParentID: parent.ID, ProjectDir: "apps/billing", Tags: []string{store.TagAgentReady}}, "tester")
 	r := h.enqueue(child)
 	approved := 0
 	h.svc.OnApprove = func(store.Card, store.Run) { approved++ }

@@ -14,10 +14,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/hub/serveinfo"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 	"github.com/tentaqles/tentaqles/internal/hub/web"
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/testutil"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // hubWS makes a trusted workspace "acme", isolates TQ_HOME, HOME and USERPROFILE, clears the agent
@@ -341,5 +345,116 @@ func TestOpenBrowserOnlyLoopbackHTTP(t *testing.T) {
 		if err := openBrowser(u); err == nil || !strings.Contains(err.Error(), "refusing to open") {
 			t.Errorf("openBrowser(%q): %v", u, err)
 		}
+	}
+}
+
+// TestHubRunsGetOnlyTheirWorkspaceEnvironment: a hub started from workspace acme's shell (which
+// set GH_CONFIG_DIR) launches globex's runs without acme's GH_CONFIG_DIR (spec §1, §5).
+func TestHubRunsGetOnlyTheirWorkspaceEnvironment(t *testing.T) {
+	py := testutil.Python(t)
+	fake, _ := filepath.Abs(filepath.Join("..", "hub", "adapter", "testdata", "fake_claude.py")) // before hubWS changes the cwd
+	// acme: identities { gh }
+	root := hubWS(t)
+	globex := filepath.Join(filepath.Dir(root), "globex")
+	os.MkdirAll(filepath.Join(globex, "apps", "web"), 0o755)
+	mp := filepath.Join(globex, manifest.FileName)
+	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: globex\nidentities: { claude: {} }\n"), 0o600)
+	h, err := trust.HashFile(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := trust.Allow(h); err != nil {
+		t.Fatal(err)
+	}
+	// acme's shell hook state: GH_CONFIG_DIR was unset before acme set it.
+	acmeGH := filepath.Join(os.Getenv("TQ_HOME"), "identities", "acme", "gh")
+	t.Setenv("GH_CONFIG_DIR", acmeGH)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(os.Getenv("TQ_HOME"), "identities", "acme", "claude"))
+	t.Setenv(envplan.StateVar, envplan.State{WS: "acme", Prev: map[string]*string{"GH_CONFIG_DIR": nil, "CLAUDE_CONFIG_DIR": nil}}.Encode())
+	t.Setenv("TQ_WS", "acme")
+	dir := t.TempDir()
+	script, _ := json.Marshal(map[string]any{"counter": filepath.Join(dir, "n"), "argv_log": filepath.Join(dir, "argv.jsonl"),
+		"rounds": []map[string]any{{"result": "I looked around.", "cost": 0.1}}})
+	os.WriteFile(filepath.Join(dir, "script.json"), script, 0o600)
+	t.Setenv("FAKE_CLAUDE_SCRIPT", filepath.Join(dir, "script.json"))
+	argv, _ := json.Marshal(append(py, fake))
+	t.Setenv("TQ_HUB_CLAUDE_CMD", string(argv))
+	t.Chdir(globex)
+	c := addCard(t, "x", "--tag", "agent-ready", "--project", "apps/web")
+	if _, _, _, err := runTQ(t, "hub", "move", c.ID, "in progress"); err != nil {
+		t.Fatal(err)
+	}
+	if _, out, errOut, err := runTQ(t, "hub", "serve", "--drain", "--no-notify"); err != nil {
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "argv.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var call map[string]any
+	if err := json.Unmarshal(bytes.SplitN(raw, []byte("\n"), 2)[0], &call); err != nil {
+		t.Fatalf("argv log %q: %v", raw, err)
+	}
+	if call["gh_config_dir"] != nil {
+		t.Fatalf("globex's run got acme's GH_CONFIG_DIR: %v", call["gh_config_dir"])
+	}
+	if call["ws"] != "globex" {
+		t.Fatalf("TQ_WS %v", call["ws"])
+	}
+	if cd, _ := call["claude_config_dir"].(string); !strings.Contains(cd, filepath.Join("identities", "globex", "claude")) {
+		t.Fatalf("CLAUDE_CONFIG_DIR %q is not globex's", cd)
+	}
+}
+
+// TestHubAgentAddRules: an agent adds only into planning lanes and never carries a budget in the
+// card body's front matter.
+func TestHubAgentAddRules(t *testing.T) {
+	hubWS(t)
+	t.Setenv("TENTAQLES_HEADLESS", "1")
+	for _, args := range [][]string{
+		{"hub", "add", "x", "--lane", "done"},
+		{"hub", "add", "x", "--lane", "in progress", "--tag", "agent-ready"},
+		{"hub", "add", "x", "--body", "---\nbudget: rounds=999\n---\nDo it."},
+	} {
+		if _, _, _, err := runTQ(t, args...); err == nil || !strings.Contains(err.Error(), "human-only") {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	if c := addCard(t, "planned", "--lane", "todo"); c.Lane != "todo" {
+		t.Fatalf("%+v", c)
+	}
+	st, _ := store.OpenExisting("acme", []string{"all"})
+	defer st.Close()
+	if cs, _ := st.ListCards(store.CardFilter{}); len(cs) != 1 {
+		t.Fatalf("only the todo card is stored: %+v", cs)
+	}
+}
+
+// TestHubAgentSignals: each agent marker alone makes the CLI an agent; none of them, a human.
+func TestHubAgentSignals(t *testing.T) {
+	markers := []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK"}
+	for _, tc := range []struct {
+		name, key, val string
+		want           bool
+	}{
+		{"none", "", "", false},
+		{"headless", "TENTAQLES_HEADLESS", "1", true},
+		{"headless other value", "TENTAQLES_HEADLESS", "0", false},
+		{"plugin root", "CLAUDE_PLUGIN_ROOT", filepath.Join("x", "plugin"), true},
+		{"claudecode", "CLAUDECODE", "1", true},
+		{"hub task", "TQ_HUB_TASK", `{"hub":"c-abcdefghijkl","workspace":"acme","kind":"feature","external":null}`, true},
+		{"blank hub task", "TQ_HUB_TASK", "  ", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range markers {
+				unsetenv(t, k)
+			}
+			if tc.key != "" {
+				t.Setenv(tc.key, tc.val)
+			}
+			if got := hubAgent(); got != tc.want {
+				t.Fatalf("hubAgent() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

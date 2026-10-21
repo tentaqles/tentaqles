@@ -4,9 +4,9 @@
     {
       "action": "answer",
       "slug": "demo",
-      "actor": "hub:renato",
-      "message": "[\"hub\",\"answer\",\"demo\",\"hub:renato\"]",
-      "mac": "84d6304294fd9b2090ca84890e4f08b31e5f1d35dfa894795fc8e136738605a4"
+      "actor": "hub:tester",
+      "message": "[\"hub\",\"answer\",\"demo\",\"hub:tester\"]",
+      "mac": "5419da1c6379943e96d892a23cd8b267ad7f1c71a49e801352f38cad3a23174f"
     },
     {
       "action": "answer",
@@ -46,9 +46,9 @@
     {
       "action": "approve",
       "slug": "demo",
-      "actor": "hub:renato",
-      "message": "[\"hub\",\"approve\",\"demo\",\"hub:renato\"]",
-      "mac": "8a425d16e832eab491b95ae21537ed784066f923fe40735145df01d804b228cb"
+      "actor": "hub:tester",
+      "message": "[\"hub\",\"approve\",\"demo\",\"hub:tester\"]",
+      "mac": "8b638d9ea89f1e3b66a78f98ab39d22abbd638ff123ee3a1406a0ea948b7ab54"
     }
   ]
 }

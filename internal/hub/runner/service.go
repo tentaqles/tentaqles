@@ -199,11 +199,45 @@ func (s *Service) Add(ctx context.Context, nc store.NewCard, budget *store.Budge
 		}
 		nc.Body = store.WithBudgetFrontMatter(nc.Body, *budget)
 	}
+	agent := IsAgent(ctx)
+	lane, err := s.addLane(nc.Lane)
+	if err != nil {
+		return store.Card{}, err
+	}
+	// An agent only files planning work: no budget (by argument or front matter), no card
+	// created straight into an active, review or done lane (spec §15).
+	if agent {
+		if _, ok := store.FrontMatter(nc.Body)["budget"]; ok {
+			return store.Card{}, ErrHumanOnly
+		}
+		if !agentLane(lane.Kind) {
+			return store.Card{}, ErrHumanOnly
+		}
+	}
 	actor := s.human()
-	if IsAgent(ctx) {
+	if agent {
 		actor = "agent"
 	}
-	return s.st.AddCard(nc, actor)
+	c, err := s.st.AddCard(nc, actor)
+	if err != nil {
+		return c, err
+	}
+	// Created straight into an active lane is entering it (spec 8.1).
+	if !agent && lane.Kind == store.LaneActive && c.HasTag(store.TagAgentReady) {
+		if _, _, err := s.Enqueue(ctx, c.ID, "added to "+lane.Name); err != nil && !errors.Is(err, ErrLocked) {
+			return c, err
+		}
+		return s.st.Card(c.ID)
+	}
+	return c, nil
+}
+
+// addLane is the lane a new card lands in: the named one, else the first backlog lane.
+func (s *Service) addLane(name string) (store.Lane, error) {
+	if strings.TrimSpace(name) == "" {
+		return s.st.FirstLane(store.LaneBacklog)
+	}
+	return s.st.Lane(name)
 }
 
 func (s *Service) view(c store.Card) (CardView, error) {

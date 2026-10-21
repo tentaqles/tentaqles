@@ -110,6 +110,9 @@ func TestAPIAgentHeaderRefusesHumanOnly(t *testing.T) {
 	if code != http.StatusForbidden || m["code"] != "human_only" || len(e.gate.answers) != 0 {
 		t.Fatalf("%d %v", code, m)
 	}
+	if d, err := svc.Store().Decision("d1a2b3c4"); err != nil || d.Status != store.DecisionPending {
+		t.Fatalf("the decision stays pending: %+v %v", d, err)
+	}
 	code, m, _ = apiDo(t, ts.URL, "POST", "/api/cards/"+c.ID+"/comments?ws=acme", map[string]any{"body": "PR: https://github.com/a/b/pull/1"}, agent)
 	if code != 200 || m["author_kind"] != store.AuthorAgent {
 		t.Fatalf("%d %v", code, m)
@@ -118,6 +121,29 @@ func TestAPIAgentHeaderRefusesHumanOnly(t *testing.T) {
 		t.Fatalf("agent → done: %d %v", code, m)
 	}
 	_ = runner.ErrHumanOnly
+}
+
+// TestAPIAgentAddRules: over the API an agent cannot set a budget through front matter or add a
+// card outside the planning lanes.
+func TestAPIAgentAddRules(t *testing.T) {
+	e := newEnv(t, "acme")
+	ts := e.server(Options{LocalKey: "lk"})
+	agent := map[string]string{HeaderAgent: "1"}
+	for _, nc := range []store.NewCard{
+		{Title: "x", Body: "---\nbudget: rounds=999\n---"},
+		{Title: "x", Lane: "done"},
+		{Title: "x", Lane: "in progress", Tags: []string{store.TagAgentReady}},
+	} {
+		if code, m, raw := apiDo(t, ts.URL, "POST", "/api/cards?ws=acme", map[string]any{"card": nc}, agent); code != http.StatusForbidden || m["code"] != "human_only" {
+			t.Fatalf("%+v: %d %s", nc, code, raw)
+		}
+	}
+	if code, m, raw := apiDo(t, ts.URL, "POST", "/api/cards?ws=acme", map[string]any{"card": store.NewCard{Title: "y", Lane: "todo"}}, agent); code != 200 || m["lane"] != "todo" {
+		t.Fatalf("%d %s", code, raw)
+	}
+	if cs, _ := e.svcs["acme"].Store().ListCards(store.CardFilter{}); len(cs) != 1 {
+		t.Fatalf("only the todo card is stored: %+v", cs)
+	}
 }
 
 type failingAnswerGate struct{ *webGate }

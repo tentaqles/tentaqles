@@ -231,7 +231,7 @@ func TestRelocateTargetMustStayInTheWorkspace(t *testing.T) {
 			target = strings.ToUpper(sib[:1]) + strings.ToLower(sib[1:]) // case does not matter on Windows
 		}
 		h.ad.steps = []step{result("TQ_HUB_RELOCATE " + target + " demo")}
-		c, err := h.st.AddCard(store.NewCard{Title: "Root project", Kind: "feature", Tags: []string{store.TagAgentReady}}, "renato")
+		c, err := h.st.AddCard(store.NewCard{Title: "Root project", Kind: "feature", Tags: []string{store.TagAgentReady}}, "tester")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -335,7 +335,7 @@ func TestSlugIsDiscoveredFromTheTaskBlock(t *testing.T) {
 func TestWaitingOnAResultMovesTheCardToReview(t *testing.T) {
 	h := newHarness(t)
 	c := h.card("feature", store.TagAgentReady)
-	h.st.MoveCard(c.ID, "in progress", "renato")
+	h.st.MoveCard(c.ID, "in progress", "tester")
 	st := loadState(t, "waiting")
 	st.PendingDecisions[0].Kind = "result"
 	st.PendingDecisions[0].Options = []string{"approve", "request-changes", "stop"}
