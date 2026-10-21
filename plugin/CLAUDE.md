@@ -25,9 +25,11 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
   jev-memory-gate.py    Detached worker for the shadow Jev memory gates (tentaqles/memory/jev_gate.py)
-skills/                 32 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
-agents/                 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer)
-tentaqles/workflow/     stdlib-only: build gate (gate.py), overnight loop (loop.py, loopguard.py)
+skills/                 38 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
+agents/                 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer, spec-critic [read-only], arbiter)
+templates/process/      process templates (PRD, ADR, spec slice, fix spec, LEARNINGS, project CLAUDE.md, review contract)
+tentaqles/workflow/     stdlib-only: build gate (gate.py), overnight loop (loop.py, loopguard.py),
+                        project.py (tq-project config block), prd.py (PRD planning-ready check)
 hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)
 .claude-plugin/         Plugin manifest (plugin.json)
 tests/                  pytest suite

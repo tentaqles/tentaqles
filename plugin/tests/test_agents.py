@@ -51,3 +51,8 @@ def test_planner_knows_the_workflow_fields() -> None:
     for token in ('"workflow"', '"hotfix"', '"spec"'):
         assert token in body
     assert re.search(r"hotfix.*n/a", body, flags=re.DOTALL)
+
+
+def test_planner_documents_the_runnable_field() -> None:
+    _, body = _fm("build-planner")
+    assert '"runnable": true' in body and "commands.run" in body

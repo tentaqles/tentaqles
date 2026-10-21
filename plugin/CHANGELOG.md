@@ -2,6 +2,60 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Development process spine.** New skills `prd`, `kickoff`, `feature`, `fix`,
+  `direction` and `dod`; agents `spec-critic` and `arbiter`; process templates
+  under `templates/process/` (PRD, ADR, spec slice, fix spec, LEARNINGS,
+  project CLAUDE.md scaffold, review contract).
+  - `/tentaqles:kickoff` is strict: it needs a planning-ready PRD (it runs
+    `prd` otherwise). `/tentaqles:feature` continues on a PRD that is not
+    planning-ready, adds its own `### FR-nn` with binary checks, and settles
+    only the `NEEDS-DECISION` items that touch it. `/tentaqles:fix` is
+    reproduce-first and locks the regression test before any fix.
+  - The skills never commit on `main`/`master`: they open or switch to a
+    `feat/<slug>` branch (or the build worktree) first.
+  - **Review crew with recorded verdicts.** `build-gate record-review` stores
+    each reviewer verdict against the tree hash; a review pass is refused
+    without a `build-critic` PASS at the current tree. A BLOCKED verdict is
+    settled by a human with `build-gate judge` (human-only).
+  - **Definition of done.** `build-gate dod` runs the project commands frozen
+    at approval and checks locked tests, checkpoint and reviewer records and
+    the obligations the diff created (ADR, privacy record, migration plan,
+    changelog). The Stop hook requires a fresh DoD for `feature`, `fix` and
+    `kickoff` plans. `build-gate dod --override "<reason>"` is human-only: the
+    agent never runs it and the hook refuses it. A human override is kept
+    while the code is unchanged (logged as `dod-override-kept`) and dropped on
+    any code change; overrides are logged to `docs/LEARNINGS.md` and counted
+    by `tq insights`.
+  - **Hub-ready interfaces.** Decision records (`build-gate ask` /
+    `build-gate answer`, stored in `decisions.jsonl`), hub actor tokens
+    (`build-gate token`, HMAC with the gate key; human-only) and
+    `build-gate state <slug> --json` (includes `dod_fresh` and answered
+    decisions). Headless mode (`TENTAQLES_HEADLESS=1` or `--headless`) never
+    calls `AskUserQuestion`: each human stop becomes a decision record and the
+    turn ends.
+  - While a build is active, the gate hook refuses an agent shell command that
+    imports or references the gate module, so human-only subcommands cannot be
+    reached around the CLI.
+  - `tq insights` gains a Process section from
+    `$TQ_HOME/build-gate/events.jsonl`. SessionStart points at the PRD and
+    counts open `NEEDS-DECISION` items. `add-project` scaffolds the fixed
+    `CLAUDE.md` sections; `ship` quotes the DoD record (check id, status and
+    the first detail line only, reading `dod_fresh` from `build-gate state`
+    and re-running the DoD only when stale) and flags diffs over ~400 lines.
+
+### Changed
+
+- `build-critic` returns the answer-key grammar (`RESULT`, `BUILT-BY-ME`,
+  `F`/`U` rows) instead of `VERDICT`. Plans gain top-level `workflow`,
+  `hotfix` and `spec` fields; `review: n/a` is allowed only for hotfix plans.
+  `build-planner` documents a per-checkpoint `"runnable": true` field, set
+  when the checkpoint produces something the project's `commands.run` can
+  start, so the build crew can add the `breaker` reviewer.
+
 ## [0.11.1] — 2026-10-20
 
 ### Added
