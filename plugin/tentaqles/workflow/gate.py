@@ -197,7 +197,7 @@ def log_event(root: Path, kind: str, slug: str, **fields) -> None:
     try:
         plan = load_plan(root, slug) or {}
         row = {"ts": now_iso(), "kind": kind, "slug": slug, "project": Path(root).name,
-               "workflow": plan.get("workflow") or "build"}
+               "workflow": plan.get("workflow") if plan.get("workflow") in WORKFLOWS else "build"}
         row.update({k: v for k, v in fields.items() if v is not None})
         append_jsonl(events_path(), row)  # creates the parent directory
     except Exception:
@@ -432,20 +432,21 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
             raise TypeError
     except (ValueError, KeyError, TypeError):
         return  # not a valid plan yet; the planner validates its own JSON
-    hotfix = bool(doc.get("hotfix")) if isinstance(doc, dict) else False
+    # Hotfix is what the human approved, never what the plan under edit claims.
+    approved = load_approved(root, slug) or {} if check_evidence else None
+    hotfix = bool(approved) and approved.get("hotfix") is True
     old: dict = {}
     try:
         old = {c["id"]: c for c in json.loads(old_text)["checkpoints"]}
     except (ValueError, KeyError, TypeError):
         pass
-    approved = None
     for cp in new:
         if not isinstance(cp, dict):
             continue
         cid = cp.get("id")
         g = {name: gate(cp, name) for name in GATES}
-        if g["review"] == "n/a" and not hotfix:
-            raise Block(f"#{cid}: review 'n/a' is only allowed when the plan has \"hotfix\": true (a hotfix skips the critic, never the test).")
+        if check_evidence and g["review"] == "n/a" and not hotfix:
+            raise Block(f"#{cid}: review 'n/a' is only allowed when the human approved the plan as a \"hotfix\": true plan (a hotfix skips the critic, never the test).")
         if g["review"] == "passed" and g["behavior"] != "passed":
             raise Block(f"#{cid}: review can't pass before behavior has passed.")
         if cp.get("status") == "passed" and not all(v in OK_STATES for v in g.values()):
@@ -463,8 +464,6 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
             rising.append("status")
         if not rising or not check_evidence:
             continue
-        if approved is None:
-            approved = load_approved(root, slug) or {}
         ok, why = checkpoint_approved(approved, cp)
         if not ok:
             raise Block(f"#{cid}: {why}. The human approves in their own terminal: `build-gate approve {slug}`.")
@@ -889,6 +888,8 @@ def cmd_approve(root: Path, slug: str) -> str:
         "fingerprints": fingerprints,
         "locked_tests": prev.get("locked_tests", {}),
         "tests_locked": prev.get("tests_locked", {}),
+        "workflow": plan.get("workflow") if plan.get("workflow") in WORKFLOWS else "build",
+        "hotfix": plan.get("hotfix") is True,
     }
     save_approved(root, slug, approved)
     sess = load_session(root, slug)

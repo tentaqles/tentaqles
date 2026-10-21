@@ -718,6 +718,7 @@ def test_review_na_only_for_hotfix_plans(repo):
     save_plan(repo, {**PLAN, "workflow": "fix", "hotfix": True})
     gate.cmd_approve(repo, "demo")
     gate.cmd_verify(repo, "demo", 2)
+    assert gate.load_approved(repo, "demo")["hotfix"] is True
     assert hook(repo, write(plan_file(repo), {**na, "workflow": "fix", "hotfix": True}))[0] == 0
 
 
@@ -739,3 +740,27 @@ def test_finish_logs_a_finish_event(repo, tq_home):
     gate.cmd_finish(repo, "demo")
     lines = [json.loads(l) for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [l["kind"] for l in lines] == ["finish"] and lines[0]["slug"] == "demo"
+
+
+def test_agent_cannot_flip_hotfix_without_reapproval(repo):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    na = with_gate(PLAN, 2, behavior="passed", review="n/a", status="passed")
+    code, _, err = hook(repo, write(plan_file(repo), {**na, "hotfix": True}))
+    assert code == 2 and "hotfix" in err
+    assert gate.load_approved(repo, "demo")["hotfix"] is False
+
+
+def test_non_hotfix_na_review_does_not_block_stop(repo):
+    own(repo)
+    save_plan(repo, with_gate(PLAN, 2, behavior="failed", review="n/a"))
+    code, _, err = stop(repo)
+    assert code == 2 and "inconsistent" not in err  # blocked for the failed gate, not for the n/a
+
+
+def test_event_workflow_is_sanitised(repo, tq_home):
+    save_plan(repo, {**PLAN, "workflow": "../x"})
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    row = json.loads((tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert row["workflow"] == "build"
