@@ -2,7 +2,8 @@
 // card numbers, IBAN) and secrets in text, by data class. Detection is
 // heuristic but validated where a checksum exists (CPF and CNPJ check digits,
 // Luhn for cards, mod-97 for IBAN), so plain numbers of the same length are
-// left alone. Values are never logged; Count reports names only.
+// left alone. Values are never logged; Count reports names only. An unknown
+// class name fails closed: it is treated as "all", never as no masking.
 package redact
 
 import (
@@ -189,6 +190,10 @@ func ParseClasses(csv string) ([]string, error) {
 	return out, nil
 }
 
+func allDetectors() []detector {
+	return append(append([]detector{}, byClass["pii"]...), byClass["financial"]...)
+}
+
 func detectors(classes []string) ([]detector, bool) {
 	var ds []detector
 	withSecrets := false
@@ -196,11 +201,15 @@ func detectors(classes []string) ([]detector, bool) {
 	for _, c := range classes {
 		switch c {
 		case "all":
-			return append(append([]detector{}, byClass["pii"]...), byClass["financial"]...), true
+			return allDetectors(), true
 		case "secrets":
 			withSecrets = true
 		case "sensitive", "children":
 			c = "pii"
+		case "pii", "financial":
+		default:
+			// Unknown class: fail closed, mask everything.
+			return allDetectors(), true
 		}
 		for _, d := range byClass[c] {
 			if !seen[d.name] {

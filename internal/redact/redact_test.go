@@ -100,3 +100,22 @@ func TestPhoneLeavesPlainDigitRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownClassFailsClosed(t *testing.T) {
+	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123"
+	got := Redact(text, []string{"bogus"})
+	if strings.Contains(got, "529.982") || strings.Contains(got, "ghp_abc") {
+		t.Fatalf("unknown class failed open: %q", got)
+	}
+	n := Count(text, []string{"bogus"})
+	if n["cpf"] != 1 || len(n) < 2 {
+		t.Fatalf("Count under unknown class: %v", n)
+	}
+	var buf bytes.Buffer
+	w := NewWriter(&buf, []string{"bogus"})
+	_, _ = w.Write([]byte("cpf 529.982.247-25\n"))
+	_ = w.Close()
+	if strings.Contains(buf.String(), "529.982") {
+		t.Fatalf("writer failed open: %q", buf.String())
+	}
+}
