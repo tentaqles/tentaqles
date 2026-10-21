@@ -82,6 +82,8 @@ Judge each row from the diff and the files it touches. Cite file:line. Rows
 that need a running system or a decision are `U` rows. Row ids are stable:
 reviewers copy them into their answers.
 
+Row sources cite ASVS 5.0 chapter numbers; the sections above use ASVS 4.0.
+
 | # | Check | Source |
 |---|---|---|
 | S1 | Every new or changed entry point checks authentication server-side; no trust in client-supplied identity (user id, role, tenant in a body or header) | ASVS 5.0 V6, V8; Top 10:2025 A01 |
