@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 AGENTS = Path(__file__).resolve().parents[1] / "agents"
-READ_ONLY = ["build-critic", "spec-critic", "arbiter"]
+READ_ONLY = ["build-critic", "spec-critic", "arbiter", "security-reviewer", "privacy-reviewer", "llm-security-reviewer"]
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"}
 
 
@@ -38,7 +38,7 @@ def test_reviewers_are_read_only(name: str) -> None:
     assert WRITE_TOOLS <= disallowed and "Agent" in disallowed
 
 
-@pytest.mark.parametrize("name", ["build-critic", "spec-critic"])
+@pytest.mark.parametrize("name", ["build-critic", "spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer"])
 def test_reviewers_return_the_contract(name: str) -> None:
     _, body = _fm(name)
     for token in ("RESULT: PASS | FAIL | BLOCKED", "BUILT-BY-ME:", "CANNOT JUDGE", "file:line"):
@@ -51,3 +51,25 @@ def test_planner_knows_the_workflow_fields() -> None:
     for token in ('"workflow"', '"hotfix"', '"spec"'):
         assert token in body
     assert re.search(r"hotfix.*n/a", body, flags=re.DOTALL)
+
+
+def test_breaker_requires_run_command_and_localhost() -> None:
+    fm, body = _fm("breaker")
+    tools = {t.strip() for t in fm["tools"].split(",")}
+    assert "Bash" in tools and "Edit" not in tools and "Write" not in tools
+    for token in (
+        "127.0.0.1", "localhost", "commands.run", "BLOCKED", "never edit source",
+        "third-party keys", "back up and restore", "--max-time", "stop the process",
+    ):
+        assert token in body, token
+    assert "RESULT: PASS | FAIL | BLOCKED" in body
+
+
+@pytest.mark.parametrize("name,ref", [
+    ("security-reviewer", "auth-security/references/asvs-checklist.md"),
+    ("privacy-reviewer", "privacy-review/references/checklist.md"),
+    ("llm-security-reviewer", "llm-security-review/references/checklist.md"),
+])
+def test_reviewers_name_their_checklist(name: str, ref: str) -> None:
+    _, body = _fm(name)
+    assert ref in body
