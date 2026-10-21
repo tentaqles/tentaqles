@@ -97,10 +97,11 @@ func (s *Service) Enqueue(ctx context.Context, cardID, reason string) (store.Run
 	return run, true, nil
 }
 
-// Tick starts due queued runs up to the workspace's concurrency limit, oldest first.
+// Tick polls waiting runs for answers given in the terminal, then starts due queued runs up to the workspace's concurrency limit, oldest first.
 func (s *Service) Tick(ctx context.Context) error {
 	s.tickMu.Lock()
 	defer s.tickMu.Unlock()
+	s.pollWaiting(ctx)
 	limit := s.st.Concurrency()
 	s.mu.Lock()
 	free := limit - len(s.flights)
