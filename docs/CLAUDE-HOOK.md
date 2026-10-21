@@ -313,7 +313,7 @@ Matchers (all regexes, case-insensitive; every one present must match):
 | `tq/cloud-delete`, `tq/iac-destroy` | ask | `az/aws/gcloud/doctl/databricks … delete/rm/purge/…`, `terraform/cdk/pulumi destroy` |
 | `tq/iac-apply` | ask | applying infrastructure to a live environment: `terraform/tofu apply`, `pulumi up`, `cdk/cdktf deploy`, `kubectl apply`, `helm install/upgrade`, `sam/serverless/sls deploy`, CloudFormation, Azure and Deployment Manager deployments (`--dry-run` exempt) |
 | `tq/remote-migration` | ask | running migrations (`prisma migrate deploy`, `alembic upgrade`, `flyway migrate`, `supabase db push`, `rails db:migrate`, `manage.py migrate`, …) against a connection that is not local; a command naming `localhost`, `127.0.0.1` or `--local` is exempt |
-| `tq/settings-widen` | deny | Edit/Write of Claude Code settings (`.claude/settings[.local].json`, `.claude.json`) that adds `Bash(*)`, `bypassPermissions`, `disableAllHooks: true`, empty `hooks`, or `skipDangerousModePermissionPrompt: true`; permission changes go through `tq settings render` and the manifest |
+| `tq/settings-widen` | deny | Edit/Write of Claude Code settings (`.claude/settings[.local].json`, `.claude.json`, or a bare `settings[.local].json`) that adds `Bash(*)`, `bypassPermissions`, `disableAllHooks: true`, empty `hooks`, or `skipDangerousModePermissionPrompt: true`; permission changes go through `tq settings render` and the manifest |
 | `tq/settings-shell-write` | deny | writing `.claude/settings[.local].json`, `.claude/tq-rules.yaml` or `.claude.json` from the shell (redirects, `tee`, `sed -i`, `cp`/`mv` onto them) |
 | `tq/registry-write` | ask | `reg add/delete`, registry writes from PowerShell |
 | `tq/sql-destructive-shell` | ask | DROP/TRUNCATE/ALTER/DELETE/UPDATE/GRANT through psql, sqlcmd, snowsql, supabase db, bq, … |
@@ -341,9 +341,10 @@ the manifest):
   push would publish; `tq/text-pii` scans commit and tag messages and `gh pr`,
   `issue` and `release` text, including `--body-file`. The reason lists
   `file:line (detector)` and never the value. Checksum-validated detectors
-  (CPF, CNPJ, card, IBAN) always run; e-mail and phone run when the manifest's
-  `data.classes` declares `pii`, `sensitive` or `children`, and `financial`
-  adds card, CNPJ and IBAN. A known-synthetic line carries `tq:allow-pii`, but
+  (the `checksummed` class: CPF, CNPJ, card, IBAN) always run; e-mail and
+  phone run only when the manifest's `data.classes` declares `pii`,
+  `sensitive` or `children`. Declaring `financial` adds no detector beyond
+  the checksummed ones. A known-synthetic line carries `tq:allow-pii`, but
   the marker only counts inside test and fixture directories (`tests/`,
   `fixtures/`, `seeds/`, `testdata/`, …) and never in published text. If the
   scan cannot finish (timeout, oversized push, unparseable quoting) the rule
@@ -351,12 +352,18 @@ the manifest):
   [Using classified data without printing it](#using-classified-data-without-printing-it).
 - `tq/pii-fixture-dump` (deny) — with a `data:` block in the manifest, a shell
   command that reads a classified path or table (`data.paths`) and writes into
-  `tests/`, `fixtures/` or `seeds/`. Fixtures must be synthetic.
+  `tests/`, `fixtures/` or `seeds/`. Fixtures must be synthetic. Its message
+  points to `docs/privacy.md`, the per-project record of classified data that
+  the development process's definition of done requires whenever
+  `classified_paths` change.
 - `tq/commit-message` (ask) — a `git commit` whose message (read from `-m`,
   `-F` or a heredoc) is not Conventional Commits: `type(scope): summary` with
   a known type, a summary of at most 100 characters, and a body when the
-  change is breaking (`!` or `BREAKING CHANGE`). Commands whose message tq
-  cannot read (editor, `--no-edit`, `--fixup`) are not checked.
+  change is breaking (`!` or `BREAKING CHANGE`). It also asks when it cannot
+  read the message safely: an unreadable or oversized (over 64 KiB) `-F` file,
+  or an unterminated quote. Commits with no readable message are skipped:
+  the editor, `--amend`, `-C`, `--squash`, `--fixup`, `--no-edit` without
+  `-m`/`-F`, `-F -`, and a message built by a shell substitution.
 - `tq/cross-client-mcp` (deny) — an MCP server that another client's
   bundle declares, and this workspace's bundle does not, is refused.
 
@@ -395,7 +402,9 @@ like the command it wraps.
 Reading, querying and processing personal data locally is allowed: Claude can
 read files, query tables and run scripts over data that holds personal
 information. The guards sit at the exits, where data would be recorded or
-published: commits, pushes, PR and issue text, memory and fixtures.
+published. tq guards commits, pushes, PR and issue text, and fixtures. The
+memory, vault and model exits are guarded by the Claude Code plugin (its PII
+redaction ships in plugin release 0.12.0), not by a tq rule.
 
 A client workspace declares what it handles in its manifest:
 
