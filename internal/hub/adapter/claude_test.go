@@ -71,7 +71,7 @@ func TestClaudeArgvAndPermissionWrapper(t *testing.T) {
 	isolate(t)
 	c := Claude{Bin: []string{"claude"}, Args: func(a []string) []string { return append([]string{"--permission-mode", "acceptEdits"}, a...) }}
 	got := c.Argv(RunRequest{Prompt: "/tentaqles:feature x --headless & echo pwned", SessionID: "s1", AllowedTools: []string{"Bash(npm test)", "Edit"}})
-	want := []string{"claude", "--permission-mode", "acceptEdits", "-p", "--output-format", "json", "--resume", "s1"}
+	want := []string{"claude", "--permission-mode", "acceptEdits", "-p", "--output-format", "json", "--resume=s1"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("argv\n got %q\nwant %q", got, want)
 	}
@@ -84,11 +84,29 @@ func TestClaudeArgvAndPermissionWrapper(t *testing.T) {
 	if !slices.Equal(plain, []string{"claude", "-p", "--output-format", "json"}) || slices.Contains(plain, "--dangerously-skip-permissions") {
 		t.Fatalf("plain argv %q", plain)
 	}
-	for _, bad := range []string{"s1 & calc", "a b", "x\ny", "s1\"", "%PATH%"} {
-		if slices.Contains(Claude{}.Argv(RunRequest{Prompt: "p", SessionID: bad}), "--resume") {
-			t.Fatalf("malformed session id %q reached argv", bad)
+	for _, bad := range []string{"s1 & calc", "a b", "x\ny", "s1\"", "%PATH%", "-x", "--dangerously-skip-permissions", "-p", ".hidden"} {
+		for _, a := range (Claude{}).Argv(RunRequest{Prompt: "p", SessionID: bad}) {
+			if strings.HasPrefix(a, "--resume") || (bad != "-p" && strings.Contains(a, bad)) {
+				t.Fatalf("malformed session id %q reached argv: %q", bad, a)
+			}
 		}
 	}
+	if n := countPrefix(Claude{}.Argv(RunRequest{Prompt: "p", SessionID: "s-1.a_b"}), "--resume"); n != 1 {
+		t.Fatalf("a valid id yields exactly one element, got %d", n)
+	}
+	if !slices.Contains(Claude{}.Argv(RunRequest{Prompt: "p", SessionID: "s-1.a_b"}), "--resume=s-1.a_b") {
+		t.Fatal("--resume=<id> is one token")
+	}
+}
+
+func countPrefix(argv []string, prefix string) int {
+	n := 0
+	for _, a := range argv {
+		if strings.HasPrefix(a, prefix) {
+			n++
+		}
+	}
+	return n
 }
 
 func TestClaudeMalformedSessionLogged(t *testing.T) {
@@ -97,7 +115,7 @@ func TestClaudeMalformedSessionLogged(t *testing.T) {
 	if !strings.Contains(log, "ignored malformed session id") {
 		t.Fatalf("log %q", log)
 	}
-	if argv, _ := f.calls(t)[0]["argv"].([]any); slices.Contains(argv, any("--resume")) {
+	if argv, _ := f.calls(t)[0]["argv"].([]any); slices.ContainsFunc(argv, func(a any) bool { s, _ := a.(string); return strings.HasPrefix(s, "--resume") }) {
 		t.Fatalf("argv %v", argv)
 	}
 }
@@ -123,6 +141,7 @@ func TestClaudePromptAndToolsRoundTripVerbatim(t *testing.T) {
 }
 
 func TestParseResultIsError(t *testing.T) {
+	isolate(t)
 	r := ParseResult([]byte(`{"type":"result","subtype":"success","is_error":true,"result":"x"}`))
 	if r.StopReason != "error" {
 		t.Fatalf("%+v", r)

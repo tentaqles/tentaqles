@@ -25,7 +25,7 @@ type Claude struct {
 	Grace time.Duration
 }
 
-var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // Argv is the command line. The prompt (stdin) and the allowed tools (a --settings file, see
 // Start) never travel on it: on Windows claude is a .cmd shim run through cmd.exe, whose
@@ -35,7 +35,8 @@ func (c Claude) Argv(req RunRequest) []string { return c.argv(req, "") }
 func (c Claude) argv(req RunRequest, settingsPath string) []string {
 	args := []string{"-p", "--output-format", "json"}
 	if sessionIDRe.MatchString(req.SessionID) {
-		args = append(args, "--resume", req.SessionID)
+		// one token: --resume takes an optional value, so a separate element could be read as a flag
+		args = append(args, "--resume="+req.SessionID)
 	}
 	if settingsPath != "" {
 		args = append(args, "--settings", settingsPath)
@@ -173,7 +174,7 @@ func ParseResult(out []byte) RunResult {
 	return res
 }
 
-// ToolSpec is the --allowedTools entry that allows exactly what was refused.
+// ToolSpec is the permissions.allow entry (see Start's --settings file) that allows exactly what was refused.
 func ToolSpec(d PermissionDenial) string {
 	if d.Tool == "Bash" {
 		if cmd, ok := d.Input["command"].(string); ok && strings.TrimSpace(cmd) != "" {
