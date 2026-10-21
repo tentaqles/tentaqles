@@ -1402,15 +1402,19 @@ def test_hub_answer_records_the_consequence_in_the_note(repo, monkeypatch):
     assert _dod_rec(repo)["override"] == "hub ok"
 
 
-def test_failed_override_is_recorded_but_exit_nonzero(repo, capsys):
+def test_failed_override_is_recorded_but_exit_nonzero(repo, capsys, monkeypatch):
     _dod_ready(repo)
     did = gate.cmd_ask(repo, "demo", "question", "override: x", ["override", "stop"]).split()[1]
     (repo / ".claude" / "build" / "demo" / "approved.json").unlink()  # cmd_dod: plan isn't approved
     code, msg = gate.answer_decision(repo, "demo", did, "override", "why", "renato")
-    assert code != 0 and "did NOT apply" in msg
+    assert code == 1 and "did NOT apply" in msg
     assert [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]["choice"] == "override"
+    # the CLI half: a confirmed human answer whose override fails exits 1, not 0 and not the refusal 2
+    monkeypatch.setattr(gate, "human_confirm", lambda *a, **k: True)
     did = gate.cmd_ask(repo, "demo", "question", "override: y", ["override", "stop"], cid=2).split()[1]
-    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "override", "--note", "why"]) in (0, 2)
+    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "override", "--note", "why"]) == 1
+    assert "did NOT apply" in capsys.readouterr().out
+    assert [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]["choice"] == "override"
 
 
 def test_kept_override_logs_an_event(repo, tq_home):
