@@ -13,9 +13,12 @@ did not read the code that implements an FR, you do not grade it: it goes under
 "Not verified".
 
 Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
-`$ARGUMENTS`, `AskUserQuestion` is never called. At a human stop, write the
-question with `build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
-(the `build-gate` prefix is in `skills/build/SKILL.md`) and end your turn.
+`$ARGUMENTS`, `AskUserQuestion` is never called. Direction has no build run of
+its own, so there is no slug to write a decision record under: report the verdict as your final output and end the turn (which `prd_exit` you got, what
+is missing, the next command such as `/tentaqles:prd`). Use
+`build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
+only when the caller passed the slug of an active build run; the `build-gate`
+prefix is in `skills/build/SKILL.md`.
 
 ## 1. Inputs
 
@@ -29,7 +32,7 @@ git -C "$root" log --oneline -30
 `prd_exit` is 0 when the PRD is planning-ready, 3 when it is not ready (audit
 anyway and say so in the verdict), 4 when there is no PRD. For 4, stop and
 point the user to `/tentaqles:prd` ("from existing code" variant); headless,
-write the question instead with `build-gate ask` and end the turn. Otherwise
+report that as the verdict and end the turn. Otherwise
 read `docs/prd.md` (section 3 goals, 3.2 non-goals, section 4 FRs with their
 acceptance checks, section 11 releases), `docs/adr/*.md` (accepted decisions)
 and `docs/specs/*.md`.

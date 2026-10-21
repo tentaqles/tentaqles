@@ -38,15 +38,14 @@ Below, `build-gate <cmd>` means that second line with `<cmd>`. Use the Bash tool
 | `privacy` | a `classified_paths` file changed and `docs/privacy.md` did not | run `/tentaqles:privacy-review`, update the record |
 | `migration` | migration files changed and the spec has no `## Migration plan` | add the section (expand/contract, backfill, rollback) to the spec slice |
 | `changelog` | the project keeps a changelog and it did not change | add the entry |
-| any item that cannot be fixed | only a human may waive it: `build-gate dod <slug> --override "<reason>"` (human runs it) | step 3 |
+| any item that cannot be fixed | only a human may waive it | step 3 (the human runs the override) |
 
-Re-run step 1 after each fix until the head line says PASS. Then the Stop hook
-lets the turn end and `/tentaqles:ship` quotes the record in the PR body.
+Re-run step 1 after each fix until the head line says PASS. The Stop hook blocks once while the definition of done is unproven; the next stop goes through, so
+the hook is no substitute for a PASS line. Once it says PASS, `/tentaqles:ship` quotes the record in the PR body.
 
 ## 3. Override (human only)
 
-Only a human waives an item, and only by running the override themselves. You
-never run `build-gate dod <slug> --override`; the hook refuses it to the agent
+Only a human waives an item, and only by running the override themselves. You never run `build-gate dod <slug> --override`; the hook refuses it to the agent
 with exit 2. If an item cannot be fixed:
 
 1. Stop. Tell the human the exact command to run in their own terminal, with

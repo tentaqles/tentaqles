@@ -57,7 +57,10 @@ def test_dod_skill_runs_the_gate_and_explains_override() -> None:
     assert SNIPPET in body and "build-gate.py" in body and "dod" in body
     assert "--override" in body and "LEARNINGS" in body
     assert "never" in body.lower() and "transcript" in body.lower()
-    assert "human runs it" in body and "--options override,stop" in body
+    assert "You never run `build-gate dod <slug> --override`" in body
+    assert '--kind question --text "override:' in body and "--options override,stop" in body
+    assert "the human runs the override" in body and "human runs it" not in body
+    assert "blocks once" in body
     assert "AskUserQuestion` is never called" in body and "build-gate state <slug> --json" in body
     assert 'dod <slug> --override "<their words' not in body.replace("<their reason>", "")
 
@@ -69,4 +72,6 @@ def test_direction_is_read_only_and_uses_the_scorecard() -> None:
         assert token in body, token
     for forbidden in ("git commit", "Edit", "Write("):
         assert forbidden not in body, forbidden
-    assert "build-gate ask" in body and "AskUserQuestion` is never called" in body
+    assert "AskUserQuestion` is never called" in body
+    assert "report the verdict as your final output and end the turn" in body
+    assert "only when the caller passed the slug of an active build run" in body
