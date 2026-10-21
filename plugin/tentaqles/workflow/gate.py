@@ -77,6 +77,10 @@ MAX_STOP_BLOCKS = 1  # block a stop once, then let it through
 RULE_ID_PREFIX = "tentaqles-build/"
 SETTINGS_TAG = "build-gate.py hook"
 HEARTBEAT = ".hook-seen"
+REVIEWERS = ("build-critic", "spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer", "breaker")
+RESULTS = ("PASS", "FAIL", "BLOCKED")
+WORKFLOWS = ("build", "feature", "fix", "kickoff")
+DOD_WORKFLOWS = ("feature", "fix", "kickoff")
 
 
 class Block(Exception):
@@ -184,6 +188,22 @@ def save_session(root: Path, slug: str, data: dict) -> None:
     write_json(state_dir(root, slug) / "session.json", sign(data))
 
 
+def events_path() -> Path:
+    return key_dir() / "events.jsonl"
+
+
+def log_event(root: Path, kind: str, slug: str, **fields) -> None:
+    """Aggregate-only process event for `tq insights`: never a file name or text."""
+    try:
+        plan = load_plan(root, slug) or {}
+        row = {"ts": now_iso(), "kind": kind, "slug": slug, "project": Path(root).name,
+               "workflow": plan.get("workflow") or "build"}
+        row.update({k: v for k, v in fields.items() if v is not None})
+        append_jsonl(events_path(), row)  # creates the parent directory
+    except Exception:
+        pass  # logging never blocks a gate
+
+
 def evidence(root: Path, slug: str) -> list[dict]:
     rows = []
     for line in read_text(state_dir(root, slug) / "evidence.jsonl").splitlines():
@@ -219,6 +239,66 @@ def checkpoint_approved(approved: dict | None, cp: dict) -> tuple[bool, str]:
 def latest_evidence(root: Path, slug: str, cid: int) -> dict | None:
     rows = [r for r in evidence(root, slug) if r.get("checkpoint") == cid]
     return rows[-1] if rows else None
+
+
+def reviews_path(root: Path, slug: str) -> Path:
+    return state_dir(root, slug) / "reviews.jsonl"
+
+
+def reviews_for(root: Path, slug: str, cid: int, tree: str | None) -> dict[str, dict]:
+    """Latest verified record per reviewer for checkpoint cid at this tree hash."""
+    out: dict[str, dict] = {}
+    for line in read_text(reviews_path(root, slug)).splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not verified(rec) or rec.get("checkpoint") != cid or rec.get("tree") != tree:
+            continue
+        out[rec.get("reviewer", "")] = rec
+    return out
+
+
+def _record_review(root: Path, slug: str, cid: int, reviewer: str, result: str, counts: dict, human: bool, note: str = "") -> str:
+    if reviewer not in REVIEWERS:
+        raise SystemExit(f"unknown reviewer '{reviewer}'. Use one of: {', '.join(REVIEWERS)}.")
+    if result not in RESULTS or (human and result == "BLOCKED"):
+        allowed = ("PASS, FAIL" if human else ", ".join(RESULTS))
+        raise SystemExit(f"result must be one of {allowed} (got '{result}').")
+    plan = load_plan(root, slug)
+    if plan is None or not any(c.get("id") == cid for c in plan["checkpoints"]):
+        raise SystemExit(f"checkpoint #{cid} doesn't exist in {PLAN_DIR}/{slug}.json.")
+    tree = tree_hash(root)
+    rec = {"checkpoint": cid, "reviewer": reviewer, "result": result, "tree": tree, "ts": now_iso(), "human": human}
+    for k in ("blockers", "majors", "minors", "unjudged"):
+        rec[k] = int(counts.get(k) or 0)
+    if note:
+        rec["note"] = redact(note)[:400]
+    append_jsonl(reviews_path(root, slug), sign(rec))
+    log_event(root, "judge" if human else "review", slug, checkpoint=cid, reviewer=reviewer, result=result,
+              blockers=rec["blockers"], majors=rec["majors"], minors=rec["minors"], unjudged=rec["unjudged"])
+    return f"#{cid} {reviewer}: {result} recorded (tree {str(tree)[:12]}{', human' if human else ''})"
+
+
+def cmd_record_review(root: Path, slug: str, cid: int, reviewer: str, result: str, counts: dict) -> str:
+    return _record_review(root, slug, cid, reviewer, result, counts, human=False)
+
+
+def cmd_judge(root: Path, slug: str, cid: int, reviewer: str, result: str, note: str) -> str:
+    return _record_review(root, slug, cid, reviewer, result, {}, human=True, note=note)
+
+
+def review_problems(root: Path, slug: str, cid: int, th: TreeHash) -> str:
+    """'' when the review gate may pass at the current tree, else why not."""
+    recs = reviews_for(root, slug, cid, th.get())
+    bad = [f"{r} {rec['result']}" for r, rec in sorted(recs.items()) if rec.get("result") != "PASS"]
+    if bad:
+        return ("reviewer(s) not at PASS for the current code: " + ", ".join(bad)
+                + ". Fix and re-review, or for BLOCKED have the human run `build-gate judge`.")
+    if "build-critic" not in recs:
+        return (f"no build-critic PASS recorded for the current code: run the critic and "
+                f"`build-gate record-review {slug} {cid} --reviewer build-critic --result PASS`.")
+    return ""
 
 
 def slugs(root: Path) -> list[str]:
@@ -346,11 +426,13 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
     where earlier checkpoints' evidence is legitimately stale).
     """
     try:
-        new = json.loads(new_text)["checkpoints"]
+        doc = json.loads(new_text)
+        new = doc["checkpoints"]
         if not isinstance(new, list):
             raise TypeError
     except (ValueError, KeyError, TypeError):
         return  # not a valid plan yet; the planner validates its own JSON
+    hotfix = bool(doc.get("hotfix")) if isinstance(doc, dict) else False
     old: dict = {}
     try:
         old = {c["id"]: c for c in json.loads(old_text)["checkpoints"]}
@@ -362,6 +444,8 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
             continue
         cid = cp.get("id")
         g = {name: gate(cp, name) for name in GATES}
+        if g["review"] == "n/a" and not hotfix:
+            raise Block(f"#{cid}: review 'n/a' is only allowed when the plan has \"hotfix\": true (a hotfix skips the critic, never the test).")
         if g["review"] == "passed" and g["behavior"] != "passed":
             raise Block(f"#{cid}: review can't pass before behavior has passed.")
         if cp.get("status") == "passed" and not all(v in OK_STATES for v in g.values()):
@@ -387,6 +471,10 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
         ok, why = evidence_fresh(root, slug, cid, th)
         if not ok:
             raise Block(f"#{cid}: can't mark {', '.join(rising)} passed: {why}. Run `build-gate verify {slug} {cid}` and only then update the plan.")
+        if "review" in rising:
+            why = review_problems(root, slug, cid, th)
+            if why:
+                raise Block(f"#{cid}: can't mark review passed: {why}")
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +502,8 @@ def _build_active(root: Path) -> bool:
 PROTECTED_CONFIG = (".claude/settings.json", ".claude/settings.local.json", ".claude/tq-rules.yaml")
 HUMAN_ONLY = {"approve": "freezes the plan's verify commands (what 'passing' means)",
               "unlock-tests": "unlocks test files the implementer must not edit",
-              "finish": "removes the gate's hooks and test locks"}
+              "finish": "removes the gate's hooks and test locks",
+              "judge": "settles a reviewer's verdict with a human judgement"}
 
 
 def _key_dir_canon() -> str:
@@ -919,6 +1008,7 @@ def cmd_verify(root: Path, slug: str, cid: int, timeout: float = 900) -> tuple[i
         "approval_id": approved.get("approval_id"),
         "results": results, "tampered": tampered, "summary": summary,
     }))
+    log_event(root, "verify", slug, checkpoint=cid, ok=ok)
     head = f"#{cid} {'PASS' if ok else 'FAIL'} (tree {str(tree)[:12]})"
     return (0 if ok else 1), "\n".join([head, *out_lines])
 
@@ -1152,6 +1242,7 @@ def cmd_finish(root: Path, slug: str) -> str:
                     hooks.pop(event)
             write_json(settings_path, settings)
             msg += "\ngate hooks removed from settings.local.json"
+    log_event(root, "finish", slug)
     return f"build '{slug}' finished\n{msg}"
 
 
@@ -1264,6 +1355,19 @@ def main(argv: list[str] | None = None) -> int:
     rb = sub.add_parser("review-bundle")
     rb.add_argument("slug")
     rb.add_argument("id", type=int)
+    rr = sub.add_parser("record-review", help="record one reviewer's verdict for a checkpoint (tied to the tree hash)")
+    rr.add_argument("slug")
+    rr.add_argument("id", type=int)
+    rr.add_argument("--reviewer", required=True, choices=REVIEWERS)
+    rr.add_argument("--result", required=True, choices=RESULTS)
+    for k in ("blockers", "majors", "minors", "unjudged"):
+        rr.add_argument(f"--{k}", type=int, default=0)
+    jd = sub.add_parser("judge", help="human only: settle a BLOCKED (or disputed) reviewer verdict")
+    jd.add_argument("slug")
+    jd.add_argument("id", type=int)
+    jd.add_argument("--reviewer", required=True, choices=REVIEWERS)
+    jd.add_argument("--result", required=True, choices=("PASS", "FAIL"))
+    jd.add_argument("--note", required=True)
     sv = sub.add_parser("serve", help="local read-only progress view on 127.0.0.1")
     sv.add_argument("slug")
     sv.add_argument("--port", type=int, default=8765)
@@ -1302,6 +1406,13 @@ def main(argv: list[str] | None = None) -> int:
         print(cmd_unlock_tests(root, a.slug, a.paths))
     elif a.cmd == "review-bundle":
         print(cmd_review_bundle(root, a.slug, a.id))
+    elif a.cmd == "record-review":
+        print(cmd_record_review(root, a.slug, a.id, a.reviewer, a.result,
+                                {k: getattr(a, k) for k in ("blockers", "majors", "minors", "unjudged")}))
+    elif a.cmd == "judge":
+        if not human_confirm(f"record a human judgement for {a.reviewer} on '{a.slug}' #{a.id}: {a.result}"):
+            return 2
+        print(cmd_judge(root, a.slug, a.id, a.reviewer, a.result, a.note))
     elif a.cmd == "serve":
         srv = make_server(root, a.slug, a.port)
         print(f"serving http://127.0.0.1:{srv.server_address[1]}/ (Ctrl+C to stop)")

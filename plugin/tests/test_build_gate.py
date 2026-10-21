@@ -223,6 +223,7 @@ def test_diff_hash_gate_reset(repo):
     # bookkeeping (the plan, reviews) never resets the gate
     (repo / "docs" / "reviews").mkdir(parents=True)
     (repo / "docs" / "reviews" / "demo-2.md").write_text("notes", encoding="utf-8")
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
     full = with_gate(PLAN, 2, behavior="passed", review="passed", status="passed")
     assert hook(repo, write(p, full))[0] == 0
 
@@ -231,6 +232,7 @@ def test_full_pass_and_downgrade(repo):
     approve_and_lock(repo)
     p = plan_file(repo)
     gate.cmd_verify(repo, "demo", 2)
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
     full = with_gate(PLAN, 2, behavior="passed", review="passed", status="passed")
     assert hook(repo, write(p, full))[0] == 0
     # reopening (moving toward pending) is always allowed
@@ -650,3 +652,90 @@ def test_script_hook_utf8_and_exit_codes(repo):
 def test_hook_fails_open_on_garbage(repo):
     proc = subprocess.run([sys.executable, str(SCRIPT), "hook"], input=b"not json", capture_output=True, timeout=60)
     assert proc.returncode == 0
+
+
+def test_review_pass_needs_a_recorded_critic_pass(repo):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    code, _, err = hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed", review="passed")))
+    assert code == 2 and "record-review" in err and "build-critic" in err
+
+
+def test_review_pass_refused_while_any_reviewer_failed_or_blocked(repo):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
+    gate.cmd_record_review(repo, "demo", 2, "spec-critic", "BLOCKED", {"unjudged": 1})
+    code, _, err = hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed", review="passed")))
+    assert code == 2 and "spec-critic" in err and "BLOCKED" in err
+    # a human judgement settles it
+    gate.cmd_judge(repo, "demo", 2, "spec-critic", "PASS", "checked the env by hand")
+    assert hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed", review="passed")))[0] == 0
+
+
+def test_review_records_are_tied_to_the_tree(repo):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
+    (repo / "app.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+    gate.cmd_verify(repo, "demo", 2)  # fresh behaviour evidence, stale review
+    code, _, err = hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed", review="passed")))
+    assert code == 2 and "build-critic" in err
+
+
+def test_record_review_rejects_unknown_reviewer_or_result(repo):
+    approve_and_lock(repo)
+    with pytest.raises(SystemExit):
+        gate.cmd_record_review(repo, "demo", 2, "build-critc", "PASS", {})
+    with pytest.raises(SystemExit):
+        gate.cmd_record_review(repo, "demo", 2, "build-critic", "pass", {})
+    with pytest.raises(SystemExit):
+        gate.cmd_judge(repo, "demo", 2, "build-critic", "BLOCKED", "x")
+
+
+def test_forged_review_record_is_ignored(repo):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    path = repo / ".claude" / "build" / "demo" / "reviews.jsonl"
+    tree = gate.tree_hash(repo)
+    path.write_text(json.dumps({"checkpoint": 2, "reviewer": "build-critic", "result": "PASS", "tree": tree, "ts": "now"}) + "\n",
+                    encoding="utf-8")
+    assert gate.reviews_for(repo, "demo", 2, tree) == {}
+
+
+def test_judge_and_record_review_are_human_only_for_judge(repo):
+    code, _, err = hook(repo, bash("python build-gate.py judge demo 2 --reviewer spec-critic --result PASS --note ok"))
+    assert code == 2 and "human" in err.lower()
+    assert hook(repo, bash("python build-gate.py record-review demo 2 --reviewer build-critic --result PASS"))[0] == 0
+
+
+def test_review_na_only_for_hotfix_plans(repo):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    na = with_gate(PLAN, 2, behavior="passed", review="n/a", status="passed")
+    code, _, err = hook(repo, write(plan_file(repo), na))
+    assert code == 2 and "hotfix" in err
+    save_plan(repo, {**PLAN, "workflow": "fix", "hotfix": True})
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_verify(repo, "demo", 2)
+    assert hook(repo, write(plan_file(repo), {**na, "workflow": "fix", "hotfix": True}))[0] == 0
+
+
+def test_events_are_logged_aggregate_only(repo, tq_home):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "FAIL", {"blockers": 1, "majors": 0, "minors": 2})
+    lines = [json.loads(l) for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    kinds = [l["kind"] for l in lines]
+    assert kinds == ["verify", "review"]
+    assert lines[0]["ok"] is True and lines[0]["slug"] == "demo" and lines[0]["checkpoint"] == 2
+    assert lines[1]["reviewer"] == "build-critic" and lines[1]["result"] == "FAIL" and lines[1]["blockers"] == 1
+    for l in lines:
+        assert "app.py" not in json.dumps(l) and "tests/" not in json.dumps(l)
+
+
+def test_finish_logs_a_finish_event(repo, tq_home):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    lines = [json.loads(l) for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [l["kind"] for l in lines] == ["finish"] and lines[0]["slug"] == "demo"
