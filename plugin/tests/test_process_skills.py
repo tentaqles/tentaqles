@@ -110,3 +110,17 @@ def test_fix_skill_is_reproduce_first_and_bug_shaped() -> None:
     assert "before the human approves" in flat and "lock-tests` right after approval" in flat
     assert "Only when the plan has `hotfix` true, after `build-gate verify` passes" in flat
     assert "substitute `$root`" in flat
+
+
+def test_feature_skill_locates_the_fr_and_interviews_first() -> None:
+    body = _body("feature")
+    for token in ("prd-status.py", "FR-", "grill-me", "templates/process/spec-slice.md", "NEEDS-DECISION",
+                  "tq decide triage", "workflow=feature", "/tentaqles:dod", "legacy", "docs/adr/"):
+        assert token in body, token
+    assert SNIPPET in body
+    flat = " ".join(body.split())
+    assert "AskUserQuestion` is never called" in flat and "build-gate ask" in flat
+    assert "the grader's exit code decides" in flat and "/tentaqles:prd" in flat
+    assert "`hotfix=no`" in flat and "spec=<path>" in flat
+    assert "you never run `build-gate dod" in flat
+    assert "lock-tests` right after approval" in flat and "before the human approves" in flat
