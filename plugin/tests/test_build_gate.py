@@ -1927,3 +1927,202 @@ def test_reapproval_consequence_for_a_hub_actor_lists_removed_and_changed(repo):
     did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
     text = gate.answer_consequence(repo, "demo", did, "approve")
     assert "removed since the last approval: #3 (" in text and "changed: #2" in text
+
+
+# ---------------------------------------------------------------------------
+# Round 2b, item 1: shell path classification (cwd tracking, globs, escapes,
+# nested shells, xargs, git add -f globs)
+# ---------------------------------------------------------------------------
+
+STATE_WRITES_VIA_CWD = [
+    "cd .claude/build/demo && cp approved.json ../../../bk.json",
+    "cd .claude/build/demo && echo x > approved.json",
+    "cd .claude/build/demo; rm approved.json",
+    "pushd .claude/build/demo; echo x > approved.json",
+    "pushd .claude/build; pushd demo; echo x > approved.json",
+    "cd .claude/build; echo x > demo/approved.json",
+    "cd .claude/build/demo; cd ..; echo x > demo/approved.json",
+    "cd .claude/build/demo; cd /tmp; cd -; echo x > approved.json",
+    "cd .claude; mv build/demo/approved.json ../moved.json",
+    "Set-Location .claude/build/demo; Set-Content approved.json x",
+]
+
+
+@pytest.mark.parametrize("cmd", STATE_WRITES_VIA_CWD)
+def test_cwd_is_tracked_across_segments(repo, cmd):
+    approve_and_lock(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2, cmd
+
+
+def test_state_copy_out_then_copy_back_both_refused(repo):
+    """The two-step sequence: approved.json copied out from inside the state dir, then back."""
+    approve_and_lock(repo)
+    assert hook(repo, bash("cd .claude/build/demo && cp approved.json ../../../bk.json"))[0] == 2
+    assert hook(repo, bash("cp ../bk.json .claude/build/demo/approved.json"))[0] == 2
+    assert hook(repo, bash("cd .claude/build/demo && cp ../../../bk.json approved.json"))[0] == 2
+
+
+def test_unknown_cwd_with_a_relative_write_fails_closed(repo):
+    approve_and_lock(repo)
+    assert hook(repo, bash("cd $SOMEWHERE && echo x > approved.json"))[0] == 2
+    assert hook(repo, bash("cd && echo x > approved.json"))[0] == 2
+    assert hook(repo, bash("popd; echo x > approved.json"))[0] == 2
+    # an absolute target after an unknown cwd is still resolved
+    assert hook(repo, bash("cd $SOMEWHERE && echo x > /tmp/out.txt"))[0] == 0
+    # no write, nothing to refuse
+    assert hook(repo, bash("cd $SOMEWHERE && ls"))[0] == 0
+
+
+def test_write_anywhere_on_a_line_with_a_state_word_anywhere_is_refused(repo):
+    """A cd into the state dir is not itself a write, but the line writes."""
+    approve_and_lock(repo)
+    assert hook(repo, bash("cd .claude/build/demo && echo hi > /tmp/x"))[0] == 2
+    assert hook(repo, bash("echo hi > /tmp/x; cat .claude/build/demo/approved.json"))[0] == 2
+    assert hook(repo, bash("cd .claude/build/demo && ls"))[0] == 0
+    assert hook(repo, bash("cat .claude/build/demo/approved.json"))[0] == 0
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd src && echo x > a.txt",
+    "cd tests && pytest -q",
+    "cd tests && echo x > new_test.py",
+    "echo x > app.py",
+    "cp app.py app2.py",
+    "pushd src; popd; echo x > approved.json",
+    "cd .. && echo x > a.txt",
+    "mkdir -p src/pkg && echo x > src/pkg/a.txt",
+    "git commit -m 'x' && git status",
+    "cd src; cd -; echo x > a.txt",
+    "ls *.py && rm *.json",
+])
+def test_ordinary_project_writes_stay_allowed_with_cwd_tracking(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "rm -r .clau*",
+    "rm .claude/buil?/demo/approved.json",
+    "cp x .cl*/build/demo/approved.json",
+    "cp x .claude/build/*/approved.json",
+    "cp x .claude/build/de[m]o/approved.json",
+    "cd .claude/build && rm de*/approved.json",
+    "rm -rf .c*e",
+])
+def test_glob_words_are_matched_against_the_state_dir(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "rm tes?s/*.py",
+    "rm tests/test_*.py",
+    "cp x t*sts/test_a.py",
+    "cd tests && rm test_?.py",
+    "cd tests && cp x test_[a].py",
+])
+def test_glob_words_are_matched_against_locked_tests(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_a_star_does_not_reach_dot_directories(repo):
+    """Shell globs skip leading dots, so an ordinary `rm *.log` is not a state write."""
+    approve_and_lock(repo)
+    assert hook(repo, bash("rm *.log"))[0] == 0
+    assert hook(repo, bash("cp *.py /tmp/backup"))[0] == 0
+
+
+def test_backslash_before_a_character_is_a_shell_escape(repo):
+    approve_and_lock(repo)
+    assert hook(repo, bash(r"rm .claude/bu\ild/demo/approved.json"))[0] == 2
+    assert hook(repo, bash(r"echo x > .claude/bu\ild/demo/approved.json"))[0] == 2
+    assert hook(repo, bash(r"echo x > tes\ts/test_a.py"))[0] == 2
+    assert hook(repo, bash(r"cd .cl\aude/build/demo && rm approved.json"))[0] == 2
+    # the Windows spellings keep working
+    assert hook(repo, bash(r"Remove-Item .claude\build\demo\approved.json", "PowerShell"))[0] == 2
+    drive = str(repo).replace("/", "\\") + "\\.claude\\build\\demo\\approved.json"
+    assert hook(repo, bash(f"Remove-Item {drive}", "PowerShell"))[0] == 2
+
+
+def test_resolve_word_backslash_rule(tmp_path):
+    from tentaqles.workflow import _common as c
+    assert c.shell_word_variants(r"bu\ild")[0] == ("bu/ild" if c.IS_WINDOWS else "build")
+    assert "build" in c.shell_word_variants(r"bu\ild")
+    assert c.shell_word_variants(r"C:\a\b") == ["C:/a/b"]
+    assert c.shell_word_variants(r"\\host\share") == ["//host/share"]
+    assert c.shell_word_variants("a/b") == ["a/b"]
+    _, absn = c.resolve_word(tmp_path, r"bu\ild/x", shell=True)
+    assert absn.endswith("/build/x")
+    # file-tool paths: every backslash is a separator
+    _, absn = c.resolve_word(tmp_path, r"bu\ild/x")
+    assert absn.endswith("/bu/ild/x")
+
+
+@pytest.mark.parametrize("cmd", [
+    "bash -c 'echo x > .claude/build/demo/approved.json'",
+    'sh -c "cp x .claude/build/demo/approved.json"',
+    "eval 'echo x > .claude/build/demo/approved.json'",
+    "eval echo x '>' .claude/build/demo/approved.json",
+    'pwsh -c "Set-Content .claude/build/demo/approved.json x"',
+    'powershell -Command "Remove-Item .claude/build/demo/approved.json"',
+    "bash -lc 'rm .claude/build/demo/approved.json'",
+    "bash -c 'cd .claude/build/demo && rm approved.json'",
+    "bash -c \"bash -c 'rm .claude/build/demo/approved.json'\"",
+    "bash -c 'echo x > tests/test_a.py'",
+    "cd tests && bash -c 'echo x > test_a.py'",
+    'bash -c "$CMD"',
+    "powershell -EncodedCommand AAAA",
+])
+def test_nested_shell_bodies_are_lexed_recursively(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "bash -c 'echo hi > out.txt'",
+    "sh -c 'cd src && echo hi > a.txt'",
+    "bash -c 'pytest -q'",
+    "eval 'ls'",
+])
+def test_nested_shell_bodies_without_protected_paths_stay_allowed(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("xargs -a list cp -t .claude/build/demo", 2),
+    ("ls | xargs rm", 2),
+    ("find . -name '*.pyc' | xargs rm -f", 2),
+    ("cat list | xargs -I{} cp {} /tmp", 2),
+    ("cat list | xargs sh -c 'echo'", 2),
+    ("cat list | xargs tests/test_a.py", 2),
+    ("git ls-files | xargs grep -n foo", 0),
+    ("git ls-files | xargs wc -l", 0),
+])
+def test_xargs_targets_are_unknown(repo, cmd, want):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == want, cmd
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("git add -f .cl*", 2),
+    ("git add --force .claude/b*", 2),
+    ("git add -f -- '*.json'", 2),
+    ("git add -f src/*.py", 2),
+    ("git add -f .claude/build/de?o", 2),
+    ("git add -f app.py", 0),
+    ("git add app.py", 0),
+    ("git add src/*.py", 0),
+])
+def test_git_add_force_with_a_glob_pathspec_is_refused(repo, cmd, want):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == want, cmd
+
+
+def test_squash_normalisation_applies_to_locked_test_names(repo):
+    approve_and_lock(repo)
+    cmd = "python -c \"open('te'+'sts/te'+'st_a.py','w')\""
+    assert hook(repo, bash(cmd))[0] == 2
+    assert hook(repo, bash("python -c \"open('te'+'sts/new_t'+'est.py','w')\""))[0] == 0

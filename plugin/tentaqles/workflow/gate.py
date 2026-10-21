@@ -41,6 +41,7 @@ from pathlib import Path
 
 from tentaqles.workflow._common import (
     WRITE_COMMANDS,
+    _WRAPPERS,
     ShellParseError,
     append_jsonl,
     canon_text,
@@ -50,6 +51,7 @@ from tentaqles.workflow._common import (
     is_write_segment,
     lex_shell,
     resolve_word,
+    shell_word_variants,
     file_sha256,
     find_bash,
     find_git_root,
@@ -935,7 +937,7 @@ def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[t
     if re.search(re.escape(PLAN_DIR) + r"/[^\s/\"']+\.json", canon):
         hits.append(("plan", PLAN_DIR))
     for lk, slug in locked.items():
-        if lk and lk.lower() in canon:
+        if lk and (lk.lower() in canon or _squash(lk.lower()) in sq):
             hits.append((f"locked:{slug}", lk))
     return hits
 
@@ -962,46 +964,359 @@ def _check_git(seg, hits: list[tuple[str, str]]) -> None:
     if sub == "stash" and any(a in ("-a", "--all", "--include-ignored") for a in rest):
         raise Block(f"`git stash --all` takes ignored files, which include {STATE_DIR}/ (the gate's signed state).")
     if sub == "add" and any(a in ("-f", "--force") or re.match(r"^-[a-z]*f", a) for a in rest if a != "--"):
-        wide = [a for a in rest if not a.startswith("-") and norm(a).rstrip("/") in ("", ".", "*", ":/", ":", "./*")]
-        if wide or not [a for a in rest if not a.startswith("-")]:
+        specs = [a for a in rest if not a.startswith("-")]
+        wide = [a for a in specs if norm(a).rstrip("/") in ("", ".", "*", ":/", ":", "./*")]
+        if wide or not specs:
             raise Block(f"`git add --force` of a whole tree stages ignored files, which include {STATE_DIR}/; "
+                        "name the files to force-add.")
+        if any(re.search(r"[*?\[]", a) for a in specs):
+            raise Block(f"`git add --force` with a glob pathspec can stage ignored files, which include {STATE_DIR}/; "
                         "name the files to force-add.")
 
 
-def check_shell(cmd: str, root: Path) -> None:
-    """Normalise once (lexer + canonical paths), then decide per segment."""
-    locked = _locked_paths(root)
-    active = _build_exists(root)
-    canon_all = canon_text(cmd)
+_CD_CMDS = {"cd", "chdir", "pushd", "popd", "set-location", "sl", "push-location", "pop-location"}
+_POP_CMDS = {"popd", "pop-location"}
+_PUSH_CMDS = {"pushd", "push-location"}
+_POSIX_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+_PS_SHELLS = {"pwsh", "powershell"}
+_MAX_NEST = 3
+_MAX_CWDS = 8
+_MAX_WALK = 500
+# xargs may run these without changing any file; every other command it launches is a write to a
+# target the hook cannot see (the arguments arrive on stdin), so it is refused while a build exists.
+_XARGS_READONLY = {"grep", "egrep", "fgrep", "wc", "ls", "echo", "stat", "basename", "dirname", "du", "true"}
+_XARGS_OPT_WITH_ARG = {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "-R", "-S"}
+_XARGS_LONG_WITH_ARG = {"--arg-file", "--delimiter", "--eof", "--max-lines", "--max-args", "--max-procs",
+                        "--max-chars", "--process-slot-var"}
+_GLOB_CHARS = re.compile(r"[*?]|\[[^\]]+\]")
+_ENCODED_PS = re.compile(r"^-e(?:n(?:c(?:o(?:d(?:e(?:d(?:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?)?)?)?)?)?)?)?$", re.I)
+_COMMAND_PS = re.compile(r"^-c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?$", re.I)
+
+
+def _is_abs(p: str) -> bool:
+    """Absolute in the forward-slash form: a leading slash (also on Windows) or a drive."""
+    return p.startswith("/") or bool(re.match(r"^[A-Za-z]:/", p))
+
+
+def _nabs(path) -> str:
+    """Canonical absolute form used for every comparison: forward slashes, normalised, folded on Windows."""
+    p = norm(os.path.normpath(norm(path)))
+    return p.lower() if os.name == "nt" else p
+
+
+def _expand_known(word: str) -> str:
+    """Hook for the key-directory rule: variables whose value is known. Identity here."""
+    return word
+
+
+def _glob_segments_match(pat: str, cand: str, dotfiles: bool) -> bool:
+    """Segment-wise glob match of two absolute forward-slash paths (both already case-folded).
+
+    `*`, `?` and `[...]` stay inside one segment; `**` spans segments. Like a POSIX shell, a
+    wildcard does not match a name that starts with a dot unless `dotfiles` (PowerShell and cmd
+    expand `*` over such names), or the pattern segment starts with a literal dot.
+    """
+    ps, cs = pat.split("/"), cand.split("/")
+
+    def hidden(name: str, p: str) -> bool:
+        return (not dotfiles) and name.startswith(".") and not p.startswith(".")
+
+    def m(i: int, j: int) -> bool:
+        if i == len(ps):
+            return j == len(cs)
+        if ps[i] == "**":
+            for k in range(j, len(cs) + 1):
+                if k > j and hidden(cs[k - 1], "**"):
+                    break
+                if m(i + 1, k):
+                    return True
+            return False
+        if j == len(cs) or hidden(cs[j], ps[i]):
+            return False
+        return fnmatch.fnmatchcase(cs[j], ps[i]) and m(i + 1, j + 1)
+
+    return m(0, 0)
+
+
+def _walk_paths(top: Path) -> list[Path]:
+    out: list[Path] = []
     try:
-        segs = lex_shell(cmd)
-    except ShellParseError as e:
-        if _text_mentions(root, canon_all, locked, active):
-            raise Block(f"can't parse this command ({e}) and it names a protected path; failing closed.")
-        return
-    if any(c == "key" for c, _ in _text_mentions(root, canon_all, {}, False)):
-        raise Block(_msg("key", "the signing key"))  # a name split across segments reads whole here
-    for seg in segs:
+        for dirpath, dirnames, filenames in os.walk(top):
+            for n in dirnames + filenames:
+                out.append(Path(dirpath) / n)
+                if len(out) >= _MAX_WALK:
+                    return out
+    except OSError:
+        pass
+    return out
+
+
+def _recursive_segment(argv: list[str], cmd_name: str) -> bool:
+    """Does this command descend into directories (so a directory word means everything under it)?"""
+    if cmd_name in ("rg", "ag", "ack", "tree"):
+        return True
+    for t in argv[1:]:
+        if t.lower() in ("--recursive", "--dereference-recursive", "-recurse", "-exec", "-execdir",
+                         "-ok", "-okdir"):
+            return True
+        if re.fullmatch(r"-[A-Za-z]{1,4}", t) and re.search(r"[rR]", t):
+            return True
+    return False
+
+
+def _xargs_rest(argv: list[str]) -> list[str] | None:
+    """The arguments after `xargs` when this segment runs it (behind env/sudo/nohup...), else None."""
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", a):
+            i += 1
+            continue
+        base = norm(a).rsplit("/", 1)[-1].lower()
+        if base.endswith(".exe"):
+            base = base[:-4]
+        if base == "xargs":
+            return argv[i + 1:]
+        if base in _WRAPPERS:
+            i += 1
+            while i < len(argv) and (argv[i].startswith("-") or argv[i].isdigit()):
+                i += 1
+            continue
+        return None
+    return None
+
+
+def _xargs_command(rest: list[str]) -> str:
+    """Base name of the command xargs launches (after its own options), or ''."""
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--":
+            i += 1
+            break
+        if a.startswith("--"):
+            i += 2 if (a in _XARGS_LONG_WITH_ARG) else 1
+        elif a.startswith("-") and len(a) > 1:
+            i += 2 if a in _XARGS_OPT_WITH_ARG else 1
+        else:
+            break
+    if i >= len(rest):
+        return "echo"  # bare `xargs` runs echo
+    base = norm(rest[i]).rsplit("/", 1)[-1].lower()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def _nested_body(cmd_name: str, cargs: list[str]) -> str | None:
+    """The program text a shell or eval is given, '\0encoded' for a PowerShell encoded command, or None."""
+    if cmd_name in _POSIX_SHELLS:
+        for i, a in enumerate(cargs):
+            if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", a):
+                return cargs[i + 1] if i + 1 < len(cargs) else ""
+            if not a.startswith("-"):
+                return None
+        return None
+    if cmd_name in _PS_SHELLS:
+        for i, a in enumerate(cargs):
+            if _ENCODED_PS.match(a):
+                return "\0encoded"
+            if _COMMAND_PS.match(a):
+                return " ".join(cargs[i + 1:])
+        return None
+    if cmd_name == "cmd":
+        for i, a in enumerate(cargs):
+            if a.lower() in ("/c", "/k", "/r"):
+                return " ".join(cargs[i + 1:])
+        return None
+    if cmd_name == "eval":
+        return " ".join(cargs)
+    return None
+
+
+class _Cwd:
+    """The tracked working directory: candidate absolute paths, or None when unknown."""
+
+    __slots__ = ("cwds", "prev", "stack")
+
+    def __init__(self, cwds):
+        self.cwds = cwds
+        self.prev = None
+        self.stack: list = []
+
+    def copy(self) -> "_Cwd":
+        c = _Cwd(list(self.cwds) if self.cwds is not None else None)
+        c.prev = self.prev
+        c.stack = list(self.stack)
+        return c
+
+
+class _ShellScan:
+    """One pass over a command line (and, recursively, the shell programs inside it).
+
+    Tracks the working directory across segments, resolves every word against it, matches glob
+    words against the protected paths, and remembers whether any segment wrote and whether any
+    word reached `.claude`/the state dir or the key; a line that does both is refused.
+    """
+
+    def __init__(self, root: Path, cwd, locked: dict, active: bool, tool: str):
+        self.root, self.locked, self.active = root, locked, active
+        self.rootn = _nabs(root)
+        self.ps = tool == "PowerShell"  # `*` also matches dot names there
+        self.start = _nabs(cwd) if cwd else self.rootn
+        self.writes = False
+        self.prot = False
+        self._cands: list | None = None
+
+    # -- protected candidates ------------------------------------------------
+
+    def candidates(self) -> list[tuple[str, str, str]]:
+        """(class, display, canonical abs path) of what a glob could name."""
+        if self._cands is not None:
+            return self._cands
+        out: list[tuple[str, str, str]] = []
+        for rel in (".claude", STATE_DIR):
+            out.append(("state", rel, _nabs(self.root / rel)))
+        for p in _walk_paths(self.root / STATE_DIR):
+            out.append(("state", STATE_DIR, _nabs(p)))
+        out.extend(self._key_candidates())
+        for lk, slug in self.locked.items():
+            out.append((f"locked:{slug}", lk, _nabs(self.root / lk)))
+            parent = Path(lk).parent
+            while str(parent) not in (".", ""):
+                out.append((f"locked:{slug}", lk, _nabs(self.root / parent)))
+                parent = parent.parent
+        self._cands = out
+        return out
+
+    def _key_candidates(self) -> list[tuple[str, str, str]]:
+        return []
+
+    # -- words ---------------------------------------------------------------
+
+    def bases(self, st: _Cwd) -> list[str]:
+        out = list(st.cwds or [])
+        if self.rootn not in out:
+            out.append(self.rootn)
+        return out
+
+    def variants(self, word: str) -> list[str]:
+        w = word
+        if w.startswith("-") and "=" in w:
+            w = w.split("=", 1)[1]
+        w = w.strip("'\"")
+        return shell_word_variants(_expand_known(w))
+
+    def resolved(self, word: str, bases: list[str]) -> list[tuple[str | None, str]]:
+        out = []
+        for v in self.variants(word):
+            for b in bases:
+                _, absn = resolve_word(b, v)
+                out.append((rel_to(self.root, absn), absn))
+        return out
+
+    def word_hits(self, word: str, bases: list[str], recursive: bool, cmd_name: str) -> list[tuple[str, str]]:
+        hits: list[tuple[str, str]] = []
+        for rel, absn in self.resolved(word, bases):
+            cls = classify(self.root, rel, absn, self.locked, self.active)
+            if cls:
+                hits.append((cls, rel or absn))
+            hits.extend(self.ancestor_hits(absn, recursive, cmd_name))
+        for v in self.variants(word):
+            if not _GLOB_CHARS.search(v):
+                continue
+            for b in bases:
+                pat = _nabs(v if _is_abs(v) else f"{b}/{v}")
+                for cls, shown, cand in self.candidates():
+                    if cls == "keydir" and not recursive:
+                        continue
+                    if _glob_segments_match(pat, cand, self.ps):
+                        hits.append(("key" if cls == "keydir" else cls, shown))
+        return hits
+
+    def ancestor_hits(self, absn: str, recursive: bool, cmd_name: str) -> list[tuple[str, str]]:
+        return []
+
+    # -- working directory ---------------------------------------------------
+
+    def apply_cd(self, cmd_name: str, cargs: list[str], st: _Cwd) -> None:
+        path_args = [a for a in cargs if a == "-" or not a.startswith("-")]
+        target = path_args[0] if path_args else None
+        old = st.cwds
+        if cmd_name in _POP_CMDS:
+            st.cwds = st.stack.pop() if st.stack else None
+            st.prev = old
+            return
+        if cmd_name in _PUSH_CMDS:
+            if target is None:
+                st.cwds = None  # swaps the top two entries: not tracked
+                return
+            st.stack.append(old)
+        if target is None:
+            st.cwds = None  # bare `cd` goes to $HOME
+            st.prev = old
+            return
+        new: list[str] | None
+        if target == "-":
+            new = st.prev
+        else:
+            exp = _expand_known(target.strip("'\""))
+            if has_expansion(exp) or _GLOB_CHARS.search(exp):
+                new = None
+            else:
+                new = []
+                for v in shell_word_variants(exp):
+                    absolute = _is_abs(v)
+                    for b in (st.cwds or []) if not absolute else [self.rootn]:
+                        _, absn = resolve_word(b, v)
+                        if absn not in new:
+                            new.append(absn)
+                new = new[:_MAX_CWDS] or None
+        st.prev = old
+        st.cwds = new
+
+    # -- the scan ------------------------------------------------------------
+
+    def scan(self, cmd: str, st: _Cwd, depth: int) -> None:
+        if depth > _MAX_NEST:
+            raise Block("shell programs nested more than three levels deep can't be checked; "
+                        "run the steps as separate commands.")
+        canon_all = canon_text(cmd)
+        try:
+            segs = lex_shell(cmd)
+        except ShellParseError as e:
+            if _text_mentions(self.root, canon_all, self.locked, self.active):
+                raise Block(f"can't parse this command ({e}) and it names a protected path; failing closed.")
+            return
+        if any(c == "key" for c, _ in _text_mentions(self.root, canon_all, {}, False)):
+            raise Block(_msg("key", "the signing key"))  # a name split across segments reads whole here
+        for seg in segs:
+            self.segment(seg, st, depth)
+
+    def segment(self, seg, st: _Cwd, depth: int) -> None:
+        root, locked, active = self.root, self.locked, self.active
         sub, sub_args = _gate_invocation(seg)
-        cmd_name, _ = command_word(seg.argv)
+        cmd_name, cargs = command_word(seg.argv)
         if cmd_name in WRITE_COMMANDS or cmd_name == "git":
             sub, sub_args = None, []  # `cp x .../build-gate.py` writes the gate script, it doesn't run it
         writes = is_write_segment(seg)
-        canon = canon_text(seg.raw)
-        word_hits = []
-        for w in seg.argv[1:] + seg.redirects:
-            if is_null_target(w):
-                continue
-            rel, absn = resolve_word(root, w)
-            cls = classify(root, rel, absn, locked, active)
-            if cls:
-                word_hits.append((cls, rel or absn))
-        text_hits = _text_mentions(root, canon, locked, active)
+        recursive = _recursive_segment(seg.argv, cmd_name)
+        bases = self.bases(st)
+        words = [w for w in seg.argv[1:] + seg.redirects if not is_null_target(w)]
+        word_hits: list[tuple[str, str]] = []
+        for w in words:
+            word_hits.extend(self.word_hits(w, bases, recursive, cmd_name))
+        raw_forms = [seg.raw, re.sub(r"\\(.)", r"\1", seg.raw, flags=re.DOTALL)]
+        text_hits: list[tuple[str, str]] = []
+        for raw in raw_forms:
+            for h in _text_mentions(root, canon_text(raw), locked, active):
+                if h not in text_hits:
+                    text_hits.append(h)
         for cls, what in word_hits + text_hits:
             if cls == "key":
                 raise Block(_msg("key", what))
             if cls == "gatemod":
                 raise Block(_GATEMOD_MSG)
+        if cmd_name in _CD_CMDS:
+            self.apply_cd(cmd_name, cargs, st)
         if sub is not None:
             if sub == "dod" and any(len(a.split("=", 1)[0]) >= 3 and "--override".startswith(a.split("=", 1)[0].lower()) for a in sub_args[1:]):
                 raise Block("`build-gate dod --override` accepts missing definition-of-done items, so only the human "
@@ -1015,24 +1330,43 @@ def check_shell(cmd: str, root: Path) -> None:
                 raise Block("don't redirect the gate CLI's output into files.")
             if any(c in ("state", "git", "plan", "config") for c, _ in word_hits):
                 raise Block("the gate CLI never takes its own state paths as arguments.")
-            continue  # the gate writes its own (signed) state
+            return  # the gate writes its own (signed) state
+        if writes:
+            self.writes = True
+        if any(c in ("state", "key") for c, _ in word_hits + text_hits):
+            self.prot = True
+        xrest = _xargs_rest(seg.argv)
+        if xrest is not None and active and _xargs_command(xrest) not in _XARGS_READONLY:
+            raise Block("`xargs` runs a command on arguments the hook can't see, which may be a write to the gate's "
+                        "state or to locked tests; it is refused while a build exists. Name the files in the command.")
+        body = _nested_body(cmd_name, cargs)
+        if body is not None:
+            if body == "\0encoded":
+                raise Block("an encoded PowerShell command can't be checked; it is refused while a build exists.")
+            if body.lstrip().startswith(("$", "`")):
+                raise Block("this shell runs a program built from a variable, which can't be checked; "
+                            "write the command out.")
+            self.scan(body, st.copy(), depth + 1)
         if cmd_name == "git":
             _check_git(seg, word_hits + text_hits)
         if not writes:
-            continue
+            return
         # Fail closed on write targets the lexer can't resolve.
         targets = seg.redirects + seg.argv[1:]
+        if st.cwds is None:
+            # for echo/printf/cat the words are data, only the redirect targets are paths
+            for t in (seg.redirects if cmd_name in ("echo", "printf", "cat") else targets):
+                if is_null_target(t) or t.startswith("-"):
+                    continue
+                v = self.variants(t)[0]
+                if not _is_abs(v) and not has_expansion(v):
+                    raise Block("this command writes after a `cd` to a directory the hook can't resolve (a variable, "
+                                "no argument, an empty popd); use literal paths or a `cd` to a literal directory first.")
         if any(has_expansion(t) for t in seg.redirects if not is_null_target(t)):
             raise Block("this command writes to a path built from a variable; use a literal path.")
         if cmd_name in WRITE_COMMANDS and any(has_expansion(t) for t in targets[len(seg.redirects):] if not t.startswith("-")) \
                 and (text_hits or locked):
             raise Block("this command writes to a path built from a variable while protected paths exist; use a literal path.")
-        globbed = [t for t in targets if re.search(r"[*?\[]", t)]
-        for g in globbed:
-            pat = canon_text(g if os.path.isabs(norm(g)) else f"{norm(root)}/{g}")
-            for lk, slug in locked.items():
-                if fnmatch.fnmatch(canon_text(f"{norm(root)}/{lk}"), pat):
-                    raise Block(_msg(f"locked:{slug}", lk))
         hits = word_hits + text_hits
         if cmd_name == "git":
             # git itself manages .git/ and the plan file (add/commit); history-changing
@@ -1040,6 +1374,24 @@ def check_shell(cmd: str, root: Path) -> None:
             hits = [(c, w) for c, w in hits if c.startswith("locked:")]
         for cls, what in hits:
             raise Block(_msg(cls, what))
+
+
+def check_shell(cmd: str, root: Path, cwd=None, tool: str = "Bash") -> None:
+    """Normalise once (lexer + canonical paths + tracked working directory), then decide per segment.
+
+    `cwd` is the session's working directory when it differs from the project root. Every path
+    is resolved against the tracked directory and also against the root, so a subshell `cd`
+    cannot hide a protected path. Shell programs given to `bash -c`, `sh -c`, `pwsh -c`,
+    `powershell -Command`, `cmd /c` and `eval` are lexed recursively (to a depth of three; deeper
+    is refused), as are `$(...)` and backticks by the lexer itself. An encoded PowerShell command,
+    a program built from a variable, and `xargs` with a command other than a short read-only list
+    are refused. A line that writes anywhere and also reaches `.claude`/the state dir is refused.
+    """
+    scan = _ShellScan(root, cwd, _locked_paths(root), _build_exists(root), tool)
+    scan.scan(cmd, _Cwd([scan.start]), 0)
+    if scan.writes and scan.prot:
+        raise Block(f"this command line writes files and also reaches {STATE_DIR}/ (hook-owned, signed state); "
+                    "run the write and the state access as separate commands, and never write into the state dir.")
 
 
 def check_agent(prompt: str, root: Path, session_id: str) -> None:
@@ -1238,7 +1590,7 @@ def _hook(data: dict) -> tuple[int, str, str]:
         if tool in ("Agent", "Task"):
             check_agent(inp.get("prompt") or "", root, data.get("session_id") or "")
         elif tool in ("Bash", "PowerShell"):
-            check_shell(inp.get("command") or "", root)
+            check_shell(inp.get("command") or "", root, data.get("cwd"), tool)
         elif tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
             check_file(tool, inp, root, TreeHash(root))
     except Block as e:

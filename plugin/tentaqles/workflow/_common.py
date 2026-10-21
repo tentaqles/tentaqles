@@ -468,16 +468,45 @@ def canon_text(text: str) -> str:
     return t.lower()
 
 
-def resolve_word(root, word: str) -> tuple[str | None, str]:
+def _is_win_prefixed(w: str) -> bool:
+    r"""A drive (`C:\x`, `C:/x`) or UNC (`\\host\share`) prefix: backslashes after it are separators."""
+    return bool(re.match(r"^[A-Za-z]:[\\/]", w) or w.startswith("\\\\"))
+
+
+def shell_word_variants(word: str) -> list[str]:
+    r"""The readings of a shell word's backslashes, primary first, each with forward slashes.
+
+    Rule (shared by the gate and the loop guard): in a shell a backslash before a
+    character is an escape and is dropped (`bu\ild` is `build`). It is a Windows separator
+    only when the word has a drive or UNC prefix (`C:\a\b`, `\\host\share`), or, on
+    Windows, when the word has no forward slash at all (`.claude\build\x`, the PowerShell
+    spelling). The primary reading follows that rule; where the word is ambiguous the other
+    reading is returned too, so callers that must not miss a protected path check both.
+    """
+    w = word or ""
+    if "\\" not in w:
+        return [w]
+    sep = norm(w)
+    if _is_win_prefixed(w):
+        return [sep]
+    drop = norm(re.sub(r"\\(.)", r"\1", w, flags=re.DOTALL))
+    first, second = (sep, drop) if (IS_WINDOWS and "/" not in w) else (drop, sep)
+    return [first] if first == second else [first, second]
+
+
+def resolve_word(root, word: str, shell: bool = False) -> tuple[str | None, str]:
     """(path relative to root or None when outside, canonical absolute path).
 
     Strips an `--opt=` prefix and quotes, normalises separators, resolves `..`,
-    folds case on Windows.
+    folds case on Windows. With `shell=True` a backslash follows the shell rule of
+    `shell_word_variants` (primary reading); file-tool paths keep every backslash
+    as a separator.
     """
     w = word
     if w.startswith("-") and "=" in w:
         w = w.split("=", 1)[1]
-    w = norm(w).strip("'\"")
+    w = w.strip("'\"")
+    w = norm(shell_word_variants(w)[0] if shell else w)
     p = Path(w)
     if not p.is_absolute() and not re.match(r"^[A-Za-z]:/", w):
         p = Path(norm(root)) / w
