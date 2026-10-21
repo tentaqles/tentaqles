@@ -1,6 +1,6 @@
 # Threat model
 
-Status: draft | accepted | superseded    Updated: <YYYY-MM-DD>    Cites: PRD §6, §2
+Document status: draft | accepted | superseded    Updated: <YYYY-MM-DD>    Cites: PRD §6, §2
 Reviewed by: <name>    Next review: <date or "on every new trust boundary">
 
 Four questions, answered per trust boundary (Shostack). Keep it short enough to
@@ -25,7 +25,7 @@ data, availability, reputation, the signing key>.
 One STRIDE table per boundary. Spoofing, Tampering, Repudiation, Information
 disclosure, Denial of service, Elevation of privilege. Write threats as
 sentences a tester can try ("a user replays another user's request id").
-Status is one of: planned, done, accepted, superseded.
+Row status is one of: planned, done, accepted, superseded. What Mitigation must hold: done = file:line or test name; planned = the FR-nn that will deliver it; accepted = who accepted and why (and an entry under Accepted risks); superseded = the row that replaces it.
 
 ### B1 <from> -> <to>
 | Category | Threat | Mitigation | Status | Owner |

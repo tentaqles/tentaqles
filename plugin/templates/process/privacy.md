@@ -19,6 +19,7 @@ One block per purpose.
 - Data classes and subjects:
 - Purpose (one sentence; necessary and specific):
 - Legal basis: LGPD Art. 7 (<item>) or LGPD Art. 11 (<item>, sensitive data) / GDPR Art. 6 (<letter>) or GDPR Art. 9 (<letter>, special categories)
+- Common bases in plain words: consent, contract, legal obligation, legitimate interest; for sensitive data: explicit consent or the listed exceptions. If unsure, add a `NEEDS-DECISION` line to `## Open decisions` instead of guessing.
 - Minimisation note (what we deliberately do not collect):
 - Retention and the deletion job that enforces it (name, schedule, test):
 - Access controls (roles, RLS policies, service accounts):

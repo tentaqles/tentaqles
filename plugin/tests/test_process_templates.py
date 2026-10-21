@@ -64,6 +64,7 @@ def test_threat_model_has_four_questions_and_stride_table() -> None:
     assert "| Category | Threat | Mitigation | Status | Owner |" in text
     assert not re.search(r"^\| Threat \|", text, flags=re.MULTILINE)
     assert "B1 <from> -> <to>" in text and "superseded" in text
+    assert "Document status" in text and "Row status" in text and "file:line or test name" in text
     assert "Accepted risks" in text and "expires" in text
 
 
@@ -78,5 +79,6 @@ def test_privacy_record_has_legal_bases_clocks_and_dsar() -> None:
 def test_incident_playbook_names_both_clocks() -> None:
     text = (TEMPLATES / "incident-playbook.md").read_text(encoding="utf-8")
     for token in ("Detect", "Contain", "Assess", "Notify", "Record", "ANPD", "3 business days", "72 hours", "shorter clock",
-                  "five years", "never rotate"):
+                  "five years", "never rotate",
+                  "never personal data or secrets", "Processors", "notifying affected subjects"):
         assert token in text, token

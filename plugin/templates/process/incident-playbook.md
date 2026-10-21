@@ -8,6 +8,7 @@ an incident. Write times in UTC.
 
 ## 1. Detect (T+0)
 - Record: who noticed, when, how, what was seen. Save evidence (logs, screenshots) in a private location; redact before sharing (`tq redact`).
+- In the incident file record counts, data classes and the evidence location only; never personal data or secrets in this file, in commits or in PR text.
 - Open `docs/incidents/<YYYY-MM-DD>-<slug>.md` from this file's sections.
 
 ## 2. Contain (first hour)
@@ -21,10 +22,12 @@ an incident. Write times in UTC.
 
 ## 4. Notify
 - Authority: **ANPD within 3 business days** of awareness (Res. CD/ANPD 15/2024, Art. 6) for Brazilian subjects; **GDPR within 72 hours** (Art. 33) for EU subjects; both apply when both regions do, so the shorter clock governs the first notice. Low-risk incidents may not require authority notice; record the reasoning.
+- Brazilian data subjects: the same ANPD resolution sets 3 business days for notifying affected subjects when the incident may cause relevant risk or damage.
+- Processors: a processor that detects the incident notifies the controller without delay (LGPD Art. 39; GDPR Art. 33(2)); the controller's clock starts at awareness.
 - Subjects: when risk is relevant (LGPD Art. 48) or high (GDPR Art. 34), in plain language: what happened, what data, what we did, what they can do.
 - Internal: the client contact in the manifest, the project owner.
 
 ## 5. Record (within a week, keep five years)
-- Timeline, decisions, notices sent, evidence location.
+- Timeline, decisions, notices sent, evidence location (counts and classes only, never personal data or secrets).
 - Fix: the `/tentaqles:fix` slug and the locked regression test.
 - Lessons: `docs/LEARNINGS.md` lines; changes to `docs/threat-model.md` and `docs/privacy.md` in the same PR as the fix.
