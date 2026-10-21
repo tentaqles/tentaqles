@@ -402,6 +402,8 @@ def answer_consequence(root: Path, slug: str, decision_id: str, choice: str) -> 
         return f"this accepts the missing definition-of-done items for {slug}: {listing}"
     if rec["kind"] == "result" and choice == "approve":
         return f"this finishes checkpoint/plan {slug} (removes the gate hooks and test locks)"
+    if rec["kind"] == "plan-approval" and choice == "approve":
+        return "this approves the plan and freezes " + approval_summary(root, slug)
     return ""
 
 
@@ -1196,10 +1198,70 @@ def _shell_argv(command: str) -> list[str]:
     return ["/bin/sh", "-c", command]
 
 
+DOD_COMMANDS = ("test", "lint", "typecheck")
+_TRIVIAL_CMD = re.compile(r"^(?:true|:|exit(?:\s+0)?|/bin/true|/usr/bin/true|cmd\s+/c\s+exit(?:\s+0)?|\$true)$", re.IGNORECASE)
+
+
+def _project_command_problem(project: dict, warning: str) -> str:
+    """'' when the tq-project DoD commands may be frozen, else why not."""
+    m = re.search(r"ignored (.+?) \(wrong type or unknown key\)", warning or "")
+    dropped = m.group(1).split(", ") if m else []
+    for name in DOD_COMMANDS:
+        if f"commands.{name}" in dropped:
+            return f"commands.{name} must be a shell command string (CLAUDE.md tq-project block)"
+    if "commands" in dropped:
+        return "commands must be an object of shell command strings (CLAUDE.md tq-project block)"
+    for name in DOD_COMMANDS:
+        c = (project.get("commands") or {}).get(name)
+        if c is not None and _TRIVIAL_CMD.match(c.strip()):
+            return f"commands.{name} must be a shell command string that runs the {name}s, not `{c.strip()}` (CLAUDE.md tq-project block)"
+    return ""
+
+
+def approval_preview(root: Path, slug: str) -> str:
+    """Everything an approval freezes, as the human should read it before confirming:
+    each checkpoint's verify commands and the project's definition-of-done config."""
+    plan = load_plan(root, slug) or {"checkpoints": []}
+    project, pwarn = load_project_config(root)
+    lines = [f"Approving '{slug}' freezes:", "  verify commands (what 'passing' means per checkpoint):"]
+    for cp in plan["checkpoints"]:
+        cmds = [c for c in (cp.get("verify") or []) if isinstance(c, str) and c.strip()] or ["(none)"]
+        lines += [f"    #{cp.get('id')}: {c}" for c in cmds]
+    lines.append("  definition of done (CLAUDE.md tq-project block):")
+    cmds = project.get("commands") or {}
+    for name in DOD_COMMANDS:
+        lines.append(f"    {name}: {cmds.get(name) or '(not configured)'}")
+    for key in ("architecture_paths", "classified_paths"):
+        lines.append(f"    {key}: {', '.join(project.get(key) or []) or '(none)'}")
+    lines.append(f"    changelog: {project.get('changelog') or '(none)'}")
+    if plan.get("hotfix") is True:
+        lines.append("  hotfix: true (the review gate becomes n/a: no critic; the tests still run)")
+    if pwarn:
+        lines.append(f"  warning: {pwarn}")
+    return "\n".join(lines)
+
+
+def approval_summary(root: Path, slug: str) -> str:
+    """approval_preview on one line, definition of done first (a hub note is truncated)."""
+    plan = load_plan(root, slug) or {"checkpoints": []}
+    project, _ = load_project_config(root)
+    cmds = project.get("commands") or {}
+    dod = "; ".join(f"{n}: {cmds.get(n) or '(not configured)'}" for n in DOD_COMMANDS)
+    verify = "; ".join(f"#{cp.get('id')}: " + " && ".join(c for c in (cp.get("verify") or []) if isinstance(c, str))
+                       for cp in plan["checkpoints"])
+    extra = ", hotfix (no critic)" if plan.get("hotfix") is True else ""
+    return (f"the definition of done ({dod}; changelog: {project.get('changelog') or '(none)'}) "
+            f"and the verify commands ({verify}){extra}")
+
+
 def cmd_approve(root: Path, slug: str) -> str:
     plan = load_plan(root, slug)
     if plan is None:
         raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
+    project, pwarn = load_project_config(root)
+    problem = _project_command_problem(project, pwarn)
+    if problem:
+        raise SystemExit(problem)
     verify, fingerprints = {}, {}
     for cp in plan["checkpoints"]:
         cmds = [c for c in (cp.get("verify") or []) if isinstance(c, str) and c.strip()]
@@ -1223,10 +1285,20 @@ def cmd_approve(root: Path, slug: str) -> str:
         "workflow": plan.get("workflow") if plan.get("workflow") in WORKFLOWS else "build",
         "hotfix": plan.get("hotfix") is True,
     }
-    project, pwarn = load_project_config(root)
     approved["project"] = project
     approved["project_warning"] = pwarn
     save_approved(root, slug, approved)
+    if approved["hotfix"]:
+        # The planner writes review "pending" (the hook allows n/a only on an approved hotfix
+        # plan); the approval that records hotfix: true is what switches the critic off.
+        changed = False
+        for cp in plan["checkpoints"]:
+            rv = (cp.setdefault("gates", {}).setdefault("review", {}))
+            if isinstance(rv, dict) and rv.get("status", "pending") == "pending":
+                rv["status"] = "n/a"
+                changed = True
+        if changed:
+            write_json(plan_path(root, slug), plan)
     sess = load_session(root, slug)
     sess.pop("finished", None)
     save_session(root, slug, sess)
@@ -1235,6 +1307,8 @@ def cmd_approve(root: Path, slug: str) -> str:
     lines = [f"approved '{slug}': {len(verify)} checkpoint(s), verify commands frozen"]
     for cid, cmds in verify.items():
         lines += [f"  #{cid}: {c}" for c in cmds]
+    dcmds = project.get("commands") or {}
+    lines += [f"  dod {name}: {dcmds.get(name) or '(not configured)'}" for name in DOD_COMMANDS]
     return "\n".join(lines)
 
 
@@ -1989,6 +2063,7 @@ def main(argv: list[str] | None = None) -> int:
         return code
     elif a.cmd == "approve":
         print(cmd_status(root, a.slug))
+        print(approval_preview(root, a.slug))
         if not (hub_actor_ok("approve", a.slug) or human_confirm(f"approve the plan '{a.slug}' and freeze its verify commands")):
             return 2
         print(cmd_approve(root, a.slug))

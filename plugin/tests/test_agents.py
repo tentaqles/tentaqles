@@ -51,6 +51,9 @@ def test_planner_knows_the_workflow_fields() -> None:
     for token in ('"workflow"', '"hotfix"', '"spec"'):
         assert token in body
     assert re.search(r"hotfix.*n/a", body, flags=re.DOTALL)
+    # final review I1: the planner writes pending; the hotfix approval switches review to n/a
+    assert 'Write every gate as `"pending"` even then' in body
+    assert "starts at `\"n/a\"`" not in body
 
 
 def test_planner_documents_the_runnable_field() -> None:

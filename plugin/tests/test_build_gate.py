@@ -1696,3 +1696,69 @@ def test_state_reads_workflow_and_hotfix_from_the_approval(repo):
     save_plan(repo, {**PLAN, "workflow": "build", "hotfix": True})
     st = gate.cmd_state(repo, "demo")
     assert st["workflow"] == "feature" and st["hotfix"] is False
+
+
+# I1: a hotfix plan is written with review pending; the approval switches it to n/a
+
+def _hotfix_plan(review="pending"):
+    p = {"feature": "Fix", "slug": "demo", "workflow": "fix", "hotfix": True,
+         "checkpoints": [cp(1, r=review)]}
+    return p
+
+
+def test_planner_hotfix_plan_goes_through_the_hook_and_approval_sets_na(set_up):
+    path = plan_file(set_up)
+    code, _, err = hook(set_up, write(path, _hotfix_plan("n/a")))
+    assert code == 2 and "hotfix" in err        # n/a still only on an approved hotfix plan
+    assert hook(set_up, write(path, _hotfix_plan("pending")))[0] == 0
+    save_plan(set_up, _hotfix_plan("pending"))  # what the Write would have written
+    gate.cmd_approve(set_up, "demo")
+    assert gate.load_approved(set_up, "demo")["hotfix"] is True
+    assert gate.gate(gate.load_plan(set_up, "demo")["checkpoints"][0], "review") == "n/a"
+    gate.cmd_lock_tests(set_up, "demo", 1, [], none=True)
+    assert gate.cmd_verify(set_up, "demo", 1)[0] == 0
+    done = {**_hotfix_plan("n/a"), "checkpoints": [cp(1, "passed", "passed", "n/a")]}
+    assert hook(set_up, write(path, done))[0] == 0
+
+
+def test_non_hotfix_approval_leaves_review_pending(repo):
+    gate.cmd_approve(repo, "demo")
+    assert all(gate.gate(c, "review") in ("pending", "passed") for c in gate.load_plan(repo, "demo")["checkpoints"])
+
+
+# I2: the human sees the frozen DoD commands; trivial or non-string commands are refused
+
+def _project_cmds(repo, cmds):
+    block = '# Demo\n\n```json tq-project\n' + json.dumps({"commands": cmds, "changelog": "CHANGELOG.md"}) + '\n```\n'
+    (repo / "CLAUDE.md").write_text(block, encoding="utf-8")
+
+
+@pytest.mark.parametrize("cmds", [{"test": True}, {"test": "true"}, {"test": ""}, {"test": "  "},
+                                  {"test": PASS_CMD, "lint": 7}, {"test": PASS_CMD, "typecheck": ":"}])
+def test_approve_refuses_trivial_or_non_string_dod_commands(repo, cmds):
+    _project_cmds(repo, cmds)
+    with pytest.raises(SystemExit, match=r"commands\.\w+ must be a shell command string"):
+        gate.cmd_approve(repo, "demo")
+    assert gate.load_approved(repo, "demo") is None
+
+
+def test_approve_shows_the_frozen_dod_commands_before_confirming(repo, monkeypatch, capsys):
+    _project_cmds(repo, {"test": "pytest -q", "lint": "ruff check ."})
+    order = []
+    monkeypatch.setattr(gate, "human_confirm", lambda action, *a, **k: order.append(capsys.readouterr().out) or True)
+    assert gate.main(["--root", str(repo), "approve", "demo"]) == 0
+    shown = order[0]
+    assert "test: pytest -q" in shown and "lint: ruff check ." in shown and "typecheck: (not configured)" in shown
+    assert PASS_CMD in shown and "changelog: CHANGELOG.md" in shown
+
+
+def test_plan_approval_consequence_lists_what_is_frozen(repo, monkeypatch):
+    _project_cmds(repo, {"test": "pytest -q"})
+    did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
+    text = gate.answer_consequence(repo, "demo", did, "approve")
+    assert "freezes" in text and "test: pytest -q" in text and PASS_CMD in text
+    assert gate.answer_consequence(repo, "demo", did, "edit") == ""
+    _set_token(monkeypatch, "answer")
+    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "approve"]) == 0
+    ans = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
+    assert "test: pytest -q" in ans["note"]

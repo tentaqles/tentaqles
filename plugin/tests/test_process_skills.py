@@ -101,7 +101,8 @@ def test_fix_skill_is_reproduce_first_and_bug_shaped() -> None:
         assert token in body, token
     assert "never" in body and "without a reproduction" in body
     assert "AskUserQuestion` is never called" in body
-    assert "build-gate ask" in body and "knowing the review gate is `n/a`" in body
+    assert "build-gate ask" in body and "knowing the review gate becomes `n/a`" in body
+    assert "review gate still `pending`" in " ".join(body.split())  # the approval, not the planner, sets n/a (final review I1)
     assert "you never run `build-gate dod" in body
     flat = " ".join(body.split())
     assert "Set `hotfix=yes` only when the user passed `--hotfix`" in flat and "never infer it from severity" in flat

@@ -80,10 +80,12 @@ higher layer. Never write a fix "while we wait" without a reproduction.
 once the plan exists, the final output before): show the failing test and its
 output, the severity, the one-checkpoint plan and its verify command. The
 human approves in their terminal (`build-gate approve fix-<slug>`); you cannot.
-For `--hotfix` the plan carries `"hotfix": true` and the gate freezes that flag
-into the signed approval. Tell the human plainly that they are approving the
-plan knowing the review gate is `n/a` (no critic runs); the regression test
-still has to pass.
+For `--hotfix` the plan carries `"hotfix": true` with the review gate still
+`pending`, and the gate freezes that flag into the signed approval; the
+approval itself switches the review gate to `n/a` (the hook refuses `n/a` on a
+plan the human has not approved as a hotfix). Tell the human plainly that they
+are approving the plan knowing the review gate becomes `n/a` (no critic runs);
+the regression test still has to pass.
 
 ## 3. Root cause
 
