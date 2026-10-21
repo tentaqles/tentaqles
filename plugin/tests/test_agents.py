@@ -100,3 +100,10 @@ def test_reviewers_keep_values_out_and_name_model_exits(name: str, tokens: tuple
     _, body = _fm(name)
     for token in tokens:
         assert token in body, (name, token)
+
+
+def test_breaker_writes_new_scratch_files_instead_of_editing_in_place() -> None:
+    _, body = _fm("breaker")
+    assert "never edit a scratch file in place" in body
+    assert "write a new file instead" in body
+    assert "links" in body and "regular files" in body
