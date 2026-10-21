@@ -10,6 +10,8 @@ You coordinate; you don't do the work. Real work goes to fresh subagents, so you
 
 `$ARGUMENTS` is a feature description, a spec path, or `resume <slug>`.
 
+When another skill hands you a run, it passes `workflow=<feature|fix|kickoff>` and (for a fix) `hotfix=<yes|no>`; pass both to the planner so the plan carries `"workflow"` and `"hotfix"`. A plan without them is a plain `build`.
+
 Details (plan schema, gate rules, the tq rule for locked tests, troubleshooting) are in `reference.md` next to this file. Read it before Phase 1 the first time.
 
 ## Running the gate CLI
@@ -28,10 +30,25 @@ Below, `build-gate <cmd>` means that second line with `<cmd>`. Use the Bash tool
 - **Never read source code, diffs or test logs yourself.** Workers read them and report in a few lines. You read the plan JSON and the gate's short output.
 - **The plan changes only through Edit or Write**, never the shell. A hook checks every edit: gates advance in order, a checkpoint can't be touched while an earlier one is open, and **no gate or status becomes "passed" without fresh evidence**.
 - **If a hook blocks you, never work around it.** Fix the state it names (run `build-gate verify`, finish the earlier checkpoint, reopen this one).
-- **Identity:** before the first commit, `git config user.email` must be the address this workspace expects (tq's guard checks it on every commit). Never pass `-c user.email=...`, never `--no-verify`, never `git add -A` or `git add .`: stage explicit paths.
+- **Identity:** before the first commit, `git config user.email` must be the address this workspace expects (tq's guard checks it on every commit). Never pass `-c user.email=...`, never `--no-verify`, never a blanket stage-everything add: stage explicit paths.
 - **Secrets:** never read or print `.env` files; a command that needs them runs as `tq dotenv run -- <command>`.
 - **Every subagent prompt** in Phase 2 starts with the marker `[checkpoint <slug>#<id> <stage>]` (stage: `tests`, `implement`, `review`, `fix`), is self-contained (paths, the checkpoint slice, what to return), and ends with: *"Return at most 15 lines: result, files changed, failures. No code, no logs."*
 - Ask the human exactly twice: plan approval (Phase 1) and the final review (Phase 4). Decide everything else, logging each judgment call as an `assumptions` entry in the plan.
+
+## Headless mode
+
+The hub (release 2) and any `claude -p` caller set `TENTAQLES_HEADLESS=1`, or pass `--headless` in `$ARGUMENTS`. Then `AskUserQuestion` is never called. At every human stop you write the question as a decision record with `build-gate ask` and end your turn; the Stop hook lets a turn end while a decision is pending:
+
+```bash
+build-gate ask <slug> --kind plan-approval --text "<the plain summary, one line per checkpoint, verify commands, assumptions>" --options approve,edit,stop
+build-gate ask <slug> --kind result --text "<what to try, checkpoint summary, deferred MINORs>" --options approve,request-changes,stop
+build-gate ask <slug> --kind judge --checkpoint <id> --reviewer <name> --text "<the U rows>" --options PASS,FAIL
+build-gate ask <slug> --kind question --checkpoint <id> --text "<the question>" --options <a>,<b>
+```
+
+On resume (`/tentaqles:build resume <slug>`), read `build-gate state <slug> --json` first: `pending_decisions` empty and the matching record answered means continue from the answer (`approve` → the plan is already frozen; `edit` → re-run the planner with the note; `request-changes` → Phase 4's request-changes path with the note; `stop` → commit and end). A pending decision means the human has not answered: end the turn again without working.
+
+In interactive mode you also write the `ask` record at each stop and then use `AskUserQuestion` as before; the human's terminal command (`approve`, `finish`, `judge`) answers it, so the record exists either way and the hub can show the history. The plan's top-level `task` block (hub id, external tracker id) is set by the on-ramp when the hub launched the run; never invent one.
 
 ## Phase 0: Worktree and hooks
 
@@ -49,7 +66,7 @@ Below, `build-gate <cmd>` means that second line with `<cmd>`. Use the Bash tool
 
 1. **Spec:** if the user gave a spec path, use it. Otherwise write `docs/specs/<slug>.md`: problem, users, behavior, acceptance criteria, out of scope. Fill gaps from the codebase and `CLAUDE.md`; record each gap you filled as an assumption.
 2. **Plan:** launch the `build-planner` agent with the spec path and the slug. It writes `docs/checkpoints/<slug>.json`. If it returns questions, answer them yourself from the spec and the code, re-run it, and log the answers as `assumptions`.
-3. **Human stop 1.** Use `AskUserQuestion` to show: the plain summary; one plain line per checkpoint; each checkpoint's `verify` commands (they define "passing", and are frozen on approval); the test files and layers; `assumptions`; `new_dependencies`. Offer **Approve**, **Edit** (re-run the planner with the feedback, ask again), **Stop**. Optional live view: `build-gate serve <slug>` in the background, then http://127.0.0.1:8765/ (it binds to localhost only).
+3. **Human stop 1.** First write the record: `build-gate ask <slug> --kind plan-approval --text "<the plain summary, one line per checkpoint, verify commands, assumptions>" --options approve,edit,stop`. Then use `AskUserQuestion` to show: the plain summary; one plain line per checkpoint; each checkpoint's `verify` commands (they define "passing", and are frozen on approval); the test files and layers; `assumptions`; `new_dependencies`. Offer **Approve**, **Edit** (re-run the planner with the feedback, ask again), **Stop**. Optional live view: `build-gate serve <slug>` in the background, then http://127.0.0.1:8765/ (it binds to localhost only).
 4. **On approve:** the human freezes the plan themselves. You can't: the hook refuses `approve`, `unlock-tests` and `finish` from the agent, and the CLI needs an interactive terminal plus a one-time code typed back. Print the exact command with absolute paths (run `echo "$TENTAQLES_PY" "$_tqe/scripts/build-gate.py"` after the prefix to get them), e.g. `"<python>" "<plugin>/scripts/build-gate.py" --root "<worktree>" approve <slug>`, ask the user to run it in their own terminal (PowerShell, Windows Terminal or a macOS/Linux terminal; in Git Bash's mintty, prefix it with `winpty`), and wait. Then run `build-gate status <slug>` to confirm `approved=yes`. Commit: `git add docs/specs/<slug>.md docs/checkpoints/<slug>.json` then `git commit -m "plan(<slug>): checkpoints"`.
 
 ## Phase 2: Checkpoint loop
@@ -68,12 +85,18 @@ This records their hashes and mirrors them into `.claude/tq-rules.yaml`, so tq's
 - PASS: Edit the plan, `gates.behavior.status = "passed"`. The hook accepts it only if that evidence matches the code on disk now.
 - FAIL: go to *On failure*.
 
-**d. Review gate.**
+**d. Review gate: a crew, every verdict recorded.**
 1. `build-gate review-bundle <slug> <id>` prints the bundle path and `base=<commit>`.
-2. Risk triage: `tq decide triage --range <base>..HEAD`. Exit 0 means **light**; exit 3, any error, or tq missing means **full** (when in doubt, review more).
-3. **Light:** one `build-critic` (`[checkpoint <slug>#<id> review]`, model `sonnet`) with the checkpoint slice and the bundle path.
-   **Full:** `build-critic` with model `opus`; on FAIL, write its findings into `docs/reviews/<slug>-<id>.md`, run a fresh `build-fixer` (`[checkpoint <slug>#<id> fix]`) on that thread, then re-run step c (code changed, so the behavior gate reset), make a new bundle, and give the critic the thread for its next round. At most 3 critic rounds. A finding the critic upholds twice after a dispute goes to a fresh `general-purpose` arbiter that sees only that finding, the cited files and `CLAUDE.md`.
-4. PASS: Edit the plan: `review = "passed"`, `status = "passed"` (the hook re-checks fresh evidence, so a fixer's change can't slip through unverified). Commit the plan and thread (`gate(<slug>#<id>): passed`). Post one line to the user: `✓ 2/5 <title> (behavior ✓ review ✓ light, 0 retries)`.
+2. Risk triage: `tq decide triage --range <base>..HEAD`. Exit 0 means **light**; exit 3, any error, or tq missing means **full** (when in doubt, review more). Note the flags it prints.
+3. Pick the crew. Always `build-critic` (model `sonnet` for light, `opus` for full). Add `spec-critic` when the plan's `workflow` is `feature` or `kickoff`, or it is `fix` and `changed_files` include files outside the failing path named in the fix spec. Add `security-reviewer` on flags auth, secrets, api, state, destructive, or when the diff touches `.github/workflows/` or a dependency manifest; `privacy-reviewer` on flag `classified_data` or a diff touching `classified_paths`; `llm-security-reviewer` on flag `agentic`; `breaker` only when the checkpoint is marked `"runnable": true` in the plan and Project config has a `run` command. (The security and privacy reviewers ship with the security pack; if an agent is not installed, record nothing for it and tell the user which reviewer was skipped and why.) Run the crew members in parallel, each with the prompt marker `[checkpoint <slug>#<id> review]`, the checkpoint slice, the bundle path, the spec slice path and its checklist source.
+4. Each reviewer returns the contract (`RESULT`, `BUILT-BY-ME`, `F` and `U` rows). If `BUILT-BY-ME: yes`, discard it and run a fresh instance. Record every verdict, you never skip one:
+   ```
+   build-gate record-review <slug> <id> --reviewer build-critic --result PASS|FAIL|BLOCKED --blockers N --majors N --minors N --unjudged N
+   ```
+   The hook refuses `review = "passed"` until the current code has a recorded `build-critic` PASS and no FAIL or BLOCKED beside it.
+5. **FAIL from any reviewer:** write all findings into `docs/reviews/<slug>-<id>.md` (one section per reviewer), run a fresh `build-fixer` (`[checkpoint <slug>#<id> fix]`) on the thread, re-run step c (code changed, so the behavior gate reset), make a new bundle, and re-run only the reviewers that failed plus `build-critic`, giving them the thread. At most 3 rounds per checkpoint. A finding upheld twice after a dispute goes to the `arbiter` agent with only that finding, the dispute, the cited files and `CLAUDE.md`; its ruling is final for this run.
+6. **BLOCKED from any reviewer:** the `U` rows are a human question. First write the record: `build-gate ask <slug> --kind judge --checkpoint <id> --reviewer <name> --text "<the U rows>" --options PASS,FAIL`. Then use `AskUserQuestion` to show them (this does not count as one of the two stops: nothing proceeds without it anyway). The human settles each in their own terminal: `build-gate judge <slug> <id> --reviewer <name> --result PASS|FAIL --note "<why>"`. A FAIL ruling goes through step 5.
+7. All PASS: Edit the plan: `review = "passed"`, `status = "passed"`. Commit the plan and thread (`gate(<slug>#<id>): passed`). Post one line to the user: `✓ 2/5 <title> (behavior ✓ review ✓ light crew: critic, spec-critic · 0 retries)`.
 
 **On failure** (behavior FAIL, or review FAIL after its rounds):
 1. Edit the plan: that gate `"failed"`, `attempts + 1`, its findings stored.
@@ -86,12 +109,12 @@ The Stop hook blocks ending your turn while a started checkpoint is unproven, on
 
 ## Phase 3: Wrap-up
 
-One `general-purpose` subagent runs the project's full test suite, lint and build (from its `CLAUDE.md` or config), and updates the changelog/docs if the project keeps them. A failure reopens the last checkpoint (`behavior = "failed"`, `review = "pending"`, `status = "pending"`) and goes through *On failure*. Promote any lesson that appears twice in `docs/LEARNINGS.md` to a rule there.
+When the plan's `workflow` is `feature`, `fix` or `kickoff`, run the definition of done yourself: `build-gate dod <slug>`. It runs the project's test, lint and typecheck commands frozen at approval, checks the locked tests, every checkpoint and reviewer record, and the obligations the diff created (an ADR for `architecture_paths`, `docs/privacy.md` for `classified_paths`, a `## Migration plan` in the spec for migration files, the changelog). `MISSING` items are work: fix them (a fixer subagent for code, you for docs), then re-run. The Stop hook will not let the turn end while a finished plan has no fresh DoD. Only a human can waive an item, and only by running the override themselves: you never run `build-gate dod <slug> --override`, and the hook refuses it with exit 2. If an item cannot be fixed, stop and ask the human to run `build-gate dod <slug> --override "<their reason>"` in their own terminal (headless: write `build-gate ask <slug> --kind question --text "override: <the MISSING items and why they cannot be fixed>" --options override,stop` and end the turn; the human, or a hub actor token, settles it). Then re-run plain `build-gate dod <slug>` to confirm it is accepted. The override is logged to `docs/LEARNINGS.md` and counted by `tq insights`. For a plain `build` plan, run one `general-purpose` subagent for the project's full test suite, lint and build as before, and have it update the changelog/docs if the project keeps them. A failure reopens the last checkpoint (`behavior = "failed"`, `review = "pending"`, `status = "pending"`) and goes through *On failure*. Promote any lesson that appears twice in `docs/LEARNINGS.md` to a rule there.
 
 ## Phase 4: Human stop 2
 
-`AskUserQuestion`: what to try and how, checkpoint summary (retries per gate, light/full reviews, test counts per layer), deferred MINOR findings. Offer **Approve**, **Request changes**, **Stop here**.
-- **Request changes:** log the feedback in `docs/LEARNINGS.md` (something every gate missed; say which gate should have caught it), append new checkpoints, have the human approve them (the approve command, in their terminal), and loop Phase 2 to 3.
+First write the record: `build-gate ask <slug> --kind result --text "<what to try, checkpoint summary, deferred MINORs>" --options approve,request-changes,stop`. Then `AskUserQuestion`: what to try and how, checkpoint summary (retries per gate, light/full reviews, test counts per layer), deferred MINOR findings. Offer **Approve**, **Request changes**, **Stop here**.
+- **Request changes:** log the feedback in `docs/LEARNINGS.md` (something every gate missed; say which gate should have caught it). Log it as an H<n> line in docs/LEARNINGS.md (what was rejected and which gate should have caught it), append new checkpoints, have the human approve them (the approve command, in their terminal), and loop Phase 2 to 3.
 - **Approve:** ask the human to run `build-gate finish <slug>` in their terminal (it removes the gate hooks and the tq rules; human-only like approve), commit what's outstanding, and report the branch `build/<slug>` and worktree path. Push or open a PR only if the user asks. The worktree can be removed later with `tq worktrees prune`.
 - **Stop here:** commit what's outstanding and leave the branch.
 
