@@ -4,6 +4,10 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+### Added
+
+- **Hub task block.** The build gate validates a top-level plan `task` (`hub`, `workspace`, `kind`, `external`), refuses one that differs from `TQ_HUB_TASK`, snapshots it in the approval, and `build-gate state --json --records` exports the gate's signed records for the hub's review page. The build skill ends a headless Phase 0 with `TQ_HUB_RELOCATE <worktree> <slug>`.
+
 ## [0.12.0] — 2026-10-21
 
 ### Added

@@ -71,6 +71,8 @@ Add `"runnable": true` to a checkpoint (beside `size`) when it produces somethin
 
 `workflow` is one of `build`, `feature`, `fix`, `kickoff`; the orchestrator tells you which, default `build`. `spec` is the spec slice path you planned from. `hotfix` is `true` only when the orchestrator says a fix is a hotfix. Write every gate as `"pending"` even then: the human's approval of a `"hotfix": true` plan is what switches `gates.review.status` to `"n/a"` (the critic is skipped; the locked regression test never is), and the gate refuses `"n/a"` on a plan that is not yet approved as a hotfix. For `fix` plans write exactly one checkpoint whose first test is the locked regression test named in the fix spec.
 
+`task` is written only when the orchestrator passes `task=<json>` (the on-ramp read it from the `TQ_HUB_TASK` environment variable because the hub launched this run): copy that JSON verbatim as the plan's top-level `"task"` (keys `hub`, `workspace`, `kind`, `external`, in that form). Never write `task` otherwise and never edit it: the gate refuses a `task` the environment did not set or that differs from it.
+
 **Splitting** (when asked to split checkpoint N after repeated failures): replace N with smaller checkpoints, renumber the later ones (the orchestrator has recorded a pending plan approval first; without it the gate refuses removing or renumbering an approved checkpoint), keep the accumulated `findings` as `notes` on the new ones, and say which new checkpoints need fresh approval.
 
 Check the JSON parses (read it back), then reply with the path and one line: `1 xs: … → 2 s: … → …`.
