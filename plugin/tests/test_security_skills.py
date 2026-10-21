@@ -15,7 +15,7 @@ def _body(name: str) -> str:
 
 
 CHECKLISTS = {
-    "auth-security/references/asvs-checklist.md": ("S1", "ASVS", "V6", "V8", "A03", "A10"),
+    "auth-security/references/asvs-checklist.md": ("S1", "ASVS", "V6", "V8", "A03", "A10", "ASVS 5.0 V6, V8", "ASVS 5.0 chapter numbers"),
     "privacy-review/references/checklist.md": ("P1", "LGPD Art. 6", "Art. 18", "Art. 37", "Art. 46", "GDPR Art. 5", "Art. 25", "Art. 30", "Art. 32"),
     "llm-security-review/references/checklist.md": ("L1", "LLM01", "LLM02", "LLM06", "ASI01", "ASI", "MCP", "memory"),
     "supply-chain/references/checklist.md": ("C1", "SLSA", "SBOM", "permissions:", "lockfile", "Scorecard", "secret scanning"),
@@ -45,3 +45,12 @@ def test_checklist_rows_present_once(rel: str, ids: list) -> None:
     text = (SKILLS / rel).read_text(encoding="utf-8")
     for rid in ids:
         assert text.count(f"| {rid} |") == 1, (rel, rid)
+
+
+def test_threat_model_skill_writes_stride_per_boundary() -> None:
+    body = _body("threat-model")
+    for token in ("templates/process/threat-model.md", "references/stride.md", "PRD", "§6", "NEEDS-DECISION",
+                  "Accepted risks", "Must not trade off", "docs/threat-model.md",
+                  "TENTAQLES_HEADLESS", "AskUserQuestion", "superseded", "B1 <from> -> <to>"):
+        assert token in body, token
+    assert "add docs/threat-model.md docs/prd.md CLAUDE.md" not in body
