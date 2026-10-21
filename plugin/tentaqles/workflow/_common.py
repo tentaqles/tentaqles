@@ -29,6 +29,12 @@ def norm(path: str | os.PathLike | None) -> str:
     return str(path or "").replace("\\", "/")
 
 
+def canon_path(path: str | os.PathLike) -> str:
+    """Canonical absolute form of a path: resolved, forward slashes, case-folded on Windows."""
+    p = norm(os.path.normpath(os.path.realpath(str(path))))
+    return p.lower() if IS_WINDOWS else p
+
+
 def find_git_root(start: str | os.PathLike | None) -> Path | None:
     """Nearest ancestor (or self) holding a `.git` dir or file (worktrees use a file)."""
     if not start:

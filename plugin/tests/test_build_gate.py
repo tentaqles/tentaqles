@@ -2220,3 +2220,118 @@ def test_shell_key_reads_via_tilde_when_tq_home_is_the_default(repo, tmp_path, m
 ])
 def test_shell_commands_beside_the_key_dir_stay_allowed(repo, cmd):
     assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+# ---------------------------------------------------------------------------
+# Rollback detection: a generation counter kept with the key
+# ---------------------------------------------------------------------------
+
+
+def _approved_path(root):
+    return root / ".claude" / "build" / "demo" / "approved.json"
+
+
+def _gen_record(root):
+    return gate.gen_record_path(root, "demo")
+
+
+def test_every_state_transition_increments_the_generation(repo):
+    gate.cmd_approve(repo, "demo")
+    a1 = json.loads(_approved_path(repo).read_text(encoding="utf-8"))
+    assert a1["gen"] == 1 and gate.recorded_gen(repo, "demo") == 1
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert gate.load_approved(repo, "demo")["gen"] == 2 == gate.recorded_gen(repo, "demo")
+    gate.cmd_unlock_tests(repo, "demo", [str(repo / "tests" / "test_a.py")])
+    assert gate.load_approved(repo, "demo")["gen"] == 3
+    gate.cmd_approve(repo, "demo")
+    assert gate.load_approved(repo, "demo")["gen"] == 4
+    gate.cmd_finish(repo, "demo")
+    assert gate.load_approved(repo, "demo")["gen"] == 5 == gate.recorded_gen(repo, "demo")
+    # the record lives with the key, outside the repository
+    assert gate.key_dir() in _gen_record(repo).parents
+
+
+def test_dod_override_and_answers_increment_the_generation(repo):
+    gate.cmd_approve(repo, "demo")
+    g = gate.recorded_gen(repo, "demo")
+    gate.cmd_dod(repo, "demo", "the human accepts it")
+    assert gate.recorded_gen(repo, "demo") == g + 1 == gate.load_approved(repo, "demo")["gen"]
+    did = gate.cmd_ask(repo, "demo", "question", "pick one", ["a", "b"]).split()[1]
+    gate.answer_decision(repo, "demo", did, "a", "", "terminal")
+    assert gate.recorded_gen(repo, "demo") == g + 2 == gate.load_approved(repo, "demo")["gen"]
+
+
+def test_an_older_signed_approval_copied_back_counts_as_rolled_back(repo, monkeypatch):
+    gate.cmd_approve(repo, "demo")
+    gen1 = _approved_path(repo).read_text(encoding="utf-8")
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    hook(repo, agent("[checkpoint demo#2 implement]"))  # this session owns the build
+    assert gate.load_approved(repo, "demo")["gen"] == 2
+    _approved_path(repo).write_text(gen1, encoding="utf-8")  # the gen-1 file, validly signed
+    old = json.loads(gen1)
+    assert gate.verified(old) is False
+    assert gate.load_approved(repo, "demo") is None
+    assert gate.rolled_back(repo, "demo") is True
+    # the locked test stays refused (gen 1 had no locks)
+    edit = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "tests" / "test_a.py"), "content": "x"}}
+    code, _, err = hook(repo, edit)
+    assert code == 2 and "rolled back" in err
+    assert hook(repo, bash("echo x > tests/test_a.py"))[0] == 2
+    assert hook(repo, agent("[checkpoint demo#2 implement]"))[0] == 2
+    assert hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed")))[0] == 2
+    # every gate decision refuses
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "rolled back" in msg
+    code, msg = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "rolled back" in msg
+    st = gate.cmd_state(repo, "demo")
+    assert st["rolled_back"] is True and st["approved"] is False
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "hub")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", gate.mint_hub_token("finish", "demo", "hub"))
+    assert gate.hub_actor_ok("finish", "demo", repo) is None
+    # Stop blocks once with the rollback message
+    code, _, err = stop(repo)
+    assert code == 2 and "build state was rolled back or altered; a human must re-approve" in err
+    assert "build-gate approve demo" in err
+    assert stop(repo)[0] == 0
+    # the human re-approves: a fresh generation, everything normal again
+    gate.cmd_approve(repo, "demo")
+    a = gate.load_approved(repo, "demo")
+    assert a["gen"] == 3 and gate.recorded_gen(repo, "demo") == 3
+    assert gate.rolled_back(repo, "demo") is False and gate.cmd_state(repo, "demo")["rolled_back"] is False
+    # the locks recorded with the generation survive the re-approval
+    assert "tests/test_a.py" in a["locked_tests"]
+    code, _, err = hook(repo, edit)
+    assert code == 2 and "locked test" in err
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 0
+    assert gate.hub_actor_ok("finish", "demo", repo) == "hub"
+    assert hook(repo, bash("echo x > app2.py"))[0] == 0
+
+
+def test_missing_generation_record_with_gen_above_zero_is_refused(repo):
+    approve_and_lock(repo)
+    _gen_record(repo).unlink()
+    assert gate.load_approved(repo, "demo") is None
+    assert gate.rolled_back(repo, "demo") is True
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 1
+    edit = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "tests" / "test_a.py"), "content": "x"}}
+    assert hook(repo, edit)[0] == 2
+
+
+def test_generation_record_present_but_approval_absent_is_refused(repo):
+    approve_and_lock(repo)
+    _approved_path(repo).unlink()
+    assert gate.rolled_back(repo, "demo") is True
+    assert gate.cmd_state(repo, "demo")["rolled_back"] is True
+    edit = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "tests" / "test_a.py"), "content": "x"}}
+    code, _, err = hook(repo, edit)
+    assert code == 2 and "rolled back" in err
+
+
+def test_generation_record_is_per_project_and_slug(repo, tmp_path):
+    gate.cmd_approve(repo, "demo")
+    other = tmp_path / "other"
+    other.mkdir()
+    assert gate.gen_record_path(repo, "demo") != gate.gen_record_path(other, "demo")
+    assert gate.gen_record_path(repo, "demo") != gate.gen_record_path(repo, "demo2")
+    assert gate.project_id(repo) == gate.project_id(Path(str(repo).upper()) if os.name == "nt" else repo)

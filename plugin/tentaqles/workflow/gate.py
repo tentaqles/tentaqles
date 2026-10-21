@@ -44,6 +44,7 @@ from tentaqles.workflow._common import (
     _WRAPPERS,
     ShellParseError,
     append_jsonl,
+    canon_path,
     canon_text,
     command_word,
     has_expansion,
@@ -166,7 +167,7 @@ def sign(data: dict) -> dict:
     return out
 
 
-def verified(data) -> bool:
+def _sig_ok(data) -> bool:
     import hmac
 
     if not isinstance(data, dict) or not isinstance(data.get("sig"), str):
@@ -175,13 +176,106 @@ def verified(data) -> bool:
     return bool(key) and hmac.compare_digest(data["sig"], _mac(data, key))
 
 
+# A signature proves the gate wrote a file, not that it is the latest one: an older, validly
+# signed approved.json copied back would drop the test locks. So every approval carries a
+# generation `gen` (signed), every state transition rewrites it with gen + 1, and the latest
+# gen is recorded with the key (closed to the agent's tools). An approval whose gen differs
+# from the record, a record without the approval, or an approval claiming gen > 0 without a
+# record, is a rolled-back state: every gate refuses until the human re-approves.
+APPROVAL_KIND = "approval"
+ROLLBACK_MSG = "build state was rolled back or altered; a human must re-approve (`build-gate approve {slug}`)"
+
+
+def project_id(root) -> str:
+    """Stable id of a project root: a hash of its canonical resolved path."""
+    import hashlib
+
+    return hashlib.sha256(canon_path(root).encode("utf-8")).hexdigest()[:16]
+
+
+def _gen_file(pid: str, slug: str) -> Path:
+    return key_dir() / "gen" / f"{pid}-{slug}"
+
+
+def gen_record_path(root, slug: str) -> Path:
+    return _gen_file(project_id(root), slug)
+
+
+def _gen_record(root, slug: str) -> dict | None:
+    data = read_json(gen_record_path(root, slug))
+    if not _sig_ok(data) or not isinstance(data.get("gen"), int) or isinstance(data.get("gen"), bool):
+        return None
+    return data
+
+
+def recorded_gen(root, slug: str) -> int | None:
+    rec = _gen_record(root, slug)
+    return rec["gen"] if rec else None
+
+
+def _gen_ok(data: dict) -> bool:
+    gen, pid, slug = data.get("gen"), data.get("project_id"), data.get("slug")
+    if not isinstance(gen, int) or isinstance(gen, bool) or gen < 1 or not isinstance(pid, str) or not isinstance(slug, str):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{16}", pid) or "/" in slug or "\\" in slug or slug in ("", ".", ".."):
+        return False
+    rec = read_json(_gen_file(pid, slug))
+    return _sig_ok(rec) and rec.get("gen") == gen
+
+
+def verified(data) -> bool:
+    """Signed by the gate; an approval must also be the latest generation on record."""
+    if not _sig_ok(data):
+        return False
+    if data.get("kind") == APPROVAL_KIND:
+        return _gen_ok(data)
+    return True
+
+
 def load_approved(root: Path, slug: str) -> dict | None:
     data = read_json(state_dir(root, slug) / "approved.json")
-    return data if verified(data) else None
+    if not verified(data) or data.get("kind") != APPROVAL_KIND:
+        return None
+    if data.get("slug") != slug or data.get("project_id") != project_id(root):
+        return None
+    return data
+
+
+def rolled_back(root: Path, slug: str) -> bool:
+    """The signed approval is not the latest one the gate wrote (see ROLLBACK_MSG)."""
+    if gen_record_path(root, slug).exists():
+        return load_approved(root, slug) is None
+    raw = read_json(state_dir(root, slug) / "approved.json")
+    gen = raw.get("gen") if isinstance(raw, dict) else None
+    return _sig_ok(raw) and isinstance(gen, int) and gen > 0
+
+
+def rollback_msg(slug: str) -> str:
+    return ROLLBACK_MSG.format(slug=slug)
+
+
+def rolled_back_slugs(root: Path) -> list[str]:
+    return [s for s in slugs(root) if rolled_back(root, s)]
 
 
 def save_approved(root: Path, slug: str, data: dict) -> None:
-    write_json(state_dir(root, slug) / "approved.json", sign(data))
+    """Write the approval as the next generation and record that generation with the key."""
+    prev = recorded_gen(root, slug) or 0
+    own = data.get("gen") if isinstance(data.get("gen"), int) and not isinstance(data.get("gen"), bool) else 0
+    gen = max(prev, own) + 1
+    pid = project_id(root)
+    out = {**data, "kind": APPROVAL_KIND, "slug": slug, "project_id": pid, "gen": gen}
+    write_json(state_dir(root, slug) / "approved.json", sign(out))
+    write_json(_gen_file(pid, slug), sign({"gen": gen, "slug": slug, "project_id": pid, "ts": now_iso(),
+                                           "locked_tests": out.get("locked_tests") or {},
+                                           "tests_locked": out.get("tests_locked") or {}}))
+
+
+def bump_gen(root: Path, slug: str) -> None:
+    """A state transition that does not otherwise rewrite the approval still advances it."""
+    approved = load_approved(root, slug)
+    if approved:
+        save_approved(root, slug, approved)
 
 
 def load_session(root: Path, slug: str) -> dict:
@@ -301,6 +395,7 @@ def _record_review(root: Path, slug: str, cid: int, reviewer: str, result: str, 
     log_event(root, "judge" if human else "review", slug, checkpoint=cid, reviewer=reviewer, result=result,
               blockers=rec["blockers"], majors=rec["majors"], minors=rec["minors"], unjudged=rec["unjudged"])
     if human:
+        bump_gen(root, slug)
         _answer_pending(root, slug, "judge", result, "terminal", cid, reviewer)
     return f"#{cid} {reviewer}: {result} recorded (tree {str(tree)[:12]}{', human' if human else ''})"
 
@@ -437,7 +532,7 @@ def answer_decision(root: Path, slug: str, decision_id: str, choice: str, note: 
         if rec["kind"] == "result" and choice == "approve":
             try:
                 extra.append(cmd_finish(root, slug))
-            except Exception as e:  # noqa: BLE001
+            except (Exception, SystemExit) as e:  # noqa: BLE001
                 rc = rc or 1
                 extra.append(f"finish did NOT apply: {e}")
         if rec["kind"] == "judge" and choice in ("PASS", "FAIL") and rec.get("reviewer") and rec.get("checkpoint") is not None:
@@ -448,6 +543,7 @@ def answer_decision(root: Path, slug: str, decision_id: str, choice: str, note: 
     if consequence and actor != "terminal":
         rec_note = f"[{consequence}] {note}".strip()  # a hub has no prompt: the record carries what the answer did
     _answer(root, slug, rec, choice, rec_note, actor)
+    bump_gen(root, slug)
     return rc, chr(10).join([f"decision {decision_id}: {choice} by {actor}", *extra])
 
 
@@ -640,6 +736,8 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
         raise Block(f"invalid plan: {bad}.")
     new = doc["checkpoints"]
     # Hotfix is what the human approved, never what the plan under edit claims.
+    if check_evidence and rolled_back(root, slug):
+        raise Block(rollback_msg(slug) + ".")
     approved = load_approved(root, slug) or {} if check_evidence else None
     hotfix = bool(approved) and approved.get("hotfix") is True
     if approved:
@@ -1419,6 +1517,10 @@ def check_shell(cmd: str, root: Path, cwd=None, tool: str = "Bash") -> None:
     """
     scan = _ShellScan(root, cwd, _locked_paths(root), _build_exists(root), tool)
     scan.scan(cmd, _Cwd([scan.start]), 0)
+    if scan.writes:
+        gone = rolled_back_slugs(root)
+        if gone:
+            raise Block(rollback_msg(gone[0]) + "; until then no command may write files.")
     if scan.writes and scan.prot:
         raise Block(f"this command line writes files and also reaches {STATE_DIR}/ (hook-owned, signed state); "
                     "run the write and the state access as separate commands, and never write into the state dir.")
@@ -1441,6 +1543,8 @@ def check_agent(prompt: str, root: Path, session_id: str) -> None:
     cp = next((c for c in cps if c.get("id") == cid), None)
     if cp is None:
         raise Block(f"checkpoint #{cid} doesn't exist in {slug}.json.")
+    if rolled_back(root, slug):
+        raise Block(rollback_msg(slug) + ".")
     todo = unpassed_before(cps, cid)
     if todo:
         raise Block(f"can't start #{cid} ({stage}): checkpoint(s) {todo} haven't passed.")
@@ -1475,6 +1579,8 @@ def check_agent(prompt: str, root: Path, session_id: str) -> None:
 
 
 def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
+    if rolled_back(root, slug):
+        return [rollback_msg(slug)]
     plan = load_plan(root, slug)
     if plan is None or plan_problem(plan):
         return []  # unreadable or malformed: PreToolUse and the CLI say why; Stop never traps the turn
@@ -1538,6 +1644,9 @@ def check_stop(data: dict, root: Path) -> None:
             continue
         sess["stop_blocks"] = blocks + 1
         save_session(root, slug, sess)
+        if rolled_back(root, slug):
+            raise Block(f"build '{slug}': {rollback_msg(slug)}. Stop and ask the human; "
+                        "this stop is blocked once; the next one goes through.")
         raise Block(
             f"build '{slug}' is mid-checkpoint: " + "; ".join(problems)
             + ". Keep going. To stop for a human (circuit breaker only), set the top-level "
@@ -1645,6 +1754,9 @@ def _hook(data: dict) -> tuple[int, str, str]:
         elif tool in ("Bash", "PowerShell"):
             check_shell(inp.get("command") or "", root, data.get("cwd"), tool)
         elif tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+            gone = rolled_back_slugs(root)
+            if gone:
+                raise Block(rollback_msg(gone[0]) + "; until then no file may be written.")
             check_file(tool, inp, root, TreeHash(root))
     except Block as e:
         return 2, "", f"build-gate: {e}"
@@ -1771,6 +1883,10 @@ def cmd_approve(root: Path, slug: str) -> str:
         verify[str(cp.get("id"))] = cmds
         fingerprints[str(cp.get("id"))] = plan_fingerprint(cp)
     prev = load_approved(root, slug) or {}
+    if not prev:
+        # A rolled-back approval: the locks of the latest generation were recorded with the key.
+        rec = _gen_record(root, slug) or {}
+        prev = {k: rec[k] for k in ("locked_tests", "tests_locked") if isinstance(rec.get(k), dict)}
     code, head = git(root, "rev-parse", "HEAD")
     import secrets
 
@@ -1815,6 +1931,8 @@ def cmd_approve(root: Path, slug: str) -> str:
 
 def cmd_lock_tests(root: Path, slug: str, cid: int, paths: list[str], none: bool,
                    action: str = "ask") -> str:
+    if rolled_back(root, slug):
+        raise SystemExit(rollback_msg(slug) + ".")
     approved = load_approved(root, slug)
     if not approved:
         raise SystemExit(f"plan '{slug}' isn't approved yet (build-gate approve {slug}).")
@@ -1854,6 +1972,8 @@ def cmd_lock_tests(root: Path, slug: str, cid: int, paths: list[str], none: bool
 
 
 def cmd_unlock_tests(root: Path, slug: str, paths: list[str]) -> str:
+    if rolled_back(root, slug):
+        raise SystemExit(rollback_msg(slug) + ".")
     approved = load_approved(root, slug)
     if not approved:
         raise SystemExit(f"plan '{slug}' isn't approved.")
@@ -1879,6 +1999,8 @@ def tests_intact(root: Path, approved: dict) -> list[str]:
 
 def cmd_verify(root: Path, slug: str, cid: int, timeout: float = 900) -> tuple[int, str]:
     """Run the frozen verify commands of one checkpoint and record the evidence."""
+    if rolled_back(root, slug):
+        return 1, rollback_msg(slug) + "."
     approved = load_approved(root, slug)
     if not approved:
         return 1, f"plan '{slug}' isn't approved (build-gate approve {slug})."
@@ -1983,10 +2105,12 @@ def cmd_state(root: Path, slug: str) -> dict:
                                           "gates": {g: "pending" for g in GATES}, "evidence": "-", "reviews": {}})
     dod = read_json(dod_path(root, slug))
     dod_out = {"ok": bool(dod.get("ok")), "tree": dod.get("tree"), "override": dod.get("override")} if verified(dod) else None
+    is_rolled_back = rolled_back(root, slug)
     signed = approved if approved is not None else plan  # the hub sees what the human approved
     return {"slug": slug, "feature": plan.get("feature", slug),
             "workflow": signed.get("workflow") if signed.get("workflow") in WORKFLOWS else "build",
             "hotfix": signed.get("hotfix") is True, "task": plan.get("task"), "approved": approved is not None,
+            "rolled_back": is_rolled_back, "gen": (approved or {}).get("gen"),
             "halted": plan.get("halted"), "finished": bool(sess.get("finished")), "checkpoints": cps, "dod": dod_out,
             "dod_fresh": dod_fresh(root, slug, th)[0],
             "pending_decisions": [{"id": p["id"], "kind": p["kind"], "checkpoint": p.get("checkpoint"),
@@ -2080,6 +2204,8 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
     bad = plan_problem(plan)
     if bad:
         return 1, f"{PLAN_DIR}/{slug}.json is invalid: {bad}."
+    if rolled_back(root, slug):
+        return 1, rollback_msg(slug) + "."
     approved = load_approved(root, slug) or {}
     if not approved:
         return 1, f"plan '{slug}' isn't approved (build-gate approve {slug})."
@@ -2181,6 +2307,7 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         tag = "ok  " if c["ok"] else ("skip" if c["ok"] is None else "MISSING")
         lines.append(f"{tag} {c['id']}: {c['detail']}")
     if override is not None:
+        bump_gen(root, slug)
         log_event(root, "dod-override", slug, ok=ok)
         _answer_pending_option(root, slug, "question", "override", "override", actor)
         head = f"DoD {slug}: OVERRIDDEN by the human (logged as D{learning_id}); {sum(1 for c in checks if c['ok'] is False)} item(s) were missing"
@@ -2363,6 +2490,8 @@ def _merge_foreign_rules(root: Path, path: Path, existing: str, rules: list[dict
 
 
 def cmd_finish(root: Path, slug: str) -> str:
+    if rolled_back(root, slug):
+        raise SystemExit(rollback_msg(slug) + " before finishing.")
     sess = load_session(root, slug)
     sess["finished"] = now_iso()
     save_session(root, slug, sess)
@@ -2440,11 +2569,15 @@ def mint_hub_token(action: str, slug: str, actor: str) -> str:
     return _hub_mac(_key(create=True), action, slug, actor)
 
 
-def hub_actor_ok(action: str, slug: str) -> str | None:
+def hub_actor_ok(action: str, slug: str, root: Path | None = None) -> str | None:
+    """The hub actor a valid token names, or None. A rolled-back state accepts no hub actor:
+    the human re-approves in their own terminal."""
     actor = (os.environ.get("TQ_BUILD_ACTOR") or "").strip()
     tok = (os.environ.get("TQ_BUILD_TOKEN") or "").strip()
     key = _key()
     if not actor or not tok or key is None:
+        return None
+    if root is not None and rolled_back(root, slug):
         return None
     want = _hub_mac(key, action, slug, actor)
     return actor if hmac.compare_digest(want.encode("ascii"), tok.encode("utf-8", "replace")) else None
@@ -2571,13 +2704,13 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "approve":
         print(cmd_status(root, a.slug))
         print(approval_preview(root, a.slug))
-        if not (hub_actor_ok("approve", a.slug) or human_confirm(f"approve the plan '{a.slug}' and freeze its verify commands")):
+        if not (hub_actor_ok("approve", a.slug, root) or human_confirm(f"approve the plan '{a.slug}' and freeze its verify commands")):
             return 2
         print(cmd_approve(root, a.slug))
     elif a.cmd == "status":
         print(cmd_status(root, a.slug))
     elif a.cmd == "finish":
-        if not (hub_actor_ok("finish", a.slug) or human_confirm(f"finish '{a.slug}' and remove its hooks and test locks")):
+        if not (hub_actor_ok("finish", a.slug, root) or human_confirm(f"finish '{a.slug}' and remove its hooks and test locks")):
             return 2
         print(cmd_finish(root, a.slug))
     elif a.cmd == "verify":
@@ -2587,7 +2720,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "lock-tests":
         print(cmd_lock_tests(root, a.slug, a.id, a.paths, a.none, a.action))
     elif a.cmd == "unlock-tests":
-        if not (hub_actor_ok("unlock-tests", a.slug) or human_confirm(f"unlock {', '.join(a.paths)} in '{a.slug}'")):
+        if not (hub_actor_ok("unlock-tests", a.slug, root) or human_confirm(f"unlock {', '.join(a.paths)} in '{a.slug}'")):
             return 2
         print(cmd_unlock_tests(root, a.slug, a.paths))
     elif a.cmd == "review-bundle":
@@ -2596,19 +2729,19 @@ def main(argv: list[str] | None = None) -> int:
         print(cmd_record_review(root, a.slug, a.id, a.reviewer, a.result,
                                 {k: getattr(a, k) for k in ("blockers", "majors", "minors", "unjudged")}))
     elif a.cmd == "judge":
-        if not (hub_actor_ok("judge", a.slug) or human_confirm(f"record a human judgement for {a.reviewer} on '{a.slug}' #{a.id}: {a.result}")):
+        if not (hub_actor_ok("judge", a.slug, root) or human_confirm(f"record a human judgement for {a.reviewer} on '{a.slug}' #{a.id}: {a.result}")):
             return 2
         print(cmd_judge(root, a.slug, a.id, a.reviewer, a.result, a.note))
     elif a.cmd == "dod":
-        if a.override is not None and not (hub_actor_ok("dod", a.slug) or human_confirm(f"accept the missing definition-of-done items for '{a.slug}'")):
+        if a.override is not None and not (hub_actor_ok("dod", a.slug, root) or human_confirm(f"accept the missing definition-of-done items for '{a.slug}'")):
             return 2
-        code, msg = cmd_dod(root, a.slug, a.override, a.timeout, actor=hub_actor_ok("dod", a.slug) or "terminal")
+        code, msg = cmd_dod(root, a.slug, a.override, a.timeout, actor=hub_actor_ok("dod", a.slug, root) or "terminal")
         print(msg)
         return code
     elif a.cmd == "ask":
         print(cmd_ask(root, a.slug, a.kind, a.text, a.options.split(","), a.checkpoint, a.reviewer))
     elif a.cmd == "answer":
-        actor = hub_actor_ok("answer", a.slug)
+        actor = hub_actor_ok("answer", a.slug, root)
         if actor and a.actor and a.actor != actor:
             print(f"build-gate: --actor '{a.actor}' differs from the hub token's actor '{actor}'. Refusing.", file=sys.stderr)
             return 2
