@@ -89,17 +89,36 @@ def test_plan_problem_refuses_a_malformed_task(task, needle):
 
 def test_hook_refuses_a_task_without_tq_hub_task(repo):
     with pytest.raises(gate.Block) as e:
-        gate.check_plan(json.dumps(_plan()), json.dumps(_plan()), repo, "demo", gate.TreeHash(repo))
+        gate.check_plan(json.dumps(_plan()), json.dumps(_plan(task=None)), repo, "demo", gate.TreeHash(repo))
     assert "TQ_HUB_TASK" in str(e.value)
 
 
 def test_hook_accepts_only_the_task_the_hub_set(repo, monkeypatch):
     monkeypatch.setenv("TQ_HUB_TASK", json.dumps(TASK))
-    gate.check_plan(json.dumps(_plan()), json.dumps(_plan()), repo, "demo", gate.TreeHash(repo))
+    gate.check_plan(json.dumps(_plan()), json.dumps(_plan(task=None)), repo, "demo", gate.TreeHash(repo))
     other = {**TASK, "hub": "c-zzzzzzzzzzzz"}
     with pytest.raises(gate.Block) as e:
         gate.check_plan(json.dumps(_plan(task=other)), json.dumps(_plan()), repo, "demo", gate.TreeHash(repo))
     assert "verbatim" in str(e.value)
+
+
+def test_hook_accepts_an_unchanged_task_without_tq_hub_task(repo):
+    # a hub-launched plan resumed in an interactive terminal: status updates keep the task
+    gate.check_plan(json.dumps(_plan()), json.dumps(_plan()), repo, "demo", gate.TreeHash(repo))
+
+
+def test_hook_accepts_an_unchanged_task_when_tq_hub_task_differs(repo, monkeypatch):
+    monkeypatch.setenv("TQ_HUB_TASK", json.dumps({**TASK, "hub": "c-zzzzzzzzzzzz"}))
+    gate.check_plan(json.dumps(_plan()), json.dumps(_plan()), repo, "demo", gate.TreeHash(repo))
+
+
+def test_hook_refuses_a_changed_task_without_tq_hub_task(repo):
+    other = {**TASK, "hub": "c-zzzzzzzzzzzz"}
+    with pytest.raises(gate.Block) as e:
+        gate.check_plan(json.dumps(_plan(task=other)), json.dumps(_plan()), repo, "demo", gate.TreeHash(repo))
+    assert "TQ_HUB_TASK" in str(e.value)
+    with pytest.raises(gate.Block):  # newly added task, old plan had none
+        gate.check_plan(json.dumps(_plan()), json.dumps(_plan(task=None)), repo, "demo", gate.TreeHash(repo))
 
 
 def test_hook_without_a_task_is_unchanged(repo):

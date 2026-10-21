@@ -967,9 +967,16 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
     if bad:
         raise Block(f"invalid plan: {bad}.")
     if check_evidence:
-        env_bad = task_env_problem(doc.get("task"), os.environ.get("TQ_HUB_TASK"))
-        if env_bad:
-            raise Block(f"invalid plan: {env_bad}.")
+        # Only a new or changed task must come from the environment; an unchanged one (a hub-launched
+        # plan resumed in a terminal without TQ_HUB_TASK) is left alone.
+        try:
+            old_task = json.loads(old_text).get("task")
+        except (ValueError, AttributeError):
+            old_task = None
+        if doc.get("task") is None or doc.get("task") != old_task:
+            env_bad = task_env_problem(doc.get("task"), os.environ.get("TQ_HUB_TASK"))
+            if env_bad:
+                raise Block(f"invalid plan: {env_bad}.")
     new = doc["checkpoints"]
     # Hotfix is what the human approved, never what the plan under edit claims.
     if check_evidence and rolled_back(root, slug):
