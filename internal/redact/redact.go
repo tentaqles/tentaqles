@@ -25,7 +25,7 @@ var (
 	cpfRe   = regexp.MustCompile(`\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b`)
 	cnpjRe  = regexp.MustCompile(`\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b`)
 	emailRe = regexp.MustCompile(`(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b`)
-	phoneRe = regexp.MustCompile(`(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,3}\)|\b\d{2,3})[\s.-]?\d{4,5}[\s.-]?\d{4}\b|\+\d{8,15}\b`)
+	phoneRe = regexp.MustCompile(`\+\d{8,15}\b|\+\d{1,3}[\s.-]?\(?\d{2,3}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}\b|\(\d{2,3}\)[\s.-]?\d{4,5}[\s.-]?\d{4}\b|\b\d{2,3}[\s.-]\d{4,5}[\s.-]?\d{4}\b|\b\d{2,3}[\s.-]?\d{4,5}[\s.-]\d{4}\b`)
 	cardRe  = regexp.MustCompile(`\b[3-6](?:\d[ -]?){12,18}\b`)
 	ibanRe  = regexp.MustCompile(`\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b`)
 )

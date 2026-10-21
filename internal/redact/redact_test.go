@@ -16,7 +16,7 @@ func TestCPF(t *testing.T) {
 	}
 	invalid := []string{"123.456.789-00", "11111111111", "52998224726", "4002-8922-0001"} // wrong check digits, repeated, order id
 	for _, v := range invalid {
-		if got := Redact("x "+v+" y", []string{"pii"}); strings.Contains(got, "[REDACTED:cpf]") {
+		if got := Redact("x "+v+" y", []string{"pii"}); strings.Contains(got, "REDACTED") {
 			t.Errorf("non-CPF %s redacted: %q", v, got)
 		}
 	}
@@ -90,5 +90,13 @@ func TestWriterMasksAcrossChunks(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "row: [REDACTED:cpf] end\nnext line\ntail [REDACTED:email]") {
 		t.Fatalf("%q", out)
+	}
+}
+
+func TestPhoneLeavesPlainDigitRuns(t *testing.T) {
+	for _, v := range []string{"1700000000", "52998224726", "123456789012"} {
+		if got := Redact("id "+v+" end", []string{"pii"}); strings.Contains(got, "REDACTED") {
+			t.Errorf("plain digit run %s masked: %q", v, got)
+		}
 	}
 }
