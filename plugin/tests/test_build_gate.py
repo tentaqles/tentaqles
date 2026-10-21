@@ -1010,3 +1010,31 @@ def test_hook_refuses_agent_dod_override_but_allows_plain_dod(repo):
     code, _, err = hook(repo, bash("python build-gate.py dod demo --override x"))
     assert code == 2 and "human" in err
     assert hook(repo, bash("python build-gate.py dod demo"))[0] == 0
+
+
+def test_agent_cannot_pad_plan_to_skip_dod(repo):
+    _project(repo)
+    own(repo)
+    plan = _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    padded = copy.deepcopy(plan)
+    padded["checkpoints"].append(cp(4))
+    save_plan(repo, padded)
+    code, _, err = stop(repo)
+    assert code == 2 and "definition of done" in err
+
+
+def test_tree_hash_sees_same_size_edit_in_same_second(repo):
+    for i in range(3):
+        a, b = f"v = {i}0\n", f"v = {i}1\n"
+        (repo / "app.py").write_text(a, encoding="utf-8")
+        _git(repo, "add", "app.py")  # refreshes the real index right now: the edit below is racy
+        h1 = gate.tree_hash(repo)
+        (repo / "app.py").write_text(b, encoding="utf-8")
+        assert gate.tree_hash(repo) != h1
+
+
+def test_hook_refuses_abbreviated_dod_override(repo):
+    for flag in ("--over", "--o", "--overr=x"):
+        code, _, err = hook(repo, bash(f"python build-gate.py dod demo {flag} x"))
+        assert code == 2 and "human" in err

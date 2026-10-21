@@ -348,7 +348,7 @@ def tree_hash(root: Path) -> str | None:
     with tempfile.TemporaryDirectory() as td:
         tmp_idx = os.path.join(td, "index")
         if idx_path.exists():
-            shutil.copyfile(idx_path, tmp_idx)
+            shutil.copy2(idx_path, tmp_idx)
         env = {**os.environ, "GIT_INDEX_FILE": tmp_idx}
         excludes = [f":(exclude){p}" for p in HASH_EXCLUDES]
         # Only tracked .gitignore files and .git/info/exclude (both protected) may hide
@@ -651,7 +651,7 @@ def check_shell(cmd: str, root: Path) -> None:
             if cls == "key":
                 raise Block(_msg("key", what))
         if sub is not None:
-            if sub == "dod" and any(a.lower().startswith("--override") for a in sub_args[1:]):
+            if sub == "dod" and any(len(a.split("=", 1)[0]) >= 3 and "--override".startswith(a.split("=", 1)[0].lower()) for a in sub_args[1:]):
                 raise Block("`build-gate dod --override` accepts missing definition-of-done items, so only the human "
                             "runs it, in their own terminal (it asks for a typed confirmation). "
                             f"Ask them to run: build-gate {' '.join(sub_args)}")
@@ -757,8 +757,11 @@ def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
         if started:
             open_gates = ", ".join(f"{g}={s}" for g, s in gates.items() if s not in OK_STATES) or "status"
             problems.append(f"#{cp.get('id')} {cp.get('title', '')}: not proven ({open_gates})")
-    if ((load_approved(root, slug) or {}).get("workflow") or "build") in DOD_WORKFLOWS and not sess.get("finished"):
-        if all(c.get("status") == "passed" for c in plan.get("checkpoints") or []):
+    appr = load_approved(root, slug) or {}
+    if (appr.get("workflow") or "build") in DOD_WORKFLOWS and not sess.get("finished"):
+        # Only the checkpoints frozen at approval count; ones added to the plan later need re-approval.
+        frozen = {str(k) for k in (appr.get("fingerprints") or {})}
+        if all(c.get("status") == "passed" for c in plan.get("checkpoints") or [] if str(c.get("id")) in frozen):
             ok, why = dod_fresh(root, slug, th)
             if not ok:
                 problems.append(f"definition of done not proven ({why}): run `build-gate dod {slug}` and fix what it lists, "
@@ -1512,7 +1515,7 @@ def main(argv: list[str] | None = None) -> int:
             print(err, file=sys.stderr)
         return code
 
-    p = argparse.ArgumentParser(prog="build-gate", description="Evidence-based checkpoint gate for /tentaqles:build")
+    p = argparse.ArgumentParser(prog="build-gate", description="Evidence-based checkpoint gate for /tentaqles:build", allow_abbrev=False)
     p.add_argument("--root", help="repo root (default: git root of cwd)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("setup", help="install the gate hooks into .claude/settings.local.json")
@@ -1548,7 +1551,7 @@ def main(argv: list[str] | None = None) -> int:
     jd.add_argument("--reviewer", required=True, choices=REVIEWERS)
     jd.add_argument("--result", required=True, choices=("PASS", "FAIL"))
     jd.add_argument("--note", required=True)
-    dd = sub.add_parser("dod", help="definition of done: run the frozen project commands and check ADR/privacy/migration/changelog obligations")
+    dd = sub.add_parser("dod", allow_abbrev=False, help="definition of done: run the frozen project commands and check ADR/privacy/migration/changelog obligations")
     dd.add_argument("slug")
     dd.add_argument("--override", default=None, help="the human's reason for accepting missing items (logged)")
     dd.add_argument("--timeout", type=float, default=900)
