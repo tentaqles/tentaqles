@@ -15,7 +15,10 @@ cannot make from the repo), use
 `build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
 only when the caller passed the slug of an active build run (the `build-gate`
 prefix is in `skills/build/SKILL.md`); otherwise report what it needs as your
-final output and end the turn. With no slug (standalone use) the skill reports
+final output and end the turn. Human-stop cases: which SBOM tool to use when
+several fit, generating or changing a lockfile (NEEDS-DECISION when headless),
+and branch protection (needs repo admin; report the settings to apply instead).
+With no slug (standalone use) the skill reports
 and changes files, and records no review verdict.
 
 ## 1. Detect
@@ -37,17 +40,34 @@ templates and images by digest (C10) and use the platform's secret scanning.
 
 - **C1 pinning**: replace every `uses: owner/repo@vN` or `@main` with the full
   commit SHA of the release and the version in a trailing comment (`# v4.2.2`).
-  Get the SHA with `gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq .object.sha`
-  (for annotated tags follow `.object.url` once more). tq refuses unpinned refs:
-  `@main`/`@master` (`tq/gha-branch-ref`) and `@latest`/`@head`
-  (`tq/gha-unpinned`).
+  Resolve a tag to a commit SHA with
+  `gh api repos/<o>/<r>/git/ref/tags/<tag> --jq '.object.type + " " + .object.sha'`.
+  If the type is `commit`, that SHA is the pin. If it is `tag` (an annotated
+  tag), dereference it: `gh api repos/<o>/<r>/git/tags/<sha> --jq .object.sha`.
+  tq refuses unpinned refs: `@main`/`@master` (`tq/gha-branch-ref`) and
+  `@latest`/`@head` (`tq/gha-unpinned`).
 - **C2 permissions**: `permissions: contents: read` at the top of every
   workflow; grant `id-token: write`, `pull-requests: write` or `packages: write`
   per job only. `persist-credentials: false` on every checkout.
 - **C3 untrusted input**: never `pull_request_target` with a PR-head checkout;
   pass `github.event.*` values through `env:` not `run:` interpolation.
-- **C4 lockfile-only**: `npm ci`, `pnpm install --frozen-lockfile`,
-  `uv sync --frozen`, `go mod verify`; commit the lockfile.
+- **C4 lockfile-only**: commit the lockfile and install from it only. Per
+  ecosystem (CI command / lockfile generation):
+
+  | Ecosystem | CI install command | Generate the lockfile (MUTATING) |
+  |---|---|---|
+  | npm | `npm ci` | `npm install --package-lock-only` |
+  | pnpm | `pnpm install --frozen-lockfile` | `pnpm install --lockfile-only` |
+  | yarn | `yarn install --immutable` | `yarn install --mode update-lockfile` |
+  | pip | `pip install --require-hashes -r requirements.txt` | `pip-compile --generate-hashes` |
+  | uv | `uv sync --locked` | `uv lock` |
+  | poetry | `poetry install --sync` | `poetry lock` |
+  | go | `go mod verify` (checks `go.sum`) | `go mod tidy` |
+  | cargo | `cargo build --locked` | `cargo generate-lockfile` |
+
+  Generation commands change files and dependency versions: run them only when
+  the user agrees and report the change; headless: record a NEEDS-DECISION and
+  do not run them.
 - **C5 audit and updates**: an audit step (`npm audit --audit-level=high`,
   `pip-audit`, `govulncheck ./...`) and a Dependabot or Renovate config with
   grouped weekly updates that also bumps action SHAs.
@@ -62,7 +82,11 @@ templates and images by digest (C10) and use the platform's secret scanning.
   (`actions/attest-build-provenance` pinned, or Sigstore `cosign`).
 - **C9 branch protection**: required checks, reviews, no force push to the
   default branch (tq denies it locally too).
-- **C10 images and toolchains**: `FROM image@sha256:...`, exact tool versions.
+- **C10 images and toolchains**: `FROM image@sha256:...` with the tag kept in a
+  comment, exact tool versions. Resolve a digest with
+  `docker buildx imagetools inspect <image>:<tag>` (the `Digest:` line, the
+  index digest for multi-arch) or `crane digest <image>:<tag>`; the same applies
+  to compose and Kubernetes `image:` lines.
 
 Run `tq decide triage --staged` on the workflow changes (they come back
 `high`); the `security-reviewer` runs in the build engine for workflow diffs.
@@ -70,12 +94,12 @@ Run `tq decide triage --staged` on the workflow changes (they come back
 ## 3. Report
 
 A table of the ten rows with `done | skipped (reason) | todo`, then commit
-only the files this run changed, each named explicitly (the workflow files you
-edited, `dependabot.yml` if touched, the lockfiles you changed):
+only the files this run changed, each named explicitly (omit any path you did
+not change; a path git does not know aborts the add):
 
 ```bash
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-git -C "$root" add .github/workflows/<file> .github/dependabot.yml <lockfile-you-changed>
+git -C "$root" add .github/workflows/<changed-file> [.github/dependabot.yml only if changed] [<lockfile-you-changed>]
 git -C "$root" commit -m "ci(supply-chain): pin actions, least-privilege permissions, SBOM on release"
 ```
 

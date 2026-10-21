@@ -28,18 +28,32 @@ your final output and end the turn.
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+# default mode is --staged; for --range A..B or a build run use --range <base>..HEAD
 tq decide triage --staged; echo "triage_exit=$?"
 echo "checklist=$_tqe/skills/llm-security-review/references/checklist.md"
 ```
 
+Triage exit codes: `0` is light, `3` is full (flags such as `agentic` are
+printed); any other code, or tq missing, means review fully. For `--range A..B`
+or `<slug> <id>` run `tq decide triage --range <base>..HEAD` instead of
+`--staged` and take the diff from `git -C "$root" diff <base>..HEAD`. The
+reviewer reads the diff as-is (personal data may be read locally); never copy
+real secrets or personal data into reports, commits or memory.
+
 ## Feed the reviewer
 
-Launch `llm-security-reviewer` with the diff (bundle path or a redacted diff
-file under your scratchpad), the changed files, the spec slice, `CLAUDE.md`,
-`docs/LEARNINGS.md`, `docs/threat-model.md` and the checklist path. Point it
-at the trust boundaries the change crosses (model provider, MCP servers, hooks,
-memory store). Ask for the review contract output (first line `RESULT: PASS`,
-`RESULT: FAIL` or `RESULT: BLOCKED`).
+Launch `llm-security-reviewer` with this bundle, each item found as shown:
+
+- the diff and the changed files (`git -C "$root" diff --name-only`);
+- every prompt file or string: `grep -rnE "system_prompt|SYSTEM_PROMPT|messages *[=:\[]|prompts?/" "$root" --include=*.py --include=*.ts --include=*.md`;
+- tool and MCP definitions: `grep -rnE "mcpServers|\.mcp\.json|tools *[=:\[]|tool_use|@tool" "$root"`, plus `hooks/hooks.json`;
+- every model-call site in the diff: `grep -nE "anthropic|openai|messages\.create|chat\.completions|generateText|claude -p|tq decide" <changed files>`;
+- the manifest `data:` block (`data.classes` and `prompts.allow`) from `.tentaqles.yaml`;
+- the spec slice, `CLAUDE.md`, `docs/LEARNINGS.md`, `docs/threat-model.md` and the checklist path.
+
+Point it at the trust boundaries the change crosses (model provider, MCP
+servers, hooks, memory store). Ask for the review contract output (first line
+`RESULT: PASS`, `RESULT: FAIL` or `RESULT: BLOCKED`).
 
 Data leaving through model calls is in scope: classified data
 (`data.classes`) sent to a model outside `prompts.allow`, and secrets in
@@ -57,8 +71,12 @@ _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR
 "$TENTAQLES_PY" "$_tqe/scripts/build-gate.py" record-review <slug> <id> --reviewer llm-security-reviewer --result PASS|FAIL|BLOCKED --blockers N --majors N --minors N --unjudged N
 ```
 
-then the fixer loop or `build-gate judge` as usual. Standalone: fix the
-findings; a `U` row about trust in a provider or an MCP server is a decision
-for the user (record it as an ADR when taken). A finding against hooks or the
-guard is a BLOCKER in tentaqles' own repositories: hooks must fail closed and
-never widen permissions.
+then the fixer loop (see `skills/build/SKILL.md`). A BLOCKED result goes to
+the human with the `U` rows; the human settles it with `build-gate judge` in
+their own terminal (judge is human-only: never run it yourself). Headless with
+an active slug:
+`build-gate ask <slug> --kind judge --checkpoint <id> --reviewer llm-security-reviewer --text "<the U rows>" --options PASS,FAIL`,
+then end the turn. Standalone: fix the findings; a `U` row about trust in a
+provider or an MCP server is a decision for the user (record it as an ADR when
+taken). A finding against hooks or the guard is a BLOCKER in tentaqles' own
+repositories: hooks must fail closed and never widen permissions.
