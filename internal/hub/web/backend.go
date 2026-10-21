@@ -30,13 +30,23 @@ type MultiBackend struct {
 	closed  bool
 	svcs    map[string]*runner.Service
 	done    map[string]chan struct{}
+	opening map[string]*opening
+}
+
+// opening is a first open in flight: later callers for the same workspace wait on done outside
+// the lock, so a slow open of one workspace never blocks the others and no runner starts twice.
+type opening struct {
+	done chan struct{}
+	svc  *runner.Service
+	err  error
 }
 
 func NewMultiBackend(ctx context.Context, entries []Entry, f Factory) *MultiBackend {
 	cctx, cancel := context.WithCancel(ctx)
 	es := append([]Entry(nil), entries...)
 	sort.Slice(es, func(i, j int) bool { return es[i].Info.Name < es[j].Info.Name })
-	return &MultiBackend{ctx: cctx, cancel: cancel, entries: es, factory: f, svcs: map[string]*runner.Service{}, done: map[string]chan struct{}{}}
+	return &MultiBackend{ctx: cctx, cancel: cancel, entries: es, factory: f, svcs: map[string]*runner.Service{},
+		done: map[string]chan struct{}{}, opening: map[string]*opening{}}
 }
 
 func (b *MultiBackend) Workspaces() []WorkspaceInfo {
@@ -46,6 +56,8 @@ func (b *MultiBackend) Workspaces() []WorkspaceInfo {
 	}
 	return out
 }
+
+func errStopping() error { return fmt.Errorf("%w: the hub is stopping", ErrUnavailable) }
 
 func (b *MultiBackend) Service(name string) (*runner.Service, error) {
 	var entry *Entry
@@ -61,25 +73,46 @@ func (b *MultiBackend) Service(name string) (*runner.Service, error) {
 		return nil, fmt.Errorf("%w: %s is %s", ErrUnavailable, name, entry.Info.Reason)
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if svc, ok := b.svcs[name]; ok {
+		b.mu.Unlock()
 		return svc, nil
 	}
 	if b.closed {
-		return nil, fmt.Errorf("%w: the hub is stopping", ErrUnavailable)
+		b.mu.Unlock()
+		return nil, errStopping()
 	}
+	if op, ok := b.opening[name]; ok {
+		b.mu.Unlock()
+		<-op.done
+		return op.svc, op.err
+	}
+	op := &opening{done: make(chan struct{})}
+	b.opening[name] = op
+	b.mu.Unlock()
+
 	svc, err := b.factory(entry.WS)
-	if err != nil {
-		return nil, err
+
+	b.mu.Lock()
+	delete(b.opening, name)
+	switch {
+	case err != nil:
+		op.err = err // a later call tries again
+	case b.closed:
+		svc.Store().Close() // Close ran while this store was opening
+		op.err = errStopping()
+	default:
+		op.svc = svc
+		b.svcs[name] = svc
+		done := make(chan struct{})
+		b.done[name] = done
+		go func() {
+			defer close(done)
+			svc.Start(b.ctx)
+		}()
 	}
-	b.svcs[name] = svc
-	done := make(chan struct{})
-	b.done[name] = done
-	go func() {
-		defer close(done)
-		svc.Start(b.ctx)
-	}()
-	return svc, nil
+	b.mu.Unlock()
+	close(op.done)
+	return op.svc, op.err
 }
 
 func (b *MultiBackend) Opened() []string {
@@ -93,17 +126,26 @@ func (b *MultiBackend) Opened() []string {
 	return out
 }
 
-// Close stops every runner (cancelling live rounds, which requeue) and closes the stores.
+// Close stops every runner (cancelling live rounds, which requeue) and closes the stores. It waits
+// for opens in flight, which see the hub closed and close their own store.
 func (b *MultiBackend) Close() {
 	b.cancel()
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.closed = true
-	for name, svc := range b.svcs {
-		<-b.done[name]
+	svcs, done := b.svcs, b.done
+	b.svcs, b.done = map[string]*runner.Service{}, map[string]chan struct{}{}
+	var pending []chan struct{}
+	for _, op := range b.opening {
+		pending = append(pending, op.done)
+	}
+	b.mu.Unlock()
+	for _, ch := range pending {
+		<-ch
+	}
+	for name, svc := range svcs {
+		<-done[name]
 		svc.Store().Close()
 	}
-	b.svcs = map[string]*runner.Service{}
 }
 
 // DiscoverAll lists every workspace under the registered bases; untrusted ones are unavailable.

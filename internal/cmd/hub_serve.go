@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,7 +43,10 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func isWildcard(host string) bool { return host == "0.0.0.0" || host == "::" || host == "[::]" }
+func isWildcard(host string) bool {
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsUnspecified()
+}
 
 // serveToken: a non-loopback bind requires a token; one is generated (and printed once) when none was given.
 func serveToken(host, token string) (string, bool) {
@@ -130,6 +134,46 @@ func servedElsewhere(ctx context.Context, entries []web.Entry, mode string) ([]w
 		}
 	}
 	return out, nil
+}
+
+const hubShutdownGrace = 5 * time.Second
+
+// runHTTP serves ln until ctx ends (or Serve fails), then stops in one fixed order:
+//  1. the HTTP server stops accepting and in-flight requests finish (grace; after it, open
+//     connections such as SSE streams are closed and their handlers get one more grace to return);
+//  2. closeBackend stops the runners (live rounds requeue) and closes the stores;
+//  3. removeRecord drops serve-<port>.json, so no new hub takes the workspaces before 2 is done.
+func runHTTP(ctx context.Context, ln net.Listener, h http.Handler, grace time.Duration, closeBackend, removeRecord func()) error {
+	var inflight sync.WaitGroup
+	hs := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inflight.Add(1)
+		defer inflight.Done()
+		h.ServeHTTP(w, r)
+	})}
+	served := make(chan error, 1)
+	go func() { served <- hs.Serve(ln) }()
+	var serveErr error
+	select {
+	case <-ctx.Done():
+	case serveErr = <-served:
+	}
+	sctx, cancel := context.WithTimeout(context.Background(), grace)
+	if hs.Shutdown(sctx) != nil {
+		_ = hs.Close()
+	}
+	cancel()
+	handlers := make(chan struct{})
+	go func() { inflight.Wait(); close(handlers) }()
+	select {
+	case <-handlers:
+	case <-time.After(grace):
+	}
+	closeBackend()
+	removeRecord()
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
+	}
+	return nil
 }
 
 func cmdCtx(c *cobra.Command) context.Context {
@@ -238,8 +282,8 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 				return err
 			}
 			actual := ln.Addr().(*net.TCPAddr).Port
-			backend := web.NewMultiBackend(ctx, entries, factory)
-			defer backend.Close()
+			// The runners outlive the signal: runHTTP stops them only after the HTTP server drained.
+			backend := web.NewMultiBackend(context.WithoutCancel(ctx), entries, factory)
 			var served, unavailable []string
 			for _, e := range entries {
 				if !e.Info.Available {
@@ -258,13 +302,13 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 			srv, err := web.New(web.Options{Backend: backend, Mode: mode, TokenHash: tokenHash, LocalKey: localKey, AllowedHosts: allowedHosts(host, actual)})
 			if err != nil {
 				ln.Close()
+				backend.Close()
 				return err
 			}
 			if err := serveinfo.Write(serveinfo.Info{PID: os.Getpid(), Addr: ln.Addr().String(), Port: actual, Mode: mode,
 				Workspaces: served, Unavailable: unavailable, LocalKey: localKey, StartedAt: store.Now()}); err != nil {
 				warn("serve record: " + err.Error())
 			}
-			defer serveinfo.Remove(actual)
 			shown := host
 			if isWildcard(host) {
 				shown = "127.0.0.1"
@@ -276,17 +320,7 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 			if generated {
 				fmt.Fprintf(out, "token (shown once; browsers on other machines open /login?token=<token> once): %s\n", tok)
 			}
-			hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
-			go func() {
-				<-ctx.Done()
-				sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = hs.Shutdown(sctx)
-			}()
-			if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				return err
-			}
-			return nil
+			return runHTTP(ctx, ln, srv.Handler(), hubShutdownGrace, backend.Close, func() { _ = serveinfo.Remove(actual) })
 		},
 	}
 	c.Flags().BoolVar(&all, "all", false, "serve every registered, trusted workspace (or set hub.mode: all in config.yaml)")

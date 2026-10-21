@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -303,5 +304,86 @@ func TestServeAllStoresTheTokenAndListsUntrusted(t *testing.T) {
 	}
 	if _, err := os.Stat(store.Dir("evil")); !os.IsNotExist(err) {
 		t.Fatal("the untrusted workspace got a hub folder")
+	}
+}
+
+// stopLog records, in order, when each shutdown step happened.
+type stopLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *stopLog) add(e string) { l.mu.Lock(); defer l.mu.Unlock(); l.events = append(l.events, e) }
+func (l *stopLog) get() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.events...)
+}
+
+func TestRunHTTPStopsInOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler func(l *stopLog, started chan struct{}) http.HandlerFunc
+		want    string
+	}{
+		{"a request in flight finishes first", func(l *stopLog, started chan struct{}) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				close(started)
+				time.Sleep(300 * time.Millisecond)
+				w.Write([]byte("ok"))
+				l.add("request done")
+			}
+		}, "request done"},
+		{"a stream past its grace is closed first", func(l *stopLog, started chan struct{}) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				w.(http.Flusher).Flush()
+				close(started)
+				<-r.Context().Done()
+				l.add("stream done")
+			}
+		}, "stream done"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			l := &stopLog{}
+			started := make(chan struct{})
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				done <- runHTTP(ctx, ln, tc.handler(l, started), 200*time.Millisecond,
+					func() { l.add("backend closed") }, func() { l.add("record removed") })
+			}()
+			go func() {
+				resp, err := http.Get("http://" + ln.Addr().String() + "/")
+				if err == nil { // read until the server ends the response or closes the stream
+					io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
+				}
+			}()
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the request never reached the handler")
+			}
+			stopAt := time.Now()
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.want == "stream done" && time.Since(stopAt) < 200*time.Millisecond {
+					t.Fatal("the open stream was not given its grace")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("runHTTP did not return")
+			}
+			if got := l.get(); !slices.Equal(got, []string{tc.want, "backend closed", "record removed"}) {
+				t.Fatalf("stop order %v", got)
+			}
+		})
 	}
 }

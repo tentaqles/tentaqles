@@ -2,13 +2,16 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/hub/adapter"
 	"github.com/tentaqles/tentaqles/internal/hub/gate"
@@ -147,5 +150,101 @@ func TestDiscoverCwd(t *testing.T) {
 	}
 	if _, err := DiscoverCwd(base, cfg); err == nil {
 		t.Fatal("the base folder itself is no workspace")
+	}
+}
+
+// quickService opens a real store and runner for ws (no adapter does anything).
+func quickService(t *testing.T, ws *resolve.Workspace) (*runner.Service, error) {
+	st, err := store.Open(ws.Name, []string{"all"})
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() { st.Close() })
+	return runner.New(runner.Config{Workspace: ws.Name, Root: ws.Root, Store: st, Gate: &webGate{states: map[string]*gate.State{}},
+		Adapters: map[string]adapter.Adapter{store.AdapterClaude: nopAdapter{}}, Actor: "hub:tester"})
+}
+
+// slowAcme blocks the first open of acme until release is closed; entered closes when it starts.
+func slowAcme(t *testing.T, calls *int32, entered, release chan struct{}) Factory {
+	var once sync.Once
+	return func(ws *resolve.Workspace) (*runner.Service, error) {
+		if ws.Name == "acme" {
+			atomic.AddInt32(calls, 1)
+			once.Do(func() { close(entered) })
+			<-release
+		}
+		return quickService(t, ws)
+	}
+}
+
+type svcErr struct {
+	svc *runner.Service
+	err error
+}
+
+func TestMultiBackendSlowOpenBlocksNoOtherWorkspace(t *testing.T) {
+	cfg, _ := fourWorkspaces(t)
+	var calls int32
+	entered, release := make(chan struct{}), make(chan struct{})
+	b := NewMultiBackend(context.Background(), DiscoverAll(cfg), slowAcme(t, &calls, entered, release))
+	defer b.Close()
+	first, second := make(chan svcErr, 1), make(chan svcErr, 1)
+	go func() { s, err := b.Service("acme"); first <- svcErr{s, err} }()
+	<-entered
+	go func() { s, err := b.Service("acme"); second <- svcErr{s, err} }()
+	got := make(chan svcErr, 1)
+	go func() { s, err := b.Service("globex"); got <- svcErr{s, err} }()
+	select {
+	case r := <-got:
+		if r.err != nil || r.svc == nil {
+			t.Fatalf("globex: %v", r.err)
+		}
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("a slow open of acme blocked globex")
+	}
+	close(release)
+	a1, a2 := <-first, <-second
+	if a1.err != nil || a2.err != nil || a1.svc == nil || a1.svc != a2.svc {
+		t.Fatalf("both callers get the one acme service: %+v %+v", a1, a2)
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Fatalf("acme was opened %d times", n)
+	}
+	if got := b.Opened(); len(got) != 2 {
+		t.Fatalf("opened %v", got)
+	}
+}
+
+func TestMultiBackendCloseDuringOpen(t *testing.T) {
+	cfg, _ := fourWorkspaces(t)
+	var calls int32
+	entered, release := make(chan struct{}), make(chan struct{})
+	b := NewMultiBackend(context.Background(), DiscoverAll(cfg), slowAcme(t, &calls, entered, release))
+	opened := make(chan svcErr, 1)
+	go func() { s, err := b.Service("acme"); opened <- svcErr{s, err} }()
+	<-entered
+	closed := make(chan struct{})
+	go func() { b.Close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while an open was in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	r := <-opened
+	if !errors.Is(r.err, ErrUnavailable) || r.svc != nil {
+		t.Fatalf("an open that finishes after Close is refused: %+v", r)
+	}
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return")
+	}
+	if got := b.Opened(); len(got) != 0 {
+		t.Fatalf("opened %v", got)
+	}
+	if _, err := b.Service("globex"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("nothing opens after Close: %v", err)
 	}
 }
