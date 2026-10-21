@@ -362,6 +362,39 @@ stderr. The agent only ever writes `$NAME`. Templates (`.env.example`,
 command, so it is never pre-approved: it goes through the permission mode
 like the command it wraps.
 
+## Using classified data without printing it
+
+A client workspace can declare what kind of data it handles in its manifest:
+
+```yaml
+data:
+  classes: [pii, financial]   # pii, financial, sensitive, children, secrets
+  prompts: { allow: [] }      # classes that may appear in prompts (public, internal)
+```
+
+Reading personal data locally is allowed. What the guard refuses is recording
+it: the exit rules `tq/commit-pii`, `tq/push-pii` and `tq/text-pii` (commit
+messages and diffs, pushes, PR and issue text) point here. `tq redact` is the
+helper for making a shareable copy without the values:
+
+```
+tq redact --classes pii < export.csv
+tq redact --count < export.csv
+tq redact --file a.csv --file b.csv
+tq redact run --classes pii,financial -- psql "$DATABASE_URL" -c "select * from customers limit 5"
+```
+
+`tq redact` reads stdin (or each `--file`) and replaces CPF, CNPJ, e-mail,
+phone, card and IBAN values (checksum-validated where one exists) and secrets
+with `[REDACTED:<kind>]`; `--count` prints findings per detector and never
+the values. `tq redact run` runs a command directly (not through a shell) and
+masks its stdout and stderr, propagating its exit code.
+
+Default classes: the trusted workspace manifest's `data.classes` minus
+`data.prompts.allow`, plus `secrets`. Outside a workspace, or without a
+`data:` block, every detector runs (`all`). `--classes` overrides this; an
+unknown class is an error.
+
 ## Turning rules on and off
 
 Every rule has an id (`tq guard list` shows them all with their current
