@@ -98,13 +98,16 @@ type page struct {
 
 // flashes is the only text a ?flash= key can put on a page: free text never travels in a URL.
 var flashes = map[string]string{
-	"answered":         "Answer recorded.",
-	"already-answered": "That decision was already answered.",
-	"added":            "Card added.",
-	"moved":            "Card moved.",
-	"commented":        "Comment added.",
-	"queued":           "Run queued.",
-	"cancelled":        "Run cancelled.",
+	"answered":          "Answer recorded.",
+	"already-answered":  "That decision was already answered.",
+	"added":             "Card added.",
+	"moved":             "Card moved.",
+	"commented":         "Comment added.",
+	"queued":            "Run queued.",
+	"cancelled":         "Run cancelled.",
+	"approved":          "Result approved.",
+	"changes-requested": "Changes requested.",
+	"done":              "Card marked done.",
 }
 
 func kTok(n int64) string {
@@ -130,6 +133,7 @@ var funcs = template.FuncMap{
 	},
 	"first": func(s string) string { l, _, _ := strings.Cut(strings.TrimSpace(s), "\n"); return l },
 	"join":  strings.Join,
+	"deref": func(b *bool) bool { return b != nil && *b },
 	"dict": func(kv ...any) map[string]any {
 		m := map[string]any{}
 		for i := 0; i+1 < len(kv); i += 2 {

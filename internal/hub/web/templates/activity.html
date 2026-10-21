@@ -1,0 +1,11 @@
+{{define "activity"}}{{template "head" .}}{{template "activity-main" .}}{{template "foot" .}}{{end}}
+{{define "activity-main"}}{{$ws := .WS}}
+<section>
+  <h1>Activity</h1>
+  <table><tr><th>when</th><th>who</th><th>what</th><th>card</th><th>run</th></tr>
+  {{range .Data.Entries}}<tr><td class="mono">{{when .TS}}</td><td>{{.Actor}}</td><td class="mono">{{.Verb}}</td>
+    <td>{{if .CardID}}<a class="mono" href="/cards/{{.CardID}}?ws={{$ws}}">{{.CardID}}</a>{{end}}</td>
+    <td>{{if .RunID}}<a class="mono" href="/runs/{{.RunID}}?ws={{$ws}}">{{.RunID}}</a>{{end}}</td></tr>
+  {{else}}<tr><td colspan="5" class="muted">No activity yet.</td></tr>{{end}}</table>
+</section>
+{{end}}
