@@ -25,6 +25,7 @@ from pathlib import Path
 from tentaqles.workflow._common import (
     INTERPRETERS,
     ShellParseError,
+    canon_path,
     canon_text,
     command_word,
     file_sha256,
@@ -78,6 +79,7 @@ def _temp_dirs() -> list[str]:
         if d:
             c = canon_text(os.path.normpath(d))
             out.append(c.rstrip("/"))
+            out.append(canon_path(d).lower().rstrip("/"))  # the form resolve_word returns (8.3 names resolved)
     return out
 
 

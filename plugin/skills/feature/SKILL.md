@@ -40,9 +40,11 @@ Report `prd_exit` and quote the grader's JSON in your reply.
 below, open the feature branch: run `/tentaqles:build` Phase 0 for the slug
 (it creates the worktree and branch) and do every edit and commit of steps 1 to
 3 inside that worktree. If Phase 0 asks you to reopen Claude Code in the
-worktree, stop there as it says; in the new session run
-`/tentaqles:build resume <slug>`, then start this skill again with the same
-`$ARGUMENTS` (the PRD check is cheap and the files already written are kept).
+worktree, stop there as it says; in the new session, re-run `/tentaqles:feature`
+with the same `$ARGUMENTS`. Phase 0 step 3 sees the worktree already exists, so
+the skill continues at this step 1 (the PRD check is cheap and the files already
+written are kept). `/tentaqles:build resume <slug>` is only for an existing
+plan, which does not exist yet.
 If a build worktree is not wanted, use `git switch -c feat/<slug>` (or switch
 to the existing branch) instead. "The feature branch" below means this branch.
 
@@ -128,7 +130,7 @@ orchestrator adds that test file path to the checkpoint's `tests` in
 files the approved plan lists, and refuses `lock-tests` until the plan is
 approved, so run `lock-tests` right after approval, before any implementer
 starts. **Human stop 1** is the plan approval in their terminal
-(`build-gate approve <slug>`; you cannot approve). Headless: the
+(`build-gate approve <slug>`; you never run it, and the hook refuses it to you). Headless: the
 `plan-approval` record once the plan exists, the final output before. Then
 Phases 2 and 3 as the build skill describes: tests first and locked,
 implementer, behaviour gate, crew review with every verdict recorded, fixer

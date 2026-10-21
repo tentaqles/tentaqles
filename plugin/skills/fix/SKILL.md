@@ -1,6 +1,6 @@
 ---
 name: fix
-description: Fix a bug reproduce-first. Captures the report verbatim, has a tester write the smallest failing test at the lowest layer that shows the bug, locks that regression test, then finds the root cause and makes the smallest change that turns it green, reviewed by risk, with the lesson appended to docs/LEARNINGS.md. Use when the user says "fix this bug", "this fails", "it crashes", "/tentaqles:fix", pastes a stack trace, an error message or a failing command, or reports behaviour that does not match the spec. --hotfix skips the critic for a production incident, never the regression test.
+description: Fix a bug reproduce-first. Captures the report as a summary with personal data replaced by placeholders, has a tester write the smallest failing test at the lowest layer that shows the bug, locks that regression test, then finds the root cause and makes the smallest change that turns it green, reviewed by risk, with the lesson appended to docs/LEARNINGS.md. Use when the user says "fix this bug", "this fails", "it crashes", "/tentaqles:fix", pastes a stack trace, an error message or a failing command, or reports behaviour that does not match the spec. --hotfix skips the critic for a production incident, never the regression test.
 argument-hint: "<report | pasted error | failing command> [--hotfix] [--headless]"
 ---
 
@@ -33,8 +33,13 @@ mkdir -p "$root/docs/specs"
 echo "template=$_tqe/templates/process/fix-spec.md"
 ```
 
-Slug: kebab-case from the symptom (`export-dup-rows`). Write
-`docs/specs/fix-<slug>.md` from the template: the report **verbatim**,
+Slug: kebab-case from the symptom (`export-dup-rows`); the slug comes from the
+symptom, never from a name, e-mail or id (it also lands in a memory pending
+item). Write
+`docs/specs/fix-<slug>.md` from the template: the report summarised with its
+meaning kept and personal data replaced by placeholders (`<customer>`, `<email>`),
+never pasted verbatim (the spec is committed; leave the original in the tracker
+or a local file),
 observed, expected (cite the PRD FR or the spec rule when one exists),
 environment, `data_classes_touched`. If the bug exposed personal data to
 someone who should not see it, this is also an incident: open
@@ -56,7 +61,7 @@ with top-level `"workflow": "fix"` and `"hotfix"` set from the flag.
 
 Before human stop 1, a tester subagent (`[checkpoint fix-<slug>#1 tests]`)
 writes the smallest failing test at the lowest layer that shows the bug (unit
-before API before CLI before UI), runs it, and reports the failure line. The
+before API before CLI before UI), runs it, and reports the failure line.
 The planner ran before the tester, so the orchestrator adds the tester's test
 file path to the checkpoint's `tests` in `docs/checkpoints/fix-<slug>.json`
 (Edit, or re-run the planner with the path) before the human approves: the gate
@@ -79,11 +84,13 @@ higher layer. Never write a fix "while we wait" without a reproduction.
 **Human stop 1** (build Phase 1 stop 1; headless: the `plan-approval` record
 once the plan exists, the final output before): show the failing test and its
 output, the severity, the one-checkpoint plan and its verify command. The
-human approves in their terminal (`build-gate approve fix-<slug>`); you cannot.
-For `--hotfix` the plan carries `"hotfix": true` and the gate freezes that flag
-into the signed approval. Tell the human plainly that they are approving the
-plan knowing the review gate is `n/a` (no critic runs); the regression test
-still has to pass.
+human approves in their terminal (`build-gate approve fix-<slug>`); you never run it (the hook refuses it to you).
+For `--hotfix` the plan carries `"hotfix": true` with the review gate still
+`pending`, and the gate freezes that flag into the signed approval; the
+approval itself switches the review gate to `n/a` (the hook refuses `n/a` on a
+plan the human has not approved as a hotfix). Tell the human plainly that they
+are approving the plan knowing the review gate becomes `n/a` (no critic runs);
+the regression test still has to pass.
 
 ## 3. Root cause
 

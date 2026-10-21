@@ -68,32 +68,35 @@ Parse out structured fields. If extraction fails, note that the URL was provided
 mkdir -p "{client_root}/{project-slug}"
 ```
 
-### 2. Create CLAUDE.md
+### 2. Create CLAUDE.md and the docs skeleton
 
-Write `{client_root}/{project-slug}/CLAUDE.md` with inherited client context:
+Write `{client_root}/{project-slug}/CLAUDE.md` from the process scaffold
+`"$_tqe/templates/process/CLAUDE-project.md"` (resolve `$_tqe` with the
+snippet above). Keep its three fixed sections, `## Reading path`,
+`## Must not trade off` and `## Project config`, and add the inherited client
+context under a `## Client Context` heading:
 
 ```markdown
-# {Project Name}
-
-## Overview
-{description from user or ticket, or placeholder}
-
-## Tech Stack
-{user-provided stack, or "TBD — update as the project takes shape"}
-
 ## Client Context
 - Client: {client display_name}
 - Cloud: {cloud provider from manifest}
 - Database: {database provider + dialect from manifest}
 - Git: {git provider} ({git email})
 - Language: {language}
-
-## Development
-<!-- Add as you go: -->
-<!-- - Build: ... -->
-<!-- - Test: ... -->
-<!-- - Deploy: ... -->
 ```
+
+Fill the `tq-project` block's `commands.test` with the real test command when
+the stack is known (read `package.json`, `pyproject.toml`, `go.mod`); leave the
+template placeholder otherwise and say so in the report. Then create the docs
+skeleton:
+
+```bash
+mkdir -p "{client_root}/{project-slug}/docs/adr" "{client_root}/{project-slug}/docs/specs"
+cp "$_tqe/templates/process/LEARNINGS.md" "{client_root}/{project-slug}/docs/LEARNINGS.md"
+```
+
+The PRD is not written here: `/tentaqles:kickoff` interviews for it and
+requires it before planning.
 
 ### 3. Create brief.md (if there's enough context)
 
@@ -158,8 +161,8 @@ Tell the user:
 - What was created (project dir, CLAUDE.md, brief.md if applicable)
 - The inherited client context (cloud, database, git — so they know it's connected)
 - Git configuration (email set to match client manifest)
-- Next steps: "You can start coding, or run `/tentaqles:build-graph` after you have some files to analyze."
-- If the stack is Node/TypeScript, Python or Go, offer to add CI with a ratchet quality gate via `/tentaqles:ci-pipeline` (cheapest now, while the baseline is zero). Do not add it without a yes.
+- Next steps: "Run /tentaqles:kickoff to write the PRD, the threat model and the data classification and plan the first slice; or /tentaqles:feature and /tentaqles:fix for work on an existing codebase."
+- If the stack is Node/TypeScript, Python or Go, offer /tentaqles:ci-pipeline (kickoff runs it anyway). Do not add CI without a yes.
 
 ## Error Handling
 

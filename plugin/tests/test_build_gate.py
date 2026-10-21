@@ -954,7 +954,7 @@ def test_missing_tree_hash_is_not_fresh(repo, monkeypatch):
     gate.cmd_approve(repo, "demo")
     _touch_changelog(repo)
     assert gate.cmd_dod(repo, "demo")[0] == 0
-    monkeypatch.setattr(gate, "tree_hash", lambda root: None)
+    monkeypatch.setattr(gate, "tree_hash", lambda root, timeout=60: None)
     assert gate.dod_fresh(repo, "demo", gate.TreeHash(repo))[0] is False
     code, out = gate.cmd_dod(repo, "demo")
     assert code == 1 and "MISSING stable_tree" in out
@@ -1109,6 +1109,19 @@ def test_stop_allowed_while_a_decision_is_pending(repo):
     assert stop(repo)[0] == 0
 
 
+def test_state_reports_dod_freshness(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    assert gate.cmd_state(repo, "demo")["dod_fresh"] is False  # no record yet
+    code, _ = gate.cmd_dod(repo, "demo")
+    assert code == 0
+    assert gate.cmd_state(repo, "demo")["dod_fresh"] is True
+    (repo / "stray.txt").write_text("changed", encoding="utf-8")
+    assert gate.cmd_state(repo, "demo")["dod_fresh"] is False
+
+
 def test_state_json_shape(repo):
     _project(repo)
     save_plan(repo, {**PLAN, "workflow": "feature", "task": {"hub_id": "t-42", "external": {"provider": "linear", "id": "ACME-7", "url": "https://linear.app/x"}}})
@@ -1233,8 +1246,9 @@ def test_hook_allows_gate_cli_state_and_mentions_without_build(repo):
     assert hook(repo, bash("python scripts/build-gate.py state demo --json"))[0] == 0
 
 
-def test_hook_allows_gate_mentions_when_no_build_is_active(repo):
-    assert hook(repo, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))[0] == 0
+def test_hook_refuses_gate_mentions_even_before_approval(repo):
+    # C1 (final review): an unapproved plan is exactly what the agent would approve itself
+    assert hook(repo, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))[0] == 2
 
 
 # --- fix round 1: override lifecycle, answered decisions in state ---------------------------
@@ -1343,10 +1357,11 @@ def test_stop_message_does_not_tell_agent_to_run_override(repo):
 def test_non_override_wording_question_does_not_waive_dod(repo):
     _dod_ready(repo)
     gate.cmd_dod(repo, "demo")
-    before = (repo / ".claude" / "build" / "demo" / "dod.json").read_text(encoding="utf-8")
+    unbound = lambda r: {k: v for k, v in r.items() if k not in ("gen", "sig")}  # noqa: E731 - the answer re-signs it at the next gen
+    before = unbound(_dod_rec(repo))
     did = gate.cmd_ask(repo, "demo", "question", "Let the env PORT override the default?", ["override", "keep"]).split()[1]
     gate.cmd_answer(repo, "demo", did, "override", "yes, env wins", actor="renato")
-    assert (repo / ".claude" / "build" / "demo" / "dod.json").read_text(encoding="utf-8") == before
+    assert unbound(_dod_rec(repo)) == before and gate.bound(repo, "demo", _dod_rec(repo))
     assert _dod_rec(repo)["override"] is None
     assert "dod-override" not in (repo / "docs" / "LEARNINGS.md").read_text(encoding="utf-8") if (repo / "docs" / "LEARNINGS.md").exists() else True
     assert gate.pending_decisions(repo, "demo") == []
@@ -1388,15 +1403,19 @@ def test_hub_answer_records_the_consequence_in_the_note(repo, monkeypatch):
     assert _dod_rec(repo)["override"] == "hub ok"
 
 
-def test_failed_override_is_recorded_but_exit_nonzero(repo, capsys):
+def test_failed_override_is_recorded_but_exit_nonzero(repo, capsys, monkeypatch):
     _dod_ready(repo)
     did = gate.cmd_ask(repo, "demo", "question", "override: x", ["override", "stop"]).split()[1]
     (repo / ".claude" / "build" / "demo" / "approved.json").unlink()  # cmd_dod: plan isn't approved
     code, msg = gate.answer_decision(repo, "demo", did, "override", "why", "renato")
-    assert code != 0 and "did NOT apply" in msg
+    assert code == 1 and "did NOT apply" in msg
     assert [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]["choice"] == "override"
+    # the CLI half: a confirmed human answer whose override fails exits 1, not 0 and not the refusal 2
+    monkeypatch.setattr(gate, "human_confirm", lambda *a, **k: True)
     did = gate.cmd_ask(repo, "demo", "question", "override: y", ["override", "stop"], cid=2).split()[1]
-    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "override", "--note", "why"]) in (0, 2)
+    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "override", "--note", "why"]) == 1
+    assert "did NOT apply" in capsys.readouterr().out
+    assert [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]["choice"] == "override"
 
 
 def test_kept_override_logs_an_event(repo, tq_home):
@@ -1852,3 +1871,1712 @@ def test_dod_refuses_code_left_in_the_scratch_dir(repo):
     assert code == 1 and "MISSING breaker_scratch" in out and "conftest.py" in out
     (repo / ".tq-breaker" / "demo" / "conftest.py").unlink()
     assert gate.cmd_dod(repo, "demo")[0] == 0
+# --- final fix wave ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def set_up(repo):
+    """A repo after `build-gate setup`, as in a real worktree (state dir git-excluded)."""
+    gate.cmd_setup(repo)
+    return repo
+
+
+def test_tree_hash_works_after_setup_and_a_checkpoint_verifies(set_up):
+    (set_up / ".claude" / "build" / "demo").mkdir(parents=True, exist_ok=True)
+    (set_up / ".claude" / "build" / "demo" / "x.json").write_text("{}", encoding="utf-8")
+    assert gate.tree_hash(set_up) is not None
+    approve_and_lock(set_up)
+    code, msg = gate.cmd_verify(set_up, "demo", 2)
+    assert code == 0 and "PASS" in msg, msg
+    assert hook(set_up, write(plan_file(set_up), with_gate(PLAN, 2, behavior="passed")))[0] == 0
+
+
+def test_tree_hash_ignores_the_state_dir_after_setup(set_up):
+    h1 = gate.tree_hash(set_up)
+    (set_up / ".claude" / "build" / "demo").mkdir(parents=True, exist_ok=True)
+    (set_up / ".claude" / "build" / "demo" / "evidence.jsonl").write_text("x\n", encoding="utf-8")
+    assert gate.tree_hash(set_up) == h1
+    (set_up / "app.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+    assert gate.tree_hash(set_up) != h1
+
+
+def test_stop_path_tree_hash_timeout_is_under_the_hook_timeout(repo, monkeypatch):
+    _project(repo)
+    own(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    seen = []
+    real = gate.tree_hash
+    monkeypatch.setattr(gate, "tree_hash", lambda root, timeout=60: seen.append(timeout) or real(root, timeout=timeout))
+    assert stop(repo)[0] == 0
+    assert seen and max(seen) <= 10
+
+
+# C1: the gate-module refusal holds before the first approval (plan or state dir exists)
+
+@pytest.mark.parametrize("cmd", [
+    'python -c "from pathlib import Path; from tentaqles.workflow import gate; gate.cmd_approve(Path(\'.\'),\'demo\')"',
+    'python -c "import tentaqles.workflow.gate as g; g.cmd_answer(1,2,3,4,5,6)"',
+    "python -m tentaqles.workflow.gate approve demo",
+])
+def test_gate_module_refused_before_approval(repo, cmd):
+    assert gate.load_approved(repo, "demo") is None
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "human" in err.lower(), err
+    assert gate.load_approved(repo, "demo") is None
+
+
+def test_gate_module_refused_with_only_a_state_dir(tmp_path):
+    root = tmp_path / "p"
+    (root / ".claude" / "build" / "other").mkdir(parents=True)
+    _git(root, "init", "-q")
+    code, _, _ = hook(root, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))
+    assert code == 2
+
+
+def test_gate_mentions_allowed_once_every_build_is_finished(repo):
+    _active_build(repo)
+    gate.cmd_finish(repo, "demo")
+    assert hook(repo, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))[0] == 0
+
+
+# C2: file content and target paths, split strings, key reads by any spelling
+
+GATE_SRC = "from tentaqles.workflow.gate import cmd_approve, mint_hub_token\nprint(mint_hub_token('approve','demo','me'))\n"
+
+
+@pytest.mark.parametrize("approved", [False, True])
+def test_write_of_gate_importing_script_refused(repo, approved):
+    if approved:
+        _active_build(repo)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "x.py"), "content": GATE_SRC}}
+    code, _, err = hook(repo, payload)
+    assert code == 2 and "human" in err.lower()
+
+
+@pytest.mark.parametrize("content", [
+    "import importlib as i\ng = i.import_module('tentaqles.workflow.' + 'ga' + 'te')\n",
+    "g = __import__('tentaqles.workflow', fromlist=['gate'])\n",
+    "import os\nprint(open(os.path.expanduser('~') + '/.tentaqles/build-' + 'gate/hmac.key', 'rb').read())\n",
+    "p = os.path.join(os.environ['TQ_HOME'], 'build-gate', 'hm' 'ac.key')\n",
+])
+def test_write_content_with_split_strings_refused(repo, content):
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "x.py"), "content": content}}
+    assert hook(repo, payload)[0] == 2, content
+
+
+def test_edit_multiedit_notebook_content_scanned(repo):
+    (repo / "x.py").write_text("A = 1\nB = 2\n", encoding="utf-8")
+    edit = {"tool_name": "Edit", "tool_input": {"file_path": str(repo / "x.py"), "old_string": "A = 1",
+                                                 "new_string": "from tentaqles.workflow import gate"}}
+    assert hook(repo, edit)[0] == 2
+    # split across two edits of one MultiEdit: the resulting file text is scanned
+    multi = {"tool_name": "MultiEdit", "tool_input": {"file_path": str(repo / "x.py"), "edits": [
+        {"old_string": "A = 1", "new_string": "import importlib; m = importlib.import_module('tentaqles.workflow.ga"},
+        {"old_string": "B = 2", "new_string": "te')"}]}}
+    assert hook(repo, multi)[0] == 2
+    # an earlier edit left half of it in the file: the next edit completes it
+    (repo / "x.py").write_text("m = 'tentaqles.workflow.ga'\nB = 2\n", encoding="utf-8")
+    edit2 = {"tool_name": "Edit", "tool_input": {"file_path": str(repo / "x.py"), "old_string": "'\nB = 2", "new_string": "' + 'te'"}}
+    assert hook(repo, edit2)[0] == 2
+    nb = {"tool_name": "NotebookEdit", "tool_input": {"notebook_path": str(repo / "n.ipynb"),
+                                                       "new_source": "from tentaqles.workflow.gate import sign"}}
+    assert hook(repo, nb)[0] == 2
+
+
+def test_ordinary_writes_still_allowed(repo):
+    _active_build(repo)
+    ok = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "app.py"), "content": "def f():\n    return 2\n"}}
+    assert hook(repo, ok)[0] == 0
+    doc = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "docs" / "notes.md"),
+                                                 "content": "Run `build-gate verify demo 2`, then `build-gate status demo`.\n"}}
+    assert hook(repo, doc)[0] == 0
+
+
+def test_writes_under_the_gate_code_are_refused(repo):
+    for target in (repo / "plugin" / "tentaqles" / "workflow" / "gate.py",
+                   gate.plugin_root() / "tentaqles" / "workflow" / "gate.py",
+                   gate.plugin_root() / "scripts" / "build-gate.py"):
+        payload = {"tool_name": "Write", "tool_input": {"file_path": str(target), "content": "x = 1\n"}}
+        assert hook(repo, payload)[0] == 2, target
+        assert hook(repo, bash(f'cp /tmp/x "{target}"'))[0] == 2, target
+
+
+@pytest.mark.parametrize("cmd,tool", [
+    ('python -c "import importlib as i; g=i.import_module(\'tentaqles.workflow.\'+\'ga\'+\'te\'); print(g._key())"', "Bash"),
+    ('python -c "print(open(__import__(\'os\').path.expanduser(\'~\')+\'/.tentaqles/build-\'+\'gate/hmac.key\',\'rb\').read())"', "Bash"),
+    ("cat $(echo ~/.tentaqles/build-ga)te/hmac.key", "Bash"),
+    ('cat ~/.tentaqles/build-gate/"hm"ac.key', "Bash"),
+    (r"type %USERPROFILE%\.tentaqles\build-gate\hmac.key", "PowerShell"),
+    (r"Get-Content (Join-Path $HOME '.tentaqles\build-gate\hmac.key')", "PowerShell"),
+    ("Get-Content (Join-Path $env:TQ_HOME 'build-gate' 'hm' + 'ac.key')", "PowerShell"),
+    ("ls ~/.tentaqles/build-gate/", "Bash"),
+])
+def test_shell_key_reads_and_split_gate_imports_refused(repo, cmd, tool):
+    code, _, err = hook(repo, bash(cmd, tool))
+    assert code == 2, cmd
+
+
+# C4: git counts as a writer of the gate's state
+
+def test_git_replay_of_signed_state_refused_at_the_first_step(repo):
+    gate.cmd_approve(repo, "demo")
+    code, _, err = hook(repo, bash("git add -f .claude/build/demo/approved.json"))
+    assert code == 2 and ".claude/build" in err
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert hook(repo, bash("git checkout -- .claude/build/demo/approved.json"))[0] == 2
+    assert gate._locked_paths(repo) == {"tests/test_a.py": "demo"}
+
+
+@pytest.mark.parametrize("cmd", [
+    "git add .claude/build/demo/approved.json",
+    "git add -f -- .claude/build",
+    "git add --force .",
+    "git add .claude",
+    "git checkout HEAD~1 -- .claude/build/demo/approved.json",
+    "git restore --source=HEAD~1 -- .claude/build",
+    "git rm --cached .claude/build/demo/approved.json",
+    "git mv .claude/build/demo/approved.json x.json",
+    "git stash push -- .claude/build",
+    "git stash --all",
+    "git stash push --include-ignored",
+    "git update-index --add .claude/build/demo/approved.json",
+    "git apply --directory=.claude/build x.patch",
+    "git clean -fdX",
+    "git clean -fdx",
+    "git -C .claude/build status",
+    "git cat-file -p 0123abc > .claude/build/demo/approved.json",
+    "git show HEAD:.claude/build/demo/approved.json",
+    "rm -rf .claude",
+    "Remove-Item -Recurse .claude",
+])
+def test_git_and_tree_commands_naming_state_refused(repo, cmd):
+    gate.cmd_approve(repo, "demo")
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git add docs/checkpoints/demo.json app.py",
+    "git status",
+    "git commit -m 'feat: x'",
+    "git clean -fd",
+    "git stash",
+    "git diff HEAD -- app.py",
+    "git add -A",
+])
+def test_ordinary_git_still_allowed(repo, cmd):
+    gate.cmd_approve(repo, "demo")
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_tq_state_shell_rule_covers_git(repo):
+    import re
+    rule = next(r for r in gate.state_rules() if r["id"].endswith("state-shell"))["command"]
+    for c in ("git add -f .claude/build/demo/approved.json", "git checkout -- .claude/build/demo/approved.json"):
+        assert re.search(rule, c, re.IGNORECASE), c
+    assert not re.search(rule, "git add docs/checkpoints/demo.json", re.IGNORECASE)
+
+
+# C3: the frozen checkpoint ids in the signed approval are the source of truth
+
+def _drop(plan, cid):
+    p = copy.deepcopy(plan)
+    p["checkpoints"] = [c for c in p["checkpoints"] if c["id"] != cid]
+    return p
+
+
+def test_plan_edit_dropping_or_renumbering_a_frozen_id_refused(repo):
+    gate.cmd_approve(repo, "demo")
+    code, _, err = hook(repo, write(plan_file(repo), _drop(PLAN, 3)))
+    assert code == 2 and "#3" in err, err
+    renum = copy.deepcopy(PLAN)
+    renum["checkpoints"][2]["id"] = 4
+    assert hook(repo, write(plan_file(repo), renum))[0] == 2
+    # adding a checkpoint is fine (it needs approval before it can pass)
+    added = copy.deepcopy(PLAN)
+    added["checkpoints"].append(cp(4))
+    assert hook(repo, write(plan_file(repo), added))[0] == 0
+
+
+def test_replan_allowed_once_a_plan_approval_is_pending(repo):
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_ask(repo, "demo", "plan-approval", "split #3 into #3 and #4", ["approve", "edit", "stop"])
+    split = copy.deepcopy(PLAN)
+    split["checkpoints"][2]["id"] = 4
+    split["checkpoints"].insert(2, cp(3, title="first half"))
+    assert hook(repo, write(plan_file(repo), _drop(PLAN, 3)))[0] == 0
+    assert hook(repo, write(plan_file(repo), split))[0] == 0
+
+
+def test_deleted_checkpoint_counts_as_not_passed(repo):
+    _project(repo)
+    own(repo)
+    plan = with_gate({**PLAN, "workflow": "feature"}, 2, behavior="passed", review="passed", status="passed")
+    save_plan(repo, plan)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    save_plan(repo, _drop(plan, 3))           # bypassing the hook, e.g. an older tool
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING checkpoints" in out and "missing from the plan" in out
+    assert "2/3 passed" in out
+    code, _, err = stop(repo)
+    assert code == 2 and "missing from the plan" in err
+    st = gate.cmd_state(repo, "demo")
+    assert [c["id"] for c in st["checkpoints"]] == [1, 2, 3]
+    assert [c for c in st["checkpoints"] if c["id"] == 3][0]["status"] == "missing"
+
+
+def test_all_frozen_passed_still_passes_the_dod(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 0 and "3/3 passed" in out
+
+
+def test_state_reads_workflow_and_hotfix_from_the_approval(repo):
+    save_plan(repo, {**PLAN, "workflow": "feature"})
+    gate.cmd_approve(repo, "demo")
+    save_plan(repo, {**PLAN, "workflow": "build", "hotfix": True})
+    st = gate.cmd_state(repo, "demo")
+    assert st["workflow"] == "feature" and st["hotfix"] is False
+
+
+# I1: a hotfix plan is written with review pending; the approval switches it to n/a
+
+def _hotfix_plan(review="pending"):
+    p = {"feature": "Fix", "slug": "demo", "workflow": "fix", "hotfix": True,
+         "checkpoints": [cp(1, r=review)]}
+    return p
+
+
+def test_planner_hotfix_plan_goes_through_the_hook_and_approval_sets_na(set_up):
+    path = plan_file(set_up)
+    code, _, err = hook(set_up, write(path, _hotfix_plan("n/a")))
+    assert code == 2 and "hotfix" in err        # n/a still only on an approved hotfix plan
+    assert hook(set_up, write(path, _hotfix_plan("pending")))[0] == 0
+    save_plan(set_up, _hotfix_plan("pending"))  # what the Write would have written
+    gate.cmd_approve(set_up, "demo")
+    assert gate.load_approved(set_up, "demo")["hotfix"] is True
+    assert gate.gate(gate.load_plan(set_up, "demo")["checkpoints"][0], "review") == "n/a"
+    gate.cmd_lock_tests(set_up, "demo", 1, [], none=True)
+    assert gate.cmd_verify(set_up, "demo", 1)[0] == 0
+    done = {**_hotfix_plan("n/a"), "checkpoints": [cp(1, "passed", "passed", "n/a")]}
+    assert hook(set_up, write(path, done))[0] == 0
+
+
+def test_non_hotfix_approval_leaves_review_pending(repo):
+    gate.cmd_approve(repo, "demo")
+    assert all(gate.gate(c, "review") in ("pending", "passed") for c in gate.load_plan(repo, "demo")["checkpoints"])
+
+
+# I2: the human sees the frozen DoD commands; trivial or non-string commands are refused
+
+def _project_cmds(repo, cmds):
+    block = '# Demo\n\n```json tq-project\n' + json.dumps({"commands": cmds, "changelog": "CHANGELOG.md"}) + '\n```\n'
+    (repo / "CLAUDE.md").write_text(block, encoding="utf-8")
+
+
+@pytest.mark.parametrize("cmds", [{"test": True}, {"test": "true"}, {"test": ""}, {"test": "  "},
+                                  {"test": PASS_CMD, "lint": 7}, {"test": PASS_CMD, "typecheck": ":"}])
+def test_approve_refuses_trivial_or_non_string_dod_commands(repo, cmds):
+    _project_cmds(repo, cmds)
+    with pytest.raises(SystemExit, match=r"commands\.\w+ must be a shell command string"):
+        gate.cmd_approve(repo, "demo")
+    assert gate.load_approved(repo, "demo") is None
+
+
+def test_approve_shows_the_frozen_dod_commands_before_confirming(repo, monkeypatch, capsys):
+    _project_cmds(repo, {"test": "pytest -q", "lint": "ruff check ."})
+    order = []
+    monkeypatch.setattr(gate, "human_confirm", lambda action, *a, **k: order.append(capsys.readouterr().out) or True)
+    assert gate.main(["--root", str(repo), "approve", "demo"]) == 0
+    shown = order[0]
+    assert "test: pytest -q" in shown and "lint: ruff check ." in shown and "typecheck: (not configured)" in shown
+    assert PASS_CMD in shown and "changelog: CHANGELOG.md" in shown
+
+
+def test_plan_approval_consequence_lists_what_is_frozen(repo, monkeypatch):
+    _project_cmds(repo, {"test": "pytest -q"})
+    did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
+    text = gate.answer_consequence(repo, "demo", did, "approve")
+    assert "freezes" in text and "test: pytest -q" in text and PASS_CMD in text
+    assert gate.answer_consequence(repo, "demo", did, "edit") == ""
+    _set_token(monkeypatch, "answer")
+    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "approve"]) == 0
+    ans = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
+    assert "test: pytest -q" in ans["note"]
+
+
+# ---------------------------------------------------------------------------
+# Round 2a item 1: plan schema and hook error handling
+# ---------------------------------------------------------------------------
+
+
+def _bad_plan(first):
+    p = copy.deepcopy(PLAN)
+    p["checkpoints"][0] = first
+    return p
+
+
+BAD_FIRST = [
+    ({"id": 1, "gates": "x"}, "gates"),
+    ({"id": [0]}, "id"),
+    ({"id": ""}, "id"),
+    ({"id": 2, "gates": {"behavior": "passed"}}, "gates"),
+    ({"id": 1, "tests": "tests/x.py"}, "tests"),
+    ({"id": 1, "tests": [1]}, "tests"),
+]
+
+
+@pytest.mark.parametrize("first,field", BAD_FIRST)
+def test_check_plan_refuses_malformed_plan(repo, first, field):
+    bad = _bad_plan(first)
+    with pytest.raises(gate.Block) as e:
+        gate.check_plan(json.dumps(bad), json.dumps(PLAN), repo, "demo", gate.TreeHash(repo))
+    assert field in str(e.value)
+
+
+def test_check_plan_refuses_non_dict_checkpoint_and_duplicate_ids(repo):
+    for plan in ({"checkpoints": [1]}, {"checkpoints": [{"id": 1}, {"id": 1}]}):
+        with pytest.raises(gate.Block):
+            gate.check_plan(json.dumps(plan), "", repo, "demo", gate.TreeHash(repo))
+
+
+@pytest.mark.parametrize("first,field", BAD_FIRST[:2])
+def test_hook_on_existing_malformed_plan(repo, first, field):
+    own(repo)
+    save_plan(repo, _bad_plan(first))  # written behind the hooks' back
+    code, _, err = hook(repo, agent("[checkpoint demo#2 implement]"))
+    assert code == 2 and field in err and "Traceback" not in err
+    assert stop(repo)[0] == 0
+
+
+@pytest.mark.parametrize("first,field", BAD_FIRST[:2])
+def test_state_and_dod_on_malformed_plan_give_a_clear_error(repo, first, field):
+    gate.cmd_approve(repo, "demo")
+    save_plan(repo, _bad_plan(first))
+    with pytest.raises(SystemExit) as e:
+        gate.cmd_state(repo, "demo")
+    assert field in str(e.value)
+    code, msg = gate.cmd_dod(repo, "demo")
+    assert code == 1 and field in msg
+
+
+def test_unexpected_exception_pretooluse_refuses_with_class_only(repo, monkeypatch):
+    def boom(*a, **k):
+        raise KeyError("secret-detail")
+    monkeypatch.setattr(gate, "check_shell", boom)
+    code, out, err = hook(repo, bash("ls"))
+    assert code == 2
+    assert "KeyError" in err and "secret-detail" not in err and "Traceback" not in err and "\n" not in err.strip()
+
+
+def test_unexpected_exception_on_stop_allows_with_note(repo, monkeypatch):
+    def boom(*a, **k):
+        raise KeyError("secret-detail")
+    monkeypatch.setattr(gate, "check_stop", boom)
+    code, out, err = stop(repo)
+    assert code == 0 and "KeyError" in err and "secret-detail" not in err
+
+
+# ---------------------------------------------------------------------------
+# Round 2a item 2: ordinary project files are never refused by a broad pattern
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path,content", [
+    ("workflow/gateway.ts", "export const gateway = 1;\n"),
+    ("api/gate.py", "def gate():\n    return 1\n"),
+    ("src/hmac.key.md", "notes on the hmac.key format\n"),
+    ("src/auth.py", "def cmd_approve(x):\n    return x\n\ndef cmd_answer():\n    pass\n"),
+    ("notes/tentaqles-workflow.md", "tentaqles/workflow notes: investigate the gateway\n"),
+])
+def test_ordinary_files_are_not_refused_while_a_build_is_active(repo, path, content):
+    approve_and_lock(repo)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / path), "content": content}}
+    code, _, err = hook(repo, payload)
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat src/workflow/gateway.ts",
+    "cat ./workflow/gateway.ts",
+    "python api/gate.py",
+    "grep -rn investigate src",
+    "grep cmd_approve src/auth.py",
+    "echo hmac.key is mentioned in the docs",
+])
+def test_ordinary_commands_are_not_refused_while_a_build_is_active(repo, cmd):
+    approve_and_lock(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("content", [
+    "from tentaqles.workflow import gate\n",
+    "import tentaqles.workflow.gate as g\n",
+    "import gate\ngate.cmd_approve(root, 'x')\n",
+    "from gate import cmd_answer\n",
+])
+def test_gate_module_references_are_still_refused(repo, content):
+    approve_and_lock(repo)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "x.py"), "content": content}}
+    assert hook(repo, payload)[0] == 2, content
+
+
+@pytest.mark.parametrize("cmd", [
+    "python plugin/tentaqles/workflow/gate.py",
+    "cat ~/.tentaqles/build-gate/hmac.key",
+    "cat /x/build-gate/sub/hmac.key",
+    "python -c \"import tentaqles.workflow.gate\"",
+])
+def test_gate_anchored_commands_are_still_refused(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+# ---------------------------------------------------------------------------
+# Round 2a item 3: a re-approval shows what was removed and changed, not only what is new
+# ---------------------------------------------------------------------------
+
+
+def _reapproval_plan(repo):
+    gate.cmd_approve(repo, "demo")
+    plan = copy.deepcopy(PLAN)
+    plan["checkpoints"] = [c for c in plan["checkpoints"] if c["id"] != 3]  # #3 removed
+    plan["checkpoints"][1]["verify"] = [FAIL_CMD]                            # #2 changed
+    plan["checkpoints"].append(cp(4))                                        # #4 new
+    save_plan(repo, plan)
+
+
+def test_reapproval_preview_lists_removed_changed_and_new(repo):
+    _reapproval_plan(repo)
+    text = gate.approval_preview(repo, "demo")
+    assert "removed since the last approval: #3 (" in text
+    assert "changed: #2" in text and "new: #4" in text
+
+
+def test_first_approval_preview_has_no_delta_lines(repo):
+    text = gate.approval_preview(repo, "demo")
+    assert "removed since" not in text and "changed:" not in text
+
+
+def test_reapproval_consequence_for_a_hub_actor_lists_removed_and_changed(repo):
+    _reapproval_plan(repo)
+    did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
+    text = gate.answer_consequence(repo, "demo", did, "approve")
+    assert "removed since the last approval: #3 (" in text and "changed: #2" in text
+
+
+# ---------------------------------------------------------------------------
+# Round 2b, item 1: shell path classification (cwd tracking, globs, escapes,
+# nested shells, xargs, git add -f globs)
+# ---------------------------------------------------------------------------
+
+STATE_WRITES_VIA_CWD = [
+    "cd .claude/build/demo && cp approved.json ../../../bk.json",
+    "cd .claude/build/demo && echo x > approved.json",
+    "cd .claude/build/demo; rm approved.json",
+    "pushd .claude/build/demo; echo x > approved.json",
+    "pushd .claude/build; pushd demo; echo x > approved.json",
+    "cd .claude/build; echo x > demo/approved.json",
+    "cd .claude/build/demo; cd ..; echo x > demo/approved.json",
+    "cd .claude/build/demo; cd /tmp; cd -; echo x > approved.json",
+    "cd .claude; mv build/demo/approved.json ../moved.json",
+    "Set-Location .claude/build/demo; Set-Content approved.json x",
+]
+
+
+@pytest.mark.parametrize("cmd", STATE_WRITES_VIA_CWD)
+def test_cwd_is_tracked_across_segments(repo, cmd):
+    approve_and_lock(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2, cmd
+
+
+def test_state_copy_out_then_copy_back_both_refused(repo):
+    """The two-step sequence: approved.json copied out from inside the state dir, then back."""
+    approve_and_lock(repo)
+    assert hook(repo, bash("cd .claude/build/demo && cp approved.json ../../../bk.json"))[0] == 2
+    assert hook(repo, bash("cp ../bk.json .claude/build/demo/approved.json"))[0] == 2
+    assert hook(repo, bash("cd .claude/build/demo && cp ../../../bk.json approved.json"))[0] == 2
+
+
+def test_unknown_cwd_with_a_relative_write_fails_closed(repo):
+    approve_and_lock(repo)
+    assert hook(repo, bash("cd $SOMEWHERE && echo x > approved.json"))[0] == 2
+    assert hook(repo, bash("cd && echo x > approved.json"))[0] == 2
+    assert hook(repo, bash("popd; echo x > approved.json"))[0] == 2
+    # an absolute target after an unknown cwd is still resolved
+    assert hook(repo, bash("cd $SOMEWHERE && echo x > /tmp/out.txt"))[0] == 0
+    # no write, nothing to refuse
+    assert hook(repo, bash("cd $SOMEWHERE && ls"))[0] == 0
+
+
+def test_write_anywhere_on_a_line_with_a_state_word_anywhere_is_refused(repo):
+    """A cd into the state dir is not itself a write, but the line writes."""
+    approve_and_lock(repo)
+    assert hook(repo, bash("cd .claude/build/demo && echo hi > /tmp/x"))[0] == 2
+    assert hook(repo, bash("echo hi > /tmp/x; cat .claude/build/demo/approved.json"))[0] == 2
+    assert hook(repo, bash("cd .claude/build/demo && ls"))[0] == 0
+    assert hook(repo, bash("cat .claude/build/demo/approved.json"))[0] == 0
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd src && echo x > a.txt",
+    "cd tests && pytest -q",
+    "cd tests && echo x > new_test.py",
+    "echo x > app.py",
+    "cp app.py app2.py",
+    "pushd src; popd; echo x > approved.json",
+    "cd .. && echo x > a.txt",
+    "mkdir -p src/pkg && echo x > src/pkg/a.txt",
+    "git commit -m 'x' && git status",
+    "cd src; cd -; echo x > a.txt",
+    "ls *.py && rm *.json",
+])
+def test_ordinary_project_writes_stay_allowed_with_cwd_tracking(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "rm -r .clau*",
+    "rm .claude/buil?/demo/approved.json",
+    "cp x .cl*/build/demo/approved.json",
+    "cp x .claude/build/*/approved.json",
+    "cp x .claude/build/de[m]o/approved.json",
+    "cd .claude/build && rm de*/approved.json",
+    "rm -rf .c*e",
+])
+def test_glob_words_are_matched_against_the_state_dir(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "rm tes?s/*.py",
+    "rm tests/test_*.py",
+    "cp x t*sts/test_a.py",
+    "cd tests && rm test_?.py",
+    "cd tests && cp x test_[a].py",
+])
+def test_glob_words_are_matched_against_locked_tests(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_a_star_does_not_reach_dot_directories(repo):
+    """Shell globs skip leading dots, so an ordinary `rm *.log` is not a state write."""
+    approve_and_lock(repo)
+    assert hook(repo, bash("rm *.log"))[0] == 0
+    assert hook(repo, bash("cp *.py /tmp/backup"))[0] == 0
+
+
+def test_backslash_before_a_character_is_a_shell_escape(repo):
+    approve_and_lock(repo)
+    assert hook(repo, bash(r"rm .claude/bu\ild/demo/approved.json"))[0] == 2
+    assert hook(repo, bash(r"echo x > .claude/bu\ild/demo/approved.json"))[0] == 2
+    assert hook(repo, bash(r"echo x > tes\ts/test_a.py"))[0] == 2
+    assert hook(repo, bash(r"cd .cl\aude/build/demo && rm approved.json"))[0] == 2
+    # the Windows spellings keep working
+    assert hook(repo, bash(r"Remove-Item .claude\build\demo\approved.json", "PowerShell"))[0] == 2
+    drive = str(repo).replace("/", "\\") + "\\.claude\\build\\demo\\approved.json"
+    assert hook(repo, bash(f"Remove-Item {drive}", "PowerShell"))[0] == 2
+
+
+def test_resolve_word_backslash_rule(tmp_path):
+    from tentaqles.workflow import _common as c
+    assert c.shell_word_variants(r"bu\ild")[0] == ("bu/ild" if c.IS_WINDOWS else "build")
+    assert "build" in c.shell_word_variants(r"bu\ild")
+    assert c.shell_word_variants(r"C:\a\b") == ["C:/a/b"]
+    assert c.shell_word_variants(r"\\host\share") == ["//host/share"]
+    assert c.shell_word_variants("a/b") == ["a/b"]
+    _, absn = c.resolve_word(tmp_path, r"bu\ild/x", shell=True)
+    assert absn.endswith("/build/x")
+    # file-tool paths: every backslash is a separator
+    _, absn = c.resolve_word(tmp_path, r"bu\ild/x")
+    assert absn.endswith("/bu/ild/x")
+
+
+@pytest.mark.parametrize("cmd", [
+    "bash -c 'echo x > .claude/build/demo/approved.json'",
+    'sh -c "cp x .claude/build/demo/approved.json"',
+    "eval 'echo x > .claude/build/demo/approved.json'",
+    "eval echo x '>' .claude/build/demo/approved.json",
+    'pwsh -c "Set-Content .claude/build/demo/approved.json x"',
+    'powershell -Command "Remove-Item .claude/build/demo/approved.json"',
+    "bash -lc 'rm .claude/build/demo/approved.json'",
+    "bash -c 'cd .claude/build/demo && rm approved.json'",
+    "bash -c \"bash -c 'rm .claude/build/demo/approved.json'\"",
+    "bash -c 'echo x > tests/test_a.py'",
+    "cd tests && bash -c 'echo x > test_a.py'",
+    'bash -c "$CMD"',
+    "powershell -EncodedCommand AAAA",
+])
+def test_nested_shell_bodies_are_lexed_recursively(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "bash -c 'echo hi > out.txt'",
+    "sh -c 'cd src && echo hi > a.txt'",
+    "bash -c 'pytest -q'",
+    "eval 'ls'",
+])
+def test_nested_shell_bodies_without_protected_paths_stay_allowed(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("xargs -a list cp -t .claude/build/demo", 2),
+    ("ls | xargs rm", 2),
+    ("find . -name '*.pyc' | xargs rm -f", 2),
+    ("cat list | xargs -I{} cp {} /tmp", 2),
+    ("cat list | xargs sh -c 'echo'", 2),
+    ("cat list | xargs tests/test_a.py", 2),
+    ("git ls-files | xargs grep -n foo", 0),
+    ("git ls-files | xargs wc -l", 0),
+])
+def test_xargs_targets_are_unknown(repo, cmd, want):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == want, cmd
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("git add -f .cl*", 2),
+    ("git add --force .claude/b*", 2),
+    ("git add -f -- '*.json'", 2),
+    ("git add -f src/*.py", 2),
+    ("git add -f .claude/build/de?o", 2),
+    ("git add -f app.py", 0),
+    ("git add app.py", 0),
+    ("git add src/*.py", 0),
+])
+def test_git_add_force_with_a_glob_pathspec_is_refused(repo, cmd, want):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == want, cmd
+
+
+def test_squash_normalisation_applies_to_locked_test_names(repo):
+    approve_and_lock(repo)
+    cmd = "python -c \"open('te'+'sts/te'+'st_a.py','w')\""
+    assert hook(repo, bash(cmd))[0] == 2
+    assert hook(repo, bash("python -c \"open('te'+'sts/new_t'+'est.py','w')\""))[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Round 2b, item 2: the key directory through Read/Grep/Glob and shell globs
+# ---------------------------------------------------------------------------
+
+
+def _key_tool(tool, **inp):
+    return {"tool_name": tool, "tool_input": inp}
+
+
+def test_search_tools_refused_on_the_key_dir_and_its_ancestors(repo, tq_home):
+    kd = gate.key_dir()
+    assert hook(repo, _key_tool("Glob", pattern="**/hmac.key", path=str(tq_home)))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern="*", path=str(tq_home.parent)))[0] == 2
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(tq_home)))[0] == 2
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(tq_home), glob="**/hmac.key"))[0] == 2
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(kd)))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern="*", path=str(kd)))[0] == 2
+    assert hook(repo, _key_tool("Read", file_path=str(kd / "hmac.key")))[0] == 2
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(kd / "hmac.key")))[0] == 2
+    # the filesystem root and a drive root are ancestors too
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(Path(kd.anchor))))[0] == 2
+
+
+def test_glob_pattern_that_names_the_key_dir_is_refused(repo, tq_home):
+    kd = str(gate.key_dir()).replace("\\", "/")
+    assert hook(repo, _key_tool("Glob", pattern=kd + "/*"))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern=kd + "/hm*.key"))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern=str(tq_home).replace("\\", "/") + "/*/*.key"))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern="**/*.py", path=str(repo)))[0] == 0
+
+
+def test_search_tools_default_to_the_cwd_when_it_is_an_ancestor_of_the_key(repo, tq_home):
+    payload = {"cwd": str(tq_home.parent), "tool_name": "Glob", "tool_input": {"pattern": "**/hmac.key"},
+               "session_id": "s1"}
+    # the project root cannot be found from here, but the key rule does not need it
+    assert gate.hook(payload)[0] == 2
+
+
+def test_search_tools_on_ordinary_paths_are_allowed(repo):
+    approve_and_lock(repo)
+    assert hook(repo, _key_tool("Grep", pattern="x", path=str(repo / "plugin")))[0] == 0
+    assert hook(repo, _key_tool("Grep", pattern="x", path="plugin/"))[0] == 0
+    assert hook(repo, _key_tool("Grep", pattern="x", path=str(repo)))[0] == 0
+    assert hook(repo, _key_tool("Glob", pattern="**/*.py", path=str(repo)))[0] == 0
+    assert hook(repo, _key_tool("Read", file_path=str(repo / "app.py")))[0] == 0
+    assert hook(repo, _key_tool("Grep", pattern="x"))[0] == 0
+
+
+@pytest.mark.parametrize("cmd,tool", [
+    ("cat $TQ_HOME/*/*.key", "Bash"),
+    ("cat ${TQ_HOME}/build-gate/hm*", "Bash"),
+    ("cat $TQ_HOME/b*/hmac.key", "Bash"),
+    ("cat %TQ_HOME%\\*\\*.key", "Bash"),
+    ('find "$TQ_HOME" -name "hm*" -exec cat {} +', "Bash"),
+    ('find "$TQ_HOME" -type f | xargs cat', "Bash"),
+    ('grep -ra . "$TQ_HOME"', "Bash"),
+    ("grep -rn secret $TQ_HOME", "Bash"),
+    ("grep -R . ${TQ_HOME}", "Bash"),
+    ("rg . $TQ_HOME", "Bash"),
+    ("cp -r $TQ_HOME /tmp/x", "Bash"),
+    ("cp $TQ_HOME/* /tmp/x -r", "Bash"),
+    ("Get-ChildItem $env:TQ_HOME -Recurse | Get-Content", "PowerShell"),
+    ("Get-Content $env:TQ_HOME\\*\\*.key", "PowerShell"),
+])
+def test_shell_reads_of_the_key_through_globs_variables_and_recursion(repo, cmd, tool):
+    assert hook(repo, bash(cmd, tool))[0] == 2, cmd
+
+
+def test_shell_key_reads_via_tilde_when_tq_home_is_the_default(repo, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".tentaqles" / "build-gate").mkdir(parents=True)
+    monkeypatch.delenv("TQ_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    for cmd in ("cat ~/.tentaqles/*/*.key", "grep -r x ~", "grep -ra . ~/.tentaqles",
+                "cat $HOME/.tentaqles/build-gate/hm*", "cat ~/.tentaqles/build-gate/hmac.key"):
+        assert hook(repo, bash(cmd))[0] == 2, cmd
+    for cmd in ("cat ~/notes.txt", "ls ~", "grep x ~/.bashrc", "cat ~/.tentaqles/knowledge.yaml"):
+        assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat $TQ_HOME/config.yaml",
+    "ls $TQ_HOME",
+    "grep -r foo plugin/",
+    "grep -rn foo .",
+    "find . -name '*.py' -exec wc -l {} +",
+    "cat $HOME/notes.txt",
+    "rm -r build/",
+])
+def test_shell_commands_beside_the_key_dir_stay_allowed(repo, cmd):
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+# ---------------------------------------------------------------------------
+# Rollback detection: a generation counter kept with the key
+# ---------------------------------------------------------------------------
+
+
+def _approved_path(root):
+    return root / ".claude" / "build" / "demo" / "approved.json"
+
+
+def _gen_record(root):
+    return gate.gen_record_path(root, "demo")
+
+
+def test_every_state_transition_increments_the_generation(repo):
+    gate.cmd_approve(repo, "demo")
+    a1 = json.loads(_approved_path(repo).read_text(encoding="utf-8"))
+    assert a1["gen"] == 1 and gate.recorded_gen(repo, "demo") == 1
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert gate.load_approved(repo, "demo")["gen"] == 2 == gate.recorded_gen(repo, "demo")
+    gate.cmd_unlock_tests(repo, "demo", [str(repo / "tests" / "test_a.py")])
+    assert gate.load_approved(repo, "demo")["gen"] == 3
+    gate.cmd_approve(repo, "demo")
+    assert gate.load_approved(repo, "demo")["gen"] == 4
+    gate.cmd_finish(repo, "demo")
+    assert gate.load_approved(repo, "demo")["gen"] == 5 == gate.recorded_gen(repo, "demo")
+    # the record lives with the key, outside the repository
+    assert gate.key_dir() in _gen_record(repo).parents
+
+
+def test_dod_override_and_answers_increment_the_generation(repo):
+    gate.cmd_approve(repo, "demo")
+    g = gate.recorded_gen(repo, "demo")
+    gate.cmd_dod(repo, "demo", "the human accepts it")
+    assert gate.recorded_gen(repo, "demo") == g + 1 == gate.load_approved(repo, "demo")["gen"]
+    did = gate.cmd_ask(repo, "demo", "question", "pick one", ["a", "b"]).split()[1]
+    gate.answer_decision(repo, "demo", did, "a", "", "terminal")
+    assert gate.recorded_gen(repo, "demo") == g + 2 == gate.load_approved(repo, "demo")["gen"]
+
+
+def test_an_older_signed_approval_copied_back_counts_as_rolled_back(repo, monkeypatch):
+    gate.cmd_approve(repo, "demo")
+    gen1 = _approved_path(repo).read_text(encoding="utf-8")
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    hook(repo, agent("[checkpoint demo#2 implement]"))  # this session owns the build
+    assert gate.load_approved(repo, "demo")["gen"] == 2
+    _approved_path(repo).write_text(gen1, encoding="utf-8")  # the gen-1 file, validly signed
+    old = json.loads(gen1)
+    assert gate.verified(old) is False
+    assert gate.load_approved(repo, "demo") is None
+    assert gate.rolled_back(repo, "demo") is True
+    # the locked test stays refused (gen 1 had no locks)
+    edit = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "tests" / "test_a.py"), "content": "x"}}
+    code, _, err = hook(repo, edit)
+    assert code == 2 and "rolled back" in err
+    assert hook(repo, bash("echo x > tests/test_a.py"))[0] == 2
+    assert hook(repo, agent("[checkpoint demo#2 implement]"))[0] == 2
+    assert hook(repo, write(plan_file(repo), with_gate(PLAN, 2, behavior="passed")))[0] == 2
+    # every gate decision refuses
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "rolled back" in msg
+    code, msg = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "rolled back" in msg
+    st = gate.cmd_state(repo, "demo")
+    assert st["rolled_back"] is True and st["approved"] is False
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "hub")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", gate.mint_hub_token("finish", "demo", "hub"))
+    assert gate.hub_actor_ok("finish", "demo", repo) is None
+    # Stop blocks once with the rollback message
+    code, _, err = stop(repo)
+    assert code == 2 and "build state was rolled back or altered; a human must re-approve" in err
+    assert "build-gate approve demo" in err
+    assert stop(repo)[0] == 0
+    # the human re-approves: a fresh generation, everything normal again
+    gate.cmd_approve(repo, "demo")
+    a = gate.load_approved(repo, "demo")
+    assert a["gen"] == 3 and gate.recorded_gen(repo, "demo") == 3
+    assert gate.rolled_back(repo, "demo") is False and gate.cmd_state(repo, "demo")["rolled_back"] is False
+    # the locks recorded with the generation survive the re-approval
+    assert "tests/test_a.py" in a["locked_tests"]
+    code, _, err = hook(repo, edit)
+    assert code == 2 and "locked test" in err
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 0
+    assert gate.hub_actor_ok("finish", "demo", repo) == "hub"
+    assert hook(repo, bash("echo x > app2.py"))[0] == 0
+
+
+def test_missing_generation_record_with_gen_above_zero_is_refused(repo):
+    approve_and_lock(repo)
+    _gen_record(repo).unlink()
+    assert gate.load_approved(repo, "demo") is None
+    assert gate.rolled_back(repo, "demo") is True
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 1
+    edit = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "tests" / "test_a.py"), "content": "x"}}
+    assert hook(repo, edit)[0] == 2
+
+
+def test_generation_record_present_but_approval_absent_is_refused(repo):
+    approve_and_lock(repo)
+    _approved_path(repo).unlink()
+    assert gate.rolled_back(repo, "demo") is True
+    assert gate.cmd_state(repo, "demo")["rolled_back"] is True
+    edit = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "tests" / "test_a.py"), "content": "x"}}
+    code, _, err = hook(repo, edit)
+    assert code == 2 and "rolled back" in err
+
+
+def test_generation_record_is_per_project_and_slug(repo, tmp_path):
+    gate.cmd_approve(repo, "demo")
+    other = tmp_path / "other"
+    other.mkdir()
+    assert gate.gen_record_path(repo, "demo") != gate.gen_record_path(other, "demo")
+    assert gate.gen_record_path(repo, "demo") != gate.gen_record_path(repo, "demo2")
+    assert gate.project_id(repo) == gate.project_id(Path(str(repo).upper()) if os.name == "nt" else repo)
+
+
+# ---------------------------------------------------------------------------
+# Path canonicaliser: one function behind every path check
+# ---------------------------------------------------------------------------
+
+win_only = pytest.mark.skipif(os.name != "nt", reason="Windows path spellings")
+
+
+def _short_name(p):
+    """The 8.3 short spelling of an existing path, or None when the volume has none."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(1024)
+    n = ctypes.windll.kernel32.GetShortPathNameW(str(p), buf, 1024)
+    if not n or Path(buf.value).name.lower() == Path(p).name.lower():
+        return None
+    return buf.value
+
+
+def _junction(link, target):
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+    else:
+        os.symlink(str(target), str(link))
+
+
+def _under(path, top):
+    p, t = gate.canon_path(path), gate.canon_path(top)
+    return p == t or p.startswith(t.rstrip("/") + "/")
+
+
+@win_only
+@pytest.mark.parametrize("spelling", [
+    r".claude.\build\demo\approved.json",
+    r".claude. .\build\demo\approved.json",
+    r".claude\build.\demo\approved.json",
+    r".claude\build\demo\approved.json:x",
+    r".claude\build\demo\approved.json::$DATA",
+    r".claude\build\demo\approved.json. ",
+])
+def test_windows_spellings_resolve_under_the_state_dir(repo, spelling):
+    assert _under(str(repo) + "\\" + spelling, repo / ".claude" / "build")
+    code, _, err = hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(repo) + "\\" + spelling, "content": "{}"}})
+    assert code == 2
+
+
+@win_only
+@pytest.mark.parametrize("prefix", ["\\\\?\\", "//?/", "\\\\.\\", "//./"])
+def test_extended_prefixes_are_stripped(repo, tq_home, prefix):
+    sep = "/" if prefix.startswith("//") else "\\"
+    p = prefix + str(repo).replace("\\", sep) + sep + sep.join([".claude", "build", "demo", "approved.json"])
+    assert _under(p, repo / ".claude" / "build")
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": p, "content": "{}"}})[0] == 2
+    gate._key(create=True)
+    k = prefix + str(tq_home).replace("\\", sep) + sep + "build-gate" + sep + "hmac.key"
+    assert _under(k, gate.key_dir())
+    assert hook(repo, {"tool_name": "Read", "tool_input": {"file_path": k}})[0] == 2
+
+
+@win_only
+def test_shell_spellings_resolve_under_the_state_dir(repo):
+    gate.cmd_approve(repo, "demo")
+    for c in ("echo x > .claude./build/demo/approved.json",
+              "echo x > .claude/build/demo/approved.json:x",
+              r"Set-Content -Path '.claude.\build\demo\approved.json' -Value x"):
+        assert hook(repo, bash(c, "PowerShell" if c.startswith("Set-") else "Bash"))[0] == 2, c
+
+
+@win_only
+def test_alternate_data_stream_of_a_locked_test_is_the_locked_test(repo):
+    approve_and_lock(repo)
+    p = str(repo / "tests" / "test_a.py") + ":evil"
+    code, _, err = hook(repo, {"tool_name": "Write", "tool_input": {"file_path": p, "content": "x"}})
+    assert code == 2 and "locked test" in err
+
+
+def test_a_junction_into_dot_claude_resolves_to_the_state_dir(repo):
+    (repo / "lib").mkdir()
+    _junction(repo / "lib" / "j", repo / ".claude")
+    p = repo / "lib" / "j" / "build" / "demo" / "approved.json"
+    assert _under(p, repo / ".claude" / "build")
+    assert _under(repo / "lib" / "j" / "build" / "demo" / "new.json", repo / ".claude" / "build")
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(p), "content": "{}"}})[0] == 2
+    assert hook(repo, bash("echo x > lib/j/build/demo/approved.json"))[0] == 2
+
+
+def test_a_short_name_resolves_to_the_state_dir(repo):
+    short = _short_name(repo / ".claude")
+    if not short:
+        pytest.skip("this volume has no 8.3 short names")
+    p = short + r"\build\demo\approved.json"
+    assert _under(p, repo / ".claude" / "build")
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": p, "content": "{}"}})[0] == 2
+
+
+def test_a_short_name_resolves_to_the_key_dir(repo, tq_home):
+    gate._key(create=True)
+    short = _short_name(gate.key_dir())
+    if not short:
+        pytest.skip("this volume has no 8.3 short names")
+    assert Path(short).name.upper().startswith("BUILD-")
+    k = short + r"\hmac.key"
+    assert _under(k, gate.key_dir())
+    assert hook(repo, {"tool_name": "Read", "tool_input": {"file_path": k}})[0] == 2
+
+
+def test_canon_path_leaves_ordinary_paths_alone(repo):
+    for rel in ("app.py", "src/a.b/c.txt", "docs/x.md", "tests/test_a.py", "deep/new/file.txt"):
+        got = gate.canon_path(repo / rel)
+        want = gate.canon_path(repo) + "/" + (rel.lower() if os.name == "nt" else rel)
+        assert got == want
+    assert gate.canon_path(repo / "src" / ".." / "app.py") == gate.canon_path(repo / "app.py")
+    if os.name == "nt":
+        assert gate.canon_path("C:\\") == "c:/"
+        assert gate.canon_path("C:/x/y.txt") == "c:/x/y.txt"
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(repo / "app.py"), "content": "x"}})[0] == 0
+
+
+
+# ---------------------------------------------------------------------------
+# Project root: every git root from the cwd upward, and CLAUDE_PROJECT_DIR
+# ---------------------------------------------------------------------------
+
+
+def _nested(repo):
+    sub = repo / "lib" / "sub"
+    sub.mkdir(parents=True)
+    _git(sub, "init", "-q")
+    return sub
+
+
+def test_a_nested_git_repo_does_not_hide_the_outer_state_dir(repo):
+    gate.cmd_approve(repo, "demo")
+    sub = _nested(repo)
+    for c in ("echo x > ../../.claude/build/demo/approved.json",
+              "cp ../../x.json ../../.claude/build/demo/approved.json",
+              "cd ../.. && echo x > .claude/build/demo/approved.json"):
+        assert hook(repo, {**bash(c), "cwd": str(sub)})[0] == 2, c
+    p = str(repo / ".claude" / "build" / "demo" / "approved.json")
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": p, "content": "{}"}, "cwd": str(sub)})[0] == 2
+    # ordinary work inside the nested repo stays allowed
+    assert hook(repo, {**bash("echo x > notes.txt"), "cwd": str(sub)})[0] == 0
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(sub / "a.py"), "content": "x"},
+                       "cwd": str(sub)})[0] == 0
+
+
+def test_a_nested_git_repo_does_not_hide_the_outer_locked_tests(repo):
+    sub = _nested(repo)
+    (sub / "test_x.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    approve_and_lock(repo, paths=("lib/sub/test_x.py",))
+    w = {"tool_name": "Write", "tool_input": {"file_path": str(sub / "test_x.py"), "content": "x"}, "cwd": str(sub)}
+    code, _, err = hook(repo, w)
+    assert code == 2 and "locked test" in err
+    assert hook(repo, {**bash("echo x > test_x.py"), "cwd": str(sub)})[0] == 2
+
+
+def test_claude_project_dir_is_judged_too(repo, tmp_path, monkeypatch):
+    approve_and_lock(repo)
+    other = tmp_path / "other"
+    (other / ".claude" / "build").mkdir(parents=True)
+    _git(other, "init", "-q")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    target = (repo / "tests" / "test_a.py").as_posix()
+    code, _, err = hook(repo, {**bash(f"echo x > '{target}'"), "cwd": str(other)})
+    assert code == 2 and "locked test" in err
+    assert hook(repo, {**bash("echo x > notes.txt"), "cwd": str(other)})[0] == 0
+
+
+
+# ---------------------------------------------------------------------------
+# Defence in depth: escapes, more writers, PowerShell bodies, locked-test parents
+# ---------------------------------------------------------------------------
+
+from tentaqles.workflow import _common  # noqa: E402
+
+
+def test_backslash_is_a_shell_escape_under_bash():
+    segs = _common.lex_shell("echo \\' ; cp a b ; echo \\'")
+    assert [s.argv[0] for s in segs] == ["echo", "cp", "echo"]
+    segs = _common.lex_shell('echo \\" ; cp a b ; echo \\"')
+    assert [s.argv[0] for s in segs] == ["echo", "cp", "echo"]
+    # Windows paths keep their backslashes for the word readings
+    assert _common.lex_shell(r"cat C:\repo\x.txt")[0].argv == ["cat", r"C:\repo\x.txt"]
+    assert _common.lex_shell(r"cat .claude\build\x")[0].argv == ["cat", r".claude\build\x"]
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo \\' ; cp x.json .claude/build/demo/approved.json ; echo \\'",
+    'echo \\" ; cp x.json .claude/build/demo/approved.json ; echo \\"',
+    'echo \\" ; cp x.py tests/test_a.py ; echo \\"',
+])
+def test_escaped_quotes_do_not_hide_a_write(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2
+
+
+def test_powershell_lexer_backtick_escape():
+    segs = _common.lex_shell('Write-Output `"; Copy-Item x tests/t.py; Write-Output `"', ps=True)
+    assert [s.argv[0] for s in segs] == ["Write-Output", "Copy-Item", "Write-Output"]
+    segs = _common.lex_shell("Write-Output 'it''s; fine'", ps=True)
+    assert len(segs) == 1 and segs[0].argv == ["Write-Output", "it's; fine"]
+    assert _common.lex_shell(r"Get-Content C:\repo\x.txt", ps=True)[0].argv == ["Get-Content", r"C:\repo\x.txt"]
+    segs = _common.lex_shell('Set-Content -Path "a`"b" -Value x > out.txt', ps=True)
+    assert segs[0].argv[:3] == ["Set-Content", "-Path", 'a"b'] and segs[0].redirects == ["out.txt"]
+
+
+@pytest.mark.parametrize("cmd,tool", [
+    ("pwsh -c 'Write-Output `\"; Copy-Item x.py tests/test_a.py; Write-Output `\"'", "Bash"),
+    ("powershell -Command 'Write-Output `\"; Copy-Item x.py tests/test_a.py; Write-Output `\"'", "Bash"),
+    ('Write-Output `"; Copy-Item x.py tests/test_a.py; Write-Output `"', "PowerShell"),
+])
+def test_powershell_bodies_are_lexed_as_powershell(repo, cmd, tool):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd, tool))[0] == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "find .claude/build -name '*.json' -delete",
+    "find .claude -name approved.json -exec cp x.json {} ;",
+    "find tests -delete",
+    "fsutil hardlink create .claude/build/demo/approved.json x.json",
+    "fsutil file setZeroData offset=0 length=9 tests/test_a.py",
+    "cmd /c mklink /J lib\\j .claude",
+    "mklink /J lib\\j .claude",
+    "cmd /c copy x.json .claude\\build\\demo\\approved.json",
+    "cmd /c move x.py tests\\test_a.py",
+])
+def test_more_writers_are_writers(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_find_exec_and_delete_count_as_writes():
+    for c in ("find . -name x -delete", "find . -exec rm {} ;", "find . -execdir touch {} +",
+              "fsutil file createnew x 0", "mklink a b"):
+        assert _common.is_write_segment(_common.lex_shell(c)[0]), c
+    for c in ("find . -name x", "find . -type f -print"):
+        assert not _common.is_write_segment(_common.lex_shell(c)[0]), c
+
+
+@pytest.mark.parametrize("cmd", [
+    "mv tests tests2",
+    "rm -rf tests",
+    "rm -rf ./tests/",
+    "cp -r src tests",
+    "Remove-Item -Recurse tests",
+    "Move-Item tests tests2",
+    "rm -rf .",
+])
+def test_writes_to_a_locked_tests_parent_dir_are_writes_to_the_locked_test(repo, cmd):
+    approve_and_lock(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "locked test" in err, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "mv app.py app2.py",
+    "rm -rf build",
+    "ls tests",
+    "cat tests/test_a.py",
+    "mkdir -p src/tests",
+    "find . -name '*.py'",
+    "echo hi > notes.txt",
+])
+def test_ordinary_commands_beside_locked_tests_stay_allowed(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+# ---------------------------------------------------------------------------
+# State-file binding: every signed state file and record names its build and generation
+# ---------------------------------------------------------------------------
+
+
+def shutil_copy(src, dst):
+    import shutil
+
+    shutil.copyfile(src, dst)
+
+
+def _state(root, slug="demo"):
+    return root / ".claude" / "build" / slug
+
+
+def _second_build(root, slug):
+    plan = copy.deepcopy(PLAN)
+    plan["slug"] = slug
+    (root / "docs" / "checkpoints" / f"{slug}.json").write_text(json.dumps(plan), encoding="utf-8")
+    gate.cmd_approve(root, slug)
+    gate.cmd_finish(root, slug)
+
+
+def _settings_write(root):
+    return {"tool_name": "Write", "tool_input": {"file_path": str(root / ".claude" / "settings.local.json"),
+                                                 "content": "{}"}}
+
+
+def test_finished_session_from_another_slug_does_not_end_the_build(repo):
+    approve_and_lock(repo)
+    hook(repo, agent("[checkpoint demo#2 implement]"))
+    assert hook(repo, _settings_write(repo))[0] == 2
+    _second_build(repo, "old")
+    assert gate.load_session(repo, "old").get("finished")
+    shutil_copy(_state(repo, "old") / "session.json", _state(repo) / "session.json")
+    assert gate._build_exists(repo) is True
+    assert gate.rolled_back(repo, "demo") is True
+    assert gate.load_session(repo, "demo") == {}
+    assert hook(repo, _settings_write(repo))[0] == 2
+    # Stop blocks once with the re-approval message, whichever session asks
+    code, _, err = stop(repo, session="other")
+    assert code == 2 and "build-gate approve demo" in err
+    assert stop(repo, session="other")[0] == 0
+
+
+def test_finished_session_from_another_project_does_not_end_the_build(repo, tmp_path):
+    approve_and_lock(repo)
+    other = tmp_path / "other"
+    (other / "docs" / "checkpoints").mkdir(parents=True)
+    _git(other, "init", "-q", "-b", "work")
+    (other / "docs" / "checkpoints" / "demo.json").write_text(json.dumps(PLAN), encoding="utf-8")
+    gate.cmd_approve(other, "demo")
+    gate.cmd_finish(other, "demo")
+    shutil_copy(_state(other) / "session.json", _state(repo) / "session.json")
+    assert gate._build_exists(repo) is True and gate.rolled_back(repo, "demo") is True
+    assert hook(repo, _settings_write(repo))[0] == 2
+
+
+def test_session_claiming_finished_against_the_record_is_a_rollback(repo):
+    approve_and_lock(repo)
+    rec = gate._gen_record(repo, "demo")
+    assert rec["finished"] is False
+    # a session the gate itself signed for this build and gen, but claiming finished
+    gate.save_session(repo, "demo", {**gate.load_session(repo, "demo"), "finished": "2026-01-01"})
+    assert gate.rolled_back(repo, "demo") is True and gate._build_exists(repo) is True
+    gate.cmd_approve(repo, "demo")
+    assert gate.rolled_back(repo, "demo") is False
+
+
+def test_finish_is_recorded_in_the_generation_record(repo):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    assert gate._gen_record(repo, "demo")["finished"] is True
+    assert gate._build_exists(repo) is False
+    gate.cmd_approve(repo, "demo")
+    assert gate._gen_record(repo, "demo")["finished"] is False and gate._build_exists(repo) is True
+
+
+def test_an_old_dod_record_copied_back_is_not_fresh(repo):
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_dod(repo, "demo", "the human accepts it")
+    th = gate.TreeHash(repo)
+    assert gate.dod_fresh(repo, "demo", th)[0] is True
+    old = (_state(repo) / "dod.json").read_text(encoding="utf-8")
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert gate.dod_fresh(repo, "demo", gate.TreeHash(repo))[0] is True  # carried to the new gen
+    (_state(repo) / "dod.json").write_text(old, encoding="utf-8")
+    ok, why = gate.dod_fresh(repo, "demo", gate.TreeHash(repo))
+    assert ok is False and "definition-of-done" in why
+
+
+def test_an_old_review_record_is_ignored(repo):
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
+    tree = gate.tree_hash(repo)
+    assert "build-critic" in gate.reviews_for(repo, "demo", 2, tree)
+    old = (_state(repo) / "reviews.jsonl").read_text(encoding="utf-8")
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert "build-critic" in gate.reviews_for(repo, "demo", 2, tree)  # live records follow the gen
+    (_state(repo) / "reviews.jsonl").write_text(old, encoding="utf-8")
+    assert gate.reviews_for(repo, "demo", 2, tree) == {}
+
+
+def test_review_and_decision_records_of_another_slug_are_ignored(repo):
+    _second_build(repo, "old")
+    gate.cmd_approve(repo, "old")
+    gate.cmd_record_review(repo, "old", 2, "build-critic", "PASS", {})
+    gate.cmd_ask(repo, "old", "question", "pick", ["a", "b"])
+    gate.cmd_approve(repo, "demo")
+    for name in ("reviews.jsonl", "decisions.jsonl"):
+        shutil_copy(_state(repo, "old") / name, _state(repo) / name)
+    assert gate.reviews_for(repo, "demo", 2, gate.tree_hash(repo)) == {}
+    assert gate.pending_decisions(repo, "demo") == []
+
+
+def test_an_old_decision_record_is_ignored_and_live_ones_survive_a_transition(repo):
+    gate.cmd_approve(repo, "demo")
+    did = gate.cmd_ask(repo, "demo", "question", "pick", ["a", "b"]).split()[1]
+    old = (_state(repo) / "decisions.jsonl").read_text(encoding="utf-8")
+    gate.cmd_lock_tests(repo, "demo", 2, [str(repo / "tests" / "test_a.py")], none=False)
+    assert [p["id"] for p in gate.pending_decisions(repo, "demo")] == [did]
+    (_state(repo) / "decisions.jsonl").write_text(old, encoding="utf-8")
+    assert gate.pending_decisions(repo, "demo") == []
+
+
+def test_state_records_carry_project_slug_and_gen(repo):
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
+    gate.cmd_ask(repo, "demo", "question", "pick", ["a", "b"])
+    gate.cmd_dod(repo, "demo")
+    g = gate.recorded_gen(repo, "demo")
+    pid = gate.project_id(repo)
+    recs = [json.loads(line) for name in ("reviews.jsonl", "decisions.jsonl")
+            for line in (_state(repo) / name).read_text(encoding="utf-8").splitlines()]
+    recs += [gate.read_json(_state(repo) / "session.json"), gate.read_json(_state(repo) / "dod.json")]
+    for r in recs:
+        assert (r["project_id"], r["slug"], r["gen"]) == (pid, "demo", g)
+
+
+# ---------------------------------------------------------------------------
+# State discovery: builds are found from the plan dir and the generation records too
+# ---------------------------------------------------------------------------
+
+
+def _locked_write(root):
+    return {"tool_name": "Write", "tool_input": {"file_path": str(root / "tests" / "test_a.py"), "content": "x"}}
+
+
+def test_removing_the_state_dir_does_not_hide_a_rollback(repo):
+    import shutil
+
+    approve_and_lock(repo)
+    hook(repo, agent("[checkpoint demo#2 implement]"))
+    shutil.rmtree(_state(repo))
+    assert "demo" in gate.all_slugs(repo) and "demo" in gate.recorded_slugs(repo)
+    assert gate.rolled_back_slugs(repo) == ["demo"]
+    assert gate._build_exists(repo) is True
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "rolled back" in err
+    assert hook(repo, bash("echo x > tests/test_a.py"))[0] == 2
+    code, _, err = stop(repo)
+    assert code == 2 and "build-gate approve demo" in err
+    assert stop(repo)[0] == 0
+    assert stop(repo)[0] == 2  # the next turn is blocked once again
+
+
+def test_a_build_with_only_a_generation_record_is_still_judged(repo):
+    import shutil
+
+    approve_and_lock(repo)
+    shutil.rmtree(_state(repo))
+    shutil.rmtree(repo / "docs" / "checkpoints")
+    assert gate.all_slugs(repo) == ["demo"]
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "rolled back" in err
+    assert stop(repo)[0] == 2
+
+
+def test_a_plan_without_state_or_record_is_not_rolled_back(repo):
+    assert gate.all_slugs(repo) == ["demo"] and gate.rolled_back_slugs(repo) == []
+    assert hook(repo, _locked_write(repo))[0] == 0
+    assert stop(repo)[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Migration: an approval signed by the plugin before generations
+# ---------------------------------------------------------------------------
+
+
+def _legacy_approval(root):
+    plan = gate.load_plan(root, "demo")
+    sha = gate.file_sha256(root / "tests" / "test_a.py")
+    data = {"slug": "demo", "approved_at": "2026-10-01T00:00:00+00:00", "approval_id": "0123456789abcdef",
+            "base": None, "verify": {str(c["id"]): c["verify"] for c in plan["checkpoints"]},
+            "fingerprints": {str(c["id"]): gate.plan_fingerprint(c) for c in plan["checkpoints"]},
+            "locked_tests": {"tests/test_a.py": sha}, "tests_locked": {"2": ["tests/test_a.py"]},
+            "workflow": "build", "hotfix": False}
+    _state(root).mkdir(parents=True, exist_ok=True)
+    gate.write_json(_state(root) / "approved.json", gate.sign(data))
+    gate.write_json(_state(root) / "session.json", gate.sign({"session_id": "s1", "stage": "implement", "checkpoint": 2}))
+
+
+def test_a_legacy_approval_is_reported_and_refused_until_migrated(repo):
+    _legacy_approval(repo)
+    assert not gate._gen_record(repo, "demo")
+    assert gate.load_approved(repo, "demo") is None
+    msg = gate.state_problem(repo, "demo")
+    assert msg == "legacy approval; run `build-gate approve demo` to migrate"
+    assert gate.rolled_back(repo, "demo") is True
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "legacy approval" in err
+    assert hook(repo, _settings_write(repo))[0] == 2
+    code, out = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "legacy approval" in out
+    assert gate.cmd_state(repo, "demo")["rolled_back"] is True
+    code, _, err = stop(repo)
+    assert code == 2 and "legacy approval; run `build-gate approve demo` to migrate" in err
+    assert stop(repo)[0] == 0
+
+
+def test_the_human_approve_migrates_a_legacy_approval_with_its_locks(repo):
+    _legacy_approval(repo)
+    gate.cmd_approve(repo, "demo")
+    a = gate.load_approved(repo, "demo")
+    assert a["gen"] == 1 and gate.state_problem(repo, "demo") is None
+    assert "tests/test_a.py" in a["locked_tests"] and a["tests_locked"] == {"2": ["tests/test_a.py"]}
+    rec = gate._gen_record(repo, "demo")
+    assert "tests/test_a.py" in rec["locked_tests"] and rec["finished"] is False
+    assert gate.load_session(repo, "demo").get("session_id") == "s1"  # the legacy session carries over
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "locked test" in err
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 0
+
+
+def test_a_legacy_format_approval_over_a_recorded_build_is_a_rollback(repo):
+    approve_and_lock(repo)
+    data = {k: v for k, v in gate.load_approved(repo, "demo").items() if k not in ("kind", "gen", "project_id", "sig")}
+    gate.write_json(_approved_path(repo), gate.sign(data))
+    assert gate.state_problem(repo, "demo").startswith("build state was rolled back")
+
+
+# ---------------------------------------------------------------------------
+# Key directory: archive and sync tools, and any word naming the key dir or an ancestor
+# ---------------------------------------------------------------------------
+
+
+def _tq(tq_home):
+    return str(tq_home).replace("\\", "/")
+
+
+@pytest.mark.parametrize("form", [
+    "tar cf t.tar {tq}",
+    "tar cf t.tar -C {tq} build-gate",
+    "tar --directory={tq} -cf t.tar build-gate",
+    "tar cf t.tar -C {tq}/sub ../build-gate",
+    "tar cf - {tq} | tar xf - -C out",
+    "bsdtar cf t.tar {tq}",
+    "7z a k.7z {tq}",
+    "zip -r k.zip {tq}",
+    "rsync -a {tq}/ bk/",
+    "robocopy {tq} bk /E",
+    "xcopy /E {tq} bk",
+    "cpio -pdm {tq}",
+    "pax -rw {tq} out",
+    "tar cf t.tar {parent}",
+    "cp -a {parent} bk",
+    "du -a {tq}",
+    "tar cf t.tar $TQ_HOME",
+    "tar cf t.tar ${{TQ_HOME}}",
+    "ls {tq} > list.txt",
+    "ls -R {tq}",
+])
+def test_archive_and_sync_tools_cannot_read_the_key_dir(repo, tq_home, form):
+    gate._key(create=True)
+    (tq_home / "sub").mkdir(parents=True, exist_ok=True)
+    cmd = form.format(tq=_tq(tq_home), parent=_tq(tq_home.parent))
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "signing key" in err, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "Compress-Archive -Path $env:TQ_HOME -DestinationPath k.zip",
+    "tar cf t.tar $env:TQ_HOME",
+    "Copy-Item -Recurse $env:TQ_HOME bk",
+])
+def test_powershell_archive_of_the_key_dir_is_refused(repo, cmd):
+    gate._key(create=True)
+    code, _, err = hook(repo, bash(cmd, "PowerShell"))
+    assert code == 2 and "signing key" in err, cmd
+
+
+def test_read_tool_refused_on_an_ancestor_of_the_key_dir(repo, tq_home):
+    gate._key(create=True)
+    for p in (tq_home, tq_home.parent):
+        code, _, err = hook(repo, {"tool_name": "Read", "tool_input": {"file_path": str(p)}})
+        assert code == 2 and "signing key" in err, p
+
+
+@pytest.mark.parametrize("cmd", [
+    "tar czf src.tgz src/",
+    "ls ~",
+    "ls {tq}",
+    "cd {tq} && pwd",
+    "stat {tq}",
+    "test -d {tq}",
+    "echo {tq}",
+    "zip -r ../a.zip .",
+])
+def test_key_dir_ancestor_reads_by_listing_verbs_stay_allowed(repo, tq_home, cmd):
+    gate._key(create=True)
+    (repo / "src").mkdir()
+    assert hook(repo, bash(cmd.format(tq=_tq(tq_home))))[0] == 0, cmd
+
+
+def test_ls_home_is_allowed_when_the_key_is_under_home(repo, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".tentaqles" / "build-gate").mkdir(parents=True)
+    monkeypatch.delenv("TQ_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    assert hook(repo, bash("ls ~"))[0] == 0
+    assert hook(repo, bash("ls -la ~"))[0] == 0
+    for cmd in ("tar cf t.tar ~", "tar cf t.tar -C ~ .tentaqles", "rsync -a ~/ bk/", "zip -r h.zip $HOME"):
+        assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+# ---------------------------------------------------------------------------
+# Locked-test parent dirs: only destination and removal operands count
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cmd", [
+    "pytest tests > out.txt",
+    "ls tests > list.txt",
+    "cp -r . ../bk",
+    "tar czf ../src.tgz .",
+    "echo . > out.txt",
+    "echo tests > out.txt",
+])
+def test_reading_a_locked_tests_parent_dir_is_not_a_write_to_it(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_echo_home_into_a_file_is_allowed_when_the_repo_is_under_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    root = home / "proj"
+    (root / "docs" / "checkpoints").mkdir(parents=True)
+    (root / "tests").mkdir()
+    _git(root, "init", "-q", "-b", "work")
+    (root / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    save_plan(root, PLAN)
+    (root / ".claude" / "build").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    approve_and_lock(root)
+    assert hook(root, bash("echo $HOME > out.txt"))[0] == 0
+    code, _, err = hook(root, bash("rm -rf $HOME/proj/tests"))
+    assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "mv tests tests2",
+    "rm -rf tests",
+    "cp -r src tests",
+    "rsync -a src/ tests/",
+    "find tests -delete",
+    "pytest > tests",
+    "tar xf a.tar",
+    "cp x.py -t tests",
+])
+def test_destination_and_removal_operands_on_a_locked_tests_parent_stay_refused(repo, cmd):
+    approve_and_lock(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "locked test" in err, cmd
+
+
+# ---------------------------------------------------------------------------
+# Round 5: cleaned-up finished builds, session binding, run-time file lists
+# ---------------------------------------------------------------------------
+
+
+def _clean_up(root, slug="demo", plan=True):
+    import shutil
+
+    shutil.rmtree(_state(root, slug), ignore_errors=True)
+    if plan:
+        (root / "docs" / "checkpoints" / f"{slug}.json").unlink()
+
+
+def test_a_finished_build_whose_state_and_plan_were_removed_does_not_lock_the_project(repo):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    _clean_up(repo)
+    assert "demo" in gate.recorded_slugs(repo)
+    assert gate.rolled_back(repo, "demo") is False and gate.rolled_back_slugs(repo) == []
+    assert gate._build_exists(repo) is False
+    assert hook(repo, _settings_write(repo))[0] == 0
+    assert hook(repo, bash("echo x > out.txt"))[0] == 0
+    assert stop(repo)[0] == 0 and stop(repo)[0] == 0
+    st = gate.cmd_state(repo, "demo")
+    assert st["finished"] is True and st["cleaned"] is True and st["rolled_back"] is False
+
+
+def test_a_finished_build_with_a_tampered_approval_is_still_a_rollback(repo):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    (_state(repo) / "approved.json").write_text("{}", encoding="utf-8")
+    assert gate.rolled_back(repo, "demo") is True
+
+
+def test_an_unfinished_build_whose_state_dir_was_removed_stays_a_rollback(repo):
+    approve_and_lock(repo)
+    _clean_up(repo)
+    assert gate.rolled_back(repo, "demo") is True and gate._build_exists(repo) is True
+    assert hook(repo, _settings_write(repo))[0] == 2
+    assert stop(repo)[0] == 2
+
+
+def test_approve_of_a_finished_cleaned_slug_says_to_write_a_new_plan(repo):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    _clean_up(repo)
+    with pytest.raises(SystemExit) as e:
+        gate.cmd_approve(repo, "demo")
+    assert "build demo is finished; write a new plan to start another" in str(e.value)
+    # a slug with no record keeps the old message
+    with pytest.raises(SystemExit) as e2:
+        gate.cmd_approve(repo, "nothing")
+    assert "no plan" in str(e2.value)
+
+
+def test_deleting_session_json_during_a_build_is_a_rollback_and_keeps_the_review_base(repo):
+    approve_and_lock(repo)
+    hook(repo, agent("[checkpoint demo#2 implement]"))
+    base = gate.load_session(repo, "demo")["bases"]["2"]
+    (repo / "app.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "impl")
+    (_state(repo) / "session.json").unlink()
+    assert gate.rolled_back(repo, "demo") is True and gate._build_exists(repo) is True
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "rolled back" in err
+    assert stop(repo)[0] == 2 and stop(repo)[0] == 0
+    assert gate.review_bases(repo, "demo")["2"] == base
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    assert head != base
+    out = gate.cmd_review_bundle(repo, "demo", 2)
+    assert f"base={base}" in out and f"Base: {base}" in Path(out.splitlines()[0]).read_text(encoding="utf-8")
+    # a human re-approval brings the session back; the next implement marker keeps the recorded base
+    gate.cmd_approve(repo, "demo")
+    assert hook(repo, agent("[checkpoint demo#2 implement]"))[0] == 0
+    assert gate.load_session(repo, "demo")["bases"]["2"] == base
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("tar czf x.tgz -T list.txt", 2),
+    ("tar -czf x.tgz --files-from=list.txt", 2),
+    ("tar cf x.tar --files-from list.txt", 2),
+    ("tar cf x.tar -T- < list.txt", 2),
+    ("cpio -i < list.cpio", 2),
+    ("cpio -o < list.txt > a.cpio", 2),
+    ("tar czf x.tgz src/", 0),
+])
+def test_run_time_file_lists_for_archive_tools_are_refused_while_a_build_exists(repo, cmd, want):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == want, cmd
+
+
+def test_echo_home_into_a_file_when_tq_home_is_under_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    root = home / "proj"
+    (root / "docs" / "checkpoints").mkdir(parents=True)
+    (root / "tests").mkdir()
+    _git(root, "init", "-q", "-b", "work")
+    (root / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    save_plan(root, PLAN)
+    (root / ".claude" / "build").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("TQ_HOME", str(home / ".tq"))
+    approve_and_lock(root)
+    assert hook(root, bash("echo $HOME > out.txt"))[0] == 0
+    assert hook(root, bash('echo "$HOME" >> out.txt'))[0] == 0
+    assert hook(root, bash("tar czf x.tgz $HOME"))[0] == 2
+    assert hook(root, bash("cat $HOME/.tq/build-gate/hmac.key"))[0] == 2
+
+
+# --- merge of the spine: link and option-write rules inside _ShellScan ------------------------
+
+
+@pytest.mark.parametrize("cmd", [
+    r"cd .tq-breaker && cmd /c mklink /J demo C:\outside",
+    "cd .tq-breaker/demo && ln -s ../../app.py l.txt",
+    "cd lib && ln -s ../.claude/build/demo/approved.json x",
+    "cd .claude && ln -s build/demo/approved.json x",
+])
+def test_link_rule_follows_the_tracked_cwd(repo, cmd):
+    (repo / "lib").mkdir()
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "mysqldump --result-file=tests/test_a.py app",
+    "mysqldump -r tests/test_a.py app",
+    "cd tests && pg_dump -w --file test_a.py app",
+    "cd tests && curl -s -o test_a.py http://127.0.0.1:3000/",
+    'cd tests && sqlite3 ../app.db ".backup main test_a.py"',
+])
+def test_option_writes_feed_the_destination_check(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "grep --file pats.txt tests/test_a.py",
+    "docker build --file Dockerfile .",
+    "git log --oneline -- tests/test_a.py",
+    "tar -tf a.tar",
+    "sort pats.txt",
+])
+def test_file_option_is_no_write_for_readers(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0
+
+
+@pytest.mark.parametrize("slug", ["..", ".", "Demo", "a/b", "-x", ""])
+def test_approve_refuses_a_slug_finish_would_refuse(repo, slug):
+    with pytest.raises(SystemExit, match="approve refused"):
+        gate.cmd_approve(repo, slug)

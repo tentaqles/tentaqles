@@ -101,7 +101,8 @@ def test_fix_skill_is_reproduce_first_and_bug_shaped() -> None:
         assert token in body, token
     assert "never" in body and "without a reproduction" in body
     assert "AskUserQuestion` is never called" in body
-    assert "build-gate ask" in body and "knowing the review gate is `n/a`" in body
+    assert "build-gate ask" in body and "knowing the review gate becomes `n/a`" in body
+    assert "review gate still `pending`" in " ".join(body.split())  # the approval, not the planner, sets n/a (final review I1)
     assert "you never run `build-gate dod" in body
     flat = " ".join(body.split())
     assert "Set `hotfix=yes` only when the user passed `--hotfix`" in flat and "never infer it from severity" in flat
@@ -126,7 +127,10 @@ def test_feature_skill_locates_the_fr_and_interviews_first() -> None:
     assert "A feature with no FR is first a PRD change, never code" in flat
     assert "`**Acceptance checks**` heading" in flat and "never guess" in flat
     assert "never commit on `main` or `master`" in flat and "`git switch -c feat/<slug>`" in flat
-    assert "the feature branch" in flat and "/tentaqles:build resume <slug>" in flat
+    assert '"The feature branch" below means this branch.' in flat
+    assert "re-run `/tentaqles:feature` with the same `$ARGUMENTS`" in flat
+    assert "`/tentaqles:build resume <slug>` is only for an existing plan" in flat
+    assert "/tentaqles:build resume <slug>`, then start" not in flat
     assert "names this FR or its goal" in flat and "treat it as touching" in flat
     assert "never write a placeholder as a command" in flat and "leave no `<...>`" in flat
     for crew in ("spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer", "breaker"):
@@ -139,3 +143,28 @@ def test_feature_skill_locates_the_fr_and_interviews_first() -> None:
     assert "`hotfix=no`" in flat and "spec=<path>" in flat
     assert "you never run `build-gate dod" in flat
     assert "lock-tests` right after approval" in flat and "before the human approves" in flat
+
+
+def test_fix_skill_never_pastes_reports_with_personal_data() -> None:
+    body = (SKILLS / "fix" / "SKILL.md").read_text(encoding="utf-8")
+    flat = " ".join(body.split())
+    assert "the report **verbatim**" not in body and "Captures the report verbatim" not in body
+    assert "personal data replaced by placeholders (`<customer>`, `<email>`)" in flat
+    assert "never pasted verbatim" in flat
+    assert "the slug comes from the symptom, never from a name, e-mail or id" in flat
+
+
+def test_docs_state_the_key_isolation_caveat_honestly() -> None:
+    # final review C2: the docs promised that the agent cannot read the key or reach around the CLI
+    plugin = SKILLS.parent
+    ref = " ".join((SKILLS / "build" / "reference.md").read_text(encoding="utf-8").split())
+    log = " ".join((plugin / "CHANGELOG.md").read_text(encoding="utf-8").split())
+    design = " ".join((plugin.parent / "docs" / "design" / "2026-10-20-development-process-design.md").read_text(encoding="utf-8").split())
+    assert "the agent cannot read it" not in ref
+    assert "cannot be reached around the CLI" not in log
+    assert "which only the human's processes hold" not in design
+    for text in (ref, log, design):
+        assert "tq follow-up" in text or "a follow-up" in text
+    assert "the signed records are what the human and the hub trust" in ref
+    assert "The signed records are what the human and the hub trust" in log
+    assert "record-review` is agent-callable" in ref
