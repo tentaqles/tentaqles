@@ -221,31 +221,55 @@ func splitCommits(out string) []commitDiff {
 	return res
 }
 
+// blobSniff is how much of a binary blob is read to tell UTF-16 (BOM)
+// from a real binary (a NUL in the head).
+const blobSniff = 8000
+
 // binaryBlob reads a file `log -p` reported as binary, from the commit that
-// added it, within the push budget: UTF-16 with a BOM is decoded and
-// returned, a real binary yields nothing, and a UTF-16 or text blob over the
-// per-file cap (or the budget) makes the push ask.
+// added it, within the push budget. Only the first blobSniff bytes are read
+// and charged at first: a real binary (an image, an archive) stops there and
+// passes. A blob that starts with a UTF-16 BOM, or has no NUL in its head,
+// is read whole up to the per-file cap, decoded and scanned; over the cap or
+// the budget the push asks.
 func (s *pushScanner) binaryBlob(sha, name string) ([]commitscan.AddedLine, rangeStatus) {
 	if s.budget <= 0 {
 		return nil, rangeTooBig
 	}
-	limit := commitscan.MaxFileBytes + 1
-	if limit > s.budget {
-		limit = s.budget
-	}
-	raw, big, err := s.git(limit, "cat-file", "-p", sha+":"+name)
+	spec := sha + ":" + name
+	head, big, err := s.git(blobSniff, "cat-file", "-p", spec)
 	if err != nil {
 		return nil, rangeFailed
 	}
-	s.budget -= len(raw)
+	s.budget -= len(head)
+	bom := len(head) >= 2 && ((head[0] == 0xFF && head[1] == 0xFE) || (head[0] == 0xFE && head[1] == 0xFF))
+	if !bom && strings.IndexByte(head, 0) >= 0 {
+		return nil, rangeScanned // a real binary: nothing to scan
+	}
+	raw := head
+	if big {
+		limit := commitscan.MaxFileBytes + 1
+		if limit > s.budget {
+			limit = s.budget
+		}
+		if limit <= 0 {
+			return nil, rangeTooBig
+		}
+		var full bool
+		raw, full, err = s.git(limit, "cat-file", "-p", spec)
+		if err != nil {
+			return nil, rangeFailed
+		}
+		s.budget -= len(raw)
+		if full {
+			return nil, rangeTooBig // UTF-16 or text larger than what can be scanned
+		}
+	}
 	text, ok, derr := commitscan.DecodeLimited([]byte(raw), name)
 	switch {
 	case derr != nil:
 		return nil, rangeTooBig
 	case !ok:
-		return nil, rangeScanned // a real binary: nothing to scan
-	case big:
-		return nil, rangeTooBig // text, but only its head was read
+		return nil, rangeScanned
 	}
 	return commitscan.FileLines(name, text), rangeScanned
 }
