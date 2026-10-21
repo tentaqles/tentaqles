@@ -148,10 +148,11 @@ const (
 	rangeFailed // resolved but could not be scanned: ask
 )
 
-// scanRange reads the commits in rng one by one (so values added and later
-// removed inside the range are still seen).
-func (s *pushScanner) scanRange(rng string) ([]commitscan.AddedLine, rangeStatus) {
-	cnt, _, err := s.git(1<<16, "rev-list", "--count", rng)
+// scanRange reads the commits in rng (a range, or rev-list arguments such as
+// `<src> --not --remotes`) one by one, so values added and later removed
+// inside the range are still seen.
+func (s *pushScanner) scanRange(rng ...string) ([]commitscan.AddedLine, rangeStatus) {
+	cnt, _, err := s.git(1<<16, append([]string{"rev-list", "--count"}, rng...)...)
 	if err != nil {
 		if s.ctx.Err() != nil {
 			return nil, rangeFailed
@@ -168,7 +169,7 @@ func (s *pushScanner) scanRange(rng string) ([]commitscan.AddedLine, rangeStatus
 	if n > maxPushCommits || s.budget <= 0 {
 		return nil, rangeTooBig
 	}
-	out, big, err := s.git(s.budget, "log", "-p", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--format=%H", rng)
+	out, big, err := s.git(s.budget, append([]string{"log", "-p", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--format=%H"}, rng...)...)
 	if big {
 		return nil, rangeTooBig
 	}
@@ -201,6 +202,12 @@ scan:
 		if plan.skipThis {
 			continue
 		}
+		dir, derr := inv.Dir(cwd)
+		if derr != nil {
+			setAsk("could not tell which repository this push acts on: " + derr.Error())
+			continue
+		}
+		sc.cwd = dir
 		pairs, a := sc.sources(plan)
 		if a != "" {
 			setAsk(a)
@@ -214,13 +221,16 @@ scan:
 			remote = "origin"
 		}
 		for _, pr := range pairs {
-			for _, rng := range []string{
-				remote + "/" + pr.dst + ".." + pr.src,
-				pr.src + "@{push}.." + pr.src,
-				pr.src + "@{upstream}.." + pr.src,
-				"origin/HEAD.." + pr.src,
+			resolved := false
+			for _, rng := range [][]string{
+				{remote + "/" + pr.dst + ".." + pr.src},
+				{pr.src + "@{push}.." + pr.src},
+				{pr.src + "@{upstream}.." + pr.src},
+				{"origin/HEAD.." + pr.src},
+				// a first push or a new branch: every commit on no remote
+				{pr.src, "--not", "--remotes"},
 			} {
-				got, st := sc.scanRange(rng)
+				got, st := sc.scanRange(rng...)
 				switch st {
 				case rangeUnresolved:
 					continue
@@ -231,7 +241,11 @@ scan:
 					break scan
 				}
 				lines = append(lines, got...)
+				resolved = true
 				break
+			}
+			if !resolved {
+				setAsk(pushScanFailed) // not even <src> --not --remotes resolved
 			}
 		}
 	}

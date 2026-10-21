@@ -13,6 +13,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -171,4 +172,44 @@ func TestFinal_I1_OversizedDiffAsks(t *testing.T) {
 	line := strings.Repeat("x", 99) + "\n"
 	stage(t, ws, run, "big.txt", strings.Repeat(line, (9<<20)/len(line)))
 	wantAsk(t, ws, `git commit -m "feat: big"`, "tq/commit-pii", "scan limit")
+}
+
+func bareRemote(t *testing.T, run func(args ...string) string) {
+	t.Helper()
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", "-b", "main", remote).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	run("remote", "add", "origin", remote)
+}
+
+// C1: push is scanned in the repository it targets.
+func TestFinal_C1_PushTargetRepository(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	withRemote(t, gitRepo(t, ws)) // the hook cwd: nothing unpushed
+	wt := filepath.Join(ws, "wt")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runWt := gitRepo(t, wt)
+	withRemote(t, runWt)
+	stage(t, wt, runWt, "export.csv", cpfRow)
+	runWt("-c", noHooks(t), "commit", "-q", "-m", "feat: export")
+	wantDeny(t, ws, `git -C wt push`, "tq/push-pii")
+	wantDeny(t, ws, `cd wt && git push origin main`, "tq/push-pii")
+	wantAsk(t, ws, `git -C missing push`, "tq/push-pii", "does not exist")
+}
+
+// I2: a first push (no upstream, no origin/HEAD) scans every commit that is
+// on no remote.
+func TestFinal_I2_FirstPushScansUnpushedHistory(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	bareRemote(t, run)
+	stage(t, ws, run, "export.csv", cpfRow)
+	run("-c", noHooks(t), "commit", "-q", "-m", "feat: export")
+	for _, c := range []string{`git push -u origin main`, `git push origin HEAD`, `cd . && git push`, `git push`} {
+		wantDeny(t, ws, c, "tq/push-pii")
+	}
+	wantAsk(t, ws, `git push origin nosuchbranch`, "tq/push-pii", "could not scan")
 }

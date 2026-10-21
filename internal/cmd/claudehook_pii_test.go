@@ -105,14 +105,14 @@ func TestPushPII_DeniedForUnpushedCommits(t *testing.T) {
 	}
 }
 
-func TestPushPII_UnresolvableRangeAllows(t *testing.T) {
+func TestPushPII_NoRemoteRangeScansUnpushedHistory(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
 	run := gitRepo(t, ws)
 	stage(t, ws, run, "export.csv", "4111 1111 1111 1111\n") // tq:allow-pii
 	run("-c", "core.hooksPath="+testutil.TempDir(t), "commit", "-q", "-m", "feat: export")
-	// no remote at all: tq has no range to scan and gives no opinion (the identity guard still applies)
+	// no remote-tracking ref at all: every commit on no remote is scanned (final review I2)
 	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push -u origin main"))
-	if strings.Contains(errOut, "tq/push-pii") {
+	if code != 2 || !strings.Contains(errOut, "tq/push-pii") || !strings.Contains(errOut, "(card)") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }
