@@ -19,6 +19,8 @@ CHECKLISTS = {
     "privacy-review/references/checklist.md": ("P1", "LGPD Art. 6", "Art. 18", "Art. 37", "Art. 46", "GDPR Art. 5", "Art. 25", "Art. 30", "Art. 32"),
     "llm-security-review/references/checklist.md": ("L1", "LLM01", "LLM02", "LLM06", "ASI01", "ASI", "MCP", "memory"),
     "supply-chain/references/checklist.md": ("C1", "SLSA", "SBOM", "permissions:", "lockfile", "Scorecard", "secret scanning"),
+    "threat-model/references/stride.md": ("Spoofing", "Elevation of privilege", "question"),
+    "classify-data/references/data-dictionary.md": ("pii", "sensitive", "financial", "children", "secrets", "Faker"),
 }
 
 ROW_IDS = {
