@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/hub/adapter"
@@ -37,19 +38,22 @@ type Config struct {
 }
 
 type flight struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel   context.CancelFunc
+	done     chan struct{}
+	explicit atomic.Bool // set by Cancel; a parent context ending (hub shutdown) leaves it false
 }
 
 type Service struct {
 	cfg Config
 	st  *store.Store
 
-	mu       sync.Mutex // flights and lastPoll
-	flights  map[string]*flight
-	lastPoll map[string]time.Time
-	enqMu    sync.Mutex // serializes Enqueue within this process
-	wg       sync.WaitGroup
+	mu         sync.Mutex // flights, cancelling and lastPoll; also held across the queued → running transition
+	flights    map[string]*flight
+	cancelling map[string]bool // runs Cancel is ending: startRound never starts them
+	lastPoll   map[string]time.Time
+	enqMu      sync.Mutex // serializes Enqueue and Cancel's final transition within this process
+	tickMu     sync.Mutex // serializes Tick so concurrent ticks cannot exceed the concurrency limit
+	wg         sync.WaitGroup
 
 	// OnApprove runs after the human approved a result (Task 11: the static review export).
 	OnApprove func(card store.Card, run store.Run)
@@ -83,7 +87,7 @@ func New(cfg Config) (*Service, error) {
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = 15 * time.Second
 	}
-	return &Service{cfg: cfg, st: cfg.Store, flights: map[string]*flight{}, lastPoll: map[string]time.Time{}}, nil
+	return &Service{cfg: cfg, st: cfg.Store, flights: map[string]*flight{}, cancelling: map[string]bool{}, lastPoll: map[string]time.Time{}}, nil
 }
 
 func (s *Service) Store() *store.Store { return s.st }
@@ -299,6 +303,9 @@ func (s *Service) Waiting(ctx context.Context) ([]WaitingItem, error) {
 
 // Run enqueues (or resumes) a run for the card now (tq hub run).
 func (s *Service) Run(ctx context.Context, id string) (store.Run, error) {
+	if IsAgent(ctx) {
+		return store.Run{}, ErrHumanOnly
+	}
 	r, _, err := s.Enqueue(ctx, id, "requested")
 	return r, err
 }

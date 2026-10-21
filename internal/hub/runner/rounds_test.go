@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,15 +32,228 @@ func TestEnqueueCoalescesWakeups(t *testing.T) {
 	}
 }
 
-func TestEnqueueOnALockedCardIsDroppedWithAComment(t *testing.T) {
+func TestEnqueueReleasesAnOrphanLock(t *testing.T) {
 	h := newHarness(t)
 	c := h.card("feature")
 	h.st.Checkout(c.ID, "r-stalestalest")
-	if _, _, err := h.svc.Enqueue(context.Background(), c.ID, "requested"); !errors.Is(err, ErrLocked) {
-		t.Fatalf("want ErrLocked, got %v", err)
+	r, made, err := h.svc.Enqueue(context.Background(), c.ID, "requested")
+	if err != nil || !made {
+		t.Fatalf("an orphan lock does not block a new run: %v %v", made, err)
 	}
-	if !strings.Contains(h.comments(c.ID), "locked by run r-stalestalest") {
+	if got, _ := h.st.Card(c.ID); got.LockedByRun != r.ID {
+		t.Fatalf("lock %q, want %q", got.LockedByRun, r.ID)
+	}
+	if !strings.Contains(h.comments(c.ID), "released an orphan lock left by run r-stalestalest") {
 		t.Fatal(h.comments(c.ID))
+	}
+	// A lock left by an ended run of this card is an orphan too.
+	ended, _ := h.svc.Cancel(context.Background(), r.ID)
+	h.st.Checkout(c.ID, ended.ID)
+	if _, made, err := h.svc.Enqueue(context.Background(), c.ID, "again"); err != nil || !made {
+		t.Fatalf("ended holder: %v %v", made, err)
+	}
+}
+
+func TestAgentsCannotRunOrCancel(t *testing.T) {
+	h := newHarness(t)
+	c := h.card("feature", store.TagAgentReady)
+	if _, err := h.svc.Run(WithAgent(context.Background()), c.ID); !errors.Is(err, ErrHumanOnly) {
+		t.Fatalf("an agent cannot start a run: %v", err)
+	}
+	if runs, _ := h.st.RunsForCard(c.ID); len(runs) != 0 {
+		t.Fatalf("no run was created: %d", len(runs))
+	}
+	r := h.enqueue(c)
+	if _, err := h.svc.Cancel(WithAgent(context.Background()), r.ID); !errors.Is(err, ErrHumanOnly) {
+		t.Fatalf("an agent cannot cancel a run: %v", err)
+	}
+	if got := h.run(r.ID); got.Status != store.StatusQueued {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestCancelRacingATickNeverResurrectsTheRun(t *testing.T) {
+	for i := 0; i < 15; i++ {
+		h := newHarness(t)
+		h.ad.steps = []step{func(context.Context, adapter.RunRequest) (adapter.RunResult, error) {
+			return adapter.RunResult{StopReason: "error_max_turns", SessionID: "s1", CostKnown: true}, nil
+		}}
+		c := h.card("feature", store.TagAgentReady)
+		r := h.enqueue(c)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); h.svc.Tick(context.Background()) }()
+		go func() { defer wg.Done(); h.svc.Cancel(context.Background(), r.ID) }()
+		wg.Wait()
+		h.svc.Wait()
+		h.tick()
+		h.tick()
+		got := h.run(r.ID)
+		card, _ := h.st.Card(c.ID)
+		if got.Status != store.StatusCancelled || got.EndedAt == "" || card.LockedByRun != "" || len(h.ad.calls()) > 1 {
+			t.Fatalf("iteration %d: %+v lock %q calls %d", i, got, card.LockedByRun, len(h.ad.calls()))
+		}
+	}
+}
+
+func TestARoundOverAnEndedRunAppliesNothing(t *testing.T) {
+	h := newHarness(t)
+	c := h.card("feature", store.TagAgentReady)
+	var id string
+	h.ad.steps = []step{func(context.Context, adapter.RunRequest) (adapter.RunResult, error) {
+		r, _ := h.st.Run(id)
+		r.Status, r.EndedAt, r.StopReason = store.StatusCancelled, "2026-10-21T09:00:00Z", "cancelled elsewhere"
+		h.st.SaveRun(r)
+		h.st.Release(c.ID, id)
+		return adapter.RunResult{StopReason: "error_max_turns", CostKnown: true}, nil
+	}}
+	id = h.enqueue(c).ID
+	h.tick()
+	h.tick()
+	if got := h.run(id); got.Status != store.StatusCancelled || got.StopReason != "cancelled elsewhere" || len(h.ad.calls()) != 1 {
+		t.Fatalf("%+v calls %d", got, len(h.ad.calls()))
+	}
+}
+
+func TestHubShutdownRequeuesTheRun(t *testing.T) {
+	h := newHarness(t)
+	started := make(chan struct{})
+	h.ad.steps = []step{func(ctx context.Context, req adapter.RunRequest) (adapter.RunResult, error) {
+		close(started)
+		<-ctx.Done()
+		return adapter.RunResult{ExitCode: -1}, ctx.Err()
+	}}
+	c := h.card("feature", store.TagAgentReady)
+	r := h.enqueue(c)
+	r.Slug, r.State = "demo", []byte(`{"slug":"demo"}`)
+	h.st.SaveRun(r)
+	ctx, stop := context.WithCancel(context.Background())
+	h.svc.Tick(ctx)
+	<-started
+	stop()
+	h.svc.Wait()
+	got := h.run(r.ID)
+	card, _ := h.st.Card(c.ID)
+	if got.Status != store.StatusQueued || got.EndedAt != "" || got.Phase != store.PhaseResume || card.LockedByRun != r.ID {
+		t.Fatalf("%+v lock %q", got, card.LockedByRun)
+	}
+	if !strings.Contains(h.comments(c.ID), "hub stopped") || strings.Contains(h.comments(c.ID), "cancelled") {
+		t.Fatal(h.comments(c.ID))
+	}
+	if err := h.svc.RecoverStale(); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.run(r.ID); got.Status != store.StatusQueued {
+		t.Fatalf("RecoverStale failed a requeued run: %+v", got)
+	}
+}
+
+func TestEndingAnEndedRunChangesNothing(t *testing.T) {
+	h := newHarness(t)
+	c := h.card("feature")
+	old := h.enqueue(c)
+	h.svc.Cancel(context.Background(), old.ID)
+	next := h.enqueue(c)
+	card, _ := h.st.Card(c.ID)
+	h.svc.fail(old, card, "late failure", "")
+	if got := h.run(old.ID); got.Status != store.StatusCancelled {
+		t.Fatalf("an ended run was ended again: %+v", got)
+	}
+	if got, _ := h.st.Card(c.ID); got.LockedByRun != next.ID {
+		t.Fatalf("the next run lost its lock: %q", got.LockedByRun)
+	}
+}
+
+func TestConcurrentTicksRespectTheLimit(t *testing.T) {
+	h := newHarness(t)
+	release := make(chan struct{})
+	h.ad.steps = []step{func(ctx context.Context, req adapter.RunRequest) (adapter.RunResult, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return adapter.RunResult{StopReason: "success", CostKnown: true}, nil
+	}}
+	for i := 0; i < 5; i++ {
+		h.enqueue(h.card("feature", store.TagAgentReady))
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); h.svc.Tick(context.Background()) }()
+	}
+	wg.Wait()
+	running, _ := h.st.RunsWithStatus(store.StatusRunning)
+	close(release)
+	h.svc.Wait()
+	if len(running) != 2 {
+		t.Fatalf("%d runs started, concurrency is 2", len(running))
+	}
+}
+
+func TestRelocateTargetMustStayInTheWorkspace(t *testing.T) {
+	outside := "/tmp/x"
+	if runtime.GOOS == "windows" {
+		outside = `C:\other-client\repo`
+	}
+	t.Run("outside", func(t *testing.T) {
+		h := newHarness(t)
+		h.ad.steps = []step{result("TQ_HUB_RELOCATE " + outside + " demo")}
+		c := h.card("feature", store.TagAgentReady)
+		r := h.enqueue(c)
+		h.tick()
+		got := h.run(r.ID)
+		if got.Status != store.StatusFailed || got.StopReason != "relocate outside workspace" || got.Worktree != "" || len(h.ad.calls()) != 1 {
+			t.Fatalf("%+v", got)
+		}
+		if !strings.Contains(h.comments(c.ID), outside) {
+			t.Fatal(h.comments(c.ID))
+		}
+	})
+	t.Run("wrong sibling", func(t *testing.T) {
+		h := newHarness(t)
+		h.ad.steps = []step{result("TQ_HUB_RELOCATE " + filepath.Join(filepath.Dir(h.root), "someone-else") + " demo")}
+		r := h.enqueue(h.card("feature", store.TagAgentReady))
+		h.tick()
+		if got := h.run(r.ID); got.StopReason != "relocate outside workspace" {
+			t.Fatalf("%+v", got)
+		}
+	})
+	t.Run("sibling convention", func(t *testing.T) {
+		h := newHarness(t)
+		sib := filepath.Join(filepath.Dir(h.root), filepath.Base(h.root)+"-build-demo")
+		if err := os.MkdirAll(sib, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(sib) })
+		target := sib
+		if runtime.GOOS == "windows" {
+			target = strings.ToUpper(sib[:1]) + strings.ToLower(sib[1:]) // case does not matter on Windows
+		}
+		h.ad.steps = []step{result("TQ_HUB_RELOCATE " + target + " demo")}
+		c, err := h.st.AddCard(store.NewCard{Title: "Root project", Kind: "feature", Tags: []string{store.TagAgentReady}}, "renato")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := h.enqueue(c)
+		h.tick()
+		if got := h.run(r.ID); got.Status != store.StatusQueued || got.Phase != store.PhaseRelocated || !strings.EqualFold(got.Worktree, sib) {
+			t.Fatalf("%+v", got)
+		}
+	})
+}
+
+func TestNotificationsAreMasked(t *testing.T) {
+	h := newHarness(t)
+	h.ad.steps = []step{func(context.Context, adapter.RunRequest) (adapter.RunResult, error) {
+		return adapter.RunResult{ExitCode: 1, StopReason: "error_during_execution", CostKnown: true,
+			PermissionDenials: []adapter.PermissionDenial{{Tool: "Bash", Input: map[string]any{"command": "mail jane.doe@example.com"}}}}, nil
+	}}
+	h.enqueue(h.card("feature", store.TagAgentReady))
+	h.tick()
+	notes := h.notifications()
+	if len(notes) != 1 || strings.Contains(notes[0], "jane.doe@example.com") {
+		t.Fatalf("%q", notes)
 	}
 }
 
@@ -222,13 +437,20 @@ func TestMaxTurnsResumesTheSameSession(t *testing.T) {
 	}
 	c := h.card("feature", store.TagAgentReady)
 	r := h.enqueue(c)
+	r.Slug = "demo"
+	h.st.SaveRun(r)
+	h.gt.set("demo", loadState(t, "in_progress"))
 	h.tick()
-	if got := h.run(r.ID); got.Status != store.StatusQueued || got.SessionID != "s-7" {
+	if got := h.run(r.ID); got.Status != store.StatusQueued || got.SessionID != "s-7" || got.Phase != store.PhaseResume {
 		t.Fatalf("%+v", got)
 	}
 	h.tick()
-	if calls := h.ad.calls(); calls[1].SessionID != "s-7" {
+	calls := h.ad.calls()
+	if calls[1].SessionID != "s-7" {
 		t.Fatalf("resume session %q", calls[1].SessionID)
+	}
+	if !strings.HasPrefix(calls[0].Prompt, "/tentaqles:feature ") || calls[1].Prompt != "/tentaqles:build resume demo --headless" {
+		t.Fatalf("once the plan exists the build resumes: %q then %q", calls[0].Prompt, calls[1].Prompt)
 	}
 }
 
