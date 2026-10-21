@@ -302,15 +302,15 @@ The diff is the working tree (default), --staged, or --range A..B. Exit
 code is 0 for low and 3 for high, so scripts can branch on it.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			args := []string{"diff", "--no-color"}
+			var sel []string
 			switch {
 			case rng != "":
-				args = append(args, rng)
+				sel = []string{rng}
 			case staged:
-				args = append(args, "--cached")
+				sel = []string{"--cached"}
 			}
 			cwd, _ := os.Getwd()
-			diff, err := gitcfg.RunGitIn(cwd, args...)
+			diff, err := triageGit(cwd, append([]string{"diff", "--no-color"}, sel...)...)
 			if err != nil {
 				return fmt.Errorf("git diff: %w", err)
 			}
@@ -319,12 +319,13 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 				fmt.Fprintln(out, "low (empty diff)")
 				return nil
 			}
-			nameArgs := append([]string{"diff", "--name-only"}, args[2:]...)
-			names, _ := gitcfg.RunGitIn(cwd, nameArgs...)
+			// -z: git quotes non-ASCII names in plain --name-only output, which
+			// would never match a classified path.
+			names, nerr := triageGit(cwd, append([]string{"diff", "--name-only", "-z", "--no-renames"}, sel...)...)
 			var changed []string
-			for _, l := range strings.Split(names, "\n") {
+			for _, l := range strings.Split(names, "\x00") {
 				if l = strings.TrimSpace(l); l != "" {
-					changed = append(changed, l)
+					changed = append(changed, strings.ReplaceAll(l, "\\", "/"))
 				}
 			}
 			classified := false
@@ -337,13 +338,20 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 				res.Error = err.Error()
 			} else {
 				res = decide.Triage(context.Background(), cl, pol, diff)
-				judgmentLog().Write(decide.Judgment{Workspace: ws.Name, Kind: "triage", Mode: policyMode(pol), P: res.P,
-					Error: res.Error, Extra: map[string]string{"risk": res.Risk, "flags": strings.Join(res.Flags, ",")}})
 			}
 			if classified {
 				res.Flags = append(res.Flags, "classified_data")
+			}
+			if nerr != nil {
+				res.Flags = append(res.Flags, "files_unlisted")
+			}
+			if classified || nerr != nil {
 				sort.Strings(res.Flags)
 				res.Risk = "high"
+			}
+			if err == nil {
+				judgmentLog().Write(decide.Judgment{Workspace: ws.Name, Kind: "triage", Mode: policyMode(pol), P: res.P,
+					Error: res.Error, Extra: map[string]string{"risk": res.Risk, "flags": strings.Join(res.Flags, ",")}})
 			}
 			if asJSON {
 				_ = json.NewEncoder(out).Encode(res)
@@ -354,6 +362,9 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 				}
 				if res.Truncated {
 					line += " [diff truncated]"
+				}
+				if nerr != nil {
+					line += " [could not list changed files: full review]"
 				}
 				if res.Error != "" {
 					line += " [jev unavailable: full review]"
@@ -386,3 +397,6 @@ func classifiedFlag(files []string, data manifest.Data) bool {
 	}
 	return false
 }
+
+// triageGit runs git for triage; tests replace it.
+var triageGit = gitcfg.RunGitIn

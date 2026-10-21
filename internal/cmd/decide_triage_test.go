@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,5 +61,79 @@ func TestTriage_ClassifiedDataFlagWithoutJev(t *testing.T) {
 	}()
 	if code != 3 || !strings.Contains(out.String(), "classified_data") {
 		t.Fatalf("code=%d out=%q", code, out.String())
+	}
+}
+
+// triageRepo creates a git repo in a trusted workspace with the classified
+// data block, stages path with content, and chdirs there.
+func triageRepo(t *testing.T, rel string) {
+	t.Helper()
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "data:\n  classes: [pii]\n  paths:\n    - { path: \"db/schema/**\", classes: [pii] }\n")
+	run := func(args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = ws
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "t")
+	full := filepath.Join(ws, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte("create table t(x text);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", rel)
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(ws); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runTriageStaged(t *testing.T) (int, string) {
+	t.Helper()
+	var code int
+	prevExit := exitFunc
+	exitFunc = func(c int) { code = c; panic(hookExitSentinel{}) }
+	t.Cleanup(func() { exitFunc = prevExit })
+	var out bytes.Buffer
+	root := NewRoot()
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"decide", "triage", "--staged"})
+	func() {
+		defer func() { _ = recover() }()
+		_ = root.Execute()
+	}()
+	return code, out.String()
+}
+
+func TestTriage_ClassifiedDataFlagNonASCIIName(t *testing.T) {
+	triageRepo(t, "db/schema/clientes_ção.sql")
+	code, out := runTriageStaged(t)
+	if code != 3 || !strings.Contains(out, "classified_data") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+}
+
+func TestTriage_FilesUnlistedFailsToHigh(t *testing.T) {
+	triageRepo(t, "README.md")
+	prev := triageGit
+	triageGit = func(dir string, args ...string) (string, error) {
+		for _, a := range args {
+			if a == "--name-only" {
+				return "", errors.New("boom")
+			}
+		}
+		return prev(dir, args...)
+	}
+	t.Cleanup(func() { triageGit = prev })
+	code, out := runTriageStaged(t)
+	if code != 3 || !strings.Contains(out, "files_unlisted") || !strings.Contains(out, "could not list changed files") {
+		t.Fatalf("code=%d out=%q", code, out)
 	}
 }
