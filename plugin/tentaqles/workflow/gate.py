@@ -56,6 +56,7 @@ from tentaqles.workflow._common import (
     file_sha256,
     find_bash,
     find_git_root,
+    find_git_roots,
     git,
     glob_match,
     norm,
@@ -1657,18 +1658,41 @@ def check_stop(data: dict, root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _root_for(data: dict) -> Path | None:
+def _roots_for(data: dict) -> list[Path]:
+    """Every project root the call is judged against: each git root from the file's directory
+    upward, each git root from the session's cwd upward (a nested `git init lib/sub` must not
+    hide the outer project's state), and CLAUDE_PROJECT_DIR (and its git roots) when set. The
+    process cwd is the fallback when nothing else names a root."""
+    out: list[Path] = []
+    seen: set[str] = set()
+
+    def add(r) -> None:
+        if r is None:
+            return
+        k = canon_path(r)
+        if k not in seen:
+            seen.add(k)
+            out.append(Path(r))
+
     tool_input = data.get("tool_input") or {}
     fp = tool_input.get("file_path") or tool_input.get("notebook_path")
     if fp:
-        r = find_git_root(os.path.dirname(norm(fp)) or ".")
-        if r:
-            return r
-    for cand in (data.get("cwd"), os.environ.get("CLAUDE_PROJECT_DIR"), os.getcwd()):
-        r = find_git_root(cand) if cand else None
-        if r:
-            return r
-    return None
+        for r in find_git_roots(os.path.dirname(norm(fp)) or "."):
+            add(r)
+    cwd = data.get("cwd")
+    if cwd:
+        for r in find_git_roots(cwd):
+            add(r)
+    pd = os.environ.get("CLAUDE_PROJECT_DIR")
+    if pd:
+        if os.path.isdir(pd):
+            add(Path(pd))
+        for r in find_git_roots(pd):
+            add(r)
+    if not out:
+        for r in find_git_roots(os.getcwd()):
+            add(r)
+    return out
 
 
 def _heartbeat(root: Path) -> None:
@@ -1736,9 +1760,18 @@ def _hook(data: dict) -> tuple[int, str, str]:
                     break
             if here and classify(here, None, absn, {}, True) == "gatecode" and _build_exists(here):
                 return 2, "", f"build-gate: {_MESSAGES['gatecode']}"
-    root = _root_for(data)
-    if root is None or not ((root / STATE_DIR).is_dir() or (root / PLAN_DIR).is_dir()):
-        return 0, "", ""
+    roots = [r for r in _roots_for(data) if (r / STATE_DIR).is_dir() or (r / PLAN_DIR).is_dir()]
+    asked = ""
+    for root in roots:
+        code, out, err = _dispatch(data, root)
+        if code != 0:
+            return code, out, err
+        asked = asked or out
+    return 0, asked, ""
+
+
+def _dispatch(data: dict, root: Path) -> tuple[int, str, str]:
+    """Judge one call against one project root."""
     _heartbeat(root)
     try:
         if data.get("hook_event_name") == "Stop":

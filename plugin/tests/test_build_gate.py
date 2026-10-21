@@ -2454,3 +2454,53 @@ def test_canon_path_leaves_ordinary_paths_alone(repo):
         assert gate.canon_path("C:\\") == "c:/"
         assert gate.canon_path("C:/x/y.txt") == "c:/x/y.txt"
     assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(repo / "app.py"), "content": "x"}})[0] == 0
+
+
+
+# ---------------------------------------------------------------------------
+# Project root: every git root from the cwd upward, and CLAUDE_PROJECT_DIR
+# ---------------------------------------------------------------------------
+
+
+def _nested(repo):
+    sub = repo / "lib" / "sub"
+    sub.mkdir(parents=True)
+    _git(sub, "init", "-q")
+    return sub
+
+
+def test_a_nested_git_repo_does_not_hide_the_outer_state_dir(repo):
+    gate.cmd_approve(repo, "demo")
+    sub = _nested(repo)
+    for c in ("echo x > ../../.claude/build/demo/approved.json",
+              "cp ../../x.json ../../.claude/build/demo/approved.json",
+              "cd ../.. && echo x > .claude/build/demo/approved.json"):
+        assert hook(repo, {**bash(c), "cwd": str(sub)})[0] == 2, c
+    p = str(repo / ".claude" / "build" / "demo" / "approved.json")
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": p, "content": "{}"}, "cwd": str(sub)})[0] == 2
+    # ordinary work inside the nested repo stays allowed
+    assert hook(repo, {**bash("echo x > notes.txt"), "cwd": str(sub)})[0] == 0
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(sub / "a.py"), "content": "x"},
+                       "cwd": str(sub)})[0] == 0
+
+
+def test_a_nested_git_repo_does_not_hide_the_outer_locked_tests(repo):
+    sub = _nested(repo)
+    (sub / "test_x.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    approve_and_lock(repo, paths=("lib/sub/test_x.py",))
+    w = {"tool_name": "Write", "tool_input": {"file_path": str(sub / "test_x.py"), "content": "x"}, "cwd": str(sub)}
+    code, _, err = hook(repo, w)
+    assert code == 2 and "locked test" in err
+    assert hook(repo, {**bash("echo x > test_x.py"), "cwd": str(sub)})[0] == 2
+
+
+def test_claude_project_dir_is_judged_too(repo, tmp_path, monkeypatch):
+    approve_and_lock(repo)
+    other = tmp_path / "other"
+    (other / ".claude" / "build").mkdir(parents=True)
+    _git(other, "init", "-q")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    target = (repo / "tests" / "test_a.py").as_posix()
+    code, _, err = hook(repo, {**bash(f"echo x > '{target}'"), "cwd": str(other)})
+    assert code == 2 and "locked test" in err
+    assert hook(repo, {**bash("echo x > notes.txt"), "cwd": str(other)})[0] == 0

@@ -123,6 +123,18 @@ def find_git_root(start: str | os.PathLike | None) -> Path | None:
     return None
 
 
+def find_git_roots(start: str | os.PathLike | None) -> list[Path]:
+    """Every ancestor (or self) holding a `.git`, nearest first."""
+    out: list[Path] = []
+    r = find_git_root(start)
+    while r is not None:
+        out.append(r)
+        if r.parent == r:
+            break
+        r = find_git_root(r.parent)
+    return out
+
+
 def rel_to(root: Path, path: str) -> str | None:
     """`path` relative to `root` in forward slashes, or None when outside it.
 
