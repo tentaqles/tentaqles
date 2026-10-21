@@ -136,6 +136,14 @@ These counts come from transcripts, so they reflect what Claude actually hit:
 - Not yet measured: time from PRD to merge and hotfix-debt counts. They need
   PR data and `memory.db`; this is a follow-up.
 
+### Hub (tq hub)
+
+Read from `$TQ_HOME/hub/<workspace>/activity.jsonl` (written by `tq hub`, masked at write;
+`--ws` filters by workspace name). Shows cards per lane (as of their last move in the
+window), runs started and ended by status, budget stops, decisions answered and the median
+time a decision waited for the human, override and request-changes answers, cost per kind
+and the ten most expensive cards. JSON: the `hub` object.
+
 ### Background review sessions
 
 This is the count of `security_review` sessions, how many of them ran on Opus,
