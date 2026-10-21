@@ -15,6 +15,11 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
     planning-ready, adds its own `### FR-nn` with binary checks, and settles
     only the `NEEDS-DECISION` items that touch it. `/tentaqles:fix` is
     reproduce-first and locks the regression test before any fix.
+  - The review crew is `build-critic` always, plus `spec-critic` for
+    `feature`/`kickoff` plans (and for `fix` plans that touch files outside
+    the failing path) and `breaker` only for checkpoints marked
+    `"runnable": true`. `/tentaqles:fix --hotfix` (user-passed only, never
+    inferred) skips the critic; the locked regression test is never skipped.
   - The skills never commit on `main`/`master`: they open or switch to a
     `feat/<slug>` branch (or the build worktree) first.
   - **Review crew with recorded verdicts.** `build-gate record-review` stores
@@ -25,14 +30,19 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
     at approval and checks locked tests, checkpoint and reviewer records and
     the obligations the diff created (ADR, privacy record, migration plan,
     changelog). The Stop hook requires a fresh DoD for `feature`, `fix` and
-    `kickoff` plans. `build-gate dod --override "<reason>"` is human-only: the
-    agent never runs it and the hook refuses it. A human override is kept
-    while the code is unchanged (logged as `dod-override-kept`) and dropped on
-    any code change; overrides are logged to `docs/LEARNINGS.md` and counted
+    `kickoff` plans: it blocks a stop once, only when every frozen checkpoint
+    has passed, the run is not finished and the DoD is not fresh.
+    `build-gate dod --override "<reason>"` is human-only: the agent never
+    runs it and the hook refuses it. A human override is kept while the code
+    is unchanged and the approval id is the same (logged as
+    `dod-override-kept`) and dropped on any code change; overrides are logged to `docs/LEARNINGS.md` and counted
     by `tq insights`.
-  - **Hub-ready interfaces.** Decision records (`build-gate ask` /
-    `build-gate answer`, stored in `decisions.jsonl`), hub actor tokens
-    (`build-gate token`, HMAC with the gate key; human-only) and
+  - **Hub-ready interfaces.** Decision records (`build-gate ask`, run by the
+    agent; `build-gate answer`, human-only like `judge`, `token` and
+    `dod --override`; stored in `decisions.jsonl`). Answering `override` on
+    an `override:` question runs the DoD override, and `approve` on a
+    `result` decision runs finish. Hub actor tokens (`build-gate token`, HMAC
+    with the gate key; the hub passes `TQ_BUILD_ACTOR`/`TQ_BUILD_TOKEN`) and
     `build-gate state <slug> --json` (includes `dod_fresh` and answered
     decisions). Headless mode (`TENTAQLES_HEADLESS=1` or `--headless`) never
     calls `AskUserQuestion`: each human stop becomes a decision record and the
