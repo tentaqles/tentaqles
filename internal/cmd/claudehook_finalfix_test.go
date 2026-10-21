@@ -4,10 +4,10 @@ package cmd
 //
 // Every personal or financial value here is a public test number with a
 // valid checksum, never a real person or account:
-//   - CPF  529.982.247-25           (widely published CPF test number)
-//   - CNPJ 11.222.333/0001-81       (widely published CNPJ test number)
-//   - card 4111 1111 1111 1111      (Visa test card)
-//   - IBAN GB82 WEST 1234 5698 7654 32 (IBAN registry example)
+//   - CPF  529.982.247-25           (widely published CPF test number) tq:allow-pii
+//   - CNPJ 11.222.333/0001-81       (widely published CNPJ test number) tq:allow-pii
+//   - card 4111 1111 1111 1111      (Visa test card) tq:allow-pii
+//   - IBAN GB82 WEST 1234 5698 7654 32 (IBAN registry example) tq:allow-pii
 // Values that must fail their checksum say so next to them.
 
 import (
@@ -314,5 +314,45 @@ func TestFinal_I7_TextPIIGhAPIAndSubstitution(t *testing.T) {
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, psPayload(t, ws, "gh pr create --title x --body \"line`nnext\""))
 	if strings.Contains(out+errOut, "tq/text-pii") {
 		t.Errorf("PowerShell backtick flagged (code=%d): %q", code, out+errOut)
+	}
+}
+
+// I8: the marker also counts in test files, never in docs or migrations.
+func TestFinal_I8_MarkerScope(t *testing.T) {
+	for f, want := range map[string]bool{
+		"internal/redact/redact_test.go":      true,
+		"internal/cmd/claudehook_pii_test.go": true,
+		"pkg/test_export.py":                  true,
+		"pkg/export_test.py":                  true,
+		"src/app.test.ts":                     true,
+		"src/app.spec.js":                     true,
+		"conftest.py":                         true,
+		"tests/fixtures/people.sql":           true,
+		"seeds/a.sql":                         true,
+		"src/seed.sql":                        false,
+		"src/export.go":                       false,
+		"docs/example_test.go":                false,
+		"docs/tests/people.sql":               false,
+		"db/migrations/0001_test.py":          false,
+		"migrations/conftest.py":              false,
+		"notes/a.test.md":                     false,
+		"README.md":                           false,
+		"latest.py":                           false,
+		"contest.py":                          false,
+	} {
+		if got := markerAllowed(f); got != want {
+			t.Errorf("markerAllowed(%q) = %v, want %v", f, got, want)
+		}
+	}
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "internal/redact/x_test.go", "package redact\n\nconst cpf = \"529.982.247-25\" // tq:allow-pii\n") // tq:allow-pii
+	if code, out := hook(t, ws, `git commit -m "test: fixture"`); code != 0 || strings.Contains(out, "tq/commit-pii") {
+		t.Fatalf("marked line in a Go test file: code=%d %q", code, out)
+	}
+	run("reset", "-q")
+	stage(t, ws, run, "docs/x_test.go", "const cpf = \"529.982.247-25\" // tq:allow-pii\n") // tq:allow-pii
+	if code, out := hook(t, ws, `git commit -m "docs: x"`); code != 2 || !strings.Contains(out, "test files") {
+		t.Fatalf("marker in docs must not count: code=%d %q", code, out)
 	}
 }

@@ -339,20 +339,31 @@ the manifest):
   financial data at the exits. `tq/commit-pii` scans the lines a commit would
   record (same scope as `tq/commit-secret`); `tq/push-pii` scans the commits a
   push would publish; `tq/text-pii` scans commit and tag messages and `gh pr`,
-  `issue` and `release` text, including `--body-file`. The reason lists
+  `issue` and `release` text, including `--body-file`, and `gh api` fields
+  (`-f`, `-F key=@file`, `--input`); text built by a command substitution
+  asks. The reason lists
   `file:line (detector)` and never the value. Checksum-validated detectors
   (the `checksummed` class: CPF, CNPJ, card, IBAN) always run; e-mail and
   phone run only when the manifest's `data.classes` declares `pii`,
   `sensitive` or `children`. Declaring `financial` adds no detector beyond
   the checksummed ones. A known-synthetic line carries `tq:allow-pii`, but
-  the marker only counts inside test and fixture directories (`tests/`,
-  `fixtures/`, `seeds/`, `testdata/`, …) and never in published text. If the
-  scan cannot finish (timeout, oversized push, unparseable quoting) the rule
-  asks instead of denying. `tq redact` is the helper for a shareable copy; see
+  the marker only counts in test files (`*_test.go`, `test_*.py`,
+  `*_test.py`, `conftest.py`, `*.test.*`, `*.spec.*`) and inside test and
+  fixture directories (`tests/`, `fixtures/`, `seeds/`, `testdata/`, …),
+  never under `docs/` or `migrations/` and never in published text. The
+  scans run in the repository the command acts on (a leading `cd <dir>`,
+  then `git -C <dir>`), cover `git commit <paths>`, and decode UTF-16 files.
+  All of them share one 8 s budget per hook call (`TQ_HOOK_SCAN_BUDGET`, at
+  most 12 s). If a scan cannot finish or vouch for the commit (a directory
+  tq cannot resolve, a text file over 1 MiB, more than 8 MiB in total, the
+  budget running out, an oversized push, unparseable quoting) the rule asks
+  instead of denying. `tq redact` is the helper for a shareable copy; see
   [Using classified data without printing it](#using-classified-data-without-printing-it).
 - `tq/pii-fixture-dump` (deny) — with a `data:` block in the manifest, a shell
-  command that reads a classified path or table (`data.paths`) and writes into
-  `tests/`, `fixtures/` or `seeds/`. Fixtures must be synthetic. Its message
+  command that reads a classified path or table (`data.paths`, matched
+  case-insensitively and in absolute or relative form) and writes into
+  `tests/`, `fixtures/` or `seeds/`, including PowerShell writers
+  (`Set-Content`, `Out-File`, `Export-Csv`, `Copy-Item`, ...). Fixtures must be synthetic. Its message
   points to `docs/privacy.md`, the per-project record of classified data that
   the planned development process asks for; tq only points at it.
 - `tq/commit-message` (ask) — a `git commit` whose message (read from `-m`,

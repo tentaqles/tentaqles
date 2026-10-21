@@ -1,6 +1,11 @@
 // internal/redact/redact_test.go
 package redact
 
+// Test values are public test numbers with valid checksums, never real data:
+// CPF 529.982.247-25, CNPJ 11.222.333/0001-81, Visa test card tq:allow-pii
+// 4111 1111 1111 1111, IBAN registry example GB82 WEST 1234 5698 7654 32. tq:allow-pii
+// Lines carrying them are marked tq:allow-pii (a test file, see markerAllowed).
+
 import (
 	"bytes"
 	"strings"
@@ -23,7 +28,7 @@ func TestCPF(t *testing.T) {
 }
 
 func TestCNPJAndCard(t *testing.T) {
-	if got := Redact("cnpj 11.222.333/0001-81", []string{"financial"}); !strings.Contains(got, "[REDACTED:cnpj]") {
+	if got := Redact("cnpj 11.222.333/0001-81", []string{"financial"}); !strings.Contains(got, "[REDACTED:cnpj]") { // tq:allow-pii
 		t.Fatalf("%q", got)
 	}
 	if got := Redact("cnpj 11.222.333/0001-82", []string{"financial"}); strings.Contains(got, "REDACTED") {
@@ -35,7 +40,7 @@ func TestCNPJAndCard(t *testing.T) {
 	if got := Redact("id 4111111111111112", []string{"financial"}); strings.Contains(got, "REDACTED") {
 		t.Fatalf("Luhn-invalid redacted: %q", got)
 	}
-	if got := Redact("iban GB82 WEST 1234 5698 7654 32", []string{"financial"}); !strings.Contains(got, "[REDACTED:iban]") {
+	if got := Redact("iban GB82 WEST 1234 5698 7654 32", []string{"financial"}); !strings.Contains(got, "[REDACTED:iban]") { // tq:allow-pii
 		t.Fatalf("%q", got)
 	}
 }
@@ -56,7 +61,7 @@ func TestEmailAndPhone(t *testing.T) {
 }
 
 func TestClassesSelectDetectorsAndSecrets(t *testing.T) {
-	text := "cpf 529.982.247-25 key sk-ant-abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii
+	text := "cpf 529.982.247-25 key sk-ant-abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii tq:allow-secret
 	// checksummed detectors always run (final review I4): financial masks the
 	// CPF too, but not the secret
 	if got := Redact(text, []string{"financial"}); !strings.Contains(got, "[REDACTED:cpf]") || strings.Contains(got, "anthropic_key") {
@@ -104,7 +109,7 @@ func TestPhoneLeavesPlainDigitRuns(t *testing.T) {
 }
 
 func TestEmptyClassListFailsClosed(t *testing.T) {
-	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii
+	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii tq:allow-secret
 	for _, cls := range [][]string{nil, {}} {
 		got := Redact(text, cls)
 		if strings.Contains(got, "529.982") || strings.Contains(got, "ghp_abc") {
@@ -124,7 +129,7 @@ func TestEmptyClassListFailsClosed(t *testing.T) {
 }
 
 func TestUnknownClassFailsClosed(t *testing.T) {
-	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii
+	text := "cpf 529.982.247-25 key ghp_abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii tq:allow-secret
 	got := Redact(text, []string{"bogus"})
 	if strings.Contains(got, "529.982") || strings.Contains(got, "ghp_abc") {
 		t.Fatalf("unknown class failed open: %q", got)
@@ -157,7 +162,7 @@ func TestChecksummedClassAndAllowMarker(t *testing.T) {
 }
 
 func TestAllowMarkerStillMasksSecrets(t *testing.T) {
-	line := "KEY=sk-ant-abcdefghijklmnopqrstuvwxyz0123 # tq:allow-pii"
+	line := "KEY=sk-ant-abcdefghijklmnopqrstuvwxyz0123 # tq:allow-pii" // tq:allow-secret
 	got := Redact(line, []string{"all"})
 	if !strings.Contains(got, "[REDACTED:anthropic_key]") {
 		t.Fatalf("secret on a marked line must still be masked: %q", got)

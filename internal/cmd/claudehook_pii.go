@@ -48,7 +48,7 @@ func piiClasses(ws *resolve.Workspace) []string {
 // targets, so the two cannot drift.
 var fixtureDirRe = regexp.MustCompile(`(?i)(^|/)(tests?|fixtures|__fixtures__|seeds?|seed|testdata)(/|$)`)
 
-const markerScopeNote = "tq:allow-pii only applies inside test and fixture directories"
+const markerScopeNote = "tq:allow-pii only applies inside test files and test or fixture directories, never in docs or migrations"
 
 func slashPath(p string) string {
 	p = strings.ReplaceAll(p, `\`, "/")
@@ -56,6 +56,33 @@ func slashPath(p string) string {
 		p = p[2:]
 	}
 	return p
+}
+
+// testFileRe names test files by convention: Go _test.go, Python
+// test_*.py / *_test.py / conftest.py, JS/TS *.test.* / *.spec.*.
+var testFileRe = regexp.MustCompile(`(?i)(_test\.go|^test_[^/]*\.py|_test\.py|^conftest\.py|\.(test|spec)\.[a-z0-9]+)$`)
+
+// noMarkerDirRe names directories whose content is published or replayed
+// (documentation, schema migrations): the marker never counts there.
+var noMarkerDirRe = regexp.MustCompile(`(?i)(^|/)(docs?|migrations?)/`)
+
+// proseExtRe names documentation formats; a test-file name does not make
+// them test code.
+var proseExtRe = regexp.MustCompile(`(?i)\.(md|mdx|markdown|rst|adoc|txt)$`)
+
+// markerAllowed reports whether a tq:allow-pii marker counts in file: a
+// test or fixture directory, or a test file by name, outside docs and
+// migrations.
+func markerAllowed(file string) bool {
+	f := slashPath(file)
+	if noMarkerDirRe.MatchString(f) {
+		return false
+	}
+	if inFixtureDir(f) {
+		return true
+	}
+	base := f[strings.LastIndex(f, "/")+1:]
+	return testFileRe.MatchString(base) && !proseExtRe.MatchString(base)
 }
 
 func inFixtureDir(file string) bool {
@@ -67,8 +94,8 @@ func inFixtureDir(file string) bool {
 }
 
 // hits formats findings as "file:line (detector)" without values. The
-// tq:allow-pii marker exempts a line only inside test and fixture
-// directories; markerIgnored reports a marked line that was still a finding.
+// tq:allow-pii marker exempts a line only where markerAllowed says so;
+// markerIgnored reports a marked line that was still a finding.
 //
 // The scan is bounded: it stops with errScanTooLarge after maxScanBytes and
 // with ctx's error when the shared budget ends.
@@ -82,7 +109,7 @@ func hits(ctx context.Context, lines []commitscan.AddedLine, classes []string) (
 			return nil, false, errScanTooLarge
 		}
 		var counts map[string]int
-		if inFixtureDir(l.File) {
+		if markerAllowed(l.File) {
 			counts = redact.Count(l.Text, classes)
 		} else {
 			counts = redact.CountAll(l.Text, classes)

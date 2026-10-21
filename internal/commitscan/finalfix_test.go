@@ -1,6 +1,6 @@
 package commitscan
 
-// Test values: 529.982.247-25 is the public CPF test number used across this
+// Test values: 529.982.247-25 is the public CPF test number used across this tq:allow-pii
 // repository's tests (valid check digits, no real person). Secrets are built
 // at run time by fakeKey.
 

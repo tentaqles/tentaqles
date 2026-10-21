@@ -1,5 +1,10 @@
 package cmd
 
+// Test values are public test numbers with valid checksums, never real data:
+// CPF 529.982.247-25, CNPJ 11.222.333/0001-81, Visa test card tq:allow-pii
+// 4111 1111 1111 1111, IBAN registry example GB82 WEST 1234 5698 7654 32. tq:allow-pii
+// Lines carrying them are marked tq:allow-pii (a test file, see markerAllowed).
+
 import (
 	"context"
 	"errors"
@@ -239,7 +244,7 @@ func TestCommitPII_MarkerOnlyInsideTestDirs(t *testing.T) {
 	run := gitRepo(t, ws)
 	stage(t, ws, run, "src/seed.sql", "insert into c values ('529.982.247-25'); -- tq:allow-pii\n") // tq:allow-pii
 	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: seed"`))
-	if code != 2 || !strings.Contains(errOut, "only applies inside test and fixture directories") || strings.Contains(errOut, "529") {
+	if code != 2 || !strings.Contains(errOut, "only applies inside test files and test or fixture directories") || strings.Contains(errOut, "529") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }

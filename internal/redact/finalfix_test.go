@@ -1,8 +1,8 @@
 package redact
 
 // Test values are public test numbers with valid checksums, never real data:
-// CPF 529.982.247-25, CNPJ 11.222.333/0001-81, Visa test card
-// 4111 1111 1111 1111, IBAN registry example GB82 WEST 1234 5698 7654 32.
+// CPF 529.982.247-25, CNPJ 11.222.333/0001-81, Visa test card tq:allow-pii
+// 4111 1111 1111 1111, IBAN registry example GB82 WEST 1234 5698 7654 32. tq:allow-pii
 // 4111 1111 1111 1112 fails Luhn on purpose.
 
 import (

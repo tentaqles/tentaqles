@@ -1,7 +1,7 @@
 package cmd
 
 // Test values are public test numbers with valid checksums, never real data:
-// CPF 529.982.247-25, CNPJ 11.222.333/0001-81, Visa test card 4111 1111 1111 1111.
+// CPF 529.982.247-25, CNPJ 11.222.333/0001-81, Visa test card 4111 1111 1111 1111. tq:allow-pii
 
 import (
 	"bytes"
@@ -28,7 +28,7 @@ func runRedact(t *testing.T, stdin string, args ...string) (string, error) {
 
 func TestRedact_StdinDefaultAll(t *testing.T) {
 	isolateHome(t)
-	out, err := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111\n")
+	out, err := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111\n") // tq:allow-pii
 	if err != nil || strings.Contains(out, "529") || !strings.Contains(out, "[REDACTED:cpf]") || !strings.Contains(out, "[REDACTED:card]") {
 		t.Fatalf("%q %v", out, err)
 	}
@@ -49,7 +49,7 @@ func TestRedact_ClassesAndCount(t *testing.T) {
 	if _, err := runRedact(t, "x", "--classes", " , "); err == nil {
 		t.Fatal("empty class list accepted")
 	}
-	out, _ = runRedact(t, "cpf 529.982.247-25\n", "--count")
+	out, _ = runRedact(t, "cpf 529.982.247-25\n", "--count") // tq:allow-pii
 	if strings.Contains(out, "529") || !strings.Contains(out, "cpf: 1") {
 		t.Fatalf("%q", out)
 	}
@@ -62,7 +62,7 @@ func TestRedact_FileAndRun(t *testing.T) {
 	isolateHome(t)
 	dir := testutil.TempDir(t)
 	f := filepath.Join(dir, "export.csv")
-	if err := os.WriteFile(f, []byte("ana@x.io,529.982.247-25\n"), 0o600); err != nil {
+	if err := os.WriteFile(f, []byte("ana@x.io,529.982.247-25\n"), 0o600); err != nil { // tq:allow-pii
 		t.Fatal(err)
 	}
 	out, err := runRedact(t, "", "--file", f)
@@ -86,7 +86,7 @@ func TestRedact_DefaultClassesFromManifest(t *testing.T) {
 	if err := os.Chdir(ws); err != nil {
 		t.Fatal(err)
 	}
-	out, _ := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111 key ghp_abcdefghijklmnopqrstuvwxyz0123\n")
+	out, _ := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111 key ghp_abcdefghijklmnopqrstuvwxyz0123\n") // tq:allow-pii tq:allow-secret
 	// financial from the manifest, secrets always, checksummed always: the CPF is masked too
 	if strings.Contains(out, "529") || !strings.Contains(out, "[REDACTED:cpf]") || !strings.Contains(out, "[REDACTED:card]") || !strings.Contains(out, "[REDACTED:github_token]") {
 		t.Fatalf("%q", out)

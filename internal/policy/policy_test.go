@@ -91,7 +91,7 @@ func TestBuiltinDecisions(t *testing.T) {
 		{"prisma migrate deploy asks", ToolCall{Tool: "Bash", Command: "npx prisma migrate deploy"}, Ask, "tq/remote-migration"},
 		{"supabase db push linked asks", ToolCall{Tool: "Bash", Command: "supabase db push --linked"}, Ask, "tq/remote-migration"},
 		{"alembic upgrade asks", ToolCall{Tool: "Bash", Command: "alembic upgrade head"}, Ask, "tq/remote-migration"},
-		{"alembic upgrade localhost ok", ToolCall{Tool: "Bash", Command: "DATABASE_URL=postgres://u:p@localhost/db alembic upgrade head"}, Allow, ""},
+		{"alembic upgrade localhost ok", ToolCall{Tool: "Bash", Command: "DATABASE_URL=postgres://u:p@localhost/db alembic upgrade head"}, Allow, ""}, // tq:allow-secret
 		{"supabase db reset local ok", ToolCall{Tool: "Bash", Command: "supabase db reset --local"}, Allow, ""},
 		// settings widening
 		{"settings bash star denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"allow": ["Bash(*)"]`}, Deny, "tq/settings-widen"},
