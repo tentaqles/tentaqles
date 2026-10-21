@@ -169,3 +169,54 @@ func TestLogMasksData(t *testing.T) {
 		t.Fatalf("data not masked: %+v", acts[0].Data)
 	}
 }
+
+func TestMoveCardSurvivesParentCompletionFailure(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	p, _ := s.AddCard(NewCard{Title: "parent", Kind: "project"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "only", ParentID: p.ID}, "renato")
+	if _, err := s.DB.Exec(`DELETE FROM lanes WHERE kind = ?`, LaneReview); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.MoveCard(c.ID, "done", "renato")
+	if err != nil || m.From.Name != "backlog" || m.To.Name != "done" || m.Card.Lane != "done" {
+		t.Fatalf("move %+v %v", m, err)
+	}
+}
+
+func TestLockedParentIsNotMovedOnCompletion(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	p, _ := s.AddCard(NewCard{Title: "parent", Kind: "project"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "only", ParentID: p.ID}, "renato")
+	if ok, _ := s.Checkout(p.ID, "r-abcdefghijkl"); !ok {
+		t.Fatal("checkout")
+	}
+	if _, err := s.MoveCard(c.ID, "done", "renato"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Card(p.ID)
+	cs, _ := s.Comments(p.ID)
+	if got.Lane != "backlog" || len(cs) != 1 || cs[0].AuthorKind != AuthorSystem || !strings.Contains(cs[0].Body, "when its run ends") {
+		t.Fatalf("parent %q comments %+v", got.Lane, cs)
+	}
+}
+
+func TestAddCardSurvivesActivityAppendFailure(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	os.Remove(ActivityPath("acme"))
+	if err := os.MkdirAll(ActivityPath("acme"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.AddCard(NewCard{Title: "still stored"}, "renato")
+	if err != nil || c.ID == "" {
+		t.Fatalf("card %+v %v", c, err)
+	}
+	if got, err := s.Card(c.ID); err != nil || got.Title != "still stored" {
+		t.Fatalf("db row: %+v %v", got, err)
+	}
+	if acts, _ := s.Activity(5); len(acts) != 1 {
+		t.Fatalf("activity row must stay: %+v", acts)
+	}
+}

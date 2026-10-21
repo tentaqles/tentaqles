@@ -34,6 +34,8 @@ func (s *Store) maskAny(v any) any {
 }
 
 // Log records one mutation: a row in `activity` and a line in activity.jsonl, both masked.
+// Row first; the jsonl mirror and publish are best-effort for callers that already committed their
+// own write. If the append fails the error is returned but the row stays (no rollback).
 func (s *Store) Log(e activity.Entry) error {
 	e.Workspace = s.Workspace
 	if e.TS == "" {
@@ -57,10 +59,10 @@ func (s *Store) Log(e activity.Entry) error {
 	s.logMu.Lock()
 	err = activity.Append(ActivityPath(s.Workspace), e)
 	s.logMu.Unlock()
+	s.Publish(Change{Kind: "activity", CardID: e.CardID, RunID: e.RunID})
 	if err != nil {
 		return fmt.Errorf("activity.jsonl: %w", err)
 	}
-	s.Publish(Change{Kind: "activity", CardID: e.CardID, RunID: e.RunID})
 	return nil
 }
 

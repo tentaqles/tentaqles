@@ -223,9 +223,8 @@ func (s *Store) AddCard(nc NewCard, actor string) (Card, error) {
 		nullStr(nc.ParentID), pd, now, now); err != nil {
 		return Card{}, err
 	}
-	if err := s.Log(activity.Entry{Actor: actor, Verb: activity.VerbCardCreate, CardID: id, Data: map[string]any{"lane": lane.Name, "kind": kind}}); err != nil {
-		return Card{}, err
-	}
+	// The row is committed; the activity mirror is best-effort.
+	_ = s.Log(activity.Entry{Actor: actor, Verb: activity.VerbCardCreate, CardID: id, Data: map[string]any{"lane": lane.Name, "kind": kind}})
 	s.Publish(Change{Kind: "card", CardID: id})
 	return s.Card(id)
 }
@@ -312,13 +311,14 @@ func (s *Store) UpdateCard(id string, u CardUpdate, actor string) (Card, error) 
 		c.Title, c.Body, c.ProjectDir, string(tags), Now(), id); err != nil {
 		return c, err
 	}
-	if err := s.Log(activity.Entry{Actor: actor, Verb: activity.VerbCardUpdate, CardID: id, Data: map[string]any{"fields": fields}}); err != nil {
-		return c, err
-	}
+	_ = s.Log(activity.Entry{Actor: actor, Verb: activity.VerbCardUpdate, CardID: id, Data: map[string]any{"fields": fields}})
 	s.Publish(Change{Kind: "card", CardID: id})
 	return s.Card(id)
 }
 
+// MoveCard moves a card between lanes. The row write is authoritative; the activity entry and parent
+// completion are best-effort. Parent completion moves an unlocked parent to review; the caller sees
+// only the child's transition.
 func (s *Store) MoveCard(id, lane, actor string) (MoveResult, error) {
 	c, err := s.Card(id)
 	if err != nil {
@@ -340,18 +340,18 @@ func (s *Store) MoveCard(id, lane, actor string) (MoveResult, error) {
 	if _, err := s.DB.Exec(`UPDATE cards SET lane = ?, done_at = ?, updated_at = ? WHERE id = ?`, to.Name, doneAt, now, id); err != nil {
 		return MoveResult{}, err
 	}
-	if err := s.Log(activity.Entry{Actor: actor, Verb: activity.VerbCardMove, CardID: id,
-		Data: map[string]any{"from": from.Name, "to": to.Name, "kind": c.Kind}}); err != nil {
+	_ = s.Log(activity.Entry{Actor: actor, Verb: activity.VerbCardMove, CardID: id,
+		Data: map[string]any{"from": from.Name, "to": to.Name, "kind": c.Kind}})
+	s.Publish(Change{Kind: "card", CardID: id})
+	moved, err := s.Card(id)
+	if err != nil {
 		return MoveResult{}, err
 	}
-	s.Publish(Change{Kind: "card", CardID: id})
+	res := MoveResult{Card: moved, From: from, To: to}
 	if to.Kind == LaneDone && c.ParentID != "" {
-		if err := s.completeParent(c.ParentID); err != nil {
-			return MoveResult{}, err
-		}
+		_ = s.completeParent(c.ParentID) // best-effort: the child's move is already committed
 	}
-	moved, err := s.Card(id)
-	return MoveResult{Card: moved, From: from, To: to}, err
+	return res, nil
 }
 
 // completeParent moves the parent to review (never done: the parent's own review is the human's)
@@ -381,15 +381,21 @@ func (s *Store) completeParent(parentID string) error {
 	if pl.Kind == LaneDone || pl.Kind == LaneReview {
 		return nil
 	}
+	if p.LockedByRun != "" {
+		// A run owns the parent: do not move it under that run, only leave a note.
+		_, err := s.AddComment(parentID, AuthorSystem, "hub",
+			fmt.Sprintf("All %d child cards are done; this card moves to review when its run ends.", len(kids)), "")
+		return err
+	}
 	rev, err := s.FirstLane(LaneReview)
 	if err != nil {
 		return err
 	}
-	if _, err := s.AddComment(parentID, AuthorSystem, "hub",
-		fmt.Sprintf("All %d child cards are done; this card moves to review for your own review.", len(kids)), ""); err != nil {
+	if _, err := s.MoveCard(parentID, rev.Name, "hub"); err != nil {
 		return err
 	}
-	_, err = s.MoveCard(parentID, rev.Name, "hub")
+	_, err = s.AddComment(parentID, AuthorSystem, "hub",
+		fmt.Sprintf("All %d child cards are done; this card moves to review for your own review.", len(kids)), "")
 	return err
 }
 
@@ -416,10 +422,8 @@ func (s *Store) AddComment(cardID, authorKind, author, body, runID string) (Comm
 	if _, err := s.DB.Exec(`UPDATE cards SET updated_at = ? WHERE id = ?`, c.CreatedAt, cardID); err != nil {
 		return Comment{}, err
 	}
-	if err := s.Log(activity.Entry{Actor: author, Verb: activity.VerbCommentAdd, CardID: cardID, RunID: runID,
-		Data: map[string]any{"author_kind": authorKind}}); err != nil {
-		return Comment{}, err
-	}
+	_ = s.Log(activity.Entry{Actor: author, Verb: activity.VerbCommentAdd, CardID: cardID, RunID: runID,
+		Data: map[string]any{"author_kind": authorKind}})
 	s.Publish(Change{Kind: "comment", CardID: cardID, RunID: runID})
 	return c, nil
 }
