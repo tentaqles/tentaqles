@@ -41,7 +41,7 @@ func Check(command, cwd string) Result {
 			switch {
 			case a == "--amend", a == "--no-edit", strings.HasPrefix(a, "--fixup"), strings.HasPrefix(a, "--squash"), a == "-C", a == "-c", a == "--reuse-message", a == "--reedit-message":
 				skip = true
-			case a == "-m" || a == "--message":
+			case a == "--message" || (len(a) > 2 && a[0] == '-' && a[1] != '-' && strings.Trim(a[1:len(a)-1], "aeipsnvq") == "" && a[len(a)-1] == 'm') || a == "-m":
 				if i+1 < len(args) {
 					msgs = append(msgs, args[i+1])
 					i++

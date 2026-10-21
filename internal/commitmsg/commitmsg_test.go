@@ -67,6 +67,8 @@ func TestCheck_QuotingAndHeredoc(t *testing.T) {
 		{"global options", `git -C repo -c core.quotepath=off commit -m "oops"`, true, false},
 		{"stdin file", `git commit -F -`, false, true},
 		{"unknown substitution", "git commit -m \"$(make msg)\"", false, true},
+		{"combined -am flag", `git commit -am "updated stuff"`, true, false},
+		{"combined -am flag ok", `git commit -am "fix(a): b"`, true, true},
 	}
 	for _, c := range cases {
 		r := Check(c.cmd, t.TempDir())
