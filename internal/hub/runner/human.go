@@ -170,6 +170,19 @@ func (s *Service) finishApproved(card store.Card, r store.Run) {
 }
 
 func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decision, choice, note string) (AnswerOutcome, error) {
+	// A raise-and-resume note is checked before the decision is consumed: a bad note keeps it pending.
+	var raised *store.Budget
+	if choice == "raise-and-resume" && strings.TrimSpace(note) != "" {
+		base := s.st.DefaultBudget()
+		if r, err := s.st.Run(d.RunID); err == nil {
+			base = r.Budget
+		}
+		nb, err := store.ParseBudget(note, base)
+		if err != nil {
+			return AnswerOutcome{}, fmt.Errorf("the note is not a budget (%v); the decision is still pending", err)
+		}
+		raised = &nb
+	}
 	d, err := s.st.AnswerHub(d.ID, choice, note, s.cfg.Actor)
 	if err != nil {
 		return AnswerOutcome{}, err
@@ -182,20 +195,23 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 	switch choice {
 	case "allow-once":
 		tool, _ := d.Data["tool"].(string)
+		// Under enqMu so a poll cannot Enqueue the run between the read and the save and start a
+		// round without the tool.
+		s.enqMu.Lock()
+		if cur, err := s.st.Run(r.ID); err == nil {
+			r = cur
+		}
 		if r.Active() && tool != "" {
 			r.AllowedTools = []string{tool}
 			r.Status, r.NotBefore = store.StatusQueued, s.stamp()
 			s.save(r)
 			out.Resumed = &r
 		}
+		s.enqMu.Unlock()
 	case "raise-and-resume":
 		b := r.Budget
-		if strings.TrimSpace(note) != "" {
-			nb, err := store.ParseBudget(note, r.Budget)
-			if err != nil {
-				return out, fmt.Errorf("the decision is answered, but the note is not a budget (%v); run tq hub run %s to resume with the same budget", err, card.ID)
-			}
-			b = nb
+		if raised != nil {
+			b = *raised
 		}
 		phase := store.PhaseStart
 		if r.Slug != "" {
@@ -248,7 +264,7 @@ func (s *Service) Move(ctx context.Context, id, laneName string, cancelRun bool)
 	if err != nil {
 		return out, err
 	}
-	if ok && to.Kind != store.LaneActive && !(to.Kind == store.LaneReview && act.Status != store.StatusRunning) &&
+	if ok && to.Kind != store.LaneActive && !(to.Kind == store.LaneReview && act.Status == store.StatusWaiting) &&
 		(from.Kind == store.LaneActive || from.Kind == store.LaneReview || to.Kind == store.LaneDone) {
 		if act.Status != store.StatusQueued && !cancelRun {
 			return MoveOutcome{}, &RunActiveError{Run: act}
@@ -368,8 +384,8 @@ func (s *Service) pollWaiting(ctx context.Context) {
 			continue
 		}
 		st := s.refresh(ctx, card, &r, r.Slug)
-		if st == nil || len(st.PendingDecisions) > 0 {
-			continue
+		if st == nil || st.RolledBack || st.Halted != nil || len(st.PendingDecisions) > 0 {
+			continue // a rolled-back or halted build waits for the human
 		}
 		if st.Finished {
 			s.finishApproved(card, r)

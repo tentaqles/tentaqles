@@ -635,7 +635,12 @@ func TestHubShutdownDetectsAPlanWrittenDuringTheRound(t *testing.T) {
 	r := h.enqueue(c)
 	ctx, stop := context.WithCancel(context.Background())
 	h.svc.Tick(ctx)
-	<-started
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		stop()
+		t.Fatal("round did not start")
+	}
 	stop()
 	h.svc.Wait()
 	got := h.run(r.ID)

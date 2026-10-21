@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/hub/gate"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 )
 
@@ -50,5 +51,28 @@ func TestPollSkipsRunsWaitingOnHubDecisions(t *testing.T) {
 	h.tick()
 	if h.run(r.ID).Status != store.StatusWaiting {
 		t.Fatal("a pending hub decision keeps the run waiting")
+	}
+}
+
+func TestPollLeavesRolledBackOrHaltedRunsWaiting(t *testing.T) {
+	for _, name := range []string{"rolled back", "halted"} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			_, r := waitingRun(t, h, "")
+			h.gt.terminalAnswer("demo", "d1a2b3c4", "approve") // answered, then the state went bad
+			h.gt.mu.Lock()
+			if name == "rolled back" {
+				h.gt.states["demo"].RolledBack = true
+			} else {
+				h.gt.states["demo"].Halted = &gate.Halted{Reason: "review failed three times"}
+			}
+			h.gt.mu.Unlock()
+			before := len(h.ad.calls())
+			h.clock.Advance(2 * time.Second)
+			h.tick()
+			if got := h.run(r.ID); got.Status != store.StatusWaiting || len(h.ad.calls()) != before {
+				t.Fatalf("the human must act first: %+v, %d new rounds", got, len(h.ad.calls())-before)
+			}
+		})
 	}
 }

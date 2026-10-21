@@ -245,3 +245,28 @@ func TestFinishApprovedOnlyOnce(t *testing.T) {
 		t.Fatalf("approved %d, parent comments %s", approved, h.comments(parent.ID))
 	}
 }
+
+func TestRaiseAndResumeRefusesABadNoteAndKeepsTheDecision(t *testing.T) {
+	h := newHarness(t)
+	h.ad.steps = []step{maxTurns(h, adapter.Usage{}, 0.01, true, 0)}
+	b := store.Budget{Tokens: 1e9, USD: 100, Minutes: 1000, Rounds: 1}
+	c, _ := h.svc.Add(context.Background(), store.NewCard{Title: "x", Tags: []string{store.TagAgentReady}, ProjectDir: "apps/billing"}, &b)
+	first, _ := h.svc.Run(context.Background(), c.ID)
+	h.tick()
+	h.tick()
+	pend, _ := h.st.PendingDecisions()
+	if len(pend) != 1 {
+		t.Fatalf("over-budget decision %+v", pend)
+	}
+	if _, err := h.svc.Answer(context.Background(), c.ID, pend[0].ID, "raise-and-resume", "rounds=lots"); err == nil || !strings.Contains(err.Error(), "rounds") {
+		t.Fatalf("bad note: %v", err)
+	}
+	d, _ := h.st.Decision(pend[0].ID)
+	runs, _ := h.st.RunsForCard(c.ID)
+	if d.Status != store.DecisionPending || len(runs) != 1 || runs[0].ID != first.ID {
+		t.Fatalf("decision %+v runs %d", d, len(runs))
+	}
+	if out, err := h.svc.Answer(context.Background(), c.ID, pend[0].ID, "raise-and-resume", "rounds=3"); err != nil || out.Resumed == nil {
+		t.Fatalf("a good note after a bad one: %+v %v", out, err)
+	}
+}

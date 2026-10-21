@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,5 +116,19 @@ func TestAgentMovesOnlyBetweenPlanningLanes(t *testing.T) {
 	plain := h.card("chore")
 	if _, err := h.svc.Move(agent, plain.ID, "done", false); !errors.Is(err, ErrHumanOnly) {
 		t.Fatalf("agent → done: %v", err)
+	}
+}
+
+func TestMoveQueuedRunToReviewCancels(t *testing.T) {
+	h := newHarness(t)
+	c := h.card("feature", store.TagAgentReady)
+	in, _ := h.svc.Move(context.Background(), c.ID, "in progress", false)
+	out, err := h.svc.Move(context.Background(), c.ID, "review", false)
+	if err != nil || out.Cancelled == nil || out.Card.Lane != "review" {
+		t.Fatalf("%+v %v", out, err)
+	}
+	card, _ := h.st.Card(c.ID)
+	if got := h.run(in.Enqueued.ID); got.Status != store.StatusCancelled || card.LockedByRun != "" || !strings.Contains(h.comments(c.ID), "system: The run was cancelled") {
+		t.Fatalf("run %+v lock %q comments %s", got, card.LockedByRun, h.comments(c.ID))
 	}
 }
