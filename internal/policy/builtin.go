@@ -4,6 +4,10 @@ package policy
 // inside one command of a chain like `cd x && git push`.
 const seg = `[^;&|\n]*`
 
+// iacFlags is any number of flag words (with their values) between a tool and
+// its verb: `kubectl -n prod apply`, `terraform -chdir=infra apply`.
+const iacFlags = `(?:\s+-{1,2}[\w.-]+(?:=\S+|\s+[^-\s]\S*)?)*`
+
 // envExcept exempts the conventional committed templates of a .env file.
 const envExcept = `\.env\.(example|sample|template|dist|defaults|schema)\b`
 
@@ -147,7 +151,8 @@ func Builtin() []Rule {
 		// --- infrastructure and remote databases ----------------------------------
 		{
 			ID: "tq/iac-apply", Action: Ask,
-			Command: `\b(terraform\s+apply|tofu\s+apply|pulumi\s+up|cdk\s+deploy|cdktf\s+deploy|az\s+deployment\s+\S+\s+create|aws\s+cloudformation\s+deploy|gcloud\s+deployment-manager\s+deployments\s+(create|update)|sam\s+deploy|serverless\s+deploy|sls\s+deploy|kubectl\s+apply|helm\s+(install|upgrade))\b`,
+			Command: `\b(?:(?:terraform|tofu)` + iacFlags + `\s+apply|pulumi` + iacFlags + `\s+up|cdk` + iacFlags + `\s+deploy|cdktf` + iacFlags + `\s+deploy|az` + iacFlags + `\s+deployment\s+\S+\s+create|aws` + iacFlags + `\s+cloudformation\s+deploy|gcloud` + iacFlags + `\s+deployment-manager\s+deployments\s+(?:create|update)|sam` + iacFlags + `\s+deploy|serverless` + iacFlags + `\s+deploy|sls` + iacFlags + `\s+deploy|kubectl` + iacFlags + `\s+apply|helm` + iacFlags + `\s+(?:install|upgrade))\b`,
+			Except:  `[^;&|\n]*--dry-run[^;&|\n]*`, // a dry run changes nothing: cut the whole segment
 			Reason:  "applies infrastructure changes to a live environment; confirm the target environment is the one named in the command (workspace, stack, resource group or kube context) and that a plan was reviewed",
 		},
 		{
@@ -166,8 +171,14 @@ func Builtin() []Rule {
 		},
 		{
 			ID: "tq/settings-shell-write", Action: Deny,
-			Command: `(>{1,2}\s*|\b(tee|cp|mv|sed\s+-i|set-content|add-content|out-file|copy-item|move-item)\b` + seg + `)\S*\.claude[/\\](settings(\.local)?\.json|tq-rules\.yaml)\b|(>{1,2}\s*|\b(tee|cp|mv|set-content|out-file)\b` + seg + `)\S*[/\\]\.claude\.json\b`,
-			Reason:  "Claude Code settings are not written from the shell; use `tq settings render` (permissions) or the Edit tool, which the guard checks",
+			// Redirects and in-place writers deny on any mention of the target; the
+			// copy/move verbs deny only when the target is the last word of the
+			// segment (the destination), so `cp .claude/settings.json backup` is a read.
+			Command: `(>{1,2}\s*|\b(tee|sed\s+-i|set-content|add-content|out-file)\b` + seg + `)\S*\.claude[/\\](settings(\.local)?\.json|tq-rules\.yaml)\b` +
+				`|\b(cp|mv|copy-item|move-item)\b` + seg + `\S*\.claude[/\\](settings(\.local)?\.json|tq-rules\.yaml)['"]?\s*($|[;&|\n])` +
+				`|(>{1,2}\s*|\b(tee|set-content|out-file)\b` + seg + `)\S*[/\\]\.claude\.json\b` +
+				`|\b(cp|mv|copy-item|move-item)\b` + seg + `\S*[/\\]\.claude\.json['"]?\s*($|[;&|\n])`,
+			Reason: "Claude Code settings are not written from the shell; use `tq settings render` (permissions) or the Edit tool, which the guard checks",
 		},
 		// --- CI ----------------------------------------------------------------
 		{

@@ -77,3 +77,42 @@ func TestCheck_QuotingAndHeredoc(t *testing.T) {
 		}
 	}
 }
+
+func TestCheck_FileBounds(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "adir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if r := Check("git commit -F adir", dir); !r.Checked || r.OK {
+		t.Fatalf("directory as -F must be checked and not ok: %+v", r)
+	}
+	big := append([]byte("fix(a): b\n\n"), make([]byte, 70<<10)...)
+	if err := os.WriteFile(filepath.Join(dir, "big.txt"), big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := Check("git commit -F big.txt", dir); !r.Checked || r.OK {
+		t.Fatalf("70 KiB file must be checked and not ok: %+v", r)
+	}
+}
+
+func TestCheck_UnterminatedQuote(t *testing.T) {
+	r := Check("cat <<EOF\nit's\nEOF\ngit commit -m \"bad\"", t.TempDir())
+	if !r.Checked || r.OK {
+		t.Fatalf("%+v", r)
+	}
+	if r := Check("echo 'open", t.TempDir()); r.Checked {
+		t.Fatalf("an unterminated quote without a commit is not a commit check: %+v", r)
+	}
+}
+
+func TestCheck_EveryCommitJudged(t *testing.T) {
+	if r := Check(`git commit -m "feat: a" && git commit -m "bad"`, t.TempDir()); !r.Checked || r.OK {
+		t.Fatalf("second commit must fail the check: %+v", r)
+	}
+	if r := Check(`git commit -m "bad" && git commit -m "feat: a"`, t.TempDir()); !r.Checked || r.OK {
+		t.Fatalf("first commit must fail the check: %+v", r)
+	}
+	if r := Check(`git commit -m "feat: a" && git commit -m "fix: b"`, t.TempDir()); !r.Checked || !r.OK {
+		t.Fatalf("%+v", r)
+	}
+}
