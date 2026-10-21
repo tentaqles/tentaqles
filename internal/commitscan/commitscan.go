@@ -194,33 +194,11 @@ type AddedLine struct {
 	Text string
 }
 
-// parseAdded walks a -U0 unified diff and yields every added line with its
-// line number in the new file.
-func parseAdded(diff string) []AddedLine {
-	var out []AddedLine
-	file := ""
-	line := 0
-	for _, l := range strings.Split(diff, "\n") {
-		switch {
-		case strings.HasPrefix(l, "+++ "):
-			file = strings.TrimPrefix(strings.TrimPrefix(strings.TrimRight(l, "\r"), "+++ "), "b/")
-		case strings.HasPrefix(l, "@@"):
-			line = hunkStart(l)
-		case strings.HasPrefix(l, "+"):
-			if file != "/dev/null" {
-				out = append(out, AddedLine{File: file, Line: line, Text: strings.TrimRight(l[1:], "\r")})
-			}
-			line++
-		}
-	}
-	return out
-}
-
 // scanDiff scans only added lines, mapping them back to their line number in
 // the new file.
 func scanDiff(diff string) []Hit {
 	var hits []Hit
-	for _, a := range parseAdded(diff) {
+	for _, a := range ParseDiffAdded(diff) {
 		if name := secrets.ScanLine(a.Text); name != "" {
 			hits = append(hits, Hit{File: a.File, Line: a.Line, Pattern: name})
 		}
@@ -250,7 +228,7 @@ func Added(dir, command string, run Runner) ([]AddedLine, error) {
 		if err != nil {
 			return nil, fmt.Errorf("git %s: %w", args[0], err)
 		}
-		out = append(out, parseAdded(o)...)
+		out = append(out, ParseDiffAdded(o)...)
 	}
 	if p.Untracked {
 		o, err := run(dir, "ls-files", "--others", "--exclude-standard")

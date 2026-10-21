@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/commitscan"
-	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -18,6 +17,37 @@ import (
 const maxPushCommits = 200
 
 const pushTooLarge = "the unpushed commits are too large to scan for personal data; push smaller batches or confirm"
+const pushScanFailed = "could not scan the commits about to be pushed; retry or push smaller batches"
+
+// pushDeadline bounds the whole push decision, every git call included
+// (hooks must never stall). Tests lower it.
+var pushDeadline = 15 * time.Second
+
+// pushGit runs git under ctx and reads at most limit bytes of stdout. Tests
+// replace it to simulate failures and slow git.
+var pushGit = runGitBounded
+
+func runGitBounded(ctx context.Context, cwd string, limit int, args ...string) (out string, tooBig bool, err error) {
+	c := exec.CommandContext(ctx, "git", args...)
+	c.Dir = cwd
+	pipe, err := c.StdoutPipe()
+	if err != nil {
+		return "", false, err
+	}
+	if err := c.Start(); err != nil {
+		return "", false, err
+	}
+	raw, _ := io.ReadAll(io.LimitReader(pipe, int64(limit)+1))
+	if len(raw) > limit {
+		_ = c.Process.Kill()
+		_ = c.Wait()
+		return "", true, nil
+	}
+	if err := c.Wait(); err != nil {
+		return "", false, err
+	}
+	return string(raw), false, nil
+}
 
 type pushPlan struct {
 	remote   string
@@ -66,23 +96,35 @@ func parsePush(args []string) pushPlan {
 
 type refPair struct{ src, dst string }
 
-func gitLine(cwd string, args ...string) string {
-	out, err := gitcfg.RunGitIn(cwd, args...)
+// pushScanner carries the shared deadline for one push decision.
+type pushScanner struct {
+	ctx    context.Context
+	cwd    string
+	budget int
+}
+
+func (s *pushScanner) git(limit int, args ...string) (string, bool, error) {
+	return pushGit(s.ctx, s.cwd, limit, args...)
+}
+
+// line returns the trimmed output of a small git query, or "".
+func (s *pushScanner) line(args ...string) string {
+	out, _, err := s.git(1<<20, args...)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(out)
 }
 
-// pushSources derives which local refs a push would send. ask is non-empty
-// when the push cannot be bounded.
-func pushSources(cwd string, p pushPlan) (pairs []refPair, ask string) {
+// sources derives which local refs a push would send. ask is non-empty when
+// the push cannot be bounded.
+func (s *pushScanner) sources(p pushPlan) (pairs []refPair, ask string) {
 	if p.mirror {
 		return nil, "this push is unbounded (--mirror); push named branches"
 	}
-	cur := gitLine(cwd, "symbolic-ref", "-q", "--short", "HEAD")
+	cur := s.line("symbolic-ref", "-q", "--short", "HEAD")
 	allBranches := func() {
-		for _, b := range strings.Split(gitLine(cwd, "for-each-ref", "--format=%(refname:short)", "refs/heads"), "\n") {
+		for _, b := range strings.Split(s.line("for-each-ref", "--format=%(refname:short)", "refs/heads"), "\n") {
 			if b = strings.TrimSpace(b); b != "" {
 				pairs = append(pairs, refPair{b, b})
 			}
@@ -124,76 +166,61 @@ func pushSources(cwd string, p pushPlan) (pairs []refPair, ask string) {
 	return pairs, ""
 }
 
-// gitBounded runs git with a deadline and reads at most limit bytes of stdout.
-func gitBounded(cwd string, limit int, args ...string) (out string, tooBig bool, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	c := exec.CommandContext(ctx, "git", args...)
-	c.Dir = cwd
-	pipe, err := c.StdoutPipe()
-	if err != nil {
-		return "", false, err
-	}
-	if err := c.Start(); err != nil {
-		return "", false, err
-	}
-	raw, _ := io.ReadAll(io.LimitReader(pipe, int64(limit)+1))
-	if len(raw) > limit {
-		cancel()
-		_ = c.Wait()
-		return "", true, nil
-	}
-	if err := c.Wait(); err != nil {
-		return "", false, err
-	}
-	return string(raw), false, nil
-}
+type rangeStatus int
+
+const (
+	rangeUnresolved rangeStatus = iota // no such range: no opinion
+	rangeScanned
+	rangeTooBig
+	rangeFailed // resolved but could not be scanned: ask
+)
 
 // scanRange reads the commits in rng one by one (so values added and later
-// removed inside the range are still seen). ok is false when rng does not resolve.
-func scanRange(cwd, rng string, budget *int) (lines []commitscan.AddedLine, tooBig, ok bool) {
-	cnt, err := gitcfg.RunGitIn(cwd, "rev-list", "--count", rng)
+// removed inside the range are still seen).
+func (s *pushScanner) scanRange(rng string) ([]commitscan.AddedLine, rangeStatus) {
+	cnt, _, err := s.git(1<<16, "rev-list", "--count", rng)
 	if err != nil {
-		return nil, false, false
+		if s.ctx.Err() != nil {
+			return nil, rangeFailed
+		}
+		return nil, rangeUnresolved
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(cnt))
 	if err != nil {
-		return nil, false, false
+		return nil, rangeFailed
 	}
 	if n == 0 {
-		return nil, false, true
+		return nil, rangeScanned
 	}
-	if n > maxPushCommits || *budget <= 0 {
-		return nil, true, true
+	if n > maxPushCommits || s.budget <= 0 {
+		return nil, rangeTooBig
 	}
-	out, big, err := gitBounded(cwd, *budget, "log", "-p", "--no-color", "--no-ext-diff", "-U0", "--format=%H", rng)
+	out, big, err := s.git(s.budget, "log", "-p", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--format=%H", rng)
 	if big {
-		return nil, true, true
+		return nil, rangeTooBig
 	}
 	if err != nil {
-		return nil, false, false
+		return nil, rangeFailed
 	}
-	*budget -= len(out)
-	file := ""
-	for _, l := range strings.Split(out, "\n") {
-		l = strings.TrimRight(l, "\r")
-		switch {
-		case strings.HasPrefix(l, "+++ "):
-			file = strings.TrimPrefix(strings.Trim(strings.TrimSpace(strings.TrimPrefix(l, "+++ ")), `"`), "b/")
-		case strings.HasPrefix(l, "+") && file != "/dev/null":
-			lines = append(lines, commitscan.AddedLine{File: file, Text: l[1:]})
-		}
-	}
-	return lines, false, true
+	s.budget -= len(out)
+	return commitscan.ParseDiffAdded(out), rangeScanned
 }
 
 func pushPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
 	if !call.IsShell() {
 		return policy.Decision{}, false
 	}
-	budget := maxPushScan
+	ctx, cancel := context.WithTimeout(context.Background(), pushDeadline)
+	defer cancel()
+	sc := &pushScanner{ctx: ctx, cwd: cwd, budget: maxPushScan}
 	var lines []commitscan.AddedLine
 	var ask string
+	setAsk := func(m string) {
+		if ask == "" {
+			ask = m
+		}
+	}
+scan:
 	for _, inv := range guard.GitInvocations(guard.StripHeredocs(call.Command)) {
 		if inv.Sub != "push" {
 			continue
@@ -202,9 +229,13 @@ func pushPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, ac
 		if plan.skipThis {
 			continue
 		}
-		pairs, a := pushSources(cwd, plan)
-		if a != "" && ask == "" {
-			ask = a
+		pairs, a := sc.sources(plan)
+		if a != "" {
+			setAsk(a)
+		}
+		if ctx.Err() != nil {
+			setAsk(pushScanFailed)
+			break
 		}
 		remote := plan.remote
 		if remote == "" {
@@ -217,12 +248,15 @@ func pushPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, ac
 				pr.src + "@{upstream}.." + pr.src,
 				"origin/HEAD.." + pr.src,
 			} {
-				got, big, ok := scanRange(cwd, rng, &budget)
-				if !ok {
+				got, st := sc.scanRange(rng)
+				switch st {
+				case rangeUnresolved:
 					continue
-				}
-				if big && ask == "" {
-					ask = pushTooLarge
+				case rangeTooBig:
+					setAsk(pushTooLarge)
+				case rangeFailed:
+					setAsk(pushScanFailed)
+					break scan
 				}
 				lines = append(lines, got...)
 				break

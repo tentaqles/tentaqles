@@ -249,10 +249,43 @@ func textPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, ac
 var (
 	fromTableRe = regexp.MustCompile(`(?i)(?:\b(?:from|join|into|table|update)\s+|\s(?:-t|--table)[\s=]+)("?[a-z_][\w]*"?(?:\."?[a-z_][\w]*"?)?)`)
 	copyToRe    = regexp.MustCompile(`(?i)\\?copy\b[^;]*\bto\s+(?:'([^']+)'|"([^"]+)"|([^\s'";]+))`)
-	redirRe     = regexp.MustCompile(`^\d*>>?(.*)$`)
 )
 
 var copyVerbs = map[string]bool{"cp": true, "mv": true, "rsync": true, "install": true, "tee": true, "copy": true}
+
+// targetDirVerbs honour -t/--target-directory (for rsync, -t is "preserve times").
+var targetDirVerbs = map[string]bool{"cp": true, "mv": true, "install": true}
+
+// copyWrappers are words after which a copy verb is the real command.
+var copyWrappers = map[string]bool{"sudo": true, "doas": true, "env": true, "nice": true, "command": true, "exec": true,
+	"busybox": true, "xargs": true, "-exec": true, "-execdir": true, "nohup": true, "time": true}
+
+var fixtureDirRe = regexp.MustCompile(`(?i)(^|/)(tests?|fixtures|__fixtures__|seeds?|seed|testdata)(/|$)`)
+
+// redirects finds redirect operators anywhere in the words (>, >>, &>, &>>,
+// 2>, 2>>): it returns their operands and the indexes of the words that are
+// an operator or an operand, so callers do not mistake them for arguments.
+func redirects(toks []string) (targets []string, skip map[int]bool) {
+	skip = map[int]bool{}
+	for i, t := range toks {
+		idx := strings.IndexByte(t, '>')
+		if idx < 0 || (idx > 0 && t[idx-1] == '\\') {
+			continue
+		}
+		rest := strings.TrimLeft(t[idx:], ">")
+		skip[i] = true
+		if rest == "" {
+			if i+1 < len(toks) {
+				rest = toks[i+1]
+				skip[i+1] = true
+			}
+		}
+		if rest != "" && !strings.HasPrefix(rest, "&") {
+			targets = append(targets, rest)
+		}
+	}
+	return targets, skip
+}
 
 // writeTargets lists every place the command writes to: redirects, output
 // flags, dump files, COPY ... TO and copy verbs, in any segment.
@@ -263,6 +296,8 @@ func writeTargets(cmd string) []string {
 	}
 	for _, sg := range splitSegments(cmd) {
 		toks, _ := tokenize(sg.Text)
+		redirTargets, skip := redirects(toks)
+		out = append(out, redirTargets...)
 		dump, mysql := false, false
 		for _, t := range toks {
 			switch baseName(t) {
@@ -273,14 +308,7 @@ func writeTargets(cmd string) []string {
 			}
 		}
 		for i, t := range toks {
-			if m := redirRe.FindStringSubmatch(t); m != nil {
-				tgt := m[1]
-				if tgt == "" && i+1 < len(toks) {
-					tgt = toks[i+1]
-				}
-				if tgt != "" && !strings.HasPrefix(tgt, "&") {
-					out = append(out, tgt)
-				}
+			if skip[i] {
 				continue
 			}
 			names := []string{"-o", "--out", "--output"}
@@ -298,20 +326,27 @@ func writeTargets(cmd string) []string {
 				}
 			}
 		}
-		if vi := verbIndex(toks); vi >= 0 && copyVerbs[baseName(toks[vi])] {
-			verb := baseName(toks[vi])
+		vi := verbIndex(toks)
+		for i := range toks {
+			if !(i == vi || (i > 0 && copyWrappers[strings.ToLower(toks[i-1])])) || !copyVerbs[baseName(toks[i])] {
+				continue
+			}
+			verb := baseName(toks[i])
+			// sources arrive on stdin or through {}: one argument is the target
+			injected := i > 0 && (toks[i-1] == "-exec" || toks[i-1] == "-execdir" || strings.ToLower(toks[i-1]) == "xargs")
 			var args []string
 			dir := ""
-			for i := vi + 1; i < len(toks); i++ {
-				t := toks[i]
+			for j := i + 1; j < len(toks); j++ {
+				t := toks[j]
 				switch {
-				case (t == "-t" || t == "--target-directory") && i+1 < len(toks):
-					dir = toks[i+1]
-					i++
+				case skip[j]:
+				case (t == "--target-directory" || (t == "-t" && targetDirVerbs[verb])) && j+1 < len(toks):
+					dir = toks[j+1]
+					j++
 				case strings.HasPrefix(t, "--target-directory="):
 					dir = strings.TrimPrefix(t, "--target-directory=")
 				case strings.HasPrefix(t, "-") && len(t) > 1:
-				case redirRe.MatchString(t) && strings.Contains(t, ">"):
+				case t == `\` || t == ";" || t == "+" || t == "{}":
 				default:
 					args = append(args, t)
 				}
@@ -321,7 +356,7 @@ func writeTargets(cmd string) []string {
 				out = append(out, dir)
 			case verb == "tee":
 				out = append(out, args...)
-			case len(args) >= 2:
+			case len(args) >= 2 || (len(args) == 1 && injected):
 				out = append(out, args[len(args)-1])
 			}
 		}
@@ -376,7 +411,7 @@ func piiFixtureDumpDecision(ws *resolve.Workspace, call policy.ToolCall, action 
 		return policy.Decision{}, false
 	}
 	for _, tgt := range writeTargets(call.Command) {
-		if inFixtureDir(tgt) {
+		if fixtureDirRe.MatchString(slashPath(tgt)) {
 			return ruleDecision(action, "tq/pii-fixture-dump",
 				fmt.Sprintf("this copies rows from %s (classified %s) into %s. Fixtures and seeds must be synthetic: generate them "+
 					"(Faker or a factory) or pseudonymise through a script that never writes real values. See docs/privacy.md.",

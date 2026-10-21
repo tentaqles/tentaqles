@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
@@ -313,5 +316,98 @@ func TestPiiFixtureDump_QuotedNestedChainedWrites(t *testing.T) {
 		if code != 2 || !strings.Contains(errOut, "tq/pii-fixture-dump") {
 			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
 		}
+	}
+}
+
+func TestPiiFixtureDump_RedirectsWithoutSpaces(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	for _, cmd := range []string{
+		`psql -c "select * from customers">tests/out.txt`,
+		`cat data/exports/q3.csv>tests/q3.csv`,
+		`cat data/exports/q3.csv &> tests/out.txt`,
+		`cat data/exports/q3.csv &>tests/out.txt`,
+		`cat data/exports/q3.csv >>tests/q3.csv`,
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 2 || !strings.Contains(errOut, "tq/pii-fixture-dump") {
+			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
+		}
+	}
+}
+
+func TestPiiFixtureDump_CopyTargetGaps(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	for _, cmd := range []string{
+		`cp data/exports/q3.csv tests/fixtures/q3.csv > /dev/null 2>&1`,
+		`cp data/exports/q3.csv tests`,
+		`cp data/exports/q3.csv pkg/tests`,
+		`find data/exports/q3.csv -exec cp {} tests/fixtures/ \;`,
+		`ls data/exports/*.csv | xargs cp -t tests/fixtures/`,
+		`sudo busybox cp data/exports/q3.csv seeds/`,
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 2 || !strings.Contains(errOut, "tq/pii-fixture-dump") {
+			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
+		}
+	}
+	for _, cmd := range []string{
+		`rsync -t tests/helpers.txt data/exports/q3.csv`, // -t is "preserve times" for rsync
+		`cp data/exports/q3.csv src/seed.sql`,            // a file called seed.sql is not a seed directory
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 0 || strings.Contains(errOut, "pii") {
+			t.Errorf("%s: wrongly denied (code=%d): %q", cmd, code, errOut)
+		}
+	}
+}
+
+func TestCommitPII_SpoofedDiffHeaderDoesNotReenableMarker(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "src/a.txt", "++ tests/x\ninsert ('529.982.247-25') -- tq:allow-pii\n") // tq:allow-pii
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: a"`))
+	if code != 2 || !strings.Contains(errOut, "src/a.txt:2 (cpf)") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+func TestPushPII_ScanFailureAfterResolvedRangeAsks(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	withRemote(t, run)
+	stage(t, ws, run, "a.txt", "plain\n")
+	run("-c", noHooks(t), "commit", "-q", "-m", "feat: a")
+	orig := pushGit
+	defer func() { pushGit = orig }()
+	pushGit = func(ctx context.Context, cwd string, limit int, args ...string) (string, bool, error) {
+		if len(args) > 0 && args[0] == "log" {
+			return "", false, errors.New("simulated git failure")
+		}
+		return orig(ctx, cwd, limit, args...)
+	}
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push"))
+	if code == 2 || !strings.Contains(out+errOut, "could not scan the commits about to be pushed") {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
+	}
+}
+
+func TestPushPII_DeadlineAsks(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	withRemote(t, run)
+	origGit, origDeadline := pushGit, pushDeadline
+	defer func() { pushGit, pushDeadline = origGit, origDeadline }()
+	pushDeadline = 50 * time.Millisecond
+	pushGit = func(ctx context.Context, cwd string, limit int, args ...string) (string, bool, error) {
+		<-ctx.Done()
+		return "", false, ctx.Err()
+	}
+	start := time.Now()
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push"))
+	if code == 2 || !strings.Contains(out+errOut, "could not scan the commits about to be pushed") {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("hook stalled")
 	}
 }

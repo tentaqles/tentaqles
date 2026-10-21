@@ -172,3 +172,16 @@ func TestAdded_GitErrorIsReported(t *testing.T) {
 		t.Fatal("a failing git must surface as an error, not as an empty scan")
 	}
 }
+
+func TestParseDiffAdded_HeaderSpoof(t *testing.T) {
+	diff := "diff --git a/src/a.txt b/src/a.txt\n--- a/src/a.txt\n+++ b/src/a.txt\n@@ -0,0 +1,3 @@\n+one\n+++ tests/x\n+two\n" +
+		"diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1,2 @@\n-old\n+new\n+--- c\n"
+	got := ParseDiffAdded(diff)
+	want := []AddedLine{
+		{"src/a.txt", 1, "one"}, {"src/a.txt", 2, "++ tests/x"}, {"src/a.txt", 3, "two"},
+		{"b.txt", 1, "new"}, {"b.txt", 2, "--- c"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
