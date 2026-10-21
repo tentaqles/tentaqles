@@ -213,3 +213,15 @@ func TestPolicy_CommitWithSecretDenied(t *testing.T) {
 		t.Fatal("reason leaks the secret value")
 	}
 }
+
+func TestPolicy_CommitMessageAsks(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "did things"`))
+	if code != 0 || !strings.Contains(askReason(t, out), "tq/commit-message") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat(x): did things"`))
+	if code != 0 || strings.Contains(out, "commit-message") {
+		t.Fatalf("conventional message must pass: %q", out)
+	}
+}

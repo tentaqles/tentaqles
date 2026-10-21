@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tentaqles/tentaqles/internal/commitmsg"
 	"github.com/tentaqles/tentaqles/internal/commitscan"
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/policy"
@@ -192,6 +193,11 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 		}
 		if pd, ok := r.fn(eff.ActionFor(r.id, policy.Deny)); ok {
 			d = policy.Merge(d, pd)
+		}
+	}
+	if call.IsShell() && !eff.Off("tq/commit-message") {
+		if r := commitmsg.Check(call.Command, cwd); r.Checked && !r.OK {
+			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-message", policy.Ask), "tq/commit-message", "commit message: "+r.Why))
 		}
 	}
 	if call.IsMCP() && !eff.Off("tq/cross-client-mcp") {

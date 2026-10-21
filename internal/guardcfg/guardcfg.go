@@ -46,6 +46,7 @@ var HookRules = map[string]string{
 	"tq/push-pii":         "a git push whose commits record personal or financial data",
 	"tq/text-pii":         "a commit, tag or GitHub PR/issue/release text that carries personal or financial data",
 	"tq/pii-fixture-dump": "copying rows from classified data into tests/, fixtures/ or seeds/",
+	"tq/commit-message":   "a git commit whose message is not Conventional Commits",
 }
 
 // Load reads the global file. A missing file is an empty File. A file that

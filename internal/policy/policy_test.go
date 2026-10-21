@@ -80,8 +80,32 @@ func TestBuiltinDecisions(t *testing.T) {
 		{"github read ok", ToolCall{Tool: "mcp__github__get_pull_request", Content: `{}`}, Allow, ""},
 		{"hostinger execute", ToolCall{Tool: "mcp__hostinger-mcp__execute", Content: `{}`}, Ask, "tq/mcp-hosting-exec"},
 		// CI
-		{"gha unpinned", ToolCall{Tool: "Write", Path: `C:\r\.github\workflows\ci.yml`, Content: "steps:\n  - uses: foo/bar@main\n"}, Ask, "tq/gha-unpinned"},
+		{"gha unpinned", ToolCall{Tool: "Write", Path: `C:\r\.github\workflows\ci.yml`, Content: "steps:\n  - uses: foo/bar@main\n"}, Deny, "tq/gha-branch-ref"},
 		{"gha tag ok", ToolCall{Tool: "Write", Path: `C:\r\.github\workflows\ci.yml`, Content: "steps:\n  - uses: actions/checkout@v4\n"}, Allow, ""},
+		// IaC apply and remote migrations
+		{"terraform apply asks", ToolCall{Tool: "Bash", Command: "terraform apply -auto-approve"}, Ask, "tq/iac-apply"},
+		{"pulumi up asks", ToolCall{Tool: "Bash", Command: "pulumi up --yes --stack prod"}, Ask, "tq/iac-apply"},
+		{"az deployment asks", ToolCall{Tool: "Bash", Command: "az deployment group create -g rg -f main.bicep"}, Ask, "tq/iac-apply"},
+		{"cfn deploy asks", ToolCall{Tool: "Bash", Command: "aws cloudformation deploy --stack-name x --template-file t.yml"}, Ask, "tq/iac-apply"},
+		{"terraform plan ok", ToolCall{Tool: "Bash", Command: "terraform plan"}, Allow, ""},
+		{"prisma migrate deploy asks", ToolCall{Tool: "Bash", Command: "npx prisma migrate deploy"}, Ask, "tq/remote-migration"},
+		{"supabase db push linked asks", ToolCall{Tool: "Bash", Command: "supabase db push --linked"}, Ask, "tq/remote-migration"},
+		{"alembic upgrade asks", ToolCall{Tool: "Bash", Command: "alembic upgrade head"}, Ask, "tq/remote-migration"},
+		{"alembic upgrade localhost ok", ToolCall{Tool: "Bash", Command: "DATABASE_URL=postgres://u:p@localhost/db alembic upgrade head"}, Allow, ""},
+		{"supabase db reset local ok", ToolCall{Tool: "Bash", Command: "supabase db reset --local"}, Allow, ""},
+		// settings widening
+		{"settings bash star denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"allow": ["Bash(*)"]`}, Deny, "tq/settings-widen"},
+		{"settings bypass denied", ToolCall{Tool: "Write", Path: `C:\r\x\.claude\settings.local.json`, Content: `{"permissions": {"defaultMode": "bypassPermissions"}}`}, Deny, "tq/settings-widen"},
+		{"settings disable hooks denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"disableAllHooks": true`}, Deny, "tq/settings-widen"},
+		{"settings harmless edit ok", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"theme": "dark"`}, Allow, ""},
+		{"settings shell redirect denied", ToolCall{Tool: "Bash", Command: `echo '{}' > .claude/settings.local.json`}, Deny, "tq/settings-shell-write"},
+		{"settings powershell write denied", ToolCall{Tool: "PowerShell", Command: `Set-Content .claude\settings.json '{}'`}, Deny, "tq/settings-shell-write"},
+		{"settings cat ok", ToolCall{Tool: "Bash", Command: "cat .claude/settings.json"}, Allow, ""},
+		// actions pinned to branches
+		{"uses main denied", ToolCall{Tool: "Edit", Path: "/r/.github/workflows/ci.yml", Content: "uses: actions/checkout@main"}, Deny, "tq/gha-branch-ref"},
+		{"uses master denied", ToolCall{Tool: "Write", Path: "/r/.github/workflows/ci.yml", Content: "- uses: foo/bar@master"}, Deny, "tq/gha-branch-ref"},
+		{"uses latest asks", ToolCall{Tool: "Edit", Path: "/r/.github/workflows/ci.yml", Content: "uses: foo/bar@latest"}, Ask, "tq/gha-unpinned"},
+		{"uses sha ok", ToolCall{Tool: "Edit", Path: "/r/.github/workflows/ci.yml", Content: "uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2"}, Allow, ""},
 		// harmless
 		{"portuguese edit ok", ToolCall{Tool: "Edit", Path: `C:\r\docs\leia-me.md`, Content: "Configuração não é necessária 🚀"}, Allow, ""},
 		{"ls ok", ToolCall{Tool: "Bash", Command: "ls -la"}, Allow, ""},
