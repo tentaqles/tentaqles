@@ -395,16 +395,16 @@ func TestPushPII_DeadlineAsks(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
 	run := gitRepo(t, ws)
 	withRemote(t, run)
-	origGit, origDeadline := pushGit, pushDeadline
-	defer func() { pushGit, pushDeadline = origGit, origDeadline }()
-	pushDeadline = 50 * time.Millisecond
+	origGit, origDeadline := pushGit, scanBudget
+	defer func() { pushGit, scanBudget = origGit, origDeadline }()
+	scanBudget = 50 * time.Millisecond
 	pushGit = func(ctx context.Context, cwd string, limit int, args ...string) (string, bool, error) {
 		<-ctx.Done()
 		return "", false, ctx.Err()
 	}
 	start := time.Now()
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push"))
-	if code == 2 || !strings.Contains(out+errOut, "could not scan the commits about to be pushed") {
+	if code == 2 || !strings.Contains(out+errOut, "scan did not finish in time") {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
 	}
 	if time.Since(start) > 10*time.Second {
@@ -445,15 +445,15 @@ func TestRunBounded_ReturnsWhenGrandchildHoldsPipe(t *testing.T) {
 func TestCommitPII_DeadlineAsksInTime(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
 	gitRepo(t, ws)
-	origGit, origDeadline := pushGit, commitDeadline
-	defer func() { pushGit, commitDeadline = origGit, origDeadline }()
-	commitDeadline = 50 * time.Millisecond
+	origGit, origDeadline := pushGit, scanBudget
+	defer func() { pushGit, scanBudget = origGit, origDeadline }()
+	scanBudget = 50 * time.Millisecond
 	pushGit = func(ctx context.Context, cwd string, limit int, args ...string) (string, bool, error) {
 		<-ctx.Done()
 		return "", false, ctx.Err()
 	}
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: x"`))
-	if code == 2 || !strings.Contains(out+errOut, "could not scan what this commit records in time") {
+	if code == 2 || !strings.Contains(out+errOut, "scan did not finish in time") {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
 	}
 }

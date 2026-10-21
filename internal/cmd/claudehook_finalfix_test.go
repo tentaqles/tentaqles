@@ -1,0 +1,174 @@
+package cmd
+
+// Hook-level tests for the final-review fix wave (C1-C4, I1-I8).
+//
+// Every personal or financial value here is a public test number with a
+// valid checksum, never a real person or account:
+//   - CPF  529.982.247-25           (widely published CPF test number)
+//   - CNPJ 11.222.333/0001-81       (widely published CNPJ test number)
+//   - card 4111 1111 1111 1111      (Visa test card)
+//   - IBAN GB82 WEST 1234 5698 7654 32 (IBAN registry example)
+// Values that must fail their checksum say so next to them.
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf16"
+)
+
+const cpfRow = "Ana;529.982.247-25;rua x\n" // tq:allow-pii
+
+func hook(t *testing.T, ws, cmd string) (int, string) {
+	t.Helper()
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+	return code, out + errOut
+}
+
+func wantDeny(t *testing.T, ws, cmd, rule string) {
+	t.Helper()
+	if code, out := hook(t, ws, cmd); code != 2 || !strings.Contains(out, rule) || strings.Contains(out, "529") {
+		t.Errorf("%s: want deny %s, got code=%d %q", cmd, rule, code, out)
+	}
+}
+
+func wantAsk(t *testing.T, ws, cmd, rule, sub string) {
+	t.Helper()
+	code, out := hook(t, ws, cmd)
+	if code == 2 || !strings.Contains(out, `"ask"`) || !strings.Contains(out, rule) || !strings.Contains(out, sub) {
+		t.Errorf("%s: want ask %s %q, got code=%d %q", cmd, rule, sub, code, out)
+	}
+}
+
+// C1: commit and push are scanned in the repository the command targets.
+func TestFinal_C1_ScansTargetRepository(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	gitRepo(t, ws) // the hook cwd: a clean repository
+	wt := filepath.Join(ws, "wt")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runWt := gitRepo(t, wt)
+	stage(t, wt, runWt, "seed.sql", cpfRow)
+	for _, c := range []string{
+		`git -C wt commit -m "feat: seed"`,
+		`cd wt && git commit -m "feat: seed"`,
+		`cd "` + wt + `" && git commit -m "feat: seed"`,
+		`cd ` + filepath.ToSlash(wt) + `; git commit -m "feat: seed"`,
+	} {
+		wantDeny(t, ws, c, "tq/commit-pii")
+	}
+	wantAsk(t, ws, `git -C missing commit -m "feat: seed"`, "tq/commit-pii", "does not exist")
+	wantAsk(t, ws, `cd $WT && git commit -m "feat: seed"`, "tq/commit-pii", "cannot evaluate")
+
+	// commit-secret follows the same directory
+	runWt("reset", "-q")
+	stage(t, wt, runWt, "cfg.py", "API"+"_KEY="+strings.Repeat("q7", 10)+"\n")
+	wantDeny(t, ws, `cd wt && git commit -m "feat: cfg"`, "tq/commit-secret")
+}
+
+// C2: `git commit <pathspec>` scans the named paths' working tree.
+func TestFinal_C2_CommitPathspec(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "export.csv", "nome;cpf\n")
+	run("-c", noHooks(t), "commit", "-q", "-m", "chore: track")
+	if err := os.WriteFile(filepath.Join(ws, "export.csv"), []byte("nome;cpf\n"+cpfRow), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantDeny(t, ws, `git commit -m "feat: x" export.csv`, "tq/commit-pii")
+	wantDeny(t, ws, `git commit -m "feat: x" -- export.csv`, "tq/commit-pii")
+	wantDeny(t, ws, `git commit -m "feat(api): x" --include export.csv`, "tq/commit-pii")
+}
+
+// C3: command-word forms reach every commit rule.
+func TestFinal_C3_CommandWordForms(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "seed.sql", cpfRow)
+	for _, c := range []string{
+		`GIT_AUTHOR_DATE=now git commit -m "feat: seed"`,
+		`"git" commit -m "feat: seed"`,
+		`git.exe commit -m "feat: seed"`,
+		`/usr/bin/git commit -m "feat: seed"`,
+		`command git commit -m "feat: seed"`,
+		`env A=1 git commit -m "feat: seed"`,
+	} {
+		wantDeny(t, ws, c, "tq/commit-pii")
+	}
+	wantAsk(t, ws, `git --git-dir .git commit -m "feat: seed"`, "tq/commit-pii", "--git-dir")
+}
+
+// C4: large and UTF-16 content is never skipped silently.
+func TestFinal_C4_LargeAndUTF16(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	big := strings.Repeat(cpfRow, (1<<20)/len(cpfRow)+100)
+	if err := os.WriteFile(filepath.Join(ws, "export.csv"), []byte(big), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantAsk(t, ws, `git add -A && git commit -m "feat: export"`, "tq/commit-pii", "export.csv is larger than the 1 MiB scan limit")
+	_ = os.Remove(filepath.Join(ws, "export.csv"))
+
+	u := utf16.Encode([]rune("nome;cpf\r\n" + cpfRow))
+	b := []byte{0xFF, 0xFE}
+	for _, r := range u {
+		b = append(b, byte(r), byte(r>>8))
+	}
+	if err := os.WriteFile(filepath.Join(ws, "le.csv"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "le.csv")
+	wantDeny(t, ws, `git commit -m "feat: export"`, "tq/commit-pii")
+}
+
+// I1: one budget for the whole decision, under the plugin's 15 s timeout.
+func TestFinal_I1_SharedBudget(t *testing.T) {
+	if hookScanBudget() > 10*time.Second || hookScanBudget() <= 0 {
+		t.Fatalf("default budget %v must stay well under the 15 s hook timeout", hookScanBudget())
+	}
+	t.Setenv("TQ_HOOK_SCAN_BUDGET", "3s")
+	if hookScanBudget() != 3*time.Second {
+		t.Fatalf("env override: %v", hookScanBudget())
+	}
+	t.Setenv("TQ_HOOK_SCAN_BUDGET", "60s")
+	if hookScanBudget() > 12*time.Second {
+		t.Fatalf("an override must be clamped under the hook timeout: %v", hookScanBudget())
+	}
+	t.Setenv("TQ_HOOK_SCAN_BUDGET", "")
+
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	withRemote(t, run)
+	origGit, origBudget := pushGit, scanBudget
+	defer func() { pushGit, scanBudget = origGit, origBudget }()
+	scanBudget = 300 * time.Millisecond
+	calls := 0
+	pushGit = func(ctx context.Context, cwd string, limit int, args ...string) (string, bool, error) {
+		calls++
+		<-ctx.Done()
+		return "", false, ctx.Err()
+	}
+	start := time.Now()
+	code, out := hook(t, ws, `git commit -m "feat: x" && git push`)
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("commit+push took %v with a 300ms budget: the budget is not shared", d)
+	}
+	if code == 2 || !strings.Contains(out, "scan did not finish in time") {
+		t.Fatalf("code=%d %q", code, out)
+	}
+	if !strings.Contains(out, "tq/commit-secret") && !strings.Contains(out, "tq/commit-pii") {
+		t.Fatalf("the commit rules must ask on the deadline: %q", out)
+	}
+}
+
+func TestFinal_I1_OversizedDiffAsks(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	line := strings.Repeat("x", 99) + "\n"
+	stage(t, ws, run, "big.txt", strings.Repeat(line, (9<<20)/len(line)))
+	wantAsk(t, ws, `git commit -m "feat: big"`, "tq/commit-pii", "scan limit")
+}

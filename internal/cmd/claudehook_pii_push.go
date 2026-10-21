@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/tentaqles/tentaqles/internal/commitscan"
 	"github.com/tentaqles/tentaqles/internal/guard"
@@ -16,10 +15,7 @@ const maxPushCommits = 200
 
 const pushTooLarge = "the unpushed commits are too large to scan for personal data; push smaller batches or confirm"
 const pushScanFailed = "could not scan the commits about to be pushed; retry or push smaller batches"
-
-// pushDeadline bounds the whole push decision, every git call included
-// (hooks must never stall). Tests lower it.
-var pushDeadline = 15 * time.Second
+const pushTimedOut = "the push " + scanTimedOut + "; retry, or push smaller batches"
 
 // pushGit runs git under ctx and reads at most limit bytes of stdout. The push
 // and commit rules both go through it; tests replace it to simulate failures
@@ -183,12 +179,11 @@ func (s *pushScanner) scanRange(rng string) ([]commitscan.AddedLine, rangeStatus
 	return commitscan.ParseDiffAdded(out), rangeScanned
 }
 
-func pushPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
+// pushPIIDecision runs under ctx, the invocation's shared scan budget.
+func pushPIIDecision(ctx context.Context, ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
 	if !call.IsShell() {
 		return policy.Decision{}, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pushDeadline)
-	defer cancel()
 	sc := &pushScanner{ctx: ctx, cwd: cwd, budget: maxPushScan}
 	var lines []commitscan.AddedLine
 	var ask string
@@ -240,7 +235,16 @@ scan:
 			}
 		}
 	}
-	h, markerIgnored := hits(lines, piiClasses(ws))
+	h, markerIgnored, herr := hits(ctx, lines, piiClasses(ws))
+	switch {
+	case herr != nil && ctx.Err() != nil:
+		return ruleDecision(policy.Ask, "tq/push-pii", pushTimedOut), true
+	case herr != nil:
+		return ruleDecision(policy.Ask, "tq/push-pii", pushTooLarge), true
+	}
+	if ctx.Err() != nil {
+		return ruleDecision(policy.Ask, "tq/push-pii", pushTimedOut), true
+	}
 	if len(h) > 0 {
 		reason := "the commits about to be pushed record personal or financial data: " + strings.Join(h, ", ") +
 			". Rewrite those commits locally (remove the values, amend or rebase) before pushing"

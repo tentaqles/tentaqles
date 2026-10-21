@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,8 +19,30 @@ import (
 // runs under a deadline and the caller never waits for a pipe that a
 // grandchild process may still hold open.
 
-// commitDeadline bounds all git work for one commit decision. Tests lower it.
-var commitDeadline = 15 * time.Second
+// scanBudget bounds all scanning work in one hook invocation: every git call
+// and every byte scanned by the commit and push rules share it (hooks must
+// never stall). The plugin's PreToolUse timeout is 15 s; when Claude Code
+// kills a hook the call proceeds, so the budget keeps a wide margin for
+// process start, the other rules and the Jev call. Tests lower it;
+// TQ_HOOK_SCAN_BUDGET (a Go duration, at most 12s) overrides the default.
+var scanBudget = 8 * time.Second
+
+const maxScanBudget = 12 * time.Second
+
+const scanTimedOut = "scan did not finish in time"
+
+// hookScanBudget is the budget for this invocation.
+func hookScanBudget() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("TQ_HOOK_SCAN_BUDGET")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			if d > maxScanBudget {
+				d = maxScanBudget
+			}
+			return d
+		}
+	}
+	return scanBudget
+}
 
 var (
 	gitBinOnce sync.Once
@@ -126,7 +147,9 @@ func runGitBounded(ctx context.Context, cwd string, limit int, args ...string) (
 	return runBounded(ctx, gitBinary(), cwd, limit, args...)
 }
 
-const maxCommitGitOutput = 64 << 20
+// maxCommitGitOutput caps one git call of the commit rules; above it the
+// rule asks instead of scanning (see commitscan.MaxTotalBytes).
+const maxCommitGitOutput = commitscan.MaxTotalBytes
 
 // commitRunner adapts pushGit to commitscan.Runner under ctx.
 func commitRunner(ctx context.Context) commitscan.Runner {
@@ -136,7 +159,7 @@ func commitRunner(ctx context.Context) commitscan.Runner {
 			return "", err
 		}
 		if big {
-			return "", errors.New("git output too large to scan")
+			return "", commitscan.ErrTooLarge
 		}
 		return out, nil
 	}

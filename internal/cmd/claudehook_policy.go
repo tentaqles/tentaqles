@@ -168,23 +168,30 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	set, _ := policy.Build(layers)
 	d := set.Evaluate(call)
 
+	// One budget for every scan in this invocation (commit and push rules).
+	ctx, cancel := context.WithTimeout(context.Background(), hookScanBudget())
+	defer cancel()
 	var commitRun commitscan.Runner
 	if call.IsShell() && commitscan.PlanFor(call.Command).Commits {
-		ctx, cancel := context.WithTimeout(context.Background(), commitDeadline)
-		defer cancel()
 		commitRun = commitRunner(ctx)
 	}
 	if commitRun != nil && !eff.Off("tq/commit-secret") {
-		if hits := commitscan.Scan(cwd, call.Command, commitRun); len(hits) > 0 {
+		hits, err := commitscan.ScanCtx(ctx, cwd, call.Command, commitRun)
+		switch {
+		case len(hits) > 0:
 			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits)))
+		case err != nil:
+			d = policy.Merge(d, ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err)))
 		}
 	}
 	for _, r := range []struct {
 		id string
 		fn func(policy.Action) (policy.Decision, bool)
 	}{
-		{"tq/commit-pii", func(a policy.Action) (policy.Decision, bool) { return commitPIIDecision(ws, call, cwd, commitRun, a) }},
-		{"tq/push-pii", func(a policy.Action) (policy.Decision, bool) { return pushPIIDecision(ws, call, cwd, a) }},
+		{"tq/commit-pii", func(a policy.Action) (policy.Decision, bool) {
+			return commitPIIDecision(ctx, ws, call, cwd, commitRun, a)
+		}},
+		{"tq/push-pii", func(a policy.Action) (policy.Decision, bool) { return pushPIIDecision(ctx, ws, call, cwd, a) }},
 		{"tq/text-pii", func(a policy.Action) (policy.Decision, bool) { return textPIIDecision(ws, call, cwd, a) }},
 		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, a) }},
 	} {

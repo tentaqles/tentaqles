@@ -66,8 +66,18 @@ func inFixtureDir(file string) bool { return fixturePathRe.MatchString(slashPath
 // hits formats findings as "file:line (detector)" without values. The
 // tq:allow-pii marker exempts a line only inside test and fixture
 // directories; markerIgnored reports a marked line that was still a finding.
-func hits(lines []commitscan.AddedLine, classes []string) (out []string, markerIgnored bool) {
-	for _, l := range lines {
+//
+// The scan is bounded: it stops with errScanTooLarge after maxScanBytes and
+// with ctx's error when the shared budget ends.
+func hits(ctx context.Context, lines []commitscan.AddedLine, classes []string) (out []string, markerIgnored bool, err error) {
+	scanned := 0
+	for i, l := range lines {
+		if i%256 == 0 && ctx.Err() != nil {
+			return nil, false, ctx.Err()
+		}
+		if scanned += len(l.Text); scanned > maxScanBytes {
+			return nil, false, errScanTooLarge
+		}
 		var counts map[string]int
 		if inFixtureDir(l.File) {
 			counts = redact.Count(l.Text, classes)
@@ -90,7 +100,26 @@ func hits(lines []commitscan.AddedLine, classes []string) (out []string, markerI
 	if len(out) > 10 {
 		out = append(out[:10], fmt.Sprintf("... and %d more", len(out)-10))
 	}
-	return out, markerIgnored
+	return out, markerIgnored, nil
+}
+
+// maxScanBytes bounds the text one rule scans for personal data.
+const maxScanBytes = commitscan.MaxTotalBytes
+
+var errScanTooLarge = errors.New("too large to scan")
+
+// commitScanAsk words the ask for a commit scan that could not finish; it
+// completes "the secret ..." / "the personal-data ...".
+func commitScanAsk(ctx context.Context, err error) string {
+	switch {
+	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
+		return scanTimedOut + "; retry, or commit fewer files"
+	case commitscan.IsAsk(err):
+		return "scan cannot vouch for this commit: " + err.Error()
+	case errors.Is(err, errScanTooLarge):
+		return fmt.Sprintf("scan stopped: what this commit records is larger than the %d MiB scan limit; commit fewer files", maxScanBytes>>20)
+	}
+	return "scan could not read what this commit records; check the repository state or confirm"
 }
 
 func dedupeSorted(s []string) []string {
@@ -103,18 +132,22 @@ func dedupeSorted(s []string) []string {
 	return out
 }
 
-func commitPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, run commitscan.Runner, action policy.Action) (policy.Decision, bool) {
+func commitPIIDecision(ctx context.Context, ws *resolve.Workspace, call policy.ToolCall, cwd string, run commitscan.Runner, action policy.Action) (policy.Decision, bool) {
 	if !call.IsShell() || run == nil || !commitscan.PlanFor(call.Command).Commits {
 		return policy.Decision{}, false
 	}
-	added, err := commitscan.Added(cwd, call.Command, run)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return ruleDecision(policy.Ask, "tq/commit-pii", "could not scan what this commit records in time; retry or commit fewer files"), true
-		}
-		return ruleDecision(policy.Ask, "tq/commit-pii", "could not scan what this commit records for personal data; check the repository state or confirm"), true
+	added, err := commitscan.AddedCtx(ctx, cwd, call.Command, run)
+	var h []string
+	markerIgnored := false
+	if err == nil {
+		h, markerIgnored, err = hits(ctx, added, piiClasses(ws))
 	}
-	h, markerIgnored := hits(added, piiClasses(ws))
+	if err != nil {
+		if !commitscan.IsAsk(err) && ctx.Err() == nil && !errors.Is(err, errScanTooLarge) {
+			return ruleDecision(policy.Ask, "tq/commit-pii", "could not scan what this commit records for personal data; check the repository state or confirm"), true
+		}
+		return ruleDecision(policy.Ask, "tq/commit-pii", "the personal-data "+commitScanAsk(ctx, err)), true
+	}
 	if len(h) == 0 {
 		return policy.Decision{}, false
 	}
