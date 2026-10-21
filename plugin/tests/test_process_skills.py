@@ -1,0 +1,170 @@
+# plugin/tests/test_process_skills.py
+"""Content checks for the development-process skills (spine)."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+SKILLS = Path(__file__).resolve().parents[1] / "skills"
+SNIPPET = '_tqe="${CLAUDE_PLUGIN_ROOT:-}"'
+
+
+def _body(name: str) -> str:
+    return (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_build_runs_a_crew_and_records_every_verdict() -> None:
+    body = _body("build")
+    for token in ("record-review", "--reviewer build-critic --result", "spec-critic", "build-gate dod", "build-gate judge",
+                  "BUILT-BY-ME", "workflow", "build-gate ask", "build-gate state", "## Headless mode", "TENTAQLES_HEADLESS"):
+        assert token in body, token
+    assert "git add -A" not in body and "git add ." not in body
+
+
+def test_build_reference_lists_new_cli() -> None:
+    ref = (SKILLS / "build" / "reference.md").read_text(encoding="utf-8")
+    for token in ("build-gate record-review", "build-gate judge", "build-gate dod", "build-gate ask", "build-gate answer", "build-gate state", "reviews.jsonl", "dod.json", "decisions.jsonl", "events.jsonl", "TQ_BUILD_TOKEN"):
+        assert token in ref, token
+
+
+def test_build_dod_override_is_human_only() -> None:
+    body = _body("build")
+    ref = (SKILLS / "build" / "reference.md").read_text(encoding="utf-8")
+    assert "--override" in ref
+    assert 'dod <slug> --override "<their words>"' not in body
+    assert "you never run `build-gate dod <slug> --override`" in body
+    assert 'ask the human to run `build-gate dod <slug> --override "<their reason>"` in their own terminal' in body
+    assert '--kind question --text "override:' in body and "--options override,stop" in body
+    assert "build-gate answer <slug> <id> --choice override" in body
+    assert "AskUserQuestion` is never called" in body
+    assert "build-gate ask" in body.split("## Headless mode", 1)[1]
+
+
+def test_build_decision_records_are_headless_only() -> None:
+    body = _body("build")
+    assert "In interactive mode you write no decision records" in body
+    assert "you also write the `ask` record" not in body
+    assert "First write the record" not in body
+    assert body.count("--kind plan-approval") >= 4  # headless block, split, Request changes, re-approval rule
+    assert "Log it as an H<n> line" not in body and "H<n> line in `docs/LEARNINGS.md`" in body
+
+
+def test_dod_skill_runs_the_gate_and_explains_override() -> None:
+    body = _body("dod")
+    assert SNIPPET in body and "build-gate.py" in body and "dod" in body
+    assert "--override" in body and "LEARNINGS" in body
+    assert "never" in body.lower() and "transcript" in body.lower()
+    assert "You never run `build-gate dod <slug> --override`" in body
+    assert '--kind question --text "override:' in body and "--options override,stop" in body
+    assert "the human runs the override" in body and "human runs it" not in body
+    assert "blocks once" in body
+    assert "AskUserQuestion` is never called" in body and "build-gate state <slug> --json" in body
+    assert 'dod <slug> --override "<their words' not in body.replace("<their reason>", "")
+
+
+def test_direction_is_read_only_and_uses_the_scorecard() -> None:
+    body = _body("direction")
+    for token in ("ON COURSE", "DRIFTING", "OFF COURSE", "Aligned", "Partial", "Missing", "Contradicted",
+                  "Not verified", "Fix code", "Update PRD", "Decide"):
+        assert token in body, token
+    for forbidden in ("git commit", "Edit", "Write("):
+        assert forbidden not in body, forbidden
+    assert "AskUserQuestion` is never called" in body
+    assert "report the verdict as your final output and end the turn" in body
+    assert "only when the caller passed the slug of an active build run" in body
+
+
+def test_prd_skill_interviews_and_checks_mechanically() -> None:
+    body = _body("prd")
+    for token in ("templates/process/prd.md", "prd-status.py", "NEEDS-DECISION", "you decide", "from existing code",
+                  "planning-ready"):
+        assert token in body, token
+    assert SNIPPET in body
+    assert "AskUserQuestion` is never called" in body
+    assert "report what it needs as its final output and end the turn" in body
+    assert "only when the caller passed the slug of an active build run" in body
+    assert "the grader's exit code decides" in body
+    assert "- NEEDS-DECISION: <question>" in body and "Numbered items and bare" in body
+    assert "contiguous" in body and "Any other exit code: report it" in body
+
+
+def test_fix_skill_is_reproduce_first_and_bug_shaped() -> None:
+    fm_text, body = _body("fix").split("\n---\n", 1)
+    desc = fm_text.lower()
+    for phrase in ("stack trace", "bug", "fails", "regression"):
+        assert phrase in desc, phrase
+    for token in ("lock-tests", "workflow=fix", "--hotfix", "templates/process/fix-spec.md", "systematic", "LEARNINGS",
+                  "post-hotfix review", '"event": "pending"', "incident"):
+        assert token in body, token
+    assert "never" in body and "without a reproduction" in body
+    assert "AskUserQuestion` is never called" in body
+    assert "build-gate ask" in body and "knowing the review gate becomes `n/a`" in body
+    assert "review gate still `pending`" in " ".join(body.split())  # the approval, not the planner, sets n/a (final review I1)
+    assert "you never run `build-gate dod" in body
+    flat = " ".join(body.split())
+    assert "Set `hotfix=yes` only when the user passed `--hotfix`" in flat and "never infer it from severity" in flat
+    assert "No reproduction, no fix" in flat and "only the critic is skipped" in flat
+    assert "adds the tester's test file path to the checkpoint's `tests`" in flat
+    assert "before the human approves" in flat and "lock-tests` right after approval" in flat
+    assert "Only when the plan has `hotfix` true, after `build-gate verify` passes" in flat
+    assert "substitute `$root`" in flat
+
+
+def test_feature_skill_locates_the_fr_and_interviews_first() -> None:
+    body = _body("feature")
+    for token in ("prd-status.py", "FR-", "grill-me", "templates/process/spec-slice.md", "NEEDS-DECISION",
+                  "tq decide triage", "workflow=feature", "/tentaqles:dod", "legacy", "docs/adr/"):
+        assert token in body, token
+    assert SNIPPET in body
+    flat = " ".join(body.split())
+    assert "AskUserQuestion` is never called" in flat and "build-gate ask" in flat
+    assert "`prd_exit` 0 or 3 (a PRD exists): continue" in flat and "touch this feature" in flat
+    assert "keeps the strict planning-ready gate" in flat and "Any other exit code: report it" in flat
+    assert "point to `/tentaqles:prd`" not in flat and "do not start the feature" not in flat
+    assert "A feature with no FR is first a PRD change, never code" in flat
+    assert "`**Acceptance checks**` heading" in flat and "never guess" in flat
+    assert "never commit on `main` or `master`" in flat and "`git switch -c feat/<slug>`" in flat
+    assert '"The feature branch" below means this branch.' in flat
+    assert "re-run `/tentaqles:feature` with the same `$ARGUMENTS`" in flat
+    assert "`/tentaqles:build resume <slug>` is only for an existing plan" in flat
+    assert "/tentaqles:build resume <slug>`, then start" not in flat
+    assert "names this FR or its goal" in flat and "treat it as touching" in flat
+    assert "never write a placeholder as a command" in flat and "leave no `<...>`" in flat
+    for crew in ("spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer", "breaker"):
+        assert crew in body, crew
+    assert "runs later, in build Phase 2" in flat
+    assert '"hotfix": false' in flat
+    assert "derived_from: no PRD: legacy repository, see kickoff later" in flat
+    assert "write code for a feature that has no FR in `docs/prd.md`, or no committed spec slice" in flat
+    assert "Status: draft" in flat and "amend the FR" in flat
+    assert "`hotfix=no`" in flat and "spec=<path>" in flat
+    assert "you never run `build-gate dod" in flat
+    assert "lock-tests` right after approval" in flat and "before the human approves" in flat
+
+
+def test_fix_skill_never_pastes_reports_with_personal_data() -> None:
+    body = (SKILLS / "fix" / "SKILL.md").read_text(encoding="utf-8")
+    flat = " ".join(body.split())
+    assert "the report **verbatim**" not in body and "Captures the report verbatim" not in body
+    assert "personal data replaced by placeholders (`<customer>`, `<email>`)" in flat
+    assert "never pasted verbatim" in flat
+    assert "the slug comes from the symptom, never from a name, e-mail or id" in flat
+
+
+def test_docs_state_the_key_isolation_caveat_honestly() -> None:
+    # final review C2: the docs promised that the agent cannot read the key or reach around the CLI
+    plugin = SKILLS.parent
+    ref = " ".join((SKILLS / "build" / "reference.md").read_text(encoding="utf-8").split())
+    log = " ".join((plugin / "CHANGELOG.md").read_text(encoding="utf-8").split())
+    design = " ".join((plugin.parent / "docs" / "design" / "2026-10-20-development-process-design.md").read_text(encoding="utf-8").split())
+    assert "the agent cannot read it" not in ref
+    assert "cannot be reached around the CLI" not in log
+    assert "which only the human's processes hold" not in design
+    for text in (ref, log, design):
+        assert "tq follow-up" in text or "a follow-up" in text
+    assert "the signed records are what the human and the hub trust" in ref
+    assert "The signed records are what the human and the hub trust" in log
+    assert "record-review` is agent-callable" in ref

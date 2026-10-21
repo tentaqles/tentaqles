@@ -2,6 +2,92 @@
 
 All notable changes to the Tentaqles plugin. Versions follow [semver](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Development process spine.** New skills `prd`, `kickoff`, `feature`, `fix`,
+  `direction` and `dod`; agents `spec-critic` and `arbiter`; process templates
+  under `templates/process/` (PRD, ADR, spec slice, fix spec, LEARNINGS,
+  project CLAUDE.md scaffold, review contract).
+  - `/tentaqles:kickoff` is strict: it needs a planning-ready PRD (it runs
+    `prd` otherwise). `/tentaqles:feature` continues on a PRD that is not
+    planning-ready, adds its own `### FR-nn` with binary checks, and settles
+    only the `NEEDS-DECISION` items that touch it. `/tentaqles:fix` is
+    reproduce-first and locks the regression test before any fix.
+  - The review crew is `build-critic` always, plus `spec-critic` for
+    `feature`/`kickoff` plans (and for `fix` plans that touch files outside
+    the failing path) and `breaker` only for checkpoints marked
+    `"runnable": true`. `/tentaqles:fix --hotfix` (user-passed only, never
+    inferred) skips the critic; the locked regression test is never skipped.
+  - The skills never commit on `main`/`master`: they open or switch to a
+    `feat/<slug>` branch (or the build worktree) first.
+  - **Review crew with recorded verdicts.** `build-gate record-review` stores
+    each reviewer verdict against the tree hash; a review pass is refused
+    without a `build-critic` PASS at the current tree. A BLOCKED verdict is
+    settled by a human with `build-gate judge` (human-only).
+  - **Definition of done.** `build-gate dod` runs the project commands frozen
+    at approval and checks locked tests, checkpoint and reviewer records and
+    the obligations the diff created (ADR, privacy record, migration plan,
+    changelog). The Stop hook requires a fresh DoD for `feature`, `fix` and
+    `kickoff` plans: it blocks a stop once, only when every frozen checkpoint
+    has passed, the run is not finished and the DoD is not fresh.
+    `build-gate dod --override "<reason>"` is human-only: the agent never
+    runs it and the hook refuses it. A human override is kept while the code
+    is unchanged and the approval id is the same (logged as
+    `dod-override-kept`) and dropped on any code change; overrides are logged to `docs/LEARNINGS.md` and counted
+    by `tq insights`.
+  - **Hub-ready interfaces.** Decision records (`build-gate ask`, run by the
+    agent; `build-gate answer`, human-only like `judge`, `token` and
+    `dod --override`; stored in `decisions.jsonl`). Answering `override` on
+    an `override:` question runs the DoD override, and `approve` on a
+    `result` decision runs finish. Hub actor tokens (`build-gate token`, HMAC
+    with the gate key; the hub passes `TQ_BUILD_ACTOR`/`TQ_BUILD_TOKEN`) and
+    `build-gate state <slug> --json` (includes `dod_fresh` and answered
+    decisions). Headless mode (`TENTAQLES_HEADLESS=1` or `--headless`) never
+    calls `AskUserQuestion`: each human stop becomes a decision record and the
+    turn ends.
+  - Whenever a build has a plan or a state dir, the gate hook refuses the
+    known routes around the CLI: shell commands that import or reference the
+    gate module, the same names in the content of files the agent writes,
+    writes under the gate's code, the known spellings of key paths (split strings,
+    globs, `$TQ_HOME`/`~`/`%TQ_HOME%`, a recursive read of a parent directory,
+    and Read/Grep/Glob calls aimed at the key directory or an ancestor of it),
+    and git commands that touch `.claude/build/`. These are text
+    checks, not isolation: the key is still readable by the agent's OS user
+    until tq isolates it (OS-level key isolation is a tq follow-up), so the gate guards against a careless
+    agent, not one set on defeating it. The signed records are what the human
+    and the hub trust. Rollback of the signed state is detected by a
+    generation record kept with the key, and unknown copy utilities remain a
+    documented gap until OS-level key isolation lands.
+    Every signed state file and record (`session.json`, `dod.json`, each
+    `reviews.jsonl` and `decisions.jsonl` line) is bound to its project, slug
+    and approval generation, so one copied from another build or an older
+    generation is ignored, stale or reported as a rollback.
+  - The approved checkpoint ids are the source of truth: a plan edit that
+    drops or renumbers one is refused unless a plan approval is pending, and
+    the DoD, the Stop hook and `state` count a removed checkpoint as not
+    passed. `approve` shows the frozen DoD commands and refuses a trivial or
+    non-string one; a hotfix plan is written with review `pending` and the
+    approval switches it to `n/a`.
+  - The tree hash works after `build-gate setup` on git 2.55 (an exclude
+    pathspec naming the ignored state dir made `git add` exit 1).
+  - `tq insights` gains a Process section from
+    `$TQ_HOME/build-gate/events.jsonl`. SessionStart points at the PRD and
+    counts open `NEEDS-DECISION` items. `add-project` scaffolds the fixed
+    `CLAUDE.md` sections; `ship` quotes the DoD record (check id, status and
+    the first detail line only, reading `dod_fresh` from `build-gate state`
+    and re-running the DoD only when stale) and flags diffs over ~400 lines.
+
+### Changed
+
+- `build-critic` returns the answer-key grammar (`RESULT`, `BUILT-BY-ME`,
+  `F`/`U` rows) instead of `VERDICT`. Plans gain top-level `workflow`,
+  `hotfix` and `spec` fields; `review: n/a` is allowed only for hotfix plans.
+  `build-planner` documents a per-checkpoint `"runnable": true` field, set
+  when the checkpoint produces something the project's `commands.run` can
+  start, so the build crew can add the `breaker` reviewer.
+
 ## [0.11.1] — 2026-10-20
 
 ### Added

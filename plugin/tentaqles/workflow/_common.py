@@ -29,6 +29,83 @@ def norm(path: str | os.PathLike | None) -> str:
     return str(path or "").replace("\\", "/")
 
 
+_EXT_PREFIX = re.compile(r"^(?:[\\/]{2}[?.][\\/]|[\\/]\?\?[\\/])")
+_DRIVE = re.compile(r"^[A-Za-z]:$")
+
+
+def _realpath_prefix(p: str) -> str:
+    """realpath of the longest existing prefix of `p`, with the rest appended unchanged, so 8.3
+    short names and junctions/symlinks along the existing part resolve to their targets."""
+    head, tail = p, []
+    for _ in range(256):
+        if os.path.lexists(head):
+            break
+        parent, name = os.path.split(head)
+        if parent == head or not name:
+            break
+        tail.append(name)
+        head = parent
+    try:
+        real = os.path.realpath(head)
+    except (OSError, ValueError):
+        real = head
+    return os.path.join(real, *reversed(tail)) if tail else real
+
+
+def canon_path(path: str | os.PathLike, base: str | os.PathLike | None = None) -> str:
+    r"""The one canonical form behind every path comparison of the gate and the loop guard.
+
+    Absolute, forward slashes, `..` resolved, and the longest existing prefix `realpath`ed (8.3
+    short names such as `CLAUDE~1`, junctions and symlinks resolve to their targets). On Windows
+    also: the extended prefixes `\\?\`, `//?/`, `\\.\` (and `\\?\UNC\`) are stripped, an NTFS
+    alternate-data-stream suffix (`name:stream`, `name::$DATA`) is dropped from each component
+    (the drive colon stays), trailing dots and spaces are stripped per component, and case is
+    folded. A relative path is taken against `base` (default: the process cwd).
+    """
+    s = os.fspath(path) if path is not None else ""
+    if IS_WINDOWS:
+        m = _EXT_PREFIX.match(s)
+        if m:
+            s = s[m.end():]
+            if s[:4].lower() in ("unc\\", "unc/"):
+                s = "//" + s[4:]
+    s = norm(s)
+    if base is not None:
+        b = norm(os.fspath(base)).rstrip("/") or "/"
+        if IS_WINDOWS and s.startswith("/") and not s.startswith("//"):
+            m = re.match(r"^[A-Za-z]:", b)
+            s = (m.group(0) if m else "") + s
+        elif not (s.startswith("/") or re.match(r"^[A-Za-z]:", s)):
+            s = f"{b}/{s}" if s else b
+    if IS_WINDOWS:
+        parts = s.split("/")
+        out = []
+        for i, c in enumerate(parts):
+            if i == 0 and _DRIVE.match(c):
+                out.append(c)
+                continue
+            if i == 0 and re.match(r"^[A-Za-z]:", c):
+                out.append(c[:2])  # drive-relative `C:x`: keep the drive, judge the rest
+                c = c[2:]
+            if ":" in c:
+                c = c.split(":", 1)[0]  # NTFS alternate data stream
+            if c not in (".", ".."):
+                c = c.rstrip(". ")
+            out.append(c)
+        s = "/".join(out)
+        if re.match(r"^[A-Za-z]:(?:/|$)", s) is None and re.match(r"^[A-Za-z]:", s):
+            s = s[:2] + "/" + s[2:]
+    p = os.path.normpath(s or ".")
+    if not os.path.isabs(p):
+        p = os.path.abspath(p)
+    p = norm(os.path.normpath(_realpath_prefix(p)))
+    if IS_WINDOWS:
+        if p.startswith("//?/"):
+            p = p[4:]
+        p = p.lower()
+    return p
+
+
 def find_git_root(start: str | os.PathLike | None) -> Path | None:
     """Nearest ancestor (or self) holding a `.git` dir or file (worktrees use a file)."""
     if not start:
@@ -44,6 +121,18 @@ def find_git_root(start: str | os.PathLike | None) -> Path | None:
         if (cand / ".git").exists():
             return cand
     return None
+
+
+def find_git_roots(start: str | os.PathLike | None) -> list[Path]:
+    """Every ancestor (or self) holding a `.git`, nearest first."""
+    out: list[Path] = []
+    r = find_git_root(start)
+    while r is not None:
+        out.append(r)
+        if r.parent == r:
+            break
+        r = find_git_root(r.parent)
+    return out
 
 
 def rel_to(root: Path, path: str) -> str | None:
@@ -323,9 +412,19 @@ WRITE_STRICT = re.compile(
 #
 # Splits compound commands outside quotes (&& || ; | & newline, subshells,
 # $(...) and backticks become their own segments), records redirect targets,
-# strips quotes. Backslash is literal outside double quotes so Windows paths
-# survive; inside double quotes it escapes " \ $ `. Unclosed quotes raise
-# ShellParseError, and callers fail closed.
+# strips quotes. Unclosed quotes raise ShellParseError, and callers fail closed.
+#
+# POSIX (the Bash tool): outside quotes a backslash escapes the next character,
+# so `echo \' ; cp a b` is two commands. Before a character the shell treats
+# specially (blank, quote, ; & | < > ( ) $ `) the backslash is dropped and the
+# character is literal; before an ordinary character, or another backslash,
+# both are kept, so Windows paths (`C:\a\b`, `\\host`) reach the word readings
+# of `shell_word_variants` intact. Inside double quotes it escapes " \ $ `.
+#
+# PowerShell (ps=True): the backtick is the escape character (outside and inside
+# double quotes), a backslash is literal, `''` inside single quotes and `""`
+# inside double quotes are a literal quote, and a backtick never starts a
+# command substitution.
 # ---------------------------------------------------------------------------
 
 
@@ -346,9 +445,10 @@ class Segment:
 
 
 _DQ_ESCAPES = '"\\$`'
+_POSIX_SPECIAL = " \t'\";&|<>()$`"
 
 
-def lex_shell(cmd: str) -> list[Segment]:
+def lex_shell(cmd: str, ps: bool = False) -> list[Segment]:
     text = cmd or ""
     segs: list[Segment] = []
     state = {"cur": Segment(), "word": [], "have": False, "redir": False, "start": 0}
@@ -375,6 +475,64 @@ def lex_shell(cmd: str) -> list[Segment]:
     i, n = 0, len(text)
     while i < n:
         c = text[i]
+        if ps and c == "`":
+            if i + 1 < n and text[i + 1] in "\r\n":
+                i += 3 if text[i + 1:i + 3] == "\r\n" else 2  # line continuation
+                continue
+            if i + 1 < n:
+                state["word"].append(text[i + 1])
+            state["have"] = True
+            i += 2
+            continue
+        if not ps and c == "\\":
+            nxt = text[i + 1] if i + 1 < n else ""
+            if nxt in ("\r", "\n"):
+                i += 3 if text[i + 1:i + 3] == "\r\n" else 2  # line continuation
+                continue
+            if nxt and nxt in _POSIX_SPECIAL:
+                state["word"].append(nxt)
+            else:
+                state["word"].append(c + nxt)
+            state["have"] = True
+            i += 2
+            continue
+        if ps and c == "'":
+            j, buf = i + 1, []
+            while True:
+                k = text.find("'", j)
+                if k < 0:
+                    raise ShellParseError("unclosed single quote")
+                buf.append(text[j:k])
+                if text.startswith("''", k):
+                    buf.append("'")
+                    j = k + 2
+                    continue
+                break
+            state["word"].append("".join(buf))
+            state["have"] = True
+            i = k + 1
+            continue
+        if ps and c == '"':
+            j, buf = i + 1, []
+            while j < n:
+                if text[j] == "`" and j + 1 < n:
+                    buf.append(text[j + 1])
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    if text.startswith('""', j):
+                        buf.append('"')
+                        j += 2
+                        continue
+                    break
+                buf.append(text[j])
+                j += 1
+            if j >= n:
+                raise ShellParseError("unclosed double quote")
+            state["word"].append("".join(buf))
+            state["have"] = True
+            i = j + 1
+            continue
         if c == "'":
             j = text.find("'", i + 1)
             if j < 0:
@@ -402,7 +560,7 @@ def lex_shell(cmd: str) -> list[Segment]:
             end_word()
             i += 1
             continue
-        if text.startswith("$(", i) or c in "`()":
+        if text.startswith("$(", i) or c in "()" or (c == "`" and not ps):
             end_segment(i)
             i += 2 if text.startswith("$(", i) else 1
             state["start"] = i
@@ -468,28 +626,52 @@ def canon_text(text: str) -> str:
     return t.lower()
 
 
-def resolve_word(root, word: str) -> tuple[str | None, str]:
+def _is_win_prefixed(w: str) -> bool:
+    r"""A drive (`C:\x`, `C:/x`) or UNC (`\\host\share`) prefix: backslashes after it are separators."""
+    return bool(re.match(r"^[A-Za-z]:[\\/]", w) or w.startswith("\\\\"))
+
+
+def shell_word_variants(word: str) -> list[str]:
+    r"""The readings of a shell word's backslashes, primary first, each with forward slashes.
+
+    Rule (shared by the gate and the loop guard): in a shell a backslash before a
+    character is an escape and is dropped (`bu\ild` is `build`). It is a Windows separator
+    only when the word has a drive or UNC prefix (`C:\a\b`, `\\host\share`), or, on
+    Windows, when the word has no forward slash at all (`.claude\build\x`, the PowerShell
+    spelling). The primary reading follows that rule; where the word is ambiguous the other
+    reading is returned too, so callers that must not miss a protected path check both.
+    """
+    w = word or ""
+    if "\\" not in w:
+        return [w]
+    sep = norm(w)
+    if _is_win_prefixed(w):
+        return [sep]
+    drop = norm(re.sub(r"\\(.)", r"\1", w, flags=re.DOTALL))
+    first, second = (sep, drop) if (IS_WINDOWS and "/" not in w) else (drop, sep)
+    return [first] if first == second else [first, second]
+
+
+def resolve_word(root, word: str, shell: bool = False) -> tuple[str | None, str]:
     """(path relative to root or None when outside, canonical absolute path).
 
     Strips an `--opt=` prefix and quotes, normalises separators, resolves `..`,
-    folds case on Windows.
+    folds case on Windows. With `shell=True` a backslash follows the shell rule of
+    `shell_word_variants` (primary reading); file-tool paths keep every backslash
+    as a separator.
     """
     w = word
     if w.startswith("-") and "=" in w:
         w = w.split("=", 1)[1]
-    w = norm(w).strip("'\"")
-    p = Path(w)
-    if not p.is_absolute() and not re.match(r"^[A-Za-z]:/", w):
-        p = Path(norm(root)) / w
-    absn = norm(os.path.normpath(norm(p)))
-    rel = rel_to(Path(root), absn)
-    if IS_WINDOWS:
-        absn = absn.lower()
-        rel = rel.lower() if rel is not None else None
+    w = w.strip("'\"")
+    w = shell_word_variants(w)[0] if shell else w
+    absn = canon_path(w, base=root)
+    rel = rel_to(Path(canon_path(root)), absn)
     return rel, absn
 
 
 WRITE_COMMANDS = {
+    "fsutil", "mklink",
     "mv", "cp", "rm", "rmdir", "unlink", "truncate", "dd", "install", "ln", "touch", "chmod",
     "chown", "shred", "tee", "mkdir", "rsync", "tar", "unzip", "patch",
     "set-content", "add-content", "out-file", "new-item", "remove-item", "move-item", "copy-item",
@@ -530,6 +712,7 @@ def command_word(argv: list[str]) -> tuple[str, list[str]]:
     return "", []
 
 
+_FIND_WRITE_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"}
 _CODE_WRITE = re.compile(
     r"writealltext|writeallbytes|appendalltext|\[(?:system\.)?io\.file\]|open\s*\(|\.write|"
     r"writefile|appendfile|unlink|rmtree|os\.remove|os\.rename|shutil|fs\.|copyfile|rename\(",
@@ -544,6 +727,8 @@ def is_write_segment(seg: Segment) -> bool:
     cmd, args = command_word(seg.argv)
     if cmd in WRITE_COMMANDS:
         return True
+    if cmd == "find" and any(a.lower() in _FIND_WRITE_ACTIONS for a in args):
+        return True  # -exec runs any command on the matches; -delete removes them
     if cmd in ("sed", "perl") and any(re.match(r"^-[a-z]*i", a) or a == "--in-place" for a in args):
         return True
     if cmd == "git":

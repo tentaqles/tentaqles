@@ -154,6 +154,22 @@ def _shadow_recall_gate(cwd: str, store) -> bool:
         return False
 
 
+def _prd_context(cwd: str) -> str:
+    """One line pointing at the PRD when the repo keeps one (spec §8.3)."""
+    try:
+        from tentaqles.workflow._common import find_git_root
+        from tentaqles.workflow.prd import prd_status
+
+        st = prd_status(Path(find_git_root(cwd) or cwd))
+        if not st["exists"]:
+            return ""
+        ready = "yes" if st["planning_ready"] else "no"
+        return ("Reading path: docs/prd.md, docs/adr/, then your spec slice · "
+                f"PRD: {st['frs']} FRs, {st['open_decisions']} open NEEDS-DECISION, planning-ready: {ready}")
+    except Exception:
+        return ""
+
+
 def main() -> None:
     memory_only = "--memory-only" in sys.argv[1:]
 
@@ -200,6 +216,9 @@ def main() -> None:
             return
 
         if memory_only:
+            prd_line = _prd_context(cwd)
+            if prd_line:
+                print(prd_line)
             temporal = _get_temporal_context(cwd, context)
             if temporal:
                 print(temporal)
@@ -218,6 +237,10 @@ def main() -> None:
             checks = [c for c in checks if c.get("section") != "git"]
 
         summary = format_context_summary(context, checks)
+
+        prd_line = _prd_context(cwd)
+        if prd_line:
+            summary += "\n\n" + prd_line
 
         temporal = _get_temporal_context(cwd, context)
         if temporal:

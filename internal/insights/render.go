@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 )
 
 // WriteJSON writes the stable JSON schema.
@@ -139,6 +140,27 @@ func WriteText(w io.Writer, r *Report) {
 	if j.Triage.Low+j.Triage.High > 0 {
 		fmt.Fprintf(w, "triage: low %d, high %d, flags: %s\n", j.Triage.Low, j.Triage.High, countList(j.Triage.Flags))
 	}
+	pr := r.Process
+	fmt.Fprintln(w, "\n== Process (build gate)")
+	fmt.Fprintf(w, "verify: pass %d, fail %d   dod: pass %d, fail %d, overrides %d (kept %d)   asked %d, answered %d   finished runs %d   by workflow: %s\n",
+		pr.VerifyPass, pr.VerifyFail, pr.DoDPass, pr.DoDFail, pr.DoDOverrides, pr.DoDOverridesKept, pr.Asked, pr.Answered, pr.Finished, countList(pr.ByWorkflow))
+	if pr.ReadError != "" {
+		fmt.Fprintf(w, "note: %s%s", pr.ReadError, "\n")
+	}
+	if len(pr.Other) > 0 {
+		fmt.Fprintf(w, "other events: %s\n", countList(cleanKeys(pr.Other)))
+	}
+	if len(pr.Reviewers) > 0 {
+		tw = tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "reviewer\tpass\tfail\tblocked\tblockers\tmajors\tminors\tunjudged\thuman judgements")
+		for _, name := range sortedKeys(pr.Reviewers) {
+			s := pr.Reviewers[name]
+			name = cleanName(name)
+			fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", name, s.Pass, s.Fail, s.Blocked, s.Blockers, s.Majors, s.Minors, s.Unjudged, s.HumanJudgements)
+		}
+		tw.Flush()
+		fmt.Fprintf(w, "cannot-judge rate: %s\n", pct(pr.CannotJudgeRate))
+	}
 
 	fmt.Fprintln(w, "\n== Background review sessions")
 	fmt.Fprintf(w, "security-review sessions: %d (%d on Opus), cost $%.2f\n", r.Total.Reviews.Sessions, r.Total.Reviews.Opus, r.Total.Reviews.CostUSD)
@@ -174,4 +196,27 @@ func dur(min float64) string {
 		return fmt.Sprintf("%.1fh", min/60)
 	}
 	return fmt.Sprintf("%.0fm", min)
+}
+
+// cleanName strips control characters and caps a file-supplied name at 64 runes.
+func cleanName(s string) string {
+	out := make([]rune, 0, len(s))
+	for _, c := range s {
+		if unicode.IsControl(c) {
+			continue
+		}
+		if len(out) == 64 {
+			break
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+func cleanKeys(m map[string]int) map[string]int {
+	o := make(map[string]int, len(m))
+	for k, v := range m {
+		o[cleanName(k)] += v
+	}
+	return o
 }

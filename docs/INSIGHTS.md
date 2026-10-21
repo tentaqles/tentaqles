@@ -115,6 +115,27 @@ These counts come from transcripts, so they reflect what Claude actually hit:
     tasks cost what an average subagent costs.
   - Triage: low/high counts and how often each flag fired.
 
+### Process (build gate)
+
+- From `$TQ_HOME/build-gate/events.jsonl`, written by the plugin's build gate.
+  One aggregate-only line per event: `ts`, `kind`, `slug`, `project`,
+  `workflow`, plus `checkpoint`, `ok`, `reviewer`, `result` and the counts
+  `blockers`, `majors`, `minors`, `unjudged` where they apply. It never holds
+  file names or text. Malformed lines are skipped and only the newest
+  200,000 events are aggregated. An unreadable file shows a one-line note
+  instead of silent zeros.
+- Counts: verify pass/fail, definition-of-done pass/fail, overrides (and
+  overrides kept for unchanged code; the kept count is logged on every
+  re-check while an override stands, so it counts re-checks, not distinct
+  overrides), questions asked and answered, finished
+  runs, runs per workflow (distinct slugs), and any unknown event kind under
+  "other events".
+- Per reviewer: PASS/FAIL/BLOCKED verdicts, blocker/major/minor/unjudged
+  counts, and human judgements (counted separately, never as a reviewer
+  PASS). The cannot-judge rate is BLOCKED divided by all verdicts.
+- Not yet measured: time from PRD to merge and hotfix-debt counts. They need
+  PR data and `memory.db`; this is a follow-up.
+
 ### Background review sessions
 
 This is the count of `security_review` sessions, how many of them ran on Opus,
@@ -178,6 +199,8 @@ schema, generated_at, since, until, window_days,
 identities: [IdentityReport], total: IdentityReport,
 top_by_context: [SessionRow], top_by_cost: [SessionRow],
 jev: {log, kinds, rules, route, triage},
+process: {verify_pass, verify_fail, reviewers, dod_pass, dod_fail, dod_overrides,
+  dod_overrides_kept, asked, answered, finished, by_workflow, other, cannot_judge_rate},
 worktrees: {total, prunable} | null,
 targets: [{id, goal, current, display, baseline, status}]
 ```

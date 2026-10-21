@@ -12,6 +12,10 @@
 | `.claude/build/<slug>/evidence.jsonl` | gate | one line per `verify` run: commands, exit codes, tree hash |
 | `.claude/build/<slug>/session.json` | gate | owning session, current stage, stop counter, checkpoint base commits |
 | `.claude/build/<slug>/review-<id>.md` | gate | the bundle a read-only reviewer reads |
+| `.claude/build/<slug>/reviews.jsonl` | gate | one signed line per reviewer verdict (reviewer, result, counts, tree hash) |
+| `.claude/build/<slug>/dod.json` | gate | the last definition-of-done run (checks, tree hash, override) |
+| `.claude/build/<slug>/decisions.jsonl` | gate | one signed line per decision asked of a human and its answer (kind, options, choice, actor) |
+| `$TQ_HOME/build-gate/events.jsonl` | gate | aggregate process events (verify, review, judge, dod, dod-override, finish) read by tq insights; never file names or text |
 | `.claude/settings.local.json` | gate (`setup`/`finish`) | the gate's hooks |
 | `.claude/tq-rules.yaml` | gate (`lock-tests`/`finish`) | the locked-tests rule for tq's guard |
 
@@ -30,6 +34,13 @@ build-gate status <slug>
 build-gate review-bundle <slug> <id>     prints the bundle path and base=<commit>
 build-gate serve <slug> [--port 8765]    progress page on 127.0.0.1 only
 build-gate finish <slug>                 remove hooks and test locks        (human only)
+build-gate ask <slug> --kind plan-approval|result|judge|question --text T --options a,b [--checkpoint N] [--reviewer R]
+build-gate answer <slug> <id> --choice C [--note N] [--actor A]       (human only, or a hub actor token)
+build-gate state <slug> --json                                          run state for the hub
+build-gate token <action> <slug> --actor A                              (human only) mint a hub actor token
+build-gate record-review <slug> <id> --reviewer R --result PASS|FAIL|BLOCKED [--blockers N --majors N --minors N --unjudged N]
+build-gate judge <slug> <id> --reviewer R --result PASS|FAIL --note TEXT      (human only)
+build-gate dod <slug> [--override REASON]      definition of done; records dod.json (--override is human only: the agent never runs it)
 ```
 
 Add `--root <path>` before the command to act on another checkout (e.g. a fresh worktree).
@@ -40,12 +51,14 @@ The agent being gated must not be able to produce or alter anything the gate tru
 
 - **Signed state.** `approved.json`, every `evidence.jsonl` line, `session.json` and the hook heartbeat carry an HMAC-SHA256 made with a per-user key at `$TQ_HOME/build-gate/hmac.key` (default `~/.tentaqles/build-gate/hmac.key`), outside every repository. A record the agent writes or edits fails verification and counts as absent, so the gate stays closed. The hook refuses reads of the key and any shell command naming it, and tq rules deny it too.
 - **Evidence only from the gate.** A gate passes on a line `build-gate verify` wrote after running the frozen commands itself, never on text in the transcript. `echo "pytest passed"` or running the tests by hand records nothing. A verify run also fails if the tree changes while the commands run, or if a locked test changed.
-- **Approvals are human-only and bound.** `approve`, `unlock-tests` and `finish` are refused to the agent by the hook and need an interactive terminal plus a one-time code typed back. An approval covers each checkpoint's id, verify commands and test list (a fingerprint). Editing any of them reopens the approval, and every approval gets a new id, so evidence recorded under an older approval no longer counts.
+- **Human-only commands also accept a hub actor token:** `TQ_BUILD_ACTOR` plus `TQ_BUILD_TOKEN`, an HMAC over the action, slug and actor made with the gate key. The hub holds the key as the user's own process. The hook refuses the known routes from the agent to the key and to the gate's code (the known spellings of key paths, including globs, `$TQ_HOME`, `~` and a recursive read of a parent directory, and Read/Grep/Glob calls aimed at the key directory or an ancestor of it; the gate module in shell commands and in the content of files the agent writes, writes under the gate's code, git commands that touch the state); the key itself is still readable by the agent's OS user until tq isolates it (see below). The hook refuses the human-only subcommands to the agent regardless. The same goes for `dod --override`: the hook refuses it to the agent (exit 2).
+- **Review and DoD records are signed like evidence;** a record the agent writes by hand fails verification and counts as absent. The DoD runs the commands frozen in `approved.json`, not the ones in the working copy of `CLAUDE.md`.
+- **Approvals are human-only and bound.** `approve`, `unlock-tests` and `finish` are refused to the agent by the hook and need an interactive terminal plus a one-time code typed back. Before the code, `approve` prints everything it freezes: each checkpoint's verify commands and the `tq-project` definition-of-done commands (test, lint, typecheck), paths and changelog; a DoD command that is not a string, is empty or is trivially true is refused. An approval covers each checkpoint's id, verify commands and test list (a fingerprint). Editing any of them reopens the approval, and every approval gets a new id, so evidence recorded under an older approval no longer counts. The approved checkpoint ids are the source of truth: a plan edit that drops or renumbers one is refused unless a `plan-approval` decision is pending, and the DoD, the Stop hook and `state` count a removed checkpoint as not passed.
 - **Tests to lock come from the approved plan**, not from the caller of `lock-tests`.
 - **One normalisation pass for shell commands.** A quote-aware lexer splits compound commands (`&& || ; | &`, newlines, subshells, `$(...)`, backticks), records redirect targets and strips quotes. Each path word is normalised (separators, `..`, case on Windows) and classified. Inline programs (`python -c ...`) are also checked by their normalised text. Unclosed quotes, and writes to a path built from a variable, fail closed. No segment is exempt just because it names `build-gate.py`.
 - **The tree hash can't be blinded.** A user-level `core.excludesFile` is switched off while hashing, a `.gitignore` that ignores itself is added anyway, and `.git/` (including `info/exclude`) is not writable through tools or the shell.
 
-What remains (documented, not hidden): a determined agent with arbitrary code execution as your user can read the key file through an obfuscated interpreter call the string checks miss. These checks raise the cost of cheating and catch honest mistakes; they are not an OS sandbox.
+What remains (documented, not hidden): the key file is readable by the OS user the agent runs as. The hook refuses the routes it knows (the known spellings of the key path, split strings, globs and variables included; the gate module in shell commands and in file content; writes under the gate's code; git commands that touch `.claude/build/`), but these are text checks: an agent that sets out to defeat them, for example with code assembled at run time, can still read the key and call the gate's functions directly, and so forge any record the gate trusts. OS-level key isolation from the agent's OS user (a hub process or the OS keyring) is a tq follow-up. Until then the gate guards against a careless or corner-cutting agent that uses the CLI and the tools, not against one that sets out to defeat it; the signed records are what the human and the hub trust. `record-review` is agent-callable, so a review record proves that a PASS was recorded at that tree, not that a critic produced it. Rollback of the signed state is detected by a generation record kept with the key, and unknown copy utilities remain a documented gap until OS-level key isolation lands.
 
 ## Gate rules (what the hook enforces)
 
@@ -58,6 +71,7 @@ PreToolUse on `Agent|Task|Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit`, St
 - `review` needs `behavior = passed` **and** fresh evidence.
 
 **Plan edits** (Edit/Write/MultiEdit of `docs/checkpoints/<slug>.json`):
+- `review` becoming `passed` needs a verified `build-critic` PASS record at the current tree hash and no FAIL/BLOCKED record beside it; `review: n/a` only in a plan with `"hotfix": true`;
 - `review` can't pass before `behavior`; `status: passed` needs every gate passed or n/a;
 - gates or status can't advance while an earlier checkpoint is open;
 - moving anything back toward `pending`/`failed` is always allowed (so a bad state can always be undone);
@@ -74,7 +88,7 @@ PreToolUse on `Agent|Task|Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit`, St
 
 These are string checks, like tq's guard: they catch honest mistakes. What makes cheating pointless is the evidence check: `verify` hashes the locked tests before running anything and fails if one changed by any route.
 
-**Stop:** for the session that owns the build (the one that launched its marker agents), a turn can't end while the active checkpoint has started but isn't proven, unless the plan has a top-level `halted` reason. It blocks **once**: Claude Code's `stop_hook_active` flag is honored, and the gate's own counter lets the next stop through, so a structurally broken plan or a confused session can never trap the user. Other sessions and the plugin's headless children are never blocked.
+**Stop:** for the session that owns the build (the one that launched its marker agents), a turn can't end while the active checkpoint has started but isn't proven, unless the plan has a top-level `halted` reason. It blocks **once**: Claude Code's `stop_hook_active` flag is honored, and the gate's own counter lets the next stop through, so a structurally broken plan or a confused session can never trap the user. Other sessions and the plugin's headless children are never blocked. A run with a pending decision may end its turn (the orchestrator wrote the question for a human). For a plan whose workflow is feature, fix or kickoff, a turn also can't end once every checkpoint passed until `dod.json` is fresh (same tree hash) and ok, or carries a human override. Blocks once, like the checkpoint rule. Precedence: `halted`, then a pending decision (suspends the checkpoint and DoD blocks), then the active checkpoint, then the DoD.
 
 ## Locked tests through tq (`.claude/tq-rules.yaml`)
 
