@@ -71,3 +71,19 @@ def test_memory_only_omits_client_header(tmp_path):
     out = _run_preamble(ws, "--memory-only")
     assert "Client:" not in out
     assert "Auto-switch" not in out
+
+
+def test_prd_reading_path_is_injected_when_prd_exists(tmp_path):
+    ws = _workspace(tmp_path)
+    (ws / "docs").mkdir()
+    (ws / "docs" / "prd.md").write_text(
+        "# X\n## 4. Functional requirements\n### FR-01 a\n**Acceptance checks**\n- ok\n"
+        "## 10. Open questions\n- NEEDS-DECISION: db?\n", encoding="utf-8")
+    out = _run_preamble(ws, "--memory-only")
+    assert "Reading path: docs/prd.md, docs/adr/" in out
+    assert "1 FRs, 1 open NEEDS-DECISION, planning-ready: no" in out
+
+
+def test_no_prd_no_reading_path(tmp_path):
+    out = _run_preamble(_workspace(tmp_path), "--memory-only")
+    assert "Reading path" not in out
