@@ -31,6 +31,10 @@ echo "template=$_tqe/templates/process/prd.md"
 `prd_exit=4`: no PRD, start from `templates/process/prd.md`. `0` or `3`: you
 are revising; read `docs/prd.md` first and keep its numbering.
 
+Every later bash block uses `_tqe`, `root` and `TENTAQLES_PY` from the snippet
+above. Blocks may run in fresh shells, so put its first two lines (the
+`_tqe=` line and the `root=` line) at the top of each block.
+
 ## 1. Pick the variant
 
 - **From an idea** (one or two sentences): the full interview below.
@@ -77,12 +81,17 @@ Fill it. The grader reads exactly this, so:
 
 - Headings stay exactly `## <n>. <title>`; section 4 holds the FRs as
   `### FR-nn <title>`, each with a `**Acceptance checks**` heading followed by
-  list items, each a binary statement. An FR with no list item under that
-  heading counts as having no checks.
-- Open items are list lines starting with `NEEDS-DECISION:` under section 10,
-  each with how to settle it (ask <who>, research, prototype). Delete the
-  template's placeholder line; decided items leave section 10 and their answer
-  moves into the section it belongs to.
+  `-` or `*` bullet items, each a binary statement. The bullets must be
+  contiguous: a prose line ends the list, and later bullets do not count. An FR
+  with no bullet under that heading counts as having no checks.
+- Open items are bullet lines `- NEEDS-DECISION: <question> (settle by: ask
+  <who> | research | prototype)` under section 10. Numbered items and bare
+  lines are not counted, so an unresolved question written that way would grade
+  ready. Delete the template's placeholder line; decided items leave section 10
+  and their answer moves into the section it belongs to.
+- Replace every `<...>` placeholder, and delete or fill the FR-02 stub: the
+  template's `- <binary, observable statement>` placeholder counts as a check,
+  so an unedited template can grade ready.
 - No scores, no adjectives in acceptance checks. "Fast" becomes a number in
   section 7.
 - Section 11 names which FRs are release 1.
@@ -98,11 +107,14 @@ own judgement. Quote its JSON output in your reply.
 
 - `0` (planning-ready): set `Status: planning-ready` in the header and say so.
 - `3` (not ready): list what blocks it from the JSON (`frs_without_checks`,
-  `open_decisions`, `has_section_10`, `frs`). Never write "planning-ready"
+  `open_decisions`, `has_section_10`, `frs`). `frs: 0` means there is no
+  `### FR-nn` heading in section 4. `has_section_10: false` blocks: the
+  section 10 heading stays even when it is empty. Never write "planning-ready"
   while the exit code is 3. Offer to settle each open item (ask, research,
   prototype), edit the PRD, and grade again. Headless: report the blockers as
   your final output and end the turn.
 - `4` (no PRD): the write step did not produce `docs/prd.md`; fix that.
+- Any other exit code: report it and the output verbatim and stop.
 
 ## 5. Commit
 

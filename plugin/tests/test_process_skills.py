@@ -87,3 +87,5 @@ def test_prd_skill_interviews_and_checks_mechanically() -> None:
     assert "report what it needs as its final output and end the turn" in body
     assert "only when the caller passed the slug of an active build run" in body
     assert "the grader's exit code decides" in body
+    assert "- NEEDS-DECISION: <question>" in body and "Numbered items and bare" in body
+    assert "contiguous" in body and "Any other exit code: report it" in body
