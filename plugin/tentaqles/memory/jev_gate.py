@@ -110,13 +110,17 @@ def find_tq() -> str | None:
     return None
 
 
-def _redact(text: str) -> str:
-    try:
-        from tentaqles.privacy import redact_text
+def _redact(text: str, classes: list[str]) -> str:
+    """Mask *text* before it is sent to a model. Fails closed (see redact_str)."""
+    from tentaqles.privacy import redact_str
 
-        return redact_text(text)[0]
-    except Exception:
-        return text
+    return redact_str(text, classes)
+
+
+def _workspace_classes(cwd: str) -> list[str]:
+    from tentaqles.privacy import workspace_classes
+
+    return workspace_classes(cwd or ".")
 
 
 def _run(argv: list[str], cwd: str, timeout: float) -> subprocess.CompletedProcess | None:
@@ -219,12 +223,20 @@ def log_judgment(
 # --- capture -------------------------------------------------------------
 
 
-def capture_payload(cwd: str, tool: str, text: str, mentioned_paths: int) -> dict:
+def capture_payload(
+    cwd: str, tool: str, text: str, mentioned_paths: int, *, classes: list[str] | None = None
+) -> dict:
+    """Payload for the capture worker; *text* is masked by the workspace's classes.
+
+    ``classes`` defaults to the classes declared by the manifest governing *cwd*.
+    """
+    if classes is None:
+        classes = _workspace_classes(cwd)
     return {
         "kind": "capture",
         "cwd": cwd,
         "tool": tool,
-        "text": _redact(text)[:MAX_CAPTURE_TEXT],
+        "text": _redact(text, classes)[:MAX_CAPTURE_TEXT],
         "paths": int(mentioned_paths),
     }
 
@@ -257,21 +269,24 @@ def recall_payload(cwd: str, store, facts_shown: int = 5, decisions_shown: int =
     decisions), so the log can say how Jev would reorder them without
     naming any memory.
     """
+    classes = getattr(store, "classes", None)
+    if not isinstance(classes, list) or not classes:
+        classes = _workspace_classes(cwd)
     facts = store.get_semantic_facts(limit=15)
     decisions = store.get_recent_decisions(days=30)[:10]
     if len(facts) <= facts_shown and len(decisions) <= decisions_shown:
         return None  # everything is surfaced already: nothing to rank
     items: dict[str, str] = {}
     for i, f in enumerate(facts):
-        items[f"f{i}"] = _redact(str(f.get("fact", "")))[:MAX_ITEM_TEXT]
+        items[f"f{i}"] = _redact(str(f.get("fact", "")), classes)[:MAX_ITEM_TEXT]
     for i, d in enumerate(decisions):
-        items[f"d{i}"] = _redact(f"{d.get('chosen', '')}: {d.get('rationale', '')}")[:MAX_ITEM_TEXT]
+        items[f"d{i}"] = _redact(f"{d.get('chosen', '')}: {d.get('rationale', '')}", classes)[:MAX_ITEM_TEXT]
     last = store.get_last_session() or {}
-    hot = [n.get("node_id", "") for n in store.get_active_nodes(limit=8)]
+    hot = [_redact(str(n.get("node_id", "")), classes) for n in store.get_active_nodes(limit=8)]
     return {
         "kind": "recall",
         "cwd": cwd,
-        "recent": {"last_session": _redact(str(last.get("summary") or ""))[:1500], "hot_files": hot},
+        "recent": {"last_session": _redact(str(last.get("summary") or ""), classes)[:1500], "hot_files": hot},
         "items": dict(list(items.items())[:MAX_RECALL_ITEMS]),
         "shown": {"f": facts_shown, "d": decisions_shown},
     }

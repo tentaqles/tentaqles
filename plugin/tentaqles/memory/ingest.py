@@ -5,7 +5,8 @@ last run. Each file is a watermark -- resolved path plus mtime -- so a run over
 an unchanged folder costs one stat per file. The item's date is the note's own
 ``published`` or ``ingested_date`` frontmatter when present, so recency
 weighting ranks by when the source appeared, not by when we happened to index
-it. Text is redacted by the store like every other write.
+it. Title, url and text are masked here by the store's workspace classes
+(and again by the store, like every other write) before they reach memory.db.
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import yaml
+
+from tentaqles import privacy
 
 MAX_TEXT_CHARS = 50_000
 _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.S)
@@ -53,6 +56,7 @@ def item_date(meta: dict, mtime: float) -> str:
 def ingest_markdown_dirs(store, dirs) -> dict:
     """Index every ``*.md`` under each dir. Returns added/updated/skipped counts."""
     result = {"added": 0, "updated": 0, "skipped": 0}
+    classes = getattr(store, "classes", None) or privacy.STRICTEST_CLASSES
     for d in dirs or []:
         root = Path(d)
         if not root.is_dir():
@@ -91,10 +95,10 @@ def ingest_markdown_dirs(store, dirs) -> dict:
             store.upsert_reference(
                 path=key,
                 mtime=mtime,
-                title=title,
-                url=str(url) if url else None,
+                title=privacy.redact_str(title, classes),
+                url=privacy.redact_str(str(url), classes) if url else None,
                 created_at=item_date(meta, mtime),
-                text=text[:MAX_TEXT_CHARS],
+                text=privacy.redact_str(text[:MAX_TEXT_CHARS], classes),
             )
             result["added" if prev is None else "updated"] += 1
     return result
