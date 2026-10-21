@@ -94,6 +94,52 @@ func PlanFor(command string) Plan {
 type DirPlan struct {
 	Dir string
 	Plan
+	// Adds are the plan's git add calls, each with the directory it runs in
+	// and its pathspecs as written, so git itself resolves globs and
+	// relative paths when the scan lists what they stage.
+	Adds []AddCall
+}
+
+// AddCall is one `git add` as the scan replays it.
+type AddCall struct {
+	Dir    string   // the directory the call runs in
+	Specs  []string // pathspecs as written ("" none)
+	Update bool     // -u/--update: tracked files only, never untracked ones
+	Whole  bool     // no pathspec (or one tq cannot evaluate): the whole repository
+}
+
+// parseAdd reads one git add call's arguments.
+func parseAdd(dir string, args []string) (AddCall, string) {
+	a := AddCall{Dir: dir}
+	ask := ""
+	for i := 0; i < len(args); i++ {
+		w := args[i]
+		switch {
+		case w == "--":
+			a.Specs = append(a.Specs, args[i+1:]...)
+			i = len(args)
+		case w == "--update":
+			a.Update = true
+		case w == "--pathspec-from-file" || strings.HasPrefix(w, "--pathspec-from-file="):
+			ask = askPathspecFile
+		case strings.HasPrefix(w, "--"):
+		case strings.HasPrefix(w, "-") && len(w) > 1:
+			if strings.Contains(w[1:], "u") {
+				a.Update = true
+			}
+		default:
+			a.Specs = append(a.Specs, w)
+		}
+	}
+	for _, sp := range a.Specs {
+		if strings.ContainsAny(sp, "$`") {
+			a.Whole = true // a substitution: cannot be evaluated here
+		}
+	}
+	if len(a.Specs) == 0 {
+		a.Whole = true // git add -A / --all / -u with no pathspec: the whole tree
+	}
+	return a, ask
 }
 
 // planItem is one git call and the directory it runs in, relative to its
@@ -101,6 +147,7 @@ type DirPlan struct {
 type planItem struct {
 	inv guard.GitInvocation
 	rel string
+	dir string
 }
 
 // Plans groups the command's add and commit calls by the repository they act
@@ -152,13 +199,25 @@ func Plans(cwd, command string, run Runner) ([]DirPlan, error) {
 			groups[key] = g
 			order = append(order, key)
 		}
-		g.items = append(g.items, planItem{inv: inv, rel: tp[1]})
+		g.items = append(g.items, planItem{inv: inv, rel: tp[1], dir: d})
 	}
 	var out []DirPlan
 	for _, k := range order {
-		if p := planOf(groups[k].items); p.Commits {
-			out = append(out, DirPlan{Dir: groups[k].top, Plan: p})
+		p := planOf(groups[k].items)
+		if !p.Commits {
+			continue
 		}
+		dp := DirPlan{Dir: groups[k].top, Plan: p}
+		for _, it := range groups[k].items {
+			if it.inv.Sub == "add" || it.inv.Sub == "stage" {
+				a, ask := parseAdd(it.dir, it.inv.Args)
+				if ask != "" {
+					dp.Ask = ask
+				}
+				dp.Adds = append(dp.Adds, a)
+			}
+		}
+		out = append(out, dp)
 	}
 	return out, nil
 }
@@ -295,30 +354,6 @@ func planOf(items []planItem) Plan {
 	return p
 }
 
-// inScope reports whether a repo-relative file is covered by AddPaths.
-func (p Plan) inScope(f string) bool {
-	if len(p.AddPaths) == 0 {
-		return true
-	}
-	f = filepath.ToSlash(f)
-	for _, a := range p.AddPaths {
-		a = strings.TrimSuffix(filepath.ToSlash(a), "/")
-		if a == "" || f == a || strings.HasPrefix(f, a+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// wdPathspec is the pathspec limiting the working-tree diff, or nil for the
-// whole tree.
-func (p Plan) wdPathspec() []string {
-	if p.CommitAll || (p.Untracked && len(p.AddPaths) == 0) {
-		return nil
-	}
-	return append(append([]string{}, p.AddPaths...), p.CommitPaths...)
-}
-
 const (
 	maxFileBytes  = 1 << 20 // per file read from disk or the index
 	maxTotalBytes = 8 << 20 // everything one commit decision scans
@@ -354,7 +389,7 @@ func ScanCtx(ctx context.Context, cwd, command string, run Runner) ([]Hit, error
 		}
 	}
 	for _, dp := range plans {
-		c := &collector{ctx: ctx, dir: dp.Dir, plan: dp.Plan, run: run, lenient: true}
+		c := &collector{ctx: ctx, dir: dp.Dir, plan: dp.Plan, adds: dp.Adds, run: run, lenient: true}
 		lines, names, err := c.collect()
 		if err != nil {
 			return hits, err
@@ -417,7 +452,7 @@ func AddedCtx(ctx context.Context, cwd, command string, run Runner) ([]AddedLine
 	}
 	var out []AddedLine
 	for _, dp := range plans {
-		c := &collector{ctx: ctx, dir: dp.Dir, plan: dp.Plan, run: run}
+		c := &collector{ctx: ctx, dir: dp.Dir, plan: dp.Plan, adds: dp.Adds, run: run}
 		lines, _, err := c.collect()
 		if err != nil {
 			return nil, err
@@ -432,6 +467,7 @@ type collector struct {
 	ctx     context.Context
 	dir     string
 	plan    Plan
+	adds    []AddCall
 	run     Runner
 	lenient bool // skip plain git errors (secret scan) instead of returning them
 	total   int
@@ -441,11 +477,13 @@ type collector struct {
 // ErrTooLarge is what a Runner returns when git's output passed its cap.
 var ErrTooLarge = errors.New("git output too large to scan")
 
-func (c *collector) git(args ...string) (string, bool, error) {
+func (c *collector) git(args ...string) (string, bool, error) { return c.gitIn(c.dir, args...) }
+
+func (c *collector) gitIn(dir string, args ...string) (string, bool, error) {
 	if err := c.ctx.Err(); err != nil {
 		return "", false, err
 	}
-	out, err := c.run(c.dir, args...)
+	out, err := c.run(dir, args...)
 	if err != nil {
 		if c.ctx.Err() != nil {
 			return "", false, c.ctx.Err()
@@ -474,23 +512,56 @@ func (c *collector) collect() (lines []AddedLine, names []string, err error) {
 		return nil, nil, &AskError{Reason: c.plan.Ask}
 	}
 	type diffSpec struct {
+		dir    string
 		args   []string
 		staged bool
 	}
-	specs := []diffSpec{{[]string{"diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"}, true}}
-	nameSpecs := [][]string{{"diff", "--cached", "--name-only"}}
-	if c.plan.WorkingDir {
-		wd := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"}
-		wn := []string{"diff", "--name-only"}
-		if ps := c.plan.wdPathspec(); len(ps) > 0 {
-			wd = append(append(wd, "--"), ps...)
-			wn = append(append(wn, "--"), ps...)
-		}
-		specs = append(specs, diffSpec{wd, false})
-		nameSpecs = append(nameSpecs, wn)
+	diffArgs := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"}
+	specs := []diffSpec{{c.dir, append([]string{"diff", "--cached"}, diffArgs[1:]...), true}}
+	type nameSpec struct {
+		dir  string
+		args []string
 	}
-	for _, args := range nameSpecs {
-		out, ok, err := c.git(args...)
+	nameSpecs := []nameSpec{{c.dir, []string{"diff", "--cached", "--name-only"}}}
+	if c.plan.WorkingDir {
+		// the working-tree scope: the whole tree, or the union of what the
+		// commit names and what each add stages (pathspecs resolved by git
+		// in the directory each call runs in)
+		whole := c.plan.CommitAll
+		type scope struct {
+			dir   string
+			specs []string
+		}
+		var scopes []scope
+		if len(c.plan.CommitPaths) > 0 {
+			scopes = append(scopes, scope{c.dir, c.plan.CommitPaths})
+		}
+		for _, a := range c.adds {
+			if a.Whole {
+				whole = true
+			} else {
+				scopes = append(scopes, scope{a.Dir, a.Specs})
+			}
+		}
+		if len(c.adds) == 0 && len(c.plan.CommitPaths) == 0 {
+			whole = true
+		}
+		if whole {
+			scopes = []scope{{c.dir, nil}}
+		}
+		for _, sc := range scopes {
+			wd := append([]string{}, diffArgs...)
+			wn := []string{"diff", "--name-only"}
+			if len(sc.specs) > 0 {
+				wd = append(append(wd, "--"), sc.specs...)
+				wn = append(append(wn, "--"), sc.specs...)
+			}
+			specs = append(specs, diffSpec{sc.dir, wd, false})
+			nameSpecs = append(nameSpecs, nameSpec{sc.dir, wn})
+		}
+	}
+	for _, ns := range nameSpecs {
+		out, ok, err := c.gitIn(ns.dir, ns.args...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -499,7 +570,7 @@ func (c *collector) collect() (lines []AddedLine, names []string, err error) {
 		}
 	}
 	for _, s := range specs {
-		out, ok, err := c.git(s.args...)
+		out, ok, err := c.gitIn(s.dir, s.args...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -520,15 +591,36 @@ func (c *collector) collect() (lines []AddedLine, names []string, err error) {
 		}
 	}
 	if c.plan.Untracked {
-		out, ok, err := c.git("ls-files", "--others", "--exclude-standard")
-		if err != nil {
-			return nil, nil, err
+		// the untracked files the add calls stage, listed by git itself
+		// (top-level paths): -u adds none; no pathspec means the whole
+		// repository; otherwise git resolves globs and relative paths
+		var listed []string
+		seen := map[string]bool{}
+		ok := true
+		for _, a := range c.adds {
+			if a.Update {
+				continue
+			}
+			dir, args := a.Dir, []string{"ls-files", "--others", "--exclude-standard", "--full-name"}
+			if a.Whole {
+				dir = c.dir
+			} else {
+				args = append(append(args, "--"), a.Specs...)
+			}
+			out, got, err := c.gitIn(dir, args...)
+			if err != nil {
+				return nil, nil, err
+			}
+			ok = ok && got
+			for _, f := range splitLines(out) {
+				if !seen[f] {
+					seen[f] = true
+					listed = append(listed, f)
+				}
+			}
 		}
 		if ok {
-			for _, f := range splitLines(out) {
-				if !c.plan.inScope(f) {
-					continue
-				}
+			for _, f := range listed {
 				names = append(names, f)
 				if bannedFile(f) {
 					continue
