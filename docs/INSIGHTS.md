@@ -121,10 +121,13 @@ These counts come from transcripts, so they reflect what Claude actually hit:
   One aggregate-only line per event: `ts`, `kind`, `slug`, `project`,
   `workflow`, plus `checkpoint`, `ok`, `reviewer`, `result` and the counts
   `blockers`, `majors`, `minors`, `unjudged` where they apply. It never holds
-  file names or text. Malformed lines are skipped and at most 200,000 lines
-  are read.
+  file names or text. Malformed lines are skipped and only the newest
+  200,000 events are aggregated. An unreadable file shows a one-line note
+  instead of silent zeros.
 - Counts: verify pass/fail, definition-of-done pass/fail, overrides (and
-  overrides kept for unchanged code), questions asked and answered, finished
+  overrides kept for unchanged code; the kept count is logged on every
+  re-check while an override stands, so it counts re-checks, not distinct
+  overrides), questions asked and answered, finished
   runs, runs per workflow (distinct slugs), and any unknown event kind under
   "other events".
 - Per reviewer: PASS/FAIL/BLOCKED verdicts, blocker/major/minor/unjudged

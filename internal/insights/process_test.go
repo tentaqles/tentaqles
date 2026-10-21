@@ -78,15 +78,35 @@ func TestProcessMissingFileIsEmpty(t *testing.T) {
 func TestProcessLineCap(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "events.jsonl")
 	var b strings.Builder
-	for i := 0; i < maxProcessLines+50; i++ {
-		b.WriteString(`{"ts":"2026-10-20T10:00:00+00:00","kind":"verify","slug":"a","ok":true}` + "\n")
+	old := 250000 - maxProcessLines
+	for i := 0; i < 250000; i++ {
+		if i < old {
+			b.WriteString(`{"ts":"2026-10-20T10:00:00+00:00","kind":"verify","slug":"o","workflow":"oldwf","ok":false}` + "\n")
+		} else {
+			b.WriteString(`{"ts":"2026-10-20T10:00:00+00:00","kind":"verify","slug":"n","workflow":"newwf","ok":true}` + "\n")
+		}
 	}
 	if err := os.WriteFile(p, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r, err := ReadProcessEvents(p, time.Time{})
-	if err != nil || r.VerifyPass != maxProcessLines {
-		t.Fatalf("pass %d err %v want cap %d", r.VerifyPass, err, maxProcessLines)
+	if err != nil || r.VerifyPass != maxProcessLines || r.VerifyFail != 0 || r.ByWorkflow["oldwf"] != 0 || r.ByWorkflow["newwf"] != 1 {
+		t.Fatalf("pass %d fail %d wf %v err %v: the cap must keep the newest events", r.VerifyPass, r.VerifyFail, r.ByWorkflow, err)
+	}
+}
+
+func TestProcessRenderSanitisesAndShowsReadError(t *testing.T) {
+	long := strings.Repeat("x", 100)
+	r := &Report{Process: ProcessReport{Reviewers: map[string]ReviewerStats{"bad\x1b[31mname" + long: {Pass: 1}},
+		Other: map[string]int{"k\x07ind": 1}, ReadError: "events.jsonl could not be read"}}
+	var sb strings.Builder
+	WriteText(&sb, r)
+	out := sb.String()
+	if strings.ContainsAny(out, "\x1b\x07") || strings.Contains(out, long) {
+		t.Fatalf("control chars or long name leaked:\n%q", out)
+	}
+	if !strings.Contains(out, "events.jsonl could not be read") {
+		t.Fatalf("read error missing:\n%s", out)
 	}
 }
 

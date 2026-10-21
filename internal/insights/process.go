@@ -39,6 +39,7 @@ type ProcessReport struct {
 	ByWorkflow       map[string]int           `json:"by_workflow"`
 	Other            map[string]int           `json:"other"`
 	CannotJudgeRate  float64                  `json:"cannot_judge_rate"`
+	ReadError        string                   `json:"read_error,omitempty"`
 }
 
 type processEvent struct {
@@ -64,21 +65,18 @@ func parseEventTime(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// maxProcessLines bounds how much of a large events file is read.
+// maxProcessLines bounds how much of a large events file is aggregated: the
+// newest events win, so a ring buffer of that many parsed events is kept.
 const maxProcessLines = 200000
 
 // ReadProcessEvents aggregates the events at or after since. A missing file
-// yields an empty report and no error; malformed lines are skipped and at
-// most maxProcessLines lines are read.
+// yields an empty report and no error; malformed lines are skipped and only
+// the newest maxProcessLines events are aggregated.
 func ReadProcessEvents(path string, since time.Time) (ProcessReport, error) {
 	r := ProcessReport{Reviewers: map[string]ReviewerStats{}, ByWorkflow: map[string]int{}, Other: map[string]int{}}
-	runs := map[string]string{} // slug -> workflow
-	verdicts, blocked, lines := 0, 0, 0
+	ring := make([]processEvent, 0, 1024)
+	total := 0
 	err := eachLine(path, func(line []byte) {
-		lines++
-		if lines > maxProcessLines {
-			return
-		}
 		var e processEvent
 		if json.Unmarshal(line, &e) != nil || e.Kind == "" {
 			return
@@ -91,69 +89,23 @@ func ReadProcessEvents(path string, since time.Time) (ProcessReport, error) {
 		} else if !since.IsZero() {
 			return
 		}
-		if e.Slug != "" {
-			if e.Workflow != "" {
-				runs[e.Slug] = e.Workflow
-			} else if _, seen := runs[e.Slug]; !seen {
-				runs[e.Slug] = "build"
-			}
+		if len(ring) < maxProcessLines {
+			ring = append(ring, e)
+		} else {
+			ring[total%maxProcessLines] = e
 		}
-		switch e.Kind {
-		case "verify":
-			if e.OK != nil && *e.OK {
-				r.VerifyPass++
-			} else {
-				r.VerifyFail++
-			}
-		case "review":
-			if e.Reviewer == "" {
-				return
-			}
-			s := r.Reviewers[e.Reviewer]
-			switch e.Result {
-			case "PASS":
-				s.Pass++
-				verdicts++
-			case "FAIL":
-				s.Fail++
-				verdicts++
-			case "BLOCKED":
-				s.Blocked++
-				blocked++
-				verdicts++
-			}
-			s.Blockers += e.Blockers
-			s.Majors += e.Majors
-			s.Minors += e.Minors
-			s.Unjudged += e.Unjudged
-			r.Reviewers[e.Reviewer] = s
-		case "judge":
-			if e.Reviewer == "" {
-				return
-			}
-			s := r.Reviewers[e.Reviewer]
-			s.HumanJudgements++
-			r.Reviewers[e.Reviewer] = s
-		case "dod":
-			if e.OK != nil && *e.OK {
-				r.DoDPass++
-			} else {
-				r.DoDFail++
-			}
-		case "dod-override":
-			r.DoDOverrides++
-		case "dod-override-kept":
-			r.DoDOverridesKept++
-		case "ask":
-			r.Asked++
-		case "answer":
-			r.Answered++
-		case "finish":
-			r.Finished++
-		default:
-			r.Other[e.Kind]++
-		}
+		total++
 	})
+	start := 0
+	if total > maxProcessLines {
+		start = total % maxProcessLines
+	}
+	runs := map[string]string{} // slug -> workflow
+	verdicts, blocked := 0, 0
+	for i := 0; i < len(ring); i++ {
+		e := ring[(start+i)%len(ring)]
+		r.add(e, runs, &verdicts, &blocked)
+	}
 	for _, wf := range runs {
 		r.ByWorkflow[wf]++
 	}
@@ -161,4 +113,69 @@ func ReadProcessEvents(path string, since time.Time) (ProcessReport, error) {
 		r.CannotJudgeRate = float64(blocked) / float64(verdicts)
 	}
 	return r, err
+}
+
+func (r *ProcessReport) add(e processEvent, runs map[string]string, verdicts, blocked *int) {
+	if e.Slug != "" {
+		if e.Workflow != "" {
+			runs[e.Slug] = e.Workflow
+		} else if _, seen := runs[e.Slug]; !seen {
+			runs[e.Slug] = "build"
+		}
+	}
+	switch e.Kind {
+	case "verify":
+		if e.OK != nil && *e.OK {
+			r.VerifyPass++
+		} else {
+			r.VerifyFail++
+		}
+	case "review":
+		if e.Reviewer == "" {
+			return
+		}
+		s := r.Reviewers[e.Reviewer]
+		switch e.Result {
+		case "PASS":
+			s.Pass++
+			*verdicts++
+		case "FAIL":
+			s.Fail++
+			*verdicts++
+		case "BLOCKED":
+			s.Blocked++
+			*blocked++
+			*verdicts++
+		}
+		s.Blockers += e.Blockers
+		s.Majors += e.Majors
+		s.Minors += e.Minors
+		s.Unjudged += e.Unjudged
+		r.Reviewers[e.Reviewer] = s
+	case "judge":
+		if e.Reviewer == "" {
+			return
+		}
+		s := r.Reviewers[e.Reviewer]
+		s.HumanJudgements++
+		r.Reviewers[e.Reviewer] = s
+	case "dod":
+		if e.OK != nil && *e.OK {
+			r.DoDPass++
+		} else {
+			r.DoDFail++
+		}
+	case "dod-override":
+		r.DoDOverrides++
+	case "dod-override-kept":
+		r.DoDOverridesKept++
+	case "ask":
+		r.Asked++
+	case "answer":
+		r.Answered++
+	case "finish":
+		r.Finished++
+	default:
+		r.Other[e.Kind]++
+	}
 }

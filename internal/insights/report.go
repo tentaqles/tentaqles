@@ -309,7 +309,11 @@ func Run(o Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	rep.Process, _ = ReadProcessEvents(filepath.Join(o.BuildGateDir, "events.jsonl"), o.Since)
+	var perr error
+	rep.Process, perr = ReadProcessEvents(filepath.Join(o.BuildGateDir, "events.jsonl"), o.Since)
+	if perr != nil {
+		rep.Process.ReadError = "events.jsonl could not be read; process counts are incomplete"
+	}
 	rep.Targets = Targets(rep)
 	return rep, nil
 }
