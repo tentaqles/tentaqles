@@ -285,3 +285,18 @@ Open points for review:
 ## 18. Provenance
 
 Parent spec §13 release 2 (decided 2026-10-20); `IDEATION.md` (the developer's board, agent-ready cards, decisions annotated on cards, the review page with feedback and approve); Paperclip design notes (product stance, status vocabulary, "one name per concept"), MIT, reference only; release-1 code as merged: `plugin/tentaqles/workflow/gate.py` (`HUB_ACTIONS`, `mint_hub_token`, `cmd_state`, decision records), `plugin/skills/build/SKILL.md` (headless mode), `internal/cmd/run.go` (`claudeArgs`, environment plan), `internal/insights` (pricing), `internal/registry` (bases). User decisions of 2026-10-21: two specs; both topologies on a switch.
+
+## 19. Rulings made while planning (2026-10-21)
+
+The implementation plan (`docs/design/plans/2026-10-21-tq-hub-core.md`) resolved these points where the sections above conflicted or were silent. The plan's reading is binding; the sections above are not rewritten.
+
+1. **Decision ids (§6).** Decisions mirrored from the gate keep the gate's own id (`d` + 8 hex). Only hub-owned decisions (`permission`, over-budget) use `d-` + 12 base32.
+2. **When the review page is built (§8.4, §10).** `finished` only becomes true after the human approves the `result` record. The card moves to `review` and the review page is built when the run is waiting on a pending `result`; a run finished from the terminal is handled the same way.
+3. **Notifications (§8.7).** There is no existing shell helper in tq; a small `internal/hub/notify` package sends one bounded (2 s) best-effort notification per platform.
+4. **`--all` opening (§5).** Workspaces that already have a `hub.db` are opened at start so their queues run; the rest open lazily on first request. Untrusted workspaces are never opened.
+5. **Agent-session detection (§15).** `CLAUDE_PLUGIN_ROOT` is not set inside the Bash tool, so `CLAUDECODE=1` is a third signal. Consequence: `tq hub answer` typed through `!` inside a Claude Code session is refused; the human answers from a terminal or the page.
+6. **Relocate resume form (§13.4).** No plan exists yet when the hand-off happens, so after the relocate the hub reruns the on-ramp prompt in the worktree; `/tentaqles:build resume <slug> --headless` is used only once a plan exists.
+7. **Approach section source (§10).** The gate signs `approved.json`, not the plan summary. The plugin gains `build-gate state --records`, which marks each plan checkpoint as still covered by the approval or not; the review page reads that.
+8. **One live hub per workspace (§17).** A second hub for a workspace already served is refused (or listed unavailable in `--all`); two hubs on one queue would fail each other's runs on start.
+
+Also recorded: the `runs` table carries queue timestamps, phase, retry count, relocations, allowed tools, round log, seconds, kind and `updated_at`; `decisions` carries a `data` column. Test hooks `TQ_HUB_CLAUDE_CMD`, `TQ_HUB_GATE_CMD`, `TQ_HUB_PLUGIN_ROOT`, `TQ_BASH` and the hidden `tq hub serve --drain` exist for tests only. `hub-port-busy` is reported only when some workspace has a hub database.
