@@ -1616,3 +1616,53 @@ def test_breaker_refuses_a_directory_over_the_walk_cap(repo, monkeypatch):
         (repo / "fixtures" / f"f{i}").write_text("", encoding="utf-8")
     monkeypatch.setattr(gate, "_WALK_CAP", 3)
     assert hook(repo, bash("cp -r fixtures .claude/build/demo/breaker/"))[0] == 2
+
+
+# Fix round 4: movers/copiers outside the allowlist get no carve-out.
+_B4 = ".claude/build/demo/breaker"
+
+
+@pytest.mark.parametrize("cmd", [
+    f"Move-Item lib/j {_B4}/j; echo x > {_B4}/j/build/demo/approved.json",
+    f"robocopy lib {_B4} /SL /E; echo x > {_B4}/j/build/demo/approved.json",
+    f"Copy-Item lib/j {_B4}/j",
+    f"xcopy /B /E lib {_B4}",
+])
+def test_breaker_refuses_a_junction_carried_in_by_other_movers(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "lib").mkdir(exist_ok=True)
+    _dir_link(repo / ".claude", repo / "lib" / "j")
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    f"Move-Item x {_B4}/x", f"mi x {_B4}/x", f"Copy-Item x {_B4}/x", f"cpi x {_B4}/x",
+    f"Rename-Item {_B4}/app.db b.db", f"rni {_B4}/app.db b.db", f"move x {_B4}/x",
+    f"copy x {_B4}/x", f"ren {_B4}/app.db b.db", f"xcopy x {_B4}", f"robocopy . {_B4} x",
+])
+def test_breaker_no_carve_out_for_movers_outside_the_allowlist(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    f"mv x {_B4}/x", f"cp x {_B4}/x", f"mkdir -p {_B4}/logs", f"echo x > {_B4}/note",
+    f"echo x >> {_B4}/note", f"touch {_B4}/t", f"echo x | tee {_B4}/t",
+])
+def test_breaker_allowlisted_and_plain_writers_keep_the_carve_out(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_breaker_refuses_a_hard_linked_source(repo):
+    _active_build(repo)
+    _scratch_sources(repo)
+    try:
+        os.link(repo / "x", repo / "x2")
+    except OSError:
+        pytest.skip("can't create a hard link here")
+    assert hook(repo, bash(f"mv x2 {_B4}/x2"))[0] == 2
+    assert hook(repo, bash(f"cp app.db {_B4}/app2.db"))[0] == 0

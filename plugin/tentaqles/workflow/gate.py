@@ -784,6 +784,9 @@ _CODE_RUNNERS = {"python", "py", "node", "deno", "bun", "ruby", "perl", "php", "
 _LINK_MAKERS = {"ln", "link", "mklink", "tar", "unzip", "cpio", "7z"}
 # Copiers whose sources must be existing, link-free files or directories.
 _COPIERS = {"mv", "cp", "rsync", "install"}
+# Every other mover/copier: its sources are not checked, so it never gets the carve-out.
+_OTHER_MOVERS = {"move-item", "mi", "copy-item", "cpi", "rename-item", "rni", "move", "copy",
+                 "ren", "rename", "xcopy", "robocopy", "pax", "busybox", "scp", "ditto"}
 _WALK_CAP = 2000
 _lstat = os.lstat  # module attribute so tests can stand in a link
 _LINK_TYPES = ("symboliclink", "junction", "hardlink")
@@ -843,8 +846,8 @@ def _is_link(st) -> bool:
 
 
 def _clean_source(path: str) -> bool:
-    """An existing regular non-link file, or a directory with no link or junction
-    in a walk of at most _WALK_CAP entries. Anything else (missing included) fails."""
+    """An existing regular file (not a link, one hard link), or a directory with no link
+    or multi-linked file in a walk of at most _WALK_CAP entries. Anything else fails."""
     try:
         st = _lstat(path)
     except OSError:
@@ -852,7 +855,7 @@ def _clean_source(path: str) -> bool:
     if _is_link(st):
         return False
     if stat.S_ISREG(st.st_mode):
-        return True
+        return getattr(st, "st_nlink", 1) <= 1  # a hard link shares the gate's file
     if not stat.S_ISDIR(st.st_mode):
         return False
     seen, todo = 0, [path]
@@ -875,7 +878,7 @@ def _clean_source(path: str) -> bool:
                 return False
             if stat.S_ISDIR(cst.st_mode):
                 todo.append(child)
-            elif not stat.S_ISREG(cst.st_mode):
+            elif not stat.S_ISREG(cst.st_mode) or getattr(cst, "st_nlink", 1) > 1:
                 return False
     return True
 
@@ -942,8 +945,9 @@ def _breaker_only(root: Path, seg) -> bool:
     `.claude/build/<active slug>/breaker/` (the breaker agent's scratch directory:
     backups, logs, notes). Judged on each resolved word, on each unquoted word's
     text and on the raw text; one other state path voids it. Code runners keep the
-    full refusal for their arguments, and link makers never get it."""
-    if _makes_links(seg):
+    full refusal for their arguments; link makers and movers/copiers outside
+    _COPIERS never get it."""
+    if _makes_links(seg) or any(b in _OTHER_MOVERS for b in _bases(seg)):
         return False
     live = {s for s in slugs(root) if load_approved(root, s) and not load_session(root, s).get("finished")}
     if not live:
