@@ -2504,3 +2504,104 @@ def test_claude_project_dir_is_judged_too(repo, tmp_path, monkeypatch):
     code, _, err = hook(repo, {**bash(f"echo x > '{target}'"), "cwd": str(other)})
     assert code == 2 and "locked test" in err
     assert hook(repo, {**bash("echo x > notes.txt"), "cwd": str(other)})[0] == 0
+
+
+
+# ---------------------------------------------------------------------------
+# Defence in depth: escapes, more writers, PowerShell bodies, locked-test parents
+# ---------------------------------------------------------------------------
+
+from tentaqles.workflow import _common  # noqa: E402
+
+
+def test_backslash_is_a_shell_escape_under_bash():
+    segs = _common.lex_shell("echo \\' ; cp a b ; echo \\'")
+    assert [s.argv[0] for s in segs] == ["echo", "cp", "echo"]
+    segs = _common.lex_shell('echo \\" ; cp a b ; echo \\"')
+    assert [s.argv[0] for s in segs] == ["echo", "cp", "echo"]
+    # Windows paths keep their backslashes for the word readings
+    assert _common.lex_shell(r"cat C:\repo\x.txt")[0].argv == ["cat", r"C:\repo\x.txt"]
+    assert _common.lex_shell(r"cat .claude\build\x")[0].argv == ["cat", r".claude\build\x"]
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo \\' ; cp x.json .claude/build/demo/approved.json ; echo \\'",
+    'echo \\" ; cp x.json .claude/build/demo/approved.json ; echo \\"',
+    'echo \\" ; cp x.py tests/test_a.py ; echo \\"',
+])
+def test_escaped_quotes_do_not_hide_a_write(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2
+
+
+def test_powershell_lexer_backtick_escape():
+    segs = _common.lex_shell('Write-Output `"; Copy-Item x tests/t.py; Write-Output `"', ps=True)
+    assert [s.argv[0] for s in segs] == ["Write-Output", "Copy-Item", "Write-Output"]
+    segs = _common.lex_shell("Write-Output 'it''s; fine'", ps=True)
+    assert len(segs) == 1 and segs[0].argv == ["Write-Output", "it's; fine"]
+    assert _common.lex_shell(r"Get-Content C:\repo\x.txt", ps=True)[0].argv == ["Get-Content", r"C:\repo\x.txt"]
+    segs = _common.lex_shell('Set-Content -Path "a`"b" -Value x > out.txt', ps=True)
+    assert segs[0].argv[:3] == ["Set-Content", "-Path", 'a"b'] and segs[0].redirects == ["out.txt"]
+
+
+@pytest.mark.parametrize("cmd,tool", [
+    ("pwsh -c 'Write-Output `\"; Copy-Item x.py tests/test_a.py; Write-Output `\"'", "Bash"),
+    ("powershell -Command 'Write-Output `\"; Copy-Item x.py tests/test_a.py; Write-Output `\"'", "Bash"),
+    ('Write-Output `"; Copy-Item x.py tests/test_a.py; Write-Output `"', "PowerShell"),
+])
+def test_powershell_bodies_are_lexed_as_powershell(repo, cmd, tool):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd, tool))[0] == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "find .claude/build -name '*.json' -delete",
+    "find .claude -name approved.json -exec cp x.json {} ;",
+    "find tests -delete",
+    "fsutil hardlink create .claude/build/demo/approved.json x.json",
+    "fsutil file setZeroData offset=0 length=9 tests/test_a.py",
+    "cmd /c mklink /J lib\\j .claude",
+    "mklink /J lib\\j .claude",
+    "cmd /c copy x.json .claude\\build\\demo\\approved.json",
+    "cmd /c move x.py tests\\test_a.py",
+])
+def test_more_writers_are_writers(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_find_exec_and_delete_count_as_writes():
+    for c in ("find . -name x -delete", "find . -exec rm {} ;", "find . -execdir touch {} +",
+              "fsutil file createnew x 0", "mklink a b"):
+        assert _common.is_write_segment(_common.lex_shell(c)[0]), c
+    for c in ("find . -name x", "find . -type f -print"):
+        assert not _common.is_write_segment(_common.lex_shell(c)[0]), c
+
+
+@pytest.mark.parametrize("cmd", [
+    "mv tests tests2",
+    "rm -rf tests",
+    "rm -rf ./tests/",
+    "cp -r src tests",
+    "Remove-Item -Recurse tests",
+    "Move-Item tests tests2",
+    "rm -rf .",
+])
+def test_writes_to_a_locked_tests_parent_dir_are_writes_to_the_locked_test(repo, cmd):
+    approve_and_lock(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "locked test" in err, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "mv app.py app2.py",
+    "rm -rf build",
+    "ls tests",
+    "cat tests/test_a.py",
+    "mkdir -p src/tests",
+    "find . -name '*.py'",
+    "echo hi > notes.txt",
+])
+def test_ordinary_commands_beside_locked_tests_stay_allowed(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd

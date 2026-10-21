@@ -412,9 +412,19 @@ WRITE_STRICT = re.compile(
 #
 # Splits compound commands outside quotes (&& || ; | & newline, subshells,
 # $(...) and backticks become their own segments), records redirect targets,
-# strips quotes. Backslash is literal outside double quotes so Windows paths
-# survive; inside double quotes it escapes " \ $ `. Unclosed quotes raise
-# ShellParseError, and callers fail closed.
+# strips quotes. Unclosed quotes raise ShellParseError, and callers fail closed.
+#
+# POSIX (the Bash tool): outside quotes a backslash escapes the next character,
+# so `echo \' ; cp a b` is two commands. Before a character the shell treats
+# specially (blank, quote, ; & | < > ( ) $ `) the backslash is dropped and the
+# character is literal; before an ordinary character, or another backslash,
+# both are kept, so Windows paths (`C:\a\b`, `\\host`) reach the word readings
+# of `shell_word_variants` intact. Inside double quotes it escapes " \ $ `.
+#
+# PowerShell (ps=True): the backtick is the escape character (outside and inside
+# double quotes), a backslash is literal, `''` inside single quotes and `""`
+# inside double quotes are a literal quote, and a backtick never starts a
+# command substitution.
 # ---------------------------------------------------------------------------
 
 
@@ -435,9 +445,10 @@ class Segment:
 
 
 _DQ_ESCAPES = '"\\$`'
+_POSIX_SPECIAL = " \t'\";&|<>()$`"
 
 
-def lex_shell(cmd: str) -> list[Segment]:
+def lex_shell(cmd: str, ps: bool = False) -> list[Segment]:
     text = cmd or ""
     segs: list[Segment] = []
     state = {"cur": Segment(), "word": [], "have": False, "redir": False, "start": 0}
@@ -464,6 +475,64 @@ def lex_shell(cmd: str) -> list[Segment]:
     i, n = 0, len(text)
     while i < n:
         c = text[i]
+        if ps and c == "`":
+            if i + 1 < n and text[i + 1] in "\r\n":
+                i += 3 if text[i + 1:i + 3] == "\r\n" else 2  # line continuation
+                continue
+            if i + 1 < n:
+                state["word"].append(text[i + 1])
+            state["have"] = True
+            i += 2
+            continue
+        if not ps and c == "\\":
+            nxt = text[i + 1] if i + 1 < n else ""
+            if nxt in ("\r", "\n"):
+                i += 3 if text[i + 1:i + 3] == "\r\n" else 2  # line continuation
+                continue
+            if nxt and nxt in _POSIX_SPECIAL:
+                state["word"].append(nxt)
+            else:
+                state["word"].append(c + nxt)
+            state["have"] = True
+            i += 2
+            continue
+        if ps and c == "'":
+            j, buf = i + 1, []
+            while True:
+                k = text.find("'", j)
+                if k < 0:
+                    raise ShellParseError("unclosed single quote")
+                buf.append(text[j:k])
+                if text.startswith("''", k):
+                    buf.append("'")
+                    j = k + 2
+                    continue
+                break
+            state["word"].append("".join(buf))
+            state["have"] = True
+            i = k + 1
+            continue
+        if ps and c == '"':
+            j, buf = i + 1, []
+            while j < n:
+                if text[j] == "`" and j + 1 < n:
+                    buf.append(text[j + 1])
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    if text.startswith('""', j):
+                        buf.append('"')
+                        j += 2
+                        continue
+                    break
+                buf.append(text[j])
+                j += 1
+            if j >= n:
+                raise ShellParseError("unclosed double quote")
+            state["word"].append("".join(buf))
+            state["have"] = True
+            i = j + 1
+            continue
         if c == "'":
             j = text.find("'", i + 1)
             if j < 0:
@@ -491,7 +560,7 @@ def lex_shell(cmd: str) -> list[Segment]:
             end_word()
             i += 1
             continue
-        if text.startswith("$(", i) or c in "`()":
+        if text.startswith("$(", i) or c in "()" or (c == "`" and not ps):
             end_segment(i)
             i += 2 if text.startswith("$(", i) else 1
             state["start"] = i
@@ -602,6 +671,7 @@ def resolve_word(root, word: str, shell: bool = False) -> tuple[str | None, str]
 
 
 WRITE_COMMANDS = {
+    "fsutil", "mklink",
     "mv", "cp", "rm", "rmdir", "unlink", "truncate", "dd", "install", "ln", "touch", "chmod",
     "chown", "shred", "tee", "mkdir", "rsync", "tar", "unzip", "patch",
     "set-content", "add-content", "out-file", "new-item", "remove-item", "move-item", "copy-item",
@@ -642,6 +712,7 @@ def command_word(argv: list[str]) -> tuple[str, list[str]]:
     return "", []
 
 
+_FIND_WRITE_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"}
 _CODE_WRITE = re.compile(
     r"writealltext|writeallbytes|appendalltext|\[(?:system\.)?io\.file\]|open\s*\(|\.write|"
     r"writefile|appendfile|unlink|rmtree|os\.remove|os\.rename|shutil|fs\.|copyfile|rename\(",
@@ -656,6 +727,8 @@ def is_write_segment(seg: Segment) -> bool:
     cmd, args = command_word(seg.argv)
     if cmd in WRITE_COMMANDS:
         return True
+    if cmd == "find" and any(a.lower() in _FIND_WRITE_ACTIONS for a in args):
+        return True  # -exec runs any command on the matches; -delete removes them
     if cmd in ("sed", "perl") and any(re.match(r"^-[a-z]*i", a) or a == "--in-place" for a in args):
         return True
     if cmd == "git":

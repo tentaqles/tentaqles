@@ -57,7 +57,9 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
     checks, not isolation: the key is still readable by the agent's OS user
     until tq isolates it (OS-level key isolation is a tq follow-up), so the gate guards against a careless
     agent, not one set on defeating it. The signed records are what the human
-    and the hub trust.
+    and the hub trust. Rollback of the signed state is detected by a
+    generation record kept with the key, and unknown copy utilities remain a
+    documented gap until OS-level key isolation lands.
   - The approved checkpoint ids are the source of truth: a plan edit that
     drops or renumbers one is refused unless a plan approval is pending, and
     the DoD, the Stop hook and `state` count a removed checkpoint as not

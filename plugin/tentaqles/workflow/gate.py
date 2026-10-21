@@ -1281,6 +1281,8 @@ class _ShellScan:
         self.root, self.locked, self.active = root, locked, active
         self.rootn = _nabs(root)
         self.ps = tool == "PowerShell"  # `*` also matches dot names there
+        self.cur_ps = self.ps  # the lexer of the program being scanned (a pwsh -c body is PowerShell)
+        self._locked_abs: list[tuple[str, str, str]] | None = None
         self.start = _nabs(cwd) if cwd else self.rootn
         self.writes = False
         self.prot = False
@@ -1333,6 +1335,11 @@ class _ShellScan:
                 out.append((rel_to(Path(self.rootn), absn), absn))
         return out
 
+    def locked_abs(self) -> list[tuple[str, str, str]]:
+        if self._locked_abs is None:
+            self._locked_abs = [(f"locked:{slug}", lk, _nabs(self.root / lk)) for lk, slug in self.locked.items()]
+        return self._locked_abs
+
     def word_hits(self, word: str, bases: list[str], recursive: bool, cmd_name: str) -> list[tuple[str, str]]:
         hits: list[tuple[str, str]] = []
         for rel, absn in self.resolved(word, bases):
@@ -1340,6 +1347,9 @@ class _ShellScan:
             if cls:
                 hits.append((cls, rel or absn))
             hits.extend(self.ancestor_hits(absn, recursive, cmd_name))
+            # a directory above a locked test: `mv tests tests2`, `rm -rf tests`, `cp -r src tests`
+            top = absn.rstrip("/") + "/"
+            hits.extend((c, lk) for c, lk, la in self.locked_abs() if la.startswith(top))
         for v in self.variants(word):
             if not _GLOB_CHARS.search(v):
                 continue
@@ -1348,7 +1358,7 @@ class _ShellScan:
                 for cls, shown, cand in self.candidates():
                     if cls == "keydir" and not recursive:
                         continue
-                    if _glob_segments_match(pat, cand, self.ps):
+                    if _glob_segments_match(pat, cand, self.ps or self.cur_ps):
                         hits.append(("key" if cls == "keydir" else cls, shown))
         return hits
 
@@ -1401,13 +1411,13 @@ class _ShellScan:
 
     # -- the scan ------------------------------------------------------------
 
-    def scan(self, cmd: str, st: _Cwd, depth: int) -> None:
+    def scan(self, cmd: str, st: _Cwd, depth: int, ps: bool = False) -> None:
         if depth > _MAX_NEST:
             raise Block("shell programs nested more than three levels deep can't be checked; "
                         "run the steps as separate commands.")
         canon_all = canon_text(cmd)
         try:
-            segs = lex_shell(cmd)
+            segs = lex_shell(cmd, ps=ps)
         except ShellParseError as e:
             if _text_mentions(self.root, canon_all, self.locked, self.active):
                 raise Block(f"can't parse this command ({e}) and it names a protected path; failing closed.")
@@ -1415,9 +1425,10 @@ class _ShellScan:
         if any(c == "key" for c, _ in _text_mentions(self.root, canon_all, {}, False)):
             raise Block(_msg("key", "the signing key"))  # a name split across segments reads whole here
         for seg in segs:
-            self.segment(seg, st, depth)
+            self.segment(seg, st, depth, ps)
 
-    def segment(self, seg, st: _Cwd, depth: int) -> None:
+    def segment(self, seg, st: _Cwd, depth: int, ps: bool = False) -> None:
+        self.cur_ps = ps
         root, locked, active = self.root, self.locked, self.active
         sub, sub_args = _gate_invocation(seg)
         cmd_name, cargs = command_word(seg.argv)
@@ -1472,7 +1483,8 @@ class _ShellScan:
             if body.lstrip().startswith(("$", "`")):
                 raise Block("this shell runs a program built from a variable, which can't be checked; "
                             "write the command out.")
-            self.scan(body, st.copy(), depth + 1)
+            # each shell's own lexer: PowerShell for pwsh/powershell, POSIX for sh/bash/eval/cmd
+            self.scan(body, st.copy(), depth + 1, ps=cmd_name in _PS_SHELLS)
         if cmd_name == "git":
             _check_git(seg, word_hits + text_hits)
         if not writes:
@@ -1514,7 +1526,7 @@ def check_shell(cmd: str, root: Path, cwd=None, tool: str = "Bash") -> None:
     are refused. A line that writes anywhere and also reaches `.claude`/the state dir is refused.
     """
     scan = _ShellScan(root, cwd, _locked_paths(root), _build_exists(root), tool)
-    scan.scan(cmd, _Cwd([scan.start]), 0)
+    scan.scan(cmd, _Cwd([scan.start]), 0, ps=tool == "PowerShell")
     if scan.writes:
         gone = rolled_back_slugs(root)
         if gone:
