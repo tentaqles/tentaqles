@@ -1,0 +1,58 @@
+{{define "card"}}{{template "head" .}}{{template "card-main" .}}{{template "foot" .}}{{end}}
+{{define "card-main"}}{{$ws := .WS}}{{with .Data}}
+<article class="detail">
+  <h1>{{.Title}}</h1>
+  <p class="meta"><span class="kind">{{.Kind}}</span> in <strong>{{.Lane}}</strong>{{range .Tags}} <span class="tag">{{.}}</span>{{end}}
+    {{if .ProjectDir}} · project <span class="mono">{{.ProjectDir}}</span>{{end}}
+    {{if .Parent}} · parent <a href="/cards/{{.Parent.ID}}?ws={{$ws}}">{{.Parent.Title}}</a>{{end}}
+    · <span class="mono">{{.ID}}</span>{{if .CostUSD}} · <span class="mono">{{money .CostUSD}}</span>{{end}}</p>
+  <form class="inline" method="post" action="/cards/{{.ID}}/move?ws={{$ws}}" data-move data-card="{{.ID}}">
+    <select name="lane">{{$lane := .Lane}}{{range .Lanes}}<option{{if eq .Name $lane}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+    <button>Move</button>
+  </form>
+  <form class="inline" method="post" action="/cards/{{.ID}}/run?ws={{$ws}}"><button>Run now</button></form>
+  {{if .ReviewReady}}<p><a class="button primary" href="/cards/{{.ID}}/review?ws={{$ws}}">Open the review page</a></p>{{end}}
+  <div class="body">{{md .Body}}</div>
+
+  {{with .Active}}
+  <section class="run">
+    <h2>Run <a class="mono" href="/runs/{{.ID}}?ws={{$ws}}">{{.ID}}</a> <span class="badge st-{{.Status}}">{{.Status}}</span></h2>
+    <p class="mono">rounds {{.Rounds}}/{{.Budget.Rounds}} · {{money .CostUSD}}/{{money .Budget.USD}} · {{ktok .Usage.Tokens}}/{{ktok .Budget.Tokens}} tokens · {{minutes .Seconds}}/{{.Budget.Minutes}} min{{if .Slug}} · build {{.Slug}}{{end}}</p>
+    {{if and (eq .Status "running") $.Data.GateURL}}<p><a href="{{$.Data.GateURL}}">Gate live view</a></p>{{end}}
+    <form method="post" action="/runs/{{.ID}}/cancel?ws={{$ws}}"><button class="danger">Cancel run</button></form>
+  </section>
+  {{end}}
+
+  {{if .Pending}}
+  <section class="decisions">
+    <h2>Waiting on you</h2>
+    {{$card := .ID}}{{range .Pending}}{{template "decision-form" (dict "ws" $ws "card" $card "item" .)}}{{end}}
+  </section>
+  {{end}}
+
+  <section class="comments">
+    <h2>Comments</h2>
+    {{range .Comments}}
+    <div class="comment {{.AuthorKind}}"><p class="meta"><span class="badge">{{.AuthorKind}}</span> {{.Author}} <span class="mono muted">{{when .CreatedAt}}</span></p><pre class="text">{{.Body}}</pre></div>
+    {{else}}<p class="muted">No comments yet.</p>{{end}}
+    <form method="post" action="/cards/{{.ID}}/comment?ws={{$ws}}"><textarea name="body" rows="3" required></textarea><button>Comment</button></form>
+  </section>
+
+  {{if .Answered}}
+  <section class="answered"><h2>Answered</h2>
+    <table><tr><th>decision</th><th>kind</th><th>choice</th><th>by</th><th>when</th></tr>
+    {{range .Answered}}<tr><td class="mono">{{.ID}}</td><td>{{.Kind}}</td><td>{{.Choice}}</td><td>{{.Actor}}</td><td class="mono">{{when .AnsweredAt}}</td></tr>{{end}}</table>
+  </section>
+  {{end}}
+
+  {{if .Runs}}
+  <section class="runs"><h2>Runs</h2>
+    <table><tr><th>run</th><th>status</th><th>rounds</th><th>cost</th><th>stop reason</th></tr>
+    {{range .Runs}}<tr><td><a class="mono" href="/runs/{{.ID}}?ws={{$ws}}">{{.ID}}</a></td><td><span class="badge st-{{.Status}}">{{.Status}}</span></td><td class="mono">{{.Rounds}}</td><td class="mono">{{money .CostUSD}}</td><td>{{.StopReason}}</td></tr>{{end}}</table>
+  </section>
+  {{end}}
+
+  {{if .Children}}<section><h2>Child cards</h2><ul>{{range .Children}}<li><a href="/cards/{{.ID}}?ws={{$ws}}">{{.Title}}</a> <span class="muted">{{.Lane}}</span></li>{{end}}</ul></section>{{end}}
+  {{if .Attachments}}<section><h2>Attachments</h2><ul>{{range .Attachments}}<li><span class="mono">{{.Path}}</span> {{.Label}}</li>{{end}}</ul></section>{{end}}
+</article>
+{{end}}{{end}}

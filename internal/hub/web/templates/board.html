@@ -1,0 +1,32 @@
+{{define "board"}}{{template "head" .}}{{template "board-main" .}}{{template "foot" .}}{{end}}
+{{define "board-main"}}
+<section class="lanes">
+{{range .Data.Lanes}}
+  <div class="lane" data-lane="{{.Lane.Name}}">
+    <h2>{{.Lane.Name}} <span class="mono muted">{{len .Cards}}</span></h2>
+    {{range .Cards}}
+    <article class="card" draggable="true" data-card="{{.ID}}">
+      <a class="title" href="/cards/{{.ID}}?ws={{$.WS}}">{{.Title}}</a>
+      <div class="meta">
+        <span class="kind">{{.Kind}}</span>{{range .Tags}} <span class="tag">{{.}}</span>{{end}}
+        {{if .Waiting}}<span class="badge st-waiting">waiting on you</span>{{end}}
+        {{if .RunStatus}}<span class="badge st-{{.RunStatus}}">{{.RunStatus}}</span>{{end}}
+        {{if .CostUSD}}<span class="mono">{{money .CostUSD}}</span>{{end}}
+      </div>
+    </article>
+    {{end}}
+  </div>
+{{end}}
+</section>
+<details class="new"><summary>New card</summary>
+  <form method="post" action="/cards?ws={{.WS}}">
+    <label>Title <input name="title" required></label>
+    <label>Body (markdown) <textarea name="body" rows="5"></textarea></label>
+    <label>Kind <select name="kind">{{range .Data.Kinds}}<option>{{.}}</option>{{end}}</select></label>
+    <label>Lane <select name="lane">{{range .Data.Lanes}}<option>{{.Lane.Name}}</option>{{end}}</select></label>
+    <label>Project folder <input name="project" placeholder="apps/billing"></label>
+    <label class="check"><input type="checkbox" name="agent_ready" value="1"> agent-ready</label>
+    <button>Add card</button>
+  </form>
+</details>
+{{end}}
