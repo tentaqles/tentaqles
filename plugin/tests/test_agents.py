@@ -38,7 +38,7 @@ def test_reviewers_are_read_only(name: str) -> None:
     assert WRITE_TOOLS <= disallowed and "Agent" in disallowed
 
 
-@pytest.mark.parametrize("name", ["build-critic", "spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer"])
+@pytest.mark.parametrize("name", ["build-critic", "spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer", "breaker"])
 def test_reviewers_return_the_contract(name: str) -> None:
     _, body = _fm(name)
     for token in ("RESULT: PASS | FAIL | BLOCKED", "BUILT-BY-ME:", "CANNOT JUDGE", "file:line"):
@@ -59,10 +59,13 @@ def test_breaker_requires_run_command_and_localhost() -> None:
     assert "Bash" in tools and "Edit" not in tools and "Write" not in tools
     for token in (
         "127.0.0.1", "localhost", "commands.run", "BLOCKED", "never edit source",
-        "third-party keys", "back up and restore", "--max-time", "stop the process",
+        "third-party keys", "back up and restore", "--max-time", "stop the process", "timeout", "starts with `<`", "::1", "taskkill",
+        "PGCONNECT_TIMEOUT", "RESTORED: no",
     ):
         assert token in body, token
     assert "RESULT: PASS | FAIL | BLOCKED" in body
+    disallowed = {t.strip() for t in fm["disallowedTools"].split(",")}
+    assert {"Edit", "Write", "MultiEdit", "NotebookEdit", "PowerShell", "Agent"} <= disallowed
 
 
 @pytest.mark.parametrize("name,ref", [

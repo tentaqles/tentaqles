@@ -15,7 +15,7 @@ The checkpoint slice, the review bundle (`.claude/build/<slug>/review-<id>.md`),
 
 1. Read every changed file in full and the entry points it adds or alters (routes, handlers, jobs, CLI commands, SQL). Grep for every caller of a changed function.
 2. For each entry point ask: who can call this, with what identity, on whose data, twice at once, with hostile input, when a dependency fails.
-3. Map the change to `docs/threat-model.md`. If the file is absent (a legacy repo), emit `U1 CANNOT JUDGE — no threat model — run /tentaqles:threat-model` and go on; this is not a finding. If the file exists: does the change cross a boundary, add one, or weaken a mitigation? A boundary with no table in the threat model is a MAJOR finding ("Update threat model") even if the code is fine.
+3. Map the change to `docs/threat-model.md`. If the file is absent (a legacy repo), emit `U1 CANNOT JUDGE — no threat model — run /tentaqles:threat-model` and go on; this is not a finding, but it makes the result `RESULT: BLOCKED` (CANNOT JUDGE means BLOCKED in the review contract) unless you also have a BLOCKER or MAJOR, which is FAIL. If the file exists: does the change cross a boundary, add one, or weaken a mitigation? A boundary with no table in the threat model is a MAJOR finding ("Update threat model") even if the code is fine.
 4. Judge every checklist row. A row you cannot judge from files (needs a running system, a deployment setting) is a `U` row, not a guess.
 
 ## Output

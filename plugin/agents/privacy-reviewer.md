@@ -18,7 +18,8 @@ The checkpoint slice, the review bundle, the spec slice (`data_classes_touched`)
 3. Check the record and the manifest changed in this diff when a class, path, table or retention changed (P10). Check the DoD `privacy` item will hold: classified paths touched imply `docs/privacy.md` in the diff.
 4. Logging and events (P5): every new log line, metric label, analytics event, error message. A personal-data value reaching a log unmasked is a BLOCKER; cite the line and the `tq redact` class that would mask it.
 5. Fixtures and exports (P6): production rows into tests or seeds are BLOCKERs.
-6. Rows needing a human (is this purpose compatible, is consent valid) are `U` rows with the question written for the DPO.
+6. Judge every checklist row P1 to P11 and say which you judged; none is skipped silently.
+7. Rows needing a human (is this purpose compatible, is consent valid) are `U` rows with the question written for the DPO.
 
 ## Output
 

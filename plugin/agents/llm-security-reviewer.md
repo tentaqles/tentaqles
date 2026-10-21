@@ -19,6 +19,8 @@ The checkpoint slice, the review bundle, the spec slice, `CLAUDE.md`, `docs/LEAR
 4. Memory and RAG writes (L5): source, time and redaction recorded; an entry that can carry instructions into later prompts is MAJOR.
 5. Bounds (L9): tokens, cost, time, loop rounds; hooks have timeouts and never stall (the plugin rule).
 6. Hooks and skills (L7): a change that lets the agent widen permissions, disable hooks or edit the guard is a BLOCKER.
+7. Data exits: classified data (manifest `data:` block) leaving through a model call outside `prompts.allow` is a finding; secrets in prompts are L4. Memory, vault and hook model calls always mask declared pii/financial classes, and `prompts.allow` does not apply to them.
+8. Judge every checklist row L1 to L12, including L8 and L10 to L12, and say which you judged; a row you cannot judge from files is a `U` row.
 
 ## Output
 
