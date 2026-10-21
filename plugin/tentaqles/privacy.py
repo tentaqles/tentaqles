@@ -6,14 +6,17 @@ imports the manifest loader lazily). Every feature that writes text to disk
 ``redact_str`` / ``redact_text`` first. Reading personal data locally is allowed;
 only the exits are guarded.
 
-Secrets are always redacted. Personal and financial data is masked by data class,
-mirroring tq's ``internal/redact``: the checksummed detectors (CPF, CNPJ, card,
-IBAN, each validated by its check digits) always run; ``pii`` / ``sensitive`` /
-``children`` add e-mail and phone; ``financial`` adds the financial detectors;
-``all`` is everything; ``secrets`` adds nothing (secrets are always on). An
-unknown class or an empty class list is a ``ValueError``; ``redact_str`` then
-falls back to the strictest masking, never to the raw text. A line carrying
-``tq:allow-pii`` keeps its personal data (secrets are still redacted).
+Secrets are always redacted. ``redact_text(text)`` with no ``classes`` is
+secrets only: that is what read paths (reviewer bundle, test tails, context
+injection, dashboard) use, so personal data stays readable locally. Exits pass
+the workspace's classes, mirroring tq's ``internal/redact``: with any class
+list the checksummed detectors (CPF, CNPJ, card, IBAN, each validated by its
+check digits) run; ``pii`` / ``sensitive`` / ``children`` add e-mail and phone;
+``financial`` adds the financial detectors; ``all`` is everything; ``public``,
+``internal`` and ``secrets`` add nothing. An unknown class or an empty class
+list is a ``ValueError``; ``redact_str`` then falls back to the strictest
+masking, never to the raw text. A line carrying ``tq:allow-pii`` keeps its
+personal data (secrets are still redacted).
 
 Pattern library is ordered from most-specific to most-generic so that e.g. an AWS access
 key is caught by its dedicated pattern before the generic "API key" fallback fires.
@@ -43,7 +46,8 @@ __all__ = [
     "has_secrets",
     "redact_str",
     "redact_text",
-    "set_default_classes",
+    "redact_value",
+    "EXIT_BASELINE_CLASSES",
     "workspace_classes",
 ]
 
@@ -67,7 +71,9 @@ REDACTION_PATTERNS: list[tuple[str, re.Pattern]] = [
         "gcp_service_account",
         re.compile(
             r'"type"\s*:\s*"service_account"|'
-            r"[a-zA-Z0-9._-]+@[a-zA-Z0-9-]+\.iam\.gserviceaccount\.com"
+            # Bounded and anchored so a long run of local-part characters
+            # cannot make the search quadratic.
+            r"(?<![a-zA-Z0-9._-])[a-zA-Z0-9._-]{1,64}@[a-zA-Z0-9-]{1,63}\.iam\.gserviceaccount\.com"
         ),
     ),
     # GitHub personal access token / fine-grained / OAuth / app / refresh
@@ -123,8 +129,10 @@ REDACTION_PATTERNS: list[tuple[str, re.Pattern]] = [
 # Standalone email pattern — only flagged when authorized_emails is provided
 # (cross-client leak detection). Intentionally NOT in REDACTION_PATTERNS because
 # plain emails are not inherently secret.
+# Bounded (RFC 5321 lengths) and anchored by a lookbehind: a match can only
+# start where the local part starts, so a long run of `1.1.1...` is linear.
 EMAIL_PATTERN: re.Pattern = re.compile(
-    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b"
 )
 
 
@@ -202,15 +210,22 @@ def _always(_s: str) -> bool:
 
 # (name, pattern, validator). Order is the tie-break when two detectors match
 # the same span: checksummed identifiers first, then the looser shapes.
+# Identifiers are delimited by anything that is not a letter or digit (so
+# `id_52998224725` matches, `abc52998224725xyz` does not). A candidate that
+# fails its checksum is retried shorter at the same start (see _pii_spans).
+_L = r"(?<![0-9A-Za-z])"
+_R = r"(?![0-9A-Za-z])"
 PII_PATTERNS: list[tuple[str, re.Pattern, Callable[[str], bool]]] = [
-    ("cpf", re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b"), _valid_cpf),
-    ("cnpj", re.compile(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b"), _valid_cnpj),
+    ("cpf", re.compile(_L + r"\d{3}[. -]?\d{3}[. -]?\d{3}[. -]?\d{2}" + _R), _valid_cpf),
+    ("cnpj", re.compile(_L + r"\d{2}[. -]?\d{3}[. -]?\d{3}[/. -]?\d{4}[. -]?\d{2}" + _R), _valid_cnpj),
     ("card", re.compile(
-        r"\b(?:[3-6]\d{3}([ -])\d{4}(?:\1\d{4}){2}(?:\1\d{1,4})?"  # 4-4-4-4 (+ a short tail)
-        r"|3[47]\d{2}([ -])\d{6}\2\d{5}"  # Amex 4-6-5
-        r"|[3-6]\d{12,18})\b"  # contiguous
+        _L + r"(?:[3-6]\d{3}(?:[ -]\d{4}){3}(?:[ -]\d{1,4})?"  # 4-4-4-4 (+ a short tail)
+        r"|3[47]\d{2}[ -]\d{6}[ -]\d{5}"  # Amex 4-6-5
+        r"|[3-6]\d{12,18})" + _R  # contiguous
     ), _luhn),
-    ("iban", re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b"), _valid_iban),
+    ("iban", re.compile(
+        _L + r"[A-Za-z]{2}\d{2}(?:[ ]?[A-Za-z0-9]{4}){2,7}(?:[ ]?[A-Za-z0-9]{1,4})?" + _R
+    ), _valid_iban),
     ("email", EMAIL_PATTERN, _always),
     ("phone", re.compile(
         r"(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,3}\)|\b\d{2,3})[\s.-]?\d{4,5}[\s.-]?\d{4}\b|\+\d{8,15}\b"
@@ -226,22 +241,25 @@ CLASS_DETECTORS: dict[str, list[str]] = {
 }
 _CLASS_ALIASES = {"sensitive": "pii", "children": "pii"}
 STRICTEST_CLASSES: list[str] = ["checksummed", "pii", "financial"]
-KNOWN_CLASSES = frozenset(CLASS_DETECTORS) | frozenset(_CLASS_ALIASES) | {"secrets", "all"}
+# Classes that add no detectors of their own (spec §11.1 `public`, `internal`;
+# `secrets` because secrets are always redacted).
+_NO_DETECTOR_CLASSES = frozenset({"public", "internal", "secrets"})
+KNOWN_CLASSES = frozenset(CLASS_DETECTORS) | frozenset(_CLASS_ALIASES) | _NO_DETECTOR_CLASSES | {"all"}
 ALLOW_PII_MARKER = "tq:allow-pii"
-
-# Module default for callers that have no workspace (no store, no manifest).
-# Stores pass their own classes explicitly; nothing in the plugin mutates this.
-_default_classes: list[str] = ["checksummed"]
+# The baseline for an exit that has no workspace classes at hand.
+EXIT_BASELINE_CLASSES: list[str] = ["checksummed"]
 
 
 def _detectors(classes: Iterable[str] | None) -> list[str]:
     """Detector names for *classes*, in pattern order. Raises ValueError.
 
-    The checksummed detectors always run. An unknown class, a bare string, or
-    an empty list is an error (fail closed, like tq's ``ParseClasses``).
+    ``None`` means secrets only (read paths): no personal-data detectors. For
+    an explicit list the checksummed detectors always run. An unknown class, a
+    bare string, or an empty list is an error (fail closed, like tq's
+    ``ParseClasses``).
     """
     if classes is None:
-        classes = _default_classes
+        return []
     if isinstance(classes, str):
         raise ValueError("data classes must be a list, not a string")
     classes = list(classes)
@@ -253,20 +271,13 @@ def _detectors(classes: Iterable[str] | None) -> list[str]:
             raise ValueError(f"unknown data class {c!r}")
         if c == "all":
             expanded = STRICTEST_CLASSES
-        elif c == "secrets":
-            expanded = []  # secrets are always redacted
+        elif c in _NO_DETECTOR_CLASSES:
+            expanded = []
         else:
             expanded = [_CLASS_ALIASES.get(c, c)]
         for cls in expanded:
             wanted.update(CLASS_DETECTORS[cls])
     return [n for n in _PII_ORDER if n in wanted]
-
-
-def set_default_classes(classes: list[str]) -> None:
-    """Set the module default (tests only). Raises ValueError like ``redact_text``."""
-    global _default_classes
-    _detectors(classes)
-    _default_classes = list(classes)
 
 
 def exit_classes(manifest: dict | None) -> list[str]:
@@ -339,6 +350,23 @@ def _allowed_lines(text: str) -> list[tuple[int, int]]:
     return out
 
 
+def _shorter_valid(rx: re.Pattern, ok, text: str, m: re.Match):
+    """The longest valid candidate at ``m.start()`` that ends before ``m.end()``.
+
+    Only cuts at a real delimiter (the next character is not a letter or a
+    digit) are tried, so a shorter candidate is never carved out of a longer
+    number. Bounded by the match length (patterns are bounded).
+    """
+    start = m.start()
+    for end in range(m.end() - 1, start, -1):
+        if text[end].isalnum() or not text[end - 1].isalnum():
+            continue
+        cand = rx.fullmatch(text, start, end)
+        if cand is not None and ok(cand.group(0)):
+            return cand
+    return None
+
+
 def _pii_spans(text: str, names: list[str]) -> list[tuple[int, int, str, str]]:
     allowed = _allowed_lines(text) if ALLOW_PII_MARKER in text else []
     allowed_starts = [a[0] for a in allowed]
@@ -351,10 +379,15 @@ def _pii_spans(text: str, names: list[str]) -> list[tuple[int, int, str, str]]:
             if m is None:
                 break
             if not ok(m.group(0)):
-                # A failed checksum must not hide a valid value that starts
-                # inside it: look again one character further on.
-                pos = m.start() + 1
-                continue
+                # The pattern may have pulled in the next token (an expiry
+                # date, a CVV, a word): try shorter candidates at the same
+                # start, then look again one character further on so a failed
+                # checksum never hides a valid value inside it.
+                shorter = _shorter_valid(rx, ok, text, m)
+                if shorter is None:
+                    pos = m.start() + 1
+                    continue
+                m = shorter
             pos = max(m.end(), m.start() + 1)
             if allowed:
                 i = bisect.bisect_right(allowed_starts, m.start()) - 1
@@ -473,7 +506,7 @@ def redact_text(
         marker, so neither secrets nor personal data reach the log).
     classes:
         Data classes whose personal-data detectors run (see the module
-        docstring). ``None`` uses the module default (``["checksummed"]``).
+        docstring). ``None`` means secrets only (read paths); exits pass a list.
         Raises ``ValueError`` on an unknown class or an empty list.
     """
     names = _detectors(classes)  # validate first: a bad class list fails even on empty text
@@ -546,12 +579,16 @@ def redact_text(
 def redact_str(text, classes: Iterable[str] | None = None):
     """Redacted *text* for an exit, without the events. Never raises.
 
-    ``None`` and ``""`` pass through. An invalid class list falls back to the
+    ``None`` and ``""`` pass through. ``classes=None`` is the exit baseline
+    (``EXIT_BASELINE_CLASSES``: secrets plus checksummed identifiers); callers
+    with a workspace pass its classes. An invalid class list falls back to the
     strictest masking; any other failure returns ``[REDACTED:error]`` rather
     than the input.
     """
     if text is None or text == "":
         return text
+    if classes is None:
+        classes = EXIT_BASELINE_CLASSES
     try:
         return redact_text(text, classes=classes)[0]
     except ValueError:
@@ -561,3 +598,14 @@ def redact_str(text, classes: Iterable[str] | None = None):
             return "[REDACTED:error]"
     except Exception:
         return "[REDACTED:error]"
+
+
+def redact_value(value, classes: Iterable[str] | None = None):
+    """``redact_str`` applied to every string (keys included) in JSON-shaped *value*."""
+    if isinstance(value, str):
+        return redact_str(value, classes)
+    if isinstance(value, dict):
+        return {redact_str(str(k), classes): redact_value(v, classes) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_value(v, classes) for v in value]
+    return value
