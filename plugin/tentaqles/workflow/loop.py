@@ -503,9 +503,15 @@ def round_usage(data: dict | None, cap: float) -> tuple[float, int, str]:
     return cost, tokens, str(data.get("result") or "")
 
 
-def idea_from(result: str) -> str:
+def idea_from(result: str, classes: list[str] | None = None) -> str:
+    """The round's IDEA line. It goes into the TSV log, the commit message and the
+    next prompt, so it is masked by the workspace's *classes* when given."""
     m = re.findall(r"^\s*IDEA:\s*(.+)$", result or "", re.MULTILINE)
     idea = (m[-1] if m else "(no IDEA line)").strip()
+    if classes is not None:
+        from tentaqles.privacy import redact_str
+
+        idea = redact_str(idea, classes)
     idea = re.sub(r"\s+", " ", redact(idea))
     return idea[:100]
 
@@ -513,6 +519,15 @@ def idea_from(result: str) -> str:
 PINNED_PLUGIN_FILES = ("tentaqles/workflow/loopguard.py", "tentaqles/workflow/_common.py",
                        "tentaqles/workflow/__init__.py", "scripts/loop-guard.py", "scripts/tq_run.sh",
                        "scripts/tq_env.sh", "scripts/_path.py")
+
+
+def _exit_classes(path) -> list[str]:
+    from tentaqles.privacy import STRICTEST_CLASSES, workspace_classes
+
+    try:
+        return workspace_classes(path)
+    except Exception:
+        return list(STRICTEST_CLASSES)
 
 
 def plugin_root() -> Path:
@@ -792,7 +807,7 @@ def _rounds(c: Ctx, best: Score) -> tuple[str, Score]:
         summary["cost_usd"] = round(summary["cost_usd"] + cost, 4)
         summary["tokens"] += tokens
         summary["rounds"] = rnd
-        idea = "(round timed out)" if timed_out else idea_from(result)
+        idea = "(round timed out)" if timed_out else idea_from(result, _exit_classes(c.wt))
         status, score, note = verify_round(c, lambda: run_scorer(c.wt, c.approved["scorer"], c.xml, b.score_timeout))
         if note:
             summary["notes"].append(f"r{rnd}: {note}; undone")

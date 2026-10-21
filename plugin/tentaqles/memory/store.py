@@ -20,22 +20,7 @@ import numpy as np
 
 from tentaqles.memory.migration import apply_migrations
 
-try:
-    from tentaqles.privacy import redact_text as _redact_text
-except ImportError:  # pragma: no cover - graceful degradation
-    def _redact_text(text, strict=False, authorized_emails=None, audit_log_path=None):
-        return (text or "", [])
-
-
-def _redact(text):
-    """Safely redact a string, returning the original on any error."""
-    if text is None:
-        return text
-    try:
-        redacted, _ = _redact_text(text)
-        return redacted
-    except Exception:
-        return text
+from tentaqles import privacy
 
 _FTS_PROBED: bool | None = None
 
@@ -274,6 +259,11 @@ class MemoryStore:
         self._db_path = db_dir / "memory.db"
         self._half_life = half_life_days
         self._active_session_id: str | None = None
+        # Personal-data classes this workspace masks at every write. Held per
+        # store (never a module global) so a process that opens several
+        # clients' stores masks each by its own manifest; an unreadable
+        # manifest gives the strictest set.
+        self._classes = privacy.workspace_classes(workspace_path)
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
@@ -285,6 +275,18 @@ class MemoryStore:
             self._conn.commit()
         # Embedding service — lazy loaded
         self._emb = None
+
+    @property
+    def classes(self) -> list[str]:
+        return list(self._classes)
+
+    def _redact(self, text):
+        """Mask secrets and this workspace's personal data before a write."""
+        return privacy.redact_str(text, self._classes)
+
+    def _redact_value(self, value):
+        """``_redact`` applied to every string inside JSON-shaped *value*."""
+        return privacy.redact_value(value, self._classes)
 
     def _get_emb(self):
         if self._emb is None:
@@ -316,7 +318,7 @@ class MemoryStore:
         sid = _uid()
         self._conn.execute(
             "INSERT INTO sessions (id, started_at, tags, metadata) VALUES (?, ?, ?, ?)",
-            (sid, _now(), json.dumps(tags or []), json.dumps(metadata or {})),
+            (sid, _now(), json.dumps(self._redact_value(tags or [])), json.dumps(self._redact_value(metadata or {}))),
         )
         self._conn.commit()
         self._active_session_id = sid
@@ -337,7 +339,8 @@ class MemoryStore:
             started = started.replace(tzinfo=timezone.utc)
         duration = int((datetime.now(timezone.utc) - started).total_seconds())
         existing_tags = json.loads(row[1] or "[]")
-        all_tags = list(set(existing_tags + (tags or [])))
+        all_tags = list(set(existing_tags + self._redact_value(tags or [])))
+        summary = self._redact(summary)
         embedding = self._embed(summary)
         self._conn.execute(
             "UPDATE sessions SET ended_at=?, duration_s=?, summary=?, embedding=?, tags=?, memory_tier='episodic' WHERE id=?",
@@ -374,7 +377,7 @@ class MemoryStore:
         weight: float = 1.0,
     ) -> None:
         sid = self._resolve_session_id()
-        safe_node_id = _redact(node_id)
+        safe_node_id = self._redact(node_id)
         self._conn.execute(
             "INSERT INTO touches (session_id, node_id, node_type, touched_at, action, weight) VALUES (?, ?, ?, ?, ?, ?)",
             (sid, safe_node_id, node_type, _now(), action, weight),
@@ -391,9 +394,9 @@ class MemoryStore:
         tags: list[str] | None = None,
     ) -> str:
         did = _uid()
-        safe_chosen = _redact(chosen)
-        safe_rationale = _redact(rationale)
-        safe_rejected = [_redact(r) for r in (rejected or [])]
+        safe_chosen = self._redact(chosen)
+        safe_rationale = self._redact(rationale)
+        safe_rejected = [self._redact(r) for r in (rejected or [])]
         text = f"{safe_chosen}. {safe_rationale}"
         embedding = self._embed(text)
         self._conn.execute(
@@ -402,13 +405,13 @@ class MemoryStore:
                 did,
                 self._resolve_session_id(),
                 _now(),
-                json.dumps(node_ids or []),
+                json.dumps(self._redact_value(node_ids or [])),
                 safe_chosen,
                 json.dumps(safe_rejected),
                 safe_rationale,
                 confidence,
                 embedding,
-                json.dumps(tags or []),
+                json.dumps(self._redact_value(tags or [])),
             ),
         )
         self._conn.commit()
@@ -522,10 +525,10 @@ class MemoryStore:
         priority: Literal["low", "medium", "high", "critical"] = "medium",
     ) -> str:
         pid = _uid()
-        safe_description = _redact(description)
+        safe_description = self._redact(description)
         self._conn.execute(
             "INSERT INTO pending (id, session_id, created_at, description, node_ids, priority) VALUES (?, ?, ?, ?, ?, ?)",
-            (pid, self._resolve_session_id(), _now(), safe_description, json.dumps(node_ids or []), priority),
+            (pid, self._resolve_session_id(), _now(), safe_description, json.dumps(self._redact_value(node_ids or [])), priority),
         )
         self._conn.commit()
         return pid
@@ -966,7 +969,7 @@ class MemoryStore:
         exes = _executables(command)
         if not exes:
             return
-        excerpt = _redact((error or "").strip())[:_ERROR_EXCERPT_CHARS]
+        excerpt = self._redact((error or "").strip())[:_ERROR_EXCERPT_CHARS]
         if not excerpt:
             return
         sid = self._resolve_session_id()
@@ -976,7 +979,7 @@ class MemoryStore:
             self._conn.execute("DELETE FROM tool_failures WHERE executable=?", (exe,))
             self._conn.execute(
                 "INSERT INTO tool_failures (session_id, created_at, executable, command, error) VALUES (?, ?, ?, ?, ?)",
-                (sid, now, exe, _redact(command)[:_ERROR_EXCERPT_CHARS], excerpt),
+                (sid, now, exe, self._redact(command)[:_ERROR_EXCERPT_CHARS], excerpt),
             )
         self._conn.commit()
 
@@ -998,7 +1001,7 @@ class MemoryStore:
             self._conn.commit()
             return None
         _, exe, error = row
-        safe_command = _redact(command)
+        safe_command = self._redact(command)
         aid = _uid()
         self._conn.execute(
             "INSERT INTO atoms (id, session_id, created_at, kind, text, command, error) VALUES (?, ?, ?, 'fix', ?, ?, ?)",
@@ -1027,8 +1030,8 @@ class MemoryStore:
 
     def upsert_reference(self, path: str, mtime: float, title: str, url: str | None, created_at: str, text: str) -> str:
         """Insert or refresh one ingested document; returns its id."""
-        safe_title = _redact(title) or path
-        safe_text = _redact(text) or ""
+        safe_title = self._redact(title) or path
+        safe_text = self._redact(text) or ""
         row = self._conn.execute("SELECT id FROM reference_docs WHERE path=?", (path,)).fetchone()
         rid = row[0] if row else _uid()
         self._conn.execute(
@@ -1036,7 +1039,7 @@ class MemoryStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(path) DO UPDATE SET created_at=excluded.created_at, ingested_at=excluded.ingested_at, "
             "mtime=excluded.mtime, title=excluded.title, url=excluded.url, text=excluded.text",
-            (rid, created_at, _now(), path, float(mtime), safe_title, url, safe_text),
+            (rid, created_at, _now(), path, float(mtime), safe_title, self._redact(url), safe_text),
         )
         self._conn.commit()
         return rid
@@ -1100,12 +1103,14 @@ class MemoryStore:
         search indexes it next to the fact text.
         """
         fid = uuid.uuid4().hex
+        fact = self._redact(fact)
+        tags = self._redact_value(tags or [])
         self._conn.execute(
             "INSERT INTO semantic_memories "
             "(id, created_at, fact, category, strength, recall_count, source_sessions, tags, embedding, query_hint) "
             "VALUES (?, ?, ?, ?, 1.0, 0, ?, ?, ?, ?)",
             (fid, _now(), fact, category, json.dumps(source_sessions), json.dumps(tags or []), embedding,
-             _redact(query_hint) if query_hint else None),
+             self._redact(query_hint) if query_hint else None),
         )
         self._conn.commit()
         return fid

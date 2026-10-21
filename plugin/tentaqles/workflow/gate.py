@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -80,7 +81,9 @@ MARKER = re.compile(r"^\s*\[checkpoint\s+([\w.-]+)#(\d+)\s+(\w+)\]")
 PLAN_DIR = "docs/checkpoints"
 STATE_DIR = ".claude/build"
 # Bookkeeping that must not count as a code change.
-HASH_EXCLUDES = (PLAN_DIR, "docs/reviews", "docs/test-plans", STATE_DIR)
+BREAKER_DIR = ".tq-breaker"  # the breaker agent's scratch directory (git-excluded, not state)
+SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]*")  # the plan slug charset (loop.py uses the same)
+HASH_EXCLUDES = (PLAN_DIR, "docs/reviews", "docs/test-plans", STATE_DIR, BREAKER_DIR)
 MAX_STOP_BLOCKS = 1  # block a stop once, then let it through
 RULE_ID_PREFIX = "tentaqles-build/"
 SETTINGS_TAG = "build-gate.py hook"
@@ -1036,6 +1039,78 @@ def _plugin_root_canon() -> str:
     return canon_path(plugin_root())
 
 
+# The breaker's scratch dir holds data files only: a name must end in one of these
+# extensions (an allowlist, so a new runner's config format can't slip through) and must
+# not look like a test or a tool config (`jest.config.json`, `package.json`, `.eslintrc.json`).
+SCRATCH_DATA_EXT = (".sql", ".db", ".db-wal", ".db-shm", "-wal", "-shm", ".log", ".pid", ".json", ".txt",
+                    ".csv", ".tsv", ".dump", ".bak")
+_SCRATCH_NOT_DATA = re.compile(
+    r"^(conftest\..*|test_.*|.*_test\..*|.*\.spec\..*|.*\.test\..*|.*config.*|\..*rc(\..*)?|.*\.pth(\..*)?"
+    r"|package(-lock)?\.json|composer\.json|deno\.jsonc?|project\.json|.*\.(py|js|ts|mjs|cjs|mts|cts)\..*)$")
+SCRATCH_WALK_CAP = 2000  # entries walked under .tq-breaker/ before failing closed
+# Commands that only remove entries or make empty directories: allowed in the scratch dir
+# whatever the name (the agent must be able to delete a stray file the walk complains about).
+_SCRATCH_CLEANERS = {"rm", "rmdir", "unlink", "del", "erase", "rd", "remove-item", "ri", "mkdir", "md"}
+
+
+def scratch_name_ok(name: str) -> bool:
+    n = name.lower()
+    return n.endswith(SCRATCH_DATA_EXT) and not _SCRATCH_NOT_DATA.match(n)
+
+
+def _lstat_is_link(path: str) -> bool:
+    """True for a symlink, a junction or any other reparse point; True when it can't tell."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return True
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    return bool(getattr(st, "st_file_attributes", 0) & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def scratch_problem(root: Path) -> str | None:
+    """Why <root>/.tq-breaker/ can't stand next to recorded evidence, or None.
+
+    The dir is excluded from the tree hash, so it may hold data files only. Bounded walk
+    (SCRATCH_WALK_CAP entries), no link followed, fail closed. Names only the first
+    offending entry, by its file name (never its path)."""
+    base = os.path.join(str(root), BREAKER_DIR)
+    if not os.path.lexists(base):
+        return None
+    if _lstat_is_link(base):
+        return f"{BREAKER_DIR} is a link; the breaker scratch dir must be a plain directory"
+    if not os.path.isdir(base):
+        return f"{BREAKER_DIR} is not a directory"
+    stack, seen = [base], 0
+    while stack:
+        d = stack.pop()
+        try:
+            entries = sorted(os.scandir(d), key=lambda e: e.name)
+        except OSError:
+            return f"can't read {BREAKER_DIR}/; failing closed"
+        for e in entries:
+            seen += 1
+            if seen > SCRATCH_WALK_CAP:
+                return f"{BREAKER_DIR}/ holds too many entries (over {SCRATCH_WALK_CAP}); clear it out"
+            name = redact(e.name)
+            if _lstat_is_link(e.path):
+                return f"{BREAKER_DIR}/ may not hold a link ('{name}'); remove it"
+            try:
+                is_dir = e.is_dir(follow_symlinks=False)
+                is_file = e.is_file(follow_symlinks=False)
+            except OSError:
+                return f"can't read {BREAKER_DIR}/; failing closed"
+            if is_dir:
+                stack.append(e.path)
+            elif not is_file:
+                return f"{BREAKER_DIR}/ may not hold a special file ('{name}'); remove it"
+            elif not scratch_name_ok(e.name):
+                return (f"{BREAKER_DIR}/ holds data files only ({', '.join(x.lstrip('.-') for x in SCRATCH_DATA_EXT)}); "
+                        f"'{name}' is not one. Remove it and run again")
+    return None
+
+
 def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool) -> str | None:
     """The protection class of one resolved path, or None.
 
@@ -1060,6 +1135,9 @@ def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool)
         return "state"
     if r in PROTECTED_CONFIG and active:
         return "config"
+    if r.startswith(BREAKER_DIR + "/") and r.count("/") >= 2 and not scratch_name_ok(r.rsplit("/", 1)[-1]) \
+            and (active or slugs(root)):
+        return "scratch"  # .tq-breaker/<slug>/<name>: a data file name, or refused
     if re.match(re.escape(PLAN_DIR) + r"/[^/]+\.json$", r, re.IGNORECASE):
         return "plan"
     for lk, slug in locked.items():
@@ -1074,6 +1152,8 @@ _MESSAGES = {
     "state": f"{STATE_DIR}/ is hook-owned evidence; only the build-gate commands write it",
     "gatecode": "the gate's own code is off limits to the agent while a build exists",
     "config": "the gate's settings and tq rules are locked while a build is active",
+    "scratch": ("scratch dir holds data files only (sql, db, db-wal, db-shm, log, pid, json, txt, csv, tsv, "
+                "dump, bak; no code, test or config files)"),
     "plan": f"{PLAN_DIR}/*.json changes only through Edit/Write, so the gate rules run",
 }
 
@@ -1553,6 +1633,115 @@ def _dest_words(seg, cmd_name: str, cargs: list[str]) -> set[str]:
     return out | set(pos)
 
 
+# Commands that can create links (or unpack them): while a build exists they may not make a
+# link whose path or target lies under .claude/build/, or at or under .tq-breaker/.
+_LINK_MAKERS = {"ln", "link", "mklink", "tar", "unzip", "cpio", "7z", "fsutil"}
+_LINK_TYPES = ("symboliclink", "junction", "hardlink")
+
+
+def _bases(seg) -> list[str]:
+    out = []
+    for w in seg.argv:
+        b = norm(w).rsplit("/", 1)[-1].lower()
+        b = b[:-4] if b.endswith(".exe") else b
+        out.append("python" if re.match(r"^python[0-9.]*$", b) else b)
+    return out
+
+
+def _makes_links(seg) -> bool:
+    bases = _bases(seg)
+    if any(b in _LINK_MAKERS for b in bases):
+        return True
+    if any(b in ("new-item", "ni") for b in bases) and any(t in w.lower() for w in seg.argv for t in _LINK_TYPES):
+        return True
+    if "cp" in bases:
+        for a in seg.argv:
+            if re.match(r"^-[A-Za-z]*[sl][A-Za-z]*$", a):
+                return True
+            opt = a.split("=", 1)[0].lower()
+            if len(opt) >= 3 and ("--link".startswith(opt) or "--symbolic-link".startswith(opt)):
+                return True
+    return False
+
+
+# Options that name a file the command writes, per tool (`-o`, `-f` and `--file` mean other
+# things elsewhere: `pytest -o`, `psql -f`, `grep --file`, `docker build --file`). A segment
+# using one counts as a write and the option's value is a destination word, so the spine's
+# destination rules (locked tests, a directory above them) apply to it. tar's `-f`/`--file` is
+# not listed: tar is a write command already and `_dest_words` takes its archive operand.
+_OUTPUT_OPTS = {
+    "curl": ({"-o", "-D", "-c"}, {"--output", "--dump-header", "--cookie-jar", "--output-dir"}),
+    "wget": ({"-O", "-o", "-a", "-P"}, {"--output-document", "--output-file", "--append-output",
+                                        "--directory-prefix"}),
+    "pg_dump": ({"-f"}, {"--file"}),
+    "pg_dumpall": ({"-f"}, {"--file"}),
+    "pg_basebackup": ({"-D"}, {"--pgdata"}),
+    "mysqldump": ({"-r"}, {"--result-file"}),
+    "sort": ({"-o"}, {"--output"}),
+}
+# Options that write with no path of their own (`curl -O` names the file after the URL).
+_OUTPUT_FLAGS = {"curl": {"-O", "--remote-name", "--remote-name-all"}}
+# Long options that name an output file for any tool (`--file` is not one; git is left to _check_git).
+_OUTPUT_LONG_ANY = {"--output", "--output-file", "--output-dir", "--out", "--outfile", "--out-file", "--log-file"}
+_SQLITE_WRITES = re.compile(r"(?:^|[\s;\"'])\.(?:backup|save|output|once)((?:[ \t]+[^\s;]+)*)", re.IGNORECASE)
+
+
+def _option_writes(cmd_name: str, cargs: list[str]) -> tuple[bool, list[str]]:
+    """(does an option make this segment write, the path words it writes through)."""
+    writes, out = False, []
+    if cmd_name == "sqlite3":
+        for a in cargs:
+            for m in _SQLITE_WRITES.finditer(a):
+                writes = True
+                ops = [t.strip("'\"") for t in m.group(1).split() if not t.startswith("-")]
+                if ops:
+                    out.append(ops[-1])  # `.backup ?DB? FILE`: the file is the last operand
+        return writes, out
+    if cmd_name == "git":
+        return False, []
+    shorts, longs = _OUTPUT_OPTS.get(cmd_name, (set(), set()))
+    longs = longs | _OUTPUT_LONG_ANY
+    flags = _OUTPUT_FLAGS.get(cmd_name, set())
+    i = 0
+    while i < len(cargs):
+        a = cargs[i]
+        nxt = cargs[i + 1] if i + 1 < len(cargs) else None
+        if a in flags:
+            writes = True
+        elif a.startswith("--"):
+            opt = a.split("=", 1)[0].lower()
+            if opt in longs:
+                writes = True
+                if "=" in a:
+                    out.append(a.split("=", 1)[1])
+                elif nxt is not None:
+                    out.append(nxt)
+                    i += 1
+        elif a in shorts:
+            writes = True
+            if nxt is not None:
+                out.append(nxt)
+                i += 1
+        elif len(a) > 2 and a[0] == "-" and a[1] != "-" and a[1].isalpha():
+            # a bundled short cluster (`-sSo path`, `-qO path`, `-wf path`, `-opath`): the first
+            # letter that is one of the tool's output options takes the rest of the word, or the next word
+            letters = {o[1] for o in shorts if len(o) == 2}
+            for k in range(1, len(a)):
+                if not a[k].isalpha():
+                    break
+                if a[k] in letters:
+                    writes = True
+                    rest = a[k + 1:]
+                    if rest:
+                        out.append(rest)
+                    elif nxt is not None:
+                        out.append(nxt)
+                        i += 1
+                    break
+        i += 1
+    return writes, out
+
+
 class _Cwd:
     """The tracked working directory: candidate absolute paths, or None when unknown."""
 
@@ -1650,6 +1839,8 @@ class _ShellScan:
         hits: list[tuple[str, str]] = []
         for rel, absn in self.resolved(word, bases):
             cls = classify(self.root, rel, absn, self.locked, self.active)
+            if cls == "scratch" and not dest:
+                cls = None  # the data-files-only class judges what a command writes, not every word
             if cls:
                 hits.append((cls, rel or absn))
             hits.extend(self.ancestor_hits(absn, recursive, cmd_name, key_safe))
@@ -1708,6 +1899,41 @@ class _ShellScan:
                 if absn not in out:
                     out.append(absn)
         return out[:_MAX_CWDS]
+
+    def check_links(self, seg, bases: list[str]) -> None:
+        """Refuse a link whose path or target lands under .claude/build/, or at or under
+        .tq-breaker/, while a build exists. Every word is resolved against the tracked cwd (and
+        the root), and also from each other word and that word's directory, since a link's
+        target is relative to the link's own directory."""
+        if not (self.active or slugs(self.root)) or not _makes_links(seg):
+            return
+        words = [w for w in seg.argv[1:] + seg.redirects if w and not w.startswith("-")]
+        words += [w.split("=", 1)[1] for w in seg.argv[1:] if w.startswith("-") and "=" in w]
+        res = {i: self.resolved(w, bases) for i, w in enumerate(words)}
+        cands: list[tuple[str, str | None]] = []
+        for i, w in enumerate(words):
+            cands.extend((w, rel) for rel, _ in res[i])
+            link_dirs: list[str] = []
+            for j in range(len(words)):
+                if j == i:
+                    continue
+                for _, absd in res[j]:
+                    a = absd.rstrip("/")
+                    parent = a.rsplit("/", 1)[0] if "/" in a else a
+                    for b in (a or "/", parent or "/"):
+                        if b not in link_dirs:
+                            link_dirs.append(b)
+            if link_dirs:
+                cands.extend((w, rel) for rel, _ in self.resolved(w, link_dirs))
+        for w, rel in cands:
+            r = (rel or "").lower() if os.name == "nt" else (rel or "")
+            text = canon_text(w)
+            if r == STATE_DIR or r.startswith(STATE_DIR + "/") or STATE_DIR in text:
+                raise Block(f"links can't be created into or out of {STATE_DIR}/ while a build exists "
+                            "(a link would let a later write land on the gate's evidence).")
+            if r == BREAKER_DIR or r.startswith(BREAKER_DIR + "/") or BREAKER_DIR in text:
+                raise Block(f"links can't be created at or under {BREAKER_DIR}/ while a build exists "
+                            "(`finish` deletes that dir, and it holds plain data files only).")
 
     # -- working directory ---------------------------------------------------
 
@@ -1772,7 +1998,8 @@ class _ShellScan:
         cmd_name, cargs = command_word(seg.argv)
         if cmd_name in WRITE_COMMANDS or cmd_name == "git":
             sub, sub_args = None, []  # `cp x .../build-gate.py` writes the gate script, it doesn't run it
-        writes = is_write_segment(seg)
+        opt_writes, opt_dest = _option_writes(cmd_name, cargs)
+        writes = is_write_segment(seg) or opt_writes
         recursive = _recursive_segment(seg.argv, cmd_name)
         bases = self.bases(st)
         words = [w for w in seg.argv[1:] + seg.redirects if not is_null_target(w)]
@@ -1780,7 +2007,7 @@ class _ShellScan:
         # echo/printf words are text even with a redirect (the redirect target is judged on its own)
         key_safe = cmd_name in _KEY_SAFE_VERBS and (not redirected or cmd_name in ("echo", "printf"))
         key_bases = tuple(self.key_bases(cmd_name, cargs, bases))
-        dest = _dest_words(seg, cmd_name, cargs) if writes else set()
+        dest = (_dest_words(seg, cmd_name, cargs) | set(opt_dest)) if writes else set()
         word_hits: list[tuple[str, str]] = []
         for w in words:
             word_hits.extend(self.word_hits(w, bases, recursive, cmd_name, w in dest, key_safe, key_bases))
@@ -1797,6 +2024,7 @@ class _ShellScan:
                 raise Block(_msg("key", what))
             if cls == "gatemod":
                 raise Block(_GATEMOD_MSG)
+        self.check_links(seg, bases)
         if cmd_name in _CD_CMDS:
             self.apply_cd(cmd_name, cargs, st)
         if sub is not None:
@@ -1858,6 +2086,8 @@ class _ShellScan:
             # git itself manages .git/ and the plan file (add/commit); history-changing
             # subcommands on locked tests are still refused
             hits = [(c, w) for c, w in hits if c.startswith("locked:")]
+        elif cmd_name in _SCRATCH_CLEANERS:
+            hits = [(c, w) for c, w in hits if c != "scratch"]
         for cls, what in hits:
             raise Block(_msg(cls, what))
 
@@ -2280,6 +2510,9 @@ def approval_summary(root: Path, slug: str) -> str:
 
 
 def cmd_approve(root: Path, slug: str) -> str:
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+        # the same rule as finish: a slug that can't be finished can't be approved either
+        raise SystemExit(f"approve refused: {slug!r} isn't a build slug (lowercase letters, digits and hyphens only).")
     plan = load_plan(root, slug)
     if plan is None:
         if _finished_and_cleaned(root, slug):
@@ -2433,7 +2666,12 @@ def cmd_verify(root: Path, slug: str, cid: int, timeout: float = 900) -> tuple[i
     results, out_lines, ok = [], [], True
     before = tree_hash(root)
     tampered = tests_intact(root, approved)
-    if tampered:
+    # .tq-breaker/ is outside the tree hash, so it may hold data files only (checked before and after).
+    scratch_bad = scratch_problem(root)
+    if scratch_bad:
+        ok = False
+        out_lines.append("FAIL: " + scratch_bad)
+    elif tampered:
         ok = False
         out_lines.append("locked tests changed since they were locked: " + ", ".join(tampered))
     else:
@@ -2449,8 +2687,14 @@ def cmd_verify(root: Path, slug: str, cid: int, timeout: float = 900) -> tuple[i
                 break
             out_lines.append(f"ok: {c}")
     tree = tree_hash(root)
+    if ok:
+        scratch_bad = scratch_problem(root)
+        if scratch_bad:
+            ok = False
+            out_lines.append("FAIL: " + scratch_bad)
     summary = ("all verify commands passed" if ok else
-               ("locked tests changed" if tampered else f"exit {results[-1]['exit']}: {results[-1]['cmd']}"))
+               (scratch_bad if scratch_bad else
+                ("locked tests changed" if tampered else f"exit {results[-1]['exit']}: {results[-1]['cmd']}")))
     if ok and (tree is None or tree != before or tests_intact(root, approved)):
         # code under test rewrote files (or the locked tests) while it ran
         ok, summary = False, "files changed while the verify commands ran"
@@ -2655,6 +2899,7 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         learning_id = _next_learning_id(read_text(root / "docs" / "LEARNINGS.md"), "D")
         _append_learning(root, f"- `D{learning_id} · {now_iso()[:10]} · {slug} · dod-override · {reason}`")
     before = tree_hash(root)
+    scratch_bad = scratch_problem(root)
     for name in ("test", "lint", "typecheck"):
         c = cmds.get(name)
         cid = "tests" if name == "test" else name
@@ -2665,6 +2910,8 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         add(cid, code == 0, f"exit {code}{' (timed out)' if timed_out else ''}: {c}" + ("" if code == 0 else "\n" + redact(tail(out + "\n" + err, 20))))
     tampered = tests_intact(root, approved)
     add("locked_tests", not tampered, "unchanged" if not tampered else f"{len(tampered)} locked test file(s) changed")
+    scratch_bad = scratch_bad or scratch_problem(root)
+    add("breaker_scratch", not scratch_bad, scratch_bad or f"{BREAKER_DIR}/ holds data files only")
     cps = plan.get("checkpoints") or []
     by_id = _ids_by_plan(cps)
     frozen = frozen_ids(approved)
@@ -2801,7 +3048,7 @@ def cmd_setup(root: Path) -> str:
         groups.append(group)
         hooks[event] = groups
     write_json(settings_path, settings)
-    excluded = _git_exclude(root, [f"/{STATE_DIR}/", "/.claude/settings.local.json"])
+    excluded = _git_exclude(root, [f"/{STATE_DIR}/", f"/{BREAKER_DIR}/", "/.claude/settings.local.json"])
     _key(create=True)
     return (f"hooks written to {norm(settings_path)}\n"
             f"git-excluded: {', '.join(excluded) or 'already excluded'}\n"
@@ -2918,7 +3165,48 @@ def _merge_foreign_rules(root: Path, path: Path, existing: str, rules: list[dict
     return f"merged the locked-tests rule into the project's {norm(path)} (backup in {STATE_DIR}/)"
 
 
+def _remove_tree(path: str) -> None:
+    """rmtree that never follows a link or junction: a link is removed, not entered."""
+    try:
+        entries = list(os.scandir(path))
+    except OSError:
+        return
+    for e in entries:
+        try:
+            if _lstat_is_link(e.path):
+                try:
+                    os.unlink(e.path)
+                except OSError:
+                    os.rmdir(e.path)  # a directory junction
+            elif e.is_dir(follow_symlinks=False):
+                _remove_tree(e.path)
+            else:
+                os.unlink(e.path)
+        except OSError:
+            pass
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
+def _scratch_deletable(root: Path, slug: str) -> bool:
+    """<root>/.tq-breaker/<slug> may be deleted: both are real directories (no link,
+    no junction, no reparse point) and the slug dir sits directly in the scratch root."""
+    base, scratch = root / BREAKER_DIR, root / BREAKER_DIR / slug
+    if _lstat_is_link(str(base)) or not base.is_dir() or _lstat_is_link(str(scratch)) or not scratch.is_dir():
+        return False
+    try:
+        base_r = base.resolve()
+        return scratch.resolve().parent == base_r and base_r == root.resolve() / BREAKER_DIR
+    except OSError:
+        return False
+
+
 def cmd_finish(root: Path, slug: str) -> str:
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+        log_event(root, "finish-refused", "-", reason="bad-slug")
+        raise SystemExit(f"finish refused: {slug!r} isn't a build slug (lowercase letters, digits and hyphens only).")
     if rolled_back(root, slug):
         raise SystemExit(rollback_msg(slug, root) + " before finishing.")
     sess = load_session(root, slug)
@@ -2942,6 +3230,14 @@ def cmd_finish(root: Path, slug: str) -> str:
             write_json(settings_path, settings)
             msg += "\ngate hooks removed from settings.local.json"
     log_event(root, "finish", slug)
+    base, scratch = root / BREAKER_DIR, root / BREAKER_DIR / slug
+    if os.path.lexists(scratch) or (os.path.lexists(base) and _lstat_is_link(str(base))):
+        if _scratch_deletable(root, slug):
+            _remove_tree(str(scratch))
+            log_event(root, "breaker-scratch-removed", slug)
+        else:
+            log_event(root, "breaker-scratch-refused", slug)
+            msg += f"\nbreaker scratch dir left in place: {BREAKER_DIR}/{slug} is a link or not a plain directory"
     _answer_pending(root, slug, "result", "approve", "terminal")
     return f"build '{slug}' finished\n{msg}"
 

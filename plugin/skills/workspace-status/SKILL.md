@@ -32,7 +32,7 @@ the workspace's Claude identity dir).
 
 Summarize in plain language:
 - Which client workspace (if any) the cwd resolves to
-- Whether it's trusted (`tq allow <name>` if not — ask before running)
+- Whether it's trusted (if not, ask the user to run `tq allow <name>` in their terminal)
 - Any `tq doctor` findings and their one-line fixes
 - Any `tq bundle diff` drift and whether `tq bundle sync` would fix it
 

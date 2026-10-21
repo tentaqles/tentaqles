@@ -74,7 +74,16 @@ class MetaMemory:
         session_count: int = 0,
         total_touches: int = 0,
     ) -> None:
-        """Update workspace status after a session ends."""
+        """Update workspace status after a session ends.
+
+        The summary and node ids are masked by the workspace's own data classes
+        (read from the manifest at *root_path*) before they reach meta.db.
+        """
+        from tentaqles import privacy
+
+        classes = privacy.workspace_classes(root_path)
+        summary = privacy.redact_str(summary, classes)
+        active_nodes = [privacy.redact_str(str(n), classes) for n in active_nodes[:20]]
         self._conn.execute(
             """INSERT INTO workspace_status
                (workspace_id, display_name, root_path, last_active, last_summary, active_nodes, session_count, total_touches)

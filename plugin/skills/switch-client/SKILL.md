@@ -71,7 +71,7 @@ For common `tq doctor` findings:
 
 | Finding | Fix |
 |---------|-----|
-| Workspace untrusted | `tq allow <name>` (ask the user before running this — see add-client's rule: never auto-trust) |
+| Workspace untrusted | ask the user to run `tq allow <name>` in their terminal (never auto-trust; see add-client's rule) |
 | Git identity drift | `tq doctor` explains the mismatch; identity is managed by `tq`, don't hand-edit `git config user.email` |
 | Env drift (TQ_WS stale) | Open a new shell, or `eval "$(tq env --shell <shell>)"` |
 | Claude config dir drift | Start Claude from a tq-activated shell in the workspace, or `tq run <name> -- claude` |

@@ -11,10 +11,10 @@ View and modify fields in the current client's `.tentaqles.yaml` manifest.
 sections of `.tentaqles.yaml` — they are written by `tq add` and verified by
 `tq doctor`. Don't hand-edit those sections; use `tq` commands instead (e.g.
 `tq add` to reconfigure identities, or edit the file for other fields then
-run `tq allow <name>` to re-trust it — editing any section changes the
+ask the user to run `tq allow <name>` in their terminal to re-trust it — editing any section changes the
 manifest hash and revokes trust). Everything else (cloud, database, stack,
 language, PM tool, blocked commands) is fine to edit by hand with this
-skill; after any hand-edit, run `tq allow <name>` to re-trust the manifest.
+skill; after any hand-edit, ask the user to run `tq allow <name>` in their terminal to re-trust the manifest (you never run it).
 
 ## Detect Current Client
 
@@ -62,14 +62,14 @@ Parse the user's request and map it to the manifest field. Common patterns:
 
 | User says | Manifest field | Action |
 |-----------|---------------|--------|
-| "change email to x@y.com" | `git.email` (tq-owned) | Run `tq add` again / edit + `tq allow` — don't just hand-edit and skip re-trust |
+| "change email to x@y.com" | `git.email` (tq-owned) | Run `tq add` again / edit, then ask the user to run `tq allow` — don't just hand-edit and skip re-trust |
 | "set cloud to aws" | `cloud.provider` | Update + regenerate preflight |
 | "change database to snowflake" | `database.provider` + `database.dialect` | Update both |
 | "add fastapi to stack" | `stack` | Append |
 | "remove django from stack" | `stack` | Remove |
 | "set language to pt-BR" | `language` | Update |
-| "change git user to newuser" | `git.user` + `git.expected_user` (tq-owned) | Edit, then `tq allow <name>` to re-trust |
-| "switch to gitlab" | `git.provider` + `git.host` + `git.preflight` (tq-owned) | Edit, then `tq allow <name>` to re-trust |
+| "change git user to newuser" | `git.user` + `git.expected_user` (tq-owned) | Edit, then ask the user to run `tq allow <name>` in their terminal to re-trust |
+| "switch to gitlab" | `git.provider` + `git.host` + `git.preflight` (tq-owned) | Edit, then ask the user to run `tq allow <name>` in their terminal to re-trust |
 | "add rate limit to blocked" | `git.blocked_commands` or `cloud.blocked_commands` | Append |
 | "set subscription to X" | `cloud.subscription_name` | Update |
 | "set pm to jira" | `project_management.provider` | Update |
@@ -99,7 +99,7 @@ with open(manifest_path, 'r') as f:
 #
 # Do NOT hand-edit identity fields here (git.email, git.user,
 # git.expected_user, git.provider/host): they are tq-owned. Change them with
-# `tq add` / `tq doctor`, then re-trust with `tq allow <name>` — a hand-edit
+# `tq add` / `tq doctor`, then ask the user to re-trust with `tq allow <name>` in their terminal — a hand-edit
 # changes the manifest hash and leaves the workspace untrusted.
 
 with open(manifest_path, 'w') as f:

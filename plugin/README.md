@@ -128,9 +128,20 @@ stack: [python, flask, postgresql]
 signals:
   enabled: true
   subscribe_to: [dirtybird, acme-corp]
+
+# Optional — what data this client's projects handle (written by /tentaqles:classify-data)
+data:
+  classes: [pii, financial]
+  regions: [BR]
+  paths:
+    - path: db/schema/customers.sql
+      classes: [pii]
+  incident: {authority: ANPD, contact: dpo@example.test}
 ```
 
 Tentaqles will detect this file from any subfolder and enforce the correct identity.
+
+The `data:` block declares which data classes the client's projects handle (`public`, `internal`, `pii`, `sensitive`, `financial`, `children`, `secrets`; `checksummed` and `all` are detector groups). Run `/tentaqles:classify-data` to build it from the PRD and the schema: it also writes `docs/privacy.md` and `docs/incident-playbook.md`. The plugin masks those classes (CPF, CNPJ, card, IBAN, e-mail, phone) in everything it stores or sends: memory, the Obsidian vault, ingest, signals and model prompts. Without a `data:` block only the checksummed identifiers and secrets are masked. Reading personal data locally is never blocked; only the exits are guarded.
 
 ## How it works
 
@@ -246,13 +257,18 @@ Stack-aware guidance that triggers on the work itself (no workspace state needed
 | `/tentaqles:profile-refresh` | Regenerate the learned workspace profile from `memory.db` |
 | `/tentaqles:cross-patterns` | Display cross-workspace patterns detected by the pattern cron job |
 | `/tentaqles:emit-signal` | Emit an inter-workspace signal to one or more registered workspaces |
-| `/tentaqles:build` | Build a feature through gated checkpoints in its own worktree: spec, approved plan, locked tests, an evidence-based test gate tied to the code on disk, risk-triaged reviewer crew with recorded verdicts, fixer loop, definition of done (agents `build-planner`, `build-critic`, `build-fixer`) |
+| `/tentaqles:build` | Build a feature through gated checkpoints in its own worktree: spec, approved plan, locked tests, an evidence-based test gate tied to the code on disk, risk-triaged reviewer crew with recorded verdicts, fixer loop, definition of done (agents `build-planner`, `build-critic`, `build-fixer`, plus the crew `spec-critic`, `security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`, `breaker` and the `arbiter`) |
 | `/tentaqles:prd` | Write or revise `docs/prd.md` through a short interview: numbered requirements with binary checks, data classes, security boundaries, open decisions |
 | `/tentaqles:kickoff` | Start a new project from a planning-ready PRD: stack ADR, project CLAUDE.md, threat model, privacy record, CI ratchet, then the first checkpoints through the build engine |
 | `/tentaqles:feature` | Add a feature from a PRD requirement (adds its own FR when missing): grill-me interview, spec slice, gated build, definition of done |
 | `/tentaqles:fix` | Fix a bug reproduce-first: locked failing regression test, root cause, smallest change, risk-sized review (`--hotfix` skips the critic, never the test) |
 | `/tentaqles:direction` | Read-only drift audit against the PRD: grades each requirement Aligned/Partial/Missing/Contradicted and returns ON COURSE, DRIFTING or OFF COURSE |
 | `/tentaqles:dod` | Run the definition of done for a build (`build-gate dod`) and turn MISSING items into work; a waiver is human-only (`--override`, run by you in a terminal) |
+| `/tentaqles:threat-model` | Write or update `docs/threat-model.md`: STRIDE per trust boundary from the PRD and the code; unmitigated high-risk rows become requirements or open decisions; only you accept a risk |
+| `/tentaqles:classify-data` | Classify the data a project handles: manifest `data:` block, `docs/privacy.md` (purpose, legal basis, retention) and `docs/incident-playbook.md` |
+| `/tentaqles:privacy-review` | Run the `privacy-reviewer` (LGPD/GDPR) on a diff that touches classified data and turn its findings into fixes and privacy-record updates |
+| `/tentaqles:supply-chain` | Pin actions to SHAs, least-privilege workflow permissions, lockfile-only installs, dependency audit, SBOM on release, secret scanning; extends `ci-pipeline` |
+| `/tentaqles:llm-security-review` | Run the `llm-security-reviewer` on a diff that adds LLM calls, prompts, agent tools, MCP servers, RAG or hooks, against OWASP LLM 2025 and Agentic 2026 |
 | `/tentaqles:loop` | Overnight Karpathy-style loop on one feature: approve locked checks by day; at night a runner keeps or undoes one headless round at a time in a worktree, under dollar/token/time/round budgets with MCP and network off; morning summary + signal |
 
 ## Hooks
@@ -262,13 +278,13 @@ All hooks are automatic and run silently.
 | Hook | Fires on | What it does |
 |------|----------|-------------|
 | `SessionStart` | Session begins (and after compaction) | `bootstrap.py` (one-time deps install, started in the background — never blocks), `tq_hook.sh session-start` → `tq claude-hook session-start` (report resolved identity + `tq doctor`; no switching), then `session-preamble.py --memory-only` (inject memory context; after a compaction, re-inject decisions, hot nodes and open pending instead) |
-| `PreToolUse` | Before Bash commands | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest, block on drift (exit 2). Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. MCP tool calls are not gated in 0.4.0. |
+| `PreToolUse` | Before Bash commands | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest, block on drift (exit 2). Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. MCP tool calls are not gated in 0.4.0. With a `data:` block, tq's data-protection exit rules also guard commits, pushes, PR text and fixtures that carry personal data (reading it stays allowed). |
 | `PostToolUse` | After Bash/Edit/Write | `knowledge-capture.py` — scan output for decisions, record file touches |
 | `Stop` | Claude finishes a turn | `stop-capture.py` — once per session, if the conversation weighed alternatives, ask Claude to record the decisions; once per session, if the context passes ~350k tokens, suggest `/compact` or session-wrap (non-blocking); `tq_hook.sh stop` → `tq claude-hook stop` — Jev completion-evidence check (only with a `decision:` block; shadow mode logs, enforce mode sends Claude back once per session when it claims verification the transcript does not show) |
 | `UserPromptSubmit` | You send a prompt | `tq_hook.sh prompt-submit` → `tq claude-hook prompt-submit` — Jev skill picker (only with a `decision:` block; logs the pick, and in enforce mode adds a one-line "Skill that may fit" hint; never blocks) |
 | `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory; the detached worker also extracts semantic facts with `claude -p --model haiku` (opt out: `TENTAQLES_SEMANTIC_FACTS=0`) |
 
-`/tentaqles:build` and `/tentaqles:loop` bring their own hooks without touching `hooks.json`: `build-gate.py setup` writes the checkpoint gate into the project's `.claude/settings.local.json` (removed by `build-gate.py finish`), and `loop-runner.py` passes its guard to the headless child through `--settings`.
+`/tentaqles:build` and `/tentaqles:loop` bring their own hooks without touching `hooks.json`: `build-gate.py setup` writes the checkpoint gate into the project's `.claude/settings.local.json` (removed by `build-gate.py finish`), and `loop-runner.py` passes its guard to the headless child through `--settings`. The gate's checks are text checks, not isolation: the signing key stays readable by the agent's OS user until tq isolates it, so the gate guards against a careless agent, not one set on defeating it.
 
 All hooks and skills use `tq_run.sh` → `tq_env.sh` to resolve a working Python interpreter, bypassing broken venv shims and machines where only `python3` exists (macOS). POSIX-compatible, tested on Windows (Git Bash), macOS, and Linux.
 

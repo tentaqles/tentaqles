@@ -105,7 +105,15 @@ def test_spawn_detached_returns_while_the_child_is_still_working(tmp_path: Path)
     assert done.returncode == 0, done.stderr.decode(errors="replace")
     assert b"parent done" in done.stdout
     assert not marker.exists(), "the parent only returned once the child had finished"
-    assert _wait_for(marker.exists, timeout=60), "the child died with its parent"
+    # The marker exists as soon as the child opens it, before the payload is
+    # written: wait for the content, not for the file.
+    def _payload():
+        try:
+            return marker.read_bytes() == b"payload-from-hook"
+        except OSError:
+            return False
+
+    assert _wait_for(_payload, timeout=60), "the child died with its parent"
     assert marker.read_bytes() == b"payload-from-hook"
 
 

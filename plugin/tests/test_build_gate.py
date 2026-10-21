@@ -1429,6 +1429,448 @@ def test_kept_override_logs_an_event(repo, tq_home):
     assert kept["ok"] is True and "reason" not in kept
 
 
+# Fix round 6: the breaker's scratch directory moved out of the gate's state directory
+# to <root>/.tq-breaker/<slug>/. No write into .claude/build/ is allowed while a build
+# exists, a former breaker/ subpath included.
+_B4 = ".claude/build/demo/breaker"
+_TQB = ".tq-breaker/demo"
+
+
+def _scratch_sources(repo):
+    """Regular files to copy from, in the project and in the old scratch path."""
+    (repo / "x").write_text("x", encoding="utf-8")
+    (repo / "app.db").write_bytes(b"db")
+    scratch = repo / ".claude" / "build" / "demo" / "breaker"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "app.db").write_bytes(b"db")
+    (scratch / "reg").write_text("r", encoding="utf-8")
+    return scratch
+
+
+def _dir_link(target, link):
+    """A directory link this box can make: a junction on Windows, else a symlink."""
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError, AttributeError):
+        pytest.skip("can't create a directory link here")
+
+
+@pytest.mark.parametrize("cmd", [
+    # formerly allowed by the carve-out: now refused
+    f"mkdir -p {_B4}",
+    f"pg_dump --clean --if-exists -w --file {_B4}/db.sql app",
+    f"cp app.db {_B4}/app.db",
+    f"rm -rf {_B4}/.",
+    f"curl -sS --max-time 10 -o {_B4}/r.json -w '%{{http_code}}' 'http://localhost:3000/api/x?id=1'",
+    f"setsid node server.js > {_B4}/app.log 2>&1",
+    f"timeout 120 sqlite3 app.db .dump > {_B4}/app.sql",
+    f"echo $! > {_B4}/app.pid",
+    f"setsid nohup timeout 900 npm run dev > {_B4}/app.log 2>&1 & echo $! > {_B4}/app.pid",
+    f"cp {_B4}/app.db ./app.db",
+    f"cp -r fixtures/ {_B4}/", f"cp -t {_B4} app.db x", f"install -m 644 app.db {_B4}/app.db",
+    f"mv x {_B4}/x", f"cp x {_B4}/x", f"mkdir -p {_B4}/logs", f"echo x > {_B4}/note",
+    f"echo x >> {_B4}/note", f"touch {_B4}/t", f"echo x | tee {_B4}/t",
+    f"echo x > {_B4}/reg", f"truncate -s0 {_B4}/reg", f"Set-Content {_B4}/reg x",
+    f"echo x | Out-File {_B4}/reg", f"cp x {_B4}", f"cp x {_B4}/patch",
+    # always refused
+    "cp x .claude/build/demo/approved.json",
+    f"echo y > {_B4}/../approved.json",
+    f"cp .claude/build/demo/approved.json {_B4}/a",
+    f"cp x {_B4}/a; cp x .claude/build/demo/evidence.jsonl",
+    "mkdir -p .claude/build/other/breaker",
+    f"echo x > {_B4}/a && echo y > .claude/build/demo/state.json",
+    f"cp missing.db {_B4}/app.db",
+    f"rsync -a fixtures/ {_B4}/f/",
+    # output options write too
+    "pg_dump -w -f .claude/build/demo/db.sql app", "pg_dump -w --file=.claude/build/demo/db.sql app",
+    "curl -s -o.claude/build/demo/r.json http://127.0.0.1:3000/",
+    "curl -s --output .claude/build/demo/r.json http://127.0.0.1:3000/",
+    "curl -s -D .claude/build/demo/h.txt http://127.0.0.1:3000/",
+    "wget -q -O .claude/build/demo/r.json http://127.0.0.1:3000/",
+    'sqlite3 app.db ".backup .claude/build/demo/b.db"',
+])
+def test_no_write_into_the_state_dir_while_a_build_exists(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "fixtures" / "sub").mkdir(parents=True)
+    (repo / "fixtures" / "sub" / "a.json").write_text("{}", encoding="utf-8")
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_build_state_dir_stays_excluded_from_the_hash() -> None:
+    assert gate.STATE_DIR in gate.HASH_EXCLUDES
+    assert ".tq-breaker" in gate.HASH_EXCLUDES
+
+
+@pytest.mark.parametrize("cmd", [
+    f"mkdir -p {_TQB}",
+    f"pg_dump --clean --if-exists -w --file {_TQB}/db.sql app",
+    f"cp app.db {_TQB}/app.db",
+    f"setsid node server.js > {_TQB}/app.log 2>&1",
+    f"setsid nohup timeout 900 npm run dev > {_TQB}/app.log 2>&1 & echo $! > {_TQB}/app.pid",
+    f"timeout 120 sqlite3 app.db .dump > {_TQB}/app.sql",
+    f"PGCONNECT_TIMEOUT=5 timeout 120 psql -w -v ON_ERROR_STOP=1 --single-transaction -f {_TQB}/backup.sql app",
+    f"cp {_TQB}/app.db ./app.db",
+    f"curl -sS --max-time 10 -o {_TQB}/r.json -w '%{{http_code}}' 'http://localhost:3000/api/x?id=1'",
+    f'sqlite3 app.db ".backup {_TQB}/b.db"',
+    "ln -s src/a.py lib/a.py",
+])
+def test_breaker_scratch_outside_the_state_dir_is_allowed(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / ".tq-breaker" / "demo").mkdir(parents=True)
+    (repo / ".tq-breaker" / "demo" / "app.db").write_bytes(b"db")
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    f"echo y > {_TQB}/../../.claude/build/demo/approved.json",
+    f"cp {_TQB}/a .claude/build/demo/approved.json",
+    f"ln -s ../../.claude/build/demo/approved.json {_TQB}/l",
+    f"ln .claude/build/demo/approved.json {_TQB}/h",
+    f"cp -s ../../.claude/build/demo/approved.json {_TQB}/l",
+    f"cp --link .claude/build/demo/approved.json {_TQB}/h",
+    r"cmd /c mklink /J .tq-breaker\demo\j .claude\build",
+    f"New-Item -ItemType Junction -Path {_TQB}/j -Target .claude/build/demo",
+    f"New-Item -ItemType HardLink -Path {_TQB}/h -Target .claude/build/demo/approved.json",
+    f"fsutil hardlink create {_TQB}/h .claude/build/demo/approved.json",
+    r"fsutil hardlink create .tq-breaker\demo\h .claude\build\demo\approved.json",
+    "fsutil.exe hardlink create lib/h .claude/build/demo/approved.json",
+])
+def test_links_from_the_scratch_dir_into_the_state_dir_are_refused(repo, cmd):
+    _active_build(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_tree_hash_ignores_the_breaker_scratch_dir(repo):
+    h1 = gate.tree_hash(repo)
+    (repo / ".tq-breaker" / "demo").mkdir(parents=True)
+    (repo / ".tq-breaker" / "demo" / "app.log").write_text("log\n", encoding="utf-8")
+    (repo / ".tq-breaker" / "demo" / "db.sql").write_text("-- dump\n", encoding="utf-8")
+    assert h1 is not None and gate.tree_hash(repo) == h1
+
+
+def test_setup_git_excludes_the_breaker_scratch_dir(repo):
+    gate.cmd_setup(repo)
+    gate.cmd_setup(repo)
+    exclude = subprocess.run(["git", "rev-parse", "--git-path", "info/exclude"], cwd=repo,
+                             capture_output=True, text=True).stdout.strip()
+    path = Path(exclude) if os.path.isabs(exclude) else repo / exclude
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines.count("/.tq-breaker/") == 1 and "/.claude/build/" in lines
+
+
+# Former carve-out block cases: still refused.
+@pytest.mark.parametrize("cmd", [
+    f'cp {_B4}/a .claude/"build"/demo/approved.json',
+    f'rm {_B4}/a .claude/b"uild"/demo/approved.json',
+    f"cp {_B4}/a '.claude/build'/demo/approved.json",
+    f"cp {_B4}/a .claude/buil[d]/demo/approved.json",
+    f"dd if={_B4}/a of={_B4}/../approved.json",
+    f"cp -t {_B4} x .claude/build/demo/approved.json",
+    f"cp x --target-directory={_B4}/..",
+    f"rm -rf {_B4}/a/../..",
+    f"cp {_B4}/a $X",
+    f"cp {_B4}/a .claude/build/*/approved.json",
+    """python -c "import os;open(os.path.join('.claude/build/demo/breaker','..','approved.json'),'w')" """,
+    """python -c "import urllib.parse as u;open(u.unquote('.claude/build/demo/breaker/..%2Fapproved.json'),'w')" """,
+    """python3 -c "open('.claude/build/demo/breaker/x','w')" """,
+    """node -e "require('fs').writeFileSync('.claude/build/demo/breaker/x','')" """,
+    f"""bash -c 'cp x {_B4}/a' > {_B4}/log""",
+    "cp x .claude/build/demo/BREAKER/a" if os.name != "nt" else "cp x .claude/build/demo/breakers/a",
+    f"""setsid python -c "open('.claude/build/demo/breaker/x','w')" > {_B4}/log""",
+    "ln -s ../approved.json .claude/build/demo/breaker/l",
+    "ln .claude/build/demo/approved.json .claude/build/demo/breaker/h",
+    "cp -s ../approved.json .claude/build/demo/breaker/l",
+    "cp -sf ../approved.json .claude/build/demo/breaker/l",
+    "cp --link .claude/build/demo/approved.json .claude/build/demo/breaker/h",
+    "cp --symbolic-link ../approved.json .claude/build/demo/breaker/l",
+    r"cmd /c mklink .claude\build\demo\breaker\l ..\approved.json",
+    "New-Item -ItemType SymbolicLink -Path .claude/build/demo/breaker/l -Target ../approved.json",
+    "New-Item -ItemType Junction -Path .claude/build/demo/breaker/j -Target .claude/build/demo",
+    "fsutil hardlink create .claude/build/demo/breaker/h .claude/build/demo/approved.json",
+    'ln -s ../b"uild"/demo/approved.json .claude/x',
+    "ln -s build/demo/approved.json .claude/x",
+    "ln -s ../approved.json lib/l && mv lib/l .claude/build/demo/breaker/l && echo x > .claude/build/demo/breaker/l",
+    r"cmd /c mklink /J lib\j .claude && mv lib/j .claude/build/demo/breaker/j",
+    f"cp -s x lib/l; cp x {_B4}/a",
+    f"New-Item -ItemType Junction -Path lib/j -Target .claude; echo x > {_B4}/a",
+    f"Move-Item x {_B4}/x", f"mi x {_B4}/x", f"Copy-Item x {_B4}/x", f"cpi x {_B4}/x",
+    f"Rename-Item {_B4}/app.db b.db", f"rni {_B4}/app.db b.db", f"move x {_B4}/x",
+    f"copy x {_B4}/x", f"ren {_B4}/app.db b.db", f"xcopy x {_B4}", f"robocopy . {_B4} x",
+    f"rsync -rt --link-dest=.. src/ {_B4}/", f"rsync -rt --link-dest ../ src/ {_B4}/",
+    f"rsync -rt --compare-dest=.. src/ {_B4}/", f"rsync -rt --copy-dest=.. src/ {_B4}/",
+    f"rsync x {_B4}/x", f"rsync.exe x {_B4}/x", f"rsync --copy-links x {_B4}/x",
+    f"cp --l x {_B4}/x", f"cp --li x {_B4}/x", f"cp --lin x {_B4}/x", f"cp --l=x x {_B4}/x",
+])
+def test_former_breaker_carve_out_block_cases_stay_blocked(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "lib").mkdir(exist_ok=True)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_writes_through_links_in_the_old_scratch_path_are_refused(repo):
+    _active_build(repo)
+    scratch = _scratch_sources(repo)
+    _dir_link(repo / ".claude" / "build" / "demo", scratch / "j")
+    for cmd in (f"echo x > {_B4}/j/approved.json", f"cp x {_B4}/j", f"cp x {_B4}/a",
+                f"echo x > {_B4}/ok"):
+        assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_moving_a_junction_into_the_old_scratch_path_is_refused(repo):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "lib").mkdir(exist_ok=True)
+    _dir_link(repo / ".claude", repo / "lib" / "j")
+    for cmd in (f"mv lib/j {_B4}/j; echo x > {_B4}/j/build/demo/approved.json",
+                f"cp -a lib/ {_B4}/", f"cp -r lib {_B4}/", f"Move-Item lib/j {_B4}/j",
+                f"robocopy lib {_B4} /SL /E", f"Copy-Item lib/j {_B4}/j", f"xcopy /B /E lib {_B4}"):
+        assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+# Fix round 7: the breaker's scratch directory holds data files only, so nothing there
+# can be collected by the project's own test run.
+@pytest.mark.parametrize("cmd", [
+    f"echo x > {_TQB}/conftest.py",
+    f"echo x > {_TQB}/test_a.py",
+    f"echo x > {_TQB}/a_test.go",
+    f"echo x > {_TQB}/a.spec.ts",
+    f"echo x > {_TQB}/a.test.js",
+    f"echo x > {_TQB}/run.mjs",
+    f"echo x > {_TQB}/pytest.ini",
+    f"echo x > {_TQB}/setup.cfg",
+    f"echo x > {_TQB}/pyproject.toml",
+    f"echo x > {_TQB}/evil.pth",
+    f"cp x {_TQB}/a.cjs",
+])
+def test_scratch_refuses_code_test_and_config_files(repo, cmd):
+    _active_build(repo)
+    (repo / "x").write_text("x", encoding="utf-8")
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "scratch dir holds data files only (sql, db, db-wal, db-shm, log, pid, json, txt, csv, tsv, dump, bak" in err, cmd
+
+
+@pytest.mark.parametrize("tool,name", [("Write", "test_a.py"), ("Edit", "conftest.py"), ("Write", "a.ts")])
+def test_scratch_file_tool_refuses_code_files(repo, tool, name):
+    _active_build(repo)
+    p = str(repo / ".tq-breaker" / "demo" / name)
+    payload = {"tool_name": tool, "tool_input": {"file_path": p, "content": "x", "old_string": "a", "new_string": "b"}}
+    code, _, err = hook(repo, payload)
+    assert code == 2 and "scratch dir holds data files only" in err
+
+
+@pytest.mark.parametrize("cmd", [
+    f"pg_dump --file {_TQB}/db.sql app",
+    f"echo 1 > {_TQB}/app.pid",
+    f"echo 1 > {_TQB}/app.log",
+    f"echo 1 > {_TQB}/r.json",
+    f"echo 1 > {_TQB}/n.txt",
+    f"echo 1 > {_TQB}/d.csv",
+    f"cp app.db {_TQB}/app.db-wal",
+    f"cp app.db {_TQB}/app.db-shm",
+])
+def test_scratch_data_files_stay_allowed(repo, cmd):
+    _active_build(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_finish_removes_the_scratch_dir_and_logs(repo, tq_home):
+    approve_and_lock(repo)
+    d = repo / ".tq-breaker" / "demo"
+    d.mkdir(parents=True)
+    (d / "app.db").write_bytes(b"db")
+    (repo / ".tq-breaker" / "other").mkdir()
+    gate.cmd_finish(repo, "demo")
+    assert not d.exists() and (repo / ".tq-breaker" / "other").exists()
+    kinds = [json.loads(l)["kind"] for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert "breaker-scratch-removed" in kinds
+
+
+def test_finish_without_a_scratch_dir_logs_nothing_extra(repo, tq_home):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    kinds = [json.loads(l)["kind"] for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert kinds == ["finish"]
+
+
+# Final fix wave, I1: `finish` deletes only <root>/.tq-breaker/<slug> for a valid slug,
+# never through a link, and the hook refuses links made at or under .tq-breaker/.
+@pytest.mark.parametrize("slug", ["..", ".", "a/b", "a\\b", "../demo", "Demo", "-x", "", "demo/.."])
+def test_finish_refuses_a_bad_slug_and_deletes_nothing(repo, tq_home, slug):
+    approve_and_lock(repo)
+    d = repo / ".tq-breaker" / "demo"
+    d.mkdir(parents=True)
+    (d / "app.db").write_bytes(b"db")
+    with pytest.raises(SystemExit):
+        gate.cmd_finish(repo, slug)
+    assert (repo / ".git").exists() and (repo / "app.py").exists() and (d / "app.db").exists()
+    assert (repo / ".claude" / "build").exists()
+
+
+def _outside_scratch(tmp_path):
+    outside = tmp_path / "outside"
+    (outside / "demo").mkdir(parents=True)
+    (outside / "demo" / "keep.txt").write_text("keep", encoding="utf-8")
+    return outside
+
+
+def _event_kinds(tq_home):
+    return [json.loads(l)["kind"] for l in (tq_home / "build-gate" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+def test_finish_does_not_follow_a_link_at_the_scratch_root(repo, tq_home, tmp_path):
+    approve_and_lock(repo)
+    outside = _outside_scratch(tmp_path)
+    _dir_link(outside, repo / ".tq-breaker")
+    gate.cmd_finish(repo, "demo")
+    assert (outside / "demo" / "keep.txt").exists()
+    kinds = _event_kinds(tq_home)
+    assert "breaker-scratch-refused" in kinds and "breaker-scratch-removed" not in kinds
+
+
+def test_finish_does_not_follow_a_link_at_the_slug_dir(repo, tq_home, tmp_path):
+    approve_and_lock(repo)
+    outside = _outside_scratch(tmp_path)
+    (repo / ".tq-breaker").mkdir()
+    _dir_link(outside / "demo", repo / ".tq-breaker" / "demo")
+    gate.cmd_finish(repo, "demo")
+    assert (outside / "demo" / "keep.txt").exists()
+    kinds = _event_kinds(tq_home)
+    assert "breaker-scratch-refused" in kinds and "breaker-scratch-removed" not in kinds
+
+
+@pytest.mark.parametrize("cmd", [
+    "ln -s ../x .tq-breaker/demo/l",
+    "ln -s ../outside .tq-breaker",
+    "ln -sfn /tmp .tq-breaker/demo",
+    "ln app.py .tq-breaker/demo/h.txt",
+    r"cmd /c mklink /J .tq-breaker C:\outside",
+    r"cmd /c mklink /J .tq-breaker\demo C:\outside",
+    r"mklink /D .tq-breaker\demo\d ..\..\lib",
+    "New-Item -ItemType Junction -Path .tq-breaker -Target lib",
+    "New-Item -ItemType SymbolicLink -Path .tq-breaker/demo/l -Target ../../lib",
+    "cp -s app.py .tq-breaker/demo/l.txt",
+    "tar -xf a.tar -C .tq-breaker/demo",
+    "fsutil hardlink create .tq-breaker/demo/h.txt app.py",
+])
+def test_links_at_or_under_the_scratch_dir_are_refused(repo, cmd):
+    _active_build(repo)
+    (repo / "lib").mkdir(exist_ok=True)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+# Final fix wave, I2: scratch holds data files only (extension allowlist), checked on every
+# write target the hook can see and, fail closed, by a bounded walk at verify and dod.
+@pytest.mark.parametrize("cmd", [
+    f"echo x > {_TQB}/jest.config.json",
+    f"echo x > {_TQB}/vitest.config.mts",
+    f"echo x > {_TQB}/package.json",
+    f"echo x > {_TQB}/tsconfig.json",
+    f"echo x > {_TQB}/run.sh",
+    f"echo x > {_TQB}/notes",
+    f"echo x > {_TQB}/a.rb",
+    f"cp x {_TQB}/sub/a.go",
+])
+def test_scratch_refuses_names_outside_the_data_allowlist(repo, cmd):
+    _active_build(repo)
+    (repo / "x").write_text("x", encoding="utf-8")
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "scratch dir holds data files only" in err, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    f"echo 1 > {_TQB}/a.tsv", f"pg_dump -w --file {_TQB}/db.dump app", f"cp app.db {_TQB}/app.db.bak",
+    f"cp app.db {_TQB}/app-wal", f"cp app.db {_TQB}/app-shm", f"mkdir -p {_TQB}", "mkdir -p .tq-breaker",
+])
+def test_scratch_allowlisted_data_names_are_allowed(repo, cmd):
+    _active_build(repo)
+    (repo / "app.db").write_bytes(b"db")
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+# The end state each hook bypass leaves behind (cp into a dir, cp -r, python -c / node -e,
+# git show > file, cd && echo, tar -C, a config named *.json).
+@pytest.mark.parametrize("rel", [
+    "a.test.js",                 # cp src/a.test.js .tq-breaker/demo/
+    "src/a.test.js",             # cp -r src .tq-breaker/demo/
+    "conftest.py",               # python -c "open(...)" / git show HEAD:app.py > ... / cd ... && echo x > ...
+    "logs.txt/x.spec.ts",        # nested under a data-named dir
+    "pkg/mod.py",                # tar -xf a.tar -C .tq-breaker/demo
+    "jest.config.json",
+    "vitest.config.mts",
+    "package.json",
+])
+def test_verify_refuses_code_left_in_the_scratch_dir(repo, rel):
+    approve_and_lock(repo)
+    p = repo / ".tq-breaker" / "demo" / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("x", encoding="utf-8")
+    (repo / ".tq-breaker" / "demo" / "app.log").write_text("log", encoding="utf-8")
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and ".tq-breaker" in msg and p.name in msg, msg
+    assert gate.norm(str(p.parent)) not in gate.norm(msg) and "app.log" not in msg
+    ev = gate.latest_evidence(repo, "demo", 2)
+    assert ev and ev["ok"] is False
+
+
+def test_verify_refuses_a_link_in_the_scratch_dir(repo):
+    approve_and_lock(repo)
+    (repo / ".tq-breaker" / "demo").mkdir(parents=True)
+    _dir_link(repo / "tests", repo / ".tq-breaker" / "demo" / "j")
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "link" in msg
+
+
+def test_verify_refuses_a_linked_scratch_root(repo, tmp_path):
+    approve_and_lock(repo)
+    outside = _outside_scratch(tmp_path)
+    _dir_link(outside, repo / ".tq-breaker")
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "link" in msg
+
+
+def test_verify_fails_closed_when_the_scratch_walk_hits_its_cap(repo, monkeypatch):
+    approve_and_lock(repo)
+    monkeypatch.setattr(gate, "SCRATCH_WALK_CAP", 5)
+    d = repo / ".tq-breaker" / "demo"
+    d.mkdir(parents=True)
+    for i in range(8):
+        (d / f"{i}.log").write_text("x", encoding="utf-8")
+    code, msg = gate.cmd_verify(repo, "demo", 2)
+    assert code == 1 and "too many" in msg
+
+
+def test_scratch_walk_cap_is_2000():
+    assert gate.SCRATCH_WALK_CAP == 2000
+
+
+def test_verify_is_unaffected_by_a_data_only_scratch_dir(repo):
+    approve_and_lock(repo)
+    d = repo / ".tq-breaker" / "demo"
+    (d / "logs").mkdir(parents=True)
+    for n in ("db.sql", "app.db", "app.db-wal", "app.db-shm", "x-wal", "x-shm", "logs/app.log", "app.pid",
+              "r.json", "n.txt", "d.csv", "d.tsv", "db.dump", "app.db.bak"):
+        (d / n).write_text("x", encoding="utf-8")
+    assert gate.cmd_verify(repo, "demo", 2)[0] == 0
+
+
+def test_dod_refuses_code_left_in_the_scratch_dir(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+    (repo / ".tq-breaker" / "demo").mkdir(parents=True)
+    (repo / ".tq-breaker" / "demo" / "conftest.py").write_text("x", encoding="utf-8")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 1 and "MISSING breaker_scratch" in out and "conftest.py" in out
+    (repo / ".tq-breaker" / "demo" / "conftest.py").unlink()
+    assert gate.cmd_dod(repo, "demo")[0] == 0
 # --- final fix wave ------------------------------------------------------------------------
 
 
@@ -3093,3 +3535,75 @@ def test_echo_home_into_a_file_when_tq_home_is_under_home(tmp_path, monkeypatch)
     assert hook(root, bash('echo "$HOME" >> out.txt'))[0] == 0
     assert hook(root, bash("tar czf x.tgz $HOME"))[0] == 2
     assert hook(root, bash("cat $HOME/.tq/build-gate/hmac.key"))[0] == 2
+
+
+# --- merge of the spine: link and option-write rules inside _ShellScan ------------------------
+
+
+@pytest.mark.parametrize("cmd", [
+    r"cd .tq-breaker && cmd /c mklink /J demo C:\outside",
+    "cd .tq-breaker/demo && ln -s ../../app.py l.txt",
+    "cd lib && ln -s ../.claude/build/demo/approved.json x",
+    "cd .claude && ln -s build/demo/approved.json x",
+])
+def test_link_rule_follows_the_tracked_cwd(repo, cmd):
+    (repo / "lib").mkdir()
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "mysqldump --result-file=tests/test_a.py app",
+    "mysqldump -r tests/test_a.py app",
+    "cd tests && pg_dump -w --file test_a.py app",
+    "cd tests && curl -s -o test_a.py http://127.0.0.1:3000/",
+    'cd tests && sqlite3 ../app.db ".backup main test_a.py"',
+])
+def test_option_writes_feed_the_destination_check(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "grep --file pats.txt tests/test_a.py",
+    "docker build --file Dockerfile .",
+    "git log --oneline -- tests/test_a.py",
+    "tar -tf a.tar",
+    "sort pats.txt",
+])
+def test_file_option_is_no_write_for_readers(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 0
+
+
+@pytest.mark.parametrize("slug", ["..", ".", "Demo", "a/b", "-x", ""])
+def test_approve_refuses_a_slug_finish_would_refuse(repo, slug):
+    with pytest.raises(SystemExit, match="approve refused"):
+        gate.cmd_approve(repo, slug)
+
+
+# Pre-ship fixes: bundled short flags and the scratch class on destinations only.
+@pytest.mark.parametrize("cmd", [
+    "curl -sSo tests/test_a.py file:///etc/hosts",
+    "wget -qO tests/test_a.py file:///etc/hosts",
+    "pg_dump -wf .claude/build/demo/x.sql app",
+    "sort -ro tests/test_a.py in.txt",
+])
+def test_bundled_short_flag_output_writes_are_judged(repo, cmd):
+    _active_build(repo)
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_bundled_short_flag_output_to_a_plain_file_is_allowed(repo):
+    _active_build(repo)
+    assert hook(repo, bash("curl -sS https://x -o out.json"))[0] == 0
+    assert hook(repo, bash("curl -sSo out.json https://x"))[0] == 0
+
+
+def test_scratch_class_applies_to_destinations_only(repo):
+    _active_build(repo)
+    (repo / ".tq-breaker" / "demo").mkdir(parents=True)
+    assert hook(repo, bash("cd .tq-breaker/demo && echo x > a.log"))[0] == 0
+    assert hook(repo, bash("cd .tq-breaker/demo && echo x > conftest.py"))[0] == 2
+    assert hook(repo, bash("cd .tq-breaker/demo && pg_dump -w --file db.sql app"))[0] == 0

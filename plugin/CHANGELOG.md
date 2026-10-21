@@ -4,8 +4,62 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-21
+
 ### Added
 
+- **Security and privacy pack.** Skills `threat-model`, `classify-data`,
+  `privacy-review`, `supply-chain` and `llm-security-review`; read-only agents
+  `security-reviewer`, `privacy-reviewer` and `llm-security-reviewer`
+  (tools Read, Glob, Grep) and the `breaker` agent (below). Templates under
+  `templates/process/` for the threat model, the privacy record and the
+  incident playbook. Checklists with stable row ids sit next to the skills
+  (`skills/<name>/references/`): STRIDE prompts, a data dictionary, and
+  `checklist.md` for privacy (LGPD/GDPR), supply chain (SLSA/SBOM) and LLM
+  security (OWASP LLM 2025 and Agentic 2026). The build crew adds
+  `security-reviewer` on the auth/secrets/api/state/destructive flags or a
+  workflow or dependency-manifest change, `privacy-reviewer` on the
+  `classified_data` flag or a diff in `classified_paths`, and
+  `llm-security-reviewer` on the `agentic` flag; `build-gate record-review`
+  accepts all three. `/tentaqles:classify-data` writes the manifest `data:`
+  block (classes, regions, paths and tables per class, retention, incident
+  authority), `docs/privacy.md` and `docs/incident-playbook.md`. Only the user
+  accepts a risk in the threat model; an unmitigated high-risk row becomes a
+  requirement or a `NEEDS-DECISION` item. The skills have a headless mode and
+  do not commit on `main`/`master`. Needs a tq that knows the manifest `data:`
+  block, `tq redact`, the `classified_data` and `agentic` triage flags and the
+  guard rules `tq/commit-pii`, `tq/push-pii`, `tq/text-pii`,
+  `tq/pii-fixture-dump`, `tq/iac-apply`, `tq/remote-migration`,
+  `tq/settings-widen`, `tq/settings-shell-write`, `tq/gha-branch-ref` and
+  `tq/commit-message`.
+- **`breaker`, the adversarial QA agent.** Runs only for checkpoints marked
+  `"runnable": true`, starts the app with the project's `commands.run` on
+  127.0.0.1, and returns BLOCKED when a data store host is not provably local.
+  It backs up and restores local test data (stop, restore, verify on every
+  exit path; `RESTORED: no` forces BLOCKED), blanks third-party keys and stops
+  the app's whole process tree. Its scratch directory is
+  `<root>/.tq-breaker/<slug>/`: data files only (the gate refuses code, test
+  and config file names there), git-excluded by `build-gate setup`, left out
+  of the evidence hash and deleted by `build-gate finish`.
+- **Data classes mask what leaves the machine.** `tentaqles.privacy` gains the
+  classes `pii`, `sensitive`, `financial`, `children`, `secrets`, `public`,
+  `internal`, `checksummed` and `all`, with CPF, CNPJ, card (Luhn), IBAN,
+  e-mail and phone detectors. Read paths (`classes=None`) mask secrets only,
+  as before. Exits mask with the workspace's classes: every `memory.db` write,
+  the Obsidian export, the markdown ingest (masked before it is truncated),
+  signals, Jev payloads, model prompts, loop ideas and skill-correction
+  records. An unknown class or an empty class list fails closed to the
+  strictest set. The manifest `data.prompts.allow` governs model calls only;
+  memory and the vault always mask. `tq:allow-pii` marks a deliberate line.
+- Gate: shell commands that create links (`ln`, `mklink`, `fsutil`, `tar`,
+  `unzip` and similar) are refused when they touch the gate's state paths or
+  `.tq-breaker/`; output options such as `-o`, `--output` and `--file` count
+  as writes to the path they name; `build-gate verify` and the definition of
+  done walk `.tq-breaker/` (DoD check `breaker_scratch`); `approve` and
+  `finish` validate the slug, so `finish ..` cannot delete anything outside
+  the scratch directory.
+- Manifest `data.classes` also accepts the two detector-group names `checksummed`
+  (CPF, CNPJ, card, IBAN) and `all` (every detector, the strictest set), as tq's `internal/redact.Known` does.
 - **Development process spine.** New skills `prd`, `kickoff`, `feature`, `fix`,
   `direction` and `dod`; agents `spec-critic` and `arbiter`; process templates
   under `templates/process/` (PRD, ADR, spec slice, fix spec, LEARNINGS,
@@ -87,6 +141,17 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
   `build-planner` documents a per-checkpoint `"runnable": true` field, set
   when the checkpoint produces something the project's `commands.run` can
   start, so the build crew can add the `breaker` reviewer.
+- `ci-pipeline` names the rule ids: `tq/gha-branch-ref` denies `@main` and
+  `@master` in workflow files and `tq/gha-unpinned` asks on `@latest`; it
+  points to `/tentaqles:supply-chain` for the full checklist.
+- `tq allow`, `build-gate judge`, `approve`, `answer` and `dod --override` are
+  human-only everywhere; no skill tells the agent to run them.
+
+### Fixed
+
+- **Flaky `test_spawn_detached_returns_while_the_child_is_still_working`.** It
+  read the marker the moment it appeared, before the detached child wrote the
+  payload; it now polls, bounded, until the content is complete.
 
 ## [0.11.1] — 2026-10-20
 
