@@ -103,3 +103,10 @@ def test_fix_skill_is_reproduce_first_and_bug_shaped() -> None:
     assert "AskUserQuestion` is never called" in body
     assert "build-gate ask" in body and "knowing the review gate is `n/a`" in body
     assert "you never run `build-gate dod" in body
+    flat = " ".join(body.split())
+    assert "Set `hotfix=yes` only when the user passed `--hotfix`" in flat and "never infer it from severity" in flat
+    assert "No reproduction, no fix" in flat and "only the critic is skipped" in flat
+    assert "adds the tester's test file path to the checkpoint's `tests`" in flat
+    assert "before the human approves" in flat and "lock-tests` right after approval" in flat
+    assert "Only when the plan has `hotfix` true, after `build-gate verify` passes" in flat
+    assert "substitute `$root`" in flat

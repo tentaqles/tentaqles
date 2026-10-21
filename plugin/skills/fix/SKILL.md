@@ -12,8 +12,9 @@ implementer cannot edit it. Everything runs through the build engine with
 `workflow=fix`, so the evidence, review and definition of done are recorded.
 
 Human stops: (1) approve the reproduction, the severity and the one-checkpoint
-plan; (2) accept the result. With `--hotfix`, stop 1 is a shorter approval of
-the hotfix plan, and the debt is recorded.
+plan; (2) accept the result. With `--hotfix`, stop 1 is the same
+`build-gate approve` of the same signed plan; only the critic is skipped, and
+the debt is recorded.
 
 Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
 `$ARGUMENTS`, `AskUserQuestion` is never called. Before a build slug exists
@@ -42,7 +43,9 @@ anything else.
 
 Severity: `critical` (data loss or exposure, everyone blocked), `high` (a core
 flow broken), `medium`, `low`. `--hotfix` applies only when production is
-affected now and the fix path is obvious; write the reason in the spec header.
+affected now and the fix path is obvious. Set `hotfix=yes` only when the user
+passed `--hotfix`; never infer it from severity. Without the flag, `hotfix=no`.
+Write the user's reason in the spec header.
 
 ## 2. Reproduce first, then lock
 
@@ -54,8 +57,11 @@ with top-level `"workflow": "fix"` and `"hotfix"` set from the flag.
 Before human stop 1, a tester subagent (`[checkpoint fix-<slug>#1 tests]`)
 writes the smallest failing test at the lowest layer that shows the bug (unit
 before API before CLI before UI), runs it, and reports the failure line. The
-test file goes in the plan's `tests` for the checkpoint. The gate refuses
-`lock-tests` until the plan is approved, so the lock follows stop 1:
+The planner ran before the tester, so the orchestrator adds the tester's test
+file path to the checkpoint's `tests` in `docs/checkpoints/fix-<slug>.json`
+(Edit, or re-run the planner with the path) before the human approves: the gate
+locks only files the approved plan lists. The gate also refuses `lock-tests`
+until the plan is approved, so run `lock-tests` right after approval:
 
 ```bash
 "$TENTAQLES_PY" "$_tqe/scripts/build-gate.py" lock-tests fix-<slug> 1 <test file>
@@ -91,12 +97,13 @@ file:line evidence and the human decides.
 
 ## 4. Review by risk
 
-Phase 2c and 2d of the engine. `tq decide triage` on the diff picks the depth:
+Steps c (behavior gate) and d (review gate) of `skills/build/SKILL.md` "Phase 2: Checkpoint loop". `tq decide triage` on the diff picks the depth:
 low risk gets the light critic; high risk gets the full crew; files outside the
 failing path add `spec-critic`. With an approved `--hotfix` plan the review
 gate may be `n/a` and the critic is skipped, **never the behaviour gate**: the
-locked regression test still has to pass through `build-gate verify`. Then
-record the debt so nobody forgets:
+locked regression test still has to pass through `build-gate verify`. Only
+when the plan has `hotfix` true, after `build-gate verify` passes, record the
+debt so nobody forgets (substitute `$root` for `<root>` and the slug):
 
 ```bash
 echo '{"cwd": "<root>", "event": "pending", "data": {"description": "post-hotfix review of fix-<slug>: run the full crew on the diff and close the LEARNINGS entry", "priority": "high", "node_ids": ["docs/specs/fix-<slug>.md"]}}' | "$TENTAQLES_PY" "$_tqe/scripts/memory-bridge.py"
