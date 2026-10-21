@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,11 +48,35 @@ func piiClasses(ws *resolve.Workspace) []string {
 	return out
 }
 
-// hits formats findings as "file:line (detector)" without values.
-func hits(lines []commitscan.AddedLine, classes []string) []string {
-	var out []string
+var fixturePathRe = regexp.MustCompile(`(?i)(^|/)(tests?|fixtures|__fixtures__|seeds?|seed|testdata)/`)
+
+const markerScopeNote = "tq:allow-pii only applies inside test and fixture directories"
+
+func slashPath(p string) string {
+	p = strings.ReplaceAll(p, `\`, "/")
+	for strings.HasPrefix(p, "./") {
+		p = p[2:]
+	}
+	return p
+}
+
+func inFixtureDir(file string) bool { return fixturePathRe.MatchString(slashPath(file)) }
+
+// hits formats findings as "file:line (detector)" without values. The
+// tq:allow-pii marker exempts a line only inside test and fixture
+// directories; markerIgnored reports a marked line that was still a finding.
+func hits(lines []commitscan.AddedLine, classes []string) (out []string, markerIgnored bool) {
 	for _, l := range lines {
-		for name := range redact.Count(l.Text, classes) {
+		var counts map[string]int
+		if inFixtureDir(l.File) {
+			counts = redact.Count(l.Text, classes)
+		} else {
+			counts = redact.CountAll(l.Text, classes)
+			if len(counts) > 0 && strings.Contains(l.Text, redact.AllowMarker) {
+				markerIgnored = true
+			}
+		}
+		for name := range counts {
 			if l.Line > 0 {
 				out = append(out, fmt.Sprintf("%s:%d (%s)", l.File, l.Line, name))
 			} else {
@@ -64,7 +89,7 @@ func hits(lines []commitscan.AddedLine, classes []string) []string {
 	if len(out) > 10 {
 		out = append(out[:10], fmt.Sprintf("... and %d more", len(out)-10))
 	}
-	return out
+	return out, markerIgnored
 }
 
 func dedupeSorted(s []string) []string {
@@ -81,123 +106,228 @@ func commitPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, 
 	if !call.IsShell() || !commitscan.PlanFor(call.Command).Commits {
 		return policy.Decision{}, false
 	}
-	h := hits(commitscan.Added(cwd, call.Command, gitcfg.RunGitIn), piiClasses(ws))
+	added, err := commitscan.Added(cwd, call.Command, gitcfg.RunGitIn)
+	if err != nil {
+		return ruleDecision(policy.Ask, "tq/commit-pii", "could not scan what this commit records for personal data; check the repository state or confirm"), true
+	}
+	h, markerIgnored := hits(added, piiClasses(ws))
 	if len(h) == 0 {
 		return policy.Decision{}, false
 	}
-	return ruleDecision(action, "tq/commit-pii", "this commit would record personal or financial data: "+strings.Join(h, ", ")+
-		". Keep real values out of the repository (synthetic fixtures, environment variables, external storage); mark a known-synthetic line with `tq:allow-pii`"), true
-}
-
-func pushPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
-	if !call.IsShell() {
-		return policy.Decision{}, false
+	reason := "this commit would record personal or financial data: " + strings.Join(h, ", ") +
+		". Keep real values out of the repository (synthetic fixtures, environment variables, external storage); mark a known-synthetic line in a test or fixture file with `tq:allow-pii`"
+	if markerIgnored {
+		reason += ". " + markerScopeNote
 	}
-	isPush := false
-	for _, inv := range guard.GitInvocations(guard.StripHeredocs(call.Command)) {
-		if inv.Sub != "push" {
-			continue
-		}
-		skip := false
-		for _, a := range inv.Args {
-			if a == "--delete" || a == "-d" || a == "--dry-run" || a == "-n" {
-				skip = true
-			}
-		}
-		if !skip {
-			isPush = true
-		}
-	}
-	if !isPush {
-		return policy.Decision{}, false
-	}
-	var diff string
-	resolved := false
-	for _, rng := range []string{"@{push}..HEAD", "@{upstream}..HEAD", "origin/HEAD..HEAD"} {
-		out, err := gitcfg.RunGitIn(cwd, "diff", "--no-color", "--no-ext-diff", "-U0", rng)
-		if err == nil {
-			diff = out
-			resolved = true
-			break
-		}
-	}
-	if !resolved || diff == "" {
-		return policy.Decision{}, false // nothing to compare against: no opinion
-	}
-	if len(diff) > maxPushScan {
-		return ruleDecision(policy.Ask, "tq/push-pii", "the unpushed diff is too large to scan for personal data; push smaller batches or confirm"), true
-	}
-	var lines []commitscan.AddedLine
-	file := ""
-	for _, l := range strings.Split(diff, "\n") {
-		l = strings.TrimRight(l, "\r")
-		switch {
-		case strings.HasPrefix(l, "+++ "):
-			file = strings.TrimPrefix(strings.TrimPrefix(l, "+++ "), "b/")
-		case strings.HasPrefix(l, "+"):
-			lines = append(lines, commitscan.AddedLine{File: file, Text: l[1:]})
-		}
-	}
-	h := hits(lines, piiClasses(ws))
-	if len(h) == 0 {
-		return policy.Decision{}, false
-	}
-	return ruleDecision(action, "tq/push-pii", "the commits about to be pushed record personal or financial data: "+strings.Join(h, ", ")+
-		". Rewrite those commits locally (remove the values, amend or rebase) before pushing"), true
+	return ruleDecision(action, "tq/commit-pii", reason), true
 }
 
 var ghTextRe = regexp.MustCompile(`(?i)\bgh\s+(pr|issue|release)\s+(create|edit|comment|review|merge|close)\b`)
-var textFileFlag = regexp.MustCompile(`(?i)\s(--body-file|--notes-file|--file|-F)[\s=]+("([^"]+)"|'([^']+)'|(\S+))`)
+
+func textRelevant(seg string) bool {
+	if ghTextRe.MatchString(seg) {
+		return true
+	}
+	for _, inv := range guard.GitInvocations(guard.StripHeredocs(seg)) {
+		if inv.Sub == "commit" || inv.Sub == "tag" || inv.Sub == "notes" {
+			return true
+		}
+	}
+	return false
+}
+
+var bodyFileFlags = []string{"--body-file", "--notes-file", "--file"}
+
+// bodyFileArgs returns the values of the message-file flags in a segment
+// (case-sensitive: -F yes, -f no). "-" means stdin.
+func bodyFileArgs(toks []string) []string {
+	var out []string
+	for i := 0; i < len(toks); i++ {
+		t := toks[i]
+		if t == "-F" || t == "--body-file" || t == "--notes-file" || t == "--file" {
+			if i+1 < len(toks) {
+				out = append(out, toks[i+1])
+				i++
+			}
+			continue
+		}
+		matched := false
+		for _, f := range bodyFileFlags {
+			if strings.HasPrefix(t, f+"=") {
+				out = append(out, strings.TrimPrefix(t, f+"="))
+				matched = true
+				break
+			}
+		}
+		if !matched && strings.HasPrefix(t, "-F") && len(t) > 2 {
+			out = append(out, strings.TrimPrefix(t[2:], "="))
+		}
+	}
+	return out
+}
+
+// scanBodyFile reads a message file with a size cap. ask is non-empty when
+// the file cannot be scanned safely.
+func scanBodyFile(cwd, p string, classes []string) (found []string, ask string) {
+	if p == "-" {
+		return nil, "body from stdin cannot be scanned; use --body-file <path>"
+	}
+	full := p
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(cwd, full)
+	}
+	fi, err := os.Stat(full)
+	if err != nil {
+		return nil, "could not read the body file; write it inside the repository"
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, "cannot scan a non-regular body file"
+	}
+	if fi.Size() > maxTextFile {
+		return nil, "the body file is larger than the scan limit; shorten it"
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		return nil, "could not read the body file; write it inside the repository"
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, maxTextFile))
+	if err != nil {
+		return nil, "could not read the body file; write it inside the repository"
+	}
+	for name := range redact.CountAll(string(raw), classes) {
+		found = append(found, filepath.Base(full)+" ("+name+")")
+	}
+	return found, ""
+}
 
 func textPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
 	if !call.IsShell() {
 		return policy.Decision{}, false
 	}
-	relevant := ghTextRe.MatchString(call.Command)
-	for _, inv := range guard.GitInvocations(guard.StripHeredocs(call.Command)) {
-		if inv.Sub == "commit" || inv.Sub == "tag" || inv.Sub == "notes" {
-			relevant = true
-		}
-	}
-	if !relevant {
-		return policy.Decision{}, false
-	}
 	classes := piiClasses(ws)
-	var where []string
-	for name := range redact.Count(call.Command, classes) {
-		where = append(where, "command text ("+name+")")
-	}
-	for _, m := range textFileFlag.FindAllStringSubmatch(call.Command, -1) {
-		p := m[3] + m[4] + m[5]
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(cwd, p)
-		}
-		raw, err := os.ReadFile(p)
-		if err != nil {
+	var where, asks []string
+	anyRelevant := false
+	for _, sg := range splitSegments(call.Command) {
+		if !textRelevant(sg.Text) {
 			continue
 		}
-		if len(raw) > maxTextFile {
-			raw = raw[:maxTextFile]
+		anyRelevant = true
+		toks, ok := tokenize(sg.Text)
+		if sg.Unbalanced || !ok {
+			asks = append(asks, "could not parse the command safely (unbalanced quote); simplify the quoting")
+			continue
 		}
-		for name := range redact.Count(string(raw), classes) {
-			where = append(where, filepath.Base(p)+" ("+name+")")
+		for name := range redact.CountAll(sg.Text, classes) {
+			where = append(where, "command text ("+name+")")
+		}
+		for _, p := range bodyFileArgs(toks) {
+			found, ask := scanBodyFile(cwd, p, classes)
+			where = append(where, found...)
+			if ask != "" {
+				asks = append(asks, ask)
+			}
 		}
 	}
-	if len(where) == 0 {
-		return policy.Decision{}, false
+	if anyRelevant && strings.Contains(call.Command, "<<") {
+		// a heredoc body is data on following lines; scan the whole command text
+		for name := range redact.CountAll(call.Command, classes) {
+			where = append(where, "command text ("+name+")")
+		}
 	}
-	sort.Strings(where)
-	return ruleDecision(action, "tq/text-pii", "this text would publish personal or financial data: "+strings.Join(where, ", ")+
-		". Describe the case without the values (a ticket id, a role, a masked sample)"), true
+	if len(where) > 0 {
+		sort.Strings(where)
+		return ruleDecision(action, "tq/text-pii", "this text would publish personal or financial data: "+strings.Join(dedupeSorted(where), ", ")+
+			". Describe the case without the values (a ticket id, a role, a masked sample)"), true
+	}
+	if len(asks) > 0 {
+		return ruleDecision(policy.Ask, "tq/text-pii", asks[0]), true
+	}
+	return policy.Decision{}, false
 }
 
 var (
-	fromTableRe   = regexp.MustCompile(`(?i)(?:\b(?:from|join|into|table|update)\s+|\s(?:-t|--table)[\s=]+)("?[a-z_][\w]*"?(?:\."?[a-z_][\w]*"?)?)`)
-	fixtureDirRe  = regexp.MustCompile(`(?i)(^|[\s'"=])\.?/?((tests?|fixtures|__fixtures__|seeds?|testdata)/)`)
-	writeTargetRe = regexp.MustCompile(`(?i)(>{1,2}\s*|\s(-o|-f|--out|--output|--file)[\s=]|\bto\s+'?)([^\s'";&|]+)`)
-	copyToRe      = regexp.MustCompile(`(?i)\\?copy\b[^;]*\bto\s+'?([^\s'";]+)`)
-	pgDumpFileRe  = regexp.MustCompile(`(?i)\bpg_dump\b[^;|&]*\s(-f|--file)[\s=]([^\s'"]+)`)
+	fromTableRe = regexp.MustCompile(`(?i)(?:\b(?:from|join|into|table|update)\s+|\s(?:-t|--table)[\s=]+)("?[a-z_][\w]*"?(?:\."?[a-z_][\w]*"?)?)`)
+	copyToRe    = regexp.MustCompile(`(?i)\\?copy\b[^;]*\bto\s+(?:'([^']+)'|"([^"]+)"|([^\s'";]+))`)
+	redirRe     = regexp.MustCompile(`^\d*>>?(.*)$`)
 )
+
+var copyVerbs = map[string]bool{"cp": true, "mv": true, "rsync": true, "install": true, "tee": true, "copy": true}
+
+// writeTargets lists every place the command writes to: redirects, output
+// flags, dump files, COPY ... TO and copy verbs, in any segment.
+func writeTargets(cmd string) []string {
+	var out []string
+	for _, m := range copyToRe.FindAllStringSubmatch(cmd, -1) {
+		out = append(out, m[1]+m[2]+m[3])
+	}
+	for _, sg := range splitSegments(cmd) {
+		toks, _ := tokenize(sg.Text)
+		dump, mysql := false, false
+		for _, t := range toks {
+			switch baseName(t) {
+			case "pg_dump", "pg_dumpall":
+				dump = true
+			case "mysqldump":
+				mysql = true
+			}
+		}
+		for i, t := range toks {
+			if m := redirRe.FindStringSubmatch(t); m != nil {
+				tgt := m[1]
+				if tgt == "" && i+1 < len(toks) {
+					tgt = toks[i+1]
+				}
+				if tgt != "" && !strings.HasPrefix(tgt, "&") {
+					out = append(out, tgt)
+				}
+				continue
+			}
+			names := []string{"-o", "--out", "--output"}
+			if dump {
+				names = append(names, "-f", "--file")
+			}
+			if mysql {
+				names = append(names, "-r", "--result-file")
+			}
+			for _, n := range names {
+				if t == n && i+1 < len(toks) {
+					out = append(out, toks[i+1])
+				} else if strings.HasPrefix(t, n+"=") && strings.HasPrefix(n, "--") {
+					out = append(out, strings.TrimPrefix(t, n+"="))
+				}
+			}
+		}
+		if vi := verbIndex(toks); vi >= 0 && copyVerbs[baseName(toks[vi])] {
+			verb := baseName(toks[vi])
+			var args []string
+			dir := ""
+			for i := vi + 1; i < len(toks); i++ {
+				t := toks[i]
+				switch {
+				case (t == "-t" || t == "--target-directory") && i+1 < len(toks):
+					dir = toks[i+1]
+					i++
+				case strings.HasPrefix(t, "--target-directory="):
+					dir = strings.TrimPrefix(t, "--target-directory=")
+				case strings.HasPrefix(t, "-") && len(t) > 1:
+				case redirRe.MatchString(t) && strings.Contains(t, ">"):
+				default:
+					args = append(args, t)
+				}
+			}
+			switch {
+			case dir != "":
+				out = append(out, dir)
+			case verb == "tee":
+				out = append(out, args...)
+			case len(args) >= 2:
+				out = append(out, args[len(args)-1])
+			}
+		}
+	}
+	return out
+}
 
 // pathWords returns slash-normalised words of a command that look like paths.
 func pathWords(cmd string) []string {
@@ -245,21 +375,8 @@ func piiFixtureDumpDecision(ws *resolve.Workspace, call policy.ToolCall, action 
 	if cs == nil {
 		return policy.Decision{}, false
 	}
-	var targets []string
-	for _, m := range writeTargetRe.FindAllStringSubmatch(call.Command, -1) {
-		targets = append(targets, m[3])
-	}
-	for _, m := range copyToRe.FindAllStringSubmatch(call.Command, -1) {
-		targets = append(targets, m[1])
-	}
-	for _, m := range pgDumpFileRe.FindAllStringSubmatch(call.Command, -1) {
-		targets = append(targets, m[2])
-	}
-	if f := strings.Fields(strings.TrimSpace(call.Command)); len(f) >= 3 && (f[0] == "cp" || strings.EqualFold(f[0], "copy")) {
-		targets = append(targets, f[len(f)-1])
-	}
-	for _, tgt := range targets {
-		if fixtureDirRe.MatchString(" " + strings.ReplaceAll(tgt, `\`, "/")) {
+	for _, tgt := range writeTargets(call.Command) {
+		if inFixtureDir(tgt) {
 			return ruleDecision(action, "tq/pii-fixture-dump",
 				fmt.Sprintf("this copies rows from %s (classified %s) into %s. Fixtures and seeds must be synthetic: generate them "+
 					"(Faker or a factory) or pseudonymise through a script that never writes real values. See docs/privacy.md.",

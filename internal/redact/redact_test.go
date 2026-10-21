@@ -153,3 +153,17 @@ func TestChecksummedClassAndAllowMarker(t *testing.T) {
 		t.Fatalf("allow marker ignored in Redact: %q", got)
 	}
 }
+
+func TestAllowMarkerStillMasksSecrets(t *testing.T) {
+	line := "KEY=sk-ant-abcdefghijklmnopqrstuvwxyz0123 # tq:allow-pii"
+	got := Redact(line, []string{"all"})
+	if !strings.Contains(got, "[REDACTED:anthropic_key]") {
+		t.Fatalf("secret on a marked line must still be masked: %q", got)
+	}
+	if n := Count(line, []string{"all"}); n["anthropic_key"] != 1 {
+		t.Fatalf("secret on a marked line must still be counted: %v", n)
+	}
+	if n := CountAll("row 529.982.247-25 # tq:allow-pii", []string{"checksummed"}); n["cpf"] != 1 { // tq:allow-pii
+		t.Fatalf("CountAll must ignore the marker: %v", n)
+	}
+}

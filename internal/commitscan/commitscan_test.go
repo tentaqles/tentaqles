@@ -1,6 +1,7 @@
 package commitscan
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -145,11 +146,14 @@ func TestAdded_StagedAndChainedAdd(t *testing.T) {
 	write(t, dir, "a.txt", "one\ntwo\n")
 	gitcfg.RunGitIn(dir, "add", "a.txt")
 	write(t, dir, "b.txt", "three\n")
-	added := Added(dir, `git commit -m "x"`, gitcfg.RunGitIn)
+	added, err := Added(dir, `git commit -m "x"`, gitcfg.RunGitIn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(added) != 2 || added[0].File != "a.txt" || added[1].Line != 2 {
 		t.Fatalf("staged only: %+v", added)
 	}
-	added = Added(dir, `git add b.txt && git commit -m "x"`, gitcfg.RunGitIn)
+	added, _ = Added(dir, `git add b.txt && git commit -m "x"`, gitcfg.RunGitIn)
 	files := map[string]bool{}
 	for _, a := range added {
 		files[a.File] = true
@@ -157,7 +161,14 @@ func TestAdded_StagedAndChainedAdd(t *testing.T) {
 	if !files["a.txt"] || !files["b.txt"] {
 		t.Fatalf("chained add must include the untracked file: %+v", added)
 	}
-	if Added(dir, "git log", gitcfg.RunGitIn) != nil {
+	if a, err := Added(dir, "git log", gitcfg.RunGitIn); a != nil || err != nil {
 		t.Fatal("no commit, no lines")
+	}
+}
+
+func TestAdded_GitErrorIsReported(t *testing.T) {
+	failing := func(dir string, args ...string) (string, error) { return "", errors.New("boom") }
+	if _, err := Added(t.TempDir(), `git commit -m x`, failing); err == nil {
+		t.Fatal("a failing git must surface as an error, not as an empty scan")
 	}
 }

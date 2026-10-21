@@ -231,10 +231,10 @@ func scanDiff(diff string) []Hit {
 // Added returns every added line the command would commit, in the same scope
 // Scan uses (staged diff; plus the working tree and untracked files when the
 // command also runs git add or commit -a). Binary files are skipped.
-func Added(dir, command string, run Runner) []AddedLine {
+func Added(dir, command string, run Runner) ([]AddedLine, error) {
 	p := PlanFor(command)
 	if !p.Commits {
-		return nil
+		return nil, nil
 	}
 	diffs := [][]string{{"diff", "--cached", "--no-color", "--no-ext-diff", "-U0"}}
 	if p.WorkingDir {
@@ -248,13 +248,16 @@ func Added(dir, command string, run Runner) []AddedLine {
 	for _, args := range diffs {
 		o, err := run(dir, args...)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("git %s: %w", args[0], err)
 		}
 		out = append(out, parseAdded(o)...)
 	}
 	if p.Untracked {
 		o, err := run(dir, "ls-files", "--others", "--exclude-standard")
-		if err == nil {
+		if err != nil {
+			return nil, fmt.Errorf("git ls-files: %w", err)
+		}
+		{
 			for _, f := range splitLines(o) {
 				if !p.inScope(f) {
 					continue
@@ -277,7 +280,7 @@ func Added(dir, command string, run Runner) []AddedLine {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 var hunkRe = regexp.MustCompile(`\+(\d+)`)

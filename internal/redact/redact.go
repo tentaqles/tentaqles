@@ -164,10 +164,11 @@ var byClass = map[string][]detector{
 	},
 }
 
-// Known lists the selectable classes.
-// AllowMarker on a line leaves that line unmasked and uncounted (known-synthetic data).
+// AllowMarker on a line exempts it from the personal and financial detectors
+// (known-synthetic data). Secrets on the line are still masked and counted.
 const AllowMarker = "tq:allow-pii"
 
+// Known lists the selectable classes.
 var Known = []string{"checksummed", "pii", "financial", "sensitive", "children", "secrets", "all"}
 
 // ParseClasses parses a comma-separated list; "sensitive" and "children" use
@@ -235,22 +236,25 @@ func detectors(classes []string) ([]detector, bool) {
 	return ds, withSecrets
 }
 
-// Redact replaces every validated match with [REDACTED:<detector>].
+// Redact replaces every validated match with [REDACTED:<detector>]. A line
+// carrying AllowMarker keeps its personal and financial values but secrets on
+// it are still masked.
 func Redact(text string, classes []string) string {
 	if !strings.Contains(text, AllowMarker) {
-		return redactText(text, classes)
+		return redactText(text, classes, false)
 	}
 	lines := strings.Split(text, "\n")
 	for i, l := range lines {
-		if !strings.Contains(l, AllowMarker) {
-			lines[i] = redactText(l, classes)
-		}
+		lines[i] = redactText(l, classes, strings.Contains(l, AllowMarker))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func redactText(text string, classes []string) string {
+func redactText(text string, classes []string, skipPII bool) string {
 	ds, withSecrets := detectors(classes)
+	if skipPII {
+		ds = nil
+	}
 	for _, d := range ds {
 		text = d.re.ReplaceAllStringFunc(text, func(m string) string {
 			if d.valid(m) {
@@ -265,26 +269,33 @@ func redactText(text string, classes []string) string {
 	return text
 }
 
-// Count reports findings per detector without the values.
+// Count reports findings per detector without the values. A line carrying
+// AllowMarker is exempt from the personal and financial detectors only.
 func Count(text string, classes []string) map[string]int {
 	if !strings.Contains(text, AllowMarker) {
-		return countText(text, classes)
+		return countText(text, classes, false)
 	}
 	out := map[string]int{}
 	for _, l := range strings.Split(text, "\n") {
-		if strings.Contains(l, AllowMarker) {
-			continue
-		}
-		for k, v := range countText(l, classes) {
+		for k, v := range countText(l, classes, strings.Contains(l, AllowMarker)) {
 			out[k] += v
 		}
 	}
 	return out
 }
 
-func countText(text string, classes []string) map[string]int {
+// CountAll is Count that ignores AllowMarker. Callers that must not honour
+// the marker (published text, files outside test directories) use it.
+func CountAll(text string, classes []string) map[string]int {
+	return countText(text, classes, false)
+}
+
+func countText(text string, classes []string, skipPII bool) map[string]int {
 	out := map[string]int{}
 	ds, withSecrets := detectors(classes)
+	if skipPII {
+		ds = nil
+	}
 	for _, d := range ds {
 		for _, m := range d.re.FindAllString(text, -1) {
 			if d.valid(m) {

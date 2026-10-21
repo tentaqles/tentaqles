@@ -177,3 +177,141 @@ func TestPIIRules_CanBeDisabledInManifest(t *testing.T) {
 		t.Fatalf("disable by id must work: %q", errOut)
 	}
 }
+
+func withRemote(t *testing.T, run func(args ...string) string) {
+	t.Helper()
+	remote := filepath.Join(testutil.TempDir(t), "remote.git")
+	_ = exec.Command("git", "init", "-q", "--bare", "-b", "main", remote).Run()
+	run("remote", "add", "origin", remote)
+	run("push", "-q", "-u", "origin", "main")
+	run("remote", "set-head", "origin", "main")
+}
+
+func noHooks(t *testing.T) string { return "core.hooksPath=" + testutil.TempDir(t) }
+
+func TestPushPII_ValueAddedThenRemovedInRangeIsDenied(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	withRemote(t, run)
+	stage(t, ws, run, "export.csv", "529.982.247-25\n") // tq:allow-pii
+	run("-c", noHooks(t), "commit", "-q", "-m", "feat: export")
+	run("rm", "-q", "export.csv")
+	run("-c", noHooks(t), "commit", "-q", "-m", "chore: drop export")
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push"))
+	if code != 2 || !strings.Contains(errOut, "tq/push-pii") || !strings.Contains(errOut, "(cpf)") || strings.Contains(errOut, "529") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+func TestPushPII_ScansNamedBranchNotJustHead(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	withRemote(t, run)
+	run("checkout", "-q", "-b", "feature")
+	stage(t, ws, run, "export.csv", "529.982.247-25\n") // tq:allow-pii
+	run("-c", noHooks(t), "commit", "-q", "-m", "feat: export")
+	run("checkout", "-q", "main")
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push origin feature"))
+	if code != 2 || !strings.Contains(errOut, "tq/push-pii") || !strings.Contains(errOut, "export.csv") {
+		t.Fatalf("named branch: code=%d err=%q", code, errOut)
+	}
+	code, _, errOut = runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push origin main"))
+	if strings.Contains(errOut, "tq/push-pii") {
+		t.Fatalf("clean main push denied: code=%d err=%q", code, errOut)
+	}
+}
+
+func TestPushPII_MirrorAsks(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	withRemote(t, run)
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git push --mirror"))
+	if code == 2 || !strings.Contains(out+errOut, "tq/push-pii") || !strings.Contains(out+errOut, "--mirror") {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
+	}
+}
+
+func TestCommitPII_MarkerOnlyInsideTestDirs(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	stage(t, ws, run, "src/seed.sql", "insert into c values ('529.982.247-25'); -- tq:allow-pii\n") // tq:allow-pii
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: seed"`))
+	if code != 2 || !strings.Contains(errOut, "only applies inside test and fixture directories") || strings.Contains(errOut, "529") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+func TestCommitPII_UnscannableCommitAsks(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData) // not a git repository
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: x"`))
+	if code == 2 || !strings.Contains(out+errOut, "could not scan what this commit records") {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
+	}
+}
+
+func TestTextPII_SegmentsFlagsAndAsks(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	run := gitRepo(t, ws)
+	_ = run
+	hook := []string{"claude-hook", "pre-tool-use"}
+	// a CPF in another segment is not the commit's text
+	code, _, errOut := runHook(t, hook, hookPayloadFor(t, ws, `psql -c "select * from customers where cpf='529.982.247-25'" && git commit -m "fix: x"`)) // tq:allow-pii
+	if strings.Contains(errOut, "tq/text-pii") {
+		t.Fatalf("other segment must not count: code=%d err=%q", code, errOut)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "body.md"), []byte("cpf 529.982.247-25\n"), 0o600); err != nil { // tq:allow-pii
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{
+		`gh pr create --body-file=body.md`,
+		`gh pr create -Fbody.md`,
+		`gh pr create --title t --body-file "body.md"`,
+	} {
+		code, _, errOut = runHook(t, hook, hookPayloadFor(t, ws, cmd))
+		if code != 2 || !strings.Contains(errOut, "tq/text-pii") || !strings.Contains(errOut, "body.md") {
+			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
+		}
+	}
+	for cmd, want := range map[string]string{
+		`gh pr create -F -`:                   "stdin cannot be scanned",
+		`gh pr create --body-file missing.md`: "could not read the body file",
+		`gh pr create --body-file .`:          "non-regular",
+		`gh pr create --body "unterminated`:   "could not parse the command safely",
+		`git commit -m "unterminated`:         "could not parse the command safely",
+	} {
+		code, out, errOut := runHook(t, hook, hookPayloadFor(t, ws, cmd))
+		if code == 2 || !strings.Contains(out+errOut, want) {
+			t.Errorf("%s: want ask %q, got code=%d out=%q err=%q", cmd, want, code, out, errOut)
+		}
+	}
+}
+
+func TestPiiFixtureDump_ReadsViaFileFlagAllowed(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	for _, cmd := range []string{
+		`grep -f tests/patterns.txt data/exports/q3.csv`,
+		`psql -c "select * from customers" -f tests/check.sql`,
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 0 || strings.Contains(errOut, "pii") {
+			t.Errorf("%s: wrongly denied (code=%d): %q", cmd, code, errOut)
+		}
+	}
+}
+
+func TestPiiFixtureDump_QuotedNestedChainedWrites(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	for _, cmd := range []string{
+		`cd app && cp data/exports/q3.csv "tests/fixtures/q3 copy.csv"`,
+		`rsync data/exports/ pkg/tests/fixtures/`,
+		`sudo cp data/exports/q3.csv ../tests/q3.csv`,
+		`cp -t src/test/ data/exports/q3.csv`,
+		`cat data/exports/q3.csv | tee seeds/q3.csv`,
+		`mysqldump -r tests/dump.sql customers && head data/exports/a.csv`,
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 2 || !strings.Contains(errOut, "tq/pii-fixture-dump") {
+			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
+		}
+	}
+}
