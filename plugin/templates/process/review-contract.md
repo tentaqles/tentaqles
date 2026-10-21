@@ -19,7 +19,7 @@ U1 CANNOT JUDGE — <check> — <what a human must look at, and where>
   (missing environment, a decision only a human can make). Every `U` row names
   the check and what the human must look at. A BLOCKED result goes to the human
   with the `U` rows; the human settles it in their own terminal with
-  `build-gate judge <slug> <id> --reviewer <you> --result PASS|FAIL`.
+  `build-gate judge <slug> <id> --reviewer <you> --result PASS|FAIL --note "<why>"`.
 - Every `F` row has a file and line and a concrete fix. No line, no finding.
 - `BUILT-BY-ME: yes` when you had any part in producing the change (you wrote
   code, answered the planner, fixed a round). The orchestrator then discards the

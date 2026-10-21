@@ -1235,3 +1235,104 @@ def test_hook_allows_gate_cli_state_and_mentions_without_build(repo):
 
 def test_hook_allows_gate_mentions_when_no_build_is_active(repo):
     assert hook(repo, bash('python -c "from tentaqles.workflow.gate import mint_hub_token"'))[0] == 0
+
+
+# --- fix round 1: override lifecycle, answered decisions in state ---------------------------
+
+def _dod_ready(repo, test_cmd=FAIL_CMD):
+    _project(repo, test_cmd)
+    own(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+
+
+def _dod_rec(repo):
+    return gate.read_json(repo / ".claude" / "build" / "demo" / "dod.json")
+
+
+def test_plain_dod_keeps_override_on_same_tree_and_drops_it_on_change(repo):
+    _dod_ready(repo)
+    assert gate.cmd_dod(repo, "demo", override="human accepted")[0] == 0
+    code, _ = gate.cmd_dod(repo, "demo")
+    rec = _dod_rec(repo)
+    assert gate.verified(rec) and rec["override"] == "human accepted" and rec["ok"] is True
+    assert code == 0
+    assert any(c["ok"] is False for c in rec["checks"])  # the checks were re-evaluated
+    assert gate.dod_fresh(repo, "demo", gate.TreeHash(repo))[0]
+    (repo / "app.py").write_text("def f():\n    return 9\n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 1
+    rec = _dod_rec(repo)
+    assert rec["override"] is None and rec["ok"] is False
+
+
+def test_answer_override_question_runs_the_dod_override(repo, monkeypatch):
+    _dod_ready(repo)
+    did = gate.cmd_ask(repo, "demo", "question", "override: tests cannot pass", ["override", "stop"]).split()[1]
+    with pytest.raises(SystemExit) as e:
+        gate.cmd_answer(repo, "demo", did, "override", "", actor="renato")
+    assert e.value.code == 2 and gate.pending_decisions(repo, "demo")
+    gate.cmd_answer(repo, "demo", did, "override", "accepted by renato", actor="renato")
+    rec = _dod_rec(repo)
+    assert rec["override"] == "accepted by renato" and rec["ok"] is True
+    assert gate.pending_decisions(repo, "demo") == []
+    ans = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"]
+    assert len(ans) == 1 and ans[0]["actor"] == "renato"
+    # a non-override choice only records
+    did2 = gate.cmd_ask(repo, "demo", "question", "override again?", ["override", "stop"], cid=1).split()[1]
+    gate.cmd_answer(repo, "demo", did2, "stop", "", actor="renato")
+    assert gate.pending_decisions(repo, "demo") == []
+
+
+def test_answer_result_approve_runs_finish(repo):
+    approve_and_lock(repo)
+    did = gate.cmd_ask(repo, "demo", "result", "ship it?", ["approve", "request-changes", "stop"]).split()[1]
+    gate.cmd_answer(repo, "demo", did, "request-changes", "more", actor="renato")
+    assert not gate.load_session(repo, "demo").get("finished")
+    did = gate.cmd_ask(repo, "demo", "result", "ship it?", ["approve", "request-changes", "stop"]).split()[1]
+    gate.cmd_answer(repo, "demo", did, "approve", "", actor="renato")
+    assert gate.load_session(repo, "demo").get("finished")
+    assert [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]["actor"] == "renato"
+
+
+def test_terminal_dod_override_answers_pending_override_question(repo):
+    _dod_ready(repo)
+    did = gate.cmd_ask(repo, "demo", "question", "override: x", ["override", "stop"]).split()[1]
+    other = gate.cmd_ask(repo, "demo", "question", "unrelated", ["a", "b"], cid=7).split()[1]
+    gate.cmd_dod(repo, "demo", override="human accepted")
+    pend = [p["id"] for p in gate.pending_decisions(repo, "demo")]
+    assert did not in pend and other in pend
+    rec = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
+    assert rec["choice"] == "override" and rec["actor"] == "terminal"
+
+
+def test_agent_still_cannot_run_answer_and_hub_token_can(repo, monkeypatch):
+    code, _, err = hook(repo, bash("python build-gate.py answer demo d1 --choice override --note x"))
+    assert code == 2 and "human" in err.lower()
+    _dod_ready(repo)
+    did = gate.cmd_ask(repo, "demo", "question", "override: x", ["override", "stop"]).split()[1]
+    _set_token(monkeypatch, "answer")
+    code = gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "override", "--note", "hub says ok"])
+    assert code == 0
+    rec = _dod_rec(repo)
+    assert rec["override"] == "hub says ok" and rec["ok"] is True
+    did = gate.cmd_ask(repo, "demo", "result", "ship?", ["approve", "stop"]).split()[1]
+    assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "approve"]) == 0
+    assert gate.load_session(repo, "demo").get("finished")
+
+
+def test_state_lists_answered_decisions(repo):
+    did = gate.cmd_ask(repo, "demo", "question", "which db?", ["a", "b"]).split()[1]
+    st = gate.cmd_state(repo, "demo")
+    assert [d["status"] for d in st["decisions"]] == ["pending"] and st["pending_decisions"][0]["id"] == did
+    gate.cmd_answer(repo, "demo", did, "b", "because", actor="renato")
+    st = gate.cmd_state(repo, "demo")
+    assert st["pending_decisions"] == []
+    d = [x for x in st["decisions"] if x["id"] == did][0]
+    assert d["status"] == "answered" and d["choice"] == "b" and d["note"] == "because" and d["actor"] == "renato" and d["answered_at"]
+
+
+def test_stop_message_does_not_tell_agent_to_run_override(repo):
+    _dod_ready(repo)
+    code, _, err = stop(repo)
+    assert code == 2 and "--override" in err and "human" in err.lower()
+    assert "when the human has said so" not in err

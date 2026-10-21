@@ -316,6 +316,13 @@ def pending_decisions(root: Path, slug: str) -> list[dict]:
     return [r for r in latest.values() if r.get("status") == "pending"]
 
 
+def latest_decisions(root: Path, slug: str) -> list[dict]:
+    latest: dict[str, dict] = {}
+    for rec in _decisions(root, slug):
+        latest[rec["id"]] = rec
+    return list(latest.values())
+
+
 def cmd_ask(root: Path, slug: str, kind: str, text: str, options: list[str], cid: int | None = None, reviewer: str | None = None) -> str:
     if kind not in DECISION_KINDS:
         raise SystemExit(f"unknown decision kind '{kind}'. Use one of: {', '.join(DECISION_KINDS)}.")
@@ -350,6 +357,14 @@ def _answer_pending(root: Path, slug: str, kind: str, choice: str, actor: str, c
             _answer(root, slug, p, choice, "", actor)
 
 
+def _answer_pending_option(root: Path, slug: str, kind: str, option: str, choice: str, actor: str) -> None:
+    if _ANSWERING:
+        return
+    for p in pending_decisions(root, slug):
+        if p["kind"] == kind and option in p["options"]:
+            _answer(root, slug, p, choice, "", actor)
+
+
 def cmd_answer(root: Path, slug: str, decision_id: str, choice: str, note: str, actor: str) -> str:
     global _ANSWERING
     rec = next((p for p in pending_decisions(root, slug) if p["id"] == decision_id), None)
@@ -357,10 +372,18 @@ def cmd_answer(root: Path, slug: str, decision_id: str, choice: str, note: str, 
         raise SystemExit(f"no pending decision '{decision_id}' in '{slug}'.")
     if rec["options"] and choice not in rec["options"]:
         raise SystemExit(f"choice must be one of {', '.join(rec['options'])}.")
+    is_override = rec["kind"] == "question" and "override" in rec["options"] and choice == "override"
+    if is_override and not (note or "").strip():
+        print("build-gate: answering `override` needs a reason in --note (it is logged to docs/LEARNINGS.md).", file=sys.stderr)
+        raise SystemExit(2)
     _ANSWERING = True
     try:
         if rec["kind"] == "plan-approval" and choice == "approve":
             cmd_approve(root, slug)
+        if is_override:
+            cmd_dod(root, slug, note, actor=actor)
+        if rec["kind"] == "result" and choice == "approve":
+            cmd_finish(root, slug)
         if rec["kind"] == "judge" and choice in ("PASS", "FAIL") and rec.get("reviewer") and rec.get("checkpoint") is not None:
             cmd_judge(root, slug, int(rec["checkpoint"]), rec["reviewer"], choice, note or f"answered by {actor}")
     finally:
@@ -859,7 +882,7 @@ def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
             ok, why = dod_fresh(root, slug, th)
             if not ok:
                 problems.append(f"definition of done not proven ({why}): run `build-gate dod {slug}` and fix what it lists, "
-                                f"or, when the human has said so, `build-gate dod {slug} --override \"<their reason>\"`")
+                                f"or, if it cannot be fixed, ask the human to run `build-gate dod {slug} --override \"<their reason>\"` in their own terminal (you never run it)")
     return problems
 
 
@@ -1183,6 +1206,10 @@ def cmd_state(root: Path, slug: str) -> dict:
             "pending_decisions": [{"id": p["id"], "kind": p["kind"], "checkpoint": p.get("checkpoint"),
                                    "reviewer": p.get("reviewer"), "text": p["text"], "options": p["options"], "asked_at": p["asked_at"]}
                                   for p in pending_decisions(root, slug)],
+            "decisions": [{"id": d["id"], "kind": d["kind"], "checkpoint": d.get("checkpoint"), "reviewer": d.get("reviewer"),
+                           "status": d.get("status"), "options": d.get("options"), "choice": d.get("choice"),
+                           "note": d.get("note"), "actor": d.get("actor"), "asked_at": d.get("asked_at"),
+                           "answered_at": d.get("answered_at")} for d in latest_decisions(root, slug)],
             "events_path": norm(events_path())}
 
 
@@ -1256,7 +1283,7 @@ def _append_learning(root: Path, line: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float = 900) -> tuple[int, str]:
+def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float = 900, actor: str = "terminal") -> tuple[int, str]:
     """Definition of done (spec §8.1): run the frozen project commands and check the
     obligations the diff created. Records signed dod.json; the Stop hook reads it."""
     if override is not None and not override.strip():
@@ -1343,8 +1370,16 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
     elif tree != before:
         add("stable_tree", False, "files changed while the DoD commands ran")
     ok = all(c["ok"] is not False for c in checks)
-    rec = {"slug": slug, "ok": ok or override is not None, "tree": tree, "ts": now_iso(), "checks": checks,
-           "approval_id": approved.get("approval_id"), "override": (override.strip() if override else None)}
+    kept = None
+    if override is None:
+        # A human override stays valid for the same code and approval: re-checking must not erase it.
+        prior = read_json(dod_path(root, slug))
+        if (verified(prior) and prior.get("override") and tree is not None and prior.get("tree") == tree
+                and prior.get("approval_id") == approved.get("approval_id")):
+            kept = prior["override"]
+    effective = override.strip() if override else kept
+    rec = {"slug": slug, "ok": ok or effective is not None, "tree": tree, "ts": now_iso(), "checks": checks,
+           "approval_id": approved.get("approval_id"), "override": effective}
     write_json(dod_path(root, slug), sign(rec))
     lines = []
     for c in checks:
@@ -1352,9 +1387,13 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         lines.append(f"{tag} {c['id']}: {c['detail']}")
     if override is not None:
         log_event(root, "dod-override", slug, ok=ok)
+        _answer_pending_option(root, slug, "question", "override", "override", actor)
         head = f"DoD {slug}: OVERRIDDEN by the human (logged as D{learning_id}); {sum(1 for c in checks if c['ok'] is False)} item(s) were missing"
         return 0, "\n".join([head, *lines])
     log_event(root, "dod", slug, ok=ok)
+    if kept is not None and not ok:
+        head = f"DoD {slug}: human override still in force for this code; {sum(1 for c in checks if c['ok'] is False)} item(s) missing"
+        return 0, chr(10).join([head, *lines])
     head = f"DoD {slug}: {'PASS' if ok else 'FAIL'} (tree {str(tree)[:12]})"
     return (0 if ok else 1), "\n".join([head, *lines])
 
@@ -1767,7 +1806,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "dod":
         if a.override is not None and not (hub_actor_ok("dod", a.slug) or human_confirm(f"accept the missing definition-of-done items for '{a.slug}'")):
             return 2
-        code, msg = cmd_dod(root, a.slug, a.override, a.timeout)
+        code, msg = cmd_dod(root, a.slug, a.override, a.timeout, actor=hub_actor_ok("dod", a.slug) or "terminal")
         print(msg)
         return code
     elif a.cmd == "ask":
