@@ -3580,3 +3580,30 @@ def test_file_option_is_no_write_for_readers(repo, cmd):
 def test_approve_refuses_a_slug_finish_would_refuse(repo, slug):
     with pytest.raises(SystemExit, match="approve refused"):
         gate.cmd_approve(repo, slug)
+
+
+# Pre-ship fixes: bundled short flags and the scratch class on destinations only.
+@pytest.mark.parametrize("cmd", [
+    "curl -sSo tests/test_a.py file:///etc/hosts",
+    "wget -qO tests/test_a.py file:///etc/hosts",
+    "pg_dump -wf .claude/build/demo/x.sql app",
+    "sort -ro tests/test_a.py in.txt",
+])
+def test_bundled_short_flag_output_writes_are_judged(repo, cmd):
+    _active_build(repo)
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_bundled_short_flag_output_to_a_plain_file_is_allowed(repo):
+    _active_build(repo)
+    assert hook(repo, bash("curl -sS https://x -o out.json"))[0] == 0
+    assert hook(repo, bash("curl -sSo out.json https://x"))[0] == 0
+
+
+def test_scratch_class_applies_to_destinations_only(repo):
+    _active_build(repo)
+    (repo / ".tq-breaker" / "demo").mkdir(parents=True)
+    assert hook(repo, bash("cd .tq-breaker/demo && echo x > a.log"))[0] == 0
+    assert hook(repo, bash("cd .tq-breaker/demo && echo x > conftest.py"))[0] == 2
+    assert hook(repo, bash("cd .tq-breaker/demo && pg_dump -w --file db.sql app"))[0] == 0

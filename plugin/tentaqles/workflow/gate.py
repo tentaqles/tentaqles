@@ -1722,9 +1722,22 @@ def _option_writes(cmd_name: str, cargs: list[str]) -> tuple[bool, list[str]]:
             if nxt is not None:
                 out.append(nxt)
                 i += 1
-        elif len(a) > 2 and a[:2] in shorts:
-            writes = True
-            out.append(a[2:])  # `-opath`
+        elif len(a) > 2 and a[0] == "-" and a[1] != "-" and a[1].isalpha():
+            # a bundled short cluster (`-sSo path`, `-qO path`, `-wf path`, `-opath`): the first
+            # letter that is one of the tool's output options takes the rest of the word, or the next word
+            letters = {o[1] for o in shorts if len(o) == 2}
+            for k in range(1, len(a)):
+                if not a[k].isalpha():
+                    break
+                if a[k] in letters:
+                    writes = True
+                    rest = a[k + 1:]
+                    if rest:
+                        out.append(rest)
+                    elif nxt is not None:
+                        out.append(nxt)
+                        i += 1
+                    break
         i += 1
     return writes, out
 
@@ -1826,6 +1839,8 @@ class _ShellScan:
         hits: list[tuple[str, str]] = []
         for rel, absn in self.resolved(word, bases):
             cls = classify(self.root, rel, absn, self.locked, self.active)
+            if cls == "scratch" and not dest:
+                cls = None  # the data-files-only class judges what a command writes, not every word
             if cls:
                 hits.append((cls, rel or absn))
             hits.extend(self.ancestor_hits(absn, recursive, cmd_name, key_safe))
