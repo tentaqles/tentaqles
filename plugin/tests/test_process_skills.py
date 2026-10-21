@@ -50,3 +50,23 @@ def test_build_decision_records_are_headless_only() -> None:
     assert "First write the record" not in body
     assert body.count("--kind plan-approval") >= 4  # headless block, split, Request changes, re-approval rule
     assert "Log it as an H<n> line" not in body and "H<n> line in `docs/LEARNINGS.md`" in body
+
+
+def test_dod_skill_runs_the_gate_and_explains_override() -> None:
+    body = _body("dod")
+    assert SNIPPET in body and "build-gate.py" in body and "dod" in body
+    assert "--override" in body and "LEARNINGS" in body
+    assert "never" in body.lower() and "transcript" in body.lower()
+    assert "human runs it" in body and "--options override,stop" in body
+    assert "AskUserQuestion` is never called" in body and "build-gate state <slug> --json" in body
+    assert 'dod <slug> --override "<their words' not in body.replace("<their reason>", "")
+
+
+def test_direction_is_read_only_and_uses_the_scorecard() -> None:
+    body = _body("direction")
+    for token in ("ON COURSE", "DRIFTING", "OFF COURSE", "Aligned", "Partial", "Missing", "Contradicted",
+                  "Not verified", "Fix code", "Update PRD", "Decide"):
+        assert token in body, token
+    for forbidden in ("git commit", "Edit", "Write("):
+        assert forbidden not in body, forbidden
+    assert "build-gate ask" in body and "AskUserQuestion` is never called" in body
