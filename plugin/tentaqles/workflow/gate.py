@@ -774,23 +774,126 @@ def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[t
 
 
 _STATE_TOKEN = re.compile(r"\.claude/build(?:/[^\s\"'|;&<>()=,]*)?", re.IGNORECASE)
+# Segments that run code: their arguments can build any path, so they never get the
+# carve-out for arguments (only a redirect, which the shell itself opens, can use it).
+_CODE_RUNNERS = {"python", "py", "node", "deno", "bun", "ruby", "perl", "php", "pwsh",
+                 "powershell", "bash", "sh", "zsh", "dash", "ksh", "fish", "cmd", "osascript", "lua",
+                 "tclsh", "awk", "gawk", "sed", "jq", "sqlite3", "psql", "mysql", "duckdb", "find", "xargs"}
+# Commands that can create links (or unpack them): never under the carve-out.
+_LINK_MAKERS = {"ln", "link", "mklink", "tar", "unzip", "rsync", "cpio", "7z"}
+_LINK_TYPES = ("symboliclink", "junction", "hardlink")
 
 
-def _breaker_only(root: Path, canon: str) -> bool:
-    """True when every `.claude/build` path in the command sits under
-    `.claude/build/<active slug>/breaker/` (the breaker agent's scratch directory:
-    backups, logs, notes). One other state path, or a `..` segment, voids it."""
-    toks = _STATE_TOKEN.findall(canon)
-    if not toks:
+def _bases(seg) -> list[str]:
+    out = []
+    for w in seg.argv:
+        b = norm(w).rsplit("/", 1)[-1].lower()
+        b = b[:-4] if b.endswith(".exe") else b
+        out.append("python" if re.match(r"^python[0-9.]*$", b) else b)
+    return out
+
+
+def _makes_links(seg) -> bool:
+    bases = _bases(seg)
+    if any(b in _LINK_MAKERS for b in bases):
+        return True
+    if any(b in ("new-item", "ni") for b in bases) and any(t in w.lower() for w in seg.argv for t in _LINK_TYPES):
+        return True
+    if "cp" in bases:
+        for a in seg.argv:
+            if re.match(r"^-[A-Za-z]*[sl][A-Za-z]*$", a):
+                return True
+            opt = a.split("=", 1)[0].lower()
+            if len(opt) >= 4 and ("--link".startswith(opt) or "--symbolic-link".startswith(opt)):
+                return True
+    return False
+
+
+def _check_links(root: Path, seg) -> None:
+    """Refuse a link whose target or link path lands under .claude/build/ while a build
+    exists. The target is also resolved from the link's own directory."""
+    if not slugs(root) or not _makes_links(seg):
+        return
+    words = [w for w in seg.argv[1:] + seg.redirects if w and not w.startswith("-")]
+    words += [w.split("=", 1)[1] for w in seg.argv[1:] if w.startswith("-") and "=" in w]
+    cands = list(words)
+    for i, w in enumerate(words):
+        for j, d in enumerate(words):
+            if i != j:
+                dd = norm(d).strip("'\"")
+                cands += [f"{dd}/{norm(w)}", f"{dd.rsplit('/', 1)[0] if '/' in dd else '.'}/{norm(w)}"]
+    for c in cands:
+        rel, _ = resolve_word(root, c)
+        r = (rel or "").lower()
+        if r == STATE_DIR or r.startswith(STATE_DIR + "/") or STATE_DIR in canon_text(c):
+            raise Block(f"links can't be created into or out of {STATE_DIR}/ while a build exists "
+                        "(a link would let a later write land on the gate's evidence).")
+
+
+def _under_breaker(root: Path, rel: str | None, live: set[str]) -> bool:
+    """rel (already `..`-resolved) sits at or under .claude/build/<live slug>/breaker,
+    and so does its real path (no link inside it leads out)."""
+    if not rel:
         return False
-    live = {s for s in slugs(root) if load_approved(root, s) and not load_session(root, s).get("finished")}
-    for t in toks:
-        parts = [x for x in t.split("/") if x]  # ['.claude', 'build', slug, 'breaker', ...]
-        if len(parts) < 4 or parts[3].lower() != "breaker" or ".." in parts or "." in parts[4:]:
+    parts = rel.split("/")
+    if len(parts) < 4 or "/".join(parts[:2]).lower() != STATE_DIR or parts[3] != "breaker":
+        return False
+    if parts[2] not in live and not (os.name == "nt" and parts[2].lower() in {x.lower() for x in live}):
+        return False
+    base = os.path.realpath(root / STATE_DIR / parts[2] / "breaker")
+    real = os.path.realpath(root / rel)
+    if os.name == "nt":
+        base, real = base.lower(), real.lower()
+    return real == base or real.startswith(base.rstrip("\\/") + os.sep)
+
+
+def _tokens_ok(text: str, live: set[str]) -> bool:
+    """Every `.claude/build` token in the (canonical) text names <live>/breaker."""
+    low = {x.lower() for x in live}
+    for t in _STATE_TOKEN.findall(canon_text(text)):
+        parts = [x for x in t.split("/") if x]
+        if len(parts) < 4 or parts[3] != "breaker" or ".." in parts:
             return False
-        if parts[2] not in live and parts[2].lower() not in {x.lower() for x in live}:
+        if parts[2] not in low:
             return False
     return True
+
+
+def _breaker_only(root: Path, seg) -> bool:
+    """True when every state path this write segment names sits under
+    `.claude/build/<active slug>/breaker/` (the breaker agent's scratch directory:
+    backups, logs, notes). Judged on each resolved word, on each unquoted word's
+    text and on the raw text; one other state path voids it. Code runners keep the
+    full refusal for their arguments, and link makers never get it."""
+    if _makes_links(seg):
+        return False
+    live = {s for s in slugs(root) if load_approved(root, s) and not load_session(root, s).get("finished")}
+    if not live:
+        return False
+    runner = any(b in _CODE_RUNNERS for b in _bases(seg))
+    if runner and any(STATE_DIR in canon_text(w) for w in seg.argv):
+        return False
+    words = seg.redirects if runner else seg.argv[1:] + seg.redirects
+    if not _tokens_ok(" ".join(seg.redirects) if runner else seg.raw, live):
+        return False
+    verb = command_word(seg.argv)[0] in WRITE_COMMANDS
+    seen = False
+    for w in words:
+        if is_null_target(w):
+            continue
+        if has_expansion(w) and (verb or w in seg.redirects):
+            return False  # a write target built from a variable
+        if re.search(r"[*?\[{]", w) and re.search(r"[/\\]", w) and not re.match(r"^[a-z][a-z0-9+.-]*://", w, re.IGNORECASE):
+            return False  # a glob that could expand to another state path
+        if not _tokens_ok(w, live):
+            return False
+        for c in ([w, w.split("=", 1)[1]] if "=" in w else [w]):
+            rel, absn = resolve_word(root, c)
+            if classify(root, rel, absn, {}, True) == "state":
+                if not _under_breaker(root, rel, live):
+                    return False
+                seen = True
+    return seen
 
 
 def check_shell(cmd: str, root: Path) -> None:
@@ -817,7 +920,8 @@ def check_shell(cmd: str, root: Path) -> None:
             if cls:
                 word_hits.append((cls, rel or absn))
         text_hits = _text_mentions(root, canon, locked, active)
-        if _breaker_only(root, canon):
+        _check_links(root, seg)
+        if writes and _breaker_only(root, seg):
             word_hits = [h for h in word_hits if h[0] != "state"]
             text_hits = [h for h in text_hits if h[0] != "state"]
         for cls, what in word_hits + text_hits:

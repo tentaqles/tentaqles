@@ -1428,3 +1428,88 @@ def test_breaker_scratch_dir_is_the_only_state_write_allowed(repo, cmd, want):
 
 def test_build_state_dir_stays_excluded_from_the_hash() -> None:
     assert gate.STATE_DIR in gate.HASH_EXCLUDES
+
+
+# Fix round 2: the carve-out judges resolved words, never raw text alone.
+@pytest.mark.parametrize("cmd", [
+    # 1. a quote spliced into the second path hid it from the text check
+    'cp .claude/build/demo/breaker/a .claude/"build"/demo/approved.json',
+    'rm .claude/build/demo/breaker/a .claude/b"uild"/demo/approved.json',
+    "cp .claude/build/demo/breaker/a '.claude/build'/demo/approved.json",
+    "cp .claude/build/demo/breaker/a .claude/buil[d]/demo/approved.json",
+    "dd if=.claude/build/demo/breaker/a of=.claude/build/demo/breaker/../approved.json",
+    "cp -t .claude/build/demo/breaker x .claude/build/demo/approved.json",
+    "cp x --target-directory=.claude/build/demo/breaker/..",
+    "rm -rf .claude/build/demo/breaker/a/../..",
+    "cp .claude/build/demo/breaker/a $X",
+    "cp .claude/build/demo/breaker/a .claude/build/*/approved.json",
+    # 2. interpreter code builds paths the token regex can't follow
+    """python -c "import os;open(os.path.join('.claude/build/demo/breaker','..','approved.json'),'w')" """,
+    """python -c "import urllib.parse as u;open(u.unquote('.claude/build/demo/breaker/..%2Fapproved.json'),'w')" """,
+    """python3 -c "open('.claude/build/demo/breaker/x','w')" """,
+    """node -e "require('fs').writeFileSync('.claude/build/demo/breaker/x','')" """,
+    """bash -c 'cp x .claude/build/demo/breaker/a' > .claude/build/demo/breaker/log""",
+    "cp x .claude/build/demo/BREAKER/a" if os.name != "nt" else "cp x .claude/build/demo/breakers/a",
+    """setsid python -c "open('.claude/build/demo/breaker/x','w')" > .claude/build/demo/breaker/log""",
+    # 3. link creation would let a later breaker write land on gate state
+    "ln -s ../approved.json .claude/build/demo/breaker/l",
+    "ln .claude/build/demo/approved.json .claude/build/demo/breaker/h",
+    "cp -s ../approved.json .claude/build/demo/breaker/l",
+    "cp -sf ../approved.json .claude/build/demo/breaker/l",
+    "cp --link .claude/build/demo/approved.json .claude/build/demo/breaker/h",
+    "cp --symbolic-link ../approved.json .claude/build/demo/breaker/l",
+    r"cmd /c mklink .claude\build\demo\breaker\l ..\approved.json",
+    "New-Item -ItemType SymbolicLink -Path .claude/build/demo/breaker/l -Target ../approved.json",
+    "New-Item -ItemType Junction -Path .claude/build/demo/breaker/j -Target .claude/build/demo",
+    'ln -s ../b"uild"/demo/approved.json .claude/x',
+    "ln -s build/demo/approved.json .claude/x",
+])
+def test_breaker_carve_out_round2_blocks(repo, cmd):
+    _active_build(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "rm -rf .claude/build/demo/breaker/.",
+    "curl -sS --max-time 10 -o .claude/build/demo/breaker/r.json -w '%{http_code}' 'http://localhost:3000/api/x?id=1'",
+    "setsid node server.js > .claude/build/demo/breaker/app.log 2>&1",
+    "timeout 120 sqlite3 app.db .dump > .claude/build/demo/breaker/app.sql",
+    "ln -s src/a.py lib/a.py",
+    "echo $! > .claude/build/demo/breaker/app.pid",
+    "setsid nohup timeout 900 npm run dev > .claude/build/demo/breaker/app.log 2>&1 & echo $! > .claude/build/demo/breaker/app.pid",
+    "PGCONNECT_TIMEOUT=5 timeout 120 psql -w -v ON_ERROR_STOP=1 --single-transaction -f .claude/build/demo/breaker/backup.sql app",
+    "cp .claude/build/demo/breaker/app.db ./app.db",
+])
+def test_breaker_carve_out_round2_still_allows(repo, cmd):
+    _active_build(repo)
+    assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+def test_breaker_carve_out_refuses_a_write_through_a_link_in_scratch(repo):
+    _active_build(repo)
+    scratch = repo / ".claude" / "build" / "demo" / "breaker"
+    scratch.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(repo / ".claude" / "build" / "demo" / "approved.json", scratch / "l")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks need developer mode on this box")
+    assert hook(repo, bash("echo x > .claude/build/demo/breaker/l"))[0] == 2
+    assert hook(repo, bash("echo x > .claude/build/demo/breaker/ok"))[0] == 0
+
+
+def test_breaker_carve_out_refuses_a_write_through_a_junction_in_scratch(repo):
+    _active_build(repo)
+    scratch = repo / ".claude" / "build" / "demo" / "breaker"
+    scratch.mkdir(parents=True, exist_ok=True)
+    target = repo / ".claude" / "build" / "demo"
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(scratch / "j"))
+        else:
+            os.symlink(target, scratch / "j", target_is_directory=True)
+    except (OSError, NotImplementedError, AttributeError):
+        pytest.skip("can't create a directory link here")
+    assert hook(repo, bash("echo x > .claude/build/demo/breaker/j/approved.json"))[0] == 2
+    assert hook(repo, bash("cp x .claude/build/demo/breaker/j"))[0] == 2
+    assert hook(repo, bash("cp x .claude/build/demo/breaker/a"))[0] == 0
