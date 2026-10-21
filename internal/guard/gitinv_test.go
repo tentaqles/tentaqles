@@ -294,3 +294,23 @@ func TestGitInvocations_Round2Wrappers(t *testing.T) {
 		}
 	}
 }
+
+// Round 3 (R3): Start-Process argument lists.
+func TestGitInvocations_StartProcessArgumentList(t *testing.T) {
+	for _, c := range []string{
+		`Start-Process -FilePath git -ArgumentList "commit -m x" -Wait`,
+		`Start-Process git -ArgumentList @("commit","-m","x") -Wait`,
+		`Start-Process git -ArgumentList 'commit','-m','x'`,
+		`Start-Process git "commit -m x"`,
+	} {
+		found := false
+		for _, inv := range GitInvocations(c) {
+			if inv.Sub == "commit" && inv.Hidden {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: %+v", c, GitInvocations(c))
+		}
+	}
+}

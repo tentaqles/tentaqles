@@ -391,11 +391,16 @@ func looseGit(words []string) (GitInvocation, bool) {
 			if strings.HasPrefix(w, "-") {
 				continue
 			}
-			sub := strings.Trim(strings.TrimSpace(strings.Split(w, ",")[0]), `"'`)
-			if sub == "" {
+			// an argument list: a comma list ('commit','-m','x'), a PowerShell
+			// array @(...), or one string ("commit -m x")
+			w = strings.TrimPrefix(strings.TrimPrefix(w, "@"), "(")
+			first := strings.Trim(strings.TrimSpace(strings.Split(w, ",")[0]), `"'()`)
+			fields := strings.Fields(first)
+			if len(fields) == 0 {
 				continue
 			}
-			return GitInvocation{Sub: sub, Args: words[j+1:], Hidden: true, Loose: true}, true
+			args := append(append([]string{}, fields[1:]...), words[j+1:]...)
+			return GitInvocation{Sub: fields[0], Args: args, Hidden: true, Loose: true}, true
 		}
 		return GitInvocation{}, false
 	}
@@ -411,7 +416,8 @@ func gitSegmentsDepth(c string, depth int) []gitInvocation {
 	masked := maskQuoted(c)
 	covered := map[int]bool{}
 	base, baseUnknown := "", false
-	for k, sp := range segmentSpans(masked) {
+	spans := segmentSpans(masked)
+	for k, sp := range spans {
 		text := c[sp.start:sp.end]
 		words := splitWords(strings.ReplaceAll(masked[sp.start:sp.end], "\x01", "\x02"))
 		if strings.Contains(masked[sp.start:sp.end], "\x01") {
@@ -446,6 +452,11 @@ func gitSegmentsDepth(c string, depth int) []gitInvocation {
 		}
 		inv, ok := ParseGitWords(words)
 		if !ok {
+			if n := len(words); n > 0 && words[n-1] == "@" && k+1 < len(spans) {
+				// PowerShell @( ... ): the array is the next segment
+				nx := spans[k+1]
+				words = append(words[:n-1], splitWords(c[nx.start:nx.end])...)
+			}
 			if loose, ok := looseGit(words); ok {
 				covered[firstNonSpace(c, sp.start)] = true
 				out = append(out, gitInvocation{GitInvocation: loose, start: sp.start})
