@@ -2847,3 +2847,88 @@ def test_a_legacy_format_approval_over_a_recorded_build_is_a_rollback(repo):
     data = {k: v for k, v in gate.load_approved(repo, "demo").items() if k not in ("kind", "gen", "project_id", "sig")}
     gate.write_json(_approved_path(repo), gate.sign(data))
     assert gate.state_problem(repo, "demo").startswith("build state was rolled back")
+
+
+# ---------------------------------------------------------------------------
+# Key directory: archive and sync tools, and any word naming the key dir or an ancestor
+# ---------------------------------------------------------------------------
+
+
+def _tq(tq_home):
+    return str(tq_home).replace("\\", "/")
+
+
+@pytest.mark.parametrize("form", [
+    "tar cf t.tar {tq}",
+    "tar cf t.tar -C {tq} build-gate",
+    "tar --directory={tq} -cf t.tar build-gate",
+    "tar cf t.tar -C {tq}/sub ../build-gate",
+    "tar cf - {tq} | tar xf - -C out",
+    "bsdtar cf t.tar {tq}",
+    "7z a k.7z {tq}",
+    "zip -r k.zip {tq}",
+    "rsync -a {tq}/ bk/",
+    "robocopy {tq} bk /E",
+    "xcopy /E {tq} bk",
+    "cpio -pdm {tq}",
+    "pax -rw {tq} out",
+    "tar cf t.tar {parent}",
+    "cp -a {parent} bk",
+    "du -a {tq}",
+    "tar cf t.tar $TQ_HOME",
+    "tar cf t.tar ${{TQ_HOME}}",
+    "ls {tq} > list.txt",
+    "ls -R {tq}",
+])
+def test_archive_and_sync_tools_cannot_read_the_key_dir(repo, tq_home, form):
+    gate._key(create=True)
+    (tq_home / "sub").mkdir(parents=True, exist_ok=True)
+    cmd = form.format(tq=_tq(tq_home), parent=_tq(tq_home.parent))
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 2 and "signing key" in err, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "Compress-Archive -Path $env:TQ_HOME -DestinationPath k.zip",
+    "tar cf t.tar $env:TQ_HOME",
+    "Copy-Item -Recurse $env:TQ_HOME bk",
+])
+def test_powershell_archive_of_the_key_dir_is_refused(repo, cmd):
+    gate._key(create=True)
+    code, _, err = hook(repo, bash(cmd, "PowerShell"))
+    assert code == 2 and "signing key" in err, cmd
+
+
+def test_read_tool_refused_on_an_ancestor_of_the_key_dir(repo, tq_home):
+    gate._key(create=True)
+    for p in (tq_home, tq_home.parent):
+        code, _, err = hook(repo, {"tool_name": "Read", "tool_input": {"file_path": str(p)}})
+        assert code == 2 and "signing key" in err, p
+
+
+@pytest.mark.parametrize("cmd", [
+    "tar czf src.tgz src/",
+    "ls ~",
+    "ls {tq}",
+    "cd {tq} && pwd",
+    "stat {tq}",
+    "test -d {tq}",
+    "echo {tq}",
+    "zip -r ../a.zip .",
+])
+def test_key_dir_ancestor_reads_by_listing_verbs_stay_allowed(repo, tq_home, cmd):
+    gate._key(create=True)
+    (repo / "src").mkdir()
+    assert hook(repo, bash(cmd.format(tq=_tq(tq_home))))[0] == 0, cmd
+
+
+def test_ls_home_is_allowed_when_the_key_is_under_home(repo, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".tentaqles" / "build-gate").mkdir(parents=True)
+    monkeypatch.delenv("TQ_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    assert hook(repo, bash("ls ~"))[0] == 0
+    assert hook(repo, bash("ls -la ~"))[0] == 0
+    for cmd in ("tar cf t.tar ~", "tar cf t.tar -C ~ .tentaqles", "rsync -a ~/ bk/", "zip -r h.zip $HOME"):
+        assert hook(repo, bash(cmd))[0] == 2, cmd

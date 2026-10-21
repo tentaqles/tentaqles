@@ -1277,12 +1277,45 @@ def _expand_known(word: str) -> str:
 
 
 def _key_glob_candidates() -> list[tuple[str, str, str]]:
-    """What a glob could name under the key directory: the key file, whatever is there, and
-    the directory itself (class "keydir", counted only for recursive commands)."""
+    """What a glob could name under the key directory: the key file, whatever is there, the
+    directory itself (class "keydir") and each directory above it (class "keyanc"); the last
+    two count unless the command only lists (see _KEY_SAFE_VERBS)."""
     kd = _nabs(key_dir())
     out = [("key", "the signing key", kd + "/hmac.key"), ("keydir", "the signing key's directory", kd)]
     out.extend(("key", "the signing key", _nabs(p)) for p in _walk_paths(key_dir()))
+    cur = kd
+    while True:
+        parent = cur.rsplit("/", 1)[0] if "/" in cur.rstrip("/") else ""
+        if not parent or parent == cur:
+            break
+        out.append(("keyanc", "the signing key (a directory above it)", parent))
+        cur = parent
     return out
+
+
+# Verbs that may name the key directory's ancestors: they list or test a name and never read
+# what is under it (only without a redirect, and `ls` without -R).
+_KEY_SAFE_VERBS = {"ls", "cd", "pwd", "stat", "test", "echo"}
+# Archive and sync tools read every file under a directory word: recursive readers.
+_ARCHIVE_TOOLS = {"tar", "bsdtar", "gtar", "7z", "7za", "7zr", "zip", "rsync", "robocopy", "xcopy",
+                  "compress-archive", "cpio", "pax", "ditto"}
+
+
+def _root_like(absn: str) -> bool:
+    """`/` or a bare drive: an ancestor of everything, counted only for recursive readers."""
+    return re.fullmatch(r"(?:[A-Za-z]:)?/?", absn) is not None
+
+
+def _key_reach(absn: str) -> str | None:
+    """'dir' when the canonical path is the key directory, 'anc' when it is above it, else None."""
+    kd = _key_dir_canon()
+    a, k = (absn.lower(), kd.lower()) if os.name == "nt" else (absn, kd)
+    a = a.rstrip("/") or "/"
+    if a == k:
+        return "dir"
+    if k.startswith(a.rstrip("/") + "/"):
+        return "anc"
+    return None
 
 
 def _glob_segments_match(pat: str, cand: str, dotfiles: bool) -> bool:
@@ -1329,8 +1362,10 @@ def _walk_paths(top: Path) -> list[Path]:
 
 def _recursive_segment(argv: list[str], cmd_name: str) -> bool:
     """Does this command descend into directories (so a directory word means everything under it)?"""
-    if cmd_name in ("rg", "ag", "ack", "tree"):
+    if cmd_name in ("rg", "ag", "ack", "tree") or cmd_name in _ARCHIVE_TOOLS:
         return True
+    if cmd_name == "ls":  # -r is reverse there
+        return any(t == "--recursive" or re.fullmatch(r"-[A-Za-z]*R[A-Za-z]*", t) for t in argv[1:])
     for t in argv[1:]:
         if t.lower() in ("--recursive", "--dereference-recursive", "-recurse", "-exec", "-execdir",
                          "-ok", "-okdir"):
@@ -1496,36 +1531,73 @@ class _ShellScan:
             self._locked_abs = [(f"locked:{slug}", lk, _nabs(self.root / lk)) for lk, slug in self.locked.items()]
         return self._locked_abs
 
-    def word_hits(self, word: str, bases: list[str], recursive: bool, cmd_name: str) -> list[tuple[str, str]]:
+    def word_hits(self, word: str, bases: list[str], recursive: bool, cmd_name: str, dest: bool = True,
+                  key_safe: bool = False, key_bases: tuple = ()) -> list[tuple[str, str]]:
+        """Protection hits of one word. `dest`: the word is a destination or removal operand (only
+        those count for a directory above a locked test). `key_safe`: the verb only lists (see
+        _KEY_SAFE_VERBS). `key_bases`: extra directories the word is relative to for the key check
+        (`tar -C <dir>`, the first positional of an archive/sync tool)."""
         hits: list[tuple[str, str]] = []
         for rel, absn in self.resolved(word, bases):
             cls = classify(self.root, rel, absn, self.locked, self.active)
             if cls:
                 hits.append((cls, rel or absn))
-            hits.extend(self.ancestor_hits(absn, recursive, cmd_name))
-            # a directory above a locked test: `mv tests tests2`, `rm -rf tests`, `cp -r src tests`
-            top = absn.rstrip("/") + "/"
-            hits.extend((c, lk) for c, lk, la in self.locked_abs() if la.startswith(top))
+            hits.extend(self.ancestor_hits(absn, recursive, cmd_name, key_safe))
+            if dest:
+                # a directory above a locked test: `mv tests tests2`, `rm -rf tests`, `cp -r src tests`
+                top = absn.rstrip("/") + "/"
+                hits.extend((c, lk) for c, lk, la in self.locked_abs() if la.startswith(top))
+        for _, absn in (self.resolved(word, list(key_bases)) if key_bases else []):
+            if classify(self.root, None, absn, {}, False) == "key":
+                hits.append(("key", "the signing key"))
+            hits.extend(self.ancestor_hits(absn, recursive, cmd_name, key_safe))
         for v in self.variants(word):
             if not _GLOB_CHARS.search(v):
                 continue
             for b in bases:
                 pat = _nabs(v if _is_abs(v) else f"{b}/{v}")
                 for cls, shown, cand in self.candidates():
-                    if cls == "keydir" and not recursive:
-                        continue
+                    if cls in ("keydir", "keyanc"):
+                        if (key_safe and not recursive) or (cls == "keyanc" and _root_like(cand) and not recursive):
+                            continue
                     if _glob_segments_match(pat, cand, self.ps or self.cur_ps):
-                        hits.append(("key" if cls == "keydir" else cls, shown))
+                        hits.append(("key" if cls in ("keydir", "keyanc") else cls, shown))
         return hits
 
-    def ancestor_hits(self, absn: str, recursive: bool, cmd_name: str) -> list[tuple[str, str]]:
-        """A recursive read (grep -r, ls -R, cp -r, rg, find) rooted at the key directory's parent
-        or any ancestor reaches the key. `find` counts whether or not it has -exec: its output
-        feeds xargs and `-exec cat` equally."""
-        kd = _key_dir_canon()
-        if (recursive or cmd_name == "find") and absn != kd and kd.startswith(absn.rstrip("/") + "/"):
-            return [("key", "the signing key (a recursive read of a parent directory)")]
-        return []
+    def ancestor_hits(self, absn: str, recursive: bool, cmd_name: str, key_safe: bool = False) -> list[tuple[str, str]]:
+        """A word naming the key directory or any directory above it reaches the key, unless the
+        verb only lists it (`ls` without -R, `cd`, `pwd`, `stat`, `test`, `echo`, no redirect). A
+        bare `/` or drive counts only for recursive readers (grep -r, find, tar, rsync...)."""
+        reach = _key_reach(absn)
+        if reach is None:
+            return []
+        rec = recursive or cmd_name == "find"
+        if reach == "anc" and _root_like(absn) and not rec:
+            return []
+        if key_safe and not rec:
+            return []
+        return [("key", "the signing key (a read of its directory or a directory above it)")]
+
+    def key_bases(self, cmd_name: str, cargs: list[str], bases: list[str]) -> list[str]:
+        """Directories an archive/sync tool takes its other words relative to: `-C <dir>`,
+        `--directory=<dir>` and the first positional (robocopy's source)."""
+        if cmd_name not in _ARCHIVE_TOOLS:
+            return []
+        raw: list[str] = []
+        for i, a in enumerate(cargs):
+            if a in ("-C", "--directory") and i + 1 < len(cargs):
+                raw.append(cargs[i + 1])
+            elif a.lower().startswith("--directory="):
+                raw.append(a.split("=", 1)[1])
+        pos = [a for a in cargs if not a.startswith("-")]
+        if pos:
+            raw.append(pos[0])
+        out: list[str] = []
+        for r in raw:
+            for _, absn in self.resolved(r, bases):
+                if absn not in out:
+                    out.append(absn)
+        return out[:_MAX_CWDS]
 
     # -- working directory ---------------------------------------------------
 
@@ -1594,9 +1666,12 @@ class _ShellScan:
         recursive = _recursive_segment(seg.argv, cmd_name)
         bases = self.bases(st)
         words = [w for w in seg.argv[1:] + seg.redirects if not is_null_target(w)]
+        redirected = any(not is_null_target(t) for t in seg.redirects)
+        key_safe = cmd_name in _KEY_SAFE_VERBS and not redirected
+        key_bases = tuple(self.key_bases(cmd_name, cargs, bases))
         word_hits: list[tuple[str, str]] = []
         for w in words:
-            word_hits.extend(self.word_hits(w, bases, recursive, cmd_name))
+            word_hits.extend(self.word_hits(w, bases, recursive, cmd_name, True, key_safe, key_bases))
         raw_forms = [seg.raw, re.sub(r"\\(.)", r"\1", seg.raw, flags=re.DOTALL)]
         text_hits: list[tuple[str, str]] = []
         for raw in raw_forms:
@@ -1937,6 +2012,8 @@ def _hook(data: dict) -> tuple[int, str, str]:
         a = absn.lower() if os.name == "nt" else absn
         if a == kd or a.startswith(kd + "/"):
             return 2, "", f"build-gate: {_MESSAGES['key']}"
+        if (data.get("tool_name") or "") == "Read" and _key_reach(absn) == "anc":
+            return 2, "", f"build-gate: {_MESSAGES['key']} (a directory above it)"
         # The gate's code may live in another git repo (a plugin checkout), where the
         # root found from the file has no build: judge it by the session's own root.
         if (data.get("tool_name") or "") not in ("Read", "Grep", "Glob"):
