@@ -89,7 +89,11 @@ def test_breaker_exit_sequence_is_safe_when_the_app_will_not_stop() -> None:
         assert token in body, token
     # every scratch path is spelled out under the breaker directory
     assert not re.search(r"cat app\.pid|-f backup\.sql|\$\(cat app", body)
-    assert ".claude/build/<slug>/breaker/app.pid" in body
+    assert ".tq-breaker/<slug>/app.pid" in body
+    # the scratch directory lives outside the gate's state directory (fix round 6)
+    assert ".claude/build/<slug>/breaker" not in body
+    for token in (".tq-breaker/<slug>/backup.sql", ".tq-breaker/<slug>/app.log"):
+        assert token in body, token
 
 
 @pytest.mark.parametrize("name,tokens", [
@@ -106,4 +110,5 @@ def test_breaker_writes_new_scratch_files_instead_of_editing_in_place() -> None:
     _, body = _fm("breaker")
     assert "never edit a scratch file in place" in body
     assert "write a new file instead" in body
-    assert "links" in body and "regular files" in body
+    assert "only new files" in body
+    assert "cp`, `mv` or `install`" not in body  # the carve-out's copier allowlist is gone
