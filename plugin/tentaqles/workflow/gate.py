@@ -33,7 +33,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import sys
 import tempfile
 import time
@@ -76,7 +75,8 @@ MARKER = re.compile(r"^\s*\[checkpoint\s+([\w.-]+)#(\d+)\s+(\w+)\]")
 PLAN_DIR = "docs/checkpoints"
 STATE_DIR = ".claude/build"
 # Bookkeeping that must not count as a code change.
-HASH_EXCLUDES = (PLAN_DIR, "docs/reviews", "docs/test-plans", STATE_DIR)
+BREAKER_DIR = ".tq-breaker"  # the breaker agent's scratch directory (git-excluded, not state)
+HASH_EXCLUDES = (PLAN_DIR, "docs/reviews", "docs/test-plans", STATE_DIR, BREAKER_DIR)
 MAX_STOP_BLOCKS = 1  # block a stop once, then let it through
 RULE_ID_PREFIX = "tentaqles-build/"
 SETTINGS_TAG = "build-gate.py hook"
@@ -774,28 +774,8 @@ def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[t
     return hits
 
 
-_STATE_TOKEN = re.compile(r"\.claude/build(?:/[^\s\"'|;&<>()=,]*)?", re.IGNORECASE)
-# Segments that run code: their arguments can build any path, so they never get the
-# carve-out for arguments (only a redirect, which the shell itself opens, can use it).
-_CODE_RUNNERS = {"python", "py", "node", "deno", "bun", "ruby", "perl", "php", "pwsh",
-                 "powershell", "bash", "sh", "zsh", "dash", "ksh", "fish", "cmd", "osascript", "lua",
-                 "tclsh", "awk", "gawk", "sed", "jq", "sqlite3", "psql", "mysql", "duckdb", "find", "xargs"}
-# Commands that can create links (or unpack them): never under the carve-out.
-_LINK_MAKERS = {"ln", "link", "mklink", "tar", "unzip", "cpio", "7z"}
-# Copiers whose sources must be existing, link-free files or directories. The only
-# source-taking verbs that get the carve-out.
-_COPIERS = {"mv", "cp", "install"}
-# Write verbs that take no source (they write, create or delete only the paths they name).
-# With _COPIERS this is the whole allowlist: any other verb in WRITE_COMMANDS (today's or
-# one added later) gets no carve-out.
-_PLAIN_WRITERS = {"rm", "rmdir", "unlink", "truncate", "touch", "tee", "mkdir", "md", "rd",
-                  "set-content", "add-content", "out-file", "clear-content", "sc", "ac",
-                  "new-item", "ni", "remove-item", "ri", "del", "erase"}
-# Documentation only (the allowlist above decides): other movers/copiers, never carved out.
-_OTHER_MOVERS = {"rsync", "move-item", "mi", "copy-item", "cpi", "rename-item", "rni", "move", "copy",
-                 "ren", "rename", "xcopy", "robocopy", "pax", "busybox", "scp", "ditto"}
-_WALK_CAP = 2000
-_lstat = os.lstat  # module attribute so tests can stand in a link
+# Commands that can create links (or unpack them): refused when they touch the state dir.
+_LINK_MAKERS = {"ln", "link", "mklink", "tar", "unzip", "cpio", "7z", "fsutil"}
 _LINK_TYPES = ("symboliclink", "junction", "hardlink")
 
 
@@ -845,184 +825,28 @@ def _check_links(root: Path, seg) -> None:
                         "(a link would let a later write land on the gate's evidence).")
 
 
-def _is_link(st) -> bool:
-    """A symlink, or on Windows any reparse point (junctions included)."""
-    if stat.S_ISLNK(st.st_mode):
+# Options that name a file the command writes. A segment using one counts as a write, so
+# the ordinary protected-path rules apply to it. Short options are per tool (`-o`, `-c`
+# and `-f` mean other things elsewhere, e.g. `pytest -o`, `bash -c`, `psql -f`).
+_OUTPUT_LONG = {"--output", "--output-document", "--output-file", "--output-dir", "--out", "--outfile",
+                "--out-file", "--dump-header", "--cookie-jar", "--file", "--log-file", "--append-output"}
+_OUTPUT_SHORT = {"curl": {"-o", "-D", "-c"}, "wget": {"-O", "-o", "-a", "-P"}, "pg_dump": {"-f"},
+                 "pg_dumpall": {"-f"}, "pg_basebackup": {"-D"}, "sort": {"-o"}}
+_SQLITE_WRITES = re.compile(r"(^|[\s;\"'])\.(backup|save|output|once)(\s|$)", re.IGNORECASE)
+
+
+def _writes_via_option(seg) -> bool:
+    cmd, args = command_word(seg.argv)
+    if cmd == "sqlite3" and any(_SQLITE_WRITES.search(a) for a in args):
         return True
-    return bool(getattr(st, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
-
-
-def _clean_source(path: str) -> bool:
-    """An existing regular file (not a link, one hard link), or a directory with no link
-    or multi-linked file in a walk of at most _WALK_CAP entries. Anything else fails."""
-    try:
-        st = _lstat(path)
-    except OSError:
-        return False
-    if _is_link(st):
-        return False
-    if stat.S_ISREG(st.st_mode):
-        return getattr(st, "st_nlink", 1) <= 1  # a hard link shares the gate's file
-    if not stat.S_ISDIR(st.st_mode):
-        return False
-    seen, todo = 0, [path]
-    while todo:
-        d = todo.pop()
-        try:
-            names = os.listdir(d)
-        except OSError:
-            return False
-        for name in names:
-            seen += 1
-            if seen > _WALK_CAP:
-                return False
-            child = os.path.join(d, name)
-            try:
-                cst = _lstat(child)
-            except OSError:
-                return False
-            if _is_link(cst):
-                return False
-            if stat.S_ISDIR(cst.st_mode):
-                todo.append(child)
-            elif not stat.S_ISREG(cst.st_mode) or getattr(cst, "st_nlink", 1) > 1:
-                return False
-    return True
-
-
-def _copy_sources(seg) -> list[str]:
-    """Source words of a mv/cp/install segment: every positional except the
-    destination (the last one, or the -t/--target-directory value)."""
-    return _copy_parts(seg)[0]
-
-
-def _copy_parts(seg) -> tuple[list[str], str | None]:
-    """(sources, destination) of a mv/cp/install segment; ([], None) for anything else."""
-    bases = _bases(seg)
-    i = next((k for k, b in enumerate(bases) if b in _COPIERS), None)
-    if i is None:
-        return [], None
-    args, pos, target, ends = seg.argv[i + 1:], [], None, False
-    k = 0
-    while k < len(args):
-        a = args[k]
-        if ends or not a.startswith("-") or a == "-":
-            pos.append(a)
-        elif a == "--":
-            ends = True
-        elif a in ("-t", "--target-directory"):
-            target = args[k + 1] if k + 1 < len(args) else ""
-            k += 1
-        elif a.startswith("--target-directory="):
-            target = a.split("=", 1)[1]
-        elif re.match(r"^-t.", a):
-            target = a[2:]
-        elif bases[i] == "install" and a in ("-m", "-o", "-g", "--mode", "--owner", "--group"):
-            k += 1
-        k += 1
-    if target is not None:
-        return pos, target
-    return pos[:-1], (pos[-1] if pos else None)
-
-
-def _shared_file(path) -> bool:
-    """An existing path that is a link (symlink, junction, reparse point) or a
-    non-directory with more than one hard link: a write there lands elsewhere too."""
-    try:
-        st = _lstat(path)
-    except OSError:
-        return False  # doesn't exist yet (or can't be read: realpath still bounds it)
-    if _is_link(st):
-        return True
-    return not stat.S_ISDIR(st.st_mode) and getattr(st, "st_nlink", 1) > 1
-
-
-def _under_breaker(root: Path, rel: str | None, live: set[str]) -> bool:
-    """rel (already `..`-resolved) sits at or under .claude/build/<live slug>/breaker,
-    and so does its real path (no link inside it leads out)."""
-    if not rel:
-        return False
-    parts = rel.split("/")
-    if len(parts) < 4 or "/".join(parts[:2]).lower() != STATE_DIR or parts[3] != "breaker":
-        return False
-    if parts[2] not in live and not (os.name == "nt" and parts[2].lower() in {x.lower() for x in live}):
-        return False
-    if _shared_file(str(root / rel)):
-        return False  # writing through an existing link or hard link inside breaker/
-    base = os.path.realpath(root / STATE_DIR / parts[2] / "breaker")
-    real = os.path.realpath(root / rel)
-    if os.name == "nt":
-        base, real = base.lower(), real.lower()
-    return real == base or real.startswith(base.rstrip("\\/") + os.sep)
-
-
-def _tokens_ok(text: str, live: set[str]) -> bool:
-    """Every `.claude/build` token in the (canonical) text names <live>/breaker."""
-    low = {x.lower() for x in live}
-    for t in _STATE_TOKEN.findall(canon_text(text)):
-        parts = [x for x in t.split("/") if x]
-        if len(parts) < 4 or parts[3] != "breaker" or ".." in parts:
-            return False
-        if parts[2] not in low:
-            return False
-    return True
-
-
-def _breaker_only(root: Path, seg) -> bool:
-    """True when every state path this write segment names sits under
-    `.claude/build/<active slug>/breaker/` (the breaker agent's scratch directory:
-    backups, logs, notes). Judged on each resolved word, on each unquoted word's
-    text and on the raw text; one other state path voids it. Code runners keep the
-    full refusal for their arguments; link makers never get it, and a write verb
-    gets it only when it is in _COPIERS or _PLAIN_WRITERS (a true allowlist)."""
-    if _makes_links(seg):
-        return False
-    allowed = _COPIERS | _PLAIN_WRITERS
-    cmd = command_word(seg.argv)[0]
-    if cmd == "git" or (cmd in WRITE_COMMANDS and cmd not in allowed):
-        return False
-    bases = _bases(seg)
-    head = bases[:bases.index(cmd) + 2] if cmd in bases else bases
-    if any(b in WRITE_COMMANDS and b not in allowed for b in head):
-        return False  # e.g. `busybox rsync`: a multi-call verb off the allowlist
-    live = {s for s in slugs(root) if load_approved(root, s) and not load_session(root, s).get("finished")}
-    if not live:
-        return False
-    srcs, dest = _copy_parts(seg)
-    for src in srcs:
-        if not _clean_source(resolve_word(root, src)[1]):
-            return False  # a link (or junction) carried in would redirect later writes
-    if dest and srcs:
-        drel, dabs = resolve_word(root, dest)
-        if os.path.isdir(dabs):
-            for src in srcs:  # each copy lands on <dest>/<basename>: no link or hard link there
-                name = norm(src).strip("'\"").rstrip("/").rsplit("/", 1)[-1]
-                if name and _shared_file(os.path.join(dabs, name)):
-                    return False
-    runner = any(b in _CODE_RUNNERS for b in _bases(seg))
-    if runner and any(STATE_DIR in canon_text(w) for w in seg.argv):
-        return False
-    words = seg.redirects if runner else seg.argv[1:] + seg.redirects
-    if not _tokens_ok(" ".join(seg.redirects) if runner else seg.raw, live):
-        return False
-    verb = command_word(seg.argv)[0] in WRITE_COMMANDS
-    seen = False
-    for w in words:
-        if is_null_target(w):
-            continue
-        if has_expansion(w) and (verb or w in seg.redirects):
-            return False  # a write target built from a variable
-        if re.search(r"[*?\[{]", w) and re.search(r"[/\\]", w) and not re.match(r"^[a-z][a-z0-9+.-]*://", w, re.IGNORECASE):
-            return False  # a glob that could expand to another state path
-        if not _tokens_ok(w, live):
-            return False
-        for c in ([w, w.split("=", 1)[1]] if "=" in w else [w]):
-            rel, absn = resolve_word(root, c)
-            if classify(root, rel, absn, {}, True) == "state":
-                if not _under_breaker(root, rel, live):
-                    return False
-                seen = True
-    return seen
+    shorts = _OUTPUT_SHORT.get(cmd, set())
+    for a in args:
+        if a.startswith("--"):
+            if a.split("=", 1)[0].lower() in _OUTPUT_LONG:
+                return True
+        elif a in shorts or (len(a) > 2 and a[:2] in shorts):
+            return True  # `-o path` or `-opath`
+    return False
 
 
 def check_shell(cmd: str, root: Path) -> None:
@@ -1036,10 +860,9 @@ def check_shell(cmd: str, root: Path) -> None:
         if _text_mentions(root, canon_all, locked, active):
             raise Block(f"can't parse this command ({e}) and it names a protected path; failing closed.")
         return
-    links_here = any(_makes_links(s) for s in segs)  # no carve-out anywhere in such a command
     for seg in segs:
         sub, sub_args = _gate_invocation(seg)
-        writes = is_write_segment(seg)
+        writes = is_write_segment(seg) or _writes_via_option(seg)
         canon = canon_text(seg.raw)
         word_hits = []
         for w in seg.argv[1:] + seg.redirects:
@@ -1051,9 +874,6 @@ def check_shell(cmd: str, root: Path) -> None:
                 word_hits.append((cls, rel or absn))
         text_hits = _text_mentions(root, canon, locked, active)
         _check_links(root, seg)
-        if writes and not links_here and _breaker_only(root, seg):
-            word_hits = [h for h in word_hits if h[0] != "state"]
-            text_hits = [h for h in text_hits if h[0] != "state"]
         for cls, what in word_hits + text_hits:
             if cls == "key":
                 raise Block(_msg("key", what))
@@ -1747,7 +1567,7 @@ def cmd_setup(root: Path) -> str:
         groups.append(group)
         hooks[event] = groups
     write_json(settings_path, settings)
-    excluded = _git_exclude(root, [f"/{STATE_DIR}/", "/.claude/settings.local.json"])
+    excluded = _git_exclude(root, [f"/{STATE_DIR}/", f"/{BREAKER_DIR}/", "/.claude/settings.local.json"])
     _key(create=True)
     return (f"hooks written to {norm(settings_path)}\n"
             f"git-excluded: {', '.join(excluded) or 'already excluded'}\n"
