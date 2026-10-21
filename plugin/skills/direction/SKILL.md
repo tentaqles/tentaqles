@@ -1,7 +1,7 @@
 ---
 name: direction
 description: Read-only drift audit of a repository against its PRD. Grades every functional requirement Aligned, Partial, Missing or Contradicted by reading the code and tests (never by trusting a summary), classifies work the PRD never asked for, and returns ON COURSE, DRIFTING or OFF COURSE with recommendations limited to Fix code, Update PRD or Decide. Use when the user asks "are we on track", "did we drift", "does the code match the PRD", at the end of /tentaqles:kickoff, before a release, or "/tentaqles:direction".
-argument-hint: "[FR-nn ...] [--headless]"
+argument-hint: "[<build-slug>] [FR-nn ...] [--headless]"
 ---
 
 # Direction
@@ -17,7 +17,9 @@ Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
 its own, so there is no slug to write a decision record under: report the verdict as your final output and end the turn (which `prd_exit` you got, what
 is missing, the next command such as `/tentaqles:prd`). Use
 `build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
-only when the caller passed the slug of an active build run; the `build-gate`
+only when the caller passed the slug of an active build run (the first
+argument, when it is not an `FR-nn` id, is that build slug: kickoff calls
+`/tentaqles:direction <slug>`); the `build-gate`
 prefix is in `skills/build/SKILL.md`.
 
 ## 1. Inputs

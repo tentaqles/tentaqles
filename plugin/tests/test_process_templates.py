@@ -52,3 +52,14 @@ def test_review_contract_defines_the_verdict_grammar() -> None:
     text = (TEMPLATES / "review-contract.md").read_text(encoding="utf-8")
     for token in ("RESULT: PASS", "RESULT: FAIL", "RESULT: BLOCKED", "CANNOT JUDGE", "BUILT-BY-ME:"):
         assert token in text, token
+
+
+def test_fix_spec_summarises_the_report_without_personal_data() -> None:
+    # final review I3: docs/specs/fix-<slug>.md is committed; a raw ticket or stack trace may carry PII
+    text = (TEMPLATES / "fix-spec.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+    assert "exactly as received" not in text
+    assert "## Report (summary, personal data replaced)" in text
+    assert ("Summarise the report, stack trace or failing command, keeping its meaning, with personal data "
+            "replaced by placeholders (`<customer>`, `<email>`, `<row id>`); never paste it verbatim.") in flat
+    assert "Leave the original where it came from" in flat

@@ -35,7 +35,7 @@ Below, `build-gate <cmd>` means that second line with `<cmd>`. Use the Bash tool
 | `checkpoints` | a checkpoint is not `passed` | finish it through `/tentaqles:build resume <slug>` |
 | `reviews` | a reviewer's last record is FAIL or BLOCKED | FAIL: fixer round; BLOCKED: show the `U` rows to the human, they run `build-gate judge` (headless: `build-gate ask <slug> --kind judge ...`) |
 | `adr` | an `architecture_paths` file changed without a new ADR | write `docs/adr/NNNN-<slug>.md` from `templates/process/adr-0000-template.md` |
-| `privacy` | a `classified_paths` file changed and `docs/privacy.md` did not | run `/tentaqles:privacy-review`, update the record |
+| `privacy` | a `classified_paths` file changed and `docs/privacy.md` did not | run `/tentaqles:privacy-review` (if that skill is not installed, review the change against `docs/privacy.md` by hand), update the record |
 | `migration` | migration files changed and the spec has no `## Migration plan` | add the section (expand/contract, backfill, rollback) to the spec slice |
 | `changelog` | the project keeps a changelog and it did not change | add the entry |
 | any item that cannot be fixed | only a human may waive it | step 3 (the human runs the override) |

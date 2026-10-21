@@ -143,3 +143,28 @@ def test_feature_skill_locates_the_fr_and_interviews_first() -> None:
     assert "`hotfix=no`" in flat and "spec=<path>" in flat
     assert "you never run `build-gate dod" in flat
     assert "lock-tests` right after approval" in flat and "before the human approves" in flat
+
+
+def test_fix_skill_never_pastes_reports_with_personal_data() -> None:
+    body = (SKILLS / "fix" / "SKILL.md").read_text(encoding="utf-8")
+    flat = " ".join(body.split())
+    assert "the report **verbatim**" not in body and "Captures the report verbatim" not in body
+    assert "personal data replaced by placeholders (`<customer>`, `<email>`)" in flat
+    assert "never pasted verbatim" in flat
+    assert "the slug comes from the symptom, never from a name, e-mail or id" in flat
+
+
+def test_docs_state_the_key_isolation_caveat_honestly() -> None:
+    # final review C2: the docs promised that the agent cannot read the key or reach around the CLI
+    plugin = SKILLS.parent
+    ref = " ".join((SKILLS / "build" / "reference.md").read_text(encoding="utf-8").split())
+    log = " ".join((plugin / "CHANGELOG.md").read_text(encoding="utf-8").split())
+    design = " ".join((plugin.parent / "docs" / "design" / "2026-10-20-development-process-design.md").read_text(encoding="utf-8").split())
+    assert "the agent cannot read it" not in ref
+    assert "cannot be reached around the CLI" not in log
+    assert "which only the human's processes hold" not in design
+    for text in (ref, log, design):
+        assert "tq follow-up" in text or "a follow-up" in text
+    assert "the signed records are what the human and the hub trust" in ref
+    assert "The signed records are what the human and the hub trust" in log
+    assert "record-review` is agent-callable" in ref

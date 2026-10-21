@@ -47,9 +47,23 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
     decisions). Headless mode (`TENTAQLES_HEADLESS=1` or `--headless`) never
     calls `AskUserQuestion`: each human stop becomes a decision record and the
     turn ends.
-  - While a build is active, the gate hook refuses an agent shell command that
-    imports or references the gate module, so human-only subcommands cannot be
-    reached around the CLI.
+  - Whenever a build has a plan or a state dir, the gate hook refuses the
+    known routes around the CLI: shell commands that import or reference the
+    gate module, the same names in the content of files the agent writes,
+    writes under the gate's code, key paths by any spelling (split strings
+    included), and git commands that touch `.claude/build/`. These are text
+    checks, not isolation: the key is still readable by the agent's OS user
+    until tq isolates it (a follow-up), so the gate guards against a careless
+    agent, not one set on defeating it. The signed records are what the human
+    and the hub trust.
+  - The approved checkpoint ids are the source of truth: a plan edit that
+    drops or renumbers one is refused unless a plan approval is pending, and
+    the DoD, the Stop hook and `state` count a removed checkpoint as not
+    passed. `approve` shows the frozen DoD commands and refuses a trivial or
+    non-string one; a hotfix plan is written with review `pending` and the
+    approval switches it to `n/a`.
+  - The tree hash works after `build-gate setup` on git 2.55 (an exclude
+    pathspec naming the ignored state dir made `git add` exit 1).
   - `tq insights` gains a Process section from
     `$TQ_HOME/build-gate/events.jsonl`. SessionStart points at the PRD and
     counts open `NEEDS-DECISION` items. `add-project` scaffolds the fixed

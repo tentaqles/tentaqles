@@ -121,7 +121,9 @@ Commit explicit paths, inside the branch from step 1 (never on `main` or
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-git -C "$root" add CLAUDE.md docs .github .gitignore
+for p in CLAUDE.md docs/prd.md docs/adr docs/LEARNINGS.md docs/threat-model.md docs/privacy.md .gitignore .github; do
+  [ -e "$root/$p" ] && git -C "$root" add -- "$p"  # skip what was not written (e.g. .github when CI was declined)
+done
 git -C "$root" commit -m "chore(kickoff): project shape, threat model, privacy record, guardrails"
 ```
 

@@ -130,7 +130,7 @@ orchestrator adds that test file path to the checkpoint's `tests` in
 files the approved plan lists, and refuses `lock-tests` until the plan is
 approved, so run `lock-tests` right after approval, before any implementer
 starts. **Human stop 1** is the plan approval in their terminal
-(`build-gate approve <slug>`; you cannot approve). Headless: the
+(`build-gate approve <slug>`; you never run it, and the hook refuses it to you). Headless: the
 `plan-approval` record once the plan exists, the final output before. Then
 Phases 2 and 3 as the build skill describes: tests first and locked,
 implementer, behaviour gate, crew review with every verdict recorded, fixer
