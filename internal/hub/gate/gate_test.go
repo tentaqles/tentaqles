@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,5 +182,52 @@ func TestUnavailableReturnsItsError(t *testing.T) {
 	}
 	if u.Slugs(".", time.Time{}) != nil {
 		t.Fatal("no slugs")
+	}
+}
+
+func TestAnswerRecordedThenFailedReturnsMessageAndError(t *testing.T) {
+	f := newFakeGate(t)
+	writeKey(t)
+	msg, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "!record-fail", "hub:renato")
+	var ge *GateError
+	if !errors.As(err, &ge) || ge.Code != 1 {
+		t.Fatalf("want GateError code 1, got %v", err)
+	}
+	if !strings.Contains(msg, "decision d1a2b3c4: approve by hub:renato") || !strings.Contains(msg, "finish did NOT apply") {
+		t.Fatalf("message %q", msg)
+	}
+	st, _ := f.client.State(context.Background(), f.root, "demo", false)
+	if len(st.PendingDecisions) != 0 {
+		t.Fatal("the fake recorded the answer before failing")
+	}
+}
+
+func TestExitTwoClassification(t *testing.T) {
+	f := newFakeGate(t)
+	writeKey(t)
+	ctx := context.Background()
+	_, err := f.client.Answer(ctx, f.root, "demo", "d1a2b3c4", "approve", "!needs-note", "hub:renato")
+	if !IsNeedsNote(err) || IsHumanRefusal(err) {
+		t.Fatalf("needs-note misclassified: %v", err)
+	}
+	_, err = f.client.Answer(ctx, f.root, "demo", "d1a2b3c4", "approve", "!actor-mismatch", "hub:renato")
+	if !IsHumanRefusal(err) || IsNeedsNote(err) {
+		t.Fatalf("actor mismatch misclassified: %v", err)
+	}
+	human := &GateError{Code: 2, Msg: "build-gate: this step needs a human at an interactive terminal (PowerShell). Refusing."}
+	if !IsHumanRefusal(human) || IsNeedsNote(human) {
+		t.Fatal("human-only refusal misclassified")
+	}
+	if IsHumanRefusal(&GateError{Code: 2, Msg: "something else"}) {
+		t.Fatal("bare exit 2 is not a human refusal")
+	}
+}
+
+func TestNilEnvInheritsProcessEnvironment(t *testing.T) {
+	f := newFakeGate(t)
+	c := *f.client
+	c.Env = nil
+	if _, err := c.State(context.Background(), f.root, "demo", false); err != nil {
+		t.Fatalf("nil Env must inherit the process environment: %v", err)
 	}
 }

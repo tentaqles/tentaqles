@@ -225,9 +225,21 @@ func IsNotPending(err error) bool {
 	return ok && strings.Contains(m, "no pending decision")
 }
 
+// IsHumanRefusal: the gate refused because the call was not a verified human/hub actor
+// (exit 2 with the human-only or actor-mismatch message; other exit-2 causes do not match).
 func IsHumanRefusal(err error) bool {
 	var ge *GateError
-	return errors.As(err, &ge) && ge.Code == 2
+	if !errors.As(err, &ge) || ge.Code != 2 {
+		return false
+	}
+	return strings.Contains(ge.Msg, "needs a human at an interactive terminal") ||
+		strings.Contains(ge.Msg, "differs from the hub token's actor")
+}
+
+// IsNeedsNote: answering `override` without a reason in --note (exit 2).
+func IsNeedsNote(err error) bool {
+	var ge *GateError
+	return errors.As(err, &ge) && ge.Code == 2 && strings.Contains(ge.Msg, "needs a reason in --note")
 }
 
 type Client struct {
@@ -263,7 +275,11 @@ func (c *Client) run(ctx context.Context, dir string, extraEnv []string, args ..
 	argv := append(append([]string(nil), c.Command...), append([]string{"--root", dir}, args...)...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(scrub(c.Env), extraEnv...)
+	env := c.Env
+	if env == nil {
+		env = os.Environ() // nil means "inherit"; an empty child environment breaks python on Windows
+	}
+	cmd.Env = append(scrub(env), extraEnv...)
 	cmd.WaitDelay = 2 * time.Second
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
@@ -273,7 +289,7 @@ func (c *Client) run(ctx context.Context, dir string, extraEnv []string, args ..
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
-		return "", &GateError{Code: ee.ExitCode(), Msg: strings.TrimSpace(se.String() + "\n" + so.String())}
+		return strings.TrimSpace(so.String()), &GateError{Code: ee.ExitCode(), Msg: strings.TrimSpace(se.String() + "\n" + so.String())}
 	}
 	if err != nil {
 		return "", err
@@ -299,6 +315,10 @@ func (c *Client) State(ctx context.Context, dir, slug string, records bool) (*St
 }
 
 // Answer reads the key, mints the token for this one call and runs build-gate answer.
+//
+// The gate records the decision and bumps its generation even when it then exits non-zero (for
+// example "finish did NOT apply"). A non-nil error with a non-empty message means the gate may
+// have recorded the answer; callers re-read the state.
 func (c *Client) Answer(ctx context.Context, dir, slug, id, choice, note, actor string) (string, error) {
 	kp := c.KeyPath
 	if kp == "" {

@@ -55,6 +55,12 @@ def main(argv):
         if not actor or not tok or key is None or not hmac.compare_digest(mac(key, "answer", slug, actor), tok):
             print("build-gate: this step needs a human at an interactive terminal. Refusing.", file=sys.stderr)
             return 2
+        if note == "!needs-note":
+            print("build-gate: answering `override` needs a reason in --note (it is logged to docs/LEARNINGS.md).", file=sys.stderr)
+            return 2
+        if note == "!actor-mismatch":
+            print(f"build-gate: --actor 'x' differs from the hub token's actor '{actor}'. Refusing.", file=sys.stderr)
+            return 2
         if st.get("rolled_back"):
             print("build state was rolled back or altered; a human must re-approve", file=sys.stderr)
             return 2
@@ -77,6 +83,9 @@ def main(argv):
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(st, fh, indent=2)
         print(f"decision {did}: {choice} by {actor}")
+        if note == "!record-fail":
+            print("finish did NOT apply: scripted")
+            return 1
         return 0
     print(f"fake gate: unsupported command {cmd}", file=sys.stderr)
     return 64
