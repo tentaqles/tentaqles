@@ -54,3 +54,11 @@ def test_threat_model_skill_writes_stride_per_boundary() -> None:
                   "TENTAQLES_HEADLESS", "AskUserQuestion", "superseded", "B1 <from> -> <to>"):
         assert token in body, token
     assert "add docs/threat-model.md docs/prd.md CLAUDE.md" not in body
+
+
+def test_threat_model_acceptance_and_commit_rules() -> None:
+    body = _body("threat-model")
+    for token in ("Only the user can set a row to `accepted`", "never accepts", "90 days",
+                  "Document status", "main or master", "commit -F",
+                  "Stage only the files this run changed", "### FR-nn"):
+        assert token in body, token
