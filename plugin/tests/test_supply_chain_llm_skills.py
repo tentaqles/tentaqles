@@ -59,3 +59,30 @@ def test_record_command_follows_bootstrap_snippet() -> None:
 def test_ci_pipeline_says_branch_refs_are_refused() -> None:
     body = _body("ci-pipeline")
     assert "tq/gha-branch-ref" in body and "denies from the next tq release" in body
+
+
+GUARD = 'br=$(git -C "$root" branch --show-current); case "$br" in main|master|"") echo "on \'$br\': do not commit"; exit 1;; esac'
+
+
+def _commit_block(body: str) -> str:
+    import re
+    blocks = [b for b in re.findall(r"```bash\n(.*?)```", body, re.S) if " commit " in b]
+    assert len(blocks) == 1, len(blocks)
+    return blocks[0]
+
+
+def test_supply_chain_commit_has_the_main_master_guard() -> None:
+    body = _body("supply-chain")
+    block = _commit_block(body)
+    assert GUARD in block and block.index(GUARD) < block.index(" commit ")
+    assert "never on main or master" in body and "leave the changes\nuncommitted" in body
+
+
+def test_llm_security_review_build_marker_and_record_ownership() -> None:
+    body = _body("llm-security-review")
+    flat = " ".join(body.split())
+    assert "[checkpoint <slug>#<id> review]" in body
+    assert "Inside a build the build orchestrator runs `record-review`" in flat
+    assert "this skill runs it when standalone with a slug" in flat
+    assert "data.prompts.allow" in body
+    assert body.count("prompts.allow") == body.count("data.prompts.allow")

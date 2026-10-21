@@ -118,9 +118,7 @@ root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 br=$(git -C "$root" branch --show-current); case "$br" in main|master|"") echo "on '$br': do not commit"; exit 1;; esac
 git -C "$root" status --short
 git -C "$root" add -N docs/threat-model.md   # plus docs/prd.md CLAUDE.md only if this run edited them
-printf 'docs(security): threat model <boundaries added or updated>
-' > "$root/.git/tm-commit-msg.txt"
-git -C "$root" commit -F "$root/.git/tm-commit-msg.txt" -- docs/threat-model.md   # list the other edited files here too
+git -C "$root" commit -m "docs(security): threat model <boundaries added or updated>" -- docs/threat-model.md   # list the other edited files here too
 ```
 
 Report: boundaries, high-risk rows and where each landed (FR, rule, decision),

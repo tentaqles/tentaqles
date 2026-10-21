@@ -56,3 +56,15 @@ def test_privacy_review_fix_round_1_rules() -> None:
     assert "git diff <a>..<b>" in body and "git diff HEAD" in body
     assert "matched" in body and "classified_paths" in body
     assert "judge flow" in body
+
+
+GUARD = 'br=$(git -C "$root" branch --show-current); case "$br" in main|master|"") echo "on \'$br\': do not commit"; exit 1;; esac'
+
+
+def test_privacy_review_commit_has_the_main_master_guard() -> None:
+    import re
+    body = _body("privacy-review")
+    blocks = [b for b in re.findall(r"```bash\n(.*?)```", body, re.S) if " commit " in b]
+    assert len(blocks) == 1
+    assert GUARD in blocks[0] and blocks[0].index(GUARD) < blocks[0].index(" commit ")
+    assert "never on main or master" in body and "uncommitted and say so" in body

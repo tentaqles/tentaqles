@@ -74,4 +74,13 @@ owner: write it as a `NEEDS-DECISION` line under `## Open decisions` in
 Never call a change privacy-reviewed in a PR body unless a recorded
 `privacy-reviewer` PASS exists for the current code (or the human's judge).
 When you commit the fixes, stage only the files this run changed, named
-explicitly (never `git add -A` or `git add .`).
+explicitly (never `git add -A` or `git add .`). Commit on the feature branch,
+never on main or master; headless on main or master, leave the changes
+uncommitted and say so:
+
+```bash
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+br=$(git -C "$root" branch --show-current); case "$br" in main|master|"") echo "on '$br': do not commit"; exit 1;; esac
+git -C "$root" add <each file this run changed>
+git -C "$root" commit -m "fix(privacy): <what the review found>" -- <each file this run changed>
+```

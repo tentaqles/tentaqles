@@ -59,6 +59,15 @@ def test_threat_model_skill_writes_stride_per_boundary() -> None:
 def test_threat_model_acceptance_and_commit_rules() -> None:
     body = _body("threat-model")
     for token in ("Only the user can set a row to `accepted`", "never accepts", "90 days",
-                  "Document status", "main or master", "commit -F",
+                  "Document status", "main or master",
                   "Stage only the files this run changed", "### FR-nn"):
         assert token in body, token
+
+
+def test_threat_model_commit_writes_nothing_under_dot_git() -> None:
+    # The gate refuses writes to .git/, and in a worktree .git is a file: commit with -m and a pathspec.
+    body = _body("threat-model")
+    assert "/.git/" not in body and "commit -F" not in body and "tm-commit-msg" not in body
+    assert 'git -C "$root" commit -m "docs(security): threat model' in body
+    assert '-- docs/threat-model.md' in body
+    assert '''case "$br" in main|master|"") echo "on '$br': do not commit"; exit 1;; esac''' in body

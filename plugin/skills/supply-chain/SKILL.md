@@ -95,12 +95,15 @@ Run `tq decide triage --staged` on the workflow changes (they come back
 
 A table of the ten rows with `done | skipped (reason) | todo`, then commit
 only the files this run changed, each named explicitly (omit any path you did
-not change; a path git does not know aborts the add):
+not change; a path git does not know aborts the add). Commit on the feature
+branch, never on main or master; headless on main or master, leave the changes
+uncommitted and say so:
 
 ```bash
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+br=$(git -C "$root" branch --show-current); case "$br" in main|master|"") echo "on '$br': do not commit"; exit 1;; esac
 git -C "$root" add .github/workflows/<changed-file> [.github/dependabot.yml only if changed] [<lockfile-you-changed>]
-git -C "$root" commit -m "ci(supply-chain): pin actions, least-privilege permissions, SBOM on release"
+git -C "$root" commit -m "ci(supply-chain): pin actions, least-privilege permissions, SBOM on release" -- .github/workflows/<changed-file> [the other paths added above]
 ```
 
 Never `git add -A` or `git add .`.

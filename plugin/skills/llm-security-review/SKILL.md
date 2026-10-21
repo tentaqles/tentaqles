@@ -48,23 +48,27 @@ Launch `llm-security-reviewer` with this bundle, each item found as shown:
 - every prompt file or string: `grep -rnE "system_prompt|SYSTEM_PROMPT|messages *[=:\[]|prompts?/" "$root" --include=*.py --include=*.ts --include=*.md`;
 - tool and MCP definitions: `grep -rnE "mcpServers|\.mcp\.json|tools *[=:\[]|tool_use|@tool" "$root"`, plus `hooks/hooks.json`;
 - every model-call site in the diff: `grep -nE "anthropic|openai|messages\.create|chat\.completions|generateText|claude -p|tq decide" <changed files>`;
-- the manifest `data:` block (`data.classes` and `prompts.allow`) from `.tentaqles.yaml`;
+- the manifest `data:` block (`data.classes` and `data.prompts.allow`) from `.tentaqles.yaml`;
 - the spec slice, `CLAUDE.md`, `docs/LEARNINGS.md`, `docs/threat-model.md` and the checklist path.
 
 Point it at the trust boundaries the change crosses (model provider, MCP
-servers, hooks, memory store). Ask for the review contract output (first line
+servers, hooks, memory store). Inside a build, the reviewer prompt starts with the marker
+`[checkpoint <slug>#<id> review]` (shape required by `skills/build/SKILL.md`;
+the gate matches it). Ask for the review contract output (first line
 `RESULT: PASS`, `RESULT: FAIL` or `RESULT: BLOCKED`).
 
 Data leaving through model calls is in scope: classified data
-(`data.classes`) sent to a model outside `prompts.allow`, and secrets in
-prompts. `prompts.allow` governs model calls only; memory, the vault and hook
+(`data.classes`) sent to a model outside `data.prompts.allow`, and secrets in
+prompts. `data.prompts.allow` governs model calls only; memory, the vault and hook
 model calls always mask declared pii/financial classes, so a class listed in
-`prompts.allow` is still a finding if it reaches memory or the vault unmasked.
+`data.prompts.allow` is still a finding if it reaches memory or the vault unmasked.
 
 ## Record and act
 
-Inside a build, record the verdict (the snippet opens the block; blocks run in
-fresh shells):
+The verdict is recorded with the reviewer's RESULT line and its counts.
+Inside a build the build orchestrator runs `record-review` (per
+`skills/build/SKILL.md`); this skill runs it when standalone with a slug (the
+snippet opens the block; blocks run in fresh shells):
 
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
