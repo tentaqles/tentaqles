@@ -1004,9 +1004,33 @@ def _nabs(path) -> str:
     return p.lower() if os.name == "nt" else p
 
 
+_TQ_VAR = re.compile(r"\$\{TQ_HOME\}|\$env:TQ_HOME|\$TQ_HOME(?![A-Za-z0-9_])|%TQ_HOME%", re.IGNORECASE)
+_HOME_VAR = re.compile(r"\$\{(?:HOME|USERPROFILE)\}|\$env:(?:HOME|USERPROFILE)"
+                       r"|\$(?:HOME|USERPROFILE)(?![A-Za-z0-9_])|%(?:HOME|USERPROFILE)%", re.IGNORECASE)
+
+
 def _expand_known(word: str) -> str:
-    """Hook for the key-directory rule: variables whose value is known. Identity here."""
-    return word
+    """Expand the variables whose value the hook knows: `$TQ_HOME`, `${TQ_HOME}`, `%TQ_HOME%`,
+    `$env:TQ_HOME`, `$HOME`/`$USERPROFILE` (all spellings) and a leading `~`. Anything else
+    stays literal (and `has_expansion` still sees it)."""
+    w = word
+    home = norm(str(Path.home()))
+    if "$" in w or "%" in w:
+        tq = norm(os.environ.get("TQ_HOME") or str(Path.home() / ".tentaqles"))
+        w = _TQ_VAR.sub(lambda m: tq, w)
+        w = _HOME_VAR.sub(lambda m: home, w)
+    if w == "~" or w.startswith(("~/", "~\\")):
+        w = home + w[1:]
+    return w
+
+
+def _key_glob_candidates() -> list[tuple[str, str, str]]:
+    """What a glob could name under the key directory: the key file, whatever is there, and
+    the directory itself (class "keydir", counted only for recursive commands)."""
+    kd = _nabs(key_dir())
+    out = [("key", "the signing key", kd + "/hmac.key"), ("keydir", "the signing key's directory", kd)]
+    out.extend(("key", "the signing key", _nabs(p)) for p in _walk_paths(key_dir()))
+    return out
 
 
 def _glob_segments_match(pat: str, cand: str, dotfiles: bool) -> bool:
@@ -1188,7 +1212,7 @@ class _ShellScan:
         return out
 
     def _key_candidates(self) -> list[tuple[str, str, str]]:
-        return []
+        return _key_glob_candidates()
 
     # -- words ---------------------------------------------------------------
 
@@ -1233,6 +1257,12 @@ class _ShellScan:
         return hits
 
     def ancestor_hits(self, absn: str, recursive: bool, cmd_name: str) -> list[tuple[str, str]]:
+        """A recursive read (grep -r, ls -R, cp -r, rg, find) rooted at the key directory's parent
+        or any ancestor reaches the key. `find` counts whether or not it has -exec: its output
+        feeds xargs and `-exec cat` equally."""
+        kd = _key_dir_canon()
+        if (recursive or cmd_name == "find") and absn != kd and kd.startswith(absn.rstrip("/") + "/"):
+            return [("key", "the signing key (a recursive read of a parent directory)")]
         return []
 
     # -- working directory ---------------------------------------------------
@@ -1557,10 +1587,33 @@ def hook(data: dict) -> tuple[int, str, str]:
         return 2, "", f"build-gate internal error ({name}); refusing"
 
 
+def _search_reaches_key(tool: str, inp: dict, cwd) -> bool:
+    """Grep/Glob search a tree: refuse when the searched path is the key directory, inside it, or
+    any ancestor of it (a pattern such as `**/hmac.key` would reach in), also when `path` is
+    omitted and the session's cwd is such an ancestor, and when a Glob pattern itself names it."""
+    kd = _key_dir_canon()
+    base = str(cwd or os.getcwd())
+    raw = str(inp.get("path") or inp.get("file_path") or "")
+    _, a = resolve_word(Path(base), raw or base)
+    if a == kd or a.startswith(kd + "/") or kd.startswith(a.rstrip("/") + "/"):
+        return True
+    pat = norm(str(inp.get("pattern") or "")) if tool == "Glob" else ""
+    if pat:
+        full = pat if _is_abs(pat) else f"{a}/{pat}"
+        fn = _nabs(full)
+        if any(_glob_segments_match(fn, cand, True) for cls, _, cand in _key_glob_candidates()
+               if cls == "key"):
+            return True
+    return False
+
+
 def _hook(data: dict) -> tuple[int, str, str]:
     """Pure-ish dispatcher: returns (exit_code, stdout, stderr)."""
     inp0 = data.get("tool_input") or {}
     fp = inp0.get("file_path") or inp0.get("notebook_path") or inp0.get("path")
+    if (data.get("tool_name") or "") in ("Grep", "Glob") and data.get("hook_event_name") != "Stop":
+        if _search_reaches_key(data.get("tool_name") or "", inp0, data.get("cwd")):
+            return 2, "", f"build-gate: {_MESSAGES['key']}"
     if fp and data.get("hook_event_name") != "Stop":
         _, absn = resolve_word(Path(data.get("cwd") or os.getcwd()), str(fp))
         kd = _key_dir_canon()

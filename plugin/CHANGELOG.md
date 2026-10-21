@@ -50,10 +50,12 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
   - Whenever a build has a plan or a state dir, the gate hook refuses the
     known routes around the CLI: shell commands that import or reference the
     gate module, the same names in the content of files the agent writes,
-    writes under the gate's code, key paths by any spelling (split strings
-    included), and git commands that touch `.claude/build/`. These are text
+    writes under the gate's code, the known spellings of key paths (split strings,
+    globs, `$TQ_HOME`/`~`/`%TQ_HOME%`, a recursive read of a parent directory,
+    and Read/Grep/Glob calls aimed at the key directory or an ancestor of it),
+    and git commands that touch `.claude/build/`. These are text
     checks, not isolation: the key is still readable by the agent's OS user
-    until tq isolates it (a follow-up), so the gate guards against a careless
+    until tq isolates it (OS-level key isolation is a tq follow-up), so the gate guards against a careless
     agent, not one set on defeating it. The signed records are what the human
     and the hub trust.
   - The approved checkpoint ids are the source of truth: a plan edit that

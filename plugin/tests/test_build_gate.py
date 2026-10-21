@@ -2126,3 +2126,97 @@ def test_squash_normalisation_applies_to_locked_test_names(repo):
     cmd = "python -c \"open('te'+'sts/te'+'st_a.py','w')\""
     assert hook(repo, bash(cmd))[0] == 2
     assert hook(repo, bash("python -c \"open('te'+'sts/new_t'+'est.py','w')\""))[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Round 2b, item 2: the key directory through Read/Grep/Glob and shell globs
+# ---------------------------------------------------------------------------
+
+
+def _key_tool(tool, **inp):
+    return {"tool_name": tool, "tool_input": inp}
+
+
+def test_search_tools_refused_on_the_key_dir_and_its_ancestors(repo, tq_home):
+    kd = gate.key_dir()
+    assert hook(repo, _key_tool("Glob", pattern="**/hmac.key", path=str(tq_home)))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern="*", path=str(tq_home.parent)))[0] == 2
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(tq_home)))[0] == 2
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(tq_home), glob="**/hmac.key"))[0] == 2
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(kd)))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern="*", path=str(kd)))[0] == 2
+    assert hook(repo, _key_tool("Read", file_path=str(kd / "hmac.key")))[0] == 2
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(kd / "hmac.key")))[0] == 2
+    # the filesystem root and a drive root are ancestors too
+    assert hook(repo, _key_tool("Grep", pattern=".", path=str(Path(kd.anchor))))[0] == 2
+
+
+def test_glob_pattern_that_names_the_key_dir_is_refused(repo, tq_home):
+    kd = str(gate.key_dir()).replace("\\", "/")
+    assert hook(repo, _key_tool("Glob", pattern=kd + "/*"))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern=kd + "/hm*.key"))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern=str(tq_home).replace("\\", "/") + "/*/*.key"))[0] == 2
+    assert hook(repo, _key_tool("Glob", pattern="**/*.py", path=str(repo)))[0] == 0
+
+
+def test_search_tools_default_to_the_cwd_when_it_is_an_ancestor_of_the_key(repo, tq_home):
+    payload = {"cwd": str(tq_home.parent), "tool_name": "Glob", "tool_input": {"pattern": "**/hmac.key"},
+               "session_id": "s1"}
+    # the project root cannot be found from here, but the key rule does not need it
+    assert gate.hook(payload)[0] == 2
+
+
+def test_search_tools_on_ordinary_paths_are_allowed(repo):
+    approve_and_lock(repo)
+    assert hook(repo, _key_tool("Grep", pattern="x", path=str(repo / "plugin")))[0] == 0
+    assert hook(repo, _key_tool("Grep", pattern="x", path="plugin/"))[0] == 0
+    assert hook(repo, _key_tool("Grep", pattern="x", path=str(repo)))[0] == 0
+    assert hook(repo, _key_tool("Glob", pattern="**/*.py", path=str(repo)))[0] == 0
+    assert hook(repo, _key_tool("Read", file_path=str(repo / "app.py")))[0] == 0
+    assert hook(repo, _key_tool("Grep", pattern="x"))[0] == 0
+
+
+@pytest.mark.parametrize("cmd,tool", [
+    ("cat $TQ_HOME/*/*.key", "Bash"),
+    ("cat ${TQ_HOME}/build-gate/hm*", "Bash"),
+    ("cat $TQ_HOME/b*/hmac.key", "Bash"),
+    ("cat %TQ_HOME%\\*\\*.key", "Bash"),
+    ('find "$TQ_HOME" -name "hm*" -exec cat {} +', "Bash"),
+    ('find "$TQ_HOME" -type f | xargs cat', "Bash"),
+    ('grep -ra . "$TQ_HOME"', "Bash"),
+    ("grep -rn secret $TQ_HOME", "Bash"),
+    ("grep -R . ${TQ_HOME}", "Bash"),
+    ("rg . $TQ_HOME", "Bash"),
+    ("cp -r $TQ_HOME /tmp/x", "Bash"),
+    ("cp $TQ_HOME/* /tmp/x -r", "Bash"),
+    ("Get-ChildItem $env:TQ_HOME -Recurse | Get-Content", "PowerShell"),
+    ("Get-Content $env:TQ_HOME\\*\\*.key", "PowerShell"),
+])
+def test_shell_reads_of_the_key_through_globs_variables_and_recursion(repo, cmd, tool):
+    assert hook(repo, bash(cmd, tool))[0] == 2, cmd
+
+
+def test_shell_key_reads_via_tilde_when_tq_home_is_the_default(repo, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".tentaqles" / "build-gate").mkdir(parents=True)
+    monkeypatch.delenv("TQ_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    for cmd in ("cat ~/.tentaqles/*/*.key", "grep -r x ~", "grep -ra . ~/.tentaqles",
+                "cat $HOME/.tentaqles/build-gate/hm*", "cat ~/.tentaqles/build-gate/hmac.key"):
+        assert hook(repo, bash(cmd))[0] == 2, cmd
+    for cmd in ("cat ~/notes.txt", "ls ~", "grep x ~/.bashrc", "cat ~/.tentaqles/knowledge.yaml"):
+        assert hook(repo, bash(cmd))[0] == 0, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat $TQ_HOME/config.yaml",
+    "ls $TQ_HOME",
+    "grep -r foo plugin/",
+    "grep -rn foo .",
+    "find . -name '*.py' -exec wc -l {} +",
+    "cat $HOME/notes.txt",
+    "rm -r build/",
+])
+def test_shell_commands_beside_the_key_dir_stay_allowed(repo, cmd):
+    assert hook(repo, bash(cmd))[0] == 0, cmd
