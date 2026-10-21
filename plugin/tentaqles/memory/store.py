@@ -286,13 +286,7 @@ class MemoryStore:
 
     def _redact_value(self, value):
         """``_redact`` applied to every string inside JSON-shaped *value*."""
-        if isinstance(value, str):
-            return self._redact(value)
-        if isinstance(value, dict):
-            return {self._redact(str(k)): self._redact_value(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [self._redact_value(v) for v in value]
-        return value
+        return privacy.redact_value(value, self._classes)
 
     def _get_emb(self):
         if self._emb is None:

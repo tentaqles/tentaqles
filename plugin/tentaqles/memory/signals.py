@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from tentaqles import privacy
+
 
 class SignalBus:
     """Lightweight pub/sub primitive for cross-workspace broadcast.
@@ -32,6 +34,18 @@ class SignalBus:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.row_factory = sqlite3.Row
         return conn
+
+    @staticmethod
+    def _sender_classes(conn: sqlite3.Connection, workspace_id: str) -> list[str]:
+        try:
+            row = conn.execute(
+                "SELECT root_path FROM workspace_status WHERE workspace_id = ?", (workspace_id,)
+            ).fetchone()
+        except sqlite3.Error:
+            row = None
+        if not row or not row[0]:
+            return list(privacy.STRICTEST_CLASSES)
+        return privacy.workspace_classes(row[0])
 
     @staticmethod
     def _ts(dt: datetime) -> str:
@@ -60,9 +74,14 @@ class SignalBus:
         signal_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(hours=ttl_hours)
-        payload_json = json.dumps(payload or {})
 
         with self._connect() as conn:
+            # meta.db is shared across workspaces: mask the message and the
+            # payload by the sender's own data classes (strictest when the
+            # sender is not registered).
+            classes = self._sender_classes(conn, from_workspace)
+            message = privacy.redact_str(message, classes)
+            payload_json = json.dumps(privacy.redact_value(payload or {}, classes))
             # Validate target workspace exists (unless table is empty)
             row_count = conn.execute(
                 "SELECT COUNT(*) FROM workspace_status"

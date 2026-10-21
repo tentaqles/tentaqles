@@ -36,13 +36,6 @@ STRICTEST = ["checksummed", "pii", "financial"]
 
 
 @pytest.fixture(autouse=True)
-def _reset():
-    privacy.set_default_classes(["checksummed"])
-    yield
-    privacy.set_default_classes(["checksummed"])
-
-
-@pytest.fixture(autouse=True)
 def _no_embeddings(monkeypatch):
     monkeypatch.setattr(MemoryStore, "_embed", lambda self, text: None)
 
@@ -59,15 +52,31 @@ def _workspace(root: Path, data_block: str | None) -> Path:
 # --- detectors -------------------------------------------------------------
 
 
-def test_checksummed_by_default_leaves_email():
-    out, events = privacy.redact_text(f"cpf {CPF} mail ana@example.com card {CARD}")
+def test_no_classes_is_secrets_only():
+    # Read paths (reviewer bundle, test tails, context injection) call
+    # redact_text without classes: personal data stays readable there.
+    text = f'assert is_valid_cpf("{CPF}") and luhn("{CARD}") key {GH_TOKEN}'
+    out, events = privacy.redact_text(text)
+    assert CPF in out and CARD in out and "ghp_" not in out
+    assert events == ["github_pat"]
+
+
+def test_read_path_helpers_keep_personal_data():
+    from tentaqles.workflow._common import redact
+
+    diff = f'+    assert is_valid_cpf("{CPF}")\n+    assert luhn("4111111111111111")'
+    assert redact(diff) == diff
+
+
+def test_checksummed_baseline_leaves_email():
+    out, events = privacy.redact_text(f"cpf {CPF} mail ana@example.com card {CARD}", classes=["checksummed"])
     assert "[REDACTED:cpf]" in out and "[REDACTED:card]" in out and "ana@example.com" in out
     assert "529" not in out and "4111" not in out
     assert "cpf" in events and "card" in events
 
 
 def test_cnpj_and_iban_are_checksummed():
-    out, events = privacy.redact_text(f"cnpj {CNPJ} iban {IBAN}")
+    out, events = privacy.redact_text(f"cnpj {CNPJ} iban {IBAN}", classes=["checksummed"])
     assert out == "cnpj [REDACTED:cnpj] iban [REDACTED:iban]"
     assert events == ["cnpj", "iban"]
 
@@ -79,7 +88,7 @@ def test_invalid_checksums_are_not_masked():
 
 
 def test_failed_checksum_does_not_hide_a_card_after_it():
-    out, events = privacy.redact_text(f"ref 5512 {CARD}")
+    out, events = privacy.redact_text(f"ref 5512 {CARD}", classes=["checksummed"])
     assert out == "ref 5512 [REDACTED:card]" and events == ["card"]
 
 
@@ -98,7 +107,7 @@ def test_pii_class_masks_email_and_phone():
 
 def test_allow_marker_and_secrets_always():
     text = f"row {CPF} tq:allow-pii\nkey {GH_TOKEN}\nrow {CPF}"
-    out, events = privacy.redact_text(text)
+    out, events = privacy.redact_text(text, classes=["checksummed"])
     first, second, third = out.split("\n")
     assert CPF in first
     assert "[REDACTED:github_pat]" in second and "ghp_" not in out
@@ -144,8 +153,6 @@ def test_exit_classes_unreadable_data_block_is_strictest(data):
 def test_unknown_or_empty_class_list_raises(bad):
     with pytest.raises(ValueError):
         privacy.redact_text("x", classes=bad)
-    with pytest.raises(ValueError):
-        privacy.set_default_classes(bad)
 
 
 def test_all_and_secrets_classes():
@@ -373,3 +380,168 @@ def test_meta_memory_masks_summary_by_workspace(tmp_path: Path):
         assert EMAIL not in nodes
     finally:
         meta.close()
+
+
+# --- fix round 1 ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text, masked", [
+    (f"{CARD} 12/29", "[REDACTED:card] 12/29"),
+    (f"{CARD} 123", "[REDACTED:card] 123"),
+    (f"{CARD} 1234", "[REDACTED:card] 1234"),
+    ("ES91 2100 0418 4502 0005 1332 PAID", "[REDACTED:iban] PAID"),
+    (f"{IBAN} EUR", "[REDACTED:iban] EUR"),
+])
+def test_a_value_followed_by_another_token_is_still_masked(text, masked):
+    for classes in (["checksummed"], ["all"]):
+        assert privacy.redact_text(text, classes=classes)[0] == masked
+
+
+@pytest.mark.parametrize("text, name", [
+    ("529 982 247 25", "cpf"),
+    ("529-982-247-25", "cpf"),
+    ("id_52998224725", "cpf"),
+    ("11 222 333 0001 81", "cnpj"),
+    ("gb82 west 1234 5698 7654 32", "iban"),
+    ("4111 1111-1111 1111", "card"),
+    ("3782 822463 10005", "card"),
+])
+def test_other_layouts_are_masked(text, name):
+    out, events = privacy.redact_text(text, classes=["checksummed"])
+    assert events == [name], (text, out)
+
+
+@pytest.mark.parametrize("text", [
+    "abc52998224725xyz", "52998224726", "4111 1111 1111 1112", "GB82 WEST 1234 5698 7654 33",
+    "sha 529982247254111111111111111111abcdef123456",
+])
+def test_glued_or_invalid_values_stay(text):
+    assert privacy.redact_text(text, classes=["checksummed"]) == (text, [])
+
+
+@pytest.mark.parametrize("blob", ["1." * 100_000, "1-" * 100_000, "1" * 200_000, "@" * 200_000,
+                                  "a." * 100_000, "1 " * 100_000, "a@" * 100_000],
+                         ids=["dots", "dashes", "digits", "ats", "letter-dots", "spaces", "letter-ats"])
+def test_pathological_lines_stay_linear(blob):
+    start = time.perf_counter()
+    privacy.redact_text(blob, classes=["all"])
+    assert privacy.has_secrets(blob) in (True, False)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.0, f"{blob[:4]!r}: {elapsed:.2f}s"
+
+
+def test_email_pattern_still_finds_addresses():
+    found = [m.group(0) for m in privacy.EMAIL_PATTERN.finditer(f"to: {EMAIL}, (bob+x@mail.example.com)")]
+    assert found == [EMAIL, "bob+x@mail.example.com"]
+
+
+def test_public_and_internal_classes_add_no_detectors():
+    text = f"{EMAIL} {CPF}"
+    assert privacy.redact_text(text, classes=["internal"])[0] == f"{EMAIL} [REDACTED:cpf]"
+    assert privacy.exit_classes({"data": {"classes": ["public", "internal"]}}) == ["checksummed"]
+    assert privacy.exit_classes({"data": {"classes": ["public", "pii"]}}) == ["checksummed", "pii"]
+
+
+def test_redact_value_masks_nested_strings():
+    value = {"who": EMAIL, "list": [CPF, 3], EMAIL: None}
+    out = privacy.redact_value(value, ["pii"])
+    assert out == {"who": "[REDACTED:email]", "list": ["[REDACTED:cpf]", 3], "[REDACTED:email]": None}
+
+
+def test_signal_bus_masks_by_sender_workspace(tmp_path: Path):
+    from tentaqles.memory.meta import MetaMemory
+    from tentaqles.memory.signals import SignalBus
+
+    db = tmp_path / "meta.db"
+    plain = _workspace(tmp_path / "plain", None)
+    meta = MetaMemory(db_path=db)
+    meta.update_workspace("plain", "Plain", str(plain), "s", [])
+    meta.update_workspace("other", "Other", str(_workspace(tmp_path / "other", None)), "s", [])
+    meta.close()
+    bus = SignalBus(meta_db_path=db)
+    bus.emit("plain", "other", "custom", f"mail {EMAIL} key {GH_TOKEN} cpf {CPF}", payload={"to": EMAIL})
+    bus.emit("ghost", "other", "custom", f"mail {EMAIL}", payload={"to": [EMAIL]})
+    import sqlite3
+
+    with sqlite3.connect(str(db)) as conn:
+        rows = conn.execute("SELECT from_workspace, message, payload FROM signals ORDER BY emitted_at, rowid").fetchall()
+    by_sender = {r[0]: (r[1], r[2]) for r in rows}
+    message, payload = by_sender["plain"]
+    assert message == f"mail {EMAIL} key [REDACTED:github_pat] cpf [REDACTED:cpf]"
+    assert json.loads(payload) == {"to": EMAIL}
+    message, payload = by_sender["ghost"]  # unknown sender: strictest
+    assert message == "mail [REDACTED:email]" and json.loads(payload) == {"to": ["[REDACTED:email]"]}
+
+
+def test_vault_frontmatter_stays_valid_yaml(tmp_path: Path):
+    import yaml
+
+    s = MemoryStore(_workspace(tmp_path / "ws", "data:\n  classes: [pii]\n"))
+    try:
+        s._conn.execute(
+            "INSERT INTO sessions (id, started_at, ended_at, summary, tags) VALUES (?, ?, ?, ?, ?)",
+            ("s1", "2026-10-01T00:00:00+00:00", "2026-10-01T01:00:00+00:00", "x",
+             json.dumps([EMAIL, f"{EMAIL} and more"])),
+        )
+        s._conn.commit()
+        written = export_workspace(s, {"client": "acme"}, KnowledgeConfig(vault_dir=tmp_path / "vault"))
+        note = next(p for p in written if p.parent.name == "sessions").read_text(encoding="utf-8")
+        front = yaml.safe_load(note.split("---\n")[1])
+        assert front["tags"] == ["[REDACTED:email]", "[REDACTED:email] and more"]
+    finally:
+        s.close()
+
+
+def test_store_masks_decisions_pending_touches_and_failures(tmp_path: Path):
+    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
+    try:
+        s.record_decision(chosen=f"bill {EMAIL}", rationale=f"cpf {CPF}", rejected=[EMAIL], tags=[EMAIL])
+        s.add_pending(f"call {EMAIL}", node_ids=[f"notes/{EMAIL}.md"])
+        s.touch(f"notes/{EMAIL}.md")
+        s.record_tool_failure("pytest -q", f"AssertionError: {EMAIL} != {CPF}")
+        rows = [
+            s._conn.execute("SELECT chosen, rationale, rejected, tags FROM decisions").fetchone(),
+            s._conn.execute("SELECT description, node_ids FROM pending").fetchone(),
+            s._conn.execute("SELECT node_id FROM touches").fetchone(),
+            s._conn.execute("SELECT error FROM tool_failures").fetchone(),
+        ]
+        blob = json.dumps(rows)
+        assert EMAIL not in blob and CPF not in blob
+        assert rows[0][0] == "bill [REDACTED:email]" and rows[0][1] == "cpf [REDACTED:cpf]"
+    finally:
+        s.close()
+
+
+def test_store_upsert_reference_masks(tmp_path: Path):
+    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
+    try:
+        s.upsert_reference("a.md", 1.0, f"About {EMAIL}", f"mailto:{EMAIL}", "2026-10-01", f"CPF {CPF}")
+        title, url, text = s._conn.execute("SELECT title, url, text FROM reference_docs").fetchone()
+        assert (title, url, text) == ("About [REDACTED:email]", "mailto:[REDACTED:email]", "CPF [REDACTED:cpf]")
+    finally:
+        s.close()
+
+
+def test_ingest_masks_before_handing_to_the_store(tmp_path: Path):
+    class _RawStore:
+        classes = ["checksummed", "pii"]
+
+        def __init__(self):
+            self.calls = []
+
+        def reference_mtime(self, path):
+            return None
+
+        def upsert_reference(self, **kw):
+            self.calls.append(kw)
+
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "a.md").write_text(f"---\ntitle: Notes on {EMAIL}\nurl: mailto:{EMAIL}\n---\nCPF {CPF}\n",
+                                encoding="utf-8")
+    store = _RawStore()
+    ingest_markdown_dirs(store, [notes])
+    (call,) = store.calls
+    assert call["title"] == "Notes on [REDACTED:email]"
+    assert call["url"] == "mailto:[REDACTED:email]"
+    assert call["text"] == "CPF [REDACTED:cpf]"

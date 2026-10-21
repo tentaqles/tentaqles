@@ -41,9 +41,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _note(front: dict, title: str, body_lines: list[str]) -> str:
+def _note(front: dict, title: str, body_lines: list[str], classes: list[str]) -> str:
+    """Build a note. Every value is masked *before* the YAML dump, so a marker
+    such as ``[REDACTED:email]`` is quoted by the dumper and the frontmatter
+    stays valid."""
+    front = privacy.redact_value(front, classes)
+    title = privacy.redact_str(title, classes)
+    body = privacy.redact_str("\n".join(body_lines).rstrip(), classes)
     fm = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, default_flow_style=False).strip()
-    return "---\n" + fm + "\n---\n" + MARKER + "\n\n# " + title + "\n\n" + "\n".join(body_lines).rstrip() + "\n"
+    return "---\n" + fm + "\n---\n" + MARKER + "\n\n# " + title + "\n\n" + body + "\n"
 
 
 class _Escape(Exception):
@@ -58,12 +64,12 @@ def _under(path: Path, root_real: Path) -> bool:
     return real == root_real or root_real in real.parents
 
 
-def _write(path: Path, content: str, root_real: Path, classes: list[str]) -> Path:
-    """Mask and write a note, refusing to go through a symlink or outside root_real."""
+def _write(path: Path, content: str, root_real: Path) -> Path:
+    """Write a note (masked by _note), refusing to go through a symlink or outside root_real."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink() or not _under(path.parent, root_real):
         raise _Escape(str(path))
-    path.write_text(privacy.redact_str(content, classes), encoding="utf-8", newline="\n")
+    path.write_text(content, encoding="utf-8", newline="\n")
     return path
 
 
@@ -109,12 +115,12 @@ def export_workspace(store, manifest: dict, cfg: KnowledgeConfig) -> list[Path]:
 
     written: list[Path] = []
     try:
-        written.append(_write(client_dir / "context.md", _context(store, manifest, client, display, front),
-                              client_real, classes))
-        written.append(_write(client_dir / "decisions.md", _decisions(store, display, front), client_real, classes))
-        written.append(_write(client_dir / "plan.md", _plan(store, display, front), client_real, classes))
+        written.append(_write(client_dir / "context.md", _context(store, manifest, client, display, front, classes),
+                              client_real))
+        written.append(_write(client_dir / "decisions.md", _decisions(store, display, front, classes), client_real))
+        written.append(_write(client_dir / "plan.md", _plan(store, display, front, classes), client_real))
         if cfg.export_fixes:
-            written.append(_write(client_dir / "fixes.md", _fixes(store, display, front), client_real, classes))
+            written.append(_write(client_dir / "fixes.md", _fixes(store, display, front, classes), client_real))
         if cfg.export_sessions:
             written.extend(_sessions(store, display, front, client_dir / "sessions", client_real, classes))
     except _Escape:
@@ -131,7 +137,7 @@ def _classes(store, manifest: dict) -> list[str]:
     return [c for c in privacy.STRICTEST_CLASSES if c in wanted]
 
 
-def _context(store, manifest: dict, client: str, display: str, front) -> str:
+def _context(store, manifest: dict, client: str, display: str, front, classes: list[str]) -> str:
     lines = [f"Client `{client}`."]
     stack = manifest.get("stack") or []
     if stack:
@@ -172,10 +178,10 @@ def _context(store, manifest: dict, client: str, display: str, front) -> str:
               f"- fixes: {fixes}",
               "",
               "See [[decisions]], [[plan]] and [[fixes]]. Session notes are in `sessions/`."]
-    return _note(front("context", "current"), display, lines)
+    return _note(front("context", "current"), display, lines, classes)
 
 
-def _decisions(store, display: str, front) -> str:
+def _decisions(store, display: str, front, classes: list[str]) -> str:
     rows = store.get_recent_decisions(days=365 * 100, status="active")
     lines = ["Confirmed choices, newest first. A superseded decision disappears from this list; "
              "its lineage stays in memory.db.", ""]
@@ -190,10 +196,10 @@ def _decisions(store, display: str, front) -> str:
         lines.append(f"- Confidence: {d.get('confidence', 'medium')}")
         lines.append(f"- id: `{d['id']}`")
         lines.append("")
-    return _note(front("decisions", "confirmed", count=len(rows)), f"{display} — decisions", lines)
+    return _note(front("decisions", "confirmed", count=len(rows)), f"{display} — decisions", lines, classes)
 
 
-def _plan(store, display: str, front) -> str:
+def _plan(store, display: str, front, classes: list[str]) -> str:
     rows = store.get_open_pending()
     lines = ["Open items are proposals: things noticed or suggested but not yet decided. "
              "When one is approved, record the decision (it then appears in [[decisions]] / decisions.md) "
@@ -202,17 +208,17 @@ def _plan(store, display: str, front) -> str:
         lines.append("_Nothing open._")
     for p in rows:
         lines.append(f"- [ ] [{p['priority']}] {p['description']} ({str(p['created_at'])[:10]}, `{p['id']}`)")
-    return _note(front("plan", "proposed", count=len(rows)), f"{display} — plan", lines)
+    return _note(front("plan", "proposed", count=len(rows)), f"{display} — plan", lines, classes)
 
 
-def _fixes(store, display: str, front) -> str:
+def _fixes(store, display: str, front, classes: list[str]) -> str:
     rows = store.get_recent_fixes(limit=200)
     lines = ["Errors and the command that made them go away, newest first.", ""]
     if not rows:
         lines.append("_No fixes recorded yet._")
     for f in rows:
         lines.append(f"- {str(f['created_at'])[:10]}: `{f['error']}` → `{f['command']}`")
-    return _note(front("fixes", "recorded", count=len(rows)), f"{display} — fixes", lines)
+    return _note(front("fixes", "recorded", count=len(rows)), f"{display} — fixes", lines, classes)
 
 
 def _sessions(store, display: str, front, sessions_dir: Path, root_real: Path, classes: list[str]) -> list[Path]:
@@ -232,5 +238,5 @@ def _sessions(store, display: str, front, sessions_dir: Path, root_real: Path, c
         fm = front("session", "ended", session_id=s["id"], date=started[:10], duration=_duration(s.get("duration_s")))
         if tags:
             fm["tags"] = [str(t) for t in tags]
-        written.append(_write(path, _note(fm, f"{display} — session {started[:10]}", lines), root_real, classes))
+        written.append(_write(path, _note(fm, f"{display} — session {started[:10]}", lines, classes), root_real))
     return written
