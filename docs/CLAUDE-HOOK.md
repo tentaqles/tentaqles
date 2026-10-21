@@ -354,8 +354,7 @@ the manifest):
   command that reads a classified path or table (`data.paths`) and writes into
   `tests/`, `fixtures/` or `seeds/`. Fixtures must be synthetic. Its message
   points to `docs/privacy.md`, the per-project record of classified data that
-  the development process's definition of done requires whenever
-  `classified_paths` change.
+  the planned development process asks for; tq only points at it.
 - `tq/commit-message` (ask) — a `git commit` whose message (read from `-m`,
   `-F` or a heredoc) is not Conventional Commits: `type(scope): summary` with
   a known type, a summary of at most 100 characters, and a body when the
@@ -402,9 +401,9 @@ like the command it wraps.
 Reading, querying and processing personal data locally is allowed: Claude can
 read files, query tables and run scripts over data that holds personal
 information. The guards sit at the exits, where data would be recorded or
-published. tq guards commits, pushes, PR and issue text, and fixtures. The
-memory, vault and model exits are guarded by the Claude Code plugin (its PII
-redaction ships in plugin release 0.12.0), not by a tq rule.
+published. tq guards commits, pushes, PR and issue text, and fixtures. tq has
+no rule for the memory, vault and model exits; the Claude Code plugin's PII
+redaction for those exits is planned for plugin 0.12.0.
 
 A client workspace declares what it handles in its manifest:
 
