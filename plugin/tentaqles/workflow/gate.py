@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -780,7 +781,11 @@ _CODE_RUNNERS = {"python", "py", "node", "deno", "bun", "ruby", "perl", "php", "
                  "powershell", "bash", "sh", "zsh", "dash", "ksh", "fish", "cmd", "osascript", "lua",
                  "tclsh", "awk", "gawk", "sed", "jq", "sqlite3", "psql", "mysql", "duckdb", "find", "xargs"}
 # Commands that can create links (or unpack them): never under the carve-out.
-_LINK_MAKERS = {"ln", "link", "mklink", "tar", "unzip", "rsync", "cpio", "7z"}
+_LINK_MAKERS = {"ln", "link", "mklink", "tar", "unzip", "cpio", "7z"}
+# Copiers whose sources must be existing, link-free files or directories.
+_COPIERS = {"mv", "cp", "rsync", "install"}
+_WALK_CAP = 2000
+_lstat = os.lstat  # module attribute so tests can stand in a link
 _LINK_TYPES = ("symboliclink", "junction", "hardlink")
 
 
@@ -830,6 +835,79 @@ def _check_links(root: Path, seg) -> None:
                         "(a link would let a later write land on the gate's evidence).")
 
 
+def _is_link(st) -> bool:
+    """A symlink, or on Windows any reparse point (junctions included)."""
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    return bool(getattr(st, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def _clean_source(path: str) -> bool:
+    """An existing regular non-link file, or a directory with no link or junction
+    in a walk of at most _WALK_CAP entries. Anything else (missing included) fails."""
+    try:
+        st = _lstat(path)
+    except OSError:
+        return False
+    if _is_link(st):
+        return False
+    if stat.S_ISREG(st.st_mode):
+        return True
+    if not stat.S_ISDIR(st.st_mode):
+        return False
+    seen, todo = 0, [path]
+    while todo:
+        d = todo.pop()
+        try:
+            names = os.listdir(d)
+        except OSError:
+            return False
+        for name in names:
+            seen += 1
+            if seen > _WALK_CAP:
+                return False
+            child = os.path.join(d, name)
+            try:
+                cst = _lstat(child)
+            except OSError:
+                return False
+            if _is_link(cst):
+                return False
+            if stat.S_ISDIR(cst.st_mode):
+                todo.append(child)
+            elif not stat.S_ISREG(cst.st_mode):
+                return False
+    return True
+
+
+def _copy_sources(seg) -> list[str]:
+    """Source words of a mv/cp/rsync/install segment: every positional except the
+    destination (the last one, or the -t/--target-directory value)."""
+    bases = _bases(seg)
+    i = next((k for k, b in enumerate(bases) if b in _COPIERS), None)
+    if i is None:
+        return []
+    args, pos, target, ends = seg.argv[i + 1:], [], None, False
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if ends or not a.startswith("-") or a == "-":
+            pos.append(a)
+        elif a == "--":
+            ends = True
+        elif a in ("-t", "--target-directory"):
+            target = args[k + 1] if k + 1 < len(args) else ""
+            k += 1
+        elif a.startswith("--target-directory="):
+            target = a.split("=", 1)[1]
+        elif re.match(r"^-t.", a):
+            target = a[2:]
+        elif bases[i] == "install" and a in ("-m", "-o", "-g", "--mode", "--owner", "--group"):
+            k += 1
+        k += 1
+    return pos if target is not None else pos[:-1]
+
+
 def _under_breaker(root: Path, rel: str | None, live: set[str]) -> bool:
     """rel (already `..`-resolved) sits at or under .claude/build/<live slug>/breaker,
     and so does its real path (no link inside it leads out)."""
@@ -870,6 +948,9 @@ def _breaker_only(root: Path, seg) -> bool:
     live = {s for s in slugs(root) if load_approved(root, s) and not load_session(root, s).get("finished")}
     if not live:
         return False
+    for src in _copy_sources(seg):
+        if not _clean_source(resolve_word(root, src)[1]):
+            return False  # a link (or junction) carried in would redirect later writes
     runner = any(b in _CODE_RUNNERS for b in _bases(seg))
     if runner and any(STATE_DIR in canon_text(w) for w in seg.argv):
         return False
@@ -907,6 +988,7 @@ def check_shell(cmd: str, root: Path) -> None:
         if _text_mentions(root, canon_all, locked, active):
             raise Block(f"can't parse this command ({e}) and it names a protected path; failing closed.")
         return
+    links_here = any(_makes_links(s) for s in segs)  # no carve-out anywhere in such a command
     for seg in segs:
         sub, sub_args = _gate_invocation(seg)
         writes = is_write_segment(seg)
@@ -921,7 +1003,7 @@ def check_shell(cmd: str, root: Path) -> None:
                 word_hits.append((cls, rel or absn))
         text_hits = _text_mentions(root, canon, locked, active)
         _check_links(root, seg)
-        if writes and _breaker_only(root, seg):
+        if writes and not links_here and _breaker_only(root, seg):
             word_hits = [h for h in word_hits if h[0] != "state"]
             text_hits = [h for h in text_hits if h[0] != "state"]
         for cls, what in word_hits + text_hits:

@@ -1423,6 +1423,7 @@ def test_kept_override_logs_an_event(repo, tq_home):
 ])
 def test_breaker_scratch_dir_is_the_only_state_write_allowed(repo, cmd, want):
     _active_build(repo)
+    _scratch_sources(repo)
     assert hook(repo, bash(cmd))[0] == want
 
 
@@ -1482,6 +1483,7 @@ def test_breaker_carve_out_round2_blocks(repo, cmd):
 ])
 def test_breaker_carve_out_round2_still_allows(repo, cmd):
     _active_build(repo)
+    _scratch_sources(repo)
     assert hook(repo, bash(cmd))[0] == 0, cmd
 
 
@@ -1499,6 +1501,7 @@ def test_breaker_carve_out_refuses_a_write_through_a_link_in_scratch(repo):
 
 def test_breaker_carve_out_refuses_a_write_through_a_junction_in_scratch(repo):
     _active_build(repo)
+    _scratch_sources(repo)
     scratch = repo / ".claude" / "build" / "demo" / "breaker"
     scratch.mkdir(parents=True, exist_ok=True)
     target = repo / ".claude" / "build" / "demo"
@@ -1513,3 +1516,103 @@ def test_breaker_carve_out_refuses_a_write_through_a_junction_in_scratch(repo):
     assert hook(repo, bash("echo x > .claude/build/demo/breaker/j/approved.json"))[0] == 2
     assert hook(repo, bash("cp x .claude/build/demo/breaker/j"))[0] == 2
     assert hook(repo, bash("cp x .claude/build/demo/breaker/a"))[0] == 0
+
+
+# Fix round 3: a link made elsewhere and moved or copied into breaker/.
+def _scratch_sources(repo):
+    """Regular files the carve-out allows copying: copies need an existing,
+    link-free source."""
+    (repo / "x").write_text("x", encoding="utf-8")
+    (repo / "app.db").write_bytes(b"db")
+    scratch = repo / ".claude" / "build" / "demo" / "breaker"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "app.db").write_bytes(b"db")
+    return scratch
+
+
+def _dir_link(target, link):
+    """A directory link this box can make: a junction on Windows, else a symlink."""
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError, AttributeError):
+        pytest.skip("can't create a directory link here")
+
+
+@pytest.mark.parametrize("cmd", [
+    "ln -s ../approved.json lib/l && mv lib/l .claude/build/demo/breaker/l && echo x > .claude/build/demo/breaker/l",
+    r"cmd /c mklink /J lib\j .claude && mv lib/j .claude/build/demo/breaker/j",
+    "cp -s x lib/l; cp x .claude/build/demo/breaker/a",
+    "New-Item -ItemType Junction -Path lib/j -Target .claude; echo x > .claude/build/demo/breaker/a",
+])
+def test_breaker_no_carve_out_in_a_command_that_makes_links(repo, cmd):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "lib").mkdir(exist_ok=True)
+    assert hook(repo, bash(cmd))[0] == 2, cmd
+
+
+def test_breaker_refuses_moving_a_junction_in(repo):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "lib").mkdir(exist_ok=True)
+    _dir_link(repo / ".claude", repo / "lib" / "j")
+    cmd = "mv lib/j .claude/build/demo/breaker/j; echo x > .claude/build/demo/breaker/j/build/demo/approved.json"
+    assert hook(repo, bash(cmd))[0] == 2
+    assert hook(repo, bash("cp -a lib/ .claude/build/demo/breaker/"))[0] == 2
+    assert hook(repo, bash("cp -r lib .claude/build/demo/breaker/"))[0] == 2
+
+
+def test_breaker_refuses_copying_a_symlink_in(repo, monkeypatch):
+    import stat as _stat
+    _active_build(repo)
+    _scratch_sources(repo)
+    real = gate._lstat
+
+    class Fake:
+        st_mode = _stat.S_IFLNK | 0o777
+        st_file_attributes = 0
+
+    def fake(p):
+        return Fake() if os.path.basename(str(p)).lower() == "x" else real(p)
+    monkeypatch.setattr(gate, "_lstat", fake)
+    assert hook(repo, bash("mv x .claude/build/demo/breaker/x"))[0] == 2
+    assert hook(repo, bash("cp app.db .claude/build/demo/breaker/app.db"))[0] == 0
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("cp app.db .claude/build/demo/breaker/app.db", 0),
+    ("cp -r fixtures/ .claude/build/demo/breaker/", 0),
+    ("cp -t .claude/build/demo/breaker app.db x", 0),
+    ("cp missing.db .claude/build/demo/breaker/app.db", 2),
+    ("mv missing .claude/build/demo/breaker/m", 2),
+    ("install -m 644 app.db .claude/build/demo/breaker/app.db", 0),
+    ("rsync -a fixtures/ .claude/build/demo/breaker/f/", 0),
+])
+def test_breaker_copy_sources_must_exist_and_be_link_free(repo, cmd, want):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "fixtures" / "sub").mkdir(parents=True)
+    (repo / "fixtures" / "sub" / "a.json").write_text("{}", encoding="utf-8")
+    assert hook(repo, bash(cmd))[0] == want, cmd
+
+
+def test_breaker_refuses_a_directory_with_a_link_inside(repo):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "fixtures" / "sub").mkdir(parents=True)
+    _dir_link(repo / ".claude", repo / "fixtures" / "sub" / "j")
+    assert hook(repo, bash("cp -r fixtures/ .claude/build/demo/breaker/"))[0] == 2
+
+
+def test_breaker_refuses_a_directory_over_the_walk_cap(repo, monkeypatch):
+    _active_build(repo)
+    _scratch_sources(repo)
+    (repo / "fixtures").mkdir()
+    for i in range(5):
+        (repo / "fixtures" / f"f{i}").write_text("", encoding="utf-8")
+    monkeypatch.setattr(gate, "_WALK_CAP", 3)
+    assert hook(repo, bash("cp -r fixtures .claude/build/demo/breaker/"))[0] == 2
