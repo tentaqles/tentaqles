@@ -35,5 +35,18 @@ def test_build_dod_override_is_human_only() -> None:
     ref = (SKILLS / "build" / "reference.md").read_text(encoding="utf-8")
     assert "--override" in ref
     assert 'dod <slug> --override "<their words>"' not in body
+    assert "you never run `build-gate dod <slug> --override`" in body
+    assert 'ask the human to run `build-gate dod <slug> --override "<their reason>"` in their own terminal' in body
+    assert '--kind question --text "override:' in body and "--options override,stop" in body
+    assert "build-gate answer <slug> <id> --choice override" in body
     assert "AskUserQuestion` is never called" in body
     assert "build-gate ask" in body.split("## Headless mode", 1)[1]
+
+
+def test_build_decision_records_are_headless_only() -> None:
+    body = _body("build")
+    assert "In interactive mode you write no decision records" in body
+    assert "you also write the `ask` record" not in body
+    assert "First write the record" not in body
+    assert body.count("--kind plan-approval") >= 4  # headless block, split, Request changes, re-approval rule
+    assert "Log it as an H<n> line" not in body and "H<n> line in `docs/LEARNINGS.md`" in body
