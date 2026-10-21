@@ -318,7 +318,11 @@ def state_problem(root: Path, slug: str) -> str | None:
     """Why the gate refuses this build until a human re-approves, or None."""
     rec = _gen_record(root, slug)
     if gen_record_path(root, slug).exists():
-        if rec is None or load_approved(root, slug) is None:
+        if rec is None:
+            return ROLLBACK_MSG.format(slug=slug)
+        if rec.get("finished") and not (state_dir(root, slug) / "approved.json").exists():
+            pass  # a finished build whose state was cleaned up (merge cleanup, re-clone): nothing left to protect
+        elif load_approved(root, slug) is None:
             return ROLLBACK_MSG.format(slug=slug)
     else:
         if legacy_approval(root, slug) is not None:
@@ -328,7 +332,10 @@ def state_problem(root: Path, slug: str) -> str | None:
         if _sig_ok(raw) and isinstance(gen, int) and gen > 0:
             return ROLLBACK_MSG.format(slug=slug)
     sess = _session_raw(root, slug)
-    if sess is not None:
+    if sess is None:
+        if rec is not None and rec.get("session") and not rec.get("finished"):
+            return ROLLBACK_MSG.format(slug=slug)  # the record says a session existed: deleting it is a rollback
+    else:
         if not bound(root, slug, sess):
             return ROLLBACK_MSG.format(slug=slug)
         if rec is not None and bool(sess.get("finished")) != bool(rec.get("finished")):
@@ -402,10 +409,13 @@ def save_approved(root: Path, slug: str, data: dict, finished: bool | None = Non
     gen = max(prev, own) + 1
     pid = project_id(root)
     done = bool(rec.get("finished")) if finished is None else bool(finished)
+    session, bases = bool(rec.get("session")), _clean_bases(rec.get("bases"))
+    if rec.get("finished") and not (state_dir(root, slug) / "session.json").exists():
+        session, bases = False, {}  # a new run of a slug whose finished build was cleaned up
     out = {**data, "kind": APPROVAL_KIND, "slug": slug, "project_id": pid, "gen": gen}
     write_json(state_dir(root, slug) / "approved.json", sign(out))
     write_json(_gen_file(pid, slug), sign({"gen": gen, "slug": slug, "project_id": pid, "ts": now_iso(),
-                                           "finished": done,
+                                           "finished": done, "session": session, "bases": bases,
                                            "locked_tests": out.get("locked_tests") or {},
                                            "tests_locked": out.get("tests_locked") or {}}))
     _restamp(root, slug, _Binding(root, slug, prev), _Binding(root, slug, gen), legacy)
@@ -423,7 +433,23 @@ def load_session(root: Path, slug: str) -> dict:
     return data if bound(root, slug, data) else {}
 
 
+def _clean_bases(raw) -> dict:
+    return {str(k): v for k, v in raw.items() if isinstance(v, str) and v} if isinstance(raw, dict) else {}
+
+
+def review_bases(root: Path, slug: str) -> dict:
+    """The review base commit per checkpoint: the session's, overridden by what the gate recorded
+    with the key (session.json may be missing, older or replaced)."""
+    rec = _gen_record(root, slug) or {}
+    return {**_clean_bases(load_session(root, slug).get("bases")), **_clean_bases(rec.get("bases"))}
+
+
 def save_session(root: Path, slug: str, data: dict) -> None:
+    rec = _gen_record(root, slug)
+    if rec is not None:
+        bases = {**_clean_bases(data.get("bases")), **_clean_bases(rec.get("bases"))}
+        data = {**data, "bases": bases}
+        write_json(_gen_file(project_id(root), slug), sign({**rec, "session": True, "bases": bases}))
     write_json(state_dir(root, slug) / "session.json", sign_state(root, slug, data))
 
 
@@ -1376,6 +1402,30 @@ def _recursive_segment(argv: list[str], cmd_name: str) -> bool:
     return False
 
 
+_TAR_TOOLS = {"tar", "gtar", "bsdtar"}
+
+
+def _runtime_file_list(cmd_name: str, cargs: list[str]) -> bool:
+    """`tar -T <file>` / `--files-from`, `cpio -i/-o/-p`: the file list is read at run time, so the
+    hook can't see which paths the command reaches."""
+    if cmd_name in _TAR_TOOLS:
+        for i, a in enumerate(cargs):
+            if a == "--files-from" or a.startswith("--files-from="):
+                return True
+            if a.startswith("--"):
+                continue
+            if a.startswith("-"):
+                if re.fullmatch(r"-[A-Za-z0-9]*T.*", a):
+                    return True
+            elif i == 0 and re.fullmatch(r"[A-Za-z]*T[A-Za-z]*", a):
+                return True  # old-style bundle: `tar cTf list x.tar`
+        return False
+    if cmd_name == "cpio":
+        return any(a in ("--extract", "--create", "--pass-through") or re.fullmatch(r"-[A-Za-z0-9]*[iop][A-Za-z0-9]*", a)
+                   for a in cargs if not a.startswith("---"))
+    return False
+
+
 def _xargs_rest(argv: list[str]) -> list[str] | None:
     """The arguments after `xargs` when this segment runs it (behind env/sudo/nohup...), else None."""
     i = 0
@@ -1727,7 +1777,8 @@ class _ShellScan:
         bases = self.bases(st)
         words = [w for w in seg.argv[1:] + seg.redirects if not is_null_target(w)]
         redirected = any(not is_null_target(t) for t in seg.redirects)
-        key_safe = cmd_name in _KEY_SAFE_VERBS and not redirected
+        # echo/printf words are text even with a redirect (the redirect target is judged on its own)
+        key_safe = cmd_name in _KEY_SAFE_VERBS and (not redirected or cmd_name in ("echo", "printf"))
         key_bases = tuple(self.key_bases(cmd_name, cargs, bases))
         dest = _dest_words(seg, cmd_name, cargs) if writes else set()
         word_hits: list[tuple[str, str]] = []
@@ -1766,6 +1817,9 @@ class _ShellScan:
             self.writes = True
         if any(c in ("state", "key") for c, _ in word_hits + text_hits):
             self.prot = True
+        if active and _runtime_file_list(cmd_name, cargs):
+            raise Block("`tar -T`/`--files-from` and `cpio` read their file list at run time, which the hook can't "
+                        "check; they are refused while a build exists. Name the paths on the command line.")
         xrest = _xargs_rest(seg.argv)
         if xrest is not None and active and _xargs_command(xrest) not in _XARGS_READONLY:
             raise Block("`xargs` runs a command on arguments the hook can't see, which may be a write to the gate's "
@@ -1869,7 +1923,7 @@ def check_agent(prompt: str, root: Path, session_id: str) -> None:
     sess = load_session(root, slug)
     sess.update({"session_id": session_id or sess.get("session_id"), "stage": stage,
                  "checkpoint": cid, "updated": now_iso()})
-    bases = sess.setdefault("bases", {})
+    bases = sess["bases"] = review_bases(root, slug)
     if stage == "implement" and str(cid) not in bases:
         code, head = git(root, "rev-parse", "HEAD")
         if code == 0:
@@ -2228,6 +2282,8 @@ def approval_summary(root: Path, slug: str) -> str:
 def cmd_approve(root: Path, slug: str) -> str:
     plan = load_plan(root, slug)
     if plan is None:
+        if _finished_and_cleaned(root, slug):
+            raise SystemExit(f"build {slug} is finished; write a new plan to start another")
         raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
     project, pwarn = load_project_config(root)
     problem = _project_command_problem(project, pwarn)
@@ -2439,8 +2495,18 @@ def cmd_status(root: Path, slug: str) -> str:
     return "\n".join(lines)
 
 
+def _finished_and_cleaned(root: Path, slug: str) -> bool:
+    rec = _gen_record(root, slug)
+    return bool(rec and rec.get("finished")) and not rolled_back(root, slug)
+
+
 def cmd_state(root: Path, slug: str) -> dict:
     plan = load_plan(root, slug)
+    if plan is None and _finished_and_cleaned(root, slug) and load_approved(root, slug) is None:
+        return {"slug": slug, "feature": slug, "workflow": "build", "hotfix": False, "task": None, "approved": False,
+                "rolled_back": False, "gen": recorded_gen(root, slug), "halted": None, "finished": True,
+                "cleaned": True, "checkpoints": [], "dod": None, "dod_fresh": False, "pending_decisions": [],
+                "decisions": [], "bases": review_bases(root, slug), "events_path": norm(events_path())}
     if plan is None:
         raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
     bad = plan_problem(plan)
@@ -2472,7 +2538,8 @@ def cmd_state(root: Path, slug: str) -> dict:
     return {"slug": slug, "feature": plan.get("feature", slug),
             "workflow": signed.get("workflow") if signed.get("workflow") in WORKFLOWS else "build",
             "hotfix": signed.get("hotfix") is True, "task": plan.get("task"), "approved": approved is not None,
-            "rolled_back": is_rolled_back, "gen": (approved or {}).get("gen"),
+            "rolled_back": is_rolled_back, "gen": (approved or {}).get("gen"), "cleaned": False,
+            "bases": review_bases(root, slug),
             "halted": plan.get("halted"), "finished": bool(sess.get("finished")), "checkpoints": cps, "dod": dod_out,
             "dod_fresh": dod_fresh(root, slug, th)[0],
             "pending_decisions": [{"id": p["id"], "kind": p["kind"], "checkpoint": p.get("checkpoint"),
@@ -2487,9 +2554,8 @@ def cmd_state(root: Path, slug: str) -> dict:
 
 def cmd_review_bundle(root: Path, slug: str, cid: int, max_bytes: int = 200_000) -> str:
     """Write the diff + evidence a read-only reviewer needs, return its path."""
-    sess = load_session(root, slug)
     approved = load_approved(root, slug) or {}
-    base = (sess.get("bases") or {}).get(str(cid)) or approved.get("base") or "HEAD"
+    base = review_bases(root, slug).get(str(cid)) or approved.get("base") or "HEAD"
     code, diff = git(root, "diff", base, "--", ".", *[f":(exclude){p}" for p in HASH_EXCLUDES], timeout=60)
     code2, untracked = git(root, "ls-files", "--others", "--exclude-standard")
     parts = [f"# Review bundle: {slug} #{cid}", "", f"Base: {base}", ""]

@@ -2983,3 +2983,113 @@ def test_destination_and_removal_operands_on_a_locked_tests_parent_stay_refused(
     approve_and_lock(repo)
     code, _, err = hook(repo, bash(cmd))
     assert code == 2 and "locked test" in err, cmd
+
+
+# ---------------------------------------------------------------------------
+# Round 5: cleaned-up finished builds, session binding, run-time file lists
+# ---------------------------------------------------------------------------
+
+
+def _clean_up(root, slug="demo", plan=True):
+    import shutil
+
+    shutil.rmtree(_state(root, slug), ignore_errors=True)
+    if plan:
+        (root / "docs" / "checkpoints" / f"{slug}.json").unlink()
+
+
+def test_a_finished_build_whose_state_and_plan_were_removed_does_not_lock_the_project(repo):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    _clean_up(repo)
+    assert "demo" in gate.recorded_slugs(repo)
+    assert gate.rolled_back(repo, "demo") is False and gate.rolled_back_slugs(repo) == []
+    assert gate._build_exists(repo) is False
+    assert hook(repo, _settings_write(repo))[0] == 0
+    assert hook(repo, bash("echo x > out.txt"))[0] == 0
+    assert stop(repo)[0] == 0 and stop(repo)[0] == 0
+    st = gate.cmd_state(repo, "demo")
+    assert st["finished"] is True and st["cleaned"] is True and st["rolled_back"] is False
+
+
+def test_a_finished_build_with_a_tampered_approval_is_still_a_rollback(repo):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    (_state(repo) / "approved.json").write_text("{}", encoding="utf-8")
+    assert gate.rolled_back(repo, "demo") is True
+
+
+def test_an_unfinished_build_whose_state_dir_was_removed_stays_a_rollback(repo):
+    approve_and_lock(repo)
+    _clean_up(repo)
+    assert gate.rolled_back(repo, "demo") is True and gate._build_exists(repo) is True
+    assert hook(repo, _settings_write(repo))[0] == 2
+    assert stop(repo)[0] == 2
+
+
+def test_approve_of_a_finished_cleaned_slug_says_to_write_a_new_plan(repo):
+    approve_and_lock(repo)
+    gate.cmd_finish(repo, "demo")
+    _clean_up(repo)
+    with pytest.raises(SystemExit) as e:
+        gate.cmd_approve(repo, "demo")
+    assert "build demo is finished; write a new plan to start another" in str(e.value)
+    # a slug with no record keeps the old message
+    with pytest.raises(SystemExit) as e2:
+        gate.cmd_approve(repo, "nothing")
+    assert "no plan" in str(e2.value)
+
+
+def test_deleting_session_json_during_a_build_is_a_rollback_and_keeps_the_review_base(repo):
+    approve_and_lock(repo)
+    hook(repo, agent("[checkpoint demo#2 implement]"))
+    base = gate.load_session(repo, "demo")["bases"]["2"]
+    (repo / "app.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "impl")
+    (_state(repo) / "session.json").unlink()
+    assert gate.rolled_back(repo, "demo") is True and gate._build_exists(repo) is True
+    code, _, err = hook(repo, _locked_write(repo))
+    assert code == 2 and "rolled back" in err
+    assert stop(repo)[0] == 2 and stop(repo)[0] == 0
+    assert gate.review_bases(repo, "demo")["2"] == base
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    assert head != base
+    out = gate.cmd_review_bundle(repo, "demo", 2)
+    assert f"base={base}" in out and f"Base: {base}" in Path(out.splitlines()[0]).read_text(encoding="utf-8")
+    # a human re-approval brings the session back; the next implement marker keeps the recorded base
+    gate.cmd_approve(repo, "demo")
+    assert hook(repo, agent("[checkpoint demo#2 implement]"))[0] == 0
+    assert gate.load_session(repo, "demo")["bases"]["2"] == base
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("tar czf x.tgz -T list.txt", 2),
+    ("tar -czf x.tgz --files-from=list.txt", 2),
+    ("tar cf x.tar --files-from list.txt", 2),
+    ("tar cf x.tar -T- < list.txt", 2),
+    ("cpio -i < list.cpio", 2),
+    ("cpio -o < list.txt > a.cpio", 2),
+    ("tar czf x.tgz src/", 0),
+])
+def test_run_time_file_lists_for_archive_tools_are_refused_while_a_build_exists(repo, cmd, want):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == want, cmd
+
+
+def test_echo_home_into_a_file_when_tq_home_is_under_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    root = home / "proj"
+    (root / "docs" / "checkpoints").mkdir(parents=True)
+    (root / "tests").mkdir()
+    _git(root, "init", "-q", "-b", "work")
+    (root / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    save_plan(root, PLAN)
+    (root / ".claude" / "build").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("TQ_HOME", str(home / ".tq"))
+    approve_and_lock(root)
+    assert hook(root, bash("echo $HOME > out.txt"))[0] == 0
+    assert hook(root, bash('echo "$HOME" >> out.txt'))[0] == 0
+    assert hook(root, bash("tar czf x.tgz $HOME"))[0] == 2
+    assert hook(root, bash("cat $HOME/.tq/build-gate/hmac.key"))[0] == 2
