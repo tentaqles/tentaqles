@@ -58,7 +58,7 @@ def test_record_command_follows_bootstrap_snippet() -> None:
 
 def test_ci_pipeline_says_branch_refs_are_refused() -> None:
     body = _body("ci-pipeline")
-    assert "tq/gha-branch-ref" in body and "denies from the next tq release" in body
+    assert "tq/gha-branch-ref" in body and "denies" in body
 
 
 GUARD = 'br=$(git -C "$root" branch --show-current); case "$br" in main|master|"") echo "on \'$br\': do not commit"; exit 1;; esac'

@@ -25,9 +25,10 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
   jev-memory-gate.py    Detached worker for the shadow Jev memory gates (tentaqles/memory/jev_gate.py)
-skills/                 38 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
-agents/                 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer, spec-critic [read-only], arbiter)
-templates/process/      process templates (PRD, ADR, spec slice, fix spec, LEARNINGS, project CLAUDE.md, review contract)
+skills/                 43 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
+agents/                 9 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer, spec-critic [read-only], arbiter, security-reviewer [read-only], privacy-reviewer [read-only], llm-security-reviewer [read-only], breaker)
+templates/process/      process templates (PRD, ADR, spec slice, fix spec, LEARNINGS, project CLAUDE.md, review contract, threat model, privacy record, incident playbook)
+skills/<name>/references/  checklists with stable row ids (STRIDE, data dictionary, privacy LGPD/GDPR, supply chain SLSA/SBOM, LLM security OWASP LLM 2025 / Agentic 2026)
 tentaqles/workflow/     stdlib-only: build gate (gate.py), overnight loop (loop.py, loopguard.py),
                         project.py (tq-project config block), prd.py (PRD planning-ready check)
 hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)
@@ -54,7 +55,10 @@ tests/                  pytest suite
 
 - **Python scripts** under `scripts/`: start with `from _path import setup_paths; setup_paths()`. Never inline `sys.path.insert` hacks.
 
-- **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`.
+- **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`. `classes=None` (read paths) masks secrets only; exits (memory writes, vault, ingest, signals, Jev, model prompts) pass the workspace's data classes (`exit_classes(manifest)`, from the manifest `data:` block; an unknown or empty class list fails closed to the strictest set). Use `redact_str` rather than a local wrapper.
+- **Reviewer agents are read-only** (`security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`: tools Read, Glob, Grep). `breaker` is the only agent with Bash and it binds to 127.0.0.1; its scratch dir is `<root>/.tq-breaker/<slug>/` (data files only, deleted by `build-gate finish`).
+- **Human-only commands**: `tq allow`, `build-gate approve/judge/answer/finish/token` and `dod --override` are run by the human; skills remind the user and never run them.
+- **Key isolation caveat**: the build gate's text checks guard against a careless agent, not one set on defeating it, until tq isolates the signing key at the OS level.
 
 - **Lazy session**: `MemoryStore.end_session()` auto-starts a session if none is active. Don't assume `start_session()` was called.
 

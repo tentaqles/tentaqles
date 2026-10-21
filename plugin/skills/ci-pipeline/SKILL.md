@@ -53,8 +53,8 @@ Metric choice, collectors per stack and tolerances:
 ## 4. Workflow security (non-negotiable)
 
 - Pin every third-party action to a full commit SHA with the version in a
-  comment; let Dependabot/Renovate bump them. tq asks (denies from the next tq release)
-  on `@main`/`@master` in workflow files (`tq/gha-branch-ref`) and asks on
+  comment; let Dependabot/Renovate bump them. tq denies
+  `@main`/`@master` in workflow files (`tq/gha-branch-ref`) and asks on
   `@latest` (`tq/gha-unpinned`). `/tentaqles:supply-chain` applies the full checklist.
 - Top-level `permissions: contents: read`; grant more per job only where needed.
 - Never use `pull_request_target` together with a checkout of the PR's code
