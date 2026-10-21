@@ -481,6 +481,35 @@ def unpassed_before(cps: list, cid) -> list:
             and c["id"] < cid and c.get("status") != "passed"]
 
 
+def plan_problem(doc) -> str:
+    """'' when the plan document has the shape every lookup relies on, else a one-line
+    reason naming the field: checkpoints is a list of dicts with unique int/non-empty-str
+    ids, gates (when present) a dict of dicts, tests (when present) a list of str."""
+    if not isinstance(doc, dict):
+        return "the plan must be a JSON object"
+    cps = doc.get("checkpoints")
+    if not isinstance(cps, list):
+        return "checkpoints must be a list"
+    seen: set = set()
+    for i, c in enumerate(cps):
+        if not isinstance(c, dict):
+            return f"checkpoints[{i}] must be an object"
+        cid = c.get("id")
+        ok = (isinstance(cid, int) and not isinstance(cid, bool)) or (isinstance(cid, str) and cid.strip() != "")
+        if not ok:
+            return f"checkpoints[{i}].id must be an integer or a non-empty string"
+        if str(cid) in seen:
+            return f"checkpoints[{i}].id {cid!r} is not unique"
+        seen.add(str(cid))
+        g = c.get("gates")
+        if g is not None and (not isinstance(g, dict) or not all(isinstance(v, dict) for v in g.values())):
+            return f"checkpoints[{i}].gates must be an object whose values are objects"
+        t = c.get("tests")
+        if t is not None and (not isinstance(t, list) or not all(isinstance(x, str) for x in t)):
+            return f"checkpoints[{i}].tests must be a list of strings"
+    return ""
+
+
 def active_checkpoint(plan: dict) -> dict | None:
     for cp in plan.get("checkpoints", []):
         if cp.get("status") != "passed":
@@ -598,11 +627,14 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
     """
     try:
         doc = json.loads(new_text)
-        new = doc["checkpoints"]
-        if not isinstance(new, list):
-            raise TypeError
-    except (ValueError, KeyError, TypeError):
-        return  # not a valid plan yet; the planner validates its own JSON
+    except ValueError:
+        return  # not valid JSON yet; the planner validates its own JSON
+    if not isinstance(doc, dict) or "checkpoints" not in doc:
+        return
+    bad = plan_problem(doc)
+    if bad:
+        raise Block(f"invalid plan: {bad}.")
+    new = doc["checkpoints"]
     # Hotfix is what the human approved, never what the plan under edit claims.
     approved = load_approved(root, slug) or {} if check_evidence else None
     hotfix = bool(approved) and approved.get("hotfix") is True
@@ -616,7 +648,7 @@ def check_plan(new_text: str, old_text: str, root: Path, slug: str, th: TreeHash
     old: dict = {}
     try:
         old = {c["id"]: c for c in json.loads(old_text)["checkpoints"]}
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     for cp in new:
         if not isinstance(cp, dict):
@@ -1001,6 +1033,9 @@ def check_agent(prompt: str, root: Path, session_id: str) -> None:
     plan = load_plan(root, slug)
     if plan is None:
         raise Block(f"can't read {PLAN_DIR}/{slug}.json (missing or not a plan).")
+    bad = plan_problem(plan)
+    if bad:
+        raise Block(f"{PLAN_DIR}/{slug}.json is invalid: {bad}.")
     cps = plan["checkpoints"]
     cp = next((c for c in cps if c.get("id") == cid), None)
     if cp is None:
@@ -1040,8 +1075,8 @@ def check_agent(prompt: str, root: Path, session_id: str) -> None:
 
 def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
     plan = load_plan(root, slug)
-    if plan is None:
-        return []
+    if plan is None or plan_problem(plan):
+        return []  # unreadable or malformed: PreToolUse and the CLI say why; Stop never traps the turn
     if (plan.get("halted") or {}).get("reason"):
         return []  # circuit breaker: stopping for a human, with the reason on record
     if pending_decisions(root, slug):
@@ -1139,6 +1174,19 @@ def _heartbeat(root: Path) -> None:
 
 
 def hook(data: dict) -> tuple[int, str, str]:
+    """Run the dispatcher; an unexpected exception never silently permits an action.
+    PreToolUse: refuse (exit 2). Stop: allow (the turn must never be stuck). Either way the
+    one-line note names only the exception class, never the traceback."""
+    try:
+        return _hook(data)
+    except Exception as e:  # noqa: BLE001
+        name = type(e).__name__
+        if (data or {}).get("hook_event_name") == "Stop":
+            return 0, "", f"build-gate: internal error ({name}); allowing the stop"
+        return 2, "", f"build-gate internal error ({name}); refusing"
+
+
+def _hook(data: dict) -> tuple[int, str, str]:
     """Pure-ish dispatcher: returns (exit_code, stdout, stderr)."""
     inp0 = data.get("tool_input") or {}
     fp = inp0.get("file_path") or inp0.get("notebook_path") or inp0.get("path")
@@ -1458,6 +1506,9 @@ def cmd_state(root: Path, slug: str) -> dict:
     plan = load_plan(root, slug)
     if plan is None:
         raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
+    bad = plan_problem(plan)
+    if bad:
+        raise SystemExit(f"{PLAN_DIR}/{slug}.json is invalid: {bad}.")
     approved = load_approved(root, slug)
     sess = load_session(root, slug)
     th = TreeHash(root)
@@ -1573,6 +1624,9 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
     plan = load_plan(root, slug)
     if plan is None:
         return 1, f"no plan at {PLAN_DIR}/{slug}.json"
+    bad = plan_problem(plan)
+    if bad:
+        return 1, f"{PLAN_DIR}/{slug}.json is invalid: {bad}."
     approved = load_approved(root, slug) or {}
     if not approved:
         return 1, f"plan '{slug}' isn't approved (build-gate approve {slug})."
@@ -1978,8 +2032,8 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:1] == ["hook"]:
         try:
             code, out, err = hook(read_stdin_json())
-        except Exception as e:  # never stall or crash a session: fail open, say why
-            code, out, err = 0, "", f"build-gate: internal error, allowing: {e}"
+        except Exception as e:  # noqa: BLE001  # input unreadable before any event is known: never stall
+            code, out, err = 0, "", f"build-gate: internal error ({type(e).__name__}); allowing"
         if out:
             print(out)
         if err:

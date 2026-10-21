@@ -1766,3 +1766,75 @@ def test_plan_approval_consequence_lists_what_is_frozen(repo, monkeypatch):
     assert gate.main(["--root", str(repo), "answer", "demo", did, "--choice", "approve"]) == 0
     ans = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
     assert "test: pytest -q" in ans["note"]
+
+
+# ---------------------------------------------------------------------------
+# Round 2a item 1: plan schema and hook error handling
+# ---------------------------------------------------------------------------
+
+
+def _bad_plan(first):
+    p = copy.deepcopy(PLAN)
+    p["checkpoints"][0] = first
+    return p
+
+
+BAD_FIRST = [
+    ({"id": 1, "gates": "x"}, "gates"),
+    ({"id": [0]}, "id"),
+    ({"id": ""}, "id"),
+    ({"id": 2, "gates": {"behavior": "passed"}}, "gates"),
+    ({"id": 1, "tests": "tests/x.py"}, "tests"),
+    ({"id": 1, "tests": [1]}, "tests"),
+]
+
+
+@pytest.mark.parametrize("first,field", BAD_FIRST)
+def test_check_plan_refuses_malformed_plan(repo, first, field):
+    bad = _bad_plan(first)
+    with pytest.raises(gate.Block) as e:
+        gate.check_plan(json.dumps(bad), json.dumps(PLAN), repo, "demo", gate.TreeHash(repo))
+    assert field in str(e.value)
+
+
+def test_check_plan_refuses_non_dict_checkpoint_and_duplicate_ids(repo):
+    for plan in ({"checkpoints": [1]}, {"checkpoints": [{"id": 1}, {"id": 1}]}):
+        with pytest.raises(gate.Block):
+            gate.check_plan(json.dumps(plan), "", repo, "demo", gate.TreeHash(repo))
+
+
+@pytest.mark.parametrize("first,field", BAD_FIRST[:2])
+def test_hook_on_existing_malformed_plan(repo, first, field):
+    own(repo)
+    save_plan(repo, _bad_plan(first))  # written behind the hooks' back
+    code, _, err = hook(repo, agent("[checkpoint demo#2 implement]"))
+    assert code == 2 and field in err and "Traceback" not in err
+    assert stop(repo)[0] == 0
+
+
+@pytest.mark.parametrize("first,field", BAD_FIRST[:2])
+def test_state_and_dod_on_malformed_plan_give_a_clear_error(repo, first, field):
+    gate.cmd_approve(repo, "demo")
+    save_plan(repo, _bad_plan(first))
+    with pytest.raises(SystemExit) as e:
+        gate.cmd_state(repo, "demo")
+    assert field in str(e.value)
+    code, msg = gate.cmd_dod(repo, "demo")
+    assert code == 1 and field in msg
+
+
+def test_unexpected_exception_pretooluse_refuses_with_class_only(repo, monkeypatch):
+    def boom(*a, **k):
+        raise KeyError("secret-detail")
+    monkeypatch.setattr(gate, "check_shell", boom)
+    code, out, err = hook(repo, bash("ls"))
+    assert code == 2
+    assert "KeyError" in err and "secret-detail" not in err and "Traceback" not in err and "\n" not in err.strip()
+
+
+def test_unexpected_exception_on_stop_allows_with_note(repo, monkeypatch):
+    def boom(*a, **k):
+        raise KeyError("secret-detail")
+    monkeypatch.setattr(gate, "check_stop", boom)
+    code, out, err = stop(repo)
+    assert code == 0 and "KeyError" in err and "secret-detail" not in err
