@@ -845,13 +845,11 @@ HUB_ACTIONS = ("approve", "unlock-tests", "finish", "judge", "answer", "dod")
 
 
 def _key_dir_canon() -> str:
-    k = norm(os.path.normpath(str(key_dir())))
-    return k.lower() if os.name == "nt" else k
+    return canon_path(key_dir())
 
 
 def _plugin_root_canon() -> str:
-    k = norm(os.path.normpath(str(plugin_root())))
-    return k.lower() if os.name == "nt" else k
+    return canon_path(plugin_root())
 
 
 def classify(root: Path, rel: str | None, absn: str, locked: dict, active: bool) -> str | None:
@@ -1097,9 +1095,8 @@ def _is_abs(p: str) -> bool:
 
 
 def _nabs(path) -> str:
-    """Canonical absolute form used for every comparison: forward slashes, normalised, folded on Windows."""
-    p = norm(os.path.normpath(norm(path)))
-    return p.lower() if os.name == "nt" else p
+    """Canonical absolute form used for every comparison (see `canon_path`)."""
+    return canon_path(path)
 
 
 _TQ_VAR = re.compile(r"\$\{TQ_HOME\}|\$env:TQ_HOME|\$TQ_HOME(?![A-Za-z0-9_])|%TQ_HOME%", re.IGNORECASE)
@@ -1332,7 +1329,7 @@ class _ShellScan:
         for v in self.variants(word):
             for b in bases:
                 _, absn = resolve_word(b, v)
-                out.append((rel_to(self.root, absn), absn))
+                out.append((rel_to(Path(self.rootn), absn), absn))
         return out
 
     def word_hits(self, word: str, bases: list[str], recursive: bool, cmd_name: str) -> list[tuple[str, str]]:

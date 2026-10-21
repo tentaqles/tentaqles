@@ -29,10 +29,81 @@ def norm(path: str | os.PathLike | None) -> str:
     return str(path or "").replace("\\", "/")
 
 
-def canon_path(path: str | os.PathLike) -> str:
-    """Canonical absolute form of a path: resolved, forward slashes, case-folded on Windows."""
-    p = norm(os.path.normpath(os.path.realpath(str(path))))
-    return p.lower() if IS_WINDOWS else p
+_EXT_PREFIX = re.compile(r"^(?:[\\/]{2}[?.][\\/]|[\\/]\?\?[\\/])")
+_DRIVE = re.compile(r"^[A-Za-z]:$")
+
+
+def _realpath_prefix(p: str) -> str:
+    """realpath of the longest existing prefix of `p`, with the rest appended unchanged, so 8.3
+    short names and junctions/symlinks along the existing part resolve to their targets."""
+    head, tail = p, []
+    for _ in range(256):
+        if os.path.lexists(head):
+            break
+        parent, name = os.path.split(head)
+        if parent == head or not name:
+            break
+        tail.append(name)
+        head = parent
+    try:
+        real = os.path.realpath(head)
+    except (OSError, ValueError):
+        real = head
+    return os.path.join(real, *reversed(tail)) if tail else real
+
+
+def canon_path(path: str | os.PathLike, base: str | os.PathLike | None = None) -> str:
+    r"""The one canonical form behind every path comparison of the gate and the loop guard.
+
+    Absolute, forward slashes, `..` resolved, and the longest existing prefix `realpath`ed (8.3
+    short names such as `CLAUDE~1`, junctions and symlinks resolve to their targets). On Windows
+    also: the extended prefixes `\\?\`, `//?/`, `\\.\` (and `\\?\UNC\`) are stripped, an NTFS
+    alternate-data-stream suffix (`name:stream`, `name::$DATA`) is dropped from each component
+    (the drive colon stays), trailing dots and spaces are stripped per component, and case is
+    folded. A relative path is taken against `base` (default: the process cwd).
+    """
+    s = os.fspath(path) if path is not None else ""
+    if IS_WINDOWS:
+        m = _EXT_PREFIX.match(s)
+        if m:
+            s = s[m.end():]
+            if s[:4].lower() in ("unc\\", "unc/"):
+                s = "//" + s[4:]
+    s = norm(s)
+    if base is not None:
+        b = norm(os.fspath(base)).rstrip("/") or "/"
+        if IS_WINDOWS and s.startswith("/") and not s.startswith("//"):
+            m = re.match(r"^[A-Za-z]:", b)
+            s = (m.group(0) if m else "") + s
+        elif not (s.startswith("/") or re.match(r"^[A-Za-z]:", s)):
+            s = f"{b}/{s}" if s else b
+    if IS_WINDOWS:
+        parts = s.split("/")
+        out = []
+        for i, c in enumerate(parts):
+            if i == 0 and _DRIVE.match(c):
+                out.append(c)
+                continue
+            if i == 0 and re.match(r"^[A-Za-z]:", c):
+                out.append(c[:2])  # drive-relative `C:x`: keep the drive, judge the rest
+                c = c[2:]
+            if ":" in c:
+                c = c.split(":", 1)[0]  # NTFS alternate data stream
+            if c not in (".", ".."):
+                c = c.rstrip(". ")
+            out.append(c)
+        s = "/".join(out)
+        if re.match(r"^[A-Za-z]:(?:/|$)", s) is None and re.match(r"^[A-Za-z]:", s):
+            s = s[:2] + "/" + s[2:]
+    p = os.path.normpath(s or ".")
+    if not os.path.isabs(p):
+        p = os.path.abspath(p)
+    p = norm(os.path.normpath(_realpath_prefix(p)))
+    if IS_WINDOWS:
+        if p.startswith("//?/"):
+            p = p[4:]
+        p = p.lower()
+    return p
 
 
 def find_git_root(start: str | os.PathLike | None) -> Path | None:
@@ -512,15 +583,9 @@ def resolve_word(root, word: str, shell: bool = False) -> tuple[str | None, str]
     if w.startswith("-") and "=" in w:
         w = w.split("=", 1)[1]
     w = w.strip("'\"")
-    w = norm(shell_word_variants(w)[0] if shell else w)
-    p = Path(w)
-    if not p.is_absolute() and not re.match(r"^[A-Za-z]:/", w):
-        p = Path(norm(root)) / w
-    absn = norm(os.path.normpath(norm(p)))
-    rel = rel_to(Path(root), absn)
-    if IS_WINDOWS:
-        absn = absn.lower()
-        rel = rel.lower() if rel is not None else None
+    w = shell_word_variants(w)[0] if shell else w
+    absn = canon_path(w, base=root)
+    rel = rel_to(Path(canon_path(root)), absn)
     return rel, absn
 
 

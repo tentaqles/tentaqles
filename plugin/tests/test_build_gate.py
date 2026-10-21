@@ -2335,3 +2335,122 @@ def test_generation_record_is_per_project_and_slug(repo, tmp_path):
     assert gate.gen_record_path(repo, "demo") != gate.gen_record_path(other, "demo")
     assert gate.gen_record_path(repo, "demo") != gate.gen_record_path(repo, "demo2")
     assert gate.project_id(repo) == gate.project_id(Path(str(repo).upper()) if os.name == "nt" else repo)
+
+
+# ---------------------------------------------------------------------------
+# Path canonicaliser: one function behind every path check
+# ---------------------------------------------------------------------------
+
+win_only = pytest.mark.skipif(os.name != "nt", reason="Windows path spellings")
+
+
+def _short_name(p):
+    """The 8.3 short spelling of an existing path, or None when the volume has none."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(1024)
+    n = ctypes.windll.kernel32.GetShortPathNameW(str(p), buf, 1024)
+    if not n or Path(buf.value).name.lower() == Path(p).name.lower():
+        return None
+    return buf.value
+
+
+def _junction(link, target):
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+    else:
+        os.symlink(str(target), str(link))
+
+
+def _under(path, top):
+    p, t = gate.canon_path(path), gate.canon_path(top)
+    return p == t or p.startswith(t.rstrip("/") + "/")
+
+
+@win_only
+@pytest.mark.parametrize("spelling", [
+    r".claude.\build\demo\approved.json",
+    r".claude. .\build\demo\approved.json",
+    r".claude\build.\demo\approved.json",
+    r".claude\build\demo\approved.json:x",
+    r".claude\build\demo\approved.json::$DATA",
+    r".claude\build\demo\approved.json. ",
+])
+def test_windows_spellings_resolve_under_the_state_dir(repo, spelling):
+    assert _under(str(repo) + "\\" + spelling, repo / ".claude" / "build")
+    code, _, err = hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(repo) + "\\" + spelling, "content": "{}"}})
+    assert code == 2
+
+
+@win_only
+@pytest.mark.parametrize("prefix", ["\\\\?\\", "//?/", "\\\\.\\", "//./"])
+def test_extended_prefixes_are_stripped(repo, tq_home, prefix):
+    sep = "/" if prefix.startswith("//") else "\\"
+    p = prefix + str(repo).replace("\\", sep) + sep + sep.join([".claude", "build", "demo", "approved.json"])
+    assert _under(p, repo / ".claude" / "build")
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": p, "content": "{}"}})[0] == 2
+    gate._key(create=True)
+    k = prefix + str(tq_home).replace("\\", sep) + sep + "build-gate" + sep + "hmac.key"
+    assert _under(k, gate.key_dir())
+    assert hook(repo, {"tool_name": "Read", "tool_input": {"file_path": k}})[0] == 2
+
+
+@win_only
+def test_shell_spellings_resolve_under_the_state_dir(repo):
+    gate.cmd_approve(repo, "demo")
+    for c in ("echo x > .claude./build/demo/approved.json",
+              "echo x > .claude/build/demo/approved.json:x",
+              r"Set-Content -Path '.claude.\build\demo\approved.json' -Value x"):
+        assert hook(repo, bash(c, "PowerShell" if c.startswith("Set-") else "Bash"))[0] == 2, c
+
+
+@win_only
+def test_alternate_data_stream_of_a_locked_test_is_the_locked_test(repo):
+    approve_and_lock(repo)
+    p = str(repo / "tests" / "test_a.py") + ":evil"
+    code, _, err = hook(repo, {"tool_name": "Write", "tool_input": {"file_path": p, "content": "x"}})
+    assert code == 2 and "locked test" in err
+
+
+def test_a_junction_into_dot_claude_resolves_to_the_state_dir(repo):
+    (repo / "lib").mkdir()
+    _junction(repo / "lib" / "j", repo / ".claude")
+    p = repo / "lib" / "j" / "build" / "demo" / "approved.json"
+    assert _under(p, repo / ".claude" / "build")
+    assert _under(repo / "lib" / "j" / "build" / "demo" / "new.json", repo / ".claude" / "build")
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(p), "content": "{}"}})[0] == 2
+    assert hook(repo, bash("echo x > lib/j/build/demo/approved.json"))[0] == 2
+
+
+def test_a_short_name_resolves_to_the_state_dir(repo):
+    short = _short_name(repo / ".claude")
+    if not short:
+        pytest.skip("this volume has no 8.3 short names")
+    p = short + r"\build\demo\approved.json"
+    assert _under(p, repo / ".claude" / "build")
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": p, "content": "{}"}})[0] == 2
+
+
+def test_a_short_name_resolves_to_the_key_dir(repo, tq_home):
+    gate._key(create=True)
+    short = _short_name(gate.key_dir())
+    if not short:
+        pytest.skip("this volume has no 8.3 short names")
+    assert Path(short).name.upper().startswith("BUILD-")
+    k = short + r"\hmac.key"
+    assert _under(k, gate.key_dir())
+    assert hook(repo, {"tool_name": "Read", "tool_input": {"file_path": k}})[0] == 2
+
+
+def test_canon_path_leaves_ordinary_paths_alone(repo):
+    for rel in ("app.py", "src/a.b/c.txt", "docs/x.md", "tests/test_a.py", "deep/new/file.txt"):
+        got = gate.canon_path(repo / rel)
+        want = gate.canon_path(repo) + "/" + (rel.lower() if os.name == "nt" else rel)
+        assert got == want
+    assert gate.canon_path(repo / "src" / ".." / "app.py") == gate.canon_path(repo / "app.py")
+    if os.name == "nt":
+        assert gate.canon_path("C:\\") == "c:/"
+        assert gate.canon_path("C:/x/y.txt") == "c:/x/y.txt"
+    assert hook(repo, {"tool_name": "Write", "tool_input": {"file_path": str(repo / "app.py"), "content": "x"}})[0] == 0
