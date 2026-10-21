@@ -75,3 +75,24 @@ hardening.
 |---|---|---|---|---|---|
 | 1 | critical | V4 | `/api/invoices/:id` loads by id without tenant check | src/api/invoices.ts:42 | filter by `tenant_id` from the session; add a cross-tenant test |
 ```
+
+## Answer-key rows (used by the security-reviewer agent)
+
+Judge each row from the diff and the files it touches. Cite file:line. Rows
+that need a running system or a decision are `U` rows. Row ids are stable:
+reviewers copy them into their answers.
+
+| # | Check | Source |
+|---|---|---|
+| S1 | Every new or changed entry point checks authentication server-side; no trust in client-supplied identity (user id, role, tenant in a body or header) | ASVS 5.0 V6, V8; Top 10:2025 A01 |
+| S2 | Authorization is per object (IDOR): the record's owner or tenant is compared to the caller for read, write and list | ASVS V8.2 |
+| S3 | Sessions and tokens: rotation on privilege change, server-side invalidation on logout, short-lived access tokens, refresh rotation | ASVS V7 |
+| S4 | Input handling: parameterised queries, no string-built SQL or shell, output encoding by context, schema validation at the boundary | ASVS V1.2, V5; A05 injection |
+| S5 | Secrets: none in code, config or tests; read by name from the environment; never logged; `.env*` ignored | ASVS V14; A04 |
+| S6 | Cryptography: vetted library, no home-made schemes, TLS for every outbound call, argon2id or bcrypt for passwords | ASVS V11 |
+| S7 | Supply chain: new dependency is pinned, from a known registry, lockfile updated; workflow actions pinned to SHAs | A03 software supply chain failures |
+| S8 | Error handling: failures fail closed (deny on exception), no stack traces or internals to clients, timeouts and retries bounded | A10 mishandling of exceptional conditions |
+| S9 | Logging: security events logged (auth failures, permission denials) without personal data or secrets; log injection prevented | ASVS V16 |
+| S10 | Destructive operations (delete, migrate, pay) are idempotent or guarded against replay and double submit | threat model (Tampering, Repudiation) |
+| S11 | The change does not weaken a `CLAUDE.md` "Must not trade off" rule or a mitigation in `docs/threat-model.md` | project |
+| S12 | Rate limits or quotas exist where the change exposes a costly or abusable action | A06 insecure design |
