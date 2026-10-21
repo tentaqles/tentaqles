@@ -1838,3 +1838,59 @@ def test_unexpected_exception_on_stop_allows_with_note(repo, monkeypatch):
     monkeypatch.setattr(gate, "check_stop", boom)
     code, out, err = stop(repo)
     assert code == 0 and "KeyError" in err and "secret-detail" not in err
+
+
+# ---------------------------------------------------------------------------
+# Round 2a item 2: ordinary project files are never refused by a broad pattern
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path,content", [
+    ("workflow/gateway.ts", "export const gateway = 1;\n"),
+    ("api/gate.py", "def gate():\n    return 1\n"),
+    ("src/hmac.key.md", "notes on the hmac.key format\n"),
+    ("src/auth.py", "def cmd_approve(x):\n    return x\n\ndef cmd_answer():\n    pass\n"),
+    ("notes/tentaqles-workflow.md", "tentaqles/workflow notes: investigate the gateway\n"),
+])
+def test_ordinary_files_are_not_refused_while_a_build_is_active(repo, path, content):
+    approve_and_lock(repo)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / path), "content": content}}
+    code, _, err = hook(repo, payload)
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat src/workflow/gateway.ts",
+    "cat ./workflow/gateway.ts",
+    "python api/gate.py",
+    "grep -rn investigate src",
+    "grep cmd_approve src/auth.py",
+    "echo hmac.key is mentioned in the docs",
+])
+def test_ordinary_commands_are_not_refused_while_a_build_is_active(repo, cmd):
+    approve_and_lock(repo)
+    code, _, err = hook(repo, bash(cmd))
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("content", [
+    "from tentaqles.workflow import gate\n",
+    "import tentaqles.workflow.gate as g\n",
+    "import gate\ngate.cmd_approve(root, 'x')\n",
+    "from gate import cmd_answer\n",
+])
+def test_gate_module_references_are_still_refused(repo, content):
+    approve_and_lock(repo)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "x.py"), "content": content}}
+    assert hook(repo, payload)[0] == 2, content
+
+
+@pytest.mark.parametrize("cmd", [
+    "python plugin/tentaqles/workflow/gate.py",
+    "cat ~/.tentaqles/build-gate/hmac.key",
+    "cat /x/build-gate/sub/hmac.key",
+    "python -c \"import tentaqles.workflow.gate\"",
+])
+def test_gate_anchored_commands_are_still_refused(repo, cmd):
+    approve_and_lock(repo)
+    assert hook(repo, bash(cmd))[0] == 2, cmd

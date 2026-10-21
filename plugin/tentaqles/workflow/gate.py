@@ -719,8 +719,18 @@ def _build_exists(root: Path) -> bool:
     return any(not load_session(root, s).get("finished") for s in names)
 
 
-GATE_INTERNALS = ("tentaqles.workflow.gate", "workflow/gate", "mint_hub_token", "cmd_answer", "cmd_approve",
-                  "tq_build_token", "tq_build_actor")
+# Anchored on purpose: a bare "gate" or "cmd_approve" appears in ordinary project files.
+GATE_INTERNALS = ("mint_hub_token", "tq_build_token", "tq_build_actor")
+_GATE_MODULE_RE = re.compile(r"tentaqles[./\\]workflow[./\\]gate\b")
+# squashed text has lost its word boundaries (a name split over edits reads whole), so only the
+# one ordinary continuation, "gateway", is excluded there.
+_GATE_SQUASHED_RE = re.compile(r"tentaqles[./\\]workflow[./\\]gate(?!way)")
+_GATE_FILE_RE = re.compile(r"(?<!build-)workflow[/\\]gate\.py\b")
+_GATE_WORKFLOW_IMPORT_RE = re.compile(r"workflow\s+import[^\n;]*\bgate\b")
+_GATE_BARE_IMPORT_RE = re.compile(r"\b(?:from|import)\s+gate\b")
+_GATE_FROMLIST_RE = re.compile(r"tentaqles[./\\]workflow[^\n]{0,40}fromlist=gate\b")
+_GATE_FUNCS_RE = re.compile(r"\b(?:cmd_approve|cmd_answer|cmd_judge|cmd_finish|cmd_unlock_tests|cmd_dod)\b")
+_KEY_FILE_RE = re.compile(r"build-gate/(?:[^/]*/)*hmac\.key")
 PROTECTED_CONFIG = (".claude/settings.json", ".claude/settings.local.json", ".claude/tq-rules.yaml")
 HUMAN_ONLY = {"approve": "freezes the plan's verify commands (what 'passing' means)",
               "unlock-tests": "unlocks test files the implementer must not edit",
@@ -902,16 +912,21 @@ def _text_mentions(root: Path, canon: str, locked: dict, active: bool) -> list[t
     hits = []
     kd = _key_dir_canon().lower()
     sq = _squash(canon)
-    if (kd in canon or kd in sq or "build-gate/hmac.key" in canon or "hmac.key" in sq.replace("/", "")
+    if (kd in canon or kd in sq or _KEY_FILE_RE.search(canon) or _KEY_FILE_RE.search(sq)
             or re.search(r"(?:\.tentaqles|tq_home)/?build-gate(?!\.py)|build-gate/", sq)):
         hits.append(("key", "the signing key"))
     if re.search(r"(^|[\s\"'=/])\.git/", canon):
         hits.append(("git", ".git/"))
     if STATE_DIR in canon:
         hits.append(("state", STATE_DIR))
-    if active and (any(m in canon or m in sq for m in GATE_INTERNALS) or re.search(r"(?<!build-)\bgate\.py", canon)
-                   or re.search(r"workflow\s+import[^\n;]*\bgate\b", canon)
-                   or (re.search(r"tentaqles[./]workflow", sq) and "gate" in sq.replace("build-gate", ""))):
+    plugin_gate = _plugin_root_canon() + "/gate.py"
+    if active and (any(m in canon or m in sq for m in GATE_INTERNALS)
+                   or _GATE_MODULE_RE.search(canon) or _GATE_SQUASHED_RE.search(sq)
+                   or _GATE_FROMLIST_RE.search(sq)
+                   or _GATE_FILE_RE.search(canon) or plugin_gate in canon.lower()
+                   or _GATE_WORKFLOW_IMPORT_RE.search(canon)
+                   or ((_GATE_FUNCS_RE.search(canon) or _GATE_FUNCS_RE.search(sq))
+                       and _GATE_BARE_IMPORT_RE.search(canon))):
         hits.append(("gatemod", "the gate's own code or hub credentials"))
     if active and any(p in canon for p in PROTECTED_CONFIG):
         hits.append(("config", ".claude/settings / tq-rules"))
@@ -962,6 +977,8 @@ def check_shell(cmd: str, root: Path) -> None:
         if _text_mentions(root, canon_all, locked, active):
             raise Block(f"can't parse this command ({e}) and it names a protected path; failing closed.")
         return
+    if any(c == "key" for c, _ in _text_mentions(root, canon_all, {}, False)):
+        raise Block(_msg("key", "the signing key"))  # a name split across segments reads whole here
     for seg in segs:
         sub, sub_args = _gate_invocation(seg)
         cmd_name, _ = command_word(seg.argv)
