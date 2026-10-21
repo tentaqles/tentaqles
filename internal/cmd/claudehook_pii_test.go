@@ -411,3 +411,79 @@ func TestPushPII_DeadlineAsks(t *testing.T) {
 		t.Fatal("hook stalled")
 	}
 }
+
+// TestHelperProcess is a subprocess used by TestRunBounded: it keeps stdout
+// open for a while, like a git launcher whose child holds the pipe.
+func TestHelperProcess(t *testing.T) {
+	switch os.Getenv("TQ_HELPER") {
+	case "parent":
+		c := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
+		c.Env = append(os.Environ(), "TQ_HELPER=child")
+		c.Stdout = os.Stdout
+		_ = c.Start()
+		time.Sleep(2 * time.Second)
+	case "child":
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func TestRunBounded_ReturnsWhenGrandchildHoldsPipe(t *testing.T) {
+	t.Setenv("TQ_HELPER", "parent")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, _, err := runBounded(ctx, os.Args[0], "", 1<<20, "-test.run=^TestHelperProcess$")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err=%v, want deadline exceeded", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("runBounded took %v, want under 1s", d)
+	}
+	time.Sleep(2200 * time.Millisecond) // let the helper processes exit so the test binary can be removed
+}
+
+func TestCommitPII_DeadlineAsksInTime(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	gitRepo(t, ws)
+	origGit, origDeadline := pushGit, commitDeadline
+	defer func() { pushGit, commitDeadline = origGit, origDeadline }()
+	commitDeadline = 50 * time.Millisecond
+	pushGit = func(ctx context.Context, cwd string, limit int, args ...string) (string, bool, error) {
+		<-ctx.Done()
+		return "", false, ctx.Err()
+	}
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: x"`))
+	if code == 2 || !strings.Contains(out+errOut, "could not scan what this commit records in time") {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
+	}
+}
+
+func TestPiiFixtureDump_WrapperOptionsAndQuotedRedirects(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	for _, cmd := range []string{
+		`ls data/exports/*.csv | xargs -I{} cp {} tests/fixtures/`,
+		`ls data/exports/*.csv | xargs -I {} cp {} tests/fixtures/`,
+		`ls data/exports/*.csv | xargs -0 cp -t tests/fixtures/`,
+		`ls data/exports/*.csv | xargs -n1 cp -t tests/fixtures/`,
+		`find data/exports/q3.csv -exec sudo cp {} tests/fixtures/ \;`,
+		`sudo -u bob cp data/exports/q3.csv tests/fixtures/q3.csv`,
+		`nice -n 5 cp data/exports/q3.csv tests/fixtures/q3.csv`,
+		`cp -S '>' data/exports/q3.csv tests/fixtures/q3.csv`,
+		`cat data/exports/q3.csv >| tests/q3.csv`,
+		`cat data/exports/q3.csv >&tests/q3.csv`,
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 2 || !strings.Contains(errOut, "tq/pii-fixture-dump") {
+			t.Errorf("%s: code=%d err=%q", cmd, code, errOut)
+		}
+	}
+	for _, cmd := range []string{
+		`grep -n "->" tests/foo_test.go data/exports/x.csv`,
+		`cat data/exports/q3.csv 2>&1`,
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, cmd))
+		if code != 0 || strings.Contains(errOut, "pii") {
+			t.Errorf("%s: wrongly denied (code=%d): %q", cmd, code, errOut)
+		}
+	}
+}

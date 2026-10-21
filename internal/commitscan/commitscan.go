@@ -130,10 +130,10 @@ func Scan(dir, command string, run Runner) []Hit {
 		}
 	}
 
-	diffs := [][]string{{"diff", "--cached", "--no-color", "--no-ext-diff", "-U0"}}
+	diffs := [][]string{{"diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"}}
 	names := [][]string{{"diff", "--cached", "--name-only"}}
 	if p.WorkingDir {
-		wd := []string{"diff", "--no-color", "--no-ext-diff", "-U0"}
+		wd := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"}
 		wn := []string{"diff", "--name-only"}
 		if len(p.AddPaths) > 0 && !p.CommitAll {
 			wd = append(append(wd, "--"), p.AddPaths...)
@@ -214,9 +214,9 @@ func Added(dir, command string, run Runner) ([]AddedLine, error) {
 	if !p.Commits {
 		return nil, nil
 	}
-	diffs := [][]string{{"diff", "--cached", "--no-color", "--no-ext-diff", "-U0"}}
+	diffs := [][]string{{"diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"}}
 	if p.WorkingDir {
-		wd := []string{"diff", "--no-color", "--no-ext-diff", "-U0"}
+		wd := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"}
 		if len(p.AddPaths) > 0 && !p.CommitAll {
 			wd = append(append(wd, "--"), p.AddPaths...)
 		}

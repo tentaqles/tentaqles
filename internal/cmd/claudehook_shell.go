@@ -52,6 +52,8 @@ func splitSegments(cmd string) []shSeg {
 			cur.WriteRune(c)
 		case c == ';' || c == '\n':
 			flush(false)
+		case c == '|' && i > 0 && rs[i-1] == '>':
+			cur.WriteRune(c) // the >| redirect operator
 		case c == '|':
 			flush(false)
 			if i+1 < len(rs) && rs[i+1] == '|' {
@@ -76,12 +78,28 @@ func splitSegments(cmd string) []shSeg {
 	return segs
 }
 
-// tokenize splits a segment into words with quotes removed. ok is false when
-// a quote is left open.
-func tokenize(seg string) (toks []string, ok bool) {
+// word is one shell word with its quotes removed. GT lists the byte offsets
+// of unquoted '>' characters in Text: only those are redirect operators.
+type word struct {
+	Text string
+	GT   []int
+}
+
+// tokenizeWords splits a segment into words. ok is false when a quote is
+// left open.
+func tokenizeWords(seg string) (words []word, ok bool) {
 	var cur strings.Builder
+	var gt []int
 	has := false
 	var q rune
+	end := func() {
+		if has {
+			words = append(words, word{Text: cur.String(), GT: gt})
+		}
+		cur.Reset()
+		gt = nil
+		has = false
+	}
 	rs := []rune(seg)
 	for i := 0; i < len(rs); i++ {
 		c := rs[i]
@@ -100,11 +118,7 @@ func tokenize(seg string) (toks []string, ok bool) {
 		}
 		switch {
 		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
-			if has {
-				toks = append(toks, cur.String())
-				cur.Reset()
-				has = false
-			}
+			end()
 		case c == '\'' || c == '"':
 			q = c
 			has = true
@@ -113,14 +127,25 @@ func tokenize(seg string) (toks []string, ok bool) {
 			cur.WriteRune(rs[i])
 			has = true
 		default:
+			if c == '>' {
+				gt = append(gt, cur.Len())
+			}
 			cur.WriteRune(c)
 			has = true
 		}
 	}
-	if has {
-		toks = append(toks, cur.String())
+	end()
+	return words, q == 0
+}
+
+// tokenize splits a segment into words with quotes removed. ok is false when
+// a quote is left open.
+func tokenize(seg string) (toks []string, ok bool) {
+	ws, ok := tokenizeWords(seg)
+	for _, w := range ws {
+		toks = append(toks, w.Text)
 	}
-	return toks, q == 0
+	return toks, ok
 }
 
 var assignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)

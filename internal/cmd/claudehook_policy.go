@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/commitscan"
-	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
@@ -167,8 +167,14 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	set, _ := policy.Build(layers)
 	d := set.Evaluate(call)
 
-	if call.IsShell() && !eff.Off("tq/commit-secret") {
-		if hits := commitscan.Scan(cwd, call.Command, gitcfg.RunGitIn); len(hits) > 0 {
+	var commitRun commitscan.Runner
+	if call.IsShell() && commitscan.PlanFor(call.Command).Commits {
+		ctx, cancel := context.WithTimeout(context.Background(), commitDeadline)
+		defer cancel()
+		commitRun = commitRunner(ctx)
+	}
+	if commitRun != nil && !eff.Off("tq/commit-secret") {
+		if hits := commitscan.Scan(cwd, call.Command, commitRun); len(hits) > 0 {
 			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits)))
 		}
 	}
@@ -176,7 +182,7 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 		id string
 		fn func(policy.Action) (policy.Decision, bool)
 	}{
-		{"tq/commit-pii", func(a policy.Action) (policy.Decision, bool) { return commitPIIDecision(ws, call, cwd, a) }},
+		{"tq/commit-pii", func(a policy.Action) (policy.Decision, bool) { return commitPIIDecision(ws, call, cwd, commitRun, a) }},
 		{"tq/push-pii", func(a policy.Action) (policy.Decision, bool) { return pushPIIDecision(ws, call, cwd, a) }},
 		{"tq/text-pii", func(a policy.Action) (policy.Decision, bool) { return textPIIDecision(ws, call, cwd, a) }},
 		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, a) }},

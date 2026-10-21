@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"io"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -23,31 +21,10 @@ const pushScanFailed = "could not scan the commits about to be pushed; retry or 
 // (hooks must never stall). Tests lower it.
 var pushDeadline = 15 * time.Second
 
-// pushGit runs git under ctx and reads at most limit bytes of stdout. Tests
-// replace it to simulate failures and slow git.
+// pushGit runs git under ctx and reads at most limit bytes of stdout. The push
+// and commit rules both go through it; tests replace it to simulate failures
+// and slow git.
 var pushGit = runGitBounded
-
-func runGitBounded(ctx context.Context, cwd string, limit int, args ...string) (out string, tooBig bool, err error) {
-	c := exec.CommandContext(ctx, "git", args...)
-	c.Dir = cwd
-	pipe, err := c.StdoutPipe()
-	if err != nil {
-		return "", false, err
-	}
-	if err := c.Start(); err != nil {
-		return "", false, err
-	}
-	raw, _ := io.ReadAll(io.LimitReader(pipe, int64(limit)+1))
-	if len(raw) > limit {
-		_ = c.Process.Kill()
-		_ = c.Wait()
-		return "", true, nil
-	}
-	if err := c.Wait(); err != nil {
-		return "", false, err
-	}
-	return string(raw), false, nil
-}
 
 type pushPlan struct {
 	remote   string

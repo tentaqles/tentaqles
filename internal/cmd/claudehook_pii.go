@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/commitscan"
-	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
@@ -102,12 +103,15 @@ func dedupeSorted(s []string) []string {
 	return out
 }
 
-func commitPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
-	if !call.IsShell() || !commitscan.PlanFor(call.Command).Commits {
+func commitPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, run commitscan.Runner, action policy.Action) (policy.Decision, bool) {
+	if !call.IsShell() || run == nil || !commitscan.PlanFor(call.Command).Commits {
 		return policy.Decision{}, false
 	}
-	added, err := commitscan.Added(cwd, call.Command, gitcfg.RunGitIn)
+	added, err := commitscan.Added(cwd, call.Command, run)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return ruleDecision(policy.Ask, "tq/commit-pii", "could not scan what this commit records in time; retry or commit fewer files"), true
+		}
 		return ruleDecision(policy.Ask, "tq/commit-pii", "could not scan what this commit records for personal data; check the repository state or confirm"), true
 	}
 	h, markerIgnored := hits(added, piiClasses(ws))
@@ -256,35 +260,89 @@ var copyVerbs = map[string]bool{"cp": true, "mv": true, "rsync": true, "install"
 // targetDirVerbs honour -t/--target-directory (for rsync, -t is "preserve times").
 var targetDirVerbs = map[string]bool{"cp": true, "mv": true, "install": true}
 
-// copyWrappers are words after which a copy verb is the real command.
+// copyWrappers are words after which a copy verb is the real command; the
+// injecting ones (xargs, find -exec) supply the sources, so a lone remaining
+// argument is the target.
 var copyWrappers = map[string]bool{"sudo": true, "doas": true, "env": true, "nice": true, "command": true, "exec": true,
-	"busybox": true, "xargs": true, "-exec": true, "-execdir": true, "nohup": true, "time": true}
+	"busybox": true, "xargs": true, "-exec": true, "-execdir": true, "-ok": true, "nohup": true, "time": true}
+
+var injectingWrappers = map[string]bool{"xargs": true, "-exec": true, "-execdir": true, "-ok": true}
+
+// wrapperValueFlags take a separate value token after a wrapper.
+var wrapperValueFlags = map[string]bool{"-I": true, "-n": true, "-L": true, "-P": true, "-u": true, "-g": true, "-s": true, "-a": true, "-d": true}
 
 var fixtureDirRe = regexp.MustCompile(`(?i)(^|/)(tests?|fixtures|__fixtures__|seeds?|seed|testdata)(/|$)`)
 
-// redirects finds redirect operators anywhere in the words (>, >>, &>, &>>,
-// 2>, 2>>): it returns their operands and the indexes of the words that are
-// an operator or an operand, so callers do not mistake them for arguments.
-func redirects(toks []string) (targets []string, skip map[int]bool) {
+// redirects finds unquoted redirect operators anywhere in the words (>, >>,
+// &>, 2>, >|, >&path): it returns their operands and the indexes of the
+// words that are an operator or an operand, so callers do not mistake them
+// for arguments. A '>' that came from quotes is data, not an operator.
+func redirects(ws []word) (targets []string, skip map[int]bool) {
 	skip = map[int]bool{}
-	for i, t := range toks {
-		idx := strings.IndexByte(t, '>')
-		if idx < 0 || (idx > 0 && t[idx-1] == '\\') {
+	for i, w := range ws {
+		if len(w.GT) == 0 {
 			continue
 		}
-		rest := strings.TrimLeft(t[idx:], ">")
+		rest := strings.TrimLeft(w.Text[w.GT[0]:], ">")
+		rest = strings.TrimPrefix(rest, "|")
 		skip[i] = true
-		if rest == "" {
-			if i+1 < len(toks) {
-				rest = toks[i+1]
-				skip[i+1] = true
+		if rest == "" && i+1 < len(ws) {
+			rest = ws[i+1].Text
+			skip[i+1] = true
+		}
+		if strings.HasPrefix(rest, "&") {
+			rest = rest[1:] // >&path writes to path; >&2 and >&- are descriptors
+			if rest == "-" || (rest != "" && strings.Trim(rest, "0123456789") == "") {
+				rest = ""
 			}
 		}
-		if rest != "" && !strings.HasPrefix(rest, "&") {
+		if rest != "" {
 			targets = append(targets, rest)
 		}
 	}
 	return targets, skip
+}
+
+type verbHit struct {
+	idx      int
+	injected bool
+}
+
+// copyVerbHits finds copy verbs used as the command word or behind wrappers
+// (with their options and further wrappers skipped).
+func copyVerbHits(toks []string) []verbHit {
+	var hits []verbHit
+	seen := map[int]bool{}
+	add := func(i int, inj bool) {
+		if i < len(toks) && copyVerbs[baseName(toks[i])] && !seen[i] {
+			seen[i] = true
+			hits = append(hits, verbHit{i, inj})
+		}
+	}
+	if vi := verbIndex(toks); vi >= 0 {
+		add(vi, false)
+	}
+	for i, t := range toks {
+		if !copyWrappers[strings.ToLower(t)] {
+			continue
+		}
+		inj := false
+		j := i
+		for j < len(toks) && copyWrappers[strings.ToLower(toks[j])] {
+			if injectingWrappers[strings.ToLower(toks[j])] {
+				inj = true
+			}
+			j++
+			for j < len(toks) && strings.HasPrefix(toks[j], "-") && len(toks[j]) > 1 && !copyWrappers[strings.ToLower(toks[j])] {
+				if wrapperValueFlags[toks[j]] {
+					j++
+				}
+				j++
+			}
+		}
+		add(j, inj)
+	}
+	return hits
 }
 
 // writeTargets lists every place the command writes to: redirects, output
@@ -295,8 +353,12 @@ func writeTargets(cmd string) []string {
 		out = append(out, m[1]+m[2]+m[3])
 	}
 	for _, sg := range splitSegments(cmd) {
-		toks, _ := tokenize(sg.Text)
-		redirTargets, skip := redirects(toks)
+		ws, _ := tokenizeWords(sg.Text)
+		toks := make([]string, len(ws))
+		for i, w := range ws {
+			toks[i] = w.Text
+		}
+		redirTargets, skip := redirects(ws)
 		out = append(out, redirTargets...)
 		dump, mysql := false, false
 		for _, t := range toks {
@@ -326,14 +388,9 @@ func writeTargets(cmd string) []string {
 				}
 			}
 		}
-		vi := verbIndex(toks)
-		for i := range toks {
-			if !(i == vi || (i > 0 && copyWrappers[strings.ToLower(toks[i-1])])) || !copyVerbs[baseName(toks[i])] {
-				continue
-			}
+		for _, vh := range copyVerbHits(toks) {
+			i := vh.idx
 			verb := baseName(toks[i])
-			// sources arrive on stdin or through {}: one argument is the target
-			injected := i > 0 && (toks[i-1] == "-exec" || toks[i-1] == "-execdir" || strings.ToLower(toks[i-1]) == "xargs")
 			var args []string
 			dir := ""
 			for j := i + 1; j < len(toks); j++ {
@@ -356,7 +413,7 @@ func writeTargets(cmd string) []string {
 				out = append(out, dir)
 			case verb == "tee":
 				out = append(out, args...)
-			case len(args) >= 2 || (len(args) == 1 && injected):
+			case len(args) >= 2 || (len(args) == 1 && vh.injected):
 				out = append(out, args[len(args)-1])
 			}
 		}
