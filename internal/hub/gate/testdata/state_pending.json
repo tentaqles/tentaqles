@@ -1,0 +1,36 @@
+{
+  "slug": "demo",
+  "feature": "Export invoices",
+  "workflow": "feature",
+  "hotfix": false,
+  "task": {"hub": "c-abcdefghijkl", "workspace": "acme", "kind": "feature", "external": null},
+  "approved": true,
+  "rolled_back": false,
+  "gen": 3,
+  "cleaned": false,
+  "bases": {"1": "0123456789abcdef0123456789abcdef01234567"},
+  "halted": null,
+  "finished": false,
+  "checkpoints": [
+    {"id": 1, "title": "Parse rows", "status": "passed", "gates": {"behavior": "passed", "review": "passed"}, "evidence": "fresh", "reviews": {"build-critic": "PASS"}},
+    {"id": "2b", "title": "Write CSV", "status": "pending", "gates": {"behavior": "pending", "review": "pending"}, "evidence": "-", "reviews": {}}
+  ],
+  "dod": null,
+  "dod_fresh": false,
+  "pending_decisions": [
+    {"id": "d1a2b3c4", "kind": "result", "checkpoint": null, "reviewer": null, "text": "Try: export March. 2 checkpoints passed.", "options": ["approve", "request-changes", "stop"], "asked_at": "2026-10-21T10:00:00+00:00"}
+  ],
+  "decisions": [
+    {"id": "d0000001", "kind": "plan-approval", "checkpoint": null, "reviewer": null, "status": "answered", "options": ["approve", "edit", "stop"], "choice": "approve", "note": "", "actor": "hub:renato", "asked_at": "2026-10-21T09:00:00+00:00", "answered_at": "2026-10-21T09:05:00+00:00"},
+    {"id": "d1a2b3c4", "kind": "result", "checkpoint": null, "reviewer": null, "status": "pending", "options": ["approve", "request-changes", "stop"], "choice": null, "note": null, "actor": null, "asked_at": "2026-10-21T10:00:00+00:00", "answered_at": null}
+  ],
+  "events_path": "C:/Users/x/.tentaqles/build-gate/events.jsonl",
+  "records": {
+    "plan": {"summary": "Export invoices as CSV.", "plain_summary": "You can download March as a CSV.", "spec": "docs/specs/demo.md",
+             "checkpoints": [{"id": 1, "title": "Parse rows", "approved": true, "tests": [{"file": "tests/test_rows.py", "layer": "unit"}]}]},
+    "evidence": [{"checkpoint": 1, "ts": "2026-10-21T09:30:00+00:00", "tree": "abcdef0123456789", "ok": true, "current": true, "summary": "all verify commands passed",
+                  "results": [{"cmd": "python -m pytest tests/test_rows.py -q", "exit": 0, "seconds": 1.2, "timed_out": false}]}],
+    "reviews": [{"checkpoint": 1, "reviewer": "build-critic", "result": "PASS", "tree": "abcdef0123456789", "ts": "2026-10-21T09:40:00+00:00", "human": false, "blockers": 0, "majors": 0, "minors": 1, "unjudged": 0}],
+    "dod": {"ok": true, "tree": "abcdef0123456789", "ts": "2026-10-21T09:50:00+00:00", "override": null, "checks": [{"id": "test", "ok": true, "detail": "exit 0: python -m pytest -q"}, {"id": "changelog", "ok": null, "detail": "skip: project keeps no changelog"}]}
+  }
+}

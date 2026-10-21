@@ -1,0 +1,54 @@
+{
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "vectors": [
+    {
+      "action": "answer",
+      "slug": "demo",
+      "actor": "hub:renato",
+      "message": "[\"hub\",\"answer\",\"demo\",\"hub:renato\"]",
+      "mac": "84d6304294fd9b2090ca84890e4f08b31e5f1d35dfa894795fc8e136738605a4"
+    },
+    {
+      "action": "answer",
+      "slug": "fix-login",
+      "actor": "hub:Jos\u00e9",
+      "message": "[\"hub\",\"answer\",\"fix-login\",\"hub:Jos\\u00e9\"]",
+      "mac": "1a1f21c11ba647ae743d0235f6263f6363824dae25e335e83577f80171399f67"
+    },
+    {
+      "action": "answer",
+      "slug": "demo",
+      "actor": "hub:a\"b\\c",
+      "message": "[\"hub\",\"answer\",\"demo\",\"hub:a\\\"b\\\\c\"]",
+      "mac": "78d4fb675a0e152b102c6f674913374efbea47a4e4ade9ad0bd06ca8c5e34b10"
+    },
+    {
+      "action": "answer",
+      "slug": "demo",
+      "actor": "hub:<x>&y",
+      "message": "[\"hub\",\"answer\",\"demo\",\"hub:<x>&y\"]",
+      "mac": "5f9024ae405319a2cfd4ca21ca95de8cbb9587a1e0e7a40840fddefa84335856"
+    },
+    {
+      "action": "answer",
+      "slug": "demo",
+      "actor": "hub:\ud83d\ude00",
+      "message": "[\"hub\",\"answer\",\"demo\",\"hub:\\ud83d\\ude00\"]",
+      "mac": "bb880759969b9eeb2f8298cef9d741fe11d0552a5c3a24a249d61ebd748e2d34"
+    },
+    {
+      "action": "answer",
+      "slug": "demo",
+      "actor": "hub:tab\there\u007f",
+      "message": "[\"hub\",\"answer\",\"demo\",\"hub:tab\\there\\u007f\"]",
+      "mac": "c0adb2b64401472843d5003ea096a549a2fc6f18ff756982df17ee63a0bb8727"
+    },
+    {
+      "action": "approve",
+      "slug": "demo",
+      "actor": "hub:renato",
+      "message": "[\"hub\",\"approve\",\"demo\",\"hub:renato\"]",
+      "mac": "8a425d16e832eab491b95ae21537ed784066f923fe40735145df01d804b228cb"
+    }
+  ]
+}
