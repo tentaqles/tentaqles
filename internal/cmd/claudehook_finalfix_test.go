@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -212,4 +213,59 @@ func TestFinal_I2_FirstPushScansUnpushedHistory(t *testing.T) {
 		wantDeny(t, ws, c, "tq/push-pii")
 	}
 	wantAsk(t, ws, `git push origin nosuchbranch`, "tq/push-pii", "could not scan")
+}
+
+func psPayload(t *testing.T, cwd, command string) string {
+	t.Helper()
+	return `{"tool_name":"PowerShell","cwd":` + jsonPath(t, cwd) + `,"tool_input":{"command":` + jsonPath(t, command) + `}}`
+}
+
+// I6: absolute, ./-relative and case-variant source paths, and PowerShell writers.
+func TestFinal_I6_FixtureRulePathsAndPowerShell(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	if err := os.MkdirAll(filepath.Join(ws, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(ws, "data", "exports", "q3.csv")
+	deny := []string{
+		`cp ` + filepath.ToSlash(abs) + ` tests/fixtures/q3.csv`,
+		`cp "` + abs + `" tests/fixtures/q3.csv`,
+		`cp ./data/exports/q3.csv tests/fixtures/q3.csv`,
+		`cp Data/Exports/q3.csv tests/fixtures/`,
+		`cd sub && cp ../data/exports/q3.csv ../tests/fixtures/`,
+		`Get-Content data/exports/q3.csv | Set-Content tests/fixtures/q3.csv`,
+		`Get-Content data/exports/q3.csv | Set-Content -Path tests/fixtures/q3.csv`,
+		`Get-Content ./data/exports/q3.csv | Add-Content -Path tests/q3.csv`,
+		`Get-Content data\exports\q3.csv | Out-File -FilePath tests\fixtures\q3.csv`,
+		`Get-Content data/exports/q3.csv | Out-File tests/fixtures/q3.csv`,
+		`Import-Csv data/exports/q3.csv | Export-Csv tests/fixtures/q3.csv`,
+		`Import-Csv data/exports/q3.csv | Export-Csv -Path tests/fixtures/q3.csv -NoTypeInformation`,
+		`Copy-Item data/exports/q3.csv tests/fixtures/q3.csv`,
+		`Copy-Item -Path data/exports/q3.csv -Destination tests/fixtures/`,
+		`Copy-Item -Destination tests/fixtures/ -Path data/exports/q3.csv`,
+		`copy-item data/exports/q3.csv -dest seeds/`,
+		`Move-Item data/exports/q3.csv tests/fixtures/q3.csv`,
+		`Get-Content data/exports/q3.csv | Tee-Object -FilePath tests/fixtures/q3.csv`,
+	}
+	if runtime.GOOS == "windows" {
+		vol := strings.ToLower(filepath.VolumeName(abs)[:1])
+		deny = append(deny, `cp /`+vol+filepath.ToSlash(abs[len(filepath.VolumeName(abs)):])+` tests/fixtures/q3.csv`)
+	}
+	for _, c := range deny {
+		code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, psPayload(t, ws, c))
+		if code != 2 || !strings.Contains(out+errOut, "tq/pii-fixture-dump") {
+			t.Errorf("%s: code=%d %q", c, code, out+errOut)
+		}
+	}
+	for _, c := range []string{
+		`Copy-Item data/exports/q3.csv backups/q3.csv`,
+		`Set-Content tests/fixtures/x.csv -Value "synthetic"`,
+		`Get-Content data/exports/q3.csv`,
+		`Copy-Item tests/fixtures/a.csv data/exports/`,
+	} {
+		code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, psPayload(t, ws, c))
+		if code != 0 || strings.Contains(out+errOut, "pii") {
+			t.Errorf("%s: wrongly flagged (code=%d): %q", c, code, out+errOut)
+		}
+	}
 }

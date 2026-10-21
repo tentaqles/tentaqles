@@ -193,7 +193,7 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 		}},
 		{"tq/push-pii", func(a policy.Action) (policy.Decision, bool) { return pushPIIDecision(ctx, ws, call, cwd, a) }},
 		{"tq/text-pii", func(a policy.Action) (policy.Decision, bool) { return textPIIDecision(ws, call, cwd, a) }},
-		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, a) }},
+		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, cwd, a) }},
 	} {
 		if eff.Off(r.id) {
 			continue

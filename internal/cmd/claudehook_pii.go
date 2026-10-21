@@ -43,7 +43,10 @@ func piiClasses(ws *resolve.Workspace) []string {
 	return out
 }
 
-var fixturePathRe = regexp.MustCompile(`(?i)(^|/)(tests?|fixtures|__fixtures__|seeds?|seed|testdata)/`)
+// fixtureDirRe names test and fixture directories. It is the single
+// definition behind the tq:allow-pii marker scope and the fixture-dump
+// targets, so the two cannot drift.
+var fixtureDirRe = regexp.MustCompile(`(?i)(^|/)(tests?|fixtures|__fixtures__|seeds?|seed|testdata)(/|$)`)
 
 const markerScopeNote = "tq:allow-pii only applies inside test and fixture directories"
 
@@ -55,7 +58,13 @@ func slashPath(p string) string {
 	return p
 }
 
-func inFixtureDir(file string) bool { return fixturePathRe.MatchString(slashPath(file)) }
+func inFixtureDir(file string) bool {
+	f := slashPath(file)
+	if i := strings.LastIndex(f, "/"); i >= 0 {
+		return fixtureDirRe.MatchString(f[:i+1])
+	}
+	return false
+}
 
 // hits formats findings as "file:line (detector)" without values. The
 // tq:allow-pii marker exempts a line only inside test and fixture
@@ -298,8 +307,6 @@ var injectingWrappers = map[string]bool{"xargs": true, "-exec": true, "-execdir"
 // wrapperValueFlags take a separate value token after a wrapper.
 var wrapperValueFlags = map[string]bool{"-I": true, "-n": true, "-L": true, "-P": true, "-u": true, "-g": true, "-s": true, "-a": true, "-d": true}
 
-var fixtureDirRe = regexp.MustCompile(`(?i)(^|/)(tests?|fixtures|__fixtures__|seeds?|seed|testdata)(/|$)`)
-
 // redirects finds unquoted redirect operators anywhere in the words (>, >>,
 // &>, 2>, >|, >&path): it returns their operands and the indexes of the
 // words that are an operator or an operand, so callers do not mistake them
@@ -415,6 +422,7 @@ func writeTargets(cmd string) []string {
 				}
 			}
 		}
+		out = append(out, psWriteTargets(toks)...)
 		for _, vh := range copyVerbHits(toks) {
 			i := vh.idx
 			verb := baseName(toks[i])
@@ -448,6 +456,98 @@ func writeTargets(cmd string) []string {
 	return out
 }
 
+// psFileWriters are PowerShell cmdlets (and aliases) whose path parameter,
+// or first positional argument, is the file they write.
+var psFileWriters = map[string]bool{"set-content": true, "sc": true, "add-content": true, "ac": true,
+	"out-file": true, "export-csv": true, "epcsv": true, "tee-object": true, "export-clixml": true}
+
+// psCopiers write to -Destination, or to their second positional argument.
+var psCopiers = map[string]bool{"copy-item": true, "cpi": true, "move-item": true, "mi": true, "move": true}
+
+// psValueParams take a value that is not a path.
+var psValueParams = []string{"value", "encoding", "delimiter", "inputobject", "width", "stream", "filter",
+	"include", "exclude", "credential", "variable", "depth"}
+
+// psParam reports whether tok is a PowerShell parameter naming one of full
+// (case-insensitive, abbreviation allowed, -Name:value form accepted) and
+// returns its attached value.
+func psParam(tok string, full ...string) (ok bool, value string, attached bool) {
+	if !strings.HasPrefix(tok, "-") || len(tok) < 3 {
+		return false, "", false
+	}
+	name := strings.ToLower(tok[1:])
+	if i := strings.Index(name, ":"); i >= 0 {
+		value, attached = tok[1+i+1:], true
+		name = name[:i]
+	}
+	for _, f := range full {
+		if strings.HasPrefix(f, name) {
+			return true, value, attached
+		}
+	}
+	return false, "", false
+}
+
+// psWriteTargets returns the files a PowerShell writer cmdlet writes.
+func psWriteTargets(toks []string) []string {
+	vi := verbIndex(toks)
+	if vi < 0 {
+		return nil
+	}
+	verb := strings.ToLower(baseName(toks[vi]))
+	writer, copier := psFileWriters[verb], psCopiers[verb]
+	if !writer && !copier {
+		return nil
+	}
+	var out, pos []string
+	for j := vi + 1; j < len(toks); j++ {
+		t := toks[j]
+		take := func(v string, attached bool) {
+			if attached {
+				out = append(out, v)
+			} else if j+1 < len(toks) {
+				out = append(out, toks[j+1])
+				j++
+			}
+		}
+		if writer {
+			if ok, v, att := psParam(t, "path", "filepath", "literalpath"); ok {
+				take(v, att)
+				continue
+			}
+		} else {
+			if ok, v, att := psParam(t, "destination"); ok {
+				take(v, att)
+				continue
+			}
+			if ok, _, att := psParam(t, "path", "literalpath"); ok {
+				if !att {
+					j++ // the source
+				}
+				pos = append(pos, "") // a named source takes the first position
+				continue
+			}
+		}
+		if ok, _, att := psParam(t, psValueParams...); ok {
+			if !att {
+				j++
+			}
+			continue
+		}
+		if strings.HasPrefix(t, "-") && len(t) > 1 {
+			continue // a switch such as -NoTypeInformation or -Force
+		}
+		pos = append(pos, t)
+	}
+	switch {
+	case writer && len(out) == 0 && len(pos) > 0:
+		out = append(out, pos[0])
+	case copier && len(out) == 0 && len(pos) > 1:
+		out = append(out, pos[1])
+	}
+	return out
+}
+
 // pathWords returns slash-normalised words of a command that look like paths.
 func pathWords(cmd string) []string {
 	var out []string
@@ -460,13 +560,51 @@ func pathWords(cmd string) []string {
 	return out
 }
 
-// classesOf returns the classes of every classified path or table the command names.
-func classesOf(data manifest.Data, cmd string) (classes []string, what string) {
+// foldData is data with its path globs lower-cased, for matching paths
+// case-insensitively (Data/Exports names data/exports on Windows and macOS).
+func foldData(data manifest.Data) manifest.Data {
+	f := data
+	f.Paths = make([]manifest.DataPath, len(data.Paths))
+	for i, p := range data.Paths {
+		p.Path = strings.ToLower(p.Path)
+		f.Paths[i] = p
+	}
+	return f
+}
+
+// candidatePaths returns the forms of a path word to match against the
+// workspace's classified globs: as written, and resolved from the
+// directory the command runs in (cwd, or a leading cd) relative to the
+// workspace root, so absolute, ./- and ../-relative spellings all match.
+func candidatePaths(root, base, w string) []string {
+	out := []string{strings.TrimPrefix(slashPath(w), "/")}
+	if base == "" || root == "" {
+		return out
+	}
+	abs, err := guard.ResolvePath(base, w)
+	if err != nil {
+		return out
+	}
+	r := strings.ToLower(filepath.ToSlash(filepath.Clean(root))) + "/"
+	a := strings.ToLower(filepath.ToSlash(filepath.Clean(abs)))
+	if strings.HasPrefix(a, r) {
+		out = append(out, a[len(r):])
+	}
+	return out
+}
+
+// classesOf returns the classes of every classified path or table the
+// command names. root is the workspace root and base the directory the
+// command runs in ("" when unknown: paths are then matched as written).
+func classesOf(data manifest.Data, root, base, cmd string) (classes []string, what string) {
 	set := map[string]bool{}
+	folded := foldData(data)
 	for _, w := range pathWords(cmd) {
-		for _, c := range data.Classified(w) {
-			set[c] = true
-			what = "path " + w
+		for _, cand := range candidatePaths(root, base, w) {
+			for _, c := range folded.Classified(strings.ToLower(cand)) {
+				set[c] = true
+				what = "path " + w
+			}
 		}
 	}
 	tables := data.Tables()
@@ -486,15 +624,30 @@ func classesOf(data manifest.Data, cmd string) (classes []string, what string) {
 	return classes, what
 }
 
-func piiFixtureDumpDecision(ws *resolve.Workspace, call policy.ToolCall, action policy.Action) (policy.Decision, bool) {
+func piiFixtureDumpDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, action policy.Action) (policy.Decision, bool) {
 	if ws == nil || ws.Manifest == nil || !ws.Manifest.Data.Enabled() || !call.IsShell() {
 		return policy.Decision{}, false
 	}
-	cs, what := classesOf(ws.Manifest.Data, call.Command)
+	base, berr := guard.BaseDir(cwd, call.Command)
+	if berr != nil {
+		base = ""
+	}
+	cs, what := classesOf(ws.Manifest.Data, ws.Root, base, call.Command)
+	targets := writeTargets(call.Command)
 	if cs == nil {
+		if berr != nil {
+			// the directory is unknown, so a relative source path cannot be
+			// matched: ask when the command writes into a fixture directory
+			for _, tgt := range targets {
+				if fixtureDirRe.MatchString(slashPath(tgt)) {
+					return ruleDecision(policy.Ask, "tq/pii-fixture-dump",
+						"this command writes into "+tgt+" from a directory tq cannot resolve ("+berr.Error()+"); confirm the source is not classified data"), true
+				}
+			}
+		}
 		return policy.Decision{}, false
 	}
-	for _, tgt := range writeTargets(call.Command) {
+	for _, tgt := range targets {
 		if fixtureDirRe.MatchString(slashPath(tgt)) {
 			return ruleDecision(action, "tq/pii-fixture-dump",
 				fmt.Sprintf("this copies rows from %s (classified %s) into %s. Fixtures and seeds must be synthetic: generate them "+
