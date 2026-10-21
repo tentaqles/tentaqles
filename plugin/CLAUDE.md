@@ -55,7 +55,7 @@ tests/                  pytest suite
 
 - **Python scripts** under `scripts/`: start with `from _path import setup_paths; setup_paths()`. Never inline `sys.path.insert` hacks.
 
-- **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`. `classes=None` (read paths) masks secrets only; exits (memory writes, vault, ingest, signals, Jev, model prompts) pass the workspace's data classes (`exit_classes(manifest)`, from the manifest `data:` block; an unknown or empty class list fails closed to the strictest set). Use `redact_str` rather than a local wrapper.
+- **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`. `redact_text(classes=None)` (read paths) masks secrets only, while `redact_str` applies the checksummed baseline; exits (memory writes, vault, ingest, signals, Jev, model prompts) pass the workspace's data classes (`exit_classes(manifest)`, from the manifest `data:` block; an unknown or empty class list fails closed to the strictest set). Use `redact_str` rather than a local wrapper.
 - **Reviewer agents are read-only** (`security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`: tools Read, Glob, Grep). `breaker` is the only agent with Bash and it binds to 127.0.0.1; its scratch dir is `<root>/.tq-breaker/<slug>/` (data files only, deleted by `build-gate finish`).
 - **Human-only commands**: `tq allow`, `build-gate approve/judge/answer/finish/token` and `dod --override` are run by the human; skills remind the user and never run them.
 - **Key isolation caveat**: the build gate's text checks guard against a careless agent, not one set on defeating it, until tq isolates the signing key at the OS level.
