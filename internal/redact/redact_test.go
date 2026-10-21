@@ -57,8 +57,10 @@ func TestEmailAndPhone(t *testing.T) {
 
 func TestClassesSelectDetectorsAndSecrets(t *testing.T) {
 	text := "cpf 529.982.247-25 key sk-ant-abcdefghijklmnopqrstuvwxyz0123" // tq:allow-pii
-	if got := Redact(text, []string{"financial"}); strings.Contains(got, "REDACTED") {
-		t.Fatalf("financial must not redact a CPF: %q", got)
+	// checksummed detectors always run (final review I4): financial masks the
+	// CPF too, but not the secret
+	if got := Redact(text, []string{"financial"}); !strings.Contains(got, "[REDACTED:cpf]") || strings.Contains(got, "anthropic_key") {
+		t.Fatalf("financial: %q", got)
 	}
 	got := Redact(text, []string{"pii", "secrets"})
 	if !strings.Contains(got, "[REDACTED:cpf]") || !strings.Contains(got, "[REDACTED:anthropic_key]") {
@@ -68,8 +70,8 @@ func TestClassesSelectDetectorsAndSecrets(t *testing.T) {
 		t.Fatal("unknown class accepted")
 	}
 	cls, err := ParseClasses("all")
-	if err != nil || len(cls) < 3 {
-		t.Fatalf("%v %v", cls, err)
+	if set, rerr := Resolve(cls); err != nil || rerr != nil || !set.secrets || len(set.detectors) < 6 {
+		t.Fatalf("%v %v %v", cls, err, rerr)
 	}
 	if n := Count(text, []string{"all"}); n["cpf"] != 1 || n["anthropic_key"] != 1 {
 		t.Fatalf("%v", n)

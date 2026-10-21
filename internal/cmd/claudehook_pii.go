@@ -26,25 +26,19 @@ import (
 const maxPushScan = 4 << 20
 const maxTextFile = 256 << 10
 
+// piiClasses are the classes the exit rules scan for: the manifest's
+// data.classes (secrets excluded: tq/commit-secret owns those) plus
+// "checksummed". redact.Resolve, shared with `tq redact`, maps them to
+// detectors, so the checksummed ones always run.
 func piiClasses(ws *resolve.Workspace) []string {
 	out := []string{"checksummed"}
 	if ws == nil || ws.Manifest == nil || !ws.Manifest.Data.Enabled() {
 		return out
 	}
-	pii, fin := false, false
 	for _, c := range ws.Manifest.Data.Classes {
-		switch c {
-		case "pii", "sensitive", "children":
-			pii = true
-		case "financial":
-			fin = true
+		if c != "secrets" {
+			out = append(out, c)
 		}
-	}
-	if pii {
-		out = append(out, "pii")
-	}
-	if fin {
-		out = append(out, "financial")
 	}
 	return out
 }

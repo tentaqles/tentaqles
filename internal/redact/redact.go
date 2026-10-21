@@ -2,9 +2,14 @@
 // card numbers, IBAN) and secrets in text, by data class. Detection is
 // heuristic but validated where a checksum exists (CPF and CNPJ check digits,
 // Luhn for cards, mod-97 for IBAN), so plain numbers of the same length are
-// left alone. Values are never logged; Count reports names only. An unknown
-// class name or an empty class list fails closed: it is treated as "all",
-// never as no masking.
+// left alone. Values are never logged; Count reports names only.
+//
+// Resolve is the one class-to-detector mapping, used by `tq redact` and by
+// the hook's exit rules alike: the checksummed detectors (CPF, CNPJ, card,
+// IBAN) always run, pii/sensitive/children add e-mail and phone, secrets adds
+// the secret patterns, all runs everything. An unknown class or an empty list
+// is an error; Redact and Count, which cannot return one, treat it as "all"
+// (fail closed: never less masking).
 package redact
 
 import (
@@ -18,9 +23,43 @@ import (
 )
 
 type detector struct {
-	name  string
-	re    *regexp.Regexp
-	valid func(string) bool
+	name string
+	re   *regexp.Regexp
+	// span returns the length of the validated value at the start of a
+	// regexp match, 0 when there is none.
+	span func(string) int
+}
+
+func whole(valid func(string) bool) func(string) int {
+	return func(m string) int {
+		if valid(m) {
+			return len(m)
+		}
+		return 0
+	}
+}
+
+// cardSpan accepts the whole match when it passes Luhn, otherwise the longest
+// prefix of 13 to 19 digits that ends at a group boundary (a space or a dash)
+// and passes Luhn: a card followed by its expiry or CVV ("4111 1111 1111
+// 1111 123") greedily matches as one longer number that fails the check.
+func cardSpan(m string) int {
+	if luhn(m) {
+		return len(strings.TrimRight(m, " -")) // the greedy match may end on a separator
+	}
+	best := 0
+	n := 0
+	for i := 0; i < len(m); i++ {
+		c := m[i]
+		if c >= '0' && c <= '9' {
+			n++
+			continue
+		}
+		if n >= 13 && n <= 19 && luhn(m[:i]) {
+			best = i
+		}
+	}
+	return best
 }
 
 var (
@@ -145,95 +184,86 @@ func validPhone(s string) bool {
 	return len(d) >= 10 && len(d) <= 15 && !allSame(d)
 }
 
-var byClass = map[string][]detector{
-	"checksummed": {
-		{"cpf", cpfRe, validCPF},
-		{"cnpj", cnpjRe, validCNPJ},
-		{"card", cardRe, luhn},
-		{"iban", ibanRe, validIBAN},
-	},
-	"pii": {
-		{"cpf", cpfRe, validCPF},
-		{"email", emailRe, func(string) bool { return true }},
-		{"phone", phoneRe, validPhone},
-	},
-	"financial": {
-		{"card", cardRe, luhn},
-		{"cnpj", cnpjRe, validCNPJ},
-		{"iban", ibanRe, validIBAN},
-	},
-}
+// checksummedDetectors always run, before contactDetectors, so phone never
+// masks part of a CNPJ or a card.
+var (
+	checksummedDetectors = []detector{
+		{"cpf", cpfRe, whole(validCPF)},
+		{"cnpj", cnpjRe, whole(validCNPJ)},
+		{"card", cardRe, cardSpan},
+		{"iban", ibanRe, whole(validIBAN)},
+	}
+	contactDetectors = []detector{
+		{"email", emailRe, whole(func(string) bool { return true })},
+		{"phone", phoneRe, whole(validPhone)},
+	}
+)
 
 // AllowMarker on a line exempts it from the personal and financial detectors
 // (known-synthetic data). Secrets on the line are still masked and counted.
 const AllowMarker = "tq:allow-pii"
 
-// Known lists the selectable classes.
-var Known = []string{"checksummed", "pii", "financial", "sensitive", "children", "secrets", "all"}
+// Known lists the selectable classes ("public" and "internal" are manifest
+// classes that add nothing beyond the checksummed detectors).
+var Known = []string{"checksummed", "pii", "financial", "sensitive", "children", "secrets", "public", "internal", "all"}
 
-// ParseClasses parses a comma-separated list; "sensitive" and "children" use
-// the pii detectors; "all" expands to pii, financial and secrets.
+// Set is a resolved class list: the detectors to run, in order, and whether
+// the secret patterns run too.
+type Set struct {
+	detectors []detector
+	secrets   bool
+}
+
+// Resolve maps data classes to detectors (see the package comment). It is
+// the only place that does, so `tq redact` masks at least what the hook
+// checks.
+func Resolve(classes []string) (Set, error) {
+	if len(classes) == 0 {
+		return Set{}, fmt.Errorf("no data class given")
+	}
+	s := Set{detectors: checksummedDetectors}
+	contact := false
+	for _, c := range classes {
+		switch strings.ToLower(strings.TrimSpace(c)) {
+		case "all":
+			contact, s.secrets = true, true
+		case "pii", "sensitive", "children":
+			contact = true
+		case "secrets":
+			s.secrets = true
+		case "checksummed", "financial", "public", "internal":
+		default:
+			return Set{}, fmt.Errorf("unknown data class %q (known: %s)", c, strings.Join(Known, ", "))
+		}
+	}
+	if contact {
+		s.detectors = append(append([]detector{}, checksummedDetectors...), contactDetectors...)
+	}
+	return s, nil
+}
+
+// resolveOrAll is Resolve that fails closed for callers without an error
+// path: an empty or unknown class list runs every detector.
+func resolveOrAll(classes []string) Set {
+	if s, err := Resolve(classes); err == nil {
+		return s
+	}
+	s, _ := Resolve([]string{"all"})
+	return s
+}
+
+// ParseClasses parses a comma-separated list and validates it with Resolve.
 func ParseClasses(csv string) ([]string, error) {
 	var out []string
 	for _, c := range strings.Split(csv, ",") {
-		c = strings.ToLower(strings.TrimSpace(c))
-		if c == "" {
-			continue
+		if c = strings.ToLower(strings.TrimSpace(c)); c != "" {
+			out = append(out, c)
 		}
-		ok := false
-		for _, k := range Known {
-			if k == c {
-				ok = true
-			}
-		}
-		if !ok {
-			return nil, fmt.Errorf("unknown data class %q (known: %s)", c, strings.Join(Known, ", "))
-		}
-		if c == "all" {
-			out = append(out, "checksummed", "pii", "financial", "secrets")
-			continue
-		}
-		out = append(out, c)
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("no data class given")
+	if _, err := Resolve(out); err != nil {
+		return nil, err
 	}
 	return out, nil
-}
-
-func allDetectors() []detector {
-	return append(append([]detector{}, byClass["pii"]...), byClass["financial"]...)
-}
-
-func detectors(classes []string) ([]detector, bool) {
-	if len(classes) == 0 {
-		// No class given: fail closed, mask everything.
-		return allDetectors(), true
-	}
-	var ds []detector
-	withSecrets := false
-	seen := map[string]bool{}
-	for _, c := range classes {
-		switch c {
-		case "all":
-			return allDetectors(), true
-		case "secrets":
-			withSecrets = true
-		case "sensitive", "children":
-			c = "pii"
-		case "pii", "financial", "checksummed":
-		default:
-			// Unknown class: fail closed, mask everything.
-			return allDetectors(), true
-		}
-		for _, d := range byClass[c] {
-			if !seen[d.name] {
-				seen[d.name] = true
-				ds = append(ds, d)
-			}
-		}
-	}
-	return ds, withSecrets
 }
 
 // Redact replaces every validated match with [REDACTED:<detector>]. A line
@@ -250,20 +280,32 @@ func Redact(text string, classes []string) string {
 	return strings.Join(lines, "\n")
 }
 
-func redactText(text string, classes []string, skipPII bool) string {
-	ds, withSecrets := detectors(classes)
-	if skipPII {
-		ds = nil
-	}
-	for _, d := range ds {
+// mask replaces every validated value, detector by detector in order, and
+// reports each one to hit. A masked value cannot be matched again by a later
+// detector.
+func mask(text string, s Set, hit func(name string)) string {
+	for _, d := range s.detectors {
+		d := d
 		text = d.re.ReplaceAllStringFunc(text, func(m string) string {
-			if d.valid(m) {
-				return "[REDACTED:" + d.name + "]"
+			n := d.span(m)
+			if n == 0 {
+				return m
 			}
-			return m
+			if hit != nil {
+				hit(d.name)
+			}
+			return "[REDACTED:" + d.name + "]" + m[n:]
 		})
 	}
-	if withSecrets {
+	return text
+}
+
+func redactText(text string, classes []string, skipPII bool) string {
+	s := resolveOrAll(classes)
+	if !skipPII {
+		text = mask(text, s, nil)
+	}
+	if s.secrets {
 		text = secrets.Redact(text)
 	}
 	return text
@@ -292,18 +334,11 @@ func CountAll(text string, classes []string) map[string]int {
 
 func countText(text string, classes []string, skipPII bool) map[string]int {
 	out := map[string]int{}
-	ds, withSecrets := detectors(classes)
-	if skipPII {
-		ds = nil
+	s := resolveOrAll(classes)
+	if !skipPII {
+		mask(text, s, func(name string) { out[name]++ })
 	}
-	for _, d := range ds {
-		for _, m := range d.re.FindAllString(text, -1) {
-			if d.valid(m) {
-				out[d.name]++
-			}
-		}
-	}
-	if withSecrets {
+	if s.secrets {
 		for _, f := range secrets.Scan(text) {
 			out[f.Pattern]++
 		}

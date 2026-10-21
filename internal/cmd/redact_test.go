@@ -1,5 +1,8 @@
 package cmd
 
+// Test values are public test numbers with valid checksums, never real data:
+// CPF 529.982.247-25, CNPJ 11.222.333/0001-81, Visa test card 4111 1111 1111 1111.
+
 import (
 	"bytes"
 	"os"
@@ -33,9 +36,18 @@ func TestRedact_StdinDefaultAll(t *testing.T) {
 
 func TestRedact_ClassesAndCount(t *testing.T) {
 	isolateHome(t)
-	out, _ := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111\n", "--classes", "financial")
-	if !strings.Contains(out, "529.982.247-25") || !strings.Contains(out, "[REDACTED:card]") {
+	// checksummed detectors always run, whatever --classes says (final review I4)
+	out, _ := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111\n", "--classes", "financial") // tq:allow-pii
+	if strings.Contains(out, "529") || !strings.Contains(out, "[REDACTED:cpf]") || !strings.Contains(out, "[REDACTED:card]") {
 		t.Fatalf("%q", out)
+	}
+	// the documented `--classes pii` copy masks the CNPJ and the card whole
+	out, _ = runRedact(t, "11.222.333/0001-81 4111 1111 1111 1111\n", "--classes", "pii") // tq:allow-pii
+	if out != "[REDACTED:cnpj] [REDACTED:card]\n" {
+		t.Fatalf("%q", out)
+	}
+	if _, err := runRedact(t, "x", "--classes", " , "); err == nil {
+		t.Fatal("empty class list accepted")
 	}
 	out, _ = runRedact(t, "cpf 529.982.247-25\n", "--count")
 	if strings.Contains(out, "529") || !strings.Contains(out, "cpf: 1") {
@@ -75,8 +87,8 @@ func TestRedact_DefaultClassesFromManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _ := runRedact(t, "cpf 529.982.247-25 card 4111 1111 1111 1111 key ghp_abcdefghijklmnopqrstuvwxyz0123\n")
-	// financial from the manifest, secrets always; pii is not declared, so the CPF stays
-	if !strings.Contains(out, "529.982.247-25") || !strings.Contains(out, "[REDACTED:card]") || !strings.Contains(out, "[REDACTED:github_token]") {
+	// financial from the manifest, secrets always, checksummed always: the CPF is masked too
+	if strings.Contains(out, "529") || !strings.Contains(out, "[REDACTED:cpf]") || !strings.Contains(out, "[REDACTED:card]") || !strings.Contains(out, "[REDACTED:github_token]") {
 		t.Fatalf("%q", out)
 	}
 }

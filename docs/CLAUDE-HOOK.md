@@ -455,7 +455,12 @@ masks its stdout and stderr, propagating its exit code.
 Default classes: the trusted workspace manifest's `data.classes` minus
 `data.prompts.allow`, plus `secrets`. Outside a workspace, or without a
 `data:` block, every detector runs (`all`). `--classes` overrides this; an
-unknown class is an error.
+unknown class or an empty list is an error. Whatever the classes, the
+checksum-validated detectors (CPF, CNPJ, card, IBAN) always run, exactly as
+in the exit rules, so a copy made with `tq redact` passes `tq/text-pii`:
+`pii`, `sensitive` and `children` add e-mail and phone, `secrets` adds the
+secret patterns, `all` runs everything. A card number followed by its expiry
+(`MM/YY`) or its CVV is still masked.
 
 ## Turning rules on and off
 
