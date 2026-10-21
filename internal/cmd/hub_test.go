@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -255,5 +256,90 @@ func TestHubTalksToARunningHub(t *testing.T) {
 	t.Setenv("TENTAQLES_HEADLESS", "1")
 	if _, _, _, err := runTQ(t, "hub", "move", c.ID, "done"); err == nil || !strings.Contains(err.Error(), "human-only") {
 		t.Fatalf("agent move over the API: %v", err)
+	}
+}
+
+// TestHubWarnsWhenTheGateIsUnavailable: a gate that cannot be built is reported on stderr at once,
+// not first discovered when a run needs it.
+func TestHubWarnsWhenTheGateIsUnavailable(t *testing.T) {
+	hubWS(t)
+	t.Setenv("TQ_HUB_GATE_CMD", "not json")
+	_, _, errOut, err := runTQ(t, "hub", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "warning: gate unavailable: TQ_HUB_GATE_CMD must be a JSON array of strings") {
+		t.Fatalf("stderr: %q", errOut)
+	}
+}
+
+// countingReader records whether a command read its stdin.
+type countingReader struct{ reads int }
+
+func (r *countingReader) Read(p []byte) (int, error) { r.reads++; return 0, io.EOF }
+
+func runTQIn(t *testing.T, in io.Reader, args ...string) (string, string, error) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	root := NewRoot()
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetIn(in)
+	root.SetArgs(args)
+	err := root.Execute()
+	return out.String(), errOut.String(), err
+}
+
+// TestHubCommentWithoutTextOnATerminal: no text and an interactive stdin is an error, not a hang.
+func TestHubCommentWithoutTextOnATerminal(t *testing.T) {
+	hubWS(t)
+	c := addCard(t, "x")
+	prev := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = prev })
+	in := &countingReader{}
+	_, _, err := runTQIn(t, in, "hub", "comment", c.ID)
+	if err == nil || !strings.Contains(err.Error(), "no comment text: pass it as an argument or pipe it on stdin") {
+		t.Fatalf("%v", err)
+	}
+	if in.reads != 0 {
+		t.Fatal("a terminal stdin is never read")
+	}
+}
+
+// TestHubCommentChecksTrustBeforeStdin: an untrusted workspace fails before stdin is read.
+func TestHubCommentChecksTrustBeforeStdin(t *testing.T) {
+	root := mkUntrusted(t, "evil")
+	home := filepath.Dir(os.Getenv("TQ_HOME"))
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, k := range []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK", "TQ_BUILD_ACTOR", "TQ_BUILD_TOKEN"} {
+		unsetenv(t, k)
+	}
+	t.Chdir(root)
+	in := &countingReader{}
+	_, _, err := runTQIn(t, in, "hub", "comment", "c-abcdefghijkl")
+	if err == nil || !strings.Contains(err.Error(), "untrusted") {
+		t.Fatalf("%v", err)
+	}
+	if in.reads != 0 {
+		t.Fatal("stdin was read before the workspace was trusted")
+	}
+}
+
+func TestOpenBrowserOnlyLoopbackHTTP(t *testing.T) {
+	for _, u := range []string{"http://127.0.0.1:7470/?ws=acme", "http://localhost:8080/cards/c-x", "http://[::1]:7470/", "http://127.0.0.1/"} {
+		if err := checkBrowserURL(u); err != nil {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+	for _, u := range []string{"https://127.0.0.1:7470/", "http://example.com/", "file:///C:/Windows/notepad.exe", "http://127.0.0.1.evil.com/",
+		"http://user@127.0.0.1/", "javascript:alert(1)", "ms-settings:", "http://10.0.0.5:7470/", "", "127.0.0.1:7470"} {
+		if err := checkBrowserURL(u); err == nil {
+			t.Errorf("%q accepted", u)
+		}
+		if err := openBrowser(u); err == nil || !strings.Contains(err.Error(), "refusing to open") {
+			t.Errorf("openBrowser(%q): %v", u, err)
+		}
 	}
 }

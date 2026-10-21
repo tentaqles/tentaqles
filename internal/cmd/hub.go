@@ -476,16 +476,44 @@ func newHubCancelCmd(f *hubFlags) *cobra.Command {
 	}
 }
 
+// stdinIsTerminal reports whether r is an interactive terminal (a seam for tests).
+var stdinIsTerminal = func(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
 func newHubCommentCmd(f *hubFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   `comment <card|-> ["<text>"|-]`,
 		Short: "Comment on a card (- is the card in TQ_HUB_TASK; ship posts the PR link this way); no text or - reads it from stdin",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(c *cobra.Command, args []string) error {
+			card := args[0]
+			if card == "-" {
+				id, _, ok := hubCardFromTask()
+				if !ok {
+					return errors.New("tq hub comment -: TQ_HUB_TASK is not set (this session was not launched by the hub)")
+				}
+				card = id
+			}
+			// The workspace and its trust are settled before stdin is touched.
+			h, ctx, cancel, err := openHub(c, f)
+			if err != nil {
+				return err
+			}
+			defer cancel()
+			defer h.close()
 			body := ""
-			if len(args) == 2 && args[1] != "-" {
+			switch {
+			case len(args) == 2 && args[1] != "-":
 				body = args[1]
-			} else {
+			case len(args) == 1 && stdinIsTerminal(c.InOrStdin()):
+				return errors.New("no comment text: pass it as an argument or pipe it on stdin")
+			default:
 				raw, err := io.ReadAll(io.LimitReader(c.InOrStdin(), 1<<20))
 				if err != nil {
 					return err
@@ -495,20 +523,6 @@ func newHubCommentCmd(f *hubFlags) *cobra.Command {
 			if strings.TrimSpace(body) == "" {
 				return errors.New("tq hub comment: the comment is empty")
 			}
-			card := args[0]
-			if card == "-" {
-				id, _, ok := hubCardFromTask()
-				if !ok {
-					return errors.New("tq hub comment -: TQ_HUB_TASK is not set (this session was not launched by the hub)")
-				}
-				card = id
-			}
-			h, ctx, cancel, err := openHub(c, f)
-			if err != nil {
-				return err
-			}
-			defer cancel()
-			defer h.close()
 			cm, err := h.ops.Comment(ctx, card, body)
 			if err != nil {
 				return err

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,6 +103,8 @@ func newHubService(ws *resolve.Workspace, warn func(string), notifyOn bool) (*ru
 	if gc, err := gate.ForWorkspace(configDir, env()); err == nil {
 		g = gc
 	} else {
+		// The error names only the plugin/bash discovery outcome (a folder path at most).
+		warn("gate unavailable: " + err.Error())
 		g = gate.Unavailable{Err: err}
 	}
 	bin := []string{"claude"}
@@ -138,13 +141,29 @@ func newHubService(ws *resolve.Workspace, warn func(string), notifyOn bool) (*ru
 	return svc, nil
 }
 
-// openBrowser opens url with the platform's opener; nothing runs through a shell.
-func openBrowser(url string) error {
+// checkBrowserURL accepts only a plain-http loopback URL (any port): the opener never sees a
+// file:, a scheme handler or a remote host.
+func checkBrowserURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err == nil && u.Scheme == "http" && u.User == nil && u.Opaque == "" {
+		switch u.Hostname() {
+		case "127.0.0.1", "localhost", "::1":
+			return nil
+		}
+	}
+	return fmt.Errorf("refusing to open %q: only http://127.0.0.1, http://localhost or http://[::1] URLs are opened", raw)
+}
+
+// openBrowser opens a loopback URL with the platform's opener; nothing runs through a shell.
+func openBrowser(raw string) error {
+	if err := checkBrowserURL(raw); err != nil {
+		return err
+	}
 	switch runtime.GOOS {
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", raw).Start()
 	case "darwin":
-		return exec.Command("open", url).Start()
+		return exec.Command("open", raw).Start()
 	}
-	return exec.Command("xdg-open", url).Start()
+	return exec.Command("xdg-open", raw).Start()
 }
