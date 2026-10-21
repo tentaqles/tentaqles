@@ -1038,3 +1038,90 @@ def test_hook_refuses_abbreviated_dod_override(repo):
     for flag in ("--over", "--o", "--overr=x"):
         code, _, err = hook(repo, bash(f"python build-gate.py dod demo {flag} x"))
         assert code == 2 and "human" in err
+
+
+def _decisions(repo):
+    path = repo / ".claude" / "build" / "demo" / "decisions.jsonl"
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+
+
+def test_ask_creates_pending_and_is_idempotent(repo):
+    out1 = gate.cmd_ask(repo, "demo", "plan-approval", "3 checkpoints, verify commands frozen on approve", ["approve", "edit", "stop"])
+    out2 = gate.cmd_ask(repo, "demo", "plan-approval", "same question again", ["approve", "edit", "stop"])
+    assert out1 == out2 and out1.startswith("decision ")
+    pend = gate.pending_decisions(repo, "demo")
+    assert len(pend) == 1 and pend[0]["kind"] == "plan-approval" and pend[0]["status"] == "pending"
+    assert all(gate.verified(d) for d in _decisions(repo))
+
+
+def test_answer_records_and_plan_approval_freezes_plan(repo):
+    did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
+    gate.cmd_answer(repo, "demo", did, "approve", "looks right", actor="renato")
+    assert gate.pending_decisions(repo, "demo") == []
+    rec = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
+    assert rec["choice"] == "approve" and rec["actor"] == "renato"
+    assert gate.load_approved(repo, "demo") is not None  # approve ran
+
+
+def test_terminal_approve_answers_the_pending_decision(repo):
+    did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
+    gate.cmd_approve(repo, "demo")
+    rec = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
+    assert rec["actor"] == "terminal" and rec["choice"] == "approve"
+
+
+def test_judge_decision_records_reviewer_judgement(repo):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    gate.cmd_record_review(repo, "demo", 2, "privacy-reviewer", "BLOCKED", {"unjudged": 1})
+    did = gate.cmd_ask(repo, "demo", "judge", "U1 retention of the audit log?", ["PASS", "FAIL"], cid=2, reviewer="privacy-reviewer").split()[1]
+    gate.cmd_answer(repo, "demo", did, "PASS", "24m", actor="renato")
+    recs = gate.reviews_for(repo, "demo", 2, gate.tree_hash(repo))
+    assert recs["privacy-reviewer"]["result"] == "PASS" and recs["privacy-reviewer"]["human"] is True
+
+
+def test_hub_token_allows_non_interactive_human_actions(repo, monkeypatch):
+    save_plan(repo, PLAN)
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "renato")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", gate.mint_hub_token("approve", "demo", "renato"))
+    assert gate.hub_actor_ok("approve", "demo") == "renato"
+    assert gate.hub_actor_ok("finish", "demo") is None   # a token is per action
+    assert gate.hub_actor_ok("approve", "other") is None # and per slug
+    code = gate.main(["--root", str(repo), "approve", "demo"])
+    assert code == 0 and gate.load_approved(repo, "demo") is not None
+
+
+def test_forged_hub_token_is_refused(repo, monkeypatch):
+    import hashlib, hmac as _hmac
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "mallory")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", _hmac.new(b"guess", b"hub:approve:demo:mallory", hashlib.sha256).hexdigest())
+    assert gate.hub_actor_ok("approve", "demo") is None
+    code, _, err = hook(repo, bash("python build-gate.py answer demo d1 --choice approve --actor x"))
+    assert code == 2 and "human" in err.lower()
+
+
+def test_stop_allowed_while_a_decision_is_pending(repo):
+    own(repo)
+    save_plan(repo, with_gate(PLAN, 2, behavior="failed"))
+    assert stop(repo)[0] == 2                      # unproven checkpoint blocks once
+    gate.cmd_ask(repo, "demo", "question", "which DB?", ["postgres", "sqlite"], cid=2)
+    assert stop(repo)[0] == 0                      # waiting on a human: the turn may end
+    assert stop(repo)[0] == 0
+
+
+def test_state_json_shape(repo):
+    _project(repo)
+    save_plan(repo, {**PLAN, "workflow": "feature", "task": {"hub_id": "t-42", "external": {"provider": "linear", "id": "ACME-7", "url": "https://linear.app/x"}}})
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_verify(repo, "demo", 2)
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
+    gate.cmd_ask(repo, "demo", "question", "ok?", ["yes", "no"], cid=2)
+    st = gate.cmd_state(repo, "demo")
+    assert st["slug"] == "demo" and st["workflow"] == "feature" and st["task"]["external"]["id"] == "ACME-7"
+    assert st["approved"] is True and st["finished"] is False and st["dod"] is None
+    cp2 = [c for c in st["checkpoints"] if c["id"] == 2][0]
+    assert cp2["evidence"] == "fresh" and cp2["reviews"] == {"build-critic": "PASS"}
+    assert st["pending_decisions"][0]["kind"] == "question"
+    assert "app.py" not in json.dumps(st)  # names of checkpoints and reviewers only, no file paths or text
+    out = gate.main(["--root", str(repo), "state", "demo", "--json"])
+    assert out == 0

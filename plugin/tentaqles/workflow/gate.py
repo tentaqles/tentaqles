@@ -27,6 +27,7 @@ it is the same before and after a commit of the same content.
 from __future__ import annotations
 
 import fnmatch
+import hmac
 import html
 import json
 import os
@@ -279,6 +280,8 @@ def _record_review(root: Path, slug: str, cid: int, reviewer: str, result: str, 
     append_jsonl(reviews_path(root, slug), sign(rec))
     log_event(root, "judge" if human else "review", slug, checkpoint=cid, reviewer=reviewer, result=result,
               blockers=rec["blockers"], majors=rec["majors"], minors=rec["minors"], unjudged=rec["unjudged"])
+    if human:
+        _answer_pending(root, slug, "judge", result, "terminal", cid, reviewer)
     return f"#{cid} {reviewer}: {result} recorded (tree {str(tree)[:12]}{', human' if human else ''})"
 
 
@@ -288,6 +291,82 @@ def cmd_record_review(root: Path, slug: str, cid: int, reviewer: str, result: st
 
 def cmd_judge(root: Path, slug: str, cid: int, reviewer: str, result: str, note: str) -> str:
     return _record_review(root, slug, cid, reviewer, result, {}, human=True, note=note)
+
+
+def decisions_path(root: Path, slug: str) -> Path:
+    return state_dir(root, slug) / "decisions.jsonl"
+
+
+def _decisions(root: Path, slug: str) -> list[dict]:
+    out = []
+    for line in read_text(decisions_path(root, slug)).splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if verified(rec):
+            out.append(rec)
+    return out
+
+
+def pending_decisions(root: Path, slug: str) -> list[dict]:
+    latest: dict[str, dict] = {}
+    for rec in _decisions(root, slug):
+        latest[rec["id"]] = rec
+    return [r for r in latest.values() if r.get("status") == "pending"]
+
+
+def cmd_ask(root: Path, slug: str, kind: str, text: str, options: list[str], cid: int | None = None, reviewer: str | None = None) -> str:
+    if kind not in DECISION_KINDS:
+        raise SystemExit(f"unknown decision kind '{kind}'. Use one of: {', '.join(DECISION_KINDS)}.")
+    if load_plan(root, slug) is None:
+        raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
+    for p in pending_decisions(root, slug):
+        if p["kind"] == kind and p.get("checkpoint") == cid and p.get("reviewer") == reviewer:
+            return f"decision {p['id']} (pending)"
+    import secrets as _secrets
+    rec = {"id": "d" + _secrets.token_hex(4), "kind": kind, "checkpoint": cid, "reviewer": reviewer,
+           "text": redact(text)[:4000], "options": [o.strip() for o in options if o.strip()],
+           "status": "pending", "asked_at": now_iso()}
+    append_jsonl(decisions_path(root, slug), sign(rec))
+    log_event(root, "ask", slug, checkpoint=cid, decision=kind)
+    return f"decision {rec['id']} (pending)"
+
+
+def _answer(root: Path, slug: str, rec: dict, choice: str, note: str, actor: str) -> None:
+    done = {**rec, "status": "answered", "answered_at": now_iso(), "choice": choice, "note": redact(note or "")[:400], "actor": actor}
+    append_jsonl(decisions_path(root, slug), sign(done))
+    log_event(root, "answer", slug, checkpoint=rec.get("checkpoint"), decision=rec["kind"], actor=actor)
+
+
+_ANSWERING = False  # cmd_answer's side effects must not auto-answer the record as "terminal"
+
+
+def _answer_pending(root: Path, slug: str, kind: str, choice: str, actor: str, cid: int | None = None, reviewer: str | None = None) -> None:
+    if _ANSWERING:
+        return
+    for p in pending_decisions(root, slug):
+        if p["kind"] == kind and (cid is None or p.get("checkpoint") == cid) and (reviewer is None or p.get("reviewer") == reviewer):
+            _answer(root, slug, p, choice, "", actor)
+
+
+def cmd_answer(root: Path, slug: str, decision_id: str, choice: str, note: str, actor: str) -> str:
+    global _ANSWERING
+    rec = next((p for p in pending_decisions(root, slug) if p["id"] == decision_id), None)
+    if rec is None:
+        raise SystemExit(f"no pending decision '{decision_id}' in '{slug}'.")
+    if rec["options"] and choice not in rec["options"]:
+        raise SystemExit(f"choice must be one of {', '.join(rec['options'])}.")
+    _ANSWERING = True
+    try:
+        if rec["kind"] == "plan-approval" and choice == "approve":
+            cmd_approve(root, slug)
+        if rec["kind"] == "judge" and choice in ("PASS", "FAIL") and rec.get("reviewer") and rec.get("checkpoint") is not None:
+            cmd_judge(root, slug, int(rec["checkpoint"]), rec["reviewer"], choice, note or f"answered by {actor}")
+    finally:
+        _ANSWERING = False
+    _answer(root, slug, rec, choice, note, actor)
+    return f"decision {decision_id}: {choice} by {actor}"
 
 
 def review_problems(root: Path, slug: str, cid: int, th: TreeHash) -> str:
@@ -504,7 +583,11 @@ PROTECTED_CONFIG = (".claude/settings.json", ".claude/settings.local.json", ".cl
 HUMAN_ONLY = {"approve": "freezes the plan's verify commands (what 'passing' means)",
               "unlock-tests": "unlocks test files the implementer must not edit",
               "finish": "removes the gate's hooks and test locks",
-              "judge": "settles a reviewer's verdict with a human judgement"}
+              "judge": "settles a reviewer's verdict with a human judgement",
+              "answer": "settles a decision the human must take",
+              "token": "mints a hub actor token that stands in for the human"}
+DECISION_KINDS = ("plan-approval", "result", "judge", "question")
+HUB_ACTIONS = ("approve", "unlock-tests", "finish", "judge", "answer", "dod")
 
 
 def _key_dir_canon() -> str:
@@ -742,6 +825,8 @@ def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
         return []
     if (plan.get("halted") or {}).get("reason"):
         return []  # circuit breaker: stopping for a human, with the reason on record
+    if pending_decisions(root, slug):
+        return []  # waiting on a human: the orchestrator must be able to end its turn
     problems = []
     try:
         check_plan(json.dumps(plan), "", root, slug, th, check_evidence=False)
@@ -914,6 +999,7 @@ def cmd_approve(root: Path, slug: str) -> str:
     sess.pop("finished", None)
     save_session(root, slug, sess)
     write_tq_rules(root)
+    _answer_pending(root, slug, "plan-approval", "approve", "terminal")
     lines = [f"approved '{slug}': {len(verify)} checkpoint(s), verify commands frozen"]
     for cid, cmds in verify.items():
         lines += [f"  #{cid}: {c}" for c in cmds]
@@ -1060,6 +1146,35 @@ def cmd_status(root: Path, slug: str) -> str:
         if bad:
             lines.append("  locked tests CHANGED: " + ", ".join(bad))
     return "\n".join(lines)
+
+
+def cmd_state(root: Path, slug: str) -> dict:
+    plan = load_plan(root, slug)
+    if plan is None:
+        raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
+    approved = load_approved(root, slug)
+    sess = load_session(root, slug)
+    th = TreeHash(root)
+    cps = []
+    for cp in plan.get("checkpoints") or []:
+        cid = cp.get("id")
+        ev = latest_evidence(root, slug, cid)
+        fresh = "-"
+        if ev:
+            ok, _ = evidence_fresh(root, slug, cid, th)
+            fresh = "fresh" if ok else ("stale" if ev.get("ok") else "failing")
+        cps.append({"id": cid, "title": cp.get("title", ""), "status": cp.get("status", "pending"),
+                    "gates": {g: gate(cp, g) for g in GATES}, "evidence": fresh,
+                    "reviews": {r: rec["result"] for r, rec in reviews_for(root, slug, cid, th.get()).items()}})
+    dod = read_json(dod_path(root, slug))
+    dod_out = {"ok": bool(dod.get("ok")), "tree": dod.get("tree"), "override": dod.get("override")} if verified(dod) else None
+    return {"slug": slug, "feature": plan.get("feature", slug), "workflow": plan.get("workflow") or "build",
+            "hotfix": bool(plan.get("hotfix")), "task": plan.get("task"), "approved": approved is not None,
+            "halted": plan.get("halted"), "finished": bool(sess.get("finished")), "checkpoints": cps, "dod": dod_out,
+            "pending_decisions": [{"id": p["id"], "kind": p["kind"], "checkpoint": p.get("checkpoint"),
+                                   "reviewer": p.get("reviewer"), "text": p["text"], "options": p["options"], "asked_at": p["asked_at"]}
+                                  for p in pending_decisions(root, slug)],
+            "events_path": norm(events_path())}
 
 
 def cmd_review_bundle(root: Path, slug: str, cid: int, max_bytes: int = 200_000) -> str:
@@ -1426,6 +1541,7 @@ def cmd_finish(root: Path, slug: str) -> str:
             write_json(settings_path, settings)
             msg += "\ngate hooks removed from settings.local.json"
     log_event(root, "finish", slug)
+    _answer_pending(root, slug, "result", "approve", "terminal")
     return f"build '{slug}' finished\n{msg}"
 
 
@@ -1470,6 +1586,21 @@ def make_server(root: Path, slug: str, port: int = 8765):
 # ---------------------------------------------------------------------------
 # argparse entry
 # ---------------------------------------------------------------------------
+
+
+def mint_hub_token(action: str, slug: str, actor: str) -> str:
+    key = _key(create=True)
+    return hmac.new(key, f"hub:{action}:{slug}:{actor}".encode("utf-8"), "sha256").hexdigest()
+
+
+def hub_actor_ok(action: str, slug: str) -> str | None:
+    actor = (os.environ.get("TQ_BUILD_ACTOR") or "").strip()
+    tok = (os.environ.get("TQ_BUILD_TOKEN") or "").strip()
+    key = _key()
+    if not actor or not tok or key is None:
+        return None
+    want = hmac.new(key, f"hub:{action}:{slug}:{actor}".encode("utf-8"), "sha256").hexdigest()
+    return actor if hmac.compare_digest(want, tok) else None
 
 
 def human_confirm(action: str, stdin=None, stdout=None) -> bool:
@@ -1555,6 +1686,26 @@ def main(argv: list[str] | None = None) -> int:
     dd.add_argument("slug")
     dd.add_argument("--override", default=None, help="the human's reason for accepting missing items (logged)")
     dd.add_argument("--timeout", type=float, default=900)
+    ak = sub.add_parser("ask", help="record a decision the human must take (the orchestrator then ends its turn)")
+    ak.add_argument("slug")
+    ak.add_argument("--kind", required=True, choices=DECISION_KINDS)
+    ak.add_argument("--text", required=True)
+    ak.add_argument("--options", default="", help="comma-separated")
+    ak.add_argument("--checkpoint", type=int, default=None)
+    ak.add_argument("--reviewer", default=None, choices=(None, *REVIEWERS))
+    an = sub.add_parser("answer", help="human only: answer a pending decision")
+    an.add_argument("slug")
+    an.add_argument("id")
+    an.add_argument("--choice", required=True)
+    an.add_argument("--note", default="")
+    an.add_argument("--actor", default=None)
+    stt = sub.add_parser("state", help="machine-readable run state for the hub")
+    stt.add_argument("slug")
+    stt.add_argument("--json", action="store_true")
+    tk = sub.add_parser("token", help="human only: mint a hub actor token for one action")
+    tk.add_argument("action", choices=HUB_ACTIONS)
+    tk.add_argument("slug")
+    tk.add_argument("--actor", required=True)
     sv = sub.add_parser("serve", help="local read-only progress view on 127.0.0.1")
     sv.add_argument("slug")
     sv.add_argument("--port", type=int, default=8765)
@@ -1572,13 +1723,13 @@ def main(argv: list[str] | None = None) -> int:
         return code
     elif a.cmd == "approve":
         print(cmd_status(root, a.slug))
-        if not human_confirm(f"approve the plan '{a.slug}' and freeze its verify commands"):
+        if not (hub_actor_ok("approve", a.slug) or human_confirm(f"approve the plan '{a.slug}' and freeze its verify commands")):
             return 2
         print(cmd_approve(root, a.slug))
     elif a.cmd == "status":
         print(cmd_status(root, a.slug))
     elif a.cmd == "finish":
-        if not human_confirm(f"finish '{a.slug}' and remove its hooks and test locks"):
+        if not (hub_actor_ok("finish", a.slug) or human_confirm(f"finish '{a.slug}' and remove its hooks and test locks")):
             return 2
         print(cmd_finish(root, a.slug))
     elif a.cmd == "verify":
@@ -1588,7 +1739,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "lock-tests":
         print(cmd_lock_tests(root, a.slug, a.id, a.paths, a.none, a.action))
     elif a.cmd == "unlock-tests":
-        if not human_confirm(f"unlock {', '.join(a.paths)} in '{a.slug}'"):
+        if not (hub_actor_ok("unlock-tests", a.slug) or human_confirm(f"unlock {', '.join(a.paths)} in '{a.slug}'")):
             return 2
         print(cmd_unlock_tests(root, a.slug, a.paths))
     elif a.cmd == "review-bundle":
@@ -1597,15 +1748,35 @@ def main(argv: list[str] | None = None) -> int:
         print(cmd_record_review(root, a.slug, a.id, a.reviewer, a.result,
                                 {k: getattr(a, k) for k in ("blockers", "majors", "minors", "unjudged")}))
     elif a.cmd == "judge":
-        if not human_confirm(f"record a human judgement for {a.reviewer} on '{a.slug}' #{a.id}: {a.result}"):
+        if not (hub_actor_ok("judge", a.slug) or human_confirm(f"record a human judgement for {a.reviewer} on '{a.slug}' #{a.id}: {a.result}")):
             return 2
         print(cmd_judge(root, a.slug, a.id, a.reviewer, a.result, a.note))
     elif a.cmd == "dod":
-        if a.override is not None and not human_confirm(f"accept the missing definition-of-done items for '{a.slug}'"):
+        if a.override is not None and not (hub_actor_ok("dod", a.slug) or human_confirm(f"accept the missing definition-of-done items for '{a.slug}'")):
             return 2
         code, msg = cmd_dod(root, a.slug, a.override, a.timeout)
         print(msg)
         return code
+    elif a.cmd == "ask":
+        print(cmd_ask(root, a.slug, a.kind, a.text, a.options.split(","), a.checkpoint, a.reviewer))
+    elif a.cmd == "answer":
+        actor = hub_actor_ok("answer", a.slug)
+        if not actor:
+            if not human_confirm(f"answer decision {a.id} in '{a.slug}' with '{a.choice}'"):
+                return 2
+            actor = "terminal"
+        print(cmd_answer(root, a.slug, a.id, a.choice, a.note, a.actor or actor))
+    elif a.cmd == "state":
+        st = cmd_state(root, a.slug)
+        if a.json:
+            print(json.dumps(st, ensure_ascii=False, indent=2))
+        else:
+            print(f"{st['slug']}: {st['workflow']}, approved={st['approved']}, finished={st['finished']}, "
+                  f"{len(st['checkpoints'])} checkpoint(s), {len(st['pending_decisions'])} pending decision(s)")
+    elif a.cmd == "token":
+        if not human_confirm(f"mint a hub token for '{a.action}' on '{a.slug}' as {a.actor}"):
+            return 2
+        print(mint_hub_token(a.action, a.slug, a.actor))
     elif a.cmd == "serve":
         srv = make_server(root, a.slug, a.port)
         print(f"serving http://127.0.0.1:{srv.server_address[1]}/ (Ctrl+C to stop)")
