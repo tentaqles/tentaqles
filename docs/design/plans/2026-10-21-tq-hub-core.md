@@ -992,10 +992,10 @@ import (
 func TestAppendAndReadSkipOldAndBadLines(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "acme", "activity.jsonl")
-	if err := Append(p, Entry{TS: "2026-01-01T00:00:00Z", Workspace: "acme", Actor: "renato", Verb: VerbCardCreate}); err != nil {
+	if err := Append(p, Entry{TS: "2026-01-01T00:00:00Z", Workspace: "acme", Actor: "tester", Verb: VerbCardCreate}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Append(p, Entry{Workspace: "acme", Actor: "renato", Verb: VerbCardMove, CardID: "c-abcdefghijkl", Data: map[string]any{"from": "backlog", "to": "review"}}); err != nil {
+	if err := Append(p, Entry{Workspace: "acme", Actor: "tester", Verb: VerbCardMove, CardID: "c-abcdefghijkl", Data: map[string]any{"from": "backlog", "to": "review"}}); err != nil {
 		t.Fatal(err)
 	}
 	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o600)
@@ -1496,7 +1496,7 @@ import (
 func TestAddCardDefaultsAndMasking(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, err := s.AddCard(NewCard{Title: "Export invoices", Body: "ask ana@example.com", Tags: []string{"agent-ready", "agent-ready"}}, "renato")
+	c, err := s.AddCard(NewCard{Title: "Export invoices", Body: "ask ana@example.com", Tags: []string{"agent-ready", "agent-ready"}}, "tester")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1530,11 +1530,11 @@ func TestAddCardValidation(t *testing.T) {
 		{Title: "x", ProjectDir: "/abs"},
 	}
 	for _, nc := range cases {
-		if _, err := s.AddCard(nc, "renato"); err == nil {
+		if _, err := s.AddCard(nc, "tester"); err == nil {
 			t.Fatalf("%+v accepted", nc)
 		}
 	}
-	c, err := s.AddCard(NewCard{Title: "ok", ProjectDir: `apps\billing`}, "renato")
+	c, err := s.AddCard(NewCard{Title: "ok", ProjectDir: `apps\billing`}, "tester")
 	if err != nil || c.ProjectDir != "apps/billing" {
 		t.Fatalf("project dir %q %v", c.ProjectDir, err)
 	}
@@ -1543,8 +1543,8 @@ func TestAddCardValidation(t *testing.T) {
 func TestListCardsFilters(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	a, _ := s.AddCard(NewCard{Title: "a", Kind: "fix", Tags: []string{"agent-ready"}}, "renato")
-	s.AddCard(NewCard{Title: "b", Kind: "feature", Lane: "todo"}, "renato")
+	a, _ := s.AddCard(NewCard{Title: "a", Kind: "fix", Tags: []string{"agent-ready"}}, "tester")
+	s.AddCard(NewCard{Title: "b", Kind: "feature", Lane: "todo"}, "tester")
 	byTag, _ := s.ListCards(CardFilter{Tag: "agent-ready"})
 	byKind, _ := s.ListCards(CardFilter{Kind: "feature"})
 	byLane, _ := s.ListCards(CardFilter{Lane: "TODO"})
@@ -1560,20 +1560,20 @@ func TestListCardsFilters(t *testing.T) {
 func TestMoveCardLaneKinds(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
-	m, err := s.MoveCard(c.ID, "In Progress", "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
+	m, err := s.MoveCard(c.ID, "In Progress", "tester")
 	if err != nil || !m.EnteredActive() || m.LeftActive() || m.Card.Lane != "in progress" {
 		t.Fatalf("move %+v %v", m, err)
 	}
-	m, _ = s.MoveCard(c.ID, "done", "renato")
+	m, _ = s.MoveCard(c.ID, "done", "tester")
 	if !m.LeftActive() || m.Card.DoneAt == "" {
 		t.Fatalf("done move %+v", m)
 	}
-	m, _ = s.MoveCard(c.ID, "todo", "renato")
+	m, _ = s.MoveCard(c.ID, "todo", "tester")
 	if m.Card.DoneAt != "" {
 		t.Fatal("leaving done clears done_at")
 	}
-	if _, err := s.MoveCard(c.ID, "nowhere", "renato"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.MoveCard(c.ID, "nowhere", "tester"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown lane: %v", err)
 	}
 }
@@ -1581,14 +1581,14 @@ func TestMoveCardLaneKinds(t *testing.T) {
 func TestParentCompletionMovesParentToReview(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	p, _ := s.AddCard(NewCard{Title: "parent", Kind: "project"}, "renato")
-	c1, _ := s.AddCard(NewCard{Title: "one", ParentID: p.ID}, "renato")
-	c2, _ := s.AddCard(NewCard{Title: "two", ParentID: p.ID}, "renato")
-	s.MoveCard(c1.ID, "done", "renato")
+	p, _ := s.AddCard(NewCard{Title: "parent", Kind: "project"}, "tester")
+	c1, _ := s.AddCard(NewCard{Title: "one", ParentID: p.ID}, "tester")
+	c2, _ := s.AddCard(NewCard{Title: "two", ParentID: p.ID}, "tester")
+	s.MoveCard(c1.ID, "done", "tester")
 	if got, _ := s.Card(p.ID); got.Lane != "backlog" {
 		t.Fatalf("parent moved too early: %s", got.Lane)
 	}
-	s.MoveCard(c2.ID, "done", "renato")
+	s.MoveCard(c2.ID, "done", "tester")
 	got, _ := s.Card(p.ID)
 	if got.Lane != "review" {
 		t.Fatalf("parent lane %q, want review (never done)", got.Lane)
@@ -1602,7 +1602,7 @@ func TestParentCompletionMovesParentToReview(t *testing.T) {
 func TestCommentsAndAttachments(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	if _, err := s.AddComment(c.ID, "robot", "x", "hi", ""); err == nil {
 		t.Fatal("unknown author kind accepted")
 	}
@@ -1670,7 +1670,7 @@ func TestCheckoutIsAtomicAcrossConnections(t *testing.T) {
 	isolate(t)
 	s1 := mustOpen(t, "acme")
 	s2 := mustOpen(t, "acme") // a second process: its own connection pool on the same file
-	c, _ := s1.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s1.AddCard(NewCard{Title: "a"}, "tester")
 	var wins int32
 	var winner atomic.Value
 	var wg sync.WaitGroup
@@ -2449,7 +2449,7 @@ func newRunFor(t *testing.T, s *Store, c Card) Run {
 func TestCreateAndSaveRun(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	r := newRunFor(t, s, c)
 	if !ValidID("r", r.ID) || r.Status != StatusQueued || r.Budget != s.DefaultBudget() || r.Phase != PhaseStart || r.Workspace != "acme" {
 		t.Fatalf("run %+v", r)
@@ -2499,8 +2499,8 @@ func TestExceeded(t *testing.T) {
 func TestDueRunsFIFOAndNotBefore(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c1, _ := s.AddCard(NewCard{Title: "a"}, "renato")
-	c2, _ := s.AddCard(NewCard{Title: "b"}, "renato")
+	c1, _ := s.AddCard(NewCard{Title: "a"}, "tester")
+	c2, _ := s.AddCard(NewCard{Title: "b"}, "tester")
 	now := time.Now().UTC()
 	r1, _ := s.CreateRun(Run{CardID: c1.ID, Adapter: AdapterClaude, OnRamp: OnRampFeature, QueuedAt: now.Add(-2 * time.Minute).Format(time.RFC3339)})
 	r2, _ := s.CreateRun(Run{CardID: c2.ID, Adapter: AdapterClaude, OnRamp: OnRampFeature, QueuedAt: now.Add(-1 * time.Minute).Format(time.RFC3339),
@@ -2521,12 +2521,12 @@ func TestDueRunsFIFOAndNotBefore(t *testing.T) {
 func TestLocksReport(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	r := newRunFor(t, s, c)
 	s.Checkout(c.ID, r.ID)
 	r.Status = StatusFailed
 	s.SaveRun(r)
-	c2, _ := s.AddCard(NewCard{Title: "b"}, "renato")
+	c2, _ := s.AddCard(NewCard{Title: "b"}, "tester")
 	s.Checkout(c2.ID, "r-gonegonegone")
 	locks, err := s.Locks()
 	if err != nil || len(locks) != 2 {
@@ -2557,7 +2557,7 @@ import (
 func TestUpsertDecisionMirrorsGateRecords(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	d := Decision{ID: "d1a2b3c4", CardID: c.ID, RunID: "r-x", Slug: "demo", Kind: KindPlanApproval,
 		Text: "approve? reply to ana@example.com", Options: []string{"approve", "edit", "stop"}, Status: DecisionPending, AskedAt: "2026-10-21T10:00:00Z"}
 	res, err := s.UpsertDecision(d)
@@ -2605,22 +2605,22 @@ func TestUpsertDecisionMirrorsGateRecords(t *testing.T) {
 func TestHubOwnedDecisions(t *testing.T) {
 	isolate(t)
 	s := mustOpen(t, "acme")
-	c, _ := s.AddCard(NewCard{Title: "a"}, "renato")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
 	d, err := s.AskHub(c.ID, "r-x", "demo", "The run was refused Bash(npm test). Allow it for one round?", []string{"allow-once", "stop"}, map[string]any{"tool": "Bash(npm test)"})
 	if err != nil || !ValidID("d", d.ID) || !d.HubOwned() || d.Kind != KindPermission {
 		t.Fatalf("%+v %v", d, err)
 	}
-	if _, err := s.AnswerHub(d.ID, "approve", "", "renato"); err == nil {
+	if _, err := s.AnswerHub(d.ID, "approve", "", "tester"); err == nil {
 		t.Fatal("a choice outside the options is refused")
 	}
-	got, err := s.AnswerHub(d.ID, "allow-once", "", "renato")
+	got, err := s.AnswerHub(d.ID, "allow-once", "", "tester")
 	if err != nil || got.Status != DecisionAnswered || got.Data["tool"] != "Bash(npm test)" {
 		t.Fatalf("%+v %v", got, err)
 	}
-	if _, err := s.AnswerHub(d.ID, "stop", "", "renato"); err == nil {
+	if _, err := s.AnswerHub(d.ID, "stop", "", "tester"); err == nil {
 		t.Fatal("answering twice is refused")
 	}
-	if _, err := s.AnswerHub("d1a2b3c4", "x", "", "renato"); err == nil {
+	if _, err := s.AnswerHub("d1a2b3c4", "x", "", "tester"); err == nil {
 		t.Fatal("a gate decision cannot be answered as a hub decision")
 	}
 	pend, _ := s.PendingDecisions()
@@ -2630,7 +2630,7 @@ func TestHubOwnedDecisions(t *testing.T) {
 }
 
 func TestActorKind(t *testing.T) {
-	for in, want := range map[string]string{"hub:renato": "hub", "terminal": "terminal", "renato": "other", "": "other"} {
+	for in, want := range map[string]string{"hub:tester": "hub", "terminal": "terminal", "tester": "other", "": "other"} {
 		if got := ActorKind(in); got != want {
 			t.Fatalf("%q: %q", in, got)
 		}
@@ -4034,13 +4034,13 @@ from tentaqles.workflow.gate import _hub_mac  # noqa: E402
 
 KEY = bytes(range(32))
 CASES = [
-    ("answer", "demo", "hub:renato"),
+    ("answer", "demo", "hub:tester"),
     ("answer", "fix-login", "hub:Jos\u00e9"),
     ("answer", "demo", 'hub:a"b\\c'),
     ("answer", "demo", "hub:<x>&y"),
     ("answer", "demo", "hub:\U0001F600"),
     ("answer", "demo", "hub:tab\there\x7f"),
-    ("approve", "demo", "hub:renato"),
+    ("approve", "demo", "hub:tester"),
 ]
 out = {"key_hex": KEY.hex(), "vectors": [
     {"action": a, "slug": s, "actor": u,
@@ -4064,8 +4064,8 @@ python internal/hub/gate/testdata/gen_hub_token_vectors.py > internal/hub/gate/t
     {
       "action": "answer",
       "slug": "demo",
-      "actor": "hub:renato",
-      "message": "[\"hub\",\"answer\",\"demo\",\"hub:renato\"]",
+      "actor": "hub:tester",
+      "message": "[\"hub\",\"answer\",\"demo\",\"hub:tester\"]",
       "mac": "84d6304294fd9b2090ca84890e4f08b31e5f1d35dfa894795fc8e136738605a4"
     },
     {
@@ -4106,8 +4106,8 @@ python internal/hub/gate/testdata/gen_hub_token_vectors.py > internal/hub/gate/t
     {
       "action": "approve",
       "slug": "demo",
-      "actor": "hub:renato",
-      "message": "[\"hub\",\"approve\",\"demo\",\"hub:renato\"]",
+      "actor": "hub:tester",
+      "message": "[\"hub\",\"approve\",\"demo\",\"hub:tester\"]",
       "mac": "8a425d16e832eab491b95ae21537ed784066f923fe40735145df01d804b228cb"
     }
   ]
@@ -4140,7 +4140,7 @@ python internal/hub/gate/testdata/gen_hub_token_vectors.py > internal/hub/gate/t
     {"id": "d1a2b3c4", "kind": "result", "checkpoint": null, "reviewer": null, "text": "Try: export March. 2 checkpoints passed.", "options": ["approve", "request-changes", "stop"], "asked_at": "2026-10-21T10:00:00+00:00"}
   ],
   "decisions": [
-    {"id": "d0000001", "kind": "plan-approval", "checkpoint": null, "reviewer": null, "status": "answered", "options": ["approve", "edit", "stop"], "choice": "approve", "note": "", "actor": "hub:renato", "asked_at": "2026-10-21T09:00:00+00:00", "answered_at": "2026-10-21T09:05:00+00:00"},
+    {"id": "d0000001", "kind": "plan-approval", "checkpoint": null, "reviewer": null, "status": "answered", "options": ["approve", "edit", "stop"], "choice": "approve", "note": "", "actor": "hub:tester", "asked_at": "2026-10-21T09:00:00+00:00", "answered_at": "2026-10-21T09:05:00+00:00"},
     {"id": "d1a2b3c4", "kind": "result", "checkpoint": null, "reviewer": null, "status": "pending", "options": ["approve", "request-changes", "stop"], "choice": null, "note": null, "actor": null, "asked_at": "2026-10-21T10:00:00+00:00", "answered_at": null}
   ],
   "events_path": "C:/Users/x/.tentaqles/build-gate/events.jsonl",
@@ -4427,11 +4427,11 @@ func TestNoPlanIsRecognised(t *testing.T) {
 func TestAnswerSendsAValidToken(t *testing.T) {
 	f := newFakeGate(t)
 	writeKey(t)
-	msg, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "looks right", "hub:renato")
+	msg, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "looks right", "hub:tester")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "decision d1a2b3c4: approve by hub:renato") {
+	if !strings.Contains(msg, "decision d1a2b3c4: approve by hub:tester") {
 		t.Fatalf("message %q", msg)
 	}
 	st, _ := f.client.State(context.Background(), f.root, "demo", false)
@@ -4440,7 +4440,7 @@ func TestAnswerSendsAValidToken(t *testing.T) {
 	}
 	calls := f.calls(t)
 	last := calls[len(calls)-2] // the answer, before the state read above
-	if last["actor"] != "hub:renato" || last["has_token"] != true {
+	if last["actor"] != "hub:tester" || last["has_token"] != true {
 		t.Fatalf("answer call %v", last)
 	}
 }
@@ -4448,7 +4448,7 @@ func TestAnswerSendsAValidToken(t *testing.T) {
 func TestAnswerAlreadyAnsweredIsRecognised(t *testing.T) {
 	f := newFakeGate(t)
 	writeKey(t)
-	_, err := f.client.Answer(context.Background(), f.root, "demo", "d9999999", "approve", "", "hub:renato")
+	_, err := f.client.Answer(context.Background(), f.root, "demo", "d9999999", "approve", "", "hub:tester")
 	if !IsNotPending(err) {
 		t.Fatalf("want not-pending, got %v", err)
 	}
@@ -4460,14 +4460,14 @@ func TestAnswerWithAWrongKeyIsAHumanRefusal(t *testing.T) {
 	c := *f.client
 	c.KeyPath = filepath.Join(t.TempDir(), "other.key")
 	os.WriteFile(c.KeyPath, []byte("not the gate key"), 0o600)
-	if _, err := c.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "", "hub:renato"); !IsHumanRefusal(err) {
+	if _, err := c.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "", "hub:tester"); !IsHumanRefusal(err) {
 		t.Fatalf("want a human-only refusal, got %v", err)
 	}
 }
 
 func TestAnswerWithoutAKeySaysAnswerInTheTerminal(t *testing.T) {
 	f := newFakeGate(t)
-	_, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "", "hub:renato")
+	_, err := f.client.Answer(context.Background(), f.root, "demo", "d1a2b3c4", "approve", "", "hub:tester")
 	if err == nil || !strings.Contains(err.Error(), "build-gate answer") {
 		t.Fatalf("err %v", err)
 	}
@@ -5892,7 +5892,7 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) card(kind string, tags ...string) store.Card {
 	h.t.Helper()
-	c, err := h.st.AddCard(store.NewCard{Title: "Export invoices", Body: "CSV per month.", Kind: kind, Tags: tags, ProjectDir: "apps/billing"}, "renato")
+	c, err := h.st.AddCard(store.NewCard{Title: "Export invoices", Body: "CSV per month.", Kind: kind, Tags: tags, ProjectDir: "apps/billing"}, "tester")
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -6131,7 +6131,7 @@ func TestSlugIsDiscoveredFromTheTaskBlock(t *testing.T) {
 func TestWaitingOnAResultMovesTheCardToReview(t *testing.T) {
 	h := newHarness(t)
 	c := h.card("feature", store.TagAgentReady)
-	h.st.MoveCard(c.ID, "in progress", "renato")
+	h.st.MoveCard(c.ID, "in progress", "tester")
 	st := loadState(t, "waiting")
 	st.PendingDecisions[0].Kind = "result"
 	st.PendingDecisions[0].Options = []string{"approve", "request-changes", "stop"}
@@ -7559,7 +7559,7 @@ func TestApproveFinishesMovesDoneAndCommentsTheParent(t *testing.T) {
 	h := newHarness(t)
 	parent := h.card("project")
 	h.ad.steps = nil
-	child, _ := h.st.AddCard(store.NewCard{Title: "Export invoices", ParentID: parent.ID, ProjectDir: "apps/billing", Tags: []string{store.TagAgentReady}}, "renato")
+	child, _ := h.st.AddCard(store.NewCard{Title: "Export invoices", ParentID: parent.ID, ProjectDir: "apps/billing", Tags: []string{store.TagAgentReady}}, "tester")
 	st := loadState(t, "waiting")
 	st.PendingDecisions[0].Kind = store.KindResult
 	st.PendingDecisions[0].Options = []string{"approve", "request-changes", "stop"}
@@ -14092,7 +14092,7 @@ func TestHubChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, _ := st.AddCard(store.NewCard{Title: "x"}, "renato")
+	c, _ := st.AddCard(store.NewCard{Title: "x"}, "tester")
 	st.Checkout(c.ID, "r-gonegonegone")
 	st.Close()
 	if !hubChecks("acme", add) {
