@@ -89,3 +89,17 @@ def test_prd_skill_interviews_and_checks_mechanically() -> None:
     assert "the grader's exit code decides" in body
     assert "- NEEDS-DECISION: <question>" in body and "Numbered items and bare" in body
     assert "contiguous" in body and "Any other exit code: report it" in body
+
+
+def test_fix_skill_is_reproduce_first_and_bug_shaped() -> None:
+    fm_text, body = _body("fix").split("\n---\n", 1)
+    desc = fm_text.lower()
+    for phrase in ("stack trace", "bug", "fails", "regression"):
+        assert phrase in desc, phrase
+    for token in ("lock-tests", "workflow=fix", "--hotfix", "templates/process/fix-spec.md", "systematic", "LEARNINGS",
+                  "post-hotfix review", '"event": "pending"', "incident"):
+        assert token in body, token
+    assert "never" in body and "without a reproduction" in body
+    assert "AskUserQuestion` is never called" in body
+    assert "build-gate ask" in body and "knowing the review gate is `n/a`" in body
+    assert "you never run `build-gate dod" in body
