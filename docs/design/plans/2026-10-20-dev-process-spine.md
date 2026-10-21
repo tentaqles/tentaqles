@@ -4,7 +4,7 @@
 
 **Goal:** Ship the process spine of the tentaqles development process: the `prd`, `kickoff`, `feature`, `fix`, `direction` and `dod` skills, the shared templates, and the engine changes (recorded reviewer verdicts, a definition-of-done gate at Stop, process metrics in `tq insights`).
 
-**Architecture:** The existing `/tentaqles:build` engine (`plugin/tentaqles/workflow/gate.py`, hooks installed per project) stays the single executor. Three new on-ramp skills (`kickoff`, `feature`, `fix`) produce a spec slice and a checkpoint plan tagged with a `workflow`, then hand off to `build`. The gate gains two kinds of script-recorded evidence the model cannot forge: **review records** (one signed line per reviewer verdict, tied to the tree hash; the review gate can only pass on a `build-critic` PASS at the current tree with no FAIL or BLOCKED beside it) and a **definition-of-done record** (`build-gate dod` runs the project's frozen test/lint/typecheck commands and checks ADR, migration-plan and changelog obligations; the Stop hook blocks once while a finished `feature`/`fix`/`kickoff` plan has no fresh DoD). Every gate outcome is appended as an aggregate-only event to `$TQ_HOME/build-gate/events.jsonl`, which `tq insights` reads for a new "Process" section. Machine-readable project settings live in a `json tq-project` fenced block inside the project's `CLAUDE.md` "Project config" section, scaffolded by `kickoff` and `add-project`.
+**Architecture:** The existing `/tentaqles:build` engine (`plugin/tentaqles/workflow/gate.py`, hooks installed per project) stays the single executor. Three new on-ramp skills (`kickoff`, `feature`, `fix`) produce a spec slice and a checkpoint plan tagged with a `workflow`, then hand off to `build`. The gate gains two kinds of script-recorded evidence the model cannot forge: **review records** (one signed line per reviewer verdict, tied to the tree hash; the review gate can only pass on a `build-critic` PASS at the current tree with no FAIL or BLOCKED beside it) and a **definition-of-done record** (`build-gate dod` runs the project's frozen test/lint/typecheck commands and checks ADR, migration-plan and changelog obligations; the Stop hook blocks once while a finished `feature`/`fix`/`kickoff` plan has no fresh DoD). Every gate outcome is appended as an aggregate-only event to `$TQ_HOME/build-gate/events.jsonl`, which `tq insights` reads for a new "Process" section. Machine-readable project settings live in a `json tq-project` fenced block inside the project's `CLAUDE.md` "Project config" section, scaffolded by `kickoff` and `add-project`. The engine is built **hub-ready** (user decision 2026-10-20, for the release-2 `tq hub` modelled on Paperclip's task-and-heartbeat core): every human stop is a signed decision record the orchestrator writes before ending its turn, approvals are records a human settles from the terminal or through a hub-minted actor token, and the whole run state is exported as JSON (`build-gate state`).
 
 **Tech Stack:** Python 3.10+ stdlib only for `tentaqles/workflow/*` and `scripts/build-gate.py` (hook code must stay dependency-free), pytest; Go 1.23+ (`internal/insights`), `go test`; Markdown skills and agents with YAML frontmatter.
 
@@ -1570,6 +1570,300 @@ git commit -m "feat(build-gate): definition of done recorded by the gate and req
 
 ---
 
+### Task 5b: Gate: decision records, hub actor tokens, run state export (hub-ready interfaces)
+
+Runs after Task 5 and before Task 6. These are the three interfaces the user asked for on 2026-10-20 so that release 2's `tq hub` (a local server modelled on Paperclip's core: tasks, heartbeats, approvals) can drive the engine headless.
+
+**Files:**
+- Modify: `plugin/tentaqles/workflow/gate.py`
+- Modify: `plugin/tests/test_build_gate.py`
+
+**Interfaces:**
+- **Decision records.** `.claude/build/<slug>/decisions.jsonl`, one signed line per record: `{id, kind, checkpoint, text, options, status: "pending"|"answered", asked_at, answered_at, choice, note, actor}`. Kinds: `plan-approval` (options `approve, edit, stop`), `result` (`approve, request-changes, stop`), `judge` (reviewer BLOCKED rows; options `PASS, FAIL`), `question` (free options). `DECISION_KINDS = ("plan-approval", "result", "judge", "question")`.
+- `cmd_ask(root, slug, kind, text, options, cid=None, reviewer=None) -> str` (agent-callable): creates a pending record and prints its id; a pending record of the same kind, checkpoint and reviewer already open is returned instead of duplicated. `text` is redacted and capped at 4000 characters.
+- `cmd_answer(root, slug, decision_id, choice, note, actor) -> str` (human-only): marks the record answered. `plan-approval` + `approve` also runs `cmd_approve`; `judge` + `PASS|FAIL` also records the reviewer judgement (`cmd_judge`) for the record's checkpoint and reviewer. Other kinds only record.
+- `pending_decisions(root, slug) -> list[dict]`; `cmd_approve`, `cmd_finish` and `cmd_judge` mark the matching pending record answered with `actor: "terminal"` so a human who uses the terminal produces the same record as one who uses the hub.
+- **Hub actor tokens.** `mint_hub_token(action, slug, actor) -> str` = HMAC-SHA256 over `hub:<action>:<slug>:<actor>` with the gate key; `hub_actor_ok(action, slug) -> str | None` reads `TQ_BUILD_ACTOR` and `TQ_BUILD_TOKEN` from the environment and returns the actor when the token verifies. `main()` accepts a valid token in place of `human_confirm` for `approve`, `unlock-tests`, `finish`, `judge`, `answer`. The agent cannot mint one (the hook refuses reads of the key and the key is outside every repository), and the hook's shell check still refuses the human-only subcommands to the agent regardless of tokens.
+- **Run state export.** `cmd_state(root, slug) -> dict` and CLI `build-gate state <slug> --json`: `{slug, feature, workflow, hotfix, task, approved, halted, finished, checkpoints: [{id, title, status, gates: {behavior, review}, evidence: "fresh"|"stale"|"failing"|"-", reviews: {reviewer: result}}], dod: {ok, tree, override} | null, pending_decisions: [...], events_path}`. Plans may carry a top-level `"task": {"hub_id": "...", "external": {"provider": "...", "id": "...", "url": "..."}}` written by the on-ramps when launched from the hub; `cmd_state` echoes it.
+- **Stop while waiting on a human.** `stop_problems` returns no problem for a run that has a pending decision (the orchestrator wrote the question and must end its turn so the hub can hand it to a human). The once-per-problem block still applies to runs with no pending decision.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `plugin/tests/test_build_gate.py`:
+
+```python
+def _decisions(repo):
+    path = repo / ".claude" / "build" / "demo" / "decisions.jsonl"
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+
+
+def test_ask_creates_pending_and_is_idempotent(repo):
+    out1 = gate.cmd_ask(repo, "demo", "plan-approval", "3 checkpoints, verify commands frozen on approve", ["approve", "edit", "stop"])
+    out2 = gate.cmd_ask(repo, "demo", "plan-approval", "same question again", ["approve", "edit", "stop"])
+    assert out1 == out2 and out1.startswith("decision ")
+    pend = gate.pending_decisions(repo, "demo")
+    assert len(pend) == 1 and pend[0]["kind"] == "plan-approval" and pend[0]["status"] == "pending"
+    assert all(gate.verified(d) for d in _decisions(repo))
+
+
+def test_answer_records_and_plan_approval_freezes_plan(repo):
+    did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
+    gate.cmd_answer(repo, "demo", did, "approve", "looks right", actor="renato")
+    assert gate.pending_decisions(repo, "demo") == []
+    rec = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
+    assert rec["choice"] == "approve" and rec["actor"] == "renato"
+    assert gate.load_approved(repo, "demo") is not None  # approve ran
+
+
+def test_terminal_approve_answers_the_pending_decision(repo):
+    did = gate.cmd_ask(repo, "demo", "plan-approval", "approve?", ["approve", "edit", "stop"]).split()[1]
+    gate.cmd_approve(repo, "demo")
+    rec = [d for d in _decisions(repo) if d["id"] == did and d["status"] == "answered"][0]
+    assert rec["actor"] == "terminal" and rec["choice"] == "approve"
+
+
+def test_judge_decision_records_reviewer_judgement(repo):
+    approve_and_lock(repo)
+    gate.cmd_verify(repo, "demo", 2)
+    gate.cmd_record_review(repo, "demo", 2, "privacy-reviewer", "BLOCKED", {"unjudged": 1})
+    did = gate.cmd_ask(repo, "demo", "judge", "U1 retention of the audit log?", ["PASS", "FAIL"], cid=2, reviewer="privacy-reviewer").split()[1]
+    gate.cmd_answer(repo, "demo", did, "PASS", "24m", actor="renato")
+    recs = gate.reviews_for(repo, "demo", 2, gate.tree_hash(repo))
+    assert recs["privacy-reviewer"]["result"] == "PASS" and recs["privacy-reviewer"]["human"] is True
+
+
+def test_hub_token_allows_non_interactive_human_actions(repo, monkeypatch):
+    save_plan(repo, PLAN)
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "renato")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", gate.mint_hub_token("approve", "demo", "renato"))
+    assert gate.hub_actor_ok("approve", "demo") == "renato"
+    assert gate.hub_actor_ok("finish", "demo") is None   # a token is per action
+    assert gate.hub_actor_ok("approve", "other") is None # and per slug
+    code = gate.main(["--root", str(repo), "approve", "demo"])
+    assert code == 0 and gate.load_approved(repo, "demo") is not None
+
+
+def test_forged_hub_token_is_refused(repo, monkeypatch):
+    import hashlib, hmac as _hmac
+    monkeypatch.setenv("TQ_BUILD_ACTOR", "mallory")
+    monkeypatch.setenv("TQ_BUILD_TOKEN", _hmac.new(b"guess", b"hub:approve:demo:mallory", hashlib.sha256).hexdigest())
+    assert gate.hub_actor_ok("approve", "demo") is None
+    code, _, err = hook(repo, bash("python build-gate.py answer demo d1 --choice approve --actor x"))
+    assert code == 2 and "human" in err.lower()
+
+
+def test_stop_allowed_while_a_decision_is_pending(repo):
+    own(repo)
+    save_plan(repo, with_gate(PLAN, 2, behavior="failed"))
+    assert stop(repo)[0] == 2                      # unproven checkpoint blocks once
+    gate.cmd_ask(repo, "demo", "question", "which DB?", ["postgres", "sqlite"], cid=2)
+    assert stop(repo)[0] == 0                      # waiting on a human: the turn may end
+    assert stop(repo)[0] == 0
+
+
+def test_state_json_shape(repo):
+    _project(repo)
+    save_plan(repo, {**PLAN, "workflow": "feature", "task": {"hub_id": "t-42", "external": {"provider": "linear", "id": "ACME-7", "url": "https://linear.app/x"}}})
+    gate.cmd_approve(repo, "demo")
+    gate.cmd_verify(repo, "demo", 2)
+    gate.cmd_record_review(repo, "demo", 2, "build-critic", "PASS", {})
+    gate.cmd_ask(repo, "demo", "question", "ok?", ["yes", "no"], cid=2)
+    st = gate.cmd_state(repo, "demo")
+    assert st["slug"] == "demo" and st["workflow"] == "feature" and st["task"]["external"]["id"] == "ACME-7"
+    assert st["approved"] is True and st["finished"] is False and st["dod"] is None
+    cp2 = [c for c in st["checkpoints"] if c["id"] == 2][0]
+    assert cp2["evidence"] == "fresh" and cp2["reviews"] == {"build-critic": "PASS"}
+    assert st["pending_decisions"][0]["kind"] == "question"
+    assert "app.py" not in json.dumps(st)  # names of checkpoints and reviewers only, no file paths or text
+    out = gate.main(["--root", str(repo), "state", "demo", "--json"])
+    assert out == 0
+```
+
+`gate.main` prints to stdout; the tests only check the exit code. `_project` is the helper from Task 5.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cd plugin && python -m pytest tests/test_build_gate.py -q -k "ask or answer or hub_token or decision or state_json"`
+Expected: FAIL with `AttributeError: ... 'cmd_ask'`.
+
+- [ ] **Step 3: Implement in `gate.py`**
+
+Constants:
+
+```python
+DECISION_KINDS = ("plan-approval", "result", "judge", "question")
+HUMAN_ONLY = ("approve", "unlock-tests", "finish", "judge", "answer")  # replaces the Task 4 tuple
+```
+
+Decision records (after the review-record helpers):
+
+```python
+def decisions_path(root: Path, slug: str) -> Path:
+    return state_dir(root, slug) / "decisions.jsonl"
+
+
+def _decisions(root: Path, slug: str) -> list[dict]:
+    out = []
+    for line in read_text(decisions_path(root, slug)).splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if verified(rec):
+            out.append(rec)
+    return out
+
+
+def pending_decisions(root: Path, slug: str) -> list[dict]:
+    latest: dict[str, dict] = {}
+    for rec in _decisions(root, slug):
+        latest[rec["id"]] = rec
+    return [r for r in latest.values() if r.get("status") == "pending"]
+
+
+def cmd_ask(root: Path, slug: str, kind: str, text: str, options: list[str], cid: int | None = None, reviewer: str | None = None) -> str:
+    if kind not in DECISION_KINDS:
+        raise SystemExit(f"unknown decision kind '{kind}'. Use one of: {', '.join(DECISION_KINDS)}.")
+    if load_plan(root, slug) is None:
+        raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
+    for p in pending_decisions(root, slug):
+        if p["kind"] == kind and p.get("checkpoint") == cid and p.get("reviewer") == reviewer:
+            return f"decision {p['id']} (pending)"
+    import secrets as _secrets
+    rec = {"id": "d" + _secrets.token_hex(4), "kind": kind, "checkpoint": cid, "reviewer": reviewer,
+           "text": redact(text)[:4000], "options": [o.strip() for o in options if o.strip()],
+           "status": "pending", "asked_at": now_iso()}
+    append_jsonl(decisions_path(root, slug), sign(rec))
+    log_event(root, "ask", slug, checkpoint=cid, kind=kind)
+    return f"decision {rec['id']} (pending)"
+
+
+def _answer(root: Path, slug: str, rec: dict, choice: str, note: str, actor: str) -> None:
+    done = {**rec, "status": "answered", "answered_at": now_iso(), "choice": choice, "note": redact(note or "")[:400], "actor": actor}
+    append_jsonl(decisions_path(root, slug), sign(done))
+    log_event(root, "answer", slug, checkpoint=rec.get("checkpoint"), kind=rec["kind"], actor=actor)
+
+
+def _answer_pending(root: Path, slug: str, kind: str, choice: str, actor: str, cid: int | None = None, reviewer: str | None = None) -> None:
+    for p in pending_decisions(root, slug):
+        if p["kind"] == kind and (cid is None or p.get("checkpoint") == cid) and (reviewer is None or p.get("reviewer") == reviewer):
+            _answer(root, slug, p, choice, "", actor)
+
+
+def cmd_answer(root: Path, slug: str, decision_id: str, choice: str, note: str, actor: str) -> str:
+    rec = next((p for p in pending_decisions(root, slug) if p["id"] == decision_id), None)
+    if rec is None:
+        raise SystemExit(f"no pending decision '{decision_id}' in '{slug}'.")
+    if rec["options"] and choice not in rec["options"]:
+        raise SystemExit(f"choice must be one of {', '.join(rec['options'])}.")
+    if rec["kind"] == "plan-approval" and choice == "approve":
+        cmd_approve(root, slug)           # also answers this record with actor "terminal"; re-answer below with the real actor
+    if rec["kind"] == "judge" and choice in ("PASS", "FAIL") and rec.get("reviewer") and rec.get("checkpoint") is not None:
+        cmd_judge(root, slug, int(rec["checkpoint"]), rec["reviewer"], choice, note or f"answered by {actor}")
+    if rec["id"] in {p["id"] for p in pending_decisions(root, slug)}:
+        _answer(root, slug, rec, choice, note, actor)
+    else:  # already answered by the side effect above; record the actor on top
+        _answer(root, slug, rec, choice, note, actor)
+    return f"decision {decision_id}: {choice} by {actor}"
+```
+
+(Keep `_answer` idempotent: the latest record per id wins in `pending_decisions`, so a second answered line only updates the actor.)
+
+In `cmd_approve` (end), `cmd_finish` (end) and `_record_review` when `human` is true: call `_answer_pending(root, slug, "plan-approval", "approve", "terminal")`, `_answer_pending(root, slug, "result", "approve", "terminal")` and `_answer_pending(root, slug, "judge", result, "terminal", cid, reviewer)` respectively.
+
+Hub tokens (near `human_confirm`):
+
+```python
+def mint_hub_token(action: str, slug: str, actor: str) -> str:
+    key = _key(create=True)
+    return hmac.new(key, f"hub:{action}:{slug}:{actor}".encode("utf-8"), "sha256").hexdigest()
+
+
+def hub_actor_ok(action: str, slug: str) -> str | None:
+    actor = (os.environ.get("TQ_BUILD_ACTOR") or "").strip()
+    tok = (os.environ.get("TQ_BUILD_TOKEN") or "").strip()
+    key = _key()
+    if not actor or not tok or key is None:
+        return None
+    want = hmac.new(key, f"hub:{action}:{slug}:{actor}".encode("utf-8"), "sha256").hexdigest()
+    return actor if hmac.compare_digest(want, tok) else None
+```
+
+(`import hmac` at the top; `_key()` already exists and returns `None` when the key is missing.)
+
+State export (after `cmd_status`):
+
+```python
+def cmd_state(root: Path, slug: str) -> dict:
+    plan = load_plan(root, slug)
+    if plan is None:
+        raise SystemExit(f"no plan at {PLAN_DIR}/{slug}.json")
+    approved = load_approved(root, slug)
+    sess = load_session(root, slug)
+    th = TreeHash(root)
+    cps = []
+    for cp in plan.get("checkpoints") or []:
+        cid = cp.get("id")
+        ev = latest_evidence(root, slug, cid)
+        fresh = "-"
+        if ev:
+            ok, _ = evidence_fresh(root, slug, cid, th)
+            fresh = "fresh" if ok else ("stale" if ev.get("ok") else "failing")
+        cps.append({"id": cid, "title": cp.get("title", ""), "status": cp.get("status", "pending"),
+                    "gates": {g: gate(cp, g) for g in GATES}, "evidence": fresh,
+                    "reviews": {r: rec["result"] for r, rec in reviews_for(root, slug, cid, th.get()).items()}})
+    dod = read_json(dod_path(root, slug))
+    dod_out = {"ok": bool(dod.get("ok")), "tree": dod.get("tree"), "override": dod.get("override")} if verified(dod) else None
+    return {"slug": slug, "feature": plan.get("feature", slug), "workflow": plan.get("workflow") or "build",
+            "hotfix": bool(plan.get("hotfix")), "task": plan.get("task"), "approved": approved is not None,
+            "halted": plan.get("halted"), "finished": bool(sess.get("finished")), "checkpoints": cps, "dod": dod_out,
+            "pending_decisions": [{"id": p["id"], "kind": p["kind"], "checkpoint": p.get("checkpoint"),
+                                   "reviewer": p.get("reviewer"), "text": p["text"], "options": p["options"], "asked_at": p["asked_at"]}
+                                  for p in pending_decisions(root, slug)],
+            "events_path": norm(events_path())}
+```
+
+Stop: at the top of `stop_problems`, after the `halted` check:
+
+```python
+    if pending_decisions(root, slug):
+        return []  # waiting on a human: the orchestrator must be able to end its turn
+```
+
+CLI in `main()`:
+
+```python
+    ak = sub.add_parser("ask", help="record a decision the human must take (the orchestrator then ends its turn)")
+    ak.add_argument("slug"); ak.add_argument("--kind", required=True, choices=DECISION_KINDS)
+    ak.add_argument("--text", required=True); ak.add_argument("--options", default="", help="comma-separated")
+    ak.add_argument("--checkpoint", type=int, default=None); ak.add_argument("--reviewer", default=None, choices=(None, *REVIEWERS))
+    an = sub.add_parser("answer", help="human only: answer a pending decision")
+    an.add_argument("slug"); an.add_argument("id"); an.add_argument("--choice", required=True)
+    an.add_argument("--note", default=""); an.add_argument("--actor", default=None)
+    stt = sub.add_parser("state", help="machine-readable run state for the hub")
+    stt.add_argument("slug"); stt.add_argument("--json", action="store_true")
+    tk = sub.add_parser("token", help="human only: mint a hub actor token for one action")
+    tk.add_argument("action", choices=HUMAN_ONLY); tk.add_argument("slug"); tk.add_argument("--actor", required=True)
+```
+
+Dispatch: for `approve`, `finish`, `unlock-tests`, `judge`, `answer`, `token` first try `actor = hub_actor_ok(a.cmd, a.slug)`; when `None`, fall back to `human_confirm(...)` and use actor `"terminal"`. `answer` passes `a.actor or actor`. `state` prints `json.dumps(cmd_state(...), ensure_ascii=False, indent=2)` with `--json`, else a short text form. `token` prints `mint_hub_token(a.action, a.slug, a.actor)`.
+
+Add `"token"` to `HUMAN_ONLY` so the agent's shell cannot mint tokens even if it found the key path.
+
+- [ ] **Step 4: Run the whole gate suite**
+
+Run: `cd plugin && python -m pytest tests/test_build_gate.py -q`
+Expected: all pass, including the earlier Stop tests (no pending decision in those fixtures).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/tentaqles/workflow/gate.py plugin/tests/test_build_gate.py
+git commit -m "feat(build-gate): decision records, hub actor tokens and run state export so a hub can drive a run headless"
+```
+
+---
+
 ### Task 6: Reviewer agents: critic grammar, spec-critic, arbiter, planner fields
 
 **Files:**
@@ -1814,14 +2108,14 @@ def _body(name: str) -> str:
 def test_build_runs_a_crew_and_records_every_verdict() -> None:
     body = _body("build")
     for token in ("record-review", "--reviewer build-critic --result", "spec-critic", "build-gate dod", "build-gate judge",
-                  "BUILT-BY-ME", "workflow"):
+                  "BUILT-BY-ME", "workflow", "build-gate ask", "build-gate state", "## Headless mode", "TENTAQLES_HEADLESS"):
         assert token in body, token
     assert "git add -A" not in body and "git add ." not in body
 
 
 def test_build_reference_lists_new_cli() -> None:
     ref = (SKILLS / "build" / "reference.md").read_text(encoding="utf-8")
-    for token in ("build-gate record-review", "build-gate judge", "build-gate dod", "reviews.jsonl", "dod.json", "events.jsonl"):
+    for token in ("build-gate record-review", "build-gate judge", "build-gate dod", "build-gate ask", "build-gate answer", "build-gate state", "reviews.jsonl", "dod.json", "decisions.jsonl", "events.jsonl", "TQ_BUILD_TOKEN"):
         assert token in ref, token
 ```
 
@@ -1865,17 +2159,44 @@ When the plan's `workflow` is `feature`, `fix` or `kickoff`, run the definition 
 
 4. In **Phase 4**, under **Request changes**, add: `Log it as an H<n> line in docs/LEARNINGS.md (what was rejected and which gate should have caught it).`
 
+5. Add a section **## Headless mode** after "Non-negotiables":
+
+```markdown
+## Headless mode
+
+The hub (release 2) and any `claude -p` caller set `TENTAQLES_HEADLESS=1`, or pass `--headless` in `$ARGUMENTS`. Then you never call `AskUserQuestion`. At every human stop you write the question as a decision record and end your turn; the Stop hook lets a turn end while a decision is pending:
+
+```bash
+build-gate ask <slug> --kind plan-approval --text "<the plain summary, one line per checkpoint, verify commands, assumptions>" --options approve,edit,stop
+build-gate ask <slug> --kind result --text "<what to try, checkpoint summary, deferred MINORs>" --options approve,request-changes,stop
+build-gate ask <slug> --kind judge --checkpoint <id> --reviewer <name> --text "<the U rows>" --options PASS,FAIL
+build-gate ask <slug> --kind question --checkpoint <id> --text "<the question>" --options <a>,<b>
+```
+
+On resume (`/tentaqles:build resume <slug>`), read `build-gate state <slug> --json` first: `pending_decisions` empty and the matching record answered means continue from the answer (`approve` → the plan is already frozen; `edit` → re-run the planner with the note; `request-changes` → Phase 4's request-changes path with the note; `stop` → commit and end). A pending decision means the human has not answered: end the turn again without working.
+
+In interactive mode you also write the `ask` record at each stop and then use `AskUserQuestion` as before; the human's terminal command (`approve`, `finish`, `judge`) answers it, so the record exists either way and the hub can show the history. The plan's top-level `task` block (hub id, external tracker id) is set by the on-ramp when the hub launched the run; never invent one.
+```
+
+6. In **Phase 1 step 4** and **Phase 4**, before the `AskUserQuestion`, add the matching `build-gate ask` line (kinds `plan-approval` and `result`); in step d.6 (BLOCKED) add the `judge` ask before showing the rows.
+
 In `plugin/skills/build/reference.md`:
 
 - Files table: add rows `.claude/build/<slug>/reviews.jsonl | gate | one signed line per reviewer verdict (reviewer, result, counts, tree hash)`, `.claude/build/<slug>/dod.json | gate | the last definition-of-done run (checks, tree hash, override)`, `$TQ_HOME/build-gate/events.jsonl | gate | aggregate process events (verify, review, judge, dod, dod-override, finish) read by tq insights; never file names or text`.
+- Files table: also `.claude/build/<slug>/decisions.jsonl | gate | one signed line per decision asked of a human and its answer (kind, options, choice, actor)`.
 - Gate CLI block: add
   ```
+  build-gate ask <slug> --kind plan-approval|result|judge|question --text T --options a,b [--checkpoint N] [--reviewer R]
+  build-gate answer <slug> <id> --choice C [--note N] [--actor A]       (human only, or a hub actor token)
+  build-gate state <slug> --json                                          run state for the hub
+  build-gate token <action> <slug> --actor A                              (human only) mint a hub actor token
   build-gate record-review <slug> <id> --reviewer R --result PASS|FAIL|BLOCKED [--blockers N --majors N --minors N --unjudged N]
   build-gate judge <slug> <id> --reviewer R --result PASS|FAIL --note TEXT      (human only)
   build-gate dod <slug> [--override REASON]      definition of done; records dod.json
   ```
 - Gate rules, plan edits: add `review` becoming `passed` needs a verified `build-critic` PASS record at the current tree hash and no FAIL/BLOCKED record beside it; `review: n/a` only in a plan with `"hotfix": true`.
-- Stop: add `For a plan whose workflow is feature, fix or kickoff, a turn also can't end once every checkpoint passed until dod.json is fresh (same tree hash) and ok, or carries a human override. Blocks once, like the checkpoint rule.`
+- Trust model: add `Human-only commands also accept a hub actor token: TQ_BUILD_ACTOR plus TQ_BUILD_TOKEN, an HMAC over the action, slug and actor made with the gate key. The hub holds the key as the user's own process; the agent cannot read it, and the hook refuses the human-only subcommands to the agent regardless.`
+- Stop: add `A run with a pending decision may end its turn (the orchestrator wrote the question for a human).` and `For a plan whose workflow is feature, fix or kickoff, a turn also can't end once every checkpoint passed until dod.json is fresh (same tree hash) and ok, or carries a human override. Blocks once, like the checkpoint rule.`
 - Trust model: add `Review and DoD records are signed like evidence; a record the agent writes by hand fails verification and counts as absent. The DoD runs the commands frozen in approved.json, not the ones in the working copy of CLAUDE.md.`
 
 - [ ] **Step 4: Run the tests**
@@ -3115,5 +3436,6 @@ Then update the status line at the top of this plan file (workspace docs, not gi
 ## Self-review notes
 
 - Spec coverage: §4.1 layout (Tasks 1, 12, 13), §4.2 PRD template and mechanical check (Tasks 1, 2, 9), §4.3 templates (Task 1; threat model, privacy record and incident playbook templates are in the companion plan), §5.1 (Task 12), §5.2 (Task 11), §5.3 (Task 10), §5.4 crew and verdicts and DoD (Tasks 4, 5, 7), §6 rows prd/kickoff/feature/fix/direction/dod/add-project/ship/build (Tasks 7 to 13), §7 build-critic/spec-critic/arbiter (Task 6), §8.1 (Task 5), §8.3 SessionStart and PR size (Tasks 3, 13; the PostToolUse command audit already exists as fix atoms in 0.11.1), §9 skill picker (the `fix` description carries the bug-shaped triggers; Jev picks among installed skills without code changes), §9 Stop check (the DoD is enforced by the gate's own Stop hook; the Jev completion check is unchanged), §12 (Task 14; PRD-to-merge time and hotfix debt deferred and documented).
+- Hub-ready interfaces (user decision 2026-10-20): decision records, hub actor tokens and `build-gate state` (Task 5b); the build skill's headless mode (Task 7).
 - Open point resolution: `/fix` with Jev disabled reviews **full** (the build skill already treats a missing `tq decide triage` as full). `breaker` runs only when a checkpoint is marked `"runnable": true` (Task 7 text).
 - Deviation from spec §8.1 wording: "the 8-block cap as today" is implemented as the gate's existing once-per-problem block (`MAX_STOP_BLOCKS = 1`), which is what the engine does today.
