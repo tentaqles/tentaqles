@@ -174,29 +174,36 @@ def _valid_cnpj(s: str) -> bool:
     return True
 
 
+_CARD_SEPARATORS = str.maketrans("", "", " -")
+
+
 def _luhn(s: str) -> bool:
-    d = _digits(s)
-    if not 13 <= len(d) <= 19 or _all_same(d):
+    d = s.translate(_CARD_SEPARATORS)  # the card pattern only admits digits, space and dash
+    if not d.isdigit():
+        d = _digits(s)
+    if not 13 <= len(d) <= 19:
         return False
-    total, alt = 0, False
-    for ch in reversed(d):
-        n = int(ch)
-        if alt:
-            n = n * 2 - 9 if n > 4 else n * 2
-        total += n
-        alt = not alt
-    return total % 10 == 0
+    rev = d[::-1]
+    # Digit sums in C: doubled positions are mapped to their doubled digit
+    # (0->0, 1->2, ..., 5->1, ..., 9->9), then the ASCII bytes are summed.
+    total = sum(rev[0::2].encode()) + sum(rev[1::2].translate(_LUHN_DOUBLE).encode()) - 48 * len(rev)
+    return total % 10 == 0 and not _all_same(d)  # 0000... passes Luhn
+
+
+_LUHN_DOUBLE = str.maketrans("0123456789", "0246813579")
 
 
 def _valid_iban(s: str) -> bool:
     s = s.replace(" ", "").upper()
     if not 15 <= len(s) <= 34:
         return False
-    r = s[4:] + s[:4]
-    try:
-        return int("".join(str(int(c, 36)) for c in r)) % 97 == 1
-    except ValueError:
+    r = (s[4:] + s[:4]).translate(_IBAN_LETTERS)  # A=10 ... Z=35
+    if not r.isdigit():
         return False
+    return int(r) % 97 == 1
+
+
+_IBAN_LETTERS = str.maketrans({chr(ord("A") + i): str(10 + i) for i in range(26)})
 
 
 def _valid_phone(s: str) -> bool:
@@ -283,7 +290,7 @@ def _detectors(classes: Iterable[str] | None) -> list[str]:
 def exit_classes(manifest: dict | None) -> list[str]:
     """Classes to mask at the exits for a workspace manifest.
 
-    ``["checksummed"]`` without a ``data:`` block (or with no classes), plus
+    ``["checksummed"]`` without a ``data:`` block (or with no ``classes`` key), plus
     ``pii`` for pii/sensitive/children and ``financial`` for financial. A data
     block that cannot be read, or that names an unknown class, gives the
     strictest set.
@@ -298,8 +305,10 @@ def exit_classes(manifest: dict | None) -> list[str]:
     if not isinstance(data, dict):
         return list(STRICTEST_CLASSES)
     classes = data.get("classes")
-    if classes is None or classes == []:
+    if classes is None:
         return ["checksummed"]
+    if classes == []:
+        return list(STRICTEST_CLASSES)  # an empty list is an error, as in tq: fail closed
     if not isinstance(classes, list):
         return list(STRICTEST_CLASSES)
     try:
@@ -350,21 +359,82 @@ def _allowed_lines(text: str) -> list[tuple[int, int]]:
     return out
 
 
-def _shorter_valid(rx: re.Pattern, ok, text: str, m: re.Match):
-    """The longest valid candidate at ``m.start()`` that ends before ``m.end()``.
+# Registered IBAN lengths by country (SWIFT IBAN registry). A candidate whose
+# country is not listed is skipped before any checksum work, and a listed one
+# is validated once, at exactly its country's length.
+_IBAN_LENGTHS: dict[str, int] = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16, "BG": 22, "BH": 22, "BI": 27,
+    "BR": 29, "BY": 28, "CH": 21, "CR": 22, "CY": 28, "CZ": 24, "DE": 22, "DJ": 27, "DK": 18, "DO": 28,
+    "EE": 20, "EG": 29, "ES": 24, "FI": 18, "FK": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23,
+    "GL": 18, "GR": 27, "GT": 28, "HN": 28, "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26,
+    "IT": 27, "JO": 30, "KW": 30, "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20, "LV": 21,
+    "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MN": 20, "MR": 27, "MT": 31, "MU": 30, "NI": 28,
+    "NL": 18, "NO": 15, "OM": 23, "PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22,
+    "RU": 33, "SA": 24, "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24, "SM": 27, "SO": 23, "ST": 25,
+    "SV": 28, "TL": 23, "TN": 24, "TR": 26, "UA": 29, "VA": 22, "VG": 24, "XK": 20, "YE": 30,
+}
+
+# At most this many shorter cuts are tried per failed candidate.
+_MAX_SHORTER_CUTS = 8
+
+
+def _iban_candidates(text: str, m: re.Match) -> list[tuple[int, int]]:
+    """The one span to validate: the country's registered length from ``m.start()``."""
+    s = m.group(0)
+    length = _IBAN_LENGTHS.get(s[:2].upper())
+    if length is None:
+        return []
+    if len(s) - s.count(" ") < length:
+        return []
+    # Character offset of the length-th alphanumeric (the pattern only admits
+    # single spaces between alphanumerics); converges in a few C-level steps.
+    cut = length
+    while length + s.count(" ", 0, cut) != cut:
+        cut = length + s.count(" ", 0, cut)
+    end = m.start() + cut
+    if end < len(text) and text[end].isalnum():
+        return []
+    return [(m.start(), end)]
+
+
+def _card_candidates(text: str, m: re.Match) -> list[tuple[int, int]]:
+    """The match, then (for 4-4-4-4 plus a tail such as a CVV) the 4-4-4-4 part.
+
+    A grouped match longer than 19 digits cannot be a card, so it is not
+    validated at all.
+    """
+    start, end = m.start(), m.end()
+    if end - start <= 19 or text[start + 4] not in " -":  # 4-4-4-4, Amex or contiguous
+        return [(start, end)]
+    head = [(start, start + 19)]
+    # 4-4-4-4 + an n-digit tail is 20 + n characters and 16 + n digits.
+    return head if end - start > 23 else [(start, end)] + head
+
+
+def _cut_candidates(rx: re.Pattern):
+    """Default strategy: the match, then shorter cuts at separators, longest first.
 
     Only cuts at a real delimiter (the next character is not a letter or a
     digit) are tried, so a shorter candidate is never carved out of a longer
-    number. Bounded by the match length (patterns are bounded).
+    number; at most ``_MAX_SHORTER_CUTS`` of them.
     """
-    start = m.start()
-    for end in range(m.end() - 1, start, -1):
-        if text[end].isalnum() or not text[end - 1].isalnum():
-            continue
-        cand = rx.fullmatch(text, start, end)
-        if cand is not None and ok(cand.group(0)):
-            return cand
-    return None
+
+    def candidates(text: str, m: re.Match) -> list[tuple[int, int]]:
+        start = m.start()
+        out = [(start, m.end())]
+        for end in range(m.end() - 1, start, -1):
+            if len(out) > _MAX_SHORTER_CUTS:
+                break
+            if text[end].isalnum() or not text[end - 1].isalnum():
+                continue
+            if rx.fullmatch(text, start, end) is not None:
+                out.append((start, end))
+        return out
+
+    return candidates
+
+
+_CANDIDATES = {"iban": _iban_candidates, "card": _card_candidates}
 
 
 def _pii_spans(text: str, names: list[str]) -> list[tuple[int, int, str, str]]:
@@ -373,27 +443,27 @@ def _pii_spans(text: str, names: list[str]) -> list[tuple[int, int, str, str]]:
     spans: list[tuple[int, int, str, str]] = []
     for name in names:
         rx, ok = _PII_BY_NAME[name]
+        candidates = _CANDIDATES.get(name) or _cut_candidates(rx)
         pos = 0
         while True:
             m = rx.search(text, pos)
             if m is None:
                 break
-            if not ok(m.group(0)):
-                # The pattern may have pulled in the next token (an expiry
-                # date, a CVV, a word): try shorter candidates at the same
-                # start, then look again one character further on so a failed
-                # checksum never hides a valid value inside it.
-                shorter = _shorter_valid(rx, ok, text, m)
-                if shorter is None:
-                    pos = m.start() + 1
-                    continue
-                m = shorter
-            pos = max(m.end(), m.start() + 1)
+            # The pattern may have pulled in the next token (an expiry date,
+            # a CVV, a word): validate the candidates at this start, longest
+            # first. When none is valid, look again one character further on
+            # so a failed checksum never hides a valid value inside it.
+            hit = next(((s, e) for s, e in candidates(text, m) if ok(text[s:e])), None)
+            if hit is None:
+                pos = m.start() + 1
+                continue
+            start, end = hit
+            pos = end
             if allowed:
-                i = bisect.bisect_right(allowed_starts, m.start()) - 1
-                if i >= 0 and m.start() <= allowed[i][1]:
+                i = bisect.bisect_right(allowed_starts, start) - 1
+                if i >= 0 and start <= allowed[i][1]:
                     continue
-            spans.append((m.start(), m.end(), name, f"[REDACTED:{name}]"))
+            spans.append((start, end, name, f"[REDACTED:{name}]"))
     return spans
 
 
