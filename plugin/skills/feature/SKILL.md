@@ -31,15 +31,19 @@ Every later bash block uses `_tqe`, `root` and `TENTAQLES_PY` from the snippet
 above. Blocks may run in fresh shells, so put its first two lines (the `_tqe=`
 line and the `root=` line) at the top of each block.
 
-Note: the grader's exit code decides whether a feature may start; you never judge
-the PRD's readiness yourself. Quote its JSON output in your reply.
+Report `prd_exit` and quote the grader's JSON in your reply.
 
-- `prd_exit=0` (planning-ready): continue.
-- `prd_exit=3` (a PRD exists but is not planning-ready): do not start the
-  feature. Report the blockers from the JSON and point to `/tentaqles:prd` to
-  settle them and grade again. Headless: report them as your final output and
-  end the turn.
-- `prd_exit=4` (legacy repository, no PRD): continue; the spec slice says
+- `prd_exit` 0 or 3 (a PRD exists): continue, planning-ready or not. Find the
+  FR in `$ARGUMENTS` or by reading §4. **A feature with no FR is first a PRD
+  change, never code**: add `### FR-nn` with acceptance checks (`-` or `*`
+  bullet lines directly under a `**Acceptance checks**` heading, as the prd
+  skill describes) to `docs/prd.md` on the feature branch, cite the goal it
+  serves, and commit it (`docs(prd): FR-nn <title>`). If the PRD has open
+  `NEEDS-DECISION` items that touch this feature, settle them first (ask the
+  user, one at a time; headless: report them as your final output and end the
+  turn). Open decisions that do not touch this feature do not block it:
+  `/tentaqles:kickoff` keeps the strict planning-ready gate.
+- `prd_exit=4` (legacy repository): continue; the spec slice says
   `derived_from: no PRD: legacy repository` and you mention once that
   `/tentaqles:kickoff` can backfill a PRD later. If `CLAUDE.md` has no
   ```` ```json tq-project ```` block, add one now from
@@ -47,13 +51,6 @@ the PRD's readiness yourself. Quote its JSON output in your reply.
   `package.json`, `pyproject.toml`, `go.mod`, the CI workflow; never guess) so
   the definition of done can run it.
 - Any other exit code: report it and the output verbatim and stop.
-
-With exit 0, find the FR in `$ARGUMENTS` or by reading §4. **A feature with no
-FR is first a PRD change, never code**: add `### FR-nn` with acceptance checks
-to `docs/prd.md` on the feature branch, cite the goal it serves, run the grader
-again (it must still exit 0) and commit it (`docs(prd): FR-nn <title>`). If the
-PRD has open `NEEDS-DECISION` items that touch this feature, the grader will
-not exit 0 until they are settled: send the user to `/tentaqles:prd`.
 
 ## 2. Interview
 
@@ -129,6 +126,5 @@ body quotes the DoD record.
 ## Never
 
 - write code for a feature that has no FR and no spec slice
-- start a feature while the PRD grader exits 3, or declare a PRD ready yourself
 - mark an acceptance check done without a test the gate ran
 - `git add -A`, `git add .`, `--no-verify`, reading `.env*` (`tq dotenv run -- <cmd>`)

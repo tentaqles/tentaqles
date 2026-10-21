@@ -120,7 +120,9 @@ def test_feature_skill_locates_the_fr_and_interviews_first() -> None:
     assert SNIPPET in body
     flat = " ".join(body.split())
     assert "AskUserQuestion` is never called" in flat and "build-gate ask" in flat
-    assert "the grader's exit code decides" in flat and "/tentaqles:prd" in flat
+    assert "`prd_exit` 0 or 3 (a PRD exists): continue" in flat and "touch this feature" in flat
+    assert "keeps the strict planning-ready gate" in flat and "Any other exit code: report it" in flat
+    assert "point to `/tentaqles:prd`" not in flat and "do not start the feature" not in flat
     assert "`hotfix=no`" in flat and "spec=<path>" in flat
     assert "you never run `build-gate dod" in flat
     assert "lock-tests` right after approval" in flat and "before the human approves" in flat
