@@ -269,3 +269,50 @@ func TestFinal_I6_FixtureRulePathsAndPowerShell(t *testing.T) {
 		}
 	}
 }
+
+// I7: gh api text, @file fields, --input, and substituted bodies.
+func TestFinal_I7_TextPIIGhAPIAndSubstitution(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData)
+	gitRepo(t, ws)
+	for name, body := range map[string]string{"body.md": "cliente 529.982.247-25\n", "body.json": `{"body":"cpf 529.982.247-25"}`} { // tq:allow-pii
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []string{
+		`gh api repos/o/r/pulls/1/comments/2/replies -f body="cliente 529.982.247-25"`, // tq:allow-pii
+		`gh api repos/o/r/issues/1/comments --raw-field body="cliente 529.982.247-25"`, // tq:allow-pii
+		`gh api repos/o/r/pulls/1/comments/2/replies -F body=@body.md`,
+		`gh api repos/o/r/pulls/1/comments/2/replies --field=body=@body.md`,
+		`gh api repos/o/r/issues/1/comments --input body.json`,
+		`gh api -X POST repos/o/r/issues/1/comments --input=body.json`,
+	} {
+		wantDeny(t, ws, c, "tq/text-pii")
+	}
+	for c, want := range map[string]string{
+		`gh pr create --title x --body "$(cat body.md)"`:      "command substitution",
+		"gh pr create --title x --body \"`cat body.md`\"":     "command substitution",
+		`gh issue comment 1 --body "$(cat body.md)"`:          "command substitution",
+		`git commit -m "$(cat msg.txt)"`:                      "command substitution",
+		`gh api repos/o/r/issues/1/comments -F body=@-`:       "stdin",
+		`gh api repos/o/r/issues/1/comments --input -`:        "stdin",
+		`gh api repos/o/r/issues/1/comments -F body=@nope.md`: "could not read",
+	} {
+		wantAsk(t, ws, c, "tq/text-pii", want)
+	}
+	for _, c := range []string{
+		`gh api repos/o/r`,
+		`gh api repos/o/r/issues -f title="login fails"`,
+		"git commit -m \"$(cat <<'EOF'\nfix: handle `nil` input\n\nCo-Authored-By: X <x@y.z>\nEOF\n)\"",
+		`gh pr create --title x --body 'literal $(not run) and ` + "`" + `code` + "`" + `'`,
+	} {
+		if code, out := hook(t, ws, c); strings.Contains(out, "tq/text-pii") {
+			t.Errorf("%s: wrongly flagged (code=%d): %q", c, code, out)
+		}
+	}
+	// PowerShell: the backtick is an escape, not a substitution
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, psPayload(t, ws, "gh pr create --title x --body \"line`nnext\""))
+	if strings.Contains(out+errOut, "tq/text-pii") {
+		t.Errorf("PowerShell backtick flagged (code=%d): %q", code, out+errOut)
+	}
+}

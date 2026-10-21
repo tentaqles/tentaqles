@@ -340,6 +340,9 @@ func sortByStart(s []gitInvocation) {
 	}
 }
 
+// BlankHeredocBodies is blankHeredocBodies for other packages.
+func BlankHeredocBodies(c string) string { return blankHeredocBodies(c) }
+
 // blankHeredocBodies replaces heredoc body lines with spaces (keeping the
 // length and line breaks), quoted `<<` included: a body is data, never a
 // command, even inside `"$(cat <<'EOF' … EOF)"`.

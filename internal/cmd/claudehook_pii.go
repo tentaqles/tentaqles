@@ -162,10 +162,97 @@ func commitPIIDecision(ctx context.Context, ws *resolve.Workspace, call policy.T
 	return ruleDecision(action, "tq/commit-pii", reason), true
 }
 
-var ghTextRe = regexp.MustCompile(`(?i)\bgh\s+(pr|issue|release)\s+(create|edit|comment|review|merge|close)\b`)
+var (
+	ghTextRe = regexp.MustCompile(`(?i)\bgh\s+(pr|issue|release)\s+(create|edit|comment|review|merge|close)\b`)
+	ghAPIRe  = regexp.MustCompile(`(?i)\bgh\s+api\b`)
+)
+
+// ghAPIText reports whether a gh api segment sends text: a -f/-F/--field/
+// --raw-field value or an --input body.
+func ghAPIText(seg string) bool {
+	if !ghAPIRe.MatchString(seg) {
+		return false
+	}
+	toks, _ := tokenize(seg)
+	for _, t := range toks {
+		switch {
+		case t == "-f" || t == "-F" || t == "--field" || t == "--raw-field" || t == "--input",
+			strings.HasPrefix(t, "--field=") || strings.HasPrefix(t, "--raw-field=") || strings.HasPrefix(t, "--input="),
+			len(t) > 2 && (strings.HasPrefix(t, "-f") || strings.HasPrefix(t, "-F")) && !strings.HasPrefix(t, "--"):
+			return true
+		}
+	}
+	return false
+}
+
+// ghAPIFileArgs returns the files a gh api call reads its text from:
+// `-F key=@file` / `--field key=@file` and `--input file` ("-" is stdin).
+// -f/--raw-field values are literal and already part of the command text.
+func ghAPIFileArgs(toks []string) []string {
+	var out []string
+	field := func(v string) {
+		if i := strings.Index(v, "=@"); i >= 0 {
+			out = append(out, v[i+2:])
+		}
+	}
+	for i := 0; i < len(toks); i++ {
+		t := toks[i]
+		switch {
+		case (t == "-F" || t == "--field") && i+1 < len(toks):
+			field(toks[i+1])
+			i++
+		case strings.HasPrefix(t, "--field="):
+			field(strings.TrimPrefix(t, "--field="))
+		case strings.HasPrefix(t, "-F") && len(t) > 2:
+			field(t[2:])
+		case t == "--input" && i+1 < len(toks):
+			out = append(out, toks[i+1])
+			i++
+		case strings.HasPrefix(t, "--input="):
+			out = append(out, strings.TrimPrefix(t, "--input="))
+		case (t == "-f" || t == "--raw-field") && i+1 < len(toks):
+			i++
+		}
+	}
+	return out
+}
+
+var heredocSubstRe = regexp.MustCompile(`^\$\(\s*cat\s+<<`)
+
+// hasSubstitution reports whether seg builds text with a command
+// substitution tq cannot evaluate: `$(...)` outside single quotes (except
+// the `$(cat <<'EOF' ... EOF)` form, whose body is in the command text), or
+// in Bash a backtick outside single quotes. Heredoc bodies are data and are
+// not looked at; in PowerShell a backtick is an escape.
+func hasSubstitution(seg string, bash bool) bool {
+	s := guard.BlankHeredocBodies(seg)
+	inSingle, inDouble := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case inSingle:
+			if c == '\'' {
+				inSingle = false
+			}
+		case c == '\\' && bash && i+1 < len(s):
+			i++
+		case c == '\'' && !inDouble:
+			inSingle = true
+		case c == '"':
+			inDouble = !inDouble
+		case c == '$' && i+1 < len(s) && s[i+1] == '(':
+			if !heredocSubstRe.MatchString(s[i:]) {
+				return true
+			}
+		case c == '`' && bash:
+			return true
+		}
+	}
+	return false
+}
 
 func textRelevant(seg string) bool {
-	if ghTextRe.MatchString(seg) {
+	if ghTextRe.MatchString(seg) || ghAPIText(seg) {
 		return true
 	}
 	for _, inv := range guard.GitInvocations(guard.StripHeredocs(seg)) {
@@ -209,7 +296,7 @@ func bodyFileArgs(toks []string) []string {
 // scanBodyFile reads a message file with a size cap. ask is non-empty when
 // the file cannot be scanned safely.
 func scanBodyFile(cwd, p string, classes []string) (found []string, ask string) {
-	if p == "-" {
+	if p == "-" || p == "" {
 		return nil, "body from stdin cannot be scanned; use --body-file <path>"
 	}
 	full := p
@@ -261,7 +348,14 @@ func textPIIDecision(ws *resolve.Workspace, call policy.ToolCall, cwd string, ac
 		for name := range redact.CountAll(sg.Text, classes) {
 			where = append(where, "command text ("+name+")")
 		}
-		for _, p := range bodyFileArgs(toks) {
+		if hasSubstitution(sg.Text, call.Tool != "PowerShell") {
+			asks = append(asks, "the text is built by a command substitution, which tq cannot scan; write it to a file and pass --body-file / -F <file>")
+		}
+		files := bodyFileArgs(toks)
+		if ghAPIText(sg.Text) {
+			files = ghAPIFileArgs(toks)
+		}
+		for _, p := range files {
 			found, ask := scanBodyFile(cwd, p, classes)
 			where = append(where, found...)
 			if ask != "" {
