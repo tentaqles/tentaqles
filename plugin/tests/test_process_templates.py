@@ -10,7 +10,8 @@ import pytest
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "templates" / "process"
 NAMES = ["prd.md", "adr-0000-template.md", "spec-slice.md", "fix-spec.md",
-         "LEARNINGS.md", "CLAUDE-project.md", "review-contract.md"]
+         "LEARNINGS.md", "CLAUDE-project.md", "review-contract.md",
+         "threat-model.md", "privacy.md", "incident-playbook.md"]
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -51,4 +52,31 @@ def test_learnings_has_rules_and_log_with_row_format() -> None:
 def test_review_contract_defines_the_verdict_grammar() -> None:
     text = (TEMPLATES / "review-contract.md").read_text(encoding="utf-8")
     for token in ("RESULT: PASS", "RESULT: FAIL", "RESULT: BLOCKED", "CANNOT JUDGE", "BUILT-BY-ME:"):
+        assert token in text, token
+
+
+def test_threat_model_has_four_questions_and_stride_table() -> None:
+    text = (TEMPLATES / "threat-model.md").read_text(encoding="utf-8")
+    for q in ("What are we building", "What can go wrong", "What will we do about it", "Did we do a good job"):
+        assert q in text, q
+    for col in ("Spoofing", "Tampering", "Repudiation", "Information disclosure", "Denial of service", "Elevation of privilege"):
+        assert col in text, col
+    assert "| Category | Threat | Mitigation | Status | Owner |" in text
+    assert not re.search(r"^\| Threat \|", text, flags=re.MULTILINE)
+    assert "B1 <from> -> <to>" in text and "superseded" in text
+    assert "Accepted risks" in text and "expires" in text
+
+
+def test_privacy_record_has_legal_bases_clocks_and_dsar() -> None:
+    text = (TEMPLATES / "privacy.md").read_text(encoding="utf-8")
+    for token in ("LGPD Art. 7", "LGPD Art. 11", "GDPR Art. 6", "GDPR Art. 9", "15 days", "one month",
+                  "3 business days", "72 hours", "DPIA", "RIPD", "five years", "deletion job", "## Processing activities",
+                  "## Open decisions", "NEEDS-DECISION"):
+        assert token in text, token
+
+
+def test_incident_playbook_names_both_clocks() -> None:
+    text = (TEMPLATES / "incident-playbook.md").read_text(encoding="utf-8")
+    for token in ("Detect", "Contain", "Assess", "Notify", "Record", "ANPD", "3 business days", "72 hours", "shorter clock",
+                  "five years", "never rotate"):
         assert token in text, token
