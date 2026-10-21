@@ -144,9 +144,12 @@ decision:
 tq decide triage            # working tree; --staged; --range main..HEAD
 ```
 
-It asks 11 yes/no risk questions about the diff:
+It asks 12 yes/no risk questions about the diff:
 - auth, money, schema, data loss, migrations, RLS, secrets
 - public API, shared state, destructive commands, n8n credentials
+- agentic code (LLM calls, prompts, agent tools, MCP servers, RAG, Claude Code hooks or skills)
+
+It also raises one flag without Jev: `classified_data`, when a changed file lies under a path the manifest's `data:` block classifies. That flag forces `high` even when Jev is off or unreachable. The flags map to the reviewer crew (`security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`) in the build skill. A workspace without a `data:` block computes no `classified_data` flag (there is nothing to compare against). If git cannot list the changed files, triage is `high` with the flag `files_unlisted`.
 
 It prints `low` or `high (flags…)` and exits 0 for low, 3 for high:
 - **low:** one light review pass

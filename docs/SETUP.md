@@ -126,3 +126,12 @@ and `~/.tentaqles/last-setup.yaml`) with owner-only permissions — `0600` for
 the file, `0700` for any directory created to hold it — on platforms that
 enforce POSIX permission bits. Windows does not enforce these bits, so the
 file is still written there but without the same OS-level restriction.
+
+## Data classification
+
+A client manifest can carry a `data:` block that names the classes of personal
+or financial data the client handles (`pii`, `financial`, `secrets`, ...). It
+is not part of the setup plan: add it to the workspace's `.tentaqles.yaml`
+afterwards and run `tq allow <ws>`, since editing the manifest changes its
+trust hash. The block widens what the commit, push and PR-text guards detect.
+See the `data:` section of [CLAUDE-HOOK.md](CLAUDE-HOOK.md#data-classification-data-block).
