@@ -555,6 +555,70 @@
   starters.push(bindNewCard);
   busyChecks.push(dialogOpen);
 
+  /* ---------- card page: tags and comments ---------- */
+  function clockNow() { var d = new Date(); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
+  function bindTags() {
+    var form = $("form[data-tags-card]");
+    if (!form) return;
+    var id = form.getAttribute("data-tags-card"), hidden = $('input[name="tags"]', form);
+    var tb = wireTagbox($("[data-tagbox]", form), function (tags) {
+      var before = hidden.value;
+      hidden.value = tags.join(",");
+      api("POST", "/api/cards/" + encodeURIComponent(id), { tags: tags }).then(function (res) {
+        if (!res.ok) {
+          hidden.value = before;
+          tb.set(before ? before.split(",") : []);
+          toast([el("span", null, errText(res))]);
+          return;
+        }
+        var saved = res.data.tags || [];
+        hidden.value = saved.join(",");
+        tb.set(saved); // the stored, masked spelling wins
+        toast([el("span", null, "Tags saved.")]);
+      });
+    });
+    on(form, "submit", function (e) { e.preventDefault(); tb.flush(); });
+  }
+  function appendComment(c) {
+    var list = $("#comments");
+    if (!list) return;
+    var none = $("#no-comments");
+    if (none) none.remove();
+    var one = el("div", "one new"), who = el("div", "who");
+    who.appendChild(el("b", null, c.author));
+    who.appendChild(el("span", "k", c.author_kind));
+    who.appendChild(el("span", null, clockNow()));
+    one.appendChild(who);
+    one.appendChild(el("div", "txt", c.body)); // plain text until the next refresh renders the markdown
+    list.appendChild(one);
+  }
+  function bindComposer() {
+    var form = $("form[data-comment-card]");
+    if (!form) return;
+    var id = form.getAttribute("data-comment-card"), ta = $("textarea", form), btn = $('button[type="submit"]', form);
+    function post() {
+      var body = ta.value.trim();
+      if (!body) { ta.focus(); return; }
+      btn.disabled = true;
+      api("POST", "/api/cards/" + encodeURIComponent(id) + "/comments", { body: body }).then(function (res) {
+        btn.disabled = false;
+        if (!res.ok) { toast([el("span", null, errText(res))]); return; }
+        appendComment(res.data);
+        ta.value = "";
+        toast([el("span", null, "Comment posted and masked for secrets.")]);
+      });
+    }
+    on(form, "submit", function (e) { e.preventDefault(); post(); });
+    on(ta, "keydown", function (e) { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); post(); } });
+    on($("[data-clear]", form), "click", function (e) { e.preventDefault(); ta.value = ""; ta.focus(); });
+  }
+  mainBinders.push(bindTags, bindComposer);
+  // an unsent comment or a half-typed tag survives a live refresh even after focus leaves the field
+  busyChecks.push(function () {
+    var ta = $("form[data-comment-card] textarea"), ti = $("form[data-tags-card] [data-tag-input]");
+    return !!((ta && ta.value.trim()) || (ti && ti.value.trim()));
+  });
+
   /* ---------- page sections: Tasks 3, 4 and 5 insert theirs above this line ---------- */
 
   function start() {
