@@ -1,11 +1,23 @@
 {{define "activity"}}{{template "head" .}}{{template "activity-main" .}}{{template "foot" .}}{{end}}
-{{define "activity-main"}}{{$ws := .WS}}
-<section>
-  <h1>Activity</h1>
-  <table><tr><th>when</th><th>who</th><th>what</th><th>card</th><th>run</th></tr>
-  {{range .Data.Entries}}<tr><td class="mono">{{when .TS}}</td><td>{{.Actor}}</td><td class="mono">{{.Verb}}</td>
-    <td>{{if .CardID}}<a class="mono" href="/cards/{{.CardID}}?ws={{$ws}}">{{.CardID}}</a>{{end}}</td>
-    <td>{{if .RunID}}<a class="mono" href="/runs/{{.RunID}}?ws={{$ws}}">{{.RunID}}</a>{{end}}</td></tr>
-  {{else}}<tr><td colspan="5" class="muted">No activity yet.</td></tr>{{end}}</table>
-</section>
-{{end}}
+{{define "activity-main"}}{{$ws := .WS}}{{with .Data}}
+<div class="act">
+  <div class="stats">
+    <div class="stat"><div class="l">Spent</div><div class="v">{{.Stats.Spent}}<small>{{.Stats.Tokens}}</small></div></div>
+    <div class="stat"><div class="l">Runs ended</div><div class="v">{{.Stats.Ended}}{{with .Stats.EndedDetail}}<small>{{.}}</small>{{end}}</div></div>
+    <div class="stat"><div class="l">Median wait on you</div><div class="v">{{.Stats.MedianWait}}</div></div>
+    <div class="stat"><div class="l">Decisions answered</div><div class="v">{{.Stats.Answered}}{{with .Stats.AnsweredDetail}}<small>{{.}}</small>{{end}}</div></div>
+    <div class="stat"><div class="l">Cost by kind</div><div class="v small">{{range $i, $k := .Stats.CostByKind}}{{if $i}} · {{end}}{{$k.Kind}} <span class="num">{{$k.Cost}}</span>{{else}}no cost yet{{end}}</div></div>
+  </div>
+  <div class="filters">
+    <nav class="seg" aria-label="Kind">{{range .Kinds}}<a href="{{.Href}}"{{if .On}} class="on" aria-current="true"{{end}}>{{.Label}}</a>{{end}}</nav>
+    <nav class="seg" aria-label="Period">{{range .Periods}}<a href="{{.Href}}"{{if .On}} class="on" aria-current="true"{{end}}>{{.Label}}</a>{{end}}</nav>
+    <span class="note">Aggregate data only: verbs, ids, lanes, costs. Card text and agent output never reach this log; titles are read from the board.</span>
+  </div>
+  <div class="panel tight">
+    {{range .Days}}<h2 class="day">{{.Label}}</h2>
+    {{range .Events}}<div class="ev {{.Class}}" data-verb="{{.Verb}}"><span class="t">{{.Time}}</span><span class="dot" aria-hidden="true"></span><div class="w">{{range .Parts}}{{if .CardID}}<a href="/cards/{{.CardID}}?ws={{$ws}}">{{.Text}}</a>{{else if .Code}}<code>{{.Code}}</code>{{else}}{{.Text}}{{end}}{{end}}{{with .By}} <span class="by">· {{.}}</span>{{end}}{{with .Num}} <span class="num">{{.}}</span>{{end}}</div></div>{{end}}
+    {{else}}<p class="note">Nothing happened in this period.</p>{{end}}
+    {{if .Truncated}}<p class="note">Showing the newest 2000 entries of this period.</p>{{end}}
+  </div>
+</div>
+{{end}}{{end}}
