@@ -1,0 +1,546 @@
+<title>tq hub redesign</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Tentaqles brand, dark first. Flat navy surfaces, hairlines, one gradient (the primary action), orange only for "needs you". */
+:root{
+  --bg:#020810; --s1:#0a1220; --s2:#111a2b; --s3:#182338;
+  --fg:#eef2f7; --fg-2:#b4bfcf; --fg-3:#8793a6; --line:#1c2638; --line-2:#28344a;
+  --blue:#2196F3; --blue-d:#1565C0; --cyan:#26C6DA; --teal:#1DE9B6; --sky:#38BDF8; --orange:#F97316; --orange-t:#FDBA74; --red:#F87171; --violet:#C4B5FD;
+  --blue-soft:#102842; --teal-soft:#0b2e2a; --orange-soft:#33200f; --red-soft:#331818; --violet-soft:#241c3c;
+  --focus:0 0 0 2px var(--bg),0 0 0 4px var(--blue);
+  --r:8px; --sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){ --bg:#f3f6fa; --s1:#ffffff; --s2:#f1f5fa; --s3:#e6edf6; --fg:#0b1a2b; --fg-2:#334458; --fg-3:#5b6b80; --line:#dbe3ee; --line-2:#c3cfdf; --blue:#1565C0; --blue-d:#0D47A1; --cyan:#0e8a9c; --teal:#0a7a5a; --sky:#0b63b8; --orange:#F97316; --orange-t:#b4530a; --red:#b3261e; --violet:#5b3fc4; --blue-soft:#e3eefb; --teal-soft:#dcf3ea; --orange-soft:#fdeadb; --red-soft:#fbe4e2; --violet-soft:#ebe6fa; --focus:0 0 0 2px var(--bg),0 0 0 4px var(--blue); color-scheme:light }}
+:root[data-theme="light"]{ --bg:#f3f6fa; --s1:#ffffff; --s2:#f1f5fa; --s3:#e6edf6; --fg:#0b1a2b; --fg-2:#334458; --fg-3:#5b6b80; --line:#dbe3ee; --line-2:#c3cfdf; --blue:#1565C0; --blue-d:#0D47A1; --cyan:#0e8a9c; --teal:#0a7a5a; --sky:#0b63b8; --orange:#F97316; --orange-t:#b4530a; --red:#b3261e; --violet:#5b3fc4; --blue-soft:#e3eefb; --teal-soft:#dcf3ea; --orange-soft:#fdeadb; --red-soft:#fbe4e2; --violet-soft:#ebe6fa; --focus:0 0 0 2px var(--bg),0 0 0 4px var(--blue); color-scheme:light }
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none} a:focus-visible,button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:var(--focus)}
+::selection{background:rgba(33,150,243,.35)}
+svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+/* sidebar */
+.side{background:var(--s1);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;gap:16px}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px;font-weight:600;letter-spacing:-.01em}
+.brand svg.mark{width:28px;height:24px;flex:none}
+.brand small{display:block;font-weight:400;color:var(--fg-3);font-size:12px}
+.ws{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--s2);font-weight:500;min-height:40px}
+.ws small{display:block;color:var(--fg-3);font-weight:400;font-size:12px}
+.ws svg.i{margin-left:auto;color:var(--fg-3)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:10px;padding:0 10px;height:36px;border-radius:var(--r);color:var(--fg-2);font-weight:500}
+.nav a:hover{background:var(--s2);color:var(--fg)} .nav a.on{background:var(--blue-soft);color:var(--fg)} .nav a.on svg{color:var(--sky)}
+.nav .n{margin-left:auto;font:500 12px var(--mono);color:var(--orange-t);background:var(--orange-soft);border-radius:999px;padding:0 7px;line-height:20px}
+.side .foot{margin-top:auto;color:var(--fg-3);font-size:12px;padding:0 8px;line-height:1.7}
+.side .foot b{color:var(--fg-2);font-weight:500;font-family:var(--mono);font-size:12px}
+/* top */
+main{min-width:0;padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px));padding-block:0 96px}
+.top{display:flex;align-items:center;gap:12px;height:56px;margin:0 -20px 20px;padding:0 20px;border-bottom:1px solid var(--line);position:sticky;top:env(safe-area-inset-top,0px);z-index:3;background:var(--bg)}
+.top h1{font-size:15px;margin:0;font-weight:600}
+.search{display:flex;align-items:center;gap:8px;height:36px;width:min(380px,100%);margin-left:auto;background:var(--s1);border:1px solid var(--line);border-radius:var(--r);padding:0 12px;color:var(--fg-3)}
+.search kbd{font:12px var(--mono);border:1px solid var(--line-2);border-radius:4px;padding:0 5px;margin-left:auto}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:var(--r);border:1px solid var(--line-2);background:var(--s1);color:var(--fg);font:500 13px var(--sans);cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--sky)} .btn.sm{height:32px;padding:0 12px;font-size:12.5px}
+.btn.pri{background:linear-gradient(90deg,var(--blue-d),var(--blue) 70%,var(--cyan));border-color:transparent;color:#fff}
+.btn.warm{background:var(--orange);border-color:var(--orange);color:#0b0e13;font-weight:600}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--fg-2)} .btn.danger{color:var(--red);border-color:var(--red-soft);background:var(--red-soft)}
+.view{display:none}.view.on{display:block}
+/* board */
+.lanes{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,1fr);gap:12px;overflow-x:auto;padding-bottom:8px}
+.lane{display:flex;flex-direction:column;gap:8px;min-width:0;background:var(--s1);border:1px solid var(--line);border-radius:var(--r);padding:8px}
+.lane header{display:flex;align-items:center;gap:8px;padding:4px 6px 6px;font-weight:600;font-size:13px}
+.lane header .c{font:500 12px var(--mono);color:var(--fg-3)} .lane header .add{margin-left:auto;color:var(--fg-3);height:24px;width:24px;display:grid;place-items:center;border-radius:6px} .lane header .add:hover{background:var(--s2);color:var(--fg)}
+.lane.drop{border-color:var(--sky);background:var(--blue-soft)}
+.lane .empty{color:var(--fg-3);font-size:13px;padding:14px 8px;text-align:center;border:1px dashed var(--line-2);border-radius:var(--r)}
+.card{background:var(--s2);border:1px solid var(--line);border-radius:var(--r);padding:12px;display:flex;flex-direction:column;gap:8px;position:relative}
+.card:hover{border-color:var(--line-2);background:var(--s3)} .card:has(a.t:focus-visible){box-shadow:var(--focus)}
+.card.hot{border-left:3px solid var(--orange);padding-left:11px}
+.card a.t{font-weight:600;font-size:14.5px;line-height:1.35;letter-spacing:-.005em;display:block} .card a.t:hover{color:var(--sky)}
+.card a.t:focus-visible{box-shadow:none}
+.status{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--fg-2);flex-wrap:wrap}
+.meta{display:flex;align-items:center;gap:10px;color:var(--fg-3);font-size:12px} .meta .id,.meta .num{font-family:var(--mono);font-size:12px} .meta .num{color:var(--fg-2)}
+.chip{font:500 12px var(--sans);color:var(--fg-2);background:var(--s3);border-radius:6px;padding:1px 7px} .chip.ready{color:var(--teal);background:var(--teal-soft)}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px var(--sans);border-radius:999px;padding:1px 9px 1px 7px}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.p-run{color:var(--sky);background:var(--blue-soft)} .p-wait{color:var(--orange-t);background:var(--orange-soft)} .p-done{color:var(--teal);background:var(--teal-soft)}
+.p-fail{color:var(--red);background:var(--red-soft)} .p-queue{color:var(--fg-2);background:var(--s3)} .p-budget{color:var(--violet);background:var(--violet-soft)}
+.p-run::before{animation:pulse 1.6s infinite} @keyframes pulse{50%{opacity:.3}} @media (prefers-reduced-motion:reduce){.p-run::before{animation:none}}
+.bar{height:3px;background:var(--s3);border-radius:2px;overflow:hidden}.bar i{display:block;height:100%;background:var(--blue);border-radius:2px}
+.card .ask{display:flex;gap:6px;margin-top:2px}
+.hint{color:var(--fg-3);font-size:13px;margin-top:14px}
+/* decisions */
+.inbox{display:grid;gap:12px;max-width:860px}
+.dec{background:var(--s1);border:1px solid var(--line);border-left:3px solid var(--orange);border-radius:var(--r);padding:16px 18px;display:grid;gap:10px}
+.dec .h{display:flex;align-items:center;gap:10px;flex-wrap:wrap} .dec .h a.t{font-weight:600;font-size:15px} .dec .h a.t:hover{color:var(--sky)} .dec .h .id{font:12px var(--mono);color:var(--fg-3)}
+.dec .q{color:var(--fg-2)} .dec .q code{font:12px var(--mono);background:var(--s3);padding:1px 6px;border-radius:4px;color:var(--fg)}
+.dec .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input.f{flex:1;min-width:200px;height:36px;font:13px var(--sans);padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--s1);color:var(--fg)}
+.note{color:var(--fg-3);font-size:12.5px}
+/* panels */
+.split{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px}
+.panel{background:var(--s1);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+.panel h2{font-size:12.5px;margin:0 0 12px;color:var(--fg-3);font-weight:600}
+.hd{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px} .hd h1{font-size:20px;margin:0;letter-spacing:-.01em;line-height:1.3;font-weight:600}
+.kv{display:grid;grid-template-columns:96px 1fr;gap:8px 12px;font-size:13px;margin:0} .kv dt{color:var(--fg-3)} .kv dd{margin:0;font-family:var(--mono);font-size:12.5px;color:var(--fg-2)}
+.tl{list-style:none;margin:0;padding:0;display:grid;gap:12px}
+.tl li{display:grid;grid-template-columns:16px 1fr;gap:10px;font-size:13px}
+.tl li i{width:8px;height:8px;border-radius:50%;background:var(--line-2);margin-top:6px;justify-self:center}
+.tl li.ok i{background:var(--teal)} .tl li.r i{background:var(--sky)}
+.tl .when{color:var(--fg-3);font-size:12px} .tl .when code{font:12px var(--mono)}
+.log{font:12px/1.6 var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;color:var(--fg-2);white-space:pre-wrap;max-height:190px;overflow:auto}
+.log .ok{color:var(--teal)} .log .k{color:var(--fg-3)}
+/* review */
+.rv{display:grid;gap:16px;max-width:980px}
+.verdict{display:flex;align-items:center;gap:14px;background:var(--teal-soft);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}
+.verdict .mark{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:var(--teal);color:#031018;flex:none}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--fg-3);font-weight:500;font-size:12.5px;padding:6px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line)} td.m{font-family:var(--mono);font-size:12px;color:var(--fg-2)} tr:last-child td{border-bottom:0}
+.actbar{position:sticky;bottom:12px;display:flex;gap:10px;align-items:center;background:var(--s1);border:1px solid var(--line-2);border-radius:var(--r);padding:10px 12px;box-shadow:0 12px 32px -16px rgba(0,0,0,.6)}
+
+/* drag and drop */
+.card[draggable="true"]{cursor:grab} .card.dragging{opacity:.55;cursor:grabbing;transform:scale(.98) rotate(-1deg);transition:transform .12s}
+.card.settle{animation:settle .32s cubic-bezier(.2,.8,.2,1)} @keyframes settle{0%{transform:translateY(-6px) scale(1.02);box-shadow:0 14px 30px -14px rgba(0,0,0,.7)}100%{transform:none;box-shadow:none}}
+.lane.over{border-color:var(--sky);background:var(--blue-soft)}
+.ghost{height:0;border:0;margin:0;border-radius:var(--r);background:var(--blue-soft);outline:1px dashed var(--sky);transition:height .15s,margin .15s} .ghost.show{height:64px;margin:0 0 8px}
+@media (prefers-reduced-motion:reduce){.card.settle{animation:none}.card.dragging{transform:none}.ghost{transition:none}}
+.toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,20px);opacity:0;background:var(--s1);border:1px solid var(--line-2);border-radius:var(--r);padding:10px 14px;font-size:13px;box-shadow:0 12px 32px -16px rgba(0,0,0,.6);transition:transform .2s,opacity .2s;z-index:9;display:flex;gap:10px;align-items:center;max-width:min(92vw,560px)}
+.toast.on{transform:translate(-50%,0);opacity:1}
+/* settings */
+.set{display:grid;gap:16px;max-width:900px}
+.set .row2{display:grid;grid-template-columns:150px 1fr;gap:12px 16px;align-items:center;font-size:13px}
+.set .row2 label{color:var(--fg-2)} .set .row2 .ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+select.f,input.f.s{height:36px;font:13px var(--sans);padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--s1);color:var(--fg);min-width:0;flex:0 1 auto}
+.seg{display:inline-flex;border:1px solid var(--line-2);border-radius:var(--r);overflow:hidden} .seg a{padding:0 12px;height:34px;display:inline-flex;align-items:center;color:var(--fg-2);font-weight:500;font-size:13px} .seg a.on{background:var(--blue-soft);color:var(--fg)}
+.conn{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.conn .c{border:1px solid var(--line);border-radius:var(--r);padding:14px;background:var(--s2);display:grid;gap:8px;align-content:start}
+.conn .c .n{display:flex;align-items:center;gap:10px;font-weight:600} .conn .c .lg{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;font:600 12px var(--sans);color:#fff;flex:none}
+.conn .c .d{color:var(--fg-3);font-size:12.5px;line-height:1.5} .conn .c .a{display:flex;gap:8px;align-items:center;margin-top:2px;flex-wrap:wrap}
+.map select{height:30px;font-size:12.5px}
+.danger{border-color:#5a2525} .danger h2{color:var(--red)}
+
+
+/* activity */
+.act{display:grid;gap:16px;max-width:980px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat{background:var(--s1);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+.stat .l{color:var(--fg-3);font-size:12.5px} .stat .v{font:500 20px var(--mono);margin-top:2px;letter-spacing:-.01em} .stat .v small{font:12px var(--mono);color:var(--fg-3);margin-left:6px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.filters .seg a{height:32px;font-size:12.5px}
+.day{color:var(--fg-3);font-size:12.5px;font-weight:600;margin:6px 0 0}
+.ev{display:grid;grid-template-columns:54px 20px 1fr;gap:0 10px;align-items:start;padding:9px 0;border-bottom:1px solid var(--line)}
+.ev:last-child{border-bottom:0}
+.ev .t{font:12px var(--mono);color:var(--fg-3);padding-top:2px}
+.ev .dot{width:8px;height:8px;border-radius:50%;background:var(--line-2);margin:7px auto 0}
+.ev.run .dot{background:var(--sky)} .ev.wait .dot{background:var(--orange)} .ev.done .dot{background:var(--teal)} .ev.fail .dot{background:var(--red)} .ev.you .dot{background:var(--teal)}
+.ev .w{font-size:13px} .ev .w a{font-weight:600} .ev .w a:hover{color:var(--sky)} .ev .w .by{color:var(--fg-3)} .ev .w code{font:12px var(--mono);color:var(--fg-2)}
+.ev .w .num{font-family:var(--mono);font-size:12.5px;color:var(--fg-2)}
+
+
+/* dialog */
+.scrim{position:fixed;inset:0;background:rgba(2,8,16,.6);backdrop-filter:blur(2px);z-index:20;display:none;align-items:flex-start;justify-content:center;padding:6vh 16px}
+.scrim.on{display:flex}
+.dlg{width:min(640px,100%);background:var(--s1);border:1px solid var(--line-2);border-radius:var(--r);box-shadow:0 24px 60px -24px rgba(0,0,0,.8);animation:dlgin .18s cubic-bezier(.2,.8,.2,1)}
+@keyframes dlgin{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}} @media (prefers-reduced-motion:reduce){.dlg{animation:none}}
+.dlg header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)} .dlg header h2{margin:0;font-size:15px;font-weight:600}
+.dlg header .x{margin-left:auto;width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--fg-3)} .dlg header .x:hover{background:var(--s2);color:var(--fg)}
+.dlg .body{padding:16px 18px;display:grid;gap:14px}
+.fld{display:grid;gap:6px} .fld label{font-size:12.5px;color:var(--fg-2);font-weight:500} .fld .hint{margin:0;font-size:12px}
+.fld input.f,.fld select.f,.fld textarea.f{width:100%;font:13px var(--sans);padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--s2);color:var(--fg)}
+.fld textarea.f{padding:10px 12px;min-height:96px;resize:vertical;line-height:1.5}
+.fld .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tagbox{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:36px;padding:4px 8px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--s2)}
+.tagbox:focus-within{box-shadow:var(--focus)} .tagbox input{border:0;background:transparent;color:var(--fg);font:13px var(--sans);min-width:120px;flex:1;height:26px;outline:none}
+.tag{display:inline-flex;align-items:center;gap:4px;font:500 12px var(--sans);color:var(--fg-2);background:var(--s3);border-radius:6px;padding:2px 4px 2px 8px}
+.tag.ready{color:var(--teal);background:var(--teal-soft)} .tag b{font-weight:400;cursor:pointer;width:18px;height:18px;display:grid;place-items:center;border-radius:4px;color:var(--fg-3)} .tag b:hover{background:rgba(255,255,255,.08);color:var(--fg)}
+.sw{display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--fg-2)} .sw i{width:34px;height:20px;border-radius:999px;background:var(--s3);border:1px solid var(--line-2);position:relative;transition:background .15s} .sw i::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--fg-3);transition:transform .15s,background .15s}
+.sw.on i{background:var(--teal-soft);border-color:var(--teal)} .sw.on i::after{transform:translateX(14px);background:var(--teal)}
+.dlg footer{display:flex;gap:10px;align-items:center;padding:12px 18px;border-top:1px solid var(--line)} .dlg footer .note{margin-right:auto}
+/* comments & tags on the card page */
+.cm{display:grid;gap:12px;font-size:13px} .cm .one{display:grid;gap:3px} .cm .who{display:flex;gap:8px;align-items:center;color:var(--fg-3);font-size:12px} .cm .who b{color:var(--fg);font-weight:600} .cm .who .k{font:500 11px var(--sans);padding:0 6px;border-radius:4px;background:var(--s3);color:var(--fg-2)}
+.cm .txt{color:var(--fg-2);white-space:pre-wrap} .cm .new{animation:settle .3s}
+.composer{display:grid;gap:8px;margin-top:12px} .composer textarea{min-height:64px} .composer .acts{display:flex;gap:8px;align-items:center} .composer .acts .note{margin-left:auto}
+.card-tags{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+
+
+/* light-mode specifics: the primary gradient stays in the blues so white text keeps contrast; the orange button uses navy text */
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]) .btn.pri{background:linear-gradient(90deg,var(--blue-d),var(--blue) 70%,#1e88e5)} :root:not([data-theme="dark"]) .btn.warm{color:#0b1a2b} :root:not([data-theme="dark"]) .verdict .mark{color:#fff} :root:not([data-theme="dark"]) .log{background:#0b1a2b;color:#c9d4e3;border-color:#0b1a2b} :root:not([data-theme="dark"]) .log .k{color:#8ea0b8} :root:not([data-theme="dark"]) .log .ok{color:#1DE9B6} :root:not([data-theme="dark"]) .scrim{background:rgba(11,26,43,.45)} :root:not([data-theme="dark"]) .danger{border-color:#f1c9c6} :root:not([data-theme="dark"]) .card{box-shadow:0 1px 2px rgba(11,26,43,.04)} :root:not([data-theme="dark"]) .lane{background:#eef3f9} }
+:root[data-theme="light"] .btn.pri{background:linear-gradient(90deg,var(--blue-d),var(--blue) 70%,#1e88e5)} :root[data-theme="light"] .btn.warm{color:#0b1a2b} :root[data-theme="light"] .verdict .mark{color:#fff} :root[data-theme="light"] .log{background:#0b1a2b;color:#c9d4e3;border-color:#0b1a2b} :root[data-theme="light"] .log .k{color:#8ea0b8} :root[data-theme="light"] .log .ok{color:#1DE9B6} :root[data-theme="light"] .scrim{background:rgba(11,26,43,.45)} :root[data-theme="light"] .danger{border-color:#f1c9c6} :root[data-theme="light"] .card{box-shadow:0 1px 2px rgba(11,26,43,.04)} :root[data-theme="light"] .lane{background:#eef3f9}
+/* sidebar bottom: settings + theme */
+.side .bottom{margin-top:auto;display:grid;gap:4px;padding-top:10px;border-top:1px solid var(--line)}
+.side .bottom .nav{gap:2px}
+.theme{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:var(--r);color:var(--fg-2);font-weight:500;cursor:pointer;user-select:none}
+.theme:hover{background:var(--s2);color:var(--fg)} .theme .seg{margin-left:auto} .theme .seg a{height:26px;padding:0 8px;font-size:12px}
+.side .foot{margin-top:0;padding-top:6px}
+
+
+.btn.icon{width:36px;padding:0;justify-content:center;color:var(--fg-2)} .btn.icon:hover{color:var(--fg)}
+
+@media (max-width:900px){.app{grid-template-columns:1fr}.side{display:none}.split{grid-template-columns:1fr}.top{margin:0 -20px 12px}.search{display:none}}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-board" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="11" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M4 13V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6"/><path d="M4 13v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="7" r="1.2"/><circle cx="15" cy="7" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="17" r="1.2"/><circle cx="15" cy="17" r="1.2"/></symbol>
+</defs></svg>
+
+<div class="app">
+<aside class="side">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 60 52" role="img" aria-label="Tentaqles mark"><defs><linearGradient id="tq-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2E6FB5"/><stop offset="1" stop-color="#123C6E"/></linearGradient><linearGradient id="tq-tent" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1565C0"/><stop offset=".55" stop-color="#26C6DA"/><stop offset="1" stop-color="#F97316"/></linearGradient></defs><circle cx="24" cy="22" r="16" fill="none" stroke="url(#tq-ring)" stroke-width="8"/><path d="M26 30 C 30 42, 44 44, 50 36 C 54 31, 58 36, 55 40" fill="none" stroke="url(#tq-tent)" stroke-width="6" stroke-linecap="round"/></svg>
+    <span>tq hub<small>Tentaqles</small></span>
+  </div>
+  <a class="ws" href="#board"><span>tentaqles<small>3 workspaces, all trusted</small></span><svg class="i"><use href="#i-chev"/></svg></a>
+  <nav class="nav">
+    <a class="on" href="#board"><svg class="i"><use href="#i-board"/></svg> Board</a>
+    <a href="#decisions"><svg class="i"><use href="#i-inbox"/></svg> Decisions <span class="n">2</span></a>
+    <a href="#card"><svg class="i"><use href="#i-play"/></svg> Runs</a>
+    <a href="#review"><svg class="i"><use href="#i-check"/></svg> Reviews</a>
+    <a href="#activity"><svg class="i"><use href="#i-pulse"/></svg> Activity</a>
+    <a href="#connections"><svg class="i"><use href="#i-link"/></svg> Connections</a>
+  </nav>
+  <div class="bottom">
+    <nav class="nav"><a href="#settings"><svg class="i"><use href="#i-gear"/></svg> Settings</a></nav>
+    <div class="foot">serving <b>127.0.0.1:7470</b><br>2 of 2 running · today <b>$4.12</b></div>
+  </div>
+</aside>
+
+<main>
+  <div class="top">
+    <h1 id="title">Board</h1>
+    <div class="search"><svg class="i"><use href="#i-search"/></svg> Search cards, runs, decisions <kbd>/</kbd></div>
+    <a class="btn pri" href="#" id="newcard"><svg class="i"><use href="#i-plus"/></svg> New card</a>
+    <button class="btn icon" id="themebtn" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="i"><use href="#i-sun"/></svg></button>
+  </div>
+
+  <section id="board" class="view on">
+    <div class="lanes">
+      <div class="lane" data-lane="backlog"><header>Backlog <span class="c">3</span><a class="add" href="#" data-new="backlog" aria-label="Add to backlog"><svg class="i"><use href="#i-plus"/></svg></a></header>
+        <div class="card" draggable="true"><a class="t" href="#card">Export invoices as CSV</a><div class="status"><span class="chip">feature</span><span class="chip ready">agent-ready</span></div><div class="meta"><span class="id">c-7hq2</span></div></div>
+        <div class="card" draggable="true"><a class="t" href="#card">Where do the 2 s at session start go?</a><div class="status"><span class="chip">analysis</span></div><div class="meta"><span class="id">c-k9pm</span></div></div>
+        <div class="card" draggable="true"><a class="t" href="#card">Rotate the onboarding copy</a><div class="status"><span class="chip">chore</span></div><div class="meta"><span class="id">c-wv0a</span></div></div>
+      </div>
+      <div class="lane" data-lane="todo"><header>Todo <span class="c">1</span><a class="add" href="#" data-new="todo" aria-label="Add to todo"><svg class="i"><use href="#i-plus"/></svg></a></header>
+        <div class="card" draggable="true"><a class="t" href="#card">Status line shows waiting decisions</a><div class="status"><span class="chip">feature</span><span class="chip ready">agent-ready</span></div><div class="meta"><span class="id">c-x1d8</span><span>budget <span class="num">$10</span></span></div></div>
+      </div>
+      <div class="lane" data-lane="in-progress"><header>In progress <span class="c">2</span></header>
+        <div class="card" draggable="true"><a class="t" href="#card">Add --json to tq hub status</a><div class="status"><span class="pill p-run">running</span><span>round 3 of 12</span></div><div class="bar"><i style="width:31%"></i></div><div class="meta"><span class="id">r-3c8n</span><span class="num">$3.10</span><span>14 min</span></div></div>
+        <div class="card hot" draggable="true"><a class="t" href="#decisions">Fix: cancel leaves the lock held</a><div class="status"><span class="pill p-wait">waiting on you</span><span>plan approval, 11 min ago</span></div><div class="ask"><a class="btn warm sm" href="#decisions">Approve plan</a><a class="btn sm" href="#decisions">Review it</a></div></div>
+      </div>
+      <div class="lane" data-lane="review"><header>Review <span class="c">1</span></header>
+        <div class="card" draggable="true"><a class="t" href="#review">Retry once on a non-zero exit</a><div class="status"><span class="pill p-done">finished</span><span>3 checkpoints, 2 reviews PASS</span></div><div class="ask"><a class="btn sm" href="#review">Open review</a></div></div>
+      </div>
+      <div class="lane" data-lane="done"><header>Done <span class="c">12</span></header>
+        <div class="card" draggable="true"><a class="t" href="#card">Per-workspace hub database</a><div class="meta"><span>PR #31</span><span class="num">$6.80</span></div></div>
+        <div class="card" draggable="true"><a class="t" href="#card">Mask notification bodies</a><div class="meta"><span>PR #31</span><span class="num">$0.90</span></div></div>
+        <div class="card" draggable="true"><a class="t" href="#card">Budget: tokens, dollars, minutes, rounds</a><div class="status"><span class="pill p-budget">budget raised once</span></div><div class="meta"><span>PR #31</span><span class="num">$12.40</span></div></div>
+      </div>
+    </div>
+    <p class="hint">Try it: drag a card into In progress. An agent-ready card starts a run; the toast and the card show what the hub would do. Drag it out again to cancel. An orange edge means a run is waiting on you; the action is on the card.</p>
+  </section>
+
+  <section id="decisions" class="view">
+    <div class="inbox">
+      <div class="dec">
+        <div class="h"><span class="pill p-wait">plan approval</span><a class="t" href="#card">Fix: cancel leaves the lock held</a><span class="id">c-9ab2 · r-1f0k · 11 min ago</span></div>
+        <div class="q">The agent proposes 2 checkpoints: <code>release the lock in end()</code> and <code>cover the cancel race</code>. Tests at the unit layer, 4 cases. Verify: <code>go test ./internal/hub/runner/ -run Cancel</code>.</div>
+        <div class="acts"><a class="btn warm" href="#">Approve plan</a><a class="btn" href="#">Reject with note</a><input class="f" placeholder="Note to the agent (optional)"></div>
+        <div class="note">Approving signs the answer with your hub token and records it in the gate. The agent cannot do this.</div>
+      </div>
+      <div class="dec">
+        <div class="h"><span class="pill p-budget">over budget</span><a class="t" href="#card">Budget: tokens, dollars, minutes, rounds</a><span class="id">c-3dd0 · r-8m2q · 2 h ago</span></div>
+        <div class="q">The run used <b>$10.00</b> of <b>$10.00</b> after 9 rounds. Checkpoint 3 of 4 is passing; the review is pending.</div>
+        <div class="acts"><a class="btn warm" href="#">Raise to $15 and resume</a><a class="btn danger" href="#">Stop the run</a><input class="f" placeholder="rounds=6 usd=15"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="card" class="view">
+    <div class="split">
+      <div>
+        <div class="panel">
+          <div class="hd"><div><div class="status" style="margin-bottom:8px"><span class="pill p-run">running</span><span>round 3 of 12</span><span class="chip">feature</span></div><h1>Add --json to tq hub status</h1></div><a class="btn danger" style="margin-left:auto" href="#">Cancel run</a></div>
+          <p style="margin:0 0 16px;color:var(--fg-2)">Print the same information as <code class="m">tq hub status</code> as one JSON object so the preamble and scripts can read it. Keep the human text as the default.</p>
+          <h2>Timeline</h2>
+          <ul class="tl">
+            <li class="ok"><i></i><div>Plan approved by you, 3 checkpoints <div class="when">14:02 · <code>hub:renato</code></div></div></li>
+            <li class="ok"><i></i><div>Checkpoint 1 passed; tests locked; build-critic PASS <div class="when">14:11</div></div></li>
+            <li class="r"><i></i><div>Round 3 started, resuming session <code>8f1c…</code> <div class="when">14:19 · $1.20 so far this round</div></div></li>
+          </ul>
+        </div>
+        <div class="panel" style="margin-top:16px"><h2>Live log</h2>
+<pre class="log"><span class="k">14:19:02</span>  round 3 · claude -p --output-format json --settings …/allow.json
+<span class="k">14:19:40</span>  build-gate record-test 2 → <span class="ok">ok (4 passed)</span>
+<span class="k">14:20:11</span>  Edit internal/cmd/hub_serve.go
+<span class="k">14:20:30</span>  go test ./internal/cmd/ -run HubStatus … <span class="ok">ok</span></pre></div>
+      </div>
+      <div>
+        <div class="panel"><h2>Run</h2>
+          <dl class="kv"><dt>Run</dt><dd>r-3c8n</dd><dt>Adapter</dt><dd>claude</dd><dt>On-ramp</dt><dd>feature → build resume</dd><dt>Worktree</dt><dd>…/tentaqles-build-hub-json</dd><dt>Spent</dt><dd>$3.10 · 410k tok · 14 min</dd><dt>Budget</dt><dd>$10 · 2M · 120 min · 12 rounds</dd></dl>
+          <div class="bar" style="margin-top:14px"><i style="width:31%"></i></div><div class="note" style="margin-top:5px">31% of the dollar budget</div>
+        </div>
+        <div class="panel" style="margin-top:16px"><h2>Tags</h2>
+          <div class="card-tags" id="cardtags"><span class="tag">feature<b title="Remove">×</b></span><span class="tag ready">agent-ready<b title="Remove">×</b></span><span class="tagbox" style="min-height:30px;padding:2px 8px;flex:1"><input id="tagin" placeholder="Add a tag, Enter to confirm" aria-label="Add a tag"></span></div>
+          <p class="note" style="margin:8px 0 0">agent-ready is the only tag with behaviour: a card with it starts a run when it enters In progress.</p>
+        </div>
+        <div class="panel" style="margin-top:16px"><h2>Comments</h2>
+          <div class="cm" id="comments">
+            <div class="one"><div class="who"><b>system</b><span class="k">hub</span><span>14:02</span></div><div class="txt">The build moved into its worktree; the next round starts there.</div></div>
+            <div class="one"><div class="who"><b>agent</b><span class="k">run r-3c8n</span><span>14:12</span></div><div class="txt">Checkpoint 1 passed. Next: wire --json into the status command and lock its tests.</div></div>
+          </div>
+          <div class="composer"><textarea class="f" id="cmtext" placeholder="Write a comment. Markdown headings, lists, code and links render; everything else stays text." aria-label="Comment"></textarea><div class="acts"><a class="btn pri sm" href="#" id="cmpost">Comment</a><a class="btn ghost sm" href="#" id="cmclear">Clear</a><span class="note">Posted as <code class="m">hub:renato</code>; masked for secrets before it is stored.</span></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="review" class="view">
+    <div class="rv">
+      <div class="verdict"><span class="mark"><svg class="i"><use href="#i-check"/></svg></span><div><div style="font-weight:600;font-size:15px">Everything the gate recorded says this is done</div><div class="note">3 checkpoints passed, 2 reviews PASS, DoD ok, 17 min, $4.60. Built from signed gate records and the hub's own git summary only; nothing here comes from what the agent said.</div></div></div>
+      <div class="panel"><h2>What was asked</h2><p style="margin:0;color:var(--fg-2)">Retry once on a non-zero exit when the gate state did not change, then fail. Card <code class="m">c-5pq1</code>, feature, approved plan with 3 checkpoints.</p></div>
+      <div class="panel"><h2>Checkpoints and evidence</h2>
+        <table><tr><th>#</th><th>Checkpoint</th><th>Covered by approval</th><th>Tests</th><th>Verify</th><th>Result</th></tr>
+        <tr><td class="m">1</td><td>classify retry verdict</td><td><span class="pill p-done">yes</span></td><td class="m">classify_test.go · unit</td><td class="m">go test ./internal/hub/runner -run Classify</td><td><span class="pill p-done">ok 0.9 s</span></td></tr>
+        <tr><td class="m">2</td><td>runner retries once</td><td><span class="pill p-done">yes</span></td><td class="m">rounds_test.go · unit</td><td class="m">go test ./internal/hub/runner -run Retry</td><td><span class="pill p-done">ok 1.4 s</span></td></tr>
+        <tr><td class="m">3</td><td>second failure ends the run</td><td><span class="pill p-done">yes</span></td><td class="m">rounds_test.go · unit</td><td class="m">go test ./internal/hub/runner -run ExitFailed</td><td><span class="pill p-done">ok 1.1 s</span></td></tr></table></div>
+      <div class="panel"><h2>Reviews</h2>
+        <table><tr><th>Checkpoint</th><th>Reviewer</th><th>Result</th><th>Findings</th></tr>
+        <tr><td class="m">1–3</td><td>build-critic</td><td><span class="pill p-done">PASS</span></td><td>0 critical, 1 minor (test name)</td></tr>
+        <tr><td class="m">1–3</td><td>security-reviewer</td><td><span class="pill p-done">PASS</span></td><td>0</td></tr></table></div>
+      <div class="panel"><h2>What was done</h2>
+        <table><tr><td class="m">a1f9c02</td><td>feat(hub): retry once on a non-zero exit with unchanged state</td></tr><tr><td class="m">b77e1d0</td><td>test(hub): retry and exit-failed verdicts</td></tr></table>
+        <div class="note" style="margin-top:10px">3 files changed, +142 −9. No PR opened yet.</div></div>
+      <div class="actbar"><a class="btn pri" href="#">Approve and finish</a><a class="btn" href="#">Request changes</a><input class="f" placeholder="What should change (required to request changes)"></div>
+    </div>
+  </section>
+
+  <section id="activity" class="view">
+    <div class="act">
+      <div class="stats">
+        <div class="stat"><div class="l">Spent today</div><div class="v">$4.12<small>1.9M tok</small></div></div>
+        <div class="stat"><div class="l">Runs ended today</div><div class="v">5<small>4 finished, 1 cancelled</small></div></div>
+        <div class="stat"><div class="l">Median wait on you</div><div class="v">11 min</div></div>
+        <div class="stat"><div class="l">Decisions answered</div><div class="v">7<small>6 page, 1 terminal</small></div></div>
+        <div class="stat"><div class="l">Cost by kind</div><div class="v" style="font-size:13px;font-family:var(--sans);font-weight:400;color:var(--fg-2);margin-top:6px">feature <span class="num">$9.90</span> · fix <span class="num">$2.10</span> · analysis <span class="num">$0.60</span></div></div>
+      </div>
+      <div class="filters">
+        <span class="seg"><a class="on" href="#">All</a><a href="#">Runs</a><a href="#">Decisions</a><a href="#">Cards</a><a href="#">Reviews</a><a href="#">Sync</a></span>
+        <span class="seg"><a class="on" href="#">Today</a><a href="#">7 days</a><a href="#">30 days</a></span>
+        <span class="note">Aggregate data only: verbs, ids, lanes, costs. Card text and agent output never reach this log.</span>
+      </div>
+      <div class="panel" style="padding-top:8px">
+        <div class="day">Today</div>
+        <div class="ev wait"><span class="t">14:31</span><span class="dot"></span><div class="w">Run <code>r-1f0k</code> waits on you: plan approval for <a href="#decisions">Fix: cancel leaves the lock held</a> <span class="by">· 2 checkpoints proposed</span></div></div>
+        <div class="ev run"><span class="t">14:19</span><span class="dot"></span><div class="w">Round 3 started on <a href="#card">Add --json to tq hub status</a> <span class="by">· resumed session</span> <span class="num">$3.10 so far</span></div></div>
+        <div class="ev you"><span class="t">14:02</span><span class="dot"></span><div class="w">You approved the plan for <a href="#card">Add --json to tq hub status</a> <span class="by">· signed <code>hub:renato</code></span></div></div>
+        <div class="ev done"><span class="t">13:58</span><span class="dot"></span><div class="w">Run <code>r-5pq1</code> finished: <a href="#review">Retry once on a non-zero exit</a> moved to Review <span class="by">· 3 checkpoints, 2 reviews PASS</span> <span class="num">$4.60 · 17 min</span></div></div>
+        <div class="ev"><span class="t">13:48</span><span class="dot"></span><div class="w">Linear sync: TQ-140 moved to Done; card <code>c-9ab2</code> moved to Done <span class="by">· tracker → hub</span></div></div>
+        <div class="ev fail"><span class="t">13:20</span><span class="dot"></span><div class="w">Run <code>r-8m2q</code> stopped over budget on <a href="#decisions">Budget: tokens, dollars, minutes, rounds</a> <span class="num">$10.00 of $10.00</span> <span class="by">· asked: raise and resume, or stop</span></div></div>
+        <div class="ev run"><span class="t">12:51</span><span class="dot"></span><div class="w">Run <code>r-3c8n</code> started on <a href="#card">Add --json to tq hub status</a> <span class="by">· feature on-ramp, worktree created</span></div></div>
+        <div class="ev"><span class="t">12:49</span><span class="dot"></span><div class="w">You moved <a href="#card">Add --json to tq hub status</a> from Todo to In progress</div></div>
+        <div class="ev"><span class="t">12:40</span><span class="dot"></span><div class="w">Agent session added <a href="#board">Where do the 2 s at session start go?</a> to Backlog <span class="by">· analysis</span></div></div>
+        <div class="day">Yesterday</div>
+        <div class="ev done"><span class="t">18:05</span><span class="dot"></span><div class="w">You marked <a href="#board">Per-workspace hub database</a> done <span class="by">· PR #31 merged</span> <span class="num">$6.80 total</span></div></div>
+        <div class="ev you"><span class="t">17:12</span><span class="dot"></span><div class="w">You requested changes on <a href="#board">Mask notification bodies</a> <span class="by">· "mask the title too"</span></div></div>
+        <div class="ev"><span class="t">16:30</span><span class="dot"></span><div class="w">Hub stopped for an upgrade; 2 in-flight runs requeued <span class="by">· resumed 16:34</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="connections" class="view">
+    <div class="set">
+      <div class="panel"><h2>Company trackers</h2>
+        <p style="margin:0 0 14px;color:var(--fg-2)">Cards can come from the tracker your client already uses and go back there with status, cost and the review link. One tracker per workspace. Secrets stay in the workspace's own secret store; the hub keeps only the connection name.</p>
+        <div class="conn">
+          <div class="c"><div class="n"><span class="lg" style="background:#5E6AD2">Li</span>Linear<span class="pill p-done" style="margin-left:auto">connected</span></div><div class="d">Team <b>TQ</b>, project <b>tq hub</b>. Last sync 2 min ago, 14 issues mirrored.</div><div class="a"><a class="btn sm" href="#">Sync now</a><a class="btn ghost sm" href="#">Disconnect</a></div></div>
+          <div class="c"><div class="n"><span class="lg" style="background:#F06A6A">As</span>Asana<span class="pill p-queue" style="margin-left:auto">not connected</span></div><div class="d">Mirror a project's tasks as cards; a finished card completes the task with the review link.</div><div class="a"><a class="btn sm" href="#">Connect</a><span class="note"><code class="m">tq hub connect asana</code></span></div></div>
+          <div class="c"><div class="n"><span class="lg" style="background:#0078D4">Az</span>Azure DevOps<span class="pill p-queue" style="margin-left:auto">not connected</span></div><div class="d">Work items in a board column become cards; pull requests link back to the work item.</div><div class="a"><a class="btn sm" href="#">Connect</a></div></div>
+          <div class="c"><div class="n"><span class="lg" style="background:#2684FF">Ji</span>Jira<span class="pill p-queue" style="margin-left:auto">not connected</span></div><div class="d">Issues from a JQL filter become cards; transitions follow the lane mapping.</div><div class="a"><a class="btn sm" href="#">Connect</a></div></div>
+        </div>
+      </div>
+      <div class="panel"><h2>Lane mapping for Linear</h2>
+        <table class="map"><tr><th>Hub lane</th><th>Linear state</th><th>Direction</th></tr>
+        <tr><td>Backlog</td><td><select class="f"><option>Backlog</option><option>Triage</option></select></td><td><span class="seg"><a class="on" href="#">both ways</a><a href="#">tracker → hub</a><a href="#">hub → tracker</a></span></td></tr>
+        <tr><td>Todo</td><td><select class="f"><option>Todo</option></select></td><td><span class="seg"><a class="on" href="#">both ways</a><a href="#">tracker → hub</a><a href="#">hub → tracker</a></span></td></tr>
+        <tr><td>In progress</td><td><select class="f"><option>In Progress</option></select></td><td><span class="seg"><a href="#">both ways</a><a href="#">tracker → hub</a><a class="on" href="#">hub → tracker</a></span></td></tr>
+        <tr><td>Review</td><td><select class="f"><option>In Review</option></select></td><td><span class="seg"><a href="#">both ways</a><a href="#">tracker → hub</a><a class="on" href="#">hub → tracker</a></span></td></tr>
+        <tr><td>Done</td><td><select class="f"><option>Done</option><option>Canceled</option></select></td><td><span class="seg"><a href="#">both ways</a><a href="#">tracker → hub</a><a class="on" href="#">hub → tracker</a></span></td></tr></table>
+        <div class="note" style="margin-top:10px">Only issues with the <code class="m">agent-ready</code> label start runs. Moving a card into In progress on either side starts one; when it finishes the hub posts a comment with the run id, cost and the review link.</div>
+      </div>
+      <div class="panel"><h2>Recent sync</h2>
+        <table><tr><th>When</th><th>What</th><th>Direction</th></tr>
+        <tr><td class="m">14:31</td><td>TQ-142 "Add --json to tq hub status" became card c-3c8n in In progress</td><td>Linear → hub</td></tr>
+        <tr><td class="m">14:02</td><td>c-5pq1 finished: comment with the review link and $4.60 posted to TQ-137</td><td>hub → Linear</td></tr>
+        <tr><td class="m">13:48</td><td>TQ-140 moved to Done in Linear; card c-9ab2 moved to Done</td><td>Linear → hub</td></tr></table>
+      </div>
+    </div>
+  </section>
+
+  <section id="settings" class="view">
+    <div class="set">
+      <div class="panel"><h2>Serving</h2>
+        <div class="row2">
+          <label>Topology</label><div class="ctl"><span class="seg"><a class="on" href="#">this workspace</a><a href="#">every trusted workspace</a></span><span class="note">one hub per workspace; a second is refused</span></div>
+          <label>Bind</label><div class="ctl"><input class="f s" value="127.0.0.1:7470" style="width:180px"><span class="note">a non-loopback bind requires a token, printed once at start</span></div>
+          <label>Concurrency</label><div class="ctl"><input class="f s" value="2" style="width:70px"><span class="note">agents running at once in this workspace</span></div>
+        </div>
+      </div>
+      <div class="panel"><h2>Default budget per run</h2>
+        <div class="row2">
+          <label>Dollars</label><div class="ctl"><input class="f s" value="10" style="width:90px"><span class="note">the run stops and asks you when it is spent</span></div>
+          <label>Tokens</label><div class="ctl"><input class="f s" value="2,000,000" style="width:120px"><span class="note">input, output and cache writes</span></div>
+          <label>Minutes</label><div class="ctl"><input class="f s" value="120" style="width:90px"></div>
+          <label>Rounds</label><div class="ctl"><input class="f s" value="12" style="width:90px"><span class="note">one round is one agent start; a card can override this in its front matter</span></div>
+        </div>
+      </div>
+      <div class="panel"><h2>Notifications</h2>
+        <div class="row2">
+          <label>Desktop</label><div class="ctl"><span class="seg"><a class="on" href="#">on</a><a href="#">off</a></span><span class="note">one toast when a run waits on you or ends; never retried</span></div>
+          <label>Session preamble</label><div class="ctl"><span class="note">"N decisions waiting on you (tq hub open)" when a Claude session starts in this workspace</span></div>
+        </div>
+      </div>
+      <div class="panel"><h2>Who can do what</h2>
+        <table><tr><th>Action</th><th>You</th><th>An agent session</th></tr>
+        <tr><td>Add a card, comment</td><td><span class="pill p-done">yes</span></td><td><span class="pill p-done">yes, into Backlog or Todo</span></td></tr>
+        <tr><td>Start, cancel, move into or out of In progress</td><td><span class="pill p-done">yes</span></td><td><span class="pill p-fail">no</span></td></tr>
+        <tr><td>Answer a decision, approve, request changes, mark done</td><td><span class="pill p-done">yes, signed with your hub token</span></td><td><span class="pill p-fail">no</span></td></tr>
+        <tr><td>Set a budget</td><td><span class="pill p-done">yes</span></td><td><span class="pill p-fail">no</span></td></tr></table>
+      </div>
+      <div class="panel danger"><h2>Stop this hub</h2><div class="row2"><label>Running agents</label><div class="ctl"><a class="btn danger" href="#">Stop the hub</a><span class="note">in-flight runs are requeued and resume when a hub starts again; nothing is cancelled</span></div></div></div>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<div class="scrim" id="scrim" role="dialog" aria-modal="true" aria-labelledby="dlgtitle">
+  <div class="dlg">
+    <header><h2 id="dlgtitle">New card</h2><a class="x" href="#" id="dlgclose" aria-label="Close">×</a></header>
+    <div class="body">
+      <div class="fld"><label for="nc-title">Title</label><input class="f" id="nc-title" style="height:36px" placeholder="What should be built, fixed or looked at?"></div>
+      <div class="fld"><label for="nc-body">Body</label><textarea class="f" id="nc-body" placeholder="Context, acceptance checks, links. Markdown. A budget line in front matter overrides the default, e.g. budget: usd=15,rounds=8"></textarea></div>
+      <div class="fld"><div class="two">
+        <div class="fld"><label for="nc-kind">Kind</label><select class="f" id="nc-kind" style="height:36px"><option>feature</option><option>fix</option><option>hotfix</option><option>analysis</option><option>chore</option><option>project</option></select></div>
+        <div class="fld"><label for="nc-lane">Lane</label><select class="f" id="nc-lane" style="height:36px"><option value="backlog">Backlog</option><option value="todo">Todo</option><option value="in-progress">In progress (starts a run if agent-ready)</option></select></div>
+      </div></div>
+      <div class="fld"><div class="two">
+        <div class="fld"><label for="nc-project">Project folder</label><input class="f" id="nc-project" style="height:36px" value="tentaqles" placeholder="folder inside the workspace"></div>
+        <div class="fld"><label for="nc-parent">Parent card</label><select class="f" id="nc-parent" style="height:36px"><option value="">none</option><option>Per-workspace hub database</option><option>demo-todo release 1</option></select></div>
+      </div></div>
+      <div class="fld"><label>Tags</label><div class="tagbox" id="nc-tags"><input id="nc-tagin" placeholder="Type a tag and press Enter"></div><p class="hint">Suggestions: agent-ready, needs-spec, client-visible, security</p></div>
+      <div class="fld"><label class="sw on" id="nc-ready"><i></i>Agent-ready: start a run when the card enters In progress</label></div>
+    </div>
+    <footer><span class="note">The card is masked for secrets before it is stored.</span><a class="btn" href="#" id="dlgcancel">Cancel</a><a class="btn pri" href="#" id="dlgcreate">Create card</a></footer>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script>
+(function(){
+  var names={board:'Board',decisions:'Decisions',card:'Run: Add --json to tq hub status',review:'Review: Retry once on a non-zero exit',connections:'Connections',settings:'Settings',activity:'Activity'};
+  function show(id){ if(!names[id]) id='board';
+    document.querySelectorAll('.view').forEach(function(v){v.classList.toggle('on',v.id===id)});
+    document.querySelectorAll('.nav a').forEach(function(a){a.classList.toggle('on',a.getAttribute('href')==='#'+id)});
+    document.getElementById('title').textContent=names[id]; }
+  window.addEventListener('hashchange',function(){show(location.hash.slice(1))});
+  show(location.hash.slice(1));
+})();
+
+(function(){
+  var toastT;
+  function toast(html){var t=document.getElementById('toast');t.innerHTML=html;t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(function(){t.classList.remove('on')},3400)}
+  var dragging=null, ghost=document.createElement('div'); ghost.className='ghost';
+  function cardAfter(lane,y){var cards=[].slice.call(lane.querySelectorAll('.card:not(.dragging)'));for(var i=0;i<cards.length;i++){var r=cards[i].getBoundingClientRect();if(y<r.top+r.height/2)return cards[i]}return null}
+  function laneName(l){return l.querySelector('header').childNodes[0].textContent.trim()}
+  function counts(){document.querySelectorAll('.lane').forEach(function(l){var n=l.querySelector('header .c');if(n)n.textContent=l.querySelectorAll('.card').length})}
+  function setStatus(c,html){var st=c.querySelector('.status');if(!st){st=document.createElement('div');st.className='status';c.insertBefore(st,c.querySelector('a.t').nextSibling)}var chips=[].slice.call(st.querySelectorAll('.chip')).map(function(x){return x.outerHTML}).join('');st.innerHTML=html+chips}
+  function addBar(c,pct){if(c.querySelector('.bar'))return;var b=document.createElement('div');b.className='bar';b.innerHTML='<i style="width:'+pct+'%"></i>';var m=c.querySelector('.meta');if(m)c.insertBefore(b,m);else c.appendChild(b)}
+  function removeBar(c){var b=c.querySelector('.bar');if(b)b.parentNode.removeChild(b);var a=c.querySelector('.ask');if(a)a.parentNode.removeChild(a)}
+  document.addEventListener('dragstart',function(e){var c=e.target.closest?e.target.closest('.card'):null;if(!c)return;dragging=c;c.classList.add('dragging');e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',c.querySelector('a.t').textContent)}catch(_){}});
+  document.addEventListener('dragend',function(){if(dragging)dragging.classList.remove('dragging');dragging=null;ghost.classList.remove('show');if(ghost.parentNode)ghost.parentNode.removeChild(ghost);document.querySelectorAll('.lane.over').forEach(function(l){l.classList.remove('over')})});
+  document.querySelectorAll('.lane').forEach(function(lane){
+    lane.addEventListener('dragover',function(e){if(!dragging)return;e.preventDefault();e.dataTransfer.dropEffect='move';lane.classList.add('over');var after=cardAfter(lane,e.clientY);if(after)lane.insertBefore(ghost,after);else lane.appendChild(ghost);ghost.classList.add('show')});
+    lane.addEventListener('dragleave',function(e){if(!lane.contains(e.relatedTarget))lane.classList.remove('over')});
+    lane.addEventListener('drop',function(e){
+      if(!dragging)return;e.preventDefault();
+      var from=dragging.parentNode.getAttribute('data-lane'),to=lane.getAttribute('data-lane');
+      if(ghost.parentNode===lane)lane.insertBefore(dragging,ghost);else lane.appendChild(dragging);
+      ghost.classList.remove('show');if(ghost.parentNode)ghost.parentNode.removeChild(ghost);lane.classList.remove('over');
+      var c=dragging;dragging=null;c.classList.remove('dragging');c.classList.add('settle');setTimeout(function(){c.classList.remove('settle')},350);counts();
+      var title=c.querySelector('a.t').textContent,ready=!!c.querySelector('.chip.ready'),running=!!c.querySelector('.p-run,.p-wait');
+      if(to==='in-progress'&&from!=='in-progress'){
+        if(ready){setStatus(c,'<span class="pill p-queue">queued</span><span>a run starts on the next tick</span>');toast('<span class="pill p-queue">queued</span><span>'+title+'</span>');
+          setTimeout(function(){setStatus(c,'<span class="pill p-run">running</span><span>round 1 of 12</span>');addBar(c,4);toast('<span class="pill p-run">running</span><span>'+title+': claude started in the project folder</span>')},1400)}
+        else{toast('<span>Moved to In progress. Add the <b>agent-ready</b> tag to start a run.</span>')}
+      } else if(to==='done'){removeBar(c);setStatus(c,'<span class="pill p-done">done</span>');toast('<span class="pill p-done">done</span><span>'+title+'</span>')}
+      else if(from==='in-progress'&&running){removeBar(c);setStatus(c,'<span class="pill p-fail">cancelled</span><span>run stopped, lock released</span>');toast('<span class="pill p-fail">cancelled</span><span>'+title+': the run was cancelled and its lock released</span>')}
+      else{toast('<span>Moved to '+laneName(lane)+'</span>')}
+    });
+  });
+})();
+
+(function(){
+  function $(id){return document.getElementById(id)}
+  function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+  function toast(parts){var t=$('toast');t.textContent='';parts.forEach(function(p){t.appendChild(p)});t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('on')},3400)}
+  function pill(cls,text){return el('span','pill '+cls,text)}
+  function now(){var d=new Date();return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}
+  function id(prefix){var a='abcdefghijklmnopqrstuvwxyz234567',o='';for(var i=0;i<12;i++)o+=a[Math.floor(Math.random()*32)];return prefix+'-'+o}
+
+  /* tag editors: Enter or comma adds, × removes, backspace on empty removes last */
+  function tagChip(box,name,before){var t=el('span','tag'+(name==='agent-ready'?' ready':''),name);var x=el('b',null,'×');x.title='Remove';x.addEventListener('click',function(e){e.preventDefault();t.remove()});t.appendChild(x);box.insertBefore(t,before||box.querySelector('input'));return t}
+  function tagsOf(box){return [].slice.call(box.querySelectorAll('.tag')).map(function(t){return t.firstChild.textContent})}
+  function wireTags(box){var inp=box.querySelector('input');inp.addEventListener('keydown',function(e){var v=inp.value.trim().replace(/,$/,'');if((e.key==='Enter'||e.key===',')&&v){e.preventDefault();if(tagsOf(box).indexOf(v)<0)tagChip(box,v);inp.value='';if(v==='agent-ready'&&$('nc-ready')&&box.id==='nc-tags')$('nc-ready').classList.add('on')}else if(e.key==='Backspace'&&!inp.value){var last=box.querySelectorAll('.tag');if(last.length)last[last.length-1].remove()}});box.addEventListener('click',function(e){if(e.target===box)inp.focus()})}
+  wireTags($('nc-tags')); var ct=$('cardtags'); if(ct){wireTags(ct.querySelector('.tagbox')); ct.querySelectorAll('.tag b').forEach(function(x){x.addEventListener('click',function(e){e.preventDefault();x.parentNode.remove()})})}
+  var ctbox=ct&&ct.querySelector('.tagbox'); if(ctbox){ctbox.querySelector('input').addEventListener('keydown',function(e){if(e.key==='Enter'){var chips=ct.querySelectorAll('.tag');var last=chips[chips.length-1];if(last&&last.parentNode===ctbox){ct.insertBefore(last,ctbox)}}})}
+
+  /* new card dialog */
+  var scrim=$('scrim'); function openDlg(lane){scrim.classList.add('on');if(lane)$('nc-lane').value=lane;setTimeout(function(){$('nc-title').focus()},50)} function closeDlg(){scrim.classList.remove('on')}
+  $('newcard').addEventListener('click',function(e){e.preventDefault();openDlg()});
+  document.querySelectorAll('[data-new]').forEach(function(a){a.addEventListener('click',function(e){e.preventDefault();openDlg(a.getAttribute('data-new'))})});
+  $('dlgclose').addEventListener('click',function(e){e.preventDefault();closeDlg()}); $('dlgcancel').addEventListener('click',function(e){e.preventDefault();closeDlg()});
+  scrim.addEventListener('click',function(e){if(e.target===scrim)closeDlg()}); document.addEventListener('keydown',function(e){if(e.key==='Escape'&&scrim.classList.contains('on'))closeDlg()});
+  $('nc-ready').addEventListener('click',function(e){e.preventDefault();this.classList.toggle('on')});
+  $('dlgcreate').addEventListener('click',function(e){e.preventDefault();var title=$('nc-title').value.trim();if(!title){$('nc-title').focus();$('nc-title').style.boxShadow='0 0 0 2px var(--bg),0 0 0 4px var(--red)';setTimeout(function(){$('nc-title').style.boxShadow=''},900);return}
+    var kind=$('nc-kind').value,lane=$('nc-lane').value,tags=tagsOf($('nc-tags')),ready=$('nc-ready').classList.contains('on');if(ready&&tags.indexOf('agent-ready')<0)tags.push('agent-ready');
+    var c=el('div','card');c.setAttribute('draggable','true');var a=el('a','t',title);a.href='#card';c.appendChild(a);
+    var st=el('div','status');st.appendChild(el('span','chip',kind));tags.forEach(function(t){if(t!==kind)st.appendChild(el('span','chip'+(t==='agent-ready'?' ready':''),t))});c.appendChild(st);
+    var m=el('div','meta');m.appendChild(el('span','id',id('c')));var bm=($('nc-body').value.match(/budget:\s*([^\n]+)/)||[])[1];if(bm){var b=el('span',null,'budget ');var n=el('span','num',bm.trim());b.appendChild(n);m.appendChild(b)}c.appendChild(m);
+    var laneEl=document.querySelector('.lane[data-lane="'+lane+'"]');laneEl.appendChild(c);c.classList.add('settle');setTimeout(function(){c.classList.remove('settle')},350);
+    document.querySelectorAll('.lane').forEach(function(l){var n=l.querySelector('header .c');if(n)n.textContent=l.querySelectorAll('.card').length});
+    closeDlg();$('nc-title').value='';$('nc-body').value='';$('nc-tags').querySelectorAll('.tag').forEach(function(t){t.remove()});
+    location.hash='#board';
+    if(lane==='in-progress'&&ready){st.insertBefore(pill('p-queue','queued'),st.firstChild);toast([pill('p-queue','queued'),el('span',null,title+': a run starts on the next tick')]);setTimeout(function(){st.removeChild(st.firstChild);st.insertBefore(pill('p-run','running'),st.firstChild);var bar=el('div','bar');bar.appendChild(el('i'));bar.firstChild.style.width='4%';c.insertBefore(bar,m);toast([pill('p-run','running'),el('span',null,title+': round 1 of 12')])},1400)}
+    else toast([el('span',null,'Created in '+laneEl.querySelector('header').childNodes[0].textContent.trim()+(ready?'. Drag it into In progress to start a run.':'.'))]);
+  });
+
+  /* comments */
+  function post(){var ta=$('cmtext'),txt=ta.value.trim();if(!txt){ta.focus();return}var one=el('div','one new');var who=el('div','who');who.appendChild(el('b',null,'you'));who.appendChild(el('span','k','hub:renato'));who.appendChild(el('span',null,now()));one.appendChild(who);one.appendChild(el('div','txt',txt));$('comments').appendChild(one);ta.value='';toast([el('span',null,'Comment posted and masked for secrets')])}
+  $('cmpost').addEventListener('click',function(e){e.preventDefault();post()}); $('cmclear').addEventListener('click',function(e){e.preventDefault();$('cmtext').value=''});
+  $('cmtext').addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='Enter')post()});
+
+  /* clicking a card title opens the card page with that title */
+  document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.card a.t');if(!a)return;var h1=document.querySelector('#card .hd h1');if(h1&&a.getAttribute('href')==='#card'){h1.textContent=a.textContent}});
+})();
+
+
+(function(){
+  var root=document.documentElement,key='tq-hub-theme',btn=document.getElementById('themebtn'),use=btn.querySelector('use');
+  function dark(){var t=root.getAttribute('data-theme');if(t)return t==='dark';return !(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)}
+  function paint(){var d=dark();use.setAttribute('href',d?'#i-sun':'#i-moon');var l=d?'Switch to light mode':'Switch to dark mode';btn.setAttribute('aria-label',l);btn.title=l}
+  btn.addEventListener('click',function(){var v=dark()?'light':'dark';root.setAttribute('data-theme',v);try{localStorage.setItem(key,v)}catch(_){}paint()});
+  var saved='';try{saved=localStorage.getItem(key)||''}catch(_){} if(saved==='light'||saved==='dark')root.setAttribute('data-theme',saved);
+  paint();
+})();
+</script>
