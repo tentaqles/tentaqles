@@ -1,0 +1,47 @@
+{{define "settings"}}{{template "head" .}}{{template "settings-main" .}}{{template "foot" .}}{{end}}
+{{define "settings-main"}}{{$ws := .WS}}{{with .Data}}
+<div class="set">
+  <section class="panel"><h2>Serving</h2>
+    <div class="row2">
+      <span class="lbl">Topology</span><div class="ctl"><span class="chip">{{if eq .Mode "all"}}every trusted workspace{{else}}this workspace{{end}}</span><span class="note">fixed when the hub starts (tq hub serve, or tq hub serve --all); one hub per workspace</span></div>
+      <span class="lbl">Bind</span><div class="ctl"><code class="m">{{or .Bind "loopback"}}</code><span class="note">{{if .TokenRequired}}this hub listens beyond loopback, so every request needs its token{{else}}a non-loopback bind requires a token, printed once at start{{end}}</span></div>
+      <span class="lbl">Workspaces</span><div class="ctl">{{range .Workspaces}}<span class="ws-chip{{if not .Available}} off{{end}}">{{.Name}}{{if not .Available}} ({{.Reason}}){{end}}</span>{{end}}</div>
+    </div>
+  </section>
+  <form class="set" method="post" action="/settings?ws={{$ws}}">
+    <section class="panel"><h2>Runs</h2>
+      <div class="row2">
+        <label for="st-conc">Concurrency</label><div class="ctl"><input class="f s w70" id="st-conc" name="concurrency" inputmode="numeric" value="{{.Settings.Concurrency}}"><span class="note">agents running at once in this workspace, 1 to 16</span></div>
+      </div>
+    </section>
+    <section class="panel"><h2>Default budget per run</h2>
+      <div class="row2">
+        <label for="st-usd">Dollars</label><div class="ctl"><input class="f s w90" id="st-usd" name="usd" inputmode="decimal" value="{{.Settings.DefaultBudget.USD}}"><span class="note">the run stops and asks you when it is spent</span></div>
+        <label for="st-tok">Tokens</label><div class="ctl"><input class="f s w120" id="st-tok" name="tokens" inputmode="numeric" value="{{.Settings.DefaultBudget.Tokens}}"><span class="note">input, output and cache writes; 2,000,000 and 2000000 both work</span></div>
+        <label for="st-min">Minutes</label><div class="ctl"><input class="f s w90" id="st-min" name="minutes" inputmode="numeric" value="{{.Settings.DefaultBudget.Minutes}}"></div>
+        <label for="st-rnd">Rounds</label><div class="ctl"><input class="f s w90" id="st-rnd" name="rounds" inputmode="numeric" value="{{.Settings.DefaultBudget.Rounds}}"><span class="note">one round is one agent start; a card can override the budget in its front matter</span></div>
+      </div>
+    </section>
+    <section class="panel"><h2>Notifications</h2>
+      <div class="row2">
+        <span class="lbl" id="st-notify">Desktop</span><div class="ctl"><span class="seg" role="radiogroup" aria-labelledby="st-notify"><label><input type="radio" name="notify" value="on"{{if .Settings.Notify}} checked{{end}}>on</label><label><input type="radio" name="notify" value="off"{{if not .Settings.Notify}} checked{{end}}>off</label></span><span class="note">one toast when a run waits on you or ends; never retried</span></div>
+        <span class="lbl">Session preamble</span><div class="ctl"><span class="note">"N decisions waiting on you (tq hub open)" when a Claude session starts in this workspace</span></div>
+      </div>
+    </section>
+    <div class="savebar"><button class="btn pri">Save settings</button><span class="note">Only you can change these; an agent session is refused.</span></div>
+  </form>
+  <section class="panel"><h2>Who can do what</h2>
+    <div class="tw"><table><tr><th>Action</th><th>You</th><th>An agent session</th></tr>
+      <tr><td>Add a card, comment</td><td><span class="pill p-done">yes</span></td><td><span class="pill p-done">yes, into Backlog or Todo</span></td></tr>
+      <tr><td>Edit a card's tags</td><td><span class="pill p-done">yes</span></td><td><span class="pill p-done">yes, on cards in Backlog or Todo</span></td></tr>
+      <tr><td>Edit a card's title, body or project folder</td><td><span class="pill p-done">yes</span></td><td><span class="pill p-fail">no</span></td></tr>
+      <tr><td>Start, cancel, move into or out of In progress</td><td><span class="pill p-done">yes</span></td><td><span class="pill p-fail">no</span></td></tr>
+      <tr><td>Answer a decision, approve, request changes, mark done</td><td><span class="pill p-done">yes, signed with your hub token</span></td><td><span class="pill p-fail">no</span></td></tr>
+      <tr><td>Set a budget, change these settings</td><td><span class="pill p-done">yes</span></td><td><span class="pill p-fail">no</span></td></tr>
+    </table></div>
+  </section>
+  <section class="panel danger-zone"><h2>Stop this hub</h2>
+    <p class="lead">Press Ctrl+C in the terminal that runs <code class="m">tq hub serve</code>. In-flight runs are requeued and resume when a hub starts again; nothing is cancelled. The page has no stop button on purpose: a page that can stop the hub is one more thing a cross-site request could try.</p>
+  </section>
+</div>
+{{end}}{{end}}
