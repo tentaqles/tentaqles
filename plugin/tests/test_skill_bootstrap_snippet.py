@@ -114,3 +114,60 @@ def test_snippet_falls_back_to_home_claude_without_config_dir(tmp_path: Path) ->
     out = subprocess.run([bash, "-c", script], env=env, capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert "sourced=home" in out.stdout, out.stdout
+
+
+def _fake_version(root: Path, version: str, name: str) -> Path:
+    """Like _fake_install, but at an explicit version directory."""
+    plugin = root / "plugins" / "cache" / "tentaqles" / "tentaqles" / version
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text('{"name": "tentaqles"}', encoding="utf-8")
+    (plugin / "scripts").mkdir()
+    (plugin / "scripts" / "tq_env.sh").write_text(f'TQ_TEST_ROOT="{name}"\n', encoding="utf-8")
+    return plugin
+
+
+@pytest.mark.skipif(bash is None, reason="bash not available")
+def test_snippet_prefers_the_highest_installed_version(tmp_path: Path) -> None:
+    """Claude Code keeps old plugin versions in the cache. A glob sorted as text
+    puts 0.10.0 before 0.12.0 and 0.9.0 last; the snippet must pick the highest
+    version by number, not the first match."""
+    config = tmp_path / "identity" / "claude"
+    config.mkdir(parents=True)
+    _fake_version(config, "0.10.0", "v0.10.0")
+    _fake_version(config, "0.9.0", "v0.9.0")
+    _fake_version(config, "0.12.0", "v0.12.0")
+    _fake_version(config, "0.11.1", "v0.11.1")
+
+    snippet = _snippet_lines(SKILLS_DIR / "query-memory" / "SKILL.md")[0].strip()
+    script = snippet + '\necho "root=$_tqe"\necho "sourced=$TQ_TEST_ROOT"\n'
+    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_ROOT", "TQ_TEST_ROOT")}
+    env["HOME"] = (tmp_path / "nohome").as_posix()
+    env["CLAUDE_CONFIG_DIR"] = config.as_posix()
+    out = subprocess.run([bash, "-c", script], env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert "sourced=v0.12.0" in out.stdout, out.stdout
+    assert f"root={config.as_posix()}/plugins/cache/tentaqles/tentaqles/0.12.0" in out.stdout, out.stdout
+
+
+@pytest.mark.skipif(bash is None, reason="bash not available")
+def test_snippet_prefers_identity_over_home_at_equal_version(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config = tmp_path / "identity" / "claude"
+    home.mkdir()
+    config.mkdir(parents=True)
+    _fake_version(home / ".claude", "0.12.0", "home")
+    _fake_version(config, "0.12.0", "identity")
+
+    snippet = _snippet_lines(SKILLS_DIR / "query-memory" / "SKILL.md")[0].strip()
+    script = snippet + '\necho "sourced=$TQ_TEST_ROOT"\n'
+    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_ROOT", "TQ_TEST_ROOT")}
+    env["HOME"] = home.as_posix()
+    env["CLAUDE_CONFIG_DIR"] = config.as_posix()
+    out = subprocess.run([bash, "-c", script], env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert "sourced=identity" in out.stdout, out.stdout
+
+
+def test_tq_env_fallback_prefers_the_highest_version() -> None:
+    text = ENV_SH.read_text(encoding="utf-8")
+    assert "sort -s -t. -k1,1nr -k2,2nr -k3,3nr" in text, "tq_env.sh must pick the highest plugin version, not the first glob match"

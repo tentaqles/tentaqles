@@ -4,6 +4,8 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+- Fixed: skill bash blocks and `tq_env.sh` picked the first plugin version in the cache alphabetically (0.10.0 over 0.12.0); they now pick the highest installed version, the identity cache winning ties.
+
 ### Added
 
 - **`/tentaqles:hub`.** Lists the decisions hub runs are waiting on (`tq hub list

@@ -49,9 +49,9 @@ tests/                  pytest suite
 
 - **Skill bash blocks**: every block that calls Python starts with:
   ```bash
-  _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && _tqe="${_d%/}" && break; done; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
+  _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && _tqe="$(for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && printf '%s\n' "${_d%/}"; done | awk -F/ '{print $NF" "$0}' | sort -s -t. -k1,1nr -k2,2nr -k3,3nr | head -n1 | cut -d" " -f2-)"; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
   ```
-  Then uses `"$TENTAQLES_PY"` instead of `python`. `CLAUDE_PLUGIN_ROOT` is never set inside the Bash tool, so the search is what actually runs; it must look in `$CLAUDE_CONFIG_DIR` first (pinned by `tests/test_skill_bootstrap_snippet.py`).
+  Then uses `"$TENTAQLES_PY"` instead of `python`. `CLAUDE_PLUGIN_ROOT` is never set inside the Bash tool, so the search is what actually runs; it must look in `$CLAUDE_CONFIG_DIR` first and pick the highest installed version, since Claude Code keeps old versions in the cache and a text sort puts 0.10.0 before 0.12.0 (both pinned by `tests/test_skill_bootstrap_snippet.py`).
 
 - **Python scripts** under `scripts/`: start with `from _path import setup_paths; setup_paths()`. Never inline `sys.path.insert` hacks.
 
