@@ -427,6 +427,134 @@
   });
   busyChecks.push(function () { return !!drag; });
 
+  /* ---------- tag editor (the dialog here, the card page in Task 5) ---------- */
+  function tagsOf(box) { return $$(".tag[data-tag]", box).map(function (t) { return t.getAttribute("data-tag"); }); }
+  // wireTagbox: Enter or comma adds the typed tag, × removes one, Backspace in the empty input
+  // removes the last. onEdit(tags) runs after each change the human makes; set() does not call it.
+  function wireTagbox(box, onEdit) {
+    var input = $("[data-tag-input]", box);
+    function changed() { if (onEdit) onEdit(tagsOf(box)); }
+    function chip(name) {
+      var t = el("span", "tag" + (name === "agent-ready" ? " ready" : ""), name);
+      t.setAttribute("data-tag", name);
+      var x = el("button", "x", "×");
+      x.type = "button";
+      x.setAttribute("aria-label", "Remove tag " + name);
+      t.appendChild(x);
+      return t;
+    }
+    function add(raw) {
+      var v = String(raw).replace(/,/g, "").trim();
+      if (!v || tagsOf(box).indexOf(v) >= 0) return false;
+      box.insertBefore(chip(v), input);
+      return true;
+    }
+    if (input) input.removeAttribute("name"); // with script the chips are the list
+    on(box, "click", function (e) {
+      var x = e.target.closest ? e.target.closest(".tag[data-tag] .x") : null;
+      if (x) { e.preventDefault(); x.parentNode.remove(); changed(); if (input) input.focus(); return; }
+      if (e.target === box && input) input.focus();
+    });
+    on(input, "keydown", function (e) {
+      if (e.key === "Enter" || e.key === ",") {
+        e.preventDefault(); // never submit the form from the tag input
+        if (add(input.value)) changed();
+        input.value = "";
+      } else if (e.key === "Backspace" && !input.value) {
+        var chips = $$(".tag[data-tag]", box);
+        if (chips.length) { chips[chips.length - 1].remove(); changed(); }
+      }
+    });
+    return {
+      flush: function () { if (input && input.value.trim()) { if (add(input.value)) changed(); input.value = ""; } },
+      set: function (tags) { $$(".tag[data-tag]", box).forEach(function (t) { t.remove(); }); tags.forEach(add); },
+      tags: function () { return tagsOf(box); }
+    };
+  }
+
+  /* ---------- new card dialog ---------- */
+  var dlg = { scrim: null, opener: null, tags: null };
+  function dialogOpen() { return !!(dlg.scrim && dlg.scrim.classList.contains("on")); }
+  function setDialogError(msg) { var e = $("#nc-error"); if (e) { e.textContent = msg; e.hidden = !msg; } }
+  function openNewCard(lane, opener) {
+    if (!dlg.scrim) return;
+    dlg.opener = opener || document.activeElement;
+    var sel = $("#nc-lane", dlg.scrim);
+    if (lane && sel) sel.value = lane;
+    setDialogError("");
+    dlg.scrim.classList.add("on");
+    setTimeout(function () { var t = $("#nc-title", dlg.scrim); if (t) t.focus(); }, 30);
+  }
+  function closeNewCard() {
+    if (!dlg.scrim) return;
+    dlg.scrim.classList.remove("on");
+    if (location.hash === "#new-card") history.replaceState(null, "", location.pathname + location.search);
+    if (dlg.opener && dlg.opener.focus) dlg.opener.focus();
+  }
+  function trapTab(e, scope) {
+    var f = $$("a[href],button:not([disabled]),input:not([type=hidden]),select,textarea", scope).filter(function (n) { return n.offsetParent !== null; });
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+  function flagField(input) {
+    input.classList.add("bad");
+    input.focus();
+    setTimeout(function () { input.classList.remove("bad"); }, 900);
+  }
+  function bindNewCard() {
+    var s = $("#new-card");
+    if (!s) return;
+    dlg.scrim = s;
+    var form = $("#nc-form", s), ready = $("#nc-ready", s), create = $("#nc-create", s);
+    form.noValidate = true; // with script the dialog checks the title itself (flagField); without, `required` does
+    dlg.tags = wireTagbox($("[data-tagbox]", s), function (tags) { if (tags.indexOf("agent-ready") >= 0) ready.checked = true; });
+    on(document, "click", function (e) {
+      var opener = e.target.closest ? e.target.closest('a[href="#new-card"]') : null;
+      if (!opener) return;
+      e.preventDefault();
+      openNewCard(opener.getAttribute("data-new"), opener);
+    });
+    $$("[data-close]", s).forEach(function (a) { on(a, "click", function (e) { e.preventDefault(); closeNewCard(); }); });
+    on(s, "click", function (e) { if (e.target === s) closeNewCard(); });
+    on(document, "keydown", function (e) {
+      if (!dialogOpen()) return;
+      if (e.key === "Escape") { e.preventDefault(); closeNewCard(); }
+      else if (e.key === "Tab") trapTab(e, s);
+    });
+    on(form, "submit", function (e) {
+      e.preventDefault();
+      dlg.tags.flush();
+      var title = $("#nc-title", s).value.trim();
+      if (!title) { flagField($("#nc-title", s)); return; }
+      var tags = dlg.tags.tags();
+      if (ready.checked && tags.indexOf("agent-ready") < 0) tags.push("agent-ready");
+      var card = { title: title, body: $("#nc-body", s).value, kind: $("#nc-kind", s).value, lane: $("#nc-lane", s).value,
+        project_dir: $("#nc-project", s).value.trim(), parent_id: $("#nc-parent", s).value, tags: tags };
+      create.disabled = true;
+      setDialogError("");
+      api("POST", "/api/cards", { card: card }).then(function (res) {
+        create.disabled = false;
+        if (!res.ok) { setDialogError(errText(res)); return; }
+        var c = res.data;
+        form.reset();
+        dlg.tags.set([]);
+        closeNewCard();
+        if (hub.nav === "board" && $(".lanes")) {
+          refreshTile(c.id);
+          if (c.locked_by_run) toast([pill("queued"), el("span", null, c.title + ": a run starts on the next tick")]);
+          else toast([el("span", null, "Created in " + laneTitle(c.lane) + ".")]);
+        } else {
+          location.href = "/cards/" + encodeURIComponent(c.id) + "?ws=" + encodeURIComponent(hub.ws) + "&flash=added";
+        }
+      });
+    });
+    if (location.hash === "#new-card") openNewCard();
+  }
+  starters.push(bindNewCard);
+  busyChecks.push(dialogOpen);
+
   /* ---------- page sections: Tasks 3, 4 and 5 insert theirs above this line ---------- */
 
   function start() {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 )
@@ -16,15 +17,31 @@ func cardURL(ws, id string) string { return "/cards/" + id + "?ws=" + url.QueryE
 
 func flashURL(ws, id, key string) string { return cardURL(ws, id) + "&flash=" + key }
 
+// splitTags reads a comma-separated tag field; the store trims, dedupes and masks.
+func splitTags(s string) []string {
+	out := []string{}
+	for _, t := range strings.Split(s, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (s *Server) formAdd(w http.ResponseWriter, r *http.Request) {
 	svc, ws, ok := s.service(w, r)
 	if !ok {
 		return
 	}
+	parent := strings.TrimSpace(r.FormValue("parent"))
+	if parent != "" && !store.ValidID("c", parent) {
+		s.fail(w, r, fmt.Errorf("parent card: %w", store.ErrNotFound))
+		return
+	}
 	nc := store.NewCard{Title: r.FormValue("title"), Body: r.FormValue("body"), Kind: r.FormValue("kind"),
-		Lane: r.FormValue("lane"), ProjectDir: r.FormValue("project")}
+		Lane: r.FormValue("lane"), ProjectDir: r.FormValue("project"), ParentID: parent, Tags: splitTags(r.FormValue("tags"))}
 	if r.FormValue("agent_ready") == "1" {
-		nc.Tags = []string{store.TagAgentReady}
+		nc.Tags = append(nc.Tags, store.TagAgentReady)
 	}
 	c, err := svc.Add(s.reqCtx(r), nc, nil)
 	if err != nil {

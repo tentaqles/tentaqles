@@ -98,6 +98,7 @@ type page struct {
 	Workspaces   []WorkspaceInfo
 	WaitingCount int
 	Flash        string
+	NewCard      *newCardForm // the dialog's choices; nil when no workspace resolved
 	Data         any
 }
 
@@ -313,6 +314,7 @@ func (s *Server) basePage(r *http.Request, title, ws string) page {
 				p.Running = len(rs)
 			}
 			p.Concurrency = st.Concurrency()
+			p.NewCard = newCardFormFor(svc)
 		}
 	}
 	return p
