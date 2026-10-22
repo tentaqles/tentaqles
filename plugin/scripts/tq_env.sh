@@ -27,9 +27,11 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
     # Search the Claude Code plugin cache (marketplace-agnostic). Under tq each
     # identity has its own config dir, and the cache lives there, so it is
     # searched before the default ~/.claude.
-    for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do
-      [ -f "${_d}.claude-plugin/plugin.json" ] && CLAUDE_PLUGIN_ROOT="${_d%/}" && break
-    done
+    # Old versions stay in the cache; a text sort puts 0.10.0 before 0.12.0,
+    # so pick the highest version by number (identity cache wins ties).
+    CLAUDE_PLUGIN_ROOT="$(for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do
+      [ -f "${_d}.claude-plugin/plugin.json" ] && printf '%s\n' "${_d%/}"
+    done | awk -F/ '{print $NF" "$0}' | sort -s -t. -k1,1nr -k2,2nr -k3,3nr | head -n1 | cut -d" " -f2-)"
   fi
 fi
 export CLAUDE_PLUGIN_ROOT
