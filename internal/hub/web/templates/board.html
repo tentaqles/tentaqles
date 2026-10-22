@@ -15,11 +15,13 @@
 {{define "board-card"}}{{$ws := .WS}}{{with .Card}}<article class="card{{if .Decision}} hot{{end}}" draggable="true" data-card="{{.ID}}" data-lane="{{.Lane}}" data-title="{{.Title}}" data-status="{{.Status}}" data-status-text="{{.StatusText}}"{{if .HasTag "agent-ready"}} data-ready{{end}}>
   <a class="t" href="/cards/{{.ID}}?ws={{$ws}}">{{.Title}}</a>
   {{if .Status}}<div class="status"><span class="pill {{pill .Status}}">{{.PillLabel}}</span>{{with .StatusText}}<span>{{.}}</span>{{end}}</div>
-  {{else}}<div class="status"><span class="chip">{{.Kind}}</span>{{range .Tags}}<span class="chip{{if eq . "agent-ready"}} ready{{end}}">{{.}}</span>{{end}}</div>{{end}}
-  {{if .Run}}<div class="bar" role="img" aria-label="{{.Pct}}% of the dollar budget"><i style="width:{{.Pct}}%"></i></div>{{end}}
+  {{else if not .Done}}<div class="status"><span class="chip">{{.Kind}}</span>{{range .Tags}}<span class="chip{{if eq . "agent-ready"}} ready{{end}}">{{.}}</span>{{end}}</div>{{end}}
+  {{if .Live}}<div class="bar" role="img" aria-label="{{.Pct}}% of the dollar budget"><i style="width:{{.Pct}}%"></i></div>{{end}}
   {{with .Decision}}{{if eq .Kind "result"}}<div class="ask"><a class="btn warm sm" href="/cards/{{$.Card.ID}}/review?ws={{$ws}}">Open review</a></div>
   {{else if $.Card.CanApprove}}<form class="ask" method="post" action="/cards/{{$.Card.ID}}/decisions/{{.ID}}/answer?ws={{$ws}}"><button class="btn warm sm" name="choice" value="approve">Approve plan</button><a class="btn sm" href="/waiting?ws={{$ws}}#d-{{.ID}}">Review it</a></form>
   {{else}}<div class="ask"><a class="btn warm sm" href="/waiting?ws={{$ws}}#d-{{.ID}}">Answer</a></div>{{end}}
   {{else}}{{if .OpenReview}}<div class="ask"><a class="btn sm" href="/cards/{{.ID}}/review?ws={{$ws}}">Open review</a></div>{{end}}{{end}}
-  <div class="meta">{{if .Run}}<span class="id">{{.Run.ID}}</span><span class="num">{{money .Run.CostUSD}}</span><span>{{minutes .Run.Seconds}} min</span>{{else}}{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}<span class="id">{{.ID}}</span>{{if .BudgetUSD}}<span>budget <span class="num">{{money .BudgetUSD}}</span></span>{{end}}{{end}}</div>
+  {{if .Live}}<div class="meta"><span class="id">{{.Run.ID}}</span><span class="num">{{money .Run.CostUSD}}</span><span>{{minutes .Run.Seconds}} min</span></div>
+  {{else if .Done}}<div class="meta">{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}</div>
+  {{else if not .Decision}}<div class="meta">{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}<span class="id">{{.ID}}</span>{{if .BudgetUSD}}<span>budget <span class="num">{{money .BudgetUSD}}</span></span>{{end}}</div>{{end}}
 </article>{{end}}{{end}}

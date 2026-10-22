@@ -134,6 +134,15 @@ func (b boardCard) Pct() int {
 	return pct(b.Run.CostUSD, b.Run.Budget.USD)
 }
 
+// Live is a run in motion: active and not waiting on the human. Only a live run shows the
+// budget bar and the run meta line; a waiting card shows its status and actions only.
+func (b boardCard) Live() bool {
+	return b.Run != nil && b.Decision == nil && b.Run.Status != store.StatusWaiting
+}
+
+// Done is a card in a done-kind lane: its meta line is the PR link and the cost, nothing else.
+func (b boardCard) Done() bool { return b.LaneKind == store.LaneDone }
+
 func (b boardCard) CanApprove() bool {
 	return b.Decision != nil && b.Decision.Kind == store.KindPlanApproval && slices.Contains(b.Decision.Options, "approve")
 }

@@ -401,6 +401,7 @@
         laneCounts();
       }
       if (slot.parentNode === lane) lane.insertBefore(card, slot); else lane.appendChild(card);
+      delete heldTiles[id]; // the move's own answer refreshes this tile; a held GET now could pull it back
       endDrag();
       if (lane === d.from) { putBack(); return; } // the order inside a lane is not stored
       settle(card);

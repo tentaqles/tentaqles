@@ -51,13 +51,47 @@ func TestBoardRunningCardShowsRoundAndBudgetBar(t *testing.T) {
 			t.Errorf("running card lacks %q", want)
 		}
 	}
+	_, tileBody, _ := get(t, ts, "/cards/"+c.ID+"/tile?ws=acme", nil)
+	if !strings.Contains(tileBody, `class="bar"`) || !strings.Contains(tileBody, `<span class="id">`+r.ID+`</span>`) {
+		t.Errorf("a running card's tile shows the bar and the run meta:\n%s", tileBody)
+	}
+}
+
+func TestBoardDoneCardShowsCostOnly(t *testing.T) {
+	e := newEnv(t, "acme")
+	svc := e.svcs["acme"]
+	ctx := context.Background()
+	c, _ := svc.Add(ctx, store.NewCard{Title: "Mask notification bodies", Kind: "feature", Tags: []string{store.TagAgentReady}, Body: "---\nbudget: usd=15\n---\nx"}, nil)
+	r, _, err := svc.Enqueue(ctx, c.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Status, r.CostUSD = store.StatusFinished, 0.9
+	svc.Store().SaveRun(r)
+	if _, err := svc.Move(ctx, c.ID, "done", false); err != nil {
+		t.Fatal(err)
+	}
+	ts := e.server(Options{})
+	_, tileBody, _ := get(t, ts, "/cards/"+c.ID+"/tile?ws=acme", nil)
+	if !strings.Contains(tileBody, `data-lane="done"`) || !strings.Contains(tileBody, `<div class="meta"><span class="num">$0.90</span></div>`) {
+		t.Fatalf("a done card's meta is its PR and cost:\n%s", tileBody)
+	}
+	for _, not := range []string{`class="chip`, `<span class="id">`, `budget <span`, `class="status"`} {
+		if strings.Contains(tileBody, not) {
+			t.Errorf("an idle done card shows no %q:\n%s", not, tileBody)
+		}
+	}
 }
 
 func TestBoardWaitingCardIsHotWithActions(t *testing.T) {
 	e := newEnv(t, "acme")
 	c, _ := e.svcs["acme"].Add(context.Background(), store.NewCard{Title: "Fix the lock", Tags: []string{store.TagAgentReady}}, nil)
-	e.pendingDecision("acme", c, store.KindPlanApproval)
+	run, _ := e.pendingDecision("acme", c, store.KindPlanApproval)
 	ts := e.server(Options{})
+	_, tileBody, _ := get(t, ts, "/cards/"+c.ID+"/tile?ws=acme", nil)
+	if strings.Contains(tileBody, `class="bar"`) || strings.Contains(tileBody, run.ID) || strings.Contains(tileBody, `class="meta"`) {
+		t.Errorf("a waiting card shows its status and actions only, no budget bar or run meta:\n%s", tileBody)
+	}
 	_, body, _ := get(t, ts, "/?ws=acme", nil)
 	for _, want := range []string{`class="card hot"`, `<span class="pill p-wait st-waiting">waiting on you</span>`,
 		`action="/cards/` + c.ID + `/decisions/d1a2b3c4/answer?ws=acme"`, `name="choice" value="approve">Approve plan</button>`,
@@ -92,6 +126,12 @@ func TestCardTileFragment(t *testing.T) {
 		if code, _, _ := get(t, ts, path, nil); code != http.StatusNotFound {
 			t.Fatalf("%s: %d", path, code)
 		}
+	}
+	b := e.backend()
+	b.Infos = append(b.Infos, WorkspaceInfo{Name: "zeta", Available: false, Reason: "untrusted"})
+	ts2 := e.server(Options{Backend: b})
+	if code, _, _ := get(t, ts2, "/cards/"+c.ID+"/tile?ws=zeta", nil); code != http.StatusForbidden {
+		t.Fatalf("an unavailable workspace: %d", code)
 	}
 }
 
