@@ -45,6 +45,53 @@ type ReviewData struct {
 	GeneratedAt string
 }
 
+// Verdict is the band on top of the review page: what the gate's records say, in one line.
+type Verdict struct {
+	Class string // ok | wait | bad
+	Title string
+	Note  string
+}
+
+func (d ReviewData) Verdict() Verdict {
+	passed, total, reviews := 0, 0, 0
+	if d.State != nil {
+		for _, c := range d.State.Checkpoints {
+			total++
+			if c.Status == "passed" {
+				passed++
+			}
+		}
+	}
+	var dod *gate.DoDRecord
+	if d.Records != nil {
+		for _, rv := range d.Records.Reviews {
+			if rv.Result == "PASS" {
+				reviews++
+			}
+		}
+		dod = d.Records.DoD
+	}
+	facts := fmt.Sprintf("%d of %d checkpoints passed, %d reviews PASS", passed, total, reviews)
+	if dod != nil {
+		if dod.OK {
+			facts += ", DoD ok"
+		} else {
+			facts += ", DoD not met"
+		}
+	}
+	facts += fmt.Sprintf(", %.0f min, $%.2f", d.Run.Seconds/60, d.Run.CostUSD)
+	note := facts + ". Built from signed gate records and the hub's own git summary only; nothing here comes from what the agent said."
+	switch {
+	case dod != nil && !dod.OK:
+		return Verdict{Class: "bad", Title: "The definition of done is not met", Note: note}
+	case d.State == nil && d.Records == nil:
+		return Verdict{Class: "wait", Title: "There are no gate records for this run", Note: "Read what was done before you close the card. " + d.RecordsNote}
+	case total > 0 && passed == total && dod != nil:
+		return Verdict{Class: "ok", Title: "Everything the gate recorded says this is done", Note: note}
+	}
+	return Verdict{Class: "wait", Title: "The gate's records are incomplete: read the evidence before you approve", Note: note}
+}
+
 func init() {
 	extraRoutes = append(extraRoutes, func(s *Server) {
 		s.handle("GET /cards/{id}/review", s.reviewPage)

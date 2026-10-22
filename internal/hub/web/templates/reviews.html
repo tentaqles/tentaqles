@@ -1,0 +1,15 @@
+{{define "reviews"}}{{template "head" .}}{{template "reviews-main" .}}{{template "foot" .}}{{end}}
+{{define "reviews-main"}}{{$ws := .WS}}{{with .Data}}
+<div class="col">
+  <section class="panel"><h2>Waiting on your review</h2>
+  {{if .Waiting}}<div class="tw"><table><tr><th>Card</th><th>Status</th><th>Run</th><th>Spent</th><th>Asked</th></tr>
+  {{range .Waiting}}<tr><td><a href="/cards/{{.Card.ID}}/review?ws={{$ws}}">{{.Card.Title}}</a></td><td><span class="pill {{pill "waiting"}}">result</span></td><td class="m">{{with .Run}}<a href="/runs/{{.ID}}?ws={{$ws}}">{{.ID}}</a>{{end}}</td><td class="m">{{with .Run}}{{money .CostUSD}}{{end}}</td><td class="m">{{with .Decision}}{{ago .AskedAt}}{{end}}</td></tr>{{end}}
+  </table></div>{{else}}<p class="note">No result waits on you. A run that reaches its result shows up here; Approve or Request changes from its review page.</p>{{end}}
+  </section>
+  <section class="panel"><h2>Finished, not closed yet</h2>
+  {{if .Finished}}<div class="tw"><table><tr><th>Card</th><th>Status</th><th>Run</th><th>Spent</th><th>Ended</th></tr>
+  {{range .Finished}}<tr><td><a href="/cards/{{.Card.ID}}/review?ws={{$ws}}">{{.Card.Title}}</a></td><td><span class="pill {{pill "finished"}}">finished</span></td><td class="m">{{with .Run}}<a href="/runs/{{.ID}}?ws={{$ws}}">{{.ID}}</a>{{end}}</td><td class="m">{{with .Run}}{{money .CostUSD}}{{end}}</td><td class="m">{{with .Run}}{{ago .EndedAt}}{{end}}</td></tr>{{end}}
+  </table></div>{{else}}<p class="note">Nothing finished is waiting to be closed.</p>{{end}}
+  </section>
+</div>
+{{end}}{{end}}
