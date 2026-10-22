@@ -23,10 +23,10 @@
   </section>
   {{end}}
 
-  {{if .Pending}}
+  {{if .PendingItems}}
   <section class="decisions">
     <h2>Waiting on you</h2>
-    {{$card := .ID}}{{range .Pending}}{{template "decision-form" (dict "ws" $ws "card" $card "item" .)}}{{end}}
+    <div class="inbox">{{range .PendingItems}}{{template "decision" .}}{{end}}</div>
   </section>
   {{end}}
 

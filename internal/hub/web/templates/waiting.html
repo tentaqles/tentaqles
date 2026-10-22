@@ -1,12 +1,7 @@
 {{define "waiting"}}{{template "head" .}}{{template "waiting-main" .}}{{template "foot" .}}{{end}}
 {{define "waiting-main"}}
-<section class="waiting">
-  <h1>Waiting on you</h1>
-  {{range .Data}}
-  <div class="item">
-    <p><span class="ws-label">{{.Workspace}}</span> <a href="/cards/{{.Card.ID}}?ws={{.Workspace}}">{{.Card.Title}}</a></p>
-    {{template "decision-form" (dict "ws" .Workspace "card" .Card.ID "item" .Decision)}}
-  </div>
-  {{else}}<p class="muted">Nothing is waiting on you.</p>{{end}}
+<section class="inbox" aria-label="Decisions waiting on you">
+  {{range .Data}}{{template "decision" .}}
+  {{else}}<div class="panel empty-state"><h2>Nothing is waiting on you</h2><p class="note">When a run stops for a plan approval, a review, a question or a budget, it shows up here and on its card.</p></div>{{end}}
 </section>
 {{end}}

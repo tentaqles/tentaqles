@@ -2,10 +2,32 @@ package web
 
 import (
 	"net/http"
+	"slices"
 	"sort"
 
 	"github.com/tentaqles/tentaqles/internal/hub/runner"
+	"github.com/tentaqles/tentaqles/internal/hub/store"
 )
+
+// decisionItem is one decision as the inbox and the card page show it.
+type decisionItem struct {
+	Workspace  string
+	Card       store.Card
+	Decision   store.Decision
+	Run        *store.Run // the decision's run, when the row still exists
+	OverBudget bool       // a hub budget stop: the page shows the run's numbers
+}
+
+func newDecisionItem(svc *runner.Service, ws string, card store.Card, d store.Decision) decisionItem {
+	it := decisionItem{Workspace: ws, Card: card, Decision: d,
+		OverBudget: d.Kind == store.KindPermission && slices.Contains(d.Options, "raise-and-resume")}
+	if d.RunID != "" {
+		if run, err := svc.Store().Run(d.RunID); err == nil {
+			it.Run = &run
+		}
+	}
+	return it
+}
 
 // waitingItems gathers pending decisions across the available workspaces; an unavailable one is
 // never opened, so it is skipped.
@@ -39,7 +61,15 @@ func (s *Server) waitingPage(w http.ResponseWriter, r *http.Request) {
 	p := s.basePage(r, "Decisions", ws)
 	p.Nav = "decisions"
 	items := s.waitingItems(r, "")
-	p.Data = items
+	views := make([]decisionItem, 0, len(items))
+	for _, it := range items {
+		svc, err := s.opts.Backend.Service(it.Workspace)
+		if err != nil {
+			continue
+		}
+		views = append(views, newDecisionItem(svc, it.Workspace, it.Card, it.Decision))
+	}
+	p.Data = views
 	if ws == "" {
 		p.WaitingCount = len(items)
 	}

@@ -9,12 +9,12 @@ import (
 
 type cardData struct {
 	runner.CardDetail
-	Lanes       []store.Lane
-	Active      *store.Run
-	Pending     []store.Decision
-	Answered    []store.Decision
-	GateURL     string
-	ReviewReady bool
+	Lanes        []store.Lane
+	Active       *store.Run
+	PendingItems []decisionItem
+	Answered     []store.Decision
+	GateURL      string
+	ReviewReady  bool
 }
 
 func (s *Server) cardPage(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func (s *Server) cardPage(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, dec := range d.Decisions {
 		if dec.Status == store.DecisionPending {
-			data.Pending = append(data.Pending, dec)
+			data.PendingItems = append(data.PendingItems, newDecisionItem(svc, ws, d.Card, dec))
 		} else {
 			data.Answered = append(data.Answered, dec)
 		}
