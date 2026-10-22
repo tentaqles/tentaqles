@@ -74,6 +74,7 @@ type Options struct {
 	LocalKey     string        // the CLI's key (serveinfo); "" disables it
 	AllowedHosts []string      // Host headers accepted (DNS-rebinding guard); empty gives 421 unless a token is set
 	PollEvery    time.Duration // SSE poll for writes by other processes; 0 → 1 s
+	Bind         string        // the listening address, shown on the page ("" in tests)
 }
 
 type Server struct {
@@ -90,6 +91,10 @@ type page struct {
 	WS           string
 	RunID        string
 	Mode         string
+	Nav          string // the sidebar entry this page belongs to: board, decisions, runs, reviews, activity, connections, settings
+	Bind         string
+	Running      int // runs running now in WS
+	Concurrency  int // WS's concurrency setting; 0 when no workspace resolved
 	Workspaces   []WorkspaceInfo
 	WaitingCount int
 	Flash        string
@@ -108,6 +113,8 @@ var flashes = map[string]string{
 	"approved":          "Result approved.",
 	"changes-requested": "Changes requested.",
 	"done":              "Card marked done.",
+	"tags-saved":        "Tags saved.",
+	"settings-saved":    "Settings saved.",
 }
 
 func kTok(n int64) string {
@@ -141,6 +148,17 @@ var funcs = template.FuncMap{
 		}
 		return m
 	},
+	"pill":        pillClass,
+	"statusLabel": statusLabel,
+	"laneTitle":   laneTitle,
+	"words":       words,
+	"optionLabel": optionLabel,
+	"pct":         pct,
+	"clock":       clock,
+	"ago":         ago,
+	"prnum":       prNum,
+	"available":   availableCount,
+	"planning":    planningLane,
 }
 
 // Templates parses every embedded template once; RenderReview (Task 11) uses it too.
@@ -283,12 +301,18 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func (s *Server) basePage(r *http.Request, title, ws string) page {
-	p := page{Title: title, WS: ws, Mode: s.opts.Mode, Workspaces: s.opts.Backend.Workspaces(), Flash: flashes[r.URL.Query().Get("flash")]}
+	p := page{Title: title, WS: ws, Mode: s.opts.Mode, Bind: s.opts.Bind, Workspaces: s.opts.Backend.Workspaces(),
+		Flash: flashes[r.URL.Query().Get("flash")]}
 	if ws != "" {
 		if svc, err := s.opts.Backend.Service(ws); err == nil {
-			if ds, err := svc.Store().PendingDecisions(); err == nil {
+			st := svc.Store()
+			if ds, err := st.PendingDecisions(); err == nil {
 				p.WaitingCount = len(ds)
 			}
+			if rs, err := st.RunsWithStatus(store.StatusRunning); err == nil {
+				p.Running = len(rs)
+			}
+			p.Concurrency = st.Concurrency()
 		}
 	}
 	return p

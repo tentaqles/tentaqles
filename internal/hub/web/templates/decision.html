@@ -1,0 +1,7 @@
+{{define "decision-form"}}{{$d := index . "item"}}
+<form class="decision" method="post" action="/cards/{{index . "card"}}/decisions/{{$d.ID}}/answer?ws={{index . "ws"}}">
+  <p><span class="badge">{{$d.Kind}}</span>{{if $d.Checkpoint}} checkpoint <span class="mono">{{$d.Checkpoint}}</span>{{end}}{{if $d.Reviewer}} · {{$d.Reviewer}}{{end}} <span class="mono muted">{{$d.ID}}</span>{{if $d.AskedAt}} <span class="mono muted">{{when $d.AskedAt}}</span>{{end}}</p>
+  <pre class="text">{{$d.Text}}</pre>
+  <label>Note <input name="note" autocomplete="off"></label>
+  <div class="choices">{{range $d.Options}}<button name="choice" value="{{.}}">{{.}}</button>{{end}}</div>
+</form>{{end}}

@@ -4,17 +4,12 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 
-	"github.com/tentaqles/tentaqles/internal/hub/activity"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 )
 
 func init() {
-	extraRoutes = append(extraRoutes, func(s *Server) {
-		s.handle("GET /runs/{id}", s.runPage)
-		s.handle("GET /activity", s.activityPage)
-	})
+	extraRoutes = append(extraRoutes, func(s *Server) { s.handle("GET /runs/{id}", s.runPage) })
 }
 
 type runData struct {
@@ -64,27 +59,8 @@ func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
 	d := runData{Run: run, Card: card, GateURL: svc.GateURL()}
 	d.LogTail, d.LogSize = tailFile(run.LogPath, 64<<10)
 	p := s.basePage(r, "Run "+run.ID, ws)
+	p.Nav = "runs"
 	p.RunID = run.ID
 	p.Data = d
 	s.render(w, r, "run", p)
-}
-
-type activityData struct {
-	Entries []activity.Entry
-}
-
-func (s *Server) activityPage(w http.ResponseWriter, r *http.Request) {
-	svc, ws, ok := s.service(w, r)
-	if !ok {
-		return
-	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	es, err := svc.Store().Activity(limit)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	p := s.basePage(r, "Activity", ws)
-	p.Data = activityData{Entries: es}
-	s.render(w, r, "activity", p)
 }

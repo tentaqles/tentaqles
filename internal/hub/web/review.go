@@ -270,6 +270,7 @@ func (s *Server) reviewPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := s.basePage(r, "Review: "+d.Card.Title, ws)
+	p.Nav = "reviews"
 	p.Data = d
 	s.render(w, r, "review", p)
 }

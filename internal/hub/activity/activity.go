@@ -25,10 +25,11 @@ const (
 	VerbReviewApprove  = "review.approve"
 	VerbReviewFeedback = "review.feedback"
 	VerbBudgetStop     = "budget.stop"
+	VerbSettingsUpdate = "settings.update"
 )
 
 var Verbs = []string{VerbCardCreate, VerbCardMove, VerbCardUpdate, VerbCommentAdd, VerbRunStart, VerbRunWait, VerbRunEnd,
-	VerbDecisionAsk, VerbDecisionAnswer, VerbReviewApprove, VerbReviewFeedback, VerbBudgetStop}
+	VerbDecisionAsk, VerbDecisionAnswer, VerbReviewApprove, VerbReviewFeedback, VerbBudgetStop, VerbSettingsUpdate}
 
 type Entry struct {
 	TS        string         `json:"ts"`

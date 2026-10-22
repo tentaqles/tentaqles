@@ -2,44 +2,72 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
 <title>{{.Title}} · tq hub</title>
 <link rel="stylesheet" href="/static/hub.css">
-</head>
-<body data-ws="{{.WS}}" data-run="{{.RunID}}">
-<header class="top">
-  <a class="brand" href="/?ws={{.WS}}">tq hub</a>
-  {{if gt (len .Workspaces) 1}}
-  <form class="switch" method="get" action="/">
-    <label>workspace
-      <select name="ws" data-autosubmit>
-        {{range .Workspaces}}<option value="{{.Name}}"{{if eq .Name $.WS}} selected{{end}}{{if not .Available}} disabled{{end}}>{{.Name}}{{if not .Available}} (unavailable: {{.Reason}}){{end}}</option>{{end}}
-      </select>
-    </label>
-    <button class="nojs">Open</button>
-  </form>
-  {{else}}<span class="ws">{{.WS}}</span>{{end}}
-  <nav>
-    <a href="/?ws={{.WS}}">Board</a>
-    <a href="/waiting?ws={{.WS}}">Waiting <span class="count mono" id="waiting-count">{{.WaitingCount}}</span></a>
-    <a href="/activity?ws={{.WS}}">Activity</a>
-  </nav>
-</header>
-{{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
-<main id="main">{{end}}
-
-{{define "foot"}}</main>
 <script src="/static/hub.js"></script>
+</head>
+<body data-ws="{{.WS}}" data-run="{{.RunID}}" data-nav="{{.Nav}}">
+{{template "sprite"}}
+<div class="app">
+<aside class="side">
+  <a class="brand" href="/?ws={{.WS}}">{{template "brandmark"}}<span>tq hub<small>Tentaqles</small></span></a>
+  {{template "wsswitch" .}}
+  <nav class="nav" aria-label="Pages">
+    <a href="/?ws={{.WS}}"{{if eq .Nav "board"}} class="on" aria-current="page"{{end}}><svg class="i" aria-hidden="true"><use href="#i-board"/></svg>Board</a>
+    <a href="/waiting?ws={{.WS}}"{{if eq .Nav "decisions"}} class="on" aria-current="page"{{end}}><svg class="i" aria-hidden="true"><use href="#i-inbox"/></svg>Decisions<span class="n" id="waiting-count"{{if not .WaitingCount}} hidden{{end}}>{{.WaitingCount}}</span></a>
+    <a href="/runs?ws={{.WS}}"{{if eq .Nav "runs"}} class="on" aria-current="page"{{end}}><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Runs</a>
+    <a href="/reviews?ws={{.WS}}"{{if eq .Nav "reviews"}} class="on" aria-current="page"{{end}}><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Reviews</a>
+    <a href="/activity?ws={{.WS}}"{{if eq .Nav "activity"}} class="on" aria-current="page"{{end}}><svg class="i" aria-hidden="true"><use href="#i-pulse"/></svg>Activity</a>
+    <a href="/connections?ws={{.WS}}"{{if eq .Nav "connections"}} class="on" aria-current="page"{{end}}><svg class="i" aria-hidden="true"><use href="#i-link"/></svg>Connections</a>
+  </nav>
+  <div class="bottom">
+    <nav class="nav" aria-label="Hub"><a href="/settings?ws={{.WS}}"{{if eq .Nav "settings"}} class="on" aria-current="page"{{end}}><svg class="i" aria-hidden="true"><use href="#i-gear"/></svg>Settings</a></nav>
+    <div class="foot">{{if .Bind}}serving <b>{{.Bind}}</b>{{else}}serving this machine{{end}}{{if .Concurrency}}<br>{{.Running}} of {{.Concurrency}} running{{end}}</div>
+  </div>
+</aside>
+<main>
+  <div class="top">
+    <h1>{{.Title}}</h1>
+    {{if eq .Nav "board"}}<label class="search"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><input id="search" type="search" placeholder="Filter cards by title" aria-label="Filter cards by title" autocomplete="off"><kbd>/</kbd></label>{{else}}<span class="grow"></span>{{end}}
+    <a class="btn pri" href="#new-card" id="newcard"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New card</a>
+    <button class="btn icon" id="themebtn" type="button" aria-label="Switch theme" title="Switch theme"><svg class="i" aria-hidden="true"><use href="#i-sun"/></svg></button>
+  </div>
+  {{if .Flash}}<p class="flash" role="status">{{.Flash}}</p>{{end}}
+  <div id="main">{{end}}
+
+{{define "foot"}}</div>
+</main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>{{end}}
 
 {{define "message"}}{{template "head" .}}{{template "message-main" .}}{{template "foot" .}}{{end}}
-{{define "message-main"}}<section class="message"><h1>{{.Title}}</h1><p>{{.Data}}</p></section>{{end}}
+{{define "message-main"}}<section class="panel message"><h2>{{.Title}}</h2><p>{{.Data}}</p></section>{{end}}
 
-{{define "decision-form"}}{{$d := index . "item"}}
-<form class="decision" method="post" action="/cards/{{index . "card"}}/decisions/{{$d.ID}}/answer?ws={{index . "ws"}}">
-  <p><span class="badge">{{$d.Kind}}</span>{{if $d.Checkpoint}} checkpoint <span class="mono">{{$d.Checkpoint}}</span>{{end}}{{if $d.Reviewer}} · {{$d.Reviewer}}{{end}} <span class="mono muted">{{$d.ID}}</span>{{if $d.AskedAt}} <span class="mono muted">{{when $d.AskedAt}}</span>{{end}}</p>
-  <pre class="text">{{$d.Text}}</pre>
-  <label>Note <input name="note" autocomplete="off"></label>
-  <div class="choices">{{range $d.Options}}<button name="choice" value="{{.}}">{{.}}</button>{{end}}</div>
-</form>{{end}}
+{{define "wsswitch"}}{{if gt (len .Workspaces) 1}}
+  <details class="ws">
+    <summary><span>{{or .WS "all workspaces"}}<small>{{len .Workspaces}} workspaces, {{available .Workspaces}} available</small></span><svg class="i" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+    <ul class="wslist">{{range .Workspaces}}<li>{{if .Available}}<a href="/?ws={{.Name}}"{{if eq .Name $.WS}} aria-current="true"{{end}}>{{.Name}}</a>{{else}}<span class="off">{{.Name}} (unavailable: {{.Reason}})</span>{{end}}</li>{{end}}</ul>
+  </details>{{else}}
+  <div class="ws"><div class="cur"><span>{{or .WS "no workspace"}}<small>{{if eq .Mode "all"}}every trusted workspace{{else}}this workspace{{end}}</small></span></div></div>{{end}}{{end}}
+
+{{define "brandmark"}}<svg class="mark" viewBox="0 0 60 52" role="img" aria-label="Tentaqles mark"><defs><linearGradient id="tq-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2E6FB5"/><stop offset="1" stop-color="#123C6E"/></linearGradient><linearGradient id="tq-tent" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1565C0"/><stop offset=".55" stop-color="#26C6DA"/><stop offset="1" stop-color="#F97316"/></linearGradient></defs><circle cx="24" cy="22" r="16" fill="none" stroke="url(#tq-ring)" stroke-width="8"/><path d="M26 30 C 30 42, 44 44, 50 36 C 54 31, 58 36, 55 40" fill="none" stroke="url(#tq-tent)" stroke-width="6" stroke-linecap="round"/></svg>{{end}}
+
+{{define "sprite"}}<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false"><defs>
+  <symbol id="i-board" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="11" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M4 13V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6"/><path d="M4 13v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="7" r="1.2"/><circle cx="15" cy="7" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="17" r="1.2"/><circle cx="15" cy="17" r="1.2"/></symbol>
+</defs></svg>{{end}}
