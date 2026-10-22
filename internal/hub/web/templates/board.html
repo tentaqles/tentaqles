@@ -1,32 +1,25 @@
 {{define "board"}}{{template "head" .}}{{template "board-main" .}}{{template "foot" .}}{{end}}
 {{define "board-main"}}
-<section class="lanes">
+<section class="lanes" aria-label="Board">
 {{range .Data.Lanes}}
-  <div class="lane" data-lane="{{.Lane.Name}}">
-    <h2>{{.Lane.Name}} <span class="mono muted">{{len .Cards}}</span></h2>
-    {{range .Cards}}
-    <article class="card" draggable="true" data-card="{{.ID}}">
-      <a class="title" href="/cards/{{.ID}}?ws={{$.WS}}">{{.Title}}</a>
-      <div class="meta">
-        <span class="kind">{{.Kind}}</span>{{range .Tags}} <span class="tag">{{.}}</span>{{end}}
-        {{if .Waiting}}<span class="badge st-waiting">waiting on you</span>{{end}}
-        {{if .RunStatus}}<span class="badge st-{{.RunStatus}}">{{.RunStatus}}</span>{{end}}
-        {{if .CostUSD}}<span class="mono">{{money .CostUSD}}</span>{{end}}
-      </div>
-    </article>
-    {{end}}
+  <div class="lane" data-lane="{{.Lane.Name}}" data-kind="{{.Lane.Kind}}" data-title="{{laneTitle .Lane.Name}}" role="region" aria-label="{{laneTitle .Lane.Name}}">
+    <header>{{laneTitle .Lane.Name}} <span class="c">{{len .Cards}}</span>{{if planning .Lane.Kind}}<a class="add" href="#new-card" data-new="{{.Lane.Name}}" aria-label="Add a card to {{laneTitle .Lane.Name}}"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></a>{{end}}</header>
+    <div class="empty"{{if .Cards}} hidden{{end}}>{{if eq .Lane.Kind "active"}}Drop an agent-ready card here to start a run.{{else if eq .Lane.Kind "review"}}Finished runs wait here for your review.{{else if eq .Lane.Kind "done"}}Nothing done yet.{{else}}No cards yet. Use + to add one.{{end}}</div>
+    {{range .Cards}}{{template "board-card" (dict "WS" $.WS "Card" .)}}{{end}}
   </div>
 {{end}}
 </section>
-<details class="new"><summary>New card</summary>
-  <form method="post" action="/cards?ws={{.WS}}">
-    <label>Title <input name="title" required></label>
-    <label>Body (markdown) <textarea name="body" rows="5"></textarea></label>
-    <label>Kind <select name="kind">{{range .Data.Kinds}}<option>{{.}}</option>{{end}}</select></label>
-    <label>Lane <select name="lane">{{range .Data.Lanes}}<option>{{.Lane.Name}}</option>{{end}}</select></label>
-    <label>Project folder <input name="project" placeholder="apps/billing"></label>
-    <label class="check"><input type="checkbox" name="agent_ready" value="1"> agent-ready</label>
-    <button>Add card</button>
-  </form>
-</details>
+<p class="hint">Drag a card between lanes, or open it and use Move. An agent-ready card that enters In progress starts a run; moving a running card out asks before the run is cancelled. An orange edge means a run is waiting on you; the action is on the card.</p>
 {{end}}
+
+{{define "board-card"}}{{$ws := .WS}}{{with .Card}}<article class="card{{if .Decision}} hot{{end}}" draggable="true" data-card="{{.ID}}" data-lane="{{.Lane}}" data-title="{{.Title}}" data-status="{{.Status}}" data-status-text="{{.StatusText}}"{{if .HasTag "agent-ready"}} data-ready{{end}}>
+  <a class="t" href="/cards/{{.ID}}?ws={{$ws}}">{{.Title}}</a>
+  {{if .Status}}<div class="status"><span class="pill {{pill .Status}}">{{.PillLabel}}</span>{{with .StatusText}}<span>{{.}}</span>{{end}}</div>
+  {{else}}<div class="status"><span class="chip">{{.Kind}}</span>{{range .Tags}}<span class="chip{{if eq . "agent-ready"}} ready{{end}}">{{.}}</span>{{end}}</div>{{end}}
+  {{if .Run}}<div class="bar" role="img" aria-label="{{.Pct}}% of the dollar budget"><i style="width:{{.Pct}}%"></i></div>{{end}}
+  {{with .Decision}}{{if eq .Kind "result"}}<div class="ask"><a class="btn warm sm" href="/cards/{{$.Card.ID}}/review?ws={{$ws}}">Open review</a></div>
+  {{else if $.Card.CanApprove}}<form class="ask" method="post" action="/cards/{{$.Card.ID}}/decisions/{{.ID}}/answer?ws={{$ws}}"><button class="btn warm sm" name="choice" value="approve">Approve plan</button><a class="btn sm" href="/waiting?ws={{$ws}}#d-{{.ID}}">Review it</a></form>
+  {{else}}<div class="ask"><a class="btn warm sm" href="/waiting?ws={{$ws}}#d-{{.ID}}">Answer</a></div>{{end}}
+  {{else}}{{if .OpenReview}}<div class="ask"><a class="btn sm" href="/cards/{{.ID}}/review?ws={{$ws}}">Open review</a></div>{{end}}{{end}}
+  <div class="meta">{{if .Run}}<span class="id">{{.Run.ID}}</span><span class="num">{{money .Run.CostUSD}}</span><span>{{minutes .Run.Seconds}} min</span>{{else}}{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}<span class="id">{{.ID}}</span>{{if .BudgetUSD}}<span>budget <span class="num">{{money .BudgetUSD}}</span></span>{{end}}{{end}}</div>
+</article>{{end}}{{end}}

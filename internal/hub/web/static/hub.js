@@ -288,6 +288,144 @@
   starters.push(bindTheme, bindSearch);
   mainBinders.push(function () { if (hub.applySearch) hub.applySearch(); });
 
+  /* ---------- board: drag and drop, live tiles ---------- */
+  var drag = null;       // { card, from, next } while a card is dragged
+  var slot = el("div", "slot");
+  var heldTiles = {};    // tile refreshes that arrived mid-drag
+  var tileTimers = {};
+  var quietUntil = {};   // card id → until when a status change does not toast (the move already did)
+
+  function laneOf(node) { return node && node.closest ? node.closest(".lane[data-lane]") : null; }
+  function cardsIn(lane) { return $$(".card[data-card]", lane); }
+  function laneCounts() {
+    $$(".lane[data-lane]").forEach(function (lane) {
+      var n = cardsIn(lane).length, c = $("header .c", lane), empty = $(".empty", lane);
+      if (c) c.textContent = String(n);
+      if (empty) empty.hidden = n > 0;
+    });
+  }
+  function settle(card) {
+    card.classList.remove("settle");
+    void card.offsetWidth; // restart the animation
+    card.classList.add("settle");
+    setTimeout(function () { card.classList.remove("settle"); }, 400);
+  }
+  function placeSlot(lane, y) {
+    var after = null;
+    cardsIn(lane).some(function (c) {
+      if (drag && c === drag.card) return false;
+      var r = c.getBoundingClientRect();
+      if (y < r.top + r.height / 2) { after = c; return true; }
+      return false;
+    });
+    if (after) lane.insertBefore(slot, after); else lane.appendChild(slot);
+    slot.classList.add("show");
+  }
+  function endDrag() {
+    if (!drag) return;
+    drag.card.classList.remove("dragging");
+    slot.classList.remove("show");
+    if (slot.parentNode) slot.parentNode.removeChild(slot);
+    $$(".lane.over").forEach(function (l) { l.classList.remove("over"); });
+    drag = null;
+    var ids = Object.keys(heldTiles);
+    heldTiles = {};
+    ids.forEach(refreshTile);
+  }
+  function statusToast(card) {
+    var st = card.getAttribute("data-status");
+    if (!st) return;
+    var text = card.getAttribute("data-status-text");
+    toast([pill(st), el("span", null, card.getAttribute("data-title") + (text ? ": " + text : ""))]);
+  }
+  // refreshTile re-reads one card and puts it in the lane the server names; a 404 removes it.
+  function refreshTile(id) {
+    if (drag) { heldTiles[id] = true; return; }
+    getHTML("/cards/" + encodeURIComponent(id) + "/tile").then(function (res) {
+      var old = byData("data-card", id, $(".lanes"));
+      if (res.status === 404) { if (old) old.remove(); laneCounts(); return; }
+      if (!res.html) return;
+      var node = fragment(res.html).firstElementChild;
+      if (!node) return;
+      var lane = $('.lane[data-lane="' + cssq(node.getAttribute("data-lane")) + '"]');
+      if (!lane) { refreshMain(); return; }
+      var before = old ? old.getAttribute("data-status") : null;
+      var moved = !old || laneOf(old) !== lane;
+      if (old && !moved) old.replaceWith(node);
+      else {
+        if (old) old.remove();
+        var first = $(".card[data-card]", lane);
+        if (first) lane.insertBefore(node, first); else lane.appendChild(node);
+      }
+      var after = node.getAttribute("data-status");
+      if (moved || before !== after) settle(node);
+      if (old && before !== after && Date.now() > (quietUntil[id] || 0)) statusToast(node);
+      laneCounts();
+      if (hub.applySearch) hub.applySearch();
+    });
+  }
+  function bindBoard() {
+    if (hub.nav !== "board") return;
+    on(document, "dragstart", function (e) {
+      var card = e.target.closest ? e.target.closest(".card[data-card]") : null;
+      if (!card) return;
+      drag = { card: card, from: laneOf(card), next: card.nextElementSibling };
+      card.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", card.getAttribute("data-card")); } catch (_) { /* some browsers refuse custom data */ }
+    });
+    on(document, "dragover", function (e) {
+      if (!drag) return;
+      var lane = laneOf(e.target);
+      if (!lane) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      $$(".lane.over").forEach(function (l) { if (l !== lane) l.classList.remove("over"); });
+      lane.classList.add("over");
+      placeSlot(lane, e.clientY);
+    });
+    on(document, "dragleave", function (e) {
+      var lane = laneOf(e.target);
+      if (lane && !lane.contains(e.relatedTarget)) lane.classList.remove("over");
+    });
+    on(document, "dragend", endDrag);
+    on(document, "drop", function (e) {
+      if (!drag) return;
+      var lane = laneOf(e.target);
+      if (!lane) return;
+      e.preventDefault();
+      var d = drag, card = d.card, id = card.getAttribute("data-card");
+      function putBack() {
+        if (d.next && d.next.parentNode === d.from) d.from.insertBefore(card, d.next); else d.from.appendChild(card);
+        settle(card);
+        laneCounts();
+      }
+      if (slot.parentNode === lane) lane.insertBefore(card, slot); else lane.appendChild(card);
+      endDrag();
+      if (lane === d.from) { putBack(); return; } // the order inside a lane is not stored
+      settle(card);
+      laneCounts();
+      quietUntil[id] = Date.now() + 2500;
+      moveCard(id, lane.getAttribute("data-lane"), {
+        title: card.getAttribute("data-title"),
+        active: lane.getAttribute("data-kind") === "active",
+        ready: card.hasAttribute("data-ready")
+      }, function (ok) {
+        if (!ok) { putBack(); return; }
+        quietUntil[id] = Date.now() + 2500; // a confirmed cancel-and-move answers later; its toast already spoke
+        refreshTile(id);
+      });
+    });
+  }
+  starters.push(bindBoard);
+  changeHandlers.push(function (c) {
+    if (hub.nav !== "board" || !c.card || !$(".lanes")) return false;
+    clearTimeout(tileTimers[c.card]);
+    tileTimers[c.card] = setTimeout(function () { delete tileTimers[c.card]; refreshTile(c.card); }, 150);
+    return true;
+  });
+  busyChecks.push(function () { return !!drag; });
+
   /* ---------- page sections: Tasks 3, 4 and 5 insert theirs above this line ---------- */
 
   function start() {
