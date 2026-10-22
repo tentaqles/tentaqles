@@ -52,6 +52,8 @@ type Verdict struct {
 	Note  string
 }
 
+// Verdict is "ok" only when every checkpoint passed, the DoD is ok, at least one review is recorded and
+// no review says anything but PASS; a failing DoD is "bad"; anything else is "wait", naming what is missing.
 func (d ReviewData) Verdict() Verdict {
 	passed, total, reviews := 0, 0, 0
 	if d.State != nil {
@@ -63,13 +65,28 @@ func (d ReviewData) Verdict() Verdict {
 		}
 	}
 	var dod *gate.DoDRecord
+	var gaps []string
 	if d.Records != nil {
 		for _, rv := range d.Records.Reviews {
 			if rv.Result == "PASS" {
 				reviews++
+			} else {
+				gaps = append(gaps, fmt.Sprintf("review %s on checkpoint %s: %s", rv.Reviewer, rv.Checkpoint, rv.Result))
 			}
 		}
 		dod = d.Records.DoD
+	}
+	if d.Records == nil || len(d.Records.Reviews) == 0 {
+		gaps = append([]string{"no review recorded"}, gaps...)
+	}
+	switch {
+	case total == 0:
+		gaps = append([]string{"no checkpoint recorded"}, gaps...)
+	case passed < total:
+		gaps = append([]string{fmt.Sprintf("%d of %d checkpoints passed", passed, total)}, gaps...)
+	}
+	if dod == nil {
+		gaps = append(gaps, "no definition-of-done record")
 	}
 	facts := fmt.Sprintf("%d of %d checkpoints passed, %d reviews PASS", passed, total, reviews)
 	if dod != nil {
@@ -86,10 +103,10 @@ func (d ReviewData) Verdict() Verdict {
 		return Verdict{Class: "bad", Title: "The definition of done is not met", Note: note}
 	case d.State == nil && d.Records == nil:
 		return Verdict{Class: "wait", Title: "There are no gate records for this run", Note: "Read what was done before you close the card. " + d.RecordsNote}
-	case total > 0 && passed == total && dod != nil:
+	case len(gaps) == 0:
 		return Verdict{Class: "ok", Title: "Everything the gate recorded says this is done", Note: note}
 	}
-	return Verdict{Class: "wait", Title: "The gate's records are incomplete: read the evidence before you approve", Note: note}
+	return Verdict{Class: "wait", Title: "The gate's records are incomplete: read the evidence before you approve", Note: "Missing: " + strings.Join(gaps, "; ") + ". " + note}
 }
 
 func init() {

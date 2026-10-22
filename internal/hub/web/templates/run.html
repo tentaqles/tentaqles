@@ -12,6 +12,9 @@
       <div class="acts">{{if .Run.Active}}<form class="inline" method="post" action="/runs/{{.Run.ID}}/cancel?ws={{$ws}}"><button class="btn danger">Cancel run</button></form>{{end}}</div>
     </div>
     {{if .Run.StopReason}}<p class="q"><b>Stop reason:</b> {{.Run.StopReason}}</p>{{end}}
+    <h3 class="sub">Timeline</h3>
+    {{if .Timeline}}<ul class="tl">{{range .Timeline}}<li class="{{.Class}}"><i></i><div>{{.Text}} <div class="when">{{when .At}}{{with .Detail}} · {{.}}{{end}}{{with .Actor}} · <code>{{.}}</code>{{end}}{{with .AnsweredAt}} · answered {{when .}}{{end}}</div></div></li>{{end}}</ul>
+    {{else}}<p class="note">Nothing has happened yet: no round has started and no decision was asked.</p>{{end}}
     <h3 class="sub">Rounds</h3>
     <div class="tw"><table><tr><th>Round</th><th>Started</th><th>Seconds</th><th>Tokens in/out</th><th>Cost</th><th>Exit</th><th>Outcome</th></tr>
     {{range .Run.RoundLog}}<tr><td class="m">{{.N}}</td><td class="m">{{when .StartedAt}}</td><td class="m">{{printf "%.0f" .Seconds}}</td><td class="m">{{.Usage.Input}}/{{.Usage.Output}}</td><td class="m">{{money .CostUSD}}{{if .CostUnknown}} (cost unknown){{end}}</td><td class="m">{{.ExitCode}}</td><td>{{.Outcome}}</td></tr>

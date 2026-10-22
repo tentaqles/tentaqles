@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -82,6 +83,52 @@ type runData struct {
 	LogTail string
 	LogSize int64
 	GateURL string
+	// Timeline merges the run's rounds and its decisions, ordered by time.
+	Timeline []timelineEntry
+}
+
+// timelineEntry is one line of the run page's timeline: a round that started or a decision of this run.
+type timelineEntry struct {
+	At         string // when it happened (round start, decision asked)
+	Class      string // ok | r | w | x: the dot colour
+	Text       string
+	Detail     string
+	Actor      string
+	AnsweredAt string
+}
+
+func runTimeline(run store.Run, decisions []store.Decision) []timelineEntry {
+	var tl []timelineEntry
+	for _, rd := range run.RoundLog {
+		e := timelineEntry{At: rd.StartedAt, Class: "r", Text: fmt.Sprintf("Round %d started", rd.N)}
+		if rd.ExitCode != 0 {
+			e.Class = "x"
+		}
+		e.Detail = fmt.Sprintf("$%.2f", rd.CostUSD)
+		if rd.CostUnknown {
+			e.Detail += " (cost unknown)"
+		}
+		if rd.Outcome != "" {
+			e.Detail = rd.Outcome + " · " + e.Detail
+		}
+		tl = append(tl, e)
+	}
+	for _, d := range decisions {
+		if d.RunID != run.ID {
+			continue
+		}
+		what := d.Kind + " decision"
+		if d.Checkpoint != "" {
+			what += " on checkpoint " + d.Checkpoint
+		}
+		e := timelineEntry{At: d.AskedAt, Class: "w", Text: what + " asked, waiting on you"}
+		if d.Status == store.DecisionAnswered {
+			e.Class, e.Text, e.Actor, e.AnsweredAt = "ok", what+" answered "+d.Choice, d.Actor, d.AnsweredAt
+		}
+		tl = append(tl, e)
+	}
+	sort.SliceStable(tl, func(i, j int) bool { return tl[i].At < tl[j].At })
+	return tl
 }
 
 func tailFile(path string, max int64) (string, int64) {
@@ -122,6 +169,8 @@ func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
 	card, _ := svc.Store().Card(run.CardID)
 	d := runData{Run: run, Card: card, GateURL: svc.GateURL()}
 	d.LogTail, d.LogSize = tailFile(run.LogPath, 64<<10)
+	decisions, _ := svc.Store().DecisionsForCard(run.CardID)
+	d.Timeline = runTimeline(run, decisions)
 	p := s.basePage(r, "Run "+run.ID, ws)
 	p.Nav = "runs"
 	p.RunID = run.ID
