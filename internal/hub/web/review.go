@@ -52,8 +52,29 @@ type Verdict struct {
 	Note  string
 }
 
+// latestReviews keeps the latest review per (checkpoint, reviewer): latest by timestamp when both carry
+// one, else the later in record order. Pairs keep the order of their first appearance.
+func latestReviews(all []gate.Review) []gate.Review {
+	idx := map[[2]string]int{}
+	var out []gate.Review
+	for _, rv := range all {
+		k := [2]string{string(rv.Checkpoint), rv.Reviewer}
+		i, ok := idx[k]
+		if !ok {
+			idx[k] = len(out)
+			out = append(out, rv)
+			continue
+		}
+		if cur := out[i]; cur.TS == "" || rv.TS == "" || rv.TS >= cur.TS {
+			out[i] = rv
+		}
+	}
+	return out
+}
+
 // Verdict is "ok" only when every checkpoint passed, the DoD is ok, at least one review is recorded and
-// no review says anything but PASS; a failing DoD is "bad"; anything else is "wait", naming what is missing.
+// no latest review (per checkpoint and reviewer) says anything but PASS; a failing DoD is "bad";
+// anything else is "wait", naming what is missing.
 func (d ReviewData) Verdict() Verdict {
 	passed, total, reviews := 0, 0, 0
 	if d.State != nil {
@@ -67,7 +88,7 @@ func (d ReviewData) Verdict() Verdict {
 	var dod *gate.DoDRecord
 	var gaps []string
 	if d.Records != nil {
-		for _, rv := range d.Records.Reviews {
+		for _, rv := range latestReviews(d.Records.Reviews) {
 			if rv.Result == "PASS" {
 				reviews++
 			} else {

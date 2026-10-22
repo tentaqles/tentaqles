@@ -37,6 +37,18 @@ func TestVerdictRules(t *testing.T) {
 		{"zero checkpoints", verdictData(nil, &yes, pass), "wait", "no checkpoint recorded"},
 		{"no DoD record", verdictData([]string{"passed"}, nil, pass), "wait", "no definition-of-done record"},
 		{"DoD not met", verdictData([]string{"passed"}, &no, pass), "bad", "DoD not met"},
+		{"FAIL then PASS, same reviewer and checkpoint", verdictData([]string{"passed", "passed"}, &yes,
+			gate.Review{Checkpoint: "2", Reviewer: "build-critic", Result: "FAIL", TS: "2026-10-21T10:00:00Z"},
+			gate.Review{Checkpoint: "2", Reviewer: "build-critic", Result: "PASS", TS: "2026-10-21T11:00:00Z"}), "ok", "1 reviews PASS"},
+		{"PASS then FAIL, same reviewer and checkpoint", verdictData([]string{"passed", "passed"}, &yes,
+			gate.Review{Checkpoint: "2", Reviewer: "build-critic", Result: "PASS", TS: "2026-10-21T10:00:00Z"},
+			gate.Review{Checkpoint: "2", Reviewer: "build-critic", Result: "FAIL", TS: "2026-10-21T11:00:00Z"}), "wait", "review build-critic on checkpoint 2: FAIL"},
+		{"FAIL then PASS without timestamps, by order", verdictData([]string{"passed"}, &yes,
+			gate.Review{Checkpoint: "1", Reviewer: "build-critic", Result: "FAIL"},
+			gate.Review{Checkpoint: "1", Reviewer: "build-critic", Result: "PASS"}), "ok", "1 reviews PASS"},
+		{"newer FAIL listed first wins by timestamp", verdictData([]string{"passed"}, &yes,
+			gate.Review{Checkpoint: "1", Reviewer: "build-critic", Result: "FAIL", TS: "2026-10-21T11:00:00Z"},
+			gate.Review{Checkpoint: "1", Reviewer: "build-critic", Result: "PASS", TS: "2026-10-21T10:00:00Z"}), "wait", "review build-critic on checkpoint 1: FAIL"},
 		{"no records at all", ReviewData{RecordsNote: "this run has no build slug"}, "wait", "this run has no build slug"},
 	}
 	for _, c := range cases {
