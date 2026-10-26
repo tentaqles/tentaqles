@@ -339,7 +339,8 @@
   function cardsIn(lane) { return $$(".card[data-card]", lane); }
   function laneCounts() {
     $$(".lane[data-lane]").forEach(function (lane) {
-      var n = cardsIn(lane).length, c = $("header .c", lane), empty = $(".empty", lane);
+      // a capped done lane leaves data-hidden cards out of the page; its count is still the total
+      var n = cardsIn(lane).length + (Number(lane.getAttribute("data-hidden")) || 0), c = $("header .c", lane), empty = $(".empty", lane);
       if (c) c.textContent = String(n);
       if (empty) empty.hidden = n > 0;
     });
@@ -389,6 +390,7 @@
       if (!node) return;
       var lane = $('.lane[data-lane="' + cssq(node.getAttribute("data-lane")) + '"]');
       if (!lane) { refreshMain(); return; }
+      if (!old && lane.hasAttribute("data-hidden")) return; // most likely a done card the cap leaves out
       var before = old ? old.getAttribute("data-status") : null;
       var moved = !old || laneOf(old) !== lane;
       if (old && !moved) old.replaceWith(node);
