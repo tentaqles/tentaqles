@@ -61,8 +61,8 @@ func (s *Service) Settings() Settings {
 	return Settings{Concurrency: s.st.Concurrency(), DefaultBudget: s.st.DefaultBudget(), Notify: s.st.Notify()}
 }
 
-// UpdateSettings is human-only. Every field is validated before any is written, so a refused update
-// changes nothing.
+// UpdateSettings is human-only. Every field is validated before any is written and the writes are one
+// transaction, so a refused or failed update changes nothing.
 func (s *Service) UpdateSettings(ctx context.Context, u SettingsUpdate) (Settings, error) {
 	if IsAgent(ctx) {
 		return Settings{}, ErrHumanOnly
@@ -80,23 +80,20 @@ func (s *Service) UpdateSettings(ctx context.Context, u SettingsUpdate) (Setting
 	}
 	var fields []any
 	if u.Concurrency != nil {
-		if err := s.st.SetConcurrency(*u.Concurrency); err != nil {
-			return Settings{}, err
-		}
 		fields = append(fields, "concurrency")
 	}
 	if u.DefaultBudget != nil {
-		if err := s.st.SetDefaultBudget(*u.DefaultBudget); err != nil {
-			return Settings{}, err
-		}
 		fields = append(fields, "default_budget")
 	}
 	if u.Notify != nil {
-		if err := s.st.SetNotify(*u.Notify); err != nil {
-			return Settings{}, err
-		}
 		fields = append(fields, "notify")
 	}
-	_ = s.st.Log(activity.Entry{Actor: s.human(), Verb: activity.VerbSettingsUpdate, Data: map[string]any{"fields": fields}})
+	// One transaction for the values and the audit row; a mirror failure after the commit is returned
+	// too, with the saved settings, never dropped.
+	err := s.st.SetSettings(store.SettingsWrite{Concurrency: u.Concurrency, DefaultBudget: u.DefaultBudget, Notify: u.Notify},
+		activity.Entry{Actor: s.human(), Verb: activity.VerbSettingsUpdate, Data: map[string]any{"fields": fields}})
+	if err != nil {
+		return s.Settings(), err
+	}
 	return s.Settings(), nil
 }

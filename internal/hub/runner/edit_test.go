@@ -158,3 +158,17 @@ func TestUpdateSettingsValidatesBeforeWriting(t *testing.T) {
 		t.Fatal("a refused update writes nothing, not even its valid fields")
 	}
 }
+
+func TestUpdateSettingsFailureChangesNothing(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.st.DB.Exec(`CREATE TRIGGER no_activity BEFORE INSERT ON activity BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	b := store.Budget{Tokens: 1000, USD: 2, Minutes: 10, Rounds: 1}
+	if _, err := h.svc.UpdateSettings(context.Background(), SettingsUpdate{Concurrency: intp(3), DefaultBudget: &b, Notify: boolp(false)}); err == nil {
+		t.Fatal("a failed write was reported as saved")
+	}
+	if h.st.Concurrency() != store.DefaultConcurrency || h.st.DefaultBudget() != store.DefaultBudget || !h.st.Notify() {
+		t.Fatal("a failed update changed some fields")
+	}
+}

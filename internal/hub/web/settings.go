@@ -1,7 +1,9 @@
 package web
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -9,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/hub/runner"
+	"github.com/tentaqles/tentaqles/internal/hub/store"
 )
 
 func init() {
@@ -25,6 +28,33 @@ type settingsData struct {
 	Mode, Bind    string
 	TokenRequired bool
 	Workspaces    []WorkspaceInfo
+	Form          settingsForm      // the text each field shows
+	Error         string            // set when a submit was refused: the page is shown again with it
+	FieldErrors   map[string]string // input name -> message
+}
+
+// settingsForm is the text in each field: the saved values, or what the person typed when a submit
+// was refused.
+type settingsForm struct {
+	Concurrency, USD, Tokens, Minutes, Rounds string
+	Notify                                    bool
+}
+
+func savedForm(c runner.Settings) settingsForm {
+	b := c.DefaultBudget
+	return settingsForm{Concurrency: strconv.Itoa(c.Concurrency), USD: fmt.Sprint(b.USD), Tokens: fmt.Sprint(b.Tokens),
+		Minutes: fmt.Sprint(b.Minutes), Rounds: fmt.Sprint(b.Rounds), Notify: c.Notify}
+}
+
+// fieldError is a refused form value; Field is the input's name.
+type fieldError struct{ Field, Msg string }
+
+func (e *fieldError) Error() string { return e.Msg }
+
+func (s *Server) settingsData(svc *runner.Service) settingsData {
+	cur := svc.Settings()
+	return settingsData{Settings: cur, Mode: s.opts.Mode, Bind: s.opts.Bind, TokenRequired: s.opts.TokenHash != "",
+		Workspaces: s.opts.Backend.Workspaces(), Form: savedForm(cur)}
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
@@ -34,8 +64,36 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	p := s.basePage(r, "Settings", ws)
 	p.Nav = "settings"
-	p.Data = settingsData{Settings: svc.Settings(), Mode: s.opts.Mode, Bind: s.opts.Bind, TokenRequired: s.opts.TokenHash != "", Workspaces: s.opts.Backend.Workspaces()}
+	p.Data = s.settingsData(svc)
 	s.render(w, r, "settings", p)
+}
+
+// settingsRefused shows the settings page again with status 400, the typed values kept and the
+// message next to the field it is about.
+func (s *Server) settingsRefused(w http.ResponseWriter, r *http.Request, svc *runner.Service, ws string, err error) {
+	if r.Header.Get("X-TQ-Hub-Fetch") == "1" { // the script reads a plain-text refusal
+		s.fail(w, r, err)
+		return
+	}
+	d := s.settingsData(svc)
+	d.Form = settingsForm{
+		Concurrency: r.PostFormValue("concurrency"), USD: r.PostFormValue("usd"), Tokens: r.PostFormValue("tokens"),
+		Minutes: r.PostFormValue("minutes"), Rounds: r.PostFormValue("rounds"),
+		Notify: strings.TrimSpace(r.PostFormValue("notify")) == "on" || (strings.TrimSpace(r.PostFormValue("notify")) != "off" && d.Settings.Notify),
+	}
+	d.Error = err.Error()
+	var fe *fieldError
+	if errors.As(err, &fe) {
+		d.FieldErrors = map[string]string{fe.Field: fe.Msg}
+	}
+	p := s.basePage(r, "Settings", ws)
+	p.Nav = "settings"
+	p.Data = d
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	if err := s.tpl.ExecuteTemplate(w, "settings", p); err != nil {
+		fmt.Fprintln(w, err.Error())
+	}
 }
 
 var numberNoise = strings.NewReplacer("_", "", " ", "", "$", "")
@@ -54,8 +112,11 @@ func cleanNumber(s string) string {
 	return v
 }
 
+func positive(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) && f > 0 }
+
 // settingsFromForm turns the form's text into typed values; a blank field keeps cur. Nothing the
 // form sent is stored as text: the runner validates the numbers and the store re-serialises them.
+// A refused value comes back as a *fieldError naming its input.
 func settingsFromForm(r *http.Request, cur runner.Settings) (runner.SettingsUpdate, error) {
 	var u runner.SettingsUpdate
 	field := func(k string) (string, bool) {
@@ -64,37 +125,37 @@ func settingsFromForm(r *http.Request, cur runner.Settings) (runner.SettingsUpda
 	}
 	if v, ok := field("concurrency"); ok {
 		n, err := strconv.Atoi(v)
-		if err != nil {
-			return u, fmt.Errorf("concurrency: want a whole number from 1 to 16")
+		if err != nil || n < 1 || n > store.MaxConcurrency {
+			return u, &fieldError{"concurrency", "Concurrency: use a whole number from 1 to 16."}
 		}
 		u.Concurrency = &n
 	}
 	b, touched := cur.DefaultBudget, false
 	if v, ok := field("usd"); ok {
 		f, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			return u, fmt.Errorf("dollars: want a number, such as 15 or 7.50")
+		if err != nil || !positive(f) {
+			return u, &fieldError{"usd", "Dollars: want a number, such as 15 or 7.50, above zero."}
 		}
 		b.USD, touched = f, true
 	}
 	if v, ok := field("tokens"); ok {
 		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return u, fmt.Errorf("tokens: want a whole number, such as 2,000,000")
+		if err != nil || n < 1 {
+			return u, &fieldError{"tokens", "Tokens: use a whole number above zero, such as 2,000,000."}
 		}
 		b.Tokens, touched = n, true
 	}
 	if v, ok := field("minutes"); ok {
 		f, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			return u, fmt.Errorf("minutes: want a number")
+		if err != nil || !positive(f) {
+			return u, &fieldError{"minutes", "Minutes: use a number above zero."}
 		}
 		b.Minutes, touched = f, true
 	}
 	if v, ok := field("rounds"); ok {
 		n, err := strconv.Atoi(v)
-		if err != nil {
-			return u, fmt.Errorf("rounds: want a whole number")
+		if err != nil || n < 1 {
+			return u, &fieldError{"rounds", "Rounds: use a whole number above zero."}
 		}
 		b.Rounds, touched = n, true
 	}
@@ -110,7 +171,7 @@ func settingsFromForm(r *http.Request, cur runner.Settings) (runner.SettingsUpda
 		u.Notify = &off
 	case "":
 	default:
-		return u, fmt.Errorf("notifications: use on or off")
+		return u, &fieldError{"notify", "Notifications: choose on or off."}
 	}
 	return u, nil
 }
@@ -122,10 +183,16 @@ func (s *Server) formSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := settingsFromForm(r, svc.Settings())
 	if err != nil {
-		s.fail(w, r, err)
+		s.settingsRefused(w, r, svc, ws, err)
 		return
 	}
 	if _, err := svc.UpdateSettings(s.reqCtx(r), u); err != nil {
+		// A value the runner refuses (400) is shown on the form; human-only, not-found and the like
+		// keep the plain error page.
+		if status, _ := errStatus(err); status == http.StatusBadRequest {
+			s.settingsRefused(w, r, svc, ws, err)
+			return
+		}
 		s.fail(w, r, err)
 		return
 	}

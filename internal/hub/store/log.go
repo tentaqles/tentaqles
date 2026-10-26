@@ -39,6 +39,20 @@ func (s *Store) maskAny(v any) any {
 // Row first; the jsonl mirror and publish are best-effort for callers that already committed their
 // own write. If the append fails the error is returned but the row stays (no rollback).
 func (s *Store) Log(e activity.Entry) error {
+	e, data, err := s.prepEntry(e)
+	if err != nil {
+		return err
+	}
+	if _, err := s.DB.Exec(insertActivity, e.TS, e.Workspace, e.Actor, e.Verb, nullStr(e.CardID), nullStr(e.RunID), data); err != nil {
+		return err
+	}
+	return s.mirrorEntry(e)
+}
+
+const insertActivity = `INSERT INTO activity(ts, workspace, actor, verb, card_id, run_id, data) VALUES (?, ?, ?, ?, ?, ?, ?)`
+
+// prepEntry stamps and masks an entry and serialises its data.
+func (s *Store) prepEntry(e activity.Entry) (activity.Entry, string, error) {
 	e.Workspace = s.Workspace
 	if e.TS == "" {
 		e.TS = Now()
@@ -49,17 +63,18 @@ func (s *Store) Log(e activity.Entry) error {
 	}
 	data, err := json.Marshal(e.Data)
 	if err != nil {
-		return err
+		return e, "", err
 	}
 	if e.Data == nil {
 		data = []byte("{}")
 	}
-	if _, err := s.DB.Exec(`INSERT INTO activity(ts, workspace, actor, verb, card_id, run_id, data) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.TS, e.Workspace, e.Actor, e.Verb, nullStr(e.CardID), nullStr(e.RunID), string(data)); err != nil {
-		return err
-	}
+	return e, string(data), nil
+}
+
+// mirrorEntry appends a committed entry to activity.jsonl and publishes it.
+func (s *Store) mirrorEntry(e activity.Entry) error {
 	s.logMu.Lock()
-	err = activity.Append(ActivityPath(s.Workspace), e)
+	err := activity.Append(ActivityPath(s.Workspace), e)
 	s.logMu.Unlock()
 	s.Publish(Change{Kind: "activity", CardID: e.CardID, RunID: e.RunID})
 	if err != nil {

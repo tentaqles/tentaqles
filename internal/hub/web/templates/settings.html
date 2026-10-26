@@ -9,22 +9,23 @@
     </div>
   </section>
   <form class="set" method="post" action="/settings?ws={{$ws}}">
+    <div class="err" role="alert"{{if not .Error}} hidden{{end}}>{{if .Error}}Settings not saved. {{.Error}}{{end}}</div>
     <section class="panel"><h2>Runs</h2>
       <div class="row2">
-        <label for="st-conc">Concurrency</label><div class="ctl"><input class="f s w70" id="st-conc" autocomplete="off" name="concurrency" inputmode="numeric" value="{{.Settings.Concurrency}}"><span class="note">agents running at once in this workspace, 1 to 16</span></div>
+        <label for="st-conc">Concurrency</label><div class="ctl"><input class="f s w70" id="st-conc" autocomplete="off" name="concurrency" inputmode="numeric" value="{{.Form.Concurrency}}"{{if index .FieldErrors "concurrency"}} aria-invalid="true" aria-describedby="err-concurrency"{{end}}>{{with index .FieldErrors "concurrency"}}<p class="err" id="err-concurrency">{{.}}</p>{{end}}<span class="note">agents running at once in this workspace, 1 to 16</span></div>
       </div>
     </section>
     <section class="panel"><h2>Default budget per run</h2>
       <div class="row2">
-        <label for="st-usd">Dollars</label><div class="ctl"><input class="f s w90" id="st-usd" autocomplete="off" name="usd" inputmode="decimal" value="{{.Settings.DefaultBudget.USD}}"><span class="note">the run stops and asks you when it is spent</span></div>
-        <label for="st-tok">Tokens</label><div class="ctl"><input class="f s w120" id="st-tok" autocomplete="off" name="tokens" inputmode="numeric" value="{{.Settings.DefaultBudget.Tokens}}"><span class="note">input, output and cache writes; 2,000,000 and 2000000 both work</span></div>
-        <label for="st-min">Minutes</label><div class="ctl"><input class="f s w90" id="st-min" autocomplete="off" name="minutes" inputmode="numeric" value="{{.Settings.DefaultBudget.Minutes}}"></div>
-        <label for="st-rnd">Rounds</label><div class="ctl"><input class="f s w90" id="st-rnd" autocomplete="off" name="rounds" inputmode="numeric" value="{{.Settings.DefaultBudget.Rounds}}"><span class="note">one round is one agent start; a card can override the budget in its front matter</span></div>
+        <label for="st-usd">Dollars</label><div class="ctl"><input class="f s w90" id="st-usd" autocomplete="off" name="usd" inputmode="decimal" value="{{.Form.USD}}"{{if index .FieldErrors "usd"}} aria-invalid="true" aria-describedby="err-usd"{{end}}>{{with index .FieldErrors "usd"}}<p class="err" id="err-usd">{{.}}</p>{{end}}<span class="note">the run stops and asks you when it is spent</span></div>
+        <label for="st-tok">Tokens</label><div class="ctl"><input class="f s w120" id="st-tok" autocomplete="off" name="tokens" inputmode="numeric" value="{{.Form.Tokens}}"{{if index .FieldErrors "tokens"}} aria-invalid="true" aria-describedby="err-tokens"{{end}}>{{with index .FieldErrors "tokens"}}<p class="err" id="err-tokens">{{.}}</p>{{end}}<span class="note">input, output and cache writes; 2,000,000 and 2000000 both work</span></div>
+        <label for="st-min">Minutes</label><div class="ctl"><input class="f s w90" id="st-min" autocomplete="off" name="minutes" inputmode="numeric" value="{{.Form.Minutes}}"{{if index .FieldErrors "minutes"}} aria-invalid="true" aria-describedby="err-minutes"{{end}}>{{with index .FieldErrors "minutes"}}<p class="err" id="err-minutes">{{.}}</p>{{end}}</div>
+        <label for="st-rnd">Rounds</label><div class="ctl"><input class="f s w90" id="st-rnd" autocomplete="off" name="rounds" inputmode="numeric" value="{{.Form.Rounds}}"{{if index .FieldErrors "rounds"}} aria-invalid="true" aria-describedby="err-rounds"{{end}}>{{with index .FieldErrors "rounds"}}<p class="err" id="err-rounds">{{.}}</p>{{end}}<span class="note">one round is one agent start; a card can override the budget in its front matter</span></div>
       </div>
     </section>
     <section class="panel"><h2>Notifications</h2>
       <div class="row2">
-        <span class="lbl" id="st-notify">Desktop</span><div class="ctl"><span class="seg" role="radiogroup" aria-labelledby="st-notify"><label><input type="radio" autocomplete="off" name="notify" value="on"{{if .Settings.Notify}} checked{{end}}>on</label><label><input type="radio" autocomplete="off" name="notify" value="off"{{if not .Settings.Notify}} checked{{end}}>off</label></span><span class="note">one toast when a run waits on you or ends; never retried</span></div>
+        <span class="lbl" id="st-notify">Desktop</span><div class="ctl"><span class="seg" role="radiogroup" aria-labelledby="st-notify"><label><input type="radio" autocomplete="off" name="notify" value="on"{{if .Form.Notify}} checked{{end}}>on</label><label><input type="radio" autocomplete="off" name="notify" value="off"{{if not .Form.Notify}} checked{{end}}>off</label></span>{{with index .FieldErrors "notify"}}<p class="err" id="err-notify">{{.}}</p>{{end}}<span class="note">one toast when a run waits on you or ends; never retried</span></div>
         <span class="lbl">Session preamble</span><div class="ctl"><span class="note">"N decisions waiting on you (tq hub open)" when a Claude session starts in this workspace</span></div>
       </div>
     </section>
