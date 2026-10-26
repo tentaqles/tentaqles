@@ -197,6 +197,9 @@ func (s *Service) Add(ctx context.Context, nc store.NewCard, budget *store.Budge
 		if IsAgent(ctx) {
 			return store.Card{}, ErrHumanOnly
 		}
+		if err := budget.Validate(); err != nil {
+			return store.Card{}, err
+		}
 		nc.Body = store.WithBudgetFrontMatter(nc.Body, *budget)
 	}
 	agent := IsAgent(ctx)
@@ -214,6 +217,9 @@ func (s *Service) Add(ctx context.Context, nc store.NewCard, budget *store.Budge
 			return store.Card{}, ErrHumanOnly
 		}
 	}
+	if err := checkBodyBudget(nc.Body); err != nil {
+		return store.Card{}, err
+	}
 	actor := s.human()
 	if agent {
 		actor = "agent"
@@ -230,6 +236,15 @@ func (s *Service) Add(ctx context.Context, nc store.NewCard, budget *store.Budge
 		return s.st.Card(c.ID)
 	}
 	return c, nil
+}
+
+// checkBodyBudget refuses a body whose budget front matter a run could not read, with the
+// parser's own error (it names the bad key or value). A body without a budget key is valid.
+func checkBodyBudget(body string) error {
+	if _, err := store.CardBudget(store.Card{Body: body}, store.DefaultBudget); err != nil {
+		return fmt.Errorf("card body front matter: %w", err)
+	}
+	return nil
 }
 
 // addLane is the lane a new card lands in: the named one, else the first backlog lane.
