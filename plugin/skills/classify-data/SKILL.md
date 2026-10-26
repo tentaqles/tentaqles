@@ -29,6 +29,11 @@ Use `build-gate ask <slug> --kind question --text "<the question>" --options <a>
 only when the caller passed the slug of an active build run; the `build-gate`
 prefix is in `skills/build/SKILL.md`.
 
+Headless never edits `.tentaqles.yaml`. The manifest is the human's: every
+change moves its trust hash and blocks the workspace until `tq allow`, which
+only a human runs. Headless writes the proposed block to
+`docs/privacy-manifest-proposal.yaml` instead (section 3).
+
 ## 1. Inputs
 
 ```bash
@@ -71,7 +76,18 @@ Headless: see the paragraph at the top.
 
 ## 3. Manifest `data:` block
 
-Edit `.tentaqles.yaml` with the Edit tool (never from the shell, never with
+Headless (see the top): do not edit `.tentaqles.yaml`, with any tool. Write
+the block below, as a complete `data:` mapping, to
+`docs/privacy-manifest-proposal.yaml` (a comment line at the top says it is a
+proposal and that regions and retention are assumptions), then record one human
+decision: with an active build slug,
+`build-gate ask <slug> --kind question --text "Review docs/privacy-manifest-proposal.yaml, apply it to .tentaqles.yaml, then run tq allow <workspace>" --options applied,stop`
+and end the turn; without a slug, a `NEEDS-DECISION` line in `## Open decisions`
+of `docs/privacy.md` with the same text, listed in the final report. Carry on
+with sections 4 to 6 (`classified_paths`, the privacy record); they do not
+touch the manifest.
+
+Interactive: edit `.tentaqles.yaml` with the Edit tool (never from the shell, never with
 credentials: the contact is an address, not a login):
 
 ```yaml
@@ -112,6 +128,8 @@ Rules:
   `table` on the same entry, or a malformed retention.
 - Changing the manifest changes its trust hash: tell the user to run
   `tq allow <workspace>` and wait for it before relying on the guard rules.
+  Headless never changes it; the human applies the proposal and runs
+  `tq allow <workspace>` themselves.
 
 Mirror the `path` entries into `CLAUDE.md`'s `tq-project` block (a JSON
 block) as `classified_paths`, a JSON array of the same globs; create the key when it is missing so the build gate's
@@ -164,7 +182,8 @@ On `main` or `master`, stop (see the top). Otherwise stage only the files this
 run changed, named explicitly: `docs/privacy.md`, `docs/incident-playbook.md`
 and `scripts/make_fixtures.py` if written, and `CLAUDE.md` if
 `classified_paths` changed. Add `.tentaqles.yaml` only when the manifest lives
-in this repository.
+in this repository (interactive only; headless stages
+`docs/privacy-manifest-proposal.yaml` instead).
 
 ```bash
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
@@ -173,4 +192,6 @@ git -C "$root" commit -m "docs(privacy): data classification and record of proce
 ```
 
 Report the classes, the paths and tables, the authority and clock, the open
-`NEEDS-DECISION` items, and remind the user: `tq allow <workspace>`.
+`NEEDS-DECISION` items, and remind the user: `tq allow <workspace>`. Headless: the
+reminder is the manifest decision itself (review the proposal, apply it, then
+`tq allow <workspace>`).

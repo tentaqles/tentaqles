@@ -19,6 +19,12 @@ human stop is a decision record written with `build-gate ask <slug>` exactly as
 `skills/build/SKILL.md` ("Headless mode") describes, and the turn ends; the
 `build-gate` prefix is defined there too.
 
+Headless never edits `.tentaqles.yaml` (not here, not in any skill kickoff runs):
+a manifest change moves its trust hash and every later round is blocked until a
+human runs `tq allow`. The data classification writes its proposed block to
+`docs/privacy-manifest-proposal.yaml` and records the human decision (section 4);
+the human reviews it, applies it to `.tentaqles.yaml` and runs `tq allow <workspace>`.
+
 **Hub task.** When `TQ_HUB_TASK` is set, the hub launched this run for one card. Read it with
 `printf '%s\n' "${TQ_HUB_TASK:-}"` and pass `task=<that JSON>` to the planner together with
 `workflow=kickoff`; the planner copies it verbatim as the plan's top-level `task`. When
@@ -104,7 +110,7 @@ block, mirrors its paths into `classified_paths` of the `tq-project` block,
 and writes `docs/privacy.md`. If any class is `pii`, `sensitive`, `financial`
 or `children`, the privacy record must name purpose, legal basis, retention
 and the DSAR path before planning continues. If that skill is not installed,
-tell the user, add the bullet line `- NEEDS-DECISION: data classification pending (settle by: run /tentaqles:classify-data when installed)` to `docs/prd.md` §10, and continue. Changing `.tentaqles.yaml` changes its trust hash:
+tell the user, add the bullet line `- NEEDS-DECISION: data classification pending (settle by: run /tentaqles:classify-data when installed)` to `docs/prd.md` §10, and continue. Headless: `/tentaqles:classify-data` writes `docs/privacy-manifest-proposal.yaml` and a `NEEDS-DECISION` line instead of editing the manifest; list that line among the pending items of stop 1 (once the plan exists, the `plan-approval` text carries it). Interactive: changing `.tentaqles.yaml` changes its trust hash:
 the human runs `tq allow <workspace>` as part of stop 1 (`<workspace>` is the
 workspace name in `.tentaqles.yaml`, see `tq status`).
 
