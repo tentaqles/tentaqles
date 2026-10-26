@@ -87,3 +87,19 @@ func TestShellPolish(t *testing.T) {
 		t.Error("a loopback bind is not all interfaces")
 	}
 }
+
+// TestRestoredFormsStartClean: the browser does not restore old values into the forms whose
+// unsaved state blocks the live refresh (a restored value would block it forever).
+func TestRestoredFormsStartClean(t *testing.T) {
+	e := newEnv(t, "acme")
+	c, _ := e.svcs["acme"].Add(context.Background(), store.NewCard{Title: "x"}, nil)
+	ts := e.server(Options{})
+	_, card, _ := get(t, ts, "/cards/"+c.ID+"?ws=acme", nil)
+	if !strings.Contains(card, `<select class="f" id="mv-lane" name="lane" autocomplete="off">`) {
+		t.Error("the move select lacks autocomplete=off")
+	}
+	_, set, _ := get(t, ts, "/settings?ws=acme", nil)
+	if n := strings.Count(set, `autocomplete="off" name="`); n != 7 {
+		t.Errorf("settings: %d controls with autocomplete=off, want 7", n)
+	}
+}

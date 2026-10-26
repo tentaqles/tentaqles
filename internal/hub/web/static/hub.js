@@ -124,7 +124,7 @@
   }
 
   /* ---------- live refresh ---------- */
-  var refreshTimer = null, stale = false, forceNext = false;
+  var refreshTimer = null, stale = false;
   // dirty: a control whose value differs from what the server rendered. A refresh would replace
   // it with the stored value, so an unsaved edit blocks it even after focus leaves the field.
   function dirty(c) {
@@ -151,15 +151,11 @@
   function bindMain() { mainBinders.forEach(function (fn) { fn(); }); }
   // refreshMain re-renders #main from the server (?fragment=main), never while the human is busy;
   // a skipped refresh runs once they leave the field. The live log keeps its own node.
-  // force: the human just saved the form that holds the edit, so its old value may go.
-  function refreshMain(force) {
-    if (force === true) forceNext = true;
+  function refreshMain() {
     if (refreshTimer) return;
     refreshTimer = setTimeout(function () {
       refreshTimer = null;
-      var forced = forceNext;
-      forceNext = false;
-      if (!forced && busy()) { stale = true; return; }
+      if (busy()) { stale = true; return; }
       stale = false;
       var u = new URL(location.href);
       u.searchParams.set("fragment", "main");
@@ -271,7 +267,16 @@
       on(f, "submit", function (e) {
         e.preventDefault();
         var sel = $('[name="lane"]', f);
-        moveCard(f.getAttribute("data-card"), sel.value, { title: f.getAttribute("data-title") }, function (ok) { if (ok) refreshMain(true); });
+        var lane = sel.value;
+        moveCard(f.getAttribute("data-card"), lane, { title: f.getAttribute("data-title") }, function (ok) {
+          // the select's default is the card's stored lane: moved (also after a confirmed cancel),
+          // the chosen lane becomes it; refused or declined, the select goes back to it. Either way
+          // the move form is clean for unsavedEdits(), so live refresh is not blocked.
+          Array.prototype.forEach.call(sel.options, function (o) {
+            if (ok) { o.defaultSelected = o.value === lane; o.selected = o.defaultSelected; } else o.selected = o.defaultSelected;
+          });
+          if (ok) refreshMain();
+        });
       });
     });
   }
@@ -514,7 +519,10 @@
     });
     return {
       flush: function () { if (input && input.value.trim()) { if (add(input.value)) changed(); input.value = ""; } },
-      set: function (tags) { $$(".tag[data-tag]", box).forEach(function (t) { t.remove(); }); tags.forEach(add); },
+      set: function (tags) { // stored tags are authoritative: one chip each, never split
+        $$(".tag[data-tag]", box).forEach(function (t) { t.remove(); });
+        tags.forEach(function (name) { if (name) box.insertBefore(chip(name), input); });
+      },
       tags: function () { return tagsOf(box); }
     };
   }
