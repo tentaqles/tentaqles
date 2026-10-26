@@ -119,6 +119,9 @@ the gate state is kept, so `tq hub run <card>` resumes it. Only an explicit
 Per run: 2,000,000 tokens (input + output + cache write), 10 USD, 120 minutes, 12
 rounds, or the card's `--budget tokens=…,usd=…,minutes=…,rounds=…`. Reaching one stops
 the run (`over-budget`), comments the numbers and asks "raise-and-resume / stop".
+A card body's `budget:` front matter is checked when the card is created or its body
+edited: an unknown key or a value that is not a positive number (rounds and tokens whole)
+is refused with an error naming it (`bad_request` on the API), so it never reaches a run.
 When Claude Code reports no cost, it is computed from the usage and the model; when it
 reports neither, the round is marked "cost unknown" and only rounds and minutes count it.
 
