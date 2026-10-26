@@ -217,7 +217,8 @@ func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 	start := s.cfg.Now()
 	fmt.Fprintf(mw, "\n=== round %d at %s in %s\n", r.Rounds+1, start.UTC().Format(time.RFC3339), dir)
 	req := adapter.RunRequest{Workspace: s.cfg.Workspace, Dir: dir, Prompt: Prompt(r, card), SessionID: r.SessionID,
-		Env: adapter.LaunchEnv(s.cfg.Env(), HubTaskJSON(s.cfg.Workspace, card)), AllowedTools: r.AllowedTools}
+		Env: adapter.LaunchEnv(s.cfg.Env(), HubTaskJSON(s.cfg.Workspace, card)), AllowedTools: r.AllowedTools,
+		Limit: RoundLimit(r), Classes: s.st.Classes()}
 	res, runErr := ad.Start(ctx, req, mw)
 	mw.Close()
 	logf.Close()
@@ -272,6 +273,10 @@ func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 	}
 	if rec.CostUnknown {
 		s.comment(card, r, fmt.Sprintf("Round %d reported no cost and no priced usage; the dollar budget could not count it (rounds and minutes still apply).", r.Rounds))
+	}
+	if res.OverBudget != "" {
+		s.stopInsideRound(ctx, r, card, rec, start, res.OverBudget)
+		return
 	}
 	final := strings.TrimSpace(res.Transcript)
 	if text := StripRelocate(final); text != "" {

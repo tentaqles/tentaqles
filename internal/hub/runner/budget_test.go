@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -83,5 +84,64 @@ func TestBudgetRoundsStopsWithoutCost(t *testing.T) {
 	}
 	if strings.Count(h.comments(card.ID), "reported no cost") != 3 {
 		t.Fatal(h.comments(card.ID))
+	}
+}
+
+func TestMidRoundBreachStopsOverBudget(t *testing.T) {
+	h := newHarness(t)
+	var limits []adapter.Limit
+	h.ad.steps = []step{
+		func(_ context.Context, req adapter.RunRequest) (adapter.RunResult, error) {
+			limits = append(limits, req.Limit)
+			h.clock.Advance(30 * time.Minute)
+			return adapter.RunResult{StopReason: "error_max_turns", Usage: adapter.Usage{Input: 1000, Output: 500, CacheRead: 9999}, CostUSD: 6, CostKnown: true, UsageKnown: true, SessionID: "s1"}, nil
+		},
+		func(_ context.Context, req adapter.RunRequest) (adapter.RunResult, error) {
+			limits = append(limits, req.Limit)
+			// the adapter stopped the round at what was left of the budget
+			return adapter.RunResult{ExitCode: 1, StopReason: "over budget: usd", OverBudget: "usd", Usage: adapter.Usage{Input: 900}, CostUSD: 4.2,
+				CostKnown: true, UsageKnown: true, SessionID: "s-mid"}, nil
+		},
+	}
+	b := store.Budget{Tokens: 10_000, USD: 10, Minutes: 120, Rounds: 12}
+	card, _ := h.svc.Add(context.Background(), store.NewCard{Title: "x", Tags: []string{store.TagAgentReady}, ProjectDir: "apps/billing"}, &b)
+	r, _ := h.svc.Run(context.Background(), card.ID)
+	for i := 0; i < 5; i++ {
+		h.tick()
+	}
+	if len(limits) != 2 || limits[0] != (adapter.Limit{Tokens: 10_000, USD: 10, Minutes: 120}) || limits[1] != (adapter.Limit{Tokens: 8_500, USD: 4, Minutes: 90}) {
+		t.Fatalf("the adapter gets what is left of the budget: %+v", limits)
+	}
+	got := h.run(r.ID)
+	if got.Status != store.StatusOverBudget || got.StopReason != "budget: usd" || len(h.ad.calls()) != 2 {
+		t.Fatalf("%+v calls %d", got, len(h.ad.calls()))
+	}
+	if got.SessionID != "s-mid" || math.Abs(got.CostUSD-10.2) > 1e-9 || got.Usage.Input != 1900 || len(got.RoundLog) != 2 || got.RoundLog[1].Outcome != "over-budget" {
+		t.Fatalf("the partial round is recorded and its session kept: %+v", got)
+	}
+	pend, _ := h.st.PendingDecisions()
+	if len(pend) != 1 || strings.Join(pend[0].Options, ",") != "raise-and-resume,stop" {
+		t.Fatalf("pending %+v", pend)
+	}
+	if cs := h.comments(card.ID); !strings.Contains(cs, "Budget reached (usd)") || !strings.Contains(cs, "Round 2 was stopped inside the round") {
+		t.Fatal(cs)
+	}
+	if strings.Contains(h.comments(card.ID), "agent: ") {
+		t.Fatal("a stopped round posts no transcript")
+	}
+	// raise-and-resume continues the same session
+	out, err := h.svc.Answer(context.Background(), card.ID, pend[0].ID, "raise-and-resume", "usd=30")
+	if err != nil || out.Resumed == nil || out.Resumed.SessionID != "s-mid" {
+		t.Fatalf("resume %+v %v", out.Resumed, err)
+	}
+}
+
+func TestRoundLimit(t *testing.T) {
+	if got := RoundLimit(store.Run{}); got != (adapter.Limit{}) {
+		t.Fatalf("no budget, no limit: %+v", got)
+	}
+	r := store.Run{Budget: store.Budget{Tokens: 100, USD: 1, Minutes: 1}, Usage: store.Usage{Input: 200}, CostUSD: 2, Seconds: 120}
+	if got := RoundLimit(r); got.Tokens != 1 || got.USD <= 0 || got.USD > 1e-6 || got.Minutes <= 0 || got.Minutes > 1e-6 {
+		t.Fatalf("a used-up limit leaves the smallest share, never none: %+v", got)
 	}
 }

@@ -1,7 +1,8 @@
-"""Stand-in for `claude -p <prompt> --output-format json` in the hub tests.
+"""Stand-in for `claude -p --output-format stream-json --verbose` in the hub tests.
 
 Each call plays the next round of the JSON script named by $FAKE_CLAUDE_SCRIPT and
-prints a result document shaped like Claude Code's JSON output:
+prints a stream shaped like Claude Code's stream-json output, one event per line: a
+system init event, the round's "events", then the result event:
 
     {"counter": "<file>", "argv_log": "<file>",
      "rounds": [{"subtype": "success",            # success | error_max_turns | error_during_execution
@@ -16,10 +17,14 @@ prints a result document shaped like Claude Code's JSON output:
                  "write": {"<absolute path>": "<text>"},
                  "write_json": {"<absolute path>": {"any": "json"}},   # gate state fixtures
                  "sleep": 0,
+                 "events": [{"type": "assistant", ...}],  # printed (flushed) after the init event
+                 "pause": 0,                      # seconds to sleep after the events
+                 "no_result": false,              # true: the stream ends without a result event
+                 "single": false,                 # true: the old single pretty-printed result document
                  "raw": null}]}                   # a string: printed instead of the JSON
 
 Rounds past the end repeat the last one. Every call appends what it saw (argv, cwd and the
-hub environment, the stdin prompt and the --settings allow list) to argv_log. Standard library only, platform-neutral.
+hub environment, the stdin prompt, the --settings allow list and its pid) to argv_log. Standard library only, platform-neutral.
 """
 
 import json
@@ -56,6 +61,7 @@ with open(script["argv_log"], "a", encoding="utf-8") as fh:
         "claude_config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
         "prompt": prompt,
         "allowed_tools": allowed,
+        "pid": os.getpid(),
     }) + "\n")
 rounds = script["rounds"]
 act = rounds[n] if n < len(rounds) else rounds[-1]
@@ -70,13 +76,30 @@ for path, obj in (act.get("write_json") or {}).items():
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(obj, fh, indent=2)
 sys.stderr.write("fake claude round %d\n" % n)
+
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+session = act.get("session_id", "sess-%d" % n)
 if act.get("raw") is not None:
     print(act["raw"])
 else:
+    if not act.get("single"):
+        init = {"type": "system", "subtype": "init", "session_id": session, "tools": ["Bash", "Edit"]}
+        if act.get("model"):
+            init["model"] = act["model"]
+        emit(init)
+        for ev in act.get("events") or []:
+            emit(ev)
+        if act.get("pause"):
+            time.sleep(act["pause"])
     subtype = act.get("subtype", "success")
     out = {"type": "result", "subtype": subtype, "is_error": subtype != "success",
            "num_turns": act.get("num_turns", 1), "result": act.get("result", ""),
-           "session_id": act.get("session_id", "sess-%d" % n)}
+           "session_id": session}
     if act.get("cost") is not None:
         out["total_cost_usd"] = act["cost"]
     if act.get("usage") is not None:
@@ -85,5 +108,8 @@ else:
         out["modelUsage"] = {act["model"]: {"inputTokens": 1, "outputTokens": 1}}
     if act.get("permission_denials"):
         out["permission_denials"] = act["permission_denials"]
-    print(json.dumps(out))
+    if act.get("single"):
+        print(json.dumps(out, indent=2))
+    elif not act.get("no_result"):
+        emit(out)
 sys.exit(int(act.get("exit", 0)))
