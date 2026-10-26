@@ -46,3 +46,21 @@ func TestSettingsFormRefusalRerendersTheFormWithTheTypedValue(t *testing.T) {
 		t.Fatalf("%d %v", code, hdr)
 	}
 }
+
+// TestSettingsRefusalHoldsLiveRefresh: the refused form carries data-hold, so the script keeps a
+// live refresh from replacing the typed values and messages; the saved page does not.
+func TestSettingsRefusalHoldsLiveRefresh(t *testing.T) {
+	e := newEnv(t, "acme")
+	ts := e.server(Options{})
+	code, body, _ := postForm(t, ts, "/settings?ws=acme", url.Values{"usd": {"abc"}}, origin(ts))
+	if code != http.StatusBadRequest || !strings.Contains(body, "data-hold") {
+		t.Fatalf("refused page lacks the hold marker: %d", code)
+	}
+	if code, _, _ := postForm(t, ts, "/settings?ws=acme", url.Values{"usd": {"7.50"}}, origin(ts)); code != http.StatusSeeOther {
+		t.Fatalf("valid submit: %d", code)
+	}
+	code, body, _ = get(t, ts, "/settings?ws=acme&flash=settings-saved", nil)
+	if code != 200 || strings.Contains(body, "data-hold") {
+		t.Fatalf("saved page carries the hold marker: %d", code)
+	}
+}

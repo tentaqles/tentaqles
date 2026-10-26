@@ -185,12 +185,23 @@
   }
   on(document, "focusout", function () { setTimeout(function () { if (stale) refreshMain(); }, 50); });
   // back/forward cache: a restored page keeps the values left in its fields while their defaults
-  // stay what the server rendered, so unsavedEdits() would hold every refresh from then on. Put
-  // #main's forms back to the server's values, reopen the stream and re-read #main.
+  // stay what the server rendered then, so a value already sent (a form submitted before Back) would
+  // hold every refresh. Re-baseline instead of reset(): what the fields show becomes their default,
+  // nothing is thrown away here, and an edit made from now on blocks a refresh as usual. Then reopen
+  // the stream and re-read #main (busy() still holds it while the human is in a field).
+  function rebaseline() {
+    $$("#main form").forEach(function (f) {
+      Array.prototype.forEach.call(f.elements, function (c) {
+        if (c.type === "checkbox" || c.type === "radio") c.defaultChecked = c.checked;
+        else if (c.tagName === "SELECT") Array.prototype.forEach.call(c.options, function (o) { o.defaultSelected = o.selected; });
+        else if (c.tagName === "TEXTAREA" || c.tagName === "INPUT") c.defaultValue = c.value;
+      });
+    });
+  }
   on(window, "pageshow", function (e) {
     if (!e.persisted) return;
     closeMenu(false);
-    $$("#main form").forEach(function (f) { f.reset(); });
+    rebaseline();
     connect();
     refreshWaitingCount();
     refreshMain();
@@ -342,6 +353,7 @@
     on(document, "keydown", function (e) {
       if (e.key === "/" && !typing() && document.activeElement !== input && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
+        closeMenu(false); // an open Move menu would otherwise stay open behind the search field
         input.focus();
       }
     });
@@ -358,6 +370,10 @@
 
   function laneOf(node) { return node && node.closest ? node.closest(".lane[data-lane]") : null; }
   function cardsIn(lane) { return $$(".card[data-card]", lane); }
+  // putLast: a node at the end of a lane, but above a capped lane's "Show all" link.
+  function putLast(lane, node) { var more = $(".more", lane); if (more) lane.insertBefore(node, more); else lane.appendChild(node); }
+  // capped: a lane that leaves cards out of the page (data-hidden); its count cannot be patched here.
+  function capped(lane) { return !!(lane && lane.hasAttribute("data-hidden")); }
   function laneCounts() {
     $$(".lane[data-lane]").forEach(function (lane) {
       // a capped done lane leaves data-hidden cards out of the page; its count is still the total
@@ -380,7 +396,7 @@
       if (y < r.top + r.height / 2) { after = c; return true; }
       return false;
     });
-    if (after) lane.insertBefore(slot, after); else lane.appendChild(slot);
+    if (after) lane.insertBefore(slot, after); else putLast(lane, slot);
     slot.classList.add("show");
   }
   function flushHeld() {
@@ -423,20 +439,23 @@
       var a = document.activeElement, keep = null;
       if (old && a && old.contains(a)) keep = a.matches("a.t") ? "a.t" : ".mvbtn";
       else if (refocus && focusFree(old)) keep = ".mvbtn";
-      if (res.status === 404) { if (old) old.remove(); laneCounts(); return; }
+      // a card not on the page may be one a capped lane leaves out, and a change in or out of a capped
+      // lane moves its hidden total: re-read #main rather than patch a count that cannot be known here
+      if (!old && $(".lane[data-hidden]")) { refreshMain(); return; }
+      if (res.status === 404) { var was = laneOf(old); if (old) old.remove(); if (capped(was)) refreshMain(); else laneCounts(); return; }
       if (!res.html) return;
       var node = fragment(res.html).firstElementChild;
       if (!node) return;
       var lane = $('.lane[data-lane="' + cssq(node.getAttribute("data-lane")) + '"]');
       if (!lane) { refreshMain(); return; }
-      if (!old && lane.hasAttribute("data-hidden")) return; // most likely a done card the cap leaves out
       var before = old ? old.getAttribute("data-status") : null;
       var moved = !old || laneOf(old) !== lane;
+      if (moved && (capped(lane) || capped(laneOf(old)))) { refreshMain(); return; }
       if (old && !moved) old.replaceWith(node);
       else {
         if (old) old.remove();
         var first = $(".card[data-card]", lane);
-        if (first) lane.insertBefore(node, first); else lane.appendChild(node);
+        if (first) lane.insertBefore(node, first); else putLast(lane, node);
       }
       var after = node.getAttribute("data-status");
       if (moved || before !== after) settle(node);
@@ -478,7 +497,7 @@
       if (!lane) return;
       e.preventDefault();
       var d = drag, card = d.card;
-      if (slot.parentNode === lane) lane.insertBefore(card, slot); else lane.appendChild(card);
+      if (slot.parentNode === lane) lane.insertBefore(card, slot); else putLast(lane, card);
       delete heldTiles[card.getAttribute("data-card")]; // the move's own answer refreshes this tile; a held GET now could pull it back
       endDrag();
       moveTile(card, { from: d.from, next: d.next }, false);
@@ -492,7 +511,7 @@
     var id = card.getAttribute("data-card"), lane = laneOf(card);
     function back() { if (refocus) focusMove(id); }
     function putBack() {
-      if (origin.next && origin.next.parentNode === origin.from) origin.from.insertBefore(card, origin.next); else origin.from.appendChild(card);
+      if (origin.next && origin.next.parentNode === origin.from) origin.from.insertBefore(card, origin.next); else putLast(origin.from, card);
       settle(card);
       laneCounts();
     }
@@ -549,7 +568,7 @@
     if (!card || !lane) return;
     var origin = { from: laneOf(card), next: card.nextElementSibling };
     var first = $(".card[data-card]", lane);
-    if (first) lane.insertBefore(card, first); else lane.appendChild(card);
+    if (first) lane.insertBefore(card, first); else putLast(lane, card);
     moveTile(card, origin, true);
   }
   function bindMoveMenu() {
@@ -584,6 +603,12 @@
       else if (e.key === "End") { e.preventDefault(); items[n - 1].focus(); }
     });
     on(document, "dragstart", function () { closeMenu(false); });
+    // focus leaving the menu and its button (Shift+Tab, a click elsewhere that takes focus) closes it;
+    // no relatedTarget (the window lost focus, or a click on something unfocusable) leaves it to click
+    on(document, "focusout", function (e) {
+      var to = e.relatedTarget;
+      if (menu && to && !menu.list.contains(to) && to !== menu.btn) closeMenu(false);
+    });
   }
   starters.push(bindBoard);
   changeHandlers.push(function (c) {
@@ -747,6 +772,9 @@
   }
   starters.push(bindNewCard);
   busyChecks.push(dialogOpen);
+  // a refused settings form (data-hold) shows typed values as its defaults, so unsavedEdits() sees
+  // nothing; hold live refresh while it is on the page. The next submit or navigation clears it.
+  busyChecks.push(function () { return !!$("#main [data-hold]"); });
 
   /* ---------- card page: tags and comments ---------- */
   function clockNow() { var d = new Date(); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
@@ -754,19 +782,20 @@
     var form = $("form[data-tags-card]");
     if (!form) return;
     var id = form.getAttribute("data-tags-card"), hidden = $('input[name="tags"]', form);
-    var confirmed = tagsOf($("[data-tagbox]", form)), seq = 0; // the last list the server confirmed
+    // confirmed: the newest list the server confirmed (from edit number confirmedSeq); a failure rolls back to it
+    var confirmed = tagsOf($("[data-tagbox]", form)), seq = 0, confirmedSeq = 0;
     var tb = wireTagbox($("[data-tagbox]", form), function (tags) {
       var mine = ++seq;
       hidden.value = tags.join(",");
       api("POST", "/api/cards/" + encodeURIComponent(id), { tags: tags }).then(function (res) {
-        if (mine !== seq) return; // a newer edit is in flight: only its response counts
+        if (res.ok && mine > confirmedSeq) { confirmed = res.data.tags || []; confirmedSeq = mine; }
+        if (mine !== seq) return; // a newer edit is in flight: only its response touches the chips
         if (!res.ok) {
           hidden.value = confirmed.join(",");
           tb.set(confirmed);
           toast([el("span", null, errText(res))]);
           return;
         }
-        confirmed = res.data.tags || [];
         hidden.value = confirmed.join(",");
         tb.set(confirmed); // the stored, masked spelling wins
         toast([el("span", null, "Tags saved.")]);

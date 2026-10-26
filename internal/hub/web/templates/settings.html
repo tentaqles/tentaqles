@@ -9,7 +9,7 @@
     </div>
   </section>
   <form class="set" method="post" action="/settings?ws={{$ws}}">
-    <div class="err" role="alert"{{if not .Error}} hidden{{end}}>{{if .Error}}Settings not saved. {{.Error}}{{end}}</div>
+    <div class="err" role="alert"{{if .Error}} data-hold{{else}} hidden{{end}}>{{if .Error}}Settings not saved. {{.Error}}{{end}}</div>
     <section class="panel"><h2>Runs</h2>
       <div class="row2">
         <label for="st-conc">Concurrency</label><div class="ctl"><input class="f s w70" id="st-conc" autocomplete="off" name="concurrency" inputmode="numeric" value="{{.Form.Concurrency}}"{{if index .FieldErrors "concurrency"}} aria-invalid="true" aria-describedby="err-concurrency"{{end}}>{{with index .FieldErrors "concurrency"}}<p class="err" id="err-concurrency">{{.}}</p>{{end}}<span class="note">agents running at once in this workspace, 1 to 16</span></div>
