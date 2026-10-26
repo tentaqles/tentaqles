@@ -47,15 +47,17 @@ MESSAGE = (
 )
 
 SEPARATORS = {";", "|", "||", "&&", "&", "\n"}
-REDIRECTS = re.compile(r"^[0-9]*(>>?|>\|)$")
+REDIRECTS = re.compile(r"^&?[0-9]*(>>?|>\|)$")
 ANY_ARG = {"mv", "rm", "truncate", "move-item", "remove-item", "set-content", "add-content",
            "out-file", "new-item", "rename-item", "clear-content", "mi", "ri", "sc", "ac"}
 LAST_ARG = {"cp", "install", "copy-item", "cpi", "ln"}
 IN_PLACE = {"sed", "yq", "perl"}
 INTERPRETERS = re.compile(r"^(python[0-9.]*|py|pypy[0-9.]*|perl|ruby|node|deno|bun|php|pwsh|powershell)(\.exe)?$")
+KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "{", "(", "time"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "bash.exe", "sh.exe"}
 INLINE_FLAGS = {"-c", "-e", "-E", "-r", "-command", "-Command", "-c:", "eval"}
 CODE_WRITES = re.compile(
-    r"write|dump|replace\(|rename|unlink|remove|truncate|set-content|add-content|out-file"
+    r"write|replace\(|rename|unlink|remove|truncate|set-content|add-content|out-file"
     r"|open\([^)]*['\"][wax+]|['\"][wa]\+?['\"]|appendfile|writefile", re.I)
 
 
@@ -108,14 +110,18 @@ def _segments(words: list) -> list:
 def _segment_writes(seg: list) -> bool:
     # redirect targets anywhere in the segment: `> f`, `>>f`, `2> f`
     for i, w in enumerate(seg):
-        m = re.match(r"^([0-9]*>>?\|?)(.*)$", w)
+        m = re.match(r"^(&?[0-9]*>>?\|?)(.*)$", w)
         if m and m.group(1):
-            target = m.group(2) or (seg[i + 1] if i + 1 < len(seg) else "")
+            target = (m.group(2) or (seg[i + 1] if i + 1 < len(seg) else "")).strip("(){}")
             if target.startswith("&") or target in ("/dev/null", "nul", "NUL", "$null"):
                 continue
             if is_manifest(target):
                 return True
     words = [w for w in seg if not REDIRECTS.match(w)]
+    words = [w.strip("(){}") for w in words]
+    words = [w for w in words if w]
+    while words and words[0] in KEYWORDS:
+        words = words[1:]  # then rm ..., do sed -i ..., ! cmd
     while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
         words = words[1:]  # FOO=bar cmd ...
     while words and words[0] in ("sudo", "env", "command", "exec", "nohup", "time", "xargs"):
@@ -135,9 +141,16 @@ def _segment_writes(seg: list) -> bool:
             if a.casefold() in ("-destination", "-target") and i + 1 < len(args):
                 return is_manifest(args[i + 1])
         return bool(dest) and is_manifest(dest[-1])
+    if cmd in SHELLS:
+        for i, a in enumerate(args):
+            if a in ("-c", "-lc", "-ic") and i + 1 < len(args):
+                return shell_writes_manifest(args[i + 1])
+    if cmd == "find" and "-delete" in args:
+        return any(is_manifest(a) for a in args)
     if cmd == "dd":
         return any(a.startswith("of=") and is_manifest(a[3:]) for a in args)
-    if cmd in IN_PLACE and any(a == "-i" or a.startswith("-i") or a == "--in-place" for a in args):
+    if cmd in IN_PLACE and any(a == "--in-place" or (a.startswith("-") and not a.startswith("--")
+                                                       and "i" in a[1:]) for a in args):
         return any(is_manifest(a) for a in plain)
     if cmd == "git" and args and args[0] in ("checkout", "restore", "apply", "mv", "rm"):
         return any(is_manifest(a) for a in args[1:])
@@ -150,15 +163,90 @@ def _segment_writes(seg: list) -> bool:
     return False
 
 
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _strip_heredocs(command: str) -> tuple:
+    """The lines of a script without heredoc bodies (a body is data, not commands), and the
+    bodies that feed a program: (lines, [(program, body)]). The `<<` line itself stays, so
+    `cat <<EOF > .tentaqles.yaml` is still seen."""
+    out, bodies, delim, prog, body = [], [], None, "", []
+    for line in command.replace("\r\n", "\n").split("\n"):
+        if delim is not None:
+            if line.strip() == delim:
+                bodies.append((prog, "\n".join(body)))
+                delim, body = None, []
+            else:
+                body.append(line)
+            continue
+        out.append(line)
+        m = HEREDOC.search(line)
+        if m:
+            delim = m.group(2)
+            first = line[:m.start()].strip().split()
+            prog = first[-1] if first else ""
+            if first and first[0] not in ("cat", "tee") and len(first) > 1 and first[-1] == "-":
+                prog = first[0]
+            elif first:
+                prog = first[0]
+    if delim is not None and body:
+        bodies.append((prog, "\n".join(body)))
+    return out, bodies
+
+
+def _body_writes(prog: str, body: str) -> bool:
+    cmd = prog.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    if MANIFEST not in body.casefold():
+        return False
+    if cmd in SHELLS:
+        return shell_writes_manifest(body)
+    if INTERPRETERS.match(cmd) or cmd.startswith("$"):
+        return bool(CODE_WRITES.search(body))
+    return False
+
+
+def _logical_lines(lines: list, posix: bool) -> list:
+    """Join continuation lines and lines inside an open quote; each result parses on its own.
+    A line that never balances is parsed alone (its quote error then skips only that line)."""
+    out, buf = [], ""
+    for line in lines:
+        buf = buf + "\n" + line if buf else line
+        if buf.endswith("\\") and posix:
+            buf = buf[:-1]
+            continue
+        try:
+            _words(buf, posix)
+        except ValueError:
+            if buf.count("\n") < 200:
+                continue  # an open quote: keep reading
+        out.append(buf)
+        buf = ""
+    if buf:
+        out.extend(buf.split("\n"))
+    return out
+
+
 def shell_writes_manifest(command: str, powershell: bool = False) -> bool:
     low = command.casefold()
     if "tentaqles.yaml" not in low and "tentaq~" not in low:
         return False
-    try:
-        words = _words(command, posix=not powershell)
-    except ValueError:
-        return False  # unbalanced quotes: the shell would refuse it too
-    return any(_segment_writes(seg) for seg in _segments(words))
+    posix = not powershell
+    lines, bodies = _strip_heredocs(command)
+    if any(_body_writes(prog, body) for prog, body in bodies):
+        return True
+    if powershell and re.search(r"\[(system\.)?io\.file\]::(write|append|move|copy|delete|replace)",
+                                low) and MANIFEST in low:
+        return True
+    for line in _logical_lines(lines, posix):
+        if "tentaqles.yaml" not in line.casefold() and "tentaq~" not in line.casefold():
+            continue
+        try:
+            words = _words(line, posix)
+        except ValueError:
+            continue  # unbalanced quotes: the shell would refuse this line too
+        if any(_segment_writes(seg) for seg in _segments(words)):
+            return True
+    return False
 
 
 def main() -> None:

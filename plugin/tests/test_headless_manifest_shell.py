@@ -91,3 +91,45 @@ def test_matcher_covers_shell_tools() -> None:
             assert re.fullmatch(group["matcher"], "NotebookEdit")
             return
     raise AssertionError("guard not registered")
+
+
+def test_multiline_scripts_and_heredocs_are_judged_line_by_line() -> None:
+    allowed = (
+        'cp "$_tqe/templates/process/privacy.md" docs/privacy.md\ngrep -n \'^data\' .tentaqles.yaml',
+        "cp a.txt b.txt\ncat .tentaqles.yaml",
+        "rm -f /tmp/x\ngrep -q data .tentaqles.yaml && echo yes",
+        "tee docs/notes.md <<EOF\nApply the block to .tentaqles.yaml, then run tq allow.\nEOF",
+        "cat <<EOF > docs/x.md\nSteps; rm the old key from .tentaqles.yaml\nEOF",
+        "cat > docs/x.md <<'EOF'\nname: it's in .tentaqles.yaml\nEOF\ngit add docs/x.md",
+        "git commit -m \"docs: propose the data block\n\nApply it to .tentaqles.yaml by hand.\"",
+        "python -c \"import yaml; print(yaml.safe_dump(yaml.safe_load(open('.tentaqles.yaml'))))\"",
+        "git diff -- .tentaqles.yaml",
+        "grep -r tentaqles.yaml .",
+    )
+    for cmd in allowed:
+        assert _run("Bash", cmd) == 0, cmd
+    blocked = (
+        "echo ok\nrm .tentaqles.yaml",
+        "echo ok\nsed -i s/a/b/ .tentaqles.yaml",
+        "cat <<EOF > .tentaqles.yaml\nclient: x\nEOF",
+        "cat > .tentaqles.yaml <<EOF\nname: it's here\nEOF",
+        "echo x &> .tentaqles.yaml",
+        "(echo x > .tentaqles.yaml)",
+        "if true; then rm .tentaqles.yaml; fi",
+        "perl -pi -e s/a/b/ .tentaqles.yaml",
+        "bash -c 'echo x >> .tentaqles.yaml'",
+        "find . -name .tentaqles.yaml -delete",
+        "echo a \\\n  > .tentaqles.yaml",
+    )
+    for cmd in blocked:
+        assert _run("Bash", cmd) == 2, cmd
+    assert _run("PowerShell", "Get-Date\nRemove-Item .tentaqles.yaml") == 2
+    assert _run("PowerShell", "Get-Date\nGet-Content .tentaqles.yaml") == 0
+
+
+def test_code_fed_through_a_heredoc_and_dotnet_writes() -> None:
+    assert _run("Bash", "python - <<EOF\nopen('.tentaqles.yaml','w').write('x')\nEOF") == 2
+    assert _run("Bash", "bash <<'EOF'\necho x >> .tentaqles.yaml\nEOF") == 2
+    assert _run("Bash", "python - <<EOF\nprint(open('.tentaqles.yaml').read())\nEOF") == 0
+    assert _run("PowerShell", "[IO.File]::WriteAllText('.tentaqles.yaml','x')") == 2
+    assert _run("PowerShell", "[IO.File]::ReadAllText('.tentaqles.yaml')") == 0
