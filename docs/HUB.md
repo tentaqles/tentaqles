@@ -70,7 +70,7 @@ It needs no network: no web fonts, no CDN; Inter and JetBrains Mono are used whe
 | Reviews (`/reviews`), review (`/cards/<id>/review`) | results waiting on your review and finished runs not yet closed; the review page opens with a verdict band built from the gate's records, and Approve / Request changes sit in a bar at the bottom. The exported review keeps the same look. |
 | Activity (`/activity`) | spend, runs ended, median wait on you, decisions answered and cost by kind for Today, 7 days or 30 days (`?days=1\|7\|30`), and the timeline by day, filtered by `?kind=runs\|decisions\|cards\|reviews`. |
 | Connections (`/connections`) | not available yet: board sync with Linear, Asana, Azure DevOps and Jira arrives in release 2 part B. The page shows what each will do and the planned lane mapping; it connects nothing. |
-| Settings (`/settings`) | what this hub serves (read-only), concurrency (1 to 16), the default budget per run, desktop notifications, and who can do what. Stop the hub with Ctrl+C in its terminal; the page has no stop button. |
+| Settings (`/settings`) | what this hub serves (read-only), concurrency (1 to 16), the default budget per run, desktop notifications, and who can do what. A value the form refuses shows the page again (status 400) with what you typed and the message next to the field; a save is all-or-nothing. Stop the hub with Ctrl+C in its terminal; the page has no stop button. |
 
 `POST /api/cards/<id>` edits a card (`title`, `body`, `project_dir`, `tags`); `GET` and
 `POST /api/settings` read and change the settings (`concurrency`, `default_budget`,
