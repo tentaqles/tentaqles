@@ -256,36 +256,54 @@ func (s *Service) addLane(name string) (store.Lane, error) {
 }
 
 func (s *Service) view(c store.Card) (CardView, error) {
-	v := CardView{Card: c}
 	n, err := s.st.PendingCount(c.ID)
 	if err != nil {
-		return v, err
+		return CardView{Card: c}, err
 	}
-	v.Waiting = n
 	runs, err := s.st.RunsForCard(c.ID)
 	if err != nil {
-		return v, err
+		return CardView{Card: c}, err
 	}
-	for _, r := range runs {
-		v.CostUSD += r.CostUSD
-	}
-	if act, ok, err := s.st.ActiveRun(c.ID); err == nil && ok {
-		v.RunID, v.RunStatus, v.Running = act.ID, act.Status, act.Status == store.StatusRunning
-	}
-	return v, nil
+	return NewCardView(c, runs, n), nil
 }
 
+// NewCardView builds a card's view from its runs (newest first, as RunsForCard and RunsForCards
+// return them) and its pending decision count. The active run is the newest active one, as
+// store.ActiveRun picks it.
+func NewCardView(c store.Card, runs []store.Run, waiting int) CardView {
+	v := CardView{Card: c, Waiting: waiting}
+	active := false
+	for _, r := range runs {
+		v.CostUSD += r.CostUSD
+		if !active && r.Active() {
+			active = true
+			v.RunID, v.RunStatus, v.Running = r.ID, r.Status, r.Status == store.StatusRunning
+		}
+	}
+	return v
+}
+
+// List reads the cards, then their runs and pending counts in one batched query each.
 func (s *Service) List(ctx context.Context, f store.CardFilter, waitingOnly bool) ([]CardView, error) {
 	cards, err := s.st.ListCards(f)
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]string, len(cards))
+	for i, c := range cards {
+		ids[i] = c.ID
+	}
+	runs, err := s.st.RunsForCards(ids)
+	if err != nil {
+		return nil, err
+	}
+	waiting, err := s.st.PendingCounts(ids)
+	if err != nil {
+		return nil, err
+	}
 	out := []CardView{}
 	for _, c := range cards {
-		v, err := s.view(c)
-		if err != nil {
-			return nil, err
-		}
+		v := NewCardView(c, runs[c.ID], waiting[c.ID])
 		if waitingOnly && v.Waiting == 0 {
 			continue
 		}
