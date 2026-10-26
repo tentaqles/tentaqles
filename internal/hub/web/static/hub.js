@@ -124,20 +124,42 @@
   }
 
   /* ---------- live refresh ---------- */
-  var refreshTimer = null, stale = false;
+  var refreshTimer = null, stale = false, forceNext = false;
+  // dirty: a control whose value differs from what the server rendered. A refresh would replace
+  // it with the stored value, so an unsaved edit blocks it even after focus leaves the field.
+  function dirty(c) {
+    if (c.disabled) return false;
+    if (c.type === "checkbox" || c.type === "radio") return c.checked !== c.defaultChecked;
+    if (c.tagName === "SELECT") {
+      var o = c.options, marked = false, i;
+      for (i = 0; i < o.length; i++) if (o[i].defaultSelected) marked = true;
+      if (!marked) return c.multiple ? c.selectedOptions.length > 0 : c.selectedIndex > 0;
+      for (i = 0; i < o.length; i++) if (o[i].selected !== o[i].defaultSelected) return true;
+      return false;
+    }
+    if (c.tagName === "TEXTAREA" || c.tagName === "INPUT") return c.value !== c.defaultValue;
+    return false;
+  }
+  function unsavedEdits() {
+    return $$("#main form").some(function (f) { return Array.prototype.some.call(f.elements, dirty); });
+  }
   function busy() {
-    if (typing()) return true;
+    if (typing() || unsavedEdits()) return true;
     for (var i = 0; i < busyChecks.length; i++) if (busyChecks[i]()) return true;
     return false;
   }
   function bindMain() { mainBinders.forEach(function (fn) { fn(); }); }
   // refreshMain re-renders #main from the server (?fragment=main), never while the human is busy;
   // a skipped refresh runs once they leave the field. The live log keeps its own node.
-  function refreshMain() {
+  // force: the human just saved the form that holds the edit, so its old value may go.
+  function refreshMain(force) {
+    if (force === true) forceNext = true;
     if (refreshTimer) return;
     refreshTimer = setTimeout(function () {
       refreshTimer = null;
-      if (busy()) { stale = true; return; }
+      var forced = forceNext;
+      forceNext = false;
+      if (!forced && busy()) { stale = true; return; }
       stale = false;
       var u = new URL(location.href);
       u.searchParams.set("fragment", "main");
@@ -154,6 +176,7 @@
           if (oldLog && newLog && oldLog.getAttribute("data-run") === newLog.getAttribute("data-run")) newLog.replaceWith(oldLog);
           window.scrollTo(0, y);
           bindMain();
+          followLog();
         }, function () { stale = true; });
     }, 300);
   }
@@ -179,13 +202,15 @@
     pre.appendChild(document.createTextNode(text));
     if (stick) pre.scrollTop = pre.scrollHeight;
   }
+  var source = null;
   function connect() {
     if (!window.EventSource) return;
+    if (source) source.close();
     var p = new URLSearchParams();
     if (hub.ws) p.set("ws", hub.ws);
     var log = $("#log");
     if (hub.run && log) { p.set("run", hub.run); p.set("from", log.getAttribute("data-from") || "0"); }
-    var es = new EventSource("/events?" + p.toString());
+    var es = source = new EventSource("/events?" + p.toString());
     es.addEventListener("change", function (e) {
       var c = {};
       try { c = JSON.parse(e.data) || {}; } catch (_) { /* a malformed frame still means "something changed" */ }
@@ -196,6 +221,15 @@
     es.addEventListener("log", function (e) {
       try { appendLog(JSON.parse(e.data).text); } catch (_) { /* ignore a malformed frame */ }
     });
+  }
+
+  // followLog: after a #main refresh the live log may belong to a run that started (or ended)
+  // since the stream opened; reopen it at that run's offset, or without a run once the log is gone.
+  function followLog() {
+    var log = $("#log"), run = log ? log.getAttribute("data-run") || "" : "";
+    if (run === hub.run) return;
+    hub.run = run;
+    connect();
   }
 
   /* ---------- moving a card (board drop and the card page's Move form) ---------- */
@@ -237,7 +271,7 @@
       on(f, "submit", function (e) {
         e.preventDefault();
         var sel = $('[name="lane"]', f);
-        moveCard(f.getAttribute("data-card"), sel.value, { title: f.getAttribute("data-title") }, function (ok) { if (ok) refreshMain(); });
+        moveCard(f.getAttribute("data-card"), sel.value, { title: f.getAttribute("data-title") }, function (ok) { if (ok) refreshMain(true); });
       });
     });
   }
@@ -247,6 +281,7 @@
   function bindTheme() {
     var btn = $("#themebtn");
     if (!btn) return;
+    btn.hidden = false; // the markup hides it so a page without script never shows a dead toggle
     var use = $("use", btn);
     function paint() {
       var dark = isDark(), label = dark ? "Switch to light mode" : "Switch to dark mode";
@@ -443,11 +478,16 @@
       t.appendChild(x);
       return t;
     }
+    // add takes one tag or several separated by commas ("needs-spec, security" is two tags).
     function add(raw) {
-      var v = String(raw).replace(/,/g, "").trim();
-      if (!v || tagsOf(box).indexOf(v) >= 0) return false;
-      box.insertBefore(chip(v), input);
-      return true;
+      var added = false;
+      String(raw).split(",").forEach(function (part) {
+        var v = part.trim();
+        if (!v || tagsOf(box).indexOf(v) >= 0) return;
+        box.insertBefore(chip(v), input);
+        added = true;
+      });
+      return added;
     }
     if (input) input.removeAttribute("name"); // with script the chips are the list
     on(box, "click", function (e) {
@@ -455,7 +495,14 @@
       if (x) { e.preventDefault(); x.parentNode.remove(); changed(); if (input) input.focus(); return; }
       if (e.target === box && input) input.focus();
     });
+    on(input, "input", function () {
+      var v = input.value, cut = v.lastIndexOf(",");
+      if (cut < 0) return;
+      if (add(v.slice(0, cut))) changed();
+      input.value = v.slice(cut + 1).replace(/^\s+/, "");
+    });
     on(input, "keydown", function (e) {
+      if (e.isComposing || e.keyCode === 229) return; // the IME owns Enter and comma while composing
       if (e.key === "Enter" || e.key === ",") {
         e.preventDefault(); // never submit the form from the tag input
         if (add(input.value)) changed();
@@ -479,8 +526,12 @@
   function openNewCard(lane, opener) {
     if (!dlg.scrim) return;
     dlg.opener = opener || document.activeElement;
-    var sel = $("#nc-lane", dlg.scrim);
-    if (lane && sel) sel.value = lane;
+    var sel = $("#nc-lane", dlg.scrim), title = $("#nc-title", dlg.scrim);
+    if (sel && sel.options.length) {
+      var known = !!lane && Array.prototype.some.call(sel.options, function (o) { return o.value === lane; });
+      if (known) sel.value = lane; else sel.selectedIndex = 0;
+    }
+    if (title) title.removeAttribute("aria-invalid");
     setDialogError("");
     dlg.scrim.classList.add("on");
     setTimeout(function () { var t = $("#nc-title", dlg.scrim); if (t) t.focus(); }, 30);
@@ -523,11 +574,18 @@
       if (e.key === "Escape") { e.preventDefault(); closeNewCard(); }
       else if (e.key === "Tab") trapTab(e, s);
     });
+    on($("#nc-title", s), "input", function () { this.removeAttribute("aria-invalid"); setDialogError(""); });
     on(form, "submit", function (e) {
       e.preventDefault();
       dlg.tags.flush();
       var title = $("#nc-title", s).value.trim();
-      if (!title) { flagField($("#nc-title", s)); return; }
+      if (!title) {
+        var ti = $("#nc-title", s);
+        ti.setAttribute("aria-invalid", "true");
+        setDialogError("Title is required.");
+        flagField(ti);
+        return;
+      }
       var tags = dlg.tags.tags();
       if (ready.checked && tags.indexOf("agent-ready") < 0) tags.push("agent-ready");
       var card = { title: title, body: $("#nc-body", s).value, kind: $("#nc-kind", s).value, lane: $("#nc-lane", s).value,
@@ -613,11 +671,7 @@
     on($("[data-clear]", form), "click", function (e) { e.preventDefault(); ta.value = ""; ta.focus(); });
   }
   mainBinders.push(bindTags, bindComposer);
-  // an unsent comment or a half-typed tag survives a live refresh even after focus leaves the field
-  busyChecks.push(function () {
-    var ta = $("form[data-comment-card] textarea"), ti = $("form[data-tags-card] [data-tag-input]");
-    return !!((ta && ta.value.trim()) || (ti && ti.value.trim()));
-  });
+  // an unsent comment or a half-typed tag survives a live refresh through unsavedEdits()
 
   /* ---------- page sections: Tasks 3, 4 and 5 insert theirs above this line ---------- */
 
@@ -626,6 +680,11 @@
     hub.ws = b.getAttribute("data-ws") || "";
     hub.run = b.getAttribute("data-run") || "";
     hub.nav = b.getAttribute("data-nav") || "";
+    if (window.history && history.replaceState && /[?&]flash=/.test(location.search)) {
+      var u = new URL(location.href);
+      u.searchParams.delete("flash");
+      history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+    }
     starters.forEach(function (fn) { fn(); });
     bindMain();
     connect();
