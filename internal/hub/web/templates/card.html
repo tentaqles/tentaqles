@@ -79,7 +79,8 @@
 
   <section class="panel"><h2>Tags</h2>
     <form class="tags-form" method="post" action="/cards/{{.ID}}/tags?ws={{$ws}}" data-tags-card="{{.ID}}">
-      <div class="tagbox" data-tagbox>{{range .Tags}}<span class="tag{{if eq . "agent-ready"}} ready{{end}}" data-tag="{{.}}">{{.}}<button type="button" class="x" aria-label="Remove tag {{.}}">×</button></span>{{end}}<input name="add" data-tag-input autocomplete="off" placeholder="Add a tag, Enter to confirm" aria-label="Add a tag"></div>
+      <button hidden tabindex="-1" aria-hidden="true">Save tags</button>
+      <div class="tagbox" data-tagbox>{{range .Tags}}<span class="tag{{if eq . "agent-ready"}} ready{{end}}" data-tag="{{.}}">{{.}}<button type="submit" class="x" name="remove" value="{{.}}" aria-label="Remove tag {{.}}">×</button></span>{{end}}<input name="add" data-tag-input autocomplete="off" placeholder="Add a tag, Enter to confirm" aria-label="Add a tag"></div>
       <input type="hidden" name="tags" value="{{join .Tags ","}}">
       <button class="btn sm nojs-only">Save tags</button>
     </form>

@@ -34,7 +34,7 @@ func TestCardPageLayout(t *testing.T) {
 		`<pre class="log" id="log" data-run="` + r.ID + `"`, "round 2 · claude -p", `<dt>Adapter</dt>`,
 		`style="width:31%"`, "31% of the dollar budget", `action="/runs/` + r.ID + `/cancel?ws=acme"`,
 		`action="/cards/` + c.ID + `/tags?ws=acme" data-tags-card="` + c.ID + `"`,
-		`<span class="tag ready" data-tag="agent-ready">agent-ready<button type="button" class="x" aria-label="Remove tag agent-ready">×</button></span>`,
+		`<span class="tag ready" data-tag="agent-ready">agent-ready<button type="submit" class="x" name="remove" value="agent-ready" aria-label="Remove tag agent-ready">×</button></span>`,
 		`<input type="hidden" name="tags" value="agent-ready,cli">`,
 		`<div class="cm" id="comments">`, "Looks good", `data-comment-card="` + c.ID + `"`, `data-move data-card="` + c.ID + `"`,
 	} {
@@ -47,9 +47,9 @@ func TestCardPageLayout(t *testing.T) {
 
 func TestCardTagsFormRoute(t *testing.T) {
 	e := newEnv(t, "acme")
-	c, _ := e.svcs["acme"].Add(context.Background(), store.NewCard{Title: "x"}, nil)
+	c, _ := e.svcs["acme"].Add(context.Background(), store.NewCard{Title: "x", Tags: []string{"a", "b"}}, nil)
 	ts := e.server(Options{})
-	code, _, hdr := postForm(t, ts, "/cards/"+c.ID+"/tags?ws=acme", url.Values{"tags": {"a, b"}, "add": {"c"}}, origin(ts))
+	code, _, hdr := postForm(t, ts, "/cards/"+c.ID+"/tags?ws=acme", url.Values{"tags": {"a,b"}, "add": {"c"}}, origin(ts))
 	if code != http.StatusSeeOther || hdr.Get("Location") != "/cards/"+c.ID+"?ws=acme&flash=tags-saved" {
 		t.Fatalf("%d %v", code, hdr)
 	}
@@ -132,5 +132,67 @@ func TestTimelineOrdersRunsAndDecisions(t *testing.T) {
 	}
 	if got[1].Detail != "cost unknown · 30 s" || got[4].Detail != "relocate loop" || got[3].Detail != "hub:tester" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestCardTagsFormRemoveAndConcurrentEdits(t *testing.T) {
+	e := newEnv(t, "acme")
+	svc := e.svcs["acme"]
+	ctx := context.Background()
+	c, _ := svc.Add(ctx, store.NewCard{Title: "x", Tags: []string{"a", "b", "c"}}, nil)
+	ts := e.server(Options{})
+	// the page was loaded with a,b,c; an agent then added "d" and removed "c"
+	later := []string{"a", "b", "d"}
+	if _, err := svc.UpdateCard(ctx, c.ID, store.CardUpdate{Tags: &later}); err != nil {
+		t.Fatal(err)
+	}
+	code, _, hdr := postForm(t, ts, "/cards/"+c.ID+"/tags?ws=acme", url.Values{"tags": {"a,b,c"}, "remove": {"a"}}, origin(ts))
+	if code != http.StatusSeeOther || hdr.Get("Location") != "/cards/"+c.ID+"?ws=acme&flash=tags-saved" {
+		t.Fatalf("%d %v", code, hdr)
+	}
+	if got, _ := svc.Store().Card(c.ID); !reflect.DeepEqual(got.Tags, []string{"b", "d"}) {
+		t.Fatalf("remove works on the stored list, keeping the concurrent edit: %+v", got.Tags)
+	}
+	if code, _, _ := postForm(t, ts, "/cards/"+c.ID+"/tags?ws=acme", url.Values{"tags": {"b"}, "add": {"e, f"}}, origin(ts)); code != http.StatusSeeOther {
+		t.Fatalf("add: %d", code)
+	}
+	if got, _ := svc.Store().Card(c.ID); !reflect.DeepEqual(got.Tags, []string{"b", "d", "e", "f"}) {
+		t.Fatalf("add appends to the stored list, not the page snapshot: %+v", got.Tags)
+	}
+}
+
+func TestCardTagsFormRemoveRefusedForAgent(t *testing.T) {
+	e := newEnv(t, "acme")
+	svc := e.svcs["acme"]
+	c, _ := svc.Add(context.Background(), store.NewCard{Title: "x", Tags: []string{"a", "b"}}, nil)
+	if _, err := svc.Move(context.Background(), c.ID, "in progress", false); err != nil {
+		t.Fatal(err)
+	}
+	ts := e.server(Options{})
+	hdr := origin(ts)
+	hdr[HeaderAgent] = "1"
+	if code, _, _ := postForm(t, ts, "/cards/"+c.ID+"/tags?ws=acme", url.Values{"remove": {"a"}}, hdr); code != http.StatusForbidden {
+		t.Fatalf("an agent cannot remove a tag outside planning lanes: %d", code)
+	}
+	if got, _ := svc.Store().Card(c.ID); !reflect.DeepEqual(got.Tags, []string{"a", "b"}) {
+		t.Fatalf("%+v", got.Tags)
+	}
+}
+
+func TestAPIUpdateCardRejectsUnknownFields(t *testing.T) {
+	e := newEnv(t, "acme")
+	c, _ := e.svcs["acme"].Add(context.Background(), store.NewCard{Title: "x"}, nil)
+	ts := e.server(Options{LocalKey: "lk"})
+	for _, body := range []map[string]any{{"tittle": "x"}, {"title": "x", "tittle": "y"}} {
+		code, m, _ := apiDo(t, ts.URL, "POST", "/api/cards/"+c.ID+"?ws=acme", body, nil)
+		if code != http.StatusBadRequest || m["code"] != "bad_request" || !strings.Contains(m["error"].(string), "tittle") {
+			t.Fatalf("%v: %d %v", body, code, m)
+		}
+	}
+	if got, _ := e.svcs["acme"].Store().Card(c.ID); got.Title != "x" {
+		t.Fatalf("nothing was applied: %q", got.Title)
+	}
+	if code, m, _ := apiDo(t, ts.URL, "POST", "/api/cards/"+c.ID+"?ws=acme", map[string]any{"title": "ok", "tags": []string{"t"}}, nil); code != 200 || m["title"] != "ok" {
+		t.Fatalf("a valid body still works: %d %v", code, m)
 	}
 }

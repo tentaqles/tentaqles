@@ -627,19 +627,21 @@
     var form = $("form[data-tags-card]");
     if (!form) return;
     var id = form.getAttribute("data-tags-card"), hidden = $('input[name="tags"]', form);
+    var confirmed = tagsOf($("[data-tagbox]", form)), seq = 0; // the last list the server confirmed
     var tb = wireTagbox($("[data-tagbox]", form), function (tags) {
-      var before = hidden.value;
+      var mine = ++seq;
       hidden.value = tags.join(",");
       api("POST", "/api/cards/" + encodeURIComponent(id), { tags: tags }).then(function (res) {
+        if (mine !== seq) return; // a newer edit is in flight: only its response counts
         if (!res.ok) {
-          hidden.value = before;
-          tb.set(before ? before.split(",") : []);
+          hidden.value = confirmed.join(",");
+          tb.set(confirmed);
           toast([el("span", null, errText(res))]);
           return;
         }
-        var saved = res.data.tags || [];
-        hidden.value = saved.join(",");
-        tb.set(saved); // the stored, masked spelling wins
+        confirmed = res.data.tags || [];
+        hidden.value = confirmed.join(",");
+        tb.set(confirmed); // the stored, masked spelling wins
         toast([el("span", null, "Tags saved.")]);
       });
     });

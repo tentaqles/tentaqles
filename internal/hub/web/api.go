@@ -17,6 +17,14 @@ func decode(r *http.Request, v any) error {
 	return json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20)).Decode(v)
 }
 
+// decodeStrict is decode that rejects unknown fields, so a misspelt key is an error instead of a
+// silent no-op.
+func decodeStrict(r *http.Request, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
+
 func (s *Server) apiPing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "mode": s.opts.Mode, "workspaces": s.opts.Backend.Workspaces()})
 }
