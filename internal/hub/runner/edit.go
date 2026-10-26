@@ -34,6 +34,11 @@ func (s *Service) UpdateCard(ctx context.Context, id string, u store.CardUpdate)
 		}
 		actor = "agent"
 	}
+	if u.Body != nil {
+		if err := checkBodyBudget(*u.Body); err != nil {
+			return store.Card{}, err
+		}
+	}
 	return s.st.UpdateCard(id, u, actor)
 }
 
