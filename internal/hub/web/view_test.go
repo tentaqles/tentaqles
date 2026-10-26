@@ -44,6 +44,14 @@ func TestViewHelpers(t *testing.T) {
 	if prNum("https://github.com/acme/billing/pull/9") != "PR #9" || prNum("https://example.com/x") != "" {
 		t.Error("prNum")
 	}
+	for _, u := range []string{"https://github.com/acme/billing/pull/9/files", "https://github.com/acme/billing/pull/9/commits/abc", "https://github.com/acme/billing/pull/9/"} {
+		if got := prNum(u); got != "PR #9" {
+			t.Errorf("prNum(%q) = %q", u, got)
+		}
+	}
+	if prNum("https://github.com/acme/billing/pull/") != "" || prNum("https://github.com/acme/billing/pulls") != "" {
+		t.Error("prNum without a number")
+	}
 	if clip("one\ntwo", 80) != "one" || clip("ábcdef", 3) != "ábc…" {
 		t.Error("clip keeps the first line and cuts on runes")
 	}

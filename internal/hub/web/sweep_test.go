@@ -46,7 +46,11 @@ func TestEveryPageHasTheShellAndIsCSPSafe(t *testing.T) {
 		if !strings.Contains(path, "?") {
 			sep = "?"
 		}
-		_, frag, _ := get(t, ts, path+sep+"fragment=main", nil)
+		fcode, frag, _ := get(t, ts, path+sep+"fragment=main", nil)
+		// The fragment is #main's content (hub.js swaps it into the page's own <div id="main">).
+		if fcode != 200 || strings.TrimSpace(frag) == "" || !strings.Contains(body, `<div id="main">`) {
+			t.Errorf("%s: fragment=main: %d, want 200 and a non-empty body for the page's #main", path, fcode)
+		}
 		if strings.Contains(frag, `class="side"`) || strings.Contains(frag, "<html") || strings.Contains(frag, `id="new-card"`) {
 			t.Errorf("%s: fragment=main carries more than #main", path)
 		}

@@ -22,7 +22,11 @@ const timelineMax = 60
 func timeline(runs []store.Run, decisions []store.Decision) []tlItem {
 	var out []tlItem
 	for _, r := range runs {
-		out = append(out, tlItem{When: r.QueuedAt, Text: "Run queued (" + r.OnRamp + ")", Code: r.ID})
+		queued := "Run queued"
+		if r.OnRamp != "" {
+			queued += " (" + r.OnRamp + ")"
+		}
+		out = append(out, tlItem{When: r.QueuedAt, Text: queued, Code: r.ID})
 		for _, rr := range r.RoundLog {
 			it := tlItem{When: rr.StartedAt, Class: "ok", Text: fmt.Sprintf("Round %d", rr.N)}
 			if rr.Outcome != "" {

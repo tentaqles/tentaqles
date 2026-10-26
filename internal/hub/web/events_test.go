@@ -60,6 +60,22 @@ func TestSSEDeliversStoreChanges(t *testing.T) {
 	}
 }
 
+func TestReadFromRestartsAShrunkFile(t *testing.T) {
+	p := t.TempDir() + "/run.log"
+	os.WriteFile(p, []byte("a long first log line\n"), 0o600)
+	if _, off := readFrom(p, 0, 1<<10); off != 22 {
+		t.Fatalf("offset %d", off)
+	}
+	os.WriteFile(p, []byte("new\n"), 0o600) // truncated or replaced
+	got, off := readFrom(p, 22, 1<<10)
+	if got != "new\n" || off != 4 {
+		t.Fatalf("a file smaller than the offset is read from the start: %q %d", got, off)
+	}
+	if got, off := readFrom(p, 4, 1<<10); got != "" || off != 4 {
+		t.Fatalf("no new bytes: %q %d", got, off)
+	}
+}
+
 func TestSSEStreamsTheRunLog(t *testing.T) {
 	e := newEnv(t, "acme")
 	svc := e.svcs["acme"]

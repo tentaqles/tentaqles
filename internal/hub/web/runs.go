@@ -169,7 +169,11 @@ func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
 	card, _ := svc.Store().Card(run.CardID)
 	d := runData{Run: run, Card: card, GateURL: svc.GateURL()}
 	d.LogTail, d.LogSize = tailFile(run.LogPath, 64<<10)
-	decisions, _ := svc.Store().DecisionsForCard(run.CardID)
+	decisions, err := svc.Store().DecisionsForCard(run.CardID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	d.Timeline = runTimeline(run, decisions)
 	p := s.basePage(r, "Run "+run.ID, ws)
 	p.Nav = "runs"

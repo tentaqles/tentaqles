@@ -83,6 +83,21 @@ func TestBoardDoneCardShowsCostOnly(t *testing.T) {
 	}
 }
 
+func TestBoardDoneCardWithoutPRAndCostHasNoMeta(t *testing.T) {
+	e := newEnv(t, "acme")
+	svc := e.svcs["acme"]
+	ctx := context.Background()
+	c, _ := svc.Add(ctx, store.NewCard{Title: "Nothing to show", Tags: []string{store.TagAgentReady}}, nil)
+	if _, err := svc.Move(ctx, c.ID, "done", false); err != nil {
+		t.Fatal(err)
+	}
+	ts := e.server(Options{})
+	_, tileBody, _ := get(t, ts, "/cards/"+c.ID+"/tile?ws=acme", nil)
+	if !strings.Contains(tileBody, `data-lane="done"`) || strings.Contains(tileBody, `class="meta"`) {
+		t.Fatalf("a done card with no PR and no cost renders no empty meta:\n%s", tileBody)
+	}
+}
+
 func TestBoardWaitingCardIsHotWithActions(t *testing.T) {
 	e := newEnv(t, "acme")
 	c, _ := e.svcs["acme"].Add(context.Background(), store.NewCard{Title: "Fix the lock", Tags: []string{store.TagAgentReady}}, nil)

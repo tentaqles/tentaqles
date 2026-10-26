@@ -111,9 +111,15 @@ func prNum(u string) string {
 	if err != nil {
 		return ""
 	}
+	// .../pull/N, .../pull/N/files, .../pull/N/commits/SHA: the number follows the last "pull".
 	parts := strings.Split(strings.Trim(p.Path, "/"), "/")
-	if len(parts) >= 2 && parts[len(parts)-2] == "pull" && parts[len(parts)-1] != "" {
-		return "PR #" + parts[len(parts)-1]
+	for i := len(parts) - 2; i >= 0; i-- {
+		if parts[i] == "pull" {
+			if parts[i+1] == "" {
+				return ""
+			}
+			return "PR #" + parts[i+1]
+		}
 	}
 	return ""
 }

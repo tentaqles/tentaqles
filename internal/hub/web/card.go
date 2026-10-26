@@ -45,7 +45,11 @@ func (s *Server) cardPage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	lanes, _ := svc.Store().Lanes()
+	lanes, err := svc.Store().Lanes()
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	data := cardData{CardDetail: d, Lanes: lanes, GateURL: svc.GateURL(), Timeline: timeline(d.Runs, d.Decisions)}
 	for _, l := range lanes {
 		if strings.EqualFold(l.Name, d.Lane) {

@@ -108,6 +108,13 @@ func TestAgentTagEditsFollowLanePolicy(t *testing.T) {
 	}
 }
 
+func TestTimelineOmitsAnEmptyOnRamp(t *testing.T) {
+	got := timeline([]store.Run{{ID: "r-bbbbbbbbbbbb", Status: store.StatusQueued, QueuedAt: "2026-10-22T10:00:00Z"}}, nil)
+	if len(got) == 0 || got[0].Text != "Run queued" {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestTimelineOrdersRunsAndDecisions(t *testing.T) {
 	runs := []store.Run{{ID: "r-bbbbbbbbbbbb", Status: store.StatusFailed, OnRamp: "feature", QueuedAt: "2026-10-22T10:00:00Z", EndedAt: "2026-10-22T10:30:00Z", StopReason: "relocate loop",
 		RoundLog: []store.RoundRecord{{N: 1, StartedAt: "2026-10-22T10:01:00Z", Seconds: 30, ExitCode: 1, CostUnknown: true}}}}

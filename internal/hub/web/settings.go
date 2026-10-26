@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -37,14 +38,28 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "settings", p)
 }
 
-var numberNoise = strings.NewReplacer(",", "", "_", "", " ", "", "$", "")
+var numberNoise = strings.NewReplacer("_", "", " ", "", "$", "")
+
+// thousands is a number whose commas sit only between full groups of three digits ("1,500" or
+// "2,000,000.50"); any other comma ("7,50", "1,5") is a typo or a decimal comma, never dropped.
+var thousands = regexp.MustCompile(`^\d{1,3}(,\d{3})+(\.\d+)?$`)
+
+// cleanNumber strips the noise a person types around a number; a comma survives (and the
+// parse then refuses the value) unless it is a valid thousands separator.
+func cleanNumber(s string) string {
+	v := numberNoise.Replace(strings.TrimSpace(s))
+	if strings.Contains(v, ",") && thousands.MatchString(v) {
+		v = strings.ReplaceAll(v, ",", "")
+	}
+	return v
+}
 
 // settingsFromForm turns the form's text into typed values; a blank field keeps cur. Nothing the
 // form sent is stored as text: the runner validates the numbers and the store re-serialises them.
 func settingsFromForm(r *http.Request, cur runner.Settings) (runner.SettingsUpdate, error) {
 	var u runner.SettingsUpdate
 	field := func(k string) (string, bool) {
-		v := numberNoise.Replace(strings.TrimSpace(r.PostFormValue(k)))
+		v := cleanNumber(r.PostFormValue(k))
 		return v, v != ""
 	}
 	if v, ok := field("concurrency"); ok {

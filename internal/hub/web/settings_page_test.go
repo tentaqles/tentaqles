@@ -42,6 +42,17 @@ func TestSettingsFormParsesHumanNumbers(t *testing.T) {
 	if st.Concurrency() != 3 || st.DefaultBudget() != (store.Budget{Tokens: 3_000_000, USD: 15, Minutes: 120, Rounds: 8}) || st.Notify() {
 		t.Fatalf("%d %+v %v", st.Concurrency(), st.DefaultBudget(), st.Notify())
 	}
+	// A comma is a thousands separator only in full groups of three; "7,50" or "1,5" is refused
+	// rather than read as 750 or 15.
+	for _, usd := range []string{"7,50", "1,5", "1,5000", ",500"} {
+		code, body, _ := postForm(t, ts, "/settings?ws=acme", url.Values{"usd": {usd}}, origin(ts))
+		if code != http.StatusBadRequest || !strings.Contains(body, "want a number, such as 15 or 7.50") {
+			t.Errorf("usd %q: %d", usd, code)
+		}
+	}
+	if code, _, _ := postForm(t, ts, "/settings?ws=acme", url.Values{"usd": {"$1,500.50"}}, origin(ts)); code != http.StatusSeeOther || st.DefaultBudget().USD != 1500.5 {
+		t.Fatalf("usd 1,500.50: %d %+v", code, st.DefaultBudget())
+	}
 }
 
 func TestSettingsFormRejectsWithoutPartialWrites(t *testing.T) {

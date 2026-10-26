@@ -121,7 +121,13 @@ func readFrom(path string, offset, max int64) (string, int64) {
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil || fi.Size() <= offset {
+	if err != nil {
+		return "", offset
+	}
+	if fi.Size() < offset { // truncated or replaced: start over
+		offset = 0
+	}
+	if fi.Size() <= offset {
 		return "", offset
 	}
 	if fi.Size()-offset > max {

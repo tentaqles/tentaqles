@@ -22,6 +22,6 @@
   {{else}}<div class="ask"><a class="btn warm sm" href="/waiting?ws={{$ws}}#d-{{.ID}}">Answer</a></div>{{end}}
   {{else}}{{if .OpenReview}}<div class="ask"><a class="btn sm" href="/cards/{{.ID}}/review?ws={{$ws}}">Open review</a></div>{{end}}{{end}}
   {{if .Live}}<div class="meta"><span class="id">{{.Run.ID}}</span><span class="num">{{money .Run.CostUSD}}</span><span>{{minutes .Run.Seconds}} min</span></div>
-  {{else if .Done}}<div class="meta">{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}</div>
+  {{else if .Done}}{{if or .PR .CostUSD}}<div class="meta">{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}</div>{{end}}
   {{else if not .Decision}}<div class="meta">{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}<span class="id">{{.ID}}</span>{{if .BudgetUSD}}<span>budget <span class="num">{{money .BudgetUSD}}</span></span>{{end}}</div>{{end}}
 </article>{{end}}{{end}}
