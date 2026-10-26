@@ -62,7 +62,7 @@ It needs no network: no web fonts, no CDN; Inter and JetBrains Mono are used whe
 
 | Page | What it is for |
 |---|---|
-| Board (`/`) | lanes with their cards; drag a card to move it. An agent-ready card that enters In progress starts a run; moving a running card out asks before cancelling the run. An orange edge means a run waits on you, with the action on the card. The box at the top filters cards by title (`/` focuses it). |
+| Board (`/`) | lanes with their cards; drag a card to move it, or use the Move button at a card's top right (Tab to it, Enter or Down opens the lane menu, arrows pick, Escape closes; focus stays on the card). Below 900px wide the sidebar folds into a bar above the page that keeps the workspace switcher. An agent-ready card that enters In progress starts a run; moving a running card out asks before cancelling the run. An orange edge means a run waits on you, with the action on the card. The box at the top filters cards by title (`/` focuses it). |
 | New card (button in the top bar, `+` on every planning lane) | title, body (markdown; a `budget:` front-matter line overrides the default budget), kind, lane, project folder, parent card (a card of kind `project`), tags, and the agent-ready switch. |
 | Card (`/cards/<id>`) | the body, a timeline of runs, rounds and decisions, the live log of an active run, the run's facts and budget bar, the tag editor (Enter or comma adds, × or Backspace removes; each change saves), comments (Ctrl+Enter posts), and any decision waiting on you. |
 | Decisions (`/waiting`) | every pending decision across the served workspaces, newest first, with the option buttons and a note; an over-budget stop shows the run's numbers, and its note takes new limits such as `rounds=6,usd=15`. |

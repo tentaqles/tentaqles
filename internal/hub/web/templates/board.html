@@ -5,15 +5,17 @@
   <div class="lane" data-lane="{{.Lane.Name}}" data-kind="{{.Lane.Kind}}" data-title="{{laneTitle .Lane.Name}}" role="region" aria-label="{{laneTitle .Lane.Name}}">
     <header>{{laneTitle .Lane.Name}} <span class="c">{{len .Cards}}</span>{{if planning .Lane.Kind}}<a class="add" href="#new-card" data-new="{{.Lane.Name}}" aria-label="Add a card to {{laneTitle .Lane.Name}}"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></a>{{end}}</header>
     <div class="empty"{{if .Cards}} hidden{{end}}>{{if eq .Lane.Kind "active"}}Drop an agent-ready card here to start a run.{{else if eq .Lane.Kind "review"}}Finished runs wait here for your review.{{else if eq .Lane.Kind "done"}}Nothing done yet.{{else}}No cards yet. Use + to add one.{{end}}</div>
-    {{range .Cards}}{{template "board-card" (dict "WS" $.WS "Card" .)}}{{end}}
+    {{range .Cards}}{{template "board-card" (dict "WS" $.WS "Card" . "Lanes" $.Data.All)}}{{end}}
   </div>
 {{end}}
 </section>
-<p class="hint">Drag a card between lanes, or open it and use Move. An agent-ready card that enters In progress starts a run; moving a running card out asks before the run is cancelled. An orange edge means a run is waiting on you; the action is on the card.</p>
+<p class="hint">Drag a card between lanes, use the Move button on a card (Tab to it, then Enter), or open it and use Move. An agent-ready card that enters In progress starts a run; moving a running card out asks before the run is cancelled. An orange edge means a run is waiting on you; the action is on the card.</p>
 {{end}}
 
-{{define "board-card"}}{{$ws := .WS}}{{with .Card}}<article class="card{{if .Decision}} hot{{end}}" draggable="true" data-card="{{.ID}}" data-lane="{{.Lane}}" data-title="{{.Title}}" data-status="{{.Status}}" data-status-text="{{.StatusText}}"{{if .HasTag "agent-ready"}} data-ready{{end}}>
+{{define "board-card"}}{{$ws := .WS}}{{$lanes := .Lanes}}{{with .Card}}<article class="card{{if .Decision}} hot{{end}}" draggable="true" data-card="{{.ID}}" data-lane="{{.Lane}}" data-title="{{.Title}}" data-status="{{.Status}}" data-status-text="{{.StatusText}}"{{if .HasTag "agent-ready"}} data-ready{{end}}>
   <a class="t" href="/cards/{{.ID}}?ws={{$ws}}">{{.Title}}</a>
+  <div class="mv"><button class="mvbtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="mv-{{.ID}}" aria-label="Move {{.Title}} to another lane" title="Move to another lane"><svg class="i" aria-hidden="true"><use href="#i-grip"/></svg></button>
+    <ul class="mvlist" id="mv-{{.ID}}" role="menu" aria-label="Move {{.Title}} to" hidden>{{range $lanes}}<li role="none"><button type="button" role="menuitem" tabindex="-1" data-to="{{.Name}}">{{laneTitle .Name}}</button></li>{{end}}</ul></div>
   {{if .Status}}<div class="status"><span class="pill {{pill .Status}}">{{.PillLabel}}</span>{{with .StatusText}}<span>{{.}}</span>{{end}}</div>
   {{else if not .Done}}<div class="status"><span class="chip">{{.Kind}}</span>{{range .Tags}}<span class="chip{{if eq . "agent-ready"}} ready{{end}}">{{.}}</span>{{end}}</div>{{end}}
   {{if .Live}}<div class="bar" role="img" aria-label="{{.Pct}}% of the dollar budget"><i style="width:{{.Pct}}%"></i></div>{{end}}
