@@ -71,7 +71,7 @@ func TestClaudeArgvAndPermissionWrapper(t *testing.T) {
 	isolate(t)
 	c := Claude{Bin: []string{"claude"}, Args: func(a []string) []string { return append([]string{"--permission-mode", "acceptEdits"}, a...) }}
 	got := c.Argv(RunRequest{Prompt: "/tentaqles:feature x --headless & echo pwned", SessionID: "s1", AllowedTools: []string{"Bash(npm test)", "Edit"}})
-	want := []string{"claude", "--permission-mode", "acceptEdits", "-p", "--output-format", "json", "--resume=s1"}
+	want := []string{"claude", "--permission-mode", "acceptEdits", "-p", "--output-format", "stream-json", "--verbose", "--resume=s1"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("argv\n got %q\nwant %q", got, want)
 	}
@@ -81,7 +81,7 @@ func TestClaudeArgvAndPermissionWrapper(t *testing.T) {
 		}
 	}
 	plain := Claude{}.Argv(RunRequest{Prompt: "p"})
-	if !slices.Equal(plain, []string{"claude", "-p", "--output-format", "json"}) || slices.Contains(plain, "--dangerously-skip-permissions") {
+	if !slices.Equal(plain, []string{"claude", "-p", "--output-format", "stream-json", "--verbose"}) || slices.Contains(plain, "--dangerously-skip-permissions") {
 		t.Fatalf("plain argv %q", plain)
 	}
 	for _, bad := range []string{"s1 & calc", "a b", "x\ny", "s1\"", "%PATH%", "-x", "--dangerously-skip-permissions", "-p", ".hidden"} {

@@ -87,13 +87,19 @@ there by a human), on
 `tq hub run <card>`, or when an answer resumes it. Wakeups coalesce; a card is checked
 out by one run at a time.
 
-Every round runs `claude -p --output-format json` in the card's project folder with the
+Every round runs `claude -p --output-format stream-json --verbose` in the card's project folder with the
 workspace's environment plan (as `tq run` builds it), `TENTAQLES_HEADLESS=1` and
 `TQ_HUB_TASK={"hub","workspace","kind","external"}`; never with a hub token, never with
 `TENTAQLES_HEADLESS_CHILD`, never with `--dangerously-skip-permissions` unless
 `tq allow --bypass` was run for the workspace. The prompt goes to `claude` on stdin and
 the tools a `permission` answer allowed go in a `--settings` file; nothing free-text is
 put on the command line (a resumed round adds `--resume=<session id>`).
+The hub reads the events as they arrive and writes one masked line per step to the run
+log, which the card and run pages tail live: `→ tool Bash: go test ./...`,
+`→ editing internal/x.go`, a subagent start, the first line of what Claude says (clipped
+to 200 characters), and at most every 30 seconds the round's running cost and tokens.
+The stream's final `result` event gives the cost, usage and session id; an output without
+one is read as a single result document, as before.
 
 When the build creates its worktree, the session ends with
 `TQ_HUB_RELOCATE <worktree> <slug>` and the next round starts there. The hand-off is
@@ -130,6 +136,10 @@ the gate state is kept, so `tq hub run <card>` resumes it. Only an explicit
 Per run: 2,000,000 tokens (input + output + cache write), 10 USD, 120 minutes, 12
 rounds, or the card's `--budget tokens=…,usd=…,minutes=…,rounds=…`. Reaching one stops
 the run (`over-budget`), comments the numbers and asks "raise-and-resume / stop".
+Tokens, dollars and minutes are checked inside a round, not only between rounds: the hub
+prices each assistant message as it streams and, once the round reaches what is left of
+the budget, stops `claude` (as a cancel does), records what the round spent and stops the
+run the same way. The session id is kept, so raise-and-resume continues that session.
 A card body's `budget:` front matter is checked when the card is created or its body
 edited: an unknown key or a value that is not a positive number (rounds and tokens whole)
 is refused with an error naming it (`bad_request` on the API), so it never reaches a run.
