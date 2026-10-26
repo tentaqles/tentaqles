@@ -1,6 +1,7 @@
 package store
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -54,5 +55,24 @@ func TestSetSettingsRollsBackWhenTheAuditWriteFails(t *testing.T) {
 	case c := <-ch:
 		t.Fatalf("published %+v after a rollback", c)
 	default:
+	}
+}
+
+// TestSetSettingsMirrorFailureIsNotFatal: once the transaction commits, a failed activity.jsonl
+// append does not turn the saved update into an error (as with every other mutation).
+func TestSetSettingsMirrorFailureIsNotFatal(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	p := ActivityPath("acme")
+	_ = os.Remove(p)
+	if err := os.MkdirAll(p, 0o700); err != nil { // a directory where the file goes: the append fails
+		t.Fatal(err)
+	}
+	n := 5
+	if err := s.SetSettings(SettingsWrite{Concurrency: &n}, activity.Entry{Actor: "hub:tester", Verb: activity.VerbSettingsUpdate}); err != nil {
+		t.Fatalf("committed update reported as failed: %v", err)
+	}
+	if s.Concurrency() != 5 {
+		t.Fatal("not stored")
 	}
 }

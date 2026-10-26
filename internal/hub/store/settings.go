@@ -192,8 +192,9 @@ type SettingsWrite struct {
 // SetSettings stores every given setting and the activity entry describing the change in one
 // transaction: an error before the commit changes nothing, so a half-applied update (and a change
 // with no audit row) cannot exist. Each value is validated and re-serialised, never caller text.
-// After the commit it appends the entry to activity.jsonl (best-effort mirror, as Log does: a failure
-// is returned, the committed rows stay) and publishes one "settings" change.
+// After the commit it publishes one "settings" change and appends the entry to activity.jsonl; that
+// mirror is best-effort (as for every other mutation): a failed append is not an error, since the
+// update is saved.
 func (s *Store) SetSettings(w SettingsWrite, entry activity.Entry) error {
 	kv := map[string]string{}
 	if w.Concurrency != nil {
@@ -240,5 +241,6 @@ func (s *Store) SetSettings(w SettingsWrite, entry activity.Entry) error {
 		return err
 	}
 	s.Publish(Change{Kind: "settings"})
-	return s.mirrorEntry(e)
+	_ = s.mirrorEntry(e) // the rows are committed; the jsonl mirror is best-effort, as for every other mutation
+	return nil
 }

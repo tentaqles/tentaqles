@@ -88,8 +88,8 @@ func (s *Service) UpdateSettings(ctx context.Context, u SettingsUpdate) (Setting
 	if u.Notify != nil {
 		fields = append(fields, "notify")
 	}
-	// One transaction for the values and the audit row; a mirror failure after the commit is returned
-	// too, with the saved settings, never dropped.
+	// One transaction for the values and the audit row; the activity.jsonl mirror after the commit is
+	// best-effort, so an error here means nothing was saved.
 	err := s.st.SetSettings(store.SettingsWrite{Concurrency: u.Concurrency, DefaultBudget: u.DefaultBudget, Notify: u.Notify},
 		activity.Entry{Actor: s.human(), Verb: activity.VerbSettingsUpdate, Data: map[string]any{"fields": fields}})
 	if err != nil {
