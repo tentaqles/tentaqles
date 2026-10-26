@@ -76,3 +76,36 @@ def test_guard_registered_with_short_timeout() -> None:
     found = [h for g in hooks["hooks"]["PreToolUse"] for h in g["hooks"]
              if "headless-manifest-guard.py" in h["command"]]
     assert len(found) == 1 and found[0]["timeout"] <= 10
+
+
+def test_guard_blocks_windows_spellings_of_the_manifest() -> None:
+    for path in (r"C:\ws\.Tentaqles.YAML", r"C:\ws\.tentaqles.yaml.", r"C:\ws\.tentaqles.yaml ",
+                 r"C:\ws\.tentaqles.yaml::$DATA", "C:/ws/.TENTAQLES.yaml:stream"):
+        r = _run({"tool_name": "Write", "tool_input": {"file_path": path}}, True)
+        assert r.returncode == 2, path
+    r = _run({"tool_name": "NotebookEdit", "tool_input": {"notebook_path": "/ws/.tentaqles.yaml"}}, True)
+    assert r.returncode == 2
+
+
+def test_guard_resolves_real_path(tmp_path) -> None:
+    real = tmp_path / ".tentaqles.yaml"
+    real.write_text("client: x\n", encoding="utf-8")
+    link = tmp_path / "alias.yaml"
+    try:
+        link.symlink_to(real)
+    except OSError:
+        return  # no symlink privilege on this box; the name checks still cover it
+    r = _run({"tool_name": "Edit", "tool_input": {"file_path": str(link)}}, True)
+    assert r.returncode == 2
+
+
+def test_guard_blocks_bash_writes_but_allows_reads() -> None:
+    for cmd in ("echo 'data: {}' >> .tentaqles.yaml", "sed -i 's/a/b/' ../.tentaqles.yaml",
+                "python -c \"open('.tentaqles.yaml','a')\"", "cp /tmp/x C:/ws/.Tentaqles.yaml",
+                "Set-Content -Path .tentaqles.yaml -Value x", "cat x | tee .tentaqles.yaml"):
+        assert _run({"tool_name": "Bash", "tool_input": {"command": cmd}}, True).returncode == 2, cmd
+    for cmd in ("cat .tentaqles.yaml", "grep client .tentaqles.yaml", "tq doctor 2>&1",
+                "echo hi > notes.txt"):
+        assert _run({"tool_name": "Bash", "tool_input": {"command": cmd}}, True).returncode == 0, cmd
+    write = {"tool_name": "Bash", "tool_input": {"command": "echo x > .tentaqles.yaml"}}
+    assert _run(write, False).returncode == 0  # interactive
