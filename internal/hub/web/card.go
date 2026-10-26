@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/hub/runner"
@@ -94,8 +95,9 @@ func (s *Server) cardPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "card", p)
 }
 
-// formTags replaces the card's tags with the form's list plus anything typed into "add". The
-// runner decides whether the caller may (an agent only on a card in a planning lane).
+// formTags edits the stored tag list: "remove" drops one tag and "add" appends one or more. It
+// reads the stored list, not the page's hidden snapshot, so a concurrent edit is not reverted.
+// The runner decides whether the caller may (an agent only on a card in a planning lane).
 func (s *Server) formTags(w http.ResponseWriter, r *http.Request) {
 	svc, ws, ok := s.service(w, r)
 	if !ok {
@@ -105,7 +107,23 @@ func (s *Server) formTags(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tags := append(splitTags(r.FormValue("tags")), splitTags(r.FormValue("add"))...)
+	card, err := svc.Store().Card(id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	drop := strings.TrimSpace(r.FormValue("remove"))
+	tags := []string{}
+	for _, t := range card.Tags {
+		if t != drop {
+			tags = append(tags, t)
+		}
+	}
+	for _, t := range splitTags(r.FormValue("add")) {
+		if !slices.Contains(tags, t) {
+			tags = append(tags, t)
+		}
+	}
 	if _, err := svc.UpdateCard(s.reqCtx(r), id, store.CardUpdate{Tags: &tags}); err != nil {
 		s.fail(w, r, err)
 		return
@@ -130,7 +148,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateRequest
-	if err := decode(r, &req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
 		s.fail(w, r, errors.Join(errors.New("the body must be a JSON object"), err))
 		return
 	}

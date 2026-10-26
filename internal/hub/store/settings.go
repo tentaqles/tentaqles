@@ -8,6 +8,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/hub/activity"
 )
 
 // Budget caps one run. Tokens count input + output + cache write (cache reads are not counted).
@@ -177,5 +179,68 @@ func (s *Store) SetNotify(on bool) error {
 		return err
 	}
 	s.Publish(Change{Kind: "settings"})
+	return nil
+}
+
+// SettingsWrite carries the settings to store; nil fields are left alone.
+type SettingsWrite struct {
+	Concurrency   *int
+	DefaultBudget *Budget
+	Notify        *bool
+}
+
+// SetSettings stores every given setting and the activity entry describing the change in one
+// transaction: an error before the commit changes nothing, so a half-applied update (and a change
+// with no audit row) cannot exist. Each value is validated and re-serialised, never caller text.
+// After the commit it publishes one "settings" change and appends the entry to activity.jsonl; that
+// mirror is best-effort (as for every other mutation): a failed append is not an error, since the
+// update is saved.
+func (s *Store) SetSettings(w SettingsWrite, entry activity.Entry) error {
+	kv := map[string]string{}
+	if w.Concurrency != nil {
+		if *w.Concurrency < 1 || *w.Concurrency > MaxConcurrency {
+			return fmt.Errorf("concurrency %d: use 1 to %d", *w.Concurrency, MaxConcurrency)
+		}
+		kv[SettingConcurrency] = strconv.Itoa(*w.Concurrency)
+	}
+	if w.DefaultBudget != nil {
+		if err := w.DefaultBudget.Validate(); err != nil {
+			return err
+		}
+		raw, err := json.Marshal(*w.DefaultBudget)
+		if err != nil {
+			return err
+		}
+		kv[SettingDefaultBudget] = string(raw)
+	}
+	if w.Notify != nil {
+		kv[SettingNotify] = strconv.FormatBool(*w.Notify)
+	}
+	if len(kv) == 0 {
+		return errors.New("no settings to store")
+	}
+	e, data, err := s.prepEntry(entry)
+	if err != nil {
+		return err
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	for k, v := range kv {
+		if _, err := tx.Exec(`INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	if _, err := tx.Exec(insertActivity, e.TS, e.Workspace, e.Actor, e.Verb, nullStr(e.CardID), nullStr(e.RunID), data); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.Publish(Change{Kind: "settings"})
+	_ = s.mirrorEntry(e) // the rows are committed; the jsonl mirror is best-effort, as for every other mutation
 	return nil
 }

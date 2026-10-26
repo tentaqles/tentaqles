@@ -136,6 +136,26 @@ func PRLink(st *store.Store, cardID string) string {
 	return ""
 }
 
+// PRLinks is PRLink for many cards with one comments query: only comments that contain "/pull/"
+// (a substring every prRe match has) are read, newest first, so each card's first match is the
+// one PRLink would return. A card without a PR link has no entry.
+func PRLinks(st *store.Store, cardIDs []string) map[string]string {
+	out := map[string]string{}
+	cs, err := st.CommentsContaining(cardIDs, "/pull/")
+	if err != nil {
+		return out
+	}
+	for _, c := range cs {
+		if _, ok := out[c.CardID]; ok {
+			continue
+		}
+		if m := prRe.FindString(c.Body); m != "" {
+			out[c.CardID] = m
+		}
+	}
+	return out
+}
+
 // finishApproved: the gate ran finish for an approved result; close the run, move the card to done,
 // tell the parent, export the review.
 // The terminal poll and a hub answer can both see the same approval; only the first closes it.

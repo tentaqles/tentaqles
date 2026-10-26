@@ -149,6 +149,12 @@
     return false;
   }
   function bindMain() { mainBinders.forEach(function (fn) { fn(); }); }
+  // tileFocus: focus on a board tile's title link or Move button survives a #main refresh.
+  function tileFocus(m) {
+    var a = document.activeElement, card = a && m.contains(a) ? a.closest(".card[data-card]") : null;
+    if (!card || !a.matches("a.t, .mvbtn")) return null;
+    return { id: card.getAttribute("data-card"), sel: a.matches("a.t") ? "a.t" : ".mvbtn" };
+  }
   // refreshMain re-renders #main from the server (?fragment=main), never while the human is busy;
   // a skipped refresh runs once they leave the field. The live log keeps its own node.
   function refreshMain() {
@@ -165,7 +171,7 @@
         .then(function (html) {
           var m = $("#main");
           if (html === null || !m) return;
-          var oldLog = $("#log"), y = window.scrollY;
+          var oldLog = $("#log"), y = window.scrollY, keep = tileFocus(m);
           clear(m);
           m.appendChild(fragment(html));
           var newLog = $("#log");
@@ -173,10 +179,33 @@
           window.scrollTo(0, y);
           bindMain();
           followLog();
+          if (keep) { var f = $(keep.sel, byData("data-card", keep.id, m)); if (f) f.focus({ preventScroll: true }); }
         }, function () { stale = true; });
     }, 300);
   }
   on(document, "focusout", function () { setTimeout(function () { if (stale) refreshMain(); }, 50); });
+  // back/forward cache: a restored page keeps the values left in its fields while their defaults
+  // stay what the server rendered then, so a value already sent (a form submitted before Back) would
+  // hold every refresh. Re-baseline instead of reset(): what the fields show becomes their default,
+  // nothing is thrown away here, and an edit made from now on blocks a refresh as usual. Then reopen
+  // the stream and re-read #main (busy() still holds it while the human is in a field).
+  function rebaseline() {
+    $$("#main form").forEach(function (f) {
+      Array.prototype.forEach.call(f.elements, function (c) {
+        if (c.type === "checkbox" || c.type === "radio") c.defaultChecked = c.checked;
+        else if (c.tagName === "SELECT") Array.prototype.forEach.call(c.options, function (o) { o.defaultSelected = o.selected; });
+        else if (c.tagName === "TEXTAREA" || c.tagName === "INPUT") c.defaultValue = c.value;
+      });
+    });
+  }
+  on(window, "pageshow", function (e) {
+    if (!e.persisted) return;
+    closeMenu(false);
+    rebaseline();
+    connect();
+    refreshWaitingCount();
+    refreshMain();
+  });
 
   var countTimer = null;
   function refreshWaitingCount() {
@@ -237,6 +266,7 @@
   }
   // moveCard asks the server to move a card. A live run answers 409: the toast asks before the run
   // is cancelled. done(ok) runs once per server answer; ok false means the caller undoes its preview.
+  // meta.declined, when set, runs when the human keeps the run or the confirmed move fails.
   function moveCard(id, lane, meta, done) {
     meta = meta || {};
     meta.title = meta.title || "The card";
@@ -251,10 +281,12 @@
           actions: [
             ["Cancel the run and move", function () {
               api("POST", path, { lane: lane, cancel_run: true }).then(function (r2) {
-                if (r2.ok) { moveToast(r2.data, meta, lane); done(true); } else toast([el("span", null, errText(r2))]);
+                if (r2.ok) { moveToast(r2.data, meta, lane); done(true); return; }
+                toast([el("span", null, errText(r2))]);
+                if (meta.declined) meta.declined();
               });
             }],
-            ["Keep it running", function () {}]
+            ["Keep it running", function () { if (meta.declined) meta.declined(); }]
           ]
         });
         return;
@@ -321,6 +353,7 @@
     on(document, "keydown", function (e) {
       if (e.key === "/" && !typing() && document.activeElement !== input && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
+        closeMenu(false); // an open Move menu would otherwise stay open behind the search field
         input.focus();
       }
     });
@@ -337,9 +370,14 @@
 
   function laneOf(node) { return node && node.closest ? node.closest(".lane[data-lane]") : null; }
   function cardsIn(lane) { return $$(".card[data-card]", lane); }
+  // putLast: a node at the end of a lane, but above a capped lane's "Show all" link.
+  function putLast(lane, node) { var more = $(".more", lane); if (more) lane.insertBefore(node, more); else lane.appendChild(node); }
+  // capped: a lane that leaves cards out of the page (data-hidden); its count cannot be patched here.
+  function capped(lane) { return !!(lane && lane.hasAttribute("data-hidden")); }
   function laneCounts() {
     $$(".lane[data-lane]").forEach(function (lane) {
-      var n = cardsIn(lane).length, c = $("header .c", lane), empty = $(".empty", lane);
+      // a capped done lane leaves data-hidden cards out of the page; its count is still the total
+      var n = cardsIn(lane).length + (Number(lane.getAttribute("data-hidden")) || 0), c = $("header .c", lane), empty = $(".empty", lane);
       if (c) c.textContent = String(n);
       if (empty) empty.hidden = n > 0;
     });
@@ -358,8 +396,13 @@
       if (y < r.top + r.height / 2) { after = c; return true; }
       return false;
     });
-    if (after) lane.insertBefore(slot, after); else lane.appendChild(slot);
+    if (after) lane.insertBefore(slot, after); else putLast(lane, slot);
     slot.classList.add("show");
+  }
+  function flushHeld() {
+    var ids = Object.keys(heldTiles);
+    heldTiles = {};
+    ids.forEach(function (id) { refreshTile(id); });
   }
   function endDrag() {
     if (!drag) return;
@@ -368,9 +411,17 @@
     if (slot.parentNode) slot.parentNode.removeChild(slot);
     $$(".lane.over").forEach(function (l) { l.classList.remove("over"); });
     drag = null;
-    var ids = Object.keys(heldTiles);
-    heldTiles = {};
-    ids.forEach(refreshTile);
+    flushHeld();
+  }
+  // focusFree: nothing else holds focus, so a tile may take it back (the focus is on the page, in
+  // the toast, or inside the tile itself).
+  function focusFree(tile) {
+    var a = document.activeElement;
+    return !a || a === document.body || a === document.documentElement || !!a.closest("#toast") || !!(tile && tile.contains(a));
+  }
+  function focusMove(id) {
+    var card = byData("data-card", id, $(".lanes")), b = card && $(".mvbtn", card);
+    if (b && focusFree(card)) b.focus();
   }
   function statusToast(card) {
     var st = card.getAttribute("data-status");
@@ -379,11 +430,19 @@
     toast([pill(st), el("span", null, card.getAttribute("data-title") + (text ? ": " + text : ""))]);
   }
   // refreshTile re-reads one card and puts it in the lane the server names; a 404 removes it.
-  function refreshTile(id) {
-    if (drag) { heldTiles[id] = true; return; }
+  // Focus inside the old tile moves to the same control of the new one; refocus (a keyboard move)
+  // puts it on the Move button when nothing else took it meanwhile.
+  function refreshTile(id, refocus) {
+    if (drag || (menu && menu.id === id)) { heldTiles[id] = true; return; }
     getHTML("/cards/" + encodeURIComponent(id) + "/tile").then(function (res) {
       var old = byData("data-card", id, $(".lanes"));
-      if (res.status === 404) { if (old) old.remove(); laneCounts(); return; }
+      var a = document.activeElement, keep = null;
+      if (old && a && old.contains(a)) keep = a.matches("a.t") ? "a.t" : ".mvbtn";
+      else if (refocus && focusFree(old)) keep = ".mvbtn";
+      // a card not on the page may be one a capped lane leaves out, and a change in or out of a capped
+      // lane moves its hidden total: re-read #main rather than patch a count that cannot be known here
+      if (!old && $(".lane[data-hidden]")) { refreshMain(); return; }
+      if (res.status === 404) { var was = laneOf(old); if (old) old.remove(); if (capped(was)) refreshMain(); else laneCounts(); return; }
       if (!res.html) return;
       var node = fragment(res.html).firstElementChild;
       if (!node) return;
@@ -391,17 +450,20 @@
       if (!lane) { refreshMain(); return; }
       var before = old ? old.getAttribute("data-status") : null;
       var moved = !old || laneOf(old) !== lane;
+      if (moved && (capped(lane) || capped(laneOf(old)))) { refreshMain(); return; }
       if (old && !moved) old.replaceWith(node);
       else {
         if (old) old.remove();
         var first = $(".card[data-card]", lane);
-        if (first) lane.insertBefore(node, first); else lane.appendChild(node);
+        if (first) lane.insertBefore(node, first); else putLast(lane, node);
       }
       var after = node.getAttribute("data-status");
       if (moved || before !== after) settle(node);
       if (old && before !== after && Date.now() > (quietUntil[id] || 0)) statusToast(node);
       laneCounts();
       if (hub.applySearch) hub.applySearch();
+      var f = keep && $(keep, node);
+      if (f) f.focus();
     });
   }
   function bindBoard() {
@@ -434,28 +496,118 @@
       var lane = laneOf(e.target);
       if (!lane) return;
       e.preventDefault();
-      var d = drag, card = d.card, id = card.getAttribute("data-card");
-      function putBack() {
-        if (d.next && d.next.parentNode === d.from) d.from.insertBefore(card, d.next); else d.from.appendChild(card);
-        settle(card);
-        laneCounts();
-      }
-      if (slot.parentNode === lane) lane.insertBefore(card, slot); else lane.appendChild(card);
-      delete heldTiles[id]; // the move's own answer refreshes this tile; a held GET now could pull it back
+      var d = drag, card = d.card;
+      if (slot.parentNode === lane) lane.insertBefore(card, slot); else putLast(lane, card);
+      delete heldTiles[card.getAttribute("data-card")]; // the move's own answer refreshes this tile; a held GET now could pull it back
       endDrag();
-      if (lane === d.from) { putBack(); return; } // the order inside a lane is not stored
+      moveTile(card, { from: d.from, next: d.next }, false);
+    });
+    bindMoveMenu();
+  }
+  // moveTile: the tile already sits in its new lane (the drop or the Move menu put it there); ask
+  // the server through moveCard, and put it back where it came from on a refusal. refocus (the
+  // keyboard path) keeps focus on the tile's Move button through every outcome.
+  function moveTile(card, origin, refocus) {
+    var id = card.getAttribute("data-card"), lane = laneOf(card);
+    function back() { if (refocus) focusMove(id); }
+    function putBack() {
+      if (origin.next && origin.next.parentNode === origin.from) origin.from.insertBefore(card, origin.next); else putLast(origin.from, card);
       settle(card);
       laneCounts();
-      quietUntil[id] = Date.now() + 2500;
-      moveCard(id, lane.getAttribute("data-lane"), {
-        title: card.getAttribute("data-title"),
-        active: lane.getAttribute("data-kind") === "active",
-        ready: card.hasAttribute("data-ready")
-      }, function (ok) {
-        if (!ok) { putBack(); return; }
-        quietUntil[id] = Date.now() + 2500; // a confirmed cancel-and-move answers later; its toast already spoke
-        refreshTile(id);
-      });
+    }
+    if (lane === origin.from) { putBack(); back(); return; } // the order inside a lane is not stored
+    settle(card);
+    laneCounts();
+    back();
+    quietUntil[id] = Date.now() + 2500;
+    moveCard(id, lane.getAttribute("data-lane"), {
+      title: card.getAttribute("data-title"),
+      active: lane.getAttribute("data-kind") === "active",
+      ready: card.hasAttribute("data-ready"),
+      declined: back
+    }, function (ok) {
+      if (!ok) { putBack(); back(); return; }
+      quietUntil[id] = Date.now() + 2500; // a confirmed cancel-and-move answers later; its toast already spoke
+      refreshTile(id, refocus);
+    });
+  }
+
+  /* ---------- board: the keyboard Move menu (a menu button on every tile) ----------
+     A menu button rather than arrow keys on a focused tile: it is a plain button that screen
+     readers announce with its popup, it needs no instructions, and arrow keys keep scrolling. */
+  var menu = null; // { id, btn, list } while a tile's Move menu is open
+  function menuItems() {
+    return menu ? $$('[role="menuitem"]', menu.list).filter(function (b) { return !b.parentNode.hidden; }) : [];
+  }
+  function openMenu(btn, at) {
+    closeMenu(false);
+    var card = btn.closest(".card[data-card]"), list = card && $(".mvlist", card), lane = laneOf(card);
+    if (!list || !lane) return;
+    var here = lane.getAttribute("data-lane");
+    $$('[role="menuitem"]', list).forEach(function (b) { b.parentNode.hidden = b.getAttribute("data-to") === here; });
+    list.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    menu = { id: card.getAttribute("data-card"), btn: btn, list: list };
+    var items = menuItems();
+    if (items.length) items[at === "last" ? items.length - 1 : 0].focus();
+  }
+  function closeMenu(refocus) {
+    if (!menu) return;
+    var m = menu;
+    menu = null;
+    m.list.hidden = true;
+    m.btn.setAttribute("aria-expanded", "false");
+    if (refocus) m.btn.focus();
+    flushHeld();
+  }
+  function chooseLane(name) {
+    if (!menu) return;
+    var id = menu.id, card = byData("data-card", id, $(".lanes")), lane = $('.lane[data-lane="' + cssq(name) + '"]');
+    delete heldTiles[id]; // the move's own answer refreshes this tile
+    closeMenu(false);
+    if (!card || !lane) return;
+    var origin = { from: laneOf(card), next: card.nextElementSibling };
+    var first = $(".card[data-card]", lane);
+    if (first) lane.insertBefore(card, first); else putLast(lane, card);
+    moveTile(card, origin, true);
+  }
+  function bindMoveMenu() {
+    on(document, "click", function (e) {
+      var t = e.target && e.target.closest ? e.target : null;
+      if (!t) return;
+      var item = t.closest('.mvlist [role="menuitem"]');
+      if (item && menu && menu.list.contains(item)) { chooseLane(item.getAttribute("data-to")); return; }
+      var btn = t.closest(".mvbtn");
+      if (btn) {
+        if (menu && menu.btn === btn) closeMenu(true); else openMenu(btn, "first");
+        return;
+      }
+      if (menu && !menu.list.contains(t)) closeMenu(false);
+    });
+    on(document, "keydown", function (e) {
+      var t = e.target;
+      if (!t || !t.closest) return;
+      if (t.classList.contains("mvbtn") && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        openMenu(t, e.key === "ArrowUp" ? "last" : "first");
+        return;
+      }
+      if (!menu || !menu.list.contains(t)) return;
+      var items = menuItems(), i = items.indexOf(t), n = items.length;
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
+      else if (e.key === "Tab") closeMenu(false);
+      else if (!n) return;
+      else if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % n].focus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + n) % n].focus(); }
+      else if (e.key === "Home") { e.preventDefault(); items[0].focus(); }
+      else if (e.key === "End") { e.preventDefault(); items[n - 1].focus(); }
+    });
+    on(document, "dragstart", function () { closeMenu(false); });
+    // focus leaving the menu and its button (Shift+Tab, a click elsewhere that takes focus) closes it;
+    // no relatedTarget (the window lost focus, or a click on something unfocusable) leaves it to click
+    on(document, "focusout", function (e) {
+      var to = e.relatedTarget;
+      if (menu && to && !menu.list.contains(to) && to !== menu.btn) closeMenu(false);
     });
   }
   starters.push(bindBoard);
@@ -465,7 +617,7 @@
     tileTimers[c.card] = setTimeout(function () { delete tileTimers[c.card]; refreshTile(c.card); }, 150);
     return true;
   });
-  busyChecks.push(function () { return !!drag; });
+  busyChecks.push(function () { return !!drag || !!menu; });
 
   /* ---------- tag editor (the dialog here, the card page in Task 5) ---------- */
   function tagsOf(box) { return $$(".tag[data-tag]", box).map(function (t) { return t.getAttribute("data-tag"); }); }
@@ -620,6 +772,9 @@
   }
   starters.push(bindNewCard);
   busyChecks.push(dialogOpen);
+  // a refused settings form (data-hold) shows typed values as its defaults, so unsavedEdits() sees
+  // nothing; hold live refresh while it is on the page. The next submit or navigation clears it.
+  busyChecks.push(function () { return !!$("#main [data-hold]"); });
 
   /* ---------- card page: tags and comments ---------- */
   function clockNow() { var d = new Date(); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
@@ -627,19 +782,22 @@
     var form = $("form[data-tags-card]");
     if (!form) return;
     var id = form.getAttribute("data-tags-card"), hidden = $('input[name="tags"]', form);
+    // confirmed: the newest list the server confirmed (from edit number confirmedSeq); a failure rolls back to it
+    var confirmed = tagsOf($("[data-tagbox]", form)), seq = 0, confirmedSeq = 0;
     var tb = wireTagbox($("[data-tagbox]", form), function (tags) {
-      var before = hidden.value;
+      var mine = ++seq;
       hidden.value = tags.join(",");
       api("POST", "/api/cards/" + encodeURIComponent(id), { tags: tags }).then(function (res) {
+        if (res.ok && mine > confirmedSeq) { confirmed = res.data.tags || []; confirmedSeq = mine; }
+        if (mine !== seq) return; // a newer edit is in flight: only its response touches the chips
         if (!res.ok) {
-          hidden.value = before;
-          tb.set(before ? before.split(",") : []);
+          hidden.value = confirmed.join(",");
+          tb.set(confirmed);
           toast([el("span", null, errText(res))]);
           return;
         }
-        var saved = res.data.tags || [];
-        hidden.value = saved.join(",");
-        tb.set(saved); // the stored, masked spelling wins
+        hidden.value = confirmed.join(",");
+        tb.set(confirmed); // the stored, masked spelling wins
         toast([el("span", null, "Tags saved.")]);
       });
     });

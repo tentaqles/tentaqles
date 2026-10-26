@@ -62,17 +62,17 @@ It needs no network: no web fonts, no CDN; Inter and JetBrains Mono are used whe
 
 | Page | What it is for |
 |---|---|
-| Board (`/`) | lanes with their cards; drag a card to move it. An agent-ready card that enters In progress starts a run; moving a running card out asks before cancelling the run. An orange edge means a run waits on you, with the action on the card. The box at the top filters cards by title (`/` focuses it). |
+| Board (`/`) | lanes with their cards; drag a card to move it, or use the Move button at a card's top right (Tab to it, Enter or Down opens the lane menu, arrows pick, Escape closes; focus stays on the card). Below 900px wide the sidebar folds into a bar above the page that keeps the workspace switcher. An agent-ready card that enters In progress starts a run; moving a running card out asks before cancelling the run. An orange edge means a run waits on you, with the action on the card. The box at the top filters cards by title (`/` focuses it). The Done lane shows its 20 most recently updated cards; its count is the full total, and "Show all N done" (`/?done=all`) lists every one. |
 | New card (button in the top bar, `+` on every planning lane) | title, body (markdown; a `budget:` front-matter line overrides the default budget), kind, lane, project folder, parent card (a card of kind `project`), tags, and the agent-ready switch. |
-| Card (`/cards/<id>`) | the body, a timeline of runs, rounds and decisions, the live log of an active run, the run's facts and budget bar, the tag editor (Enter or comma adds, × or Backspace removes; each change saves), comments (Ctrl+Enter posts), and any decision waiting on you. |
+| Card (`/cards/<id>`) | the body, a timeline of runs, rounds and decisions, the live log of an active run, the run's facts and budget bar, the tag editor (Enter or comma adds, × or Backspace removes; each change saves; without script × and Add work as a form against the stored list), comments (Ctrl+Enter posts), and any decision waiting on you. |
 | Decisions (`/waiting`) | every pending decision across the served workspaces, newest first, with the option buttons and a note; an over-budget stop shows the run's numbers, and its note takes new limits such as `rounds=6,usd=15`. |
 | Runs (`/runs`), run (`/runs/<id>`) | runs in flight and the 50 most recent; a run's rounds, log, facts and budget. |
 | Reviews (`/reviews`), review (`/cards/<id>/review`) | results waiting on your review and finished runs not yet closed; the review page opens with a verdict band built from the gate's records, and Approve / Request changes sit in a bar at the bottom. The exported review keeps the same look. |
 | Activity (`/activity`) | spend, runs ended, median wait on you, decisions answered and cost by kind for Today, 7 days or 30 days (`?days=1\|7\|30`), and the timeline by day, filtered by `?kind=runs\|decisions\|cards\|reviews`. |
 | Connections (`/connections`) | not available yet: board sync with Linear, Asana, Azure DevOps and Jira arrives in release 2 part B. The page shows what each will do and the planned lane mapping; it connects nothing. |
-| Settings (`/settings`) | what this hub serves (read-only), concurrency (1 to 16), the default budget per run, desktop notifications, and who can do what. Stop the hub with Ctrl+C in its terminal; the page has no stop button. |
+| Settings (`/settings`) | what this hub serves (read-only), concurrency (1 to 16), the default budget per run, desktop notifications, and who can do what. A value the form refuses shows the page again (status 400) with what you typed and the message next to the field; a save is all-or-nothing. Stop the hub with Ctrl+C in its terminal; the page has no stop button. |
 
-`POST /api/cards/<id>` edits a card (`title`, `body`, `project_dir`, `tags`); `GET` and
+`POST /api/cards/<id>` edits a card (`title`, `body`, `project_dir`, `tags`; an unknown field is a 400); `GET` and
 `POST /api/settings` read and change the settings (`concurrency`, `default_budget`,
 `notify`). Both follow the same rules as the page.
 
@@ -119,6 +119,12 @@ the gate state is kept, so `tq hub run <card>` resumes it. Only an explicit
 Per run: 2,000,000 tokens (input + output + cache write), 10 USD, 120 minutes, 12
 rounds, or the card's `--budget tokens=…,usd=…,minutes=…,rounds=…`. Reaching one stops
 the run (`over-budget`), comments the numbers and asks "raise-and-resume / stop".
+A card body's `budget:` front matter is checked when the card is created or its body
+edited: an unknown key or a value that is not a positive number (rounds and tokens whole)
+is refused with an error naming it (`bad_request` on the API), so it never reaches a run.
+A `budget` object on `POST /api/cards` must carry all four limits; a partial one is a 400.
+A body edit is checked as a whole, so a card whose stored front matter already holds an
+invalid `budget:` line takes a body edit only once that edit fixes the line.
 When Claude Code reports no cost, it is computed from the usage and the model; when it
 reports neither, the round is marked "cost unknown" and only rounds and minutes count it.
 

@@ -15,17 +15,21 @@ func init() {
 }
 
 type laneView struct {
-	Lane  store.Lane
-	Cards []boardCard
+	Lane   store.Lane
+	Cards  []boardCard
+	Total  int // every card in the lane, shown or not
+	Hidden int // done cards past doneCap that this render leaves out
 }
 
 type boardData struct {
 	Lanes []laneView
+	All   []store.Lane // every lane, in order: each tile's Move menu lists them
 }
 
 type tileData struct {
-	WS   string
-	Card boardCard
+	WS    string
+	Card  boardCard
+	Lanes []store.Lane
 }
 
 // boardCard is everything one board tile shows; the board and the tile route build it the same way.
@@ -151,36 +155,70 @@ func (b boardCard) OpenReview() bool {
 	return b.Decision == nil && b.Run == nil && b.Last != nil && b.Last.Status == store.StatusFinished && b.LaneKind == store.LaneReview
 }
 
-// tile reads what newBoardCard needs beyond the card view: the runs and, for review and done
-// lanes, the PR link.
+// tile reads what newBoardCard needs beyond the card view, for one card: the runs and, for
+// review and done lanes, the PR link. The board reads the same for all its cards at once.
 func tile(svc *runner.Service, v runner.CardView, laneKind string, pending []store.Decision) (boardCard, error) {
 	runs, err := svc.Store().RunsForCard(v.ID)
 	if err != nil {
 		return boardCard{}, err
 	}
 	pr := ""
-	if laneKind == store.LaneReview || laneKind == store.LaneDone {
+	if hasPR(laneKind) {
 		pr = runner.PRLink(svc.Store(), v.ID)
 	}
 	return newBoardCard(v, laneKind, runs, pending, pr, svc.Store().DefaultBudget()), nil
 }
 
+// hasPR: review and done tiles show the PR link a comment carried.
+func hasPR(laneKind string) bool { return laneKind == store.LaneReview || laneKind == store.LaneDone }
+
+// board reads a fixed number of queries whatever the card count: the cards, then the runs, the
+// pending decisions and the PR-looking comments of the cards it shows, each in one query. A done
+// lane shows its doneCap most recently updated cards unless ?done=all asks for every one.
 func (s *Server) board(w http.ResponseWriter, r *http.Request) {
 	svc, ws, ok := s.service(w, r)
 	if !ok {
 		return
 	}
-	lanes, err := svc.Store().Lanes()
+	st := svc.Store()
+	lanes, err := st.Lanes()
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	views, err := svc.List(s.reqCtx(r), store.CardFilter{}, false)
+	cards, err := st.ListCards(store.CardFilter{}) // newest update first within a lane
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	pending, err := svc.Store().PendingDecisions()
+	allDone := r.URL.Query().Get("done") == "all"
+	shown := make([][]store.Card, len(lanes))
+	data := boardData{All: lanes, Lanes: make([]laneView, len(lanes))}
+	var ids, prIDs []string
+	for i, l := range lanes {
+		data.Lanes[i].Lane = l
+		for _, c := range cards {
+			if !strings.EqualFold(c.Lane, l.Name) {
+				continue
+			}
+			data.Lanes[i].Total++
+			if l.Kind == store.LaneDone && !allDone && len(shown[i]) >= doneCap {
+				data.Lanes[i].Hidden++
+				continue
+			}
+			shown[i] = append(shown[i], c)
+			ids = append(ids, c.ID)
+			if hasPR(l.Kind) {
+				prIDs = append(prIDs, c.ID)
+			}
+		}
+	}
+	runs, err := st.RunsForCards(ids)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	pending, err := st.PendingDecisions()
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -189,21 +227,13 @@ func (s *Server) board(w http.ResponseWriter, r *http.Request) {
 	for _, d := range pending {
 		byCard[d.CardID] = append(byCard[d.CardID], d)
 	}
-	data := boardData{}
-	for _, l := range lanes {
-		lv := laneView{Lane: l}
-		for _, v := range views {
-			if !strings.EqualFold(v.Lane, l.Name) {
-				continue
-			}
-			bc, err := tile(svc, v, l.Kind, byCard[v.ID])
-			if err != nil {
-				s.fail(w, r, err)
-				return
-			}
-			lv.Cards = append(lv.Cards, bc)
+	prs := runner.PRLinks(st, prIDs)
+	def := st.DefaultBudget()
+	for i, l := range lanes {
+		for _, c := range shown[i] {
+			v := runner.NewCardView(c, runs[c.ID], len(byCard[c.ID]))
+			data.Lanes[i].Cards = append(data.Lanes[i].Cards, newBoardCard(v, l.Kind, runs[c.ID], byCard[c.ID], prs[c.ID], def))
 		}
-		data.Lanes = append(data.Lanes, lv)
 	}
 	p := s.basePage(r, "Board", ws)
 	p.Nav = "board"
@@ -231,6 +261,11 @@ func (s *Server) cardTile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	lanes, err := svc.Store().Lanes()
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	var pending []store.Decision
 	for _, dec := range d.Decisions {
 		if dec.Status == store.DecisionPending {
@@ -243,7 +278,10 @@ func (s *Server) cardTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tpl.ExecuteTemplate(w, "board-card", tileData{WS: ws, Card: bc}); err != nil {
+	if err := s.tpl.ExecuteTemplate(w, "board-card", tileData{WS: ws, Card: bc, Lanes: lanes}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
+
+// doneCap is how many cards a done lane shows before "Show all".
+const doneCap = 20
