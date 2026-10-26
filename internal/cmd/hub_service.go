@@ -48,6 +48,23 @@ func untrustedErr(name string) error {
 	return fmt.Errorf("workspace %s is untrusted; run: tq allow %s", name, name)
 }
 
+// manifestTrusted is the trust check tq commands make (trust.IsTrusted of the manifest's hash),
+// re-hashing the manifest now: the hub checks it before every round, and a skill may have edited
+// the manifest since the hub resolved the workspace.
+func manifestTrusted(ws *resolve.Workspace) error {
+	if ws.ManifestPath == "" {
+		return nil
+	}
+	h, err := trust.HashFile(ws.ManifestPath)
+	if err != nil {
+		return fmt.Errorf("cannot read the workspace manifest (%v); run: tq allow %s", err, ws.Name)
+	}
+	if !trust.IsTrusted(h) {
+		return untrustedErr(ws.Name)
+	}
+	return nil
+}
+
 // hubWorkspace is --workspace, else the workspace containing the cwd, else TQ_HUB_TASK's; always trusted.
 func hubWorkspace(name string) (*resolve.Workspace, error) {
 	if name == "" {
@@ -128,7 +145,8 @@ func newHubService(ws *resolve.Workspace, warn func(string), notifyOn bool) (*ru
 		notifyFn = notify.Send
 	}
 	svc, err := runner.New(runner.Config{Workspace: ws.Name, Root: ws.Root, Store: st, Gate: g, Adapters: adapters, Env: env,
-		Notify: notifyFn, Actor: gate.Actor(), GateURL: "http://127.0.0.1:8765/"})
+		Notify: notifyFn, Actor: gate.Actor(), GateURL: "http://127.0.0.1:8765/",
+		Trusted: func() error { return manifestTrusted(ws) }, RepoCheck: runner.GitPreflight})
 	if err != nil {
 		st.Close()
 		return nil, err

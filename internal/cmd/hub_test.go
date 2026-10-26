@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -39,6 +40,35 @@ func hubWS(t *testing.T) string {
 	os.MkdirAll(filepath.Join(root, "apps", "billing"), 0o755)
 	t.Chdir(root)
 	return root
+}
+
+// hubRepo makes dir a git repository: the hub refuses a round outside one (runner.GitPreflight).
+func hubRepo(t *testing.T, dir string) {
+	t.Helper()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+}
+
+// TestManifestTrustedRehashes: the hub's per-round check sees a manifest edited after start.
+func TestManifestTrustedRehashes(t *testing.T) {
+	hubWS(t)
+	ws, err := hubWorkspace("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifestTrusted(ws); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(ws.ManifestPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("\n# edited by a skill\n")
+	f.Close()
+	if err := manifestTrusted(ws); err == nil || !strings.Contains(err.Error(), "tq allow acme") {
+		t.Fatalf("%v", err)
+	}
 }
 
 func addCard(t *testing.T, args ...string) store.Card {
@@ -357,6 +387,7 @@ func TestHubRunsGetOnlyTheirWorkspaceEnvironment(t *testing.T) {
 	root := hubWS(t)
 	globex := filepath.Join(filepath.Dir(root), "globex")
 	os.MkdirAll(filepath.Join(globex, "apps", "web"), 0o755)
+	hubRepo(t, filepath.Join(globex, "apps", "web"))
 	mp := filepath.Join(globex, manifest.FileName)
 	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: globex\nidentities: { claude: {} }\n"), 0o600)
 	h, err := trust.HashFile(mp)
