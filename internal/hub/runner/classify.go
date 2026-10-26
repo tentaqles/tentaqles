@@ -135,8 +135,8 @@ const usageLimitMax = 600
 var usageLimitRe = regexp.MustCompile(`(?i)^(?:` +
 	`you(?:'|’)re out of (?:usage )?credits` +
 	`|(?:claude(?: ai)? )?usage limit (?:reached|exceeded)` +
-	`|you(?:'|’)ve (?:hit|reached) your (?:usage|rate) limit` +
-	`|(?:\d+-hour|weekly|daily|session) limit reached` +
+	`|you(?:'|’)ve (?:hit|reached) your (?:\w+ )?limit` + // "your limit · resets 3pm", "your weekly limit"
+	`|(?:(?:claude|opus|sonnet|haiku|fable) )?(?:\d+-hour|weekly|daily|session) limit reached` + // "Opus weekly limit reached ∙ resets …"
 	`|rate limit (?:reached|exceeded)` +
 	`|credit balance is too low` +
 	`|api error: 429\b.*rate_limit_error` +

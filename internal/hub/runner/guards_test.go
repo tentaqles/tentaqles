@@ -2,10 +2,13 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -305,6 +308,13 @@ func TestClassifyUsageLimit(t *testing.T) {
 		"Rate limit reached. Please try again later.",
 		"Credit balance is too low",
 		"Some partial work.\n\nYou're out of usage credits. Switch to another model.",
+		"You've hit your limit · resets 3pm (America/Sao_Paulo)",
+		"You’ve hit your limit · resets 3pm (UTC)",
+		"You've hit your weekly limit · resets Mon 9am",
+		"You've reached your session limit",
+		"Opus weekly limit reached ∙ resets Oct 30, 3pm",
+		"Sonnet 5-hour limit reached ∙ resets 3pm",
+		"Weekly limit reached ∙ resets Oct 30",
 	}
 	for _, text := range hits {
 		for _, exit := range []int{0, 1} {
@@ -318,6 +328,9 @@ func TestClassifyUsageLimit(t *testing.T) {
 		"Added a rate limit to the login endpoint; tests pass.",
 		"The API now returns 429 when the rate limit is exceeded.",
 		"Done. I documented the usage limit for the export.",
+		"Summary: the client hits rate limits under load, so I added a backoff and a test.\nYou've hit your stride on the exporter.",
+		"The weekly limit reached its cap in the report, so I split the export.",
+		"Notes on the 429 rate limit handling are in docs/LIMITS.md.",
 		strings.Repeat("Long summary. ", 80) + "\nRate limit reached.",
 	}
 	for _, text := range misses {
@@ -328,5 +341,114 @@ func TestClassifyUsageLimit(t *testing.T) {
 	// A gate stop read after the round still wins.
 	if got := Classify(Observation{FinalText: outOfCredits, State: loadState(t, "waiting")}); got.Verdict != VerdictWaiting {
 		t.Errorf("%+v", got)
+	}
+}
+
+// fakeClaudeStep runs the adapter's fake_claude.py through the real Claude adapter for one round.
+func fakeClaudeStep(t *testing.T, round map[string]any) step {
+	t.Helper()
+	py := testutil.Python(t)
+	script, err := filepath.Abs(filepath.Join("..", "adapter", "testdata", "fake_claude.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := testutil.TempDir(t)
+	raw, _ := json.Marshal(map[string]any{"counter": filepath.Join(dir, "counter"), "argv_log": filepath.Join(dir, "argv.jsonl"),
+		"rounds": []map[string]any{round}})
+	p := filepath.Join(dir, "script.json")
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_CLAUDE_SCRIPT", p)
+	return func(ctx context.Context, req adapter.RunRequest) (adapter.RunResult, error) {
+		req.Env = os.Environ() // the harness env has no python and no FAKE_CLAUDE_SCRIPT
+		return adapter.Claude{Bin: append(py, script)}.Start(ctx, req, io.Discard)
+	}
+}
+
+func TestUsageLimitWithoutAResultEventHolds(t *testing.T) {
+	text := func(s string) map[string]any {
+		return map[string]any{"type": "assistant", "parent_tool_use_id": nil,
+			"message": map[string]any{"id": "m-" + s[:3], "role": "assistant", "content": []any{map[string]any{"type": "text", "text": s}}}}
+	}
+	for name, round := range map[string]map[string]any{
+		"assistant text": {"no_result": true, "exit": 1, "session_id": "s-8",
+			"events": []map[string]any{text("Working on the export."), text("You've hit your limit · resets 3pm (UTC)")}},
+		"plain stdout": {"no_result": true, "exit": 1, "session_id": "s-8",
+			"events": []map[string]any{text("Working on the export.")}, "stdout": []string{"Claude AI usage limit reached|1761500000"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.ad.steps = []step{fakeClaudeStep(t, round)}
+			c := h.card("feature", store.TagAgentReady)
+			r := h.enqueue(c)
+			h.tick()
+			got := wantHeld(t, h, r.ID, "usage limit")
+			if got.Retried != 0 || got.SessionID != "s-8" || len(got.RoundLog) != 1 || got.RoundLog[0].Outcome != string(VerdictUsageLimit) {
+				t.Fatalf("%+v", got)
+			}
+		})
+	}
+}
+
+func TestEmptyRepoCheckErrorDoesNotPanic(t *testing.T) {
+	h := newHarness(t)
+	h.svc.cfg.RepoCheck = func(context.Context, string, string) error { return errors.New("") }
+	c := h.card("feature", store.TagAgentReady)
+	r := h.enqueue(c)
+	h.tick()
+	if len(h.ad.calls()) != 0 {
+		t.Fatal("a round started past a failed preflight")
+	}
+	wantHeld(t, h, r.ID, "git preflight")
+	if d := h.pendingHub(c.ID); strings.TrimSpace(d.Text) == "" {
+		t.Fatalf("%+v", d)
+	}
+}
+
+// fakeGit puts a git on PATH that prints stderr and exits 128, as git does for a refused repository.
+func fakeGit(t *testing.T, stderr string) {
+	t.Helper()
+	bin := testutil.TempDir(t)
+	msg := filepath.Join(bin, "stderr.txt")
+	if err := os.WriteFile(msg, []byte(stderr), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		body := "@echo off\r\ntype \"" + msg + "\" 1>&2\r\nexit /b 128\r\n"
+		if err := os.WriteFile(filepath.Join(bin, "git.bat"), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		body := "#!/bin/sh\ncat '" + msg + "' >&2\nexit 128\n"
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+}
+
+func TestGitPreflightShowsGitsReason(t *testing.T) {
+	dir := testutil.TempDir(t)
+	fakeGit(t, "fatal: detected dubious ownership in repository at 'C:/work/app'\n"+
+		"To add an exception for this directory, call:\n\n\tgit config --global --add safe.directory C:/work/app\n"+
+		strings.Repeat("noise ", 200))
+	err := GitPreflight(context.Background(), dir, "apps/billing")
+	if err == nil || errors.Is(err, ErrNotARepo) {
+		t.Fatalf("dubious ownership is not 'not a git repository': %v", err)
+	}
+	for _, want := range []string{"dubious ownership", "safe.directory", "apps/billing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("%q misses %q", err, want)
+		}
+	}
+	if strings.Count(err.Error(), "noise") > 60 {
+		t.Fatalf("git's stderr is not bounded: %d bytes", len(err.Error()))
+	}
+
+	fakeGit(t, "fatal: not a git repository (or any of the parent directories): .git\n")
+	err = GitPreflight(context.Background(), dir, "")
+	if !errors.Is(err, ErrNotARepo) || !strings.Contains(err.Error(), "not a git repository (or any of the parent directories)") {
+		t.Fatalf("%v", err)
 	}
 }

@@ -102,13 +102,17 @@ func (c Claude) Start(ctx context.Context, req RunRequest, log io.Writer) (RunRe
 	s := newStream(lw, req, c.ProgressEvery, stopRound)
 	cmd.Stdout = s
 	cmd.Stderr = lw
+	var timer *time.Timer
 	if m := req.Limit.Minutes; m > 0 {
-		t := time.AfterFunc(time.Duration(m*float64(time.Minute)), func() { s.breachMinutes(m) })
-		defer t.Stop()
+		timer = time.AfterFunc(time.Duration(m*float64(time.Minute)), func() { s.breachMinutes(m) })
 	}
 	runErr := cmd.Run()
+	if timer != nil {
+		timer.Stop()
+	}
+	s.exited() // a minutes timer that fires from here on is not a breach
 	s.flush()
-	res := s.outcome()
+	res := s.outcome(runErr == nil)
 	code, err := exitCode(ctx, runErr)
 	if res.OverBudget != "" && err != nil && ctx.Err() == nil && rctx.Err() != nil {
 		code, err = -1, nil // stopped at the budget: a result, not a start failure

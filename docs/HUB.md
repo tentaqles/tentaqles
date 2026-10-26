@@ -116,10 +116,12 @@ is still trusted (a skill that edits the manifest changes its hash), that the ru
 exists, and that `git` is on PATH and the folder is inside a git repository (a card without
 a project folder runs in the workspace root, so the root must be one). If a check fails, no
 round starts: the run goes to `waiting` with a stop reason (`untrusted`, `project folder
-missing`, `not a git repository`), the card gets a comment, and a hub decision asks
+missing`, `not a git repository`, or `git preflight` when git refused a folder for another
+reason, such as "dubious ownership", whose fix is `safe.directory`; git's own message is
+quoted), the card gets a comment, and a hub decision asks
 "resume / stop". Fix the cause (for example `tq allow <ws>`), then answer resume. If a
 round ends on a usage limit (the CLI says the account is out of usage credits or has hit
-a usage or rate limit), the run waits the same way with stop reason `usage limit`. It
+a usage, weekly or rate limit, including when the stream ends without a result event), the run waits the same way with stop reason `usage limit`. It
 keeps the round's cost and does not count as a failure, and resume continues the session.
 
 Statuses: `queued running waiting finished failed cancelled over-budget`.

@@ -72,7 +72,17 @@ type stream struct {
 	unpriced   bool
 	lastReport time.Time
 	over       string
+	exitedRun  bool
+
+	// The round's last words when the stream ends without a result event: the last top-level
+	// assistant text, or the non-JSON stdout lines, whichever came last (a usage-limit message).
+	lastText  string
+	plain     []byte
+	plainLast bool
 }
+
+// transcriptTail bounds the plain-output transcript, as ParseResult bounds unparseable output.
+const transcriptTail = 4000
 
 func newStream(log io.Writer, req RunRequest, every time.Duration, stop func()) *stream {
 	if every <= 0 {
@@ -134,6 +144,8 @@ func (s *stream) handle(raw []byte) {
 	var ev streamEvent
 	if text[0] != '{' || json.Unmarshal([]byte(text), &ev) != nil || ev.Type == "" {
 		s.line(clip(text, 4000)) // not an event: shown as claude printed it
+		s.plain = tailBytes(append(s.plain, text+"\n"...), transcriptTail)
+		s.plainLast = true
 		return
 	}
 	s.sawEvent = true
@@ -180,6 +192,9 @@ func (s *stream) assistant(ev streamEvent) {
 	for _, b := range blocks {
 		if l := s.describe(b); l != "" {
 			s.line(indent + l)
+		}
+		if b.Type == "text" && indent == "" && strings.TrimSpace(b.Text) != "" {
+			s.lastText, s.plainLast = strings.TrimSpace(b.Text), false
 		}
 	}
 	if u := ev.Message.Usage; u != nil {
@@ -303,18 +318,37 @@ func (s *stream) breach(limit, detail string) {
 	}
 }
 
+// breachMinutes is the minutes timer firing. It counts only while the process runs: a timer that
+// fires after cmd.Run returned would turn a finished round into an over-budget one.
 func (s *stream) breachMinutes(minutes float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.exitedRun {
+		return
+	}
 	s.breach("minutes", fmt.Sprintf("%.1f minutes left", minutes))
+}
+
+// exited marks the process as ended; call it as soon as cmd.Run returns.
+func (s *stream) exited() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.exitedRun = true
 }
 
 // outcome is the round's result: the stream's result event when there is one, else the old
 // single-document parse of the whole output. A round stopped at its budget, or one whose stream
-// ended without a result, keeps the spend and session the stream showed.
-func (s *stream) outcome() RunResult {
+// ended without a result, keeps the spend and session the stream showed. clean: the process
+// exited 0; a budget stop that came too late to cut a round which then exited 0 with its result
+// does not count, the finished work is classified as usual (the spend still counts between rounds).
+func (s *stream) outcome(clean bool) RunResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	over := s.over
+	if over != "" && clean && s.result != nil {
+		s.line("tq hub: the round finished before the stop took effect; its result is kept")
+		over = ""
+	}
 	var res RunResult
 	switch {
 	case s.result != nil:
@@ -322,8 +356,13 @@ func (s *stream) outcome() RunResult {
 	case s.sawEvent:
 		res = RunResult{StopReason: "unparseable output", SessionID: s.sessionID, Model: s.model, Usage: s.usage,
 			UsageKnown: len(s.msgs) > 0, CostUSD: s.cost, CostKnown: len(s.msgs) > 0 && !s.unpriced}
-		if s.over != "" {
-			res.StopReason = "over budget: " + s.over
+		if s.plainLast || s.lastText == "" {
+			res.Transcript = string(s.plain)
+		} else {
+			res.Transcript = string(tailBytes([]byte(s.lastText), transcriptTail))
+		}
+		if over != "" {
+			res.StopReason = "over budget: " + over
 		}
 	default:
 		res = ParseResult(s.raw.b.Bytes())
@@ -331,8 +370,20 @@ func (s *stream) outcome() RunResult {
 	if res.SessionID == "" {
 		res.SessionID = s.sessionID
 	}
-	res.OverBudget = s.over
+	res.OverBudget = over
 	return res
+}
+
+// tailBytes keeps at most the last n bytes of b, cut at a rune boundary.
+func tailBytes(b []byte, n int) []byte {
+	if len(b) <= n {
+		return b
+	}
+	b = b[len(b)-n:]
+	for len(b) > 0 && !utf8.RuneStart(b[0]) {
+		b = b[1:]
+	}
+	return append([]byte(nil), b...)
 }
 
 func firstLine(s string) string {

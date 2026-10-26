@@ -8,9 +8,12 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tentaqles/tentaqles/internal/hub/activity"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
+	"github.com/tentaqles/tentaqles/internal/redact"
 )
 
 // gitProbe bounds the local git call of the preflight (no network: rev-parse reads .git only).
@@ -43,10 +46,39 @@ func GitPreflight(ctx context.Context, dir, label string) error {
 	if err == nil && strings.TrimSpace(string(out)) == "true" {
 		return nil
 	}
-	if label == "" {
-		return notRepoError{fmt.Sprintf("The card has no project folder, so the run would start in the workspace root %s, which is not a git repository. Set the card's project folder (relative to the workspace root) to a git repository, then resume", dir)}
+	var stderr string
+	if ee := (*exec.ExitError)(nil); errors.As(err, &ee) {
+		stderr = gitStderr(ee.Stderr)
 	}
-	return notRepoError{fmt.Sprintf("The project folder %s (%s) is not inside a git repository. Point the card at a git repository (or git init it), then resume", label, dir)}
+	where := fmt.Sprintf("The project folder %s (%s)", label, dir)
+	if label == "" {
+		where = "The workspace root " + dir + " (the card has no project folder)"
+	}
+	if stderr != "" && !strings.Contains(strings.ToLower(stderr), "not a git repository") {
+		// dubious ownership, a broken .git, a bad config: git refused, the folder may well be a repository
+		return fmt.Errorf("%s could not be read by git (git: %s). Fix what git reports (a \"dubious ownership\" refusal needs `git config --global --add safe.directory <folder>` run as the hub's user), then resume", where, stderr)
+	}
+	said := ""
+	if stderr != "" {
+		said = " (git: " + stderr + ")"
+	}
+	if label == "" {
+		return notRepoError{fmt.Sprintf("The card has no project folder, so the run would start in the workspace root %s, which is not a git repository%s. Set the card's project folder (relative to the workspace root) to a git repository, then resume", dir, said)}
+	}
+	return notRepoError{fmt.Sprintf("The project folder %s (%s) is not inside a git repository%s. Point the card at a git repository (or git init it), then resume", label, dir, said)}
+}
+
+// gitStderrMax bounds git's own words in a preflight message.
+const gitStderrMax = 300
+
+// gitStderr is git's stderr on one line, masked and bounded.
+func gitStderr(b []byte) string {
+	t := strings.Join(strings.Fields(string(b)), " ")
+	t = redact.Redact(t, nil)
+	if r := []rune(t); len(r) > gitStderrMax {
+		t = string(r[:gitStderrMax]) + "…"
+	}
+	return t
 }
 
 // preflight runs the zero-cost checks before every round, first and resumed. ok=false means
@@ -73,8 +105,12 @@ func (s *Service) preflight(ctx context.Context, r store.Run, card store.Card, d
 			if errors.Is(err, ErrNotARepo) {
 				reason = ErrNotARepo.Error()
 			}
-			msg := err.Error()
-			msg = strings.ToUpper(msg[:1]) + msg[1:] + "."
+			msg := strings.TrimSpace(err.Error())
+			if msg == "" {
+				msg = "the git preflight failed without a message"
+			}
+			first, n := utf8.DecodeRuneInString(msg)
+			msg = string(unicode.ToUpper(first)) + msg[n:] + "."
 			s.hold(r, card, reason, msg, "No round was started.")
 			return false
 		}

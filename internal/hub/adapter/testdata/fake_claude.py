@@ -19,6 +19,7 @@ system init event, the round's "events", then the result event:
                  "sleep": 0,
                  "events": [{"type": "assistant", ...}],  # printed (flushed) after the init event
                  "pause": 0,                      # seconds to sleep after the events
+                 "stdout": ["plain line"],        # non-JSON lines printed after the events
                  "no_result": false,              # true: the stream ends without a result event
                  "single": false,                 # true: the old single pretty-printed result document
                  "raw": null}]}                   # a string: printed instead of the JSON
@@ -94,6 +95,9 @@ else:
         emit(init)
         for ev in act.get("events") or []:
             emit(ev)
+        for line in act.get("stdout") or []:
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
         if act.get("pause"):
             time.sleep(act["pause"])
     subtype = act.get("subtype", "success")

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func assistant(id string, usage map[string]any, parent any, blocks ...map[string]any) map[string]any {
@@ -87,7 +88,7 @@ func TestClaudeStreamSplitWritesAndNoResult(t *testing.T) {
 		s.Write([]byte(line[i:min(i+7, len(line))]))
 	}
 	s.flush()
-	res := s.outcome()
+	res := s.outcome(false)
 	// no result event: the spend and session the stream showed are kept, priced at the init model
 	if res.StopReason != "unparseable output" || res.SessionID != "s-3" || !res.UsageKnown || res.Usage.Input != 1_000_000 ||
 		!res.CostKnown || math.Abs(res.CostUSD-4) > 1e-9 || !strings.Contains(log.String(), "→ hi") {
@@ -165,5 +166,79 @@ func TestClaudeUnderBudgetRunsToTheEnd(t *testing.T) {
 	// the stream priced the round at $0.40, under the $1 left; the result's own total decides afterwards
 	if res.OverBudget != "" || res.Transcript != "fine" || res.CostUSD != 1.5 {
 		t.Fatalf("res %+v", res)
+	}
+}
+
+const hitLimit = "You've hit your limit · resets 3pm (UTC)"
+
+func TestClaudeNoResultKeepsTheLastAssistantText(t *testing.T) {
+	f := newFakeClaude(t, []map[string]any{{"no_result": true, "session_id": "s-4", "exit": 1, "events": []map[string]any{
+		assistant("m1", tokens(10, 5), nil, map[string]any{"type": "text", "text": "Working on the export."}),
+		assistant("m2", tokens(1, 1), "t1", map[string]any{"type": "text", "text": "a subagent's own text"}),
+		assistant("m3", nil, nil, map[string]any{"type": "text", "text": hitLimit}),
+		assistant("m4", tokens(1, 1), "t1", map[string]any{"type": "text", "text": "a later subagent text"}),
+	}}})
+	res, _ := run(t, Claude{Bin: f.bin}, RunRequest{Dir: f.dir, Prompt: "p", Env: os.Environ()})
+	if res.Transcript != hitLimit || res.ExitCode != 1 || res.StopReason != "unparseable output" || res.SessionID != "s-4" {
+		t.Fatalf("res %+v", res)
+	}
+}
+
+func TestClaudeNoResultKeepsTheLastPlainLines(t *testing.T) {
+	f := newFakeClaude(t, []map[string]any{{"no_result": true, "session_id": "s-4", "exit": 1,
+		"events": []map[string]any{assistant("m1", tokens(10, 5), nil, map[string]any{"type": "text", "text": "Working on the export."})},
+		"stdout": []string{"some notice", "Claude AI usage limit reached|1761500000"}}})
+	res, _ := run(t, Claude{Bin: f.bin}, RunRequest{Dir: f.dir, Prompt: "p", Env: os.Environ()})
+	if strings.TrimSpace(res.Transcript) != "some notice\nClaude AI usage limit reached|1761500000" || res.ExitCode != 1 {
+		t.Fatalf("res %+v", res)
+	}
+}
+
+func TestClaudeNoResultPlainTailIsBounded(t *testing.T) {
+	isolate(t)
+	s := newStream(&syncBuf{}, RunRequest{}, time.Hour, nil)
+	s.Write([]byte(`{"type":"system","subtype":"init","session_id":"s-1"}` + "\n"))
+	for i := 0; i < 100; i++ {
+		s.Write([]byte(strings.Repeat("é", 60) + "\n"))
+	}
+	s.Write([]byte("the last line\n"))
+	s.flush()
+	res := s.outcome(false)
+	if len(res.Transcript) > 4000 || !strings.HasSuffix(strings.TrimSpace(res.Transcript), "the last line") || !utf8.ValidString(res.Transcript) {
+		t.Fatalf("transcript %d bytes %q", len(res.Transcript), res.Transcript[len(res.Transcript)-40:])
+	}
+}
+
+func TestClaudeMinutesAfterExitIsNotABreach(t *testing.T) {
+	isolate(t)
+	stopped := false
+	s := newStream(&syncBuf{}, RunRequest{}, time.Hour, func() { stopped = true })
+	s.Write([]byte(`{"type":"result","subtype":"success","result":"done","session_id":"s-1","total_cost_usd":0.5}` + "\n"))
+	s.exited()
+	s.breachMinutes(1) // the timer fired after the process had already ended
+	res := s.outcome(true)
+	if res.OverBudget != "" || stopped || res.Transcript != "done" {
+		t.Fatalf("res %+v stopped %v", res, stopped)
+	}
+}
+
+func TestClaudeBreachThenCleanResultKeepsTheResult(t *testing.T) {
+	isolate(t)
+	var log syncBuf
+	s := newStream(&log, RunRequest{Limit: Limit{Tokens: 100}}, time.Hour, func() {})
+	s.Write([]byte(`{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":500,"output_tokens":0}}}` + "\n"))
+	s.Write([]byte(`{"type":"result","subtype":"success","result":"all done","session_id":"s-1","total_cost_usd":0.5,"usage":{"input_tokens":500,"output_tokens":0}}` + "\n"))
+	s.exited()
+	// the process was stopped at the budget: the stop stands
+	if res := s.outcome(false); res.OverBudget != "tokens" {
+		t.Fatalf("killed round %+v", res)
+	}
+	// it exited 0 with its result before the stop took effect: the finished work is classified as usual
+	res := s.outcome(true)
+	if res.OverBudget != "" || res.StopReason != "success" || res.Transcript != "all done" || res.CostUSD != 0.5 {
+		t.Fatalf("clean round %+v", res)
+	}
+	if !strings.Contains(log.String(), "finished before the stop") {
+		t.Fatalf("log %q", log.String())
 	}
 }
