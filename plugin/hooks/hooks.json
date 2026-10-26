@@ -55,7 +55,7 @@
         ]
       },
       {
-        "matcher": "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$",
+        "matcher": "^(Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell)$",
         "hooks": [
           {
             "type": "command",
