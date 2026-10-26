@@ -228,6 +228,10 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 			out.Resumed = &r
 		}
 		s.enqMu.Unlock()
+	case "resume":
+		// A run held before or after a round (trust, folder, git, usage limit): the same run
+		// goes back to the queue, and its next round re-runs the preflight.
+		out.Resumed = s.resumeHeld(r)
 	case "raise-and-resume":
 		b := r.Budget
 		if raised != nil {

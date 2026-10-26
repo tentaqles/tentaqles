@@ -110,6 +110,7 @@ func TestHubEndToEndWithFakeClaude(t *testing.T) {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		gitIn(t, d, "init", "-q") // the hub starts a round only inside a git repository
 	}
 	cfg := &registry.Config{}
 	if _, err := cfg.AddBase(base); err != nil {

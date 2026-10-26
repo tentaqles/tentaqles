@@ -35,6 +35,11 @@ type Config struct {
 	RetryDelay time.Duration // 0 → 2 min
 	PollEvery  time.Duration // waiting runs re-read the gate this often; 0 → 15 s
 	GateURL    string        // the gate's own live view, linked while a run is active
+	// Trusted re-checks workspace trust before every round (a skill may edit the manifest
+	// mid-run); an error holds the run at zero cost. nil → no check.
+	Trusted func() error
+	// RepoCheck refuses a round whose folder is not in a git repository (GitPreflight). nil → no check.
+	RepoCheck func(ctx context.Context, dir, projectDir string) error
 }
 
 type flight struct {

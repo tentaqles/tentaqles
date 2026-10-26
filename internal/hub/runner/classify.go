@@ -124,7 +124,34 @@ const (
 	VerdictRetry        Verdict = "retry"
 	VerdictExitFailed   Verdict = "exit-failed"
 	VerdictNoStop       Verdict = "no-stop"
+	VerdictUsageLimit   Verdict = "usage-limit"
 )
+
+// usageLimitMax: a usage-limit stop is a short message the CLI prints in place of the agent's
+// result; a longer final text is the agent's own summary, which may well discuss rate limits.
+const usageLimitMax = 600
+
+// usageLimitRe matches the Claude CLI's credit, usage and rate limit messages at the start of a line.
+var usageLimitRe = regexp.MustCompile(`(?i)^(?:` +
+	`you(?:'|’)re out of (?:usage )?credits` +
+	`|(?:claude(?: ai)? )?usage limit (?:reached|exceeded)` +
+	`|you(?:'|’)ve (?:hit|reached) your (?:usage|rate) limit` +
+	`|(?:\d+-hour|weekly|daily|session) limit reached` +
+	`|rate limit (?:reached|exceeded)` +
+	`|credit balance is too low` +
+	`|api error: 429\b.*rate_limit_error` +
+	`)`)
+
+// UsageLimited reports whether a round's final text is a usage, credit or rate limit stop. It
+// matches conservatively: the text is short and its last non-empty line is the limit message.
+func UsageLimited(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" || len(text) > usageLimitMax {
+		return false
+	}
+	line, _ := lastLine(text)
+	return usageLimitRe.MatchString(line)
+}
 
 type Outcome struct {
 	Verdict    Verdict
@@ -157,6 +184,9 @@ func Classify(o Observation) Outcome {
 	}
 	if o.PermissionTool != "" {
 		return Outcome{Verdict: VerdictPermission, Status: store.StatusWaiting, StopReason: "needs permission: " + o.PermissionTool}
+	}
+	if UsageLimited(o.FinalText) {
+		return Outcome{Verdict: VerdictUsageLimit, Status: store.StatusWaiting, StopReason: "usage limit"}
 	}
 	if o.Subtype == "error_max_turns" {
 		return Outcome{Verdict: VerdictMaxTurns, Status: store.StatusQueued}

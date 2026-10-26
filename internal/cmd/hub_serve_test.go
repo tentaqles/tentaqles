@@ -142,6 +142,7 @@ func TestServeDrainRunsQueuedWorkAndHonoursHubMode(t *testing.T) {
 	py := testutil.Python(t)
 	fake, _ := filepath.Abs(filepath.Join("..", "hub", "adapter", "testdata", "fake_claude.py")) // before hubWS changes the cwd
 	root := hubWS(t)
+	hubRepo(t, filepath.Join(root, "apps", "billing"))
 	dir := t.TempDir()
 	script, _ := json.Marshal(map[string]any{"counter": filepath.Join(dir, "n"), "argv_log": filepath.Join(dir, "argv.jsonl"),
 		"rounds": []map[string]any{{"result": "I looked around.", "cost": 0.1}}})

@@ -105,6 +105,17 @@ the hub reads `build-gate state <slug> --json`: pending decisions → `waiting`;
 or rolled-back build → `failed`; a non-zero exit with no progress → one retry after two
 minutes; anything else that ends without a stop → `failed` with the transcript tail.
 
+Before every round, first or resumed, the hub re-checks at zero cost that the workspace
+is still trusted (a skill that edits the manifest changes its hash), that the run's folder
+exists, and that `git` is on PATH and the folder is inside a git repository (a card without
+a project folder runs in the workspace root, so the root must be one). If a check fails, no
+round starts: the run goes to `waiting` with a stop reason (`untrusted`, `project folder
+missing`, `not a git repository`), the card gets a comment, and a hub decision asks
+"resume / stop". Fix the cause (for example `tq allow <ws>`), then answer resume. If a
+round ends on a usage limit (the CLI says the account is out of usage credits or has hit
+a usage or rate limit), the run waits the same way with stop reason `usage limit`. It
+keeps the round's cost and does not count as a failure, and resume continues the session.
+
 Statuses: `queued running waiting finished failed cancelled over-budget`.
 
 Stopping the hub never cancels work. A run whose round was cut short goes back to
@@ -132,7 +143,8 @@ reports neither, the round is marked "cost unknown" and only rounds and minutes 
 
 The hub mirrors the gate's decision records (`plan-approval`, `result`, `judge`,
 `question`) and adds its own `permission` kind (a refused tool: `allow-once`; a budget
-stop: `raise-and-resume`). Answering from the hub mints a hub actor token
+stop: `raise-and-resume`; a held run (untrusted, folder, git, usage limit): `resume`,
+which requeues the same run). Answering from the hub mints a hub actor token
 (HMAC-SHA256 with the gate key, actor `hub:<your user>`) for one `build-gate answer` call;
 the gate validates it and applies the consequence. The hub never calls `approve`,
 `finish`, `judge`, `dod --override` or `unlock-tests`. If you answered in the terminal
