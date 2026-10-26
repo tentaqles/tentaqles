@@ -1,0 +1,16 @@
+{{define "runs"}}{{template "head" .}}{{template "runs-main" .}}{{template "foot" .}}{{end}}
+{{define "runs-main"}}{{$ws := .WS}}{{with .Data}}
+<div class="col">
+  <section class="panel"><h2>In flight</h2>
+  {{if .Active}}<div class="tw"><table>{{template "run-head"}}{{range .Active}}{{template "run-row" (dict "WS" $ws "Row" .)}}{{end}}</table></div>
+  {{else}}<p class="note">No run is queued, running or waiting. A run starts when an agent-ready card enters In progress, or from Run now on a card.</p>{{end}}
+  </section>
+  <section class="panel"><h2>Recent</h2>
+  {{if .Recent}}<div class="tw"><table>{{template "run-head"}}{{range .Recent}}{{template "run-row" (dict "WS" $ws "Row" .)}}{{end}}</table></div>
+  {{else}}<p class="note">No run has ended yet.</p>{{end}}
+  {{if .More}}<p class="note">{{.More}} older runs are not listed; each card page lists its own.</p>{{end}}
+  </section>
+</div>
+{{end}}{{end}}
+{{define "run-head"}}<tr><th>Run</th><th>Card</th><th>Status</th><th>Rounds</th><th>Spent</th><th>Updated</th></tr>{{end}}
+{{define "run-row"}}{{$ws := .WS}}{{with .Row}}<tr><td class="m"><a href="/runs/{{.Run.ID}}?ws={{$ws}}">{{.Run.ID}}</a></td><td><a href="/cards/{{.Run.CardID}}?ws={{$ws}}">{{.Title}}</a></td><td><span class="pill {{pill .Run.Status}}">{{statusLabel .Run.Status}}</span></td><td class="m">{{.Run.Rounds}} of {{.Run.Budget.Rounds}}</td><td class="m">{{money .Run.CostUSD}}</td><td class="m">{{ago .Run.UpdatedAt}}</td></tr>{{end}}{{end}}

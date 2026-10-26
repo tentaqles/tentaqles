@@ -1,0 +1,25 @@
+{{define "newcard"}}{{with .NewCard}}
+<div class="scrim" id="new-card" role="dialog" aria-modal="true" aria-labelledby="nc-heading">
+  <form class="dlg" method="post" action="/cards?ws={{$.WS}}" id="nc-form">
+    <header><h2 id="nc-heading">New card</h2><a class="x" href="#" data-close aria-label="Close">×</a></header>
+    <div class="body">
+      <div class="fld"><label for="nc-title">Title</label><input class="f" id="nc-title" name="title" required maxlength="300" autocomplete="off" placeholder="What should be built, fixed or looked at?"></div>
+      <div class="fld"><label for="nc-body">Body</label><textarea class="f" id="nc-body" name="body" placeholder="Context, acceptance checks, links. Markdown. A budget line in front matter overrides the default, e.g. budget: usd=15,rounds=8"></textarea></div>
+      <div class="two">
+        <div class="fld"><label for="nc-kind">Kind</label><select class="f" id="nc-kind" name="kind">{{range .Kinds}}<option>{{.}}</option>{{end}}</select></div>
+        <div class="fld"><label for="nc-lane">Lane</label><select class="f" id="nc-lane" name="lane">{{range .Lanes}}<option value="{{.Name}}">{{laneTitle .Name}}{{if eq .Kind "active"}} (starts a run if agent-ready){{end}}</option>{{end}}</select></div>
+      </div>
+      <div class="two">
+        <div class="fld"><label for="nc-project">Project folder</label><input class="f" id="nc-project" name="project" autocomplete="off" placeholder="folder inside the workspace, e.g. apps/billing"></div>
+        <div class="fld"><label for="nc-parent">Parent card</label><select class="f" id="nc-parent" name="parent"><option value="">none</option>{{range .Parents}}<option value="{{.ID}}">{{.Title}}</option>{{end}}</select></div>
+      </div>
+      <div class="fld"><label for="nc-tagin">Tags</label>
+        <div class="tagbox" data-tagbox><input id="nc-tagin" name="tags" data-tag-input autocomplete="off" placeholder="Type a tag and press Enter"></div>
+        <p class="hint">Suggestions: agent-ready, needs-spec, client-visible, security</p></div>
+      <div class="fld"><label class="sw" for="nc-ready"><input type="checkbox" id="nc-ready" name="agent_ready" value="1" checked><i aria-hidden="true"></i>Agent-ready: start a run when the card enters In progress</label></div>
+      <p class="err" id="nc-error" role="alert" hidden></p>
+    </div>
+    <footer><span class="note">The card is masked for secrets before it is stored.</span><a class="btn" href="#" data-close>Cancel</a><button class="btn pri" id="nc-create">Create card</button></footer>
+  </form>
+</div>
+{{end}}{{end}}

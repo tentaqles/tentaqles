@@ -45,6 +45,91 @@ type ReviewData struct {
 	GeneratedAt string
 }
 
+// Verdict is the band on top of the review page: what the gate's records say, in one line.
+type Verdict struct {
+	Class string // ok | wait | bad
+	Title string
+	Note  string
+}
+
+// latestReviews keeps the latest review per (checkpoint, reviewer): latest by timestamp when both carry
+// one, else the later in record order. Pairs keep the order of their first appearance.
+func latestReviews(all []gate.Review) []gate.Review {
+	idx := map[[2]string]int{}
+	var out []gate.Review
+	for _, rv := range all {
+		k := [2]string{string(rv.Checkpoint), rv.Reviewer}
+		i, ok := idx[k]
+		if !ok {
+			idx[k] = len(out)
+			out = append(out, rv)
+			continue
+		}
+		if cur := out[i]; cur.TS == "" || rv.TS == "" || rv.TS >= cur.TS {
+			out[i] = rv
+		}
+	}
+	return out
+}
+
+// Verdict is "ok" only when every checkpoint passed, the DoD is ok, at least one review is recorded and
+// no latest review (per checkpoint and reviewer) says anything but PASS; a failing DoD is "bad";
+// anything else is "wait", naming what is missing.
+func (d ReviewData) Verdict() Verdict {
+	passed, total, reviews := 0, 0, 0
+	if d.State != nil {
+		for _, c := range d.State.Checkpoints {
+			total++
+			if c.Status == "passed" {
+				passed++
+			}
+		}
+	}
+	var dod *gate.DoDRecord
+	var gaps []string
+	if d.Records != nil {
+		for _, rv := range latestReviews(d.Records.Reviews) {
+			if rv.Result == "PASS" {
+				reviews++
+			} else {
+				gaps = append(gaps, fmt.Sprintf("review %s on checkpoint %s: %s", rv.Reviewer, rv.Checkpoint, rv.Result))
+			}
+		}
+		dod = d.Records.DoD
+	}
+	if d.Records == nil || len(d.Records.Reviews) == 0 {
+		gaps = append([]string{"no review recorded"}, gaps...)
+	}
+	switch {
+	case total == 0:
+		gaps = append([]string{"no checkpoint recorded"}, gaps...)
+	case passed < total:
+		gaps = append([]string{fmt.Sprintf("%d of %d checkpoints passed", passed, total)}, gaps...)
+	}
+	if dod == nil {
+		gaps = append(gaps, "no definition-of-done record")
+	}
+	facts := fmt.Sprintf("%d of %d checkpoints passed, %d reviews PASS", passed, total, reviews)
+	if dod != nil {
+		if dod.OK {
+			facts += ", DoD ok"
+		} else {
+			facts += ", DoD not met"
+		}
+	}
+	facts += fmt.Sprintf(", %.0f min, $%.2f", d.Run.Seconds/60, d.Run.CostUSD)
+	note := facts + ". Built from signed gate records and the hub's own git summary only; nothing here comes from what the agent said."
+	switch {
+	case dod != nil && !dod.OK:
+		return Verdict{Class: "bad", Title: "The definition of done is not met", Note: note}
+	case d.State == nil && d.Records == nil:
+		return Verdict{Class: "wait", Title: "There are no gate records for this run", Note: "Read what was done before you close the card. " + d.RecordsNote}
+	case len(gaps) == 0:
+		return Verdict{Class: "ok", Title: "Everything the gate recorded says this is done", Note: note}
+	}
+	return Verdict{Class: "wait", Title: "The gate's records are incomplete: read the evidence before you approve", Note: "Missing: " + strings.Join(gaps, "; ") + ". " + note}
+}
+
 func init() {
 	extraRoutes = append(extraRoutes, func(s *Server) {
 		s.handle("GET /cards/{id}/review", s.reviewPage)
@@ -270,6 +355,7 @@ func (s *Server) reviewPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := s.basePage(r, "Review: "+d.Card.Title, ws)
+	p.Nav = "reviews"
 	p.Data = d
 	s.render(w, r, "review", p)
 }

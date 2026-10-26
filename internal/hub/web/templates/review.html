@@ -2,88 +2,81 @@
 {{define "review-main"}}{{template "review-body" .Data}}{{end}}
 
 {{define "review-standalone"}}<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light">
 <title>Review: {{.Card.Title}}</title><style>{{.CSS}}</style></head>
-<body><main>{{template "review-body" .}}<p class="muted mono">exported {{.GeneratedAt}} by tq hub · workspace {{.Workspace}} · run {{.Run.ID}}</p></main></body></html>{{end}}
+<body class="standalone"><main><h1 class="rv-title">Review: {{.Card.Title}}</h1>{{template "review-body" .}}<p class="note mono">exported {{.GeneratedAt}} by tq hub · workspace {{.Workspace}} · run {{.Run.ID}}</p></main></body></html>{{end}}
 
-{{define "review-body"}}
-<article class="review">
-<h1>Review: {{.Card.Title}}</h1>
+{{define "review-body"}}{{$v := .Verdict}}
+<article class="rv review">
+<div class="verdict {{$v.Class}}"><span class="mark" aria-hidden="true">{{if eq $v.Class "ok"}}<svg class="i" viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg>{{else if eq $v.Class "bad"}}<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>{{else}}<svg class="i" viewBox="0 0 24 24"><path d="M12 7v6M12 17h.01"/></svg>{{end}}</span><div><div class="vt">{{$v.Title}}</div><div class="note">{{$v.Note}}</div></div></div>
 
-<section id="goal"><h2>1. Goal</h2>
-  <p><span class="kind">{{.Card.Kind}}</span>{{if .Parent}} · parent <strong>{{.Parent.Title}}</strong>{{end}}{{if .SpecPath}} · spec slice <span class="mono">{{.SpecPath}}</span>{{end}}{{if .State}}{{if .State.Feature}} · feature {{.State.Feature}}{{end}}{{end}}</p>
-  <div class="body">{{md .Card.Body}}</div>
+<section id="goal" class="panel"><h2>What was asked</h2>
+  <p class="status"><span class="chip">{{.Card.Kind}}</span><code class="m">{{.Card.ID}}</code>{{if .Parent}}<span>parent <strong>{{.Parent.Title}}</strong></span>{{end}}{{if .SpecPath}}<span>spec slice <code class="m">{{.SpecPath}}</code></span>{{end}}{{if .State}}{{if .State.Feature}}<span>feature {{.State.Feature}}</span>{{end}}{{end}}</p>
+  <div class="md">{{md .Card.Body}}</div>
 </section>
 
-<section id="approach"><h2>2. Approach</h2>
+<section id="approach" class="panel"><h2>Approach</h2>
   {{with .Records}}{{with .Plan}}
-  <p>{{.Summary}}</p>{{if .PlainSummary}}<p class="muted">{{.PlainSummary}}</p>{{end}}
-  <table><tr><th>#</th><th>checkpoint</th><th>approved</th><th>tests</th></tr>
-  {{range .Checkpoints}}<tr><td class="mono">{{.ID}}</td><td>{{.Title}}</td><td>{{if .Approved}}yes{{else}}<strong>changed since approval</strong>{{end}}</td>
-    <td>{{range .Tests}}<span class="mono">{{.File}}</span> ({{.Layer}}) {{end}}</td></tr>{{end}}</table>
-  {{else}}<p class="muted">No approved plan record.</p>{{end}}{{else}}<p class="muted">No gate records.</p>{{end}}
+  <p class="q">{{.Summary}}</p>{{if .PlainSummary}}<p class="note">{{.PlainSummary}}</p>{{end}}
+  <div class="tw"><table><tr><th>#</th><th>Checkpoint</th><th>Covered by approval</th><th>Tests</th></tr>
+  {{range .Checkpoints}}<tr><td class="m">{{.ID}}</td><td>{{.Title}}</td><td>{{if .Approved}}<span class="pill {{pill "finished"}}">yes</span>{{else}}<span class="pill {{pill "failed"}}">changed since approval</span>{{end}}</td><td class="m">{{range .Tests}}{{.File}} · {{.Layer}} {{end}}</td></tr>{{end}}
+  </table></div>
+  {{else}}<p class="note">No approved plan record.</p>{{end}}{{else}}<p class="note">No gate records.</p>{{end}}
 </section>
 
-<section id="done"><h2>3. What was done</h2>
-  {{if .PRURL}}<p>Pull request: <a href="{{.PRURL}}">{{.PRURL}}</a></p>{{end}}
-  {{if .Commits}}<ul>{{range .Commits}}<li><span class="mono">{{.Hash}}</span> {{.Subject}}</li>{{end}}</ul>{{else}}<p class="muted">No commits found.</p>{{end}}
-  {{if .DiffStat}}<pre class="text">{{.DiffStat}}</pre>{{end}}
+<section id="done" class="panel"><h2>What was done</h2>
+  {{if .PRURL}}<p class="q">Pull request: <a href="{{.PRURL}}" rel="noopener noreferrer">{{.PRURL}}</a></p>{{end}}
+  {{if .Commits}}<div class="tw"><table>{{range .Commits}}<tr><td class="m">{{.Hash}}</td><td>{{.Subject}}</td></tr>{{end}}</table></div>{{else}}<p class="note">No commits found.</p>{{end}}
+  {{if .DiffStat}}<pre class="log">{{.DiffStat}}</pre>{{end}}
 </section>
 
-<section id="stands"><h2>4. Where it stands</h2>
-  {{with .State}}
-  <table><tr><th>#</th><th>checkpoint</th><th>status</th><th>behavior</th><th>review</th><th>evidence</th><th>reviewers</th></tr>
-  {{range .Checkpoints}}<tr><td class="mono">{{.ID}}</td><td>{{.Title}}</td><td>{{.Status}}</td><td>{{index .Gates "behavior"}}</td><td>{{index .Gates "review"}}</td><td>{{.Evidence}}</td>
-    <td>{{range $k, $v := .Reviews}}{{$k}}: {{$v}} {{end}}</td></tr>{{end}}</table>
-  {{end}}
+<section id="stands" class="panel"><h2>Where it stands</h2>
+  {{with .State}}<div class="tw"><table><tr><th>#</th><th>Checkpoint</th><th>Status</th><th>Behavior</th><th>Review</th><th>Evidence</th><th>Reviewers</th></tr>
+  {{range .Checkpoints}}<tr><td class="m">{{.ID}}</td><td>{{.Title}}</td><td>{{.Status}}</td><td>{{index .Gates "behavior"}}</td><td>{{index .Gates "review"}}</td><td>{{.Evidence}}</td><td>{{range $k, $v := .Reviews}}{{$k}}: {{$v}} {{end}}</td></tr>{{end}}
+  </table></div>{{end}}
   {{with .Records}}{{with .DoD}}
-  <h3>Definition of done: {{if .OK}}PASS{{else}}FAIL{{end}} <span class="mono">{{.Tree}}</span></h3>
-  {{if .Override}}<p><strong>Overridden:</strong> {{.Override}}</p>{{end}}
-  <table><tr><th>check</th><th>result</th><th>detail</th></tr>
-  {{range .Checks}}<tr><td class="mono">{{.ID}}</td><td>{{if not .OK}}skip{{else if deref .OK}}ok{{else}}MISSING{{end}}</td><td>{{.Detail}}</td></tr>{{end}}</table>
+  <h3>Definition of done: {{if .OK}}PASS{{else}}FAIL{{end}} <code class="m">{{.Tree}}</code></h3>
+  {{if .Override}}<p class="q"><strong>Overridden:</strong> {{.Override}}</p>{{end}}
+  <div class="tw"><table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>
+  {{range .Checks}}<tr><td class="m">{{.ID}}</td><td>{{if not .OK}}skip{{else if deref .OK}}<span class="pill {{pill "finished"}}">ok</span>{{else}}<span class="pill {{pill "failed"}}">missing</span>{{end}}</td><td>{{.Detail}}</td></tr>{{end}}
+  </table></div>
   {{end}}{{end}}
-  {{if .RecordsNote}}<p class="muted">{{.RecordsNote}}</p>{{end}}
+  {{if .RecordsNote}}<p class="note">{{.RecordsNote}}</p>{{end}}
 </section>
 
-<section id="evidence"><h2>5. Evidence</h2>
+<section id="evidence" class="panel"><h2>Checkpoints and evidence</h2>
   {{with .Records}}
-  <table><tr><th>#</th><th>result</th><th>command</th><th>exit</th><th>tree</th><th>time</th></tr>
-  {{range .Evidence}}{{$e := .}}{{range .Results}}<tr><td class="mono">{{$e.Checkpoint}}</td><td>{{if $e.OK}}pass{{else}}fail{{end}}{{if not $e.Current}} (older approval){{end}}</td>
-    <td class="mono">{{.Cmd}}</td><td class="mono">{{.Exit}}{{if .TimedOut}} timed out{{end}}</td><td class="mono">{{printf "%.12s" $e.Tree}}</td><td class="mono">{{when $e.TS}}</td></tr>{{end}}{{end}}</table>
-  <h3>Reviewer verdicts</h3>
-  <table><tr><th>#</th><th>reviewer</th><th>result</th><th>blockers/majors/minors/unjudged</th><th>tree</th><th>by</th></tr>
-  {{range .Reviews}}<tr><td class="mono">{{.Checkpoint}}</td><td>{{.Reviewer}}</td><td>{{.Result}}</td><td class="mono">{{.Blockers}}/{{.Majors}}/{{.Minors}}/{{.Unjudged}}</td><td class="mono">{{printf "%.12s" .Tree}}</td><td>{{if .Human}}human{{else}}agent{{end}}</td></tr>{{end}}</table>
-  {{else}}<p class="muted">No gate evidence recorded.</p>{{end}}
-  {{with .State}}{{if .Bases}}<p class="muted">review bases: {{range $k, $v := .Bases}}<span class="mono">#{{$k}} {{printf "%.12s" $v}}</span> {{end}}</p>{{end}}{{end}}
+  <div class="tw"><table><tr><th>#</th><th>Result</th><th>Verify</th><th>Exit</th><th>Tree</th><th>Time</th></tr>
+  {{range .Evidence}}{{$e := .}}{{range .Results}}<tr><td class="m">{{$e.Checkpoint}}</td><td>{{if $e.OK}}<span class="pill {{pill "finished"}}">pass</span>{{else}}<span class="pill {{pill "failed"}}">fail</span>{{end}}{{if not $e.Current}} <span class="note">older approval</span>{{end}}</td><td class="m">{{.Cmd}}</td><td class="m">{{.Exit}}{{if .TimedOut}} timed out{{end}}</td><td class="m">{{printf "%.12s" $e.Tree}}</td><td class="m">{{when $e.TS}}</td></tr>{{end}}{{end}}
+  </table></div>
+  <h3>Reviews</h3>
+  <div class="tw"><table><tr><th>#</th><th>Reviewer</th><th>Result</th><th>Blockers / majors / minors / unjudged</th><th>Tree</th><th>By</th></tr>
+  {{range .Reviews}}<tr><td class="m">{{.Checkpoint}}</td><td>{{.Reviewer}}</td><td>{{if eq .Result "PASS"}}<span class="pill {{pill "finished"}}">PASS</span>{{else}}<span class="pill {{pill "failed"}}">{{.Result}}</span>{{end}}</td><td class="m">{{.Blockers}}/{{.Majors}}/{{.Minors}}/{{.Unjudged}}</td><td class="m">{{printf "%.12s" .Tree}}</td><td>{{if .Human}}human{{else}}agent{{end}}</td></tr>{{end}}
+  </table></div>
+  {{else}}<p class="note">No gate evidence recorded.</p>{{end}}
+  {{with .State}}{{if .Bases}}<p class="note">review bases: {{range $k, $v := .Bases}}<code class="m">#{{$k}} {{printf "%.12s" $v}}</code> {{end}}</p>{{end}}{{end}}
 </section>
 
-<section id="cost"><h2>6. Cost</h2>
-  <p class="mono">{{.Run.Rounds}} rounds · {{ktok .Run.Usage.Tokens}} tokens · {{money .Run.CostUSD}} · {{minutes .Run.Seconds}} min</p>
-  <table><tr><th>round</th><th>tokens in/out</th><th>cost</th><th>seconds</th><th>outcome</th></tr>
-  {{range .Rounds}}<tr><td class="mono">{{.N}}</td><td class="mono">{{.Usage.Input}}/{{.Usage.Output}}</td><td class="mono">{{money .CostUSD}}{{if .CostUnknown}} (cost unknown){{end}}</td><td class="mono">{{printf "%.0f" .Seconds}}</td><td>{{.Outcome}}</td></tr>{{end}}</table>
+<section id="cost" class="panel"><h2>Cost</h2>
+  <p class="status"><span class="num">{{.Run.Rounds}} rounds</span><span class="num">{{ktok .Run.Usage.Tokens}} tokens</span><span class="num">{{money .Run.CostUSD}}</span><span class="num">{{minutes .Run.Seconds}} min</span></p>
+  <div class="tw"><table><tr><th>Round</th><th>Tokens in/out</th><th>Cost</th><th>Seconds</th><th>Outcome</th></tr>
+  {{range .Rounds}}<tr><td class="m">{{.N}}</td><td class="m">{{.Usage.Input}}/{{.Usage.Output}}</td><td class="m">{{money .CostUSD}}{{if .CostUnknown}} (cost unknown){{end}}</td><td class="m">{{printf "%.0f" .Seconds}}</td><td>{{.Outcome}}</td></tr>{{end}}
+  </table></div>
 </section>
 
 {{if not .Standalone}}
-<section id="feedback"><h2>7. Feedback</h2>
+<div class="actbar">
   {{if .Pending}}
-  <form method="post" action="/cards/{{.Card.ID}}/review/request-changes?ws={{.Workspace}}">
-    <textarea name="note" rows="4" required placeholder="What should change?"></textarea>
-    <button>Request changes</button>
-  </form>
-  {{else}}<p class="muted">No result is waiting for feedback.</p>{{end}}
-</section>
-<section id="approve"><h2>8. Approve</h2>
-  {{if .Pending}}
-  <form method="post" action="/cards/{{.Card.ID}}/review/approve?ws={{.Workspace}}"><button class="primary">Approve</button></form>
-  <p class="muted">Approving answers the result record; the gate runs finish, the card moves to done.</p>
+  <section id="approve"><form method="post" action="/cards/{{.Card.ID}}/review/approve?ws={{.Workspace}}"><button class="btn pri">Approve and finish</button></form></section>
+  <section id="feedback"><form method="post" action="/cards/{{.Card.ID}}/review/request-changes?ws={{.Workspace}}"><input class="f" name="note" required autocomplete="off" aria-label="What should change" placeholder="What should change (required to request changes)"><button class="btn">Request changes</button></form></section>
   {{else}}
-  <form method="post" action="/cards/{{.Card.ID}}/review/done?ws={{.Workspace}}"><button>Mark done</button></form>
-  <p class="muted">This run has no pending result record; marking done is a board action only.</p>
+  <section id="approve"><form method="post" action="/cards/{{.Card.ID}}/review/done?ws={{.Workspace}}"><button class="btn pri">Mark done</button></form><span class="note">This run has no pending result record; marking done is a board action only.</span></section>
+  <section id="feedback"><span class="note">No result is waiting for feedback.</span></section>
   {{end}}
-</section>
+</div>
 {{else}}
-<section id="feedback"><h2>7. Feedback</h2><p class="muted">Exported after approval.</p></section>
-<section id="approve"><h2>8. Approve</h2><p>Approved. Run <span class="mono">{{.Run.ID}}</span> {{.Run.Status}}.</p></section>
+<section id="feedback" class="panel"><h2>Feedback</h2><p class="note">Exported after approval.</p></section>
+<section id="approve" class="panel"><h2>Approved</h2><p>Approved. Run <code class="m">{{.Run.ID}}</code> {{.Run.Status}}.</p></section>
 {{end}}
 </article>
 {{end}}

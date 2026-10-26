@@ -133,3 +133,49 @@ func (s *Store) Notify() bool {
 	}
 	return strings.TrimSpace(strings.ToLower(v)) != "false"
 }
+
+// MaxConcurrency bounds the concurrency a human can set from the page or the API.
+const MaxConcurrency = 16
+
+// Validate reports a budget whose limits are not all positive, finite numbers.
+func (b Budget) Validate() error {
+	if !b.valid() {
+		return fmt.Errorf("budget %s: tokens, usd, minutes and rounds must all be positive numbers", b.String())
+	}
+	return nil
+}
+
+func (s *Store) SetConcurrency(n int) error {
+	if n < 1 || n > MaxConcurrency {
+		return fmt.Errorf("concurrency %d: use 1 to %d", n, MaxConcurrency)
+	}
+	if err := s.SetSetting(SettingConcurrency, strconv.Itoa(n)); err != nil {
+		return err
+	}
+	s.Publish(Change{Kind: "settings"})
+	return nil
+}
+
+// SetDefaultBudget stores the budget re-serialised from the validated struct, never caller text.
+func (s *Store) SetDefaultBudget(b Budget) error {
+	if err := b.Validate(); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	if err := s.SetSetting(SettingDefaultBudget, string(raw)); err != nil {
+		return err
+	}
+	s.Publish(Change{Kind: "settings"})
+	return nil
+}
+
+func (s *Store) SetNotify(on bool) error {
+	if err := s.SetSetting(SettingNotify, strconv.FormatBool(on)); err != nil {
+		return err
+	}
+	s.Publish(Change{Kind: "settings"})
+	return nil
+}

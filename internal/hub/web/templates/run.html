@@ -1,21 +1,50 @@
 {{define "run"}}{{template "head" .}}{{template "run-main" .}}{{template "foot" .}}{{end}}
 {{define "run-main"}}{{$ws := .WS}}{{with .Data}}
-<article class="detail">
-  <h1>Run <span class="mono">{{.Run.ID}}</span> <span class="badge st-{{.Run.Status}}">{{.Run.Status}}</span></h1>
-  <p>Card <a href="/cards/{{.Card.ID}}?ws={{$ws}}">{{.Card.Title}}</a> · {{.Run.Adapter}} · on-ramp {{.Run.OnRamp}}{{if .Run.Slug}} · build <span class="mono">{{.Run.Slug}}</span>{{end}}{{if .Run.Worktree}} · <span class="mono">{{.Run.Worktree}}</span>{{end}}</p>
-  {{if .Run.StopReason}}<p><strong>Stop reason:</strong> {{.Run.StopReason}}</p>{{end}}
-  {{if and (eq .Run.Status "running") .GateURL}}<p><a href="{{.GateURL}}">Gate live view</a></p>{{end}}
-  <table><tr><th></th><th>used</th><th>budget</th></tr>
-    <tr><td>tokens</td><td class="mono">{{ktok .Run.Usage.Tokens}}</td><td class="mono">{{ktok .Run.Budget.Tokens}}</td></tr>
-    <tr><td>dollars</td><td class="mono">{{money .Run.CostUSD}}</td><td class="mono">{{money .Run.Budget.USD}}</td></tr>
-    <tr><td>minutes</td><td class="mono">{{minutes .Run.Seconds}}</td><td class="mono">{{.Run.Budget.Minutes}}</td></tr>
-    <tr><td>rounds</td><td class="mono">{{.Run.Rounds}}</td><td class="mono">{{.Run.Budget.Rounds}}</td></tr>
-  </table>
-  <h2>Rounds</h2>
-  <table><tr><th>round</th><th>started</th><th>seconds</th><th>tokens in/out</th><th>cost</th><th>exit</th><th>outcome</th></tr>
-  {{range .Run.RoundLog}}<tr><td class="mono">{{.N}}</td><td class="mono">{{when .StartedAt}}</td><td class="mono">{{printf "%.0f" .Seconds}}</td><td class="mono">{{.Usage.Input}}/{{.Usage.Output}}</td>
-    <td class="mono">{{money .CostUSD}}{{if .CostUnknown}} (cost unknown){{end}}</td><td class="mono">{{.ExitCode}}</td><td>{{.Outcome}}</td></tr>{{end}}</table>
-  <h2>Log</h2>
-  <pre id="log" class="text" data-from="{{.LogSize}}">{{.LogTail}}</pre>
-</article>
+<div class="split">
+<div class="col">
+  <section class="panel">
+    <div class="hd">
+      <div>
+        <div class="status"><span class="pill {{pill .Run.Status}}">{{statusLabel .Run.Status}}</span><span>{{.Run.Rounds}} of {{.Run.Budget.Rounds}} rounds</span>{{with .Run.Kind}}<span class="chip">{{.}}</span>{{end}}</div>
+        <h2>Run <code class="m">{{.Run.ID}}</code></h2>
+        <div class="meta"><span>card <a href="/cards/{{.Card.ID}}?ws={{$ws}}">{{.Card.Title}}</a></span></div>
+      </div>
+      <div class="acts">{{if .Run.Active}}<form class="inline" method="post" action="/runs/{{.Run.ID}}/cancel?ws={{$ws}}"><button class="btn danger">Cancel run</button></form>{{end}}</div>
+    </div>
+    {{if .Run.StopReason}}<p class="q"><b>Stop reason:</b> {{.Run.StopReason}}</p>{{end}}
+    <h3 class="sub">Timeline</h3>
+    {{if .Timeline}}<ul class="tl">{{range .Timeline}}<li class="{{.Class}}"><i></i><div>{{.Text}} <div class="when">{{when .At}}{{with .Detail}} · {{.}}{{end}}{{with .Actor}} · <code>{{.}}</code>{{end}}{{with .AnsweredAt}} · answered {{when .}}{{end}}</div></div></li>{{end}}</ul>
+    {{else}}<p class="note">Nothing has happened yet: no round has started and no decision was asked.</p>{{end}}
+    <h3 class="sub">Rounds</h3>
+    <div class="tw"><table><tr><th>Round</th><th>Started</th><th>Seconds</th><th>Tokens in/out</th><th>Cost</th><th>Exit</th><th>Outcome</th></tr>
+    {{range .Run.RoundLog}}<tr><td class="m">{{.N}}</td><td class="m">{{when .StartedAt}}</td><td class="m">{{printf "%.0f" .Seconds}}</td><td class="m">{{.Usage.Input}}/{{.Usage.Output}}</td><td class="m">{{money .CostUSD}}{{if .CostUnknown}} (cost unknown){{end}}</td><td class="m">{{.ExitCode}}</td><td>{{.Outcome}}</td></tr>
+    {{else}}<tr><td colspan="7" class="note">No round has ended yet.</td></tr>{{end}}</table></div>
+  </section>
+  <section class="panel"><h2>Log</h2><pre class="log tall" id="log" data-run="{{.Run.ID}}" data-from="{{.LogSize}}">{{.LogTail}}</pre></section>
+</div>
+<div class="col">
+  <section class="panel"><h2>Facts</h2>
+    <dl class="kv">
+      <dt>Adapter</dt><dd>{{.Run.Adapter}}</dd>
+      <dt>On-ramp</dt><dd>{{.Run.OnRamp}}{{with .Run.Phase}} · {{.}}{{end}}</dd>
+      {{with .Run.Slug}}<dt>Build</dt><dd>{{.}}</dd>{{end}}
+      <dt>Folder</dt><dd>{{if .Run.Worktree}}{{.Run.Worktree}}{{else if .Run.ProjectDir}}{{.Run.ProjectDir}}{{else}}workspace root{{end}}</dd>
+      <dt>Queued</dt><dd>{{when .Run.QueuedAt}}</dd>
+      {{with .Run.StartedAt}}<dt>Started</dt><dd>{{when .}}</dd>{{end}}
+      {{with .Run.EndedAt}}<dt>Ended</dt><dd>{{when .}}</dd>{{end}}
+    </dl>
+  </section>
+  <section class="panel"><h2>Budget</h2>
+    <div class="tw"><table><tr><th></th><th>Used</th><th>Budget</th></tr>
+      <tr><td>Tokens</td><td class="m">{{ktok .Run.Usage.Tokens}}</td><td class="m">{{ktok .Run.Budget.Tokens}}</td></tr>
+      <tr><td>Dollars</td><td class="m">{{money .Run.CostUSD}}</td><td class="m">{{money .Run.Budget.USD}}</td></tr>
+      <tr><td>Minutes</td><td class="m">{{minutes .Run.Seconds}}</td><td class="m">{{.Run.Budget.Minutes}}</td></tr>
+      <tr><td>Rounds</td><td class="m">{{.Run.Rounds}}</td><td class="m">{{.Run.Budget.Rounds}}</td></tr>
+    </table></div>
+    <div class="bar mt" role="img" aria-label="{{pct .Run.CostUSD .Run.Budget.USD}}% of the dollar budget"><i style="width:{{pct .Run.CostUSD .Run.Budget.USD}}%"></i></div>
+    <div class="note">{{pct .Run.CostUSD .Run.Budget.USD}}% of the dollar budget</div>
+    {{if and (eq .Run.Status "running") .GateURL}}<p class="note"><a href="{{.GateURL}}">Gate live view</a></p>{{end}}
+  </section>
+</div>
+</div>
 {{end}}{{end}}

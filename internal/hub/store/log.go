@@ -1,8 +1,10 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/hub/activity"
 )
@@ -70,8 +72,21 @@ func (s *Store) Activity(limit int) ([]activity.Entry, error) {
 	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := s.DB.Query(`SELECT ts, workspace, actor, verb, COALESCE(card_id, ''), COALESCE(run_id, ''), data
-		FROM activity ORDER BY rowid DESC LIMIT ?`, limit)
+	return scanActivity(s.DB.Query(`SELECT ts, workspace, actor, verb, COALESCE(card_id, ''), COALESCE(run_id, ''), data
+		FROM activity ORDER BY rowid DESC LIMIT ?`, limit))
+}
+
+// ActivitySince is every entry at or after since, newest first, at most limit (0 → 500). Stored
+// times are RFC3339 UTC, so the text comparison is a time comparison.
+func (s *Store) ActivitySince(since time.Time, limit int) ([]activity.Entry, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	return scanActivity(s.DB.Query(`SELECT ts, workspace, actor, verb, COALESCE(card_id, ''), COALESCE(run_id, ''), data
+		FROM activity WHERE ts >= ? ORDER BY rowid DESC LIMIT ?`, since.UTC().Format(time.RFC3339), limit))
+}
+
+func scanActivity(rows *sql.Rows, err error) ([]activity.Entry, error) {
 	if err != nil {
 		return nil, err
 	}

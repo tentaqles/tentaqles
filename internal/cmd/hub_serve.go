@@ -303,7 +303,8 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 				}
 			}
 			localKey := randomKey()
-			srv, err := web.New(web.Options{Backend: backend, Mode: mode, TokenHash: tokenHash, LocalKey: localKey, AllowedHosts: allowedHosts(host, actual)})
+			srv, err := web.New(web.Options{Backend: backend, Mode: mode, TokenHash: tokenHash, LocalKey: localKey,
+				AllowedHosts: allowedHosts(host, actual), Bind: ln.Addr().String()})
 			if err != nil {
 				ln.Close()
 				backend.Close()

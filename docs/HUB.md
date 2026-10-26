@@ -53,6 +53,29 @@ The page is guarded against DNS rebinding and cross-site requests:
   through the guarded API. The one exception is the `log` frames of a run page, which
   carry the run log's text, already masked.
 
+## The page
+
+The button at the top right switches between dark and light (a sun while dark, a moon while
+light); the choice is kept in this browser (`localStorage` key `tq-hub-theme`). With no choice
+saved it follows the system, and is dark when the system states no preference.
+It needs no network: no web fonts, no CDN; Inter and JetBrains Mono are used when installed.
+
+| Page | What it is for |
+|---|---|
+| Board (`/`) | lanes with their cards; drag a card to move it. An agent-ready card that enters In progress starts a run; moving a running card out asks before cancelling the run. An orange edge means a run waits on you, with the action on the card. The box at the top filters cards by title (`/` focuses it). |
+| New card (button in the top bar, `+` on every planning lane) | title, body (markdown; a `budget:` front-matter line overrides the default budget), kind, lane, project folder, parent card (a card of kind `project`), tags, and the agent-ready switch. |
+| Card (`/cards/<id>`) | the body, a timeline of runs, rounds and decisions, the live log of an active run, the run's facts and budget bar, the tag editor (Enter or comma adds, × or Backspace removes; each change saves), comments (Ctrl+Enter posts), and any decision waiting on you. |
+| Decisions (`/waiting`) | every pending decision across the served workspaces, newest first, with the option buttons and a note; an over-budget stop shows the run's numbers, and its note takes new limits such as `rounds=6,usd=15`. |
+| Runs (`/runs`), run (`/runs/<id>`) | runs in flight and the 50 most recent; a run's rounds, log, facts and budget. |
+| Reviews (`/reviews`), review (`/cards/<id>/review`) | results waiting on your review and finished runs not yet closed; the review page opens with a verdict band built from the gate's records, and Approve / Request changes sit in a bar at the bottom. The exported review keeps the same look. |
+| Activity (`/activity`) | spend, runs ended, median wait on you, decisions answered and cost by kind for Today, 7 days or 30 days (`?days=1\|7\|30`), and the timeline by day, filtered by `?kind=runs\|decisions\|cards\|reviews`. |
+| Connections (`/connections`) | not available yet: board sync with Linear, Asana, Azure DevOps and Jira arrives in release 2 part B. The page shows what each will do and the planned lane mapping; it connects nothing. |
+| Settings (`/settings`) | what this hub serves (read-only), concurrency (1 to 16), the default budget per run, desktop notifications, and who can do what. Stop the hub with Ctrl+C in its terminal; the page has no stop button. |
+
+`POST /api/cards/<id>` edits a card (`title`, `body`, `project_dir`, `tags`); `GET` and
+`POST /api/settings` read and change the settings (`concurrency`, `default_budget`,
+`notify`). Both follow the same rules as the page.
+
 ## Cards, lanes, runs
 
 Lanes: `backlog`, `todo`, `in progress` (kind `active`), `review`, `done`. Kinds:
@@ -114,9 +137,11 @@ first, the hub notices on its next read and resumes.
 A `tq hub` command run with `TENTAQLES_HEADLESS=1`, `CLAUDE_PLUGIN_ROOT`, `CLAUDECODE=1` or
 `TQ_HUB_TASK` in its environment (or an API request with `X-TQ-Hub-Agent: 1`) counts as
 an agent session. It may add cards, but only into backlog or todo lanes (or lanes of kind
-`other`), comment, and move cards between those lanes. It never starts a run (`tq hub run`,
+`other`), comment, move cards between those lanes, and edit the tags of a card in one of
+those lanes. It never starts a run (`tq hub run`,
 a move into an active lane, or a card added straight into one), cancels one, answers a
-decision, approves, requests changes, moves a card to review or done, or sets a budget:
+decision, approves, requests changes, moves a card to review or done, edits a card's
+title, body or project folder, changes the hub's settings, or sets a budget:
 neither `--budget` nor a card body whose front matter has a `budget:` key is accepted from
 an agent. It cannot start `tq hub serve --bind` on a non-loopback address either (that
 hub's token must never reach an agent). The refusal tells you to run the command in your
