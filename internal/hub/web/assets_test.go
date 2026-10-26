@@ -117,7 +117,7 @@ func contrast(a, b [3]float64) float64 {
 
 // TestCSSTextContrast: body text, secondary and tertiary text on every surface, every pill, the
 // warm button and the log reach WCAG AA (4.5:1) in both themes. The primary button's gradient
-// runs from --blue-d to --pri-end; its white text reaches 4.5:1 at both stops.
+// runs from --pri-start to --pri-end; its white text reaches 4.5:1 at both stops.
 func TestCSSTextContrast(t *testing.T) {
 	css := readAsset(t, "static/hub.css")
 	themes := map[string]map[string]string{
@@ -133,7 +133,7 @@ func TestCSSTextContrast(t *testing.T) {
 		{"fg-3", "bg", 4.5}, {"fg-3", "s1", 4.5}, {"fg-3", "s2", 4.5}, {"fg-3", "s3", 4.5}, {"fg-3", "lane-bg", 4.5},
 		{"sky", "blue-soft", 4.5}, {"orange-t", "orange-soft", 4.5}, {"teal", "teal-soft", 4.5},
 		{"red", "red-soft", 4.5}, {"violet", "violet-soft", 4.5}, {"fg-2", "s3", 4.5},
-		{"on-warm", "orange", 4.5}, {"on-mark", "teal", 4.5}, {"on-pri", "blue-d", 4.5}, {"on-pri", "pri-end", 4.5},
+		{"on-warm", "orange", 4.5}, {"on-mark", "teal", 4.5}, {"on-pri", "blue-d", 4.5}, {"on-pri", "pri-start", 4.5}, {"on-pri", "pri-end", 4.5},
 		{"log-fg", "log-bg", 4.5}, {"log-k", "log-bg", 4.5}, {"log-ok", "log-bg", 4.5},
 	}
 	for theme, tok := range themes {

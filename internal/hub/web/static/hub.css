@@ -8,7 +8,7 @@
   --fg:#eef2f7; --fg-2:#b4bfcf; --fg-3:#8793a6; --line:#1c2638; --line-2:#28344a;
   --blue:#2196F3; --blue-d:#1565C0; --cyan:#26C6DA; --teal:#1DE9B6; --sky:#38BDF8; --orange:#F97316; --orange-t:#FDBA74; --red:#F87171; --violet:#C4B5FD;
   --blue-soft:#102842; --teal-soft:#0b2e2a; --orange-soft:#33200f; --red-soft:#331818; --violet-soft:#241c3c;
-  --on-pri:#ffffff; --pri-end:#1976D2; --on-warm:#0b0e13; --on-mark:#031018; --danger-line:#5a2525;
+  --on-pri:#ffffff; --pri-start:#0D47A1; --pri-end:#1976D2; --on-warm:#0b0e13; --on-mark:#031018; --danger-line:#5a2525;
   --lane-bg:#0a1220; --card-shadow:none; --scrim:rgba(2,8,16,.6);
   --log-bg:#020810; --log-line:#1c2638; --log-fg:#b4bfcf; --log-k:#8793a6; --log-ok:#1DE9B6;
   --focus:0 0 0 2px var(--bg),0 0 0 4px var(--blue);
@@ -22,7 +22,7 @@
   --fg:#0b1a2b; --fg-2:#334458; --fg-3:#5b6b80; --line:#dbe3ee; --line-2:#c3cfdf;
   --blue:#1565C0; --blue-d:#0D47A1; --cyan:#0e8a9c; --teal:#0a7a5a; --sky:#0b63b8; --orange:#F97316; --orange-t:#a34b08; --red:#b3261e; --violet:#5b3fc4;
   --blue-soft:#e3eefb; --teal-soft:#dcf3ea; --orange-soft:#fdeadb; --red-soft:#fbe4e2; --violet-soft:#ebe6fa;
-  --on-pri:#ffffff; --pri-end:#1976D2; --on-warm:#0b1a2b; --on-mark:#ffffff; --danger-line:#f1c9c6;
+  --on-pri:#ffffff; --pri-start:#0D47A1; --pri-end:#1976D2; --on-warm:#0b1a2b; --on-mark:#ffffff; --danger-line:#f1c9c6;
   --lane-bg:#eef3f9; --card-shadow:0 1px 2px rgba(11,26,43,.04); --scrim:rgba(11,26,43,.45);
   --log-bg:#0b1a2b; --log-line:#0b1a2b; --log-fg:#c9d4e3; --log-k:#8ea0b8; --log-ok:#1DE9B6;
   --focus:0 0 0 2px var(--bg),0 0 0 4px var(--blue);
@@ -33,7 +33,7 @@
   --fg:#0b1a2b; --fg-2:#334458; --fg-3:#5b6b80; --line:#dbe3ee; --line-2:#c3cfdf;
   --blue:#1565C0; --blue-d:#0D47A1; --cyan:#0e8a9c; --teal:#0a7a5a; --sky:#0b63b8; --orange:#F97316; --orange-t:#a34b08; --red:#b3261e; --violet:#5b3fc4;
   --blue-soft:#e3eefb; --teal-soft:#dcf3ea; --orange-soft:#fdeadb; --red-soft:#fbe4e2; --violet-soft:#ebe6fa;
-  --on-pri:#ffffff; --pri-end:#1976D2; --on-warm:#0b1a2b; --on-mark:#ffffff; --danger-line:#f1c9c6;
+  --on-pri:#ffffff; --pri-start:#0D47A1; --pri-end:#1976D2; --on-warm:#0b1a2b; --on-mark:#ffffff; --danger-line:#f1c9c6;
   --lane-bg:#eef3f9; --card-shadow:0 1px 2px rgba(11,26,43,.04); --scrim:rgba(11,26,43,.45);
   --log-bg:#0b1a2b; --log-line:#0b1a2b; --log-fg:#c9d4e3; --log-k:#8ea0b8; --log-ok:#1DE9B6;
   --focus:0 0 0 2px var(--bg),0 0 0 4px var(--blue);
@@ -48,6 +48,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--sans);-we
 a{color:inherit;text-decoration:none}
 .md a,.note a,.q a,.lead a{color:var(--sky);text-decoration:underline;text-underline-offset:2px}
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:var(--focus)}
+@media (forced-colors: active){:focus-visible{outline:2px solid CanvasText!important;outline-offset:2px}}
 ::selection{background:rgba(33,150,243,.35)}
 code,pre,kbd,.m,.mono{font-family:var(--mono)}
 code.m,.mono{font-size:12px}
@@ -102,7 +103,7 @@ kbd{font:12px var(--mono);border:1px solid var(--line-2);border-radius:4px;paddi
 .btn:hover{border-color:var(--sky)}
 .btn.sm{height:32px;padding:0 12px;font-size:12.5px}
 /* white text reaches 4.5:1 at both gradient stops; --blue stays the accent elsewhere */
-.btn.pri{background:linear-gradient(90deg,var(--blue-d),var(--pri-end));border-color:transparent;color:var(--on-pri)}
+.btn.pri{background:linear-gradient(90deg,var(--pri-start),var(--pri-end));border-color:transparent;color:var(--on-pri)}
 .btn.warm{background:var(--orange);border-color:var(--orange);color:var(--on-warm);font-weight:600}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--fg-2)}
 .btn.danger{color:var(--red);border-color:var(--red-soft);background:var(--red-soft)}

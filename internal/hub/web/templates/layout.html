@@ -24,15 +24,15 @@
   </nav>
   <div class="bottom">
     <nav class="nav" aria-label="Hub"><a href="/settings?ws={{.WS}}"{{if eq .Nav "settings"}} class="on" aria-current="page"{{end}}><svg class="i" aria-hidden="true"><use href="#i-gear"/></svg>Settings</a></nav>
-    <div class="foot">{{if .Bind}}serving <b>{{.Bind}}</b>{{else}}serving this machine{{end}}{{if .Concurrency}}<br>{{.Running}} of {{.Concurrency}} running{{end}}</div>
+    <div class="foot">{{if .Bind}}<span{{if allInterfaces .Bind}} title="listening on all interfaces"{{end}}>serving <b>{{.Bind}}</b></span>{{else}}serving this machine{{end}}{{if .Concurrency}}<br>{{.Running}} of {{.Concurrency}} running{{end}}</div>
   </div>
 </aside>
 <main>
   <div class="top">
     <h1>{{.Title}}</h1>
     {{if eq .Nav "board"}}<label class="search"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><input id="search" type="search" placeholder="Filter cards by title" aria-label="Filter cards by title" autocomplete="off"><kbd>/</kbd></label>{{else}}<span class="grow"></span>{{end}}
-    <a class="btn pri" href="#new-card" id="newcard"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New card</a>
-    <button class="btn icon" id="themebtn" type="button" aria-label="Switch theme" title="Switch theme"><svg class="i" aria-hidden="true"><use href="#i-sun"/></svg></button>
+    {{if .NewCard}}<a class="btn pri" href="#new-card" id="newcard"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New card</a>{{end}}
+    <button class="btn icon" id="themebtn" type="button" aria-label="Switch theme" title="Switch theme" hidden><svg class="i" aria-hidden="true"><use href="#i-sun"/></svg></button>
   </div>
   {{if .Flash}}<p class="flash" role="status">{{.Flash}}</p>{{end}}
   <div id="main">{{end}}
@@ -51,11 +51,11 @@
 {{define "wsswitch"}}{{if gt (len .Workspaces) 1}}
   <details class="ws">
     <summary><span>{{or .WS "all workspaces"}}<small>{{len .Workspaces}} workspaces, {{available .Workspaces}} available</small></span><svg class="i" aria-hidden="true"><use href="#i-chev"/></svg></summary>
-    <ul class="wslist">{{range .Workspaces}}<li>{{if .Available}}<a href="/?ws={{.Name}}"{{if eq .Name $.WS}} aria-current="true"{{end}}>{{.Name}}</a>{{else}}<span class="off">{{.Name}} (unavailable: {{.Reason}})</span>{{end}}</li>{{end}}</ul>
+    <ul class="wslist">{{range .Workspaces}}<li>{{if .Available}}<a href="{{$.SwitchPath}}?ws={{.Name}}"{{if eq .Name $.WS}} aria-current="true"{{end}}>{{.Name}}</a>{{else}}<span class="off">{{.Name}} (unavailable: {{.Reason}})</span>{{end}}</li>{{end}}</ul>
   </details>{{else}}
   <div class="ws"><div class="cur"><span>{{or .WS "no workspace"}}<small>{{if eq .Mode "all"}}every trusted workspace{{else}}this workspace{{end}}</small></span></div></div>{{end}}{{end}}
 
-{{define "brandmark"}}<svg class="mark" viewBox="0 0 60 52" role="img" aria-label="Tentaqles mark"><defs><linearGradient id="tq-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2E6FB5"/><stop offset="1" stop-color="#123C6E"/></linearGradient><linearGradient id="tq-tent" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1565C0"/><stop offset=".55" stop-color="#26C6DA"/><stop offset="1" stop-color="#F97316"/></linearGradient></defs><circle cx="24" cy="22" r="16" fill="none" stroke="url(#tq-ring)" stroke-width="8"/><path d="M26 30 C 30 42, 44 44, 50 36 C 54 31, 58 36, 55 40" fill="none" stroke="url(#tq-tent)" stroke-width="6" stroke-linecap="round"/></svg>{{end}}
+{{define "brandmark"}}<svg class="mark" viewBox="0 0 60 52" aria-hidden="true" focusable="false"><defs><linearGradient id="tq-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2E6FB5"/><stop offset="1" stop-color="#123C6E"/></linearGradient><linearGradient id="tq-tent" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1565C0"/><stop offset=".55" stop-color="#26C6DA"/><stop offset="1" stop-color="#F97316"/></linearGradient></defs><circle cx="24" cy="22" r="16" fill="none" stroke="url(#tq-ring)" stroke-width="8"/><path d="M26 30 C 30 42, 44 44, 50 36 C 54 31, 58 36, 55 40" fill="none" stroke="url(#tq-tent)" stroke-width="6" stroke-linecap="round"/></svg>{{end}}
 
 {{define "sprite"}}<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false"><defs>
   <symbol id="i-board" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="11" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/></symbol>

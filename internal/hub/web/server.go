@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -96,6 +97,7 @@ type page struct {
 	Running      int // runs running now in WS
 	Concurrency  int // WS's concurrency setting; 0 when no workspace resolved
 	Workspaces   []WorkspaceInfo
+	SwitchPath   string // where a workspace switcher link lands: this page, or the board for a card or run
 	WaitingCount int
 	Flash        string
 	NewCard      *newCardForm // the dialog's choices; nil when no workspace resolved
@@ -149,17 +151,38 @@ var funcs = template.FuncMap{
 		}
 		return m
 	},
-	"pill":        pillClass,
-	"statusLabel": statusLabel,
-	"laneTitle":   laneTitle,
-	"words":       words,
-	"optionLabel": optionLabel,
-	"pct":         pct,
-	"clock":       clock,
-	"ago":         ago,
-	"prnum":       prNum,
-	"available":   availableCount,
-	"planning":    planningLane,
+	"pill":          pillClass,
+	"statusLabel":   statusLabel,
+	"laneTitle":     laneTitle,
+	"words":         words,
+	"optionLabel":   optionLabel,
+	"pct":           pct,
+	"clock":         clock,
+	"ago":           ago,
+	"prnum":         prNum,
+	"available":     availableCount,
+	"planning":      planningLane,
+	"allInterfaces": allInterfaces,
+}
+
+// switchPages are the pages that exist in every workspace; card and run ids belong to one.
+var switchPages = map[string]bool{"/waiting": true, "/runs": true, "/reviews": true, "/activity": true, "/connections": true, "/settings": true}
+
+func switchPath(path string) string {
+	if switchPages[path] {
+		return path
+	}
+	return "/"
+}
+
+// allInterfaces: the hub listens on a wildcard address (0.0.0.0, ::, or no host).
+func allInterfaces(bind string) bool {
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		host = bind
+	}
+	ip := net.ParseIP(host)
+	return host == "" || (ip != nil && ip.IsUnspecified())
 }
 
 // Templates parses every embedded template once; RenderReview (Task 11) uses it too.
@@ -303,7 +326,7 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 
 func (s *Server) basePage(r *http.Request, title, ws string) page {
 	p := page{Title: title, WS: ws, Mode: s.opts.Mode, Bind: s.opts.Bind, Workspaces: s.opts.Backend.Workspaces(),
-		Flash: flashes[r.URL.Query().Get("flash")]}
+		SwitchPath: switchPath(r.URL.Path), Flash: flashes[r.URL.Query().Get("flash")]}
 	if ws != "" {
 		if svc, err := s.opts.Backend.Service(ws); err == nil {
 			st := svc.Store()
