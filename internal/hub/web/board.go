@@ -23,11 +23,13 @@ type laneView struct {
 
 type boardData struct {
 	Lanes []laneView
+	All   []store.Lane // every lane, in order: each tile's Move menu lists them
 }
 
 type tileData struct {
-	WS   string
-	Card boardCard
+	WS    string
+	Card  boardCard
+	Lanes []store.Lane
 }
 
 // boardCard is everything one board tile shows; the board and the tile route build it the same way.
@@ -191,7 +193,7 @@ func (s *Server) board(w http.ResponseWriter, r *http.Request) {
 	}
 	allDone := r.URL.Query().Get("done") == "all"
 	shown := make([][]store.Card, len(lanes))
-	data := boardData{Lanes: make([]laneView, len(lanes))}
+	data := boardData{All: lanes, Lanes: make([]laneView, len(lanes))}
 	var ids, prIDs []string
 	for i, l := range lanes {
 		data.Lanes[i].Lane = l
@@ -259,6 +261,11 @@ func (s *Server) cardTile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	lanes, err := svc.Store().Lanes()
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	var pending []store.Decision
 	for _, dec := range d.Decisions {
 		if dec.Status == store.DecisionPending {
@@ -271,7 +278,7 @@ func (s *Server) cardTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tpl.ExecuteTemplate(w, "board-card", tileData{WS: ws, Card: bc}); err != nil {
+	if err := s.tpl.ExecuteTemplate(w, "board-card", tileData{WS: ws, Card: bc, Lanes: lanes}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
