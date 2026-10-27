@@ -242,7 +242,7 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:session-wrap` | End-of-session save: summary, decisions, pending items, corrections |
 | `/tentaqles:wrap` | End-of-day wrap: what landed (git/gh), open PRs + CI state, memory via session-wrap, a daily note |
 | `/tentaqles:ship` | Working tree → PR: identity, branch, `tq decide triage` review depth, tests, commit, `gh pr create` |
-| `/tentaqles:babysit-pr` | Loop a PR to green: watch checks, fix failures from logs, answer review threads; never `--admin` |
+| `/tentaqles:babysit-pr` | Loop a PR to green: watch checks, fix failures from logs, answer review threads, record a new project's first ratchet baseline from CI's own measurement; never `--admin` |
 | `/tentaqles:n8n-triage` | Diagnose a failing n8n workflow read-only, fix a draft copy, promote only with confirmation |
 | `/tentaqles:build-graph` | Build the knowledge graph for the current workspace + embed nodes |
 | `/tentaqles:query-memory` | Full-text, recency-weighted search over memory, plus knowledge graphs |
@@ -264,7 +264,7 @@ Stack-aware guidance that triggers on the work itself (no workspace state needed
 |-------|-------------|
 | `/tentaqles:db-migration` | Safe schema changes for Postgres/Supabase and SQL Server: expand/contract, lock-safe DDL, up/down, pre-flight and rollback plan |
 | `/tentaqles:index-advisor` | Read EXPLAIN / execution plans, find missing FK, unused and duplicate indexes, output lock-safe DDL plus how to verify it |
-| `/tentaqles:ci-pipeline` | GitHub Actions templates (Node/TS, Python, Go) with pinned SHAs and a ratchet quality gate (`baseline.json` never gets worse) |
+| `/tentaqles:ci-pipeline` | GitHub Actions templates (Node/TS, Python, Go) with pinned SHAs and a ratchet quality gate (`baseline.json` never gets worse; a metric not measured yet is `null` until CI's first measurement is recorded) and a gitleaks `secrets` job |
 | `/tentaqles:auth-security` | IdP vs own auth, argon2id, sessions vs JWT, refresh rotation, CSRF, rate limits, MFA, RLS, secrets, ASVS-style checklist |
 | `/tentaqles:system-design-review` | Review a design/RFC across SLOs, data, failure modes, idempotency, observability, security, cost, rollback; ranked findings |
 | `/tentaqles:grill-me` | Interview the user on every business-rule branch before coding; write the spec and a "verifier first" test list |
@@ -277,14 +277,14 @@ Stack-aware guidance that triggers on the work itself (no workspace state needed
 | `/tentaqles:feature` | Add a feature from a PRD requirement (adds its own FR when missing): grill-me interview, spec slice, gated build, definition of done |
 | `/tentaqles:fix` | Fix a bug reproduce-first: locked failing regression test, root cause, smallest change, risk-sized review (`--hotfix` skips the critic, never the test) |
 | `/tentaqles:direction` | Read-only drift audit against the PRD: grades each requirement Aligned/Partial/Missing/Contradicted and returns ON COURSE, DRIFTING or OFF COURSE |
-| `/tentaqles:dod` | Run the definition of done for a build (`build-gate dod`) and turn MISSING items into work; a waiver is human-only (`--override`, run by you in a terminal) |
+| `/tentaqles:dod` | Run the definition of done for a build (`build-gate dod`) and turn MISSING items into work; a waiver is human-only (`--override`, run by you in a terminal, or the override answer on the hub card in a hub run); fails on PRD §10 decisions the build opened and left open |
 | `/tentaqles:threat-model` | Write or update `docs/threat-model.md`: STRIDE per trust boundary from the PRD and the code; unmitigated high-risk rows become requirements or open decisions; only you accept a risk |
 | `/tentaqles:classify-data` | Classify the data a project handles: manifest `data:` block, `docs/privacy.md` (purpose, legal basis, retention) and `docs/incident-playbook.md` |
 | `/tentaqles:privacy-review` | Run the `privacy-reviewer` (LGPD/GDPR) on a diff that touches classified data and turn its findings into fixes and privacy-record updates |
 | `/tentaqles:supply-chain` | Pin actions to SHAs, least-privilege workflow permissions, lockfile-only installs, dependency audit, SBOM on release, secret scanning; extends `ci-pipeline` |
 | `/tentaqles:llm-security-review` | Run the `llm-security-reviewer` on a diff that adds LLM calls, prompts, agent tools, MCP servers, RAG or hooks, against OWASP LLM 2025 and Agentic 2026 |
 | `/tentaqles:loop` | Overnight Karpathy-style loop on one feature: approve locked checks by day; at night a runner keeps or undoes one headless round at a time in a worktree, under dollar/token/time/round budgets with MCP and network off; morning summary + signal |
-| `/tentaqles:hub` | See what `tq hub` runs are waiting on, in plain language, add or show cards; prints the `tq hub answer` line for you (answering is yours) |
+| `/tentaqles:hub` | See what `tq hub` runs are waiting on, in plain language, add or show cards; prints the `tq hub answer` line for you (answering is yours); explains the hub's own question when a run stopped before its build existed |
 
 ## Hooks
 
