@@ -11,12 +11,15 @@ with `build-gate answer`. Nothing leaves the machine.
 ```powershell
 cd C:\work\acme                       # a trusted workspace
 tq hub add "Export invoices" --kind feature --tag agent-ready --project apps/billing --body "CSV per month."
-tq hub serve                          # http://127.0.0.1:7470/
+tq hub serve                          # http://127.0.0.1:7470/  (in its own terminal, see below)
 tq hub move c-xxxxxxxxxxxx "in progress"   # an agent-ready card in an active lane starts a run
 tq hub list --waiting                 # what the run waits on
 tq hub answer c-xxxxxxxxxxxx d1a2b3c4 --choice approve
 tq hub review c-xxxxxxxxxxxx --open   # evidence from the gate's records; Approve or Request changes
 ```
+
+Run `tq hub serve` in your own terminal, not as an agent's background task: a Claude Code
+session can reap its background tasks when memory runs low, and the hub goes with it.
 
 ## One workspace or all of them
 
@@ -82,7 +85,12 @@ Lanes: `backlog`, `todo`, `in progress` (kind `active`), `review`, `done`. Kinds
 `project` → `/tentaqles:kickoff`, `feature` / `analysis` / `chore` → `/tentaqles:feature`,
 `fix` → `/tentaqles:fix`, `hotfix` → `/tentaqles:fix --hotfix` (only this kind). The
 prompt is the card's title and body; context comes from the project's `CLAUDE.md`, PRD
-and skills. A run starts when an `agent-ready` card enters an active lane (moved there, or added
+and skills. Once the build plan exists, the prompt is `/tentaqles:build resume <slug> --headless`.
+Every prompt, on-ramp or resume, ends with the human's card comments posted since the
+run's previous round (the start of the latest round of any run on the card; every
+comment when the card has none yet), under "Notes from the human on this card": only
+human comments, never agent or system ones, the newest 5, each cut to 2,000 characters.
+So a comment you post on the card reaches the next round. A run starts when an `agent-ready` card enters an active lane (moved there, or added
 there by a human), on
 `tq hub run <card>`, or when an answer resumes it. Wakeups coalesce; a card is checked
 out by one run at a time.
@@ -109,7 +117,10 @@ accepted only for a folder inside the workspace root or the build's sibling work
 relocate loop. After each round
 the hub reads `build-gate state <slug> --json`: pending decisions → `waiting`; a halted
 or rolled-back build → `failed`; a non-zero exit with no progress → one retry after two
-minutes; anything else that ends without a stop → `failed` with the transcript tail.
+minutes; a round that exits 0 with a final message before any build slug exists (the
+feature, kickoff or fix step-1 stops, which have no gate record to write) → `waiting` on a
+hub `question` (see Decisions); anything else that ends without a stop → `failed` with
+the transcript tail.
 
 Before every round, first or resumed, the hub re-checks at zero cost that the workspace
 is still trusted (a skill that edits the manifest changes its hash), that the run's folder
@@ -156,7 +167,22 @@ reports neither, the round is marked "cost unknown" and only rounds and minutes 
 The hub mirrors the gate's decision records (`plan-approval`, `result`, `judge`,
 `question`) and adds its own `permission` kind (a refused tool: `allow-once`; a budget
 stop: `raise-and-resume`; a held run (untrusted, folder, git, usage limit): `resume`,
-which requeues the same run). Answering from the hub mints a hub actor token
+which requeues the same run).
+
+| Kind | Owner | Asked when | Options |
+|---|---|---|---|
+| `plan-approval`, `result`, `judge`, `question` | the gate (mirrored) | the skill wrote a decision record | the record's own |
+| `permission` | the hub | a refused tool, a budget stop, a held run | `allow-once` / `raise-and-resume` / `resume`, and `stop` |
+| `question` | the hub | a round exited 0 with a final message and no build slug yet | `answer`, `stop` |
+
+The hub's own `question` carries the agent's final message as its text and shows on
+`/waiting` and the card like any other decision (the card gets the orange edge).
+`answer` needs a note: it is posted as your comment on the card and the same run goes
+back to the queue, continuing its session, so the next prompt carries your answer under
+"Notes from the human on this card". `stop` ends the run as cancelled. A round that ends
+without a stop after a slug exists still fails, and a non-zero exit still retries once.
+
+Answering a gate decision from the hub mints a hub actor token
 (HMAC-SHA256 with the gate key, actor `hub:<your user>`) for one `build-gate answer` call;
 the gate validates it and applies the consequence. The hub never calls `approve`,
 `finish`, `judge`, `dod --override` or `unlock-tests`. If you answered in the terminal
@@ -175,7 +201,9 @@ title, body or project folder, changes the hub's settings, or sets a budget:
 neither `--budget` nor a card body whose front matter has a `budget:` key is accepted from
 an agent. It cannot start `tq hub serve --bind` on a non-loopback address either (that
 hub's token must never reach an agent). The refusal tells you to run the command in your
-own terminal or use the page.
+own terminal or use the page. A comment from an agent session is always stored as an
+agent comment, never a human one, so it never reaches a run's prompt as the human's
+notes; only a human answers the hub's `question`.
 
 Runs launch with their own workspace's environment only: whatever the shell hook set for
 another workspace (recorded in `__TQ_STATE`) is undone and every provider config variable
