@@ -192,7 +192,10 @@ as wrong-cloud, and the block message names the allowed set ("azure + aws").
 Only the trusted manifest (pinned by `tq allow`) can add clouds; a manifest
 file in a repo cannot. Each extra cloud also gets its own private config home
 under `~/.tentaqles/identities/<workspace>/`, so its login stays apart from
-other clients.
+other clients; if the manifest has an `identities:` block that does not list
+that cloud's identity (`az`, `aws`, `gcloud`, `doctl`), tq adds it implicitly.
+`cloud.also` needs a real `cloud.provider` (not missing or `none`), and a name
+listed twice is a load error.
 
 ### Temporal memory
 

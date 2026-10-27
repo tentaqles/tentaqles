@@ -168,8 +168,13 @@ cloud:
 `also` must be a list. Accepted names are `azure`, `aws`, `gcp` and
 `digitalocean`; the aliases `az`, `gcloud`, `do` and `doctl` work in both
 `provider` and `also`. An unknown name, a scalar (`also: aws`) or the primary
-cloud repeated is a load error. Each extra cloud (`digitalocean` via `doctl`)
-gets its own private config home under `~/.tentaqles/identities/<ws>/`. See
+cloud repeated is a load error, as is a repeat within `also`, or `also` with no
+real `cloud.provider` (missing or `none`); `cloud.provider` itself must be one
+of the names above or `none`. Each extra cloud (`digitalocean` via `doctl`)
+gets its own private config home under `~/.tentaqles/identities/<ws>/`. If the
+manifest has an `identities:` block that does not list that cloud's identity
+(`az`, `aws`, `gcloud`, `doctl`), tq adds it implicitly, so the extra cloud is
+never left on the shared default config. See
 [CLAUDE-HOOK.md](CLAUDE-HOOK.md) for the guard rules.
 
 ## Data classification

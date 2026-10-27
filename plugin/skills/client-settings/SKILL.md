@@ -87,7 +87,9 @@ workspace may use. It must be a YAML list of names from `azure`, `aws`, `gcp`, `
 scalar, an unknown name or the primary cloud repeated makes the manifest fail
 to load. `digitalocean` maps to the `doctl` identity. Other cloud CLIs stay blocked as wrong-cloud. Each listed
 cloud gets its own private CLI config home under
-`~/.tentaqles/identities/<workspace>/`. Editing `cloud.also` changes the
+`~/.tentaqles/identities/<workspace>/` (added implicitly when the manifest's
+`identities:` block does not list it). `cloud.also` needs a real
+`cloud.provider` (not missing or `none`) and no repeated names. Editing `cloud.also` changes the
 manifest hash, so after the edit ask the user to run `tq allow <name>` in
 their terminal; until then the new cloud stays blocked. Only the trusted
 manifest counts; a repo-level manifest cannot add clouds.

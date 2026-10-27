@@ -247,6 +247,11 @@ identities:
 GitHub, `glab` for GitLab), so a workspace on Azure DevOps whose
 `expected_user` is an email address is not compared against a GitHub username.
 
+The AWS check runs `aws sts get-caller-identity` against the default profile
+(or `AWS_PROFILE` if set), and `expected_account` is the 12-digit account id. A
+setup from `aws configure sso` that only created a named profile reads as
+logged out until `AWS_PROFILE` points at it.
+
 **What it costs.** These checks run the CLI's own status command, which takes
 hundreds of milliseconds and sometimes a network call. So the default
 (`--verify auto`) only runs one where it can answer a question you actually
