@@ -397,7 +397,7 @@ def cmd_compare(args) -> int:
     md = render_markdown(rows, failed)
     unmeasured = [r["metric"] for r in rows if r["status"] == "unmeasured"]
     if unmeasured:
-        md += (f"unmeasured: {', '.join(unmeasured)} — record CI's measurement with: "
+        md += (f"unmeasured: {', '.join(unmeasured)} - record CI's measurement with: "
                f"ratchet.py compare --update --baseline {args.baseline} --current current.json\n")
     sys.stdout.write(md)
     if args.summary:

@@ -73,15 +73,18 @@ A new project's `baseline.json` can hold `"value": null` (unmeasured, see
 `/tentaqles:ci-pipeline`). The `quality` job passes and prints a line
 `unmeasured: <names> ...` in its log and step summary. When it does, record
 CI's own measurement so the gate binds from now on. Find the run for the
-current head and read its report:
+current head, wait until it has completed (`conclusion` is not empty; an
+in-progress run has no artifact yet), and read its report. Compare first, and
+run `--update` only when that compare exits 0 with nothing regressed:
 
 ```bash
-gh run list --branch <headRefName> --commit <headRefOid> --workflow ci --json databaseId,conclusion
+gh run list --branch <headRefName> --commit <headRefOid> --workflow ci --json databaseId,status,conclusion
 d="$(mktemp -d)"; gh run download <run-id> -n quality-reports -D "$d"
+python .github/quality/ratchet.py compare --baseline .github/quality/baseline.json --current "$d/current.json"
 python .github/quality/ratchet.py compare --baseline .github/quality/baseline.json --current "$d/current.json" --update
 ```
 
-Do this only when that compare exits 0 with nothing regressed; `--update`
+`--update`
 then fills only the null metrics and tightens improved ones, and never loosens
 a numeric value. If it exits 1, treat it as a normal failure (step 2). If the
 baseline file changed, commit just that path and push:

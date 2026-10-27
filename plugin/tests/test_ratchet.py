@@ -266,7 +266,7 @@ def test_unmeasured_names_and_record_command_in_stdout_and_summary(ratchet, tmp_
     summary = tmp_path / "summary.md"
     assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur),
                 "--summary", str(summary)) == 0
-    expected = (f"unmeasured: coverage_pct, duplication_pct — record CI's measurement with: "
+    expected = (f"unmeasured: coverage_pct, duplication_pct - record CI's measurement with: "
                 f"ratchet.py compare --update --baseline {base} --current current.json")
     assert expected in capsys.readouterr().out.splitlines()
     assert expected in summary.read_text(encoding="utf-8").splitlines()
