@@ -82,6 +82,31 @@ func TestHubOwnedDecisions(t *testing.T) {
 	}
 }
 
+// TestHubQuestion: the hub's own question (a run that stopped before a build slug existed) is a
+// question decision the hub owns; a question mirrored from the gate is not.
+func TestHubQuestion(t *testing.T) {
+	isolate(t)
+	s := mustOpen(t, "acme")
+	c, _ := s.AddCard(NewCard{Title: "a"}, "tester")
+	d, err := s.AskHubQuestion(c.ID, "r-x", "Monthly or weekly?")
+	if err != nil || !ValidID("d", d.ID) || d.Kind != KindQuestion || !d.HubOwned() || d.Slug != "" ||
+		strings.Join(d.Options, ",") != "answer,stop" || d.Text != "Monthly or weekly?" {
+		t.Fatalf("%+v %v", d, err)
+	}
+	s.UpsertDecision(Decision{ID: "d7a7a7a7", CardID: c.ID, RunID: "r-x", Slug: "demo", Kind: KindQuestion, Text: "q", Options: []string{"a", "b"}})
+	g, _ := s.Decision("d7a7a7a7")
+	if g.HubOwned() {
+		t.Fatal("a gate question is answered through the gate")
+	}
+	if _, err := s.AnswerHub(g.ID, "a", "", "tester"); err == nil {
+		t.Fatal("a gate question cannot be answered as a hub decision")
+	}
+	got, err := s.AnswerHub(d.ID, "answer", "monthly", "tester")
+	if err != nil || got.Status != DecisionAnswered || got.Note != "monthly" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
 func TestActorKind(t *testing.T) {
 	for in, want := range map[string]string{"hub:tester": "hub", "terminal": "terminal", "tester": "other", "": "other"} {
 		if got := ActorKind(in); got != want {
