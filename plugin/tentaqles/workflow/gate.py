@@ -2264,8 +2264,15 @@ def stop_problems(root: Path, slug: str, th: TreeHash) -> list[str]:
         if all((by_id.get(f) or {}).get("status") == "passed" for f in frozen):
             ok, why = dod_fresh(root, slug, th)
             if not ok:
-                problems.append(f"definition of done not proven ({why}): run `build-gate dod {slug}` and fix what it lists, "
-                                f"or, if it cannot be fixed, ask the human to run `build-gate dod {slug} --override \"<their reason>\"` in their own terminal (you never run it)")
+                if os.environ.get("TENTAQLES_HEADLESS") == "1":
+                    # Headless: nobody is at a terminal; the stop goes to the human as a decision.
+                    fallback = (f"or, if it cannot be fixed, write `build-gate ask {slug} --kind question --text \"override: <the MISSING items and why>\" "
+                                "--options override,stop` and end the turn; the human answers it on the hub card (/waiting) and the hub "
+                                "resumes the run (without a hub, whoever launched the run answers it). Never name a command for the human to run")
+                else:
+                    fallback = (f"or, if it cannot be fixed, ask the human to run `build-gate dod {slug} --override \"<their reason>\"` "
+                                "in their own terminal (you never run it)")
+                problems.append(f"definition of done not proven ({why}): run `build-gate dod {slug}` and fix what it lists, {fallback}")
     return problems
 
 
