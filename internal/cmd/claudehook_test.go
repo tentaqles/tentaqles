@@ -430,3 +430,19 @@ func TestGHEnv_DropsKeysCaseInsensitively(t *testing.T) {
 		t.Fatalf("env=%v", got)
 	}
 }
+
+// cloud.also names are normalised like cloud.provider: gcloud is gcp.
+func TestPreToolUse_CloudAlsoAliasAndPrimaryAlias(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "cloud:\n  provider: azure\n  also: [gcloud]\n")
+	for cmd, want := range map[string]int{"gcloud projects list": 0, "az account show": 0, "aws s3 ls": 2} {
+		if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, cmd)); code != want {
+			t.Fatalf("%q: code=%d want %d out=%s", cmd, code, want, out)
+		}
+	}
+	ws = setupTrustedWorkspaceWithManifest(t, "acme2", "cloud:\n  provider: gcloud\n")
+	for cmd, want := range map[string]int{"gcloud projects list": 0, "gsutil ls": 0, "az account show": 2} {
+		if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, cmd)); code != want {
+			t.Fatalf("%q: code=%d want %d out=%s", cmd, code, want, out)
+		}
+	}
+}

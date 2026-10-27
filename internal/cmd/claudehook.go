@@ -16,6 +16,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/guard"
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -420,8 +421,10 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 	m := ws.Manifest
 	in.Client = m.Client
 	in.ExpectedEmail = strings.TrimSpace(m.Git.Email)
-	in.CloudProvider = strings.ToLower(strings.TrimSpace(cloudString(m.Cloud, "provider")))
-	in.ExtraClouds = cloudStrings(m.Cloud, "also")
+	in.CloudProvider = manifest.CloudProviderName(cloudString(m.Cloud, "provider"))
+	for _, x := range cloudStrings(m.Cloud, "also") {
+		in.ExtraClouds = append(in.ExtraClouds, manifest.CloudProviderName(x))
+	}
 	in.Blocked = effectiveBlocked(ws)
 
 	expectedGH := strings.TrimSpace(m.Git.User)
