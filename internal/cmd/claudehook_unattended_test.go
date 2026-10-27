@@ -10,6 +10,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/guardlog"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -160,5 +161,91 @@ func TestSessionStartShowsUnattended(t *testing.T) {
 	code, out, _ := runHook(t, []string{"claude-hook", "session-start"}, hookPayloadFor(t, proj, ""))
 	if code != 0 || !strings.Contains(out, "Unattended: on") {
 		t.Fatalf("code %d out %q", code, out)
+	}
+}
+
+func modeToolPayload(t *testing.T, cwd, tool, input, mode string) string {
+	t.Helper()
+	return strings.TrimSuffix(toolPayload(t, cwd, tool, input), "}") + `,"permission_mode":` + jsonPath(t, mode) + `}`
+}
+
+func writeMigration(t *testing.T, dir string) string {
+	t.Helper()
+	d := filepath.Join(dir, "supabase", "migrations")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(d, "0001.sql")
+	if err := os.WriteFile(p, []byte("create table t (id int);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestUnattendedFileTargetMustBeCovered(t *testing.T) {
+	root, proj := unattendedWS(t, unattendedProject, true)
+	outside := writeMigration(t, filepath.Join(root, "app"))
+	inside := writeMigration(t, proj)
+	edit := func(p string) string {
+		return `{"file_path":` + jsonPath(t, p) + `,"old_string":"int","new_string":"bigint"}`
+	}
+	rel, err := filepath.Rel(proj, outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{outside, rel} {
+		for _, tool := range []string{"Edit", "Write"} {
+			_, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, modeToolPayload(t, proj, tool, edit(p), "bypassPermissions"))
+			if !strings.Contains(askReason(t, out), "tq/migration-edit") {
+				t.Fatalf("%s %s outside demo-todo: want ask, got %q", tool, p, out)
+			}
+		}
+	}
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, modeToolPayload(t, proj, "Edit", edit(inside), "bypassPermissions"))
+	if code != 0 || strings.TrimSpace(out) != "" {
+		t.Fatalf("inside demo-todo: want silent allow, got code %d out %q", code, out)
+	}
+}
+
+func askDecision(id string) policy.Decision {
+	return policy.Decision{Action: policy.Ask, Matched: []*policy.Rule{{ID: id, Action: policy.Ask}}}
+}
+
+func TestUnattendedSkipNeedsTrustedWorkspace(t *testing.T) {
+	root, proj := unattendedWS(t, "guard:\n  unattended:\n    workspace: true\n", true)
+	ws := wsFor(t, root)
+	call := policy.ToolCall{Tool: "Bash", Command: "git push --force origin feat/x"}
+	if !unattendedSkip(ws, proj, "auto", call, askDecision("tq/force-push")) {
+		t.Fatal("trusted + bypass must skip")
+	}
+	// Bypass marker left behind but the manifest is no longer trusted.
+	if err := trust.Deny(ws.Hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := trust.AllowBypass(ws.Hash); err != nil {
+		t.Fatal(err)
+	}
+	if unattendedSkip(ws, proj, "auto", call, askDecision("tq/force-push")) {
+		t.Fatal("an untrusted workspace must never skip")
+	}
+}
+
+func TestUnattendedSkipAuditsMCPContent(t *testing.T) {
+	root, proj := unattendedWS(t, "guard:\n  unattended:\n    workspace: true\n", true)
+	ws := wsFor(t, root)
+	call := policy.ToolCall{Tool: "mcp__postgres__query", Content: `{"sql":"DELETE FROM orders WHERE id=1"}`}
+	if !unattendedSkip(ws, proj, "auto", call, askDecision("tq/mcp-sql-write")) {
+		t.Fatal("want skip")
+	}
+	recs := guardlog.Read("acme", time.Now().Add(-time.Minute), 0)
+	if len(recs) != 1 || !strings.Contains(recs[0].Command, "DELETE FROM orders") {
+		t.Fatalf("audit records = %+v", recs)
+	}
+}
+
+func TestUnattendedLineWorkspaceNotThisFolder(t *testing.T) {
+	root, _ := unattendedWS(t, "guard:\n  unattended:\n    workspace: true\n", true)
+	if got, want := unattendedLine(wsFor(t, root), t.TempDir(), time.Now()), "Unattended: on for the workspace (not this folder)"; got != want {
+		t.Fatalf("got %q", got)
 	}
 }

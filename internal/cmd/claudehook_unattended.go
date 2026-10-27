@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,12 +17,23 @@ import (
 // workspace runs this folder unattended in a bypass or auto session, and
 // records the skip. Deny decisions never reach it.
 func unattendedSkip(ws *resolve.Workspace, cwd, mode string, call policy.ToolCall, d policy.Decision) bool {
-	if ws == nil || ws.Manifest == nil || d.Action != policy.Ask {
+	if ws == nil || ws.Manifest == nil || d.Action != policy.Ask || !trust.IsTrusted(ws.Hash) {
 		return false
 	}
 	on, scope := guardcfg.Unattended(ws.Manifest, ws.Root, cwd, mode, trust.IsBypassAllowed(ws.Hash))
 	if !on {
 		return false
+	}
+	// A file tool may reach outside the covered folder: its target must be
+	// covered too. Bash and MCP calls stay judged by the session cwd.
+	if call.Path != "" {
+		abs := call.Path
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(cwd, abs)
+		}
+		if ok, _ := guardcfg.Covers(ws.Manifest, ws.Root, filepath.Dir(abs)); !ok {
+			return false
+		}
 	}
 	ids := make([]string, 0, len(d.Matched))
 	for _, r := range d.Matched {
@@ -33,6 +45,9 @@ func unattendedSkip(ws *resolve.Workspace, cwd, mode string, call policy.ToolCal
 	subject := call.Command
 	if subject == "" {
 		subject = call.Path
+	}
+	if subject == "" {
+		subject = call.Content // MCP/Agent input: masked and truncated by Append
 	}
 	guardlog.Append(guardlog.Record{WS: ws.Name, Scope: scope, Mode: mode, Rules: ids, Tool: call.Tool, Command: subject}, ws.Manifest.Data.Classes)
 	return true
@@ -50,7 +65,11 @@ func unattendedLine(ws *resolve.Workspace, cwd string, now time.Time) string {
 	}
 	on, scope := guardcfg.Covers(ws.Manifest, ws.Root, cwd)
 	if !on {
-		return "Unattended: on for " + strings.Join(u.Projects, ", ") + " (not this folder)"
+		what := strings.Join(u.Projects, ", ")
+		if u.Workspace {
+			what = "the workspace"
+		}
+		return "Unattended: on for " + what + " (not this folder)"
 	}
 	n := len(guardlog.Read(ws.Name, now.Add(-24*time.Hour), 1<<20))
 	noun := "confirms"
