@@ -15,7 +15,9 @@ did not read the code that implements an FR, you do not grade it: it goes under
 Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
 `$ARGUMENTS`, `AskUserQuestion` is never called. Direction has no build run of
 its own, so there is no slug to write a decision record under: report the verdict as your final output and end the turn (which `prd_exit` you got, what
-is missing, the next command such as `/tentaqles:prd`). Use
+is missing, the next step such as a PRD; when `TQ_HUB_TASK` is set, say the
+human answers on the hub card (`/waiting`) and never name a command for them
+to run, as the build skill's "What headless output tells the human" says). Use
 `build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
 only when the caller passed the slug of an active build run (the first
 argument, when it is not an `FR-nn` id, is that build slug: kickoff calls

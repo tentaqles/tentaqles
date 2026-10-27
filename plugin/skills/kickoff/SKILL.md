@@ -17,7 +17,12 @@ the guardrails) a human stop or an unanswerable question is reported as your
 final output and the turn ends. Once the build plan for the slug exists, every
 human stop is a decision record written with `build-gate ask <slug>` exactly as
 `skills/build/SKILL.md` ("Headless mode") describes, and the turn ends; the
-`build-gate` prefix is defined there too.
+`build-gate` prefix is defined there too. Headless output never tells the human
+to run a terminal command or to re-run this skill (the build skill, "What
+headless output tells the human"): when `TQ_HUB_TASK` is set, end with the
+question itself and say the answer goes on the hub card (`/waiting`). The hub
+resumes this run with the answer in the prompt, under "Notes from the human on
+this card". (`tq allow` stays the human's own command: no hub answer replaces it.)
 
 Headless never edits `.tentaqles.yaml` (not here, not in any skill kickoff runs):
 a manifest change moves its trust hash and every later round is blocked until a
