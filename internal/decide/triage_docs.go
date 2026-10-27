@@ -1,7 +1,9 @@
 package decide
 
 import (
+	"math"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/secrets"
@@ -13,10 +15,11 @@ import (
 // secret-shaped value, that flag is dropped. Code, config and workflow files,
 // mixed diffs and truncated diffs keep today's behaviour.
 
-var docExts = map[string]bool{".md": true, ".rst": true, ".txt": true}
+var docExts = map[string]bool{".md": true, ".rst": true}
 
 // isDocPath reports whether a repo-relative path is documentation:
-// *.md, *.rst, *.txt, or anything under a docs/ directory at the repo root.
+// *.md and *.rst anywhere, or anything under the top-level docs/ directory
+// (so docs/notes.txt counts; requirements.txt and CMakeLists.txt do not).
 func isDocPath(p string) bool {
 	p = strings.TrimPrefix(strings.ReplaceAll(p, "\\", "/"), "./")
 	if docExts[strings.ToLower(path.Ext(p))] {
@@ -47,9 +50,10 @@ func diffPath(v, prefix string) string {
 // parseDiff splits a unified diff into files. Paths come from the ---/+++
 // and rename headers, never from the "diff --git" line (a name may hold
 // " b/"). Added lines are only collected inside hunks, so a line whose
-// content starts with "++" is still seen.
-func parseDiff(diff string) []fileSec {
-	var out []fileSec
+// content starts with "++" is still seen. odd is true when the diff holds
+// a section this parser does not understand (a combined or conflict diff
+// such as "diff --cc", or an "* Unmerged path" line).
+func parseDiff(diff string) (files []fileSec, odd bool) {
 	var cur *fileSec
 	var minus, plus, renameTo string
 	var inHunk bool
@@ -67,9 +71,13 @@ func parseDiff(diff string) []fileSec {
 		case minus != "":
 			cur.path, cur.ok = minus, true // deleted file (+++ /dev/null)
 		}
-		out = append(out, *cur)
+		files = append(files, *cur)
 	}
 	for _, l := range strings.Split(diff, "\n") {
+		// Hunk body lines start with ' ', '+', '-' or '\', never 'd' or '*'.
+		if strings.HasPrefix(l, "* Unmerged path") || (strings.HasPrefix(l, "diff ") && !strings.HasPrefix(l, "diff --git ")) {
+			odd = true
+		}
 		if strings.HasPrefix(l, "diff --git ") {
 			flush()
 			cur = &fileSec{}
@@ -97,22 +105,36 @@ func parseDiff(diff string) []fileSec {
 		}
 	}
 	flush()
-	return out
+	return files, odd
 }
 
 // docsOnlyNoSecrets is true when the diff touches only documentation files
-// and none of its added lines is secret-shaped.
-func docsOnlyNoSecrets(diff string) bool {
-	files := parseDiff(diff)
-	if len(files) == 0 {
+// and none of its added lines is secret-shaped. When names (the changed-file
+// list) is non-nil, every name must also have been parsed as a file here.
+func docsOnlyNoSecrets(diff string, names []string) bool {
+	files, odd := parseDiff(diff)
+	if odd || len(files) == 0 {
 		return false
+	}
+	if names != nil {
+		parsed := map[string]bool{}
+		for _, f := range files {
+			if f.ok {
+				parsed[f.path] = true
+			}
+		}
+		for _, n := range names {
+			if !parsed[n] {
+				return false
+			}
+		}
 	}
 	for _, f := range files {
 		if !f.ok || !isDocPath(f.path) {
 			return false
 		}
 		for _, l := range f.added {
-			if secrets.ScanLine(l) != "" {
+			if secrets.ScanLine(l) != "" || highEntropyToken(l) {
 				return false
 			}
 		}
@@ -123,8 +145,8 @@ func docsOnlyNoSecrets(diff string) bool {
 // dropDocsSecrets removes the secrets flag from res when docsOnlyNoSecrets
 // holds for diff, and recomputes the risk. Never lowers an errored or
 // truncated result.
-func dropDocsSecrets(res *TriageResult, diff string) {
-	if res.Error != "" || res.Truncated || !docsOnlyNoSecrets(diff) {
+func dropDocsSecrets(res *TriageResult, diff string, names []string) {
+	if res.Error != "" || res.Truncated || !docsOnlyNoSecrets(diff, names) {
 		return
 	}
 	kept := res.Flags[:0:0]
@@ -140,4 +162,66 @@ func dropDocsSecrets(res *TriageResult, diff string) {
 	if len(kept) == 0 {
 		res.Risk = "low"
 	}
+}
+
+var tokenRe = regexp.MustCompile(`[A-Za-z0-9+/=_-]{32,}`)
+var hexRe = regexp.MustCompile(`^[0-9a-fA-F]+$`)
+
+// highEntropyToken reports a bare token that looks like a credential: at
+// least 32 chars of [A-Za-z0-9+/=_-] with Shannon entropy >= 4.0 bits/char,
+// or a hex-only run of >= 40 chars at >= 3.0. A 40-char commit SHA in prose
+// therefore keeps the flag, on purpose: it cannot be told from a key.
+// Local to the docs-only rule; secrets.ScanLine is untouched.
+func highEntropyToken(line string) bool {
+	for _, t := range tokenRe.FindAllString(line, -1) {
+		h := entropy(t)
+		if hexRe.MatchString(t) {
+			if len(t) >= 40 && h >= 3.0 {
+				return true
+			}
+			continue
+		}
+		// Hyphenated lowercase words (URL slugs) reach 4 bits too; a random
+		// token mixes at least two of upper, lower and digits.
+		if h >= 4.0 && classes(t) >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func classes(s string) int {
+	var up, lo, dg bool
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			up = true
+		case r >= 'a' && r <= 'z':
+			lo = true
+		case r >= '0' && r <= '9':
+			dg = true
+		}
+	}
+	n := 0
+	for _, b := range []bool{up, lo, dg} {
+		if b {
+			n++
+		}
+	}
+	return n
+}
+
+func entropy(s string) float64 {
+	freq := map[rune]float64{}
+	n := 0.0
+	for _, r := range s {
+		freq[r]++
+		n++
+	}
+	h := 0.0
+	for _, c := range freq {
+		p := c / n
+		h -= p * math.Log2(p)
+	}
+	return h
 }

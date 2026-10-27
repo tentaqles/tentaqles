@@ -48,6 +48,12 @@ const maxTriageDiff = 60_000
 
 // Triage classifies a diff. It never returns "low" on an error.
 func Triage(ctx context.Context, c *Client, p Policy, diff string) TriageResult {
+	return TriageWith(ctx, c, p, diff, nil)
+}
+
+// TriageWith is Triage plus the changed-file list (git --name-only). When
+// names is non-nil, the docs-only rule needs every name parsed as a doc.
+func TriageWith(ctx context.Context, c *Client, p Policy, diff string, names []string) TriageResult {
 	res := TriageResult{Risk: "high"}
 	if len(diff) > maxTriageDiff {
 		// Keep the head: file headers and the first hunks carry the most
@@ -75,7 +81,7 @@ func Triage(ctx context.Context, c *Client, p Policy, diff string) TriageResult 
 		}
 	}
 	sort.Strings(res.Flags)
-	dropDocsSecrets(&res, diff)
+	dropDocsSecrets(&res, diff, names)
 	// A truncated diff is never "low": the unseen part may hold the risk.
 	if len(res.Flags) == 0 && !res.Truncated {
 		res.Risk = "low"

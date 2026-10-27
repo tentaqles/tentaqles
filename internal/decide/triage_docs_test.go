@@ -32,7 +32,7 @@ func TestTriage_DocsOnlyKeywordIsNotSecrets(t *testing.T) {
 	c := client(secretsFlagged(t))
 	diff := docDiff("docs/prd.md", "Risk: secret scanning is not wired up yet.") +
 		docDiff("docs/threat-model.md", "A leaked token is the main threat.") +
-		docDiff("README.txt", "token handling")
+		docDiff("docs/notes.txt", "token handling")
 	if r := Triage(context.Background(), c, pol, diff); r.Risk != "low" || len(r.Flags) != 0 {
 		t.Fatalf("docs-only keyword mention must be low: %+v", r)
 	}
@@ -62,7 +62,8 @@ func TestTriage_CodeKeepsSecretsFlag(t *testing.T) {
 }
 
 func TestIsDocPath(t *testing.T) {
-	for p, want := range map[string]bool{"a.md": true, "x/b.RST": true, "c.txt": true, "docs/d.yaml": true,
+	for p, want := range map[string]bool{"a.md": true, "x/b.RST": true, "docs/c.txt": true, "docs/d.yaml": true,
+		"c.txt": false, "requirements.txt": false, "CMakeLists.txt": false, "src/notes.txt": false,
 		"docs/sub/e.png": true, "main.go": false, ".github/workflows/ci.yml": false, "mydocs/x.go": false} {
 		if got := isDocPath(p); got != want {
 			t.Errorf("isDocPath(%q) = %v", p, got)

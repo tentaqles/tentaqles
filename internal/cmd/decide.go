@@ -337,7 +337,7 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 			if err != nil {
 				res.Error = err.Error()
 			} else {
-				res = decide.Triage(context.Background(), cl, pol, diff)
+				res = decide.TriageWith(context.Background(), cl, pol, diff, namesOrNil(changed, nerr))
 			}
 			if classified {
 				res.Flags = append(res.Flags, "classified_data")
@@ -381,6 +381,15 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 	c.Flags().StringVar(&rng, "range", "", "triage a commit range, e.g. main..HEAD")
 	c.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON")
 	return c
+}
+
+// namesOrNil gives the changed-file list to the docs-only rule; an empty or
+// failed listing becomes a one-entry sentinel so the cross-check fails.
+func namesOrNil(changed []string, err error) []string {
+	if err != nil || len(changed) == 0 {
+		return []string{"?unlisted"}
+	}
+	return changed
 }
 
 // classifiedFlag reports whether any changed file lies under a path the
