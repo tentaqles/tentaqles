@@ -395,6 +395,10 @@ def cmd_compare(args) -> int:
     loose = [r for r in pending if r["status"] != "unmeasured"]
     failed = bool(regressed) or (args.require_tight and bool(loose) and not args.update)
     md = render_markdown(rows, failed)
+    unmeasured = [r["metric"] for r in rows if r["status"] == "unmeasured"]
+    if unmeasured:
+        md += (f"unmeasured: {', '.join(unmeasured)} — record CI's measurement with: "
+               f"ratchet.py compare --update --baseline {args.baseline} --current current.json\n")
     sys.stdout.write(md)
     if args.summary:
         _write_text(args.summary, md)

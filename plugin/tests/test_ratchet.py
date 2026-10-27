@@ -260,6 +260,25 @@ def test_unmeasured_baseline_passes_first_measurement_and_is_reported(ratchet, t
     assert base.read_text(encoding="utf-8") == before  # compare alone never writes
 
 
+def test_unmeasured_names_and_record_command_in_stdout_and_summary(ratchet, tmp_path, capsys):
+    base = _unmeasured_baseline(tmp_path)
+    cur = _write(tmp_path / "cur.json", FIRST)
+    summary = tmp_path / "summary.md"
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur),
+                "--summary", str(summary)) == 0
+    expected = (f"unmeasured: coverage_pct, duplication_pct — record CI's measurement with: "
+                f"ratchet.py compare --update --baseline {base} --current current.json")
+    assert expected in capsys.readouterr().out.splitlines()
+    assert expected in summary.read_text(encoding="utf-8").splitlines()
+
+
+def test_no_unmeasured_line_when_everything_is_measured(ratchet, tmp_path, capsys):
+    base = _baseline(tmp_path)
+    cur = _write(tmp_path / "cur.json", {"lint_errors": 10, "coverage_pct": 70.0})
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur)) == 0
+    assert "unmeasured:" not in capsys.readouterr().out
+
+
 def test_unmeasured_baseline_with_require_tight_still_passes(ratchet, tmp_path):
     base = _unmeasured_baseline(tmp_path)
     cur = _write(tmp_path / "cur.json", FIRST)
