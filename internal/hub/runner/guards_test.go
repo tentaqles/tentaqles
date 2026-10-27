@@ -425,7 +425,8 @@ func fakeGit(t *testing.T, stderr string) {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("PATH", bin)
+	// first on PATH, keeping the rest: the fake itself needs cat (or type) from the system
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func TestGitPreflightShowsGitsReason(t *testing.T) {
