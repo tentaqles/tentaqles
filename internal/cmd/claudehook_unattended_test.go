@@ -10,6 +10,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/guardlog"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
@@ -114,5 +115,50 @@ func TestUnattendedJSONReportsSkip(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(out), &v); err != nil || v.Block || v.Rule != "tq/sql-destructive-shell" || !strings.HasPrefix(v.Reason, "unattended: ") {
 		t.Fatalf("json = %q (%v)", out, err)
+	}
+}
+
+func wsFor(t *testing.T, root string) *resolve.Workspace {
+	t.Helper()
+	mp := filepath.Join(root, manifest.FileName)
+	m, err := manifest.Load(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _ := trust.HashFile(mp)
+	return &resolve.Workspace{Name: "acme", Root: root, ManifestPath: mp, Hash: h, Manifest: m}
+}
+
+func TestUnattendedLine(t *testing.T) {
+	root, proj := unattendedWS(t, unattendedProject, true)
+	ws := wsFor(t, root)
+	now := time.Now()
+	for i := 0; i < 2; i++ {
+		guardlog.Append(guardlog.Record{WS: "acme", Scope: "demo-todo", Mode: "auto", Rules: []string{"x"}, Tool: "Bash", Command: "c"}, nil)
+	}
+	if got, want := unattendedLine(ws, proj, now), "Unattended: on (demo-todo) · 2 confirms skipped in 24h · applies in bypass and auto sessions"; got != want {
+		t.Fatalf("got %q", got)
+	}
+	if got, want := unattendedLine(ws, root, now), "Unattended: on for demo-todo (not this folder)"; got != want {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestUnattendedLineNotEffectiveAndUnset(t *testing.T) {
+	root, proj := unattendedWS(t, unattendedProject, false)
+	if got, want := unattendedLine(wsFor(t, root), proj, time.Now()), "Unattended: configured, not effective (needs tq allow --bypass acme)"; got != want {
+		t.Fatalf("got %q", got)
+	}
+	root2, _ := unattendedWS(t, "", false)
+	if got := unattendedLine(wsFor(t, root2), root2, time.Now()); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSessionStartShowsUnattended(t *testing.T) {
+	_, proj := unattendedWS(t, unattendedProject, true)
+	code, out, _ := runHook(t, []string{"claude-hook", "session-start"}, hookPayloadFor(t, proj, ""))
+	if code != 0 || !strings.Contains(out, "Unattended: on") {
+		t.Fatalf("code %d out %q", code, out)
 	}
 }

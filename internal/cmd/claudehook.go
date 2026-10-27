@@ -134,6 +134,9 @@ func newSessionStartCmd() *cobra.Command {
 				expectedDir = envplan.Desired(rep.Result.Workspace)["CLAUDE_CONFIG_DIR"]
 			}
 			fmt.Fprint(c.OutOrStdout(), renderSessionStart(rep, expectedDir))
+			if line := unattendedLine(rep.Result.Workspace, cwd, time.Now()); line != "" {
+				fmt.Fprintln(c.OutOrStdout(), line)
+			}
 			return nil
 		},
 	}

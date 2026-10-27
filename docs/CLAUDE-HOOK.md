@@ -171,6 +171,67 @@ command that dodges the guard still does not get another client's
 credentials. The guard's job is to catch the honest mistake - the wrong cwd,
 the stale shell, the forgotten `tq allow` - not to contain an adversary.
 
+## Unattended mode
+
+Unattended mode lets a bypass or auto session run without tq's *confirms*
+(the `ask` decisions of PreToolUse) in the workspace or folders you choose.
+It is for sandboxed demo folders and long agent runs, not for production
+work.
+
+**What it skips.** Only the `ask` branch, and only when all of these hold:
+
+- the manifest has a `guard.unattended` block that covers the session's cwd;
+- `tq allow --bypass <ws>` was run for the workspace (a separate trust step);
+- the session's permission mode is exactly `bypassPermissions` or `auto`
+  (any other mode asks as before);
+- none of the matched rules is in the always-ask set or in `keep_asking`.
+
+**What it never skips.**
+
+- Deny rules: a blocked command stays blocked, in every mode.
+- `tq/guard-change`: this confirm is always asked. It covers `tq guard`,
+  `tq allow`, `tq deny` and `tq unattended on|off`, so an agent cannot widen
+  its own permissions.
+- Anything in `keep_asking`. The default is `tq/iac-apply` and
+  `tq/remote-migration`; set `keep_asking: []` to keep nothing, or list your
+  own ids (`tq guard list` shows them; unknown ids are a `tq doctor` warning).
+
+**Manifest block** (edit with `tq unattended`, or by hand and then `tq allow`):
+
+```yaml
+guard:
+  unattended:
+    workspace: false            # true covers the whole workspace
+    projects: [demo-todo]       # or only these folders, relative to the root
+    keep_asking: [tq/iac-apply, tq/remote-migration]
+    codex_sandbox: workspace-write   # read-only|workspace-write|danger-full-access
+```
+
+**Commands.**
+
+| Command | What it does |
+|---|---|
+| `tq unattended on [--project <dir>] [--codex-sandbox <mode>]` | turn it on for the workspace, or for one folder |
+| `tq unattended off [--project <dir>]` | turn it off for one folder, or clear the block |
+| `tq unattended status` | what is covered and whether it is effective |
+| `tq unattended log [--since 24h]` | the confirms it skipped |
+
+`on` and `off` re-trust the manifest like `tq guard --ws` does, so they print
+only the bypass hint when `tq allow --bypass` is still missing.
+
+**Audit.** Every skipped confirm is appended to
+`$TQ_HOME/guard/unattended.jsonl` (time, workspace, scope, mode, rule ids,
+tool, command). The command is masked with the workspace's data classes and
+cut to 200 characters; the file rotates to `unattended.jsonl.1` at 5 MB.
+Write errors never fail the hook.
+
+**Visibility.** SessionStart adds one line for a workspace with the block:
+`Unattended: on (demo-todo) · 2 confirms skipped in 24h · applies in bypass
+and auto sessions`, or `Unattended: configured, not effective (needs tq allow
+--bypass <ws>)`, or `Unattended: on for demo-todo (not this folder)`.
+`tq doctor` warns with `unattended-not-effective`, `unattended-unknown-rule`
+and `unattended-cloud` (unattended plus a cloud identity).
+
 ## `session-start` output
 
 Sample for a trusted workspace:
