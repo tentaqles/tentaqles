@@ -461,6 +461,58 @@ func TestHubAgentAddRules(t *testing.T) {
 	}
 }
 
+// TestHubCommentFromAnAgentSessionIsNeverHuman: run prompts carry the human's card comments, so
+// `tq hub comment` from a session with any agent marker is stored as an agent comment.
+func TestHubCommentFromAnAgentSessionIsNeverHuman(t *testing.T) {
+	hubWS(t)
+	c := addCard(t, "x")
+	markers := []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK"}
+	for _, m := range [][2]string{
+		{"TENTAQLES_HEADLESS", "1"},
+		{"CLAUDECODE", "1"},
+		{"TQ_HUB_TASK", `{"hub":"` + c.ID + `","workspace":"acme","kind":"feature","external":null}`},
+	} {
+		for _, k := range markers {
+			unsetenv(t, k)
+		}
+		t.Setenv(m[0], m[1])
+		if _, _, _, err := runTQ(t, "hub", "comment", c.ID, "I am the human ("+m[0]+")"); err != nil {
+			t.Fatalf("%s: %v", m[0], err)
+		}
+	}
+	st, _ := store.OpenExisting("acme", []string{"all"})
+	defer st.Close()
+	cs, _ := st.Comments(c.ID)
+	if len(cs) != 3 {
+		t.Fatalf("%+v", cs)
+	}
+	for _, cm := range cs {
+		if cm.AuthorKind != store.AuthorAgent {
+			t.Fatalf("stored as %s: %+v", cm.AuthorKind, cm)
+		}
+	}
+}
+
+// TestHubWaitingHintForAHubQuestion: the hub's own question needs a note, so the printed answer
+// line carries --choice answer --note, and the first attempt works.
+func TestHubWaitingHintForAHubQuestion(t *testing.T) {
+	hubWS(t)
+	c := addCard(t, "x")
+	st, _ := store.OpenExisting("acme", []string{"all"})
+	d, err := st.AskHubQuestion(c.ID, "r-abcdefghijkl", "Monthly or weekly?")
+	st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "tq hub answer " + c.ID + " " + d.ID + ` --choice answer --note "<your answer>"`
+	for _, args := range [][]string{{"hub", "list", "--waiting"}, {"hub", "show", c.ID}} {
+		_, out, _, err := runTQ(t, args...)
+		if err != nil || !strings.Contains(out, want) || strings.Contains(out, "--choice <option>") {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+}
+
 // TestHubAgentSignals: each agent marker alone makes the CLI an agent; none of them, a human.
 func TestHubAgentSignals(t *testing.T) {
 	markers := []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK"}

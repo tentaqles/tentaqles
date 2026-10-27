@@ -108,6 +108,7 @@ type Observation struct {
 	Relocations    []string
 	PermissionTool string
 	Retried        int
+	PreSlug        bool // the run has no build slug yet (no worktree, no gate record possible)
 }
 
 type Verdict string
@@ -125,6 +126,7 @@ const (
 	VerdictExitFailed   Verdict = "exit-failed"
 	VerdictNoStop       Verdict = "no-stop"
 	VerdictUsageLimit   Verdict = "usage-limit"
+	VerdictQuestion     Verdict = "question"
 )
 
 // usageLimitMax: a usage-limit stop is a short message the CLI prints in place of the agent's
@@ -196,6 +198,11 @@ func Classify(o Observation) Outcome {
 			return Outcome{Verdict: VerdictRetry, Status: store.StatusQueued}
 		}
 		return Outcome{Verdict: VerdictExitFailed, Status: store.StatusFailed, StopReason: fmt.Sprintf("exit %d", o.ExitCode)}
+	}
+	// A skill that needs the human before it has a build slug (feature, kickoff and fix step 1)
+	// cannot write a gate record: in headless mode its final message is the question.
+	if o.PreSlug && o.State == nil && o.ExitCode == 0 && (o.Subtype == "success" || o.Subtype == "exit 0") && strings.TrimSpace(o.FinalText) != "" {
+		return Outcome{Verdict: VerdictQuestion, Status: store.StatusWaiting, StopReason: "question"}
 	}
 	return Outcome{Verdict: VerdictNoStop, Status: store.StatusFailed, StopReason: "ended without a stop"}
 }

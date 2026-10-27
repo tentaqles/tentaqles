@@ -55,6 +55,12 @@ func TestClassifyTable(t *testing.T) {
 		{"exit non-zero again: failed", Observation{ExitCode: 1, Retried: 1, State: inProgress, PrevStateKey: StateKey(inProgress)}, VerdictExitFailed, store.StatusFailed, "exit 1"},
 		{"exit non-zero but state changed: no stop", Observation{ExitCode: 1, State: inProgress, PrevStateKey: "older"}, VerdictNoStop, store.StatusFailed, "ended without a stop"},
 		{"exit zero, nothing to show: no stop", Observation{State: inProgress, PrevStateKey: StateKey(inProgress)}, VerdictNoStop, store.StatusFailed, "ended without a stop"},
+		{"exit zero before a slug, with a final message: a question", Observation{Subtype: "success", FinalText: "Which one?", PreSlug: true}, VerdictQuestion, store.StatusWaiting, "question"},
+		{"process adapter exit 0 before a slug: a question", Observation{Subtype: "exit 0", FinalText: "Which one?", PreSlug: true}, VerdictQuestion, store.StatusWaiting, "question"},
+		{"exit zero before a slug, no final message: no stop", Observation{Subtype: "success", PreSlug: true}, VerdictNoStop, store.StatusFailed, "ended without a stop"},
+		{"exit zero after a slug: no stop", Observation{Subtype: "success", FinalText: "Which one?", State: inProgress, PrevStateKey: StateKey(inProgress)}, VerdictNoStop, store.StatusFailed, "ended without a stop"},
+		{"exit non-zero before a slug: retry, not a question", Observation{ExitCode: 1, Subtype: "error_during_execution", FinalText: "Which one?", PreSlug: true}, VerdictRetry, store.StatusQueued, ""},
+		{"an error subtype with exit zero before a slug: no stop", Observation{Subtype: "error", FinalText: "Which one?", PreSlug: true}, VerdictNoStop, store.StatusFailed, "ended without a stop"},
 	}
 	for _, c := range cases {
 		got := Classify(c.obs)

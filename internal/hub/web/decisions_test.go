@@ -61,6 +61,33 @@ func TestOverBudgetDecisionWithoutRunStillRenders(t *testing.T) {
 	}
 }
 
+// TestHubQuestionShowsOnWaitingAndTheCard: a run that asked before its build slug existed shows a
+// question with Answer and Stop, a note field that asks for the answer, on /waiting and on the card.
+func TestHubQuestionShowsOnWaitingAndTheCard(t *testing.T) {
+	e := newEnv(t, "acme")
+	svc := e.svcs["acme"]
+	c, _ := svc.Add(context.Background(), store.NewCard{Title: "Monthly export"}, nil)
+	r, _, _ := svc.Enqueue(context.Background(), c.ID, "test")
+	r.Status = store.StatusWaiting
+	svc.Store().SaveRun(r)
+	svc.Store().AskHubQuestion(c.ID, r.ID, "Monthly or weekly?")
+	ts := e.server(Options{})
+	for _, path := range []string{"/waiting?ws=acme", "/cards/" + c.ID + "?ws=acme"} {
+		_, body, _ := get(t, ts, path, nil)
+		for _, want := range []string{`<span class="pill p-wait st-waiting">question</span>`, "Monthly or weekly?",
+			`<button class="btn warm" name="choice" value="answer">Answer</button>`, `<button class="btn danger" name="choice" value="stop">Stop</button>`,
+			`placeholder="Your answer (required for Answer; it is posted on the card for the run)"`, "Answering records your choice in the hub"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s lacks %q", path, want)
+			}
+		}
+	}
+	_, body, _ := get(t, ts, "/cards/"+c.ID+"?ws=acme", nil)
+	if !strings.Contains(body, "waiting on you") {
+		t.Error("the card shows waiting on you")
+	}
+}
+
 func TestDecisionsEmptyState(t *testing.T) {
 	e := newEnv(t, "acme")
 	ts := e.server(Options{})

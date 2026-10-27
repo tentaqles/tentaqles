@@ -41,7 +41,19 @@ type Decision struct {
 	Data       map[string]any `json:"data,omitempty"`
 }
 
-func (d Decision) HubOwned() bool { return d.Kind == KindPermission }
+// hubAsked marks, in Data, a question the hub itself asked (AskHubQuestion). The mirror never
+// writes Data, so a question from the gate never carries it.
+const hubAsked = "hub_asked"
+
+// HubOwned: the hub's permission kind, or a question the hub asked because the run stopped before
+// any build slug (and so any gate record) existed.
+func (d Decision) HubOwned() bool {
+	if d.Kind == KindPermission {
+		return true
+	}
+	asked, _ := d.Data[hubAsked].(bool)
+	return d.Kind == KindQuestion && d.Slug == "" && asked
+}
 
 type MirrorResult struct{ Inserted, NowAnswered bool }
 
@@ -148,6 +160,17 @@ func (s *Store) logAnswer(d Decision) error {
 func (s *Store) AskHub(cardID, runID, slug, text string, options []string, data map[string]any) (Decision, error) {
 	d := Decision{ID: NewID("d"), CardID: cardID, RunID: runID, Slug: slug, Kind: KindPermission, Text: text,
 		Options: options, Status: DecisionPending, AskedAt: Now(), Data: data}
+	if _, err := s.UpsertDecision(d); err != nil {
+		return Decision{}, err
+	}
+	return s.Decision(d.ID)
+}
+
+// AskHubQuestion records the question a run asked in its final message before it had a build slug:
+// kind question, owned by the hub, options answer (the note is the answer) and stop.
+func (s *Store) AskHubQuestion(cardID, runID, text string) (Decision, error) {
+	d := Decision{ID: NewID("d"), CardID: cardID, RunID: runID, Kind: KindQuestion, Text: text,
+		Options: []string{"answer", "stop"}, Status: DecisionPending, AskedAt: Now(), Data: map[string]any{hubAsked: true}}
 	if _, err := s.UpsertDecision(d); err != nil {
 		return Decision{}, err
 	}

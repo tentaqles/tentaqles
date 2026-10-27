@@ -1345,11 +1345,23 @@ def test_state_lists_answered_decisions(repo):
     assert d["status"] == "answered" and d["choice"] == "b" and d["note"] == "because" and d["actor"] == "renato" and d["answered_at"]
 
 
-def test_stop_message_does_not_tell_agent_to_run_override(repo):
+def test_stop_message_does_not_tell_agent_to_run_override(repo, monkeypatch):
+    monkeypatch.delenv("TENTAQLES_HEADLESS", raising=False)
     _dod_ready(repo)
     code, _, err = stop(repo)
     assert code == 2 and "--override" in err and "human" in err.lower()
+    assert "in their own terminal" in err
     assert "when the human has said so" not in err
+
+
+def test_headless_stop_message_points_at_the_hub_not_a_terminal(repo, monkeypatch):
+    monkeypatch.setenv("TENTAQLES_HEADLESS", "1")
+    _dod_ready(repo)
+    code, _, err = stop(repo)
+    assert code == 2 and "build-gate dod demo" in err
+    assert "--override" not in err and "own terminal" not in err
+    assert '--kind question --text "override:' in err and "--options override,stop" in err
+    assert "hub card" in err and "/waiting" in err
 
 
 # --- fix round 2: explicit override questions, visible consequences -------------------------

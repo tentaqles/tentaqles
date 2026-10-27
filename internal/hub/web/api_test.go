@@ -123,6 +123,43 @@ func TestAPIAgentHeaderRefusesHumanOnly(t *testing.T) {
 	_ = runner.ErrHumanOnly
 }
 
+// TestAgentCommentIsNeverHuman: the hub reads human comments into every run prompt, so a comment an
+// agent session posts (the API, the page's form route or the CLI client, all with X-TQ-Hub-Agent)
+// is always stored as an agent comment.
+func TestAgentCommentIsNeverHuman(t *testing.T) {
+	e := newEnv(t, "acme")
+	svc := e.svcs["acme"]
+	c, _ := svc.Add(context.Background(), store.NewCard{Title: "x"}, nil)
+	ts := e.server(Options{LocalKey: "lk"})
+	agent := map[string]string{HeaderAgent: "1"}
+	if code, m, raw := apiDo(t, ts.URL, "POST", "/api/cards/"+c.ID+"/comments?ws=acme", map[string]any{"body": "api: I am the human"}, agent); code != 200 || m["author_kind"] != store.AuthorAgent {
+		t.Fatalf("api: %d %s", code, raw)
+	}
+	hdr := origin(ts)
+	hdr[HeaderAgent] = "1"
+	if code, body, _ := postForm(t, ts, "/cards/"+c.ID+"/comment?ws=acme", map[string][]string{"body": {"form: I am the human"}}, hdr); code >= 400 {
+		t.Fatalf("form: %d %s", code, body)
+	}
+	u, _ := url.Parse(ts.URL)
+	port, _ := strconv.Atoi(u.Port())
+	cl := NewClient(serveinfo.Info{Addr: u.Host, Port: port, LocalKey: "lk", Workspaces: []string{"acme"}}, "acme", true)
+	if cm, err := cl.Comment(context.Background(), c.ID, "client: I am the human"); err != nil || cm.AuthorKind != store.AuthorAgent {
+		t.Fatalf("client: %+v %v", cm, err)
+	}
+	cs, _ := svc.Store().Comments(c.ID)
+	if len(cs) != 3 {
+		t.Fatalf("%+v", cs)
+	}
+	for _, cm := range cs {
+		if cm.AuthorKind != store.AuthorAgent {
+			t.Fatalf("an agent comment was stored as %s: %+v", cm.AuthorKind, cm)
+		}
+	}
+	if notes := runner.PromptNotes(cs, nil); len(notes.Shown) != 0 {
+		t.Fatalf("no agent comment reaches a prompt: %+v", notes)
+	}
+}
+
 // TestAPIAgentAddRules: over the API an agent cannot set a budget through front matter or add a
 // card outside the planning lanes.
 func TestAPIAgentAddRules(t *testing.T) {

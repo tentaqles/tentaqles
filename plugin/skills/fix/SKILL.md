@@ -22,7 +22,12 @@ Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
 your final output and the turn ends. Once the build plan for `fix-<slug>`
 exists, every human stop is a decision record written with `build-gate ask`
 exactly as `skills/build/SKILL.md` ("Headless mode") describes, and the turn
-ends; the `build-gate` prefix is defined there too.
+ends; the `build-gate` prefix is defined there too. Headless output never tells
+the human to run a terminal command or to re-run this skill (the build skill,
+"What headless output tells the human"): when `TQ_HUB_TASK` is set, end with
+the question itself and say the answer goes on the hub card (`/waiting`). The
+hub resumes this run with the answer in the prompt, under "Notes from the human
+on this card".
 
 **Hub task.** When `TQ_HUB_TASK` is set, the hub launched this run for one card. Read it with
 `printf '%s\n' "${TQ_HUB_TASK:-}"` and pass `task=<that JSON>` to the planner together with

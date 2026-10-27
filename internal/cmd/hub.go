@@ -195,9 +195,9 @@ func newHubListCmd(f *hubFlags) *cobra.Command {
 					fmt.Fprintln(c.OutOrStdout(), "nothing is waiting on you")
 				}
 				for _, it := range items {
-					fmt.Fprintf(c.OutOrStdout(), "%s  %s  %-13s %s: %s\n    options: %s   answer: tq hub answer %s %s --choice <option>\n",
+					fmt.Fprintf(c.OutOrStdout(), "%s  %s  %-13s %s: %s\n    options: %s   answer: %s\n",
 						it.Card.ID, it.Decision.ID, it.Decision.Kind, it.Card.Title, firstLine(it.Decision.Text),
-						strings.Join(it.Decision.Options, " | "), it.Card.ID, it.Decision.ID)
+						strings.Join(it.Decision.Options, " | "), answerHint(it.Card.ID, it.Decision))
 				}
 				return nil
 			}
@@ -232,6 +232,15 @@ func dash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// answerHint is the tq hub answer line printed for a pending decision. The hub's own question
+// needs the answer as its note, so its line carries --choice answer --note.
+func answerHint(cardID string, d store.Decision) string {
+	if d.Kind == store.KindQuestion && d.HubOwned() {
+		return "tq hub answer " + cardID + " " + d.ID + ` --choice answer --note "<your answer>"   (or --choice stop)`
+	}
+	return "tq hub answer " + cardID + " " + d.ID + " --choice <option>"
 }
 
 func firstLine(s string) string {
@@ -270,8 +279,8 @@ func newHubShowCmd(f *hubFlags) *cobra.Command {
 			fmt.Fprintf(w, " · cost $%.2f\n\n%s\n", d.CostUSD, strings.TrimSpace(store.StripFrontMatter(d.Body)))
 			for _, dec := range d.Decisions {
 				if dec.Status == store.DecisionPending {
-					fmt.Fprintf(w, "\nwaiting on you: %s %s: %s\n  options: %s\n  answer: tq hub answer %s %s --choice <option>\n",
-						dec.Kind, dec.ID, firstLine(dec.Text), strings.Join(dec.Options, " | "), d.ID, dec.ID)
+					fmt.Fprintf(w, "\nwaiting on you: %s %s: %s\n  options: %s\n  answer: %s\n",
+						dec.Kind, dec.ID, firstLine(dec.Text), strings.Join(dec.Options, " | "), answerHint(d.ID, dec))
 				}
 			}
 			for _, r := range d.Runs {

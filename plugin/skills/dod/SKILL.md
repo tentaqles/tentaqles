@@ -67,7 +67,10 @@ build-gate ask <slug> --kind question --text "override: <what is missing and why
 ```
 
 The human answers with `build-gate answer <slug> <id> --choice override --note "<their reason>"`
-(or a hub actor token does). On resume, read `build-gate state <slug> --json`.
+(or a hub actor token does). Your final output names the record and never tells
+the human to run that command: when `TQ_HUB_TASK` is set, say the answer goes on
+the hub card (`/waiting`) and the hub resumes the run (the build skill,
+"What headless output tells the human"). On resume, read `build-gate state <slug> --json`.
 
 The gate records the override, appends a `D<n>` line to `docs/LEARNINGS.md` and
 logs an event `tq insights` counts.

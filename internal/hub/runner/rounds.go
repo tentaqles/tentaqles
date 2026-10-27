@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tentaqles/tentaqles/internal/hub/activity"
 	"github.com/tentaqles/tentaqles/internal/hub/adapter"
@@ -215,7 +216,7 @@ func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 	mw := redact.NewWriter(logf, s.st.Classes())
 	start := s.cfg.Now()
 	fmt.Fprintf(mw, "\n=== round %d at %s in %s\n", r.Rounds+1, start.UTC().Format(time.RFC3339), dir)
-	req := adapter.RunRequest{Workspace: s.cfg.Workspace, Dir: dir, Prompt: Prompt(r, card), SessionID: r.SessionID,
+	req := adapter.RunRequest{Workspace: s.cfg.Workspace, Dir: dir, Prompt: Prompt(r, card, s.humanNotes(card.ID)), SessionID: r.SessionID,
 		Env: adapter.LaunchEnv(s.cfg.Env(), HubTaskJSON(s.cfg.Workspace, card)), AllowedTools: r.AllowedTools,
 		Limit: RoundLimit(r), Classes: s.st.Classes()}
 	res, runErr := ad.Start(ctx, req, mw)
@@ -291,7 +292,7 @@ func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 		tool = adapter.ToolSpec(res.PermissionDenials[0])
 	}
 	out := Classify(Observation{ExitCode: res.ExitCode, Subtype: res.StopReason, FinalText: final, State: st,
-		PrevStateKey: prevKey, Relocations: r.Relocations, PermissionTool: tool, Retried: r.Retried})
+		PrevStateKey: prevKey, Relocations: r.Relocations, PermissionTool: tool, Retried: r.Retried, PreSlug: r.Slug == ""})
 	rec.Outcome = string(out.Verdict)
 	r.RoundLog = append(r.RoundLog, rec)
 	s.apply(r, card, out, st, tool, final, res.ExitCode)
@@ -406,6 +407,18 @@ func (s *Service) apply(r store.Run, card store.Card, out Outcome, st *gate.Stat
 		}
 		s.hold(r, card, out.StopReason, "The agent hit a usage limit (out of usage credits, or a usage or rate limit). Resume when credits are available again (the session continues where it stopped), or stop?",
 			fmt.Sprintf("Round %d ended on a usage limit; its cost ($%.2f) is kept and the run is not failed.", r.Rounds, cost))
+	case VerdictQuestion:
+		// The run stopped on a question before any build slug existed: the hub asks it, and the
+		// human's answer (a card comment) reaches the same run's next prompt.
+		if _, err := s.st.AskHubQuestion(card.ID, r.ID, tailText(final, questionMax)); err != nil {
+			// never wait with nothing to answer
+			s.fail(r, card, "question not recorded", "The hub could not record the run's question ("+err.Error()+"), so the run cannot wait on you; it was failed. The question is the agent's comment above; answer it with a comment, then `tq hub run "+card.ID+"`.")
+			return
+		}
+		r.Status, r.StopReason = store.StatusWaiting, out.StopReason
+		s.save(r)
+		_ = s.st.Log(activity.Entry{Actor: "hub", Verb: activity.VerbRunWait, CardID: card.ID, RunID: r.ID, Data: map[string]any{"question": true}})
+		s.notify("tq hub: waiting on you", card.Title+": the run asked a question")
 	case VerdictMaxTurns:
 		r.Status, r.NotBefore = store.StatusQueued, s.stamp()
 		s.save(r)
@@ -425,6 +438,9 @@ func (s *Service) apply(r store.Run, card store.Card, out Outcome, st *gate.Stat
 		s.fail(r, card, out.StopReason, "The run ended without a stop.\n\n"+tailText(final, 2000))
 	}
 }
+
+// questionMax bounds a hub question's text; the question is at the end of the final message.
+const questionMax = 4000
 
 func (s *Service) overBudget(r store.Run, card store.Card, limit string) {
 	b := r.Budget
@@ -539,7 +555,11 @@ func tailText(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return "…" + s[len(s)-n:]
+	i := len(s) - n
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++ // never cut a character in half
+	}
+	return "…" + s[i:]
 }
 
 // RecoverStale fails runs left "running" by a hub that stopped (no live round in this process) and

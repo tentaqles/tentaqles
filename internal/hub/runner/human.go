@@ -203,6 +203,9 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 		}
 		raised = &nb
 	}
+	if choice == "answer" && strings.TrimSpace(note) == "" {
+		return AnswerOutcome{}, errors.New("write the answer in the note: it goes to the run as your comment on the card; the decision is still pending")
+	}
 	d, err := s.st.AnswerHub(d.ID, choice, note, s.cfg.Actor)
 	if err != nil {
 		return AnswerOutcome{}, err
@@ -231,6 +234,14 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 	case "resume":
 		// A run held before or after a round (trust, folder, git, usage limit): the same run
 		// goes back to the queue, and its next round re-runs the preflight.
+		out.Resumed = s.resumeHeld(r)
+	case "answer":
+		// The hub's own question (asked before a build slug existed): the note becomes the human's
+		// comment on the card, which the next prompt carries, and the same run (and its session)
+		// goes back to the queue.
+		if _, err := s.st.AddComment(card.ID, store.AuthorHuman, s.human(), note, r.ID); err != nil {
+			return out, fmt.Errorf("the answer was recorded but not posted on the card (%v); post it as a comment, then tq hub run %s", err, card.ID)
+		}
 		out.Resumed = s.resumeHeld(r)
 	case "raise-and-resume":
 		b := r.Budget

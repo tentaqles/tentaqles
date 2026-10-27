@@ -160,9 +160,14 @@ func TestServeDrainRunsQueuedWorkAndHonoursHubMode(t *testing.T) {
 	}
 	st, _ := store.OpenExisting("acme", []string{"all"})
 	runs, _ := st.RunsForCard(c.ID)
+	pend, _ := st.PendingDecisions()
 	st.Close()
-	if len(runs) != 1 || runs[0].Status != store.StatusFailed || runs[0].StopReason != "ended without a stop" || runs[0].CostUSD != 0.1 {
+	// exit 0 with a final message and no build slug yet: the run waits on the hub's question
+	if len(runs) != 1 || runs[0].Status != store.StatusWaiting || runs[0].StopReason != "question" || runs[0].CostUSD != 0.1 {
 		t.Fatalf("%+v", runs)
+	}
+	if len(pend) != 1 || pend[0].Kind != store.KindQuestion || !pend[0].HubOwned() || pend[0].Text != "I looked around." {
+		t.Fatalf("%+v", pend)
 	}
 	raw, _ := os.ReadFile(filepath.Join(dir, "argv.jsonl"))
 	var call map[string]any
