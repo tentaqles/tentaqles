@@ -55,6 +55,24 @@ func TestTriage_ProseAndURLPathStayLow(t *testing.T) {
 	}
 }
 
+func TestTriage_Hex32KeyKeepsFlag(t *testing.T) {
+	hex := "9f2c4a1b7d3e8056a1c9e4f2b3d70856"
+	if len(hex) != 32 {
+		t.Fatal("hex length")
+	}
+	for _, line := range []string{
+		"the key is " + hex,
+		"key=\"" + hex + "\"",
+		"key=" + hex,
+		"see https://example.com/x?k=" + hex,
+		"\"" + hex + "\"",
+	} {
+		if r := triageDocs(t, docDiff("docs/a.md", line), nil); r.Risk != "high" {
+			t.Errorf("%q must keep the flag: %+v", line, r)
+		}
+	}
+}
+
 func TestTriage_GitSHAInProseKeepsFlag(t *testing.T) {
 	// Deliberate: a 40-char hex string is indistinguishable from a key, so the flag stays.
 	sha := "8407cd25b0ed1e9a7f3c4d2b6e8109f5a3c7d4e2"

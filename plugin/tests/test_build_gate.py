@@ -3676,3 +3676,41 @@ def test_dod_prd_decisions_without_a_base_treat_all_as_new(repo):
     checks, _ = _dod_checks(repo)
     assert code == 1 and checks["prd-decisions"]["ok"] is False
     assert "no recorded base" in checks["prd-decisions"]["detail"] and "retention period" in checks["prd-decisions"]["detail"]
+
+
+def test_dod_prd_decisions_missing_base_commit_fails_loudly(repo):
+    _commit_prd(repo, OLD_DECISION)
+    _approved_build(repo)
+    approved = gate.load_approved(repo, "demo")
+    approved["base"] = "deadbeef" * 5
+    gate.save_approved(repo, "demo", approved)
+    code, _ = gate.cmd_dod(repo, "demo")
+    checks, _ = _dod_checks(repo)
+    d = checks["prd-decisions"]["detail"]
+    assert code == 1 and checks["prd-decisions"]["ok"] is False
+    assert "recorded base deadbeefdead is not in this repository (shallow clone or gc); every open decision counts as new" in d
+    assert "retention period" in d
+
+
+def test_dod_prd_decisions_marker_change_is_not_a_new_decision(repo):
+    _commit_prd(repo, "- NEEDS-DECISION: retention period")
+    _approved_build(repo)
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + "*   [ ] NEEDS-DECISION: retention period  \n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + "- [x] NEEDS-DECISION: retention period\n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + "- NEEDS-DECISION: retention period, 90 days?\n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 1
+
+
+def test_dod_prd_decisions_exception_is_a_failed_check(repo, monkeypatch):
+    _commit_prd(repo)
+    _approved_build(repo)
+
+    def boom(*a, **k):
+        raise ValueError("kaput")
+
+    monkeypatch.setattr(gate, "open_prd_decisions", boom)
+    code, _ = gate.cmd_dod(repo, "demo")
+    checks, _ = _dod_checks(repo)
+    assert code == 1 and checks["prd-decisions"]["ok"] is False and "ValueError" in checks["prd-decisions"]["detail"]

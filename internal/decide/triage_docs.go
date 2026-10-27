@@ -165,22 +165,25 @@ func dropDocsSecrets(res *TriageResult, diff string, names []string) {
 }
 
 var tokenRe = regexp.MustCompile(`[A-Za-z0-9+/=_-]{32,}`)
+var alnumRe = regexp.MustCompile(`[A-Za-z0-9]+`)
 var hexRe = regexp.MustCompile(`^[0-9a-fA-F]+$`)
 
 // highEntropyToken reports a bare token that looks like a credential: at
-// least 32 chars of [A-Za-z0-9+/=_-] with Shannon entropy >= 4.0 bits/char,
-// or a hex-only run of >= 40 chars at >= 3.0. A 40-char commit SHA in prose
-// therefore keeps the flag, on purpose: it cannot be told from a key.
+// least 32 chars of [A-Za-z0-9+/=_-] with Shannon entropy >= 4.0 bits/char
+// (mixing two character classes), or any hex-only run of >= 32 chars. A
+// commit SHA or an md5 in prose therefore keeps the flag, on purpose: it
+// cannot be told from a key.
 // Local to the docs-only rule; secrets.ScanLine is untouched.
 func highEntropyToken(line string) bool {
+	// Any hex-only run of 32+ chars (an md5, a 32-hex API key, a SHA), however
+	// it is glued to separators (key=<hex>, "<hex>", ?k=<hex>), keeps the flag.
+	for _, r := range alnumRe.FindAllString(line, -1) {
+		if len(r) >= 32 && hexRe.MatchString(r) {
+			return true
+		}
+	}
 	for _, t := range tokenRe.FindAllString(line, -1) {
 		h := entropy(t)
-		if hexRe.MatchString(t) {
-			if len(t) >= 40 && h >= 3.0 {
-				return true
-			}
-			continue
-		}
 		// Hyphenated lowercase words (URL slugs) reach 4 bits too; a random
 		// token mixes at least two of upper, lower and digits.
 		if h >= 4.0 && classes(t) >= 2 {

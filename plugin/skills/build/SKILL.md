@@ -41,7 +41,7 @@ The hub (release 2) and any `claude -p` caller set `TENTAQLES_HEADLESS=1`, or pa
 
 ```bash
 build-gate ask <slug> --kind plan-approval --text "<the plain summary, one line per checkpoint, verify commands, assumptions>" --options approve,edit,stop
-build-gate ask <slug> --kind result --text "<what to try, checkpoint summary, deferred MINORs>" --options approve,request-changes,stop
+build-gate ask <slug> --kind result --text "<what to try, checkpoint summary, deferred MINORs, open PRD §10 NEEDS-DECISION lines (new and pre-existing)>" --options approve,request-changes,stop
 build-gate ask <slug> --kind judge --checkpoint <id> --reviewer <name> --text "<the U rows>" --options PASS,FAIL
 build-gate ask <slug> --kind question --checkpoint <id> --text "<the question>" --options <a>,<b>
 ```

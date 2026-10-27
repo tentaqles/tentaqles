@@ -61,7 +61,16 @@ def _frs(section: list[str]) -> tuple[list[str], list[str]]:
 def open_decision_lines(text: str) -> list[str]:
     """The open NEEDS-DECISION lines of section 10 (stripped), in file order."""
     secs = _sections(text.replace("\r\n", "\n").split("\n"))
-    return [ln.strip() for ln in secs.get(10, []) if TAG_ITEM_RE.match(ln)]
+    return [normalize_decision(ln) for ln in secs.get(10, []) if TAG_ITEM_RE.match(ln)]
+
+
+_LEAD_RE = re.compile(r"^\s*[-*]\s+(\[[ xX]\]\s*)?")
+
+
+def normalize_decision(line: str) -> str:
+    """A decision line without its bullet, checkbox and outer/duplicate whitespace, so a
+    marker or spacing change does not make it look new. Wording is kept."""
+    return " ".join(_LEAD_RE.sub("", line, count=1).split())
 
 
 def prd_status(root: Path) -> dict:
