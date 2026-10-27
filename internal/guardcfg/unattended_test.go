@@ -126,3 +126,16 @@ func TestUnknownKeepAsking(t *testing.T) {
 		t.Fatalf("nil manifest: %v", got)
 	}
 }
+
+func TestCoversIgnoresEscapingProjectEntries(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "demo-todo/src", "x")
+	for _, p := range []string{".", "..", "../x", ""} {
+		m := mWith(&manifest.Unattended{Projects: []string{p}})
+		for _, cwd := range []string{root, filepath.Join(root, "demo-todo", "src"), filepath.Dir(root)} {
+			if ok, scope := Covers(m, root, cwd); ok {
+				t.Errorf("entry %q must not cover %q (scope %q)", p, cwd, scope)
+			}
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package guardcfg
 
 import (
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -31,6 +32,9 @@ func Covers(m *manifest.Manifest, root, cwd string) (bool, string) {
 	}
 	for _, p := range u.Projects {
 		cp := manifest.CleanProject(p)
+		if cp == "" || cp == "." || cp == ".." || strings.HasPrefix(cp, "../") || path.IsAbs(cp) || filepath.IsAbs(cp) {
+			continue // defense in depth: Validate rejects these, but never widen coverage without it
+		}
 		if within(c, normDir(filepath.Join(root, filepath.FromSlash(cp)))) {
 			return true, cp
 		}
