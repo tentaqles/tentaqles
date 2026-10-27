@@ -380,7 +380,7 @@ Matchers (all regexes, case-insensitive; every one present must match):
 |---|---|---|
 | `tq/secret-store-read`, `tq/secret-store-shell` | deny | SSH private keys, `~/.aws/credentials`, `.git-credentials`, `.netrc`, docker/gh/azure token files, the tq catalog |
 | `tq/env-file-read`, `tq/env-file-shell` | ask | reading or printing `.env*` (templates such as `.env.example` exempt) |
-| `tq/env-dump` | deny | `printenv`, bare `env`/`set`, `Get-ChildItem Env:` |
+| `tq/env-dump` | deny | `printenv`, bare `env`/`set` (also `cmd /c set`), `Get-ChildItem Env:`, as the command word of a segment with no arguments. Prose does not count: separators inside quoted arguments (`git commit -m "fix (set)"`) and data heredoc bodies are not read; `bash -c "…"`, `$( )` and code heredocs are |
 | `tq/force-push-main` | deny | any force push (incl. `--force-with-lease`, `+main`) to main/master |
 | `tq/force-push` | ask | plain `--force`/`-f` push elsewhere (`--force-with-lease` is fine) |
 | `tq/gh-admin-merge` | ask | `gh pr merge --admin` |
@@ -582,3 +582,23 @@ The guard protects its own settings: `tq guard off|on|set`, `tq allow` and
 `tq deny` ask before they run (`tq/guard-change`), and direct edits to
 `guard.yaml` from file tools or the shell are denied
 (`tq/guard-file-write`). An agent can propose a change; you confirm it.
+The shell rule denies any command line that names the file, but not a
+heredoc body that is only data and mentions it (see below).
+
+### Heredocs: data and code
+
+`tq/guard-file-write` and `tq/env-dump` skip a heredoc body that is
+**data**: fed to `cat`, `tee`, `git commit|tag|notes -F -`, or a bare
+redirect, directly or inside a `$( )` that is an argument of a plain
+command (`git commit -m "$(cat <<'EOF' … EOF)"`). The command line is
+still read, so `cat > ~/.tentaqles/guard.yaml <<EOF` is still denied.
+
+A body is **code**, and is still read, when it is fed to anything else
+(`bash`, `sh`, `zsh`, `pwsh`, `powershell`, `python`, `node`, `perl`,
+`ruby`, an unknown program, `sudo tee`), when the `$( )` is in command
+position, assigned to a variable, passed to `eval` or an interpreter, or
+is a `<( )` / backtick. If any command in the line runs a shell, an
+interpreter, `eval`/`source`, a `./script` or a `$VAR` command (`cat <<EOF
+| bash`, `cat > x.sh <<EOF … EOF; bash x.sh`), every body is read. An
+unterminated heredoc, or one whose line continues a previous one, is read.
+When tq cannot tell, it reads.

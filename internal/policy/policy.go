@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/guard"
 )
 
 // Action is a rule's verdict.
@@ -79,8 +81,17 @@ type Rule struct {
 	Content      string `yaml:"content,omitempty"` // regex on written content / MCP input
 	Except       string `yaml:"except,omitempty"`
 	ExistingOnly bool   `yaml:"existing_only,omitempty"` // only when Path already exists
-	Reason       string `yaml:"reason"`
-	Source       string `yaml:"-"` // "builtin", the manifest path, or the project rules path
+	// SkipHeredocData (built-ins only): the command regex does not see
+	// heredoc bodies that are data, fed to cat/tee/git commit -F or a
+	// redirect (guard.BlankDataHeredocs). Code bodies and the command lines,
+	// redirect targets included, are still matched.
+	SkipHeredocData bool `yaml:"-"`
+	// MaskQuoted (built-ins only): SkipHeredocData, and separators inside
+	// quoted arguments are hidden too, so a rule anchored on a command word
+	// does not match prose in a message (guard.MaskQuotedArgs).
+	MaskQuoted bool   `yaml:"-"`
+	Reason     string `yaml:"reason"`
+	Source     string `yaml:"-"` // "builtin", the manifest path, or the project rules path
 
 	tool, command, path, content, except *regexp.Regexp
 }
@@ -135,7 +146,14 @@ func (r *Rule) Match(call ToolCall) bool {
 		if !call.IsShell() {
 			return false
 		}
-		subjects = append(subjects, subject{r.command, call.Command})
+		cmd := call.Command
+		switch {
+		case r.MaskQuoted:
+			cmd = guard.MaskQuotedArgs(cmd)
+		case r.SkipHeredocData:
+			cmd = guard.BlankDataHeredocs(cmd)
+		}
+		subjects = append(subjects, subject{r.command, cmd})
 	}
 	if r.path != nil {
 		subjects = append(subjects, subject{r.path, NormalizePath(call.Path)})

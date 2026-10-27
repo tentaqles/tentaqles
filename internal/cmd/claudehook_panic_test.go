@@ -57,3 +57,29 @@ func TestPreToolUseGuardPanicAsks(t *testing.T) {
 		t.Errorf("--json: code=%d out=%q", code, out)
 	}
 }
+
+// End to end: a data heredoc that mentions the guard file or `set` passes the
+// policy rules; a heredoc that writes the guard file is still denied.
+func TestPreToolUseHeredocDataRules(t *testing.T) {
+	isolateHome(t)
+	dir := testutil.TempDir(t)
+	gf := "~/.tentaqles/" + "guard.yaml"
+	for _, cmd := range []string{
+		"cat > notes.md <<'EOF'\nThe guard file is " + gf + ".\n\nset\nEOF",
+		"echo \"$(cat <<'EOF'\nset\nEOF\n)\" > notes.md",
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, cmd))
+		if code == 2 && (strings.Contains(errOut, "tq/guard-file-write") || strings.Contains(errOut, "tq/env-dump")) {
+			t.Errorf("%q: denied: %q", cmd, errOut)
+		}
+	}
+	for cmd, rule := range map[string]string{
+		"cat > " + gf + " <<'EOF'\ndisable: [x]\nEOF": "tq/guard-file-write",
+		"bash <<'EOF'\nset\nEOF":                      "tq/env-dump",
+	} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, cmd))
+		if code != 2 || !strings.Contains(errOut, rule) {
+			t.Errorf("%q: code=%d err=%q, want %s", cmd, code, errOut, rule)
+		}
+	}
+}
