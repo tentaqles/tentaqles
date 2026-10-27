@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "metrics": {
+    "complex_functions": {
+      "value": 0,
+      "direction": "lower"
+    },
+    "coverage_pct": {
+      "value": null,
+      "direction": "higher",
+      "tolerance": 0.1
+    },
+    "duplication_pct": {
+      "value": null,
+      "direction": "lower"
+    },
+    "lint_errors": {
+      "value": 0,
+      "direction": "lower"
+    }
+  }
+}

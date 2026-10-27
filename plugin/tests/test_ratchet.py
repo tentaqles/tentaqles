@@ -224,3 +224,117 @@ def test_example_baseline_is_valid(ratchet):
     example = SCRIPT.parent.parent / "references" / "baseline.example.json"
     metrics = ratchet.load_metrics(str(example))
     assert metrics["coverage_pct"]["direction"] == "higher"
+
+
+# --------------------------------------------------------------------------
+# unmeasured baseline (placeholder written before any code existed)
+# --------------------------------------------------------------------------
+
+
+def _unmeasured_baseline(tmp_path: Path) -> Path:
+    return _write(tmp_path / "baseline.json", {
+        "version": 1,
+        "metrics": {
+            "duplication_pct": {"value": None, "direction": "lower"},
+            "coverage_pct": {"value": None, "direction": "higher", "tolerance": 0.1},
+            "lint_errors": {"value": 0, "direction": "lower"},
+        },
+    })
+
+
+FIRST = {"duplication_pct": 2.05, "coverage_pct": 88.8, "lint_errors": 0}
+
+
+def test_unmeasured_baseline_passes_first_measurement_and_is_reported(ratchet, tmp_path, capsys):
+    base = _unmeasured_baseline(tmp_path)
+    before = base.read_text(encoding="utf-8")
+    cur = _write(tmp_path / "cur.json", FIRST)
+    report = tmp_path / "report.json"
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur),
+                "--report", str(report)) == 0
+    out = capsys.readouterr().out
+    assert "unmeasured" in out and "passed" in out
+    rows = {r["metric"]: r for r in json.loads(report.read_text(encoding="utf-8"))["rows"]}
+    assert rows["duplication_pct"]["status"] == "unmeasured"
+    assert rows["duplication_pct"]["current"] == 2.05
+    assert base.read_text(encoding="utf-8") == before  # compare alone never writes
+
+
+def test_unmeasured_names_and_record_command_in_stdout_and_summary(ratchet, tmp_path, capsys):
+    base = _unmeasured_baseline(tmp_path)
+    cur = _write(tmp_path / "cur.json", FIRST)
+    summary = tmp_path / "summary.md"
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur),
+                "--summary", str(summary)) == 0
+    expected = (f"unmeasured: coverage_pct, duplication_pct - record CI's measurement with: "
+                f"ratchet.py compare --update --baseline {base} --current current.json")
+    assert expected in capsys.readouterr().out.splitlines()
+    assert expected in summary.read_text(encoding="utf-8").splitlines()
+
+
+def test_no_unmeasured_line_when_everything_is_measured(ratchet, tmp_path, capsys):
+    base = _baseline(tmp_path)
+    cur = _write(tmp_path / "cur.json", {"lint_errors": 10, "coverage_pct": 70.0})
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur)) == 0
+    assert "unmeasured:" not in capsys.readouterr().out
+
+
+def test_unmeasured_baseline_with_require_tight_still_passes(ratchet, tmp_path):
+    base = _unmeasured_baseline(tmp_path)
+    cur = _write(tmp_path / "cur.json", FIRST)
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur), "--require-tight") == 0
+
+
+def test_update_records_first_measurement_then_gate_binds(ratchet, tmp_path):
+    base = _unmeasured_baseline(tmp_path)
+    cur = _write(tmp_path / "cur.json", FIRST)
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur), "--update") == 0
+    saved = json.loads(base.read_text(encoding="utf-8"))["metrics"]
+    assert saved["duplication_pct"] == {"value": 2.05, "direction": "lower"}
+    assert saved["coverage_pct"] == {"value": 88.8, "direction": "higher", "tolerance": 0.1}
+    worse = _write(tmp_path / "worse.json", dict(FIRST, duplication_pct=2.5))
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(worse)) == 1
+    lower_cov = _write(tmp_path / "lc.json", dict(FIRST, coverage_pct=80.0))
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(lower_cov)) == 1
+    # tolerance behaviour unchanged after the first measurement
+    wobble = _write(tmp_path / "w.json", dict(FIRST, coverage_pct=88.75))
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(wobble)) == 0
+
+
+def test_update_skips_unmeasured_when_something_regressed(ratchet, tmp_path):
+    base = _unmeasured_baseline(tmp_path)
+    before = base.read_text(encoding="utf-8")
+    cur = _write(tmp_path / "cur.json", dict(FIRST, lint_errors=3))
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur), "--update") == 1
+    assert base.read_text(encoding="utf-8") == before
+
+
+def test_unmeasured_metric_still_fails_when_collector_stops_producing_it(ratchet, tmp_path):
+    base = _unmeasured_baseline(tmp_path)
+    cur = _write(tmp_path / "cur.json", {"duplication_pct": 2.05, "lint_errors": 0})
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur)) == 1
+
+
+def test_current_file_must_be_numeric(ratchet, tmp_path):
+    base = _unmeasured_baseline(tmp_path)
+    cur = _write(tmp_path / "cur.json", dict(FIRST, duplication_pct=None))
+    assert _run(ratchet, "compare", "--baseline", str(base), "--current", str(cur)) == 2
+
+
+def test_init_accepts_unmeasured_placeholders_and_force_is_the_only_overwrite(ratchet, tmp_path):
+    cur = _write(tmp_path / "cur.json", {"metrics": {
+        "duplication_pct": {"value": None, "direction": "lower"},
+        "coverage_pct": {"value": None, "direction": "higher"}}})
+    base = tmp_path / "baseline.json"
+    assert _run(ratchet, "init", "--baseline", str(base), "--current", str(cur)) == 0
+    saved = json.loads(base.read_text(encoding="utf-8"))["metrics"]
+    assert saved["coverage_pct"]["value"] is None
+    assert _run(ratchet, "init", "--baseline", str(base), "--current", str(cur)) == 2
+    assert _run(ratchet, "init", "--baseline", str(base), "--current", str(cur), "--force") == 0
+
+
+def test_example_unmeasured_baseline_is_valid(ratchet):
+    example = SCRIPT.parent.parent / "references" / "baseline.unmeasured.example.json"
+    metrics = ratchet.normalize(json.loads(example.read_text(encoding="utf-8")), "example",
+                                allow_unmeasured=True)
+    assert metrics["coverage_pct"]["value"] is None

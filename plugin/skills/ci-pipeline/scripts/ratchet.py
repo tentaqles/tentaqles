@@ -20,6 +20,11 @@ compare   Compare current metrics with the baseline. Exit 0 when nothing got
 
           --update writes improvements (and new metrics) back into the
           baseline, only when nothing regressed. The baseline never loosens.
+          A baseline value of null means "not measured yet" (a placeholder
+          written before any code existed): it passes and is reported as
+          unmeasured, and --update records the first real measurement, after
+          which the metric ratchets like any other. The current file must
+          always be numeric.
 
 init      Create the first baseline from a metrics file (refuses to
           overwrite unless --force).
@@ -78,8 +83,13 @@ def _read_json(path: str):
         raise RatchetError(f"{path}: invalid JSON ({exc})")
 
 
-def normalize(data, source: str, defaults: Optional[Dict[str, dict]] = None) -> Dict[str, dict]:
-    """Return {name: {"value": float, "direction": str, "tolerance": float}}."""
+def normalize(data, source: str, defaults: Optional[Dict[str, dict]] = None,
+              allow_unmeasured: bool = False) -> Dict[str, dict]:
+    """Return {name: {"value": float, "direction": str, "tolerance": float}}.
+
+    With ``allow_unmeasured`` a value of ``null`` is accepted and kept as None:
+    "not measured yet" (a baseline written before any code existed).
+    """
     if not isinstance(data, dict):
         raise RatchetError(f"{source}: expected a JSON object")
     raw = data.get("metrics", data)
@@ -97,7 +107,9 @@ def normalize(data, source: str, defaults: Optional[Dict[str, dict]] = None) -> 
             value, direction, tolerance = spec, None, 0
         if direction is None:
             direction = ((defaults or {}).get(name) or {}).get("direction") or DEFAULT_DIRECTIONS.get(name)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if value is None and allow_unmeasured:
+            pass
+        elif isinstance(value, bool) or not isinstance(value, (int, float)):
             raise RatchetError(f"{source}: metric {name!r} needs a numeric value")
         if direction not in ("lower", "higher"):
             raise RatchetError(f"{source}: metric {name!r} needs direction 'lower' or 'higher'")
@@ -107,8 +119,9 @@ def normalize(data, source: str, defaults: Optional[Dict[str, dict]] = None) -> 
     return out
 
 
-def load_metrics(path: str, defaults: Optional[Dict[str, dict]] = None) -> Dict[str, dict]:
-    return normalize(_read_json(path), path, defaults)
+def load_metrics(path: str, defaults: Optional[Dict[str, dict]] = None,
+                 allow_unmeasured: bool = False) -> Dict[str, dict]:
+    return normalize(_read_json(path), path, defaults, allow_unmeasured)
 
 
 def write_metrics(path: str, metrics: Dict[str, dict]) -> None:
@@ -132,7 +145,10 @@ def write_metrics(path: str, metrics: Dict[str, dict]) -> None:
 
 
 def compare(baseline: Dict[str, dict], current: Dict[str, dict]) -> List[dict]:
-    """One row per metric: status is regressed | improved | same | new | missing."""
+    """One row per metric: status is regressed | improved | same | new | missing | unmeasured.
+
+    unmeasured: the baseline value is null (placeholder); it passes, and --update records it.
+    """
     rows = []
     for name in sorted(set(baseline) | set(current)):
         b, c = baseline.get(name), current.get(name)
@@ -143,6 +159,10 @@ def compare(baseline: Dict[str, dict], current: Dict[str, dict]) -> List[dict]:
         if c is None:
             rows.append({"metric": name, "baseline": b["value"], "current": None,
                          "direction": b["direction"], "status": "missing"})
+            continue
+        if b["value"] is None:
+            rows.append({"metric": name, "baseline": None, "current": c["value"],
+                         "direction": b["direction"], "status": "unmeasured"})
             continue
         delta = c["value"] - b["value"]
         worse = delta if b["direction"] == "lower" else -delta
@@ -158,11 +178,11 @@ def compare(baseline: Dict[str, dict], current: Dict[str, dict]) -> List[dict]:
 
 
 def tightened(baseline: Dict[str, dict], current: Dict[str, dict], rows: List[dict]) -> Dict[str, dict]:
-    """Baseline with improved values locked in and new metrics added."""
+    """Baseline with improved values locked in, first measurements recorded, new metrics added."""
     out = {k: dict(v) for k, v in baseline.items()}
     for row in rows:
         name = row["metric"]
-        if row["status"] == "improved":
+        if row["status"] in ("improved", "unmeasured"):
             out[name]["value"] = current[name]["value"]
         elif row["status"] == "new":
             out[name] = dict(current[name])
@@ -179,7 +199,7 @@ def _fmt(v) -> str:
 
 def render_markdown(rows: List[dict], failed: bool) -> str:
     icon = {"regressed": "FAIL", "missing": "FAIL", "improved": "better",
-            "same": "ok", "new": "new"}
+            "same": "ok", "new": "new", "unmeasured": "unmeasured"}
     lines = ["## Ratchet quality gate: " + ("FAILED" if failed else "passed"), "",
              "| Metric | Baseline | Current | Goal | Status |", "|---|---|---|---|---|"]
     for r in rows:
@@ -190,7 +210,10 @@ def render_markdown(rows: List[dict], failed: bool) -> str:
         lines.append("A baseline metric was not produced this run: the collector step is broken or a report is missing.")
     if any(r["status"] == "regressed" for r in rows):
         lines.append("A metric got worse. Fix it in this PR; the baseline only moves in the good direction.")
-    if any(r["status"] in ("improved", "new") for r in rows):
+    if any(r["status"] == "unmeasured" for r in rows):
+        lines.append("A baseline metric is still unmeasured (null): it passes now and binds once the first "
+                     "measurement is recorded with `ratchet.py compare ... --update` and committed.")
+    if any(r["status"] in ("improved", "new", "unmeasured") for r in rows):
         lines.append("Run `ratchet.py compare ... --update` and commit baseline.json to lock in the improvement.")
     return "\n".join(lines) + "\n"
 
@@ -363,13 +386,19 @@ def _write_text(path: str, text: str) -> None:
 
 
 def cmd_compare(args) -> int:
-    baseline = load_metrics(args.baseline)
+    baseline = load_metrics(args.baseline, allow_unmeasured=True)
     current = load_metrics(args.current, defaults=baseline)
     rows = compare(baseline, current)
     regressed = [r for r in rows if r["status"] in ("regressed", "missing")]
-    loose = [r for r in rows if r["status"] in ("improved", "new")]
+    pending = [r for r in rows if r["status"] in ("improved", "new", "unmeasured")]
+    # An unmeasured placeholder never fails the gate, not even with --require-tight.
+    loose = [r for r in pending if r["status"] != "unmeasured"]
     failed = bool(regressed) or (args.require_tight and bool(loose) and not args.update)
     md = render_markdown(rows, failed)
+    unmeasured = [r["metric"] for r in rows if r["status"] == "unmeasured"]
+    if unmeasured:
+        md += (f"unmeasured: {', '.join(unmeasured)} - record CI's measurement with: "
+               f"ratchet.py compare --update --baseline {args.baseline} --current current.json\n")
     sys.stdout.write(md)
     if args.summary:
         _write_text(args.summary, md)
@@ -377,7 +406,7 @@ def cmd_compare(args) -> int:
         with open(args.report, "w", encoding="utf-8", newline="\n") as fh:
             json.dump({"passed": not failed, "rows": rows}, fh, indent=2)
             fh.write("\n")
-    if args.update and not regressed and loose:
+    if args.update and not regressed and pending:
         write_metrics(args.baseline, tightened(baseline, current, rows))
         sys.stdout.write(f"baseline updated: {args.baseline}\n")
     if args.require_tight and loose and not args.update:
@@ -396,7 +425,7 @@ def cmd_collect(args) -> int:
 def cmd_init(args) -> int:
     if os.path.exists(args.baseline) and not args.force:
         raise RatchetError(f"{args.baseline} exists; use --force to overwrite (compare --update only ever tightens)")
-    write_metrics(args.baseline, load_metrics(args.current))
+    write_metrics(args.baseline, load_metrics(args.current, allow_unmeasured=True))
     sys.stdout.write(f"baseline written: {args.baseline}\n")
     return EXIT_OK
 

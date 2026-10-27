@@ -31,6 +31,14 @@ recall@k, golden-set accuracy) with direction `higher`.
   the templates `|| [ $? -eq 1 ]` accepts "found issues" but still fails the
   step on exit 2+ (crash, bad config). Never use a bare `|| true`: an empty
   report would read as "0 errors" and look like an improvement.
+- **Unmeasured (`null`) baselines.** A metric written before any code
+  existed (typically `coverage_pct` and `duplication_pct` at kickoff) is
+  `"value": null`. `compare` passes it and reports `unmeasured`; `compare
+  --update` records the first real measurement (only when nothing regressed),
+  and from then on it ratchets with its direction and tolerance. Never write
+  a placeholder `0`: for a lower-is-better metric it fails the first real
+  run, for a higher-is-better one it never binds. `--require-tight` does not
+  fail on unmeasured metrics.
 - **Baseline updates happen in PRs**, by the author running `--update`
   locally or in a refactor PR. CI never commits to the repo, which keeps
   the workflow at `contents: read`.

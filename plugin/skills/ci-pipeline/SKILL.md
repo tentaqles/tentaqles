@@ -28,8 +28,15 @@ locally.
 3. Run the collect commands from the template locally, then create the
    baseline once:
    `python .github/quality/ratchet.py init --baseline .github/quality/baseline.json --current current.json`
-4. Commit the workflow, script and baseline together. Example baseline:
-   [references/baseline.example.json](references/baseline.example.json).
+   Before any code exists there is nothing to measure: write the metrics
+   that cannot be measured yet as `"value": null` (unmeasured), never as a
+   made-up `0`. A zero for `coverage_pct` would make the check a permanent
+   no-op and a zero for `duplication_pct` would fail the first real run.
+   Examples: [references/baseline.example.json](references/baseline.example.json)
+   and [references/baseline.unmeasured.example.json](references/baseline.unmeasured.example.json).
+4. Commit the workflow, script and baseline together. The template also has a
+   `secrets` job (gitleaks); its job-level `pull-requests: read` is required
+   because gitleaks-action lists a PR's commits.
 
 Metric choice, collectors per stack and tolerances:
 [references/ratchet.md](references/ratchet.md).
@@ -43,6 +50,13 @@ Metric choice, collectors per stack and tolerances:
   commits the tightened `baseline.json`. `--update` never loosens a value
   and does nothing when anything regressed. `--require-tight` makes CI fail
   until improvements are committed.
+- A baseline value of `null` is "not measured yet": `compare` passes it and
+  reports it as `unmeasured`. The first PR that has real code runs
+  `compare ... --update` and commits the baseline; from then on the metric
+  ratchets like any other. Until then it does not bind, so record the first
+  measurement in the first PR that adds code. A collector that stops
+  producing an unmeasured metric still fails (missing), the current file
+  must be numeric, and `init --force` stays the only way to overwrite.
 - Tests themselves must pass outright; only measured quantities ratchet.
 - The JSON report and step summary are uploaded as an artifact so an agent
   can read why the gate failed.
@@ -88,4 +102,5 @@ run this skill. A future `tq` or add-project step could do it
 automatically: pick the template from the manifest's `stack`, copy
 `ratchet.py`, run the collectors once and write the first baseline. Doing it
 at project creation is the cheapest moment, since the baseline starts at
-zero lint errors.
+zero lint errors. Metrics that need code (coverage, duplication) start as
+`null` and are recorded with `--update` in the first PR that has code.

@@ -116,7 +116,12 @@ workspace name in `.tentaqles.yaml`, see `tq status`).
 
 ## 5. Guardrails before code
 
-- `/tentaqles:ci-pipeline`: the ratchet with a zero baseline (cheapest now).
+- `/tentaqles:ci-pipeline`: the ratchet. No code exists yet, so lint and
+  complexity start at 0 and `coverage_pct` and `duplication_pct` start as
+  `"value": null` (unmeasured), never a made-up 0: a placeholder that is not
+  a real measurement fails the first CI run or makes the check a no-op. The
+  first slice's PR runs `ratchet.py compare ... --update` and commits the
+  measured baseline.
 - `/tentaqles:supply-chain`: actions pinned to SHAs, `permissions:` on every
   workflow, lockfiles committed, SBOM on release, secret scanning as a
   required check. If that skill is not installed, tell the user, add the bullet line `- NEEDS-DECISION: supply-chain guardrails pending (settle by: run /tentaqles:supply-chain when installed)` to `docs/prd.md` §10, and continue.

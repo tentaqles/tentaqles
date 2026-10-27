@@ -76,7 +76,8 @@ templates and images by digest (C10) and use the platform's secret scanning.
   elements (component name, version, supplier, unique identifier, dependency
   relationships, author, timestamp, licence, hash), and attach it to the release.
 - **C7 secret scanning**: enable the platform's secret scanning and push
-  protection, or a pinned gitleaks action as a required check; locally tq's
+  protection, or a pinned gitleaks action as a required check (the `secrets`
+  job in the ci-pipeline templates; it needs job-level `pull-requests: read`); locally tq's
   `commit-secret` rule already scans commits.
 - **C8 attestations**: build in CI; sign or attest release artifacts
   (`actions/attest-build-provenance` pinned, or Sigstore `cosign`).
