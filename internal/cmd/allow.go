@@ -61,8 +61,10 @@ func newAllowCmd() *cobra.Command {
 				if ws.Manifest.HasCloudIdentity() {
 					fmt.Fprintln(c.ErrOrStderr(), "warning: bypass + cloud identity — Claude can run cloud CLIs unattended in this workspace")
 				}
-				renderCodex(c, ws, false)
 			}
+			// Always re-render: trusting a new manifest without --bypass
+			// drops bypass for it, so the Codex block and profile must go.
+			renderCodex(c, ws, false)
 			return nil
 		},
 	}
@@ -87,6 +89,8 @@ func newDenyCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(c.OutOrStdout(), "Denied %s\n", ws.Name)
+			// Bypass trust is gone: remove the Codex unattended settings.
+			renderCodex(c, ws, false)
 			return nil
 		},
 	}
