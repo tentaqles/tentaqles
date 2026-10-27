@@ -246,3 +246,20 @@ func TestRunVerify_NoRunnerIsANoOp(t *testing.T) {
 		t.Fatalf("without a runner there is nothing to report, got %+v", fs)
 	}
 }
+
+// aws is only asked who it is when the workspace declares the account id.
+func TestShouldVerify_AWSOnlyWithExpectedAccount(t *testing.T) {
+	p, ok := providers.MustLoad().Get("aws")
+	if !ok {
+		t.Fatal("aws missing from catalog")
+	}
+	if shouldVerify(VerifyAuto, mf(nil), "aws", p) {
+		t.Error("auto must not call sts without an expectation")
+	}
+	m := mf(func(m *manifest.Manifest) {
+		m.Identities["aws"] = manifest.Identity{ExpectedAccount: "123456789012"}
+	})
+	if !shouldVerify(VerifyAuto, m, "aws", p) {
+		t.Error("auto should verify aws when expected_account is declared")
+	}
+}
