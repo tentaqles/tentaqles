@@ -246,12 +246,51 @@ type guardBlock struct {
 	Enable  []string          `yaml:"enable,omitempty"`
 	Actions map[string]string `yaml:"actions,omitempty"`
 	Rules   yaml.Node         `yaml:"rules,omitempty"`
+
+	Unattended *manifest.Unattended `yaml:"unattended,omitempty"`
 }
 
-// editManifestGuard rewrites w's guard block, validates the result loads,
-// and re-trusts it. It refuses a manifest that is not currently trusted, so
-// re-trusting can never approve edits the user has not reviewed.
+// editManifestGuard applies off/on/set for ids to w's guard block through
+// rewriteManifestGuard.
 func editManifestGuard(w *resolve.Workspace, ids []string, op, action string) error {
+	return rewriteManifestGuard(w, func(gb *guardBlock) error {
+		g, gerr := guardcfg.Load()
+		for _, id := range ids {
+			switch op {
+			case "off":
+				gb.Disable = appendUniq(gb.Disable, id)
+				gb.Enable = without(gb.Enable, id)
+			case "on":
+				gb.Disable = without(gb.Disable, id)
+				// Still off from the global file or decision.disable? Enable it
+				// here, which wins for this workspace.
+				mm := *w.Manifest
+				mm.Guard.Disable = gb.Disable
+				mm.Guard.Enable = gb.Enable
+				if guardcfg.Merge(g, gerr, &mm, w.Name).Off(id) {
+					gb.Enable = appendUniq(gb.Enable, id)
+				}
+			case "set":
+				if action == "default" {
+					delete(gb.Actions, id)
+				} else {
+					if gb.Actions == nil {
+						gb.Actions = map[string]string{}
+					}
+					gb.Actions[id] = action
+				}
+			}
+		}
+		return nil
+	})
+}
+
+// rewriteManifestGuard reads w's guard block, lets mutate change it, writes
+// the manifest back (dropping an empty block), validates the result loads,
+// and re-trusts it, carrying bypass trust from the old hash to the new. It
+// refuses a manifest that is not currently trusted, so re-trusting can never
+// approve edits the user has not reviewed.
+func rewriteManifestGuard(w *resolve.Workspace, mutate func(gb *guardBlock) error) error {
 	path := w.ManifestPath
 	oldHash, err := trust.HashFile(path)
 	if err != nil {
@@ -279,38 +318,14 @@ func editManifestGuard(w *resolve.Workspace, ids []string, op, action string) er
 			}
 		}
 	}
-	g, gerr := guardcfg.Load()
-	for _, id := range ids {
-		switch op {
-		case "off":
-			gb.Disable = appendUniq(gb.Disable, id)
-			gb.Enable = without(gb.Enable, id)
-		case "on":
-			gb.Disable = without(gb.Disable, id)
-			// Still off from the global file or decision.disable? Enable it
-			// here, which wins for this workspace.
-			mm := *w.Manifest
-			mm.Guard.Disable = gb.Disable
-			mm.Guard.Enable = gb.Enable
-			if guardcfg.Merge(g, gerr, &mm, w.Name).Off(id) {
-				gb.Enable = appendUniq(gb.Enable, id)
-			}
-		case "set":
-			if action == "default" {
-				delete(gb.Actions, id)
-			} else {
-				if gb.Actions == nil {
-					gb.Actions = map[string]string{}
-				}
-				gb.Actions[id] = action
-			}
-		}
+	if err := mutate(&gb); err != nil {
+		return err
 	}
 	var gnode yaml.Node
 	if err := gnode.Encode(gb); err != nil {
 		return err
 	}
-	empty := len(gb.Disable) == 0 && len(gb.Enable) == 0 && len(gb.Actions) == 0 && gb.Rules.IsZero()
+	empty := len(gb.Disable) == 0 && len(gb.Enable) == 0 && len(gb.Actions) == 0 && gb.Rules.IsZero() && gb.Unattended == nil
 	switch {
 	case gi >= 0 && empty:
 		root.Content = append(root.Content[:gi], root.Content[gi+2:]...)
