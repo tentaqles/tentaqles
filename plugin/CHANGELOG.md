@@ -4,6 +4,8 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-26
+
 - Fixed: skill bash blocks and `tq_env.sh` picked the first plugin version in the cache alphabetically (0.10.0 over 0.12.0); they now pick the highest installed version, the identity cache winning ties.
 
 ### Added
@@ -26,6 +28,16 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
   ignored) when `TQ_HUB_TASK` is set.
 - **Session preamble** prints "N decisions waiting on you (tq hub open)" from a read-only
   SQLite read bounded to 300 ms.
+
+- **Headless runs never edit `.tentaqles.yaml`.** In a hub run (`TENTAQLES_HEADLESS=1`),
+  `classify-data`, `kickoff`, `client-settings` and `rollback` write the proposed change to
+  `docs/privacy-manifest-proposal.yaml` and raise a decision (`build-gate ask <slug> --kind
+  question --options applied,stop`) or a `NEEDS-DECISION` line; the user applies it and
+  re-trusts. A new PreToolUse hook, `headless-manifest-guard.py` (5 s timeout, matcher
+  `Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell`), blocks headless writes of the
+  manifest: file tools (Windows spellings, streams, short names) and shell commands parsed
+  line by line, with heredoc bodies read as data unless they feed a shell or an
+  interpreter. Reads and mentions are allowed; outside headless runs it always allows.
 
 ### Changed
 
