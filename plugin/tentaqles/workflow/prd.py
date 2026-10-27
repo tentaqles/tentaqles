@@ -58,6 +58,12 @@ def _frs(section: list[str]) -> tuple[list[str], list[str]]:
     return frs, without
 
 
+def open_decision_lines(text: str) -> list[str]:
+    """The open NEEDS-DECISION lines of section 10 (stripped), in file order."""
+    secs = _sections(text.replace("\r\n", "\n").split("\n"))
+    return [ln.strip() for ln in secs.get(10, []) if TAG_ITEM_RE.match(ln)]
+
+
 def prd_status(root: Path) -> dict:
     base = {"exists": False, "path": PRD_REL, "frs": 0, "frs_without_checks": [],
             "open_decisions": 0, "has_section_10": False, "planning_ready": False}

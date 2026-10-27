@@ -117,7 +117,7 @@ When the plan's `workflow` is `feature`, `fix` or `kickoff`, run the definition 
 
 ## Phase 4: Human stop 2
 
-`AskUserQuestion` (headless: write the `result` record from the Headless mode section and end the turn): what to try and how, checkpoint summary (retries per gate, light/full reviews, test counts per layer), deferred MINOR findings. Offer **Approve**, **Request changes**, **Stop here**.
+`AskUserQuestion` (headless: write the `result` record from the Headless mode section and end the turn): what to try and how, checkpoint summary (retries per gate, light/full reviews, test counts per layer), deferred MINOR findings. Also list every open `NEEDS-DECISION` line of `docs/prd.md` section 10, new ones (opened during this build; the `prd-decisions` DoD item fails on them) and pre-existing ones, so the human settles or accepts each here. Offer **Approve**, **Request changes**, **Stop here**.
 - **Request changes:** log the feedback as an H<n> line in `docs/LEARNINGS.md` (what was rejected and which gate should have caught it), append new checkpoints, have the human approve them (the approve command, in their terminal; headless: `build-gate ask <slug> --kind plan-approval ...`), and loop Phase 2 to 3.
 - **Approve:** ask the human to run `build-gate finish <slug>` in their terminal (it removes the gate hooks and the tq rules; human-only like approve), commit what's outstanding, and report the branch `build/<slug>` and worktree path. Push or open a PR only if the user asks. The worktree can be removed later with `tq worktrees prune`.
 - **Stop here:** commit what's outstanding and leave the branch.
