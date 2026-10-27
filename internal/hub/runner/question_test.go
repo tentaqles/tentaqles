@@ -107,6 +107,28 @@ func TestStopOnAPreSlugQuestionEndsTheRun(t *testing.T) {
 	}
 }
 
+// TestQuestionThatCannotBeRecordedFailsTheRun: a run never waits with no decision to answer.
+func TestQuestionThatCannotBeRecordedFailsTheRun(t *testing.T) {
+	h := newHarness(t)
+	h.ad.steps = []step{func(ctx context.Context, req adapter.RunRequest) (adapter.RunResult, error) {
+		if _, err := h.st.DB.Exec(`ALTER TABLE decisions RENAME TO decisions_gone`); err != nil {
+			t.Error(err)
+		}
+		return result(preSlugQuestion)(ctx, req)
+	}}
+	c := h.card("feature", store.TagAgentReady)
+	r := h.enqueue(c)
+	h.tick()
+	got := h.run(r.ID)
+	card, _ := h.st.Card(c.ID)
+	if got.Status != store.StatusFailed || got.StopReason != "question not recorded" || card.LockedByRun != "" {
+		t.Fatalf("%+v lock %q", got, card.LockedByRun)
+	}
+	if cm := h.comments(c.ID); !strings.Contains(cm, "could not record the run's question") || !strings.Contains(cm, "decisions") {
+		t.Fatal(cm)
+	}
+}
+
 // TestNoStopAfterASlugStillFails: once a build slug exists, a round with no stop fails as before.
 func TestNoStopAfterASlugStillFails(t *testing.T) {
 	h := newHarness(t)

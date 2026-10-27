@@ -118,9 +118,23 @@ func (n Notes) block() string {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
-		fmt.Fprintf(&b, "### %s at %s\n\n%s", c.Author, c.CreatedAt, c.Body)
+		fmt.Fprintf(&b, "### %s at %s\n\n%s", c.Author, c.CreatedAt, quote(c.Body))
 	}
 	return b.String()
+}
+
+// quote renders a comment body as a markdown blockquote ("> " on every line, ">" on an empty
+// one), so the human's text can never fake a heading or an entry boundary of the hub's own.
+func quote(body string) string {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "" {
+			lines[i] = ">"
+		} else {
+			lines[i] = "> " + l
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // humanNotes reads the card's comments and runs for the next prompt; a read error leaves the

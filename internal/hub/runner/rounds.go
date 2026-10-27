@@ -410,9 +410,13 @@ func (s *Service) apply(r store.Run, card store.Card, out Outcome, st *gate.Stat
 	case VerdictQuestion:
 		// The run stopped on a question before any build slug existed: the hub asks it, and the
 		// human's answer (a card comment) reaches the same run's next prompt.
+		if _, err := s.st.AskHubQuestion(card.ID, r.ID, tailText(final, questionMax)); err != nil {
+			// never wait with nothing to answer
+			s.fail(r, card, "question not recorded", "The hub could not record the run's question ("+err.Error()+"), so the run cannot wait on you; it was failed. The question is the agent's comment above; answer it with a comment, then `tq hub run "+card.ID+"`.")
+			return
+		}
 		r.Status, r.StopReason = store.StatusWaiting, out.StopReason
 		s.save(r)
-		_, _ = s.st.AskHubQuestion(card.ID, r.ID, tailText(final, questionMax))
 		_ = s.st.Log(activity.Entry{Actor: "hub", Verb: activity.VerbRunWait, CardID: card.ID, RunID: r.ID, Data: map[string]any{"question": true}})
 		s.notify("tq hub: waiting on you", card.Title+": the run asked a question")
 	case VerdictMaxTurns:

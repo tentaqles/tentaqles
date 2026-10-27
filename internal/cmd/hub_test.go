@@ -493,6 +493,26 @@ func TestHubCommentFromAnAgentSessionIsNeverHuman(t *testing.T) {
 	}
 }
 
+// TestHubWaitingHintForAHubQuestion: the hub's own question needs a note, so the printed answer
+// line carries --choice answer --note, and the first attempt works.
+func TestHubWaitingHintForAHubQuestion(t *testing.T) {
+	hubWS(t)
+	c := addCard(t, "x")
+	st, _ := store.OpenExisting("acme", []string{"all"})
+	d, err := st.AskHubQuestion(c.ID, "r-abcdefghijkl", "Monthly or weekly?")
+	st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "tq hub answer " + c.ID + " " + d.ID + ` --choice answer --note "<your answer>"`
+	for _, args := range [][]string{{"hub", "list", "--waiting"}, {"hub", "show", c.ID}} {
+		_, out, _, err := runTQ(t, args...)
+		if err != nil || !strings.Contains(out, want) || strings.Contains(out, "--choice <option>") {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+}
+
 // TestHubAgentSignals: each agent marker alone makes the CLI an agent; none of them, a human.
 func TestHubAgentSignals(t *testing.T) {
 	markers := []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK"}
