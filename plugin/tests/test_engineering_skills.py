@@ -129,5 +129,17 @@ def test_ci_template_is_hardened(template: Path) -> None:
         steps = job["steps"]
         checkout = [s for s in steps if str(s.get("uses", "")).startswith("actions/checkout@")]
         assert checkout and checkout[0].get("with", {}).get("persist-credentials") is False
-        assert any("ratchet.py compare" in str(s.get("run", "")) for s in steps)
+    assert any("ratchet.py compare" in str(s.get("run", ""))
+               for job in doc["jobs"].values() for s in job["steps"])
     assert "|| true" not in text, "a crashed tool must not read as zero findings"
+
+
+@pytest.mark.parametrize("template", TEMPLATES, ids=lambda p: p.name)
+def test_ci_template_secrets_job_can_list_pr_commits(template: Path) -> None:
+    doc = yaml.safe_load(template.read_text(encoding="utf-8"))
+    job = doc["jobs"]["secrets"]
+    # gitleaks-action lists the PR's commits on pull_request; contents: read alone fails with
+    # "Resource not accessible by integration".
+    assert job["permissions"] == {"contents": "read", "pull-requests": "read"}
+    assert any("gitleaks/gitleaks-action@" in str(s.get("uses", "")) for s in job["steps"])
+    assert "pull-requests: read" in template.read_text(encoding="utf-8")
