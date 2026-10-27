@@ -185,30 +185,119 @@ func Load(path string) (*Manifest, error) {
 	if err := m.Guard.Unattended.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: guard.unattended: %w", path, err)
 	}
+	if err := m.validateCloud(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	m.Path = path
 	return &m, nil
 }
 
+// CloudProviders are the canonical provider names cloud.provider and
+// cloud.also accept (after CloudProviderName normalisation).
+var CloudProviders = []string{"azure", "aws", "gcp", "digitalocean"}
+
+// CloudProviderName normalises a cloud provider name: trimmed, lowercased,
+// with the CLI-flavoured aliases mapped to the canonical names the guard
+// compares against (gcloud -> gcp, az -> azure, do/doctl -> digitalocean).
+// Unknown names come back lowercased and trimmed, otherwise unchanged.
+func CloudProviderName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "gcloud":
+		return "gcp"
+	case "az":
+		return "azure"
+	case "do", "doctl":
+		return "digitalocean"
+	}
+	return s
+}
+
+// cloudIdentity maps a canonical cloud provider to its catalog identity.
+var cloudIdentity = map[string]string{"azure": "az", "aws": "aws", "gcp": "gcloud", "digitalocean": "doctl"}
+
+// validateCloud checks the cloud block: cloud.provider is empty, "none" or a
+// known provider (aliases allowed); cloud.also is a list of known providers
+// with no repeats, none equal to the primary, and needs a real primary.
+func (m *Manifest) validateCloud() error {
+	primary := ""
+	if raw, present := m.Cloud["provider"]; present && raw != nil {
+		p, ok := raw.(string)
+		if !ok {
+			return fmt.Errorf("cloud.provider: must be a string, got %v", raw)
+		}
+		primary = CloudProviderName(p)
+		if primary != "" && primary != "none" && !contains(CloudProviders, primary) {
+			return fmt.Errorf("cloud.provider: unknown provider %q (known: %s, none)", p, strings.Join(CloudProviders, ", "))
+		}
+	}
+	raw, present := m.Cloud["also"]
+	if !present || raw == nil {
+		return nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return fmt.Errorf("cloud.also: must be a list of provider names (e.g. [aws]), got %v", raw)
+	}
+	if len(list) > 0 && (primary == "" || primary == "none") {
+		return fmt.Errorf("cloud.also: needs cloud.provider to name a primary cloud (not empty or none)")
+	}
+	seen := map[string]bool{}
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("cloud.also: entries must be strings, got %v", v)
+		}
+		name := CloudProviderName(s)
+		if !contains(CloudProviders, name) {
+			return fmt.Errorf("cloud.also: unknown provider %q (known: %s)", s, strings.Join(CloudProviders, ", "))
+		}
+		if name == primary {
+			return fmt.Errorf("cloud.also: %q is already the primary cloud.provider", s)
+		}
+		if seen[name] {
+			return fmt.Errorf("cloud.also: %q is listed twice", s)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
 // IdentityNames returns the sorted providers this workspace isolates.
 // v1 manifests (no identities block) default to claude+gh plus the cloud CLI.
+// Every cloud.also cloud is isolated too: with an identities block, one that
+// block does not declare is added implicitly, so the guard never allows a
+// cloud CLI that has no private config home.
 func (m *Manifest) IdentityNames() []string {
+	var out []string
+	var clouds []string
 	if len(m.Identities) > 0 {
-		out := make([]string, 0, len(m.Identities))
 		for k := range m.Identities {
 			out = append(out, k)
 		}
-		sort.Strings(out)
-		return out
+	} else {
+		out = []string{"claude", "gh"}
+		if p, _ := m.Cloud["provider"].(string); p != "" {
+			clouds = append(clouds, p)
+		}
 	}
-	out := []string{"claude", "gh"}
-	if p, _ := m.Cloud["provider"].(string); p != "" {
-		switch p {
-		case "azure":
-			out = append(out, "az")
-		case "aws":
-			out = append(out, "aws")
-		case "gcp", "gcloud":
-			out = append(out, "gcloud")
+	// cloud.also: further clouds this workspace may use (see guard.Input.ExtraClouds).
+	if also, ok := m.Cloud["also"].([]any); ok {
+		for _, v := range also {
+			if s, ok := v.(string); ok {
+				clouds = append(clouds, s)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, n := range out {
+		seen[n] = true
+	}
+	for _, p := range clouds {
+		id := cloudIdentity[CloudProviderName(p)]
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
 		}
 	}
 	sort.Strings(out)
@@ -217,7 +306,7 @@ func (m *Manifest) IdentityNames() []string {
 
 func (m *Manifest) HasCloudIdentity() bool {
 	for _, n := range m.IdentityNames() {
-		if n == "az" || n == "aws" || n == "gcloud" {
+		if n == "az" || n == "aws" || n == "gcloud" || n == "doctl" {
 			return true
 		}
 	}

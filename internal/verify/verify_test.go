@@ -288,3 +288,35 @@ func TestCheck_GhFallsBackWhenNoActiveMarker(t *testing.T) {
 		t.Fatalf("account = %q", r.Account)
 	}
 }
+
+// The embedded aws catalog entry: sts get-caller-identity JSON gives the
+// account id, and expired or missing credentials read as logged out even
+// though the CLI exits non-zero.
+func TestCheck_AWSFromEmbeddedCatalog(t *testing.T) {
+	p, ok := providers.MustLoad().Get("aws")
+	if !ok || p.Verify == nil {
+		t.Fatal("aws must declare a verify block")
+	}
+	if got := strings.Join(p.Verify.Args, " "); got != "sts get-caller-identity --output json" {
+		t.Fatalf("verify args = %q", got)
+	}
+	const who = `{"UserId": "AIDAEXAMPLE:tester", "Account": "123456789012", "Arn": "arn:aws:sts::123456789012:assumed-role/Dev/tester"}`
+	r := Check(context.Background(), p, nil, fixed(who, nil))
+	if !r.LoggedIn || r.Account != "123456789012" {
+		t.Fatalf("got %+v, want logged in as 123456789012", r)
+	}
+	for _, out := range []string{
+		"Token has expired and refresh failed",
+		"Unable to locate credentials. You can configure credentials by running \"aws configure\".",
+		"Error loading SSO Token: Token for https://example.awsapps.com/start does not exist",
+		"The SSO session associated with this profile has expired or is otherwise invalid.",
+		"the SSO session for acme has expired",
+		"An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired",
+		"An error occurred (InvalidClientTokenId) when calling the GetCallerIdentity operation: The security token included in the request is invalid.",
+	} {
+		r := Check(context.Background(), p, nil, fixed(out, errors.New("exit status 255")))
+		if r.LoggedIn || r.Err != nil {
+			t.Errorf("%q: want logged out without error, got %+v", out, r)
+		}
+	}
+}

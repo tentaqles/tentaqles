@@ -4,6 +4,12 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-10-27
+
+- Docs: `cloud.also` (extra clouds a workspace may use) in the plugin README and `docs/`; accepted names are `azure`, `aws`, `gcp`, `digitalocean` plus the aliases `az`, `gcloud`, `do`, `doctl`.
+- `/tentaqles:client-settings` can add and remove `cloud.also` entries (a re-trust with `tq allow` follows).
+- Docs: `tq login <ws> aws` uses AWS SSO when the private config has an sso-session, and `expected_account` for aws (account id).
+
 ## [0.13.0] — 2026-10-26
 
 - Fixed: skill bash blocks and `tq_env.sh` picked the first plugin version in the cache alphabetically (0.10.0 over 0.12.0); they now pick the highest installed version, the identity cache winning ties.

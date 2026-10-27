@@ -430,3 +430,33 @@ func TestGHEnv_DropsKeysCaseInsensitively(t *testing.T) {
 		t.Fatalf("env=%v", got)
 	}
 }
+
+// cloud.also names are normalised like cloud.provider: gcloud is gcp.
+func TestPreToolUse_CloudAlsoAliasAndPrimaryAlias(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "cloud:\n  provider: azure\n  also: [gcloud]\n")
+	for cmd, want := range map[string]int{"gcloud projects list": 0, "az account show": 0, "aws s3 ls": 2} {
+		if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, cmd)); code != want {
+			t.Fatalf("%q: code=%d want %d out=%s", cmd, code, want, out)
+		}
+	}
+	ws = setupTrustedWorkspaceWithManifest(t, "acme2", "cloud:\n  provider: gcloud\n")
+	for cmd, want := range map[string]int{"gcloud projects list": 0, "gsutil ls": 0, "az account show": 2} {
+		if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, cmd)); code != want {
+			t.Fatalf("%q: code=%d want %d out=%s", cmd, code, want, out)
+		}
+	}
+}
+
+// cloud.also only counts from a trusted manifest: edit it (so the hash no
+// longer matches) and the extra cloud is blocked again.
+func TestPreToolUse_UntrustedManifestCannotAddClouds(t *testing.T) {
+	trusted := setupTrustedWorkspaceWithManifest(t, "acme", "cloud:\n  provider: azure\n  also: [aws]\n")
+	if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, trusted, "aws s3 ls")); code != 0 {
+		t.Fatalf("trusted also: code=%d out=%s", code, out)
+	}
+	untrusted := mkUntrustedWithManifest(t, "acme", "cloud:\n  provider: azure\n  also: [aws]\n")
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, untrusted, "aws s3 ls"))
+	if code != 2 || !strings.Contains(out, `"rule":"wrong-cloud"`) {
+		t.Fatalf("untrusted also: code=%d out=%s", code, out)
+	}
+}

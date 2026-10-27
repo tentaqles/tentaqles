@@ -118,6 +118,20 @@ mirrors `tq login`'s normal behavior outside of `setup` — see the main
 README's "Quick start" and "Where things live" sections for how per-workspace
 credential isolation works.
 
+### AWS login
+
+`tq login <workspace> aws` picks the flow from the workspace's private AWS
+config (`~/.tentaqles/identities/<workspace>/aws/config`):
+
+- one `[sso-session NAME]` section: `aws sso login --sso-session NAME`;
+- several sections: pass `--sso-session NAME` (the error lists the names);
+- `--sso`: `aws configure sso` (first-time SSO setup), whatever the file holds;
+- otherwise: `aws configure` (static access keys).
+
+`--sso-session NAME` always wins. SSO tokens are cached in the shared
+`~/.aws/sso/cache`, which `AWS_CONFIG_FILE` does not move, so workspaces using
+the same SSO start URL share that login; tq prints a note about it.
+
 ## Unattended runs
 
 To let a bypass or auto Claude session run without tq's confirms in a demo
@@ -138,6 +152,30 @@ and `~/.tentaqles/last-setup.yaml`) with owner-only permissions — `0600` for
 the file, `0700` for any directory created to hold it — on platforms that
 enforce POSIX permission bits. Windows does not enforce these bits, so the
 file is still written there but without the same OS-level restriction.
+
+## Extra clouds
+
+A workspace allows the cloud CLI of `cloud.provider` only; any other cloud CLI
+is blocked as wrong-cloud. To use a second cloud, add it to the manifest
+afterwards and run `tq allow <ws>`:
+
+```yaml
+cloud:
+  provider: azure
+  also: [aws]
+```
+
+`also` must be a list. Accepted names are `azure`, `aws`, `gcp` and
+`digitalocean`; the aliases `az`, `gcloud`, `do` and `doctl` work in both
+`provider` and `also`. An unknown name, a scalar (`also: aws`) or the primary
+cloud repeated is a load error, as is a repeat within `also`, or `also` with no
+real `cloud.provider` (missing or `none`); `cloud.provider` itself must be one
+of the names above or `none`. Each extra cloud (`digitalocean` via `doctl`)
+gets its own private config home under `~/.tentaqles/identities/<ws>/`. If the
+manifest has an `identities:` block that does not list that cloud's identity
+(`az`, `aws`, `gcloud`, `doctl`), tq adds it implicitly, so the extra cloud is
+never left on the shared default config. See
+[CLAUDE-HOOK.md](CLAUDE-HOOK.md) for the guard rules.
 
 ## Data classification
 

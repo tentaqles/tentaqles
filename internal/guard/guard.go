@@ -24,6 +24,7 @@ type Input struct {
 	NeutralReason  string   // resolve.Result.Reason when Neutral
 	Blocked        []string // effective blocked-command list (manifest union)
 	CloudProvider  string   // "azure"|"aws"|"gcp"|"digitalocean"|"" (lowercased)
+	ExtraClouds    []string // further providers the manifest allows (cloud.also)
 	ExpectedEmail  string   // manifest.Git.Email
 	ActualEmail    string   // effective `git config user.email` in cwd ("" if unknown)
 	ExpectedGHUser string   // manifest.Git.User (or ExpectedUser)
@@ -76,6 +77,18 @@ func StartsWith(command, prefix string) bool {
 		startsWithCache.Store(key, re)
 	}
 	return re.MatchString(command)
+}
+
+// cloudList names a workspace's allowed clouds for a block message: the
+// primary provider, then any extras from cloud.also.
+func cloudList(primary string, extra []string) string {
+	out := []string{primary}
+	for _, x := range extra {
+		if x = strings.ToLower(strings.TrimSpace(x)); x != "" && x != primary {
+			out = append(out, x)
+		}
+	}
+	return strings.Join(out, " + ")
 }
 
 // CloudCLIs maps cloud CLI binary names to the provider they belong to.
@@ -238,9 +251,13 @@ func Decide(in Input) Decision {
 		}
 	}
 	if p := strings.ToLower(in.CloudProvider); p != "" && p != "none" {
+		allowed := map[string]bool{p: true}
+		for _, x := range in.ExtraClouds {
+			allowed[strings.ToLower(strings.TrimSpace(x))] = true
+		}
 		for cli, prov := range CloudCLIs() {
-			if StartsWith(in.Command, cli) && prov != p {
-				return block("wrong-cloud", fmt.Sprintf("This workspace uses %s, but you ran a %s command ('%s').\n  Client: %s", p, prov, cli, client))
+			if StartsWith(in.Command, cli) && !allowed[prov] {
+				return block("wrong-cloud", fmt.Sprintf("This workspace uses %s, but you ran a %s command ('%s').\n  Client: %s", cloudList(p, in.ExtraClouds), prov, cli, client))
 			}
 		}
 	}
