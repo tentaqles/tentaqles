@@ -61,6 +61,7 @@ func newAllowCmd() *cobra.Command {
 				if ws.Manifest.HasCloudIdentity() {
 					fmt.Fprintln(c.ErrOrStderr(), "warning: bypass + cloud identity — Claude can run cloud CLIs unattended in this workspace")
 				}
+				renderCodex(c, ws, false)
 			}
 			return nil
 		},

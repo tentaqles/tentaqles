@@ -5,12 +5,34 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/codexcfg"
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
+
+// codexArgs adds tq's unattended profile when cwd is a covered project of a
+// projects-only setup and bypass is trusted; workspace-wide setups use the
+// top-level keys instead, and an explicit --profile/-p is left alone.
+func codexArgs(ws *resolve.Workspace, cwd string, args []string) []string {
+	u := ws.Manifest.Guard.Unattended
+	if !u.Configured() || u.Workspace || !trust.IsBypassAllowed(ws.Hash) {
+		return args
+	}
+	if ok, _ := guardcfg.Covers(ws.Manifest, ws.Root, cwd); !ok {
+		return args
+	}
+	for _, a := range args {
+		if a == "--profile" || a == "-p" || strings.HasPrefix(a, "--profile=") {
+			return args
+		}
+	}
+	return append([]string{"--profile", codexcfg.Profile}, args...)
+}
 
 func claudeArgs(ws *resolve.Workspace, args []string, warn func(string)) []string {
 	mode := ws.Manifest.Claude.PermissionMode
@@ -36,6 +58,10 @@ func claudeArgs(ws *resolve.Workspace, args []string, warn func(string)) []strin
 func execIn(ws *resolve.Workspace, name string, args []string, applyClaudeArgs bool, errw func(string)) error {
 	if applyClaudeArgs && name == "claude" {
 		args = claudeArgs(ws, args, errw)
+	}
+	if applyClaudeArgs && name == "codex" {
+		cwd, _ := os.Getwd()
+		args = codexArgs(ws, cwd, args)
 	}
 	cmd := exec.Command(name, args...)
 	cmd.Env = envplan.Environ(ws, os.Environ())

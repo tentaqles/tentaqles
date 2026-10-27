@@ -93,6 +93,7 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.`,
 				for _, ch := range res.Changes {
 					fmt.Fprintf(c.OutOrStdout(), "  %s\n", ch)
 				}
+				renderCodex(c, ws, dryRun)
 			}
 			if n == 0 {
 				return fmt.Errorf("no matching workspace")
