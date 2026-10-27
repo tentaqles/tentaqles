@@ -65,9 +65,11 @@ func Builtin() []Rule {
 			// ; && || | ( a backtick or a newline, optionally behind `cmd /c`)
 			// with no arguments: `set -e`, `echo set`, `Set-Content` and
 			// `git commit -m "set the flag"` are not dumps. A closing quote
-			// also ends the dump (`bash -c "ls; set"`). A Bash heredoc body
-			// that is data (guard.BlankDataHeredocs) is not read.
-			Command: `(^|[;&|\n(` + bt + `]\s*)(cmd(\.exe)?\s+/[ck]\s+)?(printenv|env|set|export\s+-p|declare\s+-p|typeset\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)"'` + bt + `])` +
+			// also ends the dump (`bash -c "ls; set"`), and a quote right
+			// after -c (`bash -c 'set'`, `sh -lc "printenv"`) starts one. A
+			// Bash heredoc body that is data (guard.BlankDataHeredocs) is not
+			// read.
+			Command: `(^|[;&|\n(` + bt + `]\s*|\s-[a-z]*c\s+["'])(cmd(\.exe)?\s+/[ck]\s+)?(printenv|env|set|export\s+-p|declare\s+-p|typeset\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)"'` + bt + `])` +
 				`|\[(system\.)?environment\]::getenvironmentvariables\s*\(`,
 			SkipHeredocData: true,
 			Reason:          "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or run the command with `tq dotenv run -- <command>`",

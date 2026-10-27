@@ -18,13 +18,14 @@ func TestHeredocDataRules(t *testing.T) {
 	}{
 		// harmless: the guard file or `set` only mentioned in data
 		{"note mentions guard file", "Bash", "cat > docs/notes.md <<'EOF'\nThe global guard file is " + gf + ".\nEOF", Allow, ""},
-		{"fixture mentions guard file", "Bash", "mkdir -p testdata && cat <<EOF > testdata/acme.md\npath: " + gf + "\nEOF", Allow, ""},
+		{"fixture mentions guard file", "Bash", "cat <<EOF > testdata/acme.md\npath: " + gf + "\nEOF", Allow, ""},
 		{"tee fixture mentions guard file", "Bash", "tee testdata/acme.txt >/dev/null <<'EOF'\n" + gf + "\nEOF", Allow, ""},
 		{"commit -F - mentions guard file", "Bash", "git commit -F - <<'EOF'\ndocs: explain " + gf + "\nEOF", Allow, ""},
 		{"commit -m heredoc mentions guard file", "Bash", "git commit -m \"$(cat <<'EOF'\ndocs: explain " + gf + "\nEOF\n)\"", Allow, ""},
 		{"pr body mentions guard file", "Bash", "gh pr create --title t --body \"$(cat <<'EOF'\nTouches " + gf + " handling.\nEOF\n)\"", Allow, ""},
 		{"commit message with bare set line", "Bash", "git commit -F - <<'EOF'\nfix: parse the env\n\nset\n(set)\n| set | yes |\nEOF", Allow, ""},
-		{"commit -m heredoc with set", "Bash", "git add a && git commit -m \"$(cat <<'EOF'\nfix: tester notes\n\nset\nEOF\n)\"", Allow, ""},
+		{"commit -m heredoc with set", "Bash", "git commit -m \"$(cat <<'EOF'\nfix: tester notes\n\nset\nEOF\n)\"", Allow, ""},
+		{"chained commit -m heredoc with set is scanned", "Bash", "git add a && git commit -m \"$(cat <<'EOF'\nfix: tester notes\n\nset\nEOF\n)\"", Deny, "tq/env-dump"},
 		{"doc with set table", "Bash", "cat > docs/acme.md <<'EOF'\n| cmd | dumps |\n|---|---|\n| set | yes |\n(set)\nEOF", Allow, ""},
 		{"quoted message starting with set", "Bash", `git commit -m "set the flag"`, Allow, ""},
 		{"quoted message with set up", "Bash", `git commit -m "fix: set up the parser"`, Allow, ""},
@@ -42,7 +43,7 @@ func TestHeredocDataRules(t *testing.T) {
 		{"set -x", "Bash", "set -x", Allow, ""},
 		{"Set-Content elsewhere", "PowerShell", "Set-Content notes.txt 'x'", Allow, ""},
 		{"Set-Location", "PowerShell", "Set-Location src; dir", Allow, ""},
-		{"two data heredocs", "Bash", "cat > a.md <<A\n" + gf + "\nA\ncat > b.md <<B\nset\nB", Allow, ""},
+		{"two data heredocs are scanned", "Bash", "cat > a.md <<A\n" + gf + "\nA\ncat > b.md <<B\nset\nB", Deny, "tq/guard-file-write"},
 
 		// real dumps
 		{"set alone", "Bash", "set", Deny, "tq/env-dump"},

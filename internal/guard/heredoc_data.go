@@ -7,23 +7,22 @@ import (
 
 // BlankDataHeredocs replaces every heredoc body of a Bash command with
 // spaces (keeping the length and line breaks) when, and only when, the
-// whole command is one of a few shapes whose bodies are plain data:
+// whole command is a single command (no `;`, `&&`, `||`, `|`, `&` or second
+// line outside the bodies) of one of these shapes:
 //
 //   - `cat` or `tee` reading a heredoc (`cat > f <<EOF`, `cat <<EOF > f`,
-//     `tee f <<EOF`);
-//   - `git commit|tag|notes … -F -` (or `--file=-` / `--file -`) reading a
-//     heredoc, the subcommand being git's first non-option word;
-//   - `git commit|tag … -m "$(cat <<'EOF' … EOF)"` and
+//     `tee f <<EOF`), where no word names a `.git` directory, a git config
+//     or a git hook;
+//   - `git commit|tag|notes … -F -` (or `-F-`, `--file=-`, `--file -`)
+//     reading a heredoc, the subcommand being git's first non-option word;
+//   - `git commit|tag … -m "$(cat <<'EOF' … EOF)"` or
 //     `gh pr|issue create|edit|comment … --body|--title "$(cat <<EOF … )"`,
 //     where the `$( )` holds only `cat <<WORD`.
 //
-// Every other segment of the command must have a known, inert command word
-// (cat, tee, echo, printf, mkdir, cd, ls, pwd, true, touch, chmod, cp, mv,
-// rm, git add|status|diff|log|show and the git/gh shapes above). Any pipe,
-// any other `$( )`, backtick or process substitution, a leading variable
-// assignment, a wrapper (sudo, env, xargs, …) or an unknown command word,
-// an unterminated heredoc or one with an odd delimiter: nothing is blanked
-// and the command is returned unchanged. When in doubt, scan.
+// Anything else (a chain, a pipe, another substitution, a `$` expansion,
+// an assignment, any other program, an unterminated heredoc or one with an
+// odd delimiter): nothing is blanked and the command is returned unchanged.
+// When in doubt, scan.
 func BlankDataHeredocs(c string) string {
 	lines := strings.Split(c, "\n")
 	hs := scanHeredocs(lines)
@@ -75,11 +74,14 @@ func BlankDataHeredocs(c string) string {
 	if !ok {
 		return c
 	}
+	var one []span
 	for _, sp := range segs {
-		text := string(skel[sp.start:sp.end])
-		if !inertSegment(text, within(marks, sp), within(subst, sp)) {
-			return c
+		if strings.TrimSpace(string(skel[sp.start:sp.end])) != "" {
+			one = append(one, sp)
 		}
+	}
+	if len(one) != 1 || !dataSegment(string(skel[one[0].start:one[0].end]), len(marks) > 0, len(subst) > 0) {
+		return c
 	}
 	out := append([]string(nil), lines...)
 	for _, h := range hs {
@@ -95,15 +97,6 @@ var substCatRe = regexp.MustCompile(`\$\(\s*cat\s+$`)
 // an opening double quote.
 var substArgRe = regexp.MustCompile(`(^|\s)(-m|--message|-b|--body|-t|--title)(=|\s+)"$`)
 
-func within(offs []int, sp span) bool {
-	for _, o := range offs {
-		if o >= sp.start && o < sp.end {
-			return true
-		}
-	}
-	return false
-}
-
 // inertSegments splits skel at top-level `;`, `&&`, `||`, `&` and line
 // breaks, with comments blanked. ok is false when skel has a pipe or any
 // command substitution, backtick or process substitution left.
@@ -117,7 +110,7 @@ func inertSegments(skel string) ([]span, bool) {
 		if i+1 < len(skel) {
 			nb = skel[i+1]
 		}
-		if !lx.comment && !lx.esc && lx.top().kind != 's' && (ch == '`' || (ch == '$' && nb == '(') || ((ch == '<' || ch == '>') && nb == '(')) {
+		if !lx.comment && !lx.esc && lx.top().kind != 's' && lx.top().kind != 'a' && (ch == '`' || (ch == '$' && nb == '(') || ((ch == '<' || ch == '>') && nb == '(')) {
 			return nil, false // a substitution tq does not read
 		}
 		if lx.live() {
@@ -156,14 +149,14 @@ func inertSegments(skel string) ([]span, bool) {
 	return out, true
 }
 
-// inertSegment judges one segment: hasHeredoc / hasSubst say it holds a
-// heredoc marker or a `"$(cat <<…)"` placeholder.
-func inertSegment(text string, hasHeredoc, hasSubst bool) bool {
-	raw := strings.Fields(text)
-	if len(raw) == 0 {
-		return !hasHeredoc && !hasSubst
+// dataSegment judges the one command of a data heredoc: hasHeredoc / hasSubst
+// say it reads a heredoc directly or holds a `"$(cat <<…)"` placeholder.
+func dataSegment(text string, hasHeredoc, hasSubst bool) bool {
+	if strings.ContainsAny(text, "$`") || hasHeredoc == hasSubst {
+		return false
 	}
-	if assignWord.MatchString(raw[0]) {
+	raw := strings.Fields(text)
+	if len(raw) == 0 || assignWord.MatchString(raw[0]) {
 		return false
 	}
 	words := commandWords(text)
@@ -172,29 +165,44 @@ func inertSegment(text string, hasHeredoc, hasSubst bool) bool {
 	}
 	switch words[0] {
 	case "cat", "tee":
-		return !hasSubst
-	case "echo", "printf", "mkdir", "cd", "ls", "pwd", "true", "touch", "chmod", "cp", "mv", "rm":
-		return !hasHeredoc && !hasSubst
+		if hasSubst {
+			return false
+		}
+		for _, w := range raw {
+			if gitPath(w) {
+				return false
+			}
+		}
+		return true
 	case "git":
-		return inertGit(words[1:], hasHeredoc, hasSubst)
+		return dataGit(words[1:], hasSubst)
 	case "gh":
-		if hasHeredoc || len(words) < 3 || (words[1] != "pr" && words[1] != "issue") {
+		if !hasSubst || len(words) < 3 || (words[1] != "pr" && words[1] != "issue") {
 			return false
 		}
 		switch words[2] {
 		case "create", "edit", "comment":
 			return true
-		case "view":
-			return !hasSubst
 		}
 	}
 	return false
 }
 
-// inertGit judges a git call (args after `git`): only -C and --no-pager
-// before the subcommand; add/status/diff/log/show plain, and commit, tag
-// or notes when a heredoc is read with -F - or a "$(cat …)" message.
-func inertGit(args []string, hasHeredoc, hasSubst bool) bool {
+// gitPathRe matches a path into a .git directory, a git config or a git
+// hook: text written there is run by later git commands.
+var gitPathRe = regexp.MustCompile(`(?i)(^|[/\\])\.git([/\\]|$)|(^|[/\\])hooks[/\\]|(^|[/\\])(\.?gitconfig|\.gitmodules|config|applypatch-msg|pre-applypatch|post-applypatch|pre-commit|pre-merge-commit|prepare-commit-msg|commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push|pre-receive|update|post-receive|post-update|push-to-checkout|pre-auto-gc|post-rewrite|sendemail-validate|fsmonitor-watchman|reference-transaction|post-index-change|proc-receive)$`)
+
+var redirPrefix = regexp.MustCompile(`^(\d*>>?|&>>?|\d*>&)`)
+
+func gitPath(w string) bool {
+	w = strings.Trim(redirPrefix.ReplaceAllString(w, ""), `"'`)
+	return w != "" && gitPathRe.MatchString(w)
+}
+
+// dataGit judges a git call (args after `git`): only -C and --no-pager
+// before the subcommand; commit, tag or notes reading a heredoc with -F -,
+// or commit or tag with a "$(cat …)" message.
+func dataGit(args []string, hasSubst bool) bool {
 	i := 0
 	for i < len(args) && strings.HasPrefix(args[i], "-") {
 		switch args[i] {
@@ -210,17 +218,11 @@ func inertGit(args []string, hasHeredoc, hasSubst bool) bool {
 		return false
 	}
 	sub, rest := args[i], args[i+1:]
-	switch sub {
-	case "add", "status", "diff", "log", "show":
-		return !hasHeredoc && !hasSubst
-	case "commit", "tag", "notes":
-		if hasSubst && sub == "notes" {
-			return false
-		}
-		if hasHeredoc && !readsStdinFile(rest) {
-			return false
-		}
-		return true
+	switch {
+	case hasSubst:
+		return sub == "commit" || sub == "tag"
+	case sub == "commit" || sub == "tag" || sub == "notes":
+		return readsStdinFile(rest)
 	}
 	return false
 }

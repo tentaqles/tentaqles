@@ -15,7 +15,8 @@ type heredoc struct {
 }
 
 // shFrame is one level of bash quoting: 'u' unquoted (the command, or a
-// `$( )` inside it), 's' single quotes, 'd' double quotes, 'b' backticks.
+// `$( )` inside it), 's' single quotes, 'a' ANSI-C `$'…'`, 'd' double
+// quotes, 'b' backticks, 'p' a `${ … }` parameter expansion.
 type shFrame struct {
 	kind  byte
 	depth int // plain parens open inside a 'u' frame
@@ -79,6 +80,13 @@ func (l *shLexer) step(ch, next byte) int {
 			if ch == '\'' {
 				l.pop()
 			}
+		case 'a': // $'…': a backslash escapes, an unescaped ' closes
+			switch ch {
+			case '\\':
+				l.esc = true
+			case '\'':
+				l.pop()
+			}
 		case 'd':
 			switch {
 			case ch == '\\':
@@ -88,13 +96,47 @@ func (l *shLexer) step(ch, next byte) int {
 			case ch == '$' && next == '(':
 				l.push('u')
 				skip = 1
+			case ch == '$' && next == '{':
+				l.push('p')
+				skip = 1
 			case ch == '`':
 				l.push('b')
+			}
+		case 'p': // ${ … }: no marker is read; closes at the matching }
+			switch {
+			case ch == '\\':
+				l.esc = true
+			case ch == '\'':
+				l.push('s')
+			case ch == '"':
+				l.push('d')
+			case ch == '`':
+				l.push('b')
+			case ch == '$' && next == '(':
+				l.push('u')
+				skip = 1
+			case ch == '$' && next == '{':
+				l.push('p')
+				skip = 1
+			case ch == '$' && next == '\'':
+				l.push('a')
+				skip = 1
+			case ch == '{':
+				f.depth++
+			case ch == '}':
+				if f.depth > 0 {
+					f.depth--
+				} else {
+					l.pop()
+				}
 			}
 		default:
 			switch {
 			case ch == '\\':
 				l.esc = true
+			case ch == '$' && next == '\'':
+				l.push('a')
+				skip = 1
 			case ch == '\'':
 				l.push('s')
 			case ch == '"':
@@ -103,6 +145,9 @@ func (l *shLexer) step(ch, next byte) int {
 				l.comment = true
 			case ch == '$' && next == '(':
 				l.push('u')
+				skip = 1
+			case ch == '$' && next == '{':
+				l.push('p')
 				skip = 1
 			case ch == '`':
 				if f.kind == 'b' {
@@ -224,7 +269,7 @@ func scanHeredocs(lines []string) []heredoc {
 		if len(pending) == 0 || (cont && i < len(lines)) {
 			continue
 		}
-		openQuote := lx.top().kind == 's' || lx.top().kind == 'd'
+		openQuote := lx.top().kind != 'u' && lx.top().kind != 'b'
 		next := i
 		for n, h := range pending {
 			h.from, h.to = next, len(lines)

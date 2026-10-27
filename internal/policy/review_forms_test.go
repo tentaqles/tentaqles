@@ -73,6 +73,36 @@ func TestReviewForms(t *testing.T) {
 		{"X14 backtick printenv", "Bash", "echo \"`printenv`\"", Deny, ed},
 		{"X15 env in a file then sh", "Bash", "cat > x <<EOF\nenv\nEOF\nsh x", Deny, ed},
 		{"continued opener piped to bash", "Bash", "cat <<EOF \\\n | bash\n" + w + "\nEOF", Deny, gw},
+
+		// re-review (round 2)
+		{"E4c gh pr create then bash -c set", "Bash", "gh pr create --body \"$(cat <<'EOF'\nx\nEOF\n)\" && bash -c 'set'", Deny, ed},
+		{"E5e commit substitution then bash -c set", "Bash", "git commit -m \"$(cat <<'EOF'\nx\nEOF\n)\"; bash -c 'set'", Deny, ed},
+		{"N1 hook written then commit", "Bash", "cat > .git/hooks/pre-commit <<'EOF'\n#!/bin/sh\n" + w + "\nEOF\nchmod +x .git/hooks/pre-commit && git commit -m x", Deny, gw},
+		{"N1b commit-msg hook then commit -F -", "Bash", "cat > .git/hooks/commit-msg <<'A'\n#!/bin/sh\n" + w + "\nA\nchmod +x .git/hooks/commit-msg\ngit commit -F - <<'B'\nmsg\nB", Deny, gw},
+		{"N1c fsmonitor config then git status", "Bash", "cat >> .git/config <<'EOF'\n[core]\n\tfsmonitor = \"" + w + "\"\nEOF\ngit status", Deny, gw},
+		{"N1d mv into hooks then commit", "Bash", "cat > h <<'EOF'\n#!/bin/sh\n" + w + "\nEOF\nmv h .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && git commit -m x", Deny, gw},
+		{"N1e cd hooks then commit", "Bash", "cd .git/hooks && cat > pre-commit <<'EOF'\n#!/bin/sh\n" + w + "\nEOF\nchmod +x pre-commit && cd ../.. && git commit -m x", Deny, gw},
+		{"N1f hook written alone", "Bash", "cat > .git/hooks/pre-commit <<'EOF'\n#!/bin/sh\n" + w + "\nEOF", Deny, gw},
+		{"N1g git config by tee", "Bash", "tee -a .git/config <<'EOF'\n[core]\n\tfsmonitor = \"" + w + "\"\nEOF", Deny, gw},
+		{"N1h windows git dir", "Bash", "cat > .git\\hooks\\pre-push <<'EOF'\n" + w + "\nEOF", Deny, gw},
+		{"N1i global gitconfig", "Bash", "cat >> ~/.gitconfig <<'EOF'\n[core]\n\thooksPath = h\n" + w + "\nEOF", Deny, gw},
+		{"N1j hooks path dir", "Bash", "cat > hooks/pre-commit <<'EOF'\n" + w + "\nEOF", Deny, gw},
+		{"chained cd then cat", "Bash", "cd docs && cat > n.md <<'EOF'\n" + w + "\nEOF", Deny, gw},
+		{"chained cat then ls", "Bash", "cat > n.md <<'EOF'\n" + w + "\nEOF\nls", Deny, gw},
+		{"N2 param expansion holds <<", "Bash", "cat ${x/<<X/}\n" + w + "\nX/}", Deny, gw},
+		{"N3 ansi-c quote", "Bash", "cat $'a\\' <<X ''\n" + w + "\nX", Deny, gw},
+		{"N3b ansi-c quote then printenv", "Bash", "cat $'a\\' <<X ''\nprintenv\nX", Deny, ed},
+		{"R10 bash -c set", "Bash", "bash -c 'set'", Deny, ed},
+		{"R10 sh -c printenv", "Bash", `sh -c "printenv"`, Deny, ed},
+		{"R10 bash -c env", "Bash", "bash -c 'env'", Deny, ed},
+		{"R10 bash -lc set piped", "Bash", "bash -lc 'set | grep KEY'", Deny, ed},
+
+		// the original false positives stay allowed
+		{"orig note naming the guard file", "Bash", "cat > notes.md <<'EOF'\nThe guard file is " + gf + ".\nEOF", Allow, ""},
+		{"orig commit -F - set the flag", "Bash", "git commit -F - <<EOF\nset the flag\nEOF", Allow, ""},
+		{"orig commit -m substitution", "Bash", "git commit -m \"$(cat <<'EOF'\ndocs: " + gf + "\n\nset\nEOF\n)\"", Allow, ""},
+		{"orig gh pr body", "Bash", "gh pr create --title t --body \"$(cat <<'EOF'\nTouches " + gf + "\nset\nEOF\n)\"", Allow, ""},
+		{"bash -c one variable", "Bash", "bash -c 'printenv PATH'", Allow, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

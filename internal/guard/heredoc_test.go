@@ -42,6 +42,13 @@ var heredocCases = []struct {
 	// the body starts after the logical line
 	{"continued opener line", "cat <<EOF \\\n | bash\nbody\nEOF", []string{"| bash"}, []string{"body"}},
 	{"continuation at end", "cat <<EOF \\", []string{"cat <<EOF"}, nil},
+	// ${ } and $'…' are not code: no marker inside them
+	{"param expansion holds <<", "cat ${x/<<X/}\nprintenv\nX/}", []string{"printenv"}, nil},
+	{"nested param expansion", "cat ${x:-${y/<<X/}}\nprintenv\nX", []string{"printenv"}, nil},
+	{"marker after param expansion", "cat ${x} <<EOF\nbody\nEOF", nil, []string{"body"}},
+	{"ansi-c quote escapes a quote", "cat $'a\\' <<X ''\nprintenv\nX", []string{"printenv"}, nil},
+	{"marker after ansi-c quote", "cat $'a\\'b' <<EOF\nbody\nEOF", nil, []string{"body"}},
+	{"$' inside double quotes is literal", "echo \"$'\" <<EOF\nbody\nEOF", nil, []string{"body"}},
 }
 
 // scanHeredocs flags a delimiter that is not a plain word or one quote pair
