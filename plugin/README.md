@@ -185,8 +185,9 @@ calls `tq claude-hook pre-tool-use`, which verifies:
 | Any blocked command | Pattern from manifest | Yes |
 
 A workspace allows the cloud CLI of `cloud.provider` only. To use more than
-one cloud, list the extras in `cloud.also` (`azure`, `aws`, `gcp`,
-`digitalocean`), e.g. `also: [aws]`. Every other cloud CLI is still blocked
+one cloud, list the extras in `cloud.also` (a list; accepted names:
+`azure`, `aws`, `gcp`, `digitalocean` (aliases: `az`, `gcloud`, `do`, `doctl`)), e.g. `also: [aws]`. An unknown name, a scalar, or the
+primary cloud repeated is a manifest load error. Every other cloud CLI is still blocked
 as wrong-cloud, and the block message names the allowed set ("azure + aws").
 Only the trusted manifest (pinned by `tq allow`) can add clouds; a manifest
 file in a repo cannot. Each extra cloud also gets its own private config home

@@ -66,7 +66,7 @@ Parse the user's request and map it to the manifest field. Common patterns:
 |-----------|---------------|--------|
 | "change email to x@y.com" | `git.email` (tq-owned) | Run `tq add` again / edit, then ask the user to run `tq allow` — don't just hand-edit and skip re-trust |
 | "set cloud to aws" | `cloud.provider` | Update + regenerate preflight |
-| "also allow aws" / "this client uses two clouds" | `cloud.also` (list: `azure`, `aws`, `gcp`, `digitalocean`) | Append to the list (create it if missing); never repeat `cloud.provider` |
+| "also allow aws" / "this client uses two clouds" | `cloud.also` (list: `azure`, `aws`, `gcp`, `digitalocean` (aliases: `az`, `gcloud`, `do`, `doctl`)) | Append to the list (create it if missing); never repeat `cloud.provider` |
 | "drop aws" / "remove the extra cloud" | `cloud.also` | Remove the entry; delete the key when the list is empty |
 | "change database to snowflake" | `database.provider` + `database.dialect` | Update both |
 | "add fastapi to stack" | `stack` | Append |
@@ -83,7 +83,9 @@ Parse the user's request and map it to the manifest field. Common patterns:
 ### Extra clouds (`cloud.also`)
 
 `cloud.provider` is the primary cloud; `cloud.also` lists further clouds the
-workspace may use. Other cloud CLIs stay blocked as wrong-cloud. Each listed
+workspace may use. It must be a YAML list of names from `azure`, `aws`, `gcp`, `digitalocean` (aliases: `az`, `gcloud`, `do`, `doctl`); a
+scalar, an unknown name or the primary cloud repeated makes the manifest fail
+to load. `digitalocean` maps to the `doctl` identity. Other cloud CLIs stay blocked as wrong-cloud. Each listed
 cloud gets its own private CLI config home under
 `~/.tentaqles/identities/<workspace>/`. Editing `cloud.also` changes the
 manifest hash, so after the edit ask the user to run `tq allow <name>` in

@@ -202,7 +202,7 @@ unsigned-app steps) and the dev loop.
 | `tq list` | List workspaces under all registered bases. `--json` for machine-readable output. |
 | `tq env` | Print the env changes for the current directory (used by the shell hook). `--shell <name>`, `--json`. |
 | `tq activate <shell>` | Print the hook to add to your shell profile, e.g. `eval "$(tq activate bash)"`. Shells: `bash`, `zsh`, `fish`, `pwsh`, `powershell`, `cmd`. |
-| `tq login <workspace> <identity>` | Run a CLI's own login flow inside the workspace's private config home. |
+| `tq login <workspace> <identity>` | Run a CLI's own login flow inside the workspace's private config home. For `aws`: one `[sso-session]` in the private config runs `aws sso login --sso-session NAME`; several need `--sso-session NAME`; `--sso` runs `aws configure sso`; otherwise `aws configure`. |
 | `tq run <workspace> -- <command> [args...]` | Run a command with a workspace's identity without cd-ing into it. |
 | `tq doctor` | Verify hooks, trust, git and env against the manifests (never mutates). `--json` for machine-readable findings. `--verify auto\|all\|off` controls whether it asks each CLI which account is signed in -- see [Checking the account, not just the folder](#checking-the-account-not-just-the-folder). |
 | `tq migrate` | Move a setup built by hand before `tq` under `tq`'s management: identity dirs, global git config, shell hooks, and (opt-in) the `cmd.exe` AutoRun hook. Dry run unless `--apply`; `--steps identity,git,shell,cmd`, `--force`, `--json`. Every mutation is journalled first. See [`docs/MIGRATE.md`](docs/MIGRATE.md). |
@@ -233,6 +233,8 @@ identities:
   claude:
     expected_account: dev@acme.test
     expected_subscription: max
+  aws:
+    expected_account: "123456789012"   # AWS account id (sts get-caller-identity)
 ```
 
 ```

@@ -118,6 +118,20 @@ mirrors `tq login`'s normal behavior outside of `setup` — see the main
 README's "Quick start" and "Where things live" sections for how per-workspace
 credential isolation works.
 
+### AWS login
+
+`tq login <workspace> aws` picks the flow from the workspace's private AWS
+config (`~/.tentaqles/identities/<workspace>/aws/config`):
+
+- one `[sso-session NAME]` section: `aws sso login --sso-session NAME`;
+- several sections: pass `--sso-session NAME` (the error lists the names);
+- `--sso`: `aws configure sso` (first-time SSO setup), whatever the file holds;
+- otherwise: `aws configure` (static access keys).
+
+`--sso-session NAME` always wins. SSO tokens are cached in the shared
+`~/.aws/sso/cache`, which `AWS_CONFIG_FILE` does not move, so workspaces using
+the same SSO start URL share that login; tq prints a note about it.
+
 ## Unattended runs
 
 To let a bypass or auto Claude session run without tq's confirms in a demo
@@ -151,7 +165,10 @@ cloud:
   also: [aws]
 ```
 
-Accepted values are `azure`, `aws`, `gcp` and `digitalocean`. Each extra cloud
+`also` must be a list. Accepted names are `azure`, `aws`, `gcp` and
+`digitalocean`; the aliases `az`, `gcloud`, `do` and `doctl` work in both
+`provider` and `also`. An unknown name, a scalar (`also: aws`) or the primary
+cloud repeated is a load error. Each extra cloud (`digitalocean` via `doctl`)
 gets its own private config home under `~/.tentaqles/identities/<ws>/`. See
 [CLAUDE-HOOK.md](CLAUDE-HOOK.md) for the guard rules.
 

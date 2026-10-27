@@ -109,7 +109,7 @@ order — the **first** matching rule wins and produces the block:
    `gcloud`, `gsutil`, `bq`, `doctl`) whose provider doesn't match the
    workspace's configured cloud provider. E.g. running `az ...` in an
    AWS-configured workspace. Providers listed in the trusted manifest's
-   `cloud.also` (e.g. `also: [aws]`) are allowed too; the block message
+   `cloud.also` (e.g. `also: [aws]`; names `azure`, `aws`, `gcp`, `digitalocean` (aliases: `az`, `gcloud`, `do`, `doctl`)) are allowed too; the block message
    then names the set ("azure + aws"). A repo manifest cannot add clouds.
 3. **`neutral-remote`** — cwd resolves to **no** trusted tq workspace
    (`Neutral`), and the command is a remote mutation (`gh` anything, any
