@@ -4,6 +4,8 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+- Fixed: a new project's first PR no longer fails CI on placeholders. `ratchet.py` accepts `"value": null` in a baseline as "unmeasured": `compare` passes and reports it, `compare --update` records the first real measurement, then the metric ratchets as usual (`init --force` remains the only overwrite). `/tentaqles:kickoff` and `ci-pipeline` write `coverage_pct` and `duplication_pct` as `null` instead of `0`. The CI templates gain a `secrets` (gitleaks) job with job-level `pull-requests: read`, which gitleaks-action needs on `pull_request`.
+
 ## [0.13.1] — 2026-10-27
 
 - Docs: `cloud.also` (extra clouds a workspace may use) in the plugin README and `docs/`; accepted names are `azure`, `aws`, `gcp`, `digitalocean` plus the aliases `az`, `gcloud`, `do`, `doctl`.
