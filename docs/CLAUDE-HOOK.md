@@ -181,14 +181,18 @@ work.
 **What it skips.** Only the `ask` branch, and only when all of these hold:
 
 - the manifest has a `guard.unattended` block that covers the session's cwd;
-- `tq allow --bypass <ws>` was run for the workspace (a separate trust step);
+- for a file tool (Edit, Write, ...), the target file's folder is covered too:
+  editing outside the covered folder still asks;
+- the workspace's current manifest is trusted, and `tq allow --bypass <ws>`
+  was run for it (a separate trust step);
 - the session's permission mode is exactly `bypassPermissions` or `auto`
   (any other mode asks as before);
 - none of the matched rules is in the always-ask set or in `keep_asking`.
 
 **What it never skips.**
 
-- Deny rules: a blocked command stays blocked, in every mode.
+- Deny rules: in Claude Code a blocked command stays blocked, in every mode.
+  (tq's guard does not run inside Codex; see `CLAUDE-SETTINGS.md`, "Codex".)
 - `tq/guard-change`: this confirm is always asked. It covers `tq guard`,
   `tq allow`, `tq deny` and `tq unattended on|off`, so an agent cannot widen
   its own permissions.
@@ -212,9 +216,9 @@ guard:
 | Command | What it does |
 |---|---|
 | `tq unattended on [--project <dir>] [--codex-sandbox <mode>]` | turn it on for the workspace, or for one folder |
-| `tq unattended off [--project <dir>]` | turn it off for one folder, or clear the block |
+| `tq unattended off [--project <dir>]` | turn it off for one folder (an error if it is not listed), or for the workspace and every folder; `keep_asking` and `codex_sandbox` stay for the next `on` |
 | `tq unattended status` | what is covered and whether it is effective |
-| `tq unattended log [--since 24h]` | the confirms it skipped |
+| `tq unattended log [--since 24h]` | the confirms it skipped (reads the current and the rotated file) |
 
 `on` and `off` re-trust the manifest like `tq guard --ws` does, so they print
 only the bypass hint when `tq allow --bypass` is still missing.
@@ -228,7 +232,8 @@ Write errors never fail the hook.
 **Visibility.** SessionStart adds one line for a workspace with the block:
 `Unattended: on (demo-todo) · 2 confirms skipped in 24h · applies in bypass
 and auto sessions`, or `Unattended: configured, not effective (needs tq allow
---bypass <ws>)`, or `Unattended: on for demo-todo (not this folder)`.
+--bypass <ws>)`, or `Unattended: on for demo-todo (not this folder)` (`on for
+the workspace (not this folder)` when the cwd is outside the workspace root).
 `tq doctor` warns with `unattended-not-effective`, `unattended-unknown-rule`
 and `unattended-cloud` (unattended plus a cloud identity).
 

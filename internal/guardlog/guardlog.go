@@ -58,10 +58,30 @@ func Append(r Record, classes []string) {
 	_, _ = f.Write(append(b, '\n'))
 }
 
-// Read returns ws's records since since, newest first. maxBytes > 0 reads
-// only the file's tail; ws "" means every workspace.
+// Read returns ws's records since since, newest first, from the current
+// file only. maxBytes > 0 reads only the file's tail (the hook path stays
+// bounded); ws "" means every workspace.
 func Read(ws string, since time.Time, maxBytes int64) []Record {
-	f, err := os.Open(Path())
+	return newestFirst(readFile(Path(), ws, since, maxBytes))
+}
+
+// ReadAll is Read over the whole rotated file (unattended.jsonl.1) and the
+// whole current file. It is for the CLI, never for a hook.
+func ReadAll(ws string, since time.Time) []Record {
+	p := Path()
+	return newestFirst(append(readFile(p+".1", ws, since, 0), readFile(p, ws, since, 0)...))
+}
+
+func newestFirst(out []Record) []Record {
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+// readFile returns p's matching records in file order.
+func readFile(p, ws string, since time.Time, maxBytes int64) []Record {
+	f, err := os.Open(p)
 	if err != nil {
 		return nil
 	}
@@ -85,9 +105,6 @@ func Read(ws string, since time.Time, maxBytes int64) []Record {
 		if (ws == "" || r.WS == ws) && !r.Time.Before(since) {
 			out = append(out, r)
 		}
-	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
 	}
 	return out
 }

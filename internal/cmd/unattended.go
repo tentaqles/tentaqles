@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ func newUnattendedCmd() *cobra.Command {
 		Short: "Skip tq's confirms in bypass/auto sessions of chosen workspaces or projects",
 		Long: `Unattended mode lets tq's "ask" rules pass without a prompt when a Claude Code
 session runs in bypassPermissions or auto mode inside a workspace (or project
-folder) you listed. Deny rules are never skipped, and neither are the rules in
+folder) you listed. Deny rules are never skipped there, and neither are the rules in
 guard.unattended.keep_asking (default: tq/iac-apply, tq/remote-migration) or
 tq/guard-change. It only takes effect once bypass trust is granted:
 tq allow --bypass NAME.
@@ -54,7 +55,7 @@ agent cannot switch the mode by itself.`,
 			return unattendedChange(c, ws, false, project, "")
 		},
 	}
-	off.Flags().StringVar(&project, "project", "", "only this folder (default: clear the whole block)")
+	off.Flags().StringVar(&project, "project", "", "only this folder (default: the workspace and every project)")
 	status := &cobra.Command{
 		Use: "status", Short: "Show what unattended mode covers and whether it is effective", Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -76,7 +77,7 @@ agent cannot switch the mode by itself.`,
 			if err != nil || d <= 0 {
 				return fmt.Errorf("--since must be a positive duration such as 24h, got %q", since)
 			}
-			for _, r := range guardlog.Read(w.Name, time.Now().Add(-d), 1<<20) {
+			for _, r := range guardlog.ReadAll(w.Name, time.Now().Add(-d)) {
 				fmt.Fprintf(c.OutOrStdout(), "%s  %s  %s  %s  %s  %s\n",
 					r.Time.Format(time.RFC3339), r.Scope, r.Mode, strings.Join(r.Rules, ","), r.Tool, r.Command)
 			}
@@ -177,23 +178,43 @@ func unattendedEdit(w *resolve.Workspace, on bool, project, sandbox string) erro
 			gb.Unattended = u
 			return nil
 		}
-		if rel == "" || u == nil {
-			gb.Unattended = nil
+		if u == nil {
+			if rel != "" {
+				return fmt.Errorf("no project %s in guard.unattended.projects", rel)
+			}
 			return nil
 		}
-		var keep []string
-		for _, p := range u.Projects {
-			if manifest.CleanProject(p) != rel {
-				keep = append(keep, p)
+		if rel == "" {
+			// Off for everything, but keep_asking and codex_sandbox are
+			// settings the user chose: they stay for the next `on`.
+			u.Workspace = false
+			u.Projects = nil
+		} else {
+			var keep []string
+			for _, p := range u.Projects {
+				if !sameProject(manifest.CleanProject(p), rel) {
+					keep = append(keep, p)
+				}
 			}
+			if len(keep) == len(u.Projects) {
+				return fmt.Errorf("no project %s in guard.unattended.projects", rel)
+			}
+			u.Projects = keep
 		}
-		u.Projects = keep
 		if !u.Configured() && u.KeepAsking == nil && u.CodexSandbox == "" {
 			u = nil
 		}
 		gb.Unattended = u
 		return nil
 	})
+}
+
+// sameProject compares two cleaned project paths, ignoring case on Windows.
+func sameProject(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // resolveUnattendedProject resolves p (relative paths against root) to a slash

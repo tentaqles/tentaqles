@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +101,90 @@ func TestUnattendedLog(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) != 2 || !strings.Contains(lines[0], "newer") || !strings.Contains(lines[0], "tq/a,tq/b") || !strings.Contains(lines[1], "older") {
+		t.Fatalf("log = %q", out)
+	}
+}
+
+func TestUnattendedOffKeepsSettings(t *testing.T) {
+	body := "guard:\n  unattended:\n    workspace: true\n    projects: [demo-todo]\n    keep_asking: [tq/force-push]\n    codex_sandbox: read-only\n"
+	root := setupTrustedWorkspaceWithManifest(t, "acme", body)
+	t.Chdir(root)
+	if out, err := runUnattendedCmd(t, "off"); err != nil {
+		t.Fatalf("off: %v\n%s", err, out)
+	}
+	m, err := manifest.Load(filepath.Join(root, manifest.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := m.Guard.Unattended
+	if u == nil || u.Configured() || u.KeepAsking == nil || len(*u.KeepAsking) != 1 || (*u.KeepAsking)[0] != "tq/force-push" || u.CodexSandbox != "read-only" {
+		t.Fatalf("off must clear coverage but keep keep_asking and codex_sandbox: %+v", u)
+	}
+}
+
+func TestUnattendedOffWithoutSettingsClearsBlock(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "guard:\n  unattended:\n    workspace: true\n")
+	t.Chdir(root)
+	if out, err := runUnattendedCmd(t, "off"); err != nil {
+		t.Fatalf("off: %v\n%s", err, out)
+	}
+	m, _ := manifest.Load(filepath.Join(root, manifest.FileName))
+	if m.Guard.Unattended != nil {
+		t.Fatalf("nothing left to keep, block must go: %+v", m.Guard.Unattended)
+	}
+}
+
+func TestUnattendedOffUnknownProjectErrors(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "guard:\n  unattended:\n    projects: [demo-todo]\n")
+	for _, d := range []string{"demo-todo", "other"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(root)
+	out, err := runUnattendedCmd(t, "off", "--project", "other")
+	if err == nil || !strings.Contains(err.Error(), "no project other in guard.unattended.projects") {
+		t.Fatalf("want an error, got %v\n%s", err, out)
+	}
+	m, _ := manifest.Load(filepath.Join(root, manifest.FileName))
+	if u := m.Guard.Unattended; u == nil || len(u.Projects) != 1 {
+		t.Fatalf("manifest must be unchanged: %+v", u)
+	}
+}
+
+func TestUnattendedOffProjectIgnoresCaseOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case-insensitive paths are a Windows behaviour")
+	}
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "guard:\n  unattended:\n    projects: [Demo-Todo]\n")
+	if err := os.MkdirAll(filepath.Join(root, "Demo-Todo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	if out, err := runUnattendedCmd(t, "off", "--project", "demo-todo"); err != nil {
+		t.Fatalf("off: %v\n%s", err, out)
+	}
+	m, _ := manifest.Load(filepath.Join(root, manifest.FileName))
+	if m.Guard.Unattended.Configured() {
+		t.Fatalf("project must be removed: %+v", m.Guard.Unattended)
+	}
+}
+
+func TestUnattendedLogReadsRotatedFile(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	t.Chdir(root)
+	now := time.Now().UTC()
+	guardlog.Append(guardlog.Record{Time: now.Add(-time.Minute), WS: "acme", Scope: "workspace", Mode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "rotated"}, nil)
+	if err := os.Rename(guardlog.Path(), guardlog.Path()+".1"); err != nil {
+		t.Fatal(err)
+	}
+	guardlog.Append(guardlog.Record{Time: now, WS: "acme", Scope: "workspace", Mode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "current"}, nil)
+	out, err := runUnattendedCmd(t, "log", "--ws", "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "current") || !strings.Contains(lines[1], "rotated") {
 		t.Fatalf("log = %q", out)
 	}
 }

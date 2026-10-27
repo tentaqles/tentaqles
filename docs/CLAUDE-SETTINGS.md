@@ -81,7 +81,14 @@ are kept; delete those by hand once you have checked them.
 
 `tq unattended on` also prepares Codex CLI for the same scope, using
 `approval_policy = "never"` and the manifest's `codex_sandbox` (default
-`workspace-write`). Where it lands depends on the scope:
+`workspace-write`).
+
+tq's guard does not run inside Codex: there are no tq deny rules or confirms
+there, and Codex's own sandbox (`codex_sandbox`) is the only limit. So tq
+writes the Codex config only while bypass trust holds (`tq allow --bypass
+<ws>` for the current manifest), for both the workspace block and the
+profile file. `tq deny <ws>`, or a plain `tq allow <ws>` after the manifest
+changed, removes them again. Where it lands depends on the scope:
 
 - **Workspace-wide**: a marked block at the head of `$CODEX_HOME/config.toml`
   (the workspace's Codex identity home):
@@ -102,8 +109,8 @@ are kept; delete those by hand once you have checked them.
 
 **Conflicts.** If you already set `approval_policy` or `sandbox_mode` in
 `config.toml`, or own a file called `tq-unattended.config.toml`, tq reports a
-conflict and never touches your keys or file. `tq unattended off` removes
-only what tq wrote.
+conflict and never touches your keys or file. `tq unattended off`,
+`tq deny` and losing bypass trust remove only what tq wrote.
 
 ## `tq doctor` checks
 
