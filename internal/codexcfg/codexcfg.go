@@ -53,8 +53,9 @@ func keys(sandbox string) string {
 	return fmt.Sprintf("approval_policy = \"never\"\nsandbox_mode = %q\n", sandbox)
 }
 
-// strip removes every managed block (marker lines included).
-func strip(s string) string {
+// strip removes every managed block (marker lines included). ok is false when
+// a begin marker has no end marker after it: nothing is then safe to remove.
+func strip(s string) (string, bool) {
 	var out []string
 	in := false
 	for _, l := range strings.SplitAfter(s, "\n") {
@@ -68,7 +69,25 @@ func strip(s string) string {
 			out = append(out, l)
 		}
 	}
-	return strings.Join(out, "")
+	return strings.Join(out, ""), !in
+}
+
+// ownedProfile reports whether s is exactly the block tq writes into the
+// profile file, for any allowed sandbox, with nothing else in it.
+func ownedProfile(s string) bool {
+	for _, sb := range []string{"read-only", "workspace-write", "danger-full-access"} {
+		if s == beginMarker+"\n"+keys(sb)+endMarker+"\n" {
+			return true
+		}
+	}
+	return false
+}
+
+// OwnsProfile reports whether dir holds a tq-unattended profile file that tq
+// wrote and nobody edited.
+func OwnsProfile(dir string) bool {
+	b, err := os.ReadFile(filepath.Join(dir, Profile+".config.toml"))
+	return err == nil && ownedProfile(string(b))
 }
 
 func writeAtomic(dir, p, content string) error {
@@ -100,7 +119,11 @@ func Render(dir string, w Want, dryRun bool) (Result, error) {
 		return res, err
 	}
 	cur := string(raw)
-	rest := strip(cur)
+	rest, ok := strip(cur)
+	if !ok {
+		res.Conflict = "tq's managed block in " + p + " has no end marker; fix it by hand"
+		return res, nil
+	}
 	if w.Top {
 		for _, l := range strings.Split(rest, "\n") {
 			if tableRe.MatchString(l) {
@@ -122,8 +145,13 @@ func Render(dir string, w Want, dryRun bool) (Result, error) {
 		return res, perr
 	}
 	pexists := perr == nil
-	ours := pexists && strings.HasPrefix(string(praw), beginMarker+"\n")
-	if pexists && !ours && (w.Profile) {
+	ours := pexists && ownedProfile(string(praw))
+	switch {
+	case pexists && !ours && strings.Contains(string(praw), beginMarker):
+		res.Conflict = Profile + ".config.toml has content besides tq's managed block; remove the extra lines to let tq manage it"
+		res.Path = pp
+		return res, nil
+	case pexists && !ours && w.Profile:
 		res.Conflict = Profile + ".config.toml already exists and is not managed by tq"
 		res.Path = pp
 		return res, nil

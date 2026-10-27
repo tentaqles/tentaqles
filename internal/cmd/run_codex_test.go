@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/codexcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -31,6 +32,54 @@ func codexWS(t *testing.T, u *manifest.Unattended, bypass bool) *resolve.Workspa
 	return w
 }
 
+// writeCodexProfile puts a tq-written ("tq"), user-authored ("user") or no
+// ("none") tq-unattended profile file in the acme codex identity dir.
+func writeCodexProfile(t *testing.T, kind string) {
+	t.Helper()
+	dir := paths.IdentityDir("acme", "codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, codexcfg.Profile+".config.toml")
+	switch kind {
+	case "tq":
+		if _, err := codexcfg.Render(dir, codexcfg.Want{Profile: true, Sandbox: "workspace-write"}, false); err != nil {
+			t.Fatal(err)
+		}
+	case "user":
+		if err := os.WriteFile(p, []byte("model = \"x\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCodexArgsRequiresTqProfileFile(t *testing.T) {
+	proj := &manifest.Unattended{Projects: []string{"demo-todo"}}
+	for _, tc := range []struct{ name, file, want string }{
+		{"tq-written file", "tq", "--profile tq-unattended hi"},
+		{"file missing", "none", "hi"},
+		{"user-authored file", "user", "hi"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := codexWS(t, proj, true)
+			writeCodexProfile(t, tc.file)
+			got := codexArgs(w, filepath.Join(w.Root, "demo-todo"), []string{"hi"})
+			if strings.Join(got, " ") != tc.want {
+				t.Fatalf("got %q want %q", strings.Join(got, " "), tc.want)
+			}
+		})
+	}
+	t.Run("no codex identity", func(t *testing.T) {
+		w := codexWS(t, proj, true)
+		writeCodexProfile(t, "tq")
+		delete(w.Manifest.Identities, "codex")
+		got := codexArgs(w, filepath.Join(w.Root, "demo-todo"), []string{"hi"})
+		if strings.Join(got, " ") != "hi" {
+			t.Fatalf("got %v", got)
+		}
+	})
+}
+
 func TestCodexArgs(t *testing.T) {
 	proj := &manifest.Unattended{Projects: []string{"demo-todo"}}
 	cases := []struct {
@@ -53,6 +102,7 @@ func TestCodexArgs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := codexWS(t, tc.u, tc.bypass)
+			writeCodexProfile(t, "tq")
 			got := codexArgs(w, filepath.Join(w.Root, filepath.FromSlash(tc.sub)), tc.args)
 			if strings.Join(got, " ") != tc.want {
 				t.Fatalf("got %q want %q", strings.Join(got, " "), tc.want)

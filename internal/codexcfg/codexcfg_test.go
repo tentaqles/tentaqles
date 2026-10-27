@@ -148,6 +148,55 @@ func TestRenderConflict(t *testing.T) {
 	}
 }
 
+func TestRenderUnterminatedBlockIsConflict(t *testing.T) {
+	broken := beginMarker + "\napproval_policy = \"never\"\n" + user
+	for _, w := range []Want{{Top: true, Sandbox: "workspace-write"}, {}} {
+		dir := write(t, broken)
+		res, err := Render(dir, w, false)
+		if err != nil || res.Conflict == "" || !strings.Contains(res.Conflict, "no end marker") || res.Changed {
+			t.Fatalf("want conflict for %+v: %+v %v", w, res, err)
+		}
+		if read(t, dir) != broken {
+			t.Fatalf("file must be byte-identical:\n%q", read(t, dir))
+		}
+	}
+}
+
+func TestRenderProfileWithExtraContentIsConflict(t *testing.T) {
+	owned := beginMarker + "\napproval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n" + endMarker + "\n"
+	edited := owned + "model = \"mine\"\n"
+	for _, w := range []Want{{Profile: true, Sandbox: "workspace-write"}, {}} {
+		dir := write(t, user)
+		pp := filepath.Join(dir, Profile+".config.toml")
+		if err := os.WriteFile(pp, []byte(edited), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Render(dir, w, false)
+		if err != nil || res.Conflict == "" || res.Changed {
+			t.Fatalf("want conflict for %+v: %+v %v", w, res, err)
+		}
+		if b, _ := os.ReadFile(pp); string(b) != edited {
+			t.Fatalf("profile file must be unchanged:\n%q", b)
+		}
+		if OwnsProfile(dir) {
+			t.Fatal("an edited file is not tq-owned")
+		}
+	}
+}
+
+func TestOwnsProfile(t *testing.T) {
+	dir := write(t, "")
+	if OwnsProfile(dir) {
+		t.Fatal("missing file")
+	}
+	if _, err := Render(dir, Want{Profile: true, Sandbox: "danger-full-access"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !OwnsProfile(dir) {
+		t.Fatal("tq-written file must be owned")
+	}
+}
+
 func TestDesired(t *testing.T) {
 	mk := func(u *manifest.Unattended) *manifest.Manifest {
 		m := &manifest.Manifest{}

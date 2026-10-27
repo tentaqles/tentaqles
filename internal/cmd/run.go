@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/codexcfg"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -21,6 +23,14 @@ import (
 func codexArgs(ws *resolve.Workspace, cwd string, args []string) []string {
 	u := ws.Manifest.Guard.Unattended
 	if !u.Configured() || u.Workspace || !trust.IsBypassAllowed(ws.Hash) {
+		return args
+	}
+	if !slices.Contains(ws.Manifest.IdentityNames(), "codex") {
+		return args
+	}
+	// Only point Codex at a profile file tq wrote; never at a missing or
+	// user-authored one (a conflict leaves that file alone).
+	if !codexcfg.OwnsProfile(paths.IdentityDir(ws.Name, "codex")) {
 		return args
 	}
 	if ok, _ := guardcfg.Covers(ws.Manifest, ws.Root, cwd); !ok {
