@@ -58,7 +58,11 @@ func Builtin() []Rule {
 		// go through tq (and the user confirms them), never by editing files.
 		{
 			ID: "tq/guard-change", Action: Ask,
-			Command: `(^|[;&|\n(]\s*|\s)(\S*[/\\])?tq(\.exe)?\s+(guard\s+(off|on|set)|unattended\s+(on|off)|allow|deny)\b`,
+			// Flags may come before the verb (`tq unattended --ws acme on`,
+			// `tq guard --ws acme off x`): iacFlags only takes dash words and
+			// their values, so a read-only verb (`tq guard list --ws acme`)
+			// still does not match.
+			Command: `(^|[;&|\n(]\s*|\s)(\S*[/\\])?tq(\.exe)?\s+(guard` + iacFlags + `\s+(off|on|set)|unattended` + iacFlags + `\s+(on|off)|allow|deny)\b`,
 			Reason:  "this changes what tq's guard checks or trusts; confirm it is what you want",
 		},
 		{
