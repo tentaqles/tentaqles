@@ -75,6 +75,7 @@ func Triage(ctx context.Context, c *Client, p Policy, diff string) TriageResult 
 		}
 	}
 	sort.Strings(res.Flags)
+	dropDocsSecrets(&res, diff)
 	// A truncated diff is never "low": the unseen part may hold the risk.
 	if len(res.Flags) == 0 && !res.Truncated {
 		res.Risk = "low"

@@ -151,6 +151,8 @@ It asks 12 yes/no risk questions about the diff:
 
 It also raises one flag without Jev: `classified_data`, when a changed file lies under a path the manifest's `data:` block classifies. That flag forces `high` even when Jev is off or unreachable. The flags map to the reviewer crew (`security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`) in the build skill. A workspace without a `data:` block computes no `classified_data` flag (there is nothing to compare against). If git cannot list the changed files, triage is `high` with the flag `files_unlisted`.
 
+Docs-only rule for `secrets`: Jev answers that question from keywords, so a design doc that only says "secret scanning" or "token" would raise it. When every changed file is documentation (`*.md`, `*.rst`, `*.txt`, or anything under `docs/`) and no added line is secret-shaped (the `internal/secrets` patterns: vendor key formats, private-key headers, assigned literal credentials), tq drops the `secrets` flag. Secret-shaped content in a doc still raises it. Code, config and workflow files keep the flag, and so does a diff that mixes docs with any other file. A truncated diff or an unreachable Jev is never lowered. Other flags (for example `auth` on a CI `permissions:` change) are untouched.
+
 It prints `low` or `high (flags…)` and exits 0 for low, 3 for high:
 - **low:** one light review pass
 - **high:** the full review. Triage is also high when the diff was truncated or Jev was unreachable: when in doubt, review more.
