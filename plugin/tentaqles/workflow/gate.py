@@ -2984,6 +2984,64 @@ def _append_learning(root: Path, line: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _build_base(root: Path, slug: str, approved: dict) -> tuple[str | None, str]:
+    """(base, why): the earliest recorded commit of the build (the approval base or a checkpoint
+    review base, whichever is an ancestor of all the others). base is None, with the reason, when
+    nothing was recorded or any recorded commit is missing from the repository."""
+    recorded = []
+    for b in [approved.get("base"), *review_bases(root, slug).values()]:
+        if isinstance(b, str) and b and b not in recorded:
+            recorded.append(b)
+    if not recorded:
+        return None, "no recorded base commit for this build, so every open decision counts as new"
+    for b in recorded:
+        if git(root, "rev-parse", "--verify", "-q", b + "^{commit}")[0] != 0:
+            return None, f"recorded base {b[:12]} is not in this repository (shallow clone or gc); every open decision counts as new"
+    for c in recorded:
+        if all(git(root, "merge-base", "--is-ancestor", c, o)[0] == 0 for o in recorded if o != c):
+            return c, ""
+    return recorded[0], ""
+
+
+def open_prd_decisions(root: Path, base: str | None, why: str = "") -> tuple[list[str], list[str], str]:
+    """(new, pre-existing, why): open NEEDS-DECISION lines of docs/prd.md section 10 now, split by
+    whether the base already had them (compared without bullet, checkbox and spacing).
+    Without a usable base every open line counts as new."""
+    from tentaqles.workflow.prd import PRD_REL, open_decision_lines
+
+    now = open_decision_lines(read_text(root / PRD_REL))
+    if not base:
+        return now, [], why or "no recorded base commit for this build, so every open decision counts as new"
+    code, old_text = git(root, "show", f"{base}:{PRD_REL}")
+    # A base without a PRD means the build created it: everything open is new.
+    pool = open_decision_lines(old_text) if code == 0 else []
+    new, old = [], []
+    for ln in now:
+        if ln in pool:
+            pool.remove(ln)
+            old.append(ln)
+        else:
+            new.append(ln)
+    return new, old, ""
+
+
+def prd_decisions_check(root: Path, slug: str, approved: dict) -> tuple[bool | None, str]:
+    """The prd-decisions DoD item. Never raises: an unexpected error is a failed check."""
+    try:
+        from tentaqles.workflow.prd import PRD_REL
+
+        if not (root / PRD_REL).exists():
+            return None, "skip: no docs/prd.md"
+        base, why = _build_base(root, slug, approved)
+        new, old, why = open_prd_decisions(root, base, why)
+        tail_old = ("; still open (pre-existing): " + " | ".join(old)) if old else ""
+        if new:
+            return False, ((why + ": ") if why else "") + f"{len(new)} NEEDS-DECISION opened during this build, settle or accept at the final review: " + " | ".join(new) + tail_old
+        return True, "no new open NEEDS-DECISION" + tail_old
+    except Exception as e:  # noqa: BLE001 - a crashed check must still be a recorded failure
+        return False, f"could not check the PRD decisions ({type(e).__name__}): {str(e)[:200]}"
+
+
 def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float = 900, actor: str = "terminal") -> tuple[int, str]:
     """Definition of done (spec §8.1): run the frozen project commands and check the
     obligations the diff created. Records signed dod.json; the Stop hook reads it."""
@@ -3079,6 +3137,8 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
         add("changelog", changelog in files, f"{changelog} " + ("changed" if changelog in files else "not changed"))
     else:
         add("changelog", None, "skip: project keeps no changelog")
+    ok_pd, detail_pd = prd_decisions_check(root, slug, approved)
+    add("prd-decisions", ok_pd, detail_pd)
     tree = tree_hash(root)
     if tree is None or before is None:
         add("stable_tree", False, "could not compute the tree hash (is this a git repo?)")

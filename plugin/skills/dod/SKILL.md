@@ -38,6 +38,7 @@ Below, `build-gate <cmd>` means that second line with `<cmd>`. Use the Bash tool
 | `privacy` | a `classified_paths` file changed and `docs/privacy.md` did not | run `/tentaqles:privacy-review` (if that skill is not installed, review the change against `docs/privacy.md` by hand), update the record |
 | `migration` | migration files changed and the spec has no `## Migration plan` | add the section (expand/contract, backfill, rollback) to the spec slice |
 | `changelog` | the project keeps a changelog and it did not change | add the entry |
+| `prd-decisions` | a `NEEDS-DECISION` line in `docs/prd.md` section 10 is open and was not open at the build's base (the detail names it; pre-existing ones are listed as "still open (pre-existing)" and do not fail). With no recorded base every open one counts as new | the human settles it in the PRD (or accepts it at the final review); list it in the stop-2 summary |
 | any item that cannot be fixed | only a human may waive it | step 3 (the human runs the override) |
 
 Re-run step 1 after each fix until the head line says PASS. The Stop hook blocks once while the definition of done is unproven; the next stop goes through, so

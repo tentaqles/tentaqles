@@ -3619,3 +3619,110 @@ def test_scratch_class_applies_to_destinations_only(repo):
     assert hook(repo, bash("cd .tq-breaker/demo && echo x > a.log"))[0] == 0
     assert hook(repo, bash("cd .tq-breaker/demo && echo x > conftest.py"))[0] == 2
     assert hook(repo, bash("cd .tq-breaker/demo && pg_dump -w --file db.sql app"))[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Definition of done: PRD decisions opened during the build
+# ---------------------------------------------------------------------------
+
+PRD_HEAD = "# Demo: product requirements\n\n## 4. Functional requirements\n### FR-01 X\n**Acceptance checks**\n- a\n\n## 10. Open questions\n"
+OLD_DECISION = "- NEEDS-DECISION: retention period for exports (old)"
+NEW_DECISION = "- [ ] NEEDS-DECISION: secrets handling for the cache (new)"
+
+
+def _commit_prd(repo, *lines):
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + "".join(f"{l}\n" for l in lines), encoding="utf-8")
+    _git(repo, "add", "docs/prd.md")
+    _git(repo, "commit", "-q", "-m", "prd")
+
+
+def _approved_build(repo):
+    _project(repo)
+    _all_passed(repo)
+    gate.cmd_approve(repo, "demo")
+    _touch_changelog(repo)
+
+
+def test_dod_prd_decisions_fail_on_a_new_open_decision(repo):
+    _commit_prd(repo, OLD_DECISION)
+    _approved_build(repo)
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + OLD_DECISION + "\n" + NEW_DECISION + "\n", encoding="utf-8")
+    code, out = gate.cmd_dod(repo, "demo")
+    checks, _ = _dod_checks(repo)
+    assert code == 1 and checks["prd-decisions"]["ok"] is False
+    detail = checks["prd-decisions"]["detail"]
+    assert "secrets handling for the cache" in detail and "retention period" not in detail.split("still open")[0]
+    assert "still open (pre-existing)" in detail and "retention period" in detail
+
+
+def test_dod_prd_decisions_pass_with_only_pre_existing(repo):
+    _commit_prd(repo, OLD_DECISION)
+    _approved_build(repo)
+    code, out = gate.cmd_dod(repo, "demo")
+    checks, _ = _dod_checks(repo)
+    assert code == 0 and checks["prd-decisions"]["ok"] is True
+    assert "still open (pre-existing)" in checks["prd-decisions"]["detail"] and "retention period" in checks["prd-decisions"]["detail"]
+
+
+def test_dod_prd_decisions_settled_new_one_passes(repo):
+    _commit_prd(repo)
+    _approved_build(repo)
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + "- [x] decided: NEEDS-DECISION settled\n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+
+
+def test_dod_prd_decisions_skip_without_prd(repo):
+    _approved_build(repo)
+    gate.cmd_dod(repo, "demo")
+    checks, _ = _dod_checks(repo)
+    assert checks["prd-decisions"]["ok"] is None
+
+
+def test_dod_prd_decisions_without_a_base_treat_all_as_new(repo):
+    _commit_prd(repo, OLD_DECISION)
+    _approved_build(repo)
+    approved = gate.load_approved(repo, "demo")
+    approved["base"] = None
+    gate.save_approved(repo, "demo", approved)
+    code, _ = gate.cmd_dod(repo, "demo")
+    checks, _ = _dod_checks(repo)
+    assert code == 1 and checks["prd-decisions"]["ok"] is False
+    assert "no recorded base" in checks["prd-decisions"]["detail"] and "retention period" in checks["prd-decisions"]["detail"]
+
+
+def test_dod_prd_decisions_missing_base_commit_fails_loudly(repo):
+    _commit_prd(repo, OLD_DECISION)
+    _approved_build(repo)
+    approved = gate.load_approved(repo, "demo")
+    approved["base"] = "deadbeef" * 5
+    gate.save_approved(repo, "demo", approved)
+    code, _ = gate.cmd_dod(repo, "demo")
+    checks, _ = _dod_checks(repo)
+    d = checks["prd-decisions"]["detail"]
+    assert code == 1 and checks["prd-decisions"]["ok"] is False
+    assert "recorded base deadbeefdead is not in this repository (shallow clone or gc); every open decision counts as new" in d
+    assert "retention period" in d
+
+
+def test_dod_prd_decisions_marker_change_is_not_a_new_decision(repo):
+    _commit_prd(repo, "- NEEDS-DECISION: retention period")
+    _approved_build(repo)
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + "*   [ ] NEEDS-DECISION: retention period  \n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + "- [x] NEEDS-DECISION: retention period\n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 0
+    (repo / "docs" / "prd.md").write_text(PRD_HEAD + "- NEEDS-DECISION: retention period, 90 days?\n", encoding="utf-8")
+    assert gate.cmd_dod(repo, "demo")[0] == 1
+
+
+def test_dod_prd_decisions_exception_is_a_failed_check(repo, monkeypatch):
+    _commit_prd(repo)
+    _approved_build(repo)
+
+    def boom(*a, **k):
+        raise ValueError("kaput")
+
+    monkeypatch.setattr(gate, "open_prd_decisions", boom)
+    code, _ = gate.cmd_dod(repo, "demo")
+    checks, _ = _dod_checks(repo)
+    assert code == 1 and checks["prd-decisions"]["ok"] is False and "ValueError" in checks["prd-decisions"]["detail"]
