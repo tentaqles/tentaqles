@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/guard"
 )
 
 // Action is a rule's verdict.
@@ -79,8 +81,14 @@ type Rule struct {
 	Content      string `yaml:"content,omitempty"` // regex on written content / MCP input
 	Except       string `yaml:"except,omitempty"`
 	ExistingOnly bool   `yaml:"existing_only,omitempty"` // only when Path already exists
-	Reason       string `yaml:"reason"`
-	Source       string `yaml:"-"` // "builtin", the manifest path, or the project rules path
+	// SkipHeredocData (built-ins only): for the Bash tool, the command regex
+	// does not see heredoc bodies when the whole command is one of the
+	// shapes guard.BlankDataHeredocs knows to be data. The command lines,
+	// redirect targets included, are still matched; PowerShell commands
+	// are matched as they are.
+	SkipHeredocData bool   `yaml:"-"`
+	Reason          string `yaml:"reason"`
+	Source          string `yaml:"-"` // "builtin", the manifest path, or the project rules path
 
 	tool, command, path, content, except *regexp.Regexp
 }
@@ -135,7 +143,11 @@ func (r *Rule) Match(call ToolCall) bool {
 		if !call.IsShell() {
 			return false
 		}
-		subjects = append(subjects, subject{r.command, call.Command})
+		cmd := call.Command
+		if r.SkipHeredocData && call.Tool == "Bash" {
+			cmd = guard.BlankDataHeredocs(cmd)
+		}
+		subjects = append(subjects, subject{r.command, cmd})
 	}
 	if r.path != nil {
 		subjects = append(subjects, subject{r.path, NormalizePath(call.Path)})

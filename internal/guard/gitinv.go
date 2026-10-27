@@ -506,21 +506,13 @@ func BlankHeredocBodies(c string) string { return blankHeredocBodies(c) }
 
 // blankHeredocBodies replaces heredoc body lines with spaces (keeping the
 // length and line breaks), quoted `<<` included: a body is data, never a
-// command, even inside `"$(cat <<'EOF' … EOF)"`.
+// command, even inside `"$(cat <<'EOF' … EOF)"`. Several markers on one line
+// take their bodies in order (see scanHeredocs); an unterminated body is kept.
 func blankHeredocBodies(c string) string {
 	lines := strings.Split(c, "\n")
-	for i := 0; i < len(lines); i++ {
-		for _, loc := range heredocStart.FindAllStringSubmatchIndex(lines[i], -1) {
-			word := lines[i][loc[4]:loc[5]]
-			for j := i + 1; j < len(lines); j++ {
-				if strings.TrimSpace(lines[j]) == word {
-					for k := i + 1; k < j; k++ {
-						lines[k] = strings.Repeat(" ", len(lines[k]))
-					}
-					i = j
-					break
-				}
-			}
+	for _, h := range scanHeredocs(lines) {
+		if h.closed {
+			blankLines(lines, h.from, h.to)
 		}
 	}
 	return strings.Join(lines, "\n")

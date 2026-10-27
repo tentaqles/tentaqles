@@ -61,8 +61,18 @@ func Builtin() []Rule {
 		},
 		{
 			ID: "tq/env-dump", Action: Deny,
-			Command: `(^|[;&|\n(]\s*)(printenv|env|set|export\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)])`,
-			Reason:  "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or run the command with `tq dotenv run -- <command>`",
+			// The dump must be the command word of a segment (start, or after
+			// ; && || | ( a backtick or a newline, optionally behind `cmd /c`)
+			// with no arguments: `set -e`, `echo set`, `Set-Content` and
+			// `git commit -m "set the flag"` are not dumps. A closing quote
+			// also ends the dump (`bash -c "ls; set"`), and a quote right
+			// after -c (`bash -c 'set'`, `sh -lc "printenv"`) starts one. A
+			// Bash heredoc body that is data (guard.BlankDataHeredocs) is not
+			// read.
+			Command: `(^|[;&|\n(` + bt + `]\s*|\s-[a-z]*c\s+["']\s*)(cmd(\.exe)?\s+/[ck]\s+)?(printenv|env|set|export\s+-p|declare\s+-p|typeset\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)"'` + bt + `])` +
+				`|\[(system\.)?environment\]::getenvironmentvariables\s*\(`,
+			SkipHeredocData: true,
+			Reason:          "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or run the command with `tq dotenv run -- <command>`",
 		},
 		// --- the guard's own settings -------------------------------------------
 		// The agent must not be able to switch the guard off by itself: changes
@@ -92,8 +102,12 @@ func Builtin() []Rule {
 			// No exception for tq itself: `tq guard` never names the file, and
 			// an exception would also cover a redirect in the same command
 			// (`tq guard list > ~/.tentaqles/guard.yaml`).
-			Command: `\.tentaqles[/\\]+guard\.yaml`,
-			Reason:  "the global guard file is changed with `tq guard off|on|set --all`, not from the shell",
+			// A heredoc body that is data (a note or fixture fed to cat/tee or
+			// a commit message) may mention the file; the command line, the
+			// redirect target included, and code bodies are still matched.
+			Command:         `\.tentaqles[/\\]+guard\.yaml`,
+			SkipHeredocData: true,
+			Reason:          "the global guard file is changed with `tq guard off|on|set --all`, not from the shell",
 		},
 		// --- git ---------------------------------------------------------------
 		{

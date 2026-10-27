@@ -66,6 +66,13 @@ confirmation prompt with the reason:
   "permissionDecisionReason": "CONFIRM [tq/gh-admin-merge]: --admin bypasses branch protection (source: builtin)"}}
 ```
 
+If the guard itself fails while it analyses a call (a panic in tq's own
+code), `pre-tool-use` fails safe: it asks, with the reason
+`CONFIRM [tq/guard-error]: tq guard error; please review the command yourself (…)`,
+and writes `tq: guard panic: …` to stderr. It never allows the call and
+never crashes (a Go crash exits 2 with a stack trace, which Claude Code
+reads as a block). The unattended mode never skips this ask.
+
 `session-start` writes its preamble to **stdout** and always returns 0,
 even when it can't resolve a workspace — a hook that fails a session start
 would be worse than a hook that reports "unknown".
@@ -373,7 +380,7 @@ Matchers (all regexes, case-insensitive; every one present must match):
 |---|---|---|
 | `tq/secret-store-read`, `tq/secret-store-shell` | deny | SSH private keys, `~/.aws/credentials`, `.git-credentials`, `.netrc`, docker/gh/azure token files, the tq catalog |
 | `tq/env-file-read`, `tq/env-file-shell` | ask | reading or printing `.env*` (templates such as `.env.example` exempt) |
-| `tq/env-dump` | deny | `printenv`, bare `env`/`set`, `Get-ChildItem Env:` |
+| `tq/env-dump` | deny | `printenv`, `env`, `set`, `export -p`, `declare -p`, `typeset -p`, `cmd /c set`, `Get-ChildItem`/`gci`/`dir`/`ls env:`, each as the command word of a segment (start, or after `;` `&` `\|` `(` a backtick or a newline, or as the first word of a quoted `-c` script: `bash -c 'set'`) with no arguments; and `[Environment]::GetEnvironmentVariables(` anywhere. `set -e`, `echo set` or `git commit -m "set the flag"` are not dumps. Bash heredoc bodies in the data shapes below are not read |
 | `tq/force-push-main` | deny | any force push (incl. `--force-with-lease`, `+main`) to main/master |
 | `tq/force-push` | ask | plain `--force`/`-f` push elsewhere (`--force-with-lease` is fine) |
 | `tq/gh-admin-merge` | ask | `gh pr merge --admin` |
@@ -575,3 +582,45 @@ The guard protects its own settings: `tq guard off|on|set`, `tq allow` and
 `tq deny` ask before they run (`tq/guard-change`), and direct edits to
 `guard.yaml` from file tools or the shell are denied
 (`tq/guard-file-write`). An agent can propose a change; you confirm it.
+The shell rule denies any command line that names the file, but not a
+heredoc body that is only data and mentions it (see below).
+
+### Heredocs: data and code
+
+For the **Bash** tool only, `tq/guard-file-write` (shell rule) and
+`tq/env-dump` skip heredoc bodies when the *whole command* is a single
+command (no `;`, `&&`, `||`, `|`, `&` or second line outside the bodies)
+of one of these shapes, and only then:
+
+- `cat` or `tee` reading a heredoc: `cat > f <<EOF`, `cat <<EOF > f`,
+  `cat <<EOF`, `tee f <<EOF`, where no word is a path into a `.git`
+  directory or a `hooks/` directory, or is named like a git config
+  (`config`, `.gitconfig`, `.gitmodules`) or a git hook (`pre-commit`,
+  `commit-msg`, …), and no word holds a `$` expansion;
+- `git commit|tag|notes … -F -` (or `-F-`, `--file=-`, `--file -`)
+  reading a heredoc, where commit/tag/notes is git's first non-option word
+  (only `-C <dir>` and `--no-pager` may come before it; `-c` never);
+- `git commit|tag … -m|--message "$(cat <<'EOF' … EOF)"` and
+  `gh pr|issue create|edit|comment … --body|--title "$(cat <<'EOF' … EOF)"`,
+  where the `$( )` holds only `cat <<WORD` and closes on the line after
+  the delimiter.
+
+Anything else and **every body is read, as before**:
+
+- a second command, chained or on another line (`cd docs && cat > f <<EOF`,
+  `cat > f <<EOF … EOF` then `ls`, two heredoc commands in a row);
+- any pipe (`cat <<EOF | bash`, `| sudo -u root bash`, `| busybox sh`,
+  `| tee`);
+- any other `$( )`, backtick or `<( )` (`find -exec sh -c "$(cat …)"`,
+  `su -c "$(…)"`, `eval "$(…)"`);
+- a leading variable assignment, a wrapper (`sudo`, `env`, `xargs`, `wsl`,
+  `su`, `find`, `make`, …) or any other command word (`bash x.sh`,
+  `./x.sh`, `make -f mk`);
+- an unterminated heredoc, a delimiter with a quote or backslash other than
+  one pair around the whole word (`<<E"O"F`, `<<\EOF`), or an opener line
+  that ends inside a quote or in a `\` continuation.
+
+The command lines are always read, so `cat > ~/.tentaqles/guard.yaml <<EOF`
+is still denied. A `<<` inside quotes (including `$'…'`), inside a `${ … }`
+expansion or after a `#` comment does not start a heredoc. **PowerShell** commands are always read whole; a here-string
+(`@' … '@`) is never data.
