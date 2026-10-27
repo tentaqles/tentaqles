@@ -214,7 +214,7 @@ func TestStripHeredocs(t *testing.T) {
 // cloud.also lets a workspace use a second cloud CLI; every other cloud CLI
 // stays blocked, and the primary provider keeps working.
 func TestExtraClouds(t *testing.T) {
-	base := Input{Client: "dirtybird", CloudProvider: "azure", ExtraClouds: []string{"AWS"}}
+	base := Input{Client: "acme", CloudProvider: "azure", ExtraClouds: []string{"AWS"}}
 	cases := []struct {
 		cmd   string
 		block bool
@@ -236,7 +236,7 @@ func TestExtraClouds(t *testing.T) {
 		}
 	}
 	// Without cloud.also the second cloud is still refused.
-	in := Input{Client: "dirtybird", CloudProvider: "azure", Command: "aws s3 ls"}
+	in := Input{Client: "acme", CloudProvider: "azure", Command: "aws s3 ls"}
 	if d := Decide(in); !d.Block || d.Rule != "wrong-cloud" {
 		t.Fatalf("aws without cloud.also: block=%v rule=%q", d.Block, d.Rule)
 	}

@@ -26,11 +26,13 @@ identity:
     AWS_SHARED_CREDENTIALS_FILE: "{dir}/credentials"
 login:
   args: ["configure"]
+# verify asks for the default profile (or AWS_PROFILE); an `aws configure sso`
+# setup that only created a named profile reads as logged out until it is set.
 verify:
   args: ["sts", "get-caller-identity", "--output", "json"]
   # Expired or missing credentials make the CLI exit non-zero with prose; the
   # pattern has to catch that before the exit code is read.
-  logged_out_when: 'Token has expired|Unable to locate credentials|Error loading SSO Token|SSO session .* expired|The SSO session associated with this profile has expired'
+  logged_out_when: 'Token has expired|Unable to locate credentials|Error loading SSO Token|SSO session .* expired|The SSO session associated with this profile has expired|ExpiredToken|security token included in the request is expired|InvalidClientTokenId'
   # {"UserId": "...", "Account": "123456789012", "Arn": "..."}
   account:
     json: Account

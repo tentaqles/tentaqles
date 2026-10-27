@@ -311,6 +311,8 @@ func TestCheck_AWSFromEmbeddedCatalog(t *testing.T) {
 		"Error loading SSO Token: Token for https://example.awsapps.com/start does not exist",
 		"The SSO session associated with this profile has expired or is otherwise invalid.",
 		"the SSO session for acme has expired",
+		"An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired",
+		"An error occurred (InvalidClientTokenId) when calling the GetCallerIdentity operation: The security token included in the request is invalid.",
 	} {
 		r := Check(context.Background(), p, nil, fixed(out, errors.New("exit status 255")))
 		if r.LoggedIn || r.Err != nil {

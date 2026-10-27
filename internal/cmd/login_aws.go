@@ -10,6 +10,11 @@ import (
 
 var ssoSessionRe = regexp.MustCompile(`^\s*\[\s*sso-session\s+([^\]\s]+)\s*\]`)
 
+// ssoSessionNameRe is the allowlist for session names, from the file or the
+// flag: they become a command-line argument, and a name with shell
+// metacharacters or a leading dash must never reach one.
+var ssoSessionNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 // awsSSONote is printed once whenever an SSO path runs: the AWS CLI keeps SSO
 // tokens in ~/.aws/sso/cache, which AWS_CONFIG_FILE does not move.
 const awsSSONote = "tq: aws sso login tokens are cached in the shared ~/.aws/sso/cache; workspaces using the same SSO start URL share that login"
@@ -45,6 +50,9 @@ func awsSSOSessions(configPath string) []string {
 //	none                 aws configure (static access keys)
 func awsLoginArgs(configPath string, sso bool, session string) ([]string, error) {
 	if session = strings.TrimSpace(session); session != "" {
+		if !ssoSessionNameRe.MatchString(session) {
+			return nil, fmt.Errorf("invalid sso-session name %q (letters, digits, '.', '_' and '-' only)", session)
+		}
 		return []string{"sso", "login", "--sso-session", session}, nil
 	}
 	if sso {
@@ -54,6 +62,9 @@ func awsLoginArgs(configPath string, sso bool, session string) ([]string, error)
 	case 0:
 		return []string{"configure"}, nil
 	case 1:
+		if !ssoSessionNameRe.MatchString(names[0]) {
+			return nil, fmt.Errorf("invalid sso-session name %q in %s (letters, digits, '.', '_' and '-' only)", names[0], configPath)
+		}
 		return []string{"sso", "login", "--sso-session", names[0]}, nil
 	default:
 		return nil, fmt.Errorf("%s has several sso-sessions (%s); pass --sso-session NAME", configPath, strings.Join(names, ", "))

@@ -35,6 +35,9 @@ func TestAWSLoginArgs(t *testing.T) {
 		{"sso flag wins over file", writeAWSConfig(t, awsOneSession), true, "", []string{"configure", "sso"}},
 		{"sso flag no file", "", true, "", []string{"configure", "sso"}},
 		{"session flag wins", writeAWSConfig(t, two), false, "other", []string{"sso", "login", "--sso-session", "other"}},
+		{"commented-out section", writeAWSConfig(t, "# [sso-session ghost]\n; [sso-session ghost2]\n[default]\n"), false, "", []string{"configure"}},
+		{"duplicate session names", writeAWSConfig(t, awsOneSession+"\n[sso-session acme]\nsso_region = eu-west-1\n"), false, "", []string{"sso", "login", "--sso-session", "acme"}},
+		{"profile only", writeAWSConfig(t, "[profile acme]\nsso_account_id = 123456789012\n"), false, "", []string{"configure"}},
 		{"session flag over sso flag", writeAWSConfig(t, awsOneSession), true, "x", []string{"sso", "login", "--sso-session", "x"}},
 	}
 	for _, c := range cases {
@@ -62,6 +65,26 @@ func TestIsAWSSSOArgs(t *testing.T) {
 	for args, want := range map[string]bool{"sso login": true, "configure sso": true, "configure": false, "": false} {
 		if got := isAWSSSOArgs(strings.Fields(args)); got != want {
 			t.Errorf("%q: %v", args, got)
+		}
+	}
+}
+
+// Session names become an argv element; anything outside the allowlist is an
+// error, from the file and from the flag alike.
+func TestAWSLoginArgsRejectsUnsafeSessionNames(t *testing.T) {
+	for _, bad := range []string{"x&calc", "a|b", "--debug", "-x", "a b", "x;y", "a^b", "a<b"} {
+		if _, err := awsLoginArgs("", false, bad); err == nil {
+			t.Errorf("flag %q: want an error", bad)
+		}
+	}
+	for _, bad := range []string{"x&calc", "a|b", "a^b", "a;b"} {
+		if _, err := awsLoginArgs(writeAWSConfig(t, "[sso-session "+bad+"]\nsso_region = us-east-1\n"), false, ""); err == nil {
+			t.Errorf("file %q: want an error", bad)
+		}
+	}
+	for _, ok := range []string{"acme", "a.b_c-d", "A1"} {
+		if _, err := awsLoginArgs("", false, ok); err != nil {
+			t.Errorf("flag %q: %v", ok, err)
 		}
 	}
 }

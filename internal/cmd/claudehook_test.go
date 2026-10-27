@@ -446,3 +446,17 @@ func TestPreToolUse_CloudAlsoAliasAndPrimaryAlias(t *testing.T) {
 		}
 	}
 }
+
+// cloud.also only counts from a trusted manifest: edit it (so the hash no
+// longer matches) and the extra cloud is blocked again.
+func TestPreToolUse_UntrustedManifestCannotAddClouds(t *testing.T) {
+	trusted := setupTrustedWorkspaceWithManifest(t, "acme", "cloud:\n  provider: azure\n  also: [aws]\n")
+	if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, trusted, "aws s3 ls")); code != 0 {
+		t.Fatalf("trusted also: code=%d out=%s", code, out)
+	}
+	untrusted := mkUntrustedWithManifest(t, "acme", "cloud:\n  provider: azure\n  also: [aws]\n")
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, untrusted, "aws s3 ls"))
+	if code != 2 || !strings.Contains(out, `"rule":"wrong-cloud"`) {
+		t.Fatalf("untrusted also: code=%d out=%s", code, out)
+	}
+}
