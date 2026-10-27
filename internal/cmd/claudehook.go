@@ -421,6 +421,7 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 	in.Client = m.Client
 	in.ExpectedEmail = strings.TrimSpace(m.Git.Email)
 	in.CloudProvider = strings.ToLower(strings.TrimSpace(cloudString(m.Cloud, "provider")))
+	in.ExtraClouds = cloudStrings(m.Cloud, "also")
 	in.Blocked = effectiveBlocked(ws)
 
 	expectedGH := strings.TrimSpace(m.Git.User)
