@@ -4,6 +4,17 @@ package policy
 // inside one command of a chain like `cd x && git push`.
 const seg = `[^;&|\n]*`
 
+// bt is a backtick (not writable inside a raw string).
+const bt = "`"
+
+// gseg is seg that may also cross a bash (backslash-newline) or PowerShell
+// (backtick-newline) line continuation.
+const gseg = `(?:[^;&|\n]|\\\r?\n|` + bt + `\r?\n)*`
+
+// verbEnd closes a verb token: a quote, whitespace, end of input, a command
+// separator, a subshell paren, a redirect or a backtick.
+const verbEnd = `(["']|\s|$|[;&|\n)<>` + bt + `])`
+
 // destTail follows a path that must be the destination of cp/mv: only flag
 // words, redirections and a comment may come after it before the segment ends.
 const destTail = `['"]?(?:\s+(?:-\S+|\d*>\S*|#[^;&|\n]*))*\s*(?:$|[;&|\n])`
@@ -58,7 +69,16 @@ func Builtin() []Rule {
 		// go through tq (and the user confirms them), never by editing files.
 		{
 			ID: "tq/guard-change", Action: Ask,
-			Command: `(^|[;&|\n(]\s*|\s)(\S*[/\\])?tq(\.exe)?\s+(guard\s+(off|on|set)|allow|deny)\b`,
+			// Not a flag grammar: after the tq executable (bare, path-prefixed
+			// or quoted) and the word guard/unattended, the verb is any
+			// whitespace/quote/=-delimited on|off|set token later in the same
+			// command segment. A literal on/off argument before a read-only
+			// verb therefore asks too (fails safe).
+			// The segment may cross a bash (\<newline>) or PowerShell
+			// (`<newline>) line continuation; the verb may be closed by a
+			// subshell paren, a redirect or a backtick; a backtick or paren
+			// may open the command (command substitution).
+			Command: `(^|[;&|\n(` + bt + `]\s*|\s)["']?(\S*[/\\])?tq(\.exe)?["']?\s+(["']?guard\b["']?` + gseg + `[\s"'=](off|on|set)` + verbEnd + `|["']?unattended\b["']?` + gseg + `[\s"'=](off|on)` + verbEnd + `|["']?(allow|deny)(["']|\b))`,
 			Reason:  "this changes what tq's guard checks or trusts; confirm it is what you want",
 		},
 		{

@@ -36,6 +36,9 @@ type hookPayload struct {
 	StopHookActive bool `json:"stop_hook_active"`
 	// Prompt is the UserPromptSubmit prompt (skill picker).
 	Prompt string `json:"prompt"`
+	// PermissionMode is the session's mode (default, acceptEdits, plan, auto,
+	// dontAsk, bypassPermissions); older Claude Code versions omit it.
+	PermissionMode string `json:"permission_mode"`
 }
 
 // lookupGHUser resolves the gh login active for the workspace env. It is a
@@ -131,6 +134,9 @@ func newSessionStartCmd() *cobra.Command {
 				expectedDir = envplan.Desired(rep.Result.Workspace)["CLAUDE_CONFIG_DIR"]
 			}
 			fmt.Fprint(c.OutOrStdout(), renderSessionStart(rep, expectedDir))
+			if line := unattendedLine(rep.Result.Workspace, cwd, time.Now()); line != "" {
+				fmt.Fprintln(c.OutOrStdout(), line)
+			}
 			return nil
 		},
 	}
@@ -276,6 +282,12 @@ permissionDecision JSON so Claude Code asks the user.`,
 				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
 				exitFunc(2)
 			case policy.Ask:
+				if unattendedSkip(ws, cwd, p.PermissionMode, call, d) {
+					if asJSON {
+						emitDecision(c, asJSON, false, d.Matched[0].ID, "unattended: "+d.Reason())
+					}
+					return nil
+				}
 				if asJSON {
 					emitDecision(c, asJSON, false, d.Matched[0].ID, d.Reason())
 					return nil

@@ -77,6 +77,41 @@ uses `git worktree remove` without `--force`, so git still refuses anything
 with uncommitted work. Branches that were squash-merged show as unmerged and
 are kept; delete those by hand once you have checked them.
 
+## Codex
+
+`tq unattended on` also prepares Codex CLI for the same scope, using
+`approval_policy = "never"` and the manifest's `codex_sandbox` (default
+`workspace-write`).
+
+tq's guard does not run inside Codex: there are no tq deny rules or confirms
+there, and Codex's own sandbox (`codex_sandbox`) is the only limit. So tq
+writes the Codex config only while bypass trust holds (`tq allow --bypass
+<ws>` for the current manifest), for both the workspace block and the
+profile file. `tq deny <ws>`, or a plain `tq allow <ws>` after the manifest
+changed, removes them again. Where it lands depends on the scope:
+
+- **Workspace-wide**: a marked block at the head of `$CODEX_HOME/config.toml`
+  (the workspace's Codex identity home):
+
+  ```
+  # >>> managed by tq (unattended): edit with tq unattended, not by hand
+  approval_policy = "never"
+  sandbox_mode = "workspace-write"
+  # <<< managed by tq (unattended)
+  ```
+
+- **Projects only**: a tq-owned profile file `$CODEX_HOME/tq-unattended.config.toml`
+  (current Codex layers `<name>.config.toml` files with `--profile <name>`).
+  `tq run <ws> -- codex` adds `--profile tq-unattended` only inside a covered
+  project, and only when the workspace has bypass trust, a Codex identity and
+  the profile file is tq's. A plain `codex` started outside `tq run` does not
+  pick the profile up in a projects-only setup.
+
+**Conflicts.** If you already set `approval_policy` or `sandbox_mode` in
+`config.toml`, or own a file called `tq-unattended.config.toml`, tq reports a
+conflict and never touches your keys or file. `tq unattended off`,
+`tq deny` and losing bypass trust remove only what tq wrote.
+
 ## `tq doctor` checks
 
 | Code | Meaning |
@@ -89,3 +124,6 @@ are kept; delete those by hand once you have checked them.
 | `memory-stale` | a workspace's `.claude/memory.db` was last written more than 48 h before its newest Claude transcript: the plugin hooks are not capturing |
 | `data-block-missing` | schema or fixture files name personal-data columns (email, cpf, phone, ...) and the manifest has no `data:` block; run /tentaqles:classify-data |
 | `python-store-alias` | `python3` is the Microsoft Store alias (slower hook start); set `TENTAQLES_PY` |
+| `unattended-not-effective` | `guard.unattended` is configured but `tq allow --bypass <ws>` was not run: confirms are still asked |
+| `unattended-unknown-rule` | `guard.unattended.keep_asking` names a rule id tq does not know |
+| `unattended-cloud` | unattended mode is effective in a workspace with a cloud identity: Claude can run cloud CLIs without asking |

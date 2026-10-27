@@ -109,6 +109,9 @@ type Guard struct {
 	// wins over the global file.
 	Actions map[string]policy.Action `yaml:"actions,omitempty"`
 	Rules   []policy.Rule            `yaml:"rules"`
+	// Unattended lets bypass/auto sessions skip tq's confirms (see
+	// guardcfg.Unattended). Nil: off.
+	Unattended *Unattended `yaml:"unattended,omitempty"`
 }
 
 type Manifest struct {
@@ -178,6 +181,9 @@ func Load(path string) (*Manifest, error) {
 	}
 	if err := m.Data.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.Guard.Unattended.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: guard.unattended: %w", path, err)
 	}
 	m.Path = path
 	return &m, nil

@@ -63,6 +63,8 @@ tests/                  pytest suite
 
 - **Lazy session**: `MemoryStore.end_session()` auto-starts a session if none is active. Don't assume `start_session()` was called.
 
+- **tq's PreToolUse may skip confirms** in unattended bypass/auto sessions (`guard.unattended`, see `docs/CLAUDE-HOOK.md`); skills must not rely on a confirm being shown. Deny rules and the `tq/guard-change` confirm are never skipped.
+
 - **Every hook in hooks.json declares a short `timeout`**; capture-only hooks are `async`. A hook without one waits up to 10 minutes when something hangs.
 
 - **Hooks never wait on the network or a model.** Anything slow (pip installs, session saving, `claude -p` fact extraction) goes to a detached worker via `_detach.spawn_detached`. Model calls go through `tentaqles.memory.llm` only, from detached/background code, and honour `TENTAQLES_SEMANTIC_FACTS=0`.

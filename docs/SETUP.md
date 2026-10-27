@@ -118,6 +118,18 @@ mirrors `tq login`'s normal behavior outside of `setup` — see the main
 README's "Quick start" and "Where things live" sections for how per-workspace
 credential isolation works.
 
+## Unattended runs
+
+To let a bypass or auto Claude session run without tq's confirms in a demo
+folder (see `CLAUDE-HOOK.md`, "Unattended mode"):
+
+1. Optional: set `claude.permission_mode: bypass` in the manifest, so the
+   workspace's sessions start in bypass mode.
+2. `tq allow --bypass <ws>` - the separate trust step for bypass.
+3. `tq unattended on [--project <dir>]` - the whole workspace, or one folder.
+
+Check with `tq unattended status`; `tq unattended off` undoes step 3.
+
 ## Saved plan files and permissions
 
 Because a plan file contains git identity metadata (name and email) for

@@ -126,6 +126,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 		if trusted {
 			claudeChecks(&w, add)
+			unattendedChecks(&w, add)
 			dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add)
 			if hubChecks(w.Name, probe, add) {
 				hubUsed = true
