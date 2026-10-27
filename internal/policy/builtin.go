@@ -12,16 +12,6 @@ const destTail = `['"]?(?:\s+(?:-\S+|\d*>\S*|#[^;&|\n]*))*\s*(?:$|[;&|\n])`
 // its verb: `kubectl -n prod apply`, `terraform -chdir=infra apply`.
 const iacFlags = `(?:\s+-{1,2}[\w.-]+(?:=\S+|\s+[^-\s]\S*)?)*`
 
-// guardFlags is iacFlags for the guard-change rule: a flag value may also be
-// "double" or 'single' quoted, or contain backslash-escaped spaces
-// (`--project "my dir"`, `--project=my\ dir`, `--ws "$(echo acme)"`).
-const guardFlags = `(?:\s+-{1,2}[\w.-]+(?:=(?:"[^"]*"|'[^']*'|(?:\\.|[^\s\\])+)|\s+(?:"[^"]*"|'[^']*'|[^-\s"'\\](?:\\.|[^\s\\])*))?)*`
-
-// guardVerb matches one of the verbs bare or wrapped in matching quotes.
-func guardVerb(verbs string) string {
-	return `(?:"(?:` + verbs + `)"|'(?:` + verbs + `)'|(?:` + verbs + `)\b)`
-}
-
 // envExcept exempts the conventional committed templates of a .env file.
 const envExcept = `\.env\.(example|sample|template|dist|defaults|schema)\b`
 
@@ -68,13 +58,12 @@ func Builtin() []Rule {
 		// go through tq (and the user confirms them), never by editing files.
 		{
 			ID: "tq/guard-change", Action: Ask,
-			// Flags may come before the verb (`tq unattended --ws acme on`,
-			// `tq guard --ws acme off x`): iacFlags only takes dash words and
-			// their values, so a read-only verb (`tq guard list --ws acme`)
-			// still does not match.
-			// Quoted flag values, quoted verbs and a quoted executable path
-			// are covered too (guardFlags, guardVerb).
-			Command: `(^|[;&|\n(]\s*|\s)(\S*[/\\])?tq(\.exe)?["']?\s+(guard` + guardFlags + `\s+` + guardVerb(`off|on|set`) + `|unattended` + guardFlags + `\s+` + guardVerb(`on|off`) + `|` + guardVerb(`allow|deny`) + `)`,
+			// Not a flag grammar: after the tq executable (bare, path-prefixed
+			// or quoted) and the word guard/unattended, the verb is any
+			// whitespace/quote/=-delimited on|off|set token later in the same
+			// command segment. A literal on/off argument before a read-only
+			// verb therefore asks too (fails safe).
+			Command: `(^|[;&|\n(]\s*|\s)["']?(\S*[/\\])?tq(\.exe)?["']?\s+(["']?guard\b["']?` + seg + `[\s"'=](off|on|set)(["']|\s|$|[;&|\n])|["']?unattended\b["']?` + seg + `[\s"'=](off|on)(["']|\s|$|[;&|\n])|["']?(allow|deny)(["']|\b))`,
 			Reason:  "this changes what tq's guard checks or trusts; confirm it is what you want",
 		},
 		{
