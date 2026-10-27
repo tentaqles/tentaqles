@@ -66,6 +66,13 @@ confirmation prompt with the reason:
   "permissionDecisionReason": "CONFIRM [tq/gh-admin-merge]: --admin bypasses branch protection (source: builtin)"}}
 ```
 
+If the guard itself fails while it analyses a call (a panic in tq's own
+code), `pre-tool-use` fails safe: it asks, with the reason
+`CONFIRM [tq/guard-error]: tq guard error; please review the command yourself (…)`,
+and writes `tq: guard panic: …` to stderr. It never allows the call and
+never crashes (a Go crash exits 2 with a stack trace, which Claude Code
+reads as a block). The unattended mode never skips this ask.
+
 `session-start` writes its preamble to **stdout** and always returns 0,
 even when it can't resolve a workspace — a hook that fails a session start
 would be worse than a hook that reports "unknown".

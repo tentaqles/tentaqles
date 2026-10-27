@@ -234,14 +234,28 @@ func newPreToolUseCmd() *cobra.Command {
 
 Deny exits 2 with the reason on stderr. Ask prints the PreToolUse
 permissionDecision JSON so Claude Code asks the user.`,
-		RunE: func(c *cobra.Command, _ []string) error {
+		RunE: func(c *cobra.Command, _ []string) (rerr error) {
+			// Fail safe: a panic anywhere in the analysis asks the user. A Go
+			// panic would otherwise exit 2 with a stack trace, which Claude
+			// Code reads as a block. exit marks a deliberate exit so the
+			// recover never swallows it (exitFunc may panic in tests).
+			exiting := false
+			exit := func(code int) { exiting = true; exitFunc(code) }
+			defer func() {
+				if r := recover(); r != nil {
+					if exiting {
+						panic(r)
+					}
+					rerr = guardPanicAsk(c, asJSON, r)
+				}
+			}()
 			// One scan deadline from hook entry: the gh/git identity
 			// lookups below count against it (hooks must never stall).
 			scanDeadline := time.Now().Add(hookScanBudget())
 			p, cmdline, perr := readHookPayload(c.InOrStdin())
 			if perr != nil {
 				fmt.Fprintln(c.ErrOrStderr(), "BLOCKED: "+perr.Error())
-				exitFunc(2)
+				exit(2)
 				return nil
 			}
 			if p.ToolName == "" {
@@ -265,14 +279,14 @@ permissionDecision JSON so Claude Code asks the user.`,
 				ws, cfg = gws, gcfg
 				if d := guard.Decide(in); d.Block {
 					emitDecision(c, asJSON, true, d.Rule, d.Reason)
-					exitFunc(2)
+					exit(2)
 					return nil
 				}
 			} else {
 				ws, cfg = resolveTrusted(cwd)
 			}
 
-			d := policyDecision(cwd, ws, cfg, call, scanDeadline)
+			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline)
 			if d.Action != policy.Deny {
 				// Jev can only add strictness, so it is skipped when the
 				// deterministic rules already deny.
@@ -281,7 +295,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 			switch d.Action {
 			case policy.Deny:
 				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
-				exitFunc(2)
+				exit(2)
 			case policy.Ask:
 				if unattendedSkip(ws, cwd, p.PermissionMode, call, d) {
 					if asJSON {
@@ -310,6 +324,30 @@ permissionDecision JSON so Claude Code asks the user.`,
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "print the decision as JSON")
 	return c
+}
+
+// hookPolicyDecision is policyDecision; tests replace it to make the
+// analysis panic.
+var hookPolicyDecision = policyDecision
+
+// guardErrorID names the fail-safe ask of a guard panic.
+const guardErrorID = "tq/guard-error"
+
+// guardPanicAsk answers a panic in the hook's analysis with an ask: never an
+// allow, never a crash, and never the unattended skip. It only formats the
+// panic value (no stack walk), so it stays cheap.
+func guardPanicAsk(c *cobra.Command, asJSON bool, r any) error {
+	detail := fmt.Sprint(r)
+	if len(detail) > 200 {
+		detail = detail[:200] + "…"
+	}
+	reason := "CONFIRM [" + guardErrorID + "]: tq guard error; please review the command yourself (" + detail + ")"
+	fmt.Fprintln(c.ErrOrStderr(), "tq: guard panic: "+detail)
+	if asJSON {
+		emitDecision(c, asJSON, false, guardErrorID, reason)
+		return nil
+	}
+	return writeAsk(c.OutOrStdout(), reason)
 }
 
 // emitDecision reports a decision: the --json object on stdout when asked
