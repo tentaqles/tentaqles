@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +128,19 @@ claude:
 	m2, _ := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"))
 	if m2.Claude.Bundle != nil {
 		t.Fatal("bundle must be nil when absent")
+	}
+}
+
+// cloud.also adds its clouds to the implicit identities, so each gets a
+// private config home next to the primary cloud's.
+func TestIdentityNamesCloudAlso(t *testing.T) {
+	m := &Manifest{Cloud: map[string]any{"provider": "azure", "also": []any{"aws", "AWS"}}}
+	got := strings.Join(m.IdentityNames(), ",")
+	if got != "aws,az,claude,gh" {
+		t.Fatalf("IdentityNames = %s, want aws,az,claude,gh", got)
+	}
+	m = &Manifest{Cloud: map[string]any{"provider": "azure"}}
+	if got := strings.Join(m.IdentityNames(), ","); got != "az,claude,gh" {
+		t.Fatalf("without also: %s", got)
 	}
 }

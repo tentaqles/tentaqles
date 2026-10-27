@@ -201,14 +201,33 @@ func (m *Manifest) IdentityNames() []string {
 		return out
 	}
 	out := []string{"claude", "gh"}
+	clouds := []string{}
 	if p, _ := m.Cloud["provider"].(string); p != "" {
-		switch p {
+		clouds = append(clouds, p)
+	}
+	// cloud.also: further clouds this workspace may use (see guard.Input.ExtraClouds);
+	// each gets its own private config home like the primary one.
+	if also, ok := m.Cloud["also"].([]any); ok {
+		for _, v := range also {
+			if s, ok := v.(string); ok {
+				clouds = append(clouds, s)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, p := range clouds {
+		id := ""
+		switch strings.ToLower(strings.TrimSpace(p)) {
 		case "azure":
-			out = append(out, "az")
+			id = "az"
 		case "aws":
-			out = append(out, "aws")
+			id = "aws"
 		case "gcp", "gcloud":
-			out = append(out, "gcloud")
+			id = "gcloud"
+		}
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
 		}
 	}
 	sort.Strings(out)
