@@ -380,7 +380,7 @@ Matchers (all regexes, case-insensitive; every one present must match):
 |---|---|---|
 | `tq/secret-store-read`, `tq/secret-store-shell` | deny | SSH private keys, `~/.aws/credentials`, `.git-credentials`, `.netrc`, docker/gh/azure token files, the tq catalog |
 | `tq/env-file-read`, `tq/env-file-shell` | ask | reading or printing `.env*` (templates such as `.env.example` exempt) |
-| `tq/env-dump` | deny | `printenv`, bare `env`/`set` (also `cmd /c set`), `Get-ChildItem Env:`, as the command word of a segment with no arguments. Prose does not count: separators inside quoted arguments (`git commit -m "fix (set)"`) and data heredoc bodies are not read; `bash -c "…"`, `$( )` and code heredocs are |
+| `tq/env-dump` | deny | `printenv`, `env`, `set`, `export -p`, `declare -p`, `typeset -p`, `cmd /c set`, `Get-ChildItem`/`gci`/`dir`/`ls env:`, each as the command word of a segment (start, or after `;` `&` `\|` `(` a backtick or a newline) with no arguments; and `[Environment]::GetEnvironmentVariables(` anywhere. `set -e`, `echo set` or `git commit -m "set the flag"` are not dumps. Bash heredoc bodies in the data shapes below are not read |
 | `tq/force-push-main` | deny | any force push (incl. `--force-with-lease`, `+main`) to main/master |
 | `tq/force-push` | ask | plain `--force`/`-f` push elsewhere (`--force-with-lease` is fine) |
 | `tq/gh-admin-merge` | ask | `gh pr merge --admin` |
@@ -587,18 +587,38 @@ heredoc body that is only data and mentions it (see below).
 
 ### Heredocs: data and code
 
-`tq/guard-file-write` and `tq/env-dump` skip a heredoc body that is
-**data**: fed to `cat`, `tee`, `git commit|tag|notes -F -`, or a bare
-redirect, directly or inside a `$( )` that is an argument of a plain
-command (`git commit -m "$(cat <<'EOF' … EOF)"`). The command line is
-still read, so `cat > ~/.tentaqles/guard.yaml <<EOF` is still denied.
+For the **Bash** tool only, `tq/guard-file-write` (shell rule) and
+`tq/env-dump` skip heredoc bodies when the *whole command* is one of these
+shapes, and only then:
 
-A body is **code**, and is still read, when it is fed to anything else
-(`bash`, `sh`, `zsh`, `pwsh`, `powershell`, `python`, `node`, `perl`,
-`ruby`, an unknown program, `sudo tee`), when the `$( )` is in command
-position, assigned to a variable, passed to `eval` or an interpreter, or
-is a `<( )` / backtick. If any command in the line runs a shell, an
-interpreter, `eval`/`source`, a `./script` or a `$VAR` command (`cat <<EOF
-| bash`, `cat > x.sh <<EOF … EOF; bash x.sh`), every body is read. An
-unterminated heredoc, or one whose line continues a previous one, is read.
-When tq cannot tell, it reads.
+- `cat` or `tee` reading a heredoc: `cat > f <<EOF`, `cat <<EOF > f`,
+  `cat <<EOF`, `tee f <<EOF`;
+- `git commit|tag|notes … -F -` (or `-F-`, `--file=-`, `--file -`)
+  reading a heredoc, where commit/tag/notes is git's first non-option word
+  (only `-C <dir>` and `--no-pager` may come before it; `-c` never);
+- `git commit|tag … -m|--message "$(cat <<'EOF' … EOF)"` and
+  `gh pr|issue create|edit|comment … --body|--title "$(cat <<'EOF' … EOF)"`,
+  where the `$( )` holds only `cat <<WORD` and closes on the line after
+  the delimiter.
+
+Every other segment (split at `;`, `&&`, `||`, `&` and line breaks) must
+start with one of `cat`, `tee`, `echo`, `printf`, `mkdir`, `cd`, `ls`,
+`pwd`, `true`, `touch`, `chmod`, `cp`, `mv`, `rm`, `git
+add|status|diff|log|show` or the git/gh shapes above. Anything else and
+**every body is read, as before**:
+
+- any pipe (`cat <<EOF | bash`, `| sudo -u root bash`, `| busybox sh`,
+  `| tee`);
+- any other `$( )`, backtick or `<( )` (`find -exec sh -c "$(cat …)"`,
+  `su -c "$(…)"`, `eval "$(…)"`);
+- a leading variable assignment, a wrapper (`sudo`, `env`, `xargs`, `wsl`,
+  `su`, `find`, `make`, …) or any other command word (`bash x.sh`,
+  `./x.sh`, `make -f mk`);
+- an unterminated heredoc, a delimiter with a quote or backslash other than
+  one pair around the whole word (`<<E"O"F`, `<<\EOF`), or an opener line
+  that ends inside a quote or in a `\` continuation.
+
+The command lines are always read, so `cat > ~/.tentaqles/guard.yaml <<EOF`
+is still denied. A `<<` inside quotes or after a `#` comment does not start
+a heredoc. **PowerShell** commands are always read whole; a here-string
+(`@' … '@`) is never data.

@@ -66,7 +66,7 @@ func TestPreToolUseHeredocDataRules(t *testing.T) {
 	gf := "~/.tentaqles/" + "guard.yaml"
 	for _, cmd := range []string{
 		"cat > notes.md <<'EOF'\nThe guard file is " + gf + ".\n\nset\nEOF",
-		"echo \"$(cat <<'EOF'\nset\nEOF\n)\" > notes.md",
+		"git commit -m \"$(cat <<'EOF'\nfix: tester notes\n\nset\nEOF\n)\"",
 	} {
 		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, cmd))
 		if code == 2 && (strings.Contains(errOut, "tq/guard-file-write") || strings.Contains(errOut, "tq/env-dump")) {
@@ -76,6 +76,8 @@ func TestPreToolUseHeredocDataRules(t *testing.T) {
 	for cmd, rule := range map[string]string{
 		"cat > " + gf + " <<'EOF'\ndisable: [x]\nEOF": "tq/guard-file-write",
 		"bash <<'EOF'\nset\nEOF":                      "tq/env-dump",
+		"echo \"$(cat <<'EOF'\nset\nEOF\n)\" > n.md":  "tq/env-dump",
+		"cat <<EOF | sudo -u root bash\nset\nEOF":     "tq/env-dump",
 	} {
 		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, cmd))
 		if code != 2 || !strings.Contains(errOut, rule) {

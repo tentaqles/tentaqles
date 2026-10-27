@@ -28,6 +28,40 @@ var heredocCases = []struct {
 	{"here-string is not a heredoc", "cat <<<word\nkeep me\nword", []string{"keep me"}, nil},
 	{"marker at end of input", "cat <<", []string{"cat <<"}, nil},
 	{"empty input", "", nil, nil},
+	// a `<<` inside quotes or a comment opens nothing: the next lines run
+	{"single-quoted <<", "git commit -m 'note <<X'\nprintenv\nX", []string{"printenv"}, nil},
+	{"double-quoted <<", "echo \"a <<X\"\nprintenv\nX", []string{"printenv"}, nil},
+	{"quoted << as an argument", "cat '<<X' > n.md\nprintenv\nX", []string{"printenv"}, nil},
+	{"commented <<", "ls # <<X\nprintenv\nX", []string{"printenv"}, nil},
+	{"multi-line quote holds <<", "git commit -m \"a\nb <<X\"\nprintenv\nX", []string{"printenv"}, nil},
+	{"apostrophe in a comment ends with the line", "ls # it's\ncat <<EOF\nbody\nEOF", []string{"ls # it's"}, []string{"body"}},
+	{"$# is not a comment", "echo $# <<EOF\nbody\nEOF", nil, []string{"body"}},
+	// the delimiter is the word with its quotes removed, as in bash
+	{"quote inside the delimiter", "cat > n.md <<E\"O\"F\nbody\nE\nprintenv\nEOF\necho after", []string{"echo after"}, []string{"body", "printenv"}},
+	{"backslash delimiter", "cat <<\\EOF\nbody\nEOF", nil, []string{"body"}},
+	// the body starts after the logical line
+	{"continued opener line", "cat <<EOF \\\n | bash\nbody\nEOF", []string{"| bash"}, []string{"body"}},
+	{"continuation at end", "cat <<EOF \\", []string{"cat <<EOF"}, nil},
+}
+
+// scanHeredocs flags a delimiter that is not a plain word or one quote pair
+// around it.
+func TestScanHeredocsOddDelimiter(t *testing.T) {
+	for in, odd := range map[string]bool{
+		"cat <<EOF\nx\nEOF":       false,
+		"cat <<'EOF'\nx\nEOF":     false,
+		"cat <<\"EOF\"\nx\nEOF":   false,
+		"cat <<-EOF\nx\nEOF":      false,
+		"cat <<E\"O\"F\nx\nEOF":   true,
+		"cat <<\\EOF\nx\nEOF":     true,
+		"cat <<'E'OF\nx\nEOF":     true,
+		"cat <<\"E'OF\"\nx\nE'OF": true,
+	} {
+		hs := scanHeredocs(strings.Split(in, "\n"))
+		if len(hs) != 1 || !hs[0].closed || hs[0].odd != odd {
+			t.Errorf("%q: %+v, want one closed heredoc with odd=%v", in, hs, odd)
+		}
+	}
 }
 
 func TestBlankHeredocBodiesNeverPanics(t *testing.T) {

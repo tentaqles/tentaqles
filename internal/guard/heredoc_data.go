@@ -5,99 +5,244 @@ import (
 	"strings"
 )
 
-// codeWord is a program that runs the text it is given: shells,
-// interpreters and eval-like builtins.
-var codeWord = regexp.MustCompile(`^(bash|sh|zsh|dash|ksh|mksh|fish|csh|tcsh|pwsh|powershell|python[0-9.]*|py|pypy[0-9.]*|node|nodejs|deno|bun|perl|ruby|php|lua|cmd|osascript|tclsh|wish|eval|source|\.|iex|invoke-expression|exec)$`)
-
-// wrapperWord runs the command that follows it.
-var wrapperWord = map[string]bool{"sudo": true, "doas": true, "env": true, "command": true, "builtin": true, "nohup": true, "time": true, "nice": true, "timeout": true, "xargs": true, "stdbuf": true}
-
-var assignWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-
-// progName normalizes a command word: no quotes, no directory, lower case,
-// no .exe.
-func progName(w string) string {
-	w = strings.Trim(w, `"'`)
-	if i := strings.LastIndexAny(w, `/\`); i >= 0 && w != "." {
-		w = w[i+1:]
+// BlankDataHeredocs replaces every heredoc body of a Bash command with
+// spaces (keeping the length and line breaks) when, and only when, the
+// whole command is one of a few shapes whose bodies are plain data:
+//
+//   - `cat` or `tee` reading a heredoc (`cat > f <<EOF`, `cat <<EOF > f`,
+//     `tee f <<EOF`);
+//   - `git commit|tag|notes … -F -` (or `--file=-` / `--file -`) reading a
+//     heredoc, the subcommand being git's first non-option word;
+//   - `git commit|tag … -m "$(cat <<'EOF' … EOF)"` and
+//     `gh pr|issue create|edit|comment … --body|--title "$(cat <<EOF … )"`,
+//     where the `$( )` holds only `cat <<WORD`.
+//
+// Every other segment of the command must have a known, inert command word
+// (cat, tee, echo, printf, mkdir, cd, ls, pwd, true, touch, chmod, cp, mv,
+// rm, git add|status|diff|log|show and the git/gh shapes above). Any pipe,
+// any other `$( )`, backtick or process substitution, a leading variable
+// assignment, a wrapper (sudo, env, xargs, …) or an unknown command word,
+// an unterminated heredoc or one with an odd delimiter: nothing is blanked
+// and the command is returned unchanged. When in doubt, scan.
+func BlankDataHeredocs(c string) string {
+	lines := strings.Split(c, "\n")
+	hs := scanHeredocs(lines)
+	if len(hs) == 0 {
+		return c
 	}
-	return strings.TrimSuffix(strings.ToLower(w), ".exe")
+	for _, h := range hs {
+		if !h.closed || h.odd {
+			return c
+		}
+	}
+	lineStart := make([]int, len(lines)+1)
+	for i, l := range lines {
+		lineStart[i+1] = lineStart[i] + len(l) + 1
+	}
+	skelLines := append([]string(nil), lines...)
+	for _, h := range hs {
+		blankLines(skelLines, h.from, h.to+1) // the closing line too
+	}
+	skel := []byte(strings.Join(skelLines, "\n"))
+
+	// Replace each `"$(cat <<WORD … )"` argument with a placeholder word, so
+	// the command it belongs to reads as one line: `git commit -m "X   "`.
+	var subst []int // placeholder offsets
+	var marks []int // offsets of heredoc markers not inside a placeholder
+	for _, h := range hs {
+		line := lines[h.line]
+		pre := line[:h.start]
+		m := substCatRe.FindStringIndex(pre)
+		if m == nil || strings.TrimSpace(line[h.end:]) != "" || h.to+1 >= len(lines) {
+			marks = append(marks, lineStart[h.line]+h.start)
+			continue
+		}
+		closeLine := lines[h.to+1]
+		p := strings.IndexByte(closeLine, ')')
+		if p < 0 || strings.TrimSpace(closeLine[:p]) != "" || !substArgRe.MatchString(pre[:m[0]]) {
+			marks = append(marks, lineStart[h.line]+h.start)
+			continue
+		}
+		from, to := lineStart[h.line]+m[0], lineStart[h.to+1]+p
+		for k := from; k <= to; k++ {
+			skel[k] = ' '
+		}
+		skel[from] = 'X'
+		subst = append(subst, from)
+	}
+
+	segs, ok := inertSegments(string(skel))
+	if !ok {
+		return c
+	}
+	for _, sp := range segs {
+		text := string(skel[sp.start:sp.end])
+		if !inertSegment(text, within(marks, sp), within(subst, sp)) {
+			return c
+		}
+	}
+	out := append([]string(nil), lines...)
+	for _, h := range hs {
+		blankLines(out, h.from, h.to)
+	}
+	return strings.Join(out, "\n")
 }
 
-// runsCode reports whether any command in skel (a command whose heredoc
-// bodies are blanked) runs a shell, an interpreter, eval/source or a
-// command named by a variable. Such a command can execute text a heredoc
-// wrote or printed, so no body is treated as data.
-func runsCode(skel string) bool {
-	for _, sp := range segmentSpans(skel) {
-		for _, w := range strings.Fields(skel[sp.start:sp.end]) {
-			if strings.HasPrefix(w, "$") || strings.HasPrefix(w, `"$`) {
-				return true
-			}
-			n := progName(w)
-			if n == "" || assignWord.MatchString(w) || wrapperWord[n] || strings.HasPrefix(w, "-") || isNumber(w) {
-				continue
-			}
-			if codeWord.MatchString(n) || scriptPath(w) {
-				return true
-			}
-			break // the command word is something else
+// substCatRe ends a line prefix with `$(cat ` right before the marker.
+var substCatRe = regexp.MustCompile(`\$\(\s*cat\s+$`)
+
+// substArgRe ends the text before `$(` with a message/body/title flag and
+// an opening double quote.
+var substArgRe = regexp.MustCompile(`(^|\s)(-m|--message|-b|--body|-t|--title)(=|\s+)"$`)
+
+func within(offs []int, sp span) bool {
+	for _, o := range offs {
+		if o >= sp.start && o < sp.end {
+			return true
 		}
 	}
 	return false
 }
 
-// scriptPath reports whether a command word runs a local script file.
-func scriptPath(w string) bool {
-	w = strings.ToLower(strings.Trim(w, `"'`))
-	return strings.HasPrefix(w, "./") || strings.HasPrefix(w, `.\`) || strings.HasPrefix(w, "../") ||
-		scriptExt.MatchString(w)
+// inertSegments splits skel at top-level `;`, `&&`, `||`, `&` and line
+// breaks, with comments blanked. ok is false when skel has a pipe or any
+// command substitution, backtick or process substitution left.
+func inertSegments(skel string) ([]span, bool) {
+	var out []span
+	lx := newShLexer()
+	start := 0
+	for i := 0; i < len(skel); i++ {
+		ch := skel[i]
+		var nb byte
+		if i+1 < len(skel) {
+			nb = skel[i+1]
+		}
+		if !lx.comment && !lx.esc && lx.top().kind != 's' && (ch == '`' || (ch == '$' && nb == '(') || ((ch == '<' || ch == '>') && nb == '(')) {
+			return nil, false // a substitution tq does not read
+		}
+		if lx.live() {
+			switch {
+			case ch == '#' && wordStart(lx.prev):
+				out = append(out, span{start, i})
+				start = len(skel) // the rest of the line is a comment
+			}
+		}
+		if lx.root() && start <= i {
+			switch {
+			case ch == '|' && nb == '|':
+				out = append(out, span{start, i})
+				lx.step(ch, nb)
+				lx.step(nb, 0)
+				i++
+				start = i + 1
+				continue
+			case ch == '|':
+				return nil, false
+			case ch == '&' && (nb == '>' || (i > 0 && (skel[i-1] == '>' || skel[i-1] == '<'))):
+				// a redirect (`2>&1`, `&>f`), not a separator
+			case ch == ';' || ch == '&' || ch == '\n':
+				out = append(out, span{start, i})
+				start = i + 1
+			}
+		}
+		if ch == '\n' && start > i {
+			start = i + 1 // a comment ends with its line
+		}
+		i += lx.step(ch, nb)
+	}
+	if start < len(skel) {
+		out = append(out, span{start, len(skel)})
+	}
+	return out, true
 }
 
-var scriptExt = regexp.MustCompile(`\.(sh|bash|zsh|py|js|mjs|cjs|ts|ps1|pl|rb|php|cmd|bat)$`)
-
-func isNumber(w string) bool {
-	if w == "" || w[0] < '0' || w[0] > '9' {
+// inertSegment judges one segment: hasHeredoc / hasSubst say it holds a
+// heredoc marker or a `"$(cat <<…)"` placeholder.
+func inertSegment(text string, hasHeredoc, hasSubst bool) bool {
+	raw := strings.Fields(text)
+	if len(raw) == 0 {
+		return !hasHeredoc && !hasSubst
+	}
+	if assignWord.MatchString(raw[0]) {
 		return false
 	}
-	for i := 0; i < len(w); i++ {
-		if (w[i] < '0' || w[i] > '9') && w[i] != '.' && w[i] != 's' && w[i] != 'm' {
+	words := commandWords(text)
+	if len(words) == 0 {
+		return false
+	}
+	switch words[0] {
+	case "cat", "tee":
+		return !hasSubst
+	case "echo", "printf", "mkdir", "cd", "ls", "pwd", "true", "touch", "chmod", "cp", "mv", "rm":
+		return !hasHeredoc && !hasSubst
+	case "git":
+		return inertGit(words[1:], hasHeredoc, hasSubst)
+	case "gh":
+		if hasHeredoc || len(words) < 3 || (words[1] != "pr" && words[1] != "issue") {
 			return false
 		}
+		switch words[2] {
+		case "create", "edit", "comment":
+			return true
+		case "view":
+			return !hasSubst
+		}
 	}
-	return true
+	return false
 }
 
-func isSegSep(ch byte) bool {
-	switch ch {
-	case ';', '|', '&', '(', ')', '`', '{', '}':
+// inertGit judges a git call (args after `git`): only -C and --no-pager
+// before the subcommand; add/status/diff/log/show plain, and commit, tag
+// or notes when a heredoc is read with -F - or a "$(cat …)" message.
+func inertGit(args []string, hasHeredoc, hasSubst bool) bool {
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		switch args[i] {
+		case "-C":
+			i += 2
+		case "--no-pager", "-P":
+			i++
+		default:
+			return false // -c, --exec-path, --git-dir, …
+		}
+	}
+	if i >= len(args) {
+		return false
+	}
+	sub, rest := args[i], args[i+1:]
+	switch sub {
+	case "add", "status", "diff", "log", "show":
+		return !hasHeredoc && !hasSubst
+	case "commit", "tag", "notes":
+		if hasSubst && sub == "notes" {
+			return false
+		}
+		if hasHeredoc && !readsStdinFile(rest) {
+			return false
+		}
 		return true
 	}
 	return false
 }
 
-// segBounds returns the command segment of line around [start, end): from
-// after the previous separator to the next one, and the separator before it
-// (0 at the start of the line).
-func segBounds(line string, start, end int) (from, to int, sep byte) {
-	from = start
-	for from > 0 && !isSegSep(line[from-1]) {
-		from--
+func readsStdinFile(args []string) bool {
+	for j, a := range args {
+		switch {
+		case a == "-F-" || a == "--file=-":
+			return true
+		case (a == "-F" || a == "--file") && j+1 < len(args) && args[j+1] == "-":
+			return true
+		}
 	}
-	if from > 0 {
-		sep = line[from-1]
-	}
-	to = end
-	for to < len(line) && !isSegSep(line[to]) {
-		to++
-	}
-	return from, to, sep
+	return false
 }
+
+var assignWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
 var redirWord = regexp.MustCompile(`^(\d*>>?|\d*>&|&>>?|<)`)
 
-// commandWords is the words of a segment without heredoc markers, redirects
-// (and their targets) and leading variable assignments.
+// commandWords is the words of a segment without heredoc markers and
+// redirects (with their targets).
 func commandWords(seg string) []string {
 	seg = heredocStart.ReplaceAllString(seg, " ")
 	var out []string
@@ -110,246 +255,7 @@ func commandWords(seg string) []string {
 			}
 			continue
 		}
-		if len(out) == 0 && assignWord.MatchString(w) {
-			continue
-		}
 		out = append(out, w)
 	}
 	return out
-}
-
-// isDataHeredoc reports whether h's body is data: it is fed to cat, tee or
-// git commit/tag/notes (-F -), or to a bare redirect, at a place where the
-// result is not run. Anything else, or anything tq cannot place, is code.
-func isDataHeredoc(lines []string, skel string, lineStart []int, h heredoc) bool {
-	if !h.closed {
-		return false
-	}
-	if h.line > 0 && strings.HasSuffix(strings.TrimRight(lines[h.line-1], " \t\r"), `\`) {
-		return false // a continued command: its program is on another line
-	}
-	if quotedAt(skel, lineStart[h.line]) {
-		return false // the line starts inside an open quote
-	}
-	line := lines[h.line]
-	from, to, sep := segBounds(line, h.start, h.end)
-	words := commandWords(line[from:to])
-	if len(words) > 0 {
-		switch progName(words[0]) {
-		case "cat", "tee":
-		case "git":
-			ok := false
-			for _, w := range words[1:] {
-				if w == "commit" || w == "tag" || w == "notes" {
-					ok = true
-				}
-			}
-			if !ok {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	switch sep {
-	case '`', ')', '}':
-		return false
-	case '(':
-		// $( ... ) as an argument of a plain command is data; a subshell,
-		// process substitution, command position or nesting is not.
-		if from < 2 || line[from-2] != '$' {
-			return false
-		}
-		efrom, _, esep := segBounds(line, from-2, from-2)
-		if esep == '(' || esep == '`' {
-			return false
-		}
-		var enc []string
-		for _, w := range strings.Fields(line[efrom : from-2]) {
-			if w = strings.Trim(w, `"'`); w != "" {
-				enc = append(enc, w)
-			}
-		}
-		for len(enc) > 0 && assignWord.MatchString(enc[0]) && !strings.HasSuffix(enc[0], "=") {
-			enc = enc[1:]
-		}
-		if len(enc) == 0 || assignWord.MatchString(enc[0]) {
-			return false // command position, or stored in a variable
-		}
-		n := progName(enc[0])
-		if codeWord.MatchString(n) || wrapperWord[n] {
-			return false
-		}
-	}
-	return true
-}
-
-// BlankDataHeredocs replaces with spaces the bodies of heredocs that are
-// data (see isDataHeredoc), keeping the length and line breaks. The command
-// lines themselves, redirect targets included, are kept. When any command
-// runs a shell or an interpreter, every body is kept: it could run what a
-// heredoc wrote. Unterminated heredocs are kept. When in doubt, keep.
-func BlankDataHeredocs(c string) string {
-	out, _ := dataView(c)
-	return out
-}
-
-// dataView returns BlankDataHeredocs(c) and, when c has heredocs, the
-// skeleton (every closed body blanked) and the closed bodies that are code.
-func dataView(c string) (string, *dataInfo) {
-	lines := strings.Split(c, "\n")
-	hs := scanHeredocs(lines)
-	if len(hs) == 0 {
-		return c, nil
-	}
-	skelLines := append([]string(nil), lines...)
-	for _, h := range hs {
-		if h.closed {
-			blankLines(skelLines, h.from, h.to)
-		}
-	}
-	skel := strings.Join(skelLines, "\n")
-	lineStart := make([]int, len(lines)+1)
-	for i, l := range lines {
-		lineStart[i+1] = lineStart[i] + len(l) + 1
-	}
-	info := &dataInfo{skel: skel, lineStart: lineStart}
-	code := runsCode(skel)
-	out := append([]string(nil), lines...)
-	for _, h := range hs {
-		switch {
-		case !code && isDataHeredoc(lines, skel, lineStart, h):
-			blankLines(out, h.from, h.to)
-		case h.closed:
-			info.code = append(info.code, h)
-		}
-	}
-	return strings.Join(out, "\n"), info
-}
-
-type dataInfo struct {
-	skel      string
-	lineStart []int
-	code      []heredoc
-}
-
-// MaskQuotedArgs is BlankDataHeredocs plus: separators inside a quoted
-// argument (`"a; set"`, a multi-line -m message) are replaced with spaces,
-// so a rule anchored on a command word does not see prose as a command.
-// Code stays visible: a `$( )` or backtick inside double quotes, a string
-// passed to -c / -e / -Command / eval / iex, and code heredoc bodies.
-func MaskQuotedArgs(c string) string {
-	view, info := dataView(c)
-	if info == nil {
-		return maskQuotes(view)
-	}
-	// Mask the skeleton (no body can open a quote there), then put the code
-	// bodies back verbatim at the same offsets.
-	b := []byte(maskQuotes(info.skel))
-	for _, h := range info.code {
-		lo := info.lineStart[h.from] - 1
-		hi := info.lineStart[h.to]
-		if lo < 0 || hi > len(c) || hi > len(b) {
-			continue
-		}
-		copy(b[lo:hi], c[lo:hi])
-	}
-	return string(b)
-}
-
-func maskByte(ch byte) bool {
-	switch ch {
-	case '&', '|', ';', '\n', '\r', '(', ')', '{', '}':
-		return true
-	}
-	return false
-}
-
-// codeArg reports whether the quote at s[i] is the argument of a flag or
-// builtin that runs it as code.
-func codeArg(s string, i int) bool {
-	if i > 0 && s[i-1] == '$' {
-		i-- // $'...'
-	}
-	j := i
-	for j > 0 && s[j-1] != ' ' && s[j-1] != '\t' && s[j-1] != '\n' {
-		j--
-	}
-	tok := strings.ToLower(s[j:i])
-	if tok == "" {
-		k := j
-		for k > 0 && (s[k-1] == ' ' || s[k-1] == '\t') {
-			k--
-		}
-		j = k
-		for j > 0 && s[j-1] != ' ' && s[j-1] != '\t' && s[j-1] != '\n' {
-			j--
-		}
-		tok = strings.ToLower(s[j:k])
-	}
-	return codeFlag.MatchString(tok)
-}
-
-var codeFlag = regexp.MustCompile(`^(-[a-z]*[ce]|--?command|--eval|-encodedcommand|eval|iex|invoke-expression)$`)
-
-// matchParen returns the index of the ')' closing the '(' at s[k], or len(s).
-func matchParen(s string, k int) int {
-	depth := 0
-	for ; k < len(s); k++ {
-		switch s[k] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return k
-			}
-		}
-	}
-	return len(s)
-}
-
-// maskQuotes blanks separators inside quoted arguments (see MaskQuotedArgs).
-func maskQuotes(s string) string {
-	b := []byte(s)
-	for i := 0; i < len(b); i++ {
-		ch := s[i]
-		if ch == '\\' {
-			i++
-			continue
-		}
-		if ch != '\'' && ch != '"' {
-			continue
-		}
-		mask := !codeArg(s, i)
-		k := i + 1
-		for ; k < len(s); k++ {
-			c := s[k]
-			if c == ch {
-				break
-			}
-			if ch == '"' {
-				switch {
-				case c == '\\':
-					k++
-					continue
-				case c == '$' && k+1 < len(s) && s[k+1] == '(':
-					k = matchParen(s, k+1)
-					continue
-				case c == '`':
-					if e := strings.IndexByte(s[k+1:], '`'); e >= 0 {
-						k += e + 1
-					} else {
-						k = len(s)
-					}
-					continue
-				}
-			}
-			if mask && maskByte(c) {
-				b[k] = ' '
-			}
-		}
-		i = k
-	}
-	return string(b)
 }

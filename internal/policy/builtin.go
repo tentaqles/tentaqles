@@ -62,15 +62,15 @@ func Builtin() []Rule {
 		{
 			ID: "tq/env-dump", Action: Deny,
 			// The dump must be the command word of a segment (start, or after
-			// ; && || | ( or a newline, optionally behind `cmd /c`) with no
-			// arguments: `set -e`, `echo set` and `Set-Content` are not dumps.
-			// MaskQuoted hides separators inside quoted arguments and data
-			// heredoc bodies, so prose like "(set)" in a commit message is not
-			// a command; code (`bash -c "…"`, `$( )`, a body fed to a shell)
-			// is still read.
-			Command:    `(^|[;&|\n(]\s*)(cmd(\.exe)?\s+/[ck]\s+)?(printenv|env|set|export\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)"'` + bt + `])`,
-			MaskQuoted: true,
-			Reason:     "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or run the command with `tq dotenv run -- <command>`",
+			// ; && || | ( a backtick or a newline, optionally behind `cmd /c`)
+			// with no arguments: `set -e`, `echo set`, `Set-Content` and
+			// `git commit -m "set the flag"` are not dumps. A closing quote
+			// also ends the dump (`bash -c "ls; set"`). A Bash heredoc body
+			// that is data (guard.BlankDataHeredocs) is not read.
+			Command: `(^|[;&|\n(` + bt + `]\s*)(cmd(\.exe)?\s+/[ck]\s+)?(printenv|env|set|export\s+-p|declare\s+-p|typeset\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)"'` + bt + `])` +
+				`|\[(system\.)?environment\]::getenvironmentvariables\s*\(`,
+			SkipHeredocData: true,
+			Reason:          "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or run the command with `tq dotenv run -- <command>`",
 		},
 		// --- the guard's own settings -------------------------------------------
 		// The agent must not be able to switch the guard off by itself: changes

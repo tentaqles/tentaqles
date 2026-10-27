@@ -81,17 +81,14 @@ type Rule struct {
 	Content      string `yaml:"content,omitempty"` // regex on written content / MCP input
 	Except       string `yaml:"except,omitempty"`
 	ExistingOnly bool   `yaml:"existing_only,omitempty"` // only when Path already exists
-	// SkipHeredocData (built-ins only): the command regex does not see
-	// heredoc bodies that are data, fed to cat/tee/git commit -F or a
-	// redirect (guard.BlankDataHeredocs). Code bodies and the command lines,
-	// redirect targets included, are still matched.
-	SkipHeredocData bool `yaml:"-"`
-	// MaskQuoted (built-ins only): SkipHeredocData, and separators inside
-	// quoted arguments are hidden too, so a rule anchored on a command word
-	// does not match prose in a message (guard.MaskQuotedArgs).
-	MaskQuoted bool   `yaml:"-"`
-	Reason     string `yaml:"reason"`
-	Source     string `yaml:"-"` // "builtin", the manifest path, or the project rules path
+	// SkipHeredocData (built-ins only): for the Bash tool, the command regex
+	// does not see heredoc bodies when the whole command is one of the
+	// shapes guard.BlankDataHeredocs knows to be data. The command lines,
+	// redirect targets included, are still matched; PowerShell commands
+	// are matched as they are.
+	SkipHeredocData bool   `yaml:"-"`
+	Reason          string `yaml:"reason"`
+	Source          string `yaml:"-"` // "builtin", the manifest path, or the project rules path
 
 	tool, command, path, content, except *regexp.Regexp
 }
@@ -147,10 +144,7 @@ func (r *Rule) Match(call ToolCall) bool {
 			return false
 		}
 		cmd := call.Command
-		switch {
-		case r.MaskQuoted:
-			cmd = guard.MaskQuotedArgs(cmd)
-		case r.SkipHeredocData:
+		if r.SkipHeredocData && call.Tool == "Bash" {
 			cmd = guard.BlankDataHeredocs(cmd)
 		}
 		subjects = append(subjects, subject{r.command, cmd})

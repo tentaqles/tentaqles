@@ -334,8 +334,9 @@ var heredocStart = regexp.MustCompile(`<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)['"
 // closing WORD line) from a shell command, so text a command feeds to an
 // interpreter or writes to a file is not mistaken for commands to run.
 //
-// It fails toward keeping text: a `<<` inside quotes, or a heredoc whose
-// closing line never appears, is left in place, because the shell would run
+// It fails toward keeping text: a `<<` inside quotes or a comment opens
+// nothing (see scanHeredocs), and when a heredoc's closing line never
+// appears the command is returned unchanged, because the shell would run
 // what follows it.
 func StripHeredocs(c string) string {
 	lines := strings.Split(c, "\n")
@@ -343,30 +344,12 @@ func StripHeredocs(c string) string {
 	for i := range keep {
 		keep[i] = true
 	}
-	for i := 0; i < len(lines); i++ {
-		if !keep[i] {
-			continue
+	for _, h := range scanHeredocs(lines) {
+		if !h.closed {
+			return c // unterminated: do not guess
 		}
-		pos := i + 1
-		for _, loc := range heredocStart.FindAllStringSubmatchIndex(lines[i], -1) {
-			if quotedAt(lines[i], loc[0]) {
-				continue
-			}
-			word := lines[i][loc[4]:loc[5]]
-			end := -1
-			for j := pos; j < len(lines); j++ {
-				if strings.TrimSpace(lines[j]) == word {
-					end = j
-					break
-				}
-			}
-			if end < 0 {
-				return c // unterminated: do not guess
-			}
-			for j := pos; j <= end; j++ {
-				keep[j] = false
-			}
-			pos = end + 1
+		for j := h.from; j <= h.to; j++ {
+			keep[j] = false
 		}
 	}
 	var out []string
@@ -376,22 +359,4 @@ func StripHeredocs(c string) string {
 		}
 	}
 	return strings.Join(out, "\n")
-}
-
-// quotedAt reports whether byte offset i of line falls inside a '…' or "…"
-// string (a simple quote-parity scan; escapes inside "…" are honoured).
-func quotedAt(line string, i int) bool {
-	var q byte
-	for k := 0; k < i && k < len(line); k++ {
-		ch := line[k]
-		switch {
-		case q == 0 && (ch == '\'' || ch == '"'):
-			q = ch
-		case q == '"' && ch == '\\':
-			k++
-		case q != 0 && ch == q:
-			q = 0
-		}
-	}
-	return q != 0
 }
