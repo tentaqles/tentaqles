@@ -58,7 +58,7 @@ func Builtin() []Rule {
 		// go through tq (and the user confirms them), never by editing files.
 		{
 			ID: "tq/guard-change", Action: Ask,
-			Command: `(^|[;&|\n(]\s*|\s)(\S*[/\\])?tq(\.exe)?\s+(guard\s+(off|on|set)|allow|deny)\b`,
+			Command: `(^|[;&|\n(]\s*|\s)(\S*[/\\])?tq(\.exe)?\s+(guard\s+(off|on|set)|unattended\s+(on|off)|allow|deny)\b`,
 			Reason:  "this changes what tq's guard checks or trusts; confirm it is what you want",
 		},
 		{

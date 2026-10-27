@@ -56,6 +56,12 @@ func TestBuiltinDecisions(t *testing.T) {
 		{"admin merge", ToolCall{Tool: "Bash", Command: "gh pr merge 12 --squash --admin"}, Ask, "tq/gh-admin-merge"},
 		{"normal merge ok", ToolCall{Tool: "Bash", Command: "gh pr merge 12 --squash"}, Allow, ""},
 		{"repo delete", ToolCall{Tool: "Bash", Command: "gh repo delete org/x --yes"}, Deny, "tq/gh-repo-delete"},
+		// unattended mode changes
+		{"unattended on asks", ToolCall{Tool: "Bash", Command: "tq unattended on"}, Ask, "tq/guard-change"},
+		{"unattended off project asks", ToolCall{Tool: "Bash", Command: "tq unattended off --project demo-todo"}, Ask, "tq/guard-change"},
+		{"unattended on exe asks", ToolCall{Tool: "PowerShell", Command: "tq.exe unattended on"}, Ask, "tq/guard-change"},
+		{"unattended status ok", ToolCall{Tool: "Bash", Command: "tq unattended status"}, Allow, ""},
+		{"unattended log ok", ToolCall{Tool: "Bash", Command: "tq unattended log"}, Allow, ""},
 		// cloud
 		{"az delete", ToolCall{Tool: "Bash", Command: "az postgres flexible-server delete -g rg-prod -n db"}, Ask, "tq/cloud-delete"},
 		{"aws s3 rm", ToolCall{Tool: "PowerShell", Command: "aws s3 rm s3://bucket/x --recursive"}, Ask, "tq/cloud-delete"},
