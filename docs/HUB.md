@@ -91,7 +91,9 @@ run's previous round (the start of the latest round of any run on the card; ever
 comment when the card has none yet), under "Notes from the human on this card": only
 human comments, never agent or system ones, the newest 5, each cut to 2,000 characters
 and quoted (`> ` on every line) under a header line naming its author and time.
-So a comment you post on the card reaches the next round. A run starts when an `agent-ready` card enters an active lane (moved there, or added
+So a comment you post on the card reaches the next round.
+
+A run starts when an `agent-ready` card enters an active lane (moved there, or added
 there by a human), on
 `tq hub run <card>`, or when an answer resumes it. Wakeups coalesce; a card is checked
 out by one run at a time.

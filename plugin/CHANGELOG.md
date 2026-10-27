@@ -4,6 +4,8 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+- Docs: `/tentaqles:hub` explains the hub's own `question` (asked when a run stops before its build exists: `answer` with a required note, or `stop`) and that a plain card comment reaches the next round but does not resume a waiting run; the plugin README rows for `babysit-pr`, `ci-pipeline`, `dod` and `hub` match 0.13.2.
+
 ## [0.13.2] — 2026-10-27
 
 - `ratchet.py compare` prints `unmeasured: <names> - record CI's measurement with: ...` (stdout and step summary) when a baseline metric is null, and `/tentaqles:babysit-pr` step 1b downloads the `quality-reports` artifact, runs `compare --update` and commits `ci: record first ratchet baseline from CI` to the PR branch, so an unmeasured baseline binds without anyone remembering `--update`.

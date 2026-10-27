@@ -29,7 +29,10 @@ tq hub list --waiting --json --timeout 2s 2>&1; echo "hub_exit=$?"
     build; `request-changes` sends a note back into the engine. The review page
     (`tq hub review <card> --open`) shows the evidence from the gate's records.
   - `judge`: a reviewer could not judge something; list the rows from `decision.text`.
-  - `question`: the question as asked.
+  - `question`: the question as asked. When `decision.data.hub_asked` is true, the run
+    stopped before its build existed (often an open PRD decision) and the hub asked for
+    it: the options are `answer`, whose note is the answer and is required, and `stop`.
+    Answering posts the note as the user's card comment and resumes the same run.
   - `permission`: the run was refused a tool (`allow-once` allows it for one round) or
     stopped at its budget (`raise-and-resume` starts a new run; a note such as
     `rounds=20` sets the new limits).
@@ -45,6 +48,11 @@ macOS/Linux terminal), with the card id, the decision id and one of the options
 exactly as listed:
 
     tq hub answer <card> <decision> --choice <option> --note "<their note, if any>"
+
+For a hub `question` the note is the answer and cannot be empty:
+`tq hub answer <card> <decision> --choice answer --note "<their answer>"`. A plain
+card comment also reaches the next round of a run (under "Notes from the human on
+this card"), but it does not resume a waiting run; only the answer does.
 
 Mention that the hub page (`tq hub open`) has the same buttons. Never run `tq hub answer`,
 `tq hub move <card> done`, `build-gate answer`, `build-gate approve` or `build-gate token`
