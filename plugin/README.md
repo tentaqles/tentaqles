@@ -104,6 +104,7 @@ language: en
 
 cloud:
   provider: azure
+  also: [aws]            # optional: extra clouds this workspace may use
   subscription_name: "My Sub"
   preflight: "az account show --query name -o tsv"
   expected: "My Sub"
@@ -182,6 +183,15 @@ calls `tq claude-hook pre-tool-use`, which verifies:
 | `az storage list` | Azure subscription matches | Yes |
 | `aws s3 ls` | AWS account matches | Yes |
 | Any blocked command | Pattern from manifest | Yes |
+
+A workspace allows the cloud CLI of `cloud.provider` only. To use more than
+one cloud, list the extras in `cloud.also` (`azure`, `aws`, `gcp`,
+`digitalocean`), e.g. `also: [aws]`. Every other cloud CLI is still blocked
+as wrong-cloud, and the block message names the allowed set ("azure + aws").
+Only the trusted manifest (pinned by `tq allow`) can add clouds; a manifest
+file in a repo cannot. Each extra cloud also gets its own private config home
+under `~/.tentaqles/identities/<workspace>/`, so its login stays apart from
+other clients.
 
 ### Temporal memory
 

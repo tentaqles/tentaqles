@@ -139,6 +139,22 @@ the file, `0700` for any directory created to hold it — on platforms that
 enforce POSIX permission bits. Windows does not enforce these bits, so the
 file is still written there but without the same OS-level restriction.
 
+## Extra clouds
+
+A workspace allows the cloud CLI of `cloud.provider` only; any other cloud CLI
+is blocked as wrong-cloud. To use a second cloud, add it to the manifest
+afterwards and run `tq allow <ws>`:
+
+```yaml
+cloud:
+  provider: azure
+  also: [aws]
+```
+
+Accepted values are `azure`, `aws`, `gcp` and `digitalocean`. Each extra cloud
+gets its own private config home under `~/.tentaqles/identities/<ws>/`. See
+[CLAUDE-HOOK.md](CLAUDE-HOOK.md) for the guard rules.
+
 ## Data classification
 
 A client manifest can carry a `data:` block that names the classes of personal

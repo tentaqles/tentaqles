@@ -66,6 +66,8 @@ Parse the user's request and map it to the manifest field. Common patterns:
 |-----------|---------------|--------|
 | "change email to x@y.com" | `git.email` (tq-owned) | Run `tq add` again / edit, then ask the user to run `tq allow` — don't just hand-edit and skip re-trust |
 | "set cloud to aws" | `cloud.provider` | Update + regenerate preflight |
+| "also allow aws" / "this client uses two clouds" | `cloud.also` (list: `azure`, `aws`, `gcp`, `digitalocean`) | Append to the list (create it if missing); never repeat `cloud.provider` |
+| "drop aws" / "remove the extra cloud" | `cloud.also` | Remove the entry; delete the key when the list is empty |
 | "change database to snowflake" | `database.provider` + `database.dialect` | Update both |
 | "add fastapi to stack" | `stack` | Append |
 | "remove django from stack" | `stack` | Remove |
@@ -77,6 +79,16 @@ Parse the user's request and map it to the manifest field. Common patterns:
 | "set pm to jira" | `project_management.provider` | Update |
 | "set snowflake account to X" | `database.connection_info` | Update |
 | "set database access to cli" | `database.access` | Update |
+
+### Extra clouds (`cloud.also`)
+
+`cloud.provider` is the primary cloud; `cloud.also` lists further clouds the
+workspace may use. Other cloud CLIs stay blocked as wrong-cloud. Each listed
+cloud gets its own private CLI config home under
+`~/.tentaqles/identities/<workspace>/`. Editing `cloud.also` changes the
+manifest hash, so after the edit ask the user to run `tq allow <name>` in
+their terminal; until then the new cloud stays blocked. Only the trusted
+manifest counts; a repo-level manifest cannot add clouds.
 
 ## Apply the Change
 
@@ -97,6 +109,7 @@ with open(manifest_path, 'r') as f:
 # Apply the change — examples (non-identity fields only):
 # data['stack'].append('fastapi')
 # data['cloud']['provider'] = 'aws'
+# data['cloud'].setdefault('also', []).append('aws')   # extra cloud
 # data['language'] = 'pt-BR'
 #
 # Do NOT hand-edit identity fields here (git.email, git.user,
