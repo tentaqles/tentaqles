@@ -94,6 +94,9 @@ func TestReviewForms(t *testing.T) {
 		{"N3b ansi-c quote then printenv", "Bash", "cat $'a\\' <<X ''\nprintenv\nX", Deny, ed},
 		{"R10 bash -c set", "Bash", "bash -c 'set'", Deny, ed},
 		{"R10 sh -c printenv", "Bash", `sh -c "printenv"`, Deny, ed},
+		{"R10b bash -c padded env", "Bash", "bash -c ' env '", Deny, ed},
+		{"R10c sh -c padded printenv", "Bash", `sh -c " printenv"`, Deny, ed},
+		{"R10d bash -c padded set -e stays allowed", "Bash", "bash -c ' set -e; ls'", Allow, ""},
 		{"R10 bash -c env", "Bash", "bash -c 'env'", Deny, ed},
 		{"R10 bash -lc set piped", "Bash", "bash -lc 'set | grep KEY'", Deny, ed},
 

@@ -69,7 +69,7 @@ func Builtin() []Rule {
 			// after -c (`bash -c 'set'`, `sh -lc "printenv"`) starts one. A
 			// Bash heredoc body that is data (guard.BlankDataHeredocs) is not
 			// read.
-			Command: `(^|[;&|\n(` + bt + `]\s*|\s-[a-z]*c\s+["'])(cmd(\.exe)?\s+/[ck]\s+)?(printenv|env|set|export\s+-p|declare\s+-p|typeset\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)"'` + bt + `])` +
+			Command: `(^|[;&|\n(` + bt + `]\s*|\s-[a-z]*c\s+["']\s*)(cmd(\.exe)?\s+/[ck]\s+)?(printenv|env|set|export\s+-p|declare\s+-p|typeset\s+-p|(get-childitem|gci|dir|ls)\s+env:\\?)\s*($|[;&|\n)"'` + bt + `])` +
 				`|\[(system\.)?environment\]::getenvironmentvariables\s*\(`,
 			SkipHeredocData: true,
 			Reason:          "dumping the whole environment prints every token in it. Check one variable without printing it (e.g. `test -n \"$NAME\"`), or run the command with `tq dotenv run -- <command>`",
