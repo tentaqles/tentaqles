@@ -7,6 +7,8 @@ description: View and modify client workspace settings — cloud provider, datab
 
 View and modify fields in the current client's `.tentaqles.yaml` manifest.
 
+Headless (`TENTAQLES_HEADLESS=1`): never edit the manifest; the PreToolUse guard blocks it. Write the proposed change to `docs/privacy-manifest-proposal.yaml` and record a human decision to apply it and run `tq allow <name>`.
+
 **Ownership boundary**: `tq` owns the `git`, `identities`, and `claude`
 sections of `.tentaqles.yaml` — they are written by `tq add` and verified by
 `tq doctor`. Don't hand-edit those sections; use `tq` commands instead (e.g.

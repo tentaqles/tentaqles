@@ -1,6 +1,6 @@
 // Package adapter runs one round of an agent for the hub runner: the contract of
 // spec §8.3, the plain-process adapter used by tests and scripted tasks, and the
-// headless `claude -p --output-format json` adapter.
+// headless `claude -p --output-format stream-json --verbose` adapter.
 package adapter
 
 import (
@@ -27,6 +27,18 @@ type RunRequest struct {
 	Workspace, Dir, Prompt, SessionID string
 	Env                               []string
 	AllowedTools                      []string
+	// Limit is what is left of the run's budget for this round; the claude adapter stops the round
+	// once its spend reaches it. A zero field is no limit.
+	Limit Limit
+	// Classes are the workspace's data classes, used to mask the progress lines (empty: every detector).
+	Classes []string
+}
+
+// Limit is a round's share of the run budget: tokens (input + output + cache write), dollars, minutes.
+type Limit struct {
+	Tokens  int64
+	USD     float64
+	Minutes float64
 }
 
 type Usage struct {
@@ -50,6 +62,9 @@ type RunResult struct {
 	Model             string
 	NumTurns          int
 	PermissionDenials []PermissionDenial
+	// OverBudget names the limit (tokens, usd or minutes) at which the adapter stopped the round
+	// inside it; Usage and CostUSD then hold what the round spent up to the stop.
+	OverBudget string
 }
 
 // command builds the process; done must be closed by the caller once cmd.Run has returned, so a

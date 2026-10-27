@@ -194,9 +194,8 @@ func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 		return
 	}
 	dir := s.RunDir(r)
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		s.fail(r, card, "project folder missing", fmt.Sprintf("The run's folder %s does not exist. Set the card's project folder (relative to the workspace root) and run it again.", dir))
-		return
+	if !s.preflight(ctx, r, card, dir) {
+		return // held for the human at zero cost: trust, folder or git
 	}
 	ad, ok := s.cfg.Adapters[r.Adapter]
 	if !ok {
@@ -217,7 +216,8 @@ func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 	start := s.cfg.Now()
 	fmt.Fprintf(mw, "\n=== round %d at %s in %s\n", r.Rounds+1, start.UTC().Format(time.RFC3339), dir)
 	req := adapter.RunRequest{Workspace: s.cfg.Workspace, Dir: dir, Prompt: Prompt(r, card), SessionID: r.SessionID,
-		Env: adapter.LaunchEnv(s.cfg.Env(), HubTaskJSON(s.cfg.Workspace, card)), AllowedTools: r.AllowedTools}
+		Env: adapter.LaunchEnv(s.cfg.Env(), HubTaskJSON(s.cfg.Workspace, card)), AllowedTools: r.AllowedTools,
+		Limit: RoundLimit(r), Classes: s.st.Classes()}
 	res, runErr := ad.Start(ctx, req, mw)
 	mw.Close()
 	logf.Close()
@@ -272,6 +272,10 @@ func (s *Service) round(ctx context.Context, f *flight, r store.Run) {
 	}
 	if rec.CostUnknown {
 		s.comment(card, r, fmt.Sprintf("Round %d reported no cost and no priced usage; the dollar budget could not count it (rounds and minutes still apply).", r.Rounds))
+	}
+	if res.OverBudget != "" {
+		s.stopInsideRound(ctx, r, card, rec, start, res.OverBudget)
+		return
 	}
 	final := strings.TrimSpace(res.Transcript)
 	if text := StripRelocate(final); text != "" {
@@ -342,7 +346,7 @@ func (s *Service) mirror(card store.Card, r store.Run, st *gate.State) {
 func (s *Service) apply(r store.Run, card store.Card, out Outcome, st *gate.State, tool, final string, exit int) {
 	if st != nil && r.Slug != "" {
 		switch out.Verdict {
-		case VerdictMaxTurns, VerdictRetry, VerdictPermission:
+		case VerdictMaxTurns, VerdictRetry, VerdictPermission, VerdictUsageLimit:
 			r.Phase = store.PhaseResume
 		}
 	}
@@ -395,6 +399,13 @@ func (s *Service) apply(r store.Run, card store.Card, out Outcome, st *gate.Stat
 		r.Status = store.StatusWaiting
 		s.save(r)
 		s.notify("tq hub: permission needed", card.Title+": "+tool)
+	case VerdictUsageLimit:
+		cost := 0.0
+		if n := len(r.RoundLog); n > 0 {
+			cost = r.RoundLog[n-1].CostUSD
+		}
+		s.hold(r, card, out.StopReason, "The agent hit a usage limit (out of usage credits, or a usage or rate limit). Resume when credits are available again (the session continues where it stopped), or stop?",
+			fmt.Sprintf("Round %d ended on a usage limit; its cost ($%.2f) is kept and the run is not failed.", r.Rounds, cost))
 	case VerdictMaxTurns:
 		r.Status, r.NotBefore = store.StatusQueued, s.stamp()
 		s.save(r)

@@ -16,13 +16,15 @@ import (
 	"github.com/tentaqles/tentaqles/internal/insights"
 )
 
-// Claude runs `claude -p <prompt> --output-format json` headless. Args is tq run's
-// permission-mode wrapper (claudeArgs): the manifest's mode, bypass only after
-// `tq allow --bypass`; the hub never adds a permission flag of its own.
+// Claude runs `claude -p --output-format stream-json --verbose` headless and reads its events as
+// they arrive (see stream). Args is tq run's permission-mode wrapper (claudeArgs): the manifest's
+// mode, bypass only after `tq allow --bypass`; the hub never adds a permission flag of its own.
+// ProgressEvery is the least time between two running cost lines (zero: DefaultProgressEvery).
 type Claude struct {
-	Bin   []string
-	Args  func([]string) []string
-	Grace time.Duration
+	Bin           []string
+	Args          func([]string) []string
+	Grace         time.Duration
+	ProgressEvery time.Duration
 }
 
 var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -33,7 +35,7 @@ var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 func (c Claude) Argv(req RunRequest) []string { return c.argv(req, "") }
 
 func (c Claude) argv(req RunRequest, settingsPath string) []string {
-	args := []string{"-p", "--output-format", "json"}
+	args := []string{"-p", "--output-format", "stream-json", "--verbose"}
 	if sessionIDRe.MatchString(req.SessionID) {
 		// one token: --resume takes an optional value, so a separate element could be read as a flag
 		args = append(args, "--resume="+req.SessionID)
@@ -89,15 +91,32 @@ func (c Claude) Start(ctx context.Context, req RunRequest, log io.Writer) (RunRe
 			return RunResult{}, err
 		}
 	}
+	// The round runs under its own context: reaching the budget cancels it, which terminates the
+	// process tree the way a cancel does, while ctx still tells a hub stop or a human cancel apart.
+	rctx, stopRound := context.WithCancel(ctx)
+	defer stopRound()
 	done := make(chan struct{})
 	defer close(done)
-	cmd := command(ctx, c.argv(req, settingsPath), req, c.Grace, done)
+	cmd := command(rctx, c.argv(req, settingsPath), req, c.Grace, done)
 	cmd.Stdin = strings.NewReader(req.Prompt)
-	out := &capped{max: 16 << 20}
-	cmd.Stdout = io.MultiWriter(out, lw)
+	s := newStream(lw, req, c.ProgressEvery, stopRound)
+	cmd.Stdout = s
 	cmd.Stderr = lw
-	code, err := exitCode(ctx, cmd.Run())
-	res := ParseResult(out.b.Bytes())
+	var timer *time.Timer
+	if m := req.Limit.Minutes; m > 0 {
+		timer = time.AfterFunc(time.Duration(m*float64(time.Minute)), func() { s.breachMinutes(m) })
+	}
+	runErr := cmd.Run()
+	if timer != nil {
+		timer.Stop()
+	}
+	s.exited() // a minutes timer that fires from here on is not a breach
+	s.flush()
+	res := s.outcome(runErr == nil)
+	code, err := exitCode(ctx, runErr)
+	if res.OverBudget != "" && err != nil && ctx.Err() == nil && rctx.Err() != nil {
+		code, err = -1, nil // stopped at the budget: a result, not a start failure
+	}
 	res.ExitCode = code
 	return res, err
 }

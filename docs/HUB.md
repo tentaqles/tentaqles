@@ -87,13 +87,19 @@ there by a human), on
 `tq hub run <card>`, or when an answer resumes it. Wakeups coalesce; a card is checked
 out by one run at a time.
 
-Every round runs `claude -p --output-format json` in the card's project folder with the
+Every round runs `claude -p --output-format stream-json --verbose` in the card's project folder with the
 workspace's environment plan (as `tq run` builds it), `TENTAQLES_HEADLESS=1` and
 `TQ_HUB_TASK={"hub","workspace","kind","external"}`; never with a hub token, never with
 `TENTAQLES_HEADLESS_CHILD`, never with `--dangerously-skip-permissions` unless
 `tq allow --bypass` was run for the workspace. The prompt goes to `claude` on stdin and
 the tools a `permission` answer allowed go in a `--settings` file; nothing free-text is
 put on the command line (a resumed round adds `--resume=<session id>`).
+The hub reads the events as they arrive and writes one masked line per step to the run
+log, which the card and run pages tail live: `→ tool Bash: go test ./...`,
+`→ editing internal/x.go`, a subagent start, the first line of what Claude says (clipped
+to 200 characters), and at most every 30 seconds the round's running cost and tokens.
+The stream's final `result` event gives the cost, usage and session id; an output without
+one is read as a single result document, as before.
 
 When the build creates its worktree, the session ends with
 `TQ_HUB_RELOCATE <worktree> <slug>` and the next round starts there. The hand-off is
@@ -104,6 +110,19 @@ relocate loop. After each round
 the hub reads `build-gate state <slug> --json`: pending decisions → `waiting`; a halted
 or rolled-back build → `failed`; a non-zero exit with no progress → one retry after two
 minutes; anything else that ends without a stop → `failed` with the transcript tail.
+
+Before every round, first or resumed, the hub re-checks at zero cost that the workspace
+is still trusted (a skill that edits the manifest changes its hash), that the run's folder
+exists, and that `git` is on PATH and the folder is inside a git repository (a card without
+a project folder runs in the workspace root, so the root must be one). If a check fails, no
+round starts: the run goes to `waiting` with a stop reason (`untrusted`, `project folder
+missing`, `not a git repository`, or `git preflight` when git refused a folder for another
+reason, such as "dubious ownership", whose fix is `safe.directory`; git's own message is
+quoted), the card gets a comment, and a hub decision asks
+"resume / stop". Fix the cause (for example `tq allow <ws>`), then answer resume. If a
+round ends on a usage limit (the CLI says the account is out of usage credits or has hit
+a usage, weekly or rate limit, including when the stream ends without a result event), the run waits the same way with stop reason `usage limit`. It
+keeps the round's cost and does not count as a failure, and resume continues the session.
 
 Statuses: `queued running waiting finished failed cancelled over-budget`.
 
@@ -119,6 +138,10 @@ the gate state is kept, so `tq hub run <card>` resumes it. Only an explicit
 Per run: 2,000,000 tokens (input + output + cache write), 10 USD, 120 minutes, 12
 rounds, or the card's `--budget tokens=…,usd=…,minutes=…,rounds=…`. Reaching one stops
 the run (`over-budget`), comments the numbers and asks "raise-and-resume / stop".
+Tokens, dollars and minutes are checked inside a round, not only between rounds: the hub
+prices each assistant message as it streams and, once the round reaches what is left of
+the budget, stops `claude` (as a cancel does), records what the round spent and stops the
+run the same way. The session id is kept, so raise-and-resume continues that session.
 A card body's `budget:` front matter is checked when the card is created or its body
 edited: an unknown key or a value that is not a positive number (rounds and tokens whole)
 is refused with an error naming it (`bad_request` on the API), so it never reaches a run.
@@ -132,7 +155,8 @@ reports neither, the round is marked "cost unknown" and only rounds and minutes 
 
 The hub mirrors the gate's decision records (`plan-approval`, `result`, `judge`,
 `question`) and adds its own `permission` kind (a refused tool: `allow-once`; a budget
-stop: `raise-and-resume`). Answering from the hub mints a hub actor token
+stop: `raise-and-resume`; a held run (untrusted, folder, git, usage limit): `resume`,
+which requeues the same run). Answering from the hub mints a hub actor token
 (HMAC-SHA256 with the gate key, actor `hub:<your user>`) for one `build-gate answer` call;
 the gate validates it and applies the consequence. The hub never calls `approve`,
 `finish`, `judge`, `dod --override` or `unlock-tests`. If you answered in the terminal
