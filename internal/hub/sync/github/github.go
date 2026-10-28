@@ -4,8 +4,13 @@
 // repository name, board the Projects v2 number. status_field names the project's single-select
 // status field ("Status" by default). With a board, an item's status is that field's option; with
 // none it is Open or Closed. Item ids are "owner/repo#number". Writes stay inside the scope:
-// the owner must be scope.org and, without a board, the repository scope.project (or the issue a
-// sub-issue of one there); anything else fails with ErrOutOfScope before a request is sent.
+// the owner must be scope.org and the repository scope.project, or the issue a sub-issue of one
+// there or (with a board) on the board or a sub-issue of a board item; anything else fails with
+// ErrOutOfScope before the write is sent.
+//
+// Cost: a board tick walks a light page per 100 items, then reads in full, by node id, only what
+// changed since the watermark. List queries ask for their rateLimit and stop the sync when less
+// than a tenth of the hourly GraphQL budget is left (with the cli source it is the user's own).
 //
 // Auth: the cli source runs `gh api` with the workspace identity environment (GH_CONFIG_DIR), so
 // the token stays in gh's own store. gh never inherits a gh login from the hub process
@@ -248,12 +253,43 @@ func (a *Adapter) gql(ctx context.Context, query string, vars map[string]any, ou
 		}
 		return err
 	}
+	if rl := budgetLow(env.Data); rl != nil {
+		return rl
+	}
 	if out != nil {
 		if err := json.Unmarshal(env.Data, out); err != nil {
 			return fmt.Errorf("github: graphql %s: decoding data: %w", op, err)
 		}
 	}
 	return nil
+}
+
+// budgetLow reads the rateLimit a list query asked for (rateLimitSel) and stops the sync when
+// what is left of the hourly GraphQL budget falls under a tenth of it: with the cli source the
+// budget is the user's own, shared with their gh. The error asks to retry at the reset.
+func budgetLow(data json.RawMessage) *hubsync.RateLimitError {
+	var d struct {
+		RateLimit *struct {
+			Remaining int       `json:"remaining"`
+			Limit     int       `json:"limit"`
+			ResetAt   time.Time `json:"resetAt"`
+		} `json:"rateLimit"`
+	}
+	if len(data) == 0 || json.Unmarshal(data, &d) != nil || d.RateLimit == nil {
+		return nil
+	}
+	reserve := d.RateLimit.Limit / 10
+	if reserve <= 0 {
+		reserve = 500
+	}
+	if d.RateLimit.Remaining >= reserve {
+		return nil
+	}
+	wait := time.Minute
+	if !d.RateLimit.ResetAt.IsZero() {
+		wait = min(max(d.RateLimit.ResetAt.Sub(now()), time.Second), time.Hour)
+	}
+	return &hubsync.RateLimitError{Provider: Provider, RetryAfter: wait}
 }
 
 // opName is a query's operation name, for error messages.
@@ -642,6 +678,7 @@ const boardItemsSel = `projectItems(first: 20) {
 // qIssues has no assignee filter: a sub-issue of the viewer's issue is kept on the client, and
 // its own changes do not touch its parent's updatedAt.
 const qIssues = `query Issues($owner: String!, $name: String!, $since: DateTime, $cursor: String) {
+  ` + rateLimitSel + `
   repository(owner: $owner, name: $name) {
     issues(first: 50, after: $cursor, orderBy: {field: UPDATED_AT, direction: ASC},
            filterBy: {since: $since, states: [OPEN, CLOSED]}) {
@@ -652,22 +689,74 @@ const qIssues = `query Issues($owner: String!, $name: String!, $since: DateTime,
 }
 ` + issueFields
 
+// rateLimitSel is the query's cost and what is left of the hourly GraphQL budget; the list
+// queries ask for it so a sync stops before it starves the user's own gh (see listReserve).
+const rateLimitSel = `rateLimit { cost remaining limit resetAt }`
+
+// qProjectItems is one light board page: per item only what decides whether it changed and is
+// mirrored (times, status, repository, assignees, parent, sub-issue count). Its only nested
+// connection is assignees(first: 10), so a page of 100 costs about 2 points. Full fields and
+// sub-issues are read afterwards, by node id, only for what changed.
 const qProjectItems = `query ProjectItems($id: ID!, $field: String!, $cursor: String) {
+  ` + rateLimitSel + `
   node(id: $id) {
     ... on ProjectV2 {
-      items(first: 50, after: $cursor) {
+      items(first: 100, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id updatedAt
           fieldValueByName(name: $field) { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } }
-          content { __typename ... on Issue { ...issueFields
-            subIssues(first: 25) { pageInfo { hasNextPage endCursor } nodes { ...issueFields ` + boardItemsSel + ` } } } }
+          content { __typename ... on Issue {
+            id number updatedAt repository { nameWithOwner }
+            assignees(first: 10) { nodes { login } }
+            parent { id }
+            subIssuesSummary { total }
+          } }
         }
       }
     }
   }
+}`
+
+// qIssueNodes reads changed board issues that have sub-issues, with the first sub-issues inline.
+const qIssueNodes = `query IssueNodes($ids: [ID!]!, $field: String!) {
+  ` + rateLimitSel + `
+  nodes(ids: $ids) {
+    ... on Issue { ...issueFields subIssues(first: 25) { pageInfo { hasNextPage endCursor } nodes { ...issueFields ` + boardItemsSel + ` } } }
+  }
 }
 ` + issueFields
+
+// qChildNodes reads changed issues without their sub-issues: board leaves and changed sub-issues
+// of unchanged parents.
+const qChildNodes = `query ChildNodes($ids: [ID!]!, $field: String!) {
+  ` + rateLimitSel + `
+  nodes(ids: $ids) { ... on Issue { ...issueFields ` + boardItemsSel + ` } }
+}
+` + issueFields
+
+// qSubIssueProbe lists the sub-issues of unchanged parents by id and time only, so a sub-issue
+// changed on its own (which does not touch its parent's updatedAt) is still seen.
+const qSubIssueProbe = `query SubIssueProbe($ids: [ID!]!) {
+  ` + rateLimitSel + `
+  nodes(ids: $ids) {
+    ... on Issue { id subIssues(first: 50) { pageInfo { hasNextPage endCursor } nodes { id number updatedAt repository { nameWithOwner } } } }
+  }
+}`
+
+const qSubIssueIDs = `query SubIssueIDs($id: ID!, $cursor: String) {
+  ` + rateLimitSel + `
+  node(id: $id) {
+    ... on Issue { subIssues(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id number updatedAt repository { nameWithOwner } } } }
+  }
+}`
+
+// Batch sizes for the node reads, keeping each query's cost to a few points.
+const (
+	parentBatch = 10
+	leafBatch   = 50
+	probeBatch  = 50
+)
 
 const qSubIssues = `query SubIssues($id: ID!, $cursor: String) {
   node(id: $id) {
@@ -701,9 +790,12 @@ const qIssueOnBoard = `query Issue($owner: String!, $name: String!, $number: Int
 // walk is resumed from its watermark on the next tick.
 const maxPages = 40
 
-// maxBoardPages bounds one board walk (50 items a page). Board items come in position order with
-// no since filter, so a cut walk is an error: items past the cut would never be seen.
-const maxBoardPages = 100
+// maxBoardPages bounds one board walk (boardPageSize items a page). Board items come in position
+// order with no since filter, so a cut walk is an error: items past the cut would never be seen.
+const (
+	maxBoardPages = 100
+	boardPageSize = 100
+)
 
 // maxSubPages bounds the extra sub-issue pages read for one parent. A list query reads the first
 // 25 sub-issues inline (keeping its node cost down) and SubIssues pages the rest, 50 at a time.
@@ -895,7 +987,7 @@ func (c *collector) markTime(t time.Time) {
 // to the logged-in account plus their sub-issues. With a board, the board's issue items (in the
 // scope repository when one is set), every one carrying its board status, sub-issues included;
 // otherwise the repository's issues. A board too large to walk in one tick is an error, and the
-// watermark does not move.
+// watermark does not move; so is a GraphQL budget running low (a RateLimitError until the reset).
 func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.Item, time.Time, error) {
 	login := ""
 	if a.cfg.AssignedTo != "anyone" {
@@ -1033,55 +1125,264 @@ func (a *Adapter) listRepo(ctx context.Context, login string, c *collector) erro
 	return nil
 }
 
+// boardEntry is one issue item of a light board page.
+type boardEntry struct {
+	itemUpdated time.Time
+	status      *statusValue
+	issue       boardIssue
+}
+
+type boardIssue struct {
+	Typename   string    `json:"__typename"`
+	ID         string    `json:"id"`
+	Number     int       `json:"number"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+	Repository struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"repository"`
+	Assignees struct {
+		Nodes []struct{ Login string } `json:"nodes"`
+	} `json:"assignees"`
+	Parent *struct {
+		ID string `json:"id"`
+	} `json:"parent"`
+	SubIssuesSummary *struct {
+		Total int `json:"total"`
+	} `json:"subIssuesSummary"`
+}
+
+func (e boardEntry) id() string {
+	return refFrom(e.issue.Repository.NameWithOwner, e.issue.Number).id()
+}
+
+// updated is the later of the issue's and its card's times, as item() computes it.
+func (e boardEntry) updated() time.Time {
+	if e.issue.UpdatedAt.After(e.itemUpdated) {
+		return e.issue.UpdatedAt
+	}
+	return e.itemUpdated
+}
+
+// hasChildren: the issue has sub-issues (or the count is unknown).
+func (e boardEntry) hasChildren() bool {
+	return e.issue.SubIssuesSummary == nil || e.issue.SubIssuesSummary.Total > 0
+}
+
+// subRef is a sub-issue as the probe reads it.
+type subRef struct {
+	ID         string    `json:"id"`
+	Number     int       `json:"number"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+	Repository struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"repository"`
+}
+
+type subRefs struct {
+	PageInfo pageInfo `json:"pageInfo"`
+	Nodes    []subRef `json:"nodes"`
+}
+
+// changed says whether an item at time t is past the watermark and not the copy the previous
+// call already returned at it.
+func (c *collector) changed(id string, t time.Time) bool {
+	if t.Before(c.since) {
+		return false
+	}
+	rev, ok := c.atSince[id]
+	return !(ok && t.Equal(c.since) && rev == t.UTC().Format(time.RFC3339))
+}
+
+// listBoard mirrors the board's issues in three steps, so a tick costs a few points even on a
+// large board. (1) It walks the board with a light page (boardEntry). (2) It keeps the items
+// assigned to login (all with "anyone"), in the scope repository when one is set, plus board
+// items whose parent is a kept one. (3) It reads in full, by node id in batches, only the kept
+// items changed since the watermark (with their sub-issues), and for the unchanged kept parents
+// it probes the sub-issues by id and time and reads only the changed ones.
 func (a *Adapter) listBoard(ctx context.Context, login string, c *collector) error {
 	p, err := a.project(ctx)
 	if err != nil {
 		return err
 	}
+	entries, err := a.boardEntries(ctx, p)
+	if err != nil {
+		return err
+	}
+	onBoard := map[string]boardEntry{} // issue node id -> its board entry, any repository
+	assigned := map[string]bool{}
+	for _, e := range entries {
+		onBoard[e.issue.ID] = e
+		inRepo := a.repo == "" || strings.EqualFold(e.issue.Repository.NameWithOwner, a.owner+"/"+a.repo)
+		if inRepo && (login == "" || hasLogin(e.issue.Assignees.Nodes, login)) {
+			assigned[e.issue.ID] = true
+		}
+	}
+	var kept []boardEntry
+	keptIDs := map[string]bool{}
+	for _, e := range entries {
+		inRepo := a.repo == "" || strings.EqualFold(e.issue.Repository.NameWithOwner, a.owner+"/"+a.repo)
+		if assigned[e.issue.ID] || (inRepo && e.issue.Parent != nil && assigned[e.issue.Parent.ID]) {
+			kept = append(kept, e)
+			keptIDs[e.issue.ID] = true
+		}
+	}
+
+	var parents, leaves, probe []string
+	for _, e := range kept {
+		switch {
+		case c.changed(e.id(), e.updated()) && e.hasChildren():
+			parents = append(parents, e.issue.ID)
+		case c.changed(e.id(), e.updated()):
+			leaves = append(leaves, e.issue.ID)
+		case e.hasChildren():
+			probe = append(probe, e.issue.ID)
+		}
+	}
+	probed, err := a.probeSubIssues(ctx, probe, c, keptIDs, onBoard)
+	if err != nil {
+		return err
+	}
+	for _, id := range probe {
+		leaves = append(leaves, probed[id]...)
+	}
+	full := map[string]ghIssue{}
+	if err := a.readNodes(ctx, qIssueNodes, parents, parentBatch, full); err != nil {
+		return err
+	}
+	if err := a.readNodes(ctx, qChildNodes, leaves, leafBatch, full); err != nil {
+		return err
+	}
+
+	for _, e := range kept {
+		if g, ok := full[e.issue.ID]; ok {
+			if err := a.addWithChildren(ctx, g, e.status, e.itemUpdated, p.ID, c); err != nil {
+				return err
+			}
+		}
+		for _, id := range probed[e.issue.ID] {
+			if g, ok := full[id]; ok {
+				st, up := g.boardStatus(p.ID)
+				c.add(a.item(g, st, up), false)
+			}
+		}
+	}
+	return nil
+}
+
+// boardEntries walks the board's light pages and returns its issue items in board order.
+func (a *Adapter) boardEntries(ctx context.Context, p *project) ([]boardEntry, error) {
 	vars := map[string]any{"id": p.ID, "field": a.statusField}
+	var entries []boardEntry
 	for page := 0; page < maxBoardPages; page++ {
 		var out struct {
 			Node *struct {
 				Items struct {
 					PageInfo pageInfo `json:"pageInfo"`
 					Nodes    []struct {
-						ID        string       `json:"id"`
 						UpdatedAt time.Time    `json:"updatedAt"`
 						Field     *statusValue `json:"fieldValueByName"`
-						Content   *ghIssue     `json:"content"`
+						Content   *boardIssue  `json:"content"`
 					} `json:"nodes"`
 				} `json:"items"`
 			} `json:"node"`
 		}
 		if err := a.gql(ctx, qProjectItems, vars, &out); err != nil {
-			return err
+			return nil, err
 		}
 		if out.Node == nil {
-			return fmt.Errorf("%w: github: project %d of %s", hubsync.ErrNotFound, a.board, a.owner)
+			return nil, fmt.Errorf("%w: github: project %d of %s", hubsync.ErrNotFound, a.board, a.owner)
 		}
 		for _, n := range out.Node.Items.Nodes {
-			g := n.Content
-			if g == nil || g.Typename != "Issue" {
+			if n.Content == nil || n.Content.Typename != "Issue" || n.Content.ID == "" {
 				continue // draft issues and pull requests are not mirrored
 			}
-			if a.repo != "" && !strings.EqualFold(g.Repository.NameWithOwner, a.owner+"/"+a.repo) {
-				continue
-			}
-			if login != "" && !g.assignedTo(login) {
-				continue // an unassigned sub-issue comes in through its parent, with its status
-			}
-			if err := a.addWithChildren(ctx, *g, n.Field, n.UpdatedAt, p.ID, c); err != nil {
-				return err
-			}
+			entries = append(entries, boardEntry{itemUpdated: n.UpdatedAt, status: n.Field, issue: *n.Content})
 		}
 		pi := out.Node.Items.PageInfo
 		if !pi.HasNextPage || pi.EndCursor == "" {
-			return nil
+			return entries, nil
 		}
 		vars["cursor"] = pi.EndCursor
 	}
-	return fmt.Errorf("github: project %d of %s has more than %d items; the sync reads a board in one walk, so it stopped without moving the watermark (narrow the board or use tracker.scope.project without a board)",
-		a.board, a.owner, maxBoardPages*50)
+	return nil, fmt.Errorf("github: project %d of %s has more than %d items; the sync reads a board in one walk, so it stopped without moving the watermark (narrow the board or use tracker.scope.project without a board)",
+		a.board, a.owner, maxBoardPages*boardPageSize)
+}
+
+// probeSubIssues lists the sub-issues of unchanged parents by id and time and returns, per
+// parent node id, the node ids of the sub-issues changed since the watermark. Kept board items
+// are skipped (they are read on their own); a sub-issue on the board counts its card's time too.
+// A parent with more sub-issues than the cap keeps the ones read, as allSubIssues does.
+func (a *Adapter) probeSubIssues(ctx context.Context, parents []string, c *collector, skip map[string]bool, onBoard map[string]boardEntry) (map[string][]string, error) {
+	out := map[string][]string{}
+	for batch := range slices.Chunk(parents, probeBatch) {
+		var resp struct {
+			Nodes []*struct {
+				ID        string  `json:"id"`
+				SubIssues subRefs `json:"subIssues"`
+			} `json:"nodes"`
+		}
+		if err := a.gql(ctx, qSubIssueProbe, map[string]any{"ids": batch}, &resp); err != nil {
+			return nil, err
+		}
+		for _, n := range resp.Nodes {
+			if n == nil || n.ID == "" {
+				continue
+			}
+			kids, pi := n.SubIssues.Nodes, n.SubIssues.PageInfo
+			for page := 0; pi.HasNextPage && pi.EndCursor != "" && page < maxSubPages; page++ {
+				var more struct {
+					Node *struct {
+						SubIssues subRefs `json:"subIssues"`
+					} `json:"node"`
+				}
+				if err := a.gql(ctx, qSubIssueIDs, map[string]any{"id": n.ID, "cursor": pi.EndCursor}, &more); err != nil {
+					return nil, err
+				}
+				if more.Node == nil {
+					break
+				}
+				kids, pi = append(kids, more.Node.SubIssues.Nodes...), more.Node.SubIssues.PageInfo
+			}
+			for _, k := range kids {
+				if k.ID == "" || skip[k.ID] {
+					continue
+				}
+				t := k.UpdatedAt
+				if e, ok := onBoard[k.ID]; ok && e.itemUpdated.After(t) {
+					t = e.itemUpdated
+				}
+				if c.changed(refFrom(k.Repository.NameWithOwner, k.Number).id(), t) {
+					out[n.ID] = append(out[n.ID], k.ID)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// readNodes reads issues in full by node id, in batches, into full. An id that no longer
+// resolves (deleted since the walk) is left out.
+func (a *Adapter) readNodes(ctx context.Context, query string, ids []string, size int, full map[string]ghIssue) error {
+	var todo []string
+	for _, id := range ids {
+		if _, done := full[id]; !done && !slices.Contains(todo, id) {
+			todo = append(todo, id)
+		}
+	}
+	for batch := range slices.Chunk(todo, size) {
+		var resp struct {
+			Nodes []*ghIssue `json:"nodes"`
+		}
+		if err := a.gql(ctx, query, map[string]any{"ids": batch, "field": a.statusField}, &resp); err != nil {
+			return err
+		}
+		for _, g := range resp.Nodes {
+			if g != nil && g.ID != "" {
+				full[g.ID] = *g
+			}
+		}
+	}
+	return nil
 }
 
 // Get reads one issue.

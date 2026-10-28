@@ -192,6 +192,7 @@ type fixture struct {
 	gql   map[string][]reply // op name -> replies (the last one repeats)
 	gqlFn map[string]func(vars map[string]any) reply
 	rest  map[string][]reply
+	nodes map[string]map[string]any // node id -> issue, for serveNodes
 }
 
 var opRe = regexp.MustCompile(`^\s*(?:query|mutation)\s+(\w+)`)

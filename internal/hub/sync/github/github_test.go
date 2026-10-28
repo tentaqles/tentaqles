@@ -51,7 +51,7 @@ func withParent(repo string, n int, assignees ...string) issueOpt {
 		for _, l := range assignees {
 			as = append(as, map[string]any{"login": l})
 		}
-		m["parent"] = map[string]any{"number": n, "repository": map[string]any{"nameWithOwner": repo},
+		m["parent"] = map[string]any{"id": fmt.Sprintf("I_%d", n), "number": n, "repository": map[string]any{"nameWithOwner": repo},
 			"assignees": map[string]any{"nodes": as}}
 	}
 }
@@ -414,30 +414,22 @@ func TestListChangedBoard(t *testing.T) {
 		f := newFixture(t)
 		f.onGQL("Viewer", viewerReply())
 		f.onGQL("Project", projectReply())
-		item := func(id, updated string, status any, content any) map[string]any {
-			return map[string]any{"id": id, "updatedAt": updated, "fieldValueByName": status, "content": content}
-		}
-		f.onGQL("ProjectItems",
-			data(map[string]any{"node": map[string]any{"items": map[string]any{
-				"pageInfo": map[string]any{"hasNextPage": true, "endCursor": "p1"},
-				"nodes": []any{
-					// issue unchanged but its card moved later: the item time counts
-					item("PVTI_1", "2026-10-05T00:00:00Z", statusVal("In Progress"), issue(1, "moving", "2026-09-01T00:00:00Z",
-						withChildren(issue(9, "child on the board", "2026-10-02T00:00:00Z", withParent("acme/web", 1))))),
-					item("PVTI_2", "2026-10-01T00:00:00Z", nil, map[string]any{"__typename": "DraftIssue", "title": "draft"}),
-					item("PVTI_3", "2026-10-02T00:00:00Z", statusVal("Todo"), issue(2, "not mine", "2026-10-02T00:00:00Z", withAssignee("acme-dev"))),
-				},
-			}}}),
-			data(map[string]any{"node": map[string]any{"items": map[string]any{
-				"pageInfo": map[string]any{"hasNextPage": false},
-				"nodes": []any{
-					item("PVTI_4", "2026-09-01T00:00:00Z", statusVal("Done"), issue(3, "old", "2026-09-01T00:00:00Z")),
-					item("PVTI_5", "2026-10-03T00:00:00Z", statusVal("Todo"), issue(4, "other repo", "2026-10-03T00:00:00Z", withRepo("acme/api"))),
-					item("PVTI_6", "2026-10-04T00:00:00Z", nil, issue(5, "no status", "2026-10-04T00:00:00Z", withState("CLOSED"))),
-					// seen first as a child (no status); its own board entry wins
-					item("PVTI_9", "2026-10-02T00:00:00Z", statusVal("In Review"), issue(9, "child on the board", "2026-10-02T00:00:00Z", withParent("acme/web", 1))),
-				},
-			}}}),
+		item := boardItem
+		onBoard(f,
+			[]any{
+				// issue unchanged but its card moved later: the item time counts
+				item("PVTI_1", "2026-10-05T00:00:00Z", statusVal("In Progress"), issue(1, "moving", "2026-09-01T00:00:00Z",
+					withChildren(issue(9, "child on the board", "2026-10-02T00:00:00Z", withParent("acme/web", 1))))),
+				item("PVTI_2", "2026-10-01T00:00:00Z", nil, map[string]any{"__typename": "DraftIssue", "title": "draft"}),
+				item("PVTI_3", "2026-10-02T00:00:00Z", statusVal("Todo"), issue(2, "not mine", "2026-10-02T00:00:00Z", withAssignee("acme-dev"))),
+			},
+			[]any{
+				item("PVTI_4", "2026-09-01T00:00:00Z", statusVal("Done"), issue(3, "old", "2026-09-01T00:00:00Z")),
+				item("PVTI_5", "2026-10-03T00:00:00Z", statusVal("Todo"), issue(4, "other repo", "2026-10-03T00:00:00Z", withRepo("acme/api"))),
+				item("PVTI_6", "2026-10-04T00:00:00Z", nil, issue(5, "no status", "2026-10-04T00:00:00Z", withState("CLOSED"))),
+				// seen first as a child (no status); its own board entry wins
+				item("PVTI_9", "2026-10-02T00:00:00Z", statusVal("In Review"), issue(9, "child on the board", "2026-10-02T00:00:00Z", withParent("acme/web", 1))),
+			},
 		)
 		a := newAdapter(t, f, mode, boardScope())
 		since := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
