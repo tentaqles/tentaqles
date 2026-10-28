@@ -1,0 +1,8 @@
+id: outlook
+name: Outlook
+category: email
+docs: https://learn.microsoft.com/graph/outlook-mail-concept-overview
+# MCP only (spec B §3).
+cli: null
+mcp: outlook
+notes: "Reached through an MCP connector only. Add the outlook entry to the tq bundle catalog and to claude.bundle.mcp, run tq bundle sync <ws>, then authenticate with /mcp in a Claude session."

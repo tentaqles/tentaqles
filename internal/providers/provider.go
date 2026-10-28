@@ -102,13 +102,33 @@ type Provider struct {
 
 	BlockedSuggested []string `yaml:"blocked_commands_suggested"`
 
+	// MCP names the tq bundle catalog MCP entry (and the mcpServers key in the identity's
+	// .claude.json) the agent reaches this provider through. Empty means the provider id. Chat and
+	// email providers are reached this way only (spec B §3).
+	MCP string `yaml:"mcp,omitempty"`
+	// Notes is prose for onboarding and doctor: how this provider authenticates when it has no
+	// isolatable CLI login (an env var, the keychain, an MCP connector).
+	Notes string `yaml:"notes,omitempty"`
+
 	// Source is "embedded" for catalog entries or the file path for user
 	// overrides. Never serialized.
 	Source string `yaml:"-"`
 }
 
 // Categories is the exact set of valid provider categories.
-var Categories = []string{"cloud", "vcs", "data", "deploy", "pm", "agent", "other"}
+var Categories = []string{"cloud", "vcs", "data", "deploy", "pm", "agent", "chat", "email", "other"}
+
+// mcpNameRe is the set of names an mcp: reference may hold: an mcpServers key, never a path or a
+// command.
+var mcpNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// MCPName is the bundle catalog MCP entry this provider is reached through (MCP, else the id).
+func (p Provider) MCPName() string {
+	if p.MCP != "" {
+		return p.MCP
+	}
+	return p.ID
+}
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
@@ -158,6 +178,12 @@ func (p Provider) Validate() error {
 	}
 	if !validCategory {
 		return fmt.Errorf("provider %q: invalid category %q (must be one of %v)", p.ID, p.Category, Categories)
+	}
+	if p.MCP != "" && !mcpNameRe.MatchString(p.MCP) {
+		return fmt.Errorf("provider %q: mcp %q is not an MCP server name (must match %s)", p.ID, p.MCP, mcpNameRe.String())
+	}
+	if hasControlChars(p.Notes) {
+		return fmt.Errorf("provider %q: notes must not contain control characters", p.ID)
 	}
 	if p.CLI != nil && p.CLI.Command == "" {
 		return fmt.Errorf("provider %q: cli.command is required when cli is set", p.ID)
