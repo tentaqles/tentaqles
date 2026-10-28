@@ -41,6 +41,15 @@ const (
 	relParent   = "System.LinkTypes.Hierarchy-Reverse"
 	relChild    = "System.LinkTypes.Hierarchy-Forward"
 	relAttached = "AttachedFile"
+
+	// requestTimeout bounds one HTTP call, reply body included, so a tracker that hangs after
+	// the handshake cannot hold the sync loop.
+	requestTimeout = 60 * time.Second
+	// shortWait is the longest throttling delay do() waits out itself; longer ones fail fast
+	// with a RateLimitError for the engine to schedule.
+	shortWait = 10 * time.Second
+	// clockSkew is taken off the local send time when a WIQL reply carries no asOf.
+	clockSkew = 5 * time.Second
 )
 
 func init() {
@@ -57,6 +66,8 @@ type Adapter struct {
 	base               string // https://dev.azure.com/<org>
 	rt                 http.RoundTripper
 	now                func() time.Time
+	sleep              func(context.Context, time.Duration) error
+	timeout            time.Duration
 
 	mu      gosync.Mutex
 	client  *http.Client
@@ -88,7 +99,8 @@ func New(cfg hubsync.Config) (*Adapter, error) {
 		typ = defaultType
 	}
 	return &Adapter{cfg: cfg, org: org, project: project, team: strings.TrimSpace(cfg.Scope["board"]),
-		itemType: typ, me: cfg.AssignedTo != "anyone", base: root + "/" + url.PathEscape(org), now: time.Now}, nil
+		itemType: typ, me: cfg.AssignedTo != "anyone", base: root + "/" + url.PathEscape(org), now: time.Now,
+		sleep: sleepCtx, timeout: requestTimeout}, nil
 }
 
 func (a *Adapter) Name() string { return Provider }
@@ -452,8 +464,11 @@ func (a *Adapter) wiql(ctx context.Context, query string, out any) error {
 }
 
 // ListChanged runs WIQL on System.ChangedDate: the items assigned to @Me (all items in scope for
-// assigned_to anyone) plus, for me, the children of those items. It returns them oldest change
-// first, and the newest ChangedDate seen as the watermark (since when nothing changed).
+// assigned_to anyone) plus, for me, the children of those items: the ones that changed since,
+// and every child of an item that came back (a parent just assigned brings its old tasks). It
+// returns them oldest change first, and the newest ChangedDate seen as the watermark, capped at
+// the time the flat query ran (its asOf) so a change landing between the query and the batch
+// read is not skipped; since when nothing changed.
 func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.Item, time.Time, error) {
 	changed, target := "", ""
 	if !since.IsZero() {
@@ -465,10 +480,12 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 		me = " AND [System.AssignedTo] = @Me"
 	}
 	var flat struct {
+		AsOf      string `json:"asOf"`
 		WorkItems []struct {
 			ID int `json:"id"`
 		} `json:"workItems"`
 	}
+	sent := a.now()
 	q := "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project" + me + changed +
 		" ORDER BY [System.ChangedDate] ASC"
 	if err := a.wiql(ctx, q, &flat); err != nil {
@@ -488,24 +505,47 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 	}
 	capped := len(flat.WorkItems) >= wiqlTop
 	if a.me {
-		var links struct {
-			WorkItemRelations []struct {
-				Rel    *string           `json:"rel"`
-				Target *struct{ ID int } `json:"target"`
-			} `json:"workItemRelations"`
+		parents := slices.Clone(ids)
+		addChildren := func(lq string) error {
+			var links struct {
+				WorkItemRelations []struct {
+					Rel    *string           `json:"rel"`
+					Target *struct{ ID int } `json:"target"`
+				} `json:"workItemRelations"`
+			}
+			if err := a.wiql(ctx, lq, &links); err != nil {
+				return err
+			}
+			for _, r := range links.WorkItemRelations {
+				if r.Rel == nil || r.Target == nil || seen[r.Target.ID] {
+					continue
+				}
+				seen[r.Target.ID] = true
+				ids = append(ids, r.Target.ID)
+			}
+			return nil
 		}
+		// Children that changed, under any of my items.
 		lq := "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.TeamProject] = @project AND " +
 			"[Source].[System.AssignedTo] = @Me) AND ([System.Links.LinkType] = '" + relChild + "')" + target +
 			" MODE (MustContain)"
-		if err := a.wiql(ctx, lq, &links); err != nil {
+		if err := addChildren(lq); err != nil {
 			return nil, since, err
 		}
-		for _, r := range links.WorkItemRelations {
-			if r.Rel == nil || r.Target == nil || seen[r.Target.ID] {
-				continue
+		// Every child of the items that came back, changed or not. Without since the query above
+		// had no date filter and already returned them.
+		if !since.IsZero() {
+			for chunk := range slices.Chunk(parents, batchSize) {
+				in := make([]string, len(chunk))
+				for i, id := range chunk {
+					in[i] = strconv.Itoa(id)
+				}
+				cq := "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.Id] IN (" + strings.Join(in, ",") +
+					")) AND ([System.Links.LinkType] = '" + relChild + "') MODE (MustContain)"
+				if err := addChildren(cq); err != nil {
+					return nil, since, err
+				}
 			}
-			seen[r.Target.ID] = true
-			ids = append(ids, r.Target.ID)
 		}
 	}
 	ws, err := a.batch(ctx, ids)
@@ -524,6 +564,18 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 		if it.UpdatedAt.After(mark) && (!capped || flatIDs[w.ID]) {
 			mark = it.UpdatedAt
 		}
+	}
+	// Nothing after the flat query ran is known to be complete: cap the mark there. Re-reading
+	// an item next tick is harmless (the query uses >=).
+	ceiling := sent.Add(-clockSkew)
+	if t, err := time.Parse(time.RFC3339Nano, flat.AsOf); err == nil {
+		ceiling = t.UTC()
+	}
+	if mark.After(ceiling) {
+		mark = ceiling
+	}
+	if mark.Before(since) {
+		mark = since
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].UpdatedAt.Before(items[j].UpdatedAt) })
 	return items, mark, nil
@@ -629,10 +681,14 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	return a.toItem(ctx, w), nil
 }
 
-// Update replaces the title and/or the description (markdown, sent as HTML). Both nil is a no-op.
+// Update replaces the title and/or the description (markdown, sent as HTML). Both nil is a no-op;
+// a blank title is refused before any call (Azure DevOps would answer 400).
 func (a *Adapter) Update(ctx context.Context, id string, title, body *string) error {
 	var ops []patchOp
 	if title != nil {
+		if strings.TrimSpace(*title) == "" {
+			return fmt.Errorf("%s: update %s: a title cannot be blank", Provider, id)
+		}
 		ops = append(ops, set("/fields/System.Title", *title))
 	}
 	if body != nil {

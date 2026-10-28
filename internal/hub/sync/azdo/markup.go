@@ -3,6 +3,7 @@ package azdo
 import (
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -133,7 +134,11 @@ func inline(s string) string {
 	return b.String()
 }
 
+// emphasis renders links, then bold and italics outside them: each anchor is swapped for a NUL
+// placeholder during the emphasis pass, so asterisks in an href stay as they are.
 func emphasis(s string) string {
+	s = strings.ReplaceAll(s, "\x00", "")
+	var anchors []string
 	s = reLink.ReplaceAllStringFunc(s, func(m string) string {
 		sm := reLink.FindStringSubmatch(m)
 		u := html.UnescapeString(sm[2])
@@ -141,8 +146,23 @@ func emphasis(s string) string {
 		if !strings.HasPrefix(low, "https://") && !strings.HasPrefix(low, "http://") && !strings.HasPrefix(low, "mailto:") {
 			return m
 		}
-		return `<a href="` + html.EscapeString(u) + `">` + sm[1] + `</a>`
+		anchors = append(anchors, `<a href="`+html.EscapeString(u)+`">`+bolds(sm[1])+`</a>`)
+		return "\x00" + strconv.Itoa(len(anchors)-1) + "\x00"
 	})
+	s = bolds(s)
+	if len(anchors) == 0 {
+		return s
+	}
+	return rePlaceholder.ReplaceAllStringFunc(s, func(m string) string {
+		n, _ := strconv.Atoi(strings.Trim(m, "\x00"))
+		return anchors[n]
+	})
+}
+
+var rePlaceholder = regexp.MustCompile("\x00[0-9]+\x00")
+
+// bolds renders **bold** and *italics*.
+func bolds(s string) string {
 	s = reBold.ReplaceAllString(s, "<strong>$1</strong>")
 	return reItalic.ReplaceAllString(s, "<em>$1</em>")
 }

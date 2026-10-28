@@ -98,6 +98,18 @@ func (a *Adapter) noteLimits(h http.Header) {
 	}
 }
 
+// sleepCtx waits d, or until ctx ends.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func retryAfter(h http.Header, now time.Time) time.Duration {
 	v := strings.TrimSpace(h.Get("Retry-After"))
 	if v == "" {
@@ -123,7 +135,19 @@ func (a *Adapter) do(ctx context.Context, method, u, ctype string, in, out any) 
 		return err
 	}
 	if wait := a.blockedFor(); wait > 0 {
-		return &hubsync.RateLimitError{Provider: Provider, RetryAfter: wait}
+		// A short delay (Azure DevOps sends Retry-After on 200s while it slows requests) is waited
+		// out here, within ctx; a long one, or one past ctx's deadline, fails fast.
+		if dl, ok := ctx.Deadline(); wait > shortWait || ok && time.Until(dl) < wait {
+			return &hubsync.RateLimitError{Provider: Provider, RetryAfter: wait}
+		}
+		if err := a.sleep(ctx, wait); err != nil {
+			return fmt.Errorf("%s: %w", Provider, err)
+		}
+	}
+	if a.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.timeout)
+		defer cancel()
 	}
 	var body io.Reader
 	if in != nil {

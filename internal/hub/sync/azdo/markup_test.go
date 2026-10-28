@@ -21,6 +21,10 @@ func TestMarkdownToHTML(t *testing.T) {
 		{"[bad](javascript:alert(1))", "<p>[bad](javascript:alert(1))</p>"},
 		{"> quoted\n> more", "<blockquote>quoted<br>more</blockquote>"},
 		{"`**not bold**`", "<p><code>**not bold**</code></p>"},
+		// Emphasis never reaches inside an href; the link text still gets it.
+		{"[x](https://h.test/*a*)", `<p><a href="https://h.test/*a*">x</a></p>`},
+		{"[**x**](https://h.test/**a**/b) and *y*", `<p><a href="https://h.test/**a**/b"><strong>x</strong></a> and <em>y</em></p>`},
+		{"a\x00b", "<p>ab</p>"},
 	} {
 		if got := MarkdownToHTML(tc.in); got != tc.want {
 			t.Errorf("MarkdownToHTML(%q)\n got %q\nwant %q", tc.in, got, tc.want)
