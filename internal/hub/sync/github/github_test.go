@@ -296,6 +296,10 @@ func TestCategoryFor(t *testing.T) {
 		"Todo": "todo", "To Do": "todo", "Ready": "todo", "Not started": "todo", "Backlog": "backlog",
 		"Icebox": "backlog", "In Progress": "active", "Doing": "active", "In Review": "review",
 		"QA": "review", "Testing": "review", "Done": "done", "Shipped": "done", "Closed": "done",
+		// whole words (or a word's stem), not substrings
+		"Inactive": "todo", "Latest": "todo", "Contest": "todo", "Renewal": "todo",
+		"New": "backlog", "Verified": "review", "Approved": "review", "Completed": "done",
+		"In-Progress": "active", "InProgress": "active", "Started": "active", "NOT STARTED": "todo",
 	} {
 		if got := categoryFor(name); got != want {
 			t.Errorf("%s: %s, want %s", name, got, want)

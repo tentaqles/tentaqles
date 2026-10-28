@@ -28,6 +28,7 @@ import (
 	"strings"
 	gosync "sync"
 	"time"
+	"unicode"
 
 	hubsync "github.com/tentaqles/tentaqles/internal/hub/sync"
 	"github.com/tentaqles/tentaqles/internal/hub/sync/cred"
@@ -479,25 +480,67 @@ func (a *Adapter) Statuses(ctx context.Context) ([]hubsync.Status, error) {
 	return out, nil
 }
 
-// categoryFor guesses a status category from a project option's name.
+// categoryFor guesses a status category from a project option's name. It matches whole words
+// (split on non-letters and camel case), or a word's start for the stems ending in "*", so
+// "Inactive", "Latest" or "Renewal" do not match "active", "test" or "new".
 func categoryFor(name string) string {
-	n := strings.ToLower(strings.TrimSpace(name))
-	has := func(subs ...string) bool {
-		return slices.ContainsFunc(subs, func(s string) bool { return strings.Contains(n, s) })
+	words := nameWords(name)
+	has := func(keys ...string) bool {
+		for _, k := range keys {
+			stem, prefix := strings.CutSuffix(k, "*")
+			for _, w := range words {
+				if w == stem || (prefix && strings.HasPrefix(w, stem)) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	notStarted := false
+	for i := 0; i+1 < len(words); i++ {
+		if words[i] == "not" && strings.HasPrefix(words[i+1], "start") {
+			notStarted = true
+		}
 	}
 	switch {
-	case has("not started"):
+	case notStarted:
 		return hubsync.CategoryTodo
-	case has("done", "closed", "complete", "shipped", "released", "merged", "resolved", "finished"):
+	case has("done", "closed", "complet*", "ship*", "releas*", "merg*", "resolv*", "finish*"):
 		return hubsync.CategoryDone
-	case has("review", "qa", "test", "verif", "approv", "staging"):
+	case has("review*", "qa", "test*", "verif*", "approv*", "staging"):
 		return hubsync.CategoryReview
-	case has("progress", "doing", "active", "started", "develop", "wip", "working", "blocked"):
+	case has("progress", "doing", "active", "start*", "develop*", "wip", "working", "block*"):
 		return hubsync.CategoryActive
-	case has("backlog", "icebox", "triage", "later", "someday", "inbox", "new"):
+	case has("backlog", "icebox", "triag*", "later", "someday", "inbox", "new"):
 		return hubsync.CategoryBacklog
 	}
 	return hubsync.CategoryTodo
+}
+
+// nameWords splits a status name into lower-case words at non-letters and camel-case humps.
+func nameWords(name string) []string {
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	rs := []rune(strings.TrimSpace(name))
+	for i, r := range rs {
+		switch {
+		case !unicode.IsLetter(r):
+			flush()
+		case unicode.IsUpper(r) && i > 0 && unicode.IsLower(rs[i-1]):
+			flush()
+			cur = append(cur, r)
+		default:
+			cur = append(cur, r)
+		}
+	}
+	flush()
+	return words
 }
 
 // ---- reading items ----
