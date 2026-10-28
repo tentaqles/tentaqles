@@ -670,12 +670,21 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	if err != nil {
 		return hubsync.Item{}, err
 	}
+	// The issue exists from here on: a later failure is a partial create, never a plain error, so
+	// the engine links it instead of creating it again.
+	made := hubsync.Item{ID: key, Key: key, URL: a.base + "/browse/" + key, Title: in.Title, Body: body,
+		ParentID: in.ParentID, Labels: in.Labels}
 	if in.Status != "" {
 		if err := a.Move(ctx, key, in.Status); err != nil {
-			return hubsync.Item{}, fmt.Errorf("jira: created %s, but setting its status: %w", key, err)
+			return made, &hubsync.PartialCreateError{Item: made, Err: fmt.Errorf("jira: setting the status of %s: %w", key, err)}
 		}
+		made.Status = in.Status
 	}
-	return a.Get(ctx, key)
+	it, err := a.Get(ctx, key)
+	if err != nil {
+		return made, &hubsync.PartialCreateError{Item: made, Err: fmt.Errorf("jira: reading back %s: %w", key, err)}
+	}
+	return it, nil
 }
 
 func (a *Adapter) restCreate(ctx context.Context, project string, in hubsync.NewItem, body string, acceptance any) (string, error) {
