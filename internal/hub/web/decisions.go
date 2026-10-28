@@ -16,11 +16,12 @@ type decisionItem struct {
 	Decision   store.Decision
 	Run        *store.Run // the decision's run, when the row still exists
 	OverBudget bool       // a hub budget stop: the page shows the run's numbers
+	Sync       bool       // a send/skip question about a write to the company board (outbox)
 }
 
 func newDecisionItem(svc *runner.Service, ws string, card store.Card, d store.Decision) decisionItem {
 	it := decisionItem{Workspace: ws, Card: card, Decision: d,
-		OverBudget: d.Kind == store.KindPermission && slices.Contains(d.Options, "raise-and-resume")}
+		OverBudget: d.Kind == store.KindPermission && slices.Contains(d.Options, "raise-and-resume"), Sync: isSyncDecision(d)}
 	if d.RunID != "" {
 		if run, err := svc.Store().Run(d.RunID); err == nil {
 			it.Run = &run

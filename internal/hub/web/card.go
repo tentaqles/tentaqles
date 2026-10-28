@@ -30,6 +30,7 @@ type cardData struct {
 	Timeline     []tlItem
 	LogTail      string
 	LogSize      int64
+	Sync         cardSync // the company board: tracker, Push to company board, outbox rows
 }
 
 func (s *Server) cardPage(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +79,8 @@ func (s *Server) cardPage(w http.ResponseWriter, r *http.Request) {
 			data.Answered = append(data.Answered, dec)
 		}
 	}
+	data.Sync = s.cardSync(svc, ws, d.Card)
+	data.Timeline = withOutbox(data.Timeline, data.Sync.Rows)
 	if _, ok := svc.PendingResult(d.ID); ok {
 		data.ReviewReady = true
 	}

@@ -839,6 +839,31 @@
   mainBinders.push(bindTags, bindComposer);
   // an unsent comment or a half-typed tag survives a live refresh through unsavedEdits()
 
+  /* ---------- connections: the write-policy toggles save on change ---------- */
+  // Each off/ask/auto toggle posts to the settings API at once (human-only there); a refusal puts
+  // the stored value back. The Save button stays for the rest of the form and without script.
+  function bindSyncPolicy() {
+    var form = $("form[data-sync-settings]");
+    if (!form) return;
+    $$('input[type="radio"][name^="policy."]', form).forEach(function (r) {
+      on(r, "change", function () {
+        if (!r.checked) return;
+        var action = r.name.slice("policy.".length), group = $$('input[name="' + cssq(r.name) + '"]', form), policy = {};
+        policy[action] = r.value;
+        api("POST", "/api/settings", { sync: { policy: policy } }).then(function (res) {
+          if (!res.ok) {
+            group.forEach(function (g) { g.checked = g.defaultChecked; });
+            toast([el("span", null, errText(res))]);
+            return;
+          }
+          group.forEach(function (g) { g.defaultChecked = g.checked; }); // saved: no longer an unsaved edit
+          toast([el("span", null, action.replace(/_/g, " ") + ": " + r.value + ". Saved.")]);
+        });
+      });
+    });
+  }
+  mainBinders.push(bindSyncPolicy);
+
   /* ---------- page sections: Tasks 3, 4 and 5 insert theirs above this line ---------- */
 
   function start() {

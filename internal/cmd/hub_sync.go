@@ -49,10 +49,11 @@ func newSyncEngine(ws *resolve.Workspace, st *store.Store, warn func(string)) (*
 	return hubsync.NewEngine(cfg)
 }
 
-// syncSibling runs the engine beside each opened workspace's runner (tq hub serve). Approvals in
-// this process wake it at once; everything else it reads from the activity log.
-func syncSibling(warn func(string)) web.Sibling {
-	return func(ws *resolve.Workspace, svc *runner.Service) func(context.Context) {
+// syncEngines builds the engine beside each opened workspace's runner (tq hub serve): the backend
+// runs its loop and hands it to the pages (Connections, Sync now, Push). Approvals in this process
+// wake it at once; everything else it reads from the activity log. nil = no tracker.
+func syncEngines(warn func(string)) web.SyncSibling {
+	return func(ws *resolve.Workspace, svc *runner.Service) web.SyncRunner {
 		if ws == nil || !ws.Manifest.HasTracker() {
 			return nil
 		}
@@ -68,7 +69,18 @@ func syncSibling(warn func(string)) web.Sibling {
 			}
 			e.Wake()
 		}
-		return e.Run
+		return e
+	}
+}
+
+// syncSibling is syncEngines as a plain loop.
+func syncSibling(warn func(string)) web.Sibling {
+	build := syncEngines(warn)
+	return func(ws *resolve.Workspace, svc *runner.Service) func(context.Context) {
+		if r := build(ws, svc); r != nil {
+			return r.Run
+		}
+		return nil
 	}
 }
 
