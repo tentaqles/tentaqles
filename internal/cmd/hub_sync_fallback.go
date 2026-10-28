@@ -34,7 +34,9 @@ active, review, done), parent_id, rev, acceptance and labels. Statuses rebuild t
 
 An agent session may import only into planning lanes (backlog, todo, other): a new item whose
 status maps to another lane starts in the backlog, and a move out of or into such a lane is held
-for the human. It creates or updates linked cards only; it never changes a local card.`,
+for the human, and so is the text of a linked card outside a planning lane or held by a run.
+Its statuses only fill gaps in the lane map (never a done lane). It creates or updates linked
+cards only; it never changes a local card. The watermark is clamped to now at most.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			src := "-"
