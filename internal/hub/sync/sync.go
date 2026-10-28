@@ -116,19 +116,20 @@ type Config struct {
 	AssignedTo string            // me | anyone
 	Auth       cred.Source       // the manifest's preferred source ("" = cli)
 	EnvVar     string            // the manifest's tracker.env
+	Lanes      map[string]string // the manifest's tracker.lanes overrides (tracker status -> hub lane)
 	Transport  cred.Transport    // the resolved credential; nil until resolved
 	Env        []string          // the workspace identity environment, for adapters that run a CLI
 	BaseURL    string            // "" = the provider's public API; tests point it at an httptest server
 }
 
 // ConfigFromManifest builds a Config from a manifest tracker block (nil gives a zero Config).
-// The scope map is copied.
+// The scope and lanes maps are copied.
 func ConfigFromManifest(workspace string, t *manifest.Tracker) Config {
 	if t == nil {
 		return Config{Workspace: workspace}
 	}
 	return Config{Workspace: workspace, Provider: t.Provider, Scope: maps.Clone(t.Scope), ScopeKey: t.ScopeKey(),
-		AssignedTo: t.AssignedToOrDefault(), Auth: cred.Source(t.AuthOrDefault()), EnvVar: t.Env}
+		AssignedTo: t.AssignedToOrDefault(), Auth: cred.Source(t.AuthOrDefault()), EnvVar: t.Env, Lanes: maps.Clone(t.Lanes)}
 }
 
 // CredRequest is the credential request for this config.
