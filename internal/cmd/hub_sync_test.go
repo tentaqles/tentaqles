@@ -19,9 +19,10 @@ import (
 
 // cmdTracker is a small in-memory tracker for the command tests.
 type cmdTracker struct {
-	mu      gosync.Mutex
-	items   map[string]hubsync.Item
-	created []hubsync.NewItem
+	mu       gosync.Mutex
+	items    map[string]hubsync.Item
+	created  []hubsync.NewItem
+	comments []string
 }
 
 func (f *cmdTracker) Name() string                              { return "github" }
@@ -44,8 +45,13 @@ func (f *cmdTracker) Get(ctx context.Context, id string) (hubsync.Item, error) {
 	defer f.mu.Unlock()
 	return f.items[id], nil
 }
-func (f *cmdTracker) Move(ctx context.Context, id, status string) error         { return nil }
-func (f *cmdTracker) Comment(ctx context.Context, id, markdown string) error    { return nil }
+func (f *cmdTracker) Move(ctx context.Context, id, status string) error { return nil }
+func (f *cmdTracker) Comment(ctx context.Context, id, markdown string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.comments = append(f.comments, markdown)
+	return nil
+}
 func (f *cmdTracker) Update(ctx context.Context, id string, t, b *string) error { return nil }
 func (f *cmdTracker) SetLabels(ctx context.Context, id string, a, r []string) error {
 	return nil
@@ -145,6 +151,78 @@ func TestHubPushAsksThenSends(t *testing.T) {
 	}
 	if _, _, _, err := runTQ(t, "hub", "push", c.ID); err == nil {
 		t.Fatal("pushed a linked card")
+	}
+}
+
+// The real wiring: a workspace without a data block redacts contact PII on the way to the tracker,
+// even on a line the tq:allow-pii marker kept unmasked in the store.
+func TestSyncExitRedactsMarkedContactPII(t *testing.T) {
+	f := syncWS(t)
+	if _, _, errOut, err := runTQ(t, "hub", "sync", "now"); err != nil {
+		t.Fatalf("%v %s", err, errOut)
+	}
+	ws, err := hubWorkspace("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ws.Name, hubClasses(ws))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := st.CardByExternal("github", "7")
+	if err != nil {
+		st.Close()
+		t.Fatal(err)
+	}
+	text := "Done. Ping tester@acme.example tq:allow-pii"
+	if _, err := st.EnqueueOutbox(c.ID, store.OutboxCommentResults, map[string]any{"text": text}); err != nil {
+		st.Close()
+		t.Fatal(err)
+	}
+	st.Close()
+	if _, _, errOut, err := runTQ(t, "hub", "sync", "now"); err != nil {
+		t.Fatalf("%v %s", err, errOut)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.comments) != 1 {
+		t.Fatalf("%v", f.comments)
+	}
+	if strings.Contains(f.comments[0], "tester@acme.example") || !strings.Contains(f.comments[0], "Done.") {
+		t.Fatalf("contact PII left the machine: %q", f.comments[0])
+	}
+}
+
+func TestHubSyncRetry(t *testing.T) {
+	syncWS(t)
+	if _, _, errOut, err := runTQ(t, "hub", "sync", "now"); err != nil {
+		t.Fatalf("%v %s", err, errOut)
+	}
+	ws, _ := hubWorkspace("acme")
+	st, err := store.Open(ws.Name, hubClasses(ws))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := st.CardByExternal("github", "7")
+	row, err := st.EnqueueOutbox(c.ID, store.OutboxCommentResults, map[string]any{"text": "hello"})
+	if err == nil {
+		_, err = st.MarkOutbox(row.ID, store.OutboxFailed, "502 bad gateway")
+	}
+	st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDECODE", "1")
+	if _, _, _, err := runTQ(t, "hub", "sync", "retry", row.ID); err == nil {
+		t.Fatal("an agent retried an outbound write")
+	}
+	unsetenv(t, "CLAUDECODE")
+	_, out, errOut, err := runTQ(t, "hub", "sync", "retry", row.ID)
+	if err != nil || !strings.Contains(out, "sent") {
+		t.Fatalf("%v %q %s", err, out, errOut)
+	}
+	if _, _, _, err := runTQ(t, "hub", "sync", "retry", row.ID); err == nil {
+		t.Fatal("retried a sent row")
 	}
 }
 

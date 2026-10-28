@@ -29,6 +29,7 @@ type fakeTracker struct {
 	calls    []string
 	comments []string // "id: text"
 	created  []NewItem
+	moveErr  error // every Move fails with it (a transient outage)
 }
 
 func newFake() *fakeTracker {
@@ -105,6 +106,9 @@ func (f *fakeTracker) Move(ctx context.Context, id, status string) error {
 	defer f.mu.Unlock()
 	if err := f.limit("move"); err != nil {
 		return err
+	}
+	if f.moveErr != nil {
+		return f.moveErr
 	}
 	f.log("move " + id + " " + status)
 	f.items[id].Status = status

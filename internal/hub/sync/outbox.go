@@ -106,7 +106,8 @@ func (e *Engine) produce(rep *Report) error {
 	for i, a := range es {
 		hold, err := e.handle(a, es[i+1:], rep)
 		if err != nil {
-			e.cfg.Logf("sync %s: activity %d: %v", e.cfg.Workspace, a.rowid, err)
+			// A store error (a busy database): keep the cursor, the next pass queues it again.
+			return fmt.Errorf("activity %d: %w", a.rowid, err)
 		}
 		if hold {
 			return nil // the next pass sees it again
@@ -270,9 +271,29 @@ const (
 // errNoSession: the background credential chain has nothing; the row waits for /tentaqles:sync.
 func noSession(err error) bool { return errors.Is(err, cred.ErrNeedsSession) }
 
-// permanent errors fail a row at once; others are retried on later ticks up to maxAttempts.
+// permanent errors fail a row at once; others are retried with back-off (see backoff).
 func permanent(err error) bool {
 	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnsupported) || errors.Is(err, store.ErrNotFound)
+}
+
+// backoff is the wait before the next try of a row that failed attempts times: 15s doubling,
+// at most 30 minutes.
+func backoff(attempts int) time.Duration {
+	d := firstBackoff
+	for i := 1; i < attempts && d < maxRowBackoff; i++ {
+		d *= 2
+	}
+	return min(d, maxRowBackoff)
+}
+
+// giveUp: a transient failure fails the row only after failAfter since it was queued and at least
+// minFailAttempts tries, so an outage of minutes or hours (a laptop asleep, wifi down) loses nothing.
+func (e *Engine) giveUp(o store.OutboxRow, attempts int) bool {
+	created, err := time.Parse(time.RFC3339, o.CreatedAt)
+	if err != nil {
+		return attempts >= minFailAttempts
+	}
+	return attempts >= minFailAttempts && e.cfg.Now().Sub(created) >= failAfter
 }
 
 func (e *Engine) send(ctx context.Context, adapter func() (Adapter, error), rep *Report) error {
@@ -280,46 +301,64 @@ func (e *Engine) send(ctx context.Context, adapter func() (Adapter, error), rep 
 	if err != nil {
 		return err
 	}
+	now := e.cfg.Now()
 	var firstErr error
 	for _, o := range rows {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		now, err := e.decide(o, rep)
+		send, err := e.decide(o, rep)
 		if err != nil {
 			e.cfg.Logf("sync %s: outbox %s: %v", e.cfg.Workspace, o.ID, err)
 			continue
 		}
-		if !now {
+		if !send {
 			continue
+		}
+		if t, ok := e.notBefore[o.ID]; ok && now.Before(t) {
+			continue // backing off
+		}
+		// Re-read: a move sent earlier in this pass may have rebased this row's base state.
+		if cur, err := e.st.OutboxRow(o.ID); err == nil {
+			if cur.Status != store.OutboxPending {
+				continue
+			}
+			o = cur
 		}
 		ad, err := adapter()
 		if err != nil {
-			// No background credential (or the adapter is not built): the row stays pending.
+			// No credential, or the adapter could not be built (a CLI token fetch failing offline):
+			// nothing reached the tracker, so no row is charged an attempt. The rows stay pending.
 			if firstErr == nil {
 				firstErr = err
-			}
-			if !noSession(err) {
-				_ = e.st.OutboxAttempt(o.ID, err.Error())
 			}
 			return firstErr
 		}
 		err = e.deliver(ctx, ad, o, rep)
 		switch {
 		case err == nil:
+			delete(e.notBefore, o.ID)
 		case isRateLimit(err):
 			_ = e.st.OutboxAttempt(o.ID, err.Error())
+			var rl *RateLimitError
+			if errors.As(err, &rl) && rl.RetryAfter > maxBackoff { // longer than retry waits in a pass
+				e.notBefore[o.ID] = now.Add(rl.RetryAfter)
+			}
 			// Rate limited after the retries: stop for this tick, the rest wait too.
 			return err
 		case permanent(err):
 			_, _ = e.st.MarkOutbox(o.ID, store.OutboxFailed, err.Error())
+			delete(e.notBefore, o.ID)
 			rep.Failed++
 		default:
-			if o.Attempts+1 >= maxAttempts {
+			attempts := o.Attempts + 1
+			if e.giveUp(o, attempts) {
 				_, _ = e.st.MarkOutbox(o.ID, store.OutboxFailed, err.Error())
+				delete(e.notBefore, o.ID)
 				rep.Failed++
 			} else {
 				_ = e.st.OutboxAttempt(o.ID, err.Error())
+				e.notBefore[o.ID] = now.Add(backoff(attempts))
 			}
 			if firstErr == nil {
 				firstErr = err
@@ -327,6 +366,57 @@ func (e *Engine) send(ctx context.Context, adapter func() (Adapter, error), rep 
 		}
 	}
 	return firstErr
+}
+
+// Retry puts a failed outbox row back to pending with a fresh attempt count (tq hub sync retry);
+// the next pass sends it under its policy. Only a failed row can be retried.
+func (e *Engine) Retry(id string) (store.OutboxRow, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	o, err := e.st.OutboxRow(id)
+	if err != nil {
+		return o, err
+	}
+	if o.Status != store.OutboxFailed {
+		return o, fmt.Errorf("outbox row %s is %s; only a failed row can be retried", id, o.Status)
+	}
+	res, err := e.st.DB.Exec(`UPDATE sync_outbox SET status = ?, attempts = 0 WHERE id = ? AND status = ?`,
+		store.OutboxPending, id, store.OutboxFailed)
+	if err != nil {
+		return o, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return o, fmt.Errorf("outbox row %s: %w", id, store.ErrOutboxFinal)
+	}
+	delete(e.notBefore, id)
+	e.st.Publish(store.Change{Kind: "outbox", CardID: o.CardID})
+	e.Wake()
+	return e.st.OutboxRow(id)
+}
+
+// rebaseMoves: after sync set the item's status, the card's other pending moves were made against
+// the state before it. Their base becomes the status just set, so the next one is not mistaken
+// for a remote change.
+func (e *Engine) rebaseMoves(cardID, sentID, status, rev string) {
+	rows, err := e.st.ListOutbox(store.OutboxFilter{CardID: cardID, Status: store.OutboxPending})
+	if err != nil {
+		return
+	}
+	for _, o := range rows {
+		if o.ID == sentID || !isMove(o.Action) {
+			continue
+		}
+		var p movePayload
+		if json.Unmarshal(o.Payload, &p) != nil {
+			continue
+		}
+		p.BaseLane, p.BaseRev = status, rev
+		b, err := json.Marshal(p)
+		if err != nil {
+			continue
+		}
+		_, _ = e.st.DB.Exec(`UPDATE sync_outbox SET payload = ? WHERE id = ? AND status = ?`, string(b), o.ID, store.OutboxPending)
+	}
 }
 
 // decide applies the write policy; true means send it now.
@@ -471,12 +561,15 @@ func (e *Engine) deliver(ctx context.Context, ad Adapter, o store.OutboxRow, rep
 				"The company board moved %s %s to %q since this card moved; not moving it to %q.", e.provider, c.ExternalID, it.Status, status), "")
 			return skip(fmt.Sprintf("conflict: the item is %q on the company board, newer than %q", it.Status, p.BaseLane))
 		}
+		rev := it.Rev
 		if !strings.EqualFold(it.Status, status) {
 			if _, err := retry(ctx, e, rep, func() (struct{}, error) { return struct{}{}, ad.Move(ctx, c.ExternalID, status) }); err != nil {
 				return err
 			}
+			rev = "" // the move made a new revision we have not seen; the status alone is the base
 		}
-		_ = e.st.MarkSynced(c.ID, status, it.Rev)
+		_ = e.st.MarkSynced(c.ID, status, rev)
+		e.rebaseMoves(c.ID, o.ID, status, rev)
 		return sent()
 	case store.OutboxCommentResults:
 		if !linked(c) {

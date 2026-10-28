@@ -35,7 +35,6 @@ var (
 const (
 	maxTries          = 3                // per call, per tick (spec §7)
 	maxBackoff        = 60 * time.Second // a longer Retry-After waits for the next tick
-	maxAttempts       = 5                // ticks an outbox row is tried before it is failed
 	defaultOutboxPass = 15 * time.Second
 	tickTimeout       = 3 * time.Minute
 	leaseTTL          = 5 * time.Minute
@@ -77,6 +76,8 @@ type Engine struct {
 	statuses []Status     // the tracker's statuses, from the last lane-map build
 	mapped   bool
 	wake     chan struct{}
+	// notBefore holds back a row that failed transiently until its back-off ends (this process).
+	notBefore map[string]time.Time
 }
 
 // NewEngine builds the engine; it does not touch the tracker.
@@ -100,7 +101,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		cfg.Logf = func(string, ...any) {}
 	}
 	e := &Engine{cfg: cfg, st: cfg.Store, provider: cfg.Tracker.Provider, scope: cfg.Tracker.ScopeKey(),
-		holder: store.NewID("s"), wake: make(chan struct{}, 1)}
+		holder: store.NewID("s"), wake: make(chan struct{}, 1), notBefore: map[string]time.Time{}}
 	e.exit = exitClasses(cfg.ExitClasses)
 	if cfg.Adapter == nil {
 		e.cfg.Adapter = e.defaultAdapter
@@ -140,8 +141,9 @@ func (e *Engine) defaultAdapter(ctx context.Context) (Adapter, error) {
 	return New(c)
 }
 
-// outbound is the text that may leave the machine: redacted with the exit classes. The
-// tq:allow-pii marker exempts nothing on the way out.
+// outbound is the text that may leave the machine: redacted with the exit classes. The marker is
+// stripped first, so a line it kept unmasked in the store is redacted here by every exit class;
+// callers pass classes at least as wide as the store's (cmd: hubClasses).
 func (e *Engine) outbound(s string) string {
 	if s == "" {
 		return s

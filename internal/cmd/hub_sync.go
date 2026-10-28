@@ -28,10 +28,12 @@ func init() { hubExtra = append(hubExtra, newHubSyncCmd, newHubPushCmd) }
 // registered provider.
 var syncAdapterHook func(ctx context.Context, ws *resolve.Workspace) (hubsync.Adapter, error)
 
-// syncExitClasses are the classes outbound tracker text is redacted with: the exit rule's classes
-// plus secrets.
+// syncExitClasses are the classes outbound tracker text is redacted with: the classes the board
+// masks stored text with (every detector without a data block; the data block's classes plus
+// secrets with one). The engine strips the tq:allow-pii marker, so a line the marker kept
+// unmasked in the store is redacted with these on its way to the tracker.
 func syncExitClasses(ws *resolve.Workspace) []string {
-	return append(piiClasses(ws), "secrets")
+	return hubClasses(ws)
 }
 
 func newSyncEngine(ws *resolve.Workspace, st *store.Store, warn func(string)) (*hubsync.Engine, error) {
@@ -122,7 +124,56 @@ serving hub polls every sync.interval seconds; tq hub sync now runs one pass her
 the tracker go through the outbox under the sync.policy.* settings: auto sends, ask waits for a
 send/skip decision on the board, off drops the write.`,
 	}
-	c.AddCommand(newHubSyncNowCmd(f), newHubSyncStatusCmd(f), newHubSyncOutboxCmd(f))
+	c.AddCommand(newHubSyncNowCmd(f), newHubSyncStatusCmd(f), newHubSyncOutboxCmd(f), newHubSyncRetryCmd(f))
+	return c
+}
+
+func newHubSyncRetryCmd(f *hubFlags) *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "retry <outbox-id> [--json]",
+		Short: "Put a failed outbox row back to pending and send it (human only)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if hubAgent() {
+				return fmt.Errorf("tq hub sync retry: %w; ask the human to retry the write", runner.ErrHumanOnly)
+			}
+			e, st, ctx, done, err := openSync(c, f, true)
+			if err != nil {
+				return err
+			}
+			defer done()
+			row, err := e.Retry(args[0])
+			if err != nil {
+				return err
+			}
+			// Send now when no other process holds the lease (else the serving hub does).
+			_, ferr := e.Flush(ctx)
+			if cur, err := st.OutboxRow(row.ID); err == nil {
+				row = cur
+			}
+			if asJSON {
+				return printJSON(c, row)
+			}
+			w := c.OutOrStdout()
+			switch {
+			case row.Status == store.OutboxSent:
+				fmt.Fprintf(w, "sent %s (%s)\n", row.ID, row.Action)
+			case row.DecisionID != "" && row.Status == store.OutboxPending:
+				fmt.Fprintf(w, "%s is pending: waiting for the send/skip decision %s\n", row.ID, row.DecisionID)
+			default:
+				fmt.Fprintf(w, "%s is %s", row.ID, row.Status)
+				if ferr != nil {
+					fmt.Fprintf(w, ": %v", ferr)
+				} else if row.LastError != "" {
+					fmt.Fprintf(w, ": %s", row.LastError)
+				}
+				fmt.Fprintln(w)
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 	return c
 }
 
