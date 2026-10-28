@@ -40,22 +40,23 @@ type fakeStory struct {
 }
 
 type fakeAsana struct {
-	t        *testing.T
-	srv      *httptest.Server
-	mu       gosync.Mutex
-	tasks    map[string]*fakeTask
-	sections [][2]string // gid, name, in order
-	tags     map[string]string
-	stories  []fakeStory
-	attach   map[string][][2]string // task -> name, permanent_url
-	pageSize int
-	next     int
-	limited  int    // answer this many requests with 429 first
-	limitAt  int    // answer the request with this 1-based number with 429
-	failOn   string // "METHOD /api/1.0/path": answer it with a 500
-	reqs     []string
-	queries  []string
-	bodies   []map[string]any
+	t          *testing.T
+	srv        *httptest.Server
+	mu         gosync.Mutex
+	tasks      map[string]*fakeTask
+	sections   [][2]string // gid, name, in order
+	tags       map[string]string
+	stories    []fakeStory
+	attach     map[string][][2]string // task -> name, permanent_url
+	pageSize   int
+	next       int
+	limited    int    // answer this many requests with 429 first
+	limitAt    int    // answer the request with this 1-based number with 429
+	failOn     string // "METHOD /api/1.0/path": answer it with a 500
+	reqs       []string
+	queries    []string
+	bodies     []map[string]any
+	typeaheads []string // the query of each tag typeahead
 }
 
 func newFake(t *testing.T) *fakeAsana {
@@ -316,6 +317,7 @@ func (f *fakeAsana) serve(w http.ResponseWriter, r *http.Request) {
 		if body["assignee"] == "me" {
 			tk.Assignee = "me"
 		}
+		tk.Completed = body["completed"] == true
 		if len(parts) == 3 {
 			if _, ok := f.tasks[parts[1]]; !ok {
 				f.fail(w, 404, "Unknown object")
@@ -344,8 +346,19 @@ func (f *fakeAsana) serve(w http.ResponseWriter, r *http.Request) {
 		if v, ok := body["notes"]; ok {
 			tk.Notes = fmt.Sprint(v)
 		}
+		if v, ok := body["completed"].(bool); ok && v != tk.Completed {
+			tk.Completed = v
+			tk.Modified = time.Now().UTC()
+		}
 		f.write(w, 200, map[string]any{"data": f.taskJSON(tk)})
-	case r.Method == "GET" && r.URL.Path == "/api/1.0/workspaces/"+wsGID+"/tags":
+	case r.Method == "GET" && r.URL.Path == "/api/1.0/workspaces/"+wsGID+"/typeahead":
+		// Asana's typeahead: up to count (default 20, max 100) objects whose name contains query,
+		// in no particular order. The fake answers in gid order, prefix matches only.
+		if q.Get("resource_type") != "tag" {
+			f.fail(w, 400, "resource_type")
+			return
+		}
+		f.typeaheads = append(f.typeaheads, q.Get("query"))
 		ids := make([]string, 0, len(f.tags))
 		for id := range f.tags {
 			ids = append(ids, id)
@@ -353,9 +366,11 @@ func (f *fakeAsana) serve(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(ids)
 		items := []any{}
 		for _, id := range ids {
-			items = append(items, map[string]any{"gid": id, "name": f.tags[id]})
+			if strings.Contains(strings.ToLower(f.tags[id]), strings.ToLower(q.Get("query"))) {
+				items = append(items, map[string]any{"gid": id, "name": f.tags[id]})
+			}
 		}
-		f.page(w, r, items)
+		f.write(w, 200, map[string]any{"data": items})
 	case r.Method == "POST" && r.URL.Path == "/api/1.0/tags":
 		if body["workspace"] != wsGID {
 			f.fail(w, 400, "workspace required")
@@ -397,5 +412,5 @@ func (f *fakeAsana) requests() []string {
 func (f *fakeAsana) reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.reqs, f.queries, f.bodies = nil, nil, nil
+	f.reqs, f.queries, f.bodies, f.typeaheads = nil, nil, nil, nil
 }

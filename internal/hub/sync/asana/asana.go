@@ -3,9 +3,9 @@
 //
 // Scope: tracker.scope.org is the Asana workspace gid and tracker.scope.board the project gid
 // (tracker.scope.project is read when board is unset). A project's sections are its statuses:
-// Move adds the task to the section named like the status, and StatusCategory comes from the
-// section name (see categoryOf) unless tracker.lanes overrides it; a completed task is always
-// done. Comments are stories, children are subtasks, and labels are workspace tags.
+// Move adds the task to the section named like the status and sets completed to whether that
+// section is done; StatusCategory comes from the section name (see categoryOf) unless
+// tracker.lanes overrides it; a completed task is always done. Comments are stories, children are subtasks, and labels are workspace tags.
 //
 // Auth: Asana has no CLI login, so the cred resolver chain yields the keychain entry
 // (tentaqles / <ws>/asana) and then the personal access token in the manifest's tracker.env,
@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	gosync "sync"
 	"time"
@@ -52,7 +53,49 @@ type Adapter struct {
 	maxPages  int // page cap per list call (tests lower it)
 
 	mu      gosync.Mutex
-	parents []string // mirrored parent gids whose subtasks ListChanged polls (SetMirroredParents)
+	parents []string           // mirrored parent gids whose subtasks ListChanged polls (SetMirroredParents)
+	cache   map[string]details // task gid -> comments and attachments read at a Rev
+}
+
+// details are a task's comments and attachments as read at one Rev (its modified_at). A new
+// comment or attachment changes modified_at, so a task listed again at the same Rev reuses them.
+type details struct {
+	rev         string
+	comments    []hubsync.Comment
+	attachments []hubsync.Attachment
+}
+
+// maxCached bounds the details cache; past it an arbitrary entry is dropped.
+const maxCached = 2000
+
+func (a *Adapter) remember(it hubsync.Item) {
+	if it.Rev == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cache == nil {
+		a.cache = map[string]details{}
+	}
+	if _, ok := a.cache[it.ID]; !ok && len(a.cache) >= maxCached {
+		for k := range a.cache {
+			delete(a.cache, k)
+			break
+		}
+	}
+	a.cache[it.ID] = details{rev: it.Rev, comments: it.Comments, attachments: it.Attachments}
+}
+
+// cached fills it from the cache when it was read at the same Rev.
+func (a *Adapter) cached(it *hubsync.Item) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	d, ok := a.cache[it.ID]
+	if !ok || it.Rev == "" || d.rev != it.Rev {
+		return false
+	}
+	it.Comments, it.Attachments = slices.Clone(d.comments), slices.Clone(d.attachments)
+	return true
 }
 
 var _ hubsync.Adapter = (*Adapter)(nil)
@@ -218,12 +261,15 @@ type attachment struct {
 }
 
 // details adds comments (stories, newest first, capped) and attachments (name and permanent
-// link; the signed download_url is never read). A task with more stories or attachments than the
-// page cap keeps the ones read: a partial comment list never moves a watermark.
+// link; the signed download_url is never read), and remembers them at the item's Rev. Stories come
+// oldest first, so a task with more stories than the page cap gets no comments (the pages read
+// would be the oldest ones); one with more attachments keeps the ones read.
 func (a *Adapter) details(ctx context.Context, it *hubsync.Item) error {
 	stories, err := list[story](ctx, a, "/tasks/"+it.ID+"/stories",
 		url.Values{"opt_fields": {"type,resource_subtype,text,created_at,created_by.name"}})
-	if err != nil && !errors.Is(err, errTruncated) {
+	if errors.Is(err, errTruncated) {
+		stories = nil
+	} else if err != nil {
 		return err
 	}
 	it.Comments = nil
@@ -253,6 +299,7 @@ func (a *Adapter) details(ctx context.Context, it *hubsync.Item) error {
 		}
 		it.Attachments = append(it.Attachments, hubsync.Attachment{Name: at.Name, URL: u})
 	}
+	a.remember(*it)
 	return nil
 }
 
@@ -308,24 +355,26 @@ func (a *Adapter) Statuses(ctx context.Context) ([]hubsync.Status, error) {
 	return out, nil
 }
 
-// sectionFor finds the project section named like status (case and spacing ignored).
-func (a *Adapter) sectionFor(ctx context.Context, status string) (string, error) {
+// sectionFor finds the project section named like status (case and spacing ignored): its gid,
+// and whether it is a done section (categoryOf, with the lanes override).
+func (a *Adapter) sectionFor(ctx context.Context, status string) (string, bool, error) {
 	if err := a.needProject("a status change"); err != nil {
-		return "", err
+		return "", false, err
 	}
 	secs, err := a.sections(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	want := normalise(status)
 	names := make([]string, 0, len(secs))
 	for _, s := range secs {
 		if normalise(s.Name) == want {
-			return gid("section", s.GID) // a server id still never reshapes a request path
+			g, err := gid("section", s.GID) // a server id still never reshapes a request path
+			return g, categoryOf(s.Name, a.cfg.Lanes) == hubsync.CategoryDone, err
 		}
 		names = append(names, s.Name)
 	}
-	return "", fmt.Errorf("asana: no section %q in project %s (sections: %s)", status, a.project, strings.Join(names, ", "))
+	return "", false, fmt.Errorf("asana: no section %q in project %s (sections: %s)", status, a.project, strings.Join(names, ", "))
 }
 
 // SetMirroredParents names the tracker tasks that have mirrored children on the board. Each
@@ -363,7 +412,11 @@ func (a *Adapter) mirroredParents() []string {
 // tasks and tasks completed since the watermark come back (completed_since; on the first sync,
 // since now), so a first sync never walks a whole history of finished work. The new watermark is
 // the newest modified_at seen (since when nothing changed). Any failure, a 429 or a list past the
-// page cap included, returns no items so the watermark never skips work.
+// page cap included, returns no items so the watermark never skips work. Each listed task costs
+// two more reads (stories, attachments) unless the adapter already read them at the task's current
+// modified_at, so a tick cut short by a 429 keeps what it read and the engine's retry with the
+// same Adapter resumes instead of starting over (Asana's free tier allows about 150 requests a
+// minute: a first sync of about 70 open tasks needs more than one attempt).
 func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.Item, time.Time, error) {
 	q := url.Values{"opt_fields": {taskFields}}
 	doneSince := since
@@ -461,8 +514,10 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 			return nil, since, err
 		}
 		it := a.toItem(t)
-		if err := a.details(ctx, &it); err != nil {
-			return nil, since, err
+		if !a.cached(&it) {
+			if err := a.details(ctx, &it); err != nil {
+				return nil, since, err
+			}
 		}
 		if it.UpdatedAt.After(wm) {
 			wm = it.UpdatedAt
@@ -509,17 +564,24 @@ func (a *Adapter) Get(ctx context.Context, id string) (hubsync.Item, error) {
 	return it, nil
 }
 
-// Move adds the task to the project section named like status.
+// Move adds the task to the project section named like status, then sets completed to whether
+// that section is done (categoryOf, with the lanes override). A completed task always reads as
+// done, so without the second write a move out of done would be undone by the next ListChanged,
+// and a move to Done would leave the task open in My Tasks. Either write failing fails the move;
+// both are idempotent, so the engine can retry it.
 func (a *Adapter) Move(ctx context.Context, id, status string) error {
 	id, err := gid("task", id)
 	if err != nil {
 		return err
 	}
-	sec, err := a.sectionFor(ctx, status)
+	sec, done, err := a.sectionFor(ctx, status)
 	if err != nil {
 		return err
 	}
-	_, err = a.do(ctx, http.MethodPost, "/sections/"+sec+"/addTask", nil, map[string]any{"task": id}, nil)
+	if _, err := a.do(ctx, http.MethodPost, "/sections/"+sec+"/addTask", nil, map[string]any{"task": id}, nil); err != nil {
+		return err
+	}
+	_, err = a.do(ctx, http.MethodPut, "/tasks/"+id, nil, map[string]any{"completed": done}, nil)
 	return err
 }
 
@@ -547,8 +609,8 @@ func notesFor(body, acceptance string) string {
 	return body + "\n\nAcceptance criteria:\n" + acceptance
 }
 
-// Create makes a task in the project (in the section named in.Status, else the first one), or a
-// subtask of in.ParentID. Asana has no acceptance field of its own, so acceptance checks follow
+// Create makes a task in the project (in the section named in.Status, else the first one; a done
+// section creates it completed), or a subtask of in.ParentID. Asana has no acceptance field of its own, so acceptance checks follow
 // the notes. With assigned_to me the task is assigned to me, so it is mirrored back.
 // in.Type is ignored, and so is in.Status for a subtask. An error means no task was created.
 func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item, error) {
@@ -576,11 +638,14 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 		}
 		if a.project != "" {
 			if strings.TrimSpace(in.Status) != "" {
-				sec, err := a.sectionFor(ctx, in.Status)
+				sec, done, err := a.sectionFor(ctx, in.Status)
 				if err != nil {
 					return hubsync.Item{}, err
 				}
 				data["memberships"] = []any{map[string]any{"project": a.project, "section": sec}}
+				if done {
+					data["completed"] = true
+				}
 			} else {
 				data["projects"] = []any{a.project}
 			}
@@ -598,8 +663,8 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	}
 	// From here on the task exists in Asana, so Create never returns an error: an engine that
 	// retried a failed create would make a duplicate. A label or read-back failure leaves the
-	// returned Item without those labels (Item.Labels is what Asana has), for the engine to
-	// reconcile with SetLabels.
+	// returned Item without those labels (Item.Labels is what Asana has): the engine reconciles
+	// by diffing in.Labels against Item.Labels and calling SetLabels for the missing ones.
 	if len(in.Labels) > 0 {
 		_ = a.SetLabels(ctx, created.GID, in.Labels, nil)
 	}
@@ -645,8 +710,9 @@ func cleanNames(in []string) []string {
 	return out
 }
 
-// SetLabels removes then adds workspace tags by name (case-insensitive). A tag to add that the
-// workspace lacks is created; a tag to remove that does not exist is skipped.
+// SetLabels removes then adds workspace tags by name (case-insensitive). Each name is looked up
+// with the workspace tag typeahead (one request per name, so a workspace of any size works). A
+// tag to add that the workspace lacks is created; a tag to remove that does not exist is skipped.
 func (a *Adapter) SetLabels(ctx context.Context, id string, add, remove []string) error {
 	add, remove = cleanNames(add), cleanNames(remove)
 	if len(add) == 0 && len(remove) == 0 {
@@ -669,20 +735,12 @@ func (a *Adapter) SetLabels(ctx context.Context, id string, add, remove []string
 			return err
 		}
 	}
-	tags, err := list[ref](ctx, a, "/workspaces/"+ws+"/tags", url.Values{"opt_fields": {"name"}})
-	if err != nil {
-		return err
-	}
-	byName := map[string]string{}
-	for _, t := range tags {
-		k := strings.ToLower(strings.TrimSpace(t.Name))
-		if _, dup := byName[k]; !dup && t.GID != "" {
-			byName[k] = t.GID
-		}
-	}
 	for _, n := range remove {
-		g, ok := byName[strings.ToLower(n)]
-		if !ok {
+		g, err := a.findTag(ctx, ws, n)
+		if err != nil {
+			return err
+		}
+		if g == "" {
 			continue
 		}
 		if _, err := a.do(ctx, http.MethodPost, "/tasks/"+id+"/removeTag", nil, map[string]any{"tag": g}, nil); err != nil {
@@ -690,8 +748,11 @@ func (a *Adapter) SetLabels(ctx context.Context, id string, add, remove []string
 		}
 	}
 	for _, n := range add {
-		g, ok := byName[strings.ToLower(n)]
-		if !ok {
+		g, err := a.findTag(ctx, ws, n)
+		if err != nil {
+			return err
+		}
+		if g == "" {
 			var t ref
 			if _, err := a.do(ctx, http.MethodPost, "/tags", nil, map[string]any{"name": n, "workspace": ws}, &t); err != nil {
 				return err
@@ -700,11 +761,34 @@ func (a *Adapter) SetLabels(ctx context.Context, id string, add, remove []string
 				return fmt.Errorf("asana: tag %q was not created", n)
 			}
 			g = t.GID
-			byName[strings.ToLower(n)] = g
 		}
 		if _, err := a.do(ctx, http.MethodPost, "/tasks/"+id+"/addTag", nil, map[string]any{"tag": g}, nil); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// typeaheadCount is the most results Asana's typeahead returns.
+const typeaheadCount = 100
+
+// findTag is the gid of the workspace tag named name (case-insensitive), "" when there is none.
+// The typeahead matches loosely and returns at most typeaheadCount results, so a full page with no
+// exact match is an error rather than "none": creating the tag then could add a duplicate on
+// every call.
+func (a *Adapter) findTag(ctx context.Context, ws, name string) (string, error) {
+	var tags []ref
+	q := url.Values{"resource_type": {"tag"}, "query": {name}, "count": {strconv.Itoa(typeaheadCount)}, "opt_fields": {"name"}}
+	if _, err := a.do(ctx, http.MethodGet, "/workspaces/"+ws+"/typeahead", q, nil, &tags); err != nil {
+		return "", err
+	}
+	for _, t := range tags {
+		if t.GID != "" && strings.EqualFold(strings.TrimSpace(t.Name), name) {
+			return t.GID, nil
+		}
+	}
+	if len(tags) >= typeaheadCount {
+		return "", fmt.Errorf("asana: tag %q: %d or more tags match the name and none exactly; rename the label", name, typeaheadCount)
+	}
+	return "", nil
 }
