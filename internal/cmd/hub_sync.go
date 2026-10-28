@@ -124,7 +124,8 @@ serving hub polls every sync.interval seconds; tq hub sync now runs one pass her
 the tracker go through the outbox under the sync.policy.* settings: auto sends, ask waits for a
 send/skip decision on the board, off drops the write.`,
 	}
-	c.AddCommand(newHubSyncNowCmd(f), newHubSyncStatusCmd(f), newHubSyncOutboxCmd(f), newHubSyncRetryCmd(f))
+	c.AddCommand(newHubSyncNowCmd(f), newHubSyncStatusCmd(f), newHubSyncOutboxCmd(f), newHubSyncRetryCmd(f),
+		newHubSyncImportCmd(f), newHubSyncPendingCmd(f), newHubSyncAckCmd(f)) // the last three: the MCP fallback (hub_sync_fallback.go)
 	return c
 }
 
