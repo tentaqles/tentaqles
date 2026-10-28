@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -754,17 +753,4 @@ func TestErrorsNameTheFailureNotTheToken(t *testing.T) {
 			t.Fatalf("422: %v", err)
 		}
 	})
-}
-
-func TestGHMissingFallsBack(t *testing.T) {
-	isolate(t)
-	t.Setenv("PATH", t.TempDir()) // no gh anywhere
-	a, _ := hubsync.New(hubsync.Config{Workspace: "acme", Provider: "github", Scope: repoScope()})
-	_, err := a.Check(context.Background())
-	if !errors.Is(err, cred.ErrNeedsSession) {
-		t.Fatalf("%v", err)
-	}
-	if !slices.Contains(cred.Order, cred.SourceCLI) {
-		t.Fatal("order")
-	}
 }

@@ -3,7 +3,9 @@
 // Scope keys (manifest tracker.scope): org is the owner (user or organization), project the
 // repository name, board the Projects v2 number. status_field names the project's single-select
 // status field ("Status" by default). With a board, an item's status is that field's option; with
-// none it is Open or Closed. Item ids are "owner/repo#number".
+// none it is Open or Closed. Item ids are "owner/repo#number". Writes stay inside the scope:
+// the owner must be scope.org and, without a board, the repository scope.project (or the issue a
+// sub-issue of one there); anything else fails with ErrOutOfScope before a request is sent.
 //
 // Auth: the cli source runs `gh api` with the workspace identity environment (GH_CONFIG_DIR), so
 // the token stays in gh's own store. gh never inherits a gh login from the hub process
@@ -48,7 +50,7 @@ func cliToken(ctx context.Context, env []string) (cred.Token, error) {
 	}
 	ctx, cancel := withTimeout(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
+	cmd := exec.CommandContext(ctx, ghCommand, "auth", "token")
 	cmd.Env = ghEnv(os.Environ(), env)
 	out, err := cmd.Output()
 	tok := strings.TrimSpace(string(out))
@@ -68,10 +70,12 @@ type Adapter struct {
 	board       int    // Projects v2 number; 0 = none
 	statusField string
 
-	mu    gosync.Mutex
-	be    backend
-	login string
-	proj  *project
+	mu     gosync.Mutex
+	be     backend
+	login  string
+	proj   *project
+	lastWM time.Time         // the watermark the last ListChanged returned
+	atWM   map[string]string // id -> rev of the items it returned at that watermark
 }
 
 type project struct {
@@ -147,7 +151,7 @@ func (a *Adapter) fallBack(ctx context.Context, failed backend, cause error) (ba
 	be, err := a.resolveLocked(ctx, req)
 	if err != nil {
 		a.be = failed
-		return nil, fmt.Errorf("github: %v; %w", cause, err)
+		return nil, fmt.Errorf("github: %w; %w", cause, err)
 	}
 	return be, nil
 }
@@ -296,6 +300,55 @@ func (a *Adapter) parseID(id string) (ref, error) {
 		return ref{}, fmt.Errorf("github: item id %q: want owner/repo#number", id)
 	}
 	return ref{owner: o, repo: r, number: n}, nil
+}
+
+// ErrOutOfScope: a write names an issue outside tracker.scope.
+var ErrOutOfScope = errors.New("outside tracker.scope")
+
+const qIssueParent = `query IssueParent($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issue(number: $number) { parent { repository { nameWithOwner } } } }
+}`
+
+// writeRef parses an id for a write and keeps writes inside tracker.scope: the owner must be
+// scope.org. Without a board the repository must be scope.project, or the issue a sub-issue of
+// one there (sub-issues may live in other repositories of the owner); one lookup checks that.
+// With a board, any repository of the owner may hold board items.
+func (a *Adapter) writeRef(ctx context.Context, id string) (ref, error) {
+	r, err := a.parseID(id)
+	if err != nil {
+		return ref{}, err
+	}
+	if !strings.EqualFold(r.owner, a.owner) {
+		return ref{}, fmt.Errorf("github: %s: %w (owner %s)", r.id(), ErrOutOfScope, a.owner)
+	}
+	r.owner = a.owner // names are case-insensitive; keep the scope's spelling
+	if strings.EqualFold(r.repo, a.repo) {
+		r.repo = a.repo
+	}
+	if a.board != 0 || a.repo == "" || r.repo == a.repo {
+		return r, nil
+	}
+	var out struct {
+		Repository *struct {
+			Issue *struct {
+				Parent *struct {
+					Repository struct {
+						NameWithOwner string `json:"nameWithOwner"`
+					} `json:"repository"`
+				} `json:"parent"`
+			} `json:"issue"`
+		} `json:"repository"`
+	}
+	if err := a.gql(ctx, qIssueParent, map[string]any{"owner": r.owner, "name": r.repo, "number": r.number}, &out); err != nil {
+		return ref{}, err
+	}
+	if out.Repository == nil || out.Repository.Issue == nil {
+		return ref{}, fmt.Errorf("%w: github: %s", hubsync.ErrNotFound, r.id())
+	}
+	if p := out.Repository.Issue.Parent; p == nil || !strings.EqualFold(p.Repository.NameWithOwner, a.owner+"/"+a.repo) {
+		return ref{}, fmt.Errorf("github: %s: %w (repository %s/%s, or a sub-issue of one there)", r.id(), ErrOutOfScope, a.owner, a.repo)
+	}
+	return r, nil
 }
 
 func refFrom(nameWithOwner string, n int) ref {
@@ -677,16 +730,25 @@ func (a *Adapter) setStatus(it *hubsync.Item, status *statusValue, closed bool) 
 
 // collector gathers changed items, dedups them and tracks the watermark. An issue listed in its
 // own right (with its board status) replaces the copy seen earlier as a sub-issue.
+//
+// The since filter includes the boundary (GitHub's filterBy.since does too, and timestamps are
+// to the second, so an item changed in the watermark's second after the last call must not be
+// lost). An item at the boundary that the previous call returned with the same Rev (atSince) is
+// skipped, so an unchanged item is not handed back on every tick.
 type collector struct {
-	since  time.Time
-	wm     time.Time
-	seen   map[string]int // id -> index in items
-	direct map[string]bool
-	items  []hubsync.Item
+	since   time.Time
+	wm      time.Time
+	atSince map[string]string // id -> rev returned at the watermark by the previous call
+	seen    map[string]int    // id -> index in items
+	direct  map[string]bool
+	items   []hubsync.Item
 }
 
 func (c *collector) add(it hubsync.Item, direct bool) {
 	if it.UpdatedAt.Before(c.since) {
+		return
+	}
+	if rev, ok := c.atSince[it.ID]; ok && rev == it.Rev && it.UpdatedAt.Equal(c.since) {
 		return
 	}
 	if i, dup := c.seen[it.ID]; dup {
@@ -724,7 +786,13 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 		}
 		login = l
 	}
-	c := &collector{since: since, wm: since, seen: map[string]int{}, direct: map[string]bool{}}
+	a.mu.Lock()
+	var atSince map[string]string
+	if !since.IsZero() && since.Equal(a.lastWM) {
+		atSince = a.atWM
+	}
+	a.mu.Unlock()
+	c := &collector{since: since, wm: since, atSince: atSince, seen: map[string]int{}, direct: map[string]bool{}}
 	var err error
 	if a.board != 0 {
 		err = a.listBoard(ctx, login, c)
@@ -734,6 +802,22 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 	if err != nil {
 		return nil, since, err
 	}
+	// remember what was handed back at the new watermark (and, when it did not move, what was
+	// skipped there), for the next call from that watermark
+	at := map[string]string{}
+	if c.wm.Equal(since) {
+		for id, rev := range atSince {
+			at[id] = rev
+		}
+	}
+	for _, it := range c.items {
+		if it.UpdatedAt.Equal(c.wm) {
+			at[it.ID] = it.Rev
+		}
+	}
+	a.mu.Lock()
+	a.lastWM, a.atWM = c.wm, at
+	a.mu.Unlock()
 	return c.items, c.wm, nil
 }
 
@@ -750,7 +834,9 @@ func (a *Adapter) addWithChildren(ctx context.Context, g ghIssue, status *status
 	return err
 }
 
-// allSubIssues is the issue's sub-issues, paging past the first page.
+// allSubIssues is the issue's sub-issues, paging past the first page. A parent with more than
+// the cap (25 + maxSubPages*50) keeps the ones read: one huge epic must not stop the sync. Its
+// later sub-issues still come in on their own when they are the viewer's (or anyone's).
 func (a *Adapter) allSubIssues(ctx context.Context, g ghIssue, projectID string) ([]ghIssue, error) {
 	out := g.SubIssues.Nodes
 	pi := g.SubIssues.PageInfo
@@ -760,7 +846,7 @@ func (a *Adapter) allSubIssues(ctx context.Context, g ghIssue, projectID string)
 	}
 	for page := 0; pi.HasNextPage && pi.EndCursor != ""; page++ {
 		if page == maxSubPages {
-			return out, fmt.Errorf("github: %s has more than %d sub-issues", g.ref().id(), len(out))
+			return out, nil
 		}
 		vars["cursor"] = pi.EndCursor
 		var resp struct {
@@ -938,19 +1024,30 @@ const mSetStatus = `mutation SetStatus($project: ID!, $item: ID!, $field: ID!, $
 // the project's built-in workflows may be off. The state goes first, so a workflow that sets a
 // status on close or reopen does not override the status asked for.
 func (a *Adapter) Move(ctx context.Context, id, status string) error {
-	r, err := a.parseID(id)
+	r, err := a.writeRef(ctx, id)
 	if err != nil {
 		return err
 	}
+	return a.move(ctx, r, status)
+}
+
+// repoState is the issue state ("open" or "closed") a status asks for without a board.
+func repoState(status string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "open", "reopen", hubsync.CategoryBacklog, hubsync.CategoryTodo, hubsync.CategoryActive, hubsync.CategoryReview:
+		return "open", nil
+	case "closed", "close", hubsync.CategoryDone:
+		return "closed", nil
+	}
+	return "", fmt.Errorf("github: status %q: without tracker.scope.board an issue is Open or Closed", status)
+}
+
+// move is Move for an id already checked against the scope.
+func (a *Adapter) move(ctx context.Context, r ref, status string) error {
 	if a.board == 0 {
-		state := ""
-		switch strings.ToLower(strings.TrimSpace(status)) {
-		case "open", "reopen", hubsync.CategoryBacklog, hubsync.CategoryTodo, hubsync.CategoryActive, hubsync.CategoryReview:
-			state = "open"
-		case "closed", "close", hubsync.CategoryDone:
-			state = "closed"
-		default:
-			return fmt.Errorf("github: status %q: without tracker.scope.board an issue is Open or Closed", status)
+		state, err := repoState(status)
+		if err != nil {
+			return err
 		}
 		return a.rest(ctx, "PATCH", r.path(), map[string]any{"state": state}, nil)
 	}
@@ -1054,7 +1151,7 @@ func (a *Adapter) ensureItem(ctx context.Context, r ref, p *project, nodeID stri
 
 // Comment adds a comment; GitHub takes markdown as is.
 func (a *Adapter) Comment(ctx context.Context, id, markdown string) error {
-	r, err := a.parseID(id)
+	r, err := a.writeRef(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -1065,16 +1162,17 @@ func (a *Adapter) Comment(ctx context.Context, id, markdown string) error {
 // in.ParentID, adds it to the board and sets in.Status. in.Type is not used: GitHub issue types
 // are per organization.
 //
-// Once the issue exists, Create never hides it: when a later step fails (the sub-issue link, the
-// board add, the status, a rate limit on any of them) it returns the created issue (ID, Key,
-// URL and what it was asked to set) together with the error. A non-empty Item.ID with an error
-// means the issue was created and must not be created again. When only the final read-back
-// fails, Create succeeds with that same item.
+// Everything that can be checked first (the parent's scope, in.Status against the board's
+// options or Open/Closed) is checked before the issue is opened, and fails with a plain error
+// and an empty Item. Once the issue exists, Create never hides it: when a later step fails (the
+// sub-issue link, the board add, the status, a rate limit on any of them) it returns the created
+// issue (ID, Key, URL and what it was asked to set) and a *hubsync.PartialCreateError holding the
+// same item and the cause. When only the final read-back fails, Create succeeds with that item.
 func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item, error) {
 	var parent *ref
 	target := ref{owner: a.owner, repo: a.repo}
 	if strings.TrimSpace(in.ParentID) != "" {
-		pr, err := a.parseID(in.ParentID)
+		pr, err := a.writeRef(ctx, in.ParentID)
 		if err != nil {
 			return hubsync.Item{}, err
 		}
@@ -1082,6 +1180,28 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	}
 	if target.repo == "" {
 		return hubsync.Item{}, errors.New("github: creating an issue needs tracker.scope.project (a repository) or a parent item")
+	}
+	wantStatus := strings.TrimSpace(in.Status) != ""
+	var proj *project
+	var opt option
+	closed := false
+	if a.board != 0 {
+		p, err := a.project(ctx)
+		if err != nil {
+			return hubsync.Item{}, err
+		}
+		proj = p
+		if wantStatus {
+			if opt, err = p.option(in.Status); err != nil {
+				return hubsync.Item{}, err
+			}
+		}
+	} else if wantStatus {
+		state, err := repoState(in.Status)
+		if err != nil {
+			return hubsync.Item{}, err
+		}
+		closed = state == "closed"
 	}
 	body := in.Body
 	if strings.TrimSpace(in.Acceptance) != "" {
@@ -1111,33 +1231,28 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	made := hubsync.Item{ID: target.id(), Key: target.key(), URL: created.HTMLURL, Title: in.Title, Body: body,
 		Labels: slices.Clone(in.Labels), UpdatedAt: now().UTC()}
 	a.setStatus(&made, nil, false)
+	partial := func(step string, err error) (hubsync.Item, error) {
+		return made, &hubsync.PartialCreateError{Item: made, Err: fmt.Errorf("github: %s: %w", step, err)}
+	}
 	if parent != nil {
 		made.ParentID = parent.id()
 		if err := a.rest(ctx, "POST", parent.path()+"/sub_issues", map[string]any{"sub_issue_id": created.ID}, nil); err != nil {
-			return made, fmt.Errorf("github: created %s but linking it under %s failed: %w", target.id(), parent.id(), err)
+			return partial("linking it under "+parent.id(), err)
 		}
 	}
-	if a.board != 0 {
-		p, err := a.project(ctx)
-		if err != nil {
-			return made, fmt.Errorf("github: created %s but reading the board failed: %w", target.id(), err)
-		}
-		if _, _, err := a.ensureItem(ctx, target, p, created.NodeID); err != nil {
-			return made, fmt.Errorf("github: created %s but adding it to the board failed: %w", target.id(), err)
-		}
-		if strings.TrimSpace(in.Status) != "" {
-			if opt, err := p.option(in.Status); err == nil {
-				a.setStatus(&made, &statusValue{Name: opt.Name, OptionID: opt.ID}, false)
-			}
+	if proj != nil {
+		if _, _, err := a.ensureItem(ctx, target, proj, created.NodeID); err != nil {
+			return partial("adding it to the board", err)
 		}
 	}
-	if strings.TrimSpace(in.Status) != "" {
-		if err := a.Move(ctx, target.id(), in.Status); err != nil {
-			a.setStatus(&made, nil, false)
-			return made, fmt.Errorf("github: created %s but setting its status failed: %w", target.id(), err)
+	if wantStatus {
+		if err := a.move(ctx, target, in.Status); err != nil {
+			return partial("setting its status", err)
 		}
-		if a.board == 0 && categoryFor(in.Status) == hubsync.CategoryDone {
-			a.setStatus(&made, nil, true)
+		if proj != nil {
+			a.setStatus(&made, &statusValue{Name: opt.Name, OptionID: opt.ID}, false)
+		} else {
+			a.setStatus(&made, nil, closed)
 		}
 	}
 	if got, err := a.Get(ctx, target.id()); err == nil {
@@ -1148,10 +1263,6 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 
 // Update edits the title and/or body; nil leaves a field as it is.
 func (a *Adapter) Update(ctx context.Context, id string, title, body *string) error {
-	r, err := a.parseID(id)
-	if err != nil {
-		return err
-	}
 	req := map[string]any{}
 	if title != nil {
 		req["title"] = *title
@@ -1162,12 +1273,16 @@ func (a *Adapter) Update(ctx context.Context, id string, title, body *string) er
 	if len(req) == 0 {
 		return nil
 	}
+	r, err := a.writeRef(ctx, id)
+	if err != nil {
+		return err
+	}
 	return a.rest(ctx, "PATCH", r.path(), req, nil)
 }
 
 // SetLabels adds and removes labels. Removing a label the issue does not have is not an error.
 func (a *Adapter) SetLabels(ctx context.Context, id string, add, remove []string) error {
-	r, err := a.parseID(id)
+	r, err := a.writeRef(ctx, id)
 	if err != nil {
 		return err
 	}

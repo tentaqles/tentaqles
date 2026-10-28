@@ -56,6 +56,9 @@ var errCLIUnavailable = errors.New("gh cannot be used for this workspace")
 // hub process has (another workspace's or the shell's).
 var errNoConfigDir = fmt.Errorf("%w: the workspace identity sets no GH_CONFIG_DIR", errCLIUnavailable)
 
+// ghCommand is the gh executable looked up on PATH (tests point it at a name that is not there).
+var ghCommand = "gh"
+
 // ghBackend runs `gh api` with the workspace identity environment. gh keeps the token in its own
 // store; tq never sees it.
 type ghBackend struct{ env []string }
@@ -83,7 +86,7 @@ func (g *ghBackend) do(ctx context.Context, method, path string, body []byte) (r
 		args = append(args, "--input", "-")
 	}
 	args = append(args, strings.TrimPrefix(path, "/"))
-	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd := exec.CommandContext(ctx, ghCommand, args...)
 	cmd.Env = ghEnv(os.Environ(), g.env)
 	if body != nil {
 		cmd.Stdin = bytes.NewReader(body)
@@ -144,14 +147,18 @@ func parseIncluded(out []byte) (response, bool) {
 // prefers GH_TOKEN over the config dir. Only the identity env may set them.
 var ambientGH = []string{"GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
 
+// neverGH are dropped from both envs: with them gh traces requests and responses to stderr,
+// which ends up in error text.
+var neverGH = map[string]bool{"GH_DEBUG": true, "DEBUG": true}
+
 // ghEnv is the child env for gh: the process env, without any ambient gh login or host, with the
-// workspace identity env laid over it.
+// workspace identity env laid over it. Debug tracing is never on.
 func ghEnv(base, identity []string) []string {
 	over := map[string]string{}
 	var order []string
 	for _, kv := range identity {
 		k, v, ok := strings.Cut(kv, "=")
-		if !ok || k == "" {
+		if !ok || k == "" || neverGH[strings.ToUpper(k)] {
 			continue
 		}
 		if _, seen := over[strings.ToUpper(k)]; !seen {
@@ -164,6 +171,9 @@ func ghEnv(base, identity []string) []string {
 		drop[k] = true
 	}
 	for _, k := range ambientGH {
+		drop[k] = true
+	}
+	for k := range neverGH {
 		drop[k] = true
 	}
 	out := make([]string, 0, len(base)+len(order)+2)
