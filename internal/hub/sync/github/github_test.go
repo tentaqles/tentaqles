@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -236,38 +238,61 @@ func TestCheckMissingScope(t *testing.T) {
 	}
 }
 
+// A logged-out gh (exit code 4, the "gh auth login" hint, or both) really runs, is classified as
+// unusable, and the cred chain takes over over HTTP.
 func TestCLIFallsBackToResolver(t *testing.T) {
-	isolate(t)
-	f := newFixture(t)
-	f.onGQL("Viewer", viewerReply())
-	f.onGQL("Repo", data(map[string]any{"repository": map[string]any{"nameWithOwner": "acme/web"}}))
-	useFakeGH(t, f)
-	t.Setenv("FAKE_GH_LOGGEDOUT", "1")
+	for _, mode := range []string{"1", "exit4", "hint"} {
+		t.Run(mode, func(t *testing.T) {
+			isolate(t)
+			f := newFixture(t)
+			f.onGQL("Viewer", viewerReply())
+			f.onGQL("Repo", data(map[string]any{"repository": map[string]any{"nameWithOwner": "acme/web"}}))
+			useFakeGH(t, f)
+			t.Setenv("FAKE_GH_LOGGEDOUT", mode)
+			log := filepath.Join(t.TempDir(), "gh.log")
+			t.Setenv("FAKE_GH_LOG", log)
+			ghRuns := func() int {
+				b, _ := os.ReadFile(log)
+				return strings.Count(string(b), "\n")
+			}
+			cfg := hubsync.Config{Workspace: "acme", Provider: "github", Scope: repoScope(), BaseURL: f.srv.URL,
+				Env: []string{"GH_CONFIG_DIR=" + t.TempDir()}}
 
-	a, err := hubsync.New(hubsync.Config{Workspace: "acme", Provider: "github", Scope: repoScope(), BaseURL: f.srv.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Check(context.Background()); !errors.Is(err, cred.ErrNeedsSession) {
-		t.Fatalf("no resolver: %v", err)
-	}
+			a, err := hubsync.New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = a.Check(context.Background())
+			if !errors.Is(err, cred.ErrNeedsSession) || !errors.Is(err, errCLIUnavailable) || !strings.Contains(err.Error(), "not logged in") {
+				t.Fatalf("no resolver: %v", err)
+			}
+			if n := ghRuns(); n != 1 {
+				t.Fatalf("gh runs %d, want 1", n)
+			}
 
-	var got cred.Request
-	restore := cred.SetDefault(cred.ResolverFunc(func(_ context.Context, req cred.Request) (cred.Transport, error) {
-		got = req
-		return cred.Static(cred.SourceKeychain, cred.Token{Value: secret}), nil
-	}))
-	defer restore()
-	a, _ = hubsync.New(hubsync.Config{Workspace: "acme", Provider: "github", Scope: repoScope(), BaseURL: f.srv.URL})
-	acct, err := a.Check(context.Background())
-	if err != nil || acct != "tester" {
-		t.Fatalf("%q %v", acct, err)
-	}
-	if got.Workspace != "acme" || got.Provider != "github" || got.Preferred != cred.SourceKeychain {
-		t.Fatalf("request %+v", got)
-	}
-	if c := f.find("Repo"); len(c) != 1 || c[0].ViaGH || c[0].Auth != "Bearer "+secret {
-		t.Fatalf("fallback call %+v", c)
+			var got cred.Request
+			restore := cred.SetDefault(cred.ResolverFunc(func(_ context.Context, req cred.Request) (cred.Transport, error) {
+				got = req
+				return cred.Static(cred.SourceKeychain, cred.Token{Value: secret}), nil
+			}))
+			defer restore()
+			a, _ = hubsync.New(cfg)
+			acct, err := a.Check(context.Background())
+			if err != nil || acct != "tester" {
+				t.Fatalf("%q %v", acct, err)
+			}
+			if n := ghRuns(); n != 2 { // one more try, then HTTP for the rest
+				t.Fatalf("gh runs %d, want 2", n)
+			}
+			if got.Workspace != "acme" || got.Provider != "github" || got.Preferred != cred.SourceKeychain {
+				t.Fatalf("request %+v", got)
+			}
+			for _, op := range []string{"Viewer", "Repo"} {
+				if c := f.find(op); len(c) != 1 || c[0].ViaGH || c[0].Auth != "Bearer "+secret {
+					t.Fatalf("%s fallback call %+v", op, c)
+				}
+			}
+		})
 	}
 }
 
