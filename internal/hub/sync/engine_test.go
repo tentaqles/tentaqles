@@ -138,7 +138,9 @@ func (f *fakeTracker) Update(ctx context.Context, id string, title, body *string
 	f.log("update " + id)
 	return nil
 }
-func (f *fakeTracker) SetLabels(ctx context.Context, id string, add, remove []string) error { return nil }
+func (f *fakeTracker) SetLabels(ctx context.Context, id string, add, remove []string) error {
+	return nil
+}
 
 func (f *fakeTracker) callLog() []string {
 	f.mu.Lock()

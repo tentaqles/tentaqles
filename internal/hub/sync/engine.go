@@ -267,8 +267,16 @@ func (e *Engine) Run(ctx context.Context) {
 	debounce.Stop()
 	defer debounce.Stop()
 	soon := func() { debounce.Reset(wakeDebounce) }
+	last := "" // an error repeated every pass is logged once (it is in sync_state anyway)
 	quiet := func(rep Report, err error) {
-		if err != nil && !errors.Is(err, ErrDisabled) && !errors.Is(err, ErrBusy) && !errors.Is(err, context.Canceled) {
+		if err == nil || errors.Is(err, ErrDisabled) || errors.Is(err, ErrBusy) || errors.Is(err, context.Canceled) {
+			if err == nil {
+				last = ""
+			}
+			return
+		}
+		if msg := err.Error(); msg != last {
+			last = msg
 			e.cfg.Logf("sync %s: %v", e.cfg.Workspace, err)
 		}
 	}
