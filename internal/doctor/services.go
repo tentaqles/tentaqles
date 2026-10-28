@@ -18,7 +18,9 @@ import (
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/redact"
 	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/verify"
 )
 
 // Company services (spec B §8): the tracker check (Adapter.Check through the registry) and the
@@ -42,6 +44,11 @@ type trackerJob struct {
 func trackerJobFor(d Deps, w *resolve.Workspace) (trackerJob, bool) {
 	// --verify off runs no account checks at all, the tracker's included.
 	if d.TrackerCheck == nil || d.VerifyMode == VerifyOff || !w.Manifest.HasTracker() {
+		return trackerJob{}, false
+	}
+	// Under auto (the default) a subprocess or network call is spent only where the answer
+	// matters: the tracker of the workspace the user is in. --verify all checks every tracker.
+	if d.VerifyMode != VerifyAll && (d.Cwd == "" || !withinDir(w.Root, d.Cwd)) {
 		return trackerJob{}, false
 	}
 	return trackerJob{w: w, env: environFor(d, w)}, true
@@ -119,7 +126,19 @@ func trackerFindings(w *resolve.Workspace, account string, err error) []Finding 
 		return []Finding{{"info", "tracker-needs-session", w.Name, label + ": no background credential, so only a Claude session can sync",
 			trackerFix(w.Name, w.Manifest, secret)}}
 	}
-	return []Finding{{"warn", "tracker-auth-failed", w.Name, label + ": " + err.Error(), trackerFix(w.Name, w.Manifest, secret)}}
+	return []Finding{{"warn", "tracker-auth-failed", w.Name, label + ": " + trackerErrText(w, err), trackerFix(w.Name, w.Manifest, secret)}}
+}
+
+// trackerErrText renders a tracker error for a finding. The error comes from the cred chain and
+// the adapters (CLI stderr, HTTP bodies) and the finding goes to the terminal, --json and the
+// onboard skill's prompt, so it is redacted with the workspace's exit classes, then cut to one
+// bounded line with the verify token sweep (spec §12: never in prompts).
+func trackerErrText(w *resolve.Workspace, err error) string {
+	classes := []string{"all"}
+	if m := w.Manifest; m != nil && m.Data.Enabled() {
+		classes = append(append([]string(nil), m.Data.Classes...), "secrets")
+	}
+	return verify.SafeError(errors.New(redact.Redact(err.Error(), classes)))
 }
 
 // trackerFix is the login step for the tracker's preferred source.
@@ -158,8 +177,10 @@ func mcpServiceChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix s
 	if !m.Chat.Enabled() && !m.Email.Enabled() {
 		return
 	}
-	file := filepath.Join(paths.IdentityDir(w.Name, "claude"), ".claude.json")
-	servers := readMCPServers(file)
+	idDir := paths.IdentityDir(w.Name, "claude")
+	file := filepath.Join(idDir, ".claude.json")
+	projectMCP := filepath.Join(w.Root, ".mcp.json")
+	servers := mcpServerNames(file, w.Root, filepath.Join(idDir, ".mcp.json"), projectMCP)
 	cat := providers.MustLoad()
 	for _, s := range []struct {
 		kind string
@@ -177,30 +198,60 @@ func mcpServiceChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix s
 			continue
 		}
 		add("warn", s.kind+"-mcp-missing", w.Name,
-			fmt.Sprintf("%s %s: no MCP server for it in %s (ignore this if you connected it on claude.ai)", s.kind, s.svc.Provider, file),
+			fmt.Sprintf("%s %s: no MCP server for it in %s (global or this folder's project entry) or %s (ignore this if you connected it on claude.ai)", s.kind, s.svc.Provider, file, projectMCP),
 			fmt.Sprintf("add %q to claude.bundle.mcp and the tq bundle catalog, run tq bundle sync %s, then /mcp in a Claude session", want, w.Name))
 	}
 }
 
-// readMCPServers is the mcpServers key set of a .claude.json; a missing or unreadable file is
-// empty.
-func readMCPServers(file string) []string {
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		return nil
+// mcpServerNames is the union of MCP server names (keys only; values stay unparsed, so no env or
+// header token is ever read) from the identity's .claude.json (top-level mcpServers and
+// projects[<root or a folder under it>].mcpServers) and from each extra .mcp.json. A missing or
+// unreadable file contributes nothing.
+func mcpServerNames(claudeJSON, root string, mcpJSONs ...string) []string {
+	set := map[string]bool{}
+	add := func(m map[string]json.RawMessage) {
+		for k := range m {
+			set[k] = true
+		}
 	}
-	var root struct {
+	type servers struct {
 		MCPServers map[string]json.RawMessage `json:"mcpServers"`
 	}
-	if json.Unmarshal(raw, &root) != nil {
-		return nil
+	if raw, err := os.ReadFile(claudeJSON); err == nil {
+		var cj struct {
+			servers
+			Projects map[string]servers `json:"projects"`
+		}
+		if json.Unmarshal(raw, &cj) == nil {
+			add(cj.MCPServers)
+			for p, s := range cj.Projects {
+				if root != "" && withinDir(root, p) {
+					add(s.MCPServers)
+				}
+			}
+		}
 	}
-	out := make([]string, 0, len(root.MCPServers))
-	for k := range root.MCPServers {
+	for _, f := range mcpJSONs {
+		if raw, err := os.ReadFile(f); err == nil {
+			var s servers
+			if json.Unmarshal(raw, &s) == nil {
+				add(s.MCPServers)
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
 		out = append(out, k)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// withinDir reports whether p (a .claude.json project key, often with forward slashes) is root or
+// a folder under it. filepath.Rel compares case-insensitively on Windows.
+func withinDir(root, p string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(filepath.FromSlash(p)))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // matchMCP finds the server for a provider: the catalog's mcp name exactly, else a key that has

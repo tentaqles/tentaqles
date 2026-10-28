@@ -165,7 +165,9 @@ func TestNextSteps(t *testing.T) {
 	for _, want := range []string{
 		"tq allow acme",
 		"tq login acme claude",
-		"tq login acme azure-devops",
+		"tq login acme az",
+		"azure-devops shares the az login",
+		"uses the az CLI login above (tq login acme az)",
 		"slack",
 		"gmail",
 		"/tentaqles:onboard",
@@ -176,6 +178,34 @@ func TestNextSteps(t *testing.T) {
 	}
 	if strings.Index(lines, "tq allow acme") > strings.Index(lines, "tq login acme claude") {
 		t.Error("tq allow comes first: login refuses an untrusted workspace")
+	}
+}
+
+// With az and azure-devops both listed, one login line is printed (az's); the tracker step must
+// name that line, not the azure-devops one that was folded into it.
+func TestNextSteps_TrackerNamesThePrintedSharedLogin(t *testing.T) {
+	m := &manifest.Manifest{Client: "acme",
+		Identities: map[string]manifest.Identity{"az": {}, "azure-devops": {}},
+		Tracker:    &manifest.Tracker{Provider: "azure-devops", Auth: "cli"}}
+	steps := NextSteps("acme", m)
+	lines := strings.Join(steps, "\n")
+	var printed []string
+	for _, l := range steps {
+		if strings.HasPrefix(l, "Log in: ") {
+			printed = append(printed, strings.TrimPrefix(l, "Log in: "))
+		}
+	}
+	if len(printed) != 1 {
+		t.Fatalf("one shared login line, got %v:\n%s", printed, lines)
+	}
+	var tracker string
+	for _, l := range steps {
+		if strings.HasPrefix(l, "Tracker ") {
+			tracker = l
+		}
+	}
+	if !strings.Contains(tracker, "("+printed[0]+")") {
+		t.Fatalf("tracker step %q must name the printed login %q", tracker, printed[0])
 	}
 }
 

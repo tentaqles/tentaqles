@@ -327,6 +327,7 @@ func NextSteps(ws string, m *manifest.Manifest) []string {
 	out := []string{"Trust the manifest (a human step): tq allow " + ws}
 	ids := m.IdentityNames()
 	covered := map[string]string{} // env var -> the identity whose login sets it up
+	loginOf := map[string]string{} // identity -> the identity whose printed login line covers it
 	for _, id := range ids {
 		p, ok := cat.Get(id)
 		if !ok || !p.HasIdentity() || (p.Login == nil && p.CLI == nil) {
@@ -334,16 +335,18 @@ func NextSteps(ws string, m *manifest.Manifest) []string {
 		}
 		// One CLI under two ids (az and azure-devops) shares one config home: one login covers both.
 		if owner, dup := sharedLogin(p, covered); dup {
+			loginOf[id] = owner
 			out = append(out, fmt.Sprintf("  (%s shares the %s login: one sign-in covers both)", id, owner))
 			continue
 		}
 		for k := range p.Identity.Env {
 			covered[k] = id
 		}
+		loginOf[id] = id
 		out = append(out, "Log in: tq login "+ws+" "+id)
 	}
 	if t := m.Tracker; t != nil && t.Provider != "" {
-		out = append(out, trackerSteps(ws, t, ids, cat)...)
+		out = append(out, trackerSteps(ws, t, loginOf, cat)...)
 	}
 	for _, s := range []struct {
 		kind string
@@ -376,7 +379,9 @@ func sharedLogin(p providers.Provider, covered map[string]string) (string, bool)
 	return owner, owner != ""
 }
 
-func trackerSteps(ws string, t *manifest.Tracker, ids []string, cat *providers.Catalog) []string {
+// trackerSteps is the tracker credential step. loginOf maps each identity NextSteps printed a
+// login for (or folded into a shared one) to the identity named on that printed line.
+func trackerSteps(ws string, t *manifest.Tracker, loginOf map[string]string, cat *providers.Catalog) []string {
 	p, _ := cat.Get(t.Provider)
 	label := t.Provider
 	if p.Name != "" {
@@ -386,8 +391,8 @@ func trackerSteps(ws string, t *manifest.Tracker, ids []string, cat *providers.C
 	switch t.AuthOrDefault() {
 	case "cli":
 		if id, ok := trackerCLI[t.Provider]; ok {
-			if slices.Contains(ids, id) {
-				return []string{fmt.Sprintf("Tracker %s: uses the %s CLI login above (tq login %s %s)", label, id, ws, id)}
+			if owner, ok := loginOf[id]; ok {
+				return []string{fmt.Sprintf("Tracker %s: uses the %s CLI login above (tq login %s %s)", label, owner, ws, owner)}
 			}
 			return []string{fmt.Sprintf("Tracker %s: log in with tq login %s %s", label, ws, id)}
 		}

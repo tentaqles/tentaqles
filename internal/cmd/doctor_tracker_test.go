@@ -46,13 +46,18 @@ func TestDoctorTrackerCheck_NoAdapterSkipsTheCredential(t *testing.T) {
 	}
 }
 
+// fakeTrackerGot is where the registered fake factory records its config. The registry has no
+// unregister, so the factory is registered once per process and writes through this variable,
+// which each run resets (the test stays green under -count=N).
+var fakeTrackerGot *hubsync.Config
+
 func TestDoctorTrackerCheck_ResolvesThenChecks(t *testing.T) {
 	const name = "onboard-test-fake"
-	var got *hubsync.Config
+	fakeTrackerGot = nil
 	if _, ok := hubsync.Lookup(name); !ok {
 		hubsync.Register(name, func(cfg hubsync.Config) (hubsync.Adapter, error) {
 			c := cfg
-			got = &c
+			fakeTrackerGot = &c
 			return fakeTracker{cfg: &c}, nil
 		})
 	}
@@ -70,7 +75,7 @@ func TestDoctorTrackerCheck_ResolvesThenChecks(t *testing.T) {
 	if req.Workspace != "acme" || req.Provider != name || req.Preferred != cred.SourceCLI || len(req.Env) != 1 {
 		t.Fatalf("request %+v", req)
 	}
-	if got == nil || got.ScopeKey != "org=acme" || got.Transport == nil {
+	if got := fakeTrackerGot; got == nil || got.ScopeKey != "org=acme" || got.Transport == nil {
 		t.Fatalf("config %+v", got)
 	}
 

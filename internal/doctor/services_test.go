@@ -91,6 +91,33 @@ func TestTracker_SkippedWithoutBlockOrChecker(t *testing.T) {
 	}
 }
 
+// Under the default --verify auto the tracker call (network or CLI) is spent only on the
+// workspace the user is in; --verify all checks every tracker.
+func TestTracker_AutoChecksOnlyTheCwdWorkspace(t *testing.T) {
+	cfg, root := servicesWorkspace(t, trackerBlock)
+	calls := 0
+	check := func(context.Context, *resolve.Workspace, []string) (string, error) { calls++; return "tester", nil }
+	outside := testutil.TempDir(t)
+	d := deps(nil, outside, nil)
+	d.TrackerCheck = check
+	if fs := Run(cfg, d); calls != 0 || has(fs, "tracker-ok") {
+		t.Fatalf("auto, cwd outside the workspace: no tracker call (calls %d)", calls)
+	}
+	d.VerifyMode = VerifyAll
+	if fs := Run(cfg, d); calls != 1 || !has(fs, "tracker-ok") {
+		t.Fatalf("--verify all checks it from anywhere (calls %d)", calls)
+	}
+	sub := filepath.Join(root, "svc")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d = deps(nil, sub, nil)
+	d.TrackerCheck = check
+	if fs := Run(cfg, d); calls != 2 || !has(fs, "tracker-ok") {
+		t.Fatalf("auto, cwd inside the workspace: checked (calls %d)", calls)
+	}
+}
+
 func TestTracker_OKNamesAccountAndScope(t *testing.T) {
 	cfg, root := servicesWorkspace(t, trackerBlock)
 	d := deps(nil, root, nil)
@@ -137,6 +164,38 @@ func TestTracker_Failures(t *testing.T) {
 				t.Fatalf("%+v", fs)
 			}
 		})
+	}
+}
+
+// The tracker error comes from other workstreams' cred chain and adapters (CLI output, HTTP
+// bodies) and lands in the terminal, --json and the onboard skill's prompt: it is cut to one
+// line, bounded and redacted.
+func TestTracker_AuthFailedErrorIsRedactedOneLine(t *testing.T) {
+	cfg, root := servicesWorkspace(t, trackerBlock)
+	tok := "ghp_" + strings.Repeat("A1b2C3d4", 5)
+	bearer := "Authorization: Bearer " + strings.Repeat("z9Y8x7W6", 5)
+	d := deps(nil, root, nil)
+	d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) {
+		return "", fmt.Errorf("gh api user: exit 1: token %s rejected; %s\nstderr line two %s\nline three", tok, bearer, tok)
+	}
+	f, ok := finding(Run(cfg, d), "tracker-auth-failed")
+	if !ok {
+		t.Fatal("no tracker-auth-failed finding")
+	}
+	if strings.ContainsAny(f.Msg, "\r\n") {
+		t.Fatalf("multi-line message: %q", f.Msg)
+	}
+	if strings.Contains(f.Msg, tok) || strings.Contains(f.Msg, "A1b2C3d4") || strings.Contains(f.Msg, "z9Y8x7W6") {
+		t.Fatalf("token leaked: %q", f.Msg)
+	}
+	if !strings.Contains(f.Msg, "gh api user") {
+		t.Fatalf("the useful part of the error is kept: %q", f.Msg)
+	}
+	long := strings.Repeat("x", 5000)
+	d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) { return "", errors.New(long) }
+	f, _ = finding(Run(cfg, d), "tracker-auth-failed")
+	if len(f.Msg) > 400 {
+		t.Fatalf("unbounded message: %d bytes", len(f.Msg))
 	}
 }
 
@@ -208,6 +267,28 @@ func TestChatEmail_MCPEntryPresent(t *testing.T) {
 	f, ok := finding(fs, "email-mcp-missing")
 	if !ok || f.Level != "warn" || !strings.Contains(f.Msg, "gmail") || !strings.Contains(f.Fix, "claude.bundle.mcp") {
 		t.Fatalf("%+v", fs)
+	}
+}
+
+// Connectors also live in the workspace's project .mcp.json and in .claude.json under
+// projects[<folder>].mcpServers; neither is a missing entry. Another folder's project entry is.
+func TestChatEmail_ProjectScopedSources(t *testing.T) {
+	cfg, root := servicesWorkspace(t, "chat: { provider: slack }\nemail: { provider: gmail }\n")
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(`{"mcpServers": {"slack": {"command": "x"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.ToSlash(filepath.Join(filepath.Dir(root), "elsewhere"))
+	writeClaudeJSON(t, `{"projects": {`+fmt.Sprintf("%q", other)+`: {"mcpServers": {"gmail": {"command": "y"}}}}}`)
+	fs := Run(cfg, deps(nil, root, nil))
+	if !has(fs, "chat-ok") {
+		t.Fatalf("<root>/.mcp.json counts: %+v", fs)
+	}
+	if !has(fs, "email-mcp-missing") {
+		t.Fatalf("another folder's project entry does not count: %+v", fs)
+	}
+	writeClaudeJSON(t, `{"projects": {`+fmt.Sprintf("%q", filepath.ToSlash(root))+`: {"mcpServers": {"gmail": {"command": "y"}}}}}`)
+	if fs = Run(cfg, deps(nil, root, nil)); !has(fs, "email-ok") {
+		t.Fatalf("projects[<root>].mcpServers counts: %+v", fs)
 	}
 }
 

@@ -91,8 +91,12 @@ Read the findings for this workspace (`workspace` equal to `<ws>`, plus the glob
 - `tracker-no-adapter`: this tq build cannot sync that tracker yet; `/tentaqles:sync`.
 - `tracker-auth-failed`: the message names the source that failed; repeat that login.
 - `chat-ok`, `email-ok`: the MCP server is configured.
-- `chat-mcp-missing`, `email-mcp-missing`: the entry is not in the identity's
-  `.claude.json`; fine if the user connected it on claude.ai, otherwise step 2.
+- `chat-mcp-missing`, `email-mcp-missing`: the entry is in neither the identity's
+  `.claude.json` (global or this folder's project entry) nor the folder's `.mcp.json`;
+  fine if the user connected it on claude.ai, otherwise step 2.
+- No `tracker-*` finding at all while the manifest has a tracker: doctor checks the
+  tracker only for the workspace it runs in (or with `--verify all`); rerun it from the
+  workspace folder.
 
 Then, for each MCP connector whose tools are available in this session, make one
 read-only call to prove it works: list one Slack channel, list one Teams team, list
