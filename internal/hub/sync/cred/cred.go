@@ -15,7 +15,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 )
@@ -100,6 +102,12 @@ func (t Token) Format(f fmt.State, verb rune) {
 	fmt.Fprint(f, t.String())
 }
 
+// MarshalJSON keeps json.Marshal (a dumped Config, a last_error payload) from printing the value.
+func (t Token) MarshalJSON() ([]byte, error) { return []byte(`"[token]"`), nil }
+
+// LogValue keeps log/slog from printing the value.
+func (t Token) LogValue() slog.Value { return slog.StringValue("[redacted]") }
+
 // Transport hands an adapter a fresh token for each request. Callers use it at once and keep
 // nothing.
 type Transport interface {
@@ -131,7 +139,27 @@ type authRoundTripper struct {
 	base http.RoundTripper
 }
 
+// origin is scheme://host[:port], lower-cased.
+func origin(u *url.URL) string { return strings.ToLower(u.Scheme + "://" + u.Host) }
+
+// firstRequest walks a redirect chain back to the request the caller made.
+func firstRequest(r *http.Request) *http.Request {
+	for r.Response != nil && r.Response.Request != nil {
+		r = r.Response.Request
+	}
+	return r
+}
+
 func (a authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	// http.Client drops Authorization on a redirect to another host before it calls the
+	// RoundTripper, so the token is bound here to the origin of the caller's own request: a hop to
+	// any other origin (another host, another port, or https to http) goes out with no
+	// Authorization and no token is fetched for it.
+	if first := firstRequest(r); first != r && origin(first.URL) != origin(r.URL) {
+		r2 := r.Clone(r.Context())
+		r2.Header.Del("Authorization")
+		return a.base.RoundTrip(r2)
+	}
 	tok, err := a.t.Token(r.Context())
 	if err != nil {
 		if r.Body != nil {
@@ -149,7 +177,8 @@ func (a authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // Client is an *http.Client that sets each request's Authorization header from t. base nil means
-// http.DefaultTransport.
+// http.DefaultTransport. Redirects are followed, but a hop to an origin other than the request
+// the caller made carries no Authorization (attachment downloads to a CDN still work).
 func Client(t Transport, base http.RoundTripper) *http.Client {
 	if base == nil {
 		base = http.DefaultTransport

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,23 @@ func isolateHome(t *testing.T) {
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+}
+
+// TestTrackerProvidersAreCatalogIDs keeps the fixed tracker list from drifting away from the
+// provider catalog: every tracker id is a catalog entry (github's CLI entry is "gh").
+func TestTrackerProvidersAreCatalogIDs(t *testing.T) {
+	isolateHome(t)
+	cat := providers.MustLoad()
+	catalogID := map[string]string{"github": "gh"}
+	for _, p := range TrackerProviders {
+		id := p
+		if alias, ok := catalogID[p]; ok {
+			id = alias
+		}
+		if _, ok := cat.Get(id); !ok {
+			t.Errorf("tracker %q has no catalog entry %q", p, id)
+		}
+	}
 }
 
 const servicesYAML = `

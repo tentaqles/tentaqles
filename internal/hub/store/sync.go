@@ -141,7 +141,8 @@ func (s *Store) MarkSynced(cardID, externalLane, rev string) error {
 }
 
 // LinkedCard is one tracker item as sync imports it. On create every field is used; on an
-// existing link only the external columns change, plus title and body when UpdateText is set
+// existing link only the external columns change (an empty Link.URL, Lane or Rev keeps the
+// stored one), plus title and body when UpdateText is set
 // (the engine sets it only when the local copy is unchanged since the last sync, spec §11).
 // Lane moves never happen here: they go through MoveCard with the actor "sync".
 type LinkedCard struct {
@@ -222,7 +223,10 @@ func (s *Store) UpsertLinkedCard(in LinkedCard, actor string) (Card, bool, error
 }
 
 func (s *Store) updateLinked(c Card, l ExternalLink, in LinkedCard, title, actor string) (Card, bool, error) {
-	q := `UPDATE cards SET external_url = ?, external_lane = ?, external_rev = ?, external_synced_at = ?, updated_at = ?`
+	// An empty URL, lane or rev means the import did not carry it (a partial item from
+	// ListChanged): the stored value stays.
+	q := `UPDATE cards SET external_url = COALESCE(?, external_url), external_lane = COALESCE(?, external_lane),
+		external_rev = COALESCE(?, external_rev), external_synced_at = ?, updated_at = ?`
 	now := Now()
 	args := []any{nullStr(l.URL), nullStr(l.Lane), nullStr(l.Rev), now, now}
 	fields := []any{"external"}

@@ -124,6 +124,11 @@ func TestUpsertLinkedCardCreatesThenUpdates(t *testing.T) {
 	if err != nil || c3.Title != "new title" || c3.Body != "body" {
 		t.Fatalf("UpdateText: %+v %v", c3, err)
 	}
+	// A partial item (no URL, lane or rev, e.g. from ListChanged) keeps what was stored.
+	c4, _, err := s.UpsertLinkedCard(LinkedCard{Link: ExternalLink{Provider: "azure-devops", ID: "123"}}, "sync")
+	if err != nil || c4.ExternalURL != "https://example.test/123" || c4.ExternalLane != "Resolved" || c4.ExternalRev != "5" {
+		t.Fatalf("partial update erased the link: %+v %v", c4, err)
+	}
 	var n int
 	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM cards WHERE external_id = '123'`).Scan(&n)
 	if n != 1 {

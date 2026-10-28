@@ -1,9 +1,12 @@
 package cred
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -77,6 +80,81 @@ func TestClientSetsAuthorizationPerRequest(t *testing.T) {
 	var se *SourceError
 	if !errors.As(err, &se) || se.Source != SourceEnv {
 		t.Fatalf("want a SourceError naming env, got %v", err)
+	}
+}
+
+func TestTokenNeverMarshalsOrLogs(t *testing.T) {
+	tok := Token{Scheme: "Bearer", Value: "s3cr3t-value"}
+	b, err := json.Marshal(struct {
+		Tok  Token
+		Ptr  *Token
+		List []Token
+	}{tok, &tok, []Token{tok}})
+	if err != nil || strings.Contains(string(b), "s3cr3t") {
+		t.Fatalf("json: %s %v", b, err)
+	}
+	if !strings.Contains(string(b), `"[token]"`) {
+		t.Fatalf("json shape: %s", b)
+	}
+	var buf bytes.Buffer
+	for _, h := range []slog.Handler{slog.NewTextHandler(&buf, nil), slog.NewJSONHandler(&buf, nil)} {
+		slog.New(h).Info("x", "tok", tok, "ptr", &tok, slog.Any("any", tok))
+	}
+	if strings.Contains(buf.String(), "s3cr3t") || !strings.Contains(buf.String(), "[redacted]") {
+		t.Fatalf("slog: %s", buf.String())
+	}
+}
+
+func TestClientNeverSendsTheTokenAcrossOrigins(t *testing.T) {
+	var seenB []string
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenB = append(seenB, r.Header.Get("Authorization"))
+	}))
+	defer b.Close()
+	var seenA []string
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenA = append(seenA, r.URL.Path+"="+r.Header.Get("Authorization"))
+		switch r.URL.Path {
+		case "/away":
+			http.Redirect(w, r, b.URL+"/stolen", http.StatusFound)
+		case "/local":
+			http.Redirect(w, r, "/landed", http.StatusTemporaryRedirect)
+		}
+	}))
+	defer a.Close()
+	fetches := 0
+	c := Client(New(SourceCLI, func(context.Context) (Token, error) {
+		fetches++
+		return Token{Value: "s3cr3t"}, nil
+	}), nil)
+	for _, p := range []string{"/away", "/local"} {
+		req, _ := http.NewRequest("GET", a.URL+p, nil)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(p, err)
+		}
+		resp.Body.Close()
+	}
+	if len(seenB) != 1 || seenB[0] != "" {
+		t.Fatalf("the other origin saw %q", seenB)
+	}
+	want := "[/away=Bearer s3cr3t /local=Bearer s3cr3t /landed=Bearer s3cr3t]"
+	if fmt.Sprint(seenA) != want {
+		t.Fatalf("origin A saw %v, want %s", seenA, want)
+	}
+	if fetches != 3 {
+		t.Fatalf("token fetched %d times; a cross-origin hop must not fetch one", fetches)
+	}
+	// A caller that sets its own Authorization does not get it carried across either.
+	req, _ := http.NewRequest("GET", a.URL+"/away", nil)
+	req.Header.Set("Authorization", "Bearer caller-set")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(seenB) != 2 || seenB[1] != "" {
+		t.Fatalf("the other origin saw %q", seenB)
 	}
 }
 
