@@ -288,6 +288,7 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 			actual := ln.Addr().(*net.TCPAddr).Port
 			// The runners outlive the signal: runHTTP stops them only after the HTTP server drained.
 			backend := web.NewMultiBackend(context.WithoutCancel(ctx), entries, factory)
+			backend.SetSibling(syncSibling(warn)) // the board sync engine beside each runner (spec B §4)
 			var served, unavailable []string
 			for _, e := range entries {
 				if !e.Info.Available {
