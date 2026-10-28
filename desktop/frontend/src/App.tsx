@@ -3,6 +3,8 @@ import * as api from './api'
 import {STEPS, StateProvider, usePlan} from './state'
 import {Button, ErrorList, Placeholder} from './ui'
 import {localStepError, needsFullValidation} from './validate'
+import {servicesStepError} from './services'
+import Board from './Board'
 import Welcome from './steps/Welcome'
 import Base from './steps/Base'
 import Companies from './steps/Companies'
@@ -122,13 +124,16 @@ function StepBody({step}: {step: number}) {
 
 function Shell() {
   const {state, dispatch} = usePlan()
+  const [tab, setTab] = useState<'setup' | 'board'>('setup')
 
   async function next() {
     // Only judge what the user has actually been asked for so far. The full
     // plan validator is right that a plan with no companies is invalid, but on
     // the Work folder step the Companies screen has not happened yet, and
     // reporting it there strands the user on step 2.
-    const local = localStepError(state.step, state.plan)
+    const local =
+      localStepError(state.step, state.plan) ??
+      (STEPS[state.step] === 'Services' ? servicesStepError(state.plan.Companies) : null)
     if (local) {
       dispatch({type: 'setErrors', errors: [local]})
       return
@@ -149,8 +154,24 @@ function Shell() {
   return (
     <div className="flex h-full">
       <nav className="w-56 shrink-0 border-r border-[var(--tq-border)] bg-[var(--tq-panel)] p-4">
-        <div className="mb-5 text-sm font-semibold tracking-wide">tq setup</div>
-        <ol className="space-y-1">
+        <div className="mb-5 flex gap-1 text-sm" role="tablist">
+          {(['setup', 'board'] as const).map((t) => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => setTab(t)}
+              className={`flex-1 rounded-md px-2 py-1 font-semibold tracking-wide ${
+                tab === t
+                  ? 'bg-[var(--tq-accent)]/15 text-[var(--tq-accent)]'
+                  : 'text-[var(--tq-muted)] hover:bg-black/5 dark:hover:bg-white/5'
+              }`}
+            >
+              {t === 'setup' ? 'Setup' : 'Board'}
+            </button>
+          ))}
+        </div>
+        <ol className={`space-y-1 ${tab === 'setup' ? '' : 'hidden'}`}>
           {STEPS.map((label, i) => {
             const active = i === state.step
             const done = i < state.step
@@ -186,9 +207,11 @@ function Shell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <InstallBanner />
         <main className="flex-1 overflow-auto p-8">
-          <StepBody step={state.step} />
+          {tab === 'board' ? <Board /> : <StepBody step={state.step} />}
         </main>
-        <footer className="border-t border-[var(--tq-border)] bg-[var(--tq-panel)] px-8 py-4">
+        <footer
+          className={`border-t border-[var(--tq-border)] bg-[var(--tq-panel)] px-8 py-4 ${tab === 'setup' ? '' : 'hidden'}`}
+        >
           <ErrorList errors={state.errors} />
           <div className="flex justify-between">
             <Button disabled={state.step === 0} onClick={() => dispatch({type: 'back'})}>
