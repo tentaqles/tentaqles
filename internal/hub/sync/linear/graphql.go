@@ -93,11 +93,28 @@ func exhaustedUntil(h http.Header) time.Time {
 	return until
 }
 
-// retryAfter is how long the tracker asked us to wait: Retry-After seconds, else the latest
-// X-RateLimit reset.
+// maxRateWait bounds any wait the server asks for, so a bad reset header cannot park the source.
+const maxRateWait = time.Hour
+
+func clampWait(d time.Duration) time.Duration {
+	if d > maxRateWait {
+		return maxRateWait
+	}
+	return d
+}
+
+// retryAfter is how long the tracker asked us to wait: Retry-After (seconds or an HTTP date),
+// else the latest X-RateLimit reset; at most maxRateWait.
 func (a *Adapter) retryAfter(h http.Header) time.Duration {
-	if s, err := strconv.Atoi(strings.TrimSpace(h.Get("Retry-After"))); err == nil && s > 0 {
-		return time.Duration(s) * time.Second
+	if v := strings.TrimSpace(h.Get("Retry-After")); v != "" {
+		if s, err := strconv.Atoi(v); err == nil && s > 0 {
+			return clampWait(time.Duration(s) * time.Second)
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			if d := t.Sub(a.now()); d > 0 {
+				return clampWait(d)
+			}
+		}
 	}
 	var until time.Time
 	for _, kind := range []string{"Requests", "Complexity", "Endpoint-Requests", "Endpoint-Complexity"} {
@@ -106,12 +123,15 @@ func (a *Adapter) retryAfter(h http.Header) time.Duration {
 		}
 	}
 	if d := until.Sub(a.now()); d > 0 {
-		return d
+		return clampWait(d)
 	}
 	return 0
 }
 
 func (a *Adapter) noteLimit(until time.Time) {
+	if max := a.now().Add(maxRateWait); until.After(max) {
+		until = max
+	}
 	a.mu.Lock()
 	if until.After(a.limitedUntil) {
 		a.limitedUntil = until
@@ -136,6 +156,26 @@ func isNotFound(errs []gqlError) bool {
 		}
 	}
 	return false
+}
+
+// apiError is a GraphQL errors array that is not auth or rate limiting.
+type apiError struct {
+	op   string
+	errs []gqlError
+}
+
+func (e *apiError) Error() string { return fmt.Sprintf("linear %s: %s", e.op, errorText(e.errs)) }
+
+// read runs a query whose subject is the item itself (Get, the id and team lookups): a "not
+// found" error there means the item is gone, so it wraps hubsync.ErrNotFound. Mutations go
+// through do, where "Entity not found" names a stale state or label id, not a missing issue.
+func (a *Adapter) read(ctx context.Context, op, query string, vars map[string]any, out any) error {
+	err := a.do(ctx, op, query, vars, out)
+	var ae *apiError
+	if errors.As(err, &ae) && isNotFound(ae.errs) {
+		return fmt.Errorf("%w: %w", err, hubsync.ErrNotFound)
+	}
+	return err
 }
 
 func errorText(errs []gqlError) string {
@@ -225,10 +265,7 @@ func (a *Adapter) do(ctx context.Context, op, query string, vars map[string]any,
 				return &cred.SourceError{Source: tr.Source(), Provider: Name, Err: errors.New(errorText(gr.Errors))}
 			}
 		}
-		if isNotFound(gr.Errors) {
-			return fmt.Errorf("linear %s: %s: %w", op, errorText(gr.Errors), hubsync.ErrNotFound)
-		}
-		return fmt.Errorf("linear %s: %s", op, errorText(gr.Errors))
+		return &apiError{op: op, errs: gr.Errors}
 	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("linear %s: HTTP %d", op, resp.StatusCode)

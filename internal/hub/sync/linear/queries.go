@@ -1,6 +1,10 @@
 package linear
 
 // GraphQL documents. Each is a named operation; the fixtures in the tests key on the name.
+//
+// Linear lists in descending order of the orderBy field ("to get most recently updated
+// resources, order by updatedAt"), so comments(first: 20, orderBy: createdAt) is the newest 20.
+// item() still sorts them newest-first, so a reversed order would only change which 20 come in.
 
 const issueFields = `
 fragment LinearIssueFields on Issue {
@@ -10,7 +14,7 @@ fragment LinearIssueFields on Issue {
   parent { id identifier }
   team { id key }
   labels(first: 50) { nodes { id name } }
-  comments(first: 50) { nodes { id body createdAt user { name displayName } } }
+  comments(first: 20, orderBy: createdAt) { nodes { id body createdAt user { name displayName } } }
   attachments(first: 20) { nodes { title url } }
 }`
 

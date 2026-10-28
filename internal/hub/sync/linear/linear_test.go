@@ -426,6 +426,184 @@ func TestListChangedZeroSinceHasNoDateFilter(t *testing.T) {
 	}
 }
 
+func TestListChangedZeroSinceSkipsClosedHistory(t *testing.T) {
+	f, srv := newFake(t)
+	f.ok("LinearAssigned", `{"viewer":{"assignedIssues":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}`)
+	f.ok("LinearChildren", `{"issues":{"pageInfo":{"hasNextPage":false},"nodes":[]}}`)
+	a := newAdapter(t, srv, nil, "me")
+	if _, _, err := a.ListChanged(context.Background(), time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"LinearAssigned", "LinearChildren"} {
+		filter, _ := json.Marshal(f.last(op).Vars["filter"])
+		if !strings.Contains(string(filter), `"state":{"type":{"nin":["completed","canceled","duplicate"]}}`) {
+			t.Fatalf("%s: the first sync must not page closed history: %s", op, filter)
+		}
+	}
+	// a later tick reads closed issues too (an issue that moved to Done must sync)
+	if _, _, err := a.ListChanged(context.Background(), time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if filter, _ := json.Marshal(f.last("LinearAssigned").Vars["filter"]); strings.Contains(string(filter), "nin") {
+		t.Fatalf("incremental filter %s", filter)
+	}
+}
+
+func TestListChangedPageCapStillAdvancesWatermark(t *testing.T) {
+	// every page says there is another: the cap must stop it, and the watermark must move
+	var n int
+	var mu gosync.Mutex
+	srvCap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			OperationName string `json:"operationName"`
+		}
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &req)
+		mu.Lock()
+		n++
+		i := n
+		mu.Unlock()
+		if req.OperationName != "LinearIssues" {
+			t.Errorf("op %s", req.OperationName)
+		}
+		upd := time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC).Add(-time.Duration(i) * time.Minute).Format(time.RFC3339Nano)
+		io.WriteString(w, `{"data":{"issues":{"pageInfo":{"hasNextPage":true,"endCursor":"c`+fmt.Sprint(i)+`"},"nodes":[`+
+			issueJSON(fmt.Sprintf("%08d-0000-4000-8000-000000000000", i), fmt.Sprintf("ACME-%d", i), "x", upd, "")+`]}}}`)
+	}))
+	defer srvCap.Close()
+	a := newAdapter(t, srvCap, map[string]string{"team": teamID}, "anyone")
+	since := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	items, wm, err := a.ListChanged(context.Background(), since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != maxPages || len(items) != maxPages {
+		t.Fatalf("pages %d items %d", n, len(items))
+	}
+	if !wm.After(since) {
+		t.Fatalf("watermark stuck at %s: the next tick would reread the same pages", wm)
+	}
+	if want := time.Date(2026, 10, 25, 23, 59, 0, 0, time.UTC); !wm.Equal(want) {
+		t.Fatalf("watermark %s, want the newest updatedAt seen %s", wm, want)
+	}
+	if w := a.LastWarning(); !strings.Contains(w, "truncated") {
+		t.Fatalf("truncation not reported: %q", w)
+	}
+	// a full read clears the warning
+	f2, srv2 := newFake(t)
+	f2.ok("LinearIssues", `{"issues":{"pageInfo":{"hasNextPage":false},"nodes":[]}}`)
+	a2 := newAdapter(t, srv2, map[string]string{"team": teamID}, "anyone")
+	a2.warning = "old"
+	if _, _, err := a2.ListChanged(context.Background(), since); err != nil || a2.LastWarning() != "" {
+		t.Fatalf("warning %q err %v", a2.LastWarning(), err)
+	}
+}
+
+func TestListChangedChildrenOfNewlyMirroredParents(t *testing.T) {
+	f, srv := newFake(t)
+	f.ok("LinearAssigned", `{"viewer":{"assignedIssues":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}`)
+	f.ok("LinearChildren", `{"issues":{"pageInfo":{"hasNextPage":false},"nodes":[]}}`)
+	a := newAdapter(t, srv, nil, "me")
+	if _, _, err := a.ListChanged(context.Background(), time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	cf, _ := json.Marshal(f.last("LinearChildren").Vars["filter"])
+	s := string(cf)
+	// children and grandchildren of the viewer's issues
+	for _, want := range []string{
+		`{"parent":{"assignee":{"isMe":{"eq":true}}}}`,
+		`{"parent":{"parent":{"assignee":{"isMe":{"eq":true}}}}}`,
+		// a child that did not change itself still comes in when its parent (or grandparent) did,
+		// as it does when the parent is newly assigned
+		`{"updatedAt":{"gt":"2026-10-25T00:00:00Z"}}`,
+		`{"parent":{"updatedAt":{"gt":"2026-10-25T00:00:00Z"}}}`,
+		`{"parent":{"parent":{"updatedAt":{"gt":"2026-10-25T00:00:00Z"}}}}`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("children filter lacks %s:\n%s", want, s)
+		}
+	}
+}
+
+func TestCommentsNewestFirstQuery(t *testing.T) {
+	if !strings.Contains(issueFields, "comments(first: 20, orderBy: createdAt)") {
+		t.Fatalf("comments must ask for the newest 20: %s", issueFields)
+	}
+}
+
+func TestMutationNotFoundIsNotItemNotFound(t *testing.T) {
+	f, srv := newFake(t)
+	f.ok("LinearIssueTeam", issueTeamFixture())
+	f.on("LinearIssueUpdate", reply{Body: `{"data":null,"errors":[{"message":"Entity not found: WorkflowState","path":["issueUpdate"],"extensions":{"code":"INVALID_INPUT"}}]}`})
+	a := newAdapter(t, srv, nil, "me")
+	err := a.Move(context.Background(), "ACME-1", "Todo")
+	if err == nil || errors.Is(err, hubsync.ErrNotFound) {
+		t.Fatalf("a stale state id must not say the issue is gone: %v", err)
+	}
+	if !strings.Contains(err.Error(), "WorkflowState") {
+		t.Fatalf("err %v", err)
+	}
+	// the read paths still map it
+	f.on("LinearIssueTeam", reply{Body: `{"data":null,"errors":[{"message":"Entity not found: Issue"}]}`})
+	f.replies["LinearIssueTeam"] = f.replies["LinearIssueTeam"][1:]
+	if err := a.Move(context.Background(), "ACME-404", "Todo"); !errors.Is(err, hubsync.ErrNotFound) {
+		t.Fatalf("read path: %v", err)
+	}
+	f.on("LinearIssueID", reply{Body: `{"data":null,"errors":[{"message":"Entity not found: Issue"}]}`})
+	if err := a.Comment(context.Background(), "ACME-404", "x"); !errors.Is(err, hubsync.ErrNotFound) {
+		t.Fatalf("issueID path: %v", err)
+	}
+}
+
+func TestUnknownTeamIsNotFound(t *testing.T) {
+	f, srv := newFake(t)
+	f.ok("LinearTeam", `{"teams":{"nodes":[]}}`)
+	a := newAdapter(t, srv, map[string]string{"team": "nope"}, "me")
+	if _, err := a.Statuses(context.Background()); !errors.Is(err, hubsync.ErrNotFound) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestRetryAfterHTTPDate(t *testing.T) {
+	f, srv := newFake(t)
+	clock := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	f.on("LinearViewer", reply{Status: 429, Header: map[string]string{"Retry-After": clock.Add(45 * time.Second).Format(http.TimeFormat)}, Body: `{}`})
+	a := newAdapter(t, srv, nil, "me")
+	a.now = func() time.Time { return clock }
+	_, err := a.Check(context.Background())
+	var rl *hubsync.RateLimitError
+	if !errors.As(err, &rl) || rl.RetryAfter != 45*time.Second {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestRateLimitWaitIsClamped(t *testing.T) {
+	f, srv := newFake(t)
+	clock := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	f.on("LinearViewer",
+		reply{Header: map[string]string{
+			"X-RateLimit-Requests-Remaining": "0",
+			"X-RateLimit-Requests-Reset":     fmt.Sprint(clock.Add(30 * 24 * time.Hour).UnixMilli()),
+		}, Body: `{"data":{"viewer":{"id":"u1","name":"tester"}}}`})
+	a := newAdapter(t, srv, nil, "me")
+	a.now = func() time.Time { return clock }
+	if _, err := a.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := a.Check(context.Background())
+	var rl *hubsync.RateLimitError
+	if !errors.As(err, &rl) || rl.RetryAfter != maxRateWait {
+		t.Fatalf("a far reset must be clamped to %s: %v", maxRateWait, err)
+	}
+	f2, srv2 := newFake(t)
+	f2.on("LinearViewer", reply{Status: 429, Header: map[string]string{"Retry-After": "999999"}, Body: `{}`})
+	a2 := newAdapter(t, srv2, nil, "me")
+	a2.now = func() time.Time { return clock }
+	if _, err := a2.Check(context.Background()); !errors.As(err, &rl) || rl.RetryAfter != maxRateWait {
+		t.Fatalf("Retry-After must be clamped: %v", err)
+	}
+}
+
 func TestListChangedAnyone(t *testing.T) {
 	f, srv := newFake(t)
 	f.ok("LinearTeam", teamFixture)

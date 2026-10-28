@@ -1,8 +1,8 @@
-// Package linear is the board-sync adapter for Linear (spec B §7), over the GraphQL API at
+// Package linear is the board-sync adapter for Linear (spec B Â§7), over the GraphQL API at
 // https://api.linear.app/graphql.
 //
 // Scope: tracker.scope.team (or org) names the Linear team by key, name or id. ListChanged mirrors
-// viewer.assignedIssues plus the children of issues assigned to the viewer (assigned_to: me), or
+// viewer.assignedIssues plus the children and grandchildren of issues assigned to the viewer (assigned_to: me), or
 // every issue of the team (assigned_to: anyone). Workflow state types map to lane kinds: triage
 // and backlog -> backlog, unstarted -> todo, started -> active (review when the state's name says
 // review), completed and canceled -> done.
@@ -32,8 +32,11 @@ const Name = "linear"
 // DefaultBaseURL is Linear's API origin; the endpoint is <base>/graphql.
 const DefaultBaseURL = "https://api.linear.app"
 
-// maxPages caps one ListChanged query's pagination (50 issues a page).
-const maxPages = 40
+// maxPages caps one ListChanged query's pagination; pageSize is the queries' first: N.
+const (
+	maxPages = 40
+	pageSize = 50
+)
 
 func init() { hubsync.Register(Name, New) }
 
@@ -48,6 +51,16 @@ type Adapter struct {
 	limitedUntil time.Time // a spent X-RateLimit budget: no request before this
 	teamID       string    // resolved tracker.scope team
 	statuses     []hubsync.Status
+	warning      string // the last ListChanged's truncation note ("" when it read everything)
+}
+
+// LastWarning is the note the last ListChanged left: non-empty when it hit the page cap and
+// skipped items (they come back when they change again). The engine can surface it as the
+// source's last_error; it is not part of hubsync.Adapter.
+func (a *Adapter) LastWarning() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.warning
 }
 
 var _ hubsync.Adapter = (*Adapter)(nil)
@@ -107,7 +120,7 @@ func (a *Adapter) team(ctx context.Context) (string, error) {
 		}
 		n := out.Teams.Nodes
 		if len(n) == 0 {
-			return "", fmt.Errorf("linear: team %q not found (tracker.scope.team or org: a team key, name or id)", ref)
+			return "", fmt.Errorf("linear: team %q (tracker.scope.team or org: a team key, name or id): %w", ref, hubsync.ErrNotFound)
 		}
 		// a key match wins over a name match
 		id = n[0].ID
@@ -213,16 +226,33 @@ func (a *Adapter) Statuses(ctx context.Context) ([]hubsync.Status, error) {
 	return slices.Clone(st), nil
 }
 
-// ListChanged returns the mirrored issues updated after since, and the new watermark (the latest
-// updatedAt seen, or since when nothing changed).
+// closedTypes are the WorkflowState types a first sync skips: years of finished history are not
+// worth mirroring, and paging them would spend the hourly complexity budget.
+var closedTypes = []string{"completed", "canceled", "duplicate"}
+
+// ListChanged returns the mirrored issues updated after since, and the new watermark: the latest
+// updatedAt seen, or since when nothing changed.
+//
+// The first sync (since zero) reads open issues only. With assigned_to me it reads the viewer's
+// issues plus their children and grandchildren; a child comes in when it, its parent or its
+// grandparent changed after since, so the existing children of a newly assigned parent arrive on
+// the tick the parent does. Deeper descendants are not mirrored.
+//
+// One query reads at most maxPages pages. When it hits that cap, the watermark still moves to the
+// newest updatedAt seen (so the next tick does not reread the same pages), the unread items are
+// skipped until they change again, and LastWarning says so.
 func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.Item, time.Time, error) {
 	team, err := a.team(ctx)
 	if err != nil {
 		return nil, since, err
 	}
 	base := map[string]any{}
-	if !since.IsZero() {
-		base["updatedAt"] = map[string]any{"gt": since.UTC().Format(time.RFC3339Nano)}
+	var sinceF map[string]any
+	if since.IsZero() {
+		base["state"] = map[string]any{"type": map[string]any{"nin": closedTypes}}
+	} else {
+		sinceF = map[string]any{"gt": since.UTC().Format(time.RFC3339Nano)}
+		base["updatedAt"] = sinceF
 	}
 	if team != "" {
 		base["team"] = map[string]any{"id": map[string]any{"eq": team}}
@@ -240,19 +270,33 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 		qs = []query{{"LinearIssues", qIssues, base, false}}
 	} else {
 		children := cloneMap(base)
-		children["parent"] = map[string]any{"assignee": map[string]any{"isMe": map[string]any{"eq": true}}}
+		delete(children, "updatedAt")
+		isMe := map[string]any{"assignee": map[string]any{"isMe": map[string]any{"eq": true}}}
+		and := []any{map[string]any{"or": []any{
+			map[string]any{"parent": isMe},
+			map[string]any{"parent": map[string]any{"parent": isMe}},
+		}}}
+		if sinceF != nil {
+			upd := map[string]any{"updatedAt": sinceF}
+			and = append(and, map[string]any{"or": []any{
+				upd,
+				map[string]any{"parent": upd},
+				map[string]any{"parent": map[string]any{"parent": upd}},
+			}})
+		}
+		children["and"] = and
 		qs = []query{{"LinearAssigned", qAssigned, base, true}, {"LinearChildren", qChildren, children, false}}
 	}
 
 	var items []hubsync.Item
 	seen := map[string]bool{}
 	wm := since
-	complete := true
+	var truncated []string
 	for _, q := range qs {
 		after := ""
 		for page := 0; ; page++ {
 			if page == maxPages {
-				complete = false
+				truncated = append(truncated, q.op)
 				break
 			}
 			vars := map[string]any{"filter": q.filter}
@@ -296,10 +340,14 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 			after = conn.PageInfo.EndCursor
 		}
 	}
-	if !complete {
-		// some pages were left unread: do not move the watermark past them
-		wm = since
+	warn := ""
+	if len(truncated) > 0 {
+		warn = fmt.Sprintf("linear: %s truncated at %d pages of %d issues; issues past the cap are skipped until they change again",
+			strings.Join(truncated, ", "), maxPages, pageSize)
 	}
+	a.mu.Lock()
+	a.warning = warn
+	a.mu.Unlock()
 	return items, wm, nil
 }
 
@@ -316,7 +364,7 @@ func (a *Adapter) Get(ctx context.Context, id string) (hubsync.Item, error) {
 	var out struct {
 		Issue *issueNode `json:"issue"`
 	}
-	if err := a.do(ctx, "LinearIssue", qIssue, map[string]any{"id": id}, &out); err != nil {
+	if err := a.read(ctx, "LinearIssue", qIssue, map[string]any{"id": id}, &out); err != nil {
 		return hubsync.Item{}, err
 	}
 	if out.Issue == nil {
@@ -333,7 +381,7 @@ func (a *Adapter) issueID(ctx context.Context, id string) (string, error) {
 	var out struct {
 		Issue *struct{ ID string } `json:"issue"`
 	}
-	if err := a.do(ctx, "LinearIssueID", qIssueID, map[string]any{"id": id}, &out); err != nil {
+	if err := a.read(ctx, "LinearIssueID", qIssueID, map[string]any{"id": id}, &out); err != nil {
 		return "", err
 	}
 	if out.Issue == nil || out.Issue.ID == "" {
@@ -371,7 +419,7 @@ func (a *Adapter) issueTeam(ctx context.Context, id string) (issueTeam, error) {
 		} `json:"issue"`
 		IssueLabels namedConn `json:"issueLabels"`
 	}
-	if err := a.do(ctx, "LinearIssueTeam", qIssueTeam, map[string]any{"id": id}, &out); err != nil {
+	if err := a.read(ctx, "LinearIssueTeam", qIssueTeam, map[string]any{"id": id}, &out); err != nil {
 		return issueTeam{}, err
 	}
 	if out.Issue == nil {
