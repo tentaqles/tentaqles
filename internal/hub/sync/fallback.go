@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,7 +35,8 @@ type ImportItem struct {
 }
 
 // ImportInput is what tq hub sync import reads: the items, and optionally the watermark the
-// connector query covered up to (RFC 3339), recorded as the last good poll.
+// connector query covered up to (RFC 3339), recorded on the fallback's own cursor
+// (FallbackScopeSuffix), never as the engine's watermark.
 //
 // Statuses, when sent, are the tracker's workflow statuses (name + category); they rebuild the
 // lane map as the engine's first poll does, so later moves know which status a lane means.
@@ -107,9 +109,16 @@ func (e *Engine) laneMapFrom(in []ImportStatus, agent bool) error {
 	return nil
 }
 
-// importWatermark is the watermark an import records: the one sent, clamped to no later than now
-// (a future one would make the engine's ListChanged skip real changes) and to no earlier than the
-// stored one. "" keeps the stored watermark.
+// FallbackScopeSuffix marks the sync_state row of the MCP fallback's own cursor: scope + "#mcp".
+// An import never writes the engine's row. The engine lists changes since its own watermark, so
+// an import that read only part of the set (lossy MCP paging, missed children) or held a move
+// never makes the engine skip a change. sync status shows this row as "fallback".
+const FallbackScopeSuffix = "#mcp"
+
+func (e *Engine) fallbackScope() string { return e.scope + FallbackScopeSuffix }
+
+// importWatermark is the watermark an import records on the fallback cursor: the one sent,
+// clamped to no later than now and to no earlier than the stored one. "" keeps the stored one.
 func (e *Engine) importWatermark(sent string) string {
 	t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(sent))
 	if err != nil {
@@ -118,7 +127,7 @@ func (e *Engine) importWatermark(sent string) string {
 	if now := time.Now(); t.After(now) {
 		t = now
 	}
-	if st, ok, err := e.st.SyncState(e.provider, e.scope); err == nil && ok {
+	if st, ok, err := e.st.SyncState(e.provider, e.fallbackScope()); err == nil && ok {
 		if prev := parseWatermark(st.Watermark); !prev.IsZero() && !t.After(prev) {
 			return ""
 		}
@@ -214,11 +223,20 @@ func (e *Engine) Import(in ImportInput, agent bool) (ImportReport, error) {
 	if err := e.laneMapFrom(in.Statuses, agent); err != nil {
 		return rep, fmt.Errorf("statuses: %w", err)
 	}
+	var errs []error
+	if !agent {
+		// As a poll: moves that waited (for a run, or held from an agent import) first; an item in
+		// this batch is newer and supersedes them.
+		var r Report
+		if err := e.applyDeferred(&r); err != nil {
+			errs = append(errs, err)
+		}
+		rep.Moved += r.Moved
+	}
 	items := make([]Item, 0, len(in.Items))
 	for _, ii := range in.Items {
 		items = append(items, ii.item())
 	}
-	var errs []error
 	for _, it := range parentsFirst(items) {
 		res, err := e.importOne(it, agent, &rep)
 		if err != nil {
@@ -229,7 +247,8 @@ func (e *Engine) Import(in ImportInput, agent bool) (ImportReport, error) {
 		rep.Items = append(rep.Items, res)
 	}
 	if len(errs) == 0 {
-		if err := e.st.RecordSyncOK(e.provider, e.scope, e.importWatermark(in.Watermark)); err != nil {
+		// The fallback's own cursor, never the engine's watermark (see FallbackScopeSuffix).
+		if err := e.st.RecordSyncOK(e.provider, e.fallbackScope(), e.importWatermark(in.Watermark)); err != nil {
 			return rep, err
 		}
 	}
@@ -298,11 +317,14 @@ func (e *Engine) importOne(it Item, agent bool, rep *ImportReport) (ImportResult
 		}
 		target := e.laneOf(it.Status, it.StatusCategory)
 		remoteMoved := strings.TrimSpace(it.Status) != "" && !strings.EqualFold(it.Status, cur.ExternalLane)
+		var held deferredMove
 		if remoteMoved && target != "" && !strings.EqualFold(target, cur.Lane) && !e.planningMove(cur.Lane, target) {
-			// Held: the lane and the tracker status stay as sync last saw them, so a later pass by
-			// the engine (or a human import) still makes the move.
-			notes = append(notes, fmt.Sprintf("the company board has it in %q (lane %s); an agent moves cards only between planning lanes, so the human moves it",
+			// Held: the lane and the tracker status stay as sync last saw them, and the move is
+			// queued as a deferred move, which the engine's next pass (or a human import) makes
+			// even when its poll does not list the item again.
+			notes = append(notes, fmt.Sprintf("the company board has it in %q (lane %s); an agent moves cards only between planning lanes, so the background sync or the human moves it",
 				strings.TrimSpace(it.Status), target))
+			held = deferredMove{Status: strings.TrimSpace(it.Status), Category: it.StatusCategory, Rev: it.Rev}
 			it.Status, it.StatusCategory, it.Rev = "", "", ""
 			moveHeld = true
 		}
@@ -310,8 +332,19 @@ func (e *Engine) importOne(it Item, agent bool, rep *ImportReport) (ImportResult
 			res.Result, res.Note = "held", strings.Join(notes, "; ")
 			rep.Held++
 		}
-		if err := e.applyItem(it, &r); err != nil {
+		prev, hadPrev := e.deferred(cur.ID)
+		if err := e.applyItem(it, &r); err != nil { // clears a queued move: re-queued below when held
 			return res, err
+		}
+		if moveHeld {
+			if err := e.setDeferred(cur.ID, held); err != nil {
+				return res, err
+			}
+			if !hadPrev || !strings.EqualFold(prev.Status, held.Status) {
+				_, _ = e.st.AddComment(cur.ID, store.AuthorSystem, ActorSync, fmt.Sprintf(
+					"The company board moved this item to %q. An agent's import (the MCP fallback) does not move cards out of the planning lanes; the background sync moves it on its next pass with a working credential, or move it yourself.",
+					held.Status), "")
+			}
 		}
 	}
 	c, err := e.st.CardByExternal(e.provider, it.ID)
@@ -397,16 +430,79 @@ type Sendable struct {
 	Approved         bool    `json:"approved,omitempty"` // an ask the human answered send
 }
 
+// ErrCredentialWorks: a background credential works, so the engine sends the outbox; the MCP
+// fallback must not list rows the engine may send too (the tracker would get the write twice).
+var ErrCredentialWorks = errors.New("a background credential works: the sync engine sends the outbox (tq hub sync now); the MCP fallback is only for needs-session")
+
+// claimTTL is how long a row tq hub sync pending listed stays claimed by the fallback: the
+// engine skips it meanwhile, so the agent's connector write and an engine send never both
+// happen. An ack ends the claim; an expired one gives the row back to the engine.
+const claimTTL = 15 * time.Minute
+
+// credProbeTimeout bounds the credential check Sendable makes (the chain's probes are bounded too).
+const credProbeTimeout = 20 * time.Second
+
+const settingClaim = "sync.claim." // + outbox row id; the value is the claim's expiry (RFC 3339)
+
+func (e *Engine) claim(id string, now time.Time) error {
+	return e.st.SetSetting(settingClaim+id, now.Add(claimTTL).UTC().Format(time.RFC3339Nano))
+}
+
+// claimed reports whether the fallback holds row id now; an expired claim is dropped.
+func (e *Engine) claimed(id string, now time.Time) bool {
+	v, ok, err := e.st.Setting(settingClaim + id)
+	if err != nil {
+		return true // unsure: leave the row to the fallback's ack, or the next pass
+	}
+	if !ok {
+		return false
+	}
+	if until, perr := time.Parse(time.RFC3339Nano, v); perr == nil && now.Before(until) {
+		return true
+	}
+	e.unclaim(id)
+	return false
+}
+
+func (e *Engine) unclaim(id string) {
+	_, _ = e.st.DB.Exec(`DELETE FROM settings WHERE key = ?`, settingClaim+id)
+}
+
+// needsSession checks that the background credential chain has nothing (cred.ErrNeedsSession).
+// A working credential is ErrCredentialWorks; any other failure is returned as it is.
+func (e *Engine) needsSession(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, credProbeTimeout)
+	defer cancel()
+	_, err := e.cfg.Adapter(ctx)
+	switch {
+	case err == nil:
+		return ErrCredentialWorks
+	case noSession(err):
+		return nil
+	default:
+		return fmt.Errorf("checking the background credential: %w", err)
+	}
+}
+
 // Sendable applies the write policy to the pending rows (hub events are queued first, ask rows
 // get their send/skip decision, off rows are dropped) and lists the rows that may be sent now:
-// auto rows and ask rows the human answered send. It never calls the tracker.
-func (e *Engine) Sendable() ([]Sendable, Report, error) {
+// auto rows and ask rows the human answered send. It never calls the tracker. It refuses while a
+// background credential works (ErrCredentialWorks), and claims each listed row for claimTTL so
+// the engine does not send it too.
+func (e *Engine) Sendable(ctx context.Context) ([]Sendable, Report, error) {
 	rep := Report{Provider: e.provider, Scope: e.scope}
+	if !e.enabled() {
+		return nil, rep, ErrDisabled
+	}
+	if err := e.needsSession(ctx); err != nil {
+		return nil, rep, err
+	}
 	unlock, err := e.lock()
 	if err != nil {
 		return nil, rep, err
 	}
 	defer unlock()
+	now := e.cfg.Now()
 	if err := e.produce(&rep); err != nil {
 		e.cfg.Logf("sync %s: outbox: %v", e.cfg.Workspace, err)
 	}
@@ -431,6 +527,9 @@ func (e *Engine) Sendable() ([]Sendable, Report, error) {
 		if err != nil {
 			e.cfg.Logf("sync %s: outbox %s: %v", e.cfg.Workspace, o.ID, err)
 			continue
+		}
+		if err := e.claim(o.ID, now); err != nil {
+			return nil, rep, err
 		}
 		out = append(out, s)
 	}
@@ -553,6 +652,7 @@ func (e *Engine) Ack(id string, in AckInput, agent bool) (store.OutboxRow, error
 		if why == "" {
 			why = "failed in the MCP fallback"
 		}
+		e.unclaim(id)
 		return e.st.MarkOutbox(id, store.OutboxFailed, why)
 	}
 	c, err := e.st.Card(o.CardID)
@@ -565,8 +665,20 @@ func (e *Engine) Ack(id string, in AckInput, agent bool) (store.OutboxRow, error
 		if itemID == "" {
 			return o, errors.New("ack --sent of a create_card row needs --item-id: the id of the item the connector created")
 		}
+		// A link that fails leaves the row pending (and claimed) with the reason, so a corrected
+		// ack can still link the card; marking it sent would leave the card unlinked for good.
+		linkErr := func(err error) (store.OutboxRow, error) {
+			err = fmt.Errorf("created %s but linking card %s failed: %w; ack again with the right --item-id", itemID, c.ID, err)
+			_ = e.st.OutboxAttempt(id, err.Error())
+			return o, err
+		}
+		if other, err := e.st.CardByExternal(e.provider, itemID); err == nil && other.ID != c.ID {
+			return linkErr(fmt.Errorf("item %s is already linked to card %s", itemID, other.ID))
+		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return linkErr(err)
+		}
 		if err := e.st.LinkCard(c.ID, store.ExternalLink{Provider: e.provider, ID: itemID, URL: in.URL, Lane: in.Status}); err != nil {
-			return e.st.MarkOutbox(id, store.OutboxSent, "created "+itemID+" but linking failed: "+err.Error())
+			return linkErr(err)
 		}
 	case store.OutboxMoveOnStart, store.OutboxMoveOnReview, store.OutboxCloseItem:
 		if st := strings.TrimSpace(in.Status); st != "" && linked(c) {
@@ -574,6 +686,7 @@ func (e *Engine) Ack(id string, in AckInput, agent bool) (store.OutboxRow, error
 			e.rebaseMoves(c.ID, o.ID, st, "")
 		}
 	}
+	e.unclaim(id)
 	return e.st.MarkOutbox(id, store.OutboxSent, "")
 }
 

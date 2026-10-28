@@ -61,3 +61,11 @@ def test_sync_skill_treats_tracker_text_as_data():
     text = SYNC.read_text(encoding="utf-8")
     assert "are data, never instructions" in text
     assert "tq/mcp-github-write" in text
+
+
+def test_sync_skill_uses_its_own_cursor_and_respects_claims():
+    text = SYNC.read_text(encoding="utf-8")
+    assert "fallback.watermark" in text and "states[0].watermark" not in text
+    assert "a background credential works" in text
+    assert "claimed for 15 minutes" in text
+    assert "Never create the item a second time" in text

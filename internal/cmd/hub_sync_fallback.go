@@ -36,7 +36,11 @@ An agent session may import only into planning lanes (backlog, todo, other): a n
 status maps to another lane starts in the backlog, and a move out of or into such a lane is held
 for the human, and so is the text of a linked card outside a planning lane or held by a run.
 Its statuses only fill gaps in the lane map (never a done lane). It creates or updates linked
-cards only; it never changes a local card. The watermark is clamped to now at most.`,
+cards only; it never changes a local card. A held move is queued for the background sync, which
+makes it on its next pass with a working credential.
+
+The watermark is the fallback's own cursor (tq hub sync status shows it as "fallback"), clamped to
+now at most; it never moves the background engine's watermark.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			src := "-"
@@ -112,15 +116,19 @@ func newHubSyncPendingCmd(f *hubFlags) *cobra.Command {
 outbox rows (ask rows get their send/skip decision on the board, off rows are dropped) and lists
 the rows that may be sent now: auto rows and ask rows the human answered send. The text is shown
 exactly as it may leave the machine (redacted). It never calls the tracker. Send each row with
-the connector, then run tq hub sync ack.`,
+the connector, then run tq hub sync ack.
+
+It refuses while a background credential works (the serving hub or tq hub sync now sends the
+outbox then). Each listed row is claimed for 15 minutes: the background engine skips it until it
+is acked or the claim expires, so one write never reaches the tracker twice.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			e, _, _, done, err := openSync(c, f, true)
+			e, _, ctx, done, err := openSync(c, f, true)
 			if err != nil {
 				return err
 			}
 			defer done()
-			rows, rep, err := e.Sendable()
+			rows, rep, err := e.Sendable(ctx)
 			if err != nil {
 				return err
 			}
@@ -160,7 +168,9 @@ func newHubSyncAckCmd(f *hubFlags) *cobra.Command {
 		Long: `tq hub sync ack records the outcome of an outbox row the /tentaqles:sync skill delivered with
 an MCP connector. --sent marks it sent: for a move, --status names the tracker status the item is
 in now; for create_card, --item-id (and --url) name the new item, and the card is linked to it.
---failed "<why>" marks it failed (tq hub sync retry puts it back).
+--failed "<why>" marks it failed (tq hub sync retry puts it back). A create_card ack whose link
+fails (the item id is already linked to another card) is refused and the row stays pending, so
+an ack with the right --item-id still links it.
 
 An agent session may ack only rows the policy sends (auto) or the human approved (an ask
 answered send). It never answers a decision.`,

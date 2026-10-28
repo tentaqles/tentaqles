@@ -43,7 +43,9 @@ tq hub sync status --json --timeout 10s 2>&1; echo "sync_exit=$?"
   creates the board) and skip step 3.
 - Any other non-zero exit: say so in one line with the first line of the output (no
   tracker block: "add a tracker block or run tq onboard") and stop.
-- Read `provider`, `scope`, `lane_map` and `states[0]` (`last_ok_at`, `last_error`).
+- Read `provider`, `scope`, `lane_map`, `states[0]` (the background engine: `last_ok_at`,
+  `last_error`) and `fallback` (this skill's own cursor: `watermark`; absent before the first
+  import). An import never writes the engine's state, and the engine's watermark is not yours.
 - `last_error` without `needs-session` and a recent `last_ok_at`: the background sync works.
   Suggest `tq hub sync now` instead and stop, unless the user asked for this skill by name.
 - Find the connector for `provider` in your tools (for example `mcp__*atlassian*`,
@@ -53,7 +55,7 @@ tq hub sync status --json --timeout 10s 2>&1; echo "sync_exit=$?"
 ## 2. Pull
 
 1. With the connector, read the work items of `scope` assigned to the current user that
-   changed since `states[0].watermark` (all assigned open items when it is empty), plus the
+   changed since `fallback.watermark` (all assigned open items when there is none), plus the
    children of items already on the board. Read the workflow statuses too, each with its
    category: `backlog`, `todo`, `active`, `review` or `done`.
 2. Build one JSON document. `id` is the tracker's own id (the one the connector writes
@@ -74,12 +76,14 @@ echo "import_exit=$?"
 - Report `created`, `updated`, `moved` and `held` in one line.
 - `held` items: the company board moved them to a lane an agent may not move a card into
   (only backlog, todo and other are planning lanes), or the card is outside a planning lane
-  or held by a run, so its title and body stay as they are. List each with its `note`; the
-  human moves the card (or imports by hand). Items that start in the backlog for the same
-  reason carry a note too.
+  or held by a run, so its title and body stay as they are. List each with its `note`. A held
+  move is queued: the background sync makes it on its next pass with a working credential,
+  or the human moves the card. Items that start in the backlog for the same reason carry a
+  note too.
 - Statuses you send only fill gaps in the lane map; they never change a status the map
   already has and never map one to the done lane (the manifest and the background engine
-  do). A watermark in the future is recorded as now.
+  do). The watermark is recorded on the fallback cursor only; one in the future is recorded
+  as now.
 - `refused` items: show the item id and the `note`; fix the JSON and import again.
 
 ## 3. Push
@@ -89,7 +93,15 @@ tq hub sync pending --json --timeout 30s 2>&1; echo "pending_exit=$?"
 ```
 
 This applies the write policy without calling the tracker. Each listed row may be sent
-now (`auto`, or an `ask` the human answered `send`). For each row, in order:
+now (`auto`, or an `ask` the human answered `send`).
+
+- Refused with "a background credential works": the background sync sends the outbox. Send
+  nothing; suggest `tq hub sync now` and stop.
+- Each listed row is claimed for 15 minutes: the background engine skips it until you ack
+  it. Send and ack each row right away; if 15 minutes have passed since `pending`, run
+  `pending` again before the next write and send only what it lists.
+
+For each row, in order:
 
 - `move_on_start`, `move_on_review`, `close_item`: read the item first. If its status is no
   longer `base_status` (and `base_status` is not empty), the company board moved it
@@ -110,6 +122,9 @@ tq hub sync ack <outbox-id> --failed "<why, without item text>" --timeout 30s
 
 - A connector error is a `--failed` ack with the error's first line; never retry a write
   that may have reached the tracker. `tq hub sync retry <id>` is the human's.
+- A `create_card` ack refused with "linking ... failed" (for example, the item id is already
+  linked to another card) leaves the row pending: check the id of the item you created and
+  ack again with the right `--item-id`. Never create the item a second time.
 - An ack refused with "may ack only outbox rows the policy sends" means the row waits for
   the human's decision: leave it.
 

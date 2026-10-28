@@ -118,3 +118,16 @@ func TestHubSyncImportHumanTextOutput(t *testing.T) {
 		t.Fatal("an item without an id is refused")
 	}
 }
+
+// pending refuses while the background credential works: the engine sends the outbox.
+func TestHubSyncPendingRefusesWithWorkingCredential(t *testing.T) {
+	syncWS(t)
+	if _, _, _, err := runTQ(t, "hub", "sync", "now"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDECODE", "1")
+	_, _, err := runTQStdin(t, "", "hub", "sync", "pending", "--json")
+	if err == nil || !strings.Contains(err.Error(), "background credential works") {
+		t.Fatalf("pending with a working credential: %v", err)
+	}
+}

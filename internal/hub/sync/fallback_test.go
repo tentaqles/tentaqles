@@ -58,7 +58,7 @@ func TestAgentImportCreatesOnlyInPlanningLanes(t *testing.T) {
 	if c := r.card("github", "13"); c.ParentID != r.card("github", "11").ID {
 		t.Fatalf("child not under its parent: %+v", c)
 	}
-	st, _, _ := r.st.SyncState("github", r.eng.Scope())
+	st, _, _ := r.st.SyncState("github", r.eng.Scope()+FallbackScopeSuffix)
 	if st.Watermark != "2026-10-27T12:00:00Z" || st.LastOKAt == "" {
 		t.Fatalf("state %+v", st)
 	}
@@ -164,7 +164,7 @@ func TestImportClampsWatermark(t *testing.T) {
 	if _, err := r.eng.Import(ImportInput{Items: item, Watermark: "2099-01-01T00:00:00Z"}, true); err != nil {
 		t.Fatal(err)
 	}
-	st, _, _ := r.st.SyncState("github", r.eng.Scope())
+	st, _, _ := r.st.SyncState("github", r.eng.Scope()+FallbackScopeSuffix)
 	wm := parseWatermark(st.Watermark)
 	if wm.IsZero() || wm.After(time.Now().Add(time.Minute)) {
 		t.Fatalf("future watermark stored: %q", st.Watermark)
@@ -172,7 +172,7 @@ func TestImportClampsWatermark(t *testing.T) {
 	if _, err := r.eng.Import(ImportInput{Items: item, Watermark: "2001-01-01T00:00:00Z"}, true); err != nil {
 		t.Fatal(err)
 	}
-	st2, _, _ := r.st.SyncState("github", r.eng.Scope())
+	st2, _, _ := r.st.SyncState("github", r.eng.Scope()+FallbackScopeSuffix)
 	if st2.Watermark != st.Watermark {
 		t.Fatalf("watermark moved back: %q -> %q", st.Watermark, st2.Watermark)
 	}
@@ -246,7 +246,7 @@ func TestSendableAndAgentAck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, rep, err := r.eng.Sendable()
+	rows, rep, err := r.eng.Sendable(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestSendableAndAgentAck(t *testing.T) {
 	if _, err := r.st.AnswerHub(row.DecisionID, "send", "", "tester"); err != nil {
 		t.Fatal(err)
 	}
-	rows, _, err = r.eng.Sendable()
+	rows, _, err = r.eng.Sendable(context.Background())
 	if err != nil || len(rows) != 1 || rows[0].Action != "create_card" || !rows[0].Approved || rows[0].Body == nil {
 		t.Fatalf("rows %+v err %v", rows, err)
 	}

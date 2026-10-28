@@ -318,6 +318,9 @@ func (e *Engine) send(ctx context.Context, adapter func() (Adapter, error), rep 
 		if t, ok := e.notBefore[o.ID]; ok && now.Before(t) {
 			continue // backing off
 		}
+		if e.claimed(o.ID, now) {
+			continue // listed by tq hub sync pending: the MCP fallback sends it (fallback.go)
+		}
 		// Re-read: a move sent earlier in this pass may have rebased this row's base state.
 		if cur, err := e.st.OutboxRow(o.ID); err == nil {
 			if cur.Status != store.OutboxPending {
