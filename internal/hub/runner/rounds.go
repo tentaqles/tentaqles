@@ -144,27 +144,47 @@ func (s *Service) tick(ctx context.Context) (int, error) {
 func (s *Service) startRound(parent context.Context, r store.Run) bool {
 	// The queued → running transition happens under mu, after a fresh read, so a run Cancel is
 	// ending (or one another path already moved on) is never started.
-	s.mu.Lock()
-	if _, busy := s.flights[r.ID]; busy || s.cancelling[r.ID] {
-		s.mu.Unlock()
-		return false
+	startable := func() (store.Run, bool) {
+		if _, busy := s.flights[r.ID]; busy || s.cancelling[r.ID] {
+			return store.Run{}, false
+		}
+		cur, err := s.st.Run(r.ID)
+		if err != nil || cur.Status != store.StatusQueued {
+			return cur, false
+		}
+		return cur, true
 	}
-	cur, err := s.st.Run(r.ID)
-	if err != nil || cur.Status != store.StatusQueued {
-		s.mu.Unlock()
+	s.mu.Lock()
+	cur, ok := startable()
+	s.mu.Unlock()
+	if !ok {
 		return false
 	}
 	r = cur
 	if needsProjectLock(r) {
+		// The lock's write transaction runs without mu: another process holding the DB write lock
+		// would otherwise stall Cancel and the flight bookkeeping for the whole busy timeout.
+		if s.beforeProjectLock != nil {
+			s.beforeProjectLock()
+		}
 		ok, holder, err := s.takeProjectLock(r)
 		if err != nil || !ok {
-			s.mu.Unlock()
 			if err == nil {
 				s.noteProjectWait(r, holder)
 			}
 			return false // stays queued; a later tick tries again
 		}
 	}
+	s.mu.Lock()
+	if cur, ok = startable(); !ok {
+		s.mu.Unlock()
+		// Cancelled (or moved on) while the lock was taken: an ended run gives the lock back.
+		if needsProjectLock(r) && cur.ID != "" && !cur.Active() {
+			s.releaseProjectLock(r)
+		}
+		return false
+	}
+	r = cur
 	first := r.StartedAt == ""
 	r.Status = store.StatusRunning
 	if first {

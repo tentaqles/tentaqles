@@ -65,6 +65,8 @@ type Service struct {
 	plMu      sync.Mutex        // projLocks and lockNoted
 	projLocks map[string]string // project folder key -> the run holding its pre-relocation lock (projectlock.go)
 	lockNoted map[string]bool   // runs whose wait for a project lock was already commented
+	// beforeProjectLock, when set (tests), runs just before startRound takes a project lock.
+	beforeProjectLock func()
 
 	// OnApprove runs after the human approved a result (Task 11: the static review export).
 	OnApprove func(card store.Card, run store.Run)

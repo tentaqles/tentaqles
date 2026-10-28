@@ -233,3 +233,51 @@ func TestDrainReturnsWhenOnlyBlockedRunsAreDue(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// The project lock's write transaction runs without s.mu: a DB write lock held by another
+// process would otherwise stall Cancel and the flight bookkeeping for the whole busy timeout.
+func TestProjectLockTakenWithoutServiceMutex(t *testing.T) {
+	h := newHarness(t)
+	h.ad.steps = []step{result("Which export format, CSV or XLSX?")}
+	a := h.card("feature", store.TagAgentReady)
+	h.enqueue(a)
+	called, free := false, false
+	h.svc.beforeProjectLock = func() {
+		called = true
+		if h.svc.mu.TryLock() {
+			free = true
+			h.svc.mu.Unlock()
+		}
+	}
+	h.tick()
+	if !called || !free {
+		t.Fatalf("project lock taken under s.mu (called %v, mu free %v)", called, free)
+	}
+	if rows := projectLockRows(t, h.st); len(rows) != 1 {
+		t.Fatalf("lock rows %v", rows)
+	}
+}
+
+// A run cancelled while its project lock is being taken does not start, and leaves no lock.
+func TestProjectLockCancelledWhileTaking(t *testing.T) {
+	h := newHarness(t)
+	h.ad.steps = []step{result("Which export format, CSV or XLSX?")}
+	a := h.card("feature", store.TagAgentReady)
+	ra := h.enqueue(a)
+	h.svc.beforeProjectLock = func() {
+		h.svc.beforeProjectLock = nil
+		if _, err := h.svc.Cancel(context.Background(), ra.ID); err != nil {
+			t.Error(err)
+		}
+	}
+	h.tick()
+	if got := h.run(ra.ID); got.StartedAt != "" || got.Active() {
+		t.Fatalf("a cancelled run started: %+v", got)
+	}
+	if n := len(h.ad.calls()); n != 0 {
+		t.Fatalf("%d rounds ran", n)
+	}
+	if rows := projectLockRows(t, h.st); len(rows) != 0 {
+		t.Fatalf("lock left by a cancelled run: %v", rows)
+	}
+}
