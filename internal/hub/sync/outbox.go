@@ -408,6 +408,11 @@ func (e *Engine) send(ctx context.Context, adapter func() (Adapter, error), rep 
 			}
 			// Rate limited after the retries: stop for this tick, the rest wait too.
 			return err
+		case errors.Is(err, ErrCreateUncertain):
+			// The item may exist: a retry could make it twice, so the human checks the tracker.
+			_, _ = e.st.MarkOutbox(o.ID, store.OutboxFailed, err.Error()+" - check the tracker before retrying")
+			delete(e.notBefore, o.ID)
+			rep.Failed++
 		case permanent(err):
 			_, _ = e.st.MarkOutbox(o.ID, store.OutboxFailed, err.Error())
 			delete(e.notBefore, o.ID)

@@ -19,19 +19,20 @@ import (
 
 // fakeTracker is an in-memory tracker: items keyed by id, a call log, and scripted 429s.
 type fakeTracker struct {
-	mu          gosync.Mutex
-	statuses    []Status
-	items       map[string]*Item
-	changed     []string // ids ListChanged returns next
-	wm          time.Time
-	next        int
-	limited     map[string]int // method -> remaining 429s
-	calls       []string
-	comments    []string // "id: text"
-	created     []NewItem
-	updates     []string // "id title=<t|-> body=<b|->" for each Update
-	moveErr     error    // every Move fails with it (a transient outage)
-	afterCreate error    // Create makes the item, then fails a later step with it (a partial create)
+	mu              gosync.Mutex
+	statuses        []Status
+	items           map[string]*Item
+	changed         []string // ids ListChanged returns next
+	wm              time.Time
+	next            int
+	limited         map[string]int // method -> remaining 429s
+	calls           []string
+	comments        []string // "id: text"
+	created         []NewItem
+	updates         []string // "id title=<t|-> body=<b|->" for each Update
+	moveErr         error    // every Move fails with it (a transient outage)
+	afterCreate     error    // Create makes the item, then fails a later step with it (a partial create)
+	uncertainCreate bool     // Create makes the item but answers ErrCreateUncertain with no id
 }
 
 func newFake() *fakeTracker {
@@ -138,6 +139,9 @@ func (f *fakeTracker) Create(ctx context.Context, in NewItem) (Item, error) {
 	f.log("create " + in.Title)
 	if f.afterCreate != nil {
 		return it, &PartialCreateError{Item: it, Err: f.afterCreate}
+	}
+	if f.uncertainCreate {
+		return Item{}, fmt.Errorf("post: timeout: %w", ErrCreateUncertain)
 	}
 	return it, nil
 }
