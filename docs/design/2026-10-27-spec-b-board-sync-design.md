@@ -122,7 +122,7 @@ type Adapter interface {
   3. **env:** the manifest's `tracker.env`, resolved via `tq dotenv`.
   4. **mcp:** the engine reports `needs-session`, and the `/tentaqles:sync` skill does the work.
 
-  A token is held in memory only for one request and is never logged. Errors say which source failed, never the token.
+  A token is held in memory only for one request and is never logged. *(Amended during the build: a CLI-issued token such as `az account get-access-token` may stay in memory, keyed by the identity's config dir, until 5 minutes before it expires, and is dropped on a 401. It is never written to disk.)* Errors say which source failed, never the token.
 - **Testing:** every adapter is tested against recorded HTTP fixtures (`httptest`) or a fake CLI on PATH. No test calls a real tracker.
 - **Rate limits:** honour `Retry-After` and `X-RateLimit-*`, back off exponentially (a 3-attempt cap per tick), and record `last_error`.
 
