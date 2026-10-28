@@ -6,9 +6,11 @@
 // none it is Open or Closed. Item ids are "owner/repo#number".
 //
 // Auth: the cli source runs `gh api` with the workspace identity environment (GH_CONFIG_DIR), so
-// the token stays in gh's own store. When gh is missing or logged out, and for the keychain and
-// env sources, the credential comes from the cred resolver and the adapter calls the API over
-// HTTP with it.
+// the token stays in gh's own store. gh never inherits a gh login from the hub process
+// (GH_CONFIG_DIR, GH_TOKEN, GITHUB_TOKEN, GH_HOST and the enterprise tokens are dropped), and
+// it is not run at all when the identity sets no GH_CONFIG_DIR. When gh cannot be used (no
+// config dir, not installed, logged out, or a 401 for its token), and for the keychain and env
+// sources, the credential comes from the cred resolver and the adapter calls the API over HTTP.
 package github
 
 import (
@@ -40,6 +42,10 @@ func init() {
 // cliToken is the cli credential hook: `gh auth token` for the identity's gh login. The resolver
 // uses it when another component needs a raw token; this adapter itself runs `gh api` instead.
 func cliToken(ctx context.Context, env []string) (cred.Token, error) {
+	if !pinsConfigDir(env) { // gh would hand out the hub process's login, not this workspace's
+		return cred.Token{}, &cred.SourceError{Source: cred.SourceCLI, Provider: Provider,
+			Err: fmt.Errorf("%w: the workspace identity sets no GH_CONFIG_DIR", cred.ErrNoCredential)}
+	}
 	ctx, cancel := withTimeout(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
@@ -130,7 +136,7 @@ func (a *Adapter) resolveLocked(ctx context.Context, req cred.Request) (backend,
 
 // fallBack asks the cred chain, from the keychain source on, for a credential when gh cannot be
 // used. On success the HTTP backend replaces gh; on failure gh stays, so a later gh login works.
-func (a *Adapter) fallBack(ctx context.Context, failed backend) (backend, error) {
+func (a *Adapter) fallBack(ctx context.Context, failed backend, cause error) (backend, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.be != failed {
@@ -141,7 +147,7 @@ func (a *Adapter) fallBack(ctx context.Context, failed backend) (backend, error)
 	be, err := a.resolveLocked(ctx, req)
 	if err != nil {
 		a.be = failed
-		return nil, err
+		return nil, fmt.Errorf("github: %v; %w", cause, err)
 	}
 	return be, nil
 }
@@ -154,7 +160,7 @@ func (a *Adapter) send(ctx context.Context, method, path string, body []byte) (r
 	}
 	r, err := be.do(ctx, method, path, body)
 	if errors.Is(err, errCLIUnavailable) {
-		if be, err = a.fallBack(ctx, be); err != nil {
+		if be, err = a.fallBack(ctx, be, err); err != nil {
 			return response{}, err
 		}
 		r, err = be.do(ctx, method, path, body)
@@ -262,7 +268,8 @@ type ref struct {
 	number      int
 }
 
-func (r ref) id() string { return r.owner + "/" + r.repo + "#" + strconv.Itoa(r.number) }
+func (r ref) id() string  { return r.owner + "/" + r.repo + "#" + strconv.Itoa(r.number) }
+func (r ref) key() string { return r.repo + "#" + strconv.Itoa(r.number) }
 func (r ref) path() string {
 	return "repos/" + url.PathEscape(r.owner) + "/" + url.PathEscape(r.repo) + "/issues/" + strconv.Itoa(r.number)
 }
@@ -447,16 +454,27 @@ const issueFields = `fragment issueFields on Issue {
   repository { nameWithOwner }
   assignees(first: 10) { nodes { login } }
   labels(first: 50) { nodes { name } }
-  parent { number repository { nameWithOwner } }
+  parent { number repository { nameWithOwner } assignees(first: 10) { nodes { login } } }
   comments(last: 20) { nodes { id body createdAt author { login } } }
 }`
 
-const qIssues = `query Issues($owner: String!, $name: String!, $since: DateTime, $assignee: String, $cursor: String) {
+// boardItemsSel is an issue's project items with their status, so an issue read anywhere (as a
+// sub-issue too) carries its board status and the board item's time.
+const boardItemsSel = `projectItems(first: 20) {
+  nodes {
+    id updatedAt project { id }
+    fieldValueByName(name: $field) { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } }
+  }
+}`
+
+// qIssues has no assignee filter: a sub-issue of the viewer's issue is kept on the client, and
+// its own changes do not touch its parent's updatedAt.
+const qIssues = `query Issues($owner: String!, $name: String!, $since: DateTime, $cursor: String) {
   repository(owner: $owner, name: $name) {
     issues(first: 50, after: $cursor, orderBy: {field: UPDATED_AT, direction: ASC},
-           filterBy: {since: $since, assignee: $assignee, states: [OPEN, CLOSED]}) {
+           filterBy: {since: $since, states: [OPEN, CLOSED]}) {
       pageInfo { hasNextPage endCursor }
-      nodes { ...issueFields subIssues(first: 25) { nodes { ...issueFields } } }
+      nodes { ...issueFields subIssues(first: 25) { pageInfo { hasNextPage endCursor } nodes { ...issueFields } } }
     }
   }
 }
@@ -470,9 +488,26 @@ const qProjectItems = `query ProjectItems($id: ID!, $field: String!, $cursor: St
         nodes {
           id updatedAt
           fieldValueByName(name: $field) { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } }
-          content { __typename ... on Issue { ...issueFields subIssues(first: 25) { nodes { ...issueFields } } } }
+          content { __typename ... on Issue { ...issueFields
+            subIssues(first: 25) { pageInfo { hasNextPage endCursor } nodes { ...issueFields ` + boardItemsSel + ` } } } }
         }
       }
+    }
+  }
+}
+` + issueFields
+
+const qSubIssues = `query SubIssues($id: ID!, $cursor: String) {
+  node(id: $id) {
+    ... on Issue { subIssues(first: 50, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { ...issueFields } } }
+  }
+}
+` + issueFields
+
+const qSubIssuesOnBoard = `query SubIssues($id: ID!, $field: String!, $cursor: String) {
+  node(id: $id) {
+    ... on Issue {
+      subIssues(first: 50, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { ...issueFields ` + boardItemsSel + ` } }
     }
   }
 }
@@ -485,21 +520,22 @@ const qIssue = `query Issue($owner: String!, $name: String!, $number: Int!) {
 
 const qIssueOnBoard = `query Issue($owner: String!, $name: String!, $number: Int!, $field: String!) {
   repository(owner: $owner, name: $name) {
-    issue(number: $number) {
-      ...issueFields
-      projectItems(first: 20) {
-        nodes {
-          id updatedAt project { id }
-          fieldValueByName(name: $field) { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } }
-        }
-      }
-    }
+    issue(number: $number) { ...issueFields ` + boardItemsSel + ` }
   }
 }
 ` + issueFields
 
-// maxPages bounds one ListChanged walk (50 items a page).
+// maxPages bounds one repository walk (50 issues a page). The walk is in update order, so a cut
+// walk is resumed from its watermark on the next tick.
 const maxPages = 40
+
+// maxBoardPages bounds one board walk (50 items a page). Board items come in position order with
+// no since filter, so a cut walk is an error: items past the cut would never be seen.
+const maxBoardPages = 100
+
+// maxSubPages bounds the extra sub-issue pages read for one parent. A list query reads the first
+// 25 sub-issues inline (keeping its node cost down) and SubIssues pages the rest, 50 at a time.
+const maxSubPages = 10
 
 type pageInfo struct {
 	HasNextPage bool   `json:"hasNextPage"`
@@ -530,6 +566,9 @@ type ghIssue struct {
 		Repository struct {
 			NameWithOwner string `json:"nameWithOwner"`
 		} `json:"repository"`
+		Assignees struct {
+			Nodes []struct{ Login string } `json:"nodes"`
+		} `json:"assignees"`
 	} `json:"parent"`
 	Comments struct {
 		Nodes []struct {
@@ -539,9 +578,7 @@ type ghIssue struct {
 			Author    *struct{ Login string } `json:"author"`
 		} `json:"nodes"`
 	} `json:"comments"`
-	SubIssues struct {
-		Nodes []ghIssue `json:"nodes"`
-	} `json:"subIssues"`
+	SubIssues    subIssues `json:"subIssues"`
 	ProjectItems struct {
 		Nodes []struct {
 			ID        string    `json:"id"`
@@ -554,6 +591,11 @@ type ghIssue struct {
 	} `json:"projectItems"`
 }
 
+type subIssues struct {
+	PageInfo pageInfo  `json:"pageInfo"`
+	Nodes    []ghIssue `json:"nodes"`
+}
+
 type statusValue struct {
 	Name     string `json:"name"`
 	OptionID string `json:"optionId"`
@@ -561,28 +603,35 @@ type statusValue struct {
 
 func (g ghIssue) ref() ref { return refFrom(g.Repository.NameWithOwner, g.Number) }
 
-func (g ghIssue) assignedTo(login string) bool {
-	return slices.ContainsFunc(g.Assignees.Nodes, func(n struct{ Login string }) bool { return strings.EqualFold(n.Login, login) })
+func hasLogin(nodes []struct{ Login string }, login string) bool {
+	return slices.ContainsFunc(nodes, func(n struct{ Login string }) bool { return strings.EqualFold(n.Login, login) })
+}
+
+func (g ghIssue) assignedTo(login string) bool { return hasLogin(g.Assignees.Nodes, login) }
+
+// parentAssignedTo: the issue is a sub-issue of one assigned to login.
+func (g ghIssue) parentAssignedTo(login string) bool {
+	return g.Parent != nil && hasLogin(g.Parent.Assignees.Nodes, login)
+}
+
+// boardStatus is the issue's status and item time on the project (nil, zero when not on it).
+func (g ghIssue) boardStatus(projectID string) (*statusValue, time.Time) {
+	if projectID == "" {
+		return nil, time.Time{}
+	}
+	for _, pi := range g.ProjectItems.Nodes {
+		if pi.Project.ID == projectID {
+			return pi.Field, pi.UpdatedAt
+		}
+	}
+	return nil, time.Time{}
 }
 
 // item maps an issue; status is the project status (nil = none or no board).
 func (a *Adapter) item(g ghIssue, status *statusValue, updated time.Time) hubsync.Item {
 	r := g.ref()
-	it := hubsync.Item{ID: r.id(), Key: r.repo + "#" + strconv.Itoa(r.number), URL: g.URL, Title: g.Title, Body: g.Body}
-	closed := strings.EqualFold(g.State, "CLOSED")
-	switch {
-	case a.board != 0 && status != nil && status.Name != "":
-		it.Status, it.StatusCategory = status.Name, categoryFor(status.Name)
-	case a.board != 0: // not on the board, or no status set: the category follows open/closed
-		it.StatusCategory = hubsync.CategoryTodo
-		if closed {
-			it.StatusCategory = hubsync.CategoryDone
-		}
-	case closed:
-		it.Status, it.StatusCategory = statusClosed, hubsync.CategoryDone
-	default:
-		it.Status, it.StatusCategory = statusOpen, hubsync.CategoryTodo
-	}
+	it := hubsync.Item{ID: r.id(), Key: r.key(), URL: g.URL, Title: g.Title, Body: g.Body}
+	a.setStatus(&it, status, strings.EqualFold(g.State, "CLOSED"))
 	if len(g.Assignees.Nodes) > 0 {
 		it.Assignee = g.Assignees.Nodes[0].Login
 	}
@@ -606,6 +655,24 @@ func (a *Adapter) item(g ghIssue, status *statusValue, updated time.Time) hubsyn
 	it.UpdatedAt = updated.UTC()
 	it.Rev = it.UpdatedAt.Format(time.RFC3339)
 	return it
+}
+
+// setStatus sets Status and StatusCategory from the board status (nil = none or no board) and
+// the open/closed state.
+func (a *Adapter) setStatus(it *hubsync.Item, status *statusValue, closed bool) {
+	switch {
+	case a.board != 0 && status != nil && status.Name != "":
+		it.Status, it.StatusCategory = status.Name, categoryFor(status.Name)
+	case a.board != 0: // not on the board, or no status set: the category follows open/closed
+		it.Status, it.StatusCategory = "", hubsync.CategoryTodo
+		if closed {
+			it.StatusCategory = hubsync.CategoryDone
+		}
+	case closed:
+		it.Status, it.StatusCategory = statusClosed, hubsync.CategoryDone
+	default:
+		it.Status, it.StatusCategory = statusOpen, hubsync.CategoryTodo
+	}
 }
 
 // collector gathers changed items, dedups them and tracks the watermark. An issue listed in its
@@ -634,15 +701,20 @@ func (c *collector) add(it hubsync.Item, direct bool) {
 	c.mark(it)
 }
 
-func (c *collector) mark(it hubsync.Item) {
-	if it.UpdatedAt.After(c.wm) {
-		c.wm = it.UpdatedAt
+func (c *collector) mark(it hubsync.Item) { c.markTime(it.UpdatedAt) }
+
+// markTime moves the watermark to t, for an item read but not kept.
+func (c *collector) markTime(t time.Time) {
+	if t.After(c.wm) {
+		c.wm = t
 	}
 }
 
 // ListChanged lists the issues changed since the watermark: with assigned_to me, those assigned
-// to the logged-in account plus the sub-issues of the ones listed. With a board, the board's
-// issue items (in the scope repository when one is set); otherwise the repository's issues.
+// to the logged-in account plus their sub-issues. With a board, the board's issue items (in the
+// scope repository when one is set), every one carrying its board status, sub-issues included;
+// otherwise the repository's issues. A board too large to walk in one tick is an error, and the
+// watermark does not move.
 func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.Item, time.Time, error) {
 	login := ""
 	if a.cfg.AssignedTo != "anyone" {
@@ -665,11 +737,47 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 	return c.items, c.wm, nil
 }
 
-func (a *Adapter) addWithChildren(g ghIssue, status *statusValue, updated time.Time, c *collector) {
+// addWithChildren adds an issue and its sub-issues, reading the sub-issues past the first page.
+// projectID is the board's id ("" without a board); a sub-issue's status comes from its own
+// project item.
+func (a *Adapter) addWithChildren(ctx context.Context, g ghIssue, status *statusValue, updated time.Time, projectID string, c *collector) error {
 	c.add(a.item(g, status, updated), true)
-	for _, ch := range g.SubIssues.Nodes {
-		c.add(a.item(ch, nil, time.Time{}), false)
+	children, err := a.allSubIssues(ctx, g, projectID)
+	for _, ch := range children {
+		st, up := ch.boardStatus(projectID)
+		c.add(a.item(ch, st, up), false)
 	}
+	return err
+}
+
+// allSubIssues is the issue's sub-issues, paging past the first page.
+func (a *Adapter) allSubIssues(ctx context.Context, g ghIssue, projectID string) ([]ghIssue, error) {
+	out := g.SubIssues.Nodes
+	pi := g.SubIssues.PageInfo
+	q, vars := qSubIssues, map[string]any{"id": g.ID}
+	if projectID != "" {
+		q, vars["field"] = qSubIssuesOnBoard, a.statusField
+	}
+	for page := 0; pi.HasNextPage && pi.EndCursor != ""; page++ {
+		if page == maxSubPages {
+			return out, fmt.Errorf("github: %s has more than %d sub-issues", g.ref().id(), len(out))
+		}
+		vars["cursor"] = pi.EndCursor
+		var resp struct {
+			Node *struct {
+				SubIssues subIssues `json:"subIssues"`
+			} `json:"node"`
+		}
+		if err := a.gql(ctx, q, vars, &resp); err != nil {
+			return out, err
+		}
+		if resp.Node == nil {
+			return out, fmt.Errorf("%w: github: issue %s", hubsync.ErrNotFound, g.ref().id())
+		}
+		out = append(out, resp.Node.SubIssues.Nodes...)
+		pi = resp.Node.SubIssues.PageInfo
+	}
+	return out, nil
 }
 
 func (a *Adapter) listRepo(ctx context.Context, login string, c *collector) error {
@@ -680,9 +788,7 @@ func (a *Adapter) listRepo(ctx context.Context, login string, c *collector) erro
 	if !c.since.IsZero() {
 		vars["since"] = c.since.UTC().Format(time.RFC3339)
 	}
-	if login != "" {
-		vars["assignee"] = login
-	}
+	top := c.since // the newest top-level issue read: the walk is in update order
 	for page := 0; page < maxPages; page++ {
 		var out struct {
 			Repository *struct {
@@ -699,7 +805,16 @@ func (a *Adapter) listRepo(ctx context.Context, login string, c *collector) erro
 			return fmt.Errorf("%w: github: repository %s/%s", hubsync.ErrNotFound, a.owner, a.repo)
 		}
 		for _, g := range out.Repository.Issues.Nodes {
-			a.addWithChildren(g, nil, time.Time{}, c)
+			if g.UpdatedAt.After(top) {
+				top = g.UpdatedAt
+			}
+			if login != "" && !g.assignedTo(login) && !g.parentAssignedTo(login) {
+				c.markTime(g.UpdatedAt) // read, not kept: the next tick need not read it again
+				continue
+			}
+			if err := a.addWithChildren(ctx, g, nil, time.Time{}, "", c); err != nil {
+				return err
+			}
 		}
 		pi := out.Repository.Issues.PageInfo
 		if !pi.HasNextPage || pi.EndCursor == "" {
@@ -707,6 +822,9 @@ func (a *Adapter) listRepo(ctx context.Context, login string, c *collector) erro
 		}
 		vars["cursor"] = pi.EndCursor
 	}
+	// Cut at the page cap: resume after the last top-level issue read, not after a newer
+	// sub-issue, or the issues between them would be skipped.
+	c.wm = top
 	return nil
 }
 
@@ -716,7 +834,7 @@ func (a *Adapter) listBoard(ctx context.Context, login string, c *collector) err
 		return err
 	}
 	vars := map[string]any{"id": p.ID, "field": a.statusField}
-	for page := 0; page < maxPages; page++ {
+	for page := 0; page < maxBoardPages; page++ {
 		var out struct {
 			Node *struct {
 				Items struct {
@@ -745,9 +863,11 @@ func (a *Adapter) listBoard(ctx context.Context, login string, c *collector) err
 				continue
 			}
 			if login != "" && !g.assignedTo(login) {
-				continue
+				continue // an unassigned sub-issue comes in through its parent, with its status
 			}
-			a.addWithChildren(*g, n.Field, n.UpdatedAt, c)
+			if err := a.addWithChildren(ctx, *g, n.Field, n.UpdatedAt, p.ID, c); err != nil {
+				return err
+			}
 		}
 		pi := out.Node.Items.PageInfo
 		if !pi.HasNextPage || pi.EndCursor == "" {
@@ -755,7 +875,8 @@ func (a *Adapter) listBoard(ctx context.Context, login string, c *collector) err
 		}
 		vars["cursor"] = pi.EndCursor
 	}
-	return nil
+	return fmt.Errorf("github: project %d of %s has more than %d items; the sync reads a board in one walk, so it stopped without moving the watermark (narrow the board or use tracker.scope.project without a board)",
+		a.board, a.owner, maxBoardPages*50)
 }
 
 // Get reads one issue.
@@ -785,16 +906,11 @@ func (a *Adapter) Get(ctx context.Context, id string) (hubsync.Item, error) {
 		return hubsync.Item{}, fmt.Errorf("%w: github: %s", hubsync.ErrNotFound, r.id())
 	}
 	g := *out.Repository.Issue
-	var status *statusValue
-	var updated time.Time
+	pid := ""
 	if p != nil {
-		for _, pi := range g.ProjectItems.Nodes {
-			if pi.Project.ID == p.ID {
-				status, updated = pi.Field, pi.UpdatedAt
-				break
-			}
-		}
+		pid = p.ID
 	}
+	status, updated := g.boardStatus(pid)
 	return a.item(g, status, updated), nil
 }
 
@@ -802,7 +918,7 @@ func (a *Adapter) Get(ctx context.Context, id string) (hubsync.Item, error) {
 
 const qIssueItems = `query IssueItems($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
-    issue(number: $number) { id projectItems(first: 20) { nodes { id project { id } } } }
+    issue(number: $number) { id state projectItems(first: 20) { nodes { id project { id } } } }
   }
 }`
 
@@ -817,7 +933,10 @@ const mSetStatus = `mutation SetStatus($project: ID!, $item: ID!, $field: ID!, $
 }`
 
 // Move sets the project status with a board (adding the issue to the board if needed), else
-// opens or closes the issue. status is a status name or a category.
+// opens or closes the issue. status is a status name or a category. With a board the issue's
+// state follows too: a done status closes an open issue and any other reopens a closed one, as
+// the project's built-in workflows may be off. The state goes first, so a workflow that sets a
+// status on close or reopen does not override the status asked for.
 func (a *Adapter) Move(ctx context.Context, id, status string) error {
 	r, err := a.parseID(id)
 	if err != nil {
@@ -843,7 +962,17 @@ func (a *Adapter) Move(ctx context.Context, id, status string) error {
 	if err != nil {
 		return err
 	}
-	itemID, err := a.ensureItem(ctx, r, p, "")
+	itemID, state, err := a.ensureItem(ctx, r, p, "")
+	if err != nil {
+		return err
+	}
+	done := categoryFor(opt.Name) == hubsync.CategoryDone
+	switch {
+	case done && strings.EqualFold(state, "OPEN"):
+		err = a.rest(ctx, "PATCH", r.path(), map[string]any{"state": "closed", "state_reason": "completed"}, nil)
+	case !done && strings.EqualFold(state, "CLOSED"):
+		err = a.rest(ctx, "PATCH", r.path(), map[string]any{"state": "open"}, nil)
+	}
 	if err != nil {
 		return err
 	}
@@ -872,14 +1001,16 @@ func (p *project) option(status string) (option, error) {
 	return option{}, fmt.Errorf("github: project %q has no status %q (statuses: %s)", p.Title, status, strings.Join(names, ", "))
 }
 
-// ensureItem is the issue's item on the project, adding the issue when it is not there. nodeID
-// skips the lookup when the caller knows the issue's node id and that it is not on the board.
-func (a *Adapter) ensureItem(ctx context.Context, r ref, p *project, nodeID string) (string, error) {
+// ensureItem is the issue's item on the project and its state (OPEN or CLOSED; "" when the
+// lookup was skipped), adding the issue when it is not there. nodeID skips the lookup when the
+// caller knows the issue's node id and that it is not on the board.
+func (a *Adapter) ensureItem(ctx context.Context, r ref, p *project, nodeID string) (itemID, state string, err error) {
 	if nodeID == "" {
 		var out struct {
 			Repository *struct {
 				Issue *struct {
 					ID           string `json:"id"`
+					State        string `json:"state"`
 					ProjectItems struct {
 						Nodes []struct {
 							ID      string `json:"id"`
@@ -892,14 +1023,15 @@ func (a *Adapter) ensureItem(ctx context.Context, r ref, p *project, nodeID stri
 			} `json:"repository"`
 		}
 		if err := a.gql(ctx, qIssueItems, map[string]any{"owner": r.owner, "name": r.repo, "number": r.number}, &out); err != nil {
-			return "", err
+			return "", "", err
 		}
 		if out.Repository == nil || out.Repository.Issue == nil {
-			return "", fmt.Errorf("%w: github: %s", hubsync.ErrNotFound, r.id())
+			return "", "", fmt.Errorf("%w: github: %s", hubsync.ErrNotFound, r.id())
 		}
+		state = out.Repository.Issue.State
 		for _, it := range out.Repository.Issue.ProjectItems.Nodes {
 			if it.Project.ID == p.ID {
-				return it.ID, nil
+				return it.ID, state, nil
 			}
 		}
 		nodeID = out.Repository.Issue.ID
@@ -912,12 +1044,12 @@ func (a *Adapter) ensureItem(ctx context.Context, r ref, p *project, nodeID stri
 		} `json:"addProjectV2ItemById"`
 	}
 	if err := a.gql(ctx, mAddToProject, map[string]any{"project": p.ID, "content": nodeID}, &added); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if added.Add.Item.ID == "" {
-		return "", fmt.Errorf("github: adding %s to project %q returned no item", r.id(), p.Title)
+		return "", "", fmt.Errorf("github: adding %s to project %q returned no item", r.id(), p.Title)
 	}
-	return added.Add.Item.ID, nil
+	return added.Add.Item.ID, state, nil
 }
 
 // Comment adds a comment; GitHub takes markdown as is.
@@ -932,6 +1064,12 @@ func (a *Adapter) Comment(ctx context.Context, id, markdown string) error {
 // Create opens an issue in the scope repository (or the parent's), links it as a sub-issue of
 // in.ParentID, adds it to the board and sets in.Status. in.Type is not used: GitHub issue types
 // are per organization.
+//
+// Once the issue exists, Create never hides it: when a later step fails (the sub-issue link, the
+// board add, the status, a rate limit on any of them) it returns the created issue (ID, Key,
+// URL and what it was asked to set) together with the error. A non-empty Item.ID with an error
+// means the issue was created and must not be created again. When only the final read-back
+// fails, Create succeeds with that same item.
 func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item, error) {
 	var parent *ref
 	target := ref{owner: a.owner, repo: a.repo}
@@ -957,9 +1095,10 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 		req["labels"] = in.Labels
 	}
 	var created struct {
-		ID     int64  `json:"id"`
-		Number int    `json:"number"`
-		NodeID string `json:"node_id"`
+		ID      int64  `json:"id"`
+		Number  int    `json:"number"`
+		NodeID  string `json:"node_id"`
+		HTMLURL string `json:"html_url"`
 	}
 	path := "repos/" + url.PathEscape(target.owner) + "/" + url.PathEscape(target.repo) + "/issues"
 	if err := a.rest(ctx, "POST", path, req, &created); err != nil {
@@ -969,26 +1108,42 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 		return hubsync.Item{}, errors.New("github: create returned no issue number")
 	}
 	target.number = created.Number
+	made := hubsync.Item{ID: target.id(), Key: target.key(), URL: created.HTMLURL, Title: in.Title, Body: body,
+		Labels: slices.Clone(in.Labels), UpdatedAt: now().UTC()}
+	a.setStatus(&made, nil, false)
 	if parent != nil {
+		made.ParentID = parent.id()
 		if err := a.rest(ctx, "POST", parent.path()+"/sub_issues", map[string]any{"sub_issue_id": created.ID}, nil); err != nil {
-			return hubsync.Item{}, fmt.Errorf("github: created %s but linking it under %s failed: %w", target.id(), parent.id(), err)
+			return made, fmt.Errorf("github: created %s but linking it under %s failed: %w", target.id(), parent.id(), err)
 		}
 	}
 	if a.board != 0 {
 		p, err := a.project(ctx)
 		if err != nil {
-			return hubsync.Item{}, err
+			return made, fmt.Errorf("github: created %s but reading the board failed: %w", target.id(), err)
 		}
-		if _, err := a.ensureItem(ctx, target, p, created.NodeID); err != nil {
-			return hubsync.Item{}, fmt.Errorf("github: created %s but adding it to the board failed: %w", target.id(), err)
+		if _, _, err := a.ensureItem(ctx, target, p, created.NodeID); err != nil {
+			return made, fmt.Errorf("github: created %s but adding it to the board failed: %w", target.id(), err)
+		}
+		if strings.TrimSpace(in.Status) != "" {
+			if opt, err := p.option(in.Status); err == nil {
+				a.setStatus(&made, &statusValue{Name: opt.Name, OptionID: opt.ID}, false)
+			}
 		}
 	}
 	if strings.TrimSpace(in.Status) != "" {
 		if err := a.Move(ctx, target.id(), in.Status); err != nil {
-			return hubsync.Item{}, fmt.Errorf("github: created %s but setting its status failed: %w", target.id(), err)
+			a.setStatus(&made, nil, false)
+			return made, fmt.Errorf("github: created %s but setting its status failed: %w", target.id(), err)
+		}
+		if a.board == 0 && categoryFor(in.Status) == hubsync.CategoryDone {
+			a.setStatus(&made, nil, true)
 		}
 	}
-	return a.Get(ctx, target.id())
+	if got, err := a.Get(ctx, target.id()); err == nil {
+		return got, nil
+	}
+	return made, nil // created and set up; the next ListChanged reads it in full
 }
 
 // Update edits the title and/or body; nil leaves a field as it is.

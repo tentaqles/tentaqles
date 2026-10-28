@@ -47,15 +47,34 @@ type backend interface {
 	do(ctx context.Context, method, path string, body []byte) (response, error)
 }
 
-// errCLIUnavailable: gh is missing or not logged in for this identity, so the next credential
-// source is tried.
-var errCLIUnavailable = errors.New("gh is not installed or not logged in")
+// errCLIUnavailable: gh cannot act for this identity (not installed, logged out, a rejected
+// token, or no GH_CONFIG_DIR in the identity env), so the next credential source is tried. It is
+// wrapped with the reason, which never holds a token.
+var errCLIUnavailable = errors.New("gh cannot be used for this workspace")
+
+// errNoConfigDir: the identity env pins no gh config dir, so gh would act as whatever login the
+// hub process has (another workspace's or the shell's).
+var errNoConfigDir = fmt.Errorf("%w: the workspace identity sets no GH_CONFIG_DIR", errCLIUnavailable)
 
 // ghBackend runs `gh api` with the workspace identity environment. gh keeps the token in its own
 // store; tq never sees it.
 type ghBackend struct{ env []string }
 
+// pinsConfigDir says whether an identity env sets a non-empty GH_CONFIG_DIR.
+func pinsConfigDir(env []string) bool {
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		if strings.EqualFold(k, "GH_CONFIG_DIR") && strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (g *ghBackend) do(ctx context.Context, method, path string, body []byte) (response, error) {
+	if !pinsConfigDir(g.env) {
+		return response{}, errNoConfigDir
+	}
 	ctx, cancel := withTimeout(ctx)
 	defer cancel()
 	args := []string{"api", "--include", "-X", method,
@@ -74,6 +93,9 @@ func (g *ghBackend) do(ctx context.Context, method, path string, body []byte) (r
 	cmd.Stderr = &limitWriter{w: &stderr, n: 4096}
 	runErr := cmd.Run()
 	if resp, ok := parseIncluded(stdout.Bytes()); ok {
+		if resp.status == http.StatusUnauthorized { // gh's stored token is expired or revoked
+			return response{}, fmt.Errorf("%w: gh api %s: HTTP 401: %s", errCLIUnavailable, path, clip(apiMessage(resp.body)))
+		}
 		return resp, nil // gh exits 1 on an HTTP error but still prints the response
 	}
 	if runErr == nil {
@@ -86,7 +108,7 @@ func (g *ghBackend) do(ctx context.Context, method, path string, body []byte) (r
 	var ee *exec.ExitError
 	if errors.Is(runErr, exec.ErrNotFound) || (errors.As(runErr, &ee) && ee.ExitCode() == 4) ||
 		strings.Contains(msg, "gh auth login") {
-		return response{}, errCLIUnavailable
+		return response{}, fmt.Errorf("%w: gh is not installed or not logged in", errCLIUnavailable)
 	}
 	return response{}, fmt.Errorf("github: gh api %s: %v: %s", path, runErr, clip(msg))
 }
@@ -117,9 +139,13 @@ func parseIncluded(out []byte) (response, bool) {
 	return response{status: status, header: http.Header(h), body: body}, true
 }
 
-// ghEnv is the child env for gh: the process env with the workspace identity env laid over it.
-// When the identity pins a GH_CONFIG_DIR, ambient token and host vars are dropped, because gh
-// prefers GH_TOKEN over the config dir and would act as the shell's login.
+// ambientGH are the process env vars that pick a gh login or host. They are never inherited: in
+// a hub serving several workspaces they belong to another workspace or to the shell, and gh
+// prefers GH_TOKEN over the config dir. Only the identity env may set them.
+var ambientGH = []string{"GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
+
+// ghEnv is the child env for gh: the process env, without any ambient gh login or host, with the
+// workspace identity env laid over it.
 func ghEnv(base, identity []string) []string {
 	over := map[string]string{}
 	var order []string
@@ -137,12 +163,8 @@ func ghEnv(base, identity []string) []string {
 	for k := range over {
 		drop[k] = true
 	}
-	if _, pinned := over["GH_CONFIG_DIR"]; pinned {
-		for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"} {
-			if _, set := over[k]; !set {
-				drop[k] = true
-			}
-		}
+	for _, k := range ambientGH {
+		drop[k] = true
 	}
 	out := make([]string, 0, len(base)+len(order)+2)
 	for _, kv := range base {
@@ -257,6 +279,15 @@ func retryAfter(h http.Header, fallback bool) time.Duration {
 		return time.Minute
 	}
 	return 0
+}
+
+// apiMessage is GitHub's top-level error message in a response body.
+func apiMessage(body []byte) string {
+	var e struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(body, &e)
+	return e.Message
 }
 
 // apiError is a non-2xx answer: the status and GitHub's message, never a header or a token.

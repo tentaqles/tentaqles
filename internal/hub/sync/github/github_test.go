@@ -44,9 +44,14 @@ func withLabels(ls ...string) issueOpt {
 		m["labels"] = map[string]any{"nodes": n}
 	}
 }
-func withParent(repo string, n int) issueOpt {
+func withParent(repo string, n int, assignees ...string) issueOpt {
 	return func(m map[string]any) {
-		m["parent"] = map[string]any{"number": n, "repository": map[string]any{"nameWithOwner": repo}}
+		var as []any
+		for _, l := range assignees {
+			as = append(as, map[string]any{"login": l})
+		}
+		m["parent"] = map[string]any{"number": n, "repository": map[string]any{"nameWithOwner": repo},
+			"assignees": map[string]any{"nodes": as}}
 	}
 }
 func withComments(cs ...map[string]any) issueOpt {
@@ -103,6 +108,7 @@ func newAdapter(t *testing.T, f *fixture, mode string, scope map[string]string) 
 	case "cli":
 		useFakeGH(t, f)
 		cfg.Auth = cred.SourceCLI
+		cfg.Env = []string{"GH_CONFIG_DIR=" + t.TempDir()}
 	case "http":
 		cfg.Auth = cred.SourceKeychain
 		cfg.Transport = cred.Static(cred.SourceKeychain, cred.Token{Value: secret})
@@ -154,8 +160,12 @@ func TestCLIHookUsesIdentityEnv(t *testing.T) {
 	if err != nil || tok.Value != secret {
 		t.Fatalf("%v", err)
 	}
+	// an identity with no gh config dir never runs gh: it would use the shell's login
+	if tok, err := h(context.Background(), nil); !errors.Is(err, cred.ErrNoCredential) || tok.Value != "" {
+		t.Fatalf("unpinned: %v", err)
+	}
 	t.Setenv("FAKE_GH_LOGGEDOUT", "1")
-	if _, err := h(context.Background(), nil); !errors.Is(err, cred.ErrNoCredential) {
+	if _, err := h(context.Background(), []string{"GH_CONFIG_DIR=" + t.TempDir()}); !errors.Is(err, cred.ErrNoCredential) {
 		t.Fatalf("logged out: %v", err)
 	}
 }
@@ -343,7 +353,7 @@ func TestListChangedRepo(t *testing.T) {
 			t.Fatalf("closed %+v", items[2])
 		}
 		cs := f.find("Issues")
-		if len(cs) != 2 || cs[0].Vars["since"] != "2026-09-30T00:00:00Z" || cs[0].Vars["assignee"] != "tester" ||
+		if len(cs) != 2 || cs[0].Vars["since"] != "2026-09-30T00:00:00Z" || cs[0].Vars["assignee"] != nil ||
 			cs[1].Vars["cursor"] != "c1" || cs[0].Vars["owner"] != "acme" || cs[0].Vars["name"] != "web" {
 			t.Fatalf("issue vars %+v", cs)
 		}
