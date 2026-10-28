@@ -1286,6 +1286,10 @@ func (a *Adapter) Comment(ctx context.Context, id, markdown string) error {
 // sub-issue link, the board add, the status, a rate limit on any of them) it returns the created
 // issue (ID, Key, URL and what it was asked to set) and a *hubsync.PartialCreateError holding the
 // same item and the cause. When only the final read-back fails, Create succeeds with that item.
+// When the POST itself was sent but its outcome is unknown (a timeout, a dropped connection, a
+// 5xx, an answer without an issue number) the error wraps hubsync.ErrCreateUncertain, so the
+// engine looks the issue up before creating it again. The item id always uses GitHub's spelling
+// of the owner and repository (from the create answer), the one ListChanged and Get return.
 func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item, error) {
 	var parent *ref
 	target := ref{owner: a.owner, repo: a.repo}
@@ -1331,28 +1335,36 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	if len(in.Labels) > 0 {
 		req["labels"] = in.Labels
 	}
-	var created struct {
-		ID      int64  `json:"id"`
-		Number  int    `json:"number"`
-		NodeID  string `json:"node_id"`
-		HTMLURL string `json:"html_url"`
-	}
-	path := "repos/" + url.PathEscape(target.owner) + "/" + url.PathEscape(target.repo) + "/issues"
-	if err := a.rest(ctx, "POST", path, req, &created); err != nil {
+	created, decodeErr, err := a.postIssue(ctx, target, req)
+	if err != nil {
 		return hubsync.Item{}, err
 	}
-	if created.Number <= 0 {
-		return hubsync.Item{}, errors.New("github: create returned no issue number")
-	}
 	target.number = created.Number
-	made := hubsync.Item{ID: target.id(), Key: target.key(), URL: created.HTMLURL, Title: in.Title, Body: body,
+	// the id uses GitHub's spelling of the names, as ListChanged and Get do
+	canon := target
+	if o, r, ok := repoFromURLs(created.RepositoryURL, created.HTMLURL); ok &&
+		strings.EqualFold(o, target.owner) && strings.EqualFold(r, target.repo) {
+		canon.owner, canon.repo = o, r
+	}
+	made := hubsync.Item{ID: canon.id(), Key: canon.key(), URL: created.HTMLURL, Title: in.Title, Body: body,
 		Labels: slices.Clone(in.Labels), UpdatedAt: now().UTC()}
 	a.setStatus(&made, nil, false)
+	if parent != nil {
+		made.ParentID = parent.id()
+		if given, err := a.parseID(in.ParentID); err == nil {
+			made.ParentID = given.id() // the engine's own spelling of its link
+		}
+	}
 	partial := func(step string, err error) (hubsync.Item, error) {
 		return made, &hubsync.PartialCreateError{Item: made, Err: fmt.Errorf("github: %s: %w", step, err)}
 	}
+	if decodeErr != nil || created.ID == 0 || created.NodeID == "" {
+		if decodeErr == nil {
+			decodeErr = errors.New("the answer has no issue id or node id")
+		}
+		return partial("reading the create answer", decodeErr)
+	}
 	if parent != nil {
-		made.ParentID = parent.id()
 		if err := a.rest(ctx, "POST", parent.path()+"/sub_issues", map[string]any{"sub_issue_id": created.ID}, nil); err != nil {
 			return partial("linking it under "+parent.id(), err)
 		}
@@ -1376,6 +1388,74 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 		return got, nil
 	}
 	return made, nil // created and set up; the next ListChanged reads it in full
+}
+
+type createdIssue struct {
+	ID            int64  `json:"id"`
+	Number        int    `json:"number"`
+	NodeID        string `json:"node_id"`
+	HTMLURL       string `json:"html_url"`
+	RepositoryURL string `json:"repository_url"`
+}
+
+// postIssue sends the create. err is set when no issue number is known: a plain error when
+// GitHub refused the request (or it was never sent), hubsync.ErrCreateUncertain when it was sent
+// and the issue may exist (a transport failure, a timeout, a 5xx, an answer without a number).
+// decodeErr is set when the answer names the issue but could not be read in full.
+func (a *Adapter) postIssue(ctx context.Context, target ref, req map[string]any) (created createdIssue, decodeErr, err error) {
+	path := "repos/" + url.PathEscape(target.owner) + "/" + url.PathEscape(target.repo) + "/issues"
+	in, err := json.Marshal(req)
+	if err != nil {
+		return created, nil, err
+	}
+	uncertain := func(cause error) error {
+		return fmt.Errorf("github: creating an issue in %s/%s: %w (look for it before creating again): %w",
+			target.owner, target.repo, hubsync.ErrCreateUncertain, cause)
+	}
+	r, err := a.send(ctx, "POST", path, in)
+	if err != nil {
+		var se *cred.SourceError
+		if errors.Is(err, errCLIUnavailable) || errors.As(err, &se) {
+			return created, nil, err // no credential: nothing was sent
+		}
+		return created, nil, uncertain(err)
+	}
+	if rl := rateLimit(r); rl != nil {
+		return created, nil, rl
+	}
+	if r.status >= 500 {
+		return created, nil, uncertain(apiError("POST", path, r))
+	}
+	if r.status < 200 || r.status > 299 {
+		return created, nil, apiError("POST", path, r)
+	}
+	decodeErr = json.Unmarshal(r.body, &created) // a type error still fills the other fields
+	if created.Number <= 0 {
+		cause := errors.New("the answer has no issue number")
+		if decodeErr != nil {
+			cause = fmt.Errorf("decoding the answer: %w", decodeErr)
+		}
+		return createdIssue{}, nil, uncertain(cause)
+	}
+	return created, decodeErr, nil
+}
+
+// repoFromURLs is the owner and repository named by a REST issue's repository_url
+// (".../repos/<owner>/<repo>") or, failing that, its html_url (".../<owner>/<repo>/issues/<n>").
+func repoFromURLs(repositoryURL, htmlURL string) (owner, repo string, ok bool) {
+	if u, err := url.Parse(repositoryURL); err == nil && repositoryURL != "" {
+		seg := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if n := len(seg); n >= 3 && seg[n-3] == "repos" && seg[n-2] != "" && seg[n-1] != "" {
+			return seg[n-2], seg[n-1], true
+		}
+	}
+	if u, err := url.Parse(htmlURL); err == nil && htmlURL != "" {
+		seg := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if n := len(seg); n >= 4 && seg[n-2] == "issues" && seg[n-4] != "" && seg[n-3] != "" {
+			return seg[n-4], seg[n-3], true
+		}
+	}
+	return "", "", false
 }
 
 // Update edits the title and/or body; nil leaves a field as it is.

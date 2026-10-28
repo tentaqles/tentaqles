@@ -18,6 +18,11 @@ func (e *PartialCreateError) Error() string {
 
 func (e *PartialCreateError) Unwrap() error { return e.Err }
 
+// ErrCreateUncertain: Create sent the request but cannot tell whether the tracker made the item
+// (a timeout, a dropped connection, a 5xx, an unreadable answer) and knows no id. The engine must
+// not create again blindly: it looks the item up (by title or marker) first, or asks the human.
+var ErrCreateUncertain = errors.New("the tracker may have created the item")
+
 // CreatedItem is the item a failed Create still made, if any.
 func CreatedItem(err error) (Item, bool) {
 	var pc *PartialCreateError

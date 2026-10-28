@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -80,6 +81,76 @@ func TestProjectCacheRefreshes(t *testing.T) {
 		it, err := c.Create(ctx, hubsync.NewItem{Title: "x", Status: "Blocked"})
 		if err != nil || it.Status != "Blocked" {
 			t.Fatalf("create with a new option: %+v %v", it, err)
+		}
+	})
+}
+
+// The created id uses GitHub's spelling of owner and repository, as ListChanged and Get do, so
+// the next sync matches it to the card instead of importing it again.
+func TestCreateIDUsesCanonicalNames(t *testing.T) {
+	each(t, func(t *testing.T, mode string) {
+		f := newFixture(t)
+		f.onREST("POST /repos/acme/web/issues", reply{Status: 201, Body: `{"id":9013,"number":13,"node_id":"I_13",` +
+			`"html_url":"https://github.com/Acme/Web/issues/13","repository_url":"https://api.github.com/repos/Acme/Web"}`})
+		f.onGQL("Issue", reply{Status: 502, Body: `{"message":"bad gateway"}`})
+		f.onREST("POST /repos/acme/web/issues/4/sub_issues", reply{Status: 429, Header: map[string]string{"Retry-After": "5"}, Body: `{"message":"slow down"}`})
+		a := newAdapter(t, f, mode, repoScope())
+		ctx := context.Background()
+		it, err := a.Create(ctx, hubsync.NewItem{Title: "plain"})
+		if err != nil || it.ID != "Acme/Web#13" || it.Key != "Web#13" {
+			t.Fatalf("read-back failed: %+v %v", it, err)
+		}
+		_, err = a.Create(ctx, hubsync.NewItem{Title: "child", ParentID: "Acme/Web#4"})
+		got, ok := hubsync.CreatedItem(err)
+		if !ok || got.ID != "Acme/Web#13" || got.ParentID != "Acme/Web#4" {
+			t.Fatalf("partial: %+v %v", got, err)
+		}
+		// no repository_url: html_url still names the repository
+		f.onREST("POST /repos/acme/web/issues", reply{Status: 201, Body: `{"id":9014,"number":14,"node_id":"I_14","html_url":"https://github.com/Acme/Web/issues/14"}`})
+		if it, err := a.Create(ctx, hubsync.NewItem{Title: "plain"}); err != nil || it.ID != "Acme/Web#14" {
+			t.Fatalf("html_url: %+v %v", it, err)
+		}
+	})
+}
+
+// A POST whose outcome is unknown (a dropped connection, a 5xx, an unreadable answer) may have
+// opened the issue: Create says so with ErrCreateUncertain, or with a PartialCreateError when
+// the answer still names the issue. A refused POST stays a plain error.
+func TestCreateUncertainPost(t *testing.T) {
+	each(t, func(t *testing.T, mode string) {
+		for name, c := range map[string]struct {
+			rep       reply
+			uncertain bool
+			partial   string
+		}{
+			"dropped":        {reply{Drop: true}, true, ""},
+			"502":            {reply{Status: 502, Body: `{"message":"bad gateway"}`}, true, ""},
+			"no number":      {reply{Status: 201, Body: `{"id":9012}`}, true, ""},
+			"not json":       {reply{Status: 201, Body: `<html>`}, true, ""},
+			"half readable":  {reply{Status: 201, Body: `{"id":"x","number":12,"html_url":"https://github.com/acme/web/issues/12"}`}, false, "acme/web#12"},
+			"422":            {reply{Status: 422, Body: `{"message":"Validation Failed"}`}, false, ""},
+			"rate limited":   {reply{Status: 429, Header: map[string]string{"Retry-After": "5"}, Body: `{"message":"slow"}`}, false, ""},
+			"not authorized": {reply{Status: 403, Body: `{"message":"Resource not accessible"}`}, false, ""},
+		} {
+			f := newFixture(t)
+			f.onREST("POST /repos/acme/web/issues", c.rep)
+			f.onGQL("Issue", reply{Status: 502, Body: `{"message":"bad gateway"}`})
+			a := newAdapter(t, f, mode, repoScope())
+			it, err := a.Create(context.Background(), hubsync.NewItem{Title: "x"})
+			if err == nil {
+				t.Fatalf("%s: no error", name)
+			}
+			if got := errors.Is(err, hubsync.ErrCreateUncertain); got != c.uncertain {
+				t.Fatalf("%s: uncertain %v, want %v: %v", name, got, c.uncertain, err)
+			}
+			made, ok := hubsync.CreatedItem(err)
+			if c.partial != "" {
+				if !ok || made.ID != c.partial || it.ID != c.partial {
+					t.Fatalf("%s: partial %+v %+v %v", name, made, it, err)
+				}
+			} else if ok || it.ID != "" {
+				t.Fatalf("%s: no id is known, got %+v %v", name, it, err)
+			}
 		}
 	})
 }
