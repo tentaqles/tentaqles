@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +51,7 @@ func withParent(repo string, n int, assignees ...string) issueOpt {
 		for _, l := range assignees {
 			as = append(as, map[string]any{"login": l})
 		}
-		m["parent"] = map[string]any{"number": n, "repository": map[string]any{"nameWithOwner": repo},
+		m["parent"] = map[string]any{"id": fmt.Sprintf("I_%d", n), "number": n, "repository": map[string]any{"nameWithOwner": repo},
 			"assignees": map[string]any{"nodes": as}}
 	}
 }
@@ -236,38 +238,61 @@ func TestCheckMissingScope(t *testing.T) {
 	}
 }
 
+// A logged-out gh (exit code 4, the "gh auth login" hint, or both) really runs, is classified as
+// unusable, and the cred chain takes over over HTTP.
 func TestCLIFallsBackToResolver(t *testing.T) {
-	isolate(t)
-	f := newFixture(t)
-	f.onGQL("Viewer", viewerReply())
-	f.onGQL("Repo", data(map[string]any{"repository": map[string]any{"nameWithOwner": "acme/web"}}))
-	useFakeGH(t, f)
-	t.Setenv("FAKE_GH_LOGGEDOUT", "1")
+	for _, mode := range []string{"1", "exit4", "hint"} {
+		t.Run(mode, func(t *testing.T) {
+			isolate(t)
+			f := newFixture(t)
+			f.onGQL("Viewer", viewerReply())
+			f.onGQL("Repo", data(map[string]any{"repository": map[string]any{"nameWithOwner": "acme/web"}}))
+			useFakeGH(t, f)
+			t.Setenv("FAKE_GH_LOGGEDOUT", mode)
+			log := filepath.Join(t.TempDir(), "gh.log")
+			t.Setenv("FAKE_GH_LOG", log)
+			ghRuns := func() int {
+				b, _ := os.ReadFile(log)
+				return strings.Count(string(b), "\n")
+			}
+			cfg := hubsync.Config{Workspace: "acme", Provider: "github", Scope: repoScope(), BaseURL: f.srv.URL,
+				Env: []string{"GH_CONFIG_DIR=" + t.TempDir()}}
 
-	a, err := hubsync.New(hubsync.Config{Workspace: "acme", Provider: "github", Scope: repoScope(), BaseURL: f.srv.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Check(context.Background()); !errors.Is(err, cred.ErrNeedsSession) {
-		t.Fatalf("no resolver: %v", err)
-	}
+			a, err := hubsync.New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = a.Check(context.Background())
+			if !errors.Is(err, cred.ErrNeedsSession) || !errors.Is(err, errCLIUnavailable) || !strings.Contains(err.Error(), "not logged in") {
+				t.Fatalf("no resolver: %v", err)
+			}
+			if n := ghRuns(); n != 1 {
+				t.Fatalf("gh runs %d, want 1", n)
+			}
 
-	var got cred.Request
-	restore := cred.SetDefault(cred.ResolverFunc(func(_ context.Context, req cred.Request) (cred.Transport, error) {
-		got = req
-		return cred.Static(cred.SourceKeychain, cred.Token{Value: secret}), nil
-	}))
-	defer restore()
-	a, _ = hubsync.New(hubsync.Config{Workspace: "acme", Provider: "github", Scope: repoScope(), BaseURL: f.srv.URL})
-	acct, err := a.Check(context.Background())
-	if err != nil || acct != "tester" {
-		t.Fatalf("%q %v", acct, err)
-	}
-	if got.Workspace != "acme" || got.Provider != "github" || got.Preferred != cred.SourceKeychain {
-		t.Fatalf("request %+v", got)
-	}
-	if c := f.find("Repo"); len(c) != 1 || c[0].ViaGH || c[0].Auth != "Bearer "+secret {
-		t.Fatalf("fallback call %+v", c)
+			var got cred.Request
+			restore := cred.SetDefault(cred.ResolverFunc(func(_ context.Context, req cred.Request) (cred.Transport, error) {
+				got = req
+				return cred.Static(cred.SourceKeychain, cred.Token{Value: secret}), nil
+			}))
+			defer restore()
+			a, _ = hubsync.New(cfg)
+			acct, err := a.Check(context.Background())
+			if err != nil || acct != "tester" {
+				t.Fatalf("%q %v", acct, err)
+			}
+			if n := ghRuns(); n != 2 { // one more try, then HTTP for the rest
+				t.Fatalf("gh runs %d, want 2", n)
+			}
+			if got.Workspace != "acme" || got.Provider != "github" || got.Preferred != cred.SourceKeychain {
+				t.Fatalf("request %+v", got)
+			}
+			for _, op := range []string{"Viewer", "Repo"} {
+				if c := f.find(op); len(c) != 1 || c[0].ViaGH || c[0].Auth != "Bearer "+secret {
+					t.Fatalf("%s fallback call %+v", op, c)
+				}
+			}
+		})
 	}
 }
 
@@ -296,6 +321,10 @@ func TestCategoryFor(t *testing.T) {
 		"Todo": "todo", "To Do": "todo", "Ready": "todo", "Not started": "todo", "Backlog": "backlog",
 		"Icebox": "backlog", "In Progress": "active", "Doing": "active", "In Review": "review",
 		"QA": "review", "Testing": "review", "Done": "done", "Shipped": "done", "Closed": "done",
+		// whole words (or a word's stem), not substrings
+		"Inactive": "todo", "Latest": "todo", "Contest": "todo", "Renewal": "todo",
+		"New": "backlog", "Verified": "review", "Approved": "review", "Completed": "done",
+		"In-Progress": "active", "InProgress": "active", "Started": "active", "NOT STARTED": "todo",
 	} {
 		if got := categoryFor(name); got != want {
 			t.Errorf("%s: %s, want %s", name, got, want)
@@ -385,30 +414,22 @@ func TestListChangedBoard(t *testing.T) {
 		f := newFixture(t)
 		f.onGQL("Viewer", viewerReply())
 		f.onGQL("Project", projectReply())
-		item := func(id, updated string, status any, content any) map[string]any {
-			return map[string]any{"id": id, "updatedAt": updated, "fieldValueByName": status, "content": content}
-		}
-		f.onGQL("ProjectItems",
-			data(map[string]any{"node": map[string]any{"items": map[string]any{
-				"pageInfo": map[string]any{"hasNextPage": true, "endCursor": "p1"},
-				"nodes": []any{
-					// issue unchanged but its card moved later: the item time counts
-					item("PVTI_1", "2026-10-05T00:00:00Z", statusVal("In Progress"), issue(1, "moving", "2026-09-01T00:00:00Z",
-						withChildren(issue(9, "child on the board", "2026-10-02T00:00:00Z", withParent("acme/web", 1))))),
-					item("PVTI_2", "2026-10-01T00:00:00Z", nil, map[string]any{"__typename": "DraftIssue", "title": "draft"}),
-					item("PVTI_3", "2026-10-02T00:00:00Z", statusVal("Todo"), issue(2, "not mine", "2026-10-02T00:00:00Z", withAssignee("acme-dev"))),
-				},
-			}}}),
-			data(map[string]any{"node": map[string]any{"items": map[string]any{
-				"pageInfo": map[string]any{"hasNextPage": false},
-				"nodes": []any{
-					item("PVTI_4", "2026-09-01T00:00:00Z", statusVal("Done"), issue(3, "old", "2026-09-01T00:00:00Z")),
-					item("PVTI_5", "2026-10-03T00:00:00Z", statusVal("Todo"), issue(4, "other repo", "2026-10-03T00:00:00Z", withRepo("acme/api"))),
-					item("PVTI_6", "2026-10-04T00:00:00Z", nil, issue(5, "no status", "2026-10-04T00:00:00Z", withState("CLOSED"))),
-					// seen first as a child (no status); its own board entry wins
-					item("PVTI_9", "2026-10-02T00:00:00Z", statusVal("In Review"), issue(9, "child on the board", "2026-10-02T00:00:00Z", withParent("acme/web", 1))),
-				},
-			}}}),
+		item := boardItem
+		onBoard(f,
+			[]any{
+				// issue unchanged but its card moved later: the item time counts
+				item("PVTI_1", "2026-10-05T00:00:00Z", statusVal("In Progress"), issue(1, "moving", "2026-09-01T00:00:00Z",
+					withChildren(issue(9, "child on the board", "2026-10-02T00:00:00Z", withParent("acme/web", 1))))),
+				item("PVTI_2", "2026-10-01T00:00:00Z", nil, map[string]any{"__typename": "DraftIssue", "title": "draft"}),
+				item("PVTI_3", "2026-10-02T00:00:00Z", statusVal("Todo"), issue(2, "not mine", "2026-10-02T00:00:00Z", withAssignee("acme-dev"))),
+			},
+			[]any{
+				item("PVTI_4", "2026-09-01T00:00:00Z", statusVal("Done"), issue(3, "old", "2026-09-01T00:00:00Z")),
+				item("PVTI_5", "2026-10-03T00:00:00Z", statusVal("Todo"), issue(4, "other repo", "2026-10-03T00:00:00Z", withRepo("acme/api"))),
+				item("PVTI_6", "2026-10-04T00:00:00Z", nil, issue(5, "no status", "2026-10-04T00:00:00Z", withState("CLOSED"))),
+				// seen first as a child (no status); its own board entry wins
+				item("PVTI_9", "2026-10-02T00:00:00Z", statusVal("In Review"), issue(9, "child on the board", "2026-10-02T00:00:00Z", withParent("acme/web", 1))),
+			},
 		)
 		a := newAdapter(t, f, mode, boardScope())
 		since := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)

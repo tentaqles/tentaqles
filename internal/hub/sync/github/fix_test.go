@@ -111,7 +111,26 @@ func boardItemsReply(next bool, cursor string, nodes ...any) reply {
 		"pageInfo": map[string]any{"hasNextPage": next, "endCursor": cursor}, "nodes": nodes}}})
 }
 
+// boardItem is a board page node. An issue's content carries its sub-issue count, as the light
+// board query reads it; the full issue is served by onBoard/serveNodes.
 func boardItem(id, updated string, status any, content any) map[string]any {
+	if m, ok := content.(map[string]any); ok && m["__typename"] == "Issue" {
+		cp := map[string]any{}
+		for k, v := range m {
+			cp[k] = v
+		}
+		total := 0
+		if s, ok := m["subIssues"].(map[string]any); ok {
+			if n, ok := s["nodes"].([]map[string]any); ok {
+				total = len(n)
+			}
+			if n, ok := s["nodes"].([]any); ok {
+				total = len(n)
+			}
+		}
+		cp["subIssuesSummary"] = map[string]any{"total": total}
+		content = cp
+	}
 	return map[string]any{"id": id, "updatedAt": updated, "fieldValueByName": status, "content": content}
 }
 
@@ -126,10 +145,10 @@ func TestListChangedBoardUnassignedChildKeepsStatus(t *testing.T) {
 			withProjectItems(
 				map[string]any{"id": "PVTI_x", "updatedAt": "2026-10-09T00:00:00Z", "project": map[string]any{"id": "PVT_9"}, "fieldValueByName": statusVal("Done")},
 				map[string]any{"id": "PVTI_9", "updatedAt": "2026-10-04T00:00:00Z", "project": map[string]any{"id": "PVT_1"}, "fieldValueByName": statusVal("In Progress")}))
-		f.onGQL("ProjectItems", boardItemsReply(false, "",
+		onBoard(f, []any{
 			boardItem("PVTI_1", "2026-10-01T00:00:00Z", statusVal("Todo"), issue(1, "parent", "2026-10-01T00:00:00Z", withChildren(child))),
 			boardItem("PVTI_9", "2026-10-04T00:00:00Z", statusVal("In Progress"), child),
-		))
+		})
 		a := newAdapter(t, f, mode, boardScope())
 		items, _, err := a.ListChanged(context.Background(), time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC))
 		if err != nil {

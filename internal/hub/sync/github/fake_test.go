@@ -71,9 +71,21 @@ func copyFile(src, dst string) error {
 
 // fakeGH is the gh CLI double.
 func fakeGH(args []string) int {
-	if os.Getenv("FAKE_GH_LOGGEDOUT") == "1" {
+	if log := os.Getenv("FAKE_GH_LOG"); log != "" { // one line per run, so a test sees gh was tried
+		if f, err := os.OpenFile(log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+			fmt.Fprintln(f, strings.Join(args, " "))
+			f.Close()
+		}
+	}
+	switch os.Getenv("FAKE_GH_LOGGEDOUT") {
+	case "1": // gh's real behaviour: the hint and exit code 4
 		fmt.Fprintln(os.Stderr, "To get started with GitHub CLI, please run:  gh auth login")
 		return 4
+	case "exit4": // exit code 4 alone
+		return 4
+	case "hint": // the hint alone, with a generic exit code
+		fmt.Fprintln(os.Stderr, "To get started with GitHub CLI, please run:  gh auth login")
+		return 1
 	}
 	if len(args) >= 2 && args[0] == "auth" && args[1] == "token" {
 		fmt.Println(os.Getenv("FAKE_GH_TOKEN"))
@@ -157,6 +169,7 @@ type call struct {
 	Vars             map[string]any
 	Body             map[string]any
 	Auth             string
+	Query            string // the GraphQL document
 	ViaGH            bool
 	ConfigDir        string
 	AmbientToken     bool
@@ -166,6 +179,7 @@ type reply struct {
 	Status int
 	Header map[string]string
 	Body   string
+	Drop   bool // close the connection without an answer
 }
 
 // fixture is the recorded GitHub API: GraphQL replies by operation name, REST replies by
@@ -176,19 +190,28 @@ type fixture struct {
 	mu    gosync.Mutex
 	calls []call
 	gql   map[string][]reply // op name -> replies (the last one repeats)
+	gqlFn map[string]func(vars map[string]any) reply
 	rest  map[string][]reply
+	nodes map[string]map[string]any // node id -> issue, for serveNodes
 }
 
 var opRe = regexp.MustCompile(`^\s*(?:query|mutation)\s+(\w+)`)
 
 func newFixture(t *testing.T) *fixture {
-	f := &fixture{t: t, gql: map[string][]reply{}, rest: map[string][]reply{}}
+	f := &fixture{t: t, gql: map[string][]reply{}, gqlFn: map[string]func(map[string]any) reply{}, rest: map[string][]reply{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
 }
 
 func (f *fixture) onGQL(op string, rs ...reply) { f.mu.Lock(); f.gql[op] = rs; f.mu.Unlock() }
+
+// onGQLFunc answers an op from its variables; it wins over onGQL replies.
+func (f *fixture) onGQLFunc(op string, fn func(vars map[string]any) reply) {
+	f.mu.Lock()
+	f.gqlFn[op] = fn
+	f.mu.Unlock()
+}
 func (f *fixture) onREST(route string, rs ...reply) {
 	f.mu.Lock()
 	f.rest[route] = rs
@@ -216,7 +239,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		if m := opRe.FindStringSubmatch(q.Query); m != nil {
 			c.Op = m[1]
 		}
-		c.Vars = q.Variables
+		c.Vars, c.Query = q.Variables, q.Query
 		key, table = c.Op, f.gql
 	} else {
 		if len(raw) > 0 {
@@ -227,8 +250,13 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.calls = append(f.calls, c)
 	rs := table[key]
+	fn := f.gqlFn[c.Op]
 	var rep reply
 	switch {
+	case c.Op != "" && fn != nil:
+		f.mu.Unlock()
+		rep = fn(c.Vars)
+		f.mu.Lock()
 	case len(rs) == 0:
 		rep = reply{Status: 500, Body: `{"message":"no fixture for ` + key + `"}`}
 	case len(rs) == 1:
@@ -238,6 +266,14 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		table[key] = rs[1:]
 	}
 	f.mu.Unlock()
+	if rep.Drop {
+		if hj, ok := w.(http.Hijacker); ok {
+			if conn, _, err := hj.Hijack(); err == nil {
+				conn.Close()
+				return
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	for k, v := range rep.Header {
 		w.Header().Set(k, v)
@@ -271,7 +307,7 @@ func isolate(t *testing.T) {
 		t.Setenv(k, home)
 	}
 	for _, k := range []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK",
-		"GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR", "FAKE_GH_LOGGEDOUT"} {
+		"GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR", "FAKE_GH_LOGGEDOUT", "FAKE_GH_LOG"} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
