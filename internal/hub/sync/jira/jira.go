@@ -63,8 +63,9 @@ type Adapter struct {
 	issueType       string
 	acceptanceField string
 
-	mu gosync.Mutex
-	tr cred.Transport
+	mu     gosync.Mutex
+	tr     cred.Transport
+	siteOK bool // acli's site was checked against base (verifyACLISite)
 
 	now func() time.Time
 	run runFunc // acli
@@ -135,13 +136,39 @@ func (a *Adapter) transport(ctx context.Context) (cred.Transport, error) {
 	return tr, nil
 }
 
-// useACLI is whether the credential is the acli login.
+// useACLI is whether the credential is the acli login. Before the first acli call it checks that
+// acli is logged in to this workspace's site, and refuses it otherwise (retried on the next call).
 func (a *Adapter) useACLI(ctx context.Context) (bool, error) {
 	tr, err := a.transport(ctx)
 	if err != nil {
 		return false, err
 	}
-	return tr.Source() == cred.SourceCLI, nil
+	if tr.Source() != cred.SourceCLI {
+		return false, nil
+	}
+	a.mu.Lock()
+	ok := a.siteOK
+	a.mu.Unlock()
+	if !ok {
+		if err := a.verifyACLISite(ctx); err != nil {
+			return false, err
+		}
+		a.mu.Lock()
+		a.siteOK = true
+		a.mu.Unlock()
+	}
+	return true, nil
+}
+
+// idRe is a Jira issue key (ACME-12) or numeric id (10001). Anything else is refused before any
+// acli or REST call, so an id can never read as an acli flag or walk a REST path.
+var idRe = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9_]*-[0-9]+|[0-9]+)$`)
+
+func checkID(id string) error {
+	if !idRe.MatchString(id) {
+		return fmt.Errorf("jira: %q is not a Jira issue key or id (ACME-12 or 10001)", id)
+	}
+	return nil
 }
 
 // basicAuth turns the stored "email:token" (or the token plus scope email) into Basic auth.
@@ -156,6 +183,10 @@ func (b basicAuth) Token(ctx context.Context) (cred.Token, error) {
 	t, err := b.inner.Token(ctx)
 	if err != nil {
 		return cred.Token{}, err
+	}
+	if strings.EqualFold(t.Scheme, ACLIScheme) {
+		return cred.Token{}, &cred.SourceError{Source: b.inner.Source(), Provider: Provider,
+			Err: errors.New("the acli marker is not a token and is never sent")}
 	}
 	switch {
 	case strings.EqualFold(t.Scheme, "Basic") && !strings.Contains(t.Value, ":"):
@@ -237,6 +268,10 @@ func (a *Adapter) do(ctx context.Context, method, path string, query url.Values,
 	tr, err := a.transport(ctx)
 	if err != nil {
 		return err
+	}
+	if tr.Source() == cred.SourceCLI {
+		return &cred.SourceError{Source: cred.SourceCLI, Provider: Provider,
+			Err: errors.New("the acli login has no token tq can send; this call needs a keychain or env token")}
 	}
 	var body io.Reader
 	if in != nil {
@@ -393,9 +428,14 @@ func jqlQuote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
+// listOverlap widens the "updated" window. The offset is counted on the local clock but the
+// watermark comes from Jira's updated times, so a local clock behind Jira's by less than this
+// still misses nothing; repeats are harmless (same Rev).
+const listOverlap = 5
+
 // jql is the ListChanged query. "updated" uses a relative minute offset, which JQL reads the same
-// whatever the account's time zone, with a minute of overlap; repeats carry the same Rev. The
-// first sync (zero since) mirrors every open item instead.
+// whatever the account's time zone, plus listOverlap minutes. The first sync (zero since) mirrors
+// every open item instead.
 func (a *Adapter) jql(since time.Time) string {
 	var cl []string
 	if a.project != "" {
@@ -407,9 +447,9 @@ func (a *Adapter) jql(since time.Time) string {
 	if since.IsZero() {
 		cl = append(cl, "statusCategory != Done")
 	} else {
-		mins := int(math.Ceil(a.now().Sub(since).Minutes())) + 1
-		if mins < 1 {
-			mins = 1
+		mins := int(math.Ceil(a.now().Sub(since).Minutes())) + listOverlap
+		if mins < listOverlap {
+			mins = listOverlap
 		}
 		cl = append(cl, fmt.Sprintf(`updated >= "-%dm"`, mins))
 	}
@@ -479,6 +519,9 @@ func (a *Adapter) search(ctx context.Context, jql string) ([]issue, error) {
 
 // Get reads one item with its rendered fields (the body fallback when the ADF has no text).
 func (a *Adapter) Get(ctx context.Context, id string) (hubsync.Item, error) {
+	if err := checkID(id); err != nil {
+		return hubsync.Item{}, err
+	}
 	if cli, err := a.useACLI(ctx); err != nil {
 		return hubsync.Item{}, err
 	} else if cli {
@@ -505,6 +548,9 @@ type transition struct {
 // Move runs the transition whose target status is status (case-insensitive). With none, the error
 // names the transitions available from the item's current status.
 func (a *Adapter) Move(ctx context.Context, id, status string) error {
+	if err := checkID(id); err != nil {
+		return err
+	}
 	if cli, err := a.useACLI(ctx); err != nil {
 		return err
 	} else if cli {
@@ -534,6 +580,9 @@ func (a *Adapter) Move(ctx context.Context, id, status string) error {
 func (a *Adapter) Comment(ctx context.Context, id, markdown string) error {
 	if strings.TrimSpace(markdown) == "" {
 		return errors.New("jira: an empty comment is not sent")
+	}
+	if err := checkID(id); err != nil {
+		return err
 	}
 	if cli, err := a.useACLI(ctx); err != nil {
 		return err
@@ -586,6 +635,9 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	}
 	project := a.project
 	if in.ParentID != "" {
+		if err := checkID(in.ParentID); err != nil {
+			return hubsync.Item{}, err
+		}
 		if p := projectOf(in.ParentID); p != "" {
 			project = p
 		}
@@ -677,6 +729,9 @@ func (a *Adapter) Update(ctx context.Context, id string, title, body *string) er
 	if title != nil && strings.TrimSpace(*title) == "" {
 		return errors.New("jira: the title cannot be empty")
 	}
+	if err := checkID(id); err != nil {
+		return err
+	}
 	if cli, err := a.useACLI(ctx); err != nil {
 		return err
 	} else if cli {
@@ -720,6 +775,9 @@ func checkLabels(ls ...[]string) error {
 func (a *Adapter) SetLabels(ctx context.Context, id string, add, remove []string) error {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
+	}
+	if err := checkID(id); err != nil {
+		return err
 	}
 	if err := checkLabels(add, remove); err != nil {
 		return err

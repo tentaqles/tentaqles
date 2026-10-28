@@ -33,6 +33,11 @@ func TestMarkdownToADF(t *testing.T) {
 	if !strings.HasPrefix(got, `{"content":[`) || !strings.HasSuffix(got, `"type":"doc","version":1}`) {
 		t.Fatal(got)
 	}
+	// an empty list item still has a content array: Jira rejects "content": null
+	raw, _ = json.Marshal(markdownToADF("- \n- x\n\n1. \n"))
+	if strings.Contains(string(raw), "null") || !strings.Contains(string(raw), `{"content":[],"type":"paragraph"}`) {
+		t.Fatal(string(raw))
+	}
 	empty, _ := json.Marshal(markdownToADF(""))
 	if string(empty) != `{"content":[],"type":"doc","version":1}` {
 		t.Fatal(string(empty))

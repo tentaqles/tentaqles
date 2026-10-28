@@ -190,7 +190,7 @@ func TestListChangedPaginatesAndMaps(t *testing.T) {
 		t.Fatalf("%d pages, %d items", len(bodies), len(items))
 	}
 	jql, _ := bodies[0]["jql"].(string)
-	for _, want := range []string{`project = "ACME"`, "assignee = currentUser()", `updated >= "-61m"`, "ORDER BY updated ASC"} {
+	for _, want := range []string{`project = "ACME"`, "assignee = currentUser()", `updated >= "-65m"`, "ORDER BY updated ASC"} {
 		if !strings.Contains(jql, want) {
 			t.Fatalf("jql %q misses %q", jql, want)
 		}
@@ -463,6 +463,36 @@ func TestErrorBodyIsBounded(t *testing.T) {
 	err := a.Update(ctx, "ACME-1", &title, nil)
 	if err == nil || len(err.Error()) > 700 || !strings.Contains(err.Error(), "summary") {
 		t.Fatalf("%d: %.200v", len(fmt.Sprint(err)), err)
+	}
+}
+
+func TestRESTRefusesTheACLIMarker(t *testing.T) {
+	f := newFakeJira(t)
+	f.json("GET", "/rest/api/3/myself", 200, `{"displayName":"Tester"}`)
+	for _, tr := range []cred.Transport{
+		cred.Static(cred.SourceCLI, cred.Token{Scheme: ACLIScheme}),
+		cred.Static(cred.SourceKeychain, cred.Token{Scheme: ACLIScheme}),
+	} {
+		a := newTestAdapter(t, f, map[string]string{"org": "acme", "email": "tester@example.com"}, cred.Token{})
+		a.tr = tr
+		var me user
+		if err := a.do(ctx, "GET", "/rest/api/3/myself", nil, nil, &me); err == nil {
+			t.Fatal("REST ran with the acli marker")
+		}
+	}
+	if n := len(f.seen()); n != 0 {
+		t.Fatalf("%d requests went out", n)
+	}
+}
+
+func TestRESTRefusesFlagLikeIDs(t *testing.T) {
+	f := newFakeJira(t)
+	a := newTestAdapter(t, f, nil, cred.Token{Value: fixtureCred})
+	if _, err := a.Get(ctx, "../myself"); err == nil || !strings.Contains(err.Error(), "not a Jira issue key or id") {
+		t.Fatal(err)
+	}
+	if len(f.seen()) != 0 {
+		t.Fatal("a request went out")
 	}
 }
 

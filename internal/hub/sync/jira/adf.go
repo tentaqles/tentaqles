@@ -88,7 +88,11 @@ func markdownToADF(md string) node {
 				if m == nil {
 					break
 				}
-				item := node{"type": "listItem", "content": []any{node{"type": "paragraph", "content": inline(m[1])}}}
+				c := inline(m[1])
+				if c == nil {
+					c = []any{} // Jira rejects "content": null
+				}
+				item := node{"type": "listItem", "content": []any{node{"type": "paragraph", "content": c}}}
 				items = append(items, item)
 			}
 			i--
