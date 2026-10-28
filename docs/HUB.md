@@ -267,11 +267,10 @@ tracker:
   lanes: { "In Review": review }
 ```
 
-This build ships background adapters for **Jira Cloud** and **Linear**. GitHub, Azure
-DevOps and Asana are accepted in the manifest but have no adapter yet: a pass with a
-working credential fails with "no sync adapter", `tq doctor` reports
-`tracker-no-adapter`, and without a background credential the MCP fallback
-(`/tentaqles:sync`) is the way to sync them.
+This build ships background adapters for all five trackers: **GitHub** (Issues and
+Projects v2), **Azure DevOps** Boards, **Jira Cloud**, **Linear** and **Asana**. Per-provider
+scope keys are in [PROVIDERS.md](PROVIDERS.md#tracker-scope-per-provider). Without a
+background credential the MCP fallback (`/tentaqles:sync`) is the way to sync.
 
 ### Polling
 
@@ -356,7 +355,10 @@ The engine resolves a credential for every pass, starting at `tracker.auth` (def
 `cli`) and continuing in the fixed order cli → keychain → env → mcp (`auth: env` tries
 env, then mcp):
 
-- **cli**: the tracker CLI's own login. In this build only Jira has one (`acli`).
+- **cli**: the tracker CLI's own login, run with the workspace identity environment:
+  `gh` for GitHub (under the identity's `GH_CONFIG_DIR`), `az account get-access-token
+  --resource 499b84ac-1321-427f-aa17-267ca6975798` for Azure DevOps (under its
+  `AZURE_CONFIG_DIR`) and `acli` for Jira. Linear and Asana have no CLI.
 - **keychain**: the OS keychain entry `tq secret set <ws> <provider>` stores.
 - **env**: the `tracker.env` variable, resolved as `tq dotenv run` does (the workspace
   identity env, then the process environment, then `<workspace root>/.env`).

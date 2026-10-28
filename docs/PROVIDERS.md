@@ -129,8 +129,42 @@ and the desktop Services step write these blocks.
 
 ### Tracker scope per provider
 
-The hub has background adapters for Jira Cloud and Linear in this build (see
-[HUB.md](HUB.md#board-sync)).
+The hub has background adapters for all five trackers (see [HUB.md](HUB.md#board-sync)).
+
+**GitHub** (`provider: github`):
+
+- `org`: the owner (user or organization) of the repository or project. Required.
+- `project`: the repository name, without the owner. Required without a `board`.
+- `board`: a Projects v2 number, optional. With it, an item's status is the project's
+  single-select status field; without it, Open or Closed.
+- `status_field`: the name of that field (default `Status`).
+
+Item ids are `owner/repo#number`. Writes stay inside the scope: an owner other than
+`scope.org`, or (without a board) a repository other than `scope.project`, fails before
+any request. With `auth: cli`, tq runs `gh api` under the identity's `GH_CONFIG_DIR`, so
+the token stays in gh's own store; gh never inherits the hub process's login, and is not
+run at all when the identity sets no `GH_CONFIG_DIR`. Otherwise a keychain or env token is
+sent to the API over HTTP.
+
+**Azure DevOps** (`provider: azure-devops`):
+
+- `org` and `project`: required.
+- `board`: optional, the team the work item query runs under.
+- `type`: the work item type for a top-level create (default `Task`).
+
+With `auth: cli`, the token is `az account get-access-token` for the Azure DevOps resource,
+run under the identity's `AZURE_CONFIG_DIR` (run `az login` for that identity). A keychain
+or env PAT is sent as Basic auth.
+
+**Asana** (`provider: asana`):
+
+- `org`: the workspace gid.
+- `board` (or `project`): the project gid. Its sections are the statuses: a move adds the
+  task to the section named like the status and sets completed to whether that section is
+  done.
+
+There is no CLI: the credential is a keychain or env personal access token, sent as
+`Bearer`. Comments are stories, children are subtasks, labels are workspace tags.
 
 **Jira** (`provider: jira`):
 
@@ -185,7 +219,7 @@ the fixed order **cli → keychain → env → mcp**:
 
 | Source | Where the token comes from |
 |---|---|
-| `cli` | the tracker CLI's own login (in this build: `acli` for Jira) |
+| `cli` | the tracker CLI's own login: `gh` (GitHub), `az` (Azure DevOps), `acli` (Jira) |
 | `keychain` | the OS keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service), service `tentaqles`, account `<ws>/<provider>` |
 | `env` | the `tracker.env` variable, resolved as `tq dotenv run` does: the workspace identity env, then the process environment, then `<workspace root>/.env` |
 | `mcp` | none in the background: sync reports `needs-session`; use `/tentaqles:sync` in a Claude session |
