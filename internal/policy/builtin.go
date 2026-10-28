@@ -146,6 +146,22 @@ func Builtin() []Rule {
 			Command: `\breg(\.exe)?\s+(add|delete|import)\b|\b(set-itemproperty|new-itemproperty|remove-itemproperty|remove-item)\b` + seg + `\bhk(lm|cu|cr|u|cc):`,
 			Reason:  "writing the Windows registry",
 		},
+		// --- company trackers ------------------------------------------------------
+		// Writes to the company board go through the hub's sync engine (the outbox, under
+		// the sync.policy.* settings); the engine calls the CLIs itself, outside any tool
+		// call. An agent running the CLI directly bypasses that policy and the redaction.
+		// The tool is a word of its own (bare, path-prefixed or quoted) and flags may sit
+		// between it and the subcommand (`gh -R acme/app issue edit`), so a PR title that
+		// only mentions "issue create" is not a write.
+		{
+			ID: "tq/tracker-cli-write", Action: Ask,
+			Command: `(^|[;&|\n(` + bt + `]|\s)["']?(\S*[/\\])?(` +
+				`az(\.cmd|\.exe)?["']?` + iacFlags + `\s+boards\s+work-item\s+(create|update|delete)` +
+				`|gh(\.exe)?["']?` + iacFlags + `\s+(issue\s+(edit|close|create|comment|reopen|delete)|project\s+item-(edit|add|create|delete|archive))` +
+				`|acli(\.exe)?["']?` + iacFlags + `\s+jira\s+workitem\s+(edit|transition|create|comment|delete|assign)` +
+				`)\b`,
+			Reason: "this writes to the company tracker outside the hub's sync engine, so the sync.policy settings and the outbound redaction do not apply; prefer `tq hub sync` (or the /tentaqles:sync skill), or confirm this write",
+		},
 		// --- databases ---------------------------------------------------------
 		{
 			ID: "tq/sql-destructive-shell", Action: Ask,
