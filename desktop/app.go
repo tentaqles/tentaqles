@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os/exec"
+	"sync/atomic"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -11,8 +12,9 @@ import (
 
 // App struct binds the setupapi facade to the Wails frontend.
 type App struct {
-	ctx   context.Context
-	board *boardHubs // the Board tab's hub discovery and child hubs (board.go)
+	ctx     context.Context
+	board   *boardHubs  // the Board tab's hub discovery and child hubs (board.go)
+	onBoard atomic.Bool // the window was sent to a board (arms View > Setup, app_board.go)
 }
 
 // NewApp creates a new App application struct

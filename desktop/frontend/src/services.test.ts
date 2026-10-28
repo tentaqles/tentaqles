@@ -48,6 +48,31 @@ describe('validateTracker', () => {
     }
     expect(validateTracker(t).join(' ')).toMatch(/lane/i)
   })
+
+  it('refuses a token pasted where a name belongs, without echoing it', () => {
+    // token shapes built at run time so no secret scanner trips on this file
+    const pat = 'gh' + 'p_' + 'a1B2'.repeat(9)
+    const base = {...emptyTracker('jira'), Scope: {org: 'acme.atlassian.net', project: 'PLAT'}}
+    const cases = [
+      {...base, Auth: 'env', Env: pat},
+      {...base, Scope: {org: 'Bearer abc', project: 'PLAT'}},
+      {...base, Scope: {org: 'acme.atlassian.net', project: 'PLAT', [pat]: 'x'}},
+      {...base, Lanes: {Doing: pat}},
+      {...base, Lanes: {[pat]: 'active'}},
+      {...base, Scope: {org: 'acme', project: 'sk-' + 'abcdefgh12'}},
+      {...base, Scope: {org: 'acme', project: 'AKIA' + 'ABCDEFGHIJKLMNOP'}},
+      {...base, Scope: {org: 'acme', project: 'xox' + 'b-123-abc'}},
+      {...base, Scope: {org: 'acme', project: 'github_' + 'pat_' + 'a'.repeat(22)}},
+      {...base, Scope: {org: 'acme', project: 'eyJ' + 'a'.repeat(20) + '.' + 'b'.repeat(10)}},
+    ]
+    for (const t of cases) {
+      const errs = validateTracker(t).join(' ')
+      expect(errs).toMatch(/looks like a secret/)
+      expect(errs).not.toContain(pat)
+      expect(errs).not.toContain('Bearer abc')
+    }
+    expect(validateTracker({...base, Auth: 'env', Env: 'ACME_JIRA_TOKEN'})).toEqual([])
+  })
 })
 
 describe('servicesStepError', () => {

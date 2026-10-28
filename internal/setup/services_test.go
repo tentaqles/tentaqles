@@ -50,6 +50,42 @@ func TestValidate_RejectsBadServiceBlocks(t *testing.T) {
 	}
 }
 
+// A token pasted where a name belongs (the env variable, a scope value, a lane) is refused
+// before anything is written, and the error names the field without echoing the value.
+func TestValidate_RejectsTokenShapedServiceValues(t *testing.T) {
+	cat := testCatalog(t)
+	pat := "gh" + "p_" + strings.Repeat("a1B2", 9) // a GitHub PAT shape, built so no scanner trips on the source
+	cases := map[string]struct {
+		mutate func(c *Company)
+		field  string
+	}{
+		"env":         {func(c *Company) { c.Tracker.Auth, c.Tracker.Env = "env", pat }, "tracker.env"},
+		"scope value": {func(c *Company) { c.Tracker.Scope = map[string]string{"org": "Bearer abc", "project": "PLAT"} }, "tracker.scope.org"},
+		"scope key":   {func(c *Company) { c.Tracker.Scope = map[string]string{"org": "acme", "project": "PLAT", pat: "x"} }, "tracker.scope"},
+		"lane value":  {func(c *Company) { c.Tracker.Lanes = map[string]string{"Doing": pat} }, "tracker.lanes.Doing"},
+		"lane key":    {func(c *Company) { c.Tracker.Lanes = map[string]string{pat: "active"} }, "tracker.lanes"},
+		"assigned":    {func(c *Company) { c.Tracker.AssignedTo = pat }, "tracker.assigned_to"},
+	}
+	for name, tc := range cases {
+		c := servicesCompany()
+		tr := *c.Tracker
+		c.Tracker = &tr
+		tc.mutate(&c)
+		err := (&SetupPlan{Base: "x", Companies: []Company{c}}).Validate(cat)
+		if err == nil {
+			t.Errorf("%s: expected an error", name)
+			continue
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, tc.field) || !strings.Contains(msg, "secret") {
+			t.Errorf("%s: error should name %s and say it looks like a secret: %v", name, tc.field, msg)
+		}
+		if strings.Contains(msg, pat) || strings.Contains(msg, "Bearer abc") {
+			t.Errorf("%s: error echoes the value: %v", name, msg)
+		}
+	}
+}
+
 func TestPreview_ReportsServices(t *testing.T) {
 	isolateHome(t)
 	base := testutil.TempDir(t)

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -37,16 +39,20 @@ type boardHubs struct {
 	freePort func() (int, error)
 	wait     time.Duration // how long a started hub may take to answer its first ping
 	poll     time.Duration
+	grace    time.Duration // how long a stopping hub gets for its clean shutdown before the tree is killed
 
 	mu       sync.Mutex
 	children map[string]*hubChild
 }
 
 type hubChild struct {
-	cmd  *exec.Cmd
-	out  *tailBuffer
-	done chan struct{}
-	err  error // set before done closes
+	cmd   *exec.Cmd
+	port  int
+	stdin io.WriteCloser // the hub's lifeline: closing it (or this app dying) is its clean stop
+	tree  *procTree      // the hub and every process it starts (board_windows.go, board_other.go)
+	out   *tailBuffer
+	done  chan struct{}
+	err   error // set before done closes
 }
 
 func (c *hubChild) exited() bool {
@@ -65,6 +71,8 @@ func newBoardHubs() *boardHubs {
 		freePort: freeLoopbackPort,
 		wait:     20 * time.Second,
 		poll:     150 * time.Millisecond,
+		grace:    10 * time.Second, // tq hub serve's own shutdown grace is 5s, plus its runners' stop
+
 		children: map[string]*hubChild{},
 	}
 }
@@ -77,6 +85,17 @@ func (b *boardHubs) open(ctx context.Context, ws string) (BoardTarget, error) {
 	if h, ok := b.find(ctx, ws); ok {
 		return BoardTarget{URL: setupapi.BoardURL(h, ws)}, nil
 	}
+	target, err := b.startAndAwait(ctx, ws)
+	var exited *childExitedError
+	if errors.As(err, &exited) && !portFree(exited.port) {
+		// The port was free when picked, but something bound it before the child did: once more,
+		// on a fresh port.
+		target, err = b.startAndAwait(ctx, ws)
+	}
+	return target, err
+}
+
+func (b *boardHubs) startAndAwait(ctx context.Context, ws string) (BoardTarget, error) {
 	b.mu.Lock()
 	ch := b.children[ws]
 	if ch == nil || ch.exited() {
@@ -91,6 +110,41 @@ func (b *boardHubs) open(ctx context.Context, ws string) (BoardTarget, error) {
 	return b.await(ctx, ws, ch)
 }
 
+// childExitedError: the started hub exited before it answered.
+type childExitedError struct {
+	port int
+	msg  string
+}
+
+func (e *childExitedError) Error() string { return e.msg }
+
+// hubParentStdinEnv tells tq hub serve that its stdin is this app's lifeline (EOF = clean stop);
+// an older tq ignores it and is stopped by the process-tree kill instead.
+const hubParentStdinEnv = "TQ_HUB_PARENT_STDIN"
+
+// childEnvDrop are the agent-session markers: a hub this app starts is a human's hub, even when
+// the app was launched from an agent's terminal.
+var childEnvDrop = []string{"CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS", "TQ_HUB_TASK", hubParentStdinEnv}
+
+// childEnv is base without the agent markers, plus the parent-stdin switch.
+func childEnv(base []string) []string {
+	out := make([]string, 0, len(base)+1)
+	for _, kv := range base {
+		name, _, _ := strings.Cut(kv, "=")
+		drop := false
+		for _, d := range childEnvDrop {
+			if strings.EqualFold(name, d) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, kv)
+		}
+	}
+	return append(out, hubParentStdinEnv+"=1")
+}
+
 func (b *boardHubs) spawn(ws string) (*hubChild, error) {
 	path := b.tqPath()
 	if path == "" {
@@ -103,16 +157,33 @@ func (b *boardHubs) spawn(ws string) (*hubChild, error) {
 	cmd := exec.Command(path, "hub", "serve", "--workspace", ws, "--port", strconv.Itoa(port))
 	out := &tailBuffer{max: 4096}
 	cmd.Stdout, cmd.Stderr = out, out
-	hideConsole(cmd)
-	if err := cmd.Start(); err != nil {
+	cmd.Env = childEnv(os.Environ())
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
 		return nil, fmt.Errorf("start tq hub serve: %w", err)
 	}
-	ch := &hubChild{cmd: cmd, out: out, done: make(chan struct{})}
+	prepareChild(cmd)
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return nil, fmt.Errorf("start tq hub serve: %w", err)
+	}
+	ch := &hubChild{cmd: cmd, port: port, stdin: stdin, tree: attachTree(cmd), out: out, done: make(chan struct{})}
 	go func() {
 		ch.err = cmd.Wait()
+		ch.tree.release() // whatever the hub left running goes with it
 		close(ch.done)
 	}()
 	return ch, nil
+}
+
+// portFree is whether port can be bound on loopback right now.
+func portFree(port int) bool {
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
 
 // await polls for the started hub until it answers, exits or runs out of time.
@@ -127,7 +198,8 @@ func (b *boardHubs) await(ctx context.Context, ws string, ch *hubChild) (BoardTa
 		}
 		select {
 		case <-ch.done:
-			return BoardTarget{}, fmt.Errorf("tq hub serve exited before the board answered (%v)%s", ch.err, outputNote(ch.out.String()))
+			return BoardTarget{}, &childExitedError{port: ch.port,
+				msg: fmt.Sprintf("tq hub serve exited before the board answered (%v)%s", ch.err, outputNote(ch.out.String()))}
 		case <-deadline.C:
 			b.stop(ws, ch)
 			return BoardTarget{}, fmt.Errorf("tq hub serve did not answer within %s; stopped it%s", b.wait, outputNote(ch.out.String()))
@@ -146,14 +218,18 @@ func outputNote(s string) string {
 	return ": " + s
 }
 
-// stop ends one child: a polite stop first where the OS has one, then a kill.
+// stop ends one child. First the hub's own clean shutdown, which drains HTTP, stops its runners
+// (and their agents) and removes its serve record: its stdin closes, on every OS, plus SIGINT
+// where there are signals. After the grace, the whole process tree is killed, so no run child
+// outlives the hub with nothing watching it.
 func (b *boardHubs) stop(ws string, ch *hubChild) {
 	if !ch.exited() {
+		_ = ch.stdin.Close()
 		interruptProcess(ch.cmd)
 		select {
 		case <-ch.done:
-		case <-time.After(5 * time.Second):
-			_ = ch.cmd.Process.Kill()
+		case <-time.After(b.grace):
+			ch.tree.killTree()
 			<-ch.done
 		}
 	}

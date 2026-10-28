@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -29,15 +32,32 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// agentMarkers are the env vars that mark an agent session; the child hub must not inherit them.
+var agentMarkers = []string{"CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS", "TQ_HUB_TASK"}
+
 func fakeTQ(mode string, args []string) int {
-	_ = os.WriteFile(filepath.Join(os.Getenv("TQ_HOME"), "fake-tq-args.txt"), []byte(strings.Join(args, " ")), 0o600)
+	home := os.Getenv("TQ_HOME")
+	_ = os.WriteFile(filepath.Join(home, "fake-tq-args.txt"), []byte(strings.Join(args, " ")), 0o600)
+	var seen []string
+	for _, k := range append([]string{"TQ_HUB_PARENT_STDIN"}, agentMarkers...) {
+		if v, ok := os.LookupEnv(k); ok {
+			seen = append(seen, k+"="+v)
+		}
+	}
+	_ = os.WriteFile(filepath.Join(home, "fake-tq-env.txt"), []byte(strings.Join(seen, "\n")), 0o600)
 	switch mode {
 	case "fail":
 		fmt.Fprintln(os.Stderr, "boom: port 7470 is busy")
 		return 3
-	case "hang":
+	case "hang", "sleep":
 		time.Sleep(time.Minute)
 		return 0
+	case "orphan": // starts a run-like grandchild, then dies on its own
+		spawnGrandchild(home)
+		return 5
+	case "stubborn": // a hub with a live run child that ignores every polite stop
+		signal.Ignore(os.Interrupt)
+		spawnGrandchild(home)
 	}
 	var ws string
 	port := 0
@@ -55,8 +75,59 @@ func fakeTQ(mode string, args []string) int {
 		return 4
 	}
 	writeRecord(port, "fake-key", ws)
+	if mode == "serve" && os.Getenv("TQ_HUB_PARENT_STDIN") == "1" {
+		// like tq hub serve: stdin EOF from the parent is a clean stop (the record goes away)
+		go func() {
+			_, _ = io.Copy(io.Discard, os.Stdin)
+			_ = os.Remove(filepath.Join(home, "hub", "serve-"+strconv.Itoa(port)+".json"))
+			os.Exit(0)
+		}()
+	}
 	_ = http.Serve(ln, pingHandler("fake-key"))
 	return 0
+}
+
+// spawnGrandchild starts this binary again as a long sleeper (what a hub run's agent is) and
+// writes its PID to $TQ_HOME/grandchild.pid.
+func spawnGrandchild(home string) {
+	self, _ := os.Executable()
+	cmd := exec.Command(self, "-test.run=^$")
+	cmd.Env = append(os.Environ(), fakeTQEnv+"=sleep")
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+	_ = os.WriteFile(filepath.Join(home, "grandchild.pid"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
+}
+
+func grandchildPID(t *testing.T, home string) int {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		raw, err := os.ReadFile(filepath.Join(home, "grandchild.pid"))
+		if pid, perr := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && perr == nil && pid > 0 {
+			return pid
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fake hub never started its grandchild")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// waitGone waits for pid to exit; the cleanup kills it so a failing test leaves nothing behind.
+func waitGone(t *testing.T, pid int, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for processAlive(pid) {
+		if time.Now().After(deadline) {
+			if p, err := os.FindProcess(pid); err == nil {
+				_ = p.Kill()
+			}
+			t.Fatalf("pid %d (the hub's run child) outlived the hub", pid)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func pingHandler(key string) http.Handler {
@@ -84,6 +155,7 @@ func testHubs(t *testing.T, tq string) *boardHubs {
 	b.tqPath = func() string { return tq }
 	b.wait = 10 * time.Second
 	b.poll = 20 * time.Millisecond
+	b.grace = 2 * time.Second
 	t.Cleanup(b.stopAll)
 	return b
 }
@@ -153,6 +225,117 @@ func TestOpenBoard_StartsTQHubServeAsAChild(t *testing.T) {
 	}
 	if _, ok := setupapi.FindHub(context.Background(), "acme"); ok {
 		t.Fatal("the stopped child still answers")
+	}
+	// The stop was the hub's own clean shutdown (stdin closed), not a kill: it removed its
+	// serve record, on every OS.
+	recs, _ := filepath.Glob(filepath.Join(home, "hub", "serve-*.json"))
+	if len(recs) != 0 {
+		t.Fatalf("the hub did not shut down cleanly; records left: %v", recs)
+	}
+}
+
+// The child hub runs as a human-started hub would: it never inherits the agent markers of a
+// terminal the app was launched from, and it is told its stdin is the parent's lifeline.
+func TestOpenBoard_ChildEnvDropsAgentMarkers(t *testing.T) {
+	home := isolateHome(t)
+	t.Setenv(fakeTQEnv, "serve")
+	for _, k := range agentMarkers {
+		t.Setenv(k, "1")
+	}
+	b := testHubs(t, selfPath(t))
+	if _, err := b.open(context.Background(), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(home, "fake-tq-env.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(raw); got != "TQ_HUB_PARENT_STDIN=1" {
+		t.Fatalf("child env markers: %q", got)
+	}
+}
+
+// A hub whose run child is alive and which ignores every polite stop: closing the app still
+// ends the whole tree, so no agent keeps editing a worktree with nothing watching it.
+func TestStopAll_EndsTheHubsProcessTree(t *testing.T) {
+	home := isolateHome(t)
+	t.Setenv(fakeTQEnv, "stubborn")
+	b := testHubs(t, selfPath(t))
+	b.grace = 300 * time.Millisecond
+	if _, err := b.open(context.Background(), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	pid := grandchildPID(t, home)
+	if !processAlive(pid) {
+		t.Fatal("the grandchild should be running before the stop")
+	}
+	b.stopAll()
+	waitGone(t, pid, 5*time.Second)
+}
+
+// View > Setup reloads the app only after the window went to a board; on the wizard it does
+// nothing, so unapplied wizard state survives a stray Ctrl+1.
+func TestSetupMenu_ReloadsOnlyFromABoard(t *testing.T) {
+	isolateHome(t)
+	srv := httptest.NewServer(pingHandler("k1"))
+	defer srv.Close()
+	writeRecord(srv.Listener.Addr().(*net.TCPAddr).Port, "k1", "acme")
+	a := NewApp()
+	a.board = testHubs(t, "")
+	if a.leaveBoard() {
+		t.Fatal("on the wizard, View > Setup must not reload")
+	}
+	if _, err := a.OpenBoard("acme"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.leaveBoard() {
+		t.Fatal("on a board, View > Setup reloads the wizard")
+	}
+	if a.leaveBoard() {
+		t.Fatal("back on the wizard: a second press must not reload")
+	}
+	if _, err := a.OpenBoard("Bad Name"); err == nil || a.leaveBoard() {
+		t.Fatal("a failed open does not arm the reload")
+	}
+}
+
+// A hub that dies on its own leaves no run child behind either.
+func TestOpenBoard_AHubThatDiesTakesItsTreeWithIt(t *testing.T) {
+	home := isolateHome(t)
+	t.Setenv(fakeTQEnv, "orphan")
+	b := testHubs(t, selfPath(t))
+	if _, err := b.open(context.Background(), "acme"); err == nil || !strings.Contains(err.Error(), "exited") {
+		t.Fatalf("want an exited error, got %v", err)
+	}
+	waitGone(t, grandchildPID(t, home), 5*time.Second)
+}
+
+// The free port is picked, then released, then bound by the child: when something else takes
+// it in between, the start is retried once on a fresh port.
+func TestOpenBoard_RetriesWhenThePortIsTakenBeforeTheChildBinds(t *testing.T) {
+	isolateHome(t)
+	t.Setenv(fakeTQEnv, "serve")
+	thief, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer thief.Close()
+	stolen := thief.Addr().(*net.TCPAddr).Port
+	b := testHubs(t, selfPath(t))
+	calls := 0
+	b.freePort = func() (int, error) {
+		calls++
+		if calls == 1 {
+			return stolen, nil
+		}
+		return freeLoopbackPort()
+	}
+	got, err := b.open(context.Background(), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || strings.Contains(got.URL, ":"+strconv.Itoa(stolen)+"/") {
+		t.Fatalf("want one retry on a new port; calls=%d url=%s", calls, got.URL)
 	}
 }
 

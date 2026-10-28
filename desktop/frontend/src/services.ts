@@ -91,10 +91,37 @@ export function emptyTracker(provider: string): Tracker {
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
+// SECRET_SHAPE mirrors the manifest's secretRe (internal/manifest/manifest.go): the token
+// shapes the loader refuses. The backend checks again before anything is written.
+const SECRET_SHAPE =
+  /\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/i
+
+export const looksLikeSecret = (s: string): boolean => SECRET_SHAPE.test(s)
+
+const secretErr = (field: string): string =>
+  `${field} looks like a secret: enter its name, never the token (store the token with tq secret set or tq dotenv)`
+
+// trackerSecretErrors names every field holding a token-shaped value, never the value itself.
+function trackerSecretErrors(t: Tracker): string[] {
+  const errs: string[] = []
+  const labels = Object.fromEntries(scopeFields(t.Provider).map((f) => [f.key, f.label]))
+  if (looksLikeSecret(t.Env ?? '')) errs.push(secretErr('The environment variable name'))
+  if (looksLikeSecret(t.AssignedTo ?? '')) errs.push(secretErr('Assigned to'))
+  for (const [k, v] of Object.entries(t.Scope ?? {})) {
+    if (looksLikeSecret(k)) errs.push(secretErr('A scope key'))
+    else if (looksLikeSecret(v)) errs.push(secretErr(labels[k] ?? `Scope ${k}`))
+  }
+  for (const [status, lane] of Object.entries(t.Lanes ?? {})) {
+    if (looksLikeSecret(status)) errs.push(secretErr('A lane override status'))
+    else if (looksLikeSecret(lane)) errs.push(secretErr(`The lane for ${status}`))
+  }
+  return errs
+}
+
 // validateTracker mirrors the manifest loader's checks that the form can judge on its own.
 export function validateTracker(t: Tracker): string[] {
-  const errs: string[] = []
   if (!t.Provider) return ['Pick a tracker, or skip it']
+  const errs = trackerSecretErrors(t)
   for (const f of scopeFields(t.Provider)) {
     if (f.required && !(t.Scope?.[f.key] ?? '').trim()) errs.push(`${f.label} is required`)
   }
