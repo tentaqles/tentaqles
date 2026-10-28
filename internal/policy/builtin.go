@@ -23,6 +23,14 @@ const destTail = `['"]?(?:\s+(?:-\S+|\d*>\S*|#[^;&|\n]*))*\s*(?:$|[;&|\n])`
 // its verb: `kubectl -n prod apply`, `terraform -chdir=infra apply`.
 const iacFlags = `(?:\s+-{1,2}[\w.-]+(?:=\S+|\s+[^-\s]\S*)?)*`
 
+// Pieces of tq/tracker-cli-write's raw-API alternatives. trackerWriteMethod is an HTTP write
+// method flag (gh -X/--method, az rest --method, az devops invoke --http-method); trackerGHWrite
+// adds gh api's field flags, which make it POST; trackerGHPath is an issues or projects path.
+const trackerWriteMethod = `\s(-X|--method|--http-method)(\s+|=)["']?(post|patch|put|delete)\b`
+const trackerGHWrite = `(` + trackerWriteMethod + `|\s(-f|--field|--raw-field|--input)\b)`
+const trackerGHPath = `(/(issues|projects(v2)?)\b|[\s"'](issues|projects(v2)?)/)`
+const trackerAzureHost = `\b(dev\.azure\.com|visualstudio\.com)\b`
+
 // envExcept exempts the conventional committed templates of a .env file.
 const envExcept = `\.env\.(example|sample|template|dist|defaults|schema)\b`
 
@@ -153,12 +161,22 @@ func Builtin() []Rule {
 		// The tool is a word of its own (bare, path-prefixed or quoted) and flags may sit
 		// between it and the subcommand (`gh -R acme/app issue edit`), so a PR title that
 		// only mentions "issue create" is not a write.
+		// The raw API paths count too: `gh api` with a write (an -X/--method write, or a field,
+		// which makes gh POST) on an issues or projects path, or a GraphQL mutation; `az rest` with
+		// a write method on dev.azure.com, and `az devops invoke` with a write --http-method.
 		{
 			ID: "tq/tracker-cli-write", Action: Ask,
 			Command: `(^|[;&|\n(` + bt + `]|\s)["']?(\S*[/\\])?(` +
-				`az(\.cmd|\.exe)?["']?` + iacFlags + `\s+boards\s+work-item\s+(create|update|delete)` +
-				`|gh(\.exe)?["']?` + iacFlags + `\s+(issue\s+(edit|close|create|comment|reopen|delete)|project\s+item-(edit|add|create|delete|archive))` +
-				`|acli(\.exe)?["']?` + iacFlags + `\s+jira\s+workitem\s+(edit|transition|create|comment|delete|assign)` +
+				`az(\.cmd|\.exe)?["']?` + iacFlags + `\s+(` +
+				`boards\s+work-item\s+(create|update|delete|relation\s+(add|remove))` +
+				`|rest\b(` + seg + trackerAzureHost + seg + trackerWriteMethod + `|` + seg + trackerWriteMethod + seg + trackerAzureHost + `)` +
+				`|devops\s+invoke\b` + seg + trackerWriteMethod + `)` +
+				`|gh(\.exe)?["']?` + iacFlags + `\s+(` +
+				`issue\s+(edit|close|create|comment|reopen|delete|transfer|lock|unlock|pin|unpin|develop)` +
+				`|project\s+item-(edit|add|create|delete|archive)` +
+				`|api\b(` + seg + trackerGHPath + seg + trackerGHWrite + `|` + seg + trackerGHWrite + seg + trackerGHPath +
+				`|` + seg + `\bgraphql\b` + seg + `\bmutation\b))` +
+				`|acli(\.exe)?["']?` + iacFlags + `\s+jira\s+workitem\s+(edit|transition|create|comment|delete|assign|clone|link|archive|unarchive)` +
 				`)\b`,
 			Reason: "this writes to the company tracker outside the hub's sync engine, so the sync.policy settings and the outbound redaction do not apply; prefer `tq hub sync` (or the /tentaqles:sync skill), or confirm this write",
 		},

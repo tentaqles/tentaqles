@@ -12,7 +12,7 @@ import (
 
 // The MCP fallback (spec B §7 source 4, §8, §9, §12). When no background credential works, the
 // /tentaqles:sync skill reads the tracker with the agent's MCP connector and hands the items to
-// Import (tq hub sync import), then asks Sendable (tq hub sync outbox --sendable) which outbox
+// Import (tq hub sync import), then asks Sendable (tq hub sync pending) which outbox
 // rows it may deliver, sends each one with the connector, and reports back with Ack (tq hub sync
 // ack). An agent may import only into planning lanes, only linked cards, and may ack only rows
 // the policy sends (auto) or the human approved (an ask answered send). It never answers a
@@ -50,33 +50,80 @@ type ImportStatus struct {
 	Category string `json:"category"` // backlog|todo|active|review|done
 }
 
-// laneMapFrom rebuilds the lane map from statuses the fallback read (as buildLaneMap does from
-// the adapter): the manifest override, else the category's first lane.
-func (e *Engine) laneMapFrom(in []ImportStatus) error {
+// laneMapFrom builds the lane map from statuses the fallback read (as buildLaneMap does from the
+// adapter): the manifest override, else the category's first lane.
+//
+// A human import rebuilds the map. An agent's statuses are only a stopgap until the engine reads
+// the adapter's (spec §5: the map comes from the manifest and the adapter, never from a user): they
+// only add statuses the stored map lacks, never replace an entry, never map a status to a done
+// lane by category (only a manifest override may), and leave the engine's in-memory statuses alone
+// so its first poll with a working credential still builds the map from the adapter.
+func (e *Engine) laneMapFrom(in []ImportStatus, agent bool) error {
 	var sts []Status
 	var entries []store.LaneMapEntry
+	have := map[string]bool{}
+	if agent {
+		cur, err := e.st.LaneMap(e.provider, e.scope)
+		if err != nil {
+			return err
+		}
+		for _, m := range cur {
+			have[strings.ToLower(m.ExternalStatus)] = true
+			entries = append(entries, store.LaneMapEntry{ExternalStatus: m.ExternalStatus, Lane: m.Lane})
+		}
+	}
+	added := 0
 	for _, s := range in {
 		st := Status{Name: strings.TrimSpace(s.Name), Category: strings.ToLower(strings.TrimSpace(s.Category))}
 		if st.Name == "" {
 			continue
 		}
 		sts = append(sts, st)
+		if have[strings.ToLower(st.Name)] {
+			continue
+		}
 		lane, ok := e.overrideLane(st.Name)
 		if !ok {
+			if agent && st.Category == store.LaneDone {
+				continue
+			}
 			lane, ok = e.categoryLane(st.Category)
 		}
 		if ok {
+			have[strings.ToLower(st.Name)] = true
 			entries = append(entries, store.LaneMapEntry{ExternalStatus: st.Name, Lane: lane})
+			added++
 		}
 	}
-	if len(sts) == 0 {
+	if len(sts) == 0 || (agent && added == 0) {
 		return nil
 	}
 	if err := e.st.ReplaceLaneMap(e.provider, e.scope, entries); err != nil {
 		return err
 	}
-	e.statuses, e.mapped = sts, true
+	if !agent {
+		e.statuses, e.mapped = sts, true
+	}
 	return nil
+}
+
+// importWatermark is the watermark an import records: the one sent, clamped to no later than now
+// (a future one would make the engine's ListChanged skip real changes) and to no earlier than the
+// stored one. "" keeps the stored watermark.
+func (e *Engine) importWatermark(sent string) string {
+	t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(sent))
+	if err != nil {
+		return ""
+	}
+	if now := time.Now(); t.After(now) {
+		t = now
+	}
+	if st, ok, err := e.st.SyncState(e.provider, e.scope); err == nil && ok {
+		if prev := parseWatermark(st.Watermark); !prev.IsZero() && !t.After(prev) {
+			return ""
+		}
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // ParseImport reads an ImportInput, or a bare JSON array of items.
@@ -164,7 +211,7 @@ func (e *Engine) Import(in ImportInput, agent bool) (ImportReport, error) {
 	if err := e.produce(&Report{}); err != nil {
 		e.cfg.Logf("sync %s: outbox: %v", e.cfg.Workspace, err)
 	}
-	if err := e.laneMapFrom(in.Statuses); err != nil {
+	if err := e.laneMapFrom(in.Statuses, agent); err != nil {
 		return rep, fmt.Errorf("statuses: %w", err)
 	}
 	items := make([]Item, 0, len(in.Items))
@@ -182,11 +229,7 @@ func (e *Engine) Import(in ImportInput, agent bool) (ImportReport, error) {
 		rep.Items = append(rep.Items, res)
 	}
 	if len(errs) == 0 {
-		wm := ""
-		if t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(in.Watermark)); err == nil {
-			wm = t.UTC().Format(time.RFC3339Nano)
-		}
-		if err := e.st.RecordSyncOK(e.provider, e.scope, wm); err != nil {
+		if err := e.st.RecordSyncOK(e.provider, e.scope, e.importWatermark(in.Watermark)); err != nil {
 			return rep, err
 		}
 	}
@@ -200,7 +243,11 @@ func (e *Engine) importOne(it Item, agent bool, rep *ImportReport) (ImportResult
 	if strings.TrimSpace(it.Title) == "" && strings.TrimSpace(it.Key) == "" {
 		return ImportResult{}, errors.New("an item needs a title")
 	}
+	if err := checkBodyBudget(itemBody(it)); err != nil {
+		return ImportResult{}, err
+	}
 	res := ImportResult{ID: it.ID}
+	var textHeld, moveHeld bool
 	cur, err := e.st.CardByExternal(e.provider, it.ID)
 	exists := err == nil
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -239,15 +286,28 @@ func (e *Engine) importOne(it Item, agent bool, rep *ImportReport) (ImportResult
 		}
 		r.Created++
 	} else {
+		var notes []string
+		if !e.agentMayRefreshText(cur) {
+			// Held text: outside a planning lane, or while a run holds the card, the title and body
+			// are the human's (spec A's UpdateCard refuses an agent text edit; a run's next round
+			// reads this body). The link keeps its stored url too.
+			notes = append(notes, fmt.Sprintf("card %s is in lane %s%s; an agent refreshes the text only of an unlocked card in a planning lane, so the title and body stay",
+				cur.ID, cur.Lane, lockedNote(cur)))
+			it.Title, it.Key, it.Body, it.Acceptance, it.URL = "", "", "", "", ""
+			textHeld = true
+		}
 		target := e.laneOf(it.Status, it.StatusCategory)
 		remoteMoved := strings.TrimSpace(it.Status) != "" && !strings.EqualFold(it.Status, cur.ExternalLane)
 		if remoteMoved && target != "" && !strings.EqualFold(target, cur.Lane) && !e.planningMove(cur.Lane, target) {
-			// Held: the text still refreshes, the lane and the tracker status stay as sync last saw
-			// them, so a later pass by the engine (or a human import) still makes the move.
-			res.Result = "held"
-			res.Note = fmt.Sprintf("the company board has it in %q (lane %s); an agent moves cards only between planning lanes, so the human moves it",
-				strings.TrimSpace(it.Status), target)
+			// Held: the lane and the tracker status stay as sync last saw them, so a later pass by
+			// the engine (or a human import) still makes the move.
+			notes = append(notes, fmt.Sprintf("the company board has it in %q (lane %s); an agent moves cards only between planning lanes, so the human moves it",
+				strings.TrimSpace(it.Status), target))
 			it.Status, it.StatusCategory, it.Rev = "", "", ""
+			moveHeld = true
+		}
+		if len(notes) > 0 {
+			res.Result, res.Note = "held", strings.Join(notes, "; ")
 			rep.Held++
 		}
 		if err := e.applyItem(it, &r); err != nil {
@@ -272,10 +332,35 @@ func (e *Engine) importOne(it Item, agent bool, rep *ImportReport) (ImportResult
 		res.Result = "updated"
 		rep.Updated++
 	}
-	if res.Result == "held" {
+	if moveHeld && !textHeld { // the text still refreshed
 		rep.Updated++
 	}
 	return res, nil
+}
+
+// agentMayRefreshText: the card is in a planning lane and no run holds it.
+func (e *Engine) agentMayRefreshText(c store.Card) bool {
+	if c.LockedByRun != "" {
+		return false
+	}
+	l, err := e.st.Lane(c.Lane)
+	return err == nil && planningKind(l.Kind)
+}
+
+func lockedNote(c store.Card) string {
+	if c.LockedByRun != "" {
+		return ", held by run " + c.LockedByRun
+	}
+	return ""
+}
+
+// checkBodyBudget refuses a body whose budget front matter a run could not read, as a card edit
+// does (runner.checkBodyBudget).
+func checkBodyBudget(body string) error {
+	if _, err := store.CardBudget(store.Card{Body: body}, store.DefaultBudget); err != nil {
+		return fmt.Errorf("card body front matter: %w", err)
+	}
+	return nil
 }
 
 // planningMove: both lanes are planning lanes.
