@@ -23,6 +23,7 @@ import (
 //     done lane -> close_item (unless it is the move an approval makes).
 //   - review.approve: a linked card -> move_on_review plus comment_results (the summary and PR
 //     link); an unlinked child of a linked parent -> comment_results on the parent's item.
+//   - card.update of a linked card's title or body, by anyone but sync -> edit_text (queueEdit).
 //   - tq hub push -> create_card (Engine.Push).
 const settingCursor = "sync.outbox_cursor"
 
@@ -84,7 +85,8 @@ func (e *Engine) produce(rep *Report) error {
 		return e.setCursor(max)
 	}
 	rows, err := e.st.DB.Query(`SELECT rowid, ts, actor, verb, COALESCE(card_id, ''), COALESCE(run_id, ''), data FROM activity
-		WHERE rowid > ? AND verb IN (?, ?) ORDER BY rowid LIMIT 500`, cur, activity.VerbCardMove, activity.VerbReviewApprove)
+		WHERE rowid > ? AND verb IN (?, ?, ?) ORDER BY rowid LIMIT 500`, cur, activity.VerbCardMove, activity.VerbReviewApprove,
+		activity.VerbCardUpdate)
 	if err != nil {
 		return err
 	}
@@ -188,8 +190,65 @@ func (e *Engine) handle(a actEntry, rest []actEntry, rep *Report) (bool, error) 
 			return false, nil
 		}
 		return false, e.enqueue(p.ID, store.OutboxCommentResults, commentPayload{Text: text, Child: c.ID}, rep)
+	case activity.VerbCardUpdate:
+		if a.actor == ActorSync || !linked(c) || c.ExternalProvider != e.provider {
+			return false, nil
+		}
+		return false, e.queueEdit(c, a.data, rep)
 	}
 	return false, nil
+}
+
+// queueEdit queues edit_text for a local title or body edit of a linked card, with the card's
+// current text for the edited fields. A still-pending edit_text row of the card that has not been
+// asked yet is superseded: its fields join the new row, so one row carries the newest text.
+func (e *Engine) queueEdit(c store.Card, data map[string]any, rep *Report) error {
+	var title, body bool
+	fields, _ := data["fields"].([]any)
+	for _, f := range fields {
+		switch f {
+		case "title":
+			title = true
+		case "body":
+			body = true
+		}
+	}
+	if !title && !body {
+		return nil
+	}
+	older, err := e.st.ListOutbox(store.OutboxFilter{CardID: c.ID, Action: store.OutboxEditText, Status: store.OutboxPending})
+	if err != nil {
+		return err
+	}
+	var superseded []string
+	for _, o := range older {
+		if o.DecisionID != "" {
+			continue // already asked: the human answers that text
+		}
+		var p editPayload
+		_ = json.Unmarshal(o.Payload, &p)
+		title = title || p.Title != nil
+		body = body || p.Body != nil
+		superseded = append(superseded, o.ID)
+	}
+	var p editPayload
+	if title {
+		p.Title = &c.Title
+	}
+	if body {
+		p.Body = &c.Body
+	}
+	row, err := e.st.EnqueueOutbox(c.ID, store.OutboxEditText, p)
+	if err != nil {
+		return err
+	}
+	rep.Queued++
+	for _, id := range superseded {
+		if _, err := e.st.MarkOutbox(id, store.OutboxSkipped, "superseded by "+row.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *Engine) enqueue(cardID, action string, payload any, rep *Report) error {
@@ -505,7 +564,17 @@ func (e *Engine) askText(o store.OutboxRow) string {
 		return fmt.Sprintf("Sync (%s): create %q on the company board %s? send or skip.\n\n%s", o.Action,
 			e.outbound(p.Title), where, preview(e.outbound(p.Body)))
 	case store.OutboxEditText:
-		return fmt.Sprintf("Sync (%s): update the title or description of %s on the company board? send or skip.", o.Action, item)
+		var p editPayload
+		_ = json.Unmarshal(o.Payload, &p)
+		var b strings.Builder
+		fmt.Fprintf(&b, "Sync (%s): update the title or description of %s on the company board? send or skip.", o.Action, item)
+		if p.Title != nil {
+			fmt.Fprintf(&b, "\n\nTitle: %s", e.outbound(*p.Title))
+		}
+		if p.Body != nil {
+			b.WriteString("\n\nDescription:\n\n" + preview(e.outbound(*p.Body)))
+		}
+		return b.String()
 	}
 	return fmt.Sprintf("Sync: send %s for %s? send or skip.", o.Action, item)
 }

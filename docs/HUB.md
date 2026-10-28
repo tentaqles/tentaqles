@@ -295,8 +295,8 @@ process is syncing this workspace right now".
 - An inbound move goes through the normal move with the actor `sync` and never starts a
   run: only a human move into an active lane starts one.
 - Text: sync updates a linked card's title and body only while nobody has edited them here
-  since sync last wrote them. A local edit is kept on every later pull. Local edits are not
-  sent to the tracker yet (nothing queues `edit_text`).
+  since sync last wrote them. A local edit is kept on every later pull, and queues
+  `edit_text` (see below).
 - Lane conflict: both sides moved since the item was last pulled (a local move counts if it
   came after that pull, or while an outbound move is still pending). The tracker wins: the
   card moves and a system comment records it. An outbound move whose item has changed on
@@ -318,7 +318,7 @@ replayed):
 | you approve a linked card's result | `move_on_review` and `comment_results` (the result summary and the PR link) |
 | you approve an unlinked child of a linked parent | `comment_results` on the parent's item |
 | `tq hub push <card>`, or Push to company board | `create_card` (a child of the parent's item when the parent is linked) |
-| (not queued yet) | `edit_text` |
+| anyone but sync edits a linked card's title or body (the edited fields, current text; a row not yet asked is replaced by the newer one) | `edit_text` |
 
 Each action has a setting `sync.policy.<action>`:
 

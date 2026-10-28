@@ -29,7 +29,8 @@ type fakeTracker struct {
 	calls    []string
 	comments []string // "id: text"
 	created  []NewItem
-	moveErr  error // every Move fails with it (a transient outage)
+	updates  []string // "id title=<t|-> body=<b|->" for each Update
+	moveErr  error    // every Move fails with it (a transient outage)
 }
 
 func newFake() *fakeTracker {
@@ -140,6 +141,13 @@ func (f *fakeTracker) Update(ctx context.Context, id string, title, body *string
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("update " + id)
+	opt := func(p *string) string {
+		if p == nil {
+			return "-"
+		}
+		return *p
+	}
+	f.updates = append(f.updates, id+" title="+opt(title)+" body="+opt(body))
 	return nil
 }
 func (f *fakeTracker) SetLabels(ctx context.Context, id string, add, remove []string) error {
