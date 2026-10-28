@@ -151,13 +151,25 @@ func (s *Service) humanNotes(cardID string) Notes {
 	return PromptNotes(cs, runs)
 }
 
+// HubTaskExternal is TQ_HUB_TASK's "external": the tracker item a linked card mirrors.
+type HubTaskExternal struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+}
+
 // HubTaskJSON is TQ_HUB_TASK: {"hub","workspace","kind","external"} in that order (spec §13.1).
+// external is {"provider","id","url"} for a card linked to a tracker item, else null.
 func HubTaskJSON(workspace string, c store.Card) string {
+	var ext *HubTaskExternal
+	if c.ExternalProvider != "" && c.ExternalID != "" {
+		ext = &HubTaskExternal{Provider: c.ExternalProvider, ID: c.ExternalID, URL: c.ExternalURL}
+	}
 	b, _ := json.Marshal(struct {
-		Hub       string    `json:"hub"`
-		Workspace string    `json:"workspace"`
-		Kind      string    `json:"kind"`
-		External  *struct{} `json:"external"`
-	}{c.ID, workspace, c.Kind, nil})
+		Hub       string           `json:"hub"`
+		Workspace string           `json:"workspace"`
+		Kind      string           `json:"kind"`
+		External  *HubTaskExternal `json:"external"`
+	}{c.ID, workspace, c.Kind, ext})
 	return string(b)
 }
