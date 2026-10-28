@@ -572,6 +572,12 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 		} `json:"issueCreate"`
 	}
 	if err := a.do(ctx, "LinearIssueCreate", mIssueCreate, map[string]any{"input": input}, &out); err != nil {
+		// The mutation ran but part of the read-back failed: the issue exists, so this is a
+		// partial create and the engine links it instead of creating it again.
+		if is := out.IssueCreate.Issue; is != nil && is.ID != "" {
+			made := is.item()
+			return made, &hubsync.PartialCreateError{Item: made, Err: err}
+		}
 		return hubsync.Item{}, err
 	}
 	if !out.IssueCreate.Success || out.IssueCreate.Issue == nil {

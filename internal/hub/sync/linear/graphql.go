@@ -265,6 +265,12 @@ func (a *Adapter) do(ctx context.Context, op, query string, vars map[string]any,
 				return &cred.SourceError{Source: tr.Source(), Provider: Name, Err: errors.New(errorText(gr.Errors))}
 			}
 		}
+		// GraphQL can return data with the errors (a mutation that ran, a field that failed):
+		// decode it best-effort so a caller can see what was made. Callers that ignore out on
+		// error are unaffected.
+		if out != nil && len(gr.Data) > 0 && string(gr.Data) != "null" {
+			_ = json.Unmarshal(gr.Data, out)
+		}
 		return &apiError{op: op, errs: gr.Errors}
 	}
 	if resp.StatusCode >= 300 {
