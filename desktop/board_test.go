@@ -77,8 +77,18 @@ func fakeTQ(mode string, args []string) int {
 	writeRecord(port, "fake-key", ws)
 	if mode == "serve" && os.Getenv("TQ_HUB_PARENT_STDIN") == "1" {
 		// like tq hub serve: stdin EOF from the parent is a clean stop (the record goes away)
+		// like tq hub serve: an interrupt is a clean stop too. The parent closes stdin and
+		// interrupts at once, so without this the signal can win and skip the cleanup.
+		stop := make(chan struct{}, 2)
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt)
+		go func() { <-sig; stop <- struct{}{} }()
 		go func() {
 			_, _ = io.Copy(io.Discard, os.Stdin)
+			stop <- struct{}{}
+		}()
+		go func() {
+			<-stop
 			_ = os.Remove(filepath.Join(home, "hub", "serve-"+strconv.Itoa(port)+".json"))
 			os.Exit(0)
 		}()
