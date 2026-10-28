@@ -36,6 +36,10 @@ const (
 	defaultType = "Task"
 	batchSize   = 200  // workitemsbatch takes at most 200 ids
 	wiqlTop     = 1000 // items per flat ListChanged query; the watermark carries the rest to the next tick
+	// defaultCommentBudget is how many flat items with comments one ListChanged reads the
+	// comments of (one request each: ADO has no cross-item comment read); the page stops before
+	// the next one and the watermark carries the rest to the next tick.
+	defaultCommentBudget = 200
 	// linkChunk is how many parents one children-by-id link query names. Link queries carry no
 	// $top (a capped link reply would drop children silently); ADO's own row limit answers an
 	// error instead, and a small chunk keeps every reply far below it.
@@ -72,6 +76,7 @@ type Adapter struct {
 	now                func() time.Time
 	sleep              func(context.Context, time.Duration) error
 	timeout            time.Duration
+	commentBudget      int // comment reads one ListChanged may make for its flat items
 
 	mu      gosync.Mutex
 	client  *http.Client
@@ -79,6 +84,13 @@ type Adapter struct {
 	blocked time.Time
 	account string // unique name from connectionData; empty when it carries none
 	display string
+	// tie is where the last truncated flat page ended: its ChangedDate (the mark it returned)
+	// and the id of its last item. A ListChanged from exactly that mark pages on by id, so a page
+	// of items sharing one ChangedDate cannot pin the mark.
+	tie struct {
+		at time.Time
+		id int
+	}
 
 	statesMu    gosync.Mutex
 	states      map[string]map[string]string // lower(type) -> lower(state) -> category
@@ -105,7 +117,7 @@ func New(cfg hubsync.Config) (*Adapter, error) {
 	}
 	return &Adapter{cfg: cfg, org: org, project: project, team: strings.TrimSpace(cfg.Scope["board"]),
 		itemType: typ, me: cfg.AssignedTo != "anyone", base: root + "/" + url.PathEscape(org), now: time.Now,
-		sleep: sleepCtx, timeout: requestTimeout}, nil
+		sleep: sleepCtx, timeout: requestTimeout, commentBudget: defaultCommentBudget}, nil
 }
 
 func (a *Adapter) Name() string { return Provider }
@@ -355,14 +367,29 @@ func identity(v any, preferDisplay bool) string {
 	return ""
 }
 
+// tagSemi stands in for a ';' inside a hub label: System.Tags is ';'-separated, so a raw ';'
+// would split one label into two tags and SetLabels would never converge. It is the fullwidth
+// semicolon, turned back into ';' on the way in.
+const tagSemi = "；"
+
+// splitTags reads System.Tags as hub labels.
 func splitTags(s string) []string {
 	var out []string
 	for _, t := range strings.Split(s, ";") {
 		if t = strings.TrimSpace(t); t != "" {
-			out = append(out, t)
+			out = append(out, strings.ReplaceAll(t, tagSemi, ";"))
 		}
 	}
 	return out
+}
+
+// joinTags writes hub labels as System.Tags.
+func joinTags(labels []string) string {
+	out := make([]string, len(labels))
+	for i, l := range labels {
+		out[i] = strings.ReplaceAll(l, ";", tagSemi)
+	}
+	return strings.Join(out, "; ")
 }
 
 func lastID(u string) string {
@@ -481,14 +508,28 @@ func (a *Adapter) wiql(ctx context.Context, query string, top int, out any) erro
 // ListChanged runs WIQL on System.ChangedDate: the items assigned to @Me (all items in scope for
 // assigned_to anyone) plus, for me, the children of those items: the ones that changed since,
 // and every child of an item that came back (a parent just assigned brings its old tasks). It
-// returns them oldest change first, and the newest ChangedDate seen as the watermark, capped at
-// the time the flat query ran (its asOf) so a change landing between the query and the batch
-// read is not skipped; since when nothing changed.
+// returns them oldest change first, with a watermark; since when nothing changed.
+//
+// Every item is read as of the flat query's snapshot (its asOf), so the watermark always comes
+// from the ChangedDates the query ordered by, never from an edit that landed after it. A flat
+// page is truncated when the query hits $top or the comment budget runs out: then only its own
+// items, up to the last one kept, move the mark, and a later tick from that mark pages on past
+// it by id (ORDER BY ChangedDate, Id), so items sharing one ChangedDate never pin the mark.
+// Otherwise the newest ChangedDate seen is the mark, capped at the query's asOf.
 func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.Item, time.Time, error) {
 	changed, target := "", ""
 	if !since.IsZero() {
-		changed = " AND [System.ChangedDate] >= '" + wiqlTime(since) + "'"
-		target = " AND ([Target].[System.ChangedDate] >= '" + wiqlTime(since) + "')"
+		ts := wiqlTime(since)
+		a.mu.Lock()
+		tie := a.tie
+		a.mu.Unlock()
+		if tie.id > 0 && tie.at.Equal(since) {
+			changed = " AND ([System.ChangedDate] > '" + ts + "' OR ([System.ChangedDate] = '" + ts +
+				"' AND [System.Id] > " + strconv.Itoa(tie.id) + "))"
+		} else {
+			changed = " AND [System.ChangedDate] >= '" + ts + "'"
+		}
+		target = " AND ([Target].[System.ChangedDate] >= '" + ts + "')"
 	}
 	me := ""
 	if a.me {
@@ -502,29 +543,28 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 	}
 	sent := a.now()
 	q := "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project" + me + changed +
-		" ORDER BY [System.ChangedDate] ASC"
+		" ORDER BY [System.ChangedDate] ASC, [System.Id] ASC"
 	if err := a.wiql(ctx, q, wiqlTop, &flat); err != nil {
 		return nil, since, err
 	}
-	var ids []int
+	var flatIDs, ids []int // flatIDs in the query's order
 	seen := map[int]bool{}
 	for _, w := range flat.WorkItems {
 		if !seen[w.ID] {
 			seen[w.ID] = true
-			ids = append(ids, w.ID)
+			flatIDs = append(flatIDs, w.ID)
 		}
 	}
-	flatIDs := map[int]bool{}
-	for _, id := range ids {
-		flatIDs[id] = true
-	}
+	ids = slices.Clone(flatIDs)
 	capped := len(flat.WorkItems) >= wiqlTop
+	changedKid := map[int]bool{} // children that changed since: always returned
+	parentOf := map[int][]int{}  // child -> the flat parents that brought it
 	if a.me {
-		parents := slices.Clone(ids)
-		addChildren := func(lq string) error {
+		addChildren := func(lq string, fromChanged bool) error {
 			var links struct {
 				WorkItemRelations []struct {
 					Rel    *string           `json:"rel"`
+					Source *struct{ ID int } `json:"source"`
 					Target *struct{ ID int } `json:"target"`
 				} `json:"workItemRelations"`
 			}
@@ -532,11 +572,19 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 				return err
 			}
 			for _, r := range links.WorkItemRelations {
-				if r.Rel == nil || r.Target == nil || seen[r.Target.ID] {
+				if r.Rel == nil || r.Target == nil {
 					continue
 				}
-				seen[r.Target.ID] = true
-				ids = append(ids, r.Target.ID)
+				kid := r.Target.ID
+				if fromChanged {
+					changedKid[kid] = true
+				} else if r.Source != nil {
+					parentOf[kid] = append(parentOf[kid], r.Source.ID)
+				}
+				if !seen[kid] {
+					seen[kid] = true
+					ids = append(ids, kid)
+				}
 			}
 			return nil
 		}
@@ -547,65 +595,125 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 			lq := "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.TeamProject] = @project AND " +
 				"[Source].[System.AssignedTo] = @Me) AND ([System.Links.LinkType] = '" + relChild + "')" + target +
 				" MODE (MustContain)"
-			if err := addChildren(lq); err != nil {
+			if err := addChildren(lq, true); err != nil {
 				return nil, since, err
 			}
 		}
 		// Every child of the items that came back, changed or not (a parent just assigned
 		// brings its old tasks).
-		for chunk := range slices.Chunk(parents, linkChunk) {
+		for chunk := range slices.Chunk(flatIDs, linkChunk) {
 			in := make([]string, len(chunk))
 			for i, id := range chunk {
 				in[i] = strconv.Itoa(id)
 			}
 			cq := "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.Id] IN (" + strings.Join(in, ",") +
 				")) AND ([System.Links.LinkType] = '" + relChild + "') MODE (MustContain)"
-			if err := addChildren(cq); err != nil {
+			if err := addChildren(cq, false); err != nil {
 				return nil, since, err
 			}
 		}
 	}
-	ws, err := a.batch(ctx, ids)
+	// Nothing after the flat query ran is known to be complete: the mark never passes it.
+	ceiling := sent.Add(-clockSkew)
+	asOf := ""
+	if t, err := time.Parse(time.RFC3339Nano, flat.AsOf); err == nil {
+		ceiling, asOf = t.UTC(), flat.AsOf
+	}
+	ws, err := a.batch(ctx, ids, asOf)
 	if err != nil {
 		return nil, since, err
 	}
-	items := make([]hubsync.Item, 0, len(ws))
-	mark := since
+	byID := make(map[int]workItem, len(ws))
 	for _, w := range ws {
+		byID[w.ID] = w
+	}
+
+	// The flat items, in the query's order, while the comment budget lasts.
+	var items []hubsync.Item
+	kept := map[int]bool{}
+	var last hubsync.Item // the last flat item kept
+	reads := 0
+	for _, id := range flatIDs {
+		w, ok := byID[id]
+		if !ok {
+			continue // deleted since the query
+		}
+		if commentCount(w) > 0 {
+			if reads >= a.commentBudget && len(kept) > 0 {
+				capped = true
+				break
+			}
+			reads++
+		}
+		it, err := a.full(ctx, w)
+		if err != nil {
+			return nil, since, err
+		}
+		items, kept[id], last = append(items, it), true, it
+	}
+	mark := since
+	if capped {
+		// Only the page's own items, read as of the query, move the mark. An item whose read
+		// is newer than the query (an edit after it, when asOf was not honoured) does not:
+		// a lower mark only re-reads, a higher one could skip the rest of the page.
+		for _, it := range items {
+			if it.UpdatedAt.After(mark) && !it.UpdatedAt.After(ceiling) {
+				mark = it.UpdatedAt
+			}
+		}
+	}
+	// The children: the ones that changed since, and those of the flat items kept.
+	for _, id := range ids[len(flatIDs):] {
+		w, ok := byID[id]
+		if !ok || capped && !changedKid[id] && !slices.ContainsFunc(parentOf[id], func(p int) bool { return kept[p] }) {
+			continue
+		}
 		it, err := a.full(ctx, w)
 		if err != nil {
 			return nil, since, err
 		}
 		items = append(items, it)
-		// A capped flat query leaves items for the next tick: only its own items move the mark.
-		if it.UpdatedAt.After(mark) && (!capped || flatIDs[w.ID]) {
-			mark = it.UpdatedAt
+	}
+	if !capped {
+		for _, it := range items {
+			if it.UpdatedAt.After(mark) {
+				mark = it.UpdatedAt
+			}
 		}
-	}
-	// Nothing after the flat query ran is known to be complete: cap the mark there. Re-reading
-	// an item next tick is harmless (the query uses >=).
-	ceiling := sent.Add(-clockSkew)
-	if t, err := time.Parse(time.RFC3339Nano, flat.AsOf); err == nil {
-		ceiling = t.UTC()
-	}
-	if mark.After(ceiling) {
-		mark = ceiling
+		if mark.After(ceiling) {
+			mark = ceiling
+		}
 	}
 	if mark.Before(since) {
 		mark = since
 	}
+	a.mu.Lock()
+	a.tie.at, a.tie.id = time.Time{}, 0
+	if capped && last.ID != "" && last.UpdatedAt.Equal(mark) {
+		a.tie.at, a.tie.id = mark, mustAtoi(last.ID)
+	}
+	a.mu.Unlock()
 	sort.SliceStable(items, func(i, j int) bool { return items[i].UpdatedAt.Before(items[j].UpdatedAt) })
 	return items, mark, nil
 }
 
-// batch reads work items by id through workitemsbatch, 200 at a time. Deleted ids are skipped.
-func (a *Adapter) batch(ctx context.Context, ids []int) ([]workItem, error) {
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+// batch reads work items by id through workitemsbatch, 200 at a time, as of asOf when set (the
+// flat query's snapshot). Deleted ids are skipped.
+func (a *Adapter) batch(ctx context.Context, ids []int, asOf string) ([]workItem, error) {
 	var out []workItem
 	for chunk := range slices.Chunk(ids, batchSize) {
 		var res struct {
 			Value []*workItem `json:"value"`
 		}
 		in := map[string]any{"ids": chunk, "$expand": "Relations", "errorPolicy": "Omit"}
+		if asOf != "" {
+			in["asOf"] = asOf
+		}
 		if err := a.do(ctx, "POST", a.projURL("wit/workitemsbatch", nil), "application/json", in, &res); err != nil {
 			return nil, err
 		}
@@ -656,7 +764,9 @@ func (a *Adapter) Comment(ctx context.Context, id, markdown string) error {
 // Create makes a work item of in.Type (else scope type, else Task). in.ParentID makes it a child
 // (System.LinkTypes.Hierarchy-Reverse to the parent). With assigned_to me it is assigned to the
 // signed-in account's unique name, so it mirrors back; when connectionData gave only a display
-// name (ambiguous, and Azure DevOps may reject it) AssignedTo is left unset.
+// name (ambiguous, and Azure DevOps may reject it) AssignedTo is left unset. in.Status is set by
+// a patch after the create; when that fails the item exists, and the error is a
+// *hubsync.PartialCreateError carrying it.
 func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return hubsync.Item{}, fmt.Errorf("%s: create: a title is required", Provider)
@@ -672,11 +782,14 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	if in.Acceptance != "" {
 		ops = append(ops, set("/fields/"+fieldAccept, MarkdownToHTML(in.Acceptance)))
 	}
-	if len(in.Labels) > 0 {
-		ops = append(ops, set("/fields/System.Tags", strings.Join(in.Labels, "; ")))
+	var labels []string
+	for _, l := range in.Labels {
+		if l = strings.TrimSpace(l); l != "" {
+			labels = append(labels, l)
+		}
 	}
-	if in.Status != "" {
-		ops = append(ops, set("/fields/System.State", in.Status))
+	if len(labels) > 0 {
+		ops = append(ops, set("/fields/System.Tags", joinTags(labels)))
 	}
 	if a.me {
 		acct, _, err := a.whoami(ctx)
@@ -698,7 +811,22 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	if err := a.do(ctx, "POST", a.projURL("wit/workitems/$"+url.PathEscape(typ), nil), jsonPatch, ops, &w); err != nil {
 		return hubsync.Item{}, err
 	}
-	return a.toItem(ctx, w), nil
+	if w.ID <= 0 {
+		return hubsync.Item{}, fmt.Errorf("%s: create: the reply names no work item", Provider)
+	}
+	it := a.toItem(ctx, w)
+	// The state is set in its own patch: a process that refuses it as an initial state must not
+	// block the create, and the item that now exists is reported with the failure.
+	if st := strings.TrimSpace(in.Status); st != "" && !strings.EqualFold(st, it.Status) {
+		var moved workItem
+		if err := a.patch(ctx, it.ID, []patchOp{set("/fields/System.State", st)}, &moved); err != nil {
+			return hubsync.Item{}, &hubsync.PartialCreateError{Item: it, Err: fmt.Errorf("set state %q: %w", st, err)}
+		}
+		if moved.ID == w.ID {
+			it = a.toItem(ctx, moved)
+		}
+	}
+	return it, nil
 }
 
 // Update replaces the title and/or the description (markdown, sent as HTML). Both nil is a no-op;
@@ -749,5 +877,5 @@ func (a *Adapter) SetLabels(ctx context.Context, id string, add, remove []string
 		return nil
 	}
 	return a.patch(ctx, id, []patchOp{{Op: "test", Path: "/rev", Value: w.Rev},
-		set("/fields/System.Tags", strings.Join(next, "; "))}, nil)
+		set("/fields/System.Tags", joinTags(next))}, nil)
 }

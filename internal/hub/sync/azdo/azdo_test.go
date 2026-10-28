@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,11 @@ type fakeADO struct {
 	links    [][2]int // source -> target pairs the link WIQL queries return (filtered like ADO would)
 	asOf     string   // the flat WIQL reply's asOf; empty sends none
 	noAcct   bool     // connectionData carries no Account property (display name only)
+	// filterFlat makes the flat query honour its ChangedDate floor (or id tiebreak) and order by
+	// ChangedDate, Id, like ADO; off, it returns flat as listed.
+	filterFlat bool
+	past       map[int]map[string]any // id -> the item as of the WIQL asOf (workitemsbatch with asOf)
+	ignoreAsOf bool                   // workitemsbatch ignores asOf (current versions only)
 
 	wantAuth string
 	requests []string // "METHOD path"
@@ -167,7 +173,7 @@ func (f *fakeADO) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		wis := []any{}
-		for _, id := range f.flat {
+		for _, id := range f.flatFor(in.Query) {
 			wis = append(wis, map[string]any{"id": id})
 		}
 		if top >= 0 && len(wis) > top {
@@ -184,7 +190,9 @@ func (f *fakeADO) serve(w http.ResponseWriter, r *http.Request) {
 		f.batch = append(f.batch, in)
 		out := []any{}
 		for _, v := range in["ids"].([]any) {
-			if it, ok := f.items[int(v.(float64))]; ok {
+			if p, ok := f.past[int(v.(float64))]; ok && in["asOf"] != nil && !f.ignoreAsOf {
+				out = append(out, p)
+			} else if it, ok := f.items[int(v.(float64))]; ok {
 				out = append(out, it)
 			} else {
 				out = append(out, nil)
@@ -266,6 +274,49 @@ func (f *fakeADO) serve(w http.ResponseWriter, r *http.Request) {
 		f.t.Errorf("unhandled %s %s", r.Method, r.URL)
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+var (
+	reFlatSince = regexp.MustCompile(`AND \[System\.ChangedDate\] >= '([^']+)'`)
+	reFlatTie   = regexp.MustCompile(`\[System\.ChangedDate\] > '([^']+)' OR \(\[System\.ChangedDate\] = '([^']+)' AND \[System\.Id\] > (\d+)\)`)
+)
+
+func (f *fakeADO) changedOf(id int) time.Time {
+	ch, _ := time.Parse(time.RFC3339Nano, f.items[id]["fields"].(map[string]any)["System.ChangedDate"].(string))
+	return ch
+}
+
+// flatFor is the flat reply: f.flat as listed, or with filterFlat the ids past the query's floor
+// (or tiebreak), ordered by ChangedDate, Id.
+func (f *fakeADO) flatFor(query string) []int {
+	if !f.filterFlat {
+		return f.flat
+	}
+	var out []int
+	for _, id := range f.flat {
+		ch := f.changedOf(id)
+		if m := reFlatTie.FindStringSubmatch(query); m != nil {
+			at, _ := time.Parse(time.RFC3339Nano, m[1])
+			after, _ := strconv.Atoi(m[3])
+			if !(ch.After(at) || ch.Equal(at) && id > after) {
+				continue
+			}
+		} else if m := reFlatSince.FindStringSubmatch(query); m != nil {
+			floor, _ := time.Parse(time.RFC3339Nano, m[1])
+			if ch.Before(floor) {
+				continue
+			}
+		}
+		out = append(out, id)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := f.changedOf(out[i]), f.changedOf(out[j])
+		if !a.Equal(b) {
+			return a.Before(b)
+		}
+		return out[i] < out[j]
+	})
+	return out
 }
 
 func newAdapter(t *testing.T, srv *httptest.Server, mod ...func(*hubsync.Config)) *Adapter {
