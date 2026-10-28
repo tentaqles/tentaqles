@@ -77,9 +77,28 @@ themselves if they want it.
 tq hub show <card> --timeout 2s 2>&1
 ```
 
+## 5. Board sync
+
+A workspace with a `tracker` block mirrors the company tracker into the board (tq's
+`docs/HUB.md#board-sync`):
+
+- A linked card is one tracker item: `tq hub show <card> --json --timeout 2s` carries its
+  `external_id`, and the card page shows the badge (`Jira ACME-7`, `ADO #123`) and company
+  lane. Sync updates its text until someone edits it here; moving it queues writes back
+  to the tracker.
+- Writes the policy sets to `ask` wait as a `permission` decision with
+  `decision.data.outbox` and the options `send` / `skip`; its text is the redacted text
+  that would leave. Explain it like any other decision and print the
+  `tq hub answer <card> <decision> --choice send|skip` command: the choice is human-only.
+- `tq hub push <card>` creates the tracker item for a local card. It is human-only: when
+  the user wants it, print the command for their terminal (or point to Push to company
+  board on the card page).
+- When sync reports `needs-session` (no background credential), use `/tentaqles:sync`.
+
 ## Never
 
 - run `tq hub answer`, move a card to a done lane, or any human-only `build-gate` command
+- answer a sync send/skip decision, or run `tq hub push` or `tq hub sync retry`
 - set a budget for the user
 - retry a failed `tq hub` call in a loop; one bounded call per step
 - copy card text into another tool; the hub masked what it stored, keep it there
