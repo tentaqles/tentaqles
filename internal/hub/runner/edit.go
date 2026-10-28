@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/tentaqles/tentaqles/internal/hub/activity"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
@@ -44,9 +45,10 @@ func (s *Service) UpdateCard(ctx context.Context, id string, u store.CardUpdate)
 
 // Settings are the workspace's run settings as the page shows them.
 type Settings struct {
-	Concurrency   int          `json:"concurrency"`
-	DefaultBudget store.Budget `json:"default_budget"`
-	Notify        bool         `json:"notify"`
+	Concurrency   int                `json:"concurrency"`
+	DefaultBudget store.Budget       `json:"default_budget"`
+	Notify        bool               `json:"notify"`
+	Sync          store.SyncSettings `json:"sync"`
 }
 
 // SettingsUpdate carries the settings to change; nil fields stay as they are. A budget is
@@ -55,10 +57,24 @@ type SettingsUpdate struct {
 	Concurrency   *int          `json:"concurrency,omitempty"`
 	DefaultBudget *store.Budget `json:"default_budget,omitempty"`
 	Notify        *bool         `json:"notify,omitempty"`
+	Sync          *SyncUpdate   `json:"sync,omitempty"`
+}
+
+// SyncUpdate changes sync settings (spec B §5); nil fields and policies left out stay as they are.
+// Policy maps an outbox action (move_on_start, ..., close_item) to off, ask or auto.
+type SyncUpdate struct {
+	Enabled  *bool             `json:"enabled,omitempty"`
+	Interval *int              `json:"interval,omitempty"` // seconds, >= 60
+	Policy   map[string]string `json:"policy,omitempty"`
+}
+
+func (u *SyncUpdate) empty() bool {
+	return u == nil || (u.Enabled == nil && u.Interval == nil && len(u.Policy) == 0)
 }
 
 func (s *Service) Settings() Settings {
-	return Settings{Concurrency: s.st.Concurrency(), DefaultBudget: s.st.DefaultBudget(), Notify: s.st.Notify()}
+	return Settings{Concurrency: s.st.Concurrency(), DefaultBudget: s.st.DefaultBudget(), Notify: s.st.Notify(),
+		Sync: s.st.SyncSettings(s.cfg.HasTracker)}
 }
 
 // UpdateSettings is human-only. Every field is validated before any is written and the writes are one
@@ -67,8 +83,8 @@ func (s *Service) UpdateSettings(ctx context.Context, u SettingsUpdate) (Setting
 	if IsAgent(ctx) {
 		return Settings{}, ErrHumanOnly
 	}
-	if u.Concurrency == nil && u.DefaultBudget == nil && u.Notify == nil {
-		return Settings{}, errors.New("nothing to update: send concurrency, default_budget or notify")
+	if u.Concurrency == nil && u.DefaultBudget == nil && u.Notify == nil && u.Sync.empty() {
+		return Settings{}, errors.New("nothing to update: send concurrency, default_budget, notify or sync")
 	}
 	if u.Concurrency != nil && (*u.Concurrency < 1 || *u.Concurrency > store.MaxConcurrency) {
 		return Settings{}, errors.New("concurrency: use a whole number from 1 to 16")
@@ -88,9 +104,35 @@ func (s *Service) UpdateSettings(ctx context.Context, u SettingsUpdate) (Setting
 	if u.Notify != nil {
 		fields = append(fields, "notify")
 	}
+	w := store.SettingsWrite{Concurrency: u.Concurrency, DefaultBudget: u.DefaultBudget, Notify: u.Notify}
+	if !u.Sync.empty() {
+		if u.Sync.Interval != nil {
+			if err := store.ValidateSyncInterval(*u.Sync.Interval); err != nil {
+				return Settings{}, err
+			}
+		}
+		actions := make([]string, 0, len(u.Sync.Policy))
+		for a, v := range u.Sync.Policy {
+			if err := store.ValidatePolicy(a, v); err != nil {
+				return Settings{}, err
+			}
+			actions = append(actions, a)
+		}
+		slices.Sort(actions)
+		if u.Sync.Enabled != nil {
+			fields = append(fields, store.SettingSyncEnabled)
+		}
+		if u.Sync.Interval != nil {
+			fields = append(fields, store.SettingSyncInterval)
+		}
+		for _, a := range actions {
+			fields = append(fields, store.SettingSyncPolicyPrefix+a)
+		}
+		w.SyncEnabled, w.SyncInterval, w.SyncPolicy = u.Sync.Enabled, u.Sync.Interval, u.Sync.Policy
+	}
 	// One transaction for the values and the audit row; the activity.jsonl mirror after the commit is
 	// best-effort, so an error here means nothing was saved.
-	err := s.st.SetSettings(store.SettingsWrite{Concurrency: u.Concurrency, DefaultBudget: u.DefaultBudget, Notify: u.Notify},
+	err := s.st.SetSettings(w,
 		activity.Entry{Actor: s.human(), Verb: activity.VerbSettingsUpdate, Data: map[string]any{"fields": fields}})
 	if err != nil {
 		return s.Settings(), err

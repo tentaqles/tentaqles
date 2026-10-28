@@ -187,6 +187,9 @@ type SettingsWrite struct {
 	Concurrency   *int
 	DefaultBudget *Budget
 	Notify        *bool
+	SyncEnabled   *bool
+	SyncInterval  *int              // seconds, >= MinSyncInterval
+	SyncPolicy    map[string]string // outbox action -> off|ask|auto
 }
 
 // SetSettings stores every given setting and the activity entry describing the change in one
@@ -215,6 +218,21 @@ func (s *Store) SetSettings(w SettingsWrite, entry activity.Entry) error {
 	}
 	if w.Notify != nil {
 		kv[SettingNotify] = strconv.FormatBool(*w.Notify)
+	}
+	if w.SyncEnabled != nil {
+		kv[SettingSyncEnabled] = strconv.FormatBool(*w.SyncEnabled)
+	}
+	if w.SyncInterval != nil {
+		if err := ValidateSyncInterval(*w.SyncInterval); err != nil {
+			return err
+		}
+		kv[SettingSyncInterval] = strconv.Itoa(*w.SyncInterval)
+	}
+	for action, value := range w.SyncPolicy {
+		if err := ValidatePolicy(action, value); err != nil {
+			return err
+		}
+		kv[SettingSyncPolicyPrefix+action] = value
 	}
 	if len(kv) == 0 {
 		return errors.New("no settings to store")

@@ -40,6 +40,8 @@ type Config struct {
 	Trusted func() error
 	// RepoCheck refuses a round whose folder is not in a git repository (GitPreflight). nil → no check.
 	RepoCheck func(ctx context.Context, dir, projectDir string) error
+	// HasTracker is whether the workspace manifest has a tracker block: sync.enabled defaults to it.
+	HasTracker bool
 }
 
 type flight struct {

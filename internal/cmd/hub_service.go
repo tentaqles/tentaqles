@@ -146,7 +146,7 @@ func newHubService(ws *resolve.Workspace, warn func(string), notifyOn bool) (*ru
 	}
 	svc, err := runner.New(runner.Config{Workspace: ws.Name, Root: ws.Root, Store: st, Gate: g, Adapters: adapters, Env: env,
 		Notify: notifyFn, Actor: gate.Actor(), GateURL: "http://127.0.0.1:8765/",
-		Trusted: func() error { return manifestTrusted(ws) }, RepoCheck: runner.GitPreflight})
+		Trusted: func() error { return manifestTrusted(ws) }, RepoCheck: runner.GitPreflight, HasTracker: ws.Manifest.HasTracker()})
 	if err != nil {
 		st.Close()
 		return nil, err
