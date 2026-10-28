@@ -46,12 +46,13 @@ Print the lines as one numbered list for the user to run in their own terminal
 they are done. Do not run any of them.
 
 - **CLIs** (every identity, the cloud CLIs, the data platform CLI, the agent CLIs):
-  `tq login <ws> <id>` for each one, for example `tq login acme claude`. `az` and
-  `azure-devops` are one CLI: one `tq login <ws> az` covers both.
+  `tq login <ws> <id>` for each one, for example `tq login acme claude`.
 - **Tracker** (`tracker.provider`), by the fallback order cli, then keychain, then env:
-  - cli: GitHub uses `tq login <ws> gh`; Azure DevOps uses `tq login <ws> azure-devops`
-    (it runs `az login`); Jira uses `acli jira auth login` (acli keeps one global login,
-    not one per workspace). Linear and Asana have no CLI login.
+  - cli: GitHub uses `tq login <ws> gh`. Azure DevOps runs `az login`: use
+    `tq login <ws> azure-devops` when `identities` lists `azure-devops`, else
+    `tq login <ws> az` (the same CLI; doctor's fix line names the right one). Jira uses
+    `acli jira auth login` (acli keeps one global login, not one per workspace). Linear
+    and Asana have no CLI login.
   - keychain: `tq secret set <ws> <provider>`, which reads the token from a hidden
     prompt. `tq secret status` shows what is stored, never the value.
   - env (`tracker.env` names the variable): the user puts the token where `tq dotenv`
@@ -59,14 +60,14 @@ they are done. Do not run any of them.
   - mcp: no background sync; `/tentaqles:sync` does the work from a Claude session.
 - **MCP connectors** (chat: Slack, Teams; email: Gmail, Outlook; and the tracker
   connectors Linear, Asana, Atlassian, Notion when the tracker is MCP-only):
-  1. Check the bundle catalog has the entry:
-
-     ```bash
-     tq bundle catalog 2>&1 | head -n 60
-     ```
-
-  2. Missing: tell the user to add it to the catalog and to `claude.bundle.mcp` in the
-     manifest, then run `tq allow <ws>` and `tq bundle sync <ws>` themselves.
+  1. Whether the server is configured comes from doctor's names-only findings in
+     step 3 (`chat-ok` / `chat-mcp-missing`, `email-ok` / `email-mcp-missing`), and for
+     the tracker connectors from the read-only call in step 3. Do not list or open the
+     tq bundle catalog or any `.claude.json` to find out: their MCP entries can carry
+     connector tokens in `env`.
+  2. Missing: tell the user to add it to the tq bundle catalog and to
+     `claude.bundle.mcp` in the manifest, then run `tq allow <ws>` and
+     `tq bundle sync <ws>` themselves (doctor's fix line names the entry).
   3. Then authenticate it with `/mcp` in this Claude session (or connect it on
      claude.ai). A restart of Claude Code may be needed before a new server shows up.
 
@@ -119,5 +120,7 @@ next step is the exact line the user runs. Then stop.
 - ask for, read, repeat or store a token, key or password
 - run `tq login`, `tq allow`, `tq secret set`, `tq bundle sync` or any CLI login
 - read or print `.env` files or the whole environment
+- Read, cat or list the tq bundle catalog file or any `.claude.json` (MCP entries can
+  hold connector tokens in `env`); presence comes from doctor's findings
 - send, post or change anything through a connector while verifying
 - edit the manifest yourself; a change needs `tq allow`, which is the user's

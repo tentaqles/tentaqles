@@ -67,3 +67,16 @@ def test_onboard_skill_runs_no_human_only_command():
         assert "printenv" not in block and "set |" not in block
     assert "Never run `tq login`" in text
     assert "never ask for" in text.lower() and "token" in text.lower()
+
+
+def test_onboard_skill_never_opens_files_that_can_hold_connector_tokens():
+    # Bundle MCP entries are verbatim mcpServers objects whose env can hold tokens, and
+    # .claude.json holds the same. Presence comes from doctor's names-only findings, never from
+    # reading those files or listing the catalog.
+    text = SKILL.read_text(encoding="utf-8")
+    for block in _bash_blocks(text):
+        assert "bundle catalog" not in block
+        assert ".claude.json" not in block and "catalog.yaml" not in block
+    never = text[text.index("## Never"):]
+    assert "bundle catalog" in never and ".claude.json" in never
+    assert "Read" in never
