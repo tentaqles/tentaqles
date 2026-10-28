@@ -233,6 +233,11 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmdCtx(c), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			if parentStdinWanted() {
+				var stopParent context.CancelFunc
+				ctx, stopParent = parentStdinContext(ctx, c.InOrStdin())
+				defer stopParent()
+			}
 			if entries, err = servedElsewhere(ctx, entries, mode); err != nil {
 				return err
 			}

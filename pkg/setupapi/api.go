@@ -52,6 +52,10 @@ type Company struct {
 	GitProvider    string
 	Identities     []string
 	PermissionMode string
+	// Company services (spec B §6), see services.go: nil Tracker and "" Chat/Email skip a block.
+	Tracker *Tracker
+	Chat    string
+	Email   string
 }
 
 // Plan mirrors internal/setup.SetupPlan.
@@ -161,6 +165,9 @@ func (c Company) toInternal() setup.Company {
 		GitProvider:    c.GitProvider,
 		Identities:     c.Identities,
 		PermissionMode: c.PermissionMode,
+		Tracker:        c.Tracker.toInternal(),
+		Chat:           serviceBlock(c.Chat),
+		Email:          serviceBlock(c.Email),
 	}
 }
 

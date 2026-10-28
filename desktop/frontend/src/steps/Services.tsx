@@ -3,6 +3,7 @@ import * as api from '../api'
 import {Badge, Button, Card, Field, Input, Select, StepHeader} from '../ui'
 import {usePlan} from '../state'
 import {CATEGORIES} from '../validate'
+import CompanyServices from './CompanyServices'
 
 interface EnvRow {
   key: string
@@ -138,6 +139,8 @@ export default function Services() {
           onCancel={() => setShowCustom(false)}
         />
       ) : null}
+
+      <CompanyServices company={company} />
     </div>
   )
 }

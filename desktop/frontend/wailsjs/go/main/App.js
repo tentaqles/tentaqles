@@ -38,12 +38,20 @@ export function HooksStatus() {
   return window['go']['main']['App']['HooksStatus']();
 }
 
+export function Hubs() {
+  return window['go']['main']['App']['Hubs']();
+}
+
 export function InstallTQ(arg1) {
   return window['go']['main']['App']['InstallTQ'](arg1);
 }
 
 export function LoginCommand(arg1, arg2) {
   return window['go']['main']['App']['LoginCommand'](arg1, arg2);
+}
+
+export function OpenBoard(arg1) {
+  return window['go']['main']['App']['OpenBoard'](arg1);
 }
 
 export function OpenTerminal(arg1) {
@@ -60,6 +68,10 @@ export function Preview(arg1) {
 
 export function Providers() {
   return window['go']['main']['App']['Providers']();
+}
+
+export function ServiceCatalog() {
+  return window['go']['main']['App']['ServiceCatalog']();
 }
 
 export function TQVersion() {

@@ -33,10 +33,13 @@ func Preview(p *SetupPlan, hp hooks.Profiles) ([]Change, error) {
 		root := filepath.Join(base, c.Name)
 		mp := filepath.Join(root, manifest.FileName)
 		if _, err := os.Stat(mp); err == nil {
-			changes = append(changes, Change{Kind: "workspace-skip", Target: c.Name, Detail: "manifest already exists"})
+			changes = append(changes, Change{Kind: "workspace-skip", Target: c.Name, Detail: c.skipDetail("manifest already exists")})
 			continue
 		}
 		changes = append(changes, Change{Kind: "workspace-create", Target: c.Name})
+		if sc, ok := c.servicesChange(); ok {
+			changes = append(changes, sc)
+		}
 		for _, id := range effectiveIdentities(c) {
 			changes = append(changes, Change{Kind: "identity-dir", Target: c.Name + "/" + id})
 		}

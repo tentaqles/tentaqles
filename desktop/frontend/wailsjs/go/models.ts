@@ -1,3 +1,22 @@
+export namespace main {
+	
+	export class BoardTarget {
+	    URL: string;
+	    Started: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BoardTarget(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.URL = source["URL"];
+	        this.Started = source["Started"];
+	    }
+	}
+
+}
+
 export namespace setupapi {
 	
 	export class Change {
@@ -16,6 +35,28 @@ export namespace setupapi {
 	        this.Detail = source["Detail"];
 	    }
 	}
+	export class Tracker {
+	    Provider: string;
+	    Scope: Record<string, string>;
+	    AssignedTo: string;
+	    Auth: string;
+	    Env: string;
+	    Lanes: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new Tracker(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Provider = source["Provider"];
+	        this.Scope = source["Scope"];
+	        this.AssignedTo = source["AssignedTo"];
+	        this.Auth = source["Auth"];
+	        this.Env = source["Env"];
+	        this.Lanes = source["Lanes"];
+	    }
+	}
 	export class Company {
 	    Name: string;
 	    DisplayName: string;
@@ -26,6 +67,9 @@ export namespace setupapi {
 	    GitProvider: string;
 	    Identities: string[];
 	    PermissionMode: string;
+	    Tracker?: Tracker;
+	    Chat: string;
+	    Email: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Company(source);
@@ -42,7 +86,28 @@ export namespace setupapi {
 	        this.GitProvider = source["GitProvider"];
 	        this.Identities = source["Identities"];
 	        this.PermissionMode = source["PermissionMode"];
+	        this.Tracker = this.convertValues(source["Tracker"], Tracker);
+	        this.Chat = source["Chat"];
+	        this.Email = source["Email"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Finding {
 	    Level: string;
@@ -100,6 +165,26 @@ export namespace setupapi {
 	        this.Shell = source["Shell"];
 	        this.Profile = source["Profile"];
 	        this.State = source["State"];
+	    }
+	}
+	export class Hub {
+	    URL: string;
+	    Port: number;
+	    PID: number;
+	    Mode: string;
+	    Workspaces: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Hub(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.URL = source["URL"];
+	        this.Port = source["Port"];
+	        this.PID = source["PID"];
+	        this.Mode = source["Mode"];
+	        this.Workspaces = source["Workspaces"];
 	    }
 	}
 	export class Plan {
@@ -194,6 +279,27 @@ export namespace setupapi {
 		    return a;
 		}
 	}
+	export class Services {
+	    Trackers: string[];
+	    TrackerAuths: string[];
+	    Assignees: string[];
+	    Chat: string[];
+	    Email: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Services(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Trackers = source["Trackers"];
+	        this.TrackerAuths = source["TrackerAuths"];
+	        this.Assignees = source["Assignees"];
+	        this.Chat = source["Chat"];
+	        this.Email = source["Email"];
+	    }
+	}
+	
 	export class Workspace {
 	    Name: string;
 	    Root: string;
