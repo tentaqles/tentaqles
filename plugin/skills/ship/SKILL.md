@@ -17,6 +17,15 @@ status is "CI pending".
 Run the steps in order. Stop and tell the user when a step fails; do not skip
 ahead.
 
+## Packs
+
+Before step 1, run the on-ramp step of the `pack` skill (`skills/pack/SKILL.md`,
+"On-ramp step"): `tq pack list --enabled --json` (timeout 10 s); for each enabled pack
+read every `skills/pack/references/onramps/<pack>-*.md` and follow its `## ship`
+section at the step it names. No pack enabled, or a tq without the `pack` command:
+skip this. Reviewers: a full review in step 4 adds every reviewer that `tq pack crew
+--flags <the flags triage printed>` prints.
+
 ## 1. Identity (light)
 
 The tq guard already blocks a commit or push under the wrong identity, so this
