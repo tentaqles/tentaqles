@@ -4,6 +4,35 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+Board sync (tq spec B). Needs a `tq` build with `tq hub sync`, `tq secret` and `tq onboard`.
+
+- **`/tentaqles:onboard`.** Connects and verifies the company tools of a client workspace
+  from its manifest: prints the logins for the user (`tq login <ws> <id>`,
+  `tq secret set <ws> <provider>`, `acli jira auth login`), guides `/mcp` for chat and email
+  connectors, verifies with `tq doctor --json` from the workspace folder and one read-only
+  call per loaded connector, and ends with a connected table. It never handles tokens and
+  never opens `.claude.json` or the bundle catalog.
+- **`/tentaqles:sync`.** The board sync's MCP fallback: when tq has no background
+  credential (`needs-session`), it reads assigned items with the tracker's connector into
+  `tq hub sync import`, sends only the rows `tq hub sync pending` lists (already redacted)
+  and records each with `tq hub sync ack`. It never answers a send/skip decision and never
+  runs the tracker CLI.
+- **`/tentaqles:plan-cards <release>`.** One `feature` card per FR of a PRD release
+  (`1`, `Release 1`, `release-1`, `R1`, or `all`), titled `<FR-id> <title>`, with the FR
+  text, the acceptance checks and a `Source:` line as the body, under `--parent` and
+  `--project`. Card ids are written back into PRD §11 between `<!-- tq:cards -->` and
+  `<!-- /tq:cards -->`; a re-run skips FRs that have one, and an interrupted run resumes.
+  It never tags `agent-ready`. Backed by `scripts/plan-cards.py` (JSON output; exit 0 ok,
+  1 a tq call failed, 2 usage or PRD error, 3 PRD not planning-ready).
+- **`/tentaqles:refine <card>`.** Takes one planning-lane card to `agent-ready`: reads the
+  card, its FR and the parent, runs grill-me, writes the refined body (FR text, rules
+  decided, acceptance checks, open questions, source) to a temp file, posts it as a card
+  comment and prints `tq hub edit <card> --body-file "<path>"` for the human (a body edit
+  is human-only), then adds the `agent-ready` tag. It refuses headless sessions.
+- `tentaqles/workflow/prd.py` parses PRD §4 FRs and §11 release membership, and records
+  card ids (`parse_frs`, `parse_releases`, `release_frs`, `fr_cards`, `record_cards`,
+  `card_body`); `prd_status` uses the new `text_status`.
+
 ## [0.13.3] — 2026-10-27
 
 - Docs: `/tentaqles:hub` explains the hub's own `question` (asked when a run stops before its build exists: `answer` with a required note, or `stop`) and that a plain card comment reaches the next round but does not resume a waiting run; the plugin README rows for `babysit-pr`, `ci-pipeline`, `dod` and `hub` match 0.13.2.

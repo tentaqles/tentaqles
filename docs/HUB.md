@@ -4,7 +4,8 @@
 plugin's gated build engine (`/tentaqles:kickoff`, `/tentaqles:feature`,
 `/tentaqles:fix`, `/tentaqles:build`). Every human stop of a run becomes a decision
 waiting on you; you answer it from the page, from `tq hub answer`, or in your terminal
-with `build-gate answer`. Nothing leaves the machine.
+with `build-gate answer`. Nothing leaves the machine, except what board sync sends to the
+company tracker under its write policy (see [Board sync](#board-sync)).
 
 ## Quick start
 
@@ -67,17 +68,21 @@ It needs no network: no web fonts, no CDN; Inter and JetBrains Mono are used whe
 |---|---|
 | Board (`/`) | lanes with their cards; drag a card to move it, or use the Move button at a card's top right (Tab to it, Enter or Down opens the lane menu, arrows pick, Escape closes; focus stays on the card). Below 900px wide the sidebar folds into a bar above the page that keeps the workspace switcher. An agent-ready card that enters In progress starts a run; moving a running card out asks before cancelling the run. An orange edge means a run waits on you, with the action on the card. The box at the top filters cards by title (`/` focuses it). The Done lane shows its 20 most recently updated cards; its count is the full total, and "Show all N done" (`/?done=all`) lists every one. |
 | New card (button in the top bar, `+` on every planning lane) | title, body (markdown; a `budget:` front-matter line overrides the default budget), kind, lane, project folder, parent card (a card of kind `project`), tags, and the agent-ready switch. |
-| Card (`/cards/<id>`) | the body, a timeline of runs, rounds and decisions, the live log of an active run, the run's facts and budget bar, the tag editor (Enter or comma adds, × or Backspace removes; each change saves; without script × and Add work as a form against the stored list), comments (Ctrl+Enter posts), and any decision waiting on you. |
+| Card (`/cards/<id>`) | for a linked card, the tracker badge (`ADO #123`, `Jira ACME-7`, a link when the item has a URL) and the company lane; for a local card in a workspace with a tracker, **Push to company board** (`tq hub push`); the body, a timeline of runs, rounds, decisions and the card's outbox rows (sent, pending, waiting on you, skipped, failed), the live log of an active run, the run's facts and budget bar, the tag editor (Enter or comma adds, × or Backspace removes; each change saves; without script × and Add work as a form against the stored list), comments (Ctrl+Enter posts), and any decision waiting on you. |
 | Decisions (`/waiting`) | every pending decision across the served workspaces, newest first, with the option buttons and a note; an over-budget stop shows the run's numbers, and its note takes new limits such as `rounds=6,usd=15`. |
 | Runs (`/runs`), run (`/runs/<id>`) | runs in flight and the 50 most recent; a run's rounds, log, facts and budget. |
 | Reviews (`/reviews`), review (`/cards/<id>/review`) | results waiting on your review and finished runs not yet closed; the review page opens with a verdict band built from the gate's records, and Approve / Request changes sit in a bar at the bottom. The exported review keeps the same look. |
 | Activity (`/activity`) | spend, runs ended, median wait on you, decisions answered and cost by kind for Today, 7 days or 30 days (`?days=1\|7\|30`), and the timeline by day, filtered by `?kind=runs\|decisions\|cards\|reviews`. |
-| Connections (`/connections`) | not available yet: board sync with Linear, Asana, Azure DevOps and Jira arrives in release 2 part B. The page shows what each will do and the planned lane mapping; it connects nothing. |
+| Connections (`/connections`) | the workspace's company tracker (see [Board sync](#board-sync)): provider and scope, the auth source in use (or the preferred one before the first check) and the fixed fallback order, the signed-in account, last sync, last error, next poll, outbox counts, a **Sync now** button (checks the login, then runs one pass in the background), the lane map, the six write-policy toggles (`off` / `ask` / `auto`) and the poll settings (sync on/off, interval). Saving is human-only. Without a tracker block the page says how to add one (`tq onboard`, then `tq allow`). |
 | Settings (`/settings`) | what this hub serves (read-only), concurrency (1 to 16), the default budget per run, desktop notifications, and who can do what. A value the form refuses shows the page again (status 400) with what you typed and the message next to the field; a save is all-or-nothing. Stop the hub with Ctrl+C in its terminal; the page has no stop button. |
+
+The board shows a linked card's badge and its company lane on the card.
 
 `POST /api/cards/<id>` edits a card (`title`, `body`, `project_dir`, `tags`; an unknown field is a 400); `GET` and
 `POST /api/settings` read and change the settings (`concurrency`, `default_budget`,
-`notify`). Both follow the same rules as the page.
+`notify`, and `sync`: `{"enabled", "interval", "policy": {"<action>": "off|ask|auto"}}`).
+Both follow the same rules as the page. `GET /api/sync` returns the sync overview,
+`POST /api/sync/now` starts a pass (202), and `POST /api/cards/<id>/push` queues a push.
 
 ## Cards, lanes, runs
 
@@ -117,7 +122,17 @@ When the build creates its worktree, the session ends with
 accepted only for a folder inside the workspace root or the build's sibling worktree
 `<project>-build-<slug>` next to the project folder; anything else fails the run
 ("relocate outside workspace"), and a second hand-off for the same slug fails it as a
-relocate loop. After each round
+relocate loop.
+
+Two cards of one project folder may run at once, but the rounds before relocation run in
+the project folder itself. So a run takes the folder's **pre-relocation lock** when its
+first such round starts, and keeps it until it relocates or ends. Another run of the same
+folder stays `queued` meanwhile (it does not use a concurrency slot) and its card gets one
+comment naming the run it waits for. The lock is kept in memory and in the store, so a
+second process sees it; on start the hub drops locks whose run ended, relocated or no
+longer exists. After relocation each build has its own worktree and needs no lock.
+
+After each round
 the hub reads `build-gate state <slug> --json`: pending decisions → `waiting`; a halted
 or rolled-back build → `failed`; a non-zero exit with no progress → one retry after two
 minutes; a round that exits 0 with a final message before any build slug exists (the
@@ -177,6 +192,11 @@ which requeues the same run).
 | `plan-approval`, `result`, `judge`, `question` | the gate (mirrored) | the skill wrote a decision record | the record's own |
 | `permission` | the hub | a refused tool, a budget stop, a held run | `allow-once` / `raise-and-resume` / `resume`, and `stop` |
 | `question` | the hub | a round exited 0 with a final message and no build slug yet | `answer`, `stop` |
+| `permission` (company board) | the sync engine | an outbox write under an `ask` policy | `send`, `skip` |
+
+A company-board decision shows the redacted text that would leave the machine. Answer it
+on the board or with `tq hub answer <card> <decision> --choice send|skip`; the sync sends
+or skips the write on its next pass. Its note stays in the hub.
 
 The hub's own `question` carries the agent's final message as its text and shows on
 `/waiting` and the card like any other decision (the card gets the orange edge).
@@ -208,6 +228,12 @@ own terminal or use the page. A comment from an agent session is always stored a
 agent comment, never a human one, so it never reaches a run's prompt as the human's
 notes; only a human answers the hub's `question`.
 
+For board sync, an agent session may run `tq hub sync now`, `status`, `outbox`, and the
+MCP fallback commands `import`, `pending` and `ack` within their limits (see
+[MCP fallback](#mcp-fallback)). `tq hub push`, `tq hub sync retry`, the Connections
+settings and the send/skip decisions are human-only. `tq hub edit` from an agent may
+only add or remove tags on a card in a planning lane.
+
 Runs launch with their own workspace's environment only: whatever the shell hook set for
 another workspace (recorded in `__TQ_STATE`) is undone and every provider config variable
 (`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`, cloud config homes and the rest of the catalog) is
@@ -226,6 +252,157 @@ records (`build-gate state --json --records`) plus the hub's own `git log` and
 work never reaches it (its final text is kept as a card comment). On approval the page is exported to
 `$TQ_HOME/hub/<workspace>/runs/<run>.review.html`.
 
+## Board sync
+
+A workspace whose manifest has a `tracker` block mirrors the company tracker into its
+board: each tracker item becomes one linked card, and some hub events are written back.
+The block holds names only (see [PROVIDERS.md](PROVIDERS.md#company-services-in-the-manifest)):
+
+```yaml
+tracker:
+  provider: jira                # github | azure-devops | jira | linear | asana
+  scope: { org: acme, project: PLAT }
+  assigned_to: me               # me | anyone
+  auth: keychain                # cli | keychain | env | mcp
+  lanes: { "In Review": review }
+```
+
+This build ships background adapters for **Jira Cloud** and **Linear**. GitHub, Azure
+DevOps and Asana are accepted in the manifest but have no adapter yet: a pass with a
+working credential fails with "no sync adapter", `tq doctor` reports
+`tracker-no-adapter`, and without a background credential the MCP fallback
+(`/tentaqles:sync`) is the way to sync them.
+
+### Polling
+
+A serving hub (`tq hub serve`) runs one sync engine per workspace with a tracker block. It
+starts and stops with that workspace's runner, does a full pass at start, then one every
+`sync.interval` seconds (default 300, minimum 60). Between polls it sends the outbox every
+15 s, and about 0.5 s after a hub event in the same process (an approval, say).
+`sync.enabled=false` (Connections, Board sync off) stops the poll and the outbox; nothing is
+lost. Errors are recorded as the last error (a repeated error is logged once).
+`tq hub sync now` runs one pass without a hub. A lease in the store keeps a serving hub and
+a CLI pass from sending the same row twice; a pass that finds it taken says "another tq
+process is syncing this workspace right now".
+
+### Inbound
+
+- Items changed since the watermark are upserted into linked cards. The body is the item's
+  description, plus a "## Acceptance" section when the tracker has acceptance criteria. A
+  parent in the same batch is imported before its children.
+- Lanes: a `tracker.lanes` override comes first (a lane name or a lane kind); otherwise the
+  status category picks the first lane of that kind; an unmapped status goes to the
+  backlog. The lane map is rebuilt from the tracker's statuses on the engine's first pass.
+- An inbound move goes through the normal move with the actor `sync` and never starts a
+  run: only a human move into an active lane starts one.
+- Text: sync updates a linked card's title and body only while nobody has edited them here
+  since sync last wrote them. A local edit is kept on every later pull. Local edits are not
+  sent to the tracker yet (nothing queues `edit_text`).
+- Lane conflict: both sides moved since the item was last pulled (a local move counts if it
+  came after that pull, or while an outbound move is still pending). The tracker wins: the
+  card moves and a system comment records it. An outbound move whose item has changed on
+  the tracker since is skipped with a comment.
+- While a run holds a card, a move on the company board is not applied: sync comments once,
+  keeps the old tracker status on the card, and makes the move on the first pull after the
+  run releases the card. An approval during the run is checked against the old status, so
+  it cannot reopen a closed item.
+
+### Outbound: the outbox and its policy
+
+Hub events queue outbox rows (history from before the engine's first pass is never
+replayed):
+
+| Event | Action |
+|---|---|
+| a human (not sync) moves a linked card into an active lane | `move_on_start` |
+| a linked card moves into a done lane (unless an approval follows within 3 s) | `close_item` |
+| you approve a linked card's result | `move_on_review` and `comment_results` (the result summary and the PR link) |
+| you approve an unlinked child of a linked parent | `comment_results` on the parent's item |
+| `tq hub push <card>`, or Push to company board | `create_card` (a child of the parent's item when the parent is linked) |
+| (not queued yet) | `edit_text` |
+
+Each action has a setting `sync.policy.<action>`:
+
+- `auto` sends it;
+- `ask` puts a `send` / `skip` decision on the board that shows the redacted text that
+  would leave (see [Decisions](#decisions));
+- `off` drops it (the row is `skipped`, last error "policy off: …").
+
+Defaults: `move_on_start`, `move_on_review` and `comment_results` are `auto`;
+`create_card`, `edit_text` and `close_item` are `ask`. Change them on the Connections page
+or with `POST /api/settings`.
+
+Several moves of one card queued during an outage are sent in order in one pass.
+
+Retries:
+
+- A rate-limited call is tried up to 3 times per pass, honouring `Retry-After` (else 1 s,
+  then 2 s). A `Retry-After` over 60 s holds the row until then.
+- Another transient failure waits 15 s, doubling up to 30 min, between tries. The row is
+  marked `failed` only once it is 24 h old and has had at least 5 tries.
+- Missing credentials, or an adapter that cannot be built (an offline CLI token fetch, for
+  example), never count as a try; the row stays pending.
+- Not-found and unsupported errors fail the row at once. `tq hub sync retry <id>` (human
+  only) puts a failed row back to pending with its tries reset and sends it now.
+
+Redaction: all outbound text is redacted with the board's mask classes (every detector
+when the manifest has no `data` block; the block's classes plus secrets when it has one).
+The `tq:allow-pii` marker is removed and exempts nothing on the way out. Tokens never
+appear in payloads, logs or reports.
+
+### Credentials
+
+The engine resolves a credential for every pass, starting at `tracker.auth` (default
+`cli`) and continuing in the fixed order cli → keychain → env → mcp (`auth: env` tries
+env, then mcp):
+
+- **cli**: the tracker CLI's own login. In this build only Jira has one (`acli`).
+- **keychain**: the OS keychain entry `tq secret set <ws> <provider>` stores.
+- **env**: the `tracker.env` variable, resolved as `tq dotenv run` does (the workspace
+  identity env, then the process environment, then `<workspace root>/.env`).
+- **mcp**: there is no background credential, so the engine reports `needs-session`; use
+  `/tentaqles:sync` from a Claude session.
+
+A token is fetched again for each request and never stored by tq. Errors name the source
+that failed, never the token.
+
+### MCP fallback
+
+When the engine reports `needs-session`, the `/tentaqles:sync` skill does the same work
+from a Claude session with the tracker's MCP connector:
+
+- `tq hub sync import [-|<file>] [--json]` reads items as JSON (a bare array, or
+  `{"items": [...], "statuses": [...], "watermark": "<RFC 3339>"}`). An item has `id`,
+  `title` and optionally `key`, `url`, `body`, `status`, `status_category`, `parent_id`,
+  `rev`, `acceptance`, `labels`. The watermark is the fallback's own cursor (shown as
+  `fallback` in `tq hub sync status`), clamped to now; it never moves the engine's.
+- `tq hub sync pending [--json]` queues new hub events, applies the policy, and lists the
+  rows that may be sent now (`auto` rows, and `ask` rows the human answered `send`) with
+  their redacted text. It never calls the tracker, and it refuses while a background
+  credential works. Each listed row is claimed for 15 minutes, so the engine does not send
+  it too.
+- `tq hub sync ack <outbox-id> --sent|--failed "<why>" [--status S] [--item-id ID --url U]`
+  records the outcome. For a move, `--status` names the item's status now; for
+  `create_card`, `--item-id` and `--url` link the card to the new item (a link that fails
+  leaves the row pending).
+
+An agent session may import only into planning lanes (backlog, todo, other) and only
+linked cards: a new item whose status maps elsewhere starts in the backlog, and a move into
+or out of a non-planning lane, or a text change on a card outside one or held by a run, is
+held (queued for the background sync, or for the human). An agent's statuses only fill
+gaps in the lane map, never with a done lane. An agent may ack only `auto` rows or `ask`
+rows the human approved, and never answers a decision.
+
+### Commands
+
+- `tq hub sync now [--json]`: one pass here; prints pulled / created / updated / moved /
+  conflicts and queued / sent / asked / skipped / dropped / failed / retried.
+- `tq hub sync status [--json]`: provider, scope, auth, on/off, interval, last ok and last
+  error, next poll, outbox counts, policies and the lane map.
+- `tq hub sync outbox [--status pending|sent|skipped|failed] [--card C] [--limit N] [--json]`.
+- `tq hub sync retry <outbox-id> [--json]` (human only).
+- `tq hub push <card> [--json]` (human only).
+
 ## Files and privacy
 
 `$TQ_HOME/hub/<workspace>/hub.db` (SQLite, WAL), `runs/<run>.log`, `activity.jsonl`,
@@ -242,6 +419,7 @@ tq hub serve [--all] [--port N] [--bind ADDR] [--token T] [--no-notify]
 tq hub add "<title>" [--body TEXT|--body-file F] [--kind K] [--lane L] [--tag T]... [--parent ID] [--project DIR] [--budget …] [--json]
 tq hub list [--lane L] [--kind K] [--tag T] [--waiting] [--json]
 tq hub show <card> [--json]
+tq hub edit <card> [--title T] [--body TEXT|--body-file F] [--project DIR] [--add-tag T]... [--remove-tag T]... [--json]
 tq hub move <card> "<lane>" [--cancel-run]
 tq hub run <card>
 tq hub answer <card> <decision> --choice C [--note TEXT]
@@ -250,7 +428,14 @@ tq hub open [<card>]
 tq hub cancel <run>
 tq hub comment <card|-> "<text>"        # - is the card in TQ_HUB_TASK
 tq hub status
+tq hub push <card> [--json]
+tq hub sync now|status|outbox|retry|import|pending|ack …   # see Board sync
 ```
+
+`tq hub edit` edits a card from the terminal (on the store, or over a running hub's
+`POST /api/cards/<id>`). Tags are added and removed against the stored list, and adding
+`agent-ready` starts nothing. It prints `edited <id>  <title>  (tags: …)`, or the card with
+`--json`. Title, body and project folder are human-only.
 
 All take `--workspace NAME` and `--timeout D` (skills pass `--timeout 2s`). They talk to
 a running hub's API when one serves the workspace, else to the store directly.

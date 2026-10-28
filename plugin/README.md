@@ -239,6 +239,8 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:client-settings` | View or modify any field in the current client's manifest |
 | `/tentaqles:switch-client` | Show all clients, verify identity, switch context safely |
 | `/tentaqles:workspace-status` | Show current client context + preflight check results |
+| `/tentaqles:onboard` | Connect and verify every company tool of this client (agent and cloud CLIs, git host, tracker, chat and email MCP connectors): prints each login for you to run (`tq login`, `tq secret set`, `acli jira auth login`), guides `/mcp`, verifies with `tq doctor --json` and read-only connector calls, ends with a connected table; never handles tokens |
+| `/tentaqles:sync` | Board sync's MCP fallback when tq has no background credential (`needs-session`): reads assigned items with the connector into `tq hub sync import`, sends the outbox rows `tq hub sync pending` lists, acks each with `tq hub sync ack`; never answers a send/skip decision |
 | `/tentaqles:session-wrap` | End-of-session save: summary, decisions, pending items, corrections |
 | `/tentaqles:wrap` | End-of-day wrap: what landed (git/gh), open PRs + CI state, memory via session-wrap, a daily note |
 | `/tentaqles:ship` | Working tree → PR: identity, branch, `tq decide triage` review depth, tests, commit, `gh pr create` |
@@ -273,6 +275,8 @@ Stack-aware guidance that triggers on the work itself (no workspace state needed
 | `/tentaqles:emit-signal` | Emit an inter-workspace signal to one or more registered workspaces |
 | `/tentaqles:build` | Build a feature through gated checkpoints in its own worktree: spec, approved plan, locked tests, an evidence-based test gate tied to the code on disk, risk-triaged reviewer crew with recorded verdicts, fixer loop, definition of done (agents `build-planner`, `build-critic`, `build-fixer`, plus the crew `spec-critic`, `security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`, `breaker` and the `arbiter`) |
 | `/tentaqles:prd` | Write or revise `docs/prd.md` through a short interview: numbered requirements with binary checks, data classes, security boundaries, open decisions |
+| `/tentaqles:plan-cards` | Turn a PRD release into `feature` cards on the `tq hub` board, one per FR (title, FR text, acceptance checks), under a project card and folder; writes the card ids into PRD §11 between `<!-- tq:cards -->` markers so a re-run skips them; never tags `agent-ready` |
+| `/tentaqles:refine` | Take one planning-lane card to `agent-ready`: grill-me on its FR, a refined body (rules decided, acceptance checks, open questions) you save with the printed `tq hub edit --body-file` line, then the `agent-ready` tag; moving the card stays yours |
 | `/tentaqles:kickoff` | Start a new project from a planning-ready PRD: stack ADR, project CLAUDE.md, threat model, privacy record, CI ratchet, then the first checkpoints through the build engine |
 | `/tentaqles:feature` | Add a feature from a PRD requirement (adds its own FR when missing): grill-me interview, spec slice, gated build, definition of done |
 | `/tentaqles:fix` | Fix a bug reproduce-first: locked failing regression test, root cause, smallest change, risk-sized review (`--hotfix` skips the critic, never the test) |
