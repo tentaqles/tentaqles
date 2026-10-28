@@ -100,8 +100,18 @@ func (s *Service) Enqueue(ctx context.Context, cardID, reason string) (store.Run
 
 // Tick polls waiting runs for answers given in the terminal, then starts due queued runs up to the workspace's concurrency limit, oldest first.
 func (s *Service) Tick(ctx context.Context) error {
+	_, err := s.tick(ctx)
+	return err
+}
+
+// dueScan bounds how many due runs one tick looks at: a run waiting for its project's lock is
+// passed over without using a concurrency slot.
+const dueScan = 200
+
+// tick is Tick, also reporting how many rounds it started.
+func (s *Service) tick(ctx context.Context) (int, error) {
 	if ctx.Err() != nil {
-		return nil // shutting down: Start's select may pick the ticker after ctx ended
+		return 0, nil // shutting down: Start's select may pick the ticker after ctx ended
 	}
 	s.tickMu.Lock()
 	defer s.tickMu.Unlock()
@@ -111,32 +121,50 @@ func (s *Service) Tick(ctx context.Context) error {
 	free := limit - len(s.flights)
 	s.mu.Unlock()
 	if free <= 0 {
-		return nil
+		return 0, nil
 	}
-	due, err := s.st.DueRuns(s.cfg.Now(), free)
+	due, err := s.st.DueRuns(s.cfg.Now(), max(free, dueScan))
 	if err != nil {
-		return err
+		return 0, err
 	}
+	started := 0
 	for _, r := range due {
-		s.startRound(ctx, r)
+		if started >= free {
+			break
+		}
+		if s.startRound(ctx, r) {
+			started++
+		}
 	}
-	return nil
+	return started, nil
 }
 
-func (s *Service) startRound(parent context.Context, r store.Run) {
+// startRound starts r's next round; false means it did not (not queued any more, or waiting
+// for its project's pre-relocation lock).
+func (s *Service) startRound(parent context.Context, r store.Run) bool {
 	// The queued → running transition happens under mu, after a fresh read, so a run Cancel is
 	// ending (or one another path already moved on) is never started.
 	s.mu.Lock()
 	if _, busy := s.flights[r.ID]; busy || s.cancelling[r.ID] {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	cur, err := s.st.Run(r.ID)
 	if err != nil || cur.Status != store.StatusQueued {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	r = cur
+	if needsProjectLock(r) {
+		ok, holder, err := s.takeProjectLock(r)
+		if err != nil || !ok {
+			s.mu.Unlock()
+			if err == nil {
+				s.noteProjectWait(r, holder)
+			}
+			return false // stays queued; a later tick tries again
+		}
+	}
 	first := r.StartedAt == ""
 	r.Status = store.StatusRunning
 	if first {
@@ -144,7 +172,7 @@ func (s *Service) startRound(parent context.Context, r store.Run) {
 	}
 	if err := s.st.SaveRun(r); err != nil {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	ctx, cancel := context.WithCancel(parent)
 	f := &flight{cancel: cancel, done: make(chan struct{})}
@@ -167,6 +195,7 @@ func (s *Service) startRound(parent context.Context, r store.Run) {
 		defer finish()
 		s.round(ctx, f, r)
 	}()
+	return true
 }
 
 func decodeState(raw json.RawMessage) *gate.State {
@@ -365,6 +394,7 @@ func (s *Service) apply(r store.Run, card store.Card, out Outcome, st *gate.Stat
 		}
 		r.Status, r.NotBefore = store.StatusQueued, s.stamp()
 		s.save(r)
+		s.releaseProjectLock(r) // the project folder is free for the next card's first round
 		s.comment(card, r, "The build moved into its worktree "+r.Worktree+" ("+r.Slug+"); the next round starts there.")
 	case VerdictRelocateLoop:
 		s.fail(r, card, out.StopReason, "The run asked to move into the worktree of "+out.Relocate.Slug+" a second time and was stopped (relocate loop). Check that the session in the worktree has the gate hooks active (build-gate ping).")
@@ -458,6 +488,7 @@ func (s *Service) end(r store.Run, card store.Card, status, reason string) {
 	}
 	r.Status, r.StopReason, r.EndedAt = status, reason, s.stamp()
 	s.save(r)
+	s.releaseProjectLock(r)
 	if r.CardID != "" {
 		_ = s.st.Release(r.CardID, r.ID)
 	}
@@ -562,8 +593,9 @@ func tailText(s string, n int) string {
 	return "…" + s[i:]
 }
 
-// RecoverStale fails runs left "running" by a hub that stopped (no live round in this process) and
-// releases card locks held by runs that ended or no longer exist.
+// RecoverStale fails runs left "running" by a hub that stopped (no live round in this process),
+// releases card locks held by runs that ended or no longer exist, and drops project locks whose
+// run ended, relocated or no longer exists.
 func (s *Service) RecoverStale() error {
 	runs, err := s.st.RunsWithStatus(store.StatusRunning)
 	if err != nil {
@@ -588,7 +620,7 @@ func (s *Service) RecoverStale() error {
 			_ = s.st.ForceRelease(l.CardID)
 		}
 	}
-	return nil
+	return s.recoverProjectLocks()
 }
 
 func (s *Service) Start(ctx context.Context) {
@@ -621,10 +653,14 @@ func (s *Service) Drain(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := s.Tick(ctx); err != nil {
+		started, err := s.tick(ctx)
+		if err != nil {
 			return err
 		}
 		s.Wait()
+		if started == 0 {
+			return nil // what is due waits for a project lock held by a run that waits on the human
+		}
 		due, err := s.st.DueRuns(s.cfg.Now(), 1)
 		if err != nil {
 			return err
