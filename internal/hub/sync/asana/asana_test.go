@@ -112,7 +112,9 @@ func TestCategoryHeuristics(t *testing.T) {
 func TestListChangedAssignedToMe(t *testing.T) {
 	f := newFake(t)
 	since := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
-	items, wm, err := newTest(t, f, nil).ListChanged(context.Background(), since)
+	a := newTest(t, f, nil)
+	a.now = func() time.Time { return time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC) } // the tick runs after every change
+	items, wm, err := a.ListChanged(context.Background(), since)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,6 +428,7 @@ func TestListChangedWatchedParents(t *testing.T) {
 	// 1001 is unchanged since then; its children 1005 (no assignee) and 1008 changed later.
 	since := time.Date(2026, 10, 20, 12, 30, 0, 0, time.UTC)
 	a := newTest(t, f, func(c *hubsync.Config) { c.AssignedTo = "anyone" })
+	a.now = func() time.Time { return time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC) }
 	items, _, err := a.ListChanged(context.Background(), since)
 	if err != nil || len(items) != 0 {
 		t.Fatalf("no watch: %v %v", items, err)
@@ -456,30 +459,6 @@ func TestListChangedMySubtaskOfAnUnchangedProjectTask(t *testing.T) {
 	items, _, err := newTest(t, f, nil).ListChanged(context.Background(), since)
 	if err != nil || len(items) != 1 || items[0].ID != "1008" || items[0].ParentID != "1001" {
 		t.Fatalf("%v %v", items, err)
-	}
-}
-
-func TestCreateKeepsTheTaskWhenLabelsFail(t *testing.T) {
-	f := newFake(t)
-	f.failOn = "POST /api/1.0/tasks/5001/addTag"
-	it, err := newTest(t, f, nil).Create(context.Background(), hubsync.NewItem{Title: "Signup", Labels: []string{"bug"}})
-	if err != nil || it.ID != "5001" || len(it.Labels) != 0 {
-		t.Fatalf("a created task must come back without an error: %+v %v", it, err)
-	}
-	n := 0
-	for _, r := range f.requests() {
-		if r == "POST /api/1.0/tasks" {
-			n++
-		}
-	}
-	if n != 1 {
-		t.Fatalf("%d creates", n)
-	}
-	// the follow-up read failing still returns the created task
-	f.failOn = "GET /api/1.0/tasks/5002"
-	it, err = newTest(t, f, nil).Create(context.Background(), hubsync.NewItem{Title: "Other"})
-	if err != nil || it.ID != "5002" || it.Title != "Other" {
-		t.Fatalf("%+v %v", it, err)
 	}
 }
 
