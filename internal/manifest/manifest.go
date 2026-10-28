@@ -132,7 +132,13 @@ type Manifest struct {
 	// unless backend is set; shadow mode unless mode is enforce.
 	Decision decide.Policy `yaml:"decision"`
 	Data     Data          `yaml:"data"`
-	Path     string        `yaml:"-"`
+	// Company services (spec B §6); each block is optional. See services.go.
+	Tracker      *Tracker `yaml:"tracker,omitempty"`
+	Chat         *Service `yaml:"chat,omitempty"`
+	Email        *Service `yaml:"email,omitempty"`
+	DataPlatform *Service `yaml:"data_platform,omitempty"`
+	Agents       []string `yaml:"agents,omitempty"`
+	Path         string   `yaml:"-"`
 }
 
 var secretRe = regexp.MustCompile(`(?i)\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9\-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,})`)
@@ -186,6 +192,9 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: guard.unattended: %w", path, err)
 	}
 	if err := m.validateCloud(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.ValidateServices(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Path = path
