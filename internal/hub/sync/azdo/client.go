@@ -82,12 +82,23 @@ func (a *Adapter) blockUntil(t time.Time) {
 }
 
 // noteLimits reads Azure DevOps throttling headers off any response: Retry-After (sent on 429,
-// and on a 200 once requests are being delayed) and an exhausted X-RateLimit-Remaining with its
-// X-RateLimit-Reset (epoch seconds). Both hold back the next call until the time given.
+// and on a 200 once requests are being delayed), an exhausted X-RateLimit-Remaining with its
+// X-RateLimit-Reset (epoch seconds), and X-RateLimit-Delay (seconds the tracker held this
+// request). The first two hold back the next call until the time given; the delay holds it back
+// as long again, at most shortWait, so it is always waited out, never turned into an error.
 func (a *Adapter) noteLimits(h http.Header) {
 	now := a.now()
 	if d := retryAfter(h, now); d > 0 {
 		a.blockUntil(now.Add(d))
+	}
+	if v := strings.TrimSpace(h.Get("X-RateLimit-Delay")); v != "" {
+		if s, err := strconv.ParseFloat(v, 64); err == nil && s > 0 {
+			d := shortWait
+			if s < shortWait.Seconds() {
+				d = time.Duration(s * float64(time.Second))
+			}
+			a.blockUntil(now.Add(d))
+		}
 	}
 	if rem := strings.TrimSpace(h.Get("X-RateLimit-Remaining")); rem != "" {
 		if n, err := strconv.ParseFloat(rem, 64); err == nil && n <= 0 {

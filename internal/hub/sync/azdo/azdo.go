@@ -35,7 +35,11 @@ const (
 	defaultBase = "https://dev.azure.com"
 	defaultType = "Task"
 	batchSize   = 200  // workitemsbatch takes at most 200 ids
-	wiqlTop     = 1000 // items per ListChanged query; the watermark carries the rest to the next tick
+	wiqlTop     = 1000 // items per flat ListChanged query; the watermark carries the rest to the next tick
+	// linkChunk is how many parents one children-by-id link query names. Link queries carry no
+	// $top (a capped link reply would drop children silently); ADO's own row limit answers an
+	// error instead, and a small chunk keeps every reply far below it.
+	linkChunk   = 100
 	statesRetry = 5 * time.Minute
 	fieldAccept = "Microsoft.VSTS.Common.AcceptanceCriteria"
 	relParent   = "System.LinkTypes.Hierarchy-Reverse"
@@ -73,7 +77,8 @@ type Adapter struct {
 	client  *http.Client
 	src     cred.Source
 	blocked time.Time
-	account string
+	account string // unique name from connectionData; empty when it carries none
+	display string
 
 	statesMu    gosync.Mutex
 	states      map[string]map[string]string // lower(type) -> lower(state) -> category
@@ -112,12 +117,17 @@ func (a *Adapter) projURL(path string, q url.Values) string {
 	return withQuery(u, q)
 }
 
-func (a *Adapter) wiqlURL() string {
+// wiqlURL is the WIQL endpoint; top > 0 caps the reply rows (flat queries only).
+func (a *Adapter) wiqlURL(top int) string {
 	u := a.base + "/" + url.PathEscape(a.project)
 	if a.team != "" {
 		u += "/" + url.PathEscape(a.team)
 	}
-	return withQuery(u+"/_apis/wit/wiql", url.Values{"timePrecision": {"true"}, "$top": {strconv.Itoa(wiqlTop)}})
+	q := url.Values{"timePrecision": {"true"}}
+	if top > 0 {
+		q.Set("$top", strconv.Itoa(top))
+	}
+	return withQuery(u+"/_apis/wit/wiql", q)
 }
 
 func withQuery(u string, q url.Values) string {
@@ -146,11 +156,15 @@ func checkID(id string) error {
 // ---- Check / Statuses ----
 
 // Check verifies the credential (connectionData) and the scope's project, and returns the
-// signed-in account (its unique name, the value System.AssignedTo takes).
+// signed-in account: its unique name (the value System.AssignedTo takes), or its display name
+// when connectionData carries no Account property.
 func (a *Adapter) Check(ctx context.Context) (string, error) {
-	acct, err := a.whoami(ctx)
+	acct, display, err := a.whoami(ctx)
 	if err != nil {
 		return "", err
+	}
+	if acct == "" {
+		acct = display
 	}
 	var p struct {
 		ID string `json:"id"`
@@ -161,12 +175,14 @@ func (a *Adapter) Check(ctx context.Context) (string, error) {
 	return acct, nil
 }
 
-func (a *Adapter) whoami(ctx context.Context) (string, error) {
+// whoami reads connectionData once: the account's unique name (empty when the reply has no
+// Account property) and its display name.
+func (a *Adapter) whoami(ctx context.Context) (acct, display string, err error) {
 	a.mu.Lock()
-	acct := a.account
+	acct, display = a.account, a.display
 	a.mu.Unlock()
-	if acct != "" {
-		return acct, nil
+	if acct != "" || display != "" {
+		return acct, display, nil
 	}
 	var cd struct {
 		AuthenticatedUser struct {
@@ -180,23 +196,20 @@ func (a *Adapter) whoami(ctx context.Context) (string, error) {
 		} `json:"authenticatedUser"`
 	}
 	if err := a.do(ctx, "GET", a.base+"/_apis/connectionData", "", nil, &cd); err != nil {
-		return "", err
+		return "", "", err
 	}
 	u := cd.AuthenticatedUser
-	acct = u.Properties.Account.Value
-	if acct == "" {
-		acct = u.ProviderDisplayName
-	}
-	if acct == "" || u.ID == "" {
+	acct, display = strings.TrimSpace(u.Properties.Account.Value), strings.TrimSpace(u.ProviderDisplayName)
+	if acct == "" && display == "" || u.ID == "" {
 		a.mu.Lock()
 		src := a.src
 		a.mu.Unlock()
-		return "", notAuthorized(src, http.StatusOK)
+		return "", "", notAuthorized(src, http.StatusOK)
 	}
 	a.mu.Lock()
-	a.account = acct
+	a.account, a.display = acct, display
 	a.mu.Unlock()
-	return acct, nil
+	return acct, display, nil
 }
 
 // categoryOf maps an Azure DevOps state category to a hub lane kind.
@@ -457,10 +470,12 @@ func (a *Adapter) Get(ctx context.Context, id string) (hubsync.Item, error) {
 	return a.full(ctx, w)
 }
 
-func wiqlTime(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05Z") }
+// wiqlTime formats a WIQL date with milliseconds (timePrecision is on), truncated, so a >=
+// query re-reads an edge item rather than skipping it.
+func wiqlTime(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.999Z") }
 
-func (a *Adapter) wiql(ctx context.Context, query string, out any) error {
-	return a.do(ctx, "POST", a.wiqlURL(), "application/json", map[string]string{"query": query}, out)
+func (a *Adapter) wiql(ctx context.Context, query string, top int, out any) error {
+	return a.do(ctx, "POST", a.wiqlURL(top), "application/json", map[string]string{"query": query}, out)
 }
 
 // ListChanged runs WIQL on System.ChangedDate: the items assigned to @Me (all items in scope for
@@ -488,7 +503,7 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 	sent := a.now()
 	q := "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project" + me + changed +
 		" ORDER BY [System.ChangedDate] ASC"
-	if err := a.wiql(ctx, q, &flat); err != nil {
+	if err := a.wiql(ctx, q, wiqlTop, &flat); err != nil {
 		return nil, since, err
 	}
 	var ids []int
@@ -513,7 +528,7 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 					Target *struct{ ID int } `json:"target"`
 				} `json:"workItemRelations"`
 			}
-			if err := a.wiql(ctx, lq, &links); err != nil {
+			if err := a.wiql(ctx, lq, 0, &links); err != nil {
 				return err
 			}
 			for _, r := range links.WorkItemRelations {
@@ -525,26 +540,28 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 			}
 			return nil
 		}
-		// Children that changed, under any of my items.
-		lq := "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.TeamProject] = @project AND " +
-			"[Source].[System.AssignedTo] = @Me) AND ([System.Links.LinkType] = '" + relChild + "')" + target +
-			" MODE (MustContain)"
-		if err := addChildren(lq); err != nil {
-			return nil, since, err
-		}
-		// Every child of the items that came back, changed or not. Without since the query above
-		// had no date filter and already returned them.
+		// Children that changed since, under any of my items (changed or not). On the first
+		// sync there is no date to bound it, so it is skipped: the per-parent query below reads
+		// the children of every item the flat query returned, and later ticks reach the rest.
 		if !since.IsZero() {
-			for chunk := range slices.Chunk(parents, batchSize) {
-				in := make([]string, len(chunk))
-				for i, id := range chunk {
-					in[i] = strconv.Itoa(id)
-				}
-				cq := "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.Id] IN (" + strings.Join(in, ",") +
-					")) AND ([System.Links.LinkType] = '" + relChild + "') MODE (MustContain)"
-				if err := addChildren(cq); err != nil {
-					return nil, since, err
-				}
+			lq := "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.TeamProject] = @project AND " +
+				"[Source].[System.AssignedTo] = @Me) AND ([System.Links.LinkType] = '" + relChild + "')" + target +
+				" MODE (MustContain)"
+			if err := addChildren(lq); err != nil {
+				return nil, since, err
+			}
+		}
+		// Every child of the items that came back, changed or not (a parent just assigned
+		// brings its old tasks).
+		for chunk := range slices.Chunk(parents, linkChunk) {
+			in := make([]string, len(chunk))
+			for i, id := range chunk {
+				in[i] = strconv.Itoa(id)
+			}
+			cq := "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.Id] IN (" + strings.Join(in, ",") +
+				")) AND ([System.Links.LinkType] = '" + relChild + "') MODE (MustContain)"
+			if err := addChildren(cq); err != nil {
+				return nil, since, err
 			}
 		}
 	}
@@ -638,7 +655,8 @@ func (a *Adapter) Comment(ctx context.Context, id, markdown string) error {
 
 // Create makes a work item of in.Type (else scope type, else Task). in.ParentID makes it a child
 // (System.LinkTypes.Hierarchy-Reverse to the parent). With assigned_to me it is assigned to the
-// signed-in account, so it mirrors back.
+// signed-in account's unique name, so it mirrors back; when connectionData gave only a display
+// name (ambiguous, and Azure DevOps may reject it) AssignedTo is left unset.
 func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return hubsync.Item{}, fmt.Errorf("%s: create: a title is required", Provider)
@@ -661,11 +679,13 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 		ops = append(ops, set("/fields/System.State", in.Status))
 	}
 	if a.me {
-		acct, err := a.whoami(ctx)
+		acct, _, err := a.whoami(ctx)
 		if err != nil {
 			return hubsync.Item{}, err
 		}
-		ops = append(ops, set("/fields/System.AssignedTo", acct))
+		if acct != "" {
+			ops = append(ops, set("/fields/System.AssignedTo", acct))
+		}
 	}
 	if in.ParentID != "" {
 		if err := checkID(in.ParentID); err != nil {

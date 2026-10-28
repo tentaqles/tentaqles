@@ -33,6 +33,7 @@ type fakeADO struct {
 	flat     []int    // ids the flat (assigned) WIQL query returns
 	links    [][2]int // source -> target pairs the link WIQL queries return (filtered like ADO would)
 	asOf     string   // the flat WIQL reply's asOf; empty sends none
+	noAcct   bool     // connectionData carries no Account property (display name only)
 
 	wantAuth string
 	requests []string // "METHOD path"
@@ -94,9 +95,12 @@ func (f *fakeADO) serve(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	switch {
 	case path == "/acme/_apis/connectionData":
+		props := map[string]any{"Account": map[string]any{"$type": "System.String", "$value": "tester@acme.test"}}
+		if f.noAcct {
+			props = map[string]any{}
+		}
 		writeJSON(w, map[string]any{"authenticatedUser": map[string]any{
-			"id": "u1", "providerDisplayName": "Tester",
-			"properties": map[string]any{"Account": map[string]any{"$type": "System.String", "$value": "tester@acme.test"}}}})
+			"id": "u1", "providerDisplayName": "Tester", "properties": props}})
 	case path == "/acme/_apis/projects/Platform":
 		writeJSON(w, map[string]any{"id": "p1", "name": "Platform"})
 	case path == "/acme/Platform/_apis/wit/workitemtypes":
@@ -122,6 +126,11 @@ func (f *fakeADO) serve(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(body, &in)
 		f.queries = append(f.queries, in.Query)
 		f.wiqlURLs = append(f.wiqlURLs, r.URL.String())
+		// Like ADO, $top silently truncates the reply rows.
+		top := -1
+		if v := q.Get("$top"); v != "" {
+			top, _ = strconv.Atoi(v)
+		}
 		if strings.Contains(in.Query, "WorkItemLinks") {
 			// Filter like ADO: a Source id list, and a Target ChangedDate floor.
 			var srcIn map[int]bool
@@ -151,12 +160,18 @@ func (f *fakeADO) serve(w http.ResponseWriter, r *http.Request) {
 				rels = append(rels, map[string]any{"rel": "System.LinkTypes.Hierarchy-Forward",
 					"source": map[string]any{"id": l[0]}, "target": map[string]any{"id": l[1]}})
 			}
+			if top >= 0 && len(rels) > top {
+				rels = rels[:top]
+			}
 			writeJSON(w, map[string]any{"queryType": "oneHop", "workItemRelations": rels})
 			return
 		}
 		wis := []any{}
 		for _, id := range f.flat {
 			wis = append(wis, map[string]any{"id": id})
+		}
+		if top >= 0 && len(wis) > top {
+			wis = wis[:top]
 		}
 		res := map[string]any{"queryType": "flat", "workItems": wis}
 		if f.asOf != "" {
