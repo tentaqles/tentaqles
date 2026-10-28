@@ -273,8 +273,11 @@ func (c *Catalog) checkEnvCollisions() error {
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		for k := range c.byID[id].Identity.Env {
+		for k, v := range c.byID[id].Identity.Env {
 			if prev, taken := owner[k]; taken {
+				if sameCLIVariable(c.byID[prev], c.byID[id], k, v) {
+					continue
+				}
 				return fmt.Errorf("providers %q and %q both set identity.env[%s]: "+
 					"one would silently overwrite the other for any workspace enabling both", prev, id, k)
 			}
@@ -282,4 +285,14 @@ func (c *Catalog) checkEnvCollisions() error {
 		}
 	}
 	return nil
+}
+
+// sameCLIVariable reports whether two catalog entries declare one variable because they are the
+// same CLI (az and azure-devops are both `az`): the variable is the CLI's own config home, the
+// templates match, and envplan points it at a single directory when a workspace enables both.
+func sameCLIVariable(a, b Provider, key, value string) bool {
+	if a.CLI == nil || b.CLI == nil || a.CLI.Command == "" || a.CLI.Command != b.CLI.Command {
+		return false
+	}
+	return a.Identity.Env[key] == value
 }

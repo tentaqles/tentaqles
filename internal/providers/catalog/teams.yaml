@@ -1,0 +1,8 @@
+id: teams
+name: Microsoft Teams
+category: chat
+docs: https://learn.microsoft.com/microsoftteams/
+# MCP only (spec B §3).
+cli: null
+mcp: teams
+notes: "Reached through an MCP connector only. Add the teams entry to the tq bundle catalog and to claude.bundle.mcp, run tq bundle sync <ws>, then authenticate with /mcp in a Claude session."

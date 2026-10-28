@@ -40,6 +40,8 @@ type AddOptions struct {
 	Email        *manifest.Service
 	DataPlatform *manifest.Service
 	Agents       []string
+	// Cloud is the cloud block ({provider, also}); nil leaves it out. tq onboard sets it.
+	Cloud map[string]any
 }
 
 func Add(o AddOptions) (*resolve.Workspace, error) {
@@ -80,6 +82,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 		Identities: map[string]manifest.Identity{},
 		Claude:     manifest.Claude{PermissionMode: o.PermissionMode},
 		Tracker:    o.Tracker, Chat: o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents,
+		Cloud: o.Cloud,
 	}
 	for _, id := range o.Identities {
 		m.Identities[id] = manifest.Identity{}
