@@ -53,6 +53,7 @@ type fakeAsana struct {
 	limited    int    // answer this many requests with 429 first
 	limitAt    int    // answer the request with this 1-based number with 429
 	failOn     string // "METHOD /api/1.0/path": answer it with a 500
+	limitOn    string // "METHOD /api/1.0/path": answer its next request with a 429, once
 	reqs       []string
 	queries    []string
 	bodies     []map[string]any
@@ -205,6 +206,12 @@ func (f *fakeAsana) serve(w http.ResponseWriter, r *http.Request) {
 		if f.limited > 0 {
 			f.limited--
 		}
+		w.Header().Set("Retry-After", "7")
+		f.fail(w, 429, "You have made too many requests recently.")
+		return
+	}
+	if f.limitOn != "" && f.limitOn == r.Method+" "+r.URL.Path {
+		f.limitOn = ""
 		w.Header().Set("Retry-After", "7")
 		f.fail(w, 429, "You have made too many requests recently.")
 		return

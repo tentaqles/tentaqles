@@ -52,11 +52,25 @@ type Adapter struct {
 	project   string // scope.board (or scope.project): project gid ("" = none)
 	now       func() time.Time
 	maxPages  int // page cap per list call (tests lower it)
+	// pollBudget caps the parent subtask polls of one ListChanged (0 = maxPollsPerTick; tests lower it).
+	pollBudget int
 
 	mu      gosync.Mutex
-	parents []string           // mirrored parent gids whose subtasks ListChanged polls (SetMirroredParents)
-	cache   map[string]details // task gid -> comments and attachments read at a Rev
+	parents []string             // mirrored parent gids whose subtasks ListChanged polls (SetMirroredParents)
+	known   map[string]bool      // parents the adapter returned itself (tasks with subtasks), polled like parents
+	polled  map[string]time.Time // parent gid -> the cut its next subtask poll lists children from
+	cache   map[string]details   // task gid -> comments and attachments read at a Rev
 }
+
+const (
+	// maxPollsPerTick bounds the subtask polls of one ListChanged, so a board with many parents
+	// never needs more requests in a tick than Asana's free tier allows (about 150 a minute). The
+	// rest wait for the next tick, least recently polled first.
+	maxPollsPerTick = 40
+	// watermarkSkew is how far before the tick's start the watermark and poll cuts stay, for
+	// clock skew between this machine and Asana.
+	watermarkSkew = 2 * time.Minute
+)
 
 // details are a task's comments and attachments as read at one Rev (its modified_at). A new
 // comment or attachment changes modified_at, so a task listed again at the same Rev reuses them.
@@ -383,7 +397,8 @@ func (a *Adapter) sectionFor(ctx context.Context, status string) (string, bool, 
 // an unchanged parent is still seen; GET /tasks with modified_since only returns the parent when
 // the parent itself changed. The engine calls it before a tick with the parent ids of its linked
 // cards (an optional interface: interface{ SetMirroredParents([]string) error }). Ids must be gids;
-// on a bad one nothing changes.
+// on a bad one nothing changes. The call is optional: the adapter also remembers every task with
+// subtasks that it returned (and the parent of every child Create made) and polls those too.
 func (a *Adapter) SetMirroredParents(ids []string) error {
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -407,22 +422,147 @@ func (a *Adapter) mirroredParents() []string {
 	return slices.Clone(a.parents)
 }
 
+// rememberParents adds tasks the adapter returned that have subtasks (they are mirrored cards, so
+// their children are mirrored too). Bounded like the details cache.
+func (a *Adapter) rememberParents(ids ...string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.known == nil {
+		a.known = map[string]bool{}
+	}
+	for _, id := range ids {
+		if _, err := gid("parent task", id); err != nil || a.known[id] {
+			continue
+		}
+		if len(a.known) >= maxCached {
+			for k := range a.known {
+				delete(a.known, k)
+				delete(a.polled, k)
+				break
+			}
+		}
+		a.known[id] = true
+	}
+}
+
+// pollTarget is one parent to poll: cut is where its children are listed from (has false: never
+// polled, so the tick's since).
+type pollTarget struct {
+	gid string
+	cut time.Time
+	has bool
+}
+
+// pollQueue orders this tick's parent polls: the parents listed in this tick first (they changed),
+// then the watched and remembered ones, least recently polled (never polled) first, by gid on a tie.
+func (a *Adapter) pollQueue(changed, watched []string) []pollTarget {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	in := map[string]bool{}
+	target := func(p string) pollTarget {
+		in[p] = true
+		c, ok := a.polled[p]
+		return pollTarget{gid: p, cut: c, has: ok}
+	}
+	var out, rest []pollTarget
+	for _, p := range changed {
+		if !in[p] {
+			out = append(out, target(p))
+		}
+	}
+	for _, p := range watched {
+		if !in[p] {
+			rest = append(rest, target(p))
+		}
+	}
+	for p := range a.known {
+		if !in[p] {
+			rest = append(rest, target(p))
+		}
+	}
+	slices.SortFunc(rest, func(x, y pollTarget) int {
+		switch {
+		case x.has != y.has:
+			if !x.has {
+				return -1
+			}
+			return 1
+		case !x.cut.Equal(y.cut):
+			return x.cut.Compare(y.cut)
+		}
+		return strings.Compare(x.gid, y.gid)
+	})
+	return append(out, rest...)
+}
+
+// pollResult is what a successful tick records about its parent polls.
+type pollResult struct {
+	queue     []pollTarget
+	polled    map[string]bool // polled in full this tick
+	gone      []string        // 404: deleted in Asana
+	parents   []string        // tasks seen with subtasks
+	childless []string        // tasks listed this tick with no subtasks
+}
+
+// commitPolls records a tick that returned its items: a polled parent lists its children from
+// cutNow next time; one left for a later tick (budget, 429) from since, unless it already had an
+// earlier cut, so a child changed while its parent waited is still found.
+func (a *Adapter) commitPolls(r pollResult, since, cutNow time.Time) {
+	a.rememberParents(r.parents...)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.polled == nil {
+		a.polled = map[string]time.Time{}
+	}
+	for _, p := range r.queue {
+		switch {
+		case r.polled[p.gid]:
+			a.polled[p.gid] = cutNow
+		case !p.has:
+			a.polled[p.gid] = since
+		}
+	}
+	for _, p := range r.childless {
+		delete(a.known, p)
+	}
+	for _, p := range r.gone {
+		delete(a.known, p)
+		delete(a.polled, p)
+	}
+	for p := range a.polled {
+		if !a.known[p] && !slices.Contains(a.parents, p) {
+			delete(a.polled, p)
+		}
+	}
+}
+
 // ListChanged lists tasks modified since the watermark: assigned to me in the workspace (kept to
 // the project when one is set, plus my subtasks of project tasks), or every task of the project
-// for assigned_to anyone, plus the subtasks of those tasks and of SetMirroredParents. Only open
-// tasks and tasks completed since the watermark come back (completed_since; on the first sync,
-// since now), so a first sync never walks a whole history of finished work. The new watermark is
-// the newest modified_at seen (since when nothing changed). Any failure, a 429 or a list past the
-// page cap included, returns no items so the watermark never skips work. Each listed task costs
-// two more reads (stories, attachments) unless the adapter already read them at the task's current
-// modified_at, so a tick cut short by a 429 keeps what it read and the engine's retry with the
-// same Adapter resumes instead of starting over (Asana's free tier allows about 150 requests a
-// minute: a first sync of about 70 open tasks needs more than one attempt).
+// for assigned_to anyone, plus the changed subtasks of mirrored parents. Only open tasks and tasks
+// completed since the watermark come back (completed_since; on the first sync, since now), so a
+// first sync never walks a whole history of finished work.
+//
+// Asana does not bump a parent's modified_at when a subtask changes, so subtasks come from polls
+// (one GET per parent): parents listed this tick, SetMirroredParents, and every task with subtasks
+// the adapter returned before. At most pollBudget parents are polled per tick, least recently
+// polled first; each lists the children changed since its own last poll, so a parent that waited
+// a tick or two still yields every change. A 429 on a poll ends the polls but keeps the tick.
+//
+// The new watermark is the newest modified_at seen, but never later than the tick's start minus
+// watermarkSkew (GET /tasks is not ordered by modified_at: a task read early that changes during
+// the tick must not be passed by a later read), and never earlier than since. Any other failure,
+// a 429 on the list or a details read or a list past the page cap, returns no items so the
+// watermark never skips work. Each listed task costs two more reads (stories, attachments) unless
+// the adapter already read them at the task's current modified_at, so a tick cut short by a 429
+// keeps what it read and the engine's retry with the same Adapter resumes instead of starting
+// over (Asana's free tier allows about 150 requests a minute).
 func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.Item, time.Time, error) {
+	start := a.now()
+	cutNow := start.Add(-watermarkSkew)
 	q := url.Values{"opt_fields": {taskFields}}
 	doneSince := since
 	if since.IsZero() {
-		doneSince = a.now()
+		doneSince = start
 	} else {
 		q.Set("modified_since", since.UTC().Format(time.RFC3339))
 	}
@@ -477,31 +617,55 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 			keep = append(keep, t)
 		}
 	}
-	var polls []string
-	for _, p := range keep {
-		if p.NumSubtasks > 0 {
-			polls = append(polls, p.GID)
+	pr := pollResult{polled: map[string]bool{}}
+	var changed []string
+	for _, t := range keep {
+		if t.NumSubtasks > 0 {
+			changed = append(changed, t.GID)
+		} else {
+			pr.childless = append(pr.childless, t.GID)
 		}
 	}
-	for _, p := range watched {
-		if !seen[p] && !slices.Contains(polls, p) {
-			polls = append(polls, p)
-		}
+	pr.queue = a.pollQueue(changed, watched)
+	pr.parents = changed
+	budget := a.pollBudget
+	if budget <= 0 {
+		budget = maxPollsPerTick
 	}
-	for _, p := range polls {
-		pg, err := gid("parent task", p)
+	for i, p := range pr.queue {
+		if i >= budget {
+			break // the rest wait for the next tick, first in line
+		}
+		pg, err := gid("parent task", p.gid)
 		if err != nil {
 			return nil, since, err
 		}
 		subs, err := list[task](ctx, a, "/tasks/"+pg+"/subtasks", url.Values{"opt_fields": {taskFields}})
-		if errors.Is(err, hubsync.ErrNotFound) && slices.Contains(watched, p) {
-			continue // a mirrored parent deleted in Asana: the engine sees that through Get
+		if errors.Is(err, hubsync.ErrNotFound) {
+			pr.gone = append(pr.gone, p.gid) // deleted in Asana: the engine sees that through Get
+			continue
+		}
+		var rl *hubsync.RateLimitError
+		if errors.As(err, &rl) {
+			break // keep the tick: this parent and the rest are polled first next time
 		}
 		if err != nil {
 			return nil, since, err
 		}
+		pr.polled[p.gid] = true
+		cut := since
+		if p.has {
+			cut = p.cut
+		}
+		childDone := cut
+		if cut.IsZero() {
+			childDone = doneSince
+		}
 		for _, s := range subs {
-			if seen[s.GID] || !since.IsZero() && s.modified().Before(since) || s.Completed && s.modified().Before(doneSince) {
+			if s.NumSubtasks > 0 {
+				pr.parents = append(pr.parents, s.GID)
+			}
+			if seen[s.GID] || !cut.IsZero() && s.modified().Before(cut) || s.Completed && s.modified().Before(childDone) {
 				continue
 			}
 			seen[s.GID] = true
@@ -525,6 +689,13 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 		}
 		items = append(items, it)
 	}
+	if wm.After(cutNow) {
+		wm = cutNow
+	}
+	if wm.Before(since) {
+		wm = since
+	}
+	a.commitPolls(pr, since, cutNow)
 	return items, wm, nil
 }
 
@@ -562,6 +733,9 @@ func (a *Adapter) Get(ctx context.Context, id string) (hubsync.Item, error) {
 	if err := a.details(ctx, &it); err != nil {
 		return hubsync.Item{}, err
 	}
+	if t.NumSubtasks > 0 {
+		a.rememberParents(t.GID)
+	}
 	return it, nil
 }
 
@@ -570,6 +744,9 @@ func (a *Adapter) Get(ctx context.Context, id string) (hubsync.Item, error) {
 // done, so without the second write a move out of done would be undone by the next ListChanged,
 // and a move to Done would leave the task open in My Tasks. Either write failing fails the move;
 // both are idempotent, so the engine can retry it.
+//
+// A task that is not a member of the project is never added to it: a subtask outside the project
+// (mirrored with no section) only has its completion set, and a top-level task is refused.
 func (a *Adapter) Move(ctx context.Context, id, status string) error {
 	id, err := gid("task", id)
 	if err != nil {
@@ -579,7 +756,15 @@ func (a *Adapter) Move(ctx context.Context, id, status string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := a.do(ctx, http.MethodPost, "/sections/"+sec+"/addTask", nil, map[string]any{"task": id}, nil); err != nil {
+	var t task
+	if _, err := a.do(ctx, http.MethodGet, "/tasks/"+id, url.Values{"opt_fields": {"memberships.project.name,parent.name"}}, nil, &t); err != nil {
+		return err
+	}
+	if !a.inProject(t) {
+		if t.Parent == nil || t.Parent.GID == "" {
+			return fmt.Errorf("asana: task %s is not in project %s (tracker.scope.board); moving it to %q would add it there, so it was not moved", id, a.project, status)
+		}
+	} else if _, err := a.do(ctx, http.MethodPost, "/sections/"+sec+"/addTask", nil, map[string]any{"task": id}, nil); err != nil {
 		return err
 	}
 	_, err = a.do(ctx, http.MethodPut, "/tasks/"+id, nil, map[string]any{"completed": done}, nil)
@@ -613,7 +798,9 @@ func notesFor(body, acceptance string) string {
 // Create makes a task in the project (in the section named in.Status, else the first one; a done
 // section creates it completed), or a subtask of in.ParentID. Asana has no acceptance field of its own, so acceptance checks follow
 // the notes. With assigned_to me the task is assigned to me, so it is mirrored back.
-// in.Type is ignored, and so is in.Status for a subtask. An error means no task was created.
+// in.Type is ignored, and so is in.Status for a subtask. A failure after the task exists (labels,
+// the read-back) is a *hubsync.PartialCreateError holding the task; any other error means no task
+// was created.
 func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item, error) {
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
@@ -662,16 +849,25 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	if _, err := gid("created task", created.GID); err != nil {
 		return hubsync.Item{}, err
 	}
-	// From here on the task exists in Asana, so Create never returns an error: an engine that
-	// retried a failed create would make a duplicate. A label or read-back failure leaves the
-	// returned Item without those labels (Item.Labels is what Asana has): the engine reconciles
-	// by diffing in.Labels against Item.Labels and calling SetLabels for the missing ones.
+	// From here on the task exists in Asana: a later failure is a PartialCreateError holding it,
+	// so the engine links the card and never creates the task again. Item.Labels is what Asana
+	// has, so the engine can retry SetLabels for the missing ones.
+	if in.ParentID != "" {
+		a.rememberParents(in.ParentID)
+	}
+	var labelErr error
 	if len(in.Labels) > 0 {
-		_ = a.SetLabels(ctx, created.GID, in.Labels, nil)
+		labelErr = a.SetLabels(ctx, created.GID, in.Labels, nil)
 	}
 	it, err := a.Get(ctx, created.GID)
 	if err != nil {
-		return a.toItem(created), nil
+		it = a.toItem(created)
+		if labelErr == nil {
+			return it, &hubsync.PartialCreateError{Item: it, Err: fmt.Errorf("asana: read back: %w", err)}
+		}
+	}
+	if labelErr != nil {
+		return it, &hubsync.PartialCreateError{Item: it, Err: fmt.Errorf("asana: labels: %w", labelErr)}
 	}
 	return it, nil
 }
