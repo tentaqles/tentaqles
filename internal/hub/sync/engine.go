@@ -322,13 +322,15 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 
 // retry calls fn up to maxTries times while the tracker rate-limits, honouring Retry-After and
 // otherwise backing off exponentially (1s, 2s). A Retry-After beyond maxBackoff waits for the
-// next tick instead.
+// next tick instead. A partial create (the item exists) is never retried, even when the step
+// that failed after it was rate-limited: calling Create again would make a second item.
 func retry[T any](ctx context.Context, e *Engine, rep *Report, fn func() (T, error)) (T, error) {
 	var zero T
 	for i := 0; ; i++ {
 		v, err := fn()
 		var rl *RateLimitError
-		if err == nil || !errors.As(err, &rl) || i == maxTries-1 {
+		var pc *PartialCreateError
+		if err == nil || !errors.As(err, &rl) || errors.As(err, &pc) || i == maxTries-1 {
 			return v, err
 		}
 		d := rl.RetryAfter

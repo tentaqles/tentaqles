@@ -666,12 +666,26 @@ func (e *Engine) deliver(ctx context.Context, ad Adapter, o store.OutboxRow, rep
 		}
 		in := NewItem{Title: e.outbound(p.Title), Body: e.outbound(p.Body), ParentID: p.ParentExternalID}
 		it, err := retry(ctx, e, rep, func() (Item, error) { return ad.Create(ctx, in) })
+		note := ""
 		if err != nil {
-			return err
+			made, ok := CreatedItem(err)
+			if !ok {
+				return err
+			}
+			// The item exists but a later step (status, parent link, read-back) failed: link it and
+			// mark the row sent with the reason, so no pass ever creates it again.
+			it, note = made, err.Error()
 		}
 		if err := e.st.LinkCard(c.ID, store.ExternalLink{Provider: e.provider, ID: it.ID, URL: it.URL, Lane: it.Status, Rev: it.Rev}); err != nil {
 			// Created on the tracker but not linked here: say so, never create it twice.
 			_, _ = e.st.MarkOutbox(o.ID, store.OutboxSent, "created "+it.ID+" but linking failed: "+err.Error())
+			rep.Sent++
+			return nil
+		}
+		if note != "" {
+			if _, err := e.st.MarkOutbox(o.ID, store.OutboxSent, note); err != nil {
+				return err
+			}
 			rep.Sent++
 			return nil
 		}
