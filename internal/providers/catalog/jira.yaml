@@ -2,4 +2,21 @@ id: jira
 name: Jira
 category: pm
 docs: https://developer.atlassian.com/cloud/acli/
-cli: null
+cli:
+  command: acli
+  version_args: ["--version"]
+install:
+  windows:
+    url: https://developer.atlassian.com/cloud/acli/guides/install-windows/
+  macos:
+    brew: "atlassian/homebrew-acli/acli"
+  linux:
+    url: https://developer.atlassian.com/cloud/acli/guides/install-linux/
+# No identity block: acli keeps one login per machine and no config-home variable has been
+# verified, so tq does not claim to isolate it.
+login:
+  args: ["jira", "auth", "login"]
+verify:
+  args: ["jira", "auth", "status"]
+mcp: atlassian
+notes: "acli keeps one global login, not one per workspace: run acli jira auth login yourself. Without acli, store an API token with tq secret set <ws> jira, or name a tracker.env variable for tq dotenv."

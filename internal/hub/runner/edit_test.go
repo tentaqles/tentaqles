@@ -121,7 +121,7 @@ func TestUpdateSettingsRoundTripAndLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != (Settings{Concurrency: 3, DefaultBudget: b, Notify: false}) || h.svc.Settings() != got {
+	if got != (Settings{Concurrency: 3, DefaultBudget: b, Notify: false, Sync: h.st.SyncSettings(false)}) || h.svc.Settings() != got {
 		t.Fatalf("%+v", got)
 	}
 	e := lastEntry(t, h, activity.VerbSettingsUpdate)

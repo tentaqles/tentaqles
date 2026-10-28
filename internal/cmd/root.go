@@ -13,6 +13,7 @@ func NewRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd(), newEnvCmd(), newActivateCmd(), newInitCmd(), newAddCmd(), newAllowCmd(), newDenyCmd(), newListCmd(), newRunCmd(), newLoginCmd(), newDoctorCmd(), newBundleCmd(), newProvidersCmd(), newHooksCmd(), newSetupCmd(), newClaudeHookCmd(), newSecretsCmd(), newSettingsCmd(), newStatuslineCmd(), newWorktreesCmd(), newInsightsCmd(), newDecideCmd(), newDotenvCmd(), newRedactCmd(), newGuardCmd(), newMigrateCmd(), newUninstallCmd(), newHubCmd(), newUnattendedCmd())
+	root.AddCommand(newVersionCmd(), newEnvCmd(), newActivateCmd(), newInitCmd(), newAddCmd(), newAllowCmd(), newDenyCmd(), newListCmd(), newRunCmd(), newLoginCmd(), newDoctorCmd(), newBundleCmd(), newProvidersCmd(), newHooksCmd(), newSetupCmd(), newClaudeHookCmd(), newSecretsCmd(), newSecretCmd(), newSettingsCmd(), newStatuslineCmd(), newWorktreesCmd(), newInsightsCmd(), newDecideCmd(), newDotenvCmd(), newRedactCmd(), newGuardCmd(), newMigrateCmd(), newUninstallCmd(), newHubCmd(), newUnattendedCmd())
+	root.AddCommand(newOnboardCmd()) // spec B §8; own line so other workstreams' additions merge cleanly
 	return root
 }

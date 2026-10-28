@@ -64,7 +64,8 @@ func TestProviders_MatchesLegacyTable(t *testing.T) {
 // that carry identity env vars show up in Providers().
 func TestProviders_IncludesNewIdentities(t *testing.T) {
 	got := Providers()
-	for _, id := range []string{"glab", "snowflake", "databricks", "postgres", "terraform"} {
+	// azure-devops is the az CLI under its own id (spec B §8): `tq login <ws> azure-devops` runs az login.
+	for _, id := range []string{"glab", "snowflake", "databricks", "postgres", "terraform", "azure-devops"} {
 		if _, ok := got[id]; !ok {
 			t.Errorf("Providers() missing new identity %q", id)
 		}
@@ -78,7 +79,7 @@ func TestProviders_ExcludesInformational(t *testing.T) {
 	// cursor and opencode moved here: their config-dir variables are real but
 	// cover settings, not credentials, so claiming them as identities told the
 	// user each workspace had its own login when they all shared one.
-	for _, id := range []string{"jira", "asana", "linear", "bitbucket", "vercel", "supabase", "cursor", "opencode", "azure-devops"} {
+	for _, id := range []string{"jira", "asana", "linear", "bitbucket", "vercel", "supabase", "cursor", "opencode"} {
 		if _, ok := got[id]; ok {
 			t.Errorf("Providers() should not include informational id %q", id)
 		}

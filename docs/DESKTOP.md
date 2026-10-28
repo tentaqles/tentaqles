@@ -47,6 +47,50 @@ If a build is produced without staging a `tq` binary into
 `desktop/build/bin/`, the app still works — the banner simply falls back to
 the one-liner installers.
 
+## Services step
+
+For each company the Services step can add, each one optional:
+
+- a **tracker** for the hub's board sync: provider (GitHub, Azure DevOps, Jira, Linear,
+  Asana), the scope fields that provider reads (for example organization, project and
+  team for Azure DevOps; site and project key for Jira; team for Linear), whose items to
+  mirror (assigned to me, or anyone), and how to sign in: the tracker CLI's own login, a
+  token in the OS keychain (`tq secret set`), a token through `tq dotenv` (you name the
+  variable), or the agent's MCP connector (no background sync). Lane overrides map a
+  tracker status to a hub lane; without them statuses map by category;
+- **chat** (Slack, Microsoft Teams or none) and **email** (Gmail, Outlook or none), both
+  reached by the agent through MCP connectors.
+
+These are written into the company's `.tentaqles.yaml` as the `tracker`, `chat` and
+`email` blocks (see [PROVIDERS.md](PROVIDERS.md#company-services-in-the-manifest)), names
+only. A token-shaped value in any field is refused, naming the field and never the value.
+Logins and tokens are set up afterwards with `tq login`, `tq secret set` or the variable.
+
+## Board tab
+
+The Board tab lists the registered workspaces and the hubs that are running.
+
+- A workspace already served by a running hub opens that hub. Otherwise the app starts
+  `tq hub serve --workspace <ws> --port <free loopback port>` as its own child process (no
+  console window), waits up to 20 s for it to answer, then navigates the app window itself
+  to the board. There is no iframe: the hub's CSP keeps `frame-ancestors 'none'`, and only
+  loopback `http` hub URLs are allowed.
+- If something takes the chosen port before the child binds it, the start is retried once
+  on a new port. When a start fails, the error shows the tail of the child's output.
+- A desktop-started hub sends its own desktop notifications (the hub's notify setting).
+- The child does not inherit `CLAUDECODE`, `CLAUDE_PLUGIN_ROOT`, `TENTAQLES_HEADLESS` or
+  `TQ_HUB_TASK`, so it runs as a human-started hub even when the app was launched from a
+  Claude Code terminal.
+- When the app closes, it stops the hubs it started; hubs started elsewhere keep running.
+  The stop is the hub's own clean shutdown (it drains HTTP, stops its runners and their
+  agents, and removes its serve record), triggered by closing the hub's stdin, plus SIGINT
+  on macOS and Linux. If the hub has not exited after 10 s, its whole process tree is
+  killed, run agents included (a Job Object on Windows, the process group on macOS and
+  Linux). On Windows the Job Object also ends the tree if the app crashes.
+- **View > Setup** (Ctrl/Cmd+1) brings the wizard back after the window went to a board.
+  It reloads the wizard, so unapplied wizard state is reset. On the wizard itself it does
+  nothing.
+
 ## Install
 
 Download the installer for your OS from the

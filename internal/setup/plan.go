@@ -27,6 +27,10 @@ type Company struct {
 	GitProvider    string   `yaml:"git_provider,omitempty"`
 	Identities     []string `yaml:"identities,omitempty"`
 	PermissionMode string   `yaml:"permission_mode,omitempty"`
+	// Company services (spec B §6), written into the new workspace's manifest. nil skips a block.
+	Tracker *manifest.Tracker `yaml:"tracker,omitempty"`
+	Chat    *manifest.Service `yaml:"chat,omitempty"`
+	Email   *manifest.Service `yaml:"email,omitempty"`
 }
 
 // SetupPlan is the full declarative setup: a base folder, the companies to
@@ -140,6 +144,9 @@ func (p *SetupPlan) Validate(cat *providers.Catalog) error {
 
 		if !contains(manifest.PermissionModes, c.PermissionMode) {
 			return fmt.Errorf("company %q: invalid permission_mode %q (must be one of %v)", c.Name, c.PermissionMode, manifest.PermissionModes)
+		}
+		if err := c.validateServices(); err != nil {
+			return fmt.Errorf("company %q: %w", c.Name, err)
 		}
 	}
 	return nil

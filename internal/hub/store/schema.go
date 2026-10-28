@@ -30,7 +30,7 @@ var LaneKinds = []string{LaneBacklog, LaneTodo, LaneActive, LaneReview, LaneDone
 const TagAgentReady = "agent-ready"
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a shipped entry.
-var migrations = []string{schemaV1}
+var migrations = []string{schemaV1, schemaV2}
 
 const schemaV1 = `
 CREATE TABLE lanes (
@@ -119,4 +119,43 @@ CREATE TABLE activity (
 );
 CREATE INDEX activity_ts ON activity(ts);
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+`
+
+// schemaV2 is board sync (spec B §5): the external link is unique per tracker item, cards carry the
+// tracker's revision and the last sync time, and the sync engine keeps its watermark, outbox and
+// lane map here.
+const schemaV2 = `
+ALTER TABLE cards ADD COLUMN external_rev TEXT;
+ALTER TABLE cards ADD COLUMN external_synced_at TEXT;
+CREATE UNIQUE INDEX cards_external ON cards(external_provider, external_id)
+  WHERE external_provider IS NOT NULL AND external_id IS NOT NULL;
+CREATE TABLE sync_state (
+  workspace TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT '',
+  watermark TEXT NOT NULL DEFAULT '',
+  last_ok_at TEXT, last_error TEXT, last_error_at TEXT,
+  PRIMARY KEY (workspace, provider, scope)
+);
+CREATE TABLE sync_outbox (
+  id TEXT PRIMARY KEY,
+  card_id TEXT NOT NULL REFERENCES cards(id),
+  action TEXT NOT NULL,
+  payload TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK (status IN ('pending','sent','skipped','failed')),
+  decision_id TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL, sent_at TEXT
+);
+CREATE INDEX sync_outbox_status ON sync_outbox(status, created_at);
+CREATE INDEX sync_outbox_card ON sync_outbox(card_id, created_at);
+CREATE INDEX sync_outbox_decision ON sync_outbox(decision_id);
+CREATE TABLE lane_map (
+  provider TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT '',
+  external_status TEXT NOT NULL COLLATE NOCASE,
+  lane TEXT NOT NULL,
+  PRIMARY KEY (provider, scope, external_status)
+);
 `

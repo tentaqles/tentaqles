@@ -1,5 +1,5 @@
 import React, {createContext, useContext, useEffect, useMemo, useReducer} from 'react'
-import type {Company, Plan, Report} from './api'
+import type {Company, Plan, Report, Tracker} from './api'
 import * as api from './api'
 
 export const STEPS = [
@@ -28,6 +28,9 @@ export type Action =
   | {type: 'removeCompany'; name: string}
   | {type: 'setIdentities'; name: string; identities: string[]}
   | {type: 'setPermission'; name: string; mode: string}
+  | {type: 'setTracker'; name: string; tracker: Tracker | undefined}
+  | {type: 'setChat'; name: string; provider: string}
+  | {type: 'setEmail'; name: string; provider: string}
   | {type: 'next'}
   | {type: 'back'}
   | {type: 'goto'; step: number}
@@ -49,6 +52,8 @@ export function newCompany(name = ''): Company {
     GitProvider: '',
     Identities: [],
     PermissionMode: 'default',
+    Chat: '',
+    Email: '',
   }
 }
 
@@ -94,6 +99,15 @@ export function reducer(state: State, action: Action): State {
         ...state,
         plan: mapCompany(state.plan, action.name, (c) => ({...c, PermissionMode: action.mode})),
       }
+    case 'setTracker':
+      return {
+        ...state,
+        plan: mapCompany(state.plan, action.name, (c) => ({...c, Tracker: action.tracker})),
+      }
+    case 'setChat':
+      return {...state, plan: mapCompany(state.plan, action.name, (c) => ({...c, Chat: action.provider}))}
+    case 'setEmail':
+      return {...state, plan: mapCompany(state.plan, action.name, (c) => ({...c, Email: action.provider}))}
     case 'next':
       return {...state, step: Math.min(state.step + 1, STEPS.length - 1), errors: []}
     case 'back':

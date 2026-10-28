@@ -32,6 +32,8 @@ type Card struct {
 	ExternalID       string   `json:"external_id,omitempty"`
 	ExternalURL      string   `json:"external_url,omitempty"`
 	ExternalLane     string   `json:"external_lane,omitempty"`
+	ExternalRev      string   `json:"external_rev,omitempty"`       // the tracker's version, etag or updated-at
+	ExternalSyncedAt string   `json:"external_synced_at,omitempty"` // when sync last wrote the external columns
 	LockedByRun      string   `json:"locked_by_run,omitempty"`
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`
@@ -95,6 +97,7 @@ type Attachment struct {
 
 const cardCols = `c.id, c.title, c.body, c.lane, c.kind, c.tags, COALESCE(c.parent_id, ''), c.project_dir,
 	COALESCE(c.external_provider, ''), COALESCE(c.external_id, ''), COALESCE(c.external_url, ''), COALESCE(c.external_lane, ''),
+	COALESCE(c.external_rev, ''), COALESCE(c.external_synced_at, ''),
 	COALESCE(c.locked_by_run, ''), c.created_at, c.updated_at, COALESCE(c.done_at, '')`
 
 type scanner interface{ Scan(dest ...any) error }
@@ -103,7 +106,7 @@ func scanCard(r scanner) (Card, error) {
 	var c Card
 	var tags string
 	err := r.Scan(&c.ID, &c.Title, &c.Body, &c.Lane, &c.Kind, &tags, &c.ParentID, &c.ProjectDir,
-		&c.ExternalProvider, &c.ExternalID, &c.ExternalURL, &c.ExternalLane, &c.LockedByRun, &c.CreatedAt, &c.UpdatedAt, &c.DoneAt)
+		&c.ExternalProvider, &c.ExternalID, &c.ExternalURL, &c.ExternalLane, &c.ExternalRev, &c.ExternalSyncedAt, &c.LockedByRun, &c.CreatedAt, &c.UpdatedAt, &c.DoneAt)
 	if err != nil {
 		return c, err
 	}

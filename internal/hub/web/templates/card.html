@@ -7,10 +7,11 @@
       <div>
         <div class="status">{{if .PendingItems}}<span class="pill {{pill "waiting"}}">waiting on you</span>{{else}}{{with .Active}}<span class="pill {{pill .Status}}">{{statusLabel .Status}}</span>{{if eq .Status "running"}}<span>round {{.Rounds}} of {{.Budget.Rounds}}</span>{{end}}{{end}}{{end}}<span class="chip">{{.Kind}}</span><span class="chip">{{laneTitle .Lane}}</span></div>
         <h2>{{.Title}}</h2>
-        <div class="meta"><span class="id">{{.ID}}</span>{{if .ProjectDir}}<span>project <code class="m">{{.ProjectDir}}</code></span>{{end}}{{with .Parent}}<span>parent <a href="/cards/{{.ID}}?ws={{$ws}}">{{.Title}}</a></span>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}</div>
+        <div class="meta"><span class="id">{{.ID}}</span>{{if .ProjectDir}}<span>project <code class="m">{{.ProjectDir}}</code></span>{{end}}{{with .Parent}}<span>parent <a href="/cards/{{.ID}}?ws={{$ws}}">{{.Title}}</a></span>{{end}}{{if .ExternalID}}<span>{{template "ext-badge" .}}</span>{{with .ExternalLane}}<span>company lane <span class="chip">{{.}}</span></span>{{end}}{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}</div>
       </div>
       <div class="acts">
         {{if .ReviewReady}}<a class="btn" href="/cards/{{.ID}}/review?ws={{$ws}}">Open review</a>{{end}}
+        {{if .Sync.CanPush}}<form class="inline" method="post" action="/cards/{{.ID}}/push?ws={{$ws}}"><button class="btn" title="Create this card on the {{providerName .Sync.Tracker}} board, under sync.policy.create_card">Push to company board</button></form>{{else if .Sync.Queued}}<span class="note">Queued for the company board</span>{{end}}
         {{with .Active}}<form class="inline" method="post" action="/runs/{{.ID}}/cancel?ws={{$ws}}"><button class="btn danger">Cancel run</button></form>{{else}}<form class="inline" method="post" action="/cards/{{$.Data.ID}}/run?ws={{$ws}}"><button class="btn">Run now</button></form>{{end}}
       </div>
     </div>

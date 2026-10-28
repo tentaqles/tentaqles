@@ -2,8 +2,31 @@ id: azure-devops
 name: Azure DevOps
 category: pm
 docs: https://learn.microsoft.com/azure/devops/cli
+# The same CLI as the az entry, so it shares az's config-home variable: a workspace that enables
+# both gets one AZURE_CONFIG_DIR (envplan keeps the first, az). Boards sync takes its token from
+# `az account get-access-token` inside that directory.
 cli:
   command: az
   version_args: ["--version"]
+install:
+  windows:
+    winget: "Microsoft.AzureCLI"
+    note: "then: az extension add --name azure-devops"
+  macos:
+    brew: "azure-cli"
+    note: "then: az extension add --name azure-devops"
+  linux:
+    apt: "azure-cli"
+    note: "then: az extension add --name azure-devops"
+identity:
+  env:
+    AZURE_CONFIG_DIR: "{dir}"
+# `az devops login` only stores a PAT; `az login` is the account login the token comes from.
 login:
-  args: ["devops", "login"]
+  args: ["login"]
+verify:
+  args: ["account", "show"]
+  # Logged out, az prints "Please run 'az login' to setup account." and exits non-zero.
+  logged_out_when: "az login"
+  account: { json: user.name }
+  subscription: { json: name }

@@ -27,6 +27,44 @@ export interface Company {
   GitProvider: string
   Identities: string[]
   PermissionMode: string
+  // Company services (spec B §6): undefined Tracker and '' Chat/Email skip the block.
+  Tracker?: Tracker
+  Chat: string
+  Email: string
+}
+
+// Tracker is the manifest's tracker block: names only, never a token.
+export interface Tracker {
+  Provider: string
+  Scope: Record<string, string>
+  AssignedTo: string
+  Auth: string
+  Env: string
+  Lanes: Record<string, string>
+}
+
+// Services are the accepted names for the Services step, from the manifest's own lists.
+export interface Services {
+  Trackers: string[]
+  TrackerAuths: string[]
+  Assignees: string[]
+  Chat: string[]
+  Email: string[]
+}
+
+// Hub is a running `tq hub serve` (a serve record that answered its ping).
+export interface Hub {
+  URL: string
+  Port: number
+  PID: number
+  Mode: string
+  Workspaces: string[]
+}
+
+// BoardTarget is where the Board tab navigates; Started is true when the app started the hub.
+export interface BoardTarget {
+  URL: string
+  Started: boolean
 }
 
 export interface Plan {
@@ -76,6 +114,10 @@ export const loginCommand = (workspace: string, provider: string): Promise<strin
   App.LoginCommand(workspace, provider)
 export const toolCheck = (plan: Plan): Promise<Record<string, ToolResult[]>> =>
   App.ToolCheck(asPlan(plan)) as unknown as Promise<Record<string, ToolResult[]>>
+
+export const serviceCatalog = (): Promise<Services> => App.ServiceCatalog()
+export const hubs = (): Promise<Hub[]> => App.Hubs()
+export const openBoard = (workspace: string): Promise<BoardTarget> => App.OpenBoard(workspace)
 
 export const addCustomProvider = (
   id: string,

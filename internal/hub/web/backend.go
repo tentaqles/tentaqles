@@ -19,6 +19,11 @@ type Entry struct {
 
 type Factory func(ws *resolve.Workspace) (*runner.Service, error)
 
+// Sibling builds a workspace's companion loop (the board sync engine, spec B §4) when its runner
+// opens. It is called once, before the runner starts, and returns the loop to run beside
+// svc.Start (nil = none). The loop stops with the runner, before the store closes.
+type Sibling func(ws *resolve.Workspace, svc *runner.Service) func(ctx context.Context)
+
 // MultiBackend serves several workspaces from one process (spec §5): one store and one runner per
 // workspace, opened on first use; an unavailable workspace is listed and never opened.
 type MultiBackend struct {
@@ -26,6 +31,8 @@ type MultiBackend struct {
 	cancel  context.CancelFunc
 	entries []Entry
 	factory Factory
+	sibling Sibling
+	engines syncEngines // each opened workspace's sync engine, for the pages (sync.go)
 	mu      sync.Mutex
 	closed  bool
 	svcs    map[string]*runner.Service
@@ -47,6 +54,13 @@ func NewMultiBackend(ctx context.Context, entries []Entry, f Factory) *MultiBack
 	sort.Slice(es, func(i, j int) bool { return es[i].Info.Name < es[j].Info.Name })
 	return &MultiBackend{ctx: cctx, cancel: cancel, entries: es, factory: f, svcs: map[string]*runner.Service{},
 		done: map[string]chan struct{}{}, opening: map[string]*opening{}}
+}
+
+// SetSibling installs the companion loop builder; call it before the first Service.
+func (b *MultiBackend) SetSibling(s Sibling) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.sibling = s
 }
 
 func (b *MultiBackend) Workspaces() []WorkspaceInfo {
@@ -105,9 +119,22 @@ func (b *MultiBackend) Service(name string) (*runner.Service, error) {
 		b.svcs[name] = svc
 		done := make(chan struct{})
 		b.done[name] = done
+		var side func(context.Context)
+		if b.sibling != nil {
+			side = b.sibling(entry.WS, svc)
+		}
 		go func() {
 			defer close(done)
+			var wg sync.WaitGroup
+			if side != nil {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					side(b.ctx)
+				}()
+			}
 			svc.Start(b.ctx)
+			wg.Wait()
 		}()
 	}
 	b.mu.Unlock()

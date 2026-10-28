@@ -99,7 +99,7 @@ func Apply(p *SetupPlan, cat *providers.Catalog, o ApplyOptions) (Report, error)
 				report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %s", c.Name, detail))
 				continue
 			}
-			report.Changes = append(report.Changes, Change{Kind: "workspace-skip", Target: c.Name, Detail: "manifest already exists"})
+			report.Changes = append(report.Changes, Change{Kind: "workspace-skip", Target: c.Name, Detail: c.skipDetail("manifest already exists")})
 			applied++
 			continue
 		}
@@ -118,6 +118,9 @@ func Apply(p *SetupPlan, cat *providers.Catalog, o ApplyOptions) (Report, error)
 			PermissionMode: c.PermissionMode,
 			Trust:          p.Trust,
 			RunGit:         o.RunGit,
+			Tracker:        c.Tracker,
+			Chat:           c.Chat,
+			Email:          c.Email,
 		})
 		if err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", c.Name, err))
@@ -126,6 +129,9 @@ func Apply(p *SetupPlan, cat *providers.Catalog, o ApplyOptions) (Report, error)
 		applied++
 
 		report.Changes = append(report.Changes, Change{Kind: "workspace-create", Target: c.Name})
+		if sc, ok := c.servicesChange(); ok {
+			report.Changes = append(report.Changes, sc)
+		}
 		for _, id := range ids {
 			report.Changes = append(report.Changes, Change{Kind: "identity-dir", Target: c.Name + "/" + id})
 		}

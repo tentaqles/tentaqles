@@ -69,6 +69,7 @@ trust: true
 | `companies[].identities` | no | List of provider ids (from the provider catalog, e.g. `claude`, `gh`, `aws`) to isolate per workspace. Defaults to `[claude, gh]` if omitted. Each id must be known to the catalog (`tq providers list`) or `Validate` rejects the plan. |
 | `companies[].permission_mode` | yes | Claude Code permission mode for this workspace. Must be one of the values in `manifest.PermissionModes` (e.g. `default`, `acceptEdits`, `bypass`). |
 | `hooks` | no | List of shells (`bash`, `zsh`, `fish`, `pwsh`, `powershell`) to install the `tq activate` line into. Shells already carrying a hand-installed activation line are detected as "present (unmanaged)" and left untouched — never duplicated. |
+| `companies[].tracker`, `companies[].chat`, `companies[].email` | no | The company's tracker, chat and email blocks, written into the new workspace's manifest with the same checks as a hand-written one (see [PROVIDERS.md](PROVIDERS.md#company-services-in-the-manifest)). A token-shaped value in any field is refused, naming the field and never the value. |
 | `trust` | no, defaults to `true` | Whether newly scaffolded workspaces are auto-trusted with `tq allow` as part of apply. If the key is absent from the YAML it defaults to `true`; set it to `false` explicitly to scaffold without trusting. |
 
 ## Preview, tool-check, and apply
@@ -131,6 +132,86 @@ config (`~/.tentaqles/identities/<workspace>/aws/config`):
 `--sso-session NAME` always wins. SSO tokens are cached in the shared
 `~/.aws/sso/cache`, which `AWS_CONFIG_FILE` does not move, so workspaces using
 the same SSO start URL share that login; tq prints a note about it.
+
+## One client: `tq onboard`
+
+`tq onboard [<name>]` sets up one client workspace and records its company tools. It is
+`tq add` plus a wizard (the same look as `tq setup`) that asks, in order:
+
+1. the identity email (git) and display name;
+2. the git provider;
+3. the cloud, plus `cloud.also`;
+4. the data platform;
+5. the agent CLIs;
+6. the tracker: provider, scope, auth source (`cli`, `keychain`, `env` or `mcp`; the
+   default is `cli` for github, azure-devops and jira, else `keychain`), and the variable
+   name when auth is `env` (suggested as `<WS>_<PROVIDER>_TOKEN`);
+7. chat (`slack`, `teams` or none);
+8. email (`gmail`, `outlook` or none).
+
+Every question can be skipped. The manifest is written with names only: an answer that
+looks like a token is refused. The workspace is left untrusted.
+
+Flags:
+
+- `--from <yaml>`: answers from a file instead of the wizard. Keys follow the manifest
+  (`name`, `base`, `display_name`, `git: {email, name, provider, user}`, `identities`,
+  `cloud: {provider, also}`, `data_platform`, `agents`, `tracker`, `chat`, `email`, plus
+  `color` and `permission_mode`). Unknown keys and token-shaped values are refused.
+- `--base <dir>`: the base folder; the default is the only registered base.
+- `--open-terminal`: with `--from`, open a new terminal in the folder afterwards. The
+  wizard asks instead.
+
+The wizard refuses to start in an agent session (`TENTAQLES_HEADLESS`, `CLAUDECODE`,
+`CLAUDE_PLUGIN_ROOT`, `TQ_HUB_TASK`); use `--from` there. A new terminal opens with Windows
+Terminal (`wt -d <folder>`) when present, otherwise with the desktop app's terminal logic.
+tq never closes or kills a terminal, and opens none from an agent session.
+
+Then it prints the next steps, for you to run:
+
+```
+Trust the manifest (a human step): tq allow acme
+Log in: tq login acme claude
+Log in: tq login acme az
+  (azure-devops shares the az login: one sign-in covers both)
+Tracker Jira: store a token in the OS keychain with tq secret set acme jira (it reads the token from a hidden prompt)
+Connect Slack (chat, MCP only): add the "slack" MCP entry to the tq bundle catalog and to claude.bundle.mcp, run tq bundle sync acme, then authenticate it with /mcp in a Claude session
+Then open Claude Code in the folder and run /tentaqles:onboard to verify every connection
+```
+
+- `tq allow <ws>` first.
+- One `tq login <ws> <id>` per CLI identity; identities that share a config home print one
+  login.
+- The tracker credential: the CLI login printed above, `tq secret set <ws> <provider>`
+  (hidden prompt), the variable where `tq dotenv` resolves it, or, for `mcp`, no background
+  sync and `/tentaqles:sync` instead.
+- For each chat or email provider: add its `mcp:` entry to the tq bundle catalog and to
+  `claude.bundle.mcp`, run `tq bundle sync <ws>`, then authenticate with `/mcp`.
+- Finally `/tentaqles:onboard` in a Claude session in the folder.
+
+### `/tentaqles:onboard`
+
+The plugin skill reads the manifest and walks through every provider in it. It prints the
+login lines for you (`tq login`, `tq secret set`, `acli jira auth login`) and never runs a
+login, handles a token, or opens `.claude.json` or the bundle catalog. It verifies with
+`tq doctor --json` from the workspace folder, then one read-only call per loaded MCP
+connector, and ends with a table of what is connected.
+
+`tq doctor` checks the services:
+
+- `tracker-ok`, `tracker-needs-session`, `tracker-no-adapter`, `tracker-auth-failed`: it
+  resolves the credential and asks the adapter who is signed in. It shows the provider,
+  the manifest's scope, the auth source and the account. It runs for the workspace of the
+  current folder (`--verify all` for every workspace; skipped under `--verify off`, on the
+  hook path, and for untrusted workspaces), with a 10 s budget per check ("timed out after
+  10s"). An auth failure is redacted and cut to one line; the fix names the right login.
+  If no `tracker-*` finding shows, run doctor from the workspace folder or use
+  `--verify all`.
+- `chat-ok` / `chat-mcp-missing`, `email-ok` / `email-mcp-missing` (warn): whether the
+  provider's MCP server is listed, by name only, in the identity's `.claude.json` (top level
+  and this folder's project entries), the identity's `.mcp.json`, or the workspace folder's
+  `.mcp.json`. A name matches the catalog `mcp:` name, or contains the provider id as a
+  whole token (`slack-mcp`). Ignore the warning for claude.ai connectors.
 
 ## Unattended runs
 

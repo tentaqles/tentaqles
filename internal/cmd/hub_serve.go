@@ -233,6 +233,11 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmdCtx(c), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			if parentStdinWanted() {
+				var stopParent context.CancelFunc
+				ctx, stopParent = parentStdinContext(ctx, c.InOrStdin())
+				defer stopParent()
+			}
 			if entries, err = servedElsewhere(ctx, entries, mode); err != nil {
 				return err
 			}
@@ -288,6 +293,7 @@ func newHubServeCmd(f *hubFlags) *cobra.Command {
 			actual := ln.Addr().(*net.TCPAddr).Port
 			// The runners outlive the signal: runHTTP stops them only after the HTTP server drained.
 			backend := web.NewMultiBackend(context.WithoutCancel(ctx), entries, factory)
+			backend.SetSyncSibling(syncEngines(warn)) // the board sync engine beside each runner (spec B §4), shown on /connections
 			var served, unavailable []string
 			for _, e := range entries {
 				if !e.Info.Available {

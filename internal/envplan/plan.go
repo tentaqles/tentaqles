@@ -27,6 +27,12 @@ func Desired(ws *resolve.Workspace) map[string]string {
 			continue
 		}
 		for k, v := range p.Vars(paths.IdentityDir(ws.Name, id)) {
+			// The catalog lets two ids share a variable only when they are one CLI (az and
+			// azure-devops); the first identity in sorted order keeps it, so both log in to
+			// one directory.
+			if _, set := out[k]; set {
+				continue
+			}
 			out[k] = v
 		}
 	}

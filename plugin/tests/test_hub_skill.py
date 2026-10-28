@@ -51,6 +51,19 @@ def test_hub_skill_prints_the_answer_command_for_the_user():
     assert "tq hub list --waiting --json --timeout 2s" in text
 
 
+def test_hub_skill_knows_board_sync():
+    """Spec B §9: linked cards, the outbox send/skip decisions (human-only) and tq hub push."""
+    text = HUB.read_text(encoding="utf-8")
+    assert "## 5. Board sync" in text
+    sync = text[text.index("## 5. Board sync"):text.index("## Never")]
+    for phrase in ("linked card", "decision.data.outbox", "`send`", "`skip`", "tq hub push <card>",
+                   "human-only", "HUB.md#board-sync", "/tentaqles:sync"):
+        assert phrase in sync, phrase
+    never = text[text.index("## Never"):]
+    assert "tq hub push" in never
+    assert "send/skip" in never
+
+
 def test_ship_posts_the_pr_link_when_the_hub_launched_the_run():
     text = SHIP.read_text(encoding="utf-8")
     blocks = [b for b in _bash_blocks(text) if "tq hub comment" in b]

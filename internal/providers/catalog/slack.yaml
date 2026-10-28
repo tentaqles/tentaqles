@@ -1,0 +1,9 @@
+id: slack
+name: Slack
+category: chat
+docs: https://docs.slack.dev/ai/mcp-server
+# MCP only: tq never reads Slack itself (spec B §3). Onboarding sets the connector up and doctor
+# checks that the identity's .claude.json lists it.
+cli: null
+mcp: slack
+notes: "Reached through an MCP connector only. Add the slack entry to the tq bundle catalog and to claude.bundle.mcp, run tq bundle sync <ws>, then authenticate with /mcp in a Claude session (or connect Slack on claude.ai)."

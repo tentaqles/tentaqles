@@ -13,6 +13,8 @@
 <p class="hint">Drag a card between lanes, use the Move button on a card (Tab to it, then Enter), or open it and use Move. An agent-ready card that enters In progress starts a run; moving a running card out asks before the run is cancelled. An orange edge means a run is waiting on you; the action is on the card.</p>
 {{end}}
 
+{{define "ext-badge"}}{{with extURL .ExternalURL}}<a class="ext" href="{{.}}" rel="noopener noreferrer">{{extLabel $.ExternalProvider $.ExternalID}}</a>{{else}}<span class="ext">{{extLabel .ExternalProvider .ExternalID}}</span>{{end}}{{end}}
+
 {{define "board-card"}}{{$ws := .WS}}{{$lanes := .Lanes}}{{with .Card}}<article class="card{{if .Decision}} hot{{end}}" draggable="true" data-card="{{.ID}}" data-lane="{{.Lane}}" data-title="{{.Title}}" data-status="{{.Status}}" data-status-text="{{.StatusText}}"{{if .HasTag "agent-ready"}} data-ready{{end}}>
   <a class="t" href="/cards/{{.ID}}?ws={{$ws}}">{{.Title}}</a>
   <div class="mv"><button class="mvbtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="mv-{{.ID}}" aria-label="Move {{.Title}} to another lane" title="Move to another lane"><svg class="i" aria-hidden="true"><use href="#i-grip"/></svg></button>
@@ -24,6 +26,7 @@
   {{else if $.Card.CanApprove}}<form class="ask" method="post" action="/cards/{{$.Card.ID}}/decisions/{{.ID}}/answer?ws={{$ws}}"><button class="btn warm sm" name="choice" value="approve">Approve plan</button><a class="btn sm" href="/waiting?ws={{$ws}}#d-{{.ID}}">Review it</a></form>
   {{else}}<div class="ask"><a class="btn warm sm" href="/waiting?ws={{$ws}}#d-{{.ID}}">Answer</a></div>{{end}}
   {{else}}{{if .OpenReview}}<div class="ask"><a class="btn sm" href="/cards/{{.ID}}/review?ws={{$ws}}">Open review</a></div>{{end}}{{end}}
+  {{if .ExternalID}}<div class="meta ext-row">{{template "ext-badge" .}}{{with .ExternalLane}}<span>{{.}}</span>{{end}}</div>{{end}}
   {{if .Live}}<div class="meta"><span class="id">{{.Run.ID}}</span><span class="num">{{money .Run.CostUSD}}</span><span>{{minutes .Run.Seconds}} min</span></div>
   {{else if .Done}}{{if or .PR .CostUSD}}<div class="meta">{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}</div>{{end}}
   {{else if not .Decision}}<div class="meta">{{with .PR}}<a href="{{.}}" rel="noopener noreferrer">{{prnum .}}</a>{{end}}{{if .CostUSD}}<span class="num">{{money .CostUSD}}</span>{{end}}<span class="id">{{.ID}}</span>{{if .BudgetUSD}}<span>budget <span class="num">{{money .BudgetUSD}}</span></span>{{end}}</div>{{end}}

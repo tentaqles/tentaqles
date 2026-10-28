@@ -37,6 +37,7 @@ func newDoctorCmd() *cobra.Command {
 				Env: os.LookupEnv, Cwd: cwd,
 				RunGit: gitcfg.RunGit, RunGitIn: gitcfg.RunGitIn, LookPath: exec.LookPath,
 				RunCLI: runVerifyCmd, VerifyMode: verifyMode,
+				TrackerCheck: doctorTrackerCheck,
 			})
 			if asJSON {
 				if err := json.NewEncoder(c.OutOrStdout()).Encode(fs); err != nil {

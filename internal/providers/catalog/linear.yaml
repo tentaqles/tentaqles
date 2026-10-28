@@ -3,3 +3,5 @@ name: Linear
 category: pm
 docs: https://linear.app/developers
 cli: null
+mcp: linear
+notes: "No CLI login: store a personal API key with tq secret set <ws> linear (auth keychain), or name the variable in tracker.env for tq dotenv (auth env). The Linear MCP connector covers a Claude session."

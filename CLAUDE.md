@@ -4,12 +4,13 @@ One repo, one installer: terminal-identity orchestration for developers who work
 
 ## Layout
 - `cmd/tq/`, `internal/` — the `tq` Go CLI (identity switching, trust, git identity, bundles, doctor). `go test ./...` must stay green.
-- `internal/hub/` — `tq hub` (release 2, spec A): per-workspace SQLite board under `$TQ_HOME/hub/<workspace>/` (`store`, `activity`), headless runner (`runner`, `adapter`, `gate`, `notify`), web page and API (`web`, `serveinfo`). `docs/HUB.md`.
+- `internal/hub/` — `tq hub` (release 2, spec A): per-workspace SQLite board under `$TQ_HOME/hub/<workspace>/` (`store`, `activity`), headless runner (`runner`, `adapter`, `gate`, `notify`), web page and API (`web`, `serveinfo`). Board sync (spec B): `sync` (engine, outbox, MCP fallback), `sync/cred` (credential chain cli → keychain → env → mcp), tracker adapters `sync/jira` and `sync/linear` (linked into the binary by `cmd/tq/adapters.go`). `docs/HUB.md`.
+- `internal/secret` (`tq secret`, OS keychain via go-keyring), `internal/onboard` (`tq onboard`), `internal/termopen` (open a terminal in a folder).
 - `providers/` — (planned) provider catalog YAML (cloud / vcs / data / deploy / pm / agent / custom), embedded in the binary.
 - `desktop/` — (planned) Wails v2 setup app sharing `internal/`.
 - `plugin/` — the Claude Code plugin (Python): hooks shell out to `tq claude-hook` for identity reporting/enforcement, plus memory/graph/dashboard. Installed via `/plugin marketplace add tentaqles/tentaqles-plugin` today; will move to this repo's marketplace.
 - `installers/`, `.goreleaser.yaml`, `.github/workflows/` — CLI release + CI.
-- `docs/` — user-facing docs: `SETUP.md`, `CLAUDE-HOOK.md`, `PROVIDERS.md`, `DESKTOP.md`, and `MIGRATE.md` (`tq migrate` steps, the journal, `tq uninstall --restore`, the `TQ_ENABLED=0` kill switch), and `CLAUDE-SETTINGS.md` (`tq settings render`, `tq statusline`, `tq worktrees`), `DECIDE.md` (`tq decide`, the Jev decision layer: policy, redaction, cache, eval, judgment rules, triage, routing, Stop check, skill picker, explore, memory gates), `INSIGHTS.md` (`tq insights`), and `HUB.md` (`tq hub`: board, headless runs, decisions, review page, budgets).
+- `docs/` — user-facing docs: `SETUP.md`, `CLAUDE-HOOK.md`, `PROVIDERS.md`, `DESKTOP.md`, and `MIGRATE.md` (`tq migrate` steps, the journal, `tq uninstall --restore`, the `TQ_ENABLED=0` kill switch), and `CLAUDE-SETTINGS.md` (`tq settings render`, `tq statusline`, `tq worktrees`), `DECIDE.md` (`tq decide`, the Jev decision layer: policy, redaction, cache, eval, judgment rules, triage, routing, Stop check, skill picker, explore, memory gates), `INSIGHTS.md` (`tq insights`), and `HUB.md` (`tq hub`: board, headless runs, decisions, review page, budgets, board sync).
 - `templates/` — standalone client-system templates (n8n Jev decision sub-workflow, RAG starter, pandas Jev labeller), each with its own tests (CI job `templates`).
 - Docs live in the workspace: `../docs/plans/*.md` (spec + plans), `../docs/superpowers/plans/*.md` (task plans).
 

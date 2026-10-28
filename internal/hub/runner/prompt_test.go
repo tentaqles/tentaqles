@@ -144,4 +144,13 @@ func TestHubTaskJSONShape(t *testing.T) {
 	if got != `{"hub":"c-abcdefghijkl","workspace":"acme","kind":"hotfix","external":null}` {
 		t.Fatal(got)
 	}
+	linked := HubTaskJSON("acme", store.Card{ID: "c-abcdefghijkl", Kind: "feature", ExternalProvider: "azure-devops",
+		ExternalID: "123", ExternalURL: "https://dev.azure.com/acme/Platform/_workitems/edit/123"})
+	if linked != `{"hub":"c-abcdefghijkl","workspace":"acme","kind":"feature","external":{"provider":"azure-devops","id":"123","url":"https://dev.azure.com/acme/Platform/_workitems/edit/123"}}` {
+		t.Fatal(linked)
+	}
+	noURL := HubTaskJSON("acme", store.Card{ID: "c-abcdefghijkl", Kind: "fix", ExternalProvider: "github", ExternalID: "7"})
+	if noURL != `{"hub":"c-abcdefghijkl","workspace":"acme","kind":"fix","external":{"provider":"github","id":"7","url":""}}` {
+		t.Fatal(noURL)
+	}
 }

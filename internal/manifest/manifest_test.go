@@ -252,6 +252,10 @@ func TestHasCloudIdentityIncludesDoctl(t *testing.T) {
 	if !m.HasCloudIdentity() {
 		t.Fatal("digitalocean must count as a cloud identity")
 	}
+	// azure-devops runs a full az login in its own config dir: the same ARM access as az.
+	if !(&Manifest{Identities: map[string]Identity{"azure-devops": {}}}).HasCloudIdentity() {
+		t.Fatal("azure-devops must count as a cloud identity")
+	}
 	if (&Manifest{Identities: map[string]Identity{"gh": {}}}).HasCloudIdentity() {
 		t.Fatal("gh alone is not a cloud identity")
 	}
