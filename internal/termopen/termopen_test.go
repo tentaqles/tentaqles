@@ -46,6 +46,22 @@ func TestPlan_WindowsFallsBackToCmdStart(t *testing.T) {
 	}
 }
 
+// wt splits its own argv on ';' into subcommands, so a folder with ';' goes through the cmd start
+// plan, which passes it only as the working directory.
+func TestPlan_WindowsSemicolonFolderAvoidsWT(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "a; new-tab calc")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	l, err := Plan("windows", dir, look("wt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Name != "cmd" || !reflect.DeepEqual(l.Args, []string{"/c", "start", "", "cmd"}) || l.Dir != dir {
+		t.Fatalf("got %+v", l)
+	}
+}
+
 func TestPlan_Darwin(t *testing.T) {
 	dir := t.TempDir()
 	l, err := Plan("darwin", dir, look())

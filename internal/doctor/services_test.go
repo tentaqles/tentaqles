@@ -110,7 +110,7 @@ func TestTracker_OKNamesAccountAndScope(t *testing.T) {
 			t.Errorf("msg %q misses %q", f.Msg, want)
 		}
 	}
-	if Exit(fs) != 0 && !has(fs, "git-include-missing") {
+	if Exit([]Finding{f}) != 0 {
 		t.Fatal("an ok finding never fails doctor")
 	}
 }
@@ -161,6 +161,43 @@ func TestTracker_Bounded(t *testing.T) {
 	}
 }
 
+// A checker that ignores ctx (a keychain prompt, a CLI run without CommandContext) must not stall
+// doctor either: the budget is enforced around the call, not only through ctx.
+func TestTracker_BoundedWhenCheckIgnoresCtx(t *testing.T) {
+	cfg, root := servicesWorkspace(t, trackerBlock)
+	prev := trackerBudget
+	trackerBudget = 50 * time.Millisecond
+	t.Cleanup(func() { trackerBudget = prev })
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	d := deps(nil, root, nil)
+	d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) {
+		<-release
+		return "late@acme.test", nil
+	}
+	start := time.Now()
+	fs := Run(cfg, d)
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("tracker check not bounded")
+	}
+	if f, ok := finding(fs, "tracker-auth-failed"); !ok || !strings.Contains(f.Msg, "timed out") {
+		t.Fatalf("%+v", fs)
+	}
+}
+
+// An azure-devops tracker logs in through whichever az identity the manifest has.
+func TestTrackerFix_AzureDevOpsUsesManifestIdentity(t *testing.T) {
+	tr := &manifest.Tracker{Provider: "azure-devops", Auth: "cli"}
+	only := &manifest.Manifest{Identities: map[string]manifest.Identity{"az": {}}, Tracker: tr}
+	if got := trackerFix("acme", only, "s"); got != "tq login acme az" {
+		t.Fatalf("az only: %q", got)
+	}
+	both := &manifest.Manifest{Identities: map[string]manifest.Identity{"az": {}, "azure-devops": {}}, Tracker: tr}
+	if got := trackerFix("acme", both, "s"); got != "tq login acme azure-devops" {
+		t.Fatalf("both: %q", got)
+	}
+}
+
 func TestChatEmail_MCPEntryPresent(t *testing.T) {
 	cfg, root := servicesWorkspace(t, "chat: { provider: slack }\nemail: { provider: gmail }\n")
 	writeClaudeJSON(t, `{"mcpServers": {"slack": {"type": "http", "url": "https://mcp.example.test"}}}`)
@@ -191,6 +228,16 @@ func TestChatEmail_LooseServerName(t *testing.T) {
 	cfg, root := servicesWorkspace(t, "chat: { provider: teams }\n")
 	writeClaudeJSON(t, `{"mcpServers": {"ms-Teams-mcp": {"command": "x"}}}`)
 	if fs := Run(cfg, deps(nil, root, nil)); !has(fs, "chat-ok") {
+		t.Fatalf("%+v", fs)
+	}
+}
+
+// The provider id must be a whole token of the key: "steamship" is not a Teams server.
+func TestChatEmail_LooseMatchNeedsTokenBoundary(t *testing.T) {
+	cfg, root := servicesWorkspace(t, "chat: { provider: teams }\n")
+	writeClaudeJSON(t, `{"mcpServers": {"steamship": {"command": "x"}, "teamsy": {"command": "y"}}}`)
+	fs := Run(cfg, deps(nil, root, nil))
+	if has(fs, "chat-ok") || !has(fs, "chat-mcp-missing") {
 		t.Fatalf("%+v", fs)
 	}
 }

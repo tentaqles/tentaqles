@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // Launch is one process to start: Name with Args, in Dir.
@@ -65,7 +66,8 @@ func Plan(goos, dir string, lookPath func(string) (string, error)) (Launch, erro
 	}
 	switch goos {
 	case "windows":
-		if _, err := lookPath("wt"); err == nil {
+		// wt splits its own argv on ';' into subcommands, so such a folder takes the start plan.
+		if _, err := lookPath("wt"); err == nil && !strings.Contains(dir, ";") {
 			return Launch{Name: "wt", Args: []string{"-d", dir}, Dir: dir}, nil
 		}
 		return Launch{Name: "cmd", Args: []string{"/c", "start", "", "cmd"}, Dir: dir}, nil

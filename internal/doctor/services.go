@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -51,6 +52,13 @@ func runTrackerChecks(d Deps, jobs []trackerJob) []Finding {
 	if len(jobs) == 0 {
 		return nil
 	}
+	// The budget is enforced around the call, not only through ctx: a checker that ignores ctx (a
+	// keychain prompt, a CLI run without CommandContext) is reported as timed out and its
+	// goroutine is left behind, so doctor never waits on it.
+	type result struct {
+		acct string
+		err  error
+	}
 	out := make([][]Finding, len(jobs))
 	var wg sync.WaitGroup
 	for i, j := range jobs {
@@ -59,11 +67,21 @@ func runTrackerChecks(d Deps, jobs []trackerJob) []Finding {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), trackerBudget)
 			defer cancel()
-			acct, err := d.TrackerCheck(ctx, j.w, j.env)
-			if err != nil && ctx.Err() != nil {
-				err = fmt.Errorf("timed out after %s", trackerBudget)
+			done := make(chan result, 1) // buffered: a late checker never blocks on its send
+			go func() {
+				acct, err := d.TrackerCheck(ctx, j.w, j.env)
+				done <- result{acct, err}
+			}()
+			timedOut := fmt.Errorf("timed out after %s", trackerBudget)
+			select {
+			case r := <-done:
+				if r.err != nil && ctx.Err() != nil {
+					r.err = timedOut
+				}
+				out[i] = trackerFindings(j.w, r.acct, r.err)
+			case <-ctx.Done():
+				out[i] = trackerFindings(j.w, "", timedOut)
 			}
-			out[i] = trackerFindings(j.w, acct, err)
 		}()
 	}
 	wg.Wait()
@@ -99,19 +117,26 @@ func trackerFindings(w *resolve.Workspace, account string, err error) []Finding 
 			"use /tentaqles:sync from a Claude session, or update tq"}}
 	case errors.Is(err, cred.ErrNeedsSession):
 		return []Finding{{"info", "tracker-needs-session", w.Name, label + ": no background credential, so only a Claude session can sync",
-			trackerFix(w.Name, t, secret)}}
+			trackerFix(w.Name, w.Manifest, secret)}}
 	}
-	return []Finding{{"warn", "tracker-auth-failed", w.Name, label + ": " + err.Error(), trackerFix(w.Name, t, secret)}}
+	return []Finding{{"warn", "tracker-auth-failed", w.Name, label + ": " + err.Error(), trackerFix(w.Name, w.Manifest, secret)}}
 }
 
 // trackerFix is the login step for the tracker's preferred source.
-func trackerFix(ws string, t *manifest.Tracker, secret string) string {
+func trackerFix(ws string, m *manifest.Manifest, secret string) string {
+	t := m.Tracker
 	switch t.AuthOrDefault() {
 	case "cli":
 		switch t.Provider {
 		case "github":
 			return "tq login " + ws + " gh"
 		case "azure-devops":
+			// The az identity the manifest actually has: azure-devops when listed, else az (the
+			// same CLI).
+			ids := m.IdentityNames()
+			if !slices.Contains(ids, "azure-devops") && slices.Contains(ids, "az") {
+				return "tq login " + ws + " az"
+			}
 			return "tq login " + ws + " azure-devops"
 		case "jira":
 			return "acli jira auth login, or " + secret
@@ -178,17 +203,21 @@ func readMCPServers(file string) []string {
 	return out
 }
 
-// matchMCP finds the server for a provider: the catalog's mcp name exactly, else a key that
-// contains the provider id (case-insensitive), as in "slack-mcp".
+// matchMCP finds the server for a provider: the catalog's mcp name exactly, else a key that has
+// the provider id as a whole token (split on - _ . and spaces, case-insensitive), as in
+// "slack-mcp" or "ms-Teams-mcp", never "steamship".
 func matchMCP(servers []string, want, provider string) (string, bool) {
 	for _, s := range servers {
 		if strings.EqualFold(s, want) {
 			return s, true
 		}
 	}
+	split := func(r rune) bool { return r == '-' || r == '_' || r == '.' || r == ' ' }
 	for _, s := range servers {
-		if strings.Contains(strings.ToLower(s), strings.ToLower(provider)) {
-			return s, true
+		for _, tok := range strings.FieldsFunc(s, split) {
+			if strings.EqualFold(tok, provider) {
+				return s, true
+			}
 		}
 	}
 	return "", false

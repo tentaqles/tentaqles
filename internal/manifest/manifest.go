@@ -315,7 +315,8 @@ func (m *Manifest) IdentityNames() []string {
 
 func (m *Manifest) HasCloudIdentity() bool {
 	for _, n := range m.IdentityNames() {
-		if n == "az" || n == "aws" || n == "gcloud" || n == "doctl" {
+		// azure-devops runs a full `az login` in its own config dir: the same ARM access as az.
+		if n == "az" || n == "azure-devops" || n == "aws" || n == "gcloud" || n == "doctl" {
 			return true
 		}
 	}
