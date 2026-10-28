@@ -52,6 +52,9 @@ type Deps struct {
 	Environ func(*resolve.Workspace) []string
 	// VerifyMode is VerifyAuto (default), VerifyAll or VerifyOff.
 	VerifyMode string
+	// TrackerCheck verifies a workspace's tracker credential (spec B §8). Optional; nil skips the
+	// tracker check. Like RunCLI it can be slow, so it runs last and bounded.
+	TrackerCheck TrackerCheckFunc
 }
 
 func Run(cfg *registry.Config, d Deps) []Finding {
@@ -86,6 +89,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	}
 	pythonStoreAlias(d.LookPath, runtime.GOOS, add)
 	var verifyJobs []verifyJob
+	var trackerJobs []trackerJob
 	verifyCovers := map[string]bool{}
 	hubUsed := false
 	probe := newHubProbe()
@@ -130,6 +134,10 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add)
 			if hubChecks(w.Name, probe, add) {
 				hubUsed = true
+			}
+			mcpServiceChecks(&w, add)
+			if j, ok := trackerJobFor(d, &w); ok {
+				trackerJobs = append(trackerJobs, j)
 			}
 		}
 		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
@@ -249,6 +257,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	// process per identity and several of those CLIs make a network call, so
 	// it is the one part of doctor that can be slow or offline-sensitive.
 	fs = append(fs, runVerify(d, verifyJobs)...)
+	fs = append(fs, runTrackerChecks(d, trackerJobs)...)
 
 	// env vs cwd — shared with tq claude-hook so both agree. RunForCwd is the
 	// hook path; it deliberately does not verify.
@@ -273,10 +282,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	}
 	pluginSkew(names, add)
 	pluginForeignPath(names, add)
-	if len(fs) == 0 {
-		add("ok", "ok", "", "all checks passed", "")
-	}
-	return fs
+	return finish(fs)
 }
 
 func Exit(fs []Finding) int {
