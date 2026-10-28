@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	gosync "sync"
 	"time"
 
 	hubsync "github.com/tentaqles/tentaqles/internal/hub/sync"
@@ -47,6 +48,11 @@ type Adapter struct {
 	http      *http.Client
 	workspace string // scope.org: workspace gid ("" = none)
 	project   string // scope.board (or scope.project): project gid ("" = none)
+	now       func() time.Time
+	maxPages  int // page cap per list call (tests lower it)
+
+	mu      gosync.Mutex
+	parents []string // mirrored parent gids whose subtasks ListChanged polls (SetMirroredParents)
 }
 
 var _ hubsync.Adapter = (*Adapter)(nil)
@@ -57,7 +63,7 @@ func NewAdapter(cfg hubsync.Config) (*Adapter, error) {
 	if cfg.Provider == "" {
 		cfg.Provider = Provider
 	}
-	a := &Adapter{cfg: cfg, base: strings.TrimRight(cfg.BaseURL, "/")}
+	a := &Adapter{cfg: cfg, base: strings.TrimRight(cfg.BaseURL, "/"), now: time.Now, maxPages: maxPages}
 	if a.base == "" {
 		a.base = DefaultBaseURL
 	}
@@ -212,11 +218,12 @@ type attachment struct {
 }
 
 // details adds comments (stories, newest first, capped) and attachments (name and permanent
-// link; the signed download_url is never read).
+// link; the signed download_url is never read). A task with more stories or attachments than the
+// page cap keeps the ones read: a partial comment list never moves a watermark.
 func (a *Adapter) details(ctx context.Context, it *hubsync.Item) error {
 	stories, err := list[story](ctx, a, "/tasks/"+it.ID+"/stories",
 		url.Values{"opt_fields": {"type,resource_subtype,text,created_at,created_by.name"}})
-	if err != nil {
+	if err != nil && !errors.Is(err, errTruncated) {
 		return err
 	}
 	it.Comments = nil
@@ -235,7 +242,7 @@ func (a *Adapter) details(ctx context.Context, it *hubsync.Item) error {
 		it.Comments = append(it.Comments, c)
 	}
 	atts, err := list[attachment](ctx, a, "/attachments", url.Values{"parent": {it.ID}, "opt_fields": {"name,permanent_url,view_url"}})
-	if err != nil {
+	if err != nil && !errors.Is(err, errTruncated) {
 		return err
 	}
 	it.Attachments = nil
@@ -314,22 +321,58 @@ func (a *Adapter) sectionFor(ctx context.Context, status string) (string, error)
 	names := make([]string, 0, len(secs))
 	for _, s := range secs {
 		if normalise(s.Name) == want {
-			return s.GID, nil
+			return gid("section", s.GID) // a server id still never reshapes a request path
 		}
 		names = append(names, s.Name)
 	}
 	return "", fmt.Errorf("asana: no section %q in project %s (sections: %s)", status, a.project, strings.Join(names, ", "))
 }
 
+// SetMirroredParents names the tracker tasks that have mirrored children on the board. Each
+// ListChanged then also polls their subtasks (one GET per parent), so a child that changed under
+// an unchanged parent is still seen; GET /tasks with modified_since only returns the parent when
+// the parent itself changed. The engine calls it before a tick with the parent ids of its linked
+// cards (an optional interface: interface{ SetMirroredParents([]string) error }). Ids must be gids;
+// on a bad one nothing changes.
+func (a *Adapter) SetMirroredParents(ids []string) error {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		g, err := gid("parent task", id)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(out, g) {
+			out = append(out, g)
+		}
+	}
+	a.mu.Lock()
+	a.parents = out
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *Adapter) mirroredParents() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.parents)
+}
+
 // ListChanged lists tasks modified since the watermark: assigned to me in the workspace (kept to
-// the project when one is set), or every task of the project for assigned_to anyone, plus the
-// subtasks of those tasks. The new watermark is the newest modified_at seen (since when nothing
-// changed). Any failure, a 429 included, returns no items so the watermark never skips work.
+// the project when one is set, plus my subtasks of project tasks), or every task of the project
+// for assigned_to anyone, plus the subtasks of those tasks and of SetMirroredParents. Only open
+// tasks and tasks completed since the watermark come back (completed_since; on the first sync,
+// since now), so a first sync never walks a whole history of finished work. The new watermark is
+// the newest modified_at seen (since when nothing changed). Any failure, a 429 or a list past the
+// page cap included, returns no items so the watermark never skips work.
 func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.Item, time.Time, error) {
 	q := url.Values{"opt_fields": {taskFields}}
-	if !since.IsZero() {
+	doneSince := since
+	if since.IsZero() {
+		doneSince = a.now()
+	} else {
 		q.Set("modified_since", since.UTC().Format(time.RFC3339))
 	}
+	q.Set("completed_since", doneSince.UTC().Format(time.RFC3339))
 	if a.anyone() {
 		if err := a.needProject("assigned_to anyone"); err != nil {
 			return nil, since, err
@@ -346,25 +389,65 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 	if err != nil {
 		return nil, since, err
 	}
+	watched := a.mirroredParents()
 	seen := map[string]bool{}
-	var keep []task
+	var keep, orphans []task
 	for _, t := range tasks {
-		if seen[t.GID] || !a.anyone() && a.project != "" && !a.inProject(t) {
+		if seen[t.GID] {
+			continue
+		}
+		if !a.anyone() && a.project != "" && !a.inProject(t) {
+			if t.Parent != nil && t.Parent.GID != "" {
+				orphans = append(orphans, t) // my subtask: kept when its parent is in the project
+			}
 			continue
 		}
 		seen[t.GID] = true
 		keep = append(keep, t)
 	}
-	for _, p := range slices.Clone(keep) {
-		if p.NumSubtasks == 0 {
+	parentIn := map[string]bool{}
+	for _, t := range orphans {
+		if seen[t.GID] {
 			continue
 		}
-		subs, err := list[task](ctx, a, "/tasks/"+p.GID+"/subtasks", url.Values{"opt_fields": {taskFields}})
+		p := t.Parent.GID
+		in, known := parentIn[p]
+		if !known {
+			if in, err = a.parentInProject(ctx, p, seen[p] || slices.Contains(watched, p)); err != nil {
+				return nil, since, err
+			}
+			parentIn[p] = in
+		}
+		if in {
+			seen[t.GID] = true
+			keep = append(keep, t)
+		}
+	}
+	var polls []string
+	for _, p := range keep {
+		if p.NumSubtasks > 0 {
+			polls = append(polls, p.GID)
+		}
+	}
+	for _, p := range watched {
+		if !seen[p] && !slices.Contains(polls, p) {
+			polls = append(polls, p)
+		}
+	}
+	for _, p := range polls {
+		pg, err := gid("parent task", p)
+		if err != nil {
+			return nil, since, err
+		}
+		subs, err := list[task](ctx, a, "/tasks/"+pg+"/subtasks", url.Values{"opt_fields": {taskFields}})
+		if errors.Is(err, hubsync.ErrNotFound) && slices.Contains(watched, p) {
+			continue // a mirrored parent deleted in Asana: the engine sees that through Get
+		}
 		if err != nil {
 			return nil, since, err
 		}
 		for _, s := range subs {
-			if seen[s.GID] || !since.IsZero() && s.modified().Before(since) {
+			if seen[s.GID] || !since.IsZero() && s.modified().Before(since) || s.Completed && s.modified().Before(doneSince) {
 				continue
 			}
 			seen[s.GID] = true
@@ -374,6 +457,9 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 	wm := since
 	items := make([]hubsync.Item, 0, len(keep))
 	for _, t := range keep {
+		if _, err := gid("task", t.GID); err != nil {
+			return nil, since, err
+		}
 		it := a.toItem(t)
 		if err := a.details(ctx, &it); err != nil {
 			return nil, since, err
@@ -384,6 +470,26 @@ func (a *Adapter) ListChanged(ctx context.Context, since time.Time) ([]hubsync.I
 		items = append(items, it)
 	}
 	return items, wm, nil
+}
+
+// parentInProject says whether parent task p is in the scope project; known short-cuts the lookup
+// (a parent listed this tick, or a mirrored one). A parent that is gone is not in the project.
+func (a *Adapter) parentInProject(ctx context.Context, p string, known bool) (bool, error) {
+	if known {
+		return true, nil
+	}
+	pg, err := gid("parent task", p)
+	if err != nil {
+		return false, nil
+	}
+	var pt task
+	if _, err := a.do(ctx, http.MethodGet, "/tasks/"+pg, url.Values{"opt_fields": {"memberships.project.name"}}, nil, &pt); err != nil {
+		if errors.Is(err, hubsync.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return a.inProject(pt), nil
 }
 
 // Get reads one task with its notes, custom fields, comments and attachments.
@@ -444,7 +550,7 @@ func notesFor(body, acceptance string) string {
 // Create makes a task in the project (in the section named in.Status, else the first one), or a
 // subtask of in.ParentID. Asana has no acceptance field of its own, so acceptance checks follow
 // the notes. With assigned_to me the task is assigned to me, so it is mirrored back.
-// in.Type is ignored, and so is in.Status for a subtask.
+// in.Type is ignored, and so is in.Status for a subtask. An error means no task was created.
 func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item, error) {
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
@@ -487,12 +593,21 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	if created.GID == "" {
 		return hubsync.Item{}, errors.New("asana: create returned no task id")
 	}
-	if len(in.Labels) > 0 {
-		if err := a.SetLabels(ctx, created.GID, in.Labels, nil); err != nil {
-			return a.toItem(created), fmt.Errorf("asana: task %s created, labels failed: %w", created.GID, err)
-		}
+	if _, err := gid("created task", created.GID); err != nil {
+		return hubsync.Item{}, err
 	}
-	return a.Get(ctx, created.GID)
+	// From here on the task exists in Asana, so Create never returns an error: an engine that
+	// retried a failed create would make a duplicate. A label or read-back failure leaves the
+	// returned Item without those labels (Item.Labels is what Asana has), for the engine to
+	// reconcile with SetLabels.
+	if len(in.Labels) > 0 {
+		_ = a.SetLabels(ctx, created.GID, in.Labels, nil)
+	}
+	it, err := a.Get(ctx, created.GID)
+	if err != nil {
+		return a.toItem(created), nil
+	}
+	return it, nil
 }
 
 // Update sets the name and/or notes; nil leaves a field as it is.

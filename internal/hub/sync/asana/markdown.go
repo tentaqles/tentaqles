@@ -15,7 +15,7 @@ import (
 
 var (
 	codeRe    = regexp.MustCompile("`([^`]+)`")
-	linkRe    = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^\s()]+)\)`)
+	linkRe    = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^\s()\x00]+)\)`) // no placeholder in a URL
 	boldRe    = regexp.MustCompile(`\*\*([^*]+?)\*\*`)
 	emStarRe  = regexp.MustCompile(`(^|[^\w*])\*([^*\s](?:[^*]*[^*\s])?)\*($|[^\w*])`)
 	emUnderRe = regexp.MustCompile(`(^|[^\w_])_([^_\s](?:[^_]*[^_\s])?)_($|[^\w_])`)
@@ -100,8 +100,17 @@ func inline(s string) string {
 		s = emStarRe.ReplaceAllString(s, "$1<em>$2</em>$3")
 		s = emUnderRe.ReplaceAllString(s, "$1<em>$2</em>$3")
 	}
-	return holderRe.ReplaceAllStringFunc(s, func(m string) string {
-		n, _ := strconv.Atoi(m[1 : len(m)-1])
-		return held[n]
-	})
+	// A held link can hold a code span ("[`x`](url)"): expand placeholders inside held text too.
+	// A placeholder only ever refers to an earlier hold, so the recursion ends.
+	var expand func(s string, below int) string
+	expand = func(s string, below int) string {
+		return holderRe.ReplaceAllStringFunc(s, func(m string) string {
+			n, err := strconv.Atoi(m[1 : len(m)-1])
+			if err != nil || n >= below {
+				return ""
+			}
+			return expand(held[n], n)
+		})
+	}
+	return expand(s, len(held))
 }

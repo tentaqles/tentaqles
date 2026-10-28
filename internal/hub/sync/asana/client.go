@@ -152,15 +152,25 @@ func (a *Adapter) do(ctx context.Context, method, path string, q url.Values, bod
 	return "", nil
 }
 
-// list follows next_page through every page (capped at maxPages) and appends each page's items.
+// errTruncated: a list still had a next page after the page cap. The pages read so far come back
+// with it, so a caller that can live with a partial list (comments) may keep them; ListChanged
+// never does, since /tasks is not ordered by modified_at and the watermark would skip the rest.
+var errTruncated = errors.New("asana: list truncated at the page cap")
+
+// list follows next_page through every page (capped at a.maxPages) and appends each page's items.
+// Past the cap it returns the items read so far and an error wrapping errTruncated.
 func list[T any](ctx context.Context, a *Adapter, path string, q url.Values) ([]T, error) {
 	q2 := url.Values{}
 	for k, v := range q {
 		q2[k] = v
 	}
 	q2.Set("limit", strconv.Itoa(pageLimit))
+	pages := a.maxPages
+	if pages <= 0 {
+		pages = maxPages
+	}
 	var all []T
-	for range maxPages {
+	for range pages {
 		var page []T
 		next, err := a.do(ctx, http.MethodGet, path, q2, nil, &page)
 		if err != nil {
@@ -172,7 +182,7 @@ func list[T any](ctx context.Context, a *Adapter, path string, q url.Values) ([]
 		}
 		q2.Set("offset", next)
 	}
-	return all, nil
+	return all, fmt.Errorf("%w: GET %s has more than %d items; narrow tracker.scope", errTruncated, path, pages*pageLimit)
 }
 
 // retryAfter reads a Retry-After header: delay seconds or an HTTP date. 0 when absent or bad.

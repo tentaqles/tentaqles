@@ -28,8 +28,12 @@ func newTest(t *testing.T, f *fakeAsana, mod func(*hubsync.Config)) *Adapter {
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.now = func() time.Time { return testNow }
 	return a
 }
+
+// testNow is the adapter clock in tests: a first sync asks for tasks completed since then.
+var testNow = time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
 
 func TestRegistered(t *testing.T) {
 	f := newFake(t)
@@ -116,15 +120,17 @@ func TestListChangedAssignedToMe(t *testing.T) {
 	for _, it := range items {
 		ids = append(ids, it.ID)
 	}
-	// 1002 is older than since; 1003 is in another project; 1005 is a subtask of a mirrored task.
-	if !slices.Equal(ids, []string{"1001", "1004", "1005"}) {
+	// 1002 is older than since; 1003 is in another project; 1007 was completed before since;
+	// 1008 is my subtask of a project task (not a project member itself); 1005 is a subtask of a
+	// mirrored task.
+	if !slices.Equal(ids, []string{"1001", "1004", "1008", "1005"}) {
 		t.Fatalf("ids %v", ids)
 	}
-	if want := time.Date(2026, 10, 20, 13, 0, 0, 0, time.UTC); !wm.Equal(want) {
+	if want := time.Date(2026, 10, 20, 14, 0, 0, 0, time.UTC); !wm.Equal(want) {
 		t.Fatalf("watermark %v", wm)
 	}
 	q := f.queries[0]
-	for _, s := range []string{"assignee=me", "workspace=" + wsGID, "modified_since=2026-10-19T00%3A00%3A00Z", "opt_fields=", "notes", "custom_fields"} {
+	for _, s := range []string{"assignee=me", "workspace=" + wsGID, "modified_since=2026-10-19T00%3A00%3A00Z", "completed_since=2026-10-19T00%3A00%3A00Z", "opt_fields=", "notes", "custom_fields"} {
 		if !strings.Contains(q, s) {
 			t.Fatalf("query %q lacks %q", q, s)
 		}
@@ -144,8 +150,8 @@ func TestListChangedAssignedToMe(t *testing.T) {
 	if items[1].StatusCategory != "done" || items[1].Status != "In Review" {
 		t.Fatalf("completed task: %+v", items[1])
 	}
-	if items[2].ParentID != "1001" || items[2].Status != "" || items[2].StatusCategory != "todo" {
-		t.Fatalf("subtask: %+v", items[2])
+	if items[3].ParentID != "1001" || items[3].Status != "" || items[3].StatusCategory != "todo" {
+		t.Fatalf("subtask: %+v", items[3])
 	}
 
 	// nothing changed: the watermark stays
@@ -167,10 +173,12 @@ func TestListChangedAnyone(t *testing.T) {
 	for _, it := range items {
 		ids = append(ids, it.ID)
 	}
-	if !slices.Equal(ids, []string{"1001", "1002", "1004", "1006", "1005"}) {
+	// 1007 was completed before the first sync; 1005 and 1008 are subtasks of 1001.
+	if !slices.Equal(ids, []string{"1001", "1002", "1004", "1006", "1005", "1008"}) {
 		t.Fatalf("ids %v", ids)
 	}
-	if !strings.Contains(f.queries[0], "project="+projGID) || strings.Contains(f.queries[0], "modified_since") {
+	if !strings.Contains(f.queries[0], "project="+projGID) || strings.Contains(f.queries[0], "modified_since") ||
+		!strings.Contains(f.queries[0], "completed_since=2026-10-19T00%3A00%3A00Z") {
 		t.Fatalf("query %s", f.queries[0])
 	}
 	if items[3].Body != "Line one" {
@@ -238,6 +246,9 @@ func TestMarkdownToHTML(t *testing.T) {
 		"```\nx <y>\n```":              "<body><pre>x &lt;y&gt;</pre></body>",
 		"**unclosed bold":              "<body>**unclosed bold</body>",
 		"[a](https://x.test/?q=1&b=2)": `<body><a href="https://x.test/?q=1&amp;b=2">a</a></body>`,
+		"[`x`](https://a.b/c)":         `<body><a href="https://a.b/c"><code>x</code></a></body>`,
+		"`[a](https://a.b/c)`":         `<body><code>[a](https://a.b/c)</code></body>`,
+		"[a](https://a.b/`c`)":         `<body>[a](https://a.b/<code>c</code>)</body>`,
 	} {
 		if got := markdownToHTML(md); got != want {
 			t.Errorf("%q\n got %s\nwant %s", md, got, want)
@@ -381,5 +392,107 @@ func TestErrorsNeverCarryTheToken(t *testing.T) {
 	_, err := a.Get(context.Background(), "4040")
 	if err == nil || strings.Contains(err.Error(), testToken) || !strings.Contains(err.Error(), "asana") {
 		t.Fatal(err)
+	}
+}
+
+func TestListChangedFirstSyncSkipsOldCompletedTasks(t *testing.T) {
+	f := newFake(t)
+	items, _, err := newTest(t, f, nil).ListChanged(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if it.ID == "1007" {
+			t.Fatal("a task completed before the first sync was listed")
+		}
+	}
+	if !strings.Contains(f.queries[0], "completed_since=2026-10-19T00%3A00%3A00Z") || strings.Contains(f.queries[0], "modified_since") {
+		t.Fatalf("first-sync query %s", f.queries[0])
+	}
+}
+
+func TestListTruncatedKeepsTheWatermark(t *testing.T) {
+	f := newFake(t)
+	a := newTest(t, f, func(c *hubsync.Config) { c.AssignedTo = "anyone" })
+	a.maxPages = 1 // page size 2: 2 of the 4 open project tasks fit
+	items, wm, err := a.ListChanged(context.Background(), time.Time{})
+	if err == nil || !errors.Is(err, errTruncated) || items != nil || !wm.IsZero() {
+		t.Fatalf("truncated list: %v %v %v", items, wm, err)
+	}
+}
+
+func TestListChangedWatchedParents(t *testing.T) {
+	f := newFake(t)
+	// 1001 is unchanged since then; its children 1005 (no assignee) and 1008 changed later.
+	since := time.Date(2026, 10, 20, 12, 30, 0, 0, time.UTC)
+	a := newTest(t, f, func(c *hubsync.Config) { c.AssignedTo = "anyone" })
+	items, _, err := a.ListChanged(context.Background(), since)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("no watch: %v %v", items, err)
+	}
+	if err := a.SetMirroredParents([]string{"1001", "../x"}); err == nil {
+		t.Fatal("a non-gid parent was accepted")
+	}
+	if err := a.SetMirroredParents([]string{"1001"}); err != nil {
+		t.Fatal(err)
+	}
+	items, wm, err := a.ListChanged(context.Background(), since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, it := range items {
+		ids = append(ids, it.ID)
+	}
+	if !slices.Equal(ids, []string{"1005", "1008"}) || !wm.Equal(time.Date(2026, 10, 20, 14, 0, 0, 0, time.UTC)) {
+		t.Fatalf("watched: %v %v", ids, wm)
+	}
+}
+
+func TestListChangedMySubtaskOfAnUnchangedProjectTask(t *testing.T) {
+	f := newFake(t)
+	// only 1008 (mine, not a project member) changed; its parent 1001 is in the project
+	since := time.Date(2026, 10, 20, 13, 30, 0, 0, time.UTC)
+	items, _, err := newTest(t, f, nil).ListChanged(context.Background(), since)
+	if err != nil || len(items) != 1 || items[0].ID != "1008" || items[0].ParentID != "1001" {
+		t.Fatalf("%v %v", items, err)
+	}
+}
+
+func TestCreateKeepsTheTaskWhenLabelsFail(t *testing.T) {
+	f := newFake(t)
+	f.failOn = "POST /api/1.0/tasks/5001/addTag"
+	it, err := newTest(t, f, nil).Create(context.Background(), hubsync.NewItem{Title: "Signup", Labels: []string{"bug"}})
+	if err != nil || it.ID != "5001" || len(it.Labels) != 0 {
+		t.Fatalf("a created task must come back without an error: %+v %v", it, err)
+	}
+	n := 0
+	for _, r := range f.requests() {
+		if r == "POST /api/1.0/tasks" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d creates", n)
+	}
+	// the follow-up read failing still returns the created task
+	f.failOn = "GET /api/1.0/tasks/5002"
+	it, err = newTest(t, f, nil).Create(context.Background(), hubsync.NewItem{Title: "Other"})
+	if err != nil || it.ID != "5002" || it.Title != "Other" {
+		t.Fatalf("%+v %v", it, err)
+	}
+}
+
+func TestSectionGIDFromTheServerIsChecked(t *testing.T) {
+	f := newFake(t)
+	f.sections[3][0] = "303/../../users/me"
+	err := newTest(t, f, nil).Move(context.Background(), "1001", "In Review")
+	if err == nil || !strings.Contains(err.Error(), "gid") {
+		t.Fatalf("bad section gid: %v", err)
+	}
+	for _, r := range f.requests() {
+		if strings.HasPrefix(r, "POST") {
+			t.Fatalf("sent %s", r)
+		}
 	}
 }

@@ -50,8 +50,9 @@ type fakeAsana struct {
 	attach   map[string][][2]string // task -> name, permanent_url
 	pageSize int
 	next     int
-	limited  int // answer this many requests with 429 first
-	limitAt  int // answer the request with this 1-based number with 429
+	limited  int    // answer this many requests with 429 first
+	limitAt  int    // answer the request with this 1-based number with 429
+	failOn   string // "METHOD /api/1.0/path": answer it with a 500
 	reqs     []string
 	queries  []string
 	bodies   []map[string]any
@@ -70,6 +71,10 @@ func newFake(t *testing.T) *fakeAsana {
 	f.tasks["1004"] = &fakeTask{GID: "1004", Name: "Shipped", Modified: base.Add(2 * time.Hour), Assignee: "me", Section: "303", Completed: true}
 	f.tasks["1005"] = &fakeTask{GID: "1005", Name: "Child step", Modified: base.Add(3 * time.Hour), Parent: "1001"}
 	f.tasks["1006"] = &fakeTask{GID: "1006", Name: "Rich notes", HTML: "<body>Line <strong>one</strong></body>", Modified: base.Add(30 * time.Minute), Section: "300"}
+	// completed long ago: a first sync (completed_since = now) never sees it
+	f.tasks["1007"] = &fakeTask{GID: "1007", Name: "Ancient", Modified: base.Add(-30 * 24 * time.Hour), Assignee: "me", Section: "305", Completed: true}
+	// a subtask assigned to me that is not itself a member of the project
+	f.tasks["1008"] = &fakeTask{GID: "1008", Name: "My child step", Modified: base.Add(4 * time.Hour), Assignee: "me", Parent: "1001"}
 	f.stories = []fakeStory{
 		{GID: "7001", Task: "1001", Subtype: "comment_added", Text: "first", Author: "tester", Created: base.Add(-time.Hour)},
 		{GID: "7002", Task: "1001", Subtype: "section_changed", Text: "moved", Author: "tester", Created: base.Add(-time.Minute * 30)},
@@ -203,6 +208,10 @@ func (f *fakeAsana) serve(w http.ResponseWriter, r *http.Request) {
 		f.fail(w, 429, "You have made too many requests recently.")
 		return
 	}
+	if f.failOn != "" && f.failOn == r.Method+" "+r.URL.Path {
+		f.fail(w, 500, "Server Error")
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, "/api/1.0/") {
 		f.fail(w, 404, "no route")
 		return
@@ -238,7 +247,19 @@ func (f *fakeAsana) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		mod := func(tk *fakeTask) bool { return since.IsZero() || !tk.Modified.Before(since) }
+		var doneSince time.Time
+		if s := q.Get("completed_since"); s != "" {
+			var err error
+			if doneSince, err = time.Parse(time.RFC3339, s); err != nil {
+				f.fail(w, 400, "completed_since: bad time")
+				return
+			}
+		}
+		// the fake has no completion time: a completed task counts as completed when last modified
+		mod := func(tk *fakeTask) bool {
+			return (since.IsZero() || !tk.Modified.Before(since)) &&
+				(!tk.Completed || q.Get("completed_since") == "" || !tk.Modified.Before(doneSince))
+		}
 		switch {
 		case q.Get("assignee") == "me" && q.Get("workspace") == wsGID:
 			f.page(w, r, f.sortedTasks(func(tk *fakeTask) bool { return tk.Assignee == "me" && mod(tk) }))
