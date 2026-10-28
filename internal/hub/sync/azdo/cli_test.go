@@ -2,6 +2,7 @@ package azdo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/hub/sync/cred"
 )
@@ -24,7 +26,7 @@ func TestMain(m *testing.M) {
 }
 
 func fakeAz(args []string) int {
-	want := []string{"account", "get-access-token", "--resource", Resource, "--query", "accessToken", "--output", "tsv"}
+	want := []string{"account", "get-access-token", "--resource", Resource, "--output", "json"}
 	if strings.Join(args, " ") != strings.Join(want, " ") {
 		fmt.Fprintf(os.Stderr, "unexpected args: %q\n", args)
 		return 2
@@ -34,8 +36,46 @@ func fakeAz(args []string) int {
 		fmt.Fprintln(os.Stderr, "ERROR: Please run 'az login' to setup account.")
 		return 1
 	}
-	fmt.Printf("tok-%s\r\n", filepath.Base(dir))
+	// Every run is counted in the config dir, so tests can see how often az ran.
+	if err := os.MkdirAll(dir, 0o755); err == nil {
+		if fh, err := os.OpenFile(filepath.Join(dir, "calls"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(fh, "run")
+			fh.Close()
+		}
+	}
+	exp := time.Now().Add(time.Hour)
+	if v := os.Getenv("FAKE_AZ_EXPIRES_IN"); v != "" {
+		d, _ := time.ParseDuration(v)
+		exp = time.Now().Add(d)
+	}
+	out := map[string]any{"accessToken": "tok-" + filepath.Base(dir), "tokenType": "Bearer",
+		"expiresOn": exp.Local().Format("2006-01-02 15:04:05.000000")}
+	if os.Getenv("FAKE_AZ_OLD") != "1" {
+		out["expires_on"] = exp.Unix()
+	}
+	json.NewEncoder(os.Stdout).Encode(out)
 	return 0
+}
+
+// azRuns is how many times the fake az ran under config dir dir.
+func azRuns(t *testing.T, dir string) int {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "calls"))
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(b), "run")
+}
+
+// withoutAzureDir is the process environment minus any AZURE_CONFIG_DIR (the "ambient login").
+func withoutAzureDir() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), "AZURE_CONFIG_DIR=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // installFakeAz copies the test binary onto a fresh dir prepended to PATH, named az.
@@ -111,7 +151,8 @@ func TestAzTokenMissingCLIIsNoCredential(t *testing.T) {
 	old := lookPath
 	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(func() { lookPath = old })
-	if _, err := AzToken(context.Background(), nil); !errors.Is(err, cred.ErrNoCredential) {
+	env := []string{"AZURE_CONFIG_DIR=" + filepath.Join(t.TempDir(), "acme")}
+	if _, err := AzToken(context.Background(), env); !errors.Is(err, cred.ErrNoCredential) || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err %v", err)
 	}
 }
