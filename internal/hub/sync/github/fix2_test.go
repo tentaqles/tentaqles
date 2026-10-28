@@ -104,18 +104,62 @@ func TestWritesStayInScope(t *testing.T) {
 			t.Fatalf("comments %d", n)
 		}
 
-		// with a board any repository of the owner may hold board items
+		// with a board, another repository of the owner is in scope only for an issue on the
+		// board, or a sub-issue of one there or of a scope.project issue
 		f2 := newFixture(t)
+		f2.onGQL("Project", projectReply())
 		f2.onREST("POST /repos/acme/api/issues/3/comments", reply{Status: 201, Body: `{"id":1}`})
+		f2.onREST("POST /repos/acme/web/issues/3/comments", reply{Status: 201, Body: `{"id":1}`})
 		b := newAdapter(t, f2, mode, boardScope())
-		if err := b.Comment(ctx, "ACME/api#3", "hi"); err != nil {
-			t.Fatalf("board, other repo: %v", err)
+		if err := b.Comment(ctx, "acme/web#3", "hi"); err != nil {
+			t.Fatalf("board, scope repo: %v", err)
+		}
+		if len(f2.find("IssueParent")) != 0 {
+			t.Fatal("the scope repository needs no lookup")
 		}
 		if err := b.Comment(ctx, "other-org/api#3", "hi"); !errors.Is(err, ErrOutOfScope) {
 			t.Fatalf("board, other owner: %v", err)
 		}
-		if len(f2.find("IssueParent")) != 0 {
-			t.Fatal("a board needs no parent lookup")
+		items := func(projects ...string) map[string]any {
+			var n []any
+			for _, p := range projects {
+				n = append(n, map[string]any{"project": map[string]any{"id": p}})
+			}
+			return map[string]any{"nodes": n}
+		}
+		scopeReply := func(issue map[string]any) reply {
+			return data(map[string]any{"repository": map[string]any{"issue": issue}})
+		}
+		for name, c := range map[string]struct {
+			issue map[string]any
+			ok    bool
+		}{
+			"not on the board": {map[string]any{"projectItems": items("PVT_9"), "parent": nil}, false},
+			"on the board":     {map[string]any{"projectItems": items("PVT_9", "PVT_1"), "parent": nil}, true},
+			"parent on the board": {map[string]any{"projectItems": items(), "parent": map[string]any{
+				"repository": map[string]any{"nameWithOwner": "acme/ops"}, "projectItems": items("PVT_1")}}, true},
+			"parent in the scope repo": {map[string]any{"projectItems": items(), "parent": map[string]any{
+				"repository": map[string]any{"nameWithOwner": "Acme/Web"}, "projectItems": items()}}, true},
+			"parent elsewhere": {map[string]any{"projectItems": items(), "parent": map[string]any{
+				"repository": map[string]any{"nameWithOwner": "acme/ops"}, "projectItems": items("PVT_9")}}, false},
+		} {
+			f2.onGQL("IssueParent", scopeReply(c.issue))
+			err := b.Comment(ctx, "ACME/api#3", "hi")
+			if c.ok && err != nil || !c.ok && !errors.Is(err, ErrOutOfScope) {
+				t.Fatalf("board, other repo, %s: %v", name, err)
+			}
+		}
+
+		// a board with no scope.project: every write needs the issue (or its parent) on the board
+		f3 := newFixture(t)
+		f3.onGQL("Project", projectReply())
+		f3.onGQL("IssueParent", scopeReply(map[string]any{"projectItems": items(), "parent": nil}))
+		ob := newAdapter(t, f3, mode, map[string]string{"org": "acme", "board": "3"})
+		if err := ob.Update(ctx, "acme/web#3", &title, nil); !errors.Is(err, ErrOutOfScope) {
+			t.Fatalf("board only, not on it: %v", err)
+		}
+		if len(f3.find("PATCH /repos/acme/web/issues/3")) != 0 {
+			t.Fatal("an out-of-scope write reached the API")
 		}
 	})
 }

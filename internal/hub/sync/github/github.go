@@ -306,14 +306,37 @@ func (a *Adapter) parseID(id string) (ref, error) {
 // ErrOutOfScope: a write names an issue outside tracker.scope.
 var ErrOutOfScope = errors.New("outside tracker.scope")
 
+// qIssueParent reads what the write scope check needs: the issue's boards and its parent's
+// repository and boards.
 const qIssueParent = `query IssueParent($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) { issue(number: $number) { parent { repository { nameWithOwner } } } }
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      projectItems(first: 20) { nodes { project { id } } }
+      parent { repository { nameWithOwner } projectItems(first: 20) { nodes { project { id } } } }
+    }
+  }
 }`
 
-// writeRef parses an id for a write and keeps writes inside tracker.scope: the owner must be
-// scope.org. Without a board the repository must be scope.project, or the issue a sub-issue of
-// one there (sub-issues may live in other repositories of the owner); one lookup checks that.
-// With a board, any repository of the owner may hold board items.
+type projectRef struct {
+	Project struct {
+		ID string `json:"id"`
+	} `json:"project"`
+}
+
+type projectRefs struct {
+	Nodes []projectRef `json:"nodes"`
+}
+
+func (p projectRefs) has(projectID string) bool {
+	return projectID != "" && slices.ContainsFunc(p.Nodes, func(n projectRef) bool { return n.Project.ID == projectID })
+}
+
+// writeRef parses an id for a write and keeps writes inside tracker.scope, as tight as what
+// ListChanged mirrors. The owner must be scope.org, and the repository scope.project; an issue in
+// another repository of the owner is in scope only as a sub-issue of a scope.project issue or,
+// with a board, when it or its parent is on the board. With a board and no scope.project, every
+// write needs the issue or its parent on the board. One lookup checks that; the scope repository
+// needs none.
 func (a *Adapter) writeRef(ctx context.Context, id string) (ref, error) {
 	r, err := a.parseID(id)
 	if err != nil {
@@ -326,16 +349,29 @@ func (a *Adapter) writeRef(ctx context.Context, id string) (ref, error) {
 	if strings.EqualFold(r.repo, a.repo) {
 		r.repo = a.repo
 	}
-	if a.board != 0 || a.repo == "" || r.repo == a.repo {
+	if a.repo != "" && r.repo == a.repo {
 		return r, nil
+	}
+	if a.repo == "" && a.board == 0 {
+		return r, nil // Check refuses this scope; reads fail the same way
+	}
+	boardID := ""
+	if a.board != 0 {
+		p, err := a.project(ctx)
+		if err != nil {
+			return ref{}, err
+		}
+		boardID = p.ID
 	}
 	var out struct {
 		Repository *struct {
 			Issue *struct {
-				Parent *struct {
+				ProjectItems projectRefs `json:"projectItems"`
+				Parent       *struct {
 					Repository struct {
 						NameWithOwner string `json:"nameWithOwner"`
 					} `json:"repository"`
+					ProjectItems projectRefs `json:"projectItems"`
 				} `json:"parent"`
 			} `json:"issue"`
 		} `json:"repository"`
@@ -346,8 +382,21 @@ func (a *Adapter) writeRef(ctx context.Context, id string) (ref, error) {
 	if out.Repository == nil || out.Repository.Issue == nil {
 		return ref{}, fmt.Errorf("%w: github: %s", hubsync.ErrNotFound, r.id())
 	}
-	if p := out.Repository.Issue.Parent; p == nil || !strings.EqualFold(p.Repository.NameWithOwner, a.owner+"/"+a.repo) {
-		return ref{}, fmt.Errorf("github: %s: %w (repository %s/%s, or a sub-issue of one there)", r.id(), ErrOutOfScope, a.owner, a.repo)
+	is := out.Repository.Issue
+	p := is.Parent
+	switch {
+	case is.ProjectItems.has(boardID):
+	case p != nil && p.ProjectItems.has(boardID):
+	case p != nil && a.repo != "" && strings.EqualFold(p.Repository.NameWithOwner, a.owner+"/"+a.repo):
+	default:
+		where := "repository " + a.owner + "/" + a.repo + ", or a sub-issue of one there"
+		switch {
+		case a.board != 0 && a.repo != "":
+			where = fmt.Sprintf("repository %s/%s, project %d, or a sub-issue of an issue there", a.owner, a.repo, a.board)
+		case a.board != 0:
+			where = fmt.Sprintf("project %d of %s, or a sub-issue of an issue on it", a.board, a.owner)
+		}
+		return ref{}, fmt.Errorf("github: %s: %w (%s)", r.id(), ErrOutOfScope, where)
 	}
 	return r, nil
 }
