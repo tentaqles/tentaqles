@@ -396,6 +396,8 @@ func (a *Adapter) viewer(ctx context.Context) (string, error) {
 	return out.Viewer.Login, nil
 }
 
+// project is the board's project, field and status options, cached for the adapter's life.
+// Statuses and an option miss reload it, so options added on the board show up without a restart.
 func (a *Adapter) project(ctx context.Context) (*project, error) {
 	a.mu.Lock()
 	p := a.proj
@@ -403,6 +405,31 @@ func (a *Adapter) project(ctx context.Context) (*project, error) {
 	if p != nil {
 		return p, nil
 	}
+	return a.loadProject(ctx)
+}
+
+// projectOption is the project and its option for status, reloading the project once when the
+// cached one has no such option.
+func (a *Adapter) projectOption(ctx context.Context, status string) (*project, option, error) {
+	p, err := a.project(ctx)
+	if err != nil {
+		return nil, option{}, err
+	}
+	opt, err := p.option(status)
+	if errors.Is(err, errNoOption) {
+		if p, err = a.loadProject(ctx); err != nil {
+			return nil, option{}, err
+		}
+		opt, err = p.option(status)
+	}
+	if err != nil {
+		return nil, option{}, err
+	}
+	return p, opt, nil
+}
+
+// loadProject reads the project and replaces the cache.
+func (a *Adapter) loadProject(ctx context.Context) (*project, error) {
 	var out struct {
 		Owner *struct {
 			Project *struct {
@@ -424,7 +451,7 @@ func (a *Adapter) project(ctx context.Context) (*project, error) {
 	if pr.Field == nil || pr.Field.ID == "" {
 		return nil, fmt.Errorf("github: project %d of %s has no single-select field %q (set tracker.scope.status_field)", a.board, a.owner, a.statusField)
 	}
-	p = &project{ID: pr.ID, Title: pr.Title, FieldID: pr.Field.ID, Options: pr.Field.Options}
+	p := &project{ID: pr.ID, Title: pr.Title, FieldID: pr.Field.ID, Options: pr.Field.Options}
 	a.mu.Lock()
 	a.proj = p
 	a.mu.Unlock()
@@ -464,12 +491,12 @@ const (
 	statusClosed = "Closed"
 )
 
-// Statuses is the project's status options with a board, else Open and Closed.
+// Statuses is the project's status options with a board (read fresh), else Open and Closed.
 func (a *Adapter) Statuses(ctx context.Context) ([]hubsync.Status, error) {
 	if a.board == 0 {
 		return []hubsync.Status{{Name: statusOpen, Category: hubsync.CategoryTodo}, {Name: statusClosed, Category: hubsync.CategoryDone}}, nil
 	}
-	p, err := a.project(ctx)
+	p, err := a.loadProject(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1094,11 +1121,7 @@ func (a *Adapter) move(ctx context.Context, r ref, status string) error {
 		}
 		return a.rest(ctx, "PATCH", r.path(), map[string]any{"state": state}, nil)
 	}
-	p, err := a.project(ctx)
-	if err != nil {
-		return err
-	}
-	opt, err := p.option(status)
+	p, opt, err := a.projectOption(ctx, status)
 	if err != nil {
 		return err
 	}
@@ -1138,8 +1161,11 @@ func (p *project) option(status string) (option, error) {
 	for i, o := range p.Options {
 		names[i] = o.Name
 	}
-	return option{}, fmt.Errorf("github: project %q has no status %q (statuses: %s)", p.Title, status, strings.Join(names, ", "))
+	return option{}, fmt.Errorf("github: project %q %w %q (statuses: %s)", p.Title, errNoOption, status, strings.Join(names, ", "))
 }
+
+// errNoOption: the project has no status by that name or category.
+var errNoOption = errors.New("has no status")
 
 // ensureItem is the issue's item on the project and its state (OPEN or CLOSED; "" when the
 // lookup was skipped), adding the issue when it is not there. nodeID skips the lookup when the
@@ -1229,15 +1255,14 @@ func (a *Adapter) Create(ctx context.Context, in hubsync.NewItem) (hubsync.Item,
 	var opt option
 	closed := false
 	if a.board != 0 {
-		p, err := a.project(ctx)
+		var err error
+		if wantStatus {
+			proj, opt, err = a.projectOption(ctx, in.Status)
+		} else {
+			proj, err = a.project(ctx)
+		}
 		if err != nil {
 			return hubsync.Item{}, err
-		}
-		proj = p
-		if wantStatus {
-			if opt, err = p.option(in.Status); err != nil {
-				return hubsync.Item{}, err
-			}
 		}
 	} else if wantStatus {
 		state, err := repoState(in.Status)
