@@ -5,7 +5,8 @@
 // (tracker.scope.project is read when board is unset). A project's sections are its statuses:
 // Move adds the task to the section named like the status and sets completed to whether that
 // section is done; StatusCategory comes from the section name (see categoryOf) unless
-// tracker.lanes overrides it; a completed task is always done. Comments are stories, children are subtasks, and labels are workspace tags.
+// tracker.lanes overrides it; a completed task is always done. Comments are stories, children
+// are subtasks, and labels are workspace tags.
 //
 // Auth: Asana has no CLI login, so the cred resolver chain yields the keychain entry
 // (tentaqles / <ws>/asana) and then the personal access token in the manifest's tracker.env,
