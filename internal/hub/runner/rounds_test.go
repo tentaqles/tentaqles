@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -174,8 +175,8 @@ func TestConcurrentTicksRespectTheLimit(t *testing.T) {
 		}
 		return adapter.RunResult{StopReason: "success", CostKnown: true}, nil
 	}}
-	for i := 0; i < 5; i++ {
-		h.enqueue(h.card("feature", store.TagAgentReady))
+	for i := 0; i < 5; i++ { // one project each: the pre-relocation lock is not what limits them
+		h.enqueue(h.projectCard("apps/p" + strconv.Itoa(i)))
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
@@ -482,7 +483,7 @@ func TestConcurrencyLimitAndFIFO(t *testing.T) {
 	}}
 	var cards []store.Card
 	for i := 0; i < 3; i++ {
-		c := h.card("feature", store.TagAgentReady)
+		c := h.projectCard("apps/p" + strconv.Itoa(i)) // one project each (pre-relocation lock)
 		h.enqueue(c)
 		cards = append(cards, c)
 	}

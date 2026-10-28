@@ -62,6 +62,12 @@ type Service struct {
 	tickMu     sync.Mutex // serializes Tick so concurrent ticks cannot exceed the concurrency limit
 	wg         sync.WaitGroup
 
+	plMu      sync.Mutex        // projLocks and lockNoted
+	projLocks map[string]string // project folder key -> the run holding its pre-relocation lock (projectlock.go)
+	lockNoted map[string]bool   // runs whose wait for a project lock was already commented
+	// beforeProjectLock, when set (tests), runs just before startRound takes a project lock.
+	beforeProjectLock func()
+
 	// OnApprove runs after the human approved a result (Task 11: the static review export).
 	OnApprove func(card store.Card, run store.Run)
 }
@@ -94,7 +100,8 @@ func New(cfg Config) (*Service, error) {
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = 15 * time.Second
 	}
-	return &Service{cfg: cfg, st: cfg.Store, flights: map[string]*flight{}, cancelling: map[string]bool{}, lastPoll: map[string]time.Time{}}, nil
+	return &Service{cfg: cfg, st: cfg.Store, flights: map[string]*flight{}, cancelling: map[string]bool{}, lastPoll: map[string]time.Time{},
+		projLocks: map[string]string{}, lockNoted: map[string]bool{}}, nil
 }
 
 func (s *Service) Store() *store.Store { return s.st }

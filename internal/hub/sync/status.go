@@ -18,6 +18,9 @@ type Overview struct {
 	NextAt    string               `json:"next_at,omitempty"` // the last poll plus the interval
 	Outbox    map[string]int       `json:"outbox"`            // rows by status
 	LaneMap   []store.LaneMapEntry `json:"lane_map"`
+	// Fallback is the MCP fallback's own cursor (tq hub sync import), kept apart from the engine's
+	// watermark; nil before the first import.
+	Fallback *store.SyncState `json:"fallback,omitempty"`
 }
 
 // Overview reads the sync state of this engine's provider and scope. It never calls the tracker.
@@ -39,6 +42,11 @@ func (e *Engine) Overview() (Overview, error) {
 		if t, err := time.Parse(time.RFC3339, last); err == nil && ov.Enabled {
 			ov.NextAt = t.Add(time.Duration(ov.Settings.Interval) * time.Second).UTC().Format(time.RFC3339)
 		}
+	}
+	if fb, ok, err := e.st.SyncState(e.provider, e.fallbackScope()); err != nil {
+		return ov, err
+	} else if ok {
+		ov.Fallback = &fb
 	}
 	for _, s := range store.OutboxStatuses {
 		ov.Outbox[s] = 0
