@@ -79,9 +79,10 @@ type Options struct {
 }
 
 type Server struct {
-	opts Options
-	tpl  *template.Template
-	mux  *http.ServeMux
+	opts    Options
+	tpl     *template.Template
+	mux     *http.ServeMux
+	syncing syncFlights // Sync now passes in flight, per workspace (sync.go)
 }
 
 // extraRoutes lets later files (review, runs, activity) add their handlers.
@@ -297,6 +298,9 @@ func errStatus(err error) (int, string) {
 		return http.StatusForbidden, "unavailable"
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, ErrUnknownWorkspace):
 		return http.StatusNotFound, "not_found"
+	}
+	if status, code, ok := syncErrStatus(err); ok {
+		return status, code
 	}
 	return http.StatusBadRequest, "bad_request"
 }

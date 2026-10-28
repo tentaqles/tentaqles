@@ -276,7 +276,7 @@ td a:hover{color:var(--sky)}
 .conn .c .n{display:flex;align-items:center;gap:10px;font-weight:600}
 .conn .c .n .pill{margin-left:auto}
 .conn .c .lg{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;font:600 12px var(--sans);color:#fff;flex:none}
-.lg-linear{background:#5E6AD2}.lg-asana{background:#F06A6A}.lg-azure{background:#0078D4}.lg-jira{background:#2684FF}
+.lg-github{background:#24292F}.lg-linear{background:#5E6AD2}.lg-asana{background:#F06A6A}.lg-azure{background:#0078D4}.lg-jira{background:#2684FF}
 .conn .c .d{color:var(--fg-3);font-size:12.5px;line-height:1.5}
 .conn .c .a{display:flex;gap:8px;align-items:center;margin-top:2px;flex-wrap:wrap}
 .danger-zone{border-color:var(--danger-line)}
@@ -325,6 +325,10 @@ td a:hover{color:var(--sky)}
 .fld textarea.f{padding:10px 12px;min-height:96px;resize:vertical;line-height:1.5}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .err{color:var(--red);font-size:12.5px;margin:0}
+.err-text{color:var(--red);overflow-wrap:anywhere}
+.ext{font:500 12px var(--mono);color:var(--sky);background:var(--blue-soft);border-radius:6px;padding:1px 7px;white-space:nowrap}
+a.ext:hover{text-decoration:underline}
+.conn.one{grid-template-columns:1fr}
 .dlg footer{display:flex;gap:10px;align-items:center;padding:12px 18px;border-top:1px solid var(--line)}
 .dlg footer .note{margin-right:auto}
 

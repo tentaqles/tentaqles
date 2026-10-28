@@ -1,7 +1,7 @@
 {{define "decision"}}{{$d := .Decision}}
 <form class="dec" id="d-{{$d.ID}}" method="post" action="/cards/{{.Card.ID}}/decisions/{{$d.ID}}/answer?ws={{.Workspace}}">
   <div class="h">
-    {{if .OverBudget}}<span class="pill {{pill "over-budget"}}">over budget</span>{{else}}<span class="pill {{pill "waiting"}}">{{words $d.Kind}}</span>{{end}}
+    {{if .OverBudget}}<span class="pill {{pill "over-budget"}}">over budget</span>{{else if .Sync}}<span class="pill {{pill "waiting"}}">company board</span>{{else}}<span class="pill {{pill "waiting"}}">{{words $d.Kind}}</span>{{end}}
     <a class="t" href="/cards/{{.Card.ID}}?ws={{.Workspace}}">{{.Card.Title}}</a>
     <span class="ws-label">{{.Workspace}}</span>
     <span class="id">{{.Card.ID}}{{with .Run}} · <a href="/runs/{{.ID}}?ws={{$.Workspace}}">{{.ID}}</a>{{end}} · {{$d.ID}}{{with $d.AskedAt}} · {{ago .}}{{end}}</span>
@@ -9,6 +9,6 @@
   {{if or $d.Checkpoint $d.Reviewer}}<div class="note">{{with $d.Checkpoint}}checkpoint <code class="m">{{.}}</code>{{end}}{{with $d.Reviewer}} · reviewer {{.}}{{end}}</div>{{end}}
   {{if .OverBudget}}{{with .Run}}<p class="q">The run used <b>{{money .CostUSD}}</b> of <b>{{money .Budget.USD}}</b>, {{ktok .Usage.Tokens}} of {{ktok .Budget.Tokens}} tokens, {{minutes .Seconds}} of {{.Budget.Minutes}} minutes and {{.Rounds}} of {{.Budget.Rounds}} rounds.</p>{{end}}{{end}}
   <p class="q text">{{$d.Text}}</p>
-  <div class="acts">{{range $i, $o := $d.Options}}<button class="btn{{if eq $i 0}} warm{{else if eq $o "stop"}} danger{{end}}" name="choice" value="{{$o}}">{{optionLabel $o}}</button>{{end}}<input class="f" name="note" autocomplete="off" aria-label="Note" placeholder="{{if .OverBudget}}new limits, e.g. rounds=6,usd=15 (empty keeps the same budget){{else if and $d.HubOwned (eq $d.Kind "question")}}Your answer (required for Answer; it is posted on the card for the run){{else}}Note to the agent (optional){{end}}"></div>
-  <div class="note">{{if $d.HubOwned}}Answering records your choice in the hub; the run resumes or stops on it.{{else}}Answering signs it with your hub token and records it in the gate.{{end}} An agent session cannot do this.</div>
+  <div class="acts">{{range $i, $o := $d.Options}}<button class="btn{{if eq $i 0}} warm{{else if eq $o "stop"}} danger{{end}}" name="choice" value="{{$o}}">{{optionLabel $o}}</button>{{end}}<input class="f" name="note" autocomplete="off" aria-label="Note" placeholder="{{if .OverBudget}}new limits, e.g. rounds=6,usd=15 (empty keeps the same budget){{else if .Sync}}Note (optional; stays in the hub){{else if and $d.HubOwned (eq $d.Kind "question")}}Your answer (required for Answer; it is posted on the card for the run){{else}}Note to the agent (optional){{end}}"></div>
+  <div class="note">{{if .Sync}}Answering records your choice in the hub; the sync sends or skips the write on its next pass.{{else if $d.HubOwned}}Answering records your choice in the hub; the run resumes or stops on it.{{else}}Answering signs it with your hub token and records it in the gate.{{end}} An agent session cannot do this.</div>
 </form>{{end}}

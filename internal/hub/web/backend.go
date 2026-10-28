@@ -32,6 +32,7 @@ type MultiBackend struct {
 	entries []Entry
 	factory Factory
 	sibling Sibling
+	engines syncEngines // each opened workspace's sync engine, for the pages (sync.go)
 	mu      sync.Mutex
 	closed  bool
 	svcs    map[string]*runner.Service

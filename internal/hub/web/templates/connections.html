@@ -1,27 +1,64 @@
 {{define "connections"}}{{template "head" .}}{{template "connections-main" .}}{{template "foot" .}}{{end}}
-{{define "connections-main"}}
+{{define "connections-main"}}{{$ws := .WS}}{{with .Data}}
 <div class="set">
-  <section class="panel notice"><h2>Board sync is not available yet</h2>
-    <p class="lead">Syncing cards with the tracker a client already uses arrives in release 2, part B. Nothing on this page connects to anything yet: there is nothing to sign in to, no credential to enter, and the hub makes no network call for it. The cards below say what each connection will do.</p>
-  </section>
-  <section class="panel"><h2>Company trackers</h2>
-    <p class="lead">Cards will come from the tracker your client already uses and go back there with status, cost and the review link. One tracker per workspace. Secrets will stay in the workspace's own secret store; the hub will keep only the connection name.</p>
-    <div class="conn">
-      <div class="c"><div class="n"><span class="lg lg-linear" aria-hidden="true">Li</span>Linear<span class="pill p-queue">not connected</span></div><div class="d">Mirror a team's issues as cards; a finished card posts its run id, cost and review link back to the issue.</div><div class="a"><span class="btn sm" aria-disabled="true">Connect</span><span class="note">coming in release 2, part B</span></div></div>
-      <div class="c"><div class="n"><span class="lg lg-asana" aria-hidden="true">As</span>Asana<span class="pill p-queue">not connected</span></div><div class="d">Mirror a project's tasks as cards; a finished card completes the task with the review link.</div><div class="a"><span class="btn sm" aria-disabled="true">Connect</span><span class="note">coming in release 2, part B</span></div></div>
-      <div class="c"><div class="n"><span class="lg lg-azure" aria-hidden="true">Az</span>Azure DevOps<span class="pill p-queue">not connected</span></div><div class="d">Work items in a board column become cards; pull requests link back to the work item.</div><div class="a"><span class="btn sm" aria-disabled="true">Connect</span><span class="note">coming in release 2, part B</span></div></div>
-      <div class="c"><div class="n"><span class="lg lg-jira" aria-hidden="true">Ji</span>Jira<span class="pill p-queue">not connected</span></div><div class="d">Issues from a JQL filter become cards; transitions follow the lane mapping.</div><div class="a"><span class="btn sm" aria-disabled="true">Connect</span><span class="note">coming in release 2, part B</span></div></div>
+  {{with .Error}}<div class="err" role="alert">The sync state could not be read: {{.}}</div>{{end}}
+  {{if .Tracker}}{{$ov := .Overview}}
+  <section class="panel"><h2>Company tracker</h2>
+    <div class="conn one">
+      <div class="c">
+        <div class="n">{{providerName $ov.Provider}}{{if not $ov.Enabled}}<span class="pill p-queue">sync off</span>{{else if .Running}}<span class="pill p-run">Sync running</span>{{else if .State.LastError}}<span class="pill p-fail">last poll failed</span>{{else if .Synced}}<span class="pill p-done">connected</span>{{else}}<span class="pill p-queue">not synced yet</span>{{end}}</div>
+        <dl class="kv">
+          <dt>Scope</dt><dd><code class="m">{{or $ov.Scope "default"}}</code></dd>
+          <dt>Auth source</dt><dd data-auth-source>{{if and .Checked .Conn.Source}}{{.Conn.Source}} <span class="note">in use</span>{{else}}{{$ov.Auth}} <span class="note">preferred</span>{{end}} <span class="note">· the fallback order is fixed: {{.Order}}</span></dd>
+          <dt>Account</dt><dd>{{if and .Checked .Conn.Account}}<b>{{.Conn.Account}}</b> <span class="note">checked {{clock .Conn.CheckedAt}}</span>{{else if and .Checked .Conn.Error}}<span class="note">check failed {{clock .Conn.CheckedAt}}: {{.Conn.Error}}</span>{{else}}<span class="note">not checked yet: Sync now checks it</span>{{end}}</dd>
+          <dt>Last sync</dt><dd>{{if .State.LastOKAt}}{{clock .State.LastOKAt}}{{else if .Synced}}<span class="note">no successful poll yet</span>{{else}}<span class="note">Never synced</span>{{end}}</dd>
+          {{if .State.LastError}}<dt>Last error</dt><dd><span class="err-text">{{.State.LastError}}</span> <span class="note">{{clock .State.LastErrorAt}}</span></dd>{{end}}
+          <dt>Next run</dt><dd>{{if not $ov.Enabled}}<span class="note">none: board sync is off</span>{{else if $ov.NextAt}}{{clock $ov.NextAt}} <span class="note">every {{$ov.Settings.Interval}} s while a hub serves this workspace</span>{{else}}<span class="note">at the first poll, then every {{$ov.Settings.Interval}} s</span>{{end}}</dd>
+          <dt>Outbox</dt><dd>{{index $ov.Outbox "pending"}} pending · {{index $ov.Outbox "sent"}} sent · {{index $ov.Outbox "skipped"}} skipped · {{index $ov.Outbox "failed"}} failed</dd>
+        </dl>
+        <div class="a">
+          <form class="inline" method="post" action="/connections/sync?ws={{$ws}}"><button class="btn pri sm"{{if or .Running (not $ov.Enabled)}} disabled{{end}}>Sync now</button></form>
+          <span class="note">checks the login, pulls what changed and sends the writes the policy allows</span>
+        </div>
+      </div>
     </div>
   </section>
-  <section class="panel"><h2>Lane mapping (planned default)</h2>
-    <div class="tw"><table class="map"><tr><th>Hub lane</th><th>Tracker state</th><th>Direction</th></tr>
-      <tr><td>Backlog</td><td>Backlog</td><td>both ways</td></tr>
-      <tr><td>Todo</td><td>Todo</td><td>both ways</td></tr>
-      <tr><td>In progress</td><td>In Progress</td><td>hub → tracker</td></tr>
-      <tr><td>Review</td><td>In Review</td><td>hub → tracker</td></tr>
-      <tr><td>Done</td><td>Done</td><td>hub → tracker</td></tr>
+
+  <section class="panel"><h2>Lane map</h2>
+    {{if $ov.LaneMap}}<div class="tw"><table class="map"><tr><th>Tracker status</th><th>Hub lane</th></tr>
+      {{range $ov.LaneMap}}<tr><td>{{.ExternalStatus}}</td><td>{{laneTitle .Lane}}</td></tr>{{end}}
     </table></div>
-    <p class="note">Read-only: the sync will start from this mapping. Only issues with the <code class="m">agent-ready</code> label will start runs; moving a card into In progress on either side starts one, and when it finishes the hub posts a comment with the run id, cost and the review link.</p>
+    <p class="note">Built from the tracker's statuses and the manifest's <code class="m">tracker.lanes</code> overrides when sync starts. Change the manifest to change it; a manifest change needs <code class="m">tq allow</code>.</p>
+    {{else}}<p class="note">Built from the tracker's statuses and the manifest's <code class="m">tracker.lanes</code> overrides at the first sync.</p>{{end}}
+  </section>
+
+  <form class="set" method="post" action="/connections/settings?ws={{$ws}}" data-sync-settings>
+    <section class="panel"><h2>Writes to the company board</h2>
+      <p class="lead">Each write the hub can make on the tracker: <b>auto</b> sends it, <b>ask</b> puts a send/skip decision on the board first, <b>off</b> never sends it. Text that leaves the machine is redacted first.</p>
+      <div class="row2">
+        {{range .Policies}}{{$v := .Value}}{{$a := .Action}}<span class="lbl" id="pol-{{$a}}">{{.Label}}</span><div class="ctl"><span class="seg" role="radiogroup" aria-labelledby="pol-{{$a}}">{{range policyValues}}<label><input type="radio" autocomplete="off" name="policy.{{$a}}" value="{{.}}"{{if eq . $v}} checked{{end}}>{{.}}</label>{{end}}</span><span class="note">{{.Note}}</span></div>
+        {{end}}
+      </div>
+    </section>
+    <section class="panel"><h2>Polling</h2>
+      <div class="row2">
+        <span class="lbl" id="sy-enabled">Board sync</span><div class="ctl"><span class="seg" role="radiogroup" aria-labelledby="sy-enabled"><label><input type="radio" autocomplete="off" name="enabled" value="on"{{if $ov.Enabled}} checked{{end}}>on</label><label><input type="radio" autocomplete="off" name="enabled" value="off"{{if not $ov.Enabled}} checked{{end}}>off</label></span><span class="note">off stops the poll and the outbox; nothing is lost</span></div>
+        <label for="sy-interval">Poll every</label><div class="ctl"><input class="f s w90" id="sy-interval" autocomplete="off" name="interval" inputmode="numeric" value="{{$ov.Settings.Interval}}"><span class="note">seconds, 60 or more</span></div>
+      </div>
+    </section>
+    <div class="savebar"><button class="btn pri">Save sync settings</button><span class="note">Only you can change these; an agent session is refused.</span></div>
+  </form>
+  {{else}}
+  <section class="panel notice"><h2>No company tracker</h2>
+    <p class="lead">This workspace's manifest has no <code class="m">tracker</code> block, so nothing is mirrored and the hub calls no tracker. Run <code class="m">tq onboard</code> in the client folder, or add a tracker block to the manifest; then run <code class="m">tq allow</code> yourself to trust the change and restart the hub.</p>
+  </section>
+  {{end}}
+  <section class="panel"><h2>Supported trackers</h2>
+    <div class="conn">
+      {{range .Choices}}<div class="c"><div class="n"><span class="lg {{.Class}}" aria-hidden="true">{{.Logo}}</span>{{.Name}}{{if and $.Data.Tracker (eq .ID $.Data.Overview.Provider)}}<span class="pill p-done">this workspace</span>{{end}}</div><div class="d">{{.What}}</div></div>
+      {{end}}
+    </div>
+    <p class="note">One tracker per workspace. Tokens stay in the tracker's own CLI login, the OS keychain (<code class="m">tq secret set</code>) or env through <code class="m">tq dotenv</code>; the hub keeps names only.</p>
   </section>
 </div>
-{{end}}
+{{end}}{{end}}
