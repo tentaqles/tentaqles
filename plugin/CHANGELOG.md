@@ -4,6 +4,8 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-28
+
 Board sync (tq spec B). Needs a `tq` build with `tq hub sync`, `tq secret` and `tq onboard`.
 
 - **`/tentaqles:onboard`.** Connects and verifies the company tools of a client workspace
@@ -32,6 +34,8 @@ Board sync (tq spec B). Needs a `tq` build with `tq hub sync`, `tq secret` and `
 - `tentaqles/workflow/prd.py` parses PRD §4 FRs and §11 release membership, and records
   card ids (`parse_frs`, `parse_releases`, `release_frs`, `fr_cards`, `record_cards`,
   `card_body`); `prd_status` uses the new `text_status`.
+- `/tentaqles:hub` has a Board sync section: linked cards, the human-only send/skip
+  decisions, and `tq hub push` / `tq hub sync retry` as human-only.
 
 ## [0.13.3] — 2026-10-27
 
