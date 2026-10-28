@@ -78,6 +78,7 @@ type Engine struct {
 	wake     chan struct{}
 	// notBefore holds back a row that failed transiently until its back-off ends (this process).
 	notBefore map[string]time.Time
+	source    sourceSeen // the credential source the default adapter last used (connection.go)
 }
 
 // NewEngine builds the engine; it does not touch the tracker.
@@ -137,6 +138,7 @@ func (e *Engine) defaultAdapter(ctx context.Context) (Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	e.source.set(tr.Source())
 	c.Transport = tr
 	return New(c)
 }
