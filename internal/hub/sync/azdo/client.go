@@ -186,7 +186,8 @@ func (a *Adapter) do(ctx context.Context, method, u, ctype string, in, out any) 
 	code := resp.StatusCode
 	switch {
 	case code == http.StatusTooManyRequests || (code == http.StatusServiceUnavailable && resp.Header.Get("Retry-After") != ""):
-		return &hubsync.RateLimitError{Provider: Provider, RetryAfter: a.blockedFor()}
+		// This response's own Retry-After, or a longer block already in force.
+		return &hubsync.RateLimitError{Provider: Provider, RetryAfter: max(retryAfter(resp.Header, a.now()), a.blockedFor())}
 	case code == http.StatusUnauthorized || code == http.StatusNonAuthoritativeInfo:
 		if src == cred.SourceCLI {
 			forgetAzToken(a.cfg.Env) // a revoked or rotated az token is not handed out again
