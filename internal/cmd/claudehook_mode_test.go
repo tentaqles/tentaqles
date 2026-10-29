@@ -493,3 +493,64 @@ func TestRelaxedTrustStoreWriteBlocks(t *testing.T) {
 	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "cat ~/.tentaqles/config.yaml", "bypassPermissions"))
 	silentAllow(t, "read", code, out)
 }
+
+// End to end through the hook: an edited (untrusted), invalid or deleted
+// manifest never runs at the granted global relaxed, on the file-tool and
+// MCP path or the shell path (final security review M1). The global grant
+// is for folders outside every workspace only.
+func TestHookUntrustedOrBrokenManifestIgnoresGlobalGrant(t *testing.T) {
+	root, proj := modeWS(t, "", "")
+	g := guardcfg.File{Mode: guardcfg.ModeRelaxed}
+	if err := guardcfg.Save(g); err != nil {
+		t.Fatal(err)
+	}
+	gr, ok := guardcfg.GlobalGrantFor(g, guardcfg.ModeRelaxed)
+	if !ok {
+		t.Fatal("no global grant")
+	}
+	if err := trust.SaveGrant(trust.GlobalGrantKey, gr); err != nil {
+		t.Fatal(err)
+	}
+	mcp := `{"tool_name":"mcp__github__create_issue","cwd":` + jsonPath(t, proj) + `,"tool_input":{"title":"x"}}`
+	notAllowed := func(what, payload string) {
+		t.Helper()
+		code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, payload)
+		if code != 2 && !strings.Contains(out, `"permissionDecision":"ask"`) {
+			t.Fatalf("%s: allowed at the global relaxed (code %d, out %q)", what, code, out)
+		}
+	}
+	// Sanity: a trusted manifest without a mode stays at default (asks).
+	notAllowed("trusted default", mcp)
+	mp := filepath.Join(root, manifest.FileName)
+	raw, err := os.ReadFile(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mp, append(raw, []byte("# edited\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notAllowed("untrusted, mcp", mcp)
+	mig := filepath.Join(proj, "migrations", "001_init.sql")
+	if err := os.MkdirAll(filepath.Dir(mig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mig, []byte("create table x();\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notAllowed("untrusted, edit", `{"tool_name":"Edit","cwd":`+jsonPath(t, proj)+`,"tool_input":{"file_path":`+jsonPath(t, mig)+`,"old_string":"x","new_string":"y"}}`)
+	if err := os.WriteFile(mp, []byte("guard: [not: valid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notAllowed("invalid, mcp", mcp)
+	notAllowed("invalid, shell", modePayload(t, proj, "terraform destroy", ""))
+	if err := os.Remove(mp); err != nil {
+		t.Fatal(err)
+	}
+	notAllowed("deleted, mcp", mcp)
+	notAllowed("deleted, shell", modePayload(t, proj, "terraform destroy", ""))
+	// A folder outside every base still takes the global grant.
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, `{"tool_name":"mcp__github__create_issue","cwd":`+jsonPath(t, t.TempDir())+`,"tool_input":{"title":"x"}}`)
+	if code != 0 || strings.Contains(out, `"permissionDecision"`) {
+		t.Fatalf("a neutral folder runs at the granted global relaxed: code %d out %q", code, out)
+	}
+}

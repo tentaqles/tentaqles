@@ -12,6 +12,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/guardlog"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 	"gopkg.in/yaml.v3"
@@ -63,7 +64,13 @@ func resolveModeFor(ws *resolve.Workspace, cwd, target, launch string) guardcfg.
 		ws = nil
 	default:
 		ws = nil
-		grant = guardcfg.GlobalGrant(g)
+		// The global grant is for folders outside every workspace only. A
+		// folder under a base whose manifest is missing, invalid or
+		// untrusted has the default ceiling, so breaking or deleting the
+		// manifest never reaches a global relaxed (final review M1).
+		if neutralFolder(cwd) && (target == "" || neutralFolder(filepath.Dir(target))) {
+			grant = guardcfg.GlobalGrant(g)
+		}
 	}
 	if launch == "" && os.Getenv("TENTAQLES_HEADLESS") == "1" {
 		// A headless run with no explicit mode gets the workspace's
@@ -74,6 +81,24 @@ func resolveModeFor(ws *resolve.Workspace, cwd, target, launch string) guardcfg.
 		}
 	}
 	return guardcfg.Resolve(m, name, root, cwd, target, g, loadRepoMode(cwd, ws), launch, grant)
+}
+
+// neutralFolder reports whether dir is outside every workspace: outside
+// every registered base, or a base folder itself. An unreadable registry is
+// not neutral (fail closed: the default ceiling).
+func neutralFolder(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	cfg, err := registry.Load()
+	if err != nil {
+		return false
+	}
+	switch resolve.Resolve(dir, cfg).Reason {
+	case "outside any base", "at base root":
+		return true
+	}
+	return false
 }
 
 // loadRepoMode reads the mode keys of every .claude/tq-rules.yaml from cwd

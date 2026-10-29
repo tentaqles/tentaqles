@@ -290,7 +290,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 			}
 			call := toolCallFrom(p, cwd)
 
-			var ws *resolve.Workspace
+			var ws, untrusted *resolve.Workspace
 			var cfg *registry.Config
 			if cmdline != "" {
 				in, gws, gcfg, err := gatherGuardInput(cwd, cmdline)
@@ -311,14 +311,21 @@ permissionDecision JSON so Claude Code asks the user.`,
 					return nil
 				}
 			} else {
-				ws, cfg = resolveTrusted(cwd)
+				ws, untrusted, cfg = resolveForHook(cwd)
+			}
+			// The mode resolves for the workspace the call is in, trusted or
+			// not: an untrusted one gets the default ceiling, never the
+			// global grant. The rules only ever read a trusted manifest.
+			modeWS := ws
+			if modeWS == nil && untrusted != nil {
+				modeWS = untrusted
 			}
 
 			// The guard mode (spec E): the gate maps every rule to its
 			// effective action under the resolved mode, whatever Claude's
 			// permission mode is; nil (the fast path) when it resolves to
 			// default. The identity guard above never goes through it.
-			gate := modeGateFor(ws, cwd, call, launchMode())
+			gate := modeGateFor(modeWS, cwd, call, launchMode())
 			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline, gate)
 			if d.Action != policy.Deny {
 				// Jev can only add strictness, so it is skipped when the
@@ -345,7 +352,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 					return nil
 				}
 				for _, fc := range patchCalls(files, cwd) {
-					fg := modeGateFor(ws, cwd, fc, launchMode())
+					fg := modeGateFor(modeWS, cwd, fc, launchMode())
 					d = policy.Merge(d, hookPolicyDecision(cwd, ws, cfg, fc, scanDeadline, fg))
 					subs = append(subs, judged{fg, fc})
 				}

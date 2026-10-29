@@ -419,9 +419,11 @@ tq allow --mode --global relaxed # for the mode in guard.yaml
   carry the grant to the new hash only when the result is no looser than it.
 - A global grant, `$TQ_HOME/trust/global.mode`, carries a SHA-256 of the
   mode keys of `guard.yaml`; an edit of those keys voids it. It is the
-  ceiling for neutral folders only. Inside a workspace the workspace's own
-  grant is the ceiling, so a global relaxed loosens only workspaces that have
-  a grant too.
+  ceiling for neutral folders only: outside every registered base, or a
+  base folder itself. Inside a workspace the workspace's own grant is the
+  ceiling, so a global relaxed loosens only workspaces that have a grant
+  too. A folder under a base whose manifest is missing, invalid or untrusted
+  (an edited manifest) gets the default ceiling, on every tool path.
 - `tq deny <ws>` removes the grant. `strict` never needs one
   (`tq allow --mode acme strict` is an error).
 - The trust store is protected by `tq/trust-store-write` (locked), so an agent

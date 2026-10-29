@@ -107,6 +107,17 @@ func nonEmpty(xs []string) []string {
 	return out
 }
 
+// resolveForHook maps cwd to its trusted workspace, or to the untrusted
+// one it is in (nil, nil when neutral or on error).
+func resolveForHook(cwd string) (trusted, untrusted *resolve.Workspace, cfg *registry.Config) {
+	cfg, err := registry.Load()
+	if err != nil {
+		return nil, nil, nil
+	}
+	res := resolve.Resolve(cwd, cfg)
+	return res.Workspace, res.Untrusted, cfg
+}
+
 // resolveTrusted maps cwd to its trusted workspace, or nil. Errors mean nil:
 // the built-in rules still apply without a workspace.
 func resolveTrusted(cwd string) (*resolve.Workspace, *registry.Config) {
