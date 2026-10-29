@@ -6,11 +6,15 @@ import "strings"
 // and guard.actions skip them, unattended mode never skips their confirm
 // (AlwaysAsk), and no pack guard may supersede them. tq/hub-store-write
 // protects the hub store, the pack ledgers and claims and the saved plans
-// under $TQ_HOME; tq/pack-config-change protects the pack config layers.
+// under $TQ_HOME; tq/pack-config-change protects the pack config layers;
+// tq/human-answer keeps answers and applies with the human, and
+// tq/secret-store-shell keeps the pack ledger signing key (the root of every
+// pack approval) out of the shell.
 var neverDisable = map[string]bool{
 	"tq/hub-store-write":    true,
 	"tq/pack-config-change": true,
 	"tq/human-answer":       true,
+	"tq/secret-store-shell": true,
 }
 
 // NeverDisable reports whether id ignores guard.disable and guard.actions.

@@ -52,3 +52,25 @@ func TestNeverDisableIgnoresActions(t *testing.T) {
 		t.Fatal("the spec D supersedes must stay possible")
 	}
 }
+
+// Final review, security m4: tq/secret-store-shell guards the pack ledger
+// signing key, the root of every pack approval, so no layer switches it off
+// or softens it, and unattended mode always asks it.
+func TestSecretStoreShellIsNeverDisable(t *testing.T) {
+	const id = "tq/secret-store-shell"
+	m := &manifest.Manifest{Guard: manifest.Guard{Disable: []string{id}, Actions: map[string]policy.Action{id: policy.Ask}}}
+	e := Merge(File{Disable: []string{id}}, nil, m, "acme")
+	if !NeverDisable(id) || e.Off(id) {
+		t.Fatal("switched off")
+	}
+	if _, ok := e.Actions[id]; ok {
+		t.Fatal("softened")
+	}
+	found := false
+	for _, a := range AlwaysAsk {
+		found = found || a == id
+	}
+	if !found {
+		t.Fatal("not in AlwaysAsk")
+	}
+}

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/approval"
 	"github.com/tentaqles/tentaqles/internal/packs/baseline"
@@ -483,7 +482,7 @@ warn; new ones keep their level. Agent sessions are refused.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			if hubAgent() {
-				return runner.ErrHumanOnly
+				return baselineAgentErr()
 			}
 			return packRun(c, func() error {
 				cwd, _ := os.Getwd()
@@ -543,4 +542,10 @@ func writeBaselines(ctx context.Context, out io.Writer, in *packs.Input, only st
 		fmt.Fprintf(out, "%s: %d entries -> %s\n", p, len(entries), in.Config.Pack(p).Baseline)
 	}
 	return nil
+}
+
+// baselineAgentErr refuses tq pack baseline in an agent session: the human
+// writes the baseline in their own terminal (the hub page cannot).
+func baselineAgentErr() error {
+	return fmt.Errorf("%w: run tq pack baseline in your own terminal", packs.ErrHumanOnly)
 }

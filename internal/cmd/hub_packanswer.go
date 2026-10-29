@@ -45,7 +45,7 @@ func subjectCode(subject string) string {
 }
 
 // errPackAnswerTTY refuses a pack-approval answer without a terminal.
-var errPackAnswerTTY = errors.New("a pack approval is answered by a human at a terminal: run tq hub answer in your own terminal (or answer it on the board in your browser); a pipe or an agent's shell cannot answer it")
+var errPackAnswerTTY = errors.New("a pack approval is answered by a human at a terminal: run tq hub answer in your own terminal (pack approvals are never answered on the board); a pipe or an agent's shell cannot answer it")
 
 func answerPackApproval(c *cobra.Command, h *hubConn, cardID string, d store.Decision, choice, note string) error {
 	if hubAgent() || !stdinIsTerminal(c.InOrStdin()) {
