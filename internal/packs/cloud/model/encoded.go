@@ -22,10 +22,12 @@ const maxEncodedDepth = 64
 // yamlKeyLineRe finds a "key:" line, the sign of a YAML mapping.
 var yamlKeyLineRe = regexp.MustCompile(`(?m)^\s*[A-Za-z0-9_.'"-]+\s*:(\s|$)`)
 
-// scrubEncoded scrubs a string that encodes a JSON object or array, or a
-// multi-line YAML mapping, and re-encodes it in the same format. ok is false
-// when s is neither. When scrubbing changes nothing, s is kept as written
-// (after RedactString), so policy documents and the like stay byte for byte.
+// scrubEncoded scrubs a string that encodes JSON objects or arrays (one, or
+// several back to back as in JSON lines), or a YAML stream whose documents
+// are mappings or lists (block or flow, one line or many), and re-encodes it
+// in the same format. ok is false when s is neither. When scrubbing changes
+// nothing, s is kept as written (after RedactString), so policy documents
+// and the like stay byte for byte.
 func scrubEncoded(s string) (string, bool) {
 	if len(s) > maxEncodedLen {
 		return "", false
@@ -35,67 +37,134 @@ func scrubEncoded(s string) (string, bool) {
 		return "", false
 	}
 	if t[0] == '{' || t[0] == '[' {
-		v, ok := decodeJSONString(t)
-		if !ok {
-			return "", false
+		if out, ok := scrubJSONStream(s, t); ok {
+			return out, true
 		}
-		sv := scrub(v, false)
-		if reflect.DeepEqual(sv, v) {
-			return RedactString(s), true
-		}
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if enc.Encode(sv) != nil {
-			return RedactedKey, true // fail closed
-		}
-		return RedactString(strings.TrimSuffix(buf.String(), "\n")), true
+		// Not JSON: maybe a YAML flow mapping or sequence ({password: x}).
 	}
-	if !strings.Contains(t, "\n") || !yamlKeyLineRe.MatchString(t) {
-		return "", false
-	}
-	var v any
-	if yaml.Unmarshal([]byte(s), &v) != nil {
-		return "", false
-	}
-	nv, ok := plainYAML(v, 0)
-	if !ok {
-		return "", false
-	}
-	if _, isMap := nv.(map[string]any); !isMap {
-		return "", false
-	}
-	sv := scrub(nv, false)
-	if reflect.DeepEqual(sv, nv) {
-		return RedactString(s), true
-	}
-	b, err := yaml.Marshal(sv)
-	if err != nil {
-		return RedactedKey, true // fail closed
-	}
-	return RedactString(string(b)), true
+	return scrubYAML(s, t)
 }
 
-// decodeJSONString decodes exactly one JSON object or array (numbers as
-// json.Number) whose nesting stays within maxEncodedDepth.
-func decodeJSONString(t string) (any, bool) {
+const jsonSpace = " \t\r\n"
+
+// scrubJSONStream scrubs the JSON objects and arrays at the start of t, one
+// after another (numbers as json.Number). Text after the last one (not JSON,
+// or a scalar) is kept, itself scrubbed when it is an encoding. ok is false
+// when t does not start with a JSON object or array.
+func scrubJSONStream(s, t string) (string, bool) {
 	if jsonDepth(t) > maxEncodedDepth {
-		return nil, false
+		return "", false
 	}
 	dec := json.NewDecoder(strings.NewReader(t))
 	dec.UseNumber()
-	var v any
-	if dec.Decode(&v) != nil {
-		return nil, false
+	var (
+		parts   []string // each document with the separator before it
+		changed bool
+		prev    int64
+	)
+stream:
+	for {
+		var v any
+		if dec.Decode(&v) != nil {
+			break // io.EOF, or text that is not JSON: the rest is kept
+		}
+		switch v.(type) {
+		case map[string]any, []any:
+		default:
+			break stream // a scalar: kept with the rest
+		}
+		end := dec.InputOffset()
+		chunk := t[prev:end]
+		sv := scrub(v, false)
+		if reflect.DeepEqual(sv, v) {
+			parts = append(parts, chunk)
+		} else {
+			changed = true
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+			if enc.Encode(sv) != nil {
+				return RedactedKey, true // fail closed
+			}
+			sep := chunk[:len(chunk)-len(strings.TrimLeft(chunk, jsonSpace))]
+			parts = append(parts, sep+strings.TrimSuffix(buf.String(), "\n"))
+		}
+		prev = end
 	}
-	if _, err := dec.Token(); err != io.EOF {
-		return nil, false // trailing data: not one document
+	if prev == 0 {
+		return "", false
 	}
-	switch v.(type) {
-	case map[string]any, []any:
-		return v, true
+	rest := t[prev:]
+	if strings.TrimSpace(rest) != "" {
+		if r, ok := scrubEncoded(rest); ok && r != RedactString(rest) {
+			changed = true
+			rest = r
+		}
 	}
-	return nil, false
+	if !changed {
+		return RedactString(s), true
+	}
+	lead := s[:len(s)-len(strings.TrimLeft(s, jsonSpace))]
+	trail := s[len(strings.TrimRight(s, jsonSpace)):]
+	return RedactString(lead + strings.Join(parts, "") + rest + trail), true
+}
+
+// scrubYAML scrubs a YAML stream whose documents are mappings or lists
+// (block or flow style). It is tried only on strings that look like YAML:
+// a "key:" line, a leading "- " item, or a flow collection.
+func scrubYAML(s, t string) (string, bool) {
+	if !(t[0] == '{' || t[0] == '[' || strings.HasPrefix(t, "- ") || yamlKeyLineRe.MatchString(t)) {
+		return "", false
+	}
+	dec := yaml.NewDecoder(strings.NewReader(s))
+	var docs []any
+	containers := 0
+	for {
+		var v any
+		err := dec.Decode(&v)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", false
+		}
+		nv, ok := plainYAML(v, 0)
+		if !ok {
+			return "", false
+		}
+		switch nv.(type) {
+		case map[string]any, []any:
+			containers++
+		}
+		docs = append(docs, nv)
+	}
+	if containers == 0 {
+		return "", false
+	}
+	changed := false
+	out := make([]any, len(docs))
+	for i, d := range docs {
+		out[i] = scrub(d, false)
+		if !reflect.DeepEqual(out[i], d) {
+			changed = true
+		}
+	}
+	if !changed {
+		return RedactString(s), true
+	}
+	enc := make([]string, len(out))
+	for i, d := range out {
+		b, err := yaml.Marshal(d)
+		if err != nil {
+			return RedactedKey, true // fail closed
+		}
+		enc[i] = string(b)
+	}
+	r := strings.Join(enc, "---\n")
+	if !strings.HasSuffix(s, "\n") {
+		r = strings.TrimSuffix(r, "\n")
+	}
+	return RedactString(r), true
 }
 
 // jsonDepth is the deepest bracket nesting of t, ignoring brackets in
