@@ -108,7 +108,7 @@ deny contains lib.result("TQR005", addr(r), "the storage account accepts plain H
 deny contains lib.result("TQR005", addr(r), "the app accepts plain HTTP (httpsOnly is not true)") if {
 	some r in resources
 	kind(r) == "microsoft.web/sites"
-	not lib.is_true(props(r).httpsOnly)
+	not lib.is_true(object.get(props(r), "httpsOnly", null))
 }
 
 # TQR006: key rotation.

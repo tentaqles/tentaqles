@@ -128,7 +128,7 @@ deny contains lib.result("TQR006", rc.address, "automatic key rotation is off on
 	some rc in changes
 	rc.type == "aws_kms_key"
 	symmetric(rc.change.after)
-	not lib.is_true(rc.change.after.enable_key_rotation)
+	not lib.is_true(object.get(rc.change.after, "enable_key_rotation", null))
 }
 
 symmetric(after) if not lib.has_key(after, "customer_master_key_spec")

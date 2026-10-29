@@ -129,6 +129,11 @@ test_kms_no_rotation if {
 	"TQR006" in rules(terraform.deny) with input as plan("aws_kms_key", {"enable_key_rotation": false, "customer_master_key_spec": "SYMMETRIC_DEFAULT"})
 }
 
+# An absent enable_key_rotation is off (the provider default is false).
+test_kms_rotation_absent if {
+	"TQR006" in rules(terraform.deny) with input as plan("aws_kms_key", {"customer_master_key_spec": "SYMMETRIC_DEFAULT"})
+}
+
 test_kms_rotation_ok if {
 	not "TQR006" in rules(terraform.deny) with input as plan("aws_kms_key", {"enable_key_rotation": true, "customer_master_key_spec": "SYMMETRIC_DEFAULT"})
 }

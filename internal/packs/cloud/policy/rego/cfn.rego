@@ -30,7 +30,7 @@ deny contains lib.result("TQR001", id, sprintf("missing required tags: %s", [con
 	some id, r in input.Resources
 	count(lib.required_tags) > 0
 	taggable(r)
-	not is_object(props(r).Tags) # an intrinsic (Fn::If, Ref) is not judged
+	not is_object(object.get(props(r), "Tags", null)) # an intrinsic (Fn::If, Ref) is not judged
 	missing := {t | some t in lib.required_tags; not t in tag_keys(r)}
 	count(missing) > 0
 }
@@ -91,7 +91,7 @@ deny contains lib.result("TQR006", id, "automatic key rotation is off on a symme
 	some id, r in input.Resources
 	r.Type == "AWS::KMS::Key"
 	symmetric(r)
-	not lib.is_true(props(r).EnableKeyRotation)
+	not lib.is_true(object.get(props(r), "EnableKeyRotation", null))
 }
 
 symmetric(r) if not lib.has_key(props(r), "KeySpec")
