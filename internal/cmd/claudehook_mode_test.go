@@ -625,3 +625,33 @@ func TestLegacyBypassCopyGetsNothing(t *testing.T) {
 		t.Fatalf("the owner starts in bypass: %q", got)
 	}
 }
+
+// The nested check compares the resolved tables, not mode names: a nested
+// agent at TQ_MODE=default or strict is allowed only when every category
+// (and rule override) is the same as or stricter than the session's. A
+// custom session stricter than default somewhere ranked as looser by name
+// (security re-review r2, m1 residual).
+func TestHookNestedAgentComparesTables(t *testing.T) {
+	cases := []struct {
+		name, body, cmd string
+		deny            bool
+	}{
+		{"custom on strict, default", "guard:\n  mode: custom\n  base: strict\n  categories: { external-writes: skip }\n", "TQ_MODE=default claude -p x", true},
+		{"custom with a deny, default", "guard:\n  mode: custom\n  base: default\n  categories: { db-destructive: deny }\n", "TQ_MODE=default claude -p x", true},
+		{"custom with a deny, strict", "guard:\n  mode: custom\n  base: default\n  categories: { db-destructive: deny }\n", "export TQ_MODE=strict; claude -p x", true},
+		{"override deny, default", "guard:\n  rules_override: { tq/migration-edit: deny }\n", "TQ_MODE=default claude -p x", true},
+		{"strict, strict", "guard:\n  mode: strict\n", "TQ_MODE=strict claude -p x", false},
+		{"default, default", "", "TQ_MODE=default claude -p x", false},
+		{"default, strict", "", "TQ_MODE=strict claude -p x", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, proj := modeWS(t, tc.body, "")
+			code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, tc.cmd, ""))
+			denied := code == 2 && strings.Contains(errOut, "tq/nested-agent-loosened")
+			if denied != tc.deny {
+				t.Fatalf("%s: denied %v, want %v (code %d, stderr %q)", tc.cmd, denied, tc.deny, code, errOut)
+			}
+		})
+	}
+}

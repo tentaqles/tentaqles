@@ -247,11 +247,22 @@ func init() {
 	})
 }
 
-// tqModeDefaultRe is a TQ_MODE assignment of exactly default, in any form
-// agAssign knows.
-var tqModeDefaultRe = regexp.MustCompile(`(?i)` + agAssign(`TQ_MODE`, agAny(`(?-i:["']?default)(?:["']|\b)`)))
+// tqModeSafeRes are TQ_MODE assignments of exactly default or strict, in any
+// form agAssign knows: the values the nested-agent rule lets through.
+var tqModeSafeRes = map[string]*regexp.Regexp{
+	"default": regexp.MustCompile(`(?i)` + agAssign(`TQ_MODE`, agAny(`(?-i:["']?default)(?:["']|\b)`))),
+	"strict":  regexp.MustCompile(`(?i)` + agAssign(`TQ_MODE`, agAny(`(?-i:["']?strict)(?:["']|\b)`))),
+}
 
-// AssignsTQModeDefault reports whether command sets TQ_MODE to default. The
-// nested-agent rule allows that (it is no looser than default), so the hook
-// denies it itself when the session's own mode is stricter (strict).
-func AssignsTQModeDefault(command string) bool { return tqModeDefaultRe.MatchString(command) }
+// AssignedTQModes returns the modes (default, strict) command sets TQ_MODE
+// to. The nested-agent rule allows them, so the hook compares each with the
+// session's own resolved table and denies one that is looser anywhere.
+func AssignedTQModes(command string) []string {
+	var out []string
+	for _, m := range []string{"default", "strict"} {
+		if tqModeSafeRes[m].MatchString(command) {
+			out = append(out, m)
+		}
+	}
+	return out
+}

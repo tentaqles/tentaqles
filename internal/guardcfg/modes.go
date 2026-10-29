@@ -158,6 +158,43 @@ func stricterValue(v, w Value) Value {
 	return w.norm()
 }
 
+// PresetResolved is the resolved view of preset mode m alone (no layers, no
+// overrides): what a nested agent started at TQ_MODE=m gets at most.
+func PresetResolved(m string) Resolved {
+	t, ok := Preset(m)
+	if !ok {
+		t, _ = Preset(ModeDefault)
+	}
+	return Resolved{Mode: m, Table: t, Overrides: map[string]Value{}}
+}
+
+// NoLooserThan reports whether r is the same as or stricter than parent for
+// every unlocked category and every rule override either names: no rule is
+// skipped or lowered under r that parent would apply at a stricter action.
+func (r Resolved) NoLooserThan(parent Resolved) bool {
+	for _, c := range allCategories {
+		if !Locked(c) && lowersCat(c, r.Table.Get(c), parent.Table.Get(c)) {
+			return false
+		}
+	}
+	ids := map[string]bool{}
+	for id := range r.Overrides {
+		ids[id] = true
+	}
+	for id := range parent.Overrides {
+		ids[id] = true
+	}
+	for id := range ids {
+		if Locked(Categories[id]) {
+			continue
+		}
+		if lowersID(id, valueFor(r.Table, r.Overrides, id), valueFor(parent.Table, parent.Overrides, id)) {
+			return false
+		}
+	}
+	return true
+}
+
 // LooserThanDefault reports whether r may skip or lower some rule (the
 // statusline's yellow): a toggleable category or a rule override that lowers
 // a built-in rule's own action. Strict is never looser: its external-writes

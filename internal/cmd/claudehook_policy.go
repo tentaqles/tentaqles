@@ -210,10 +210,15 @@ func policyDecisionWith(pb builtPolicy, cwd string, ws *resolve.Workspace, cfg *
 	// A nested agent starts at its parent's mode or a stricter one: the
 	// nested-agent rule lets TQ_MODE=default through, so a strict session
 	// denies it here (locked self-protection, never mapped by the mode).
-	if call.IsShell() && policy.AssignsTQModeDefault(call.Command) {
-		if parent := gate.resolved().Mode; !noLooser(guardcfg.ModeDefault, parent) {
-			d = policy.Merge(d, ruleDecision(policy.Deny, policy.NestedAgentRuleID,
-				"this session runs at "+parent+": a nested agent may start only at that mode or a stricter one, not default"))
+	if call.IsShell() {
+		// Compared table by table, not by name: a custom session stricter
+		// than default in one category must not start a default child.
+		parent := gate.resolved()
+		for _, m := range policy.AssignedTQModes(call.Command) {
+			if !guardcfg.PresetResolved(m).NoLooserThan(parent) {
+				d = policy.Merge(d, ruleDecision(policy.Deny, policy.NestedAgentRuleID,
+					"a nested agent may start only at this session's mode ("+orDefault(parent.Mode)+") or stricter, in every category; "+m+" is looser somewhere"))
+			}
 		}
 	}
 

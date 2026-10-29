@@ -537,9 +537,11 @@ Bash or PowerShell call:
 - assigning `TQ_MODE` to anything but exactly `default` or `strict`
   (`TQ_MODE=off cmd`, `export`, `$env:TQ_MODE=…`, `set -x`, `env TQ_MODE=…`,
   an empty value, `unset`, `Remove-Item Env:TQ_MODE`), or `TQ_ENABLED=0`;
-  and `TQ_MODE=default` when the session itself runs at `strict`: a nested
-  agent starts only at its parent's mode or a stricter one (the hook checks
-  this against the resolved mode, as `tq run` does for `--tq-mode`);
+  and `TQ_MODE=default` or `TQ_MODE=strict` when that preset is looser than
+  the session's own resolved table in any category or rule override: a
+  nested agent starts only at its parent's mode or a stricter one, compared
+  category by category (so a `custom` session with a `deny` somewhere cannot
+  start a `default` child);
 - `env -i`, `env -` or `env --ignore-environment` before `claude` or `codex`
   (it drops `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `TQ_MODE` at once);
 - `claude-off`, `codex-off`, `tq off`, `tq run --off`, `tq env --off`, and
