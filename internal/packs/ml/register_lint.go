@@ -63,15 +63,15 @@ func init() {
 	builtin("ml/unsafe-deserialize", func(in *packs.Input) bool { return in.AnyChanged("*.py", "*.ipynb") }, runDeserialize)
 	builtin("ml/notebook-outputs", func(in *packs.Input) bool { return in.AnyChanged("*.ipynb") }, runNotebookOutputs)
 
-	packs.Register(packs.Check{ID: "ml/ruff", Pack: "ml", Kind: packs.External, Tool: "ruff", MinVersion: "0.6.0", Timeout: toolTimeout,
+	packs.Register(packs.Check{ID: "ml/ruff", Pack: "ml", Kind: packs.External, Tool: "ruff", MinVersion: "0.6.0", Timeout: toolTimeout, Env: ruffEnv,
 		Applies: func(in *packs.Input) bool { return in.AnyChanged("*.py", "*.ipynb") }, Run: runRuff})
-	packs.Register(packs.Check{ID: "ml/lock-check", Pack: "ml", Kind: packs.External, Tool: "uv", Timeout: toolTimeout,
+	packs.Register(packs.Check{ID: "ml/lock-check", Pack: "ml", Kind: packs.External, Tool: "uv", Timeout: toolTimeout, Env: uvEnv,
 		Applies: func(in *packs.Input) bool { return in.AnyChanged("pyproject.toml", "uv.lock") },
 		Run:     lockCheck("uv", "uv.lock", []string{"lock", "--check"})})
-	packs.Register(packs.Check{ID: "ml/lock-check-poetry", Pack: "ml", Kind: packs.External, Tool: "poetry", Timeout: toolTimeout,
+	packs.Register(packs.Check{ID: "ml/lock-check-poetry", Pack: "ml", Kind: packs.External, Tool: "poetry", Timeout: toolTimeout, Env: poetryEnv,
 		Applies: func(in *packs.Input) bool { return in.AnyChanged("pyproject.toml", "poetry.lock") },
 		Run:     lockCheck("poetry", "poetry.lock", []string{"check", "--lock"})})
-	packs.Register(packs.Check{ID: "ml/dvc-status", Pack: "ml", Kind: packs.External, Tool: "dvc", Timeout: toolTimeout,
+	packs.Register(packs.Check{ID: "ml/dvc-status", Pack: "ml", Kind: packs.External, Tool: "dvc", Timeout: toolTimeout, Env: dvcEnv,
 		Applies: dvcApplies, Run: runDVCStatus})
 }
 

@@ -141,7 +141,7 @@ func EstimateSpec(s packs.Settings, r EstimateRequest, sql string) (spec toolrun
 	if !ok {
 		return spec, cleanup, fmt.Errorf("unknown engine %q (known: %s)", r.Engine, strings.Join(costEngines, ", "))
 	}
-	spec = toolrun.Spec{Pack: "data", Tool: tool, Timeout: EstimateTimeout, Dir: r.Dir}
+	spec = toolrun.Spec{Pack: "data", Tool: tool, Timeout: EstimateTimeout, Dir: r.Dir, PassEnv: estimateEnv[r.Engine]}
 	switch r.Engine {
 	case engBigQuery:
 		spec.Args = []string{"query", "--dry_run", "--use_legacy_sql=false", "--format=json"}

@@ -39,11 +39,11 @@ func init() {
 	packs.Register(packs.Check{ID: idHardcodedRel, Pack: "data", Kind: packs.Builtin,
 		Applies: func(in *packs.Input) bool { return in.AnyChanged("*.sql") }, Run: runHardcodedRelation})
 
-	packs.Register(packs.Check{ID: idDBTParse, Pack: "data", Kind: packs.External, Tool: "dbt",
+	packs.Register(packs.Check{ID: idDBTParse, Pack: "data", Kind: packs.External, Tool: "dbt", Env: dbtEnv,
 		MinVersion: dbtMinVersion, Timeout: dbtParseTimeout, Applies: anyDBTFile, Run: runDBTParse})
-	packs.Register(packs.Check{ID: idDBTBuildModified, Pack: "data", Kind: packs.External, Tool: "dbt",
+	packs.Register(packs.Check{ID: idDBTBuildModified, Pack: "data", Kind: packs.External, Tool: "dbt", Env: dbtEnv,
 		MinVersion: dbtMinVersion, Timeout: dbtBuildTimeout, Applies: buildApplies, Run: runDBTBuildModified})
-	packs.Register(packs.Check{ID: idSQLFluff, Pack: "data", Kind: packs.External, Tool: "sqlfluff",
+	packs.Register(packs.Check{ID: idSQLFluff, Pack: "data", Kind: packs.External, Tool: "sqlfluff", Env: sqlfluffEnv,
 		Timeout: sqlfluffTimeout, Applies: sqlfluffApplies, Run: runSqlfluff})
 
 	packs.RegisterGuard(packs.Guard{ID: guardProdTarget, Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: checkProdTarget})

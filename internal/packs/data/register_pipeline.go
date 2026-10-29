@@ -53,7 +53,7 @@ func init() {
 	builtin("data/fabric-artifacts", fabricApplies, runFabricArtifacts)
 	builtin("data/synapse-artifacts", synapseApplies, runSynapseArtifacts)
 	builtin("data/notebook-outputs", notebookApplies, runNotebookOutputs)
-	packs.Register(packs.Check{ID: "data/dagster-validate", Pack: "data", Kind: packs.External, Tool: "dagster",
+	packs.Register(packs.Check{ID: "data/dagster-validate", Pack: "data", Kind: packs.External, Tool: "dagster", Env: dagsterEnv,
 		Timeout: dagsterTimeout * time.Second, Applies: dagsterApplies, Run: runDagsterValidate})
 
 	packs.RegisterGuard(packs.Guard{ID: "tq/pipeline-run", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: pipelineRunGuard})

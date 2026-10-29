@@ -37,7 +37,7 @@ func init() {
 	packs.Register(packs.Check{ID: "data/contract-dbt-sync", Pack: "data", Kind: packs.Builtin,
 		Applies: func(in *packs.Input) bool { return in.All || contractDBTApplies(in) }, Run: runContractDBTSync})
 	packs.Register(packs.Check{ID: "data/datacontract-lint", Pack: "data", Kind: packs.External, Tool: contractTool,
-		Timeout: contractToolTimeout, Applies: func(in *packs.Input) bool { return in.All || anyContractChange(in) }, Run: runDatacontractLint})
+		Env: contractEnv, Timeout: contractToolTimeout, Applies: func(in *packs.Input) bool { return in.All || anyContractChange(in) }, Run: runDatacontractLint})
 	packs.Register(packs.Check{ID: "data/datacontract-breaking", Pack: "data", Kind: packs.External, Tool: contractTool,
-		Timeout: contractToolTimeout, Applies: anyContractChange, Run: runDatacontractBreaking})
+		Env: contractEnv, Timeout: contractToolTimeout, Applies: anyContractChange, Run: runDatacontractBreaking})
 }

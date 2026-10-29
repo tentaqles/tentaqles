@@ -50,7 +50,7 @@ func init() {
 	})
 	packs.Register(packs.Check{ID: checkBQJobMaxBytes, Pack: "data", Kind: packs.Builtin, Applies: bqLintApplies, Run: runBQJobMaxBytes})
 	packs.Register(packs.Check{ID: checkCostEstimate, Pack: "data", Kind: packs.External, Tool: "dbt", Timeout: 900 * time.Second,
-		Applies: costEstimateApplies, Run: runCostEstimate})
+		Env: dbtEnv, Applies: costEstimateApplies, Run: runCostEstimate})
 	shell := []string{"Bash", "PowerShell"}
 	packs.RegisterGuard(packs.Guard{ID: GuardBQUnbounded, Pack: "data", Events: shell, Check: checkBQUnbounded})
 	packs.RegisterGuard(packs.Guard{ID: GuardWarehouseSize, Pack: "data", Events: []string{"Bash", "PowerShell", `mcp__.*`}, Check: checkWarehouseResize})

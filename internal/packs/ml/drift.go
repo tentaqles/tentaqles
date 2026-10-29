@@ -623,7 +623,9 @@ func ensureCurrent(ctx context.Context, in *packs.Input, st Settings, m Model, d
 	}
 	cctx, cancel := context.WithTimeout(ctx, CurrentTimeout)
 	defer cancel()
-	out, err := in.Tools.Run(cctx, toolrun.Spec{Pack: "ml", Tool: argv[0], Args: argv[1:], Timeout: CurrentTimeout})
+	// The current_command is the project's own (often uv run ...): it gets
+	// the runner's user dirs, index and proxy variables (uvEnv).
+	out, err := in.Tools.Run(cctx, toolrun.Spec{Pack: "ml", Tool: argv[0], Args: argv[1:], Timeout: CurrentTimeout, PassEnv: uvEnv})
 	switch {
 	case err != nil:
 		return fmt.Errorf("drift.current_command: %v", err)

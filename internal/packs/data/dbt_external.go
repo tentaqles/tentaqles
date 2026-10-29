@@ -43,7 +43,11 @@ func scratchArgs(scratch string, i int) []string {
 }
 
 func runToolOnce(ctx context.Context, in *packs.Input, tool string, args []string, dir string, timeout time.Duration) (toolrun.Output, *packs.Result) {
-	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "data", Tool: tool, Args: args, Dir: dir, Timeout: timeout})
+	spec := toolrun.Spec{Pack: "data", Tool: tool, Args: args, Dir: dir, Timeout: timeout}
+	if tool == "dbt" || tool == "sqlfluff" {
+		spec.PassEnv = dbtRunEnv(dir) // the profile's env_var() names
+	}
+	out, err := in.Tools.Run(ctx, spec)
 	if err != nil {
 		return out, &packs.Result{Status: packs.Fail, Detail: fmt.Sprintf("%s did not run: %v", tool, err)}
 	}

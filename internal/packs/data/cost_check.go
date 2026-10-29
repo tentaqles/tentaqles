@@ -127,7 +127,7 @@ func runCostEstimate(ctx context.Context, in *packs.Input) packs.Result {
 	for _, m := range models {
 		args = append(args, "path:"+m)
 	}
-	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "data", Tool: "dbt", Args: args, Dir: projAbs, Timeout: 600 * time.Second})
+	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "data", Tool: "dbt", Args: args, Dir: projAbs, Timeout: 600 * time.Second, PassEnv: dbtRunEnv(projAbs)})
 	tool := &packs.ToolRun{Name: "dbt", Version: out.Version, Path: out.Path, ExitCode: out.ExitCode, DurationMS: out.Duration.Milliseconds(), TimedOut: out.TimedOut}
 	res.Tool = tool
 	if err != nil && !errors.Is(err, context.DeadlineExceeded) && out.ExitCode == 0 && !out.TimedOut {

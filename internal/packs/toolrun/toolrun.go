@@ -269,6 +269,15 @@ var secretName = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSW(OR)?D|PASS$|PWD$|CR
 // testPass are names the package tests pass to the fake tool.
 var testPass []string
 
+// PassForTests adds names every tool run passes, for the fake tools of
+// other packages' tests (TQ_FAKE_*). Only _test.go files call it; it
+// returns the restore function.
+func PassForTests(names ...string) (restore func()) {
+	prev := testPass
+	testPass = append(append([]string(nil), prev...), names...)
+	return func() { testPass = prev }
+}
+
 // toolEnv is the environment of a tool run: the parent's BaseEnv and LC_*
 // variables, the names in pass, DO_NOT_TRACK=1, the tool's telemetry
 // switches, then extra (explicit KEY=VALUE pairs). A base or LC_* name that
