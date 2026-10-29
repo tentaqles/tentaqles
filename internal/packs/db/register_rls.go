@@ -180,6 +180,20 @@ func isTestFile(p string) bool {
 	return false
 }
 
+// runTests keeps the test files the runner runs: pg_prove runs with
+// --ext .sql (spec D §12), so only a .sql file counts as coverage. A .pg
+// file still marks the tests changed, but a table it alone names is
+// untested.
+func runTests(files []string) []string {
+	var out []string
+	for _, p := range files {
+		if strings.EqualFold(path.Ext(p), ".sql") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func testsChanged(in *packs.Input) bool {
 	d := testsDir(in)
 	if d == "" {
@@ -320,7 +334,7 @@ func runRLSTests(ctx context.Context, in *packs.Input) packs.Result {
 	}
 	dir := testsDir(in)
 	tests := map[string][]byte{}
-	files := testFiles(in, dir)
+	files := runTests(testFiles(in, dir))
 	if len(files) > maxTestFiles {
 		files = files[:maxTestFiles]
 	}

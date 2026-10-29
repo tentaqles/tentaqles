@@ -223,7 +223,9 @@ func TestPgtapCheckSelection(t *testing.T) {
 	in := rlsInput(t, "[pg_prove]", root, changed, tracked)
 	in.Tools.(*toolrun.Runner).LookPath = lookOnly(bin)
 	res := byID(packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"db"}}))
-	if r := res["db/pgtap"]; r.Status != packs.OK || !r.Required {
+	// The fake pg_prove prints no harness summary: the check ran against
+	// the local target and fails closed (no test is known to have run).
+	if r := res["db/pgtap"]; r.Status != packs.Fail || !r.Required || !strings.Contains(r.Detail, "no harness summary") {
 		t.Fatalf("db/pgtap = %+v", r)
 	}
 	if _, ok := res["db/pgtap-supabase"]; ok {
@@ -275,6 +277,31 @@ func TestRLSRegisteredChecks(t *testing.T) {
 			if strings.HasPrefix(strings.ToUpper(n), "PG") {
 				t.Errorf("%s passes %s from the parent environment", id, n)
 			}
+		}
+	}
+}
+
+// pg_prove runs only .sql files (--ext .sql): a test in a .pg file never
+// runs, so it never counts as coverage either.
+func TestRLSCoverageCountsOnlyRunTests(t *testing.T) {
+	isolate(t)
+	root, changed, tracked := rlsRepo(t)
+	write(t, root, "supabase/tests/database/rls_notes.pg", "select plan(1);\nselect is_empty('select 1 from public.notes', 'anon sees nothing');\n")
+	in := rlsInput(t, "[]", root, append(changed, packs.ChangedFile{Path: "supabase/tests/database/rls_notes.pg", Status: 'A'}), tracked)
+	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"db"}, BuiltinOnly: true})
+	if rt := byID(rep)["db/rls-tests"]; rt.Status != packs.Fail || !strings.Contains(rt.Detail, "public.notes") {
+		t.Fatalf("db/rls-tests with only a .pg test = %+v", rt)
+	}
+}
+
+// A tests directory that pg_prove could read as an option is never used,
+// whichever layer set it.
+func TestRLSTestsDirNeverAnOption(t *testing.T) {
+	for _, bad := range []string{"--psql-bin=evil", "-x", "db/-x"} {
+		cfg := packs.Merge(packsOf(t, "db: {enabled: true}"), packsOf(t, "db: {rls: {tests: '"+bad+"'}}"))
+		in := (&packs.Input{Config: cfg}).ForPack("db")
+		if d := testsDir(in); d == bad || strings.HasPrefix(d, "-") || strings.Contains(d, "/-") {
+			t.Errorf("%q: tests dir = %q", bad, d)
 		}
 	}
 }
