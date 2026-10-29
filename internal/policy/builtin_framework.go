@@ -22,6 +22,15 @@ const httpClients = `\b(curl|wget|http|https|invoke-webrequest|iwr|invoke-restme
 func frameworkRules() []Rule {
 	return []Rule{
 		{
+			ID: "tq/secret-store-shell", Action: Deny,
+			// The pack ledger key (service tentaqles-packs) signs human answers;
+			// reading it (cmdkey, CredentialManager/PasswordVault, secret-tool,
+			// security find-generic-password, a keyring library) would let an
+			// agent sign a forged answer.
+			Command: `tentaqles-packs`,
+			Reason:  "the pack ledger key in the OS keychain signs human answers; it is never read from the shell",
+		},
+		{
 			ID: "tq/human-answer", Action: Deny,
 			Command: tqCmd + `(hub\s+(answer|serve-key|key|token)\b|pack\s+\S+\s+(approve|promote\s+apply|apply)\b)`,
 			Reason:  "answering an approval and applying an approved action are done by a human in their own terminal or browser, never by an agent",

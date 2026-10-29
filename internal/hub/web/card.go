@@ -74,11 +74,7 @@ func (s *Server) cardPage(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, dec := range d.Decisions {
 		if dec.Status == store.DecisionPending {
-			it := newDecisionItem(svc, ws, d.Card, dec)
-			if it.Pack != nil {
-				it.CSRF = s.csrfFor(r, dec.ID)
-			}
-			data.PendingItems = append(data.PendingItems, it)
+			data.PendingItems = append(data.PendingItems, newDecisionItem(svc, ws, d.Card, dec))
 		} else {
 			data.Answered = append(data.Answered, dec)
 		}

@@ -5,7 +5,7 @@
 // granting option). No line carries the note text.
 //
 // It imports neither the hub store nor internal/packs, so the store's
-// answer path can call RecordAnswer without an import cycle.
+// answer path can append the signed answered line without an import cycle.
 package ledger
 
 import (
@@ -52,6 +52,9 @@ type Entry struct {
 	ActorKind string `json:"actor_kind,omitempty"` // human | agent | hub | terminal | other
 	Card      string `json:"card,omitempty"`
 	TS        string `json:"ts"`
+	// EvidenceHash and MAC sign an answered line (mac.go).
+	EvidenceHash string `json:"evidence_hash,omitempty"`
+	MAC          string `json:"mac,omitempty"`
 }
 
 // Path is the ledger of pack in workspace ws.
@@ -105,23 +108,6 @@ func Append(ws string, e Entry) error {
 		return err
 	}
 	return f.Close()
-}
-
-// RecordAnswer appends the answered line for a hub decision whose data marks
-// a pack approval (data.pack set). Decisions without data.pack are ignored
-// (nil error). The hub store calls it before acknowledging the answer; an
-// error must fail the answer.
-func RecordAnswer(ws, decisionID string, data map[string]any, choice, actorKind string, at time.Time) error {
-	pack, _ := data["pack"].(string)
-	if pack == "" {
-		return nil
-	}
-	e := Entry{Event: Answered, Decision: decisionID, Pack: pack, Choice: choice, ActorKind: actorKind, TS: at.UTC().Format(time.RFC3339)}
-	e.Action, _ = data["action"].(string)
-	e.Subject, _ = data["subject"].(string)
-	e.Target, _ = data["target"].(string)
-	e.ExpiresAt, _ = data["expires_at"].(string)
-	return Append(ws, e)
 }
 
 // ErrCorrupt is a ledger that cannot be read completely: a malformed or

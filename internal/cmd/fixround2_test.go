@@ -229,3 +229,69 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		}
 	}
 }
+
+// Fix round 3 (R2-2, R2-3, R2-4, R2-7): the reviewer's bypass table is
+// denied; normal agent work and prose stay allowed.
+func TestHookRound3Bypasses(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	home := paths.Home()
+	cfgDir := filepath.Join(home, "identities", "acme", "claude")
+	os.MkdirAll(cfgDir, 0o700)
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	os.MkdirAll(filepath.Join(home, "build-gate"), 0o700)
+	deny := []policy.ToolCall{
+		{Tool: "Bash", Command: `echo x >> ~/.tentaqles/identities/../packs/acme/ml/ledger.jsonl`},
+		{Tool: "PowerShell", Command: `Add-Content $HOME\.tentaqles\identities\..\packs\acme\ml\ledger.jsonl x`},
+		{Tool: "Bash", Command: `echo x >> $CLAUDE_CONFIG_DIR/../../../packs/acme/ml/ledger.jsonl`},
+		{Tool: "PowerShell", Command: `Add-Content "$env:CLAUDE_CONFIG_DIR\..\..\..\packs\acme\ml\ledger.jsonl" x`},
+		{Tool: "Bash", Command: `D=~/.tentaqles/identities; echo x >> $D/../packs/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `cd ~/.tentaqles/identities/acme && cd ../.. && echo x >> packs/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `cd ~/.tentaqles/identities; cd ..; echo x >> packs/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `cd $CLAUDE_CONFIG_DIR/../../.. && echo x >> packs/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `python -c "import os;open(os.path.expanduser('~/.tenta'+'qles/packs/acme/ml/ledger.jsonl'),'a').write('x')"`},
+		{Tool: "Bash", Command: `python -c "import os;open(os.environ['CLAUDE_CONFIG_DIR']+'/../../../packs/acme/ml/ledger.jsonl','a').write('x')"`},
+		{Tool: "Bash", Command: `ln -s ~/.tentaqles/identities/.. /tmp/t && echo x >> /tmp/t/packs/acme/ml/ledger.jsonl`},
+		{Tool: "PowerShell", Command: `New-Item -ItemType Junction -Path C:\t -Target $HOME\.tentaqles\identities\..`},
+		{Tool: "PowerShell", Command: `cmd /c mklink /J C:\t $env:CLAUDE_CONFIG_DIR\..\..\..`},
+		{Tool: "Bash", Command: `cat ~/.tentaqles/identities/../hub/s*.json`},
+		{Tool: "Bash", Command: `echo 'bases: []' > ~/.tentaqles/config.yaml`},
+		{Tool: "Bash", Command: `echo x >> ~/.tentaqles/audit.jsonl`},
+		{Tool: "Bash", Command: `echo x >> ~/.tentaqles/guard/unattended.jsonl`},
+		{Tool: "Write", Path: filepath.Join(home, "config.yaml")},
+		{Tool: "Bash", Command: `tq hub --workspace acme answer c1 d1 --choice approve`},
+		{Tool: "Bash", Command: `t''q hub answer c1 d1 --choice approve`},
+		{Tool: "Bash", Command: `T=tq; $T hub answer c1 d1 --choice approve`},
+		{Tool: "PowerShell", Command: `& (Get-Command tq).Source hub answer c1 d1 --choice approve`},
+		{Tool: "Bash", Command: `python -c "import subprocess;subprocess.run(['tq','hub','answer','c1','d1','--choice','approve'])"`},
+		{Tool: "Bash", Command: `curl -b j -H 'Origin: http://127.0.0.1:8765' -d choice=approve 'http://127.0.0.1:8765/cards/c1/%64ecisions/d1/%61nswer?ws=acme'`},
+		{Tool: "Bash", Command: `curl -d choice=approve "http://127.0.0.1:8765/cards/c1/deci""sions/d1/answer"`},
+		{Tool: "PowerShell", Command: `$u='http://127.0.0.1:8765/cards/c1/deci'+'sions/d1/answer'; Invoke-WebRequest -Method Post $u`},
+		{Tool: "PowerShell", Command: `cmdkey /list:tentaqles-packs`},
+		{Tool: "Bash", Command: `secret-tool lookup service tentaqles-packs username acme`},
+		{Tool: "Bash", Command: `security find-generic-password -s tentaqles-packs -a acme -w`},
+		{Tool: "PowerShell", Command: `[Windows.Security.Credentials.PasswordVault]::new().Retrieve('tentaqles-packs','acme')`},
+	}
+	if s := shortPath(filepath.Join(home, "build-gate")); s != "" && !strings.EqualFold(filepath.Base(s), "build-gate") {
+		deny = append(deny, policy.ToolCall{Tool: "Bash", Command: `echo k > ~/.tentaqles/` + filepath.Base(s) + `/hmac.key`})
+	}
+	for _, c := range deny {
+		if code, out := hookDecision(t, ws, c); code != 2 {
+			t.Errorf("not denied (%d): %s%s\n%s", code, c.Command, c.Path, out)
+		}
+	}
+	allowed := []policy.ToolCall{
+		{Tool: "Bash", Command: `git commit -m "docs: the state dir ~/.tentaqles keeps packs and hub data"`},
+		{Tool: "Bash", Command: `echo "the hub keeps packs under ~/.tentaqles"`},
+		{Tool: "Write", Path: filepath.Join(cfgDir, "projects", "p", "memory", "MEMORY.md")},
+		{Tool: "Bash", Command: `ls $CLAUDE_CONFIG_DIR/projects`},
+		{Tool: "Bash", Command: `grep -r hub ~/.tentaqles/identities/acme/claude/projects`},
+		{Tool: "Bash", Command: `tq hub list`},
+		{Tool: "Bash", Command: `tq hub add "answer the question about packs"`},
+		{Tool: "Bash", Command: `tq pack approvals --json`},
+	}
+	for _, c := range allowed {
+		if code, out := hookDecision(t, ws, c); code != 0 {
+			t.Errorf("denied (%d): %s%s\n%s", code, c.Command, c.Path, out)
+		}
+	}
+}

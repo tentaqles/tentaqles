@@ -18,7 +18,6 @@ type decisionItem struct {
 	OverBudget bool       // a hub budget stop: the page shows the run's numbers
 	Sync       bool       // a send/skip question about a write to the company board (outbox)
 	Pack       *packApproval
-	CSRF       string // a pack approval's form token in this browser session
 }
 
 // packApproval is what the page shows for a pack approval (spec C §2.11):
@@ -97,11 +96,7 @@ func (s *Server) waitingPage(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		v := newDecisionItem(svc, it.Workspace, it.Card, it.Decision)
-		if v.Pack != nil {
-			v.CSRF = s.csrfFor(r, v.Decision.ID)
-		}
-		views = append(views, v)
+		views = append(views, newDecisionItem(svc, it.Workspace, it.Card, it.Decision))
 	}
 	p.Data = views
 	if ws == "" {

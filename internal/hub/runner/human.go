@@ -206,16 +206,25 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 	if choice == "answer" && strings.TrimSpace(note) == "" {
 		return AnswerOutcome{}, errors.New("write the answer in the note: it goes to the run as your comment on the card; the decision is still pending")
 	}
+	if d.PackApproval() != "" {
+		// A pack approval (spec C §2.11) is answered only through the human,
+		// TTY-checked path, which puts a HumanPresence (its ledger signer) in
+		// the context; it never resumes or requeues a run.
+		p := humanPresence(ctx)
+		if p == nil || p.Sign == nil {
+			return AnswerOutcome{}, store.ErrPackAnswer
+		}
+		d, err := s.st.AnswerPackApproval(d.ID, choice, note, s.cfg.Actor, p.Sign)
+		if err != nil {
+			return AnswerOutcome{}, err
+		}
+		return AnswerOutcome{Decision: d, Message: fmt.Sprintf("decision %s: %s by %s", d.ID, choice, s.cfg.Actor)}, nil
+	}
 	d, err := s.st.AnswerHub(d.ID, choice, note, s.cfg.Actor)
 	if err != nil {
 		return AnswerOutcome{}, err
 	}
 	out := AnswerOutcome{Decision: d, Message: fmt.Sprintf("decision %s: %s by %s", d.ID, choice, s.cfg.Actor)}
-	if d.PackApproval() != "" {
-		// A pack approval (spec C §2.11) is consumed by a human-run apply or a
-		// guard; it never resumes or requeues a run.
-		return out, nil
-	}
 	r, err := s.st.Run(d.RunID)
 	if err != nil {
 		return out, nil
@@ -480,3 +489,25 @@ func lastAnswered(st *gate.State) *gate.Decision {
 }
 
 var _ Ops = (*Service)(nil)
+
+type presenceKey struct{}
+
+// HumanPresence marks an answer made by a human present at a terminal (the
+// TTY and binding check of tq hub answer). Sign builds the signed ledger
+// line. Only that path sets it; no web route or API does.
+type HumanPresence struct {
+	Sign store.PackSigner
+}
+
+// WithHumanPresence returns ctx carrying p.
+func WithHumanPresence(ctx context.Context, p HumanPresence) context.Context {
+	return context.WithValue(ctx, presenceKey{}, &p)
+}
+
+func humanPresence(ctx context.Context) *HumanPresence {
+	if ctx == nil {
+		return nil
+	}
+	p, _ := ctx.Value(presenceKey{}).(*HumanPresence)
+	return p
+}

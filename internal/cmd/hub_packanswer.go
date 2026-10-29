@@ -11,8 +11,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/internal/hub/gate"
+	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 )
 
 // A pack approval (spec C §2.11) is answered by a human present at a real
@@ -73,18 +74,30 @@ func answerPackApproval(c *cobra.Command, h *hubConn, cardID string, d store.Dec
 	if h.ws == nil {
 		return errors.New("no workspace for this hub")
 	}
-	st, err := store.Open(h.ws.Name, hubClasses(h.ws))
-	if err != nil {
-		return err
-	}
-	defer st.Close()
 	if d.CardID != cardID {
 		return fmt.Errorf("decision %s belongs to card %s, not %s", d.ID, d.CardID, cardID)
 	}
-	got, err := st.AnswerHub(d.ID, choice, note, gate.Actor())
+	// The human is present: sign the answer with the workspace's ledger key
+	// (created on first use, in the OS keychain) and answer through the
+	// service, which refuses a pack approval without this marker.
+	key, err := ledger.SigningKey(h.ws.Name)
+	if err != nil {
+		return fmt.Errorf("the pack approval cannot be signed: %w (pack approvals need an OS keychain)", err)
+	}
+	svc := h.svc
+	if svc == nil {
+		s, err := newHubService(h.ws, warnTo(c), false)
+		if err != nil {
+			return err
+		}
+		defer s.Store().Close()
+		svc = s
+	}
+	ctx := runner.WithHumanPresence(context.Background(), runner.HumanPresence{Sign: store.PackSigner(ledger.AnswerSigner(h.ws.Name, key))})
+	got, err := svc.Answer(ctx, cardID, d.ID, choice, note)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "decision %s: %s by %s\n", got.ID, got.Choice, got.Actor)
+	fmt.Fprintf(out, "decision %s: %s by %s\n", got.Decision.ID, got.Decision.Choice, got.Decision.Actor)
 	return nil
 }
