@@ -453,6 +453,49 @@ the manifest):
 - `tq/cross-client-mcp` (deny) — an MCP server that another client's
   bundle declares, and this workspace's bundle does not, is refused.
 
+### Pack framework rules (always on, never-disable)
+
+These core rules come with the pack framework ([PACKS.md](PACKS.md)). They are
+active in every workspace, with or without a pack. `guard.disable` and
+`guard.actions` skip them, no pack guard may supersede them, and their confirm
+is never skipped.
+
+| Rule | Action | What |
+|---|---|---|
+| `tq/hub-store-write` | deny | a write into `$TQ_HOME/hub/` or `$TQ_HOME/packs/` (the hub store, pack ledgers, claims and plans) by a file tool or a shell command. A hook-time check also denies any agent shell command that reaches a protected part of `$TQ_HOME` (`hub/`, `packs/`, `build-gate/`, `trust/`, `guard/`, `guard.yaml`, `config.yaml`, `audit.jsonl`), under any spelling: the real, final and 8.3 paths, `~/.tentaqles`, the `TQ_HOME` variable forms, tq's exported variables. Only a call of this tq with a subcommand that never runs a child is exempt, and a child after `--` is checked on its own ([framework-security.md](packs/framework-security.md)) |
+| `tq/human-answer` | deny | `tq hub answer`, `tq pack <pack> ... apply` (apply as a subcommand word, flags allowed between), an HTTP call to the hub's decision or answer endpoints, and reading `hub/serve-*.json` |
+| `tq/pack-config-change` | ask | an edit of `tq-packs.yaml`, a pack baseline file or the manifest's `packs:` block, from a file tool or the shell |
+| `tq/secret-store-shell` | deny | a shell command naming the pack ledger key's keychain entry (`tentaqles-packs`) |
+
+### Pack rules and guards (while the pack is on)
+
+A pack's rules and decision guards run only while the trusted manifest enables
+that pack. A decision guard reads the command (and small local files) and
+returns its own verdict; the ones marked "policy" apply the environment policy
+of the pack's `environments` block.
+
+| Rule | Pack | Default | What |
+|---|---|---|---|
+| `tq/iac-apply-env` | cloud | policy | an apply or destroy resolves to an environment and gets its `auto` / `ask` / `approve` / `deny` policy; `approve` needs a human-approved recorded plan ([apply gate](packs/cloud-apply-gate.md)) |
+| `tq/iac-identity-drift` | cloud | deny | an apply or destroy whose subscription, profile or AWS account disagrees with its environment |
+| `tq/plan-read` | cloud | deny | reading or printing a plan file, a state file, the plan store or a CDK asset manifest |
+| `tq/plan-print` | cloud | ask | `terraform show` / `output` or `pulumi stack output --show-secrets` into the transcript |
+| `tq/plan-commit` | cloud | deny | `git add` of a plan, state, `.terraform/` or the plan store |
+| `tq/db-migrate-env` | db | policy | a migration command resolves to an environment and gets its `migrate` policy ([migrations](packs/db-migrations.md)) |
+| `tq/restore-target` | db | deny | a restore into a declared environment or a non-local host ([restore drill](packs/db-restore-drill.md)) |
+| `tq/dbt-prod-target` | data | deny | a writing dbt command with `--target` in `dbt.prod_targets` |
+| `tq/dbt-full-refresh` | data | ask | `--full-refresh` on a command that can rebuild a relation |
+| `tq/pipeline-run` | data | ask | an orchestrator run or backfill (airflow, dagster, prefect, `az ... pipeline create-run`) |
+| `tq/bq-unbounded-query` | data | deny | `bq query` without `--maximum_bytes_billed`, or above `cost.bigquery.max_bytes` |
+| `tq/warehouse-resize` | data | deny or ask | a Snowflake warehouse resize: deny above `max_warehouse_size`, ask at or below |
+| `tq/warehouse-query-unbounded` | data | ask | a warehouse query with no statement timeout and no `LIMIT` |
+| `tq/model-promote` | ml | deny | a registry promotion outside `tq pack ml promote apply` (MLflow, SageMaker, Vertex AI, Databricks, Azure ML) |
+
+The pack guards read through `bash -c`, `pwsh -Command` and a decoded
+`-EncodedCommand`; a PowerShell script file, stdin or an undecodable payload
+asks. In the cloud and db gates, a global flag tq does not know before the
+subcommand counts at the strictest environment ([PACKS.md](PACKS.md#known-behaviours)).
+
 ### Limits
 
 - The policy reads tool input as text. Like the identity guard it catches

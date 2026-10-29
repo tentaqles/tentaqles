@@ -36,7 +36,7 @@ RLS_RULES = [f"RLS{i:03d}" for i in range(1, 11)]
 CLOUD_CHECKS = ("cloud/iac-policy", "cloud/iam", "cloud/plan-fresh", "cloud/no-plan-files", "cloud/checkov",
                 "cloud/trivy", "cloud/conftest", "cloud/tflint", "cloud/bicep-lint", "cloud/cfn-lint")
 DB_CHECKS = ("db/migration-lint", "db/migration-rollback", "db/rls", "db/rls-tests", "db/squawk", "db/sqlfluff",
-             "db/pgtap", "db/restore-drill")
+             "db/pgtap", "db/pgtap-supabase", "db/restore-drill")
 GUARDS = ("tq/iac-apply-env", "tq/iac-identity-drift", "tq/db-migrate-env", "tq/restore-target", "tq/plan-read",
           "tq/plan-print", "tq/plan-commit", "tq/hub-store-write")
 HUMAN_ONLY = ("tq hub answer", "tq pack baseline", "build-gate approve", "tq allow", "--allow-failing", "--no-drill")
@@ -209,7 +209,7 @@ def test_rls_tests_skill_uses_the_templates_and_local_only_target():
     body = _read(SKILLS / "rls-tests" / "SKILL.md")
     flat = _flat(body)
     for token in ("templates/packs/db/rls_table.test.sql", "templates/packs/db/tests_tq_helpers.sql",
-                  "packs.db.rls.tests", "db/rls-tests", "db/pgtap", "db/rls", "tests_tq", "tester-a", "tester-b",
+                  "packs.db.rls.tests", "db/rls-tests", "db/pgtap", "db/pgtap-supabase", "pack:db/pgtap-supabase", "db/rls", "tests_tq", "tester-a", "tester-b",
                   "supabase test db", "pg_prove", "test_db is not local", "--linked", "--db-url", "tq dotenv",
                   "never real data", "rls_<table>.test.sql"):
         assert token in flat, token

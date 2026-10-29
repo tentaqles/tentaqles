@@ -1,6 +1,6 @@
 ---
 name: rls-tests
-description: "Write and run pgTAP tests that prove Postgres and Supabase row-level security: one rls_<table>.test.sql per exposed table from the db pack template, with two synthetic users, anon and the service role, plus the tests_tq helper schema, then run them against a local test database through the db/pgtap check. Use when a migration adds a table in an exposed schema, when db/rls-tests fails with untested tables, when the user says \"test RLS\", \"prove the policies\", \"pgTAP\", \"can user A see user B's rows\", or when /tentaqles:feature needs the acceptance check that every new exposed table has RLS and a pgTAP file."
+description: "Write and run pgTAP tests that prove Postgres and Supabase row-level security: one rls_<table>.test.sql per exposed table from the db pack template, with two synthetic users, anon and the service role, plus the tests_tq helper schema, then run them against a local test database through the db/pgtap check (db/pgtap-supabase in Supabase mode). Use when a migration adds a table in an exposed schema, when db/rls-tests fails with untested tables, when the user says \"test RLS\", \"prove the policies\", \"pgTAP\", \"can user A see user B's rows\", or when /tentaqles:feature needs the acceptance check that every new exposed table has RLS and a pgTAP file."
 argument-hint: "[<schema.table> ...] [--run]"
 ---
 
@@ -10,8 +10,11 @@ Policies that nobody tests are policies that nobody knows work. The db pack's
 `db/rls` check judges the policies from the migrations; this skill proves them
 by running queries as real roles against a local database. The `db/rls-tests`
 check fails when a table in an exposed schema with RLS has no test file that
-names it; `db/pgtap` (required when `pg_prove` or `supabase` is in
-`packs.db.tools`) runs the files.
+names it. The pgTAP check runs the files and is required when `pg_prove` or
+`supabase` is in `packs.db.tools`. It is `db/pgtap` (pg_prove), or
+`db/pgtap-supabase` (`supabase test db`) when `supabase` is declared, or when a
+Postgres migrations entry uses the `supabase` migrator and `pg_prove` is not
+declared; the DoD item is `pack:db/pgtap` or `pack:db/pgtap-supabase`.
 
 ## 1. Find what needs a test
 
@@ -68,8 +71,9 @@ For each table, fill `templates/packs/db/rls_table.test.sql` and write it as
 
 The target is `packs.db.test_db`, and it must be local: `localhost`,
 `127.0.0.1`, `::1`, a Unix socket or a compose service named in
-`test_db.hosts`. Anything else makes `db/pgtap` fail with `test_db is not
-local` before anything connects. tq resolves `test_db.url_env` through `tq
+`test_db.hosts`. Anything else makes the pgTAP check (`db/pgtap` or
+`db/pgtap-supabase`) fail with `test_db is not local` before anything
+connects. tq resolves `test_db.url_env` through `tq
 dotenv`; never read `.env` files and never print the URL.
 
 ```bash

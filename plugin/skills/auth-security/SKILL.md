@@ -78,7 +78,7 @@ Details and tradeoffs: [references/sessions-tokens.md](references/sessions-token
   user-editable metadata, `anon` grants, views without `security_invoker`,
   `SECURITY DEFINER` without `search_path`), and the "test as `anon` and as a
   second user" row by the `rls-tests` skill's pgTAP files (`db/rls-tests`,
-  `db/pgtap`).
+  `db/pgtap`, or `db/pgtap-supabase` in Supabase mode).
 
 ## 5. Secrets
 

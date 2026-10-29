@@ -32,6 +32,8 @@ assume it is):
 ## dod
 
 - List `pack:db/rls`, `pack:db/rls-tests` and, when `pg_prove` or `supabase`
-  is declared, `pack:db/pgtap`. `db/pgtap` failing with "test_db is not local"
-  means the config points at a shared database: report it to the human, never
-  point the tests at another server.
+  is declared, the pgTAP item: `pack:db/pgtap-supabase` when `supabase` is
+  declared (or a Postgres migrations entry uses the `supabase` migrator and
+  `pg_prove` is not declared), otherwise `pack:db/pgtap`. Either failing with
+  "test_db is not local" means the config points at a shared database: report
+  it to the human, never point the tests at another server.

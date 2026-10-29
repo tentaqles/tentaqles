@@ -15,6 +15,24 @@ triage raises one of its flags.
 A workspace with no `packs:` block has no packs: `tq pack check` prints
 `no packs enabled` and exits 0.
 
+**Always on, with or without a pack.** These core rules protect the pack
+approvals and config. They apply in every workspace and are never-disable
+(`guard.disable` and `guard.actions` skip them):
+
+- `tq/hub-store-write`: agents cannot write tq's hub store, pack ledgers,
+  claims or plans. A hook-time check also denies any agent shell or file access
+  to `$TQ_HOME` `hub/`, `packs/`, `build-gate/`, `trust/`, `guard/`,
+  `guard.yaml`, `config.yaml` and `audit.jsonl`, under any spelling of the path.
+- `tq/human-answer`: an agent cannot answer an approval
+  (`tq hub answer`, the hub's answer endpoints) or run an apply
+  (`tq pack <pack> ... apply`).
+- `tq/pack-config-change`: asks before an agent edits `tq-packs.yaml`, a
+  baseline file or the manifest's `packs:` block.
+- `tq/secret-store-shell`: the pack ledger key in the OS keychain is never
+  read from the shell.
+
+See [CLAUDE-HOOK.md](CLAUDE-HOOK.md) for every rule.
+
 ## Config
 
 ### The manifest `packs:` block (trusted)
@@ -32,7 +50,7 @@ packs:
 ```
 
 - The block is part of `.tentaqles.yaml`, so `tq allow` pins it. An unknown pack
-  name, an unknown pack key or a tool name outside `[a-z0-9-]` is a load error. The
+  name, an unknown pack key or a tool name outside `[a-z0-9_-]` is a load error. The
   secret scan runs over it as over the rest of the manifest: it holds names, never
   values.
 - A non-empty block without `enabled` is enabled. `enabled: false` turns a pack off.
@@ -56,12 +74,13 @@ schema. When it is merged with the manifest, the stricter value always wins:
 
 | Key kind | Merge rule |
 |---|---|
-| `enabled` | OR: a repo may enable a pack, never disable one the manifest enabled |
+| `enabled` | trusted layer only: only the manifest enables a pack. A `tq-packs.yaml` block for a pack the manifest does not configure is ignored and reported |
 | `tools` | union |
 | path lists | union |
 | upper bounds (cost caps, drift `warn`/`fail`, `valid_for`) | minimum |
 | lower bounds (`drift.metrics.<m>.min`) | maximum |
-| `tool_paths` | ignored: executable locations are trusted-layer only |
+| `tool_paths`, `baseline` | ignored: trusted-layer only |
+| any key without a merge rule | ignored: trusted-layer only |
 | commands (`ml.promotion.command`, `ml.drift.current_command`) | allowed; they run only from a human-confirmed command or a frozen DoD run |
 
 A key that tries to loosen a trusted value is ignored and reported by `tq doctor`
@@ -82,8 +101,16 @@ edits `tq-packs.yaml` or a baseline file.
 
 Without a selection flag, `tq pack check` takes the working tree against `HEAD`
 plus untracked files. `--all` treats every tracked file as changed (diff checks
-skip). A check that needs warehouse or cloud credentials gets them only from the
-inherited environment: `tq dotenv run -- tq pack check`.
+skip). A tool gets a filtered environment, not the parent one: a base list (`PATH`,
+`HOME`, `TEMP`, locale and a few more) without anything named like a secret,
+plus the names its check declares (dbt's profile variables, the cloud CLI's
+config homes and so on). A check that needs warehouse or cloud credentials gets
+them only through a declared name, for example `tq dotenv run -- tq pack check`.
+A tool resolved inside the repository (the project `.venv`, `node_modules/.bin`)
+never gets a secret-looking name; the check gets a `tq/tool-env` warning naming
+it. Keep such a tool in `tool_paths` or outside the repo when it needs a
+credential. Every tool also gets `DO_NOT_TRACK=1`, plus the known telemetry
+opt-outs of dbt, tflint, trivy, dvc and dagster.
 
 `--json` prints schema `tq.packs/v1`:
 
@@ -110,8 +137,13 @@ The build gate (`/tentaqles:build`, `/tentaqles:dod`) ties packs to the plan:
 
 - **At approval** it runs `tq pack list --enabled --json` (10 s) and freezes the
   enabled packs and the `config_hash` with the plan. Without tq, or with a tq
-  that has no `pack` command, it freezes no packs and no hash. An approval is refused when tq is there but the pack config
-  can't be read (a config error, a timeout, output that is not JSON).
+  that has no `pack` command, it freezes no packs and no hash. An approval is
+  refused when tq is there but the pack config can't be read (a config error, a
+  timeout, output that is not JSON), and when `tq pack list` reports
+  `problems`, such as a `tq-packs.yaml` that tried to loosen or enable
+  something. Since this runs even with no pack configured, approval also fails
+  closed in a workspace whose manifest is untrusted or invalid, or whose tq
+  registry cannot be read: fix the workspace (`tq doctor`, `tq allow`) first.
 - **In the definition of done** it runs
   `tq pack check --json --base <approval base> --budget <B>s` with a subprocess
   timeout of `B + 30` s. `B` is 600, or the `pack_budget` (seconds, at most 1800)
@@ -136,6 +168,27 @@ on-ramp notes of the enabled packs, `plugin/skills/pack/references/onramps/<pack
 (one `## <on-ramp>` section per skill they change). The `pack` skill explains the
 results and how to fix a declared tool that is missing.
 
+## Known behaviours
+
+- **Unknown global flags floor to the strictest environment.** The cloud and db
+  gates read a tool's documented global flags. A flag tq does not know, written
+  before the subcommand and followed by another word, may take that word as its
+  value or not, so tq cannot tell which subcommand runs. Such a command counts
+  as an apply (or a migration) to the **strictest** declared environment, with
+  no approval to match: `supabase --x v db push`, `terraform -foo x apply`,
+  `pulumi --x a b up`, and the same for tofu, cdk/cdktf, az, aws and sam. With
+  `approve` that is a deny. Put the flag after the subcommand, or report the
+  missing flag (tool, flag, whether it takes a value, a link to the tool's
+  docs) as an issue on the tentaqles repository so it can be added.
+- **Pack approvals are answered in the terminal only.** `tq hub answer` needs a
+  TTY and the typed binding, and the board refuses the answer. A machine with
+  no OS keychain (`packs-keychain-missing` in `tq pack doctor`) cannot grant
+  pack approvals.
+- **`pwsh -File` and script files ask.** With data or ml enabled, a PowerShell
+  script file, `pwsh -Command -` or an undecodable `-EncodedCommand` asks, since
+  the guards cannot read it. A bash script file asks only when its content names
+  the guard's tool.
+
 ## Index
 
 Each pack workstream documents its checks, config keys, guard rules and reviewers
@@ -155,3 +208,4 @@ on its own page in [`docs/packs/`](packs/):
 | db | [Migrations](packs/db-migrations.md) | migration checks and `db-reviewer` |
 | db | [RLS](packs/db-rls.md) | row-level security tests |
 | db | [Restore drill](packs/db-restore-drill.md) | restore drills and their freshness |
+| all | [Framework security](packs/framework-security.md) | the core rules, the state-dir check, approvals and the tool environment |

@@ -9,7 +9,7 @@ You look for the way this migration locks a hot table, breaks the code that is r
 
 ## Input
 
-The checkpoint slice, the review bundle (`.claude/build/<slug>/review-<id>.md`), the spec slice and its `## Migration plan` (with `### Rollback`), `CLAUDE.md`, `docs/LEARNINGS.md`, `docs/threat-model.md` when present, and the triage flags the caller passes (`db_migration`, `rls_change`, `schema`, `migration`, `rls`, `data_loss`). The bundle carries the `db/*` results of `tq pack check --pack db`: `db/migration-lint`, `db/migration-rollback`, `db/rls`, `db/rls-tests`, `db/restore-drill` and the declared external checks (`db/squawk`, `db/sqlfluff`, `db/pgtap`), with their `file:line level rule message` findings.
+The checkpoint slice, the review bundle (`.claude/build/<slug>/review-<id>.md`), the spec slice and its `## Migration plan` (with `### Rollback`), `CLAUDE.md`, `docs/LEARNINGS.md`, `docs/threat-model.md` when present, and the triage flags the caller passes (`db_migration`, `rls_change`, `schema`, `migration`, `rls`, `data_loss`). The bundle carries the `db/*` results of `tq pack check --pack db`: `db/migration-lint`, `db/migration-rollback`, `db/rls`, `db/rls-tests`, `db/restore-drill` and the declared external checks (`db/squawk`, `db/sqlfluff`, `db/pgtap` or `db/pgtap-supabase`), with their `file:line level rule message` findings.
 
 Your checklist is `skills/db-migration/references/review-checklist.md` in the plugin (the caller gives you its path); keep its row ids (`D1`...`D12`). For a new index or foreign key, the `index-advisor` skill's rules are the reference.
 

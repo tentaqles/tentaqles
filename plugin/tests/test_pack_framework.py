@@ -515,7 +515,9 @@ def test_packs_doc_is_an_index_of_the_pack_docs():
                   "config_hash", "packs/", "## Index"):
         assert token in text, token
     for link in re.findall(r"\]\((packs/[^)]+)\)", text):
-        assert re.fullmatch(r"packs/(data|ml|cloud|db)-[a-z0-9-]+\.md", link), link
+        assert re.fullmatch(r"packs/((data|ml|cloud|db)-[a-z0-9-]+|framework-security)\.md", link), link
+        # final review M1: every linked page exists
+        assert (REPO / "docs" / link).is_file(), link
 
 
 def test_ci_templates_job_loops_over_every_template():
