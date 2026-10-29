@@ -65,7 +65,9 @@ func newPromoteRequestCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "request <model> <version> --to <target>",
 		Short: "Check the model and ask a human to approve its promotion",
-		Args:  cobra.ExactArgs(2),
+		// It only asks (approval.Ask); tq/human-answer lets agents run it.
+		Annotations: map[string]string{packs.AnnotationHumanOnly: packs.ApprovalAsk},
+		Args:        cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
 			if to == "" {
 				return errors.New("--to <target> is required")
@@ -130,7 +132,9 @@ func newPromoteApplyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "apply <decision>",
 		Short: "Human only: verify the approval, show the promotion command, and run it after a typed yes",
-		Args:  cobra.ExactArgs(1),
+		// The executor: HumanOnly, Confirm, Claim; tq/human-answer denies it to agents.
+		Annotations: map[string]string{packs.AnnotationHumanOnly: packs.HumanOnlyExecute},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			in, err := packs.FromCommand(c)
 			if err != nil {
