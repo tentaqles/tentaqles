@@ -13,6 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func codexAnswerJSON(t *testing.T, out string) (decision, reason string) {
@@ -187,7 +188,19 @@ func TestCodexRulesHome(t *testing.T) {
 // permission mode, so even an ask a prompt rule in CODEX_HOME would cover is
 // a deny; never an ask, never empty.
 func TestPreToolUseAgentCodexAsksDeny(t *testing.T) {
-	root := setupTrustedWorkspaceWithManifest(t, "acme", "identities: { gh: {}, codex: {} }\n")
+	// A valid manifest that isolates codex (the setup helper already writes
+	// an identities key, so the body must not add a second one).
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	mp := filepath.Join(root, manifest.FileName)
+	if err := os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\nidentities: { gh: {}, codex: {} }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := trust.Allow(manifestHash(t, root)); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := resolveTrusted(root); w == nil || !codexIsolated(w) {
+		t.Fatal("the fixture must resolve to a trusted workspace that isolates codex")
+	}
 	dir := paths.IdentityDir("acme", "codex")
 	t.Setenv("CODEX_HOME", dir)
 	prev := codexPromptOS
