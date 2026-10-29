@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/packs"
 )
 
@@ -18,7 +19,7 @@ func runCostCmd(t *testing.T, cfg packs.Config, stdin string, args ...string) (s
 	root := t.TempDir()
 	oldEnv, oldExit := costCmdEnv, costExit
 	t.Cleanup(func() { costCmdEnv, costExit = oldEnv, oldExit })
-	costCmdEnv = func() (costEnv, error) {
+	costCmdEnv = func(*cobra.Command) (costEnv, error) {
 		return costEnv{Root: root, Config: cfg, Tools: packs.NewToolRunner(root, cfg)}, nil
 	}
 	code := 0

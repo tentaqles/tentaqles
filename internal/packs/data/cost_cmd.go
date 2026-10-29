@@ -13,8 +13,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
-	"github.com/tentaqles/tentaqles/internal/registry"
-	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
 // Exit codes of tq pack data cost estimate.
@@ -34,38 +32,15 @@ type costEnv struct {
 	Tools     packs.ToolRunner
 }
 
-// costCmdEnv builds the environment from the working directory: the trusted
-// workspace's manifest (none outside one), tq-packs.yaml at the repo root, and
-// the tool runner. Tests replace it.
-var costCmdEnv = func() (costEnv, error) {
-	cwd, err := os.Getwd()
+// costCmdEnv is the command's run context from packs.FromCommand: the
+// trusted manifest merged with tq-packs.yaml, the repo root and the tool
+// runner. Tests replace it.
+var costCmdEnv = func(c *cobra.Command) (costEnv, error) {
+	in, err := packs.FromCommand(c)
 	if err != nil {
 		return costEnv{}, err
 	}
-	env := costEnv{Root: cwd}
-	if r, err := packs.RepoRoot(context.Background(), cwd); err == nil {
-		env.Root = r
-	}
-	var ws *resolve.Workspace
-	if reg, err := registry.Load(); err == nil {
-		ws = resolve.Resolve(cwd, reg).Workspace
-	}
-	if ws != nil && ws.Manifest != nil {
-		env.Workspace = ws.Name
-		cfg, err := packs.LoadConfig(ws.Manifest, env.Root)
-		env.Config = cfg
-		if err != nil {
-			return env, err
-		}
-	} else {
-		cfg, err := packs.LoadConfig(nil, env.Root)
-		env.Config = cfg
-		if err != nil {
-			return env, err
-		}
-	}
-	env.Tools = packs.NewToolRunner(env.Root, env.Config)
-	return env, nil
+	return costEnv{Root: in.Root, Workspace: in.Workspace(), Config: in.Config, Tools: in.Tools}, nil
 }
 
 // costExit ends the process with a code (tests replace it).
@@ -131,7 +106,7 @@ Exit: 0 within the cap, 1 over the cap, 2 usage or config error,
 			if len(sql) > estimateMaxSQL {
 				return usage("the query is larger than %d bytes", estimateMaxSQL)
 			}
-			env, err := costCmdEnv()
+			env, err := costCmdEnv(cmd)
 			if err != nil {
 				return usage("%v", err)
 			}
