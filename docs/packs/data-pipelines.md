@@ -55,6 +55,7 @@ packs:
 | | | `fabric-no-parameters-cell`, `fabric-pinned-lakehouse`, `fabric-copy-no-retry` | warn |
 | `data/synapse-artifacts` | built-in | `synapse-inline-secret` | error |
 | | | `synapse-hardcoded-pool` | warn |
+| | | `synapse-unparsed` | warn |
 | `data/notebook-outputs` | built-in | `notebook-output-pii` | error |
 | | | `notebook-outputs` | warn |
 | `data/dagster-validate` | external `dagster` (timeout 120 s) | the tool's exit code | fail on a non-zero exit |
@@ -65,8 +66,9 @@ Files that import `airflow` and build a `DAG(...)` or `@dag(...)`.
 
 - `airflow-dynamic-start-date`: `start_date` from `datetime.now()`, `utcnow()`,
   `today()`, `date.today()`, `days_ago(...)`, `pendulum.now()` or
-  `timezone.utcnow()`, as a keyword or in `default_args`. Use a fixed
-  `pendulum.datetime(...)`.
+  `timezone.utcnow()`, as a keyword or in `default_args`, directly or through
+  a name assigned from one of those (`YESTERDAY = datetime.now() - timedelta(1)`,
+  then `"start_date": YESTERDAY`). Use a fixed `pendulum.datetime(...)`.
 - `airflow-catchup-unset`: no `catchup=` on the DAG. Airflow 3 defaults to `False`
   and Airflow 2 to `True`, so say which one you mean.
 - `airflow-no-retries`: no `retries` in `default_args` or on any task.
@@ -81,8 +83,10 @@ Wall-clock time where the run's logical date belongs:
 - Python: `datetime.now()`, `utcnow()`, `today()`, `date.today()`, `pendulum.now()`,
   `current_date()`, `current_timestamp()`, `getdate()` or `now()` inside
   `.filter(...)`, `.where(...)`, `.query(...)`, `.isin(...)`, `.between(...)`,
-  `.loc[...]` or a `partition...=` value. A variable assigned from one of those and
-  used in a filter counts too.
+  `.loc[...]`, a pandas boolean mask (`df[df.order_date == date.today()]`: a
+  subscript holding a comparison or `&`, `|`, `~`) or a `partition...=` value. A
+  variable assigned from one of those and used in a filter counts too. A column
+  pick (`df["col"]`), a slice and a column assignment are not filters.
 - SQL, in `.sql` files and in Python string literals: `CURRENT_DATE`,
   `CURRENT_TIMESTAMP`, `GETDATE()`, `GETUTCDATE()`, `SYSDATE`, `SYSDATETIME()`,
   `NOW()` or `TODAY()` after `WHERE`, `HAVING`, `QUALIFY`, `ON` or `PARTITION`.
@@ -94,10 +98,12 @@ Wall-clock time where the run's logical date belongs:
 An append (`.mode("append")`, `mode="append"`, `if_exists="append"`,
 `if_table_exists="append"`, `.insertInto(...)` without `overwrite=True`,
 `INSERT INTO ... SELECT`) in a file that has no dedupe anywhere. Dedupe means
-`MERGE INTO`, `.merge(`/`whenMatched`, `replaceWhere`, `partitionOverwriteMode`, an
-overwrite or replace mode, `INSERT OVERWRITE`, `DELETE FROM`, `ON CONFLICT`,
-`dropDuplicates`/`drop_duplicates`, `TRUNCATE`, an upsert or
-`QUALIFY ROW_NUMBER`. It is a warning: a log table may append by design, and the
+a Delta merge (`whenMatched*`/`whenNotMatched*`), `replaceWhere`,
+`partitionOverwriteMode`, an overwrite, replace or merge mode,
+`dropDuplicates`/`drop_duplicates` or an upsert in code, and `MERGE`, `DELETE`,
+`TRUNCATE`, `INSERT OVERWRITE`, `ON CONFLICT` or `QUALIFY ROW_NUMBER` in SQL (a
+`.sql` file or a Python string literal). Comments, docstrings and SQL string
+values never count, and a bare `.merge(` is a pandas join, not a dedupe. It is a warning: a log table may append by design, and the
 reviewer's D1 row decides.
 
 ### `data/pipeline-pii-output`
@@ -127,7 +133,9 @@ A heuristic; the reviewer (D5) judges the rest.
 5. **Masked.** The use sits inside a call to `sha2`, `sha256`, `sha1`, `md5`, `hash`,
    `farm_fingerprint`, `xxhash64`, `mask` or `hashbytes`, at any depth, or to a
    function listed in `packs.data.pipelines.masking`. This is where a project's own
-   masking macros go, for example a dbt macro `mask_email`.
+   masking macros go, for example a dbt macro `mask_email`. A dotted name
+   (`acme.mask_email`) matches a call by its whole name or a dotted suffix, so
+   `acme.mask_email(...)` and `udfs.acme.mask_email(...)` are both masked.
 
 The finding names the column, its class and the output, never a value. To fix it,
 mask the column or drop it. If the output may hold the data, classify it in the
@@ -163,6 +171,9 @@ change.
 - `synapse-hardcoded-pool` (warn): `sqlPool.referenceName` in a pipeline, or
   `currentConnection.poolName` in a SQL script, names a pool literally (not `@...`
   and not the serverless `Built-in` pool).
+- `synapse-unparsed` (warn): a resource file does not parse as JSON, so its
+  credentials and pools were not checked. Valid JSON without `properties` is not
+  a Synapse resource and is not counted.
 
 ### `data/notebook-outputs`
 
@@ -221,7 +232,20 @@ The guard asks before an agent starts an orchestrator run (Bash and PowerShell):
 | `az datafactory pipeline create-run`, `az synapse pipeline create-run` | starts a run |
 
 `--help` and `-h` are allowed. The guard is pure: it splits the command into shell
-segments and words, and it reads no files. `guard.disable` and `guard.actions` (for
+segments and words, and it reads no files. A bash `\` or PowerShell backtick
+before a newline joins the two lines. It looks through wrappers:
+
+- launchers and runners: `sudo`, `env`, `nohup`, `VAR=value`, `uv run`,
+  `poetry run`, `python -m` (any `python3.N`, `py`, `pypy3`);
+- shells: `bash|sh|zsh -c '...'`, `pwsh|powershell -Command ...`, `cmd /c ...`,
+  `eval`, whose script is split again;
+- `astro dev run <args>`, which is the Airflow CLI;
+- container and remote wrappers, whose inner command is matched at every later
+  word: `docker|podman [compose] exec|run`, `docker-compose exec|run`,
+  `kubectl|oc exec|run|debug`, `ssh host '...'` and `tq dotenv run [--file f] --`.
+
+Nesting is bounded (4 levels and a step budget). A command nested deeper than that
+fails closed: the guard asks. `guard.disable` and `guard.actions` (for
 example `deny`) apply to it as to every guard. Detection hints for `tq doctor`
 (`packs-suggest`) are `from airflow`, `import dagster`, `from prefect`, a Fabric
 `.platform` file, Synapse `notebook/*.json` with `nbformat` and `pipeline/*.json`
