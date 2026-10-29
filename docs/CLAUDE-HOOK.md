@@ -183,31 +183,78 @@ the stale shell, the forgotten `tq allow` - not to contain an adversary.
 ## Unattended mode
 
 Unattended mode lets a bypass or auto session run without tq's *confirms*
-(the `ask` decisions of PreToolUse) in the workspace or folders you choose.
-It is for sandboxed demo folders and long agent runs, not for production
-work.
+and *blocks* (the `ask` and `deny` decisions of PreToolUse) in the workspace
+or folders you choose, except for three groups of rules that stay enforced
+(below). It is for sandboxed demo folders and long agent runs, not for
+production work.
 
-**What it skips.** Only the `ask` branch, and only when all of these hold:
+**When it applies.** Only when all of these hold:
 
 - the manifest has a `guard.unattended` block that covers the session's cwd;
 - for a file tool (Edit, Write, ...), the target file's folder is covered too:
-  editing outside the covered folder still asks;
+  editing outside the covered folder still asks and blocks;
 - the workspace's current manifest is trusted, and `tq allow --bypass <ws>`
   was run for it (a separate trust step);
 - the session's permission mode is exactly `bypassPermissions` or `auto`
-  (any other mode asks as before);
-- none of the matched rules is in the always-ask set or in `keep_asking`.
+  (any other mode asks and blocks as before).
 
-**What it never skips.**
+**What it skips.** Every ask and every deny whose rule is not always
+enforced: destructive SQL, cloud deletes, IaC destroy, force pushes
+(`tq/force-push-main` included), `tq/gh-repo-delete`, migrations, MCP
+writes, tracker CLI writes, registry writes, GitHub Actions pins
+(`tq/gha-*`), the PII rules, `tq/commit-message`, the Jev judgment rules
+`jev/destructive-sql` and `jev/rls-weakened`, and the custom rules of the
+manifest, the global guard file and `.claude/tq-rules.yaml`. When a skipped
+deny hid a weaker rule that is enforced, that rule still decides (a command
+that matches both `tq/force-push-main` and `tq/guard-change` is asked).
 
-- Deny rules: in Claude Code a blocked command stays blocked, in every mode.
-  (tq's guard does not run inside Codex; see `CLAUDE-SETTINGS.md`, "Codex".)
-- `tq/guard-change`: this confirm is always asked. It covers `tq guard`,
-  `tq allow`, `tq deny` and `tq unattended on|off`, so an agent cannot widen
-  its own permissions.
-- Anything in `keep_asking`. The default is `tq/iac-apply` and
-  `tq/remote-migration`; set `keep_asking: []` to keep nothing, or list your
-  own ids (`tq guard list` shows them; unknown ids are a `tq doctor` warning).
+**What it never skips.** Three groups, listed in one table
+(`guardcfg.UnattendedGroups`; a test fails when a new built-in rule is not
+classified there):
+
+- **Identity**: the identity guard in full (`blocked-command`,
+  `wrong-cloud`, `neutral-remote`, `untrusted`, `env-drift`,
+  `claude-config-drift`, `git-email-drift`, `gh-user`; it runs before the
+  rules and the unattended check), and `tq/cross-client-mcp`.
+- **Secrets**: `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`,
+  `tq/secret-store-read`, `tq/secret-store-shell`, `tq/commit-secret` (the
+  commit secret scan), and the Jev rules `jev/service-role-client` and
+  `jev/n8n-inline-credentials`.
+- **Self-protection**: `tq/guard-change` (covers `tq guard`, `tq allow`,
+  `tq deny` and `tq unattended on|off`), `tq/guard-file-write`,
+  `tq/settings-widen`, `tq/settings-shell-write` (also covers
+  `.claude/tq-rules.yaml`) and the `tq/guard-error` fail-safe ask, so an
+  agent cannot widen unattended mode or switch the guard off. The human-only
+  commands (`tq secret`, `tq hub answer`, `tq hub push`,
+  `tq hub sync retry`, the build gate's approve/judge/answer/finish/token
+  and `dod --override`) refuse agent sessions in their own code, outside the
+  hook, so unattended mode does not change them either. Trust is pinned to
+  the manifest's hash: an edit of `.tentaqles.yaml` makes it untrusted,
+  which turns unattended mode off until a human runs `tq allow`. tq has no
+  rule of its own for writes to the trust store (`$TQ_HOME/trust`).
+
+Also enforced:
+
+- Anything in `keep_asking`, whatever its action. The default is
+  `tq/iac-apply` and `tq/remote-migration`; set `keep_asking: []` to keep
+  nothing, or list your own ids (`tq guard list` shows them; unknown ids are
+  a `tq doctor` warning).
+- A manifest rule (`guard.rules`) with `unattended: enforce`. The field is
+  optional, and `enforce` is its only value (anything else is a manifest
+  load error). A global or project rule may set it too; there any other
+  value also counts as `enforce`.
+
+  ```yaml
+  guard:
+    rules:
+      - id: acme/no-prod-db
+        action: deny
+        command: '\bprod-db\b'
+        reason: the production database is off limits
+        unattended: enforce
+  ```
+
+tq's guard does not run inside Codex; see `CLAUDE-SETTINGS.md`, "Codex".
 
 **Manifest block** (edit with `tq unattended`, or by hand and then `tq allow`):
 
@@ -226,22 +273,24 @@ guard:
 |---|---|
 | `tq unattended on [--project <dir>] [--codex-sandbox <mode>]` | turn it on for the workspace, or for one folder |
 | `tq unattended off [--project <dir>]` | turn it off for one folder (an error if it is not listed), or for the workspace and every folder; `keep_asking` and `codex_sandbox` stay for the next `on` |
-| `tq unattended status` | what is covered and whether it is effective |
-| `tq unattended log [--since 24h]` | the confirms it skipped (reads the current and the rotated file) |
+| `tq unattended status` | what is covered, whether it is effective, and the always-enforced rules |
+| `tq unattended log [--since 24h]` | the confirms and blocks it skipped, with the action (`ask` or `deny`) of each (reads the current and the rotated file) |
 
 `on` and `off` re-trust the manifest like `tq guard --ws` does, so they print
 only the bypass hint when `tq allow --bypass` is still missing.
 
-**Audit.** Every skipped confirm is appended to
-`$TQ_HOME/guard/unattended.jsonl` (time, workspace, scope, mode, rule ids,
-tool, command). The command is masked with the workspace's data classes and
-cut to 200 characters; the file rotates to `unattended.jsonl.1` at 5 MB.
+**Audit.** Every call whose confirm or block was skipped is appended to
+`$TQ_HOME/guard/unattended.jsonl` (time, workspace, scope, mode, action,
+rule ids, tool, command). `action` is the strictest verdict skipped:
+`deny` for a block, `ask` for a confirm (records written before skipped
+blocks existed have none and count as confirms). The command is masked
+with the workspace's data classes and cut to 200 characters; the file rotates to `unattended.jsonl.1` at 5 MB.
 Write errors never fail the hook.
 
 **Visibility.** SessionStart adds one line for a workspace with the block:
-`Unattended: on (demo-todo) · 2 confirms skipped in 24h · applies in bypass
-and auto sessions`, or `Unattended: configured, not effective (needs tq allow
---bypass <ws>)`, or `Unattended: on for demo-todo (not this folder)` (`on for
+`Unattended: on (demo-todo) · 2 confirms and 1 block skipped in 24h ·
+applies in bypass and auto sessions`, or `Unattended: configured, not
+effective (needs tq allow --bypass <ws>)`, or `Unattended: on for demo-todo (not this folder)` (`on for
 the workspace (not this folder)` when the cwd is outside the workspace root).
 `tq doctor` warns with `unattended-not-effective`, `unattended-unknown-rule`
 and `unattended-cloud` (unattended plus a cloud identity).

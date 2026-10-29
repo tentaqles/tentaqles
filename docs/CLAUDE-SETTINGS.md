@@ -124,6 +124,6 @@ conflict and never touches your keys or file. `tq unattended off`,
 | `memory-stale` | a workspace's `.claude/memory.db` was last written more than 48 h before its newest Claude transcript: the plugin hooks are not capturing |
 | `data-block-missing` | schema or fixture files name personal-data columns (email, cpf, phone, ...) and the manifest has no `data:` block; run /tentaqles:classify-data |
 | `python-store-alias` | `python3` is the Microsoft Store alias (slower hook start); set `TENTAQLES_PY` |
-| `unattended-not-effective` | `guard.unattended` is configured but `tq allow --bypass <ws>` was not run: confirms are still asked |
+| `unattended-not-effective` | `guard.unattended` is configured but `tq allow --bypass <ws>` was not run: every rule still applies |
 | `unattended-unknown-rule` | `guard.unattended.keep_asking` names a rule id tq does not know |
-| `unattended-cloud` | unattended mode is effective in a workspace with a cloud identity: Claude can run cloud CLIs without asking |
+| `unattended-cloud` | unattended mode is effective in a workspace with a cloud identity: Claude can run cloud CLIs without asking (the identity guard, wrong-cloud included, still applies) |

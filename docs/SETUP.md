@@ -215,8 +215,9 @@ connector, and ends with a table of what is connected.
 
 ## Unattended runs
 
-To let a bypass or auto Claude session run without tq's confirms in a demo
-folder (see `CLAUDE-HOOK.md`, "Unattended mode"):
+To let a bypass or auto Claude session run without tq's confirms and blocks
+in a demo folder (see `CLAUDE-HOOK.md`, "Unattended mode"; identity, secret
+and self-protection rules stay enforced):
 
 1. Optional: set `claude.permission_mode: bypass` in the manifest, so the
    workspace's sessions start in bypass mode.

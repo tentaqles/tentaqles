@@ -63,7 +63,7 @@ tests/                  pytest suite
 
 - **Lazy session**: `MemoryStore.end_session()` auto-starts a session if none is active. Don't assume `start_session()` was called.
 
-- **tq's PreToolUse may skip confirms** in unattended bypass/auto sessions (`guard.unattended`, see `docs/CLAUDE-HOOK.md`); skills must not rely on a confirm being shown. Deny rules and the `tq/guard-change` confirm are never skipped.
+- **tq's PreToolUse may skip confirms and blocks** in unattended bypass/auto sessions (`guard.unattended`, see `docs/CLAUDE-HOOK.md`); skills must not rely on a confirm or a block. Identity, secret and self-protection rules (the identity guard, `tq/cross-client-mcp`, `.env`/env-dump/secret-store/commit-secret rules, `tq/guard-change`, guard-file and settings rules) are never skipped.
 
 - **Every hook in hooks.json declares a short `timeout`**; capture-only hooks are `async`. A hook without one waits up to 10 minutes when something hangs.
 
