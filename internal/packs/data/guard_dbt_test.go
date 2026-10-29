@@ -1,6 +1,7 @@
 package data
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,45 @@ func TestDBTProdTargetGuard(t *testing.T) {
 		{"Bash", `git commit -m "dbt run --target prod"`, policy.Allow},
 		{"Bash", "ls models/prod", policy.Allow},
 		{"Bash", "dbtx run --target prod", policy.Allow},
+
+		// review r0 Major 1: an option's value is not the subcommand
+		{"Bash", "dbt --log-level debug run --target prod", policy.Deny},
+		{"Bash", "dbt --log-level-file debug build --target prod", policy.Deny},
+		{"Bash", "dbt --log-format json --log-level debug seed -t prod", policy.Deny},
+		{"Bash", "dbt --log-level debug compile --target prod", policy.Allow},
+		{"Bash", "dbt debug --target prod", policy.Allow},
+
+		// review r0 Major 2: dbt after any leading word is a call
+		{"Bash", "timeout 600 dbt run --target prod", policy.Deny},
+		{"PowerShell", "cmd /c dbt run --target prod", policy.Deny},
+		{"PowerShell", "pwsh -c dbt run --target prod", policy.Deny},
+		{"Bash", "nice dbt run --target prod", policy.Deny},
+		{"Bash", "xargs dbt run --target prod", policy.Deny},
+		{"Bash", "if true; then dbt run --target prod; fi", policy.Deny},
+		{"Bash", "! dbt run --target prod", policy.Deny},
+		{"Bash", "docker compose run dbt dbt run --target prod", policy.Deny},
+		{"Bash", "docker compose run dbt dbt compile --target prod", policy.Allow},
+		{"Bash", "python -m dbt.cli.main run --target prod", policy.Deny},
+		{"PowerShell", "Start-Process dbt -ArgumentList 'run --target prod'", policy.Deny},
+		{"PowerShell", "Start-Process -ArgumentList 'run','--target','prod' -FilePath dbt", policy.Deny},
+		{"PowerShell", `& "C:\Program Files\dbt\dbt.exe" run --target prod`, policy.Deny},
+		{"Bash", "DBT_TARGET=prod bash -c 'dbt run'", policy.Deny},
+		{"Bash", `ssh build-host "dbt run --target prod"`, policy.Deny},
+		{"PowerShell", `Write-Host "dbt run --target prod"`, policy.Allow},
+		{"Bash", `grep -rn "dbt run --target prod" docs`, policy.Allow},
+		{"Bash", "cat dbt/run.log", policy.Allow},
+
+		// review r0 Minor 1: the target must be a literal the guard can read
+		{"Bash", "T=prod; dbt run --target $T", policy.Deny},
+		{"Bash", "T=prod; dbt run --target ${T}", policy.Deny},
+		{"PowerShell", `$env:T = "prod"; dbt run --target $env:T`, policy.Deny},
+		{"Bash", "T=dev; dbt run --target $T", policy.Allow},
+		{"Bash", `dbt run --target "$DBT_TARGET"`, policy.Deny},
+		{"PowerShell", "dbt run --target $env:X", policy.Deny},
+		{"Bash", "dbt run --target $(cat target.txt)", policy.Deny},
+		{"Bash", "DBT_TARGET=$X dbt run", policy.Deny},
+		{"Bash", "dbt run -tprod", policy.Deny},
+		{"Bash", "dbt run -tdev", policy.Allow},
 	}
 	for _, c := range cases {
 		o := outcome(t, env, c.tool, c.cmd, guardProdTarget)
@@ -129,10 +169,45 @@ func TestDBTProdTargetDefaultFromProfiles(t *testing.T) {
 	}
 }
 
+// review r0 Minor 2: a profiles.yml outside the repository is never read, and
+// every --profiles-dir outside it (absolute, ~, $HOME, a config dir) denies a
+// write that has no --target.
+func TestDBTProdTargetProfilesDirOutsideRepo(t *testing.T) {
+	home := isolate(t)
+	repo := t.TempDir()
+	writeFile(t, repo, "analytics/dbt_project.yml", "name: acme\nprofile: acme\n")
+	writeFile(t, repo, "analytics/profiles.yml", "acme:\n  target: prod\n")
+	// a config dir ReadLocal could read, holding a dev default: still not read
+	cfgDir := filepath.Join(home, ".config", "dbt")
+	writeFile(t, cfgDir, "profiles.yml", "acme:\n  target: dev\n")
+	env := guardEnv(t, repo, "data: {dbt: {project: analytics}}")
+	for _, dir := range []string{cfgDir, "~/.dbt", "$HOME/.dbt", "${HOME}/.dbt", `$env:USERPROFILE\.dbt`, "%USERPROFILE%\\.dbt"} {
+		o := outcome(t, env, "Bash", "dbt run --profiles-dir "+dir, guardProdTarget)
+		if o.Action != policy.Deny || !strings.Contains(o.Reason, "outside the repository") || !strings.Contains(o.Reason, "--target dev") {
+			t.Errorf("--profiles-dir %s: %+v", dir, o)
+		}
+		if o := outcome(t, env, "Bash", "dbt run --target dev --profiles-dir "+dir, guardProdTarget); o.Action != policy.Allow {
+			t.Errorf("--profiles-dir %s with --target dev: %+v", dir, o)
+		}
+	}
+	// an absolute --profiles-dir inside the repo is read
+	if o := outcome(t, env, "Bash", "dbt run --profiles-dir "+filepath.Join(repo, "analytics"), guardProdTarget); o.Action != policy.Deny || !strings.Contains(o.Reason, `"prod"`) {
+		t.Errorf("absolute in-repo profiles dir: %+v", o)
+	}
+	// an absolute --project-dir outside the repo is not read either
+	if o := outcome(t, env, "Bash", "dbt run --project-dir "+filepath.Join(home, ".config"), guardProdTarget); o.Action != policy.Deny || !strings.Contains(o.Reason, "outside the repository") {
+		t.Errorf("outside project dir: %+v", o)
+	}
+}
+
 func TestDBTFullRefreshGuard(t *testing.T) {
 	isolate(t)
 	env := guardEnv(t, t.TempDir(), "data: {enabled: true}")
-	for _, c := range []string{"dbt run --full-refresh --target dev", "dbt build -f -s fct_orders", "DBT_FULL_REFRESH=true dbt run", "dbt seed --full-refresh"} {
+	for _, c := range []string{"dbt run --full-refresh --target dev", "dbt build -f -s fct_orders", "DBT_FULL_REFRESH=true dbt run", "dbt seed --full-refresh",
+		// review r0 Major 1, Major 2 and Minor 6
+		"dbt --log-level debug run --full-refresh", "timeout 600 dbt build --full-refresh", "cmd /c dbt run --full-refresh",
+		"dbt clone --full-refresh --state prod-artifacts", "DBT_FULL_REFRESH=1 bash -c 'dbt run'",
+		"export DBT_FULL_REFRESH=true; pwsh -Command 'dbt build'"} {
 		o := outcome(t, env, "Bash", c, guardFullRefresh)
 		if o.Action != policy.Ask || !o.Handled || !strings.Contains(o.Reason, "drops and rebuilds incremental tables") {
 			t.Errorf("%q: %+v", c, o)
@@ -141,7 +216,7 @@ func TestDBTFullRefreshGuard(t *testing.T) {
 			t.Errorf("%q counters: %+v", c, o.Counters)
 		}
 	}
-	for _, c := range []string{"dbt run --target dev", "dbt ls -s x", "grep -f patterns.txt"} {
+	for _, c := range []string{"dbt run --target dev", "dbt ls -s x", "grep -f patterns.txt", `echo "dbt run --full-refresh"`} {
 		if o := outcome(t, env, "Bash", c, guardFullRefresh); o.Action != policy.Allow {
 			t.Errorf("%q: %+v", c, o)
 		}
