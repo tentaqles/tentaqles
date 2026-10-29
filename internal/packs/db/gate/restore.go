@@ -14,14 +14,39 @@ import (
 // restoreWordRe spots a restore in a payload tq cannot open (docker exec,
 // ssh, a script argument): such a restore is denied, since its target
 // cannot be read.
-var restoreWordRe = regexp.MustCompile(`(?i)\b(pg_restore\b|sqlpackage\b[^\n]*[/-]a(ction)?:\s*import|restore\s+database\b|supabase\s+db\s+reset\b[^\n]*--(linked|db-url)|psql\b[^\n]*(\s-f|\s--file|<))|\|\s*(\S*/)?psql\b`)
+var restoreWordRe = regexp.MustCompile(`(?i)\b(pg_restore\b|sqlpackage\b[^\n]*[/-]a(ction)?:\s*import|restore\s+database\b|supabase\s+db\s+reset\b[^\n]*--(linked|db-url)|psql\b[^\n]*(\s-[a-z0-9]*f|\s--file|<|\\(i|ir|include|include_relative)\b))|\|\s*(\S*/)?psql\b`)
 
 var restoreDBRe = regexp.MustCompile(`restore\s+database\b`)
 
+// psqlWordRe spots psql in an opaque payload; psqlOtherRe a psql -c or -l,
+// which give psql something other than its stdin to run.
+var (
+	psqlWordRe  = regexp.MustCompile(`(?i)(^|[\s"'/\\=;(&|])psql(\.exe)?($|[\s"';)&|])`)
+	psqlOtherRe = regexp.MustCompile(`(^|\s)(-[a-zA-Z0-9]*[cl]|--command|--list)([\s=]|$)`)
+)
+
+// pipedPsql: a piped opaque leaf runs psql on its stdin. Only the words after
+// psql count as its flags (ssh -l user box psql acme is not psql -l).
+func pipedPsql(l Leaf) bool {
+	if !l.Piped {
+		return false
+	}
+	at := psqlWordRe.FindStringIndex(l.Raw)
+	if at == nil {
+		return false
+	}
+	return !psqlOtherRe.MatchString(l.Raw[at[1]-1:])
+}
+
+// includeRe is a psql include meta-command (\i, \ir, \include,
+// \include_relative): in a -c value it runs a file, like psql -f.
+var includeRe = regexp.MustCompile(`(^|[\s;=])\\(i|ir|include|include_relative)(\s|$)`)
+
 // The short switches that take no value, which may come before a value
-// flag in a bundle (psql -Xf dump.sql, pg_restore -Cd acme).
+// flag in a bundle (psql -Xf dump.sql, psql -1f dump.sql, pg_restore -Cd
+// acme).
 const (
-	psqlSwitches      = "aAbeEHlnqsStxXz0"
+	psqlSwitches      = "aAbeEHlnqsStxXz01wW"
 	pgRestoreSwitches = "acCelOsxv1wW"
 )
 
@@ -44,6 +69,13 @@ func restoreKind(l Leaf) string {
 	case "psql":
 		if _, ok := pgFlag(l, 'f', "--file", psqlSwitches); ok {
 			return kindPsqlFile
+		}
+		// -c '\i dump.sql' (also \ir, \include): every -c value counts,
+		// and an argument holding the meta-command is one
+		for _, a := range l.Args {
+			if includeRe.MatchString(a) {
+				return kindPsqlFile
+			}
 		}
 		if l.Stdin {
 			return kindPsqlStdin
@@ -264,7 +296,10 @@ func RestoreTarget(call policy.ToolCall, g packs.GuardCtx) (policy.Action, strin
 	for _, l := range Analyze(call.Command, call.Tool == "PowerShell") {
 		kind := restoreKind(l)
 		if kind == "" {
-			if l.Opaque && restoreWordRe.MatchString(l.Raw) {
+			// a pipe into an opaque wrapper (gunzip -c x.gz | ssh box psql
+			// acme): the split cut the pipe off the leaf's Raw, and psql reads
+			// the pipe unless -c or -l gives it something else to run
+			if l.Opaque && (pipedPsql(l) || restoreWordRe.MatchString(l.Raw)) {
 				deny("a restore inside a command tq cannot read (a wrapper, a container or remote shell, a script): its target is unknown, so it is denied. Run the restore tool directly against the local server, or use `tq pack db drill`", "unreadable")
 			}
 			continue

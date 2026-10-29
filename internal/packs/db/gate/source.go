@@ -41,10 +41,10 @@ var configSelectors = map[string][]string{
 }
 
 // envSelectors are variables that select the migrations folder.
-var envSelectors = map[string]string{"DBMATE_MIGRATIONS_DIR": "dbmate", "FLYWAY_LOCATIONS": "flyway", "DJANGO_SETTINGS_MODULE": ""}
+var envSelectors = map[string]string{"DBMATE_MIGRATIONS_DIR": "dbmate", "FLYWAY_LOCATIONS": "flyway", "GOOSE_MIGRATION_DIR": "goose", "DJANGO_SETTINGS_MODULE": ""}
 
-// flagValues returns every value of the named flags (-f v, -f=v, -f:v for
-// one-dash names).
+// flagValues returns every value of the named flags, spelled -f v or -f=v.
+// No listed selector takes the -f:v form.
 func flagValues(l Leaf, names ...string) []string {
 	var out []string
 	for i, a := range l.Args {
@@ -76,15 +76,23 @@ func unboundSource(l Leaf, g packs.GuardCtx) string {
 	if !ok {
 		return "the command moves to a folder tq cannot follow"
 	}
-	if !samePath(dir, g.Cwd()) {
-		return "the command runs in another folder (" + l.Dir + ") than the one the approval was asked in, so its migrations are not the approved ones; run it from the repository's folder"
-	}
+	// The bound paths (and the migrator config files) are hashed from the
+	// repository root, the root GuardCtx.ReadLocal reads from. A command with
+	// no selector reads its migrator's default folder relative to the folder
+	// it runs in, so that folder must be the root itself: the hook's cwd
+	// follows an earlier `cd`, and a session may start in a subfolder.
 	repo := g.RepoRoot()
 	if repo == "" {
 		repo = g.WorkspaceRoot()
 	}
 	if fp, err := packs.FinalPath(repo); err == nil {
 		repo = fp
+	}
+	if fp, err := packs.FinalPath(dir); err == nil {
+		dir = fp
+	}
+	if repo == "" || !samePath(dir, repo) {
+		return "the command runs in a folder other than the repository root, so its migrator's default migrations are not the approved paths (" + strings.Join(roots, ", ") + "); run it from the repository root"
 	}
 	inside := func(p string) bool {
 		if computed(p) {

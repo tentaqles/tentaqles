@@ -450,6 +450,25 @@ func TestRestoreTargetPipesGluedFlagsAndServers(t *testing.T) {
 		{"Bash", "psql -h prod.acme.test -c 'select 1' | grep 1", nil, false},
 		{"Bash", "psql -h prod.acme.test -l | grep acme", nil, false},
 		{"Bash", `ssh box "gunzip -c x.gz | psql acme"`, nil, true},
+		// a pipe into an opaque wrapper that runs psql
+		{"Bash", "gunzip -c x.gz | ssh prod.acme.test psql acme", nil, true},
+		{"Bash", "cat dump.sql | docker exec -i pg psql -h prod.acme.test acme", nil, true},
+		{"Bash", "docker exec -i pg psql -c 'select 1' | grep 1", nil, false},
+		{"Bash", "ssh box psql -l | grep acme", nil, false},
+		{"Bash", "gunzip -c x.gz | ssh -l tester box psql acme", nil, true},
+		{"Bash", "gunzip -c x.gz | ssh box /usr/bin/psql acme", nil, true},
+		// no-value switches bundled before -f
+		{"Bash", "psql postgresql://tester@prod.acme.test/acme -1f dump.sql", nil, true},
+		{"Bash", "psql -h prod.acme.test -wf dump.sql acme", nil, true},
+		{"Bash", "psql -h prod.acme.test -Wf dump.sql acme", nil, true},
+		{"Bash", "psql -h localhost -1f dump.sql scratch", nil, false},
+		// an include meta-command in -c is psql -f
+		{"Bash", `psql -h prod.acme.test acme -c '\i dump.sql'`, nil, true},
+		{"Bash", `psql -h prod.acme.test acme -c '\ir dump.sql'`, nil, true},
+		{"Bash", `psql -h prod.acme.test acme --command='\include dump.sql'`, nil, true},
+		{"Bash", `psql -h prod.acme.test acme -c 'select 1' -c '\i dump.sql'`, nil, true},
+		{"Bash", `ssh box "psql acme -c '\i dump.sql'"`, nil, true},
+		{"Bash", `psql -h localhost scratch -c '\i dump.sql'`, nil, false},
 		// glued short flags
 		{"Bash", "pg_restore -hprod.acme.test -dacme acme.dump", nil, true},
 		{"Bash", "pg_restore -Cd acme -h prod.acme.test acme.dump", nil, true},
@@ -584,6 +603,7 @@ func TestApprovalBindsTheMigrationSource(t *testing.T) {
 	}
 	allow := []struct{ tool, cmd string }{
 		{"Bash", "supabase db push"},
+		{"Bash", "DATABASE_URL=" + pool + " prisma migrate deploy"},
 		{"Bash", "supabase db push --workdir ."},
 		{"Bash", "migrate -path supabase/migrations -database " + pool + " up"},
 		{"Bash", "migrate -path ./supabase/migrations/ -database " + pool + " up"},
@@ -593,6 +613,64 @@ func TestApprovalBindsTheMigrationSource(t *testing.T) {
 			f := approvedProd(t)
 			if a, r, _ := f.migrate(c.tool, c.cmd); a != policy.Allow {
 				t.Fatalf("got %s (%s), want allow", a, r)
+			}
+		})
+	}
+}
+
+// A session whose folder is not the repository root: a command with no
+// selector reads its migrator's default folder there (svc/supabase/migrations),
+// not the approved paths, which are rooted at the repository.
+func TestApprovalNeedsTheRepositoryFolder(t *testing.T) {
+	pool := "postgres://postgres." + prodRef + "@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+	for _, c := range []struct{ tool, cmd string }{
+		{"Bash", "supabase db push"},
+		{"Bash", "DATABASE_URL=" + pool + " prisma migrate deploy"},
+		{"PowerShell", "supabase db push"},
+	} {
+		t.Run(c.cmd, func(t *testing.T) {
+			f := approvedProd(t)
+			f.env.Cwd = filepath.Join(f.repo, "svc")
+			a, r, _ := f.migrate(c.tool, c.cmd)
+			if a != policy.Deny || !strings.Contains(r, "repository") {
+				t.Fatalf("got %s (%s), want deny", a, r)
+			}
+			if strings.Contains(r, "asked in") {
+				t.Fatalf("the reason names a folder the approval does not bind: %s", r)
+			}
+			f.env.Cwd = f.repo
+			if a, r, _ := f.migrate("Bash", "supabase db push"); a != policy.Allow {
+				t.Fatalf("the approval was used by a denied command: %s %s", a, r)
+			}
+		})
+	}
+	// moving back to the repository root from the subfolder matches
+	f := approvedProd(t)
+	f.env.Cwd = filepath.Join(f.repo, "svc")
+	if a, r, _ := f.migrate("Bash", "cd .. && supabase db push"); a != policy.Allow {
+		t.Fatalf("cd .. to the repository: got %s (%s), want allow", a, r)
+	}
+}
+
+// A migrator's default configuration file can redirect a command with no
+// selector, so the approval binds it: adding or editing one after the
+// approval stops the approval from matching.
+func TestApprovalBindsMigratorConfigFiles(t *testing.T) {
+	for _, name := range []string{"alembic.ini", "drizzle.config.ts", "package.json", "knexfile.js", "flyway.conf", "atlas.hcl", "sqitch.conf", "liquibase.properties", "prisma.config.ts", "config/database.yml"} {
+		t.Run(name, func(t *testing.T) {
+			f := approvedProd(t)
+			p := filepath.Join(f.repo, filepath.FromSlash(name))
+			os.MkdirAll(filepath.Dir(p), 0o755)
+			if err := os.WriteFile(p, []byte("script_location = other\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if a, r, _ := f.migrate("Bash", "supabase db push"); a != policy.Deny {
+				t.Fatalf("a config file written after the approval: got %s (%s), want deny", a, r)
+			}
+			// a fresh ask binds it, and both readers hash it the same
+			f.answer(f.ask("prod", diskEvidence(t, f, "")), "apply")
+			if a, r, _ := f.migrate("Bash", "supabase db push"); a != policy.Allow {
+				t.Fatalf("the approval of the config file: got %s (%s), want allow", a, r)
 			}
 		})
 	}

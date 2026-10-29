@@ -52,10 +52,30 @@ type Reader interface {
 // ErrHashBudget is a hash that ran over HashBudget.
 var ErrHashBudget = errors.New("the migrations could not be hashed within the guard's time budget")
 
+// MigratorConfigFiles are the migrators' default configuration files at the
+// repository root. Each can point a command that names no selector at another
+// migrations folder (alembic.ini script_location, package.json prisma.schema,
+// drizzle.config out, knexfile migrations.directory, flyway.conf locations,
+// config/database.yml migrations_paths, ...), so the approval binds them too.
+var MigratorConfigFiles = []string{
+	"alembic.ini",
+	"atlas.hcl",
+	"config/database.yml",
+	"dbconfig.yml",
+	"drizzle.config.cjs", "drizzle.config.cts", "drizzle.config.js", "drizzle.config.json", "drizzle.config.mjs", "drizzle.config.mts", "drizzle.config.ts",
+	"flyway.conf", "flyway.toml",
+	"knexfile.cjs", "knexfile.js", "knexfile.mjs", "knexfile.ts",
+	"liquibase.properties",
+	"package.json",
+	"prisma.config.js", "prisma.config.mjs", "prisma.config.mts", "prisma.config.ts",
+	"sqitch.conf",
+}
+
 // MigrationsHash is the content hash the approval binds: every file under
 // the migrations paths (repo-relative, slash), to MaxMigrationDepth levels,
-// as "path\x00sha256(content)\n" sorted by path. A missing path hashes as
-// missing. deadline zero means no time limit.
+// as "path\x00sha256(content)\n" sorted by path, plus each MigratorConfigFiles
+// entry that exists. A missing path hashes as missing. deadline zero means no
+// time limit.
 func MigrationsHash(r Reader, roots []string, deadline time.Time) (string, error) {
 	var lines []string
 	n := 0
@@ -122,6 +142,20 @@ func MigrationsHash(r Reader, roots []string, deadline time.Time) (string, error
 		if err := walk(r, 0); err != nil {
 			return "", err
 		}
+	}
+	for _, p := range MigratorConfigFiles {
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			return "", ErrHashBudget
+		}
+		b, err := r.Read(p)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			continue // absent: creating one later adds a line
+		case err != nil:
+			return "", fmt.Errorf("%s: %w", p, err)
+		}
+		s := sha256.Sum256(b)
+		lines = append(lines, "config:"+p+"\x00"+hex.EncodeToString(s[:])+"\n")
 	}
 	sort.Strings(lines)
 	h := sha256.New()
