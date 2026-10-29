@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// tq/hub-store-write end to end (spec D §16, assumption 6): active while
-// cloud or db is on, inactive otherwise, and the manifest's guard.disable
-// can't switch it off.
+// tq/hub-store-write end to end (spec D §16, assumption 6): denied while
+// cloud or db is on, and by the core rule otherwise; the manifest's
+// guard.disable can't switch it off.
 func TestHookHubStoreWrite(t *testing.T) {
 	const write = `sqlite3 ~/.tentaqles/hub/acme/board.db "update tasks set state='done'"`
 	hook := func(manifest, cmd string) (int, string) {
@@ -27,10 +27,14 @@ func TestHookHubStoreWrite(t *testing.T) {
 			t.Fatalf("%q: want deny by tq/hub-store-write, got %d %s", m, code, out)
 		}
 	}
-	if code, out := hook("", write); strings.Contains(out, "tq/hub-store-write") {
-		t.Fatalf("packs off: the rule must be inactive: %d %s", code, out)
+	// Since F round 1 tq/hub-store-write is also a core rule (no Pack), and
+	// the hook-time state-dir check denies any shell reach into hub/ or
+	// packs/ (F round 2): with the packs off the write is still denied, and
+	// so is a read of the store. D-GR's pack block stays as a second layer.
+	if code, out := hook("", write); code != 2 || !strings.Contains(out, "tq/hub-store-write") {
+		t.Fatalf("packs off: the core rule still denies: %d %s", code, out)
 	}
-	if code, out := hook("packs:\n  db: { enabled: true }\n", "cat ~/.tentaqles/hub/acme/serve.json"); code != 0 || strings.Contains(out, "tq/hub-store-write") {
-		t.Fatalf("a read is not a write: %d %s", code, out)
+	if code, out := hook("packs:\n  db: { enabled: true }\n", "cat ~/.tentaqles/hub/acme/serve.json"); code != 2 || !strings.Contains(out, "protected part") {
+		t.Fatalf("a shell read of the hub store is denied by the state-dir rule: %d %s", code, out)
 	}
 }
