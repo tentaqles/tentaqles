@@ -1,0 +1,9 @@
+template.yaml:4 error IAC002 AdminSg: ingress from anywhere (0.0.0.0/0, ::/0 or *) reaches admin or database port 3389; restrict the source to known ranges or use a bastion/private endpoint
+template.yaml:22 error IAC003 PublicBucket: the bucket ACL makes it public (public-read or public-read-write)
+template.yaml:27 error IAC004 Db: storage encryption is off (storage_encrypted / StorageEncrypted = false)
+template.yaml:27 warn IAC005 Db: the database instance is publicly accessible
+template.yaml:27 warn IAC006 Db: deletion protection is off on a database
+template.yaml:34 warn IAC006 Table: deletion protection is off on a DynamoDB table; the stateful resource has DeletionPolicy Delete (the default); use Retain or Snapshot
+template.yaml:38 error IAC004 QuietDb: storage encryption is off (StorageEncrypted is not set; the default is unencrypted)
+template.yaml:38 warn IAC006 QuietDb: deletion protection is off on a database
+template.yaml:56 error IAC004 Disk: the volume is not encrypted (Encrypted is not set; the default is unencrypted unless the account turns on EBS encryption by default)

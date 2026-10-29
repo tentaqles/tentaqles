@@ -1,0 +1,36 @@
+[
+  {
+    "check_type": "terraform",
+    "results": {
+      "failed_checks": [
+        {
+          "check_id": "CKV_AWS_24",
+          "bc_check_id": null,
+          "check_name": "Ensure no security groups allow ingress from 0.0.0.0:0 to port 22",
+          "check_result": {"result": "FAILED"},
+          "file_path": "/main.tf",
+          "file_abs_path": "",
+          "repo_file_path": "/infra/terraform/main.tf",
+          "file_line_range": [12, 30],
+          "resource": "aws_security_group.web",
+          "severity": null,
+          "guideline": null
+        },
+        {
+          "check_id": "CKV_AWS_16",
+          "check_name": "Ensure all data stored in the RDS is securely encrypted at rest",
+          "file_path": "/modules/db/main.tf",
+          "file_line_range": [1, 9],
+          "resource": "module.db.aws_db_instance.main",
+          "severity": null
+        }
+      ]
+    },
+    "summary": {"passed": 4, "failed": 2, "skipped": 0, "parsing_errors": 0, "resource_count": 6, "checkov_version": "3.2.300"}
+  },
+  {
+    "check_type": "secrets",
+    "results": {"failed_checks": []},
+    "summary": {"passed": 0, "failed": 0, "skipped": 0, "parsing_errors": 0, "resource_count": 0, "checkov_version": "3.2.300"}
+  }
+]

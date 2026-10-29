@@ -1,0 +1,6 @@
+template.json:5 error IAC003 acmesa: the storage account allows public blob access (allowBlobPublicAccess / allow_nested_items_to_be_public)
+template.json:5 error IAC004 acmesa: storage service encryption is off for blob
+template.json:12 error IAC002 acme-nsg: ingress from anywhere (0.0.0.0/0, ::/0 or *) reaches admin or database port 22; restrict the source to known ranges or use a bastion/private endpoint
+template.json:22 warn IAC005 acme-sql/all: the database firewall allows every address (0.0.0.0–255.255.255.255)
+template.json:28 warn IAC007 nested: a Complete-mode deployment deletes every resource of the scope that the template does not list; the apply gate treats it as a destroy
+template.json:34 warn IAC006 acme-kv: purge protection is off on a key vault

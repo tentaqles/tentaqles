@@ -1,0 +1,35 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.15.2",
+  "resource_changes": [
+    {"address": "aws_db_instance.main", "type": "aws_db_instance",
+     "change": {"actions": ["delete", "create"],
+       "before": {"identifier": "acme-main"},
+       "after": {"identifier": "acme-main", "storage_encrypted": false, "publicly_accessible": true, "deletion_protection": false, "backup_retention_period": 1}}},
+    {"address": "aws_s3_bucket.logs", "type": "aws_s3_bucket",
+     "change": {"actions": ["delete"], "before": {"bucket": "acme-logs"}, "after": null}},
+    {"address": "aws_s3_bucket.kept", "type": "aws_s3_bucket",
+     "change": {"actions": ["delete"], "before": {"bucket": "acme-old", "tags": {"tq-allow": "IAC001: emptied and retired in ACME-1"}}, "after": null}},
+    {"address": "aws_security_group.web", "type": "aws_security_group",
+     "change": {"actions": ["create"],
+       "after": {"name": "web", "ingress": [
+         {"from_port": 443, "to_port": 443, "protocol": "tcp", "cidr_blocks": ["0.0.0.0/0"]},
+         {"from_port": 22, "to_port": 22, "protocol": "tcp", "cidr_blocks": ["0.0.0.0/0"]}]}}},
+    {"address": "aws_security_group.internal", "type": "aws_security_group",
+     "change": {"actions": ["create"],
+       "after": {"name": "internal", "ingress": [{"from_port": 5432, "to_port": 5432, "protocol": "tcp", "cidr_blocks": ["10.0.0.0/8"]}]}}},
+    {"address": "aws_s3_bucket_public_access_block.logs", "type": "aws_s3_bucket_public_access_block",
+     "change": {"actions": ["update"], "after": {"block_public_acls": false, "block_public_policy": true, "ignore_public_acls": true, "restrict_public_buckets": true}}},
+    {"address": "azurerm_key_vault.main", "type": "azurerm_key_vault",
+     "change": {"actions": ["create"], "after": {"name": "acme-kv", "purge_protection_enabled": false}}},
+    {"address": "azurerm_mssql_firewall_rule.all", "type": "azurerm_mssql_firewall_rule",
+     "change": {"actions": ["create"], "after": {"name": "all", "start_ip_address": "0.0.0.0", "end_ip_address": "255.255.255.255"}}},
+    {"address": "azurerm_mssql_firewall_rule.azure", "type": "azurerm_mssql_firewall_rule",
+     "change": {"actions": ["create"], "after": {"name": "azure", "start_ip_address": "0.0.0.0", "end_ip_address": "0.0.0.0"}}},
+    {"address": "aws_db_instance.ok", "type": "aws_db_instance",
+     "change": {"actions": ["no-op"], "before": {"identifier": "acme-ok"}, "after": {"identifier": "acme-ok", "storage_encrypted": false}}},
+    {"address": "aws_security_group.noreason", "type": "aws_security_group",
+     "change": {"actions": ["create"],
+       "after": {"name": "noreason", "tags": {"tq-allow": "IAC002"}, "ingress": [{"from_port": 0, "to_port": 65535, "protocol": "-1", "cidr_blocks": ["0.0.0.0/0"]}]}}}
+  ]
+}

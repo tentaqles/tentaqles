@@ -1,0 +1,17 @@
+{
+  "issues": [
+    {
+      "rule": {"name": "terraform_unused_declarations", "severity": "warning", "link": "https://github.com/terraform-linters/tflint-ruleset-terraform/blob/v0.10.0/docs/rules/terraform_unused_declarations.md"},
+      "message": "variable \"acme_unused\" is declared but not used",
+      "range": {"filename": "variables.tf", "start": {"line": 3, "column": 1}, "end": {"line": 3, "column": 22}},
+      "callers": []
+    },
+    {
+      "rule": {"name": "aws_instance_invalid_type", "severity": "error", "link": ""},
+      "message": "\"t1.2xlarge\" is an invalid value as instance_type",
+      "range": {"filename": "main.tf", "start": {"line": 7, "column": 19}, "end": {"line": 7, "column": 31}},
+      "callers": []
+    }
+  ],
+  "errors": []
+}
