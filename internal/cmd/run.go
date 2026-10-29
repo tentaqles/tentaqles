@@ -29,7 +29,7 @@ func claudeArgs(ws *resolve.Workspace, args []string, warn func(string)) []strin
 	case "", "default":
 		return args
 	case "bypass":
-		if trust.IsBypassAllowed(ws.Hash) {
+		if guardcfg.BypassAllowed(ws.Hash, ws.Name, ws.Root) {
 			return append([]string{"--dangerously-skip-permissions"}, args...)
 		}
 		warn(fmt.Sprintf("workspace %s asks for bypass but `tq allow --bypass %s` was not run; using acceptEdits", ws.Name, ws.Name))

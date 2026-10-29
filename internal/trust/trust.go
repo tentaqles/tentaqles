@@ -30,9 +30,9 @@ func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func IsTrusted(hash string) bool { return exists(file(hash, "")) }
 
-// IsBypassAllowed reports whether hash has bypass trust: a legacy .bypass
-// file or a mode grant (spec E: tq allow --bypass is an alias of tq allow
-// --mode <ws> relaxed, so a grant allows what bypass trust allowed).
+// IsBypassAllowed reports whether a legacy .bypass file or a mode grant file
+// exists for hash. It does not check which workspace the grant is for:
+// decisions use guardcfg.BypassAllowed, which is root-checked.
 func IsBypassAllowed(hash string) bool {
 	return exists(file(hash, ".bypass")) || exists(file(hash, GrantSuffix))
 }

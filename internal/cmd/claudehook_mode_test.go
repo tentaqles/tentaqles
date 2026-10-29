@@ -577,3 +577,51 @@ func TestHookNestedAgentNeverLoosensAStrictParent(t *testing.T) {
 		t.Fatalf("default under default is allowed: %q", errOut)
 	}
 }
+
+// A legacy .bypass grant counts only for the one registered workspace with
+// that manifest hash. A byte copy of the manifest in another workspace voids
+// it for both: the copy's hook never takes or re-pins it, its claude does not
+// start in bypass, and doctor says why (security re-review r2).
+func TestLegacyBypassCopyGetsNothing(t *testing.T) {
+	body := "claude: { permission_mode: bypass }\n" + relaxedWorkspace
+	root, _ := modeWS(t, body, "bypass")
+	h := manifestHash(t, root)
+	copyRoot := filepath.Join(filepath.Dir(root), "copy")
+	if err := os.MkdirAll(copyRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, manifest.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(copyRoot, manifest.FileName), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws, cp := wsFor(t, root), wsFor(t, copyRoot)
+	cp.Name = "copy"
+	for _, w := range []*resolve.Workspace{ws, cp} {
+		if r := resolveModeFor(w, w.Root, "", ""); r.Ceiling != nil || r.Mode != guardcfg.ModeDefault {
+			t.Fatalf("%s: a shared .bypass is no grant: %+v", w.Name, r)
+		}
+	}
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, copyRoot, "terraform destroy", ""))
+	if code != 2 && !strings.Contains(out, `"permissionDecision":"ask"`) {
+		t.Fatalf("the copy runs at the legacy grant: code %d out %q", code, out)
+	}
+	if g, _ := trust.LoadGrant(h); g == nil || !g.FromBypass {
+		t.Fatalf("the copy's hook must not adopt (re-pin) the grant: %+v", g)
+	}
+	if got := strings.Join(claudeArgs(cp, nil, func(string) {}), " "); got != "--permission-mode acceptEdits" {
+		t.Fatalf("the copy must not start in bypass: %q", got)
+	}
+	// Remove the copy: the original has its grant again.
+	if err := os.RemoveAll(copyRoot); err != nil {
+		t.Fatal(err)
+	}
+	if r := resolveModeFor(ws, ws.Root, "", ""); r.Mode != guardcfg.ModeRelaxed {
+		t.Fatalf("the one owner reads its legacy grant: %+v", r)
+	}
+	if got := strings.Join(claudeArgs(ws, nil, func(string) {}), " "); got != "--dangerously-skip-permissions" {
+		t.Fatalf("the owner starts in bypass: %q", got)
+	}
+}

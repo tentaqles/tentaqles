@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
@@ -167,6 +169,21 @@ func WorkspaceGrant(hash, ws, root string) *Grant {
 		return nil
 	}
 	switch {
+	case g.FromBypass:
+		// A legacy .bypass names no workspace: it counts only when no
+		// registered workspace at another root has this manifest hash, so
+		// the one workspace that has it is the caller (security re-review
+		// r2). A byte copy elsewhere voids it for both, so the copy can
+		// never adopt (re-pin) it. (A writer carrying the grant has already
+		// rewritten its own manifest, so the caller's root may hash anew.)
+		if root == "" {
+			return nil
+		}
+		for _, o := range BypassOwners(hash) {
+			if !sameRoot(o, root) {
+				return nil
+			}
+		}
 	case g.Root != "":
 		if !sameRoot(g.Root, root) {
 			return nil
@@ -179,10 +196,40 @@ func WorkspaceGrant(hash, ws, root string) *Grant {
 	return g
 }
 
+// BypassOwners returns the roots of the registered workspaces whose manifest
+// hashes to hash (an unreadable registry: none, which fails closed).
+func BypassOwners(hash string) []string {
+	cfg, err := registry.Load()
+	if err != nil {
+		return nil
+	}
+	wss, _ := resolve.ListWorkspaces(cfg)
+	var out []string
+	for _, w := range wss {
+		if w.Hash == hash {
+			out = append(out, w.Root)
+		}
+	}
+	return out
+}
+
+// BypassAllowed reports whether workspace ws at root with manifest hash may
+// start Claude in bypass (claude.permission_mode bypass): it has a mode grant
+// there, root-checked like every grant (security re-review r2). It replaces
+// trust.IsBypassAllowed, which only looks for a file.
+func BypassAllowed(hash, ws, root string) bool { return WorkspaceGrant(hash, ws, root) != nil }
+
 // sameRoot compares two workspace roots the way the file system does.
 func sameRoot(a, b string) bool {
 	if a == "" || b == "" {
 		return false
+	}
+	// Symlinks and short names resolved, as the registry spells roots.
+	if n, err := registry.Normalize(a); err == nil {
+		a = n
+	}
+	if n, err := registry.Normalize(b); err == nil {
+		b = n
 	}
 	a, b = filepath.Clean(a), filepath.Clean(b)
 	if runtime.GOOS == "windows" {

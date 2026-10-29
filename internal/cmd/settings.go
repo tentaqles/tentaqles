@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/claudesettings"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -71,7 +72,7 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.`,
 					continue
 				}
 				dir := paths.IdentityDir(ws.Name, "claude")
-				d := claudesettings.Desired(ws.Manifest, trust.IsBypassAllowed(ws.Hash), tqExe)
+				d := claudesettings.Desired(ws.Manifest, guardcfg.BypassAllowed(ws.Hash, ws.Name, ws.Root), tqExe)
 				res, err := claudesettings.Render(dir, d, dryRun)
 				if err != nil {
 					return fmt.Errorf("%s: %w", ws.Name, err)
@@ -125,7 +126,7 @@ func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
 	if trust.IsTrusted(ws.Hash) {
 		dir := paths.IdentityDir(ws.Name, "claude")
 		if _, err := os.Stat(dir); err == nil {
-			d := claudesettings.Desired(ws.Manifest, trust.IsBypassAllowed(ws.Hash), statuslineExe())
+			d := claudesettings.Desired(ws.Manifest, guardcfg.BypassAllowed(ws.Hash, ws.Name, ws.Root), statuslineExe())
 			if _, err := claudesettings.Render(dir, d, false); err != nil {
 				fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not re-rendered: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
 			}

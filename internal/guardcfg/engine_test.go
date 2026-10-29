@@ -478,9 +478,10 @@ func TestGrantsCarryAndDigest(t *testing.T) {
 		t.Fatal("nothing written for a dropped grant")
 	}
 	// a legacy .bypass carries as a relaxed .mode grant
+	// (of the one registered workspace that has that manifest hash)
 	rel, _ := writeManifest(t, "guard:\n  mode: relaxed\n")
-	_ = trust.AllowBypass("b1")
-	if _, carried, _ := CarryGrant("b1", "b2", rel, "acme", root, File{}); !carried {
+	b1, roots := bypassWorkspaces(t, "acme")
+	if _, carried, _ := CarryGrant(b1, "b2", rel, "acme", roots[0], File{}); !carried {
 		t.Fatal("bypass carries for relaxed")
 	}
 	if g, _ := trust.LoadGrant("b2"); g == nil || g.Mode != ModeRelaxed || g.FromBypass || g.Table["system"] != "ask" {

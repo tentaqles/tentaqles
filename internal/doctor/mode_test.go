@@ -3,11 +3,13 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -137,5 +139,48 @@ func TestGlobalModeChecks(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the mode check is registered")
+	}
+}
+
+// A legacy .bypass shared by two workspaces with the same manifest bytes is
+// ignored, and doctor says so for each (security re-review r2).
+func TestModeBypassShared(t *testing.T) {
+	isolateHub(t)
+	base := t.TempDir()
+	cfg := &registry.Config{}
+	if _, err := cfg.AddBase(base); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("schema: tentaqles-client-v2\nclient: acme\nidentities: { gh: {} }\nguard:\n  mode: relaxed\n")
+	var w *resolve.Workspace
+	for _, n := range []string{"acme", "copy"} {
+		root := filepath.Join(base, n)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mp := filepath.Join(root, manifest.FileName)
+		if err := os.WriteFile(mp, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		m, err := manifest.Load(mp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, _ := trust.HashFile(mp)
+		w = &resolve.Workspace{Name: n, Root: root, ManifestPath: mp, Hash: h, Manifest: m}
+	}
+	if err := trust.Allow(w.Hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := trust.AllowBypass(w.Hash); err != nil {
+		t.Fatal(err)
+	}
+	var codes []string
+	modeChecks(w, Deps{}, func(level, code, ws, msg, fix string) { codes = append(codes, code) })
+	if !slices.Contains(codes, "mode-bypass-shared") {
+		t.Fatalf("codes = %v", codes)
 	}
 }
