@@ -37,7 +37,7 @@ var sqlClauseEnd = map[string]bool{"SELECT": true, "GROUP": true, "ORDER": true,
 
 func runPipelineBackfill(_ context.Context, in *packs.Input) packs.Result {
 	sel := loadUnits(in)
-	cp := contractPaths(in)
+	cp := pipelineContractModels(in)
 	var fs findings
 	n := 0
 	for _, u := range sel.units {

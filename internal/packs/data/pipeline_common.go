@@ -39,7 +39,9 @@ func pipelineGlobs(in *packs.Input) []string {
 	return defaultPipelinePaths
 }
 
-func contractPaths(in *packs.Input) []string { return in.Settings().Strings("dbt.contract_paths") }
+func pipelineContractModels(in *packs.Input) []string {
+	return in.Settings().Strings("dbt.contract_paths")
+}
 
 func matchAny(globs []string, p string) bool {
 	for _, g := range globs {
@@ -209,13 +211,6 @@ func result(n int, what string, skipped int, fs *findings) packs.Result {
 		d += fmt.Sprintf(", %d unreadable or over 4 MiB skipped", skipped)
 	}
 	return packs.Result{Status: packs.OK, Detail: d, Findings: fs.sorted()}
-}
-
-func plural(n int, what string) string {
-	if n == 1 {
-		return "1 " + what
-	}
-	return fmt.Sprintf("%d %ss", n, what)
 }
 
 // codeLines returns src lines with Python comments and full-line SQL

@@ -18,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var update = flag.Bool("update", false, "rewrite the want.json golden files")
+var updatePipeline = flag.Bool("update-pipeline", false, "rewrite the pipeline want.json golden files")
 
 // isolatePipeline points TQ_HOME, HOME and USERPROFILE at a temp dir.
 func isolatePipeline(t testing.TB) string {
@@ -54,9 +54,9 @@ type golden struct {
 	Findings []packs.Finding `json:"findings"`
 }
 
-// runCase runs every enabled data check over testdata/<dir>/<case>/new as
+// runPipelineCase runs every enabled data check over testdata/<dir>/<case>/new as
 // the changed set and returns the result of check id.
-func runCase(t *testing.T, caseDir, id string) packs.Result {
+func runPipelineCase(t *testing.T, caseDir, id string) packs.Result {
 	t.Helper()
 	root := filepath.Join(caseDir, "new")
 	var files []string
@@ -128,12 +128,12 @@ func TestPipelineGoldens(t *testing.T) {
 			}
 			n++
 			t.Run(filepath.Base(dir)+"/"+c.Name(), func(t *testing.T) {
-				r := runCase(t, caseDir, id)
+				r := runPipelineCase(t, caseDir, id)
 				got := golden{Status: r.Status, Detail: r.Detail, Findings: r.Findings}
 				b, _ := json.MarshalIndent(got, "", "  ")
 				b = append(b, '\n')
 				want := filepath.Join(caseDir, "want.json")
-				if *update {
+				if *updatePipeline {
 					if err := os.WriteFile(want, b, 0o644); err != nil {
 						t.Fatal(err)
 					}
@@ -177,7 +177,7 @@ func TestPipelineFindingsCarryNoValues(t *testing.T) {
 		{"testdata/pipeline-synapse-artifacts/bad", "data/synapse-artifacts"},
 		{"testdata/pipeline-pii-output/bad", "data/pipeline-pii-output"},
 	} {
-		r := runCase(t, c.dir, c.id)
+		r := runPipelineCase(t, c.dir, c.id)
 		if len(r.Findings) == 0 {
 			t.Fatalf("%s: no findings", c.id)
 		}

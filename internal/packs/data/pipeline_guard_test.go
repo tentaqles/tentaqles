@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func guardEnv(t testing.TB, body string) packs.GuardEnv {
+func pipelineGuardEnv(t testing.TB, body string) packs.GuardEnv {
 	t.Helper()
 	var m map[string]manifest.PackConfig
 	if err := yaml.Unmarshal([]byte(body), &m); err != nil {
@@ -31,7 +31,7 @@ func pipelineOutcome(outs []packs.GuardOutcome) *packs.GuardOutcome {
 
 func TestPipelineRunGuard(t *testing.T) {
 	isolatePipeline(t)
-	env := guardEnv(t, "data: { enabled: true }\n")
+	env := pipelineGuardEnv(t, "data: { enabled: true }\n")
 	cases := []struct {
 		cmd      string
 		want     policy.Action
@@ -119,10 +119,10 @@ func TestPipelineRunGuardLayers(t *testing.T) {
 	isolatePipeline(t)
 	cmd := policy.ToolCall{Tool: "Bash", Command: "airflow dags trigger orders_daily"}
 	// A disabled pack never runs its guard.
-	if o := pipelineOutcome(packs.EvaluateGuards(cmd, guardEnv(t, "data: { enabled: false }\n"), nil, nil)); o != nil {
+	if o := pipelineOutcome(packs.EvaluateGuards(cmd, pipelineGuardEnv(t, "data: { enabled: false }\n"), nil, nil)); o != nil {
 		t.Fatalf("disabled pack: %+v", o)
 	}
-	env := guardEnv(t, "data: { enabled: true }\n")
+	env := pipelineGuardEnv(t, "data: { enabled: true }\n")
 	// guard.disable
 	if o := pipelineOutcome(packs.EvaluateGuards(cmd, env, func(id string) bool { return id == "tq/pipeline-run" }, nil)); o != nil {
 		t.Fatalf("disabled guard ran: %+v", o)
@@ -140,7 +140,7 @@ func TestPipelineRunGuardLayers(t *testing.T) {
 }
 
 func TestPipelineRunGuardDirect(t *testing.T) {
-	g := packs.NewGuardCtx(guardEnv(t, "data: { enabled: true }\n"), "data")
+	g := packs.NewGuardCtx(pipelineGuardEnv(t, "data: { enabled: true }\n"), "data")
 	a, reason, handled := pipelineRunGuard(policy.ToolCall{Tool: "Bash", Command: "prefect deployment run orders/daily"}, g)
 	if a != policy.Ask || !handled || !strings.Contains(reason, "prefect deployment run") {
 		t.Fatalf("%q %q %v", a, reason, handled)
@@ -148,7 +148,7 @@ func TestPipelineRunGuardDirect(t *testing.T) {
 }
 
 func BenchmarkPipelineRunGuard64KiB(b *testing.B) {
-	g := packs.NewGuardCtx(guardEnv(b, "data: { enabled: true }\n"), "data")
+	g := packs.NewGuardCtx(pipelineGuardEnv(b, "data: { enabled: true }\n"), "data")
 	cmd := strings.Repeat("echo airflow dags list; ", 64<<10/24) + "airflow dags trigger orders_daily"
 	call := policy.ToolCall{Tool: "Bash", Command: cmd}
 	b.ResetTimer()
@@ -160,7 +160,7 @@ func BenchmarkPipelineRunGuard64KiB(b *testing.B) {
 // Nested wrappers on a 64 KiB command stay inside the guard budget; a
 // command too deeply wrapped to see through fails closed (ask).
 func TestPipelineRunGuardWrappersBounded(t *testing.T) {
-	g := packs.NewGuardCtx(guardEnv(t, "data: { enabled: true }\n"), "data")
+	g := packs.NewGuardCtx(pipelineGuardEnv(t, "data: { enabled: true }\n"), "data")
 	for _, c := range []struct {
 		cmd  string
 		want policy.Action
@@ -182,7 +182,7 @@ func TestPipelineRunGuardWrappersBounded(t *testing.T) {
 }
 
 func TestPipelineRunGuardUnder50ms(t *testing.T) {
-	g := packs.NewGuardCtx(guardEnv(t, "data: { enabled: true }\n"), "data")
+	g := packs.NewGuardCtx(pipelineGuardEnv(t, "data: { enabled: true }\n"), "data")
 	cmd := strings.Repeat("echo airflow dags list; dagster job list; ", 64<<10/42) + "dagster asset materialize --select x"
 	call := policy.ToolCall{Tool: "Bash", Command: cmd}
 	start := time.Now()

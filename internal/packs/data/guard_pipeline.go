@@ -75,7 +75,7 @@ type wrapMatcher struct {
 
 // script splits a shell string into segments and matches each.
 func (m *wrapMatcher) script(script string, depth int) (runCommand, bool) {
-	for _, seg := range shellSegments(script) {
+	for _, seg := range pipeShellSegments(script) {
 		if rc, ok := m.words(shellWords(seg), depth); ok || m.exhausted {
 			return rc, ok
 		}
@@ -254,8 +254,8 @@ func programWords(w []string) []string {
 	return nil
 }
 
-// shellSegments splits a command on unquoted ; & | newlines and ( ).
-func shellSegments(cmd string) []string {
+// pipeShellSegments splits a command on unquoted ; & | newlines and ( ).
+func pipeShellSegments(cmd string) []string {
 	var out []string
 	var b strings.Builder
 	var quote byte

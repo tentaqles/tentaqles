@@ -30,9 +30,6 @@ var commonPersonal = []string{"email", "cpf", "phone", "birth_date", "address", 
 // packs.data.pipelines.masking adds project macros.
 var defaultMasking = []string{"sha2", "sha256", "sha1", "md5", "hash", "farm_fingerprint", "xxhash64", "mask", "hashbytes"}
 
-// defaultContractPaths mirrors packs.data.contracts.paths' default (§3.1).
-var defaultContractPaths = []string{"contracts/**/*.odcs.yaml", "**/*.odcs.yml"}
-
 const maxContracts = 200
 
 var (
