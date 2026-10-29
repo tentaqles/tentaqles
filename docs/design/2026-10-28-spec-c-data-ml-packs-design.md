@@ -81,7 +81,7 @@ packs:
 ```
 
 - **Go type** (`internal/manifest/packs.go`): `Manifest.Packs map[string]PackConfig`. `PackConfig{Enabled *bool; Tools []string; Timeouts map[string]Duration; ToolPaths map[string]string; Baseline string; Raw yaml.Node}`. `Raw` is the whole `packs.<name>` node, so a pack decodes its own settings (environments, migration paths, drills, contracts, models) with line numbers for its errors.
-- **Validation:** Load rejects an unknown pack name (known: `data`, `ml`, `cloud`, `db`) and a tool name with characters outside `[a-z0-9-]`. It runs the secret scan, as for the rest of the manifest. It then runs the validator registered with `manifest.RegisterPackValidator(name string, fn func(yaml.Node) error)`, so an unknown pack-specific key is an error. `internal/packs/<pack>` calls this from `init` (through `packs.RegisterPack`, which composes the per-key validators of §2.4). `manifest` never imports `packs`, so there is no import cycle. In a test binary without a pack linked, the pack's keys are kept and not validated.
+- **Validation:** Load rejects an unknown pack name (known: `data`, `ml`, `cloud`, `db`) and a tool name with characters outside `[a-z0-9_-]` (amended 2026-10-29: `_` is allowed, which `pg_prove` needs). It runs the secret scan, as for the rest of the manifest. It then runs the validator registered with `manifest.RegisterPackValidator(name string, fn func(yaml.Node) error)`, so an unknown pack-specific key is an error. `internal/packs/<pack>` calls this from `init` (through `packs.RegisterPack`, which composes the per-key validators of §2.4). `manifest` never imports `packs`, so there is no import cycle. In a test binary without a pack linked, the pack's keys are kept and not validated.
 - **Defaults:** if `enabled` is absent and the block is non-empty, the pack is enabled. `enabled: false` turns it off.
 
 ### 2.3 Repo layer `tq-packs.yaml` (untrusted, add-only)
@@ -90,7 +90,7 @@ The file sits at the repo root and uses the same schema as `packs:`. It lets one
 
 | Key kind | Merge rule |
 |---|---|
-| `enabled` | OR: a repo may enable a pack, but not disable one the manifest enabled |
+| `enabled` | trusted layer only (amended 2026-10-29, see the note below the table) |
 | `tools` | union |
 | path lists (`contracts.paths`, `ml.paths.train`, …) | union |
 | upper bounds (cost caps, drift `warn`/`fail`, `valid_for`) | minimum |
@@ -99,6 +99,9 @@ The file sits at the repo root and uses the same schema as `packs:`. It lets one
 | commands (`ml.promotion.command`, `ml.drift.current_command`) | allowed. They run only from human-confirmed commands (§4.4) or frozen DoD runs (§2.8), like the `tq-project` commands |
 
 `tq pack list --json` prints the merged config and its `config_hash` (sha256 over canonical JSON). The pack guard `tq/pack-config-change` asks before an agent edits `tq-packs.yaml` (§5.3).
+
+
+*Amended 2026-10-29 (pack enabling, final review M2).* Only the trusted manifest enables a pack. `enabled`, `tool_paths` and `baseline` are trusted-layer only, and a `tq-packs.yaml` block for a pack the manifest does not configure is ignored and reported as a problem. Every other pack key the repo may set has its own merge rule (Union, Min, Max, Or, Ordered, RepoValue or TrustedAdd); a key with no rule is trusted-layer only at any depth.
 
 ### 2.4 Go package `internal/packs`
 
@@ -272,6 +275,15 @@ func MarkUsed(ws, id string) error          // also appended to StateDir()/ledge
   - A human-run command, as in this spec's `tq pack ml promote apply`.
   - A decision guard that checks the ledger at PreToolUse and allows the call once, as in spec D's apply gate. Spec D's binding of a saved-plan hash and an identity is entries in `evidence`, which the guard recomputes with `HashState` and `ReadLocal`.
 - **Execution of a human-run apply:** a pack's `apply` command is human-only. It uses the same agent-session refusal as `tq secret`, then runs `Verify`, shows the exact command it will run, asks for a typed `yes` on a TTY, runs it, and then calls `MarkUsed` and comments the result on the card.
+
+*Amended 2026-10-29 (final approval API, F rounds 1-6, integration).* The code differs from the text above in these ways, and the code is the reference:
+
+- **Binding.** `Verify(ws, id string, want Binding, evidence map[string]string)`. `Binding{Pack, Action, Subject, Target}` must equal the asked line, so an approval for one subject or target never matches another. Guards call `FindGuard(g GuardCtx, want Binding, evidence)`; `Find` and `VerifyEntries` take the entries and the ledger `Trust`.
+- **Terminal-only answers.** Pack approvals are answered only in the human's own terminal: `tq hub answer <card> <decision>` needs a TTY, refuses agent sessions, shows the binding and asks the human to type the pack, the action and a 12-hex code of the subject. The board shows the decision and the command but refuses the answer (every web route returns 403 for a pack approval). `ledger.RecordAnswer` is gone: the answer goes through `store.AnswerPackApproval`, which writes the `answered` line.
+- **Signed answers.** The `answered` line is signed (Ed25519) with a per-workspace key in the OS keychain (service `tentaqles-packs`). Readers take the outcome fields from the signed line only and read the public key from the keychain on every read; without the key nothing counts (`packs-keychain-missing` in doctor). A high-water mark in the keychain retires consumed and older approvals, so an old ledger copy cannot bring one back. The core rule `tq/secret-store-shell` (never-disable) keeps the key out of the shell.
+- **Claim.** A human-run apply calls `Claim(c *cobra.Command, ws, id, want, evidence)`, which verifies again and takes the approval with an exclusive-create claim file, so it is single use even if the run fails. `Confirm(c, in, out, command)` asks for the typed `yes`. Both refuse a command that does not declare the `tq.human-only: execute` annotation. `MarkUsed(ws, pack, id)` takes the pack.
+- **Order (ruling N1).** `packs.FromCommand` → `HumanOnly` → `Verify` (read-only, for an early error) → `Confirm` → `Claim` → run → `MarkUsed` → `Comment`. A declined prompt leaves the approval usable; a run that fails after the claim uses it.
+- **Protection.** The ledger, claims and plans are protected by the core `tq/hub-store-write` and the hook-time state-dir check, which are always on, not by spec D's pack rule.
 
 ### 2.12 Skills, agents and docs layout
 
@@ -800,7 +812,7 @@ Aggregates only, as for the rest of insights.
   - `events.jsonl` is aggregate-only.
 - **Contract examples, model cards, notebook outputs:** checked by the redaction detectors (`data/contract-pii`, `ml/model-card`, `*/notebook-outputs`), on top of `tq/commit-pii` and `tq/push-pii`.
 - **Fixtures:** synthetic only, with people named `tester` and the company `acme` (`tester@acme.test`). dbt `seeds/` is already covered by `tq/pii-fixture-dump`. Templates generate data at test time.
-- **Secrets:** the manifest and `tq-packs.yaml` hold names only, and both run the secret scan. The runner never reads `.env*`, never prints the environment, and passes credentials only through the inherited env (`tq dotenv run`). `profiles.yml` outside the repo is never read; inside the repo it is read only for the adapter type, and values are never printed.
+- **Secrets:** the manifest and `tq-packs.yaml` hold names only, and both run the secret scan. The runner never reads `.env*`, never prints the environment, and passes credentials only through a name the check declares in `Check.Env` / `Spec.PassEnv` (amended 2026-10-29, see §2.6: a tool gets a filtered environment, `tq dotenv run -- tq pack check` supplies a credential only through a declared name, and a tool resolved inside the repository never gets a secret-looking one; the check gets a `tq/tool-env` warning instead). `profiles.yml` outside the repo is never read; inside the repo it is read only for the adapter type, and values are never printed.
 - **Untrusted repo content:** `tq-packs.yaml` can't loosen, and its hash is frozen at approval. Commands from it run only in the frozen DoD or after a human's typed confirmation. `tool_paths` is trusted-layer only. Placeholders filled into the promotion command are charset-limited and quoted.
 - **Gated actions:** promotion needs a human-answered approval bound to evidence hashes and a clean commit, single-use and expiring. Agents are denied registry promotion, prod dbt targets and unbounded BigQuery queries. The key-isolation caveat of the build gate applies: the gate's text checks stop a careless agent, not one set on defeating them, until key isolation lands.
 - **Warehouse calls** happen only in opt-in checks and the human- or agent-invoked `cost estimate`, as plan-only statements. They are never made in hooks or in tests.

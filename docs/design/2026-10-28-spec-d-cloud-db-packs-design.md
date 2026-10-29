@@ -67,7 +67,8 @@ These are names only, never secrets. Subscription and account ids are identifier
 - Spec C's loader validates the framework keys `enabled`, `tools`, `timeouts`, `tool_paths` and `baseline`.
 - The pack decodes every other key below from `PackConfig.Raw`. Its validators are registered through `packs.RegisterPack` (`ConfigKeys`), which feeds `manifest.RegisterPackValidator`.
 - A repo's `tq-packs.yaml` may add to these keys under spec C §2.3's stricter-wins rules:
-  - environments and `match` lists are unions, and a repo file can add an environment but cannot loosen one;
+  - a repo file can add a new environment but cannot loosen one. It cannot extend the `match` lists of an environment the manifest defines, because that would route an unlisted target into a looser environment (amended 2026-10-28, ruling S1). A new environment brings its own `match` (rule `environments.*.match: TrustedAdd()`, no `Union` on `match.*`). A missing `apply`/`destroy`/`migrate` decodes as the rule's Default, which is the strictest value (`deny`). Every key the repo may set has its own merge rule; unruled keys are trusted-layer only;
+  - pack approvals (prod apply/destroy, migrations, promotions) are answered from the human's terminal only: TTY plus a typed binding, with the answer signed (Ed25519) by a key in the OS keychain. The board shows the decision and the command, and it refuses the answer until WebAuthn lands (amended 2026-10-28, security review of F; signature scheme amended 2026-10-29);
   - for a policy value, the stricter wins (`deny` > `approve` > `ask` > `auto`);
   - for `approval_ttl` and `freshness`, the minimum wins;
   - `default_environment` and `accounts` are honoured from the manifest only.
@@ -157,6 +158,7 @@ Every check is registered through spec C's `internal/packs` registry. "Built-in"
 | `db/rls-tests` | built-in | `db/rls` found tables in exposed schemas | `packs.db.rls.tests` (§12) |
 | `db/squawk`, `db/sqlfluff` | external | declared, and the engine matches | changed migration files |
 | `db/pgtap` | external (`pg_prove`) | declared, and a Postgres migration or test file changed | runs the RLS tests against `test_db` (§12) |
+| `db/pgtap-supabase` | external (`supabase`) | the same, in Supabase mode (amended 2026-10-29) | runs the same tests through `supabase test db` (§12) |
 | `db/restore-drill` | built-in | `packs.db.drill` declared, and a migration changed | `docs/ops/restore-drills.jsonl` (§13) |
 
 Every result follows spec C §2.4: `ok | fail | skip`, `required`, a detail line, and findings as `file:line level rule message`. A finding at level `warn` never fails a check. External findings go through the framework baseline (`Input.Baseline`, spec C §2.6a). Built-in findings are suppressed in the source, never in the manifest:
@@ -330,7 +332,9 @@ This flow is built on spec C §2.11 (`internal/packs/approval`: `Ask`, `Verify`,
    - **Evidence:** `{plan_sha256, inputs_hash, env, identity, plan_id}`.
    - **Summary:** the redacted plan summary, the failing checks (if any), the environment and the identity.
    - **If any check fails**, the request is still made, but the summary leads with the failures and the request offers only `reject`, unless the human passes `--allow-failing` from their own terminal.
-3. The human answers on the board or with `tq hub answer <card> <decision> --choice apply`. Agent sessions are refused (existing hub rule). F's runner hunk ignores `permission` decisions whose `data.pack` is set, so they never resume or allow a run.
+   - *Amended 2026-10-29 (final review m8):* stricter in the code. With a failing check, `tq pack cloud approve` (and `tq pack db approve`) refuses to make the request at all unless `--allow-failing` is passed from the human's own terminal; no reject-only request is created.
+3. The human answers with `tq hub answer <card> <decision>` in their own terminal. F's runner hunk ignores `permission` decisions whose `data.pack` is set, so they never resume or allow a run.
+   - *Amended 2026-10-29 (final approval API, see spec C §2.11's amendment):* terminal only. The answer needs a TTY, refuses agent sessions and asks for the typed binding (pack, action, a 12-hex code of the subject); `--choice` alone is refused. The board shows the decision but refuses the answer. The answered line is signed with the workspace key in the OS keychain. The guard in step 4 matches the approval with `approval.FindGuard(g, Binding{Pack, Action, Subject, Target}, evidence)`, and a human-run apply follows FromCommand → HumanOnly → Verify → Confirm → Claim → run → MarkUsed → Comment.
 4. At PreToolUse, the `tq/iac-apply-env` guard (§16) rebuilds the evidence from the command and calls `Verify`. The command must:
    - name a saved plan file inside `StateDir()/plans/` (bare `terraform apply` in an `approve` environment is denied, and the reason says to apply the saved plan);
    - have a plan file whose sha256 equals the evidence;
@@ -466,7 +470,9 @@ rollback;
 2. If `start` is set and the database does not answer a 2 s TCP probe, tq runs `start` with a timeout (default 180 s).
 3. Supabase: `supabase test db`. Others: `pg_prove --ext .sql -r <tests dir>` with `PG*` variables built from the URL in the child's environment only. The TAP output is parsed for `not ok` lines, and each maps to `file:test-number`. *Assumption: `supabase test db` runs the files in `supabase/tests` against the local stack; verify the path and the exit codes.*
 
-**DoD:** `db/pgtap` is required when `pg_prove` (or `supabase`) is declared in `tools`. `db/rls-tests`, built-in, always checks the coverage: every table in an exposed schema with RLS needs at least one test file that names it (word match). It fails with the list of untested tables and the skill command that writes them.
+**Two check ids** (amended 2026-10-29, final review M4). The tests run as `db/pgtap` (pg_prove) or as `db/pgtap-supabase` (`supabase test db`). Supabase mode (`supabaseMode`) applies when `supabase` is declared in `tools`, or when a Postgres migrations entry uses the `supabase` migrator and `pg_prove` is not declared; otherwise the check is `db/pgtap`. The DoD item is `pack:db/pgtap` or `pack:db/pgtap-supabase` accordingly.
+
+**DoD:** the pgTAP check (`db/pgtap` or `db/pgtap-supabase`) is required when `pg_prove` (or `supabase`) is declared in `tools`. `db/rls-tests`, built-in, always checks the coverage: every table in an exposed schema with RLS needs at least one test file that names it (word match). It fails with the list of untested tables and the skill command that writes them.
 
 ## 13. Backup and restore drill
 
