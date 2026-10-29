@@ -3,6 +3,7 @@ package ml
 // tq pack ml promote request|apply|status and tq pack ml drift.
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/approval"
@@ -150,8 +152,8 @@ func newPromoteApplyCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 			out := c.OutOrStdout()
-			confirm := func(cmd string) error { return approval.Confirm(stdinFile(c), out, cmd) }
-			return promoteApply(ctx, e, args[0], confirm, out)
+			confirm := func(cmd string) error { return approval.Confirm(c, stdinFile(c), out, cmd) }
+			return promoteApply(ctx, c, e, args[0], confirm, out)
 		},
 	}
 }
@@ -231,7 +233,7 @@ Output names features and numbers only, never category labels.`,
 			if f := stdinFile(c); f != nil && stdinTTY() && !packs.AgentSession() {
 				opts.Confirm = func(cmd string) error {
 					fmt.Fprintln(out, "drift.current_command comes from tq-packs.yaml, not the manifest.")
-					return approval.Confirm(f, out, cmd)
+					return confirmTyped(f, out, cmd)
 				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), CurrentTimeout+time.Minute)
@@ -278,4 +280,21 @@ func printDrift(out io.Writer, r DriftResult) {
 		fmt.Fprintln(out, "fail: "+s)
 	}
 	fmt.Fprintf(out, "result: %s\n", resultPath(r.Model))
+}
+
+// confirmTyped is the drift command's prompt before a current_command that
+// comes from tq-packs.yaml. drift is not an executor (agents may run it), so
+// this is a plain typed yes on a terminal, not approval.Confirm (which only
+// executors may call). The caller sets it only on a terminal outside an
+// agent session.
+func confirmTyped(in *os.File, out io.Writer, command string) error {
+	if packs.AgentSession() || in == nil || !term.IsTerminal(in.Fd()) {
+		return errors.New("this command needs a terminal: type yes to confirm the command it runs")
+	}
+	fmt.Fprintf(out, "tq will run:\n\n  %s\n\nType yes to run it: ", command)
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	if strings.TrimSpace(line) != "yes" {
+		return approval.ErrNotConfirmed
+	}
+	return nil
 }

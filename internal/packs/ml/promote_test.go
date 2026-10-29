@@ -165,7 +165,7 @@ func (r *promoteRepo) request(t *testing.T, target string) RequestResult {
 
 func (r *promoteRepo) apply(id, text string) (string, error) {
 	var out bytes.Buffer
-	err := promoteApply(context.Background(), r.env, id, typed(strings.NewReader(text), &out), &out)
+	err := promoteApply(context.Background(), newPromoteApplyCmd(), r.env, id, typed(strings.NewReader(text), &out), &out)
 	return out.String(), err
 }
 
@@ -303,7 +303,7 @@ func TestApplyRunsAfterSlowConfirm(t *testing.T) {
 	answer(t, res.Decision, "approve", "hub:tester")
 	ctx, cancel := context.WithCancel(context.Background())
 	var out bytes.Buffer
-	err := promoteApply(ctx, r.env, res.Decision, typed(cancelReader{strings.NewReader("yes\n"), cancel}, &out), &out)
+	err := promoteApply(ctx, newPromoteApplyCmd(), r.env, res.Decision, typed(cancelReader{strings.NewReader("yes\n"), cancel}, &out), &out)
 	if err != nil {
 		t.Fatalf("a slow yes must not fail the run: %v\n%s", err, out.String())
 	}
@@ -463,8 +463,9 @@ func TestApplyNeedsTTY(t *testing.T) {
 	res := r.request(t, "production")
 	answer(t, res.Decision, "approve", "hub:tester")
 	var out bytes.Buffer
-	confirm := func(cmd string) error { return approval.Confirm(nil, &out, cmd) } // not a terminal
-	if err := promoteApply(context.Background(), r.env, res.Decision, confirm, &out); err == nil || !strings.Contains(err.Error(), "terminal") {
+	c := newPromoteApplyCmd()
+	confirm := func(cmd string) error { return approval.Confirm(c, nil, &out, cmd) } // not a terminal
+	if err := promoteApply(context.Background(), c, r.env, res.Decision, confirm, &out); err == nil || !strings.Contains(err.Error(), "terminal") {
 		t.Fatalf("no tty: %v", err)
 	}
 }
@@ -486,5 +487,26 @@ func TestFillCommand(t *testing.T) {
 	}
 	if got := QuoteArgv([]string{"uv", "a b", "it's"}); got != `uv 'a b' 'it'\''s'` {
 		t.Fatal(got)
+	}
+}
+
+// Claim refuses a command that does not declare itself an executor.
+func TestApplyNeedsTheExecutorAnnotation(t *testing.T) {
+	r := newPromoteRepo(t)
+	res := r.request(t, "production")
+	answer(t, res.Decision, "approve", "hub:tester")
+	var out bytes.Buffer
+	plain := newPromoteStatusCmd() // no tq.human-only: execute
+	if err := promoteApply(context.Background(), plain, r.env, res.Decision, typed(strings.NewReader("yes\n"), &out), &out); !errors.Is(err, approval.ErrNotExecutor) {
+		t.Fatalf("a non-executor claimed: %v", err)
+	}
+	if _, err := approval.Verify("acme", res.Decision, promoteWant(res), res.Evidence); err != nil {
+		t.Fatalf("the refused claim leaves the approval usable: %v", err)
+	}
+	if a := newPromoteApplyCmd().Annotations[packs.AnnotationHumanOnly]; a != packs.HumanOnlyExecute {
+		t.Fatalf("apply annotation %q", a)
+	}
+	if a := newPromoteRequestCmd().Annotations[packs.AnnotationHumanOnly]; a != packs.ApprovalAsk {
+		t.Fatalf("request annotation %q", a)
 	}
 }

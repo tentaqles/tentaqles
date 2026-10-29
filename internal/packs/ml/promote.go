@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/approval"
@@ -517,7 +518,10 @@ func envKeyOf(kv string) string {
 // packs.FromCommand, HumanOnly, a read-only Verify for an early answer,
 // confirm (the typed yes), Claim, run, MarkUsed, Comment. confirm is
 // approval.Confirm on the terminal (tests replace it).
-func promoteApply(ctx context.Context, e *promoteEnv, id string, confirm func(command string) error, out io.Writer) error {
+//
+// c is the running `promote apply` command: Claim (and Confirm) refuse a
+// command that does not declare packs.HumanOnlyExecute.
+func promoteApply(ctx context.Context, c *cobra.Command, e *promoteEnv, id string, confirm func(command string) error, out io.Writer) error {
 	if err := packs.HumanOnly(); err != nil {
 		return err
 	}
@@ -569,7 +573,7 @@ func promoteApply(ctx context.Context, e *promoteEnv, id string, confirm func(co
 	}
 	// Claim verifies again and makes the approval single use: from here on
 	// it is used, whatever the command does.
-	a, err := approval.Claim(ws, id, want, ev)
+	a, err := approval.Claim(c, ws, id, want, ev)
 	if err != nil {
 		return verr(err)
 	}
