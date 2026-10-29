@@ -120,13 +120,15 @@ func evalResource(d Doc, r model.Resource) []hit {
 		}
 		hs = append(hs, hit{IAC001, level, fmt.Sprintf("stateful %s %s; its data is lost unless it is backed up", r.Type, what)})
 	}
-	if !r.Changes() || r.After == nil {
+	// A template declares the resource even with no Properties; a planned
+	// delete has no after side to judge.
+	if !r.Changes() || (r.After == nil && r.Planned()) {
 		return hs
 	}
 	p := props(r)
 	hs = append(hs, openIngress(t, p)...)
 	hs = append(hs, publicStorage(t, p)...)
-	hs = append(hs, encryptionOff(t, p)...)
+	hs = append(hs, encryptionOff(r, t, p)...)
 	hs = append(hs, dbOpen(d, r, t, p)...)
 	hs = append(hs, deletionProtection(d, r, t, p)...)
 	if t == "microsoft.resources/deployments" && strings.EqualFold(r.Meta["deployment_mode"], "complete") {
@@ -179,6 +181,37 @@ func isTrue(v any) bool  { b, ok := model.Bool(v); return ok && b }
 func isFalse(v any) bool { b, ok := model.Bool(v); return ok && !b }
 
 func str(v any) string { s, _ := model.Str(v); return s }
+
+// authored reports an input that carries only what the author wrote: ARM
+// templates, what-if payloads and CloudFormation templates. A Terraform plan
+// fills in the provider defaults, so absence there says nothing.
+func authored(r model.Resource) bool {
+	return r.Source == model.KindARM || r.Source == model.KindWhatIf || r.Source == model.KindCFN
+}
+
+// offByDefault reports a setting whose provider default is off as off: set
+// explicitly to false, or absent from an authored input. An unresolved value
+// (a CFN intrinsic, an ARM expression) is not judged.
+func offByDefault(r model.Resource, p map[string]any, names ...string) bool {
+	v := get(p, names...)
+	if v == nil {
+		return authored(r)
+	}
+	return isFalse(v)
+}
+
+// inherits reports a CFN resource whose setting comes from elsewhere (a
+// cluster, a snapshot, a source instance, a KMS key that requires it) when
+// one of keys is present, so an absent value is not off.
+func inherits(r model.Resource, p map[string]any, keys ...string) bool {
+	return r.Source == model.KindCFN && get(p, keys...) != nil
+}
+
+// inCluster: a CFN DB instance of an Aurora or Multi-AZ cluster, whose
+// storage, encryption and deletion protection belong to the cluster.
+func inCluster(r model.Resource, t string, p map[string]any) bool {
+	return t == "aws::rds::dbinstance" && inherits(r, p, "DBClusterIdentifier")
+}
 
 // --- IAC002: ingress from anywhere to admin or database ports --------------
 
@@ -448,16 +481,26 @@ func publicStorage(t string, p map[string]any) []hit {
 
 // --- IAC004: encryption at rest off ----------------------------------------
 
-func encryptionOff(t string, p map[string]any) []hit {
+func encryptionOff(r model.Resource, t string, p map[string]any) []hit {
 	h := func(msg string) []hit { return []hit{{IAC004, packs.LevelError, msg}} }
 	switch t {
 	case "aws_db_instance", "aws_rds_cluster", "aws:rds/instance:instance", "aws:rds/cluster:cluster", "aws::rds::dbinstance", "aws::rds::dbcluster":
-		if isFalse(get(p, "storage_encrypted", "StorageEncrypted")) {
+		v := get(p, "storage_encrypted", "StorageEncrypted")
+		if isFalse(v) {
 			return h("storage encryption is off (storage_encrypted / StorageEncrypted = false)")
 		}
+		if v == nil && offByDefault(r, p, "StorageEncrypted") &&
+			!inherits(r, p, "KmsKeyId", "DBClusterIdentifier", "DBSnapshotIdentifier", "SourceDBInstanceIdentifier",
+				"SourceDBClusterIdentifier", "SnapshotIdentifier", "SourceDbiResourceId") {
+			return h("storage encryption is off (StorageEncrypted is not set; the default is unencrypted)")
+		}
 	case "aws_ebs_volume", "aws:ebs/volume:volume", "aws::ec2::volume":
-		if isFalse(get(p, "encrypted", "Encrypted")) {
+		v := get(p, "encrypted", "Encrypted")
+		if isFalse(v) {
 			return h("the volume is not encrypted")
+		}
+		if v == nil && offByDefault(r, p, "Encrypted") && !inherits(r, p, "KmsKeyId", "SnapshotId") {
+			return h("the volume is not encrypted (Encrypted is not set; the default is unencrypted unless the account turns on EBS encryption by default)")
 		}
 	case "azurerm_mssql_database":
 		if isFalse(get(p, "transparent_data_encryption_enabled")) {
@@ -527,31 +570,36 @@ func deletionProtection(d Doc, r model.Resource, t string, p map[string]any) []h
 	default:
 		return nil
 	}
-	h := func(msg string) []hit { return []hit{{IAC006, level, msg}} }
+	var msgs []string
 	switch t {
 	case "aws_db_instance", "aws_rds_cluster", "aws:rds/instance:instance", "aws:rds/cluster:cluster", "aws::rds::dbinstance", "aws::rds::dbcluster":
-		if isFalse(get(p, "deletion_protection", "DeletionProtection")) {
-			return h("deletion protection is off on a database")
+		if !inCluster(r, t, p) && offByDefault(r, p, "deletion_protection", "DeletionProtection") {
+			msgs = append(msgs, "deletion protection is off on a database")
 		}
 	case "azurerm_key_vault", "microsoft.keyvault/vaults":
-		if isFalse(get(p, "purge_protection_enabled", "enablePurgeProtection")) {
-			return h("purge protection is off on a key vault")
+		if offByDefault(r, p, "purge_protection_enabled", "enablePurgeProtection") {
+			msgs = append(msgs, "purge protection is off on a key vault")
 		}
 	case "aws_dynamodb_table", "aws::dynamodb::table":
-		if isFalse(get(p, "deletion_protection_enabled", "DeletionProtectionEnabled")) {
-			return h("deletion protection is off on a DynamoDB table")
+		if offByDefault(r, p, "deletion_protection_enabled", "DeletionProtectionEnabled") {
+			msgs = append(msgs, "deletion protection is off on a DynamoDB table")
 		}
 	}
-	if r.Source == model.KindCFN && model.Stateful(r.Type) {
-		switch r.Meta["deletion_policy"] {
-		case "Retain", "Snapshot":
+	if r.Source == model.KindCFN && model.Stateful(r.Type) && !inCluster(r, t, p) {
+		pol := r.Meta["deletion_policy"]
+		if pol == "" && (t == "aws::rds::dbcluster" || t == "aws::rds::dbinstance") {
+			pol = "Snapshot" // the CloudFormation default for these two
+		}
+		switch pol {
+		case "Retain", "RetainExceptOnCreate", "Snapshot":
+		case "":
+			msgs = append(msgs, "the stateful resource has DeletionPolicy Delete (the default); use Retain or Snapshot")
 		default:
-			pol := r.Meta["deletion_policy"]
-			if pol == "" {
-				pol = "Delete (the default)"
-			}
-			return h("the stateful resource has DeletionPolicy " + pol + "; use Retain or Snapshot")
+			msgs = append(msgs, "the stateful resource has DeletionPolicy "+pol+"; use Retain or Snapshot")
 		}
 	}
-	return nil
+	if len(msgs) == 0 {
+		return nil
+	}
+	return []hit{{IAC006, level, strings.Join(msgs, "; ")}}
 }

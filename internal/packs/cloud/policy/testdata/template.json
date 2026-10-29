@@ -30,6 +30,24 @@
       "apiVersion": "2022-09-01",
       "name": "nested",
       "properties": {"mode": "Complete", "template": {"resources": []}}
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "acme-kv",
+      "properties": {"tenantId": "[subscription().tenantId]", "enableSoftDelete": true}
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "acme-kv-safe",
+      "properties": {"tenantId": "[subscription().tenantId]", "enablePurgeProtection": true}
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "acme-kv-param",
+      "properties": {"tenantId": "[subscription().tenantId]", "enablePurgeProtection": "[parameters('purge')]"}
     }
   ]
 }

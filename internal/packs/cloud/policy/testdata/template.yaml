@@ -35,3 +35,36 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: acme
+  QuietDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.micro
+  SafeDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      StorageEncrypted: true
+      DeletionProtection: true
+  ParamDb:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      StorageEncrypted: !Ref Encrypt
+      DeletionProtection: !Ref Protect
+  ClusterMember:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref ParamDb
+  Disk:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    Properties:
+      Size: 10
+  SafeDisk:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    Properties:
+      Encrypted: true
+  SafeTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      DeletionProtectionEnabled: true

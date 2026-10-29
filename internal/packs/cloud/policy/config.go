@@ -200,11 +200,12 @@ func ValidateConftest(n yaml.Node) error {
 		if k.Value != "policy" {
 			return at(*k, "unknown conftest key %q (policy)", k.Value)
 		}
-		items := []*yaml.Node{v}
-		if v.Kind == yaml.SequenceNode {
-			items = v.Content
+		// A list only: Load decodes a list, and the Union merge of
+		// conftest.policy works on lists, so a scalar would be dropped.
+		if v.Kind != yaml.SequenceNode {
+			return at(*v, "conftest policy must be a list of paths (policy: [%s])", v.Value)
 		}
-		for _, it := range items {
+		for _, it := range v.Content {
 			if err := checkRelPath(*it, "conftest policy"); err != nil {
 				return err
 			}
