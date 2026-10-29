@@ -25,8 +25,11 @@ SKILLS = PLUGIN / "skills"
 SNIPPET = '_tqe="${CLAUDE_PLUGIN_ROOT:-}"'
 PY = sys.executable.replace("\\", "/")
 PASS_CMD = f'"{PY}" -c "import sys; sys.exit(0)"'
-HASH = "9f2c" + "0" * 60
-OTHER_HASH = "1d4e" + "0" * 60
+# Fixtures follow the Go goldens (internal/packs/testdata/{check,list}-golden.json), copied
+# verbatim to fixtures/packs/: a sha256:-prefixed config_hash, findings always an array.
+GOLDEN = Path(__file__).resolve().parent / "fixtures" / "packs"
+HASH = "sha256:d72e19dd77287865cfc8b1ecfa280c6b7892182c8a06d05fc4b0be1031a8013c"
+OTHER_HASH = "sha256:" + "1d4e" + "0" * 60
 
 FAKE_TQ = r'''
 import json, os, sys, time
@@ -37,6 +40,12 @@ mode = os.environ.get("FAKE_TQ_MODE", "")
 if argv[:2] == ["pack", "list"]:
     if mode == "old":
         sys.stderr.write('tq: unknown command "pack" for "tq"\n'); sys.exit(1)
+    if mode == "old-error":
+        sys.stderr.write('Error: unknown command "pack" for "tq"\nRun "tq --help" for usage.\n'); sys.exit(1)
+    if mode == "spoof":
+        sys.stderr.write('tq-packs.yaml:2: cannot unmarshal !!str `unknown command "pack"` into bool\n'); sys.exit(2)
+    if mode == "spoof-exit1":
+        sys.stderr.write('tq-packs.yaml:2: value `tq: unknown command "pack" for "tq"` is not a bool\n'); sys.exit(1)
     if mode == "list-config-error":
         sys.stderr.write("tq-packs.yaml:3: unknown key packs.data.colour\n"); sys.exit(2)
     if mode == "list-garbage":
@@ -59,15 +68,7 @@ def finding(i: int, level: str = "error") -> dict:
     return {"file": f"models/m{i}.sql", "line": i, "level": level, "rule": "LT01", "message": f"finding {i}"}
 
 
-LIST_OUT = {
-    "schema": "tq.packs/v1",
-    "workspace": "acme",
-    "config_hash": HASH,
-    "packs": [
-        {"name": "data", "enabled": True, "checks": [{"id": "data/contract-breaking", "kind": "builtin", "required": True}]},
-        {"name": "ml", "enabled": True, "checks": []},
-    ],
-}
+LIST_OUT = json.loads((GOLDEN / "list-golden.json").read_text(encoding="utf-8"))
 
 CHECK_OUT = {
     "schema": "tq.packs/v1",
@@ -76,24 +77,27 @@ CHECK_OUT = {
     "config_hash": HASH,
     "results": [
         {"id": "data/contract-breaking", "pack": "data", "status": "ok", "required": True,
-         "detail": "2 contracts, no breaking change", "findings": []},
+         "detail": "2 contracts, no breaking change", "findings": [finding(7, "warn")]},
+        {"id": "data/baseline", "pack": "data", "status": "ok", "required": True,
+         "detail": "baseline grew by 2 entries",
+         "findings": [{"file": ".tq/sqlfluff-baseline.json", "level": "warn", "rule": "baseline-grew",
+                       "message": "2 new entries"}]},
         {"id": "data/sqlfluff", "pack": "data", "status": "fail", "required": True, "detail": "6 errors",
          "findings": [finding(i) for i in range(1, 7)],
-         "tool": {"name": "sqlfluff", "version": "3.2.0", "path": "/usr/bin/sqlfluff", "exit_code": 1,
-                  "duration_ms": 40, "timed_out": False}},
+         "tool": {"name": "sqlfluff", "version": "3.2.0", "exit_code": 1, "duration_ms": 0}},
         {"id": "ml/ruff", "pack": "ml", "status": "fail", "required": False,
          "detail": "ruff is installed but not declared in packs.ml.tools (advisory)", "findings": [finding(9)]},
         {"id": "data/dbt-parse", "pack": "data", "status": "skip", "required": False,
          "detail": "dbt not installed (not declared)", "findings": []},
     ],
-    "summary": {"ok": 1, "fail": 2, "skip": 1, "required_fail": 1},
+    "summary": {"ok": 2, "fail": 2, "skip": 1, "required_fail": 1},
 }
 
 
 def green_check() -> dict:
     out = copy.deepcopy(CHECK_OUT)
     out["results"] = [r for r in out["results"] if r["id"] != "data/sqlfluff"]
-    out["summary"] = {"ok": 1, "fail": 1, "skip": 1, "required_fail": 0}
+    out["summary"] = {"ok": 2, "fail": 1, "skip": 1, "required_fail": 0}
     return out
 
 
@@ -515,3 +519,168 @@ def test_ci_templates_job_loops_over_every_template():
     assert "templates/*/" in job and "pyproject.toml" in job and "tests" in job
     for old in ("templates/rag-starter/tests", "templates/pandas-jev-labeller/tests", "templates/n8n-jev-decision/tests"):
         assert old not in job, old  # the loop covers them; a hard-coded list misses new templates
+
+
+# ---------------------------------------------------------------------------
+# fix round 1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["spoof", "spoof-exit1"])
+def test_approve_refuses_config_error_text_that_quotes_unknown_command(repo, fake_tq, mode):
+    # a tq-packs.yaml value can put the old-tq message in an error; that must not freeze "no packs"
+    fake_tq.mode(mode)
+    with pytest.raises(SystemExit) as e:
+        gate.cmd_approve(repo, "demo")
+    assert "approve refused" in str(e.value)
+    assert gate.load_approved(repo, "demo") is None
+
+
+def test_approve_accepts_the_cobra_error_prefix_for_an_old_tq(repo, fake_tq):
+    fake_tq.mode("old-error")
+    gate.cmd_approve(repo, "demo")
+    assert frozen(repo) == {"enabled": [], "tq": "no-pack-command"}
+
+
+def test_no_pack_command_needs_exit_1_blank_stdout_and_a_whole_line():
+    msg = 'tq: unknown command "pack" for "tq"\n'
+    assert gate._no_pack_command(1, "", msg)
+    assert gate._no_pack_command(1, "  \n", 'Error: unknown command "pack" for "tq"  \n')
+    assert not gate._no_pack_command(2, "", msg)
+    assert not gate._no_pack_command(1, "{}", msg)
+    assert not gate._no_pack_command(1, "", 'x: tq: unknown command "pack" for "tq"\n')
+    assert not gate._no_pack_command(1, "", 'tq: unknown command "pack" for "tq" (yaml)\n')
+
+
+def test_dod_skips_packs_frozen_as_no_pack_command(repo, fake_tq):
+    fake_tq.mode("old")
+    gate.cmd_approve(repo, "demo")
+    fake_tq.mode("")
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 0, out
+    assert dod_items(repo)["pack"] == {"id": "pack", "ok": None, "detail": "skip: no packs frozen at approval"}
+    assert not [c for c in fake_tq.calls() if c[:2] == ["pack", "check"]]
+
+
+def test_dod_fails_closed_when_a_hash_was_frozen_with_no_packs_and_tq_is_missing(repo, fake_tq, monkeypatch):
+    fake_tq.lists({**LIST_OUT, "packs": []})
+    gate.cmd_approve(repo, "demo")
+    assert frozen(repo) == {"enabled": [], "config_hash": HASH}
+    monkeypatch.setattr(gate, "find_tq", lambda: None)
+    code, _ = gate.cmd_dod(repo, "demo")
+    item = dod_items(repo)["pack:run"]
+    assert code == 1 and item["ok"] is False and "tq not found" in item["detail"]
+
+
+def test_dod_accepts_null_findings_and_null_results(repo, fake_tq):
+    gate.cmd_approve(repo, "demo")
+    doc = green_check()
+    for r in doc["results"]:
+        r["findings"] = None
+    fake_tq.checks(doc, exit_code=0)
+    code, out = gate.cmd_dod(repo, "demo")
+    assert code == 0, out
+    assert dod_items(repo)["pack:data/contract-breaking"]["ok"] is True
+    fake_tq.checks({**green_check(), "results": None,
+                    "summary": {"ok": 0, "fail": 0, "skip": 0, "required_fail": 0}}, exit_code=0)
+    code, out = gate.cmd_dod(repo, "demo")
+    items = dod_items(repo)
+    assert code == 0 and items["pack:run"]["ok"] is True, out
+    assert not [i for i in items if i.startswith("pack:") and i not in ("pack:run", "pack:config")]
+
+
+def test_dod_rejects_required_that_is_not_a_bool_duplicate_ids_and_a_pack_mismatch(repo, fake_tq):
+    gate.cmd_approve(repo, "demo")
+    ok = {"id": "data/x", "pack": "data", "status": "ok", "required": True, "detail": "", "findings": []}
+    for results, frag in (([{**ok, "required": "yes"}], "required is not a boolean"),
+                          ([{**ok, "required": 1}], "required is not a boolean"),
+                          ([ok, dict(ok)], "duplicate result id data/x"),
+                          ([{**ok, "pack": "ml"}], "does not match the id prefix"),
+                          ([{k: v for k, v in ok.items() if k != "pack"}], "does not match the id prefix")):
+        fake_tq.checks({**green_check(), "results": results}, exit_code=0)
+        code, _ = gate.cmd_dod(repo, "demo")
+        item = dod_items(repo)["pack:run"]
+        assert code == 1 and item["ok"] is False and frag in item["detail"], (results, item)
+
+
+def _exe(dirpath: Path, name: str) -> Path:
+    dirpath.mkdir(parents=True, exist_ok=True)
+    path = dirpath / name
+    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_find_tq_order_is_tq_bin_then_path_then_the_plugin_bin(tmp_path, monkeypatch):
+    # the real find_tq: undo the autouse fixture's stub, then isolate the environment again
+    monkeypatch.undo()
+    for k in ("HOME", "USERPROFILE", "TQ_HOME"):
+        monkeypatch.setenv(k, str(tmp_path / "home"))
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    win = sys.platform == "win32"
+    plug = tmp_path / "plugin"
+    monkeypatch.setattr(gate, "plugin_root", lambda: plug)
+    plugin_tq = _exe(plug / "bin", "tq.exe" if win else "tq")
+    path_tq = _exe(tmp_path / "onpath", "tq.cmd" if win else "tq")
+    bin_tq = _exe(tmp_path / "pinned", "tq.exe" if win else "tq")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    monkeypatch.setenv("TQ_BIN", str(bin_tq))
+    monkeypatch.setenv("PATH", str(path_tq.parent))
+    assert Path(gate.find_tq()) == bin_tq
+    monkeypatch.delenv("TQ_BIN")
+    assert Path(gate.find_tq()).resolve() == path_tq.resolve()
+    monkeypatch.setenv("PATH", str(empty))
+    assert Path(gate.find_tq()) == plugin_tq
+    plugin_tq.unlink()
+    assert gate.find_tq() is None
+
+
+def test_hub_approval_summary_names_the_pack_freeze(repo):
+    project_block(repo, pack_budget=120)
+    summary = gate.approval_summary(repo, "demo")
+    assert "packs (enabled set + config hash, budget 120s)" in summary
+
+
+def test_pack_skill_bounds_every_tq_call_and_readme_scopes_kickoff():
+    body = _body("pack")
+    for line in body.splitlines():
+        if line.startswith(("tq pack", "$_to tq pack")):
+            assert line.startswith("$_to tq pack"), line
+    assert '_to="timeout 630"' in body and "$_to tq pack check --budget 600s" in body
+    assert "$_to tq pack doctor" in body
+    readme = " ".join((SKILLS / "pack" / "references" / "onramps" / "README.md").read_text(encoding="utf-8").split())
+    assert ("`## kickoff` is read for every pack, enabled or not: start it with the stack condition and "
+            "propose the `packs.<pack>` block; never assume it is enabled.") in readme
+
+
+def test_goldens_from_the_go_side_round_trip(repo, fake_tq):
+    fake_tq.lists(json.loads((GOLDEN / "list-golden.json").read_text(encoding="utf-8")))
+    gate.cmd_approve(repo, "demo")
+    assert frozen(repo) == {"enabled": ["data", "ml"], "config_hash": HASH}
+    fake_tq.check_file.write_text((GOLDEN / "check-golden.json").read_text(encoding="utf-8"), encoding="utf-8")
+    fake_tq.mp.setenv("FAKE_TQ_CHECK_EXIT", "1")  # summary.required_fail is 2
+    code, _ = gate.cmd_dod(repo, "demo")
+    items = dod_items(repo)
+    assert code == 1
+    assert items["pack:config"]["ok"] is True and items["pack:run"]["ok"] is True
+    assert "1 ok, 3 fail (2 required), 1 skip" in items["pack:run"]["detail"]
+    assert items["pack:data/example-select-star"]["ok"] is False
+    assert "models/orders.sql:1 error SQL001 SELECT * in a model" in items["pack:data/example-select-star"]["detail"]
+    assert items["pack:data/example-sqlfluff"]["ok"] is False
+    assert items["pack:data/example-warn"]["ok"] is True  # a warn finding never fails
+    assert "warn STY01" in items["pack:data/example-warn"]["detail"]
+    assert items["pack:ml/example-dvc"]["ok"] is None
+    assert items["pack:ml/example-ruff"]["ok"] is None  # not required: advisory
+    assert items["pack:ml/example-ruff"]["detail"].startswith("advisory: ruff 0.4.1 is below the minimum 0.5.0")
+
+
+def test_baseline_growth_result_is_recorded_like_any_check(repo, fake_tq):
+    gate.cmd_approve(repo, "demo")
+    fake_tq.checks(green_check(), exit_code=0)
+    code, out = gate.cmd_dod(repo, "demo")
+    item = dod_items(repo)["pack:data/baseline"]
+    assert code == 0, out
+    assert item["ok"] is True and "baseline-grew" in item["detail"]

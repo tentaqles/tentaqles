@@ -109,8 +109,8 @@ A result's `status` is `ok`, `fail` or `skip`; each finding has `file`, `line`,
 The build gate (`/tentaqles:build`, `/tentaqles:dod`) ties packs to the plan:
 
 - **At approval** it runs `tq pack list --enabled --json` (10 s) and freezes the
-  enabled packs and the `config_hash` with the plan. Without tq it freezes "no
-  packs, tq missing". An approval is refused when tq is there but the pack config
+  enabled packs and the `config_hash` with the plan. Without tq, or with a tq
+  that has no `pack` command, it freezes no packs and no hash. An approval is refused when tq is there but the pack config
   can't be read (a config error, a timeout, output that is not JSON).
 - **In the definition of done** it runs
   `tq pack check --json --base <approval base> --budget <B>s` with a subprocess
@@ -119,9 +119,9 @@ The build gate (`/tentaqles:build`, `/tentaqles:dod`) ties packs to the plan:
 
 | Item | Recorded as |
 |---|---|
-| `pack` | skip, when no packs were frozen at approval (none enabled, or tq missing then) |
+| `pack` | skip, when no config hash was frozen at approval: tq was missing or had no `pack` command then, or the plan was approved before the freeze existed |
 | `pack:config` | ok when the current `config_hash` equals the frozen one; otherwise missing: "pack config changed since approval; re-approve the plan" |
-| `pack:run` | missing when tq is missing, crashes, times out or prints invalid `tq.packs/v1` output while packs were frozen (fail closed) |
+| `pack:run` | missing when a config hash was frozen (even with no pack enabled) and tq is now missing, crashes, times out or prints invalid `tq.packs/v1` output (fail closed) |
 | `pack:<pack>/<check>` | one per result: ok for `ok`; missing for a required `fail`; skip for an advisory `fail` or a `skip`; the detail carries the first 5 findings |
 
 The Stop hook only reads the recorded `dod.json`; no hook ever runs `tq pack check`.

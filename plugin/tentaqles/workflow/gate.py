@@ -2590,7 +2590,8 @@ def approval_summary(root: Path, slug: str) -> str:
     verify = "; ".join(f"#{cp.get('id')}: " + " && ".join(c for c in (cp.get("verify") or []) if isinstance(c, str))
                        for cp in plan["checkpoints"])
     extra = ", hotfix (no critic)" if plan.get("hotfix") is True else ""
-    return (f"the definition of done ({dod}; changelog: {project.get('changelog') or '(none)'}) "
+    return (f"the definition of done ({dod}; changelog: {project.get('changelog') or '(none)'}), "
+            f"packs (enabled set + config hash, budget {_pack_budget(project)}s) "
             f"and the verify commands ({verify}){extra}")
 
 
@@ -3002,12 +3003,20 @@ PACK_FINDINGS_SHOWN = 5
 PACK_STATUSES = ("ok", "fail", "skip")
 PACK_NAME_RE = re.compile(r"[a-z][a-z0-9-]*")
 PACK_CHECK_ID_RE = re.compile(r"[a-z][a-z0-9-]*/[a-z0-9][a-z0-9._-]*")
-_NO_PACK_COMMAND = re.compile(r'unknown command "pack"')
+# cobra's message for a tq that predates packs. Matched as a whole stderr line, with exit 1 and
+# an empty stdout, so a config error that quotes this text (a tq-packs.yaml value) can't fake it.
+_NO_PACK_COMMAND = re.compile(r'(?:Error|tq): unknown command "pack" for "tq"\s*')
 PACK_SKIP = "skip: no packs frozen at approval"
 
 
+def _no_pack_command(code: int, out: str, err: str) -> bool:
+    return (code == 1 and not out.strip()
+            and any(_NO_PACK_COMMAND.fullmatch(ln) for ln in err.splitlines()))
+
+
 def find_tq() -> str | None:
-    """The tq binary, resolved in the order scripts/tq_hook.sh uses."""
+    """The tq binary, resolved in the order scripts/tq_hook.sh uses, then the plugin's own
+    bin/ (as memory/jev_gate.py does) when CLAUDE_PLUGIN_ROOT is unset."""
     win = os.name == "nt"
     exe = ".exe" if win else ""
     cands: list[str] = []
@@ -3018,6 +3027,7 @@ def find_tq() -> str | None:
     found = shutil.which("tq")
     if found:
         cands.append(found)
+    cands.append(str(plugin_root() / "bin" / ("tq" + exe)))
     home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
     if home:
         cands += [os.path.join(home, ".tentaqles", "bin", "tq" + exe), os.path.join(home, ".local", "bin", "tq" + exe)]
@@ -3060,7 +3070,7 @@ def freeze_packs(root: Path) -> dict:
     if not tq:
         return {"enabled": [], "tq": "missing"}
     code, out, err, timed_out = run([tq, "pack", "list", "--enabled", "--json"], cwd=root, timeout=PACK_LIST_TIMEOUT)
-    if code != 0 and not timed_out and _NO_PACK_COMMAND.search(err + "\n" + out):
+    if not timed_out and _no_pack_command(code, out, err):
         return {"enabled": [], "tq": "no-pack-command"}
     why, names, h = "", None, None
     if timed_out:
@@ -3113,12 +3123,18 @@ def _parse_pack_check(out: str) -> tuple[dict | None, str]:
         results = doc["results"] = []
     if not isinstance(results, list):
         return None, "results is not a list"
+    seen: set[str] = set()
     for r in results:
         if not isinstance(r, dict):
             return None, "a result is not an object"
         rid = r.get("id")
         if not isinstance(rid, str) or not PACK_CHECK_ID_RE.fullmatch(rid):
             return None, f"a result id is not <pack>/<check>: {str(rid)[:60]!r}"
+        if rid in seen:
+            return None, f"duplicate result id {rid}"
+        seen.add(rid)
+        if r.get("pack") != rid.split("/", 1)[0]:
+            return None, f"{rid}: pack {str(r.get('pack'))[:40]!r} does not match the id prefix"
         if r.get("status") not in PACK_STATUSES:
             return None, f"{rid}: status {str(r.get('status'))[:20]!r} is not ok, fail or skip"
         if not isinstance(r.get("required"), bool):
@@ -3163,11 +3179,13 @@ def pack_items(root: Path, approved: dict) -> list[tuple[str, bool | None, str]]
     if not isinstance(packs, dict):
         return [("pack", None, PACK_SKIP)]  # approved before the freeze existed
     enabled = [n for n in (packs.get("enabled") or []) if isinstance(n, str)]
+    if not isinstance(packs.get("config_hash"), str):
+        return [("pack", None, PACK_SKIP)]  # tq missing, or without the pack command, at approval
     tq = find_tq()
-    if not enabled and (packs.get("tq") or not isinstance(packs.get("config_hash"), str) or not tq):
-        return [("pack", None, PACK_SKIP)]
     if not tq:
-        return [("pack:run", False, (f"tq not found, but packs were frozen at approval ({', '.join(enabled)}); "
+        # A config hash was frozen: without tq nothing can show it still holds (fail closed).
+        frozen_what = f"packs {', '.join(enabled)}" if enabled else "a pack config with no pack enabled"
+        return [("pack:run", False, (f"tq not found, but {frozen_what} was frozen at approval; "
                                      "install tq (tq doctor) and re-run the definition of done"))]
     budget = _pack_budget(approved.get("project") or {})
     argv = [tq, "pack", "check", "--json"]

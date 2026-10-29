@@ -26,6 +26,8 @@ on-ramp.
 ## ship
 ```
 
+- `## kickoff` is read for every pack, enabled or not: start it with the stack
+  condition and propose the `packs.<pack>` block; never assume it is enabled.
 - A section says what the on-ramp adds when this pack is enabled: spec slice fields,
   acceptance checks, regression-test layer, proposed `packs.<pack>` keys, the rows of
   the DoD item table for `pack:<pack>/*`, the PR body lines. Reviewers come from

@@ -35,16 +35,18 @@ $_to tq pack list --enabled --json; echo "packs_exit=$?"
 
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && _tqe="$(for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && printf '%s\n' "${_d%/}"; done | awk -F/ '{print $NF" "$0}' | sort -s -t. -k1,1nr -k2,2nr -k3,3nr | head -n1 | cut -d" " -f2-)"; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
-tq pack check --budget 600s; echo "check_exit=$?"
+_to=""; command -v timeout >/dev/null 2>&1 && _to="timeout 630"; command -v gtimeout >/dev/null 2>&1 && _to="gtimeout 630"
+$_to tq pack check --budget 600s; echo "check_exit=$?"
 ```
 
 - Add `--pack <name>` to run one pack, `--staged` for the index, `--base <ref>` for a
   branch, `--all` for every tracked file, `--builtin-only` to skip the external tools.
-  `--json` prints schema `tq.packs/v1`. The budget caps the whole run (max 1800 s).
+  `--json` prints schema `tq.packs/v1`. The budget caps the whole run (max 1800 s);
+  the outer timeout is the budget plus 30 s, so raise both together.
 - A check that needs warehouse or cloud credentials runs only when the human wraps it:
   `tq dotenv run -- tq pack check`. Never read `.env` files yourself.
 - `check_exit=0`: no required check failed. `1`: at least one did. `2`: a usage or
-  config error.
+  config error. `124`: the outer timeout hit; report it.
 
 Each line is one result: `ok`, `fail` or `skip`, the check id `<pack>/<check>` and a
 detail, then up to 20 findings as `file:line level rule message`. Only an `error`
@@ -84,7 +86,8 @@ the pack's minimum version.
 
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && _tqe="$(for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && printf '%s\n' "${_d%/}"; done | awk -F/ '{print $NF" "$0}' | sort -s -t. -k1,1nr -k2,2nr -k3,3nr | head -n1 | cut -d" " -f2-)"; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
-tq pack doctor; echo "doctor_exit=$?"
+_to=""; command -v timeout >/dev/null 2>&1 && _to="timeout 10"; command -v gtimeout >/dev/null 2>&1 && _to="gtimeout 10"
+$_to tq pack doctor; echo "doctor_exit=$?"
 ```
 
 tq looks in `tool_paths.<tool>` (manifest only), then the project's `.venv`, then
@@ -101,9 +104,9 @@ build's base and records:
 
 | Item | Meaning | Who fixes it |
 |---|---|---|
-| `pack` (skip) | no packs were frozen at approval (none enabled, or tq missing then) | nobody |
+| `pack` (skip) | no config hash was frozen at approval: tq was missing or had no `pack` command then, or the plan was approved before the freeze existed | nobody |
 | `pack:config` | the merged pack config hash differs from the one frozen at approval (the manifest or `tq-packs.yaml` changed) | the human re-approves the plan so the new config is frozen |
-| `pack:run` | tq is missing, crashed, timed out or printed output that is not `tq.packs/v1`, while packs were frozen: the gate fails closed | install or repair tq (`tq doctor`), then re-run the DoD; never re-approve to skip it |
+| `pack:run` | a config hash was frozen (even with no pack enabled) and tq is now missing, crashed, timed out or printed output that is not `tq.packs/v1`: the gate fails closed | install or repair tq (`tq doctor`), then re-run the DoD; never re-approve to skip it |
 | `pack:<pack>/<check>` | one per result: `ok`, `MISSING` for a required fail, `skip` for an advisory fail or a skip; the detail carries the first 5 findings | fix the code; a declared-missing tool goes through step 4 |
 
 The budget is 600 s unless the project's `tq-project` block sets `pack_budget`
