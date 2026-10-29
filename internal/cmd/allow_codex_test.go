@@ -29,6 +29,10 @@ func codexTrustWS(t *testing.T) (mp, cfg string) {
 	if err := os.WriteFile(mp, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Reviewed and trusted: tq allow --mode grants only a trusted manifest.
+	if err := trust.Allow(manifestHash(t, root)); err != nil {
+		t.Fatal(err)
+	}
 	tab, _ := guardcfg.Preset(guardcfg.ModeRelaxed)
 	prev := codexModeAt
 	codexModeAt = func(ws *resolve.Workspace, cwd string) (string, func(*policy.Rule) policy.Action) {

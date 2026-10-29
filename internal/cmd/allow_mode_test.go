@@ -229,3 +229,33 @@ func TestGuardEditReportsADroppedGrant(t *testing.T) {
 		t.Fatalf("err %v, out:\n%s", err, out)
 	}
 }
+
+// tq allow --mode grants only a manifest the human already reviewed and
+// trusted with tq allow: it never trusts an edited one on the way (an agent
+// could have loosened the table), the same rule tq mode set follows
+// (security review m5).
+func TestAllowModeRefusesAnUnreviewedManifest(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", relaxedWorkspace)
+	asHuman(t)
+	mp := filepath.Join(root, manifest.FileName)
+	raw, err := os.ReadFile(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mp, append(raw, []byte("# edited\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := manifestHash(t, root)
+	for _, args := range [][]string{{"allow", "--mode", "acme", "custom"}, {"allow", "--mode", "acme", "relaxed"}, {"allow", "--bypass", "acme"}} {
+		out, err := runGuardCmd(t, args...)
+		if err == nil || !strings.Contains(err.Error(), "tq allow acme") {
+			t.Fatalf("%v: must refuse an untrusted manifest: %v\n%s", args, err, out)
+		}
+	}
+	if trust.IsTrusted(h) {
+		t.Fatal("the edited manifest must stay untrusted")
+	}
+	if g, _ := trust.LoadGrant(h); g != nil {
+		t.Fatalf("no grant may be written: %+v", g)
+	}
+}
