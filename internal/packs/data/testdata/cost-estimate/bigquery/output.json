@@ -1,0 +1,14 @@
+{
+  "configuration": {
+    "dryRun": true,
+    "jobType": "QUERY",
+    "query": {"destinationTable": {"datasetId": "_acme_anon", "projectId": "acme-dev", "tableId": "anon"}, "priority": "INTERACTIVE", "useLegacySql": false}
+  },
+  "jobReference": {"location": "EU", "projectId": "acme-dev"},
+  "statistics": {
+    "creationTime": "1761650000000",
+    "query": {"totalBytesBilled": "0", "totalBytesProcessed": "1234567890", "statementType": "SELECT"},
+    "totalBytesProcessed": "1234567890"
+  },
+  "status": {"state": "DONE"}
+}

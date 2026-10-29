@@ -1,0 +1,3 @@
+<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan" Version="1.564" Build="12.0.2000.8"><BatchSequence><Batch><Statements><StmtSimple StatementText="SELECT status, COUNT(*) FROM dbo.orders GROUP BY status" StatementId="1" StatementCompId="1" StatementType="SELECT" StatementSubTreeCost="0.0328577" StatementEstRows="96"><QueryPlan><RelOp NodeId="0" PhysicalOp="Compute Scalar" EstimatedTotalSubtreeCost="0.0328577"/></QueryPlan></StmtSimple></Statements></Batch></BatchSequence></ShowPlanXML>
+
+(1 rows affected)

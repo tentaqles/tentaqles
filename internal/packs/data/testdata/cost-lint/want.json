@@ -1,0 +1,86 @@
+{
+  "id": "",
+  "pack": "",
+  "status": "fail",
+  "required": false,
+  "detail": "5 files checked, 11 BigQuery jobs without a usable byte cap",
+  "findings": [
+    {
+      "file": ".github/workflows/nightly.yml",
+      "line": 7,
+      "level": "error",
+      "rule": "bq-cli-no-cap",
+      "message": "bq query without --maximum_bytes_billed; add --maximum_bytes_billed=50000000000"
+    },
+    {
+      "file": "jobs/export.py",
+      "line": 32,
+      "level": "error",
+      "rule": "bq-cli-no-cap",
+      "message": "bq query without --maximum_bytes_billed; add --maximum_bytes_billed=50000000000"
+    },
+    {
+      "file": "jobs/export.py",
+      "line": 14,
+      "level": "error",
+      "rule": "bq-job-config-no-cap",
+      "message": "QueryJobConfig without maximum_bytes_billed; add maximum_bytes_billed=50000000000"
+    },
+    {
+      "file": "jobs/export.py",
+      "line": 17,
+      "level": "error",
+      "rule": "bq-cap-above-max",
+      "message": "maximum bytes billed 900000000000 is above packs.data.cost.bigquery.max_bytes (50GB)"
+    },
+    {
+      "file": "jobs/export.py",
+      "line": 21,
+      "level": "error",
+      "rule": "bq-query-no-cap",
+      "message": "client.query without job_config; pass a QueryJobConfig with maximum_bytes_billed=50000000000"
+    },
+    {
+      "file": "jobs/export.py",
+      "line": 26,
+      "level": "error",
+      "rule": "bq-read-gbq-no-cap",
+      "message": "read_gbq without configuration {\"query\": {\"maximumBytesBilled\": \"50000000000\"}}"
+    },
+    {
+      "file": "notebooks/explore.ipynb",
+      "line": 8,
+      "level": "error",
+      "rule": "bq-magic-no-cap",
+      "message": "%%bigquery cell without --maximum_bytes_billed; add --maximum_bytes_billed=50000000000 or set magics.context.default_query_job_config.maximum_bytes_billed"
+    },
+    {
+      "file": "notebooks/explore.ipynb",
+      "line": 22,
+      "level": "error",
+      "rule": "bq-query-no-cap",
+      "message": "client.query without job_config; pass a QueryJobConfig with maximum_bytes_billed=50000000000"
+    },
+    {
+      "file": "scripts/load.sh",
+      "line": 4,
+      "level": "error",
+      "rule": "bq-cli-no-cap",
+      "message": "bq query without --maximum_bytes_billed; add --maximum_bytes_billed=50000000000"
+    },
+    {
+      "file": "scripts/load.sh",
+      "line": 6,
+      "level": "error",
+      "rule": "bq-cap-above-max",
+      "message": "maximum bytes billed 900000000000 is above packs.data.cost.bigquery.max_bytes (50GB)"
+    },
+    {
+      "file": "scripts/load.sh",
+      "line": 8,
+      "level": "error",
+      "rule": "bq-cli-no-cap",
+      "message": "bq query without --maximum_bytes_billed; add --maximum_bytes_billed=50000000000"
+    }
+  ]
+}
