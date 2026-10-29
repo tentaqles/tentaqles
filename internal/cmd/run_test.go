@@ -118,6 +118,8 @@ func ws(t *testing.T, mode string) *resolve.Workspace {
 	return &resolve.Workspace{
 		Name: "acme",
 		Hash: "hash-" + mode,
+		// A grant is read for a workspace root (security re-review r2).
+		Root: t.TempDir(),
 		Manifest: &manifest.Manifest{
 			Schema: "tentaqles-client-v2", Client: "acme",
 			Claude: manifest.Claude{PermissionMode: mode},
