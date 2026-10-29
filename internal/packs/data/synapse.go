@@ -16,6 +16,7 @@ import (
 const (
 	ruleSynapseInline = "synapse-inline-secret"
 	ruleSynapsePool   = "synapse-hardcoded-pool"
+	ruleSynapseParse  = "synapse-unparsed"
 )
 
 // secretKeys are property names that hold a credential (lower case).
@@ -44,8 +45,14 @@ func runSynapseArtifacts(_ context.Context, in *packs.Input) packs.Result {
 			continue
 		}
 		root, err := parseJSONLines(b)
-		if err != nil || scan.Get(root, "properties") == nil {
-			continue // not a Synapse resource
+		if err != nil {
+			// Fail visibly: an unparsed file may hold an inline secret.
+			fs.addFile(p, 1, packs.LevelWarn, ruleSynapseParse,
+				"the file does not parse as JSON; its credentials and pools were not checked")
+			continue
+		}
+		if scan.Get(root, "properties") == nil {
+			continue // valid JSON, but not a Synapse resource
 		}
 		n++
 		synapseSecrets(p, root, &fs)

@@ -1,0 +1,7 @@
+{
+	"name": "AcmeSql",
+	"properties": {
+		"typeProperties": {
+			"connectionString": "Data Source=acme;User ID=tester;Password=notreal"
+		}
+	
