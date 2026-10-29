@@ -64,7 +64,7 @@ def _lock_sha256(root: Path) -> str:
 
 def _write_json(path: Path, obj: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_bytes((json.dumps(obj, indent=2, sort_keys=True) + "\n").encode("utf-8"))  # LF on every OS
 
 
 def train(root: Path = Path("."), seed: int = SEED, snapshot: str = SNAPSHOT) -> Result:

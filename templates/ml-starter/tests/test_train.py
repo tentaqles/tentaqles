@@ -75,6 +75,7 @@ def test_two_runs_give_the_same_metrics(project: Path) -> None:
     first = (project / "reports" / "churn" / "metrics.json").read_text(encoding="utf-8")
     train.train(project)
     assert (project / "reports" / "churn" / "metrics.json").read_text(encoding="utf-8") == first
+    assert b"\r" not in (project / "reports" / "churn" / "metrics.json").read_bytes()  # same bytes on every OS
 
 
 def test_committed_metrics_are_reproduced(project: Path) -> None:

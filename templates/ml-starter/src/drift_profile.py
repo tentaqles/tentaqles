@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"drift_profile: {exc}", file=sys.stderr)
         return 2
     a.out.parent.mkdir(parents=True, exist_ok=True)
-    a.out.write_text(json.dumps(prof, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    a.out.write_bytes((json.dumps(prof, indent=2, sort_keys=True) + "\n").encode("utf-8"))  # LF on every OS
     print(f"wrote {a.out}: {prof['rows']} rows, {len(prof['features'])} features")
     return 0
 
