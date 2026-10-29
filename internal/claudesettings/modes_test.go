@@ -1,6 +1,8 @@
 package claudesettings
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
@@ -79,5 +81,42 @@ func TestDesired_SkipDangerousPromptAndDefaultMode(t *testing.T) {
 	}
 	if p := next["permissions"].(map[string]any); p["defaultMode"] != "plan" {
 		t.Fatalf("defaultMode = %v", p["defaultMode"])
+	}
+}
+
+// The global guard.yaml is a layer too (spec E §6.1): relaxed there moves the
+// repo-delete entry to ask like a relaxed manifest does. An unreadable global
+// file applies nothing, so the deny stays (fail closed). The launch layer
+// (--tq-mode, TQ_MODE) is per session and cannot be rendered into settings.
+func TestDesired_GlobalGuardFileLoosensGitHistory(t *testing.T) {
+	cases := []struct {
+		name, file string
+		ask        bool
+	}{
+		{"none", "", false},
+		{"global relaxed", "mode: relaxed\n", true},
+		{"global strict", "mode: strict\n", false},
+		{"global custom git-history ask", "mode: custom\ncategories:\n  git-history: ask\n", true},
+		{"global rules_override skip", "rules_override:\n  tq/gh-repo-delete: skip\n", true},
+		{"global relaxed, override deny", "mode: relaxed\nrules_override:\n  tq/gh-repo-delete: deny\n", false},
+		{"unparsable", "mode: [relaxed\n", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("TQ_HOME", home)
+			if c.file != "" {
+				if err := os.WriteFile(filepath.Join(home, "guard.yaml"), []byte(c.file), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			d := Desired(man(""), false, "")
+			if got := contains(d.Ask, ghRepoDelete); got != c.ask {
+				t.Fatalf("ask has the repo-delete entry = %v, want %v", got, c.ask)
+			}
+			if got := contains(d.Deny, ghRepoDelete); got == c.ask {
+				t.Fatalf("deny has the repo-delete entry = %v, want %v", got, !c.ask)
+			}
+		})
 	}
 }

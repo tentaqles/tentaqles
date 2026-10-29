@@ -14,15 +14,31 @@ const ghRepoDeleteEntry = "Bash(gh repo delete:*)"
 
 const ghRepoDeleteID = "tq/gh-repo-delete"
 
-// gitHistoryLoosened reports whether any layer of g (the workspace or one of
-// its projects) puts tq/gh-repo-delete below deny: relaxed, a custom table
-// with git-history ask or skip, or a rules_override. The legacy
-// guard.unattended block reads as relaxed. Whether the workspace has the
-// grant does not matter here: without it the hook clamps the rule back to
-// deny, and the hook runs before the settings.
+// gitHistoryLoosened reports whether any layer (the global guard.yaml, the
+// workspace or one of its projects) puts tq/gh-repo-delete below deny:
+// relaxed, a custom table with git-history ask or skip, or a rules_override.
+// The legacy guard.unattended block reads as relaxed. Whether the workspace
+// has the grant does not matter here: without it the hook clamps the rule
+// back to deny, and the hook runs before the settings. A global file that
+// cannot be loaded applies nothing (the deny stays). The launch layer
+// (--tq-mode, TQ_MODE) is per session and cannot be rendered: a relaxed
+// launch in a workspace that is not relaxed keeps the settings deny.
 func gitHistoryLoosened(g manifest.Guard) bool {
 	if g.Unattended.Configured() {
 		return true
+	}
+	if gf, err := guardcfg.Load(); err == nil {
+		cats := map[string]string{}
+		for k, v := range gf.Categories {
+			cats[string(k)] = string(v)
+		}
+		ovr := map[string]string{}
+		for k, v := range gf.RulesOverride {
+			ovr[k] = string(v)
+		}
+		if layerLoosens(gf.Mode, gf.Base, cats, ovr) {
+			return true
+		}
 	}
 	if layerLoosens(g.Mode, g.Base, g.Categories, g.RulesOverride) {
 		return true
