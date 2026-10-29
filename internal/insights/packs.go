@@ -69,18 +69,28 @@ type ledgerLine struct {
 	TS        string `json:"ts"`
 }
 
+// isGauge reports a pack counter that records a level, not a count: its
+// name before the first ":" ends in _days (drill_age_days:<name>, spec D
+// §19).
+func isGauge(counter string) bool {
+	name, _, _ := strings.Cut(counter, ":")
+	return strings.HasSuffix(name, "_days")
+}
+
 // ReadPacks reads $TQ_HOME/packs/events.jsonl and every pack ledger
 // ($TQ_HOME/packs/<ws>/<pack>/ledger.jsonl) since since; keepWS filters
 // workspaces (nil: all).
 func ReadPacks(dir string, since, now time.Time, keepWS func(string) bool) (PacksReport, error) {
 	rep := PacksReport{Checks: map[string]*PackCheckStats{}, Counters: map[string]map[string]int{}}
+	gaugeAt := map[string]time.Time{} // pack + counter -> time of the value kept
 	var firstErr error
 	if err := eachLine(filepath.Join(dir, "events.jsonl"), func(b []byte) {
 		var e packEvent
 		if json.Unmarshal(b, &e) != nil {
 			return
 		}
-		if ts, ok := parseEventTime(e.TS); !ok || ts.Before(since) {
+		ts, ok := parseEventTime(e.TS)
+		if !ok || ts.Before(since) {
 			return
 		}
 		if keepWS != nil && !keepWS(e.Workspace) {
@@ -91,6 +101,14 @@ func ReadPacks(dir string, since, now time.Time, keepWS func(string) bool) (Pack
 			if m == nil {
 				m = map[string]int{}
 				rep.Counters[e.Pack] = m
+			}
+			if isGauge(e.Counter) {
+				// a gauge keeps its latest value, never a sum
+				k := e.Pack + "\x00" + e.Counter
+				if prev, seen := gaugeAt[k]; !seen || !ts.Before(prev) {
+					gaugeAt[k], m[e.Counter] = ts, e.N
+				}
+				return
 			}
 			m[e.Counter] += e.N
 			return
