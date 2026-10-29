@@ -181,14 +181,22 @@ func agFlag(prog, flag string) string { return prog + `(?:` + seg + `\s)?` + fla
 // agLoosenedMode is a --tq-mode value looser than default (or off).
 const agLoosenedMode = `--tq-mode` + agVal + `(?:off|relaxed|custom)\b`
 
+// agLoosenEnv are the variables a settings env block may not set: tq's mode
+// and kill switch, the Claude config dir (the main install, no tq) and
+// Claude's simple and safe modes.
+const agLoosenEnv = `TQ_MODE|TQ_ENABLED|CLAUDE_CONFIG_DIR|CLAUDE_CODE_SIMPLE|CLAUDE_CODE_SAFE_MODE`
+
 // agSettingsLoose is a claude --settings value that switches tq off: inline
 // JSON that disables the tentaqles plugin, all hooks, or empties the hooks,
+// sets one of agLoosenEnv in env, or a looser permissions.defaultMode,
 // or a settings file (its content cannot be read by a regex, so a file fails
 // closed: pass the settings inline, or run the command yourself).
 const agSettingsLoose = `--settings` + agVal + `(?:` +
 	`[^\n]*disableAllHooks` +
 	`|[^\n]*["']?hooks["']?\s*:\s*\{\s*\}` +
 	`|[^\n]*enabledPlugins[^\n]*tentaqles[^\n]*\bfalse\b` +
+	`|[^\n]*["']?env["']?\s*:\s*\{[^\n]*\b(?:` + agLoosenEnv + `)\b` +
+	`|[^\n]*["']?defaultMode["']?\s*:\s*["']?(?:bypassPermissions|auto|dontAsk)\b` +
 	`|[^\s{'"])`
 
 func nestedAgentCommand() string {

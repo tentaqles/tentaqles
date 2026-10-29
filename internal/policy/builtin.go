@@ -295,10 +295,16 @@ func coreBuiltin() []Rule {
 		// --- Claude Code settings ---------------------------------------------------
 		{
 			ID: "tq/settings-widen", Action: Deny,
-			Tool:    "Edit|MultiEdit|Write",
-			Path:    `(^|/)(\.claude/settings(\.local)?\.json|\.claude\.json|settings(\.local)?\.json)$`,
-			Content: `Bash\(\*\)|bypassPermissions|"disableAllHooks"\s*:\s*true|"hooks"\s*:\s*\{\s*\}|"skipDangerousModePermissionPrompt"\s*:\s*true`,
-			Reason:  "this would widen permissions or switch hooks off from inside the session; permission changes go through `tq settings render` and the manifest",
+			Tool: "Edit|MultiEdit|Write",
+			Path: `(^|/)(\.claude/settings(\.local)?\.json|\.claude\.json|settings(\.local)?\.json)$`,
+			// Also what switches tq off for the next or a nested session: the
+			// tentaqles plugin disabled, an env block naming tq's or Claude's
+			// mode variables, a looser defaultMode.
+			Content: `Bash\(\*\)|bypassPermissions|"disableAllHooks"\s*:\s*true|"hooks"\s*:\s*\{\s*\}|"skipDangerousModePermissionPrompt"\s*:\s*true` +
+				`|"enabledPlugins"\s*:\s*\{[^}]*"tentaqles[^"]*"\s*:\s*false` +
+				`|"env"\s*:\s*\{[^}]*"(` + agLoosenEnv + `)"` +
+				`|"defaultMode"\s*:\s*"(auto|dontAsk)"`,
+			Reason: "this would widen permissions or switch hooks off from inside the session; permission changes go through `tq settings render` and the manifest",
 		},
 		{
 			ID: "tq/settings-shell-write", Action: Deny,

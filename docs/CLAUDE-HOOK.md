@@ -537,7 +537,10 @@ Bash or PowerShell call:
   `--allow-dangerously-skip-permissions`,
   `--permission-mode bypassPermissions|auto|dontAsk`, `--bare`,
   `--safe-mode`, `--setting-sources` without `user`, `--settings` with inline
-  JSON that switches tentaqles off or empties hooks (a `--settings` file is
+  JSON that switches tentaqles off, empties hooks, sets `TQ_MODE`,
+  `TQ_ENABLED`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_SIMPLE` or
+  `CLAUDE_CODE_SAFE_MODE` in `env`, or sets `permissions.defaultMode` to
+  `bypassPermissions`, `auto` or `dontAsk` (a `--settings` file is
   always denied, because the rule cannot read it), and
   `CLAUDE_CODE_SIMPLE=1` or `CLAUDE_CODE_SAFE_MODE=1`;
 - clearing or reassigning `CLAUDE_CONFIG_DIR` or `CODEX_HOME`;
@@ -770,7 +773,7 @@ Matchers (all regexes, case-insensitive; every one present must match):
 | `tq/cloud-delete`, `tq/iac-destroy` | ask | `az/aws/gcloud/doctl/databricks … delete/rm/purge/…`, `terraform/cdk/pulumi destroy` |
 | `tq/iac-apply` | ask | applying infrastructure to a live environment: `terraform/tofu apply`, `pulumi up`, `cdk/cdktf deploy`, `kubectl apply`, `helm install/upgrade`, `sam/serverless/sls deploy`, CloudFormation, Azure and Deployment Manager deployments (`--dry-run` exempt) |
 | `tq/remote-migration` | ask | running migrations (`prisma migrate deploy`, `alembic upgrade`, `flyway migrate`, `supabase db push`, `rails db:migrate`, `manage.py migrate`, …) against a connection that is not local; a command naming `localhost`, `127.0.0.1` or `--local` is exempt |
-| `tq/settings-widen` | deny | Edit/Write of Claude Code settings (`.claude/settings[.local].json`, `.claude.json`, or a bare `settings[.local].json`) that adds `Bash(*)`, `bypassPermissions`, `disableAllHooks: true`, empty `hooks`, or `skipDangerousModePermissionPrompt: true`; permission changes go through `tq settings render` and the manifest |
+| `tq/settings-widen` | deny | Edit/Write of Claude Code settings (`.claude/settings[.local].json`, `.claude.json`, or a bare `settings[.local].json`) that adds `Bash(*)`, `bypassPermissions`, `disableAllHooks: true`, empty `hooks`, `skipDangerousModePermissionPrompt: true`, `enabledPlugins` with tentaqles `false`, an `env` block naming `TQ_MODE`, `TQ_ENABLED`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_SIMPLE` or `CLAUDE_CODE_SAFE_MODE`, or `defaultMode` `auto` or `dontAsk`; permission changes go through `tq settings render` and the manifest |
 | `tq/settings-shell-write` | deny | writing `.claude/settings[.local].json`, `.claude/tq-rules.yaml` or `.claude.json` from the shell (redirects, `tee`, `sed -i`, `cp`/`mv` onto them) |
 | `tq/registry-write` | ask | `reg add/delete`, registry writes from PowerShell |
 | `tq/tracker-cli-write` | ask | a write to the company tracker from its CLI, outside the hub's sync engine (so the `sync.policy.*` settings and the outbound redaction do not apply): `az boards work-item create/update/delete/relation add\|remove`; `az rest` with a write method (`--method`, `-m`) on `dev.azure.com` or `visualstudio.com`; `az devops invoke --http-method` with a write; `gh issue edit/close/create/comment/reopen/delete/transfer/lock/unlock/pin/unpin/develop`; `gh project item-edit/add/create/delete/archive`; `gh api` with a write (`-X`/`--method` POST, PATCH, PUT or DELETE, also `-XPATCH`, or a field flag, which makes gh POST) on an issues or projects path; `gh api graphql` with a `mutation`, or with a query read from a file (`-F query=@…`, `--input`), which the rule cannot read; `acli jira workitem edit/transition/create/comment/delete/assign/clone/link/archive/unarchive`. The tool must be the command word (bare, path-prefixed or quoted; flags may sit before the subcommand, as in `gh -R acme/app issue edit`), so a PR title that only mentions "issue create" is not a write. Use `tq hub sync` or `/tentaqles:sync` instead |
