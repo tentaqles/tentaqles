@@ -190,3 +190,42 @@ func TestCrewDetail(t *testing.T) {
 		t.Fatalf("%q", out)
 	}
 }
+
+// The state-dir rule covers only the protected parts (hub, packs,
+// build-gate, trust, guard.yaml); the agents' working area stays open.
+func TestHookStateDirOnlyProtectedParts(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	home := paths.Home()
+	mem := filepath.Join(home, "identities", "x", "claude", "projects", "p", "memory", "a.md")
+	allowed := []policy.ToolCall{
+		{Tool: "Write", Path: mem},
+		{Tool: "Write", Path: `~/.tentaqles/identities/x/claude/projects/p/memory/a.md`},
+		{Tool: "Bash", Command: `cat ~/.tentaqles/identities/x/claude/settings.json`},
+		{Tool: "PowerShell", Command: `Get-Content $HOME\.tentaqles\identities\x\claude\settings.json`},
+		{Tool: "Bash", Command: `git commit -m "docs: mention ~/.tentaqles in the setup guide"`},
+		{Tool: "Bash", Command: `ls ~/.tentaqles/bundles`},
+		{Tool: "Bash", Command: `cat ~/.tentaqles/identities/x/claude/projects/hub-notes.md`},
+	}
+	for _, c := range allowed {
+		if code, out := hookDecision(t, ws, c); code != 0 || strings.Contains(out, "tq/hub-store-write") {
+			t.Errorf("denied (%d): %s%s\n%s", code, c.Command, c.Path, out)
+		}
+	}
+	denied := []policy.ToolCall{
+		{Tool: "Bash", Command: `cd ~/.tentaqles && echo x >> packs/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `cd ~/.tentaqles; cd packs; echo x >> acme/ml/ledger.jsonl`},
+		{Tool: "PowerShell", Command: `Set-Location $HOME\.tentaqles; Add-Content .\hub\acme\x x`},
+		{Tool: "Bash", Command: `cat ~/.tentaqles/*/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `echo k > ~/.tentaqles/build-gate/hmac.key`},
+		{Tool: "Bash", Command: `cp t ~/.tentaqles/trust/abc`},
+		{Tool: "Bash", Command: `ln -s ~/.tentaqles /tmp/t`},
+		{Tool: "Write", Path: filepath.Join(home, "trust", "abc")},
+		{Tool: "Write", Path: filepath.Join(home, "build-gate", "hmac.key")},
+		{Tool: "Write", Path: filepath.Join(home, "guard.yaml")},
+	}
+	for _, c := range denied {
+		if code, out := hookDecision(t, ws, c); code != 2 {
+			t.Errorf("not denied (%d): %s%s\n%s", code, c.Command, c.Path, out)
+		}
+	}
+}

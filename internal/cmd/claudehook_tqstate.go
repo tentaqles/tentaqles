@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/guard"
@@ -97,10 +99,96 @@ func bareTqCommand(n string) bool {
 	return bareTq.MatchString(n) && !strings.ContainsAny(n, ";&|<>\n`") && !strings.Contains(n, "$(")
 }
 
-func mentionsAny(n string, forms []string) bool {
-	for _, f := range forms {
-		if f != "" && strings.Contains(n, f) {
+// protectedSubs are the parts of tq's state directory whose integrity a
+// gate relies on: the hub store and its serve info (hub/), the pack
+// ledgers, claims, plans and state dirs (packs/), the build gate's records
+// and HMAC key (build-gate/), the manifest trust store (trust/) and the
+// global guard settings (guard.yaml). The rest (identities/<id>/claude/...,
+// bundles, logs) is the agents' normal working area and stays open.
+var protectedSubs = []string{"hub", "packs", "build-gate", "trust", "guard.yaml"}
+
+func isProtectedSeg(seg string) bool {
+	for _, p := range protectedSubs {
+		if seg == p {
 			return true
+		}
+	}
+	return false
+}
+
+// rootRegex matches any spelling of the state directory root.
+func rootRegex() *regexp.Regexp {
+	forms := stateDirForms()
+	sort.Slice(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
+	alts := []string{`tentaq~[0-9]+`}
+	for _, f := range forms {
+		if f != "" && f != "tentaq~" {
+			alts = append(alts, regexp.QuoteMeta(f))
+		}
+	}
+	return regexp.MustCompile("(" + strings.Join(alts, "|") + ")")
+}
+
+var (
+	protectedWord = regexp.MustCompile(`(^|[/,\s(=:;])(hub|packs|build-gate|trust|guard\.yaml)([/,\s);]|$)`)
+	cdRe          = regexp.MustCompile(`(^|[;&|(\s])(cd|pushd|chdir|set-location|sl)\s+(\S+)`)
+	linkVerb      = regexp.MustCompile(`\b(ln|mklink|new-item\b.*-itemtype\s+(junction|symboliclink|hardlink)|cmd\s+/c\s+mklink)\b`)
+	wordSplit     = regexp.MustCompile(`[\s;&|()<>=,]+`)
+)
+
+func firstSeg(s string) string {
+	if i := strings.IndexAny(s, "/ \t;&|)<>,"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// protectedMention reports whether a folded command can reach a protected
+// part of the state directory: it names one (any spelling of the root
+// followed by a protected or a glob segment); it names the bare root and a
+// protected name elsewhere (a variable or a link: D=~/.tentaqles; …
+// $D/packs); it creates a link to the root; or it cds under the root and
+// then uses a relative path that resolves into a protected part.
+func protectedMention(n string) bool {
+	re := rootRegex()
+	bare := false
+	for _, l := range re.FindAllStringIndex(n, -1) {
+		rest := n[l[1]:]
+		if strings.HasPrefix(rest, "/") {
+			seg := firstSeg(rest[1:])
+			if seg == "" || isProtectedSeg(seg) || strings.ContainsAny(seg, "*?{") {
+				if seg == "" {
+					bare = true
+					continue
+				}
+				return true
+			}
+			continue
+		}
+		bare = true
+	}
+	if bare && (protectedWord.MatchString(n) || linkVerb.MatchString(n)) {
+		return true
+	}
+	for _, m := range cdRe.FindAllStringSubmatchIndex(n, -1) {
+		target := n[m[6]:m[7]]
+		loc := re.FindStringIndex(target)
+		if loc == nil || loc[0] != 0 {
+			continue
+		}
+		rel := strings.Trim(target[loc[1]:], "/")
+		for _, w := range wordSplit.Split(n[m[1]:], -1) {
+			w = strings.TrimPrefix(w, "./")
+			if w == "" || strings.HasPrefix(w, "-") || strings.Contains(w, "://") {
+				continue
+			}
+			full := strings.TrimPrefix(path.Join(rel, w), "/")
+			if path.IsAbs(w) || strings.HasPrefix(w, "~") || strings.HasPrefix(w, "$") {
+				continue
+			}
+			if isProtectedSeg(firstSeg(full)) {
+				return true
+			}
 		}
 	}
 	return false
@@ -133,19 +221,32 @@ func canonicalPath(p, cwd string) string {
 	return normPathForm(p)
 }
 
-func underStateDir(canon string) bool {
+// underProtected reports whether a canonical path is inside a protected part
+// of the state directory (any absolute spelling of the root).
+func underProtected(canon string) bool {
 	if canon == "" {
 		return false
 	}
+	var roots []string
 	for _, f := range stateDirForms() {
-		if strings.HasPrefix(f, "$") || strings.HasPrefix(f, "%") || strings.HasPrefix(f, "~") || !strings.Contains(f, "/") {
-			continue
+		if strings.Contains(f, "/") && !strings.HasPrefix(f, "$") && !strings.HasPrefix(f, "%") && !strings.HasPrefix(f, "~") {
+			roots = append(roots, f)
 		}
-		if canon == f || strings.HasPrefix(canon, f+"/") {
+	}
+	for _, r := range roots {
+		if strings.HasPrefix(canon, r+"/") && isProtectedSeg(firstSeg(canon[len(r)+1:])) {
 			return true
 		}
 	}
-	return strings.Contains(canon, "/.tentaqles/") || strings.Contains(canon, "/tentaq~")
+	for _, marker := range []string{"/.tentaqles/"} {
+		if i := strings.Index(canon, marker); i >= 0 && isProtectedSeg(firstSeg(canon[i+len(marker):])) {
+			return true
+		}
+	}
+	if m := regexp.MustCompile(`/tentaq~[0-9]+/`).FindStringIndex(canon); m != nil && isProtectedSeg(firstSeg(canon[m[1]:])) {
+		return true
+	}
+	return false
 }
 
 var readOnlyVerb = regexp.MustCompile(`^\s*(cat|type|more|less|head|tail|bat|nl|grep|rg|findstr|gc|get-content|select-string|sls|git\s+(diff|log|show|status|blame))\b`)
@@ -161,8 +262,8 @@ func stateDirDecision(call policy.ToolCall, cwd string) policy.Decision {
 			cmd = guard.BlankDataHeredocs(cmd)
 		}
 		n := normShell(cmd)
-		if !bareTqCommand(n) && mentionsAny(n, stateDirForms()) {
-			deny("tq/hub-store-write", "this command names tq's state directory ("+paths.Home()+"), which holds the hub store, the pack ledgers, approvals and plans; only tq itself touches it")
+		if !bareTqCommand(n) && protectedMention(n) {
+			deny("tq/hub-store-write", "this command reaches a protected part of tq's state directory ("+paths.Home()+": hub, packs, build-gate, trust or guard.yaml), which holds the hub store, the pack ledgers, approvals, plans and keys; only tq itself touches it")
 		}
 		if (strings.Contains(n, "tq-packs.y") || strings.Contains(n, "tq-pac~")) && !(readOnlyVerb.MatchString(n) && !strings.ContainsAny(n, ">;&|")) {
 			ask("tq/pack-config-change", "this command may change the pack config (tq-packs.yaml); confirm it")
@@ -175,15 +276,15 @@ func stateDirDecision(call policy.ToolCall, cwd string) policy.Decision {
 	canon := canonicalPath(call.Path, cwd)
 	switch call.Tool {
 	case "Edit", "Write", "MultiEdit", "NotebookEdit":
-		if underStateDir(canon) {
-			deny("tq/hub-store-write", "this file is under tq's state directory ("+paths.Home()+"); only tq writes there")
+		if underProtected(canon) {
+			deny("tq/hub-store-write", "this file is in a protected part of tq's state directory ("+paths.Home()+": hub, packs, build-gate, trust or guard.yaml); only tq writes there")
 		}
 		base := filepath.Base(canon)
 		if base == "tq-packs.yaml" || base == "tq-packs.yml" {
 			ask("tq/pack-config-change", "this changes the pack config (tq-packs.yaml); confirm it")
 		}
 	case "Read", "Grep", "NotebookRead", "Glob":
-		if underStateDir(canon) {
+		if underProtected(canon) {
 			rel := canon[strings.LastIndex(canon, "/hub/")+1:]
 			if strings.Contains(canon, "/hub/") && (strings.HasPrefix(filepath.Base(rel), "serve-") || strings.Contains(filepath.Base(rel), "token")) {
 				deny("tq/human-answer", "the hub's serve info holds its local key; it is never read into the conversation")
