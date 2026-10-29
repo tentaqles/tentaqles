@@ -112,3 +112,47 @@ func TestOutsidePathWrite(t *testing.T) {
 		}
 	}
 }
+
+// Claude's auto-memory, plans and todos under the session's
+// CLAUDE_CONFIG_DIR (else ~/.claude), and Codex's session folders under
+// CODEX_HOME (else ~/.codex), are write roots: Claude writes them with
+// Write/Edit all the time (final review M3). The config dir itself is not,
+// so its settings files still get the confirm (and the locked settings and
+// identity-file rules).
+func TestWriteRootsIncludeAgentWorkingDirs(t *testing.T) {
+	isolateHome(t)
+	// Outside every temp folder: those are write roots already.
+	base := string(filepath.Separator) + "tq-nonexistent"
+	if runtime.GOOS == "windows" {
+		base = `C:\tq-nonexistent`
+	}
+	cfgDir := filepath.Join(base, "identities", "acme", "claude")
+	codexDir := filepath.Join(base, "identities", "acme", "codex")
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	t.Setenv("CODEX_HOME", codexDir)
+	cwd := t.TempDir()
+	roots := writeRoots(nil, nil, cwd)
+	for _, p := range []string{
+		filepath.Join(cfgDir, "projects", "C--repos-x", "memory", "MEMORY.md"),
+		filepath.Join(cfgDir, "plans", "p.md"),
+		filepath.Join(cfgDir, "todos", "t.json"),
+		filepath.Join(codexDir, "sessions", "2026", "s.jsonl"),
+	} {
+		if got := outsideWriteTargets(policy.ToolCall{Tool: "Write", Path: p, Content: "x"}, roots); len(got) != 0 {
+			t.Errorf("%s must be a write root: %v", p, got)
+		}
+	}
+	for _, r := range roots {
+		if r == cfgDir || r == codexDir {
+			t.Errorf("the config dir itself is not a root (its settings files stay guarded): %s", r)
+		}
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("HOME", base)
+	t.Setenv("USERPROFILE", base)
+	home, _ := os.UserHomeDir()
+	roots = writeRoots(nil, nil, cwd)
+	if got := outsideWriteTargets(policy.ToolCall{Tool: "Edit", Path: filepath.Join(home, ".claude", "projects", "x", "memory", "a.md"), Content: "x"}, roots); len(got) != 0 {
+		t.Errorf("~/.claude/projects is a write root when CLAUDE_CONFIG_DIR is unset: %v", got)
+	}
+}

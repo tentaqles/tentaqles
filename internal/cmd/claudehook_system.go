@@ -22,7 +22,7 @@ const outsidePathWriteID = guardcfg.OutsidePathWriteID
 
 // writeRoots are the folders a write may land in without a confirm: the
 // workspace root, the session cwd, the registry's base folders (the user's
-// repos) and the temp folders.
+// repos), the temp folders and the agents' own working folders.
 func writeRoots(ws *resolve.Workspace, cfg *registry.Config, cwd string) []string {
 	var out []string
 	add := func(p string) {
@@ -45,6 +45,30 @@ func writeRoots(ws *resolve.Workspace, cfg *registry.Config, cwd string) []strin
 	}
 	add("/tmp")
 	add("/var/tmp")
+	// The agents' own working folders: Claude's auto-memory (under
+	// projects/), plans and todos in its config dir, and Codex's sessions
+	// and memories. The config dirs themselves are not roots: their
+	// settings, rules and hooks files stay guarded.
+	home, _ := os.UserHomeDir()
+	agentDir := func(name, def string) string {
+		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+			return v
+		}
+		if home == "" {
+			return ""
+		}
+		return filepath.Join(home, def)
+	}
+	if d := agentDir("CLAUDE_CONFIG_DIR", ".claude"); d != "" {
+		for _, sub := range []string{"projects", "plans", "todos"} {
+			add(filepath.Join(d, sub))
+		}
+	}
+	if d := agentDir("CODEX_HOME", ".codex"); d != "" {
+		for _, sub := range []string{"sessions", "memories"} {
+			add(filepath.Join(d, sub))
+		}
+	}
 	return out
 }
 

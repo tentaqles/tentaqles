@@ -838,8 +838,12 @@ the manifest):
   bundle declares, and this workspace's bundle does not, is refused.
 - `tq/outside-path-write` (ask) — a write or recursive delete on an
   **absolute** path outside the workspace root, the session's cwd, the
-  registered bases (`tq` registry) and the temp folders (`$TMPDIR`/`%TEMP%`,
-  `/tmp`, `/var/tmp`): `rm -r`, `Remove-Item -Recurse`, `rmdir /s`, a
+  registered bases (`tq` registry), the temp folders (`$TMPDIR`/`%TEMP%`,
+  `/tmp`, `/var/tmp`) and the agents' own working folders (`projects/`,
+  which holds the auto-memory, `plans/` and `todos/` under
+  `$CLAUDE_CONFIG_DIR`, else `~/.claude`; `sessions/` and `memories/` under
+  `$CODEX_HOME`, else `~/.codex`; the config dirs themselves are not roots,
+  so their settings files keep the confirm): `rm -r`, `Remove-Item -Recurse`, `rmdir /s`, a
   redirect, `tee`, a `cp`/`mv` destination, `Set-Content`/`Out-File`/
   `Add-Content`, `sed -i`, and Edit or Write with such a `file_path`. `~` and
   `$HOME` count as absolute, and Git Bash `/c/...` paths are understood. It
