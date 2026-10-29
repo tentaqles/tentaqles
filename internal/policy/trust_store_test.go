@@ -71,3 +71,41 @@ func hasRule(d Decision, id string) bool {
 	}
 	return false
 }
+
+// tq/trust-store-write also covers the files tq renders into an identity:
+// the codex identity's rules/ and hooks.json (and its config.toml, which
+// holds the approval policy and hook trust), and the Claude identity's
+// settings files. An agent that edits them widens its own session.
+func TestTrustStoreWriteCoversIdentityFiles(t *testing.T) {
+	s := builtinSet(t)
+	const id = "tq/trust-store-write"
+	deny := []ToolCall{
+		{Tool: "Edit", Path: `C:\Users\u\.tentaqles\identities\acme\codex\rules\tq.rules`, Content: "x"},
+		{Tool: "Write", Path: "/home/u/.tentaqles/identities/acme/codex/rules/extra.rules", Content: "x"},
+		{Tool: "Write", Path: "/home/u/.tentaqles/identities/acme/codex/hooks.json", Content: "{}"},
+		{Tool: "Edit", Path: "/home/u/.tentaqles/identities/acme/codex/config.toml", Content: "x"},
+		{Tool: "Write", Path: "/home/u/.tentaqles/identities/acme/claude/settings.json", Content: "{}"},
+		{Tool: "Edit", Path: "$TQ_HOME/identities/acme/claude/settings.local.json", Content: "{}"},
+		{Tool: "Bash", Command: "echo x >> ~/.tentaqles/identities/acme/codex/rules/tq.rules"},
+		{Tool: "Bash", Command: "rm ~/.tentaqles/identities/acme/codex/hooks.json"},
+		{Tool: "PowerShell", Command: `Set-Content $env:TQ_HOME\identities\acme\claude\settings.json '{}'`},
+	}
+	for _, c := range deny {
+		d := s.Evaluate(c)
+		if d.Action != Deny || !hasRule(d, id) {
+			t.Errorf("%s %q %q: want deny %s, got %s %v", c.Tool, c.Path, c.Command, id, d.Action, ruleIDs(d.Matched))
+		}
+	}
+	allow := []ToolCall{
+		{Tool: "Read", Path: "/home/u/.tentaqles/identities/acme/codex/rules/tq.rules"},
+		{Tool: "Write", Path: "/home/u/.tentaqles/identities/acme/codex/notes.md", Content: "x"},
+		{Tool: "Write", Path: "/home/u/project/codex/rules/x", Content: "x"},
+		{Tool: "Bash", Command: "cat ~/.tentaqles/identities/acme/codex/hooks.json"},
+		{Tool: "Bash", Command: "cp ~/.tentaqles/identities/acme/claude/settings.json /tmp/s.json"},
+	}
+	for _, c := range allow {
+		if d := s.Evaluate(c); hasRule(d, id) {
+			t.Errorf("%s %q %q: must not match %s", c.Tool, c.Path, c.Command, id)
+		}
+	}
+}

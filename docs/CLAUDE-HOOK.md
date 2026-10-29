@@ -978,16 +978,18 @@ The shell rule denies any command line that names the file, but not a
 heredoc body that is only data and mentions it (see below).
 
 The same goes for tq's trust store (`$TQ_HOME/trust/`, which holds the
-trust markers and the mode grants) and registry (`$TQ_HOME/config.yaml`):
-`tq/trust-store-write` denies Edit, Write, MultiEdit and NotebookEdit on
+trust markers and the mode grants), its registry (`$TQ_HOME/config.yaml`)
+and the files tq renders into an identity (`identities/<ws>/codex/rules/`,
+`hooks.json` and `config.toml`, and `identities/<ws>/claude/settings.json`
+and `settings.local.json`): `tq/trust-store-write` denies Edit, Write, MultiEdit and NotebookEdit on
 them, and shell writes: redirects, `tee`, `sed -i`, `rm`, `mv`, `cp` onto
 them, `Set-Content`, `Add-Content`, `Out-File`, `Remove-Item`,
 `Move-Item`, `Copy-Item` onto them, and `python -c` / `node -e` one-liners
 that name them and call a write. Both the `~/.tentaqles` and the
 `$TQ_HOME` (`${TQ_HOME}`, `$env:TQ_HOME`, `%TQ_HOME%`) spellings match; a
 custom `TQ_HOME` written out as a literal path does not. Reads (`cat`,
-`Get-Content`, Read, `cp` from them) stay allowed. `tq allow`, `tq deny`
-and `tq init` change these files.
+`Get-Content`, Read, `cp` from them) stay allowed. `tq allow`, `tq deny`,
+`tq init` and `tq settings render` change these files.
 
 ### Heredocs: data and code
 

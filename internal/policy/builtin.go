@@ -40,8 +40,14 @@ const envExcept = `\.env\.(example|sample|template|dist|defaults|schema)\b`
 // tqHomeVar is the TQ_HOME variable as bash, PowerShell or cmd spell it.
 const tqHomeVar = `(\$\{?(env:)?tq_home\}?|%tq_home%)`
 
-// tqStore is tq's trust store or registry under ~/.tentaqles or $TQ_HOME.
-const tqStore = `(\.tentaqles|` + tqHomeVar + `)[/\\]+(trust\b|config\.yaml\b)`
+// tqStore is tq's trust store or registry under ~/.tentaqles or $TQ_HOME,
+// or a file tq renders into an identity (tqIdentityFile).
+const tqStore = `(\.tentaqles|` + tqHomeVar + `)[/\\]+(trust\b|config\.yaml\b|` + tqIdentityFile + `)`
+
+// tqIdentityFile is, under identities/<ws>/, the codex identity's rules/,
+// hooks.json and config.toml, or the Claude identity's settings files: tq
+// renders them, and an agent that edits them widens its own session.
+const tqIdentityFile = `identities[/\\]+[^/\\\s'"]+[/\\]+(codex[/\\]+(rules\b|hooks\.json\b|config\.toml\b)|claude[/\\]+settings(\.local)?\.json\b)`
 
 // scriptWrite is a call in a python/node one-liner that writes or removes a
 // file, or an open() in a write mode.
@@ -153,8 +159,8 @@ func coreBuiltin() []Rule {
 		{
 			ID: "tq/trust-store-write", Action: Deny,
 			Tool:   "Edit|Write|MultiEdit|NotebookEdit",
-			Path:   `(^|/)(\.tentaqles|` + tqHomeVar + `)/(trust(/|$)|config\.yaml$)`,
-			Reason: "tq's trust store and registry are changed with tq (tq allow, tq deny, tq init), not edited directly",
+			Path:   `(^|/)(\.tentaqles|` + tqHomeVar + `)/(trust(/|$)|config\.yaml$|identities/[^/]+/(codex/(rules(/|$)|hooks\.json$|config\.toml$)|claude/settings(\.local)?\.json$))`,
+			Reason: "tq's trust store, registry and rendered identity settings are changed with tq (tq allow, tq deny, tq init, tq settings render), not edited directly",
 		},
 		{
 			ID: "tq/trust-store-write", Action: Deny,
@@ -167,7 +173,7 @@ func coreBuiltin() []Rule {
 				`|\b(cp|copy|copy-item|cpi)\b` + seg + `\S*` + tqStore + `\S*` + destTail +
 				`|\b(python[0-9.]*|py|node|deno|bun)(\.exe)?\b[^\n]*\s-(c|e|p|-eval)\b[^\n]*(` + tqStore + `[^\n]*` + scriptWrite + `|` + scriptWrite + `[^\n]*` + tqStore + `)`,
 			SkipHeredocData: true,
-			Reason:          "tq's trust store and registry are changed with tq (tq allow, tq deny, tq init), not from the shell",
+			Reason:          "tq's trust store, registry and rendered identity settings are changed with tq (tq allow, tq deny, tq init, tq settings render), not from the shell",
 		},
 		// --- git ---------------------------------------------------------------
 		{
