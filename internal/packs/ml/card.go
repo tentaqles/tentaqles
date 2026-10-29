@@ -298,6 +298,13 @@ func cardFindings(in *packs.Input, st Settings, m Model) []packs.Finding {
 			add(line, packs.LevelError, "card-snapshot-mismatch", fmt.Sprintf("the sha256 of snapshot %q differs from %s", name, st.DataManifest))
 		}
 	}
+	if strings.HasSuffix(st.DataManifest, "dvc.lock") {
+		// dvc.lock pins outputs by md5 per stage, not snapshot name + sha256:
+		// say the comparison did not run rather than pass silently.
+		if td := findSection(ss, "training data"); td != nil {
+			add(td.Line, packs.LevelWarn, "card-snapshot-unchecked", "snapshot not compared: dvc.lock data manifests are not read yet; check the card's snapshot against dvc.lock by hand")
+		}
+	}
 	classes := classesFor(in)
 	for i, l := range strings.Split(src, "\n") {
 		hits := redact.CountAll(l, classes)

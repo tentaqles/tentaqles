@@ -128,6 +128,22 @@ func TestModelCardSnapshotUnknown(t *testing.T) {
 	}
 }
 
+// With a dvc.lock data manifest the snapshot is not compared, and the card
+// check says so (review r0 finding 9).
+func TestModelCardDVCLockNotCompared(t *testing.T) {
+	good := readFixture(t, "promote-card/good/MODEL_CARD.md")
+	in := cardInput(t, strings.Replace(good, "churn-2026-09", "churn-2026-10", 1))
+	setConfig(t, in, strings.Replace(cardConfig, "data/snapshots.yaml", "dvc.lock", 1), "")
+	in = in.ForPack("ml")
+	r := runModelCard(context.Background(), in)
+	if got := rules(r.Findings, packs.LevelError); len(got) != 0 {
+		t.Fatalf("errors %v", got)
+	}
+	if got := rules(r.Findings, packs.LevelWarn); !reflect.DeepEqual(got, []string{"card-snapshot-unchecked"}) {
+		t.Fatalf("warns %+v", r.Findings)
+	}
+}
+
 func TestAppendPromotionHistory(t *testing.T) {
 	good := readFixture(t, "promote-card/good/MODEL_CARD.md")
 	out, err := appendPromotionRow(good, []string{"2026-10-28", "7", "production", "dec_1", "human"})
