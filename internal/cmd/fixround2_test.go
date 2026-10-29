@@ -207,6 +207,13 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "Bash", Command: `git commit -m "docs: mention ~/.tentaqles in the setup guide"`},
 		{Tool: "Bash", Command: `ls ~/.tentaqles/bundles`},
 		{Tool: "Bash", Command: `cat ~/.tentaqles/identities/x/claude/projects/hub-notes.md`},
+		// A manifest named .tentaqles.yaml is not the state root, even with
+		// a packs path elsewhere in the command.
+		{Tool: "Bash", Command: `grep -rn x internal/packs/*.go; cat /c/repos/personal/.tentaqles.yaml`},
+		{Tool: "PowerShell", Command: `Get-Content C:\repos\acme\.tentaqles.yaml; Select-String x internal\packs\doctor.go`},
+		{Tool: "Bash", Command: `ls ~/.tentaqles-old/packs`},
+		{Tool: "Bash", Command: `ls ~/.tentaqles.y*ml internal/packs/*.go`},
+		{Tool: "Bash", Command: `git add .tentaqles.yaml internal/packs/doctor.go && git status`},
 	}
 	for _, c := range allowed {
 		if code, out := hookDecision(t, ws, c); code != 0 || strings.Contains(out, "tq/hub-store-write") {
@@ -221,6 +228,33 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "Bash", Command: `echo k > ~/.tentaqles/build-gate/hmac.key`},
 		{Tool: "Bash", Command: `cp t ~/.tentaqles/trust/abc`},
 		{Tool: "Bash", Command: `ln -s ~/.tentaqles /tmp/t`},
+		// Windows drops trailing dots from a component: still the root.
+		{Tool: "Bash", Command: `echo x >> ~/.tentaqles./packs/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `cat ~/.tentaqles../packs/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `D=~/.tentaqles.; echo x >> $D/packs/acme/ml/ledger.jsonl`},
+		// a manifest beside a real root mention does not hide it
+		{Tool: "Bash", Command: `cat .tentaqles.yaml ~/.tentaqles/packs/acme/ml/ledger.jsonl`},
+		// A longer name counts as the root when a later step can cut the
+		// suffix back off (security review of the name-boundary fix).
+		{Tool: "Bash", Command: `echo ~/.tentaqles.x | sed 's/.x/\/packs/' | xargs rm -rf`},
+		{Tool: "Bash", Command: `p=~/.tentaqles.yaml; rm -rf ${p%.yaml}/packs`},
+		{Tool: "PowerShell", Command: `$p="$HOME/.tentaqles".Trim(); Remove-Item -Recurse -Force "$p/packs"`},
+		{Tool: "PowerShell", Command: `$p=$env:TQ_HOME-replace'zz',''; Remove-Item -Recurse "$p/packs"`},
+		{Tool: "PowerShell", Command: `set p=%USERPROFILE%\.tentaqles.x & rd /s /q %p:~0,-2%\packs`},
+		{Tool: "Bash", Command: `node -e "require('fs').rmSync(require('os').homedir()+'/.tentaqles'.concat('/packs'),{recursive:true})"`},
+		{Tool: "PowerShell", Command: `New-Item -ItemType Junction -Path j -Target "$HOME/.tentaqles".Trim()`},
+		// a glob class reads as a longer name once normShell drops the brackets
+		{Tool: "Bash", Command: `rm -rf ~/.tentaqle[sz]/packs`},
+		{Tool: "PowerShell", Command: `Remove-Item -Recurse -Force ~/.tentaqle[sz]/packs`},
+		// an interpreter shortens a string without any refused character
+		{Tool: "Bash", Command: `ruby -rfileutils -e "FileUtils.rm_rf Dir.home+'/.tentaqlesX'.chop+'/packs'"`},
+		{Tool: "Bash", Command: `perl -MFile::Path -e "chdir; rmtree pack q/A10A7/, q/.tentaqlesX/, q:/packs/:"`},
+		// a lone CR ends a PowerShell statement: the second one is no reader
+		{Tool: "PowerShell", Command: "gc README.md\rruby -rfileutils -e \"FileUtils.rm_rf Dir.home+'/.tentaqlesX'.chop+'/packs'\""},
+		{Tool: "Bash", Command: "gc README.md\rruby -rfileutils -e \"FileUtils.rm_rf Dir.home+'/.tentaqlesX'.chop+'/packs'\""},
+		{Tool: "PowerShell", Command: "cat README.md ruby -rfileutils -e \"FileUtils.rm_rf Dir.home+'/.tentaqlesX'.chop+'/packs'\""},
+		// not only readers: judged as before (fail closed), though no root
+		{Tool: "Bash", Command: `rm -rf ~/.tentaqles.x/packs; cat ~/.tentaqles.x`},
 		{Tool: "Write", Path: filepath.Join(home, "trust", "abc")},
 		{Tool: "Write", Path: filepath.Join(home, "build-gate", "hmac.key")},
 		{Tool: "Write", Path: filepath.Join(home, "guard.yaml")},

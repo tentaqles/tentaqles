@@ -14,11 +14,15 @@ import (
 )
 
 var (
-	oracleTokenRe   = regexp.MustCompile(`[^\s;&|()<>,=]+`)
-	oracleSegSplit  = regexp.MustCompile(`&&|\|\||[;&|\n]`)
-	oracleWordSplit = regexp.MustCompile(`[\s()<>=,]+`)
-	oracleRootMu    sync.Mutex
-	oracleRootCache = map[string]*regexp.Regexp{}
+	oracleTokenRe = regexp.MustCompile(`[^\s;&|()<>,=]+`)
+	// oraclePlumbingRe: a character that lets a command rewrite a string;
+	// oracleNameTailRe: dots, then a name character (another name).
+	oraclePlumbingRe = regexp.MustCompile("[$%(){}\\[\\]=|<>@!`]")
+	oracleNameTailRe = regexp.MustCompile(`^\.*[A-Za-z0-9_-]`)
+	oracleSegSplit   = regexp.MustCompile(`&&|\|\||[;&|\n]`)
+	oracleWordSplit  = regexp.MustCompile(`[\s()<>=,]+`)
+	oracleRootMu     sync.Mutex
+	oracleRootCache  = map[string]*regexp.Regexp{}
 )
 
 func oracleRootRegex(forms []string) *regexp.Regexp {
@@ -105,6 +109,35 @@ func foldPathsOracle(n string, re *regexp.Regexp) (string, bool) {
 
 // rawDots is the command with only quotes folded, for the .. check (the
 
+// oracleReadersOnly is readersOnly written apart: every segment's first
+// word is a reader, or git with a read subcommand and no -c.
+var (
+	oracleReaderRe = regexp.MustCompile(`^(cat|type|head|tail|wc|ls|dir|grep|findstr|gc|get-content|select-string|sls)$`)
+	oracleGitRe    = regexp.MustCompile(`^git\s+(add|diff|log|show|status|blame|ls-files)(\s|$)`)
+	// oracleBreakRe: line breaks other than LF (a lone CR ends a
+	// PowerShell statement).
+	oracleBreakRe = regexp.MustCompile("[\r\v\f\u0085\u2028\u2029]")
+)
+
+func oracleReadersOnly(raw string) bool {
+	for _, seg := range regexp.MustCompile(`[;&|\n]+`).Split(normShell(raw), -1) {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		if strings.HasPrefix(seg+" ", "git ") || strings.HasPrefix(seg, "git\t") {
+			if !oracleGitRe.MatchString(seg) || strings.Contains(seg, " -c") {
+				return false
+			}
+			continue
+		}
+		if !oracleReaderRe.MatchString(strings.Fields(seg)[0]) {
+			return false
+		}
+	}
+	return true
+}
+
 func protectedMentionOracle(raw string) bool {
 	si := stateInfo()
 	re := oracleRootRegex(si.forms)
@@ -116,7 +149,14 @@ func protectedMentionOracle(raw string) bool {
 	}
 	bare := false
 	mentioned := false
+	// A longer name (.tentaqles.yaml) is another file only in a command
+	// that cannot rewrite strings; written apart from plainArgv and
+	// continuesName so the comparison can catch a drift in either.
+	plain := !oraclePlumbingRe.MatchString(raw) && !oracleBreakRe.MatchString(raw) && oracleReadersOnly(raw)
 	for _, l := range re.FindAllStringIndex(n, -1) {
+		if plain && oracleNameTailRe.MatchString(n[l[1]:]) {
+			continue
+		}
 		mentioned = true
 		rest := n[l[1]:]
 		if strings.HasPrefix(rest, "/") {

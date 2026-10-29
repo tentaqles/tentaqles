@@ -469,6 +469,67 @@ func mapTokens(s string, f func(string) string) string {
 	return b.String()
 }
 
+// continuesName reports whether a root spelling that ends at end in n is
+// only the start of a longer name (.tentaqles.yaml, .tentaqles-old,
+// $tq_homex): a name character follows, possibly after dots. Windows drops
+// trailing dots and spaces from a path component, so .tentaqles. and
+// .tentaqles./packs still name the root; so does anything a shell expands
+// next to it (a glob, a brace, a variable).
+func continuesName(n string, end int) bool {
+	i := end
+	for i < len(n) && n[i] == '.' {
+		i++
+	}
+	if i >= len(n) {
+		return false
+	}
+	c := n[i]
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-'
+}
+
+// plainArgv reports a command that cannot rewrite a string before using it:
+// no variable, substitution, method call, assignment, brace, pipe,
+// redirect or splat. Only then is a longer name (.tentaqles.yaml) taken at
+// its word; otherwise a later step may cut the suffix back to the root
+// (sed, ${p%.yaml}, .Trim(), %p:~0,-2%, .concat()). Sequencing (; && and
+// newlines) carries no value from one command to the next. Glob brackets
+// count too: normShell drops them, so .tentaqle[sz] reads as a longer name
+// while the shell expands it to the root. * and ? stay in the folded form
+// and are no name characters, so they never make a longer name.
+func plainArgv(raw string) bool {
+	// A lone CR ends a PowerShell statement, and the other breaks may end
+	// one somewhere: refuse them rather than split on them.
+	return !strings.ContainsAny(raw, "$%(){}[]=|<>@!`\r\v\f\u0085\u2028\u2029") && readersOnly(raw)
+}
+
+// readerCmds run no code of their own, so they cannot rewrite a name either
+// (an interpreter can without any character plainArgv refuses: Ruby
+// '.tentaqlesX'.chop, a paren-less Perl pack).
+var readerCmds = map[string]bool{"cat": true, "type": true, "head": true, "tail": true, "wc": true, "ls": true, "dir": true,
+	"grep": true, "findstr": true, "gc": true, "get-content": true, "select-string": true, "sls": true}
+
+// gitReadSubs are git subcommands that run no alias, hook or pager command
+// given on the line; any -c (or -C, folded to -c) refuses the command.
+var gitReadSubs = map[string]bool{"add": true, "diff": true, "log": true, "show": true, "status": true, "blame": true, "ls-files": true}
+
+// readersOnly reports whether every ; & | or newline separated command
+// starts with a reader (readerCmds, or git with a gitReadSubs subcommand).
+func readersOnly(raw string) bool {
+	for _, seg := range strings.FieldsFunc(normShell(raw), isSegSep) {
+		f := strings.Fields(seg)
+		switch {
+		case len(f) == 0:
+		case f[0] == "git":
+			if len(f) < 2 || !gitReadSubs[f[1]] || strings.Contains(seg, " -c") {
+				return false
+			}
+		case !readerCmds[f[0]]:
+			return false
+		}
+	}
+	return true
+}
+
 func firstSeg(s string) string {
 	if i := strings.IndexAny(s, "/ \t;&|)<>,"); i >= 0 {
 		return s[:i]
@@ -544,7 +605,11 @@ func protectedMention(raw string) bool {
 	}
 	bare := false
 	mentioned := false
+	plain := plainArgv(raw)
 	for _, l := range re.FindAllStringIndex(n, -1) {
+		if plain && continuesName(n, l[1]) {
+			continue // .tentaqles.yaml, .tentaqles-old: another name
+		}
 		mentioned = true
 		rest := n[l[1]:]
 		if strings.HasPrefix(rest, "/") {
