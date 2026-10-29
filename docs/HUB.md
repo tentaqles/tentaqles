@@ -265,8 +265,7 @@ The page `/guard` shows the resolved mode, the category table with each value's
 source, the ceiling and the 24 h counts of skipped confirms and blocks,
 read-only: "change it with `tq mode edit` or the desktop app". It has no form and
 no POST route, because a web form is scriptable from an agent's `curl` and the hub
-API has no proof of a human. It is reached by URL (`/guard`); the nav has no link
-yet.
+API has no proof of a human. The nav links it as **Guard**, next to Settings.
 
 ## Review page
 

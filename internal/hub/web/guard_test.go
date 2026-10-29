@@ -49,6 +49,9 @@ func TestGuardPageIsReadOnly(t *testing.T) {
 			t.Errorf("guard page lacks %q", want)
 		}
 	}
+	if !strings.Contains(body, `href="/guard?ws=acme" class="on" aria-current="page"`) {
+		t.Error("the nav links the guard page and marks it current")
+	}
 	main := body[strings.Index(body, `<div id="main">`):strings.Index(body, "</main>")]
 	if strings.Contains(main, "<form") || strings.Contains(main, "<input") || strings.Contains(main, "<button") {
 		t.Fatal("the guard page has no form: web forms are scriptable from an agent's curl")
