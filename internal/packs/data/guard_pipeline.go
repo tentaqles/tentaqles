@@ -225,22 +225,44 @@ var pythonProgRe = regexp.MustCompile(`^(?:python(?:[23](?:\.\d+)?)?|py|pypy3?)$
 
 // hasSub reports whether the leading non-flag words are sub. Flags between
 // subcommand words (`az synapse --only-show-errors pipeline create-run`)
-// are skipped.
+// are skipped. When a flag comes before the first non-flag word, tq cannot
+// tell whether it takes that word as its value (az --subscription x
+// synapse ...), so sub counts anywhere among the non-flag words (fail
+// closed).
 func hasSub(args, sub []string) bool {
-	i := 0
+	var pos []string
+	flagFirst := false
 	for _, a := range args {
-		if i == len(sub) {
-			return true
-		}
 		if strings.HasPrefix(a, "-") {
+			if len(pos) == 0 {
+				flagFirst = true
+			}
 			continue
 		}
-		if !strings.EqualFold(a, sub[i]) {
+		pos = append(pos, a)
+	}
+	at := func(k int) bool {
+		if k+len(sub) > len(pos) {
 			return false
 		}
-		i++
+		for j, s := range sub {
+			if !strings.EqualFold(pos[k+j], s) {
+				return false
+			}
+		}
+		return true
 	}
-	return i == len(sub)
+	if at(0) {
+		return true
+	}
+	if flagFirst {
+		for k := 1; k < len(pos); k++ {
+			if at(k) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func helpOnly(words []string) bool {

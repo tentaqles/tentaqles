@@ -22,7 +22,7 @@ const promoteDeny = "model promotion is gated: run tq pack ml promote request <m
 
 var (
 	wsRe         = regexp.MustCompile(`\s+`)
-	applyRe      = regexp.MustCompile(`\btq(\.exe)?\s+pack\s+ml\s+promote\s+apply\b`)
+	applyRe      = regexp.MustCompile(`\btq(\.exe)?\s([^;&|]*\s)?pack\s([^;&|]*\s)?ml\s([^;&|]*\s)?promote\s([^;&|]*\s)?apply\b`) // flags may sit between the words
 	interpRe     = regexp.MustCompile(`(^|[\s;&|(/\\])(python[0-9.]*|py|ipython|jupyter|uv|poetry|pdm|pipenv|pixi|conda|hatch)(\.exe)?(\s|$)`)
 	apiNameRe    = regexp.MustCompile(`\b(transition_model_version_stage|set_registered_model_alias|add_version_aliases|merge_version_aliases)\b`)
 	pkgApproveRe = regexp.MustCompile(`\bupdate_model_package\b[\s\S]*approved`)
