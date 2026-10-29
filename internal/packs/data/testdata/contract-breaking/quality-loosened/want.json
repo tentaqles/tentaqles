@@ -1,0 +1,27 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 with breaking changes and no major version bump",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 53,
+      "level": "error",
+      "rule": "quality-loosened",
+      "message": "property orders.amount quality rule amount_not_null threshold mustBeLessThan loosened"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 75,
+      "level": "error",
+      "rule": "quality-loosened",
+      "message": "object orders quality rule orders_rowcount threshold mustBeGreaterThan loosened"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "error",
+      "rule": "version-not-bumped",
+      "message": "breaking change without a major version bump (1.2.0 -> 1.3.0); bump to 2.0.0"
+    }
+  ]
+}

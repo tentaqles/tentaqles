@@ -2,11 +2,13 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/hub/gate"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 )
 
 // A pack approval (permission with data.pack, spec C §2.11) never resumes,
@@ -30,7 +32,27 @@ func TestPackApprovalNeverDrivesTheRun(t *testing.T) {
 	if h.svc.hubPending(h.run(r.ID)) {
 		t.Fatal("a pack approval holds the run")
 	}
-	out, err := h.svc.Answer(context.Background(), c.ID, d.ID, "approve", "")
+	// R2-5: without the terminal path's human-presence marker, the service refuses.
+	if _, err := h.svc.Answer(context.Background(), c.ID, d.ID, "approve", ""); !errors.Is(err, store.ErrPackAnswer) {
+		t.Fatalf("answered without presence: %v", err)
+	}
+	sign := func(shown ledger.Shown, id, choice, kind, ts string) (ledger.Entry, error) {
+		return ledger.Entry{Event: ledger.Answered, Decision: id, Pack: shown.Pack, Choice: choice, ActorKind: kind, TS: ts}, nil
+	}
+	// R4-5: a store row that changed after it was shown is not signed.
+	stale := d.Shown()
+	stale.Target = "staging"
+	if _, err := h.svc.Answer(WithHumanPresence(context.Background(), HumanPresence{Sign: sign, Shown: &stale}), c.ID, d.ID, "approve", ""); !errors.Is(err, ledger.ErrShownMismatch) {
+		t.Fatalf("a changed row was signed: %v", err)
+	}
+	if got, _ := h.st.Decision(d.ID); got.Status != store.DecisionPending {
+		t.Fatalf("answered over a changed row: %+v", got)
+	}
+	if _, err := h.svc.Answer(WithHumanPresence(context.Background(), HumanPresence{Sign: sign}), c.ID, d.ID, "approve", ""); !errors.Is(err, store.ErrPackAnswer) {
+		t.Fatalf("answered with no shown binding: %v", err)
+	}
+	shown := d.Shown()
+	out, err := h.svc.Answer(WithHumanPresence(context.Background(), HumanPresence{Sign: sign, Shown: &shown}), c.ID, d.ID, "approve", "")
 	if err != nil {
 		t.Fatal(err)
 	}

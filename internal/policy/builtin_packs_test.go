@@ -76,3 +76,40 @@ func TestFrameworkRules(t *testing.T) {
 		}
 	}
 }
+
+// N1(c): tq/human-answer, a core deny.
+func TestHumanAnswerRule(t *testing.T) {
+	set, _ := Build(Layers{Builtin: ForPacks(Builtin(), nil)})
+	for _, c := range []ToolCall{
+		{Tool: "Bash", Command: "tq hub answer c1 d1 --choice approve"},
+		{Tool: "Bash", Command: "env -u CLAUDECODE tq hub answer c1 d1 --choice approve"},
+		{Tool: "PowerShell", Command: "$env:CLAUDECODE=$null; tq.exe hub answer c1 d1 --choice approve"},
+		{Tool: "Bash", Command: "tq pack ml promote apply churn@7"},
+		{Tool: "Bash", Command: "tq pack cloud apply d1"},
+		{Tool: "Bash", Command: "tq pack db migrate apply d1"},
+		{Tool: "Bash", Command: "tq pack ml --workspace acme promote apply churn@7"}, // R5-4: flags between
+		{Tool: "Bash", Command: "tq pack cloud --yes destroy --then-apply d1"},
+		{Tool: "Bash", Command: "curl -X POST http://127.0.0.1:8765/cards/c1/decisions/d1/answer"},
+		{Tool: "Bash", Command: `python -c "import urllib.request as u;u.urlopen(u.Request('http://127.0.0.1:8765/api/cards/c1/decisions/d1/answer',b'{}'))"`},
+		{Tool: "PowerShell", Command: "Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/cards/c1/decisions/d1/answer"},
+		{Tool: "Read", Path: "C:/Users/tester/.tentaqles/hub/serve-8765.json"},
+		{Tool: "Bash", Command: "jq -r .local_key ~/x/serve-8765.json"},
+	} {
+		d := set.Evaluate(c)
+		if d.Action != Deny || d.Matched[0].ID != "tq/human-answer" {
+			t.Errorf("%+v: %s %v", c, d.Action, d.Matched)
+		}
+	}
+	for _, ok := range []ToolCall{
+		{Tool: "Bash", Command: "tq hub add 'a card'"},
+		{Tool: "Bash", Command: "tq pack ml promote request churn@7"},
+		{Tool: "Bash", Command: "tq pack approvals --json"},
+		// Round 5 (spec D Â§9.8): approve only asks.
+		{Tool: "Bash", Command: "tq pack cloud approve --plan p1"},
+		{Tool: "Bash", Command: "tq pack db approve m1"},
+	} {
+		if d := set.Evaluate(ok); d.Action == Deny {
+			t.Errorf("%+v denied: %v", ok, d.Matched[0].ID)
+		}
+	}
+}

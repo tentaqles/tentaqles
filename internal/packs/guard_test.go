@@ -2,6 +2,7 @@ package packs
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -262,5 +263,106 @@ func TestRegisterGuardPanics(t *testing.T) {
 			}()
 			RegisterGuard(g)
 		})
+	}
+}
+
+// Round 5: Cwd is the payload's cwd, canonicalised; the process cwd only
+// when the payload has none.
+func TestGuardCwd(t *testing.T) {
+	home := isolate(t)
+	ws := filepath.Join(home, "acme")
+	os.MkdirAll(filepath.Join(ws, "infra"), 0o700)
+	env := dataEnv(t)
+	env.Cwd = filepath.Join(ws, "infra", ".", "..", "infra")
+	want, _ := FinalPath(filepath.Join(ws, "infra"))
+	if got := NewGuardCtx(env, "cloud").Cwd(); got != want {
+		t.Fatalf("payload cwd: %q want %q", got, want)
+	}
+	env.Cwd = ""
+	pwd, _ := os.Getwd()
+	wantPwd, _ := FinalPath(pwd)
+	if got := NewGuardCtx(env, "cloud").Cwd(); got != wantPwd {
+		t.Fatalf("fallback: %q want %q", got, wantPwd)
+	}
+}
+
+// Round 5: ListLocal lists names and sizes under ReadLocal's roots and
+// refusals, at most 256 entries.
+func TestListLocal(t *testing.T) {
+	home := isolate(t)
+	ws := filepath.Join(home, "acme")
+	writeFile(t, ws, "infra/main.tf", "resource {}")
+	writeFile(t, ws, "infra/.env", "SECRET=1")
+	os.MkdirAll(filepath.Join(ws, "infra", "modules"), 0o700)
+	writeFile(t, home, ".aws/credentials", "[default]")
+	writeFile(t, home, "outside/file.txt", "no")
+	for i := 0; i < 300; i++ {
+		writeFile(t, ws, filepath.Join("big", fmt.Sprintf("f%03d", i)), "x")
+	}
+	env := dataEnv(t)
+	env.WorkspaceRoot, env.RepoRoot = ws, ws
+	g := NewGuardCtx(env, "cloud")
+	es, err := g.ListLocal("infra", 0)
+	if err != nil || len(es) != 2 || es[0].Name != "main.tf" || es[0].Size != 11 || es[1].Name != "modules" || !es[1].Dir {
+		t.Fatalf("%v %+v", err, es)
+	}
+	writeFile(t, home, ".aws/config", "[default]")
+	if es, err := g.ListLocal(filepath.Join(home, ".aws"), 0); err != nil || len(es) != 1 || es[0].Name != "config" {
+		t.Fatalf("a config dir lists without its credential store: %v %+v", err, es)
+	}
+	for _, bad := range []string{"../outside", "infra/.env", filepath.Join(home, "outside"), "infra/main.tf"} {
+		if _, err := g.ListLocal(bad, 0); !errors.Is(err, ErrRefused) {
+			t.Fatalf("%s must be refused, got %v", bad, err)
+		}
+	}
+	if _, err := g.ListLocal("big", 0); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("the 256 cap: %v", err)
+	}
+	if _, err := g.ListLocal("big", 1000); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("max above the cap: %v", err)
+	}
+	if _, err := g.ListLocal("infra", 1); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("max: %v", err)
+	}
+}
+
+// Round 5: ReadArgs names only files HashState verified in this call.
+func TestReadArgsNeedHashState(t *testing.T) {
+	isolate(t)
+	env := dataEnv(t)
+	dir := StateDir(env.Workspace, "cloud")
+	writeFile(t, dir, "plans/p1.tfplan", "plan")
+	writeFile(t, dir, "ledger.jsonl", "{}")
+	writeFile(t, dir, "claims/d1", "")
+	g := NewGuardCtx(env, "cloud")
+	if err := g.ReadArgs(ReadSpec{Program: "tofu"}, "plans/p1.tfplan"); !errors.Is(err, ErrRefused) {
+		t.Fatalf("unhashed: %v", err)
+	}
+	for _, n := range []string{"plans/p1.tfplan", "ledger.jsonl", "claims/d1"} {
+		if _, err := g.HashState(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := g.ReadArgs(ReadSpec{Program: "tofu", BoolFlags: []string{"-auto-approve"}}, "plans/p1.tfplan"); err != nil {
+		t.Fatal(err)
+	}
+	// R5-3 (d): only stored plans, a declared program and a name.
+	for name, call := range map[string]func() error{
+		"..":           func() error { return g.ReadArgs(ReadSpec{Program: "tofu"}, "../x") },
+		"ledger":       func() error { return g.ReadArgs(ReadSpec{Program: "tofu"}, "ledger.jsonl") },
+		"claim":        func() error { return g.ReadArgs(ReadSpec{Program: "tofu"}, "claims/d1") },
+		"plans itself": func() error { return g.ReadArgs(ReadSpec{Program: "tofu"}, "plans") },
+		"no program":   func() error { return g.ReadArgs(ReadSpec{}, "plans/p1.tfplan") },
+		"a path":       func() error { return g.ReadArgs(ReadSpec{Program: "/usr/bin/tofu"}, "plans/p1.tfplan") },
+		"no file":      func() error { return g.ReadArgs(ReadSpec{Program: "tofu"}) },
+		"bad flag":     func() error { return g.ReadArgs(ReadSpec{Program: "pulumi", Flag: "plan"}, "plans/p1.tfplan") },
+		"flag value":   func() error { return g.ReadArgs(ReadSpec{Program: "pulumi", Flag: "--plan=x"}, "plans/p1.tfplan") },
+		"bad bool": func() error {
+			return g.ReadArgs(ReadSpec{Program: "tofu", BoolFlags: []string{"yes"}}, "plans/p1.tfplan")
+		},
+	} {
+		if err := call(); !errors.Is(err, ErrRefused) {
+			t.Fatalf("%s: %v", name, err)
+		}
 	}
 }

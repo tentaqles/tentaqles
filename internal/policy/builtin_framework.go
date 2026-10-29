@@ -13,8 +13,50 @@ const tqStateDir = `(\.tentaqles|\$\{?TQ_HOME\}?|%TQ_HOME%|\$env:TQ_HOME)[/\\]+(
 // shellWriteVerbs write, move, copy, delete or open a file for writing.
 const shellWriteVerbs = `(>{1,2}|\b(tee|sqlite3|sed\s+-i|perl\s+-[a-z]*i|truncate|dd|cp|mv|rm|del|erase|rmdir|ln|mklink|install|rsync|copy|move|ren|set-content|add-content|out-file|copy-item|move-item|remove-item|new-item|clear-content|rename-item)\b)`
 
+// tqCmd is a tq invocation (tq, tq.exe, a path to it, quoted or not).
+const tqCmd = `(^|[\s;&|(` + bt + `"'=])(\S*[/\\])?tq(\.exe)?["']?\s+`
+
+// httpClients post from the shell.
+const httpClients = `\b(curl|wget|http|https|invoke-webrequest|iwr|invoke-restmethod|irm|python3?|py|node|deno|bun|ruby|perl|php|pwsh|powershell)\b`
+
 func frameworkRules() []Rule {
 	return []Rule{
+		{
+			ID: "tq/secret-store-shell", Action: Deny,
+			// The pack ledger key (service tentaqles-packs) signs human answers;
+			// reading it (cmdkey, CredentialManager/PasswordVault, secret-tool,
+			// security find-generic-password, a keyring library) would let an
+			// agent sign a forged answer.
+			Command: `tentaqles-packs`,
+			Reason:  "the pack ledger key in the OS keychain signs human answers; it is never read from the shell",
+		},
+		{
+			ID: "tq/human-answer", Action: Deny,
+			Command: tqCmd + `(hub\s+(answer|serve-key|key|token)\b|pack\s+\S+[^;&|\n]*\bapply\b)`,
+			// tq pack <x> approve and tq pack ml promote request only ask (they
+			// create the pending decision): agents may run them (spec D Â§9.8).
+			// apply anywhere after pack <x> in the segment, flags included,
+			// executes an approved action: human-only. Executors declare
+			// themselves with the packs.AnnotationHumanOnly annotation, and a
+			// test asserts this rule matches every one of them.
+			Reason: "answering an approval and applying an approved action are done by a human in their own terminal or browser, never by an agent",
+		},
+		{
+			ID: "tq/human-answer", Action: Deny,
+			Command: httpClients + gseg + `(/decisions/|/answer\b|/api/cards/)`,
+			Reason:  "an HTTP call to the hub's decision or answer endpoints; decisions are answered by a human in the browser or the terminal",
+		},
+		{
+			ID: "tq/human-answer", Action: Deny,
+			Tool:   "Read|Grep|NotebookRead|Glob",
+			Path:   `(^|/)\.tentaqles/hub/(serve-[^/]*\.json|[^/]*token[^/]*)$`,
+			Reason: "the hub's serve info holds its local key; it is never read into the conversation",
+		},
+		{
+			ID: "tq/human-answer", Action: Deny,
+			Command: `\bserve-[0-9*?]*\.json\b|[/\\]hub[/\\][^\s;&|]*token`,
+			Reason:  "the hub's serve info holds its local key; it is never read into the conversation",
+		},
 		{
 			ID: "tq/pack-config-change", Action: Ask,
 			Tool:   "Edit|Write|MultiEdit|NotebookEdit",

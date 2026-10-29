@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(subscription().id, 'owner')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]",
+        "principalId": "33333333-3333-3333-3333-333333333333"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(subscription().id, 'reader')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+        "principalId": "33333333-3333-3333-3333-333333333333"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleDefinitions",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(subscription().id, 'ops')]",
+      "properties": {
+        "roleName": "acme-ops",
+        "permissions": [{"actions": ["Microsoft.Compute/*", "Microsoft.Authorization/*"], "notActions": []}],
+        "assignableScopes": ["[subscription().id]"]
+      }
+    },
+    {
+      "type": "Microsoft.ManagedServices/registrationDefinitions",
+      "apiVersion": "2022-10-01",
+      "name": "[guid('acme-msp')]",
+      "properties": {
+        "registrationDefinitionName": "acme-msp",
+        "managedByTenantId": "44444444-4444-4444-4444-444444444444",
+        "authorizations": [{"principalId": "55555555-5555-5555-5555-555555555555", "roleDefinitionId": "acdd72a7-3385-48ef-bd42-f606fba81ae7"}]
+      }
+    }
+  ]
+}

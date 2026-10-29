@@ -34,10 +34,13 @@ func TriageQuestions() map[string]Question {
 
 // TriageResult is the outcome for one diff.
 type TriageResult struct {
-	Risk  string             `json:"risk"` // low | high
-	Flags []string           `json:"flags,omitempty"`
-	P     map[string]float64 `json:"p,omitempty"`
-	Error string             `json:"error,omitempty"`
+	Risk  string   `json:"risk"` // low | high
+	Flags []string `json:"flags,omitempty"`
+	// Detail carries a flag's detail (baseline_change: the packs whose
+	// baseline grew), for tq pack crew --detail.
+	Detail map[string]string  `json:"detail,omitempty"`
+	P      map[string]float64 `json:"p,omitempty"`
+	Error  string             `json:"error,omitempty"`
 	// Truncated is set when the diff was cut to fit the request cap.
 	Truncated bool `json:"truncated,omitempty"`
 }

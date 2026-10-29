@@ -22,7 +22,7 @@ func TestPackApprovalShowsEvidence(t *testing.T) {
 	_, body, _ := get(t, ts, "/waiting?ws=acme", nil)
 	for _, want := range []string{"ml pack approval: <b>promote</b>", `<code class="m">churn@7</code>`, `<code class="m">production</code>`,
 		`<li><code class="m">git_head</code> <code class="m">sha256:bb22</code></li><li><code class="m">model_card</code>`,
-		"the pack ledger; the approval is bound to the evidence above and used once"} {
+		"Answer this in your own terminal"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("pack approval view lacks %q", want)
 		}

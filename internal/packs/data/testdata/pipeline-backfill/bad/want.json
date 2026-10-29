@@ -1,0 +1,41 @@
+{
+  "status": "ok",
+  "detail": "2 pipeline files scanned",
+  "findings": [
+    {
+      "file": "pipelines/daily_orders.py",
+      "line": 8,
+      "level": "warn",
+      "rule": "wall-clock-filter",
+      "message": "wall-clock time in a filter or partition value; use the run's logical date (ds, data_interval_start, a partition key or a parameter) so reruns and backfills select the same rows"
+    },
+    {
+      "file": "pipelines/daily_orders.py",
+      "line": 11,
+      "level": "warn",
+      "rule": "wall-clock-filter",
+      "message": "wall-clock time in a filter or partition value; use the run's logical date (ds, data_interval_start, a partition key or a parameter) so reruns and backfills select the same rows"
+    },
+    {
+      "file": "pipelines/daily_orders.py",
+      "line": 13,
+      "level": "warn",
+      "rule": "wall-clock-filter",
+      "message": "wall-clock time in a filter or partition value; use the run's logical date (ds, data_interval_start, a partition key or a parameter) so reruns and backfills select the same rows"
+    },
+    {
+      "file": "pipelines/daily_orders.py",
+      "line": 17,
+      "level": "warn",
+      "rule": "wall-clock-filter",
+      "message": "wall-clock time in a filter or partition value; use the run's logical date (ds, data_interval_start, a partition key or a parameter) so reruns and backfills select the same rows"
+    },
+    {
+      "file": "pipelines/load_events.sql",
+      "line": 5,
+      "level": "warn",
+      "rule": "wall-clock-filter",
+      "message": "wall-clock time in a filter or partition value; use the run's logical date (ds, data_interval_start, a partition key or a parameter) so reruns and backfills select the same rows"
+    }
+  ]
+}

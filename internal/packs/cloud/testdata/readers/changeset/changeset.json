@@ -1,0 +1,101 @@
+{
+    "Changes": [
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "Db",
+                "PhysicalResourceId": "acme-db-0000",
+                "ResourceType": "AWS::RDS::DBInstance",
+                "Replacement": "True",
+                "PolicyAction": "ReplaceAndDelete",
+                "Scope": ["Properties"],
+                "Details": [
+                    { "Target": { "Attribute": "Properties", "Name": "DBInstanceIdentifier", "RequiresRecreation": "Always" }, "Evaluation": "Static", "ChangeSource": "DirectModification" }
+                ],
+                "BeforeContext": "{\"Properties\":{\"DBInstanceIdentifier\":\"acme-db\",\"MasterUserPassword\":\"tester-cfn-pass-0000\"}}",
+                "AfterContext": "{\"Properties\":{\"DBInstanceIdentifier\":\"acme-db-2\",\"MasterUserPassword\":\"tester-cfn-pass-0000\",\"PubliclyAccessible\":\"true\"}}"
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "Fn",
+                "PhysicalResourceId": "acme-fn",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "Conditional",
+                "Scope": ["Properties"],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "Topic",
+                "PhysicalResourceId": "arn:aws:sns:us-east-1:000000000000:acme",
+                "ResourceType": "AWS::SNS::Topic",
+                "Replacement": "False",
+                "Scope": ["Tags"],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Add",
+                "LogicalResourceId": "Queue",
+                "ResourceType": "AWS::SQS::Queue",
+                "Scope": [],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Remove",
+                "LogicalResourceId": "OldBucket",
+                "PhysicalResourceId": "acme-old",
+                "ResourceType": "AWS::S3::Bucket",
+                "PolicyAction": "Retain",
+                "Scope": [],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Import",
+                "LogicalResourceId": "Imported",
+                "PhysicalResourceId": "acme-imported",
+                "ResourceType": "AWS::S3::Bucket"
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Dynamic",
+                "LogicalResourceId": "Nested",
+                "ResourceType": "AWS::CloudFormation::Stack"
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "SyncWithActual",
+                "LogicalResourceId": "Synced",
+                "ResourceType": "AWS::SQS::Queue"
+            }
+        }
+    ],
+    "ChangeSetName": "acme-change-set",
+    "ChangeSetId": "arn:aws:cloudformation:us-east-1:000000000000:changeSet/acme-change-set/00000000-0000-0000-0000-000000000000",
+    "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/acme/00000000-0000-0000-0000-000000000000",
+    "StackName": "acme",
+    "Description": null,
+    "Parameters": [ { "ParameterKey": "DbPassword", "ParameterValue": "****" } ],
+    "ExecutionStatus": "AVAILABLE",
+    "Status": "CREATE_COMPLETE",
+    "Capabilities": ["CAPABILITY_IAM"]
+}

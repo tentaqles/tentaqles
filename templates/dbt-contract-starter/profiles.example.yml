@@ -1,0 +1,15 @@
+# Copy to ~/.dbt/profiles.yml (or set DBT_PROFILES_DIR). Credentials come from
+# the environment only: run dbt through `tq dotenv run -- dbt ...`.
+# `dbt parse` reads this profile but opens no connection.
+acme_orders:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('ACME_PG_HOST', 'localhost') }}"
+      port: 5432
+      user: "{{ env_var('ACME_PG_USER') }}"
+      password: "{{ env_var('ACME_PG_PASSWORD') }}"
+      dbname: acme
+      schema: analytics_dev
+      threads: 4

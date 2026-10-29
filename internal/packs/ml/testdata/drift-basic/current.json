@@ -1,0 +1,13 @@
+{
+  "schema": "tq.drift-profile/v1",
+  "rows": 1000,
+  "source": "synthetic acme scoring window",
+  "created_at": "2026-10-27T00:00:00Z",
+  "features": {
+    "tenure_days": {"type": "numeric", "edges": [30, 90, 180, 365], "counts": [100, 150, 200, 250, 300]},
+    "monthly_fee": {"type": "numeric", "edges": [10, 20, 40], "counts": [240, 260, 250, 250]},
+    "plan": {"type": "categorical", "counts": {"basic": 450, "pro": 300, "team": 200, "enterprise": 50}},
+    "region": {"type": "categorical", "hashed": true, "counts": {"3b9c358f36f0a31b6ad3e14f309c7cf198ac9246e8316f9ce543d5b19ac02b80": 590, "e6f2f2a8b8a2b0cba1e0a1f1d8c4e2b0a4c1d9e0f7a6b5c4d3e2f1a0b9c8d7e6": 410}},
+    "__prediction__": {"type": "numeric", "edges": [0.2, 0.5, 0.8], "counts": [390, 310, 200, 100]}
+  }
+}

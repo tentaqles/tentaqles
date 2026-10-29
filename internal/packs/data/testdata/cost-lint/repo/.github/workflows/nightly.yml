@@ -1,0 +1,8 @@
+name: nightly
+on: { schedule: [{ cron: "0 3 * * *" }] }
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bq query --use_legacy_sql=false "SELECT COUNT(*) FROM acme.orders"
+      - run: bq query --maximum_bytes_billed=5000000 "SELECT 1"

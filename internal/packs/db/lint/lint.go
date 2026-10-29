@@ -23,6 +23,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/db/sqllex"
+	"github.com/tentaqles/tentaqles/internal/packs/scan"
 )
 
 // Rule describes one lint rule.
@@ -70,6 +71,26 @@ func RuleByID(id string) (Rule, bool) {
 
 // SUP001 is the finding for a tq:allow without a reason.
 const SUP001 = "SUP001"
+
+// SQL001 is the finding for a statement the framework scanner marks
+// ambiguous (scan.Statement.Ambiguous): a nested block comment that MySQL
+// or SQLite would end early, or a MySQL executable comment /*! ... */. Code
+// may hide there, so the statement is unknown and dangerous: an error that
+// no tq:allow suppresses (the comment itself decides where a statement and
+// its directives start).
+const SQL001 = "SQL001"
+
+// ambiguous lists the SQL001 findings of one file.
+func ambiguous(path string, src []byte) []packs.Finding {
+	var out []packs.Finding
+	for _, st := range scan.SQLStatements(src) {
+		if st.Ambiguous() {
+			out = append(out, packs.Finding{File: path, Line: st.Line, Level: packs.LevelError, Rule: SQL001,
+				Message: "a nested /* */ or a /*! */ comment that another engine reads as code: the statement is treated as unknown and dangerous; remove the nested or executable comment"})
+		}
+	}
+	return out
+}
 
 // Options configure one engine group (one packs.db.migrations entry).
 type Options struct {
@@ -132,6 +153,7 @@ func Run(units []Unit, o Options) Result {
 		res.Files++
 		res.Statements += len(f.Statements)
 		res.Findings = append(res.Findings, l.out...)
+		res.Findings = append(res.Findings, ambiguous(u.Path, u.Src)...)
 		res.Suppressed = append(res.Suppressed, l.suppressed...)
 	}
 	sort.SliceStable(res.Findings, func(i, j int) bool {

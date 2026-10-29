@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 classified property, 1 problem",
+  "findings": [
+    {
+      "file": "contracts/customers.odcs.yaml",
+      "line": 19,
+      "level": "error",
+      "rule": "table-not-classified",
+      "message": "property customers.email is classified restricted (sensitive) but table dim_customers is not in the manifest data.paths with class sensitive; the human adds it to the manifest"
+    }
+  ]
+}

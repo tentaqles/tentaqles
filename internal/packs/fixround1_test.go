@@ -274,10 +274,10 @@ func TestSharpEdges(t *testing.T) {
 		t.Fatal("a leading ./ in the glob")
 	}
 	cfg := Merge(packsOf(t, "data: { enabled: true }\nml: { enabled: true }\n"), nil)
-	if got := Crew(cfg, []string{"baseline_change:ml"}); len(got) != 0 {
+	if got := CrewDetail(cfg, []string{"baseline_change"}, map[string]string{"baseline_change": "ml"}); len(got) != 0 {
 		t.Fatalf("baseline_change of ml must not add the data reviewer: %v", got)
 	}
-	if got := Crew(cfg, []string{"baseline_change:data"}); len(got) != 1 || got[0] != "pipeline-reviewer" {
+	if got := CrewDetail(cfg, []string{"baseline_change"}, map[string]string{"baseline_change": "data"}); len(got) != 1 || got[0] != "pipeline-reviewer" {
 		t.Fatalf("%v", got)
 	}
 	func() {

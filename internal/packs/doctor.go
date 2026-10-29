@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/doctor"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -90,6 +91,12 @@ func Doctor(in *Input, files []string, repoErr error) []doctor.Finding {
 	}
 	if repoErr != nil {
 		add("error", "packs-repo-file-invalid", repoErr.Error(), "fix tq-packs.yaml (same schema as the manifest's packs: block)")
+	}
+	if len(in.Config.Enabled()) > 0 && ws != "" {
+		if err := ledger.KeychainAvailable(ws); err != nil {
+			add("warn", "packs-keychain-missing", "the OS keychain cannot be used ("+err.Error()+"): pack approvals are signed with a key kept there, so no pack approval can be granted on this machine",
+				"use a desktop session with a keychain (Windows Credential Manager, macOS Keychain, a Secret Service such as gnome-keyring on Linux)")
+		}
 	}
 	for _, p := range in.Config.Problems {
 		add("error", "packs-repo-file-invalid", "tq-packs.yaml: "+p.String(), "the repo file may only add to or tighten the manifest")

@@ -376,6 +376,9 @@ func newHubAnswerCmd(f *hubFlags) *cobra.Command {
 			}
 			defer cancel()
 			defer h.close()
+			if d, ok := packApprovalDecision(ctx, h, args[0], args[1]); ok {
+				return answerPackApproval(c, h, args[0], d, choice, note)
+			}
 			// An answer the gate recorded can still come back with an error: print both.
 			out, err := h.ops.Answer(ctx, args[0], args[1], choice, note)
 			if out.Message != "" {

@@ -1,0 +1,6 @@
+version: 2
+models:
+  - name: fct_events
+    config:
+      materialized: incremental
+      unique_key: event_id

@@ -1,0 +1,147 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "aws_iam_policy.later",
+      "mode": "managed",
+      "type": "aws_iam_policy",
+      "name": "later",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "acme-later", "path": "/", "tags": null},
+        "after_unknown": {"policy": true, "arn": true, "id": true},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_iam_role.later",
+      "mode": "managed",
+      "type": "aws_iam_role",
+      "name": "later",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "acme-later", "tags": null},
+        "after_unknown": {"assume_role_policy": true, "arn": true, "id": true, "inline_policy": true, "managed_policy_arns": true},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_iam_role_policy.garbled",
+      "mode": "managed",
+      "type": "aws_iam_role_policy",
+      "name": "garbled",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {"name": "g", "role": "acme", "policy": "{\"Statement\":[]}"},
+        "after": {"name": "g", "role": "acme", "policy": "not json"},
+        "after_unknown": {},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_s3_bucket.plain",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "plain",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"bucket": "acme-plain", "tags": null},
+        "after_unknown": {"policy": true, "arn": true, "id": true},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_iam_role_policy_attachment.later",
+      "mode": "managed",
+      "type": "aws_iam_role_policy_attachment",
+      "name": "later",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"role": "acme-later"},
+        "after_unknown": {"policy_arn": true, "id": true},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "data.aws_iam_policy_document.star",
+      "mode": "data",
+      "type": "aws_iam_policy_document",
+      "name": "star",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["read"],
+        "before": null,
+        "after": {
+          "statement": [
+            {"actions": ["*"], "effect": "Allow", "not_actions": null, "resources": null, "not_resources": null, "principals": [], "not_principals": [], "condition": [], "sid": ""}
+          ]
+        },
+        "after_unknown": {"id": true, "json": true, "minified_json": true, "statement": [{"resources": true}]},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "data.aws_iam_policy_document.gh",
+      "mode": "data",
+      "type": "aws_iam_policy_document",
+      "name": "gh",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["read"],
+        "before": null,
+        "after": {
+          "statement": [
+            {
+              "actions": ["sts:AssumeRoleWithWebIdentity"],
+              "effect": "Allow",
+              "principals": [{"type": "Federated", "identifiers": null}],
+              "condition": [
+                {"test": "StringEquals", "variable": "token.actions.githubusercontent.com:aud", "values": ["sts.amazonaws.com"]},
+                {"test": "StringLike", "variable": "token.actions.githubusercontent.com:sub", "values": ["repo:acme/*"]}
+              ]
+            }
+          ]
+        },
+        "after_unknown": {"id": true, "json": true, "statement": [{"principals": [{"identifiers": true}]}]},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "data.aws_iam_policy_document.scoped",
+      "mode": "data",
+      "type": "aws_iam_policy_document",
+      "name": "scoped",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["read"],
+        "before": null,
+        "after": {
+          "statement": [
+            {"actions": ["s3:GetObject"], "effect": "Allow", "resources": null},
+            {"not_actions": ["iam:*"], "effect": "Deny", "resources": ["*"]}
+          ]
+        },
+        "after_unknown": {"id": true, "json": true, "statement": [{"resources": true}, {}]},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ]
+}

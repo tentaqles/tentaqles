@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "2 contracts, 2 problems",
+  "findings": [
+    {
+      "file": "contracts/orders-copy.odcs.yaml",
+      "line": 3,
+      "level": "error",
+      "rule": "duplicate-contract-id",
+      "message": "contract id acme-orders is also used by contracts/orders.odcs.yaml"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 3,
+      "level": "error",
+      "rule": "duplicate-contract-id",
+      "message": "contract id acme-orders is also used by contracts/orders-copy.odcs.yaml"
+    }
+  ]
+}

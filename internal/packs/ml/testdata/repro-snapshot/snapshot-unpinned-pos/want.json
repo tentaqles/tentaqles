@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "data reads checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 3,
+      "level": "error",
+      "rule": "snapshot-unpinned",
+      "message": "read_csv reads \"data/raw/orders.csv\", which is not pinned by data_manifest (with sha256) or DVC"
+    },
+    {
+      "file": "train.py",
+      "line": 4,
+      "level": "error",
+      "rule": "snapshot-unpinned",
+      "message": "read_parquet reads \"data/acme/draft.parquet\", which is not pinned by data_manifest (with sha256) or DVC"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+manifest_data:
+  classes: [public, internal, pii]
+  paths:
+    - table: marts.dim_orders
+      classes: [pii]

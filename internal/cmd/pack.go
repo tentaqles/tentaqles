@@ -30,6 +30,12 @@ func (e packCLIError) Error() string { return e.err.Error() }
 
 func usageErr(format string, a ...any) error { return packCLIError{fmt.Errorf(format, a...)} }
 
+func init() {
+	// A pack command group with its own PersistentPreRun must not shadow the
+	// tq pack <pack> parent's (which builds the FromCommand context).
+	cobra.EnableTraverseRunHooks = true
+}
+
 func newPackCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "pack",
@@ -86,7 +92,7 @@ func packRepoRoot(cwd string) string {
 func packWorkspace(cwd string) (*resolve.Workspace, error) {
 	cfg, err := registry.Load()
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("the tq registry cannot be read (%v): fix it, then retry", err)
 	}
 	res := resolve.Resolve(cwd, cfg)
 	switch {
@@ -377,6 +383,7 @@ func yesNo(b bool) string {
 
 func newPackCrewCmd() *cobra.Command {
 	var flags []string
+	var details []string
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "crew --flags a,b",
@@ -391,7 +398,13 @@ func newPackCrewCmd() *cobra.Command {
 				return nil
 			}
 			in, _ := packInput(cwd, ws) // an invalid repo file keeps the manifest crew
-			crew := packs.Crew(in.Config, flags)
+			detail := map[string]string{}
+			for _, d := range details {
+				if k, v, ok := strings.Cut(d, "="); ok {
+					detail[strings.TrimSpace(k)] = v
+				}
+			}
+			crew := packs.CrewDetail(in.Config, flags, detail)
 			out := c.OutOrStdout()
 			if asJSON {
 				if flags == nil {
@@ -406,6 +419,7 @@ func newPackCrewCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringSliceVar(&flags, "flags", nil, "the flags tq decide triage printed (comma separated)")
+	c.Flags().StringArrayVar(&details, "detail", nil, "a flag detail tq decide triage --json printed, flag=value (repeatable), e.g. baseline_change=cloud,db")
 	c.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return c
 }

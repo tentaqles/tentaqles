@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: >
+      One row per order of a known customer. Consumers rely on it through
+      contracts/fct_orders.odcs.yaml; a breaking change needs a major version
+      bump of that contract.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: order_id
+        description: The order key.
+        data_type: integer
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: The customer who placed the order.
+        data_type: integer
+        constraints:
+          - type: not_null
+        data_tests: [not_null]
+      - name: order_date
+        description: The day the order was placed.
+        data_type: date
+        constraints:
+          - type: not_null
+      - name: status
+        description: placed, shipped, completed or returned.
+        data_type: varchar
+        constraints:
+          - type: not_null
+      - name: amount
+        description: The order amount.
+        data_type: numeric(12,2)
+      - name: updated_at
+        description: When the order last changed.
+        data_type: timestamp
+        constraints:
+          - type: not_null
+
+unit_tests:
+  - name: fct_orders_keeps_known_customers_only
+    description: An order whose customer is unknown never reaches the fact.
+    model: fct_orders
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_orders')
+        rows:
+          - {order_id: 1, customer_id: 1, order_date: 2026-03-01, status: completed, amount: 25.99, updated_at: "2026-03-01 10:00:00"}
+          - {order_id: 2, customer_id: 99, order_date: 2026-03-02, status: placed, amount: 10.00, updated_at: "2026-03-02 11:00:00"}
+      - input: ref('stg_customers')
+        rows:
+          - {customer_id: 1, signup_date: 2026-01-05}
+    expect:
+      rows:
+        - {order_id: 1, customer_id: 1, amount: 25.99}

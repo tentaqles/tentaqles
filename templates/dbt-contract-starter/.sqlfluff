@@ -1,0 +1,12 @@
+[sqlfluff]
+dialect = postgres
+# tq runs sqlfluff with the jinja templater, which needs no warehouse; the dbt
+# templater would compile against a live connection.
+templater = jinja
+max_line_length = 120
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower

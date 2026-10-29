@@ -1,0 +1,10 @@
+schema: '2.0'
+stages:
+  prepare:
+    cmd: python prepare.py
+    deps:
+    - path: data/raw/orders.csv
+      md5: 3b5d5c3712955042212316173ccf37be
+    outs:
+    - path: data/prepared/train.parquet
+      md5: 5d41402abc4b2a76b9719d911017c592

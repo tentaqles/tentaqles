@@ -1,0 +1,27 @@
+{
+  "status": "fail",
+  "detail": "data reads checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 3,
+      "level": "error",
+      "rule": "snapshot-moving",
+      "message": "read_parquet reads a moving reference (\"data/acme/latest/orders.parquet\" names latest)"
+    },
+    {
+      "file": "train.py",
+      "line": 4,
+      "level": "error",
+      "rule": "snapshot-moving",
+      "message": "reads table \"acme.events\" with no versionAsOf/timestampAsOf/snapshot id"
+    },
+    {
+      "file": "train.py",
+      "line": 5,
+      "level": "error",
+      "rule": "snapshot-moving",
+      "message": "read_sql runs a SELECT with no as-of bound (FOR SYSTEM_TIME AS OF, VERSION AS OF, TIMESTAMP AS OF, AT/BEFORE)"
+    }
+  ]
+}

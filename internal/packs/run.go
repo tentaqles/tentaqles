@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -192,9 +193,13 @@ func runOne(ctx context.Context, c Check, in *Input, o RunOptions) (Result, bool
 			return base, false
 		}
 		cin := *in
-		cin.Tools = checkTools{ToolRunner: in.Tools, timeout: c.Timeout}
+		warns := &toolWarnings{}
+		cin.Tools = checkTools{ToolRunner: in.Tools, timeout: c.Timeout, env: c.Env, warns: warns}
 		r := guarded(ctx, c, &cin, 0)
 		r.ID, r.Pack, r.Required = c.ID, c.Pack, declared
+		for _, w := range warns.list() {
+			r.Findings = append(r.Findings, Finding{Level: LevelWarn, Rule: "tq/tool-env", Message: w})
+		}
 		if r.Tool == nil {
 			r.Tool = &ToolRun{Name: c.Tool, Version: p.Version, Path: p.Path}
 		}
@@ -214,17 +219,50 @@ func runOne(ctx context.Context, c Check, in *Input, o RunOptions) (Result, bool
 	return normalise(r, 0), false
 }
 
+// toolrun resolves a tool's final path with the handle-based FinalPath.
+func init() { toolrun.FinalPath = FinalPath }
+
 // checkTools gives a check's tool runs the check's default timeout.
 type checkTools struct {
 	ToolRunner
 	timeout time.Duration
+	env     []string      // Check.Env
+	warns   *toolWarnings // the runs' framework warnings, reported as warn findings
+}
+
+// toolWarnings collects toolrun.Output.Warnings across a check's runs.
+type toolWarnings struct {
+	mu sync.Mutex
+	w  []string
+}
+
+func (t *toolWarnings) add(ws []string) {
+	if t == nil || len(ws) == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, w := range ws {
+		if !slices.Contains(t.w, w) {
+			t.w = append(t.w, w)
+		}
+	}
+}
+
+func (t *toolWarnings) list() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.w...)
 }
 
 func (t checkTools) Run(ctx context.Context, s toolrun.Spec) (toolrun.Output, error) {
 	if s.Timeout <= 0 {
 		s.Timeout = t.timeout
 	}
-	return t.ToolRunner.Run(ctx, s)
+	s.PassEnv = append(append([]string(nil), s.PassEnv...), t.env...)
+	out, err := t.ToolRunner.Run(ctx, s)
+	t.warns.add(out.Warnings)
+	return out, err
 }
 
 func orUnknown(v string) string {
@@ -357,6 +395,9 @@ func baselineKeys(in *Input, p string, old bool) map[string]bool {
 	}
 	out := map[string]bool{}
 	if err != nil {
+		if !old {
+			out["\x00unreadable"] = true // an unreadable new side is growth
+		}
 		return out
 	}
 	var f struct {

@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 contract object in sync with dbt",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 18,
+      "level": "warn",
+      "rule": "dbt-not-null-unstated",
+      "message": "dbt model fct_orders tests amount not_null but the contract does not mark it required"
+    }
+  ]
+}

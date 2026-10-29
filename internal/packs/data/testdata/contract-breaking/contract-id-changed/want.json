@@ -1,0 +1,27 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 with breaking changes and no major version bump",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 14,
+      "level": "error",
+      "rule": "property-removed",
+      "message": "property orders.ordered_at removed"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 3,
+      "level": "warn",
+      "rule": "contract-id-changed",
+      "message": "contract id changed from acme-orders to acme-orders-v2: consumers, catalogs and tooling keyed by the id lose it"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "error",
+      "rule": "version-not-bumped",
+      "message": "breaking change without a major version bump (1.2.0 -> 1.3.0); bump to 2.0.0; consumers: acme-finance-dashboard"
+    }
+  ]
+}

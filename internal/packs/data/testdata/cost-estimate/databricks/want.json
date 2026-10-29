@@ -1,0 +1,12 @@
+{
+  "schema": "tq.packs.cost/v1",
+  "engine": "databricks",
+  "tool": "databricks",
+  "metric": "max_size_in_bytes",
+  "value": 13529146982.4,
+  "unit": "bytes",
+  "cap": "10GB",
+  "cap_key": "packs.data.cost.databricks.max_bytes",
+  "cap_value": 10000000000,
+  "verdict": "over"
+}

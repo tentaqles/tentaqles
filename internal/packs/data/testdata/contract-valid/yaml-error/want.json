@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 problem",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 2,
+      "level": "error",
+      "rule": "contract-parse",
+      "message": "the file is not valid YAML"
+    }
+  ]
+}

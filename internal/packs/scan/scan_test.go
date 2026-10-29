@@ -265,12 +265,33 @@ func contains(xs []string, s string) bool {
 
 func TestSQLNestedBlockComments(t *testing.T) {
 	st := SQLStatements([]byte("/* a /* b */ still comment */ select 1;\n/* x */ drop table t;"))
-	if len(st) != 2 || st[0].Keyword() != "SELECT" || st[1].Keyword() != "DROP" {
+	// The flat reading leaves "still comment */": the dialects disagree (R8).
+	if len(st) != 2 || !st[0].Ambiguous() || st[0].Keyword() != "AMBIGUOUS" || st[1].Keyword() != "DROP" {
 		t.Fatalf("%d %v", len(st), st)
 	}
 	for _, tk := range st[0].Tokens {
 		if tk.Text == "still" || tk.Text == "*" {
 			t.Fatalf("comment leaked: %+v", st[0].Tokens)
 		}
+	}
+}
+
+// R8: where nesting and flat readings differ, the statement is ambiguous.
+func TestSQLAmbiguousNestedComment(t *testing.T) {
+	st := SQLStatements([]byte("/* a /* b */ DROP TABLE t; -- */\nselect 1;"))
+	if len(st) == 0 || !st[0].Ambiguous() || st[0].Keyword() != "AMBIGUOUS" {
+		t.Fatalf("%+v", st)
+	}
+	clean := SQLStatements([]byte("/* a /* b */ */ select 1;"))
+	if len(clean) != 1 || clean[0].Ambiguous() || clean[0].Keyword() != "SELECT" {
+		t.Fatalf("an agreeing nested comment is fine: %+v", clean)
+	}
+}
+
+// Q2: a MySQL executable comment is ambiguous.
+func TestSQLExecutableComment(t *testing.T) {
+	st := SQLStatements([]byte("select 1 /*!50000 DROP TABLE t */;"))
+	if len(st) != 1 || !st[0].Ambiguous() {
+		t.Fatalf("%+v", st)
 	}
 }

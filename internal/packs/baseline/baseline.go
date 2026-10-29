@@ -80,12 +80,23 @@ func Read(raw []byte) (File, error) {
 	return f, nil
 }
 
-// Load reads a baseline file; a missing file is an empty baseline.
+// MaxSize caps a baseline file (the growth check reads at most this much).
+const MaxSize = 16 << 20
+
+// Load reads a baseline file; a missing file is an empty baseline, a file
+// over MaxSize an error (fail closed: nothing is downgraded).
 func Load(p string) (File, error) {
-	raw, err := os.ReadFile(p)
+	fi, err := os.Stat(p)
 	if os.IsNotExist(err) {
 		return File{Schema: Schema}, nil
 	}
+	if err != nil {
+		return File{}, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > MaxSize {
+		return File{}, fmt.Errorf("baseline %s: not a regular file of at most %d bytes", p, MaxSize)
+	}
+	raw, err := os.ReadFile(p)
 	if err != nil {
 		return File{}, err
 	}

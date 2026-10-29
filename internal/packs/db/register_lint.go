@@ -45,14 +45,14 @@ func init() {
 			"edition":       lint.ValidateEdition,
 			"sqlfluff_fail": lint.ValidateBool,
 		},
-		Merge: map[string]packs.MergeKind{
+		Merge: map[string]packs.MergeRule{
 			// More migration paths lint more: a repo file may add them.
-			"migrations": packs.MergeUnion,
+			"migrations": packs.Union(),
 			// Both loosen the lint (lock rules to warn): trusted layer only.
-			"small_tables": packs.MergeIgnoreRepo,
-			"edition":      packs.MergeIgnoreRepo,
+			"small_tables": {},
+			"edition":      {},
 			// true only tightens.
-			"sqlfluff_fail": packs.MergeOr,
+			"sqlfluff_fail": packs.Or(),
 		},
 		Flags: []packs.Flag{
 			{Name: "db_migration", Reviewers: []string{reviewer}, Raise: raiseMigration},
@@ -70,6 +70,7 @@ func init() {
 		Applies: func(in *packs.Input) bool { return anyMigrationChanged(in, "") },
 		Run:     runRollback})
 	packs.Register(packs.Check{ID: "db/squawk", Pack: "db", Kind: packs.External, Tool: "squawk", MinVersion: "2.0.0",
+		// squawk reads only the repo's .squawk.toml: no variable beyond the base.
 		Applies: func(in *packs.Input) bool { return anyMigrationChanged(in, "postgres") },
 		Run: func(ctx context.Context, in *packs.Input) packs.Result {
 			files := lintableChanged(in, "postgres")
@@ -79,6 +80,8 @@ func init() {
 			return tools.Squawk(ctx, in, files)
 		}})
 	packs.Register(packs.Check{ID: "db/sqlfluff", Pack: "db", Kind: packs.External, Tool: "sqlfluff",
+		// User config: ~/.sqlfluff and the platformdirs config dir.
+		Env:     []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA"},
 		Applies: func(in *packs.Input) bool { return anyMigrationChanged(in, "") },
 		Run:     runSqlfluff})
 }

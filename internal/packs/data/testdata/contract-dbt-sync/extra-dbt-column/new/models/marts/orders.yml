@@ -1,0 +1,23 @@
+version: 2
+models:
+  - name: fct_orders
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: order_id
+        data_type: bigint
+        constraints:
+          - type: not_null
+        data_tests: [unique, not_null]
+      - name: status
+        data_type: varchar(20)
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [placed, shipped, delivered]
+      - name: amount
+        data_type: numeric(12, 2)
+      - name: channel
+        data_type: text

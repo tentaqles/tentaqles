@@ -1,0 +1,12 @@
+{
+  "status": "ok",
+  "detail": "1 contract, no breaking change",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "level": "warn",
+      "rule": "contract-deleted",
+      "message": "contract file deleted (it was retired)"
+    }
+  ]
+}

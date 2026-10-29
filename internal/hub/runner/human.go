@@ -11,6 +11,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/hub/activity"
 	"github.com/tentaqles/tentaqles/internal/hub/gate"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 )
 
 func endsRun(kind, choice string) bool {
@@ -206,16 +207,34 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 	if choice == "answer" && strings.TrimSpace(note) == "" {
 		return AnswerOutcome{}, errors.New("write the answer in the note: it goes to the run as your comment on the card; the decision is still pending")
 	}
+	if d.PackApproval() != "" {
+		// A pack approval (spec C §2.11) is answered only through the human,
+		// TTY-checked path, which puts a HumanPresence (its ledger signer) in
+		// the context; it never resumes or requeues a run.
+		p := humanPresence(ctx)
+		if p == nil || p.Sign == nil || p.Shown == nil {
+			return AnswerOutcome{}, store.ErrPackAnswer
+		}
+		// R4-5: sign only if the store row at answer time still equals what
+		// the human was shown.
+		shown, inner := *p.Shown, p.Sign
+		sign := func(cur ledger.Shown, id, choice, kind, ts string) (ledger.Entry, error) {
+			if !ledger.SameShown(cur, shown) {
+				return ledger.Entry{}, ledger.ErrShownMismatch
+			}
+			return inner(cur, id, choice, kind, ts)
+		}
+		d, err := s.st.AnswerPackApproval(d.ID, choice, note, s.cfg.Actor, sign)
+		if err != nil {
+			return AnswerOutcome{}, err
+		}
+		return AnswerOutcome{Decision: d, Message: fmt.Sprintf("decision %s: %s by %s", d.ID, choice, s.cfg.Actor)}, nil
+	}
 	d, err := s.st.AnswerHub(d.ID, choice, note, s.cfg.Actor)
 	if err != nil {
 		return AnswerOutcome{}, err
 	}
 	out := AnswerOutcome{Decision: d, Message: fmt.Sprintf("decision %s: %s by %s", d.ID, choice, s.cfg.Actor)}
-	if d.PackApproval() != "" {
-		// A pack approval (spec C §2.11) is consumed by a human-run apply or a
-		// guard; it never resumes or requeues a run.
-		return out, nil
-	}
 	r, err := s.st.Run(d.RunID)
 	if err != nil {
 		return out, nil
@@ -480,3 +499,28 @@ func lastAnswered(st *gate.State) *gate.Decision {
 }
 
 var _ Ops = (*Service)(nil)
+
+type presenceKey struct{}
+
+// HumanPresence marks an answer made by a human present at a terminal (the
+// TTY and binding check of tq hub answer). Sign builds the signed ledger
+// line; Shown is the decision as the human was shown it, which the store row
+// must still equal when the answer is signed. Only that path sets it; no web
+// route or API does.
+type HumanPresence struct {
+	Sign  store.PackSigner
+	Shown *ledger.Shown
+}
+
+// WithHumanPresence returns ctx carrying p.
+func WithHumanPresence(ctx context.Context, p HumanPresence) context.Context {
+	return context.WithValue(ctx, presenceKey{}, &p)
+}
+
+func humanPresence(ctx context.Context) *HumanPresence {
+	if ctx == nil {
+		return nil
+	}
+	p, _ := ctx.Value(presenceKey{}).(*HumanPresence)
+	return p
+}

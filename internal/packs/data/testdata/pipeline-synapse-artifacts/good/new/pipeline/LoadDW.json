@@ -1,0 +1,14 @@
+{
+	"name": "LoadDW",
+	"properties": {
+		"parameters": { "pool": { "type": "string" } },
+		"activities": [
+			{
+				"name": "RefreshMart",
+				"type": "SqlPoolStoredProcedure",
+				"sqlPool": { "referenceName": "@pipeline().parameters.pool", "type": "SqlPoolReference" },
+				"typeProperties": { "storedProcedureName": "dbo.refresh_mart" }
+			}
+		]
+	}
+}

@@ -347,16 +347,18 @@ func TestHangingToolIsKilledAtItsTimeout(t *testing.T) {
 func TestFlagsAndCrew(t *testing.T) {
 	isolate(t)
 	cfg := packs.Merge(packsOf(t, fmt.Sprintf(dbConfig, "[]")), nil)
+	// Other db workstreams raise their own flags on the same paths (D-DR's
+	// rls_change on a Postgres migration): db_migration must be among them.
 	in := &packs.Input{Config: cfg, Changed: []packs.ChangedFile{{Path: "supabase/migrations/20240103_x.sql", Status: 'A'}}}
-	if got := packs.RaiseFlags(in); !reflect.DeepEqual(got, []string{"db_migration"}) {
+	if got := packs.RaiseFlags(in); !hasFlag(got, "db_migration") || !onlyDBFlags(got) {
 		t.Fatalf("flags = %v", got)
 	}
 	in.Changed = []packs.ChangedFile{{Path: "services/api/prisma/migrations/20240101_init/migration.sql", Status: 'A'}}
-	if got := packs.RaiseFlags(in); !reflect.DeepEqual(got, []string{"db_migration"}) {
+	if got := packs.RaiseFlags(in); !hasFlag(got, "db_migration") || !onlyDBFlags(got) {
 		t.Fatalf("MIGRATION_DIR_RE path: flags = %v", got)
 	}
 	in.Changed = []packs.ChangedFile{{Path: "src/app.go", Status: 'M'}}
-	if got := packs.RaiseFlags(in); len(got) != 0 {
+	if got := packs.RaiseFlags(in); hasFlag(got, "db_migration") {
 		t.Fatalf("no migration: flags = %v", got)
 	}
 	for _, f := range []string{"db_migration", "schema", "migration", "rls", "data_loss", "destructive"} {
@@ -497,4 +499,23 @@ func TestStagedExternalToolSeesTheIndex(t *testing.T) {
 	if got := findings(sq); !reflect.DeepEqual(got, []string{idx + ":2 error squawk:require-concurrent-index-creation"}) {
 		t.Fatalf("staged squawk findings = %v", got)
 	}
+}
+
+func hasFlag(flags []string, f string) bool {
+	for _, x := range flags {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
+
+// onlyDBFlags: the db pack's own flags (db_migration, and D-DR's rls_change).
+func onlyDBFlags(flags []string) bool {
+	for _, x := range flags {
+		if x != "db_migration" && x != "rls_change" {
+			return false
+		}
+	}
+	return true
 }

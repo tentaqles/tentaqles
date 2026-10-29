@@ -1,0 +1,10 @@
+{
+	"name": "AcmeBlob",
+	"properties": {
+		"type": "AzureBlobStorage",
+		"typeProperties": {
+			"serviceEndpoint": "https://acmeblob.blob.core.windows.net",
+			"accountKey": { "type": "SecureString", "value": "c2VjcmV0a2V5" }
+		}
+	}
+}

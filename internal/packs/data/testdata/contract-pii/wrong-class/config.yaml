@@ -1,0 +1,5 @@
+manifest_data:
+  classes: [public, internal, pii]
+  paths:
+    - table: dim_customers
+      classes: [internal]

@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 new model",
+  "findings": [
+    {
+      "file": "models/marts/_marts.yml",
+      "line": 6,
+      "level": "error",
+      "rule": "missing-key-tests",
+      "message": "new model fct_orders: primary key order_key has no unique or not_null test"
+    }
+  ]
+}

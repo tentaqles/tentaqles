@@ -1,0 +1,38 @@
+# packs.cloud snippet for .tentaqles.yaml (tentaqles cloud pack template, MIT).
+# Names and identifiers only, never secrets. Proposed by kickoff for the human;
+# an agent never edits the manifest (headless: docs/privacy-manifest-proposal.yaml).
+# Replace the zero and repeated-digit ids with the client's own, and drop the
+# IaC kinds and environments the project does not use.
+packs:
+  cloud:
+    enabled: true
+    tools: [checkov, conftest, tflint]        # declared => required DoD checks; list only what is installed
+    iac:
+      - {path: infra/terraform, kind: terraform}   # terraform | tofu | bicep | arm | cdk | cloudformation | pulumi
+      # - {path: infra/bicep, kind: bicep}
+    accounts: [111111111111]                  # AWS accounts that are ours (cross-account trust rule)
+    tenants: [00000000-0000-0000-0000-000000000000]
+    conftest: {policy: [policy/]}             # project Rego, added to the shipped bundle
+    baseline: .tq/iac-baseline.json           # written by the human with tq pack baseline --pack cloud
+    require_plan: false
+    default_environment: prod                 # what an unresolved target counts as
+    environments:
+      dev:
+        match:
+          workspaces: [dev]
+          dirs: [infra/envs/dev]
+          var_files: [envs/dev.tfvars]
+          subscriptions: [11111111-1111-1111-1111-111111111111]
+          profiles: [acme-dev]
+        apply: auto
+        destroy: ask
+      staging:
+        match: {workspaces: [staging], dirs: [infra/envs/staging]}
+        apply: ask
+        destroy: approve
+      prod:
+        match: {workspaces: [prod], dirs: [infra/envs/prod], subscriptions: [22222222-2222-2222-2222-222222222222]}
+        apply: approve
+        destroy: deny
+        approval_ttl: 60m                     # max 24h; single use
+        require_merged: true
