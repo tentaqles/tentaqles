@@ -209,15 +209,29 @@ type ReadArg struct {
 	// Flag is the one flag whose value the file may be (--plan); empty: a
 	// positional argument only. A positional argument is always accepted.
 	Flag string
-	Path string
+	// BoolFlags are the program's flags that take no value (-auto-approve,
+	// --yes): a plan right after one is still positional. Any other flag
+	// before the plan is read as taking it as its value (fail closed).
+	BoolFlags []string
+	Path      string
+}
+
+// ReadSpec is how a program reads its stored plans: its name (the
+// segment's first word), the flag whose value the plan may be ("" for
+// positional only) and its boolean flags.
+type ReadSpec struct {
+	Program   string
+	Flag      string
+	BoolFlags []string
 }
 
 var flagNameRe = regexp.MustCompile(`^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$`)
 
 // ReadArgs names stored plans this guard verified with HashState in this
-// call and that program reads as a positional argument (terraform apply
-// <plan>) or as the value of flag (pulumi up --plan <plan>, --plan=<plan>;
-// flag "" allows the positional form only). For this call only, the core state-dir rule
+// call and that spec.Program reads as a positional argument (terraform
+// apply <plan>, also after a declared boolean flag: -auto-approve <plan>) or
+// as the value of spec.Flag (pulumi up --plan <plan>, --plan=<plan>; Flag ""
+// allows the positional form only). For this call only, the core state-dir rule
 // (tq/hub-store-write) does not count that exact path, provided:
 //   - the command writes nothing (no redirect, no write verb, shell,
 //     interpreter, downloader or wrapper, no substitution);
@@ -228,7 +242,15 @@ var flagNameRe = regexp.MustCompile(`^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$`)
 // handles the call and allows it. Only files under the pack's plans/
 // directory can be named; a name not hashed in this call, outside plans/,
 // or an empty program is an error (the guard should deny).
-func (g GuardCtx) ReadArgs(program, flag string, names ...string) error {
+func (g GuardCtx) ReadArgs(spec ReadSpec, names ...string) error {
+	program, flag := spec.Program, spec.Flag
+	var bools []string
+	for _, b := range spec.BoolFlags {
+		if !flagNameRe.MatchString(b) {
+			return fmt.Errorf("%w: %q is not a flag name", ErrRefused, b)
+		}
+		bools = append(bools, strings.ToLower(b))
+	}
 	program = strings.ToLower(strings.TrimSpace(program))
 	if program == "" || strings.ContainsAny(program, `/\ `) || len(names) == 0 {
 		return fmt.Errorf("%w: ReadArgs needs the program name that reads the file and at least one file", ErrRefused)
@@ -250,7 +272,7 @@ func (g GuardCtx) ReadArgs(program, flag string, names ...string) error {
 		if !ok {
 			return fmt.Errorf("%w: %q was not verified with HashState in this call", ErrRefused, n)
 		}
-		g.st.readArgs = append(g.st.readArgs, ReadArg{Program: program, Flag: strings.ToLower(flag), Path: abs})
+		g.st.readArgs = append(g.st.readArgs, ReadArg{Program: program, Flag: strings.ToLower(flag), BoolFlags: bools, Path: abs})
 	}
 	return nil
 }

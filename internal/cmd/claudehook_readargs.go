@@ -3,6 +3,7 @@ package cmd
 import (
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -100,7 +101,11 @@ func withoutReadArgs(cmd string, readArgs []packs.ReadArg) (string, bool) {
 			case prefix != "":
 				under = strings.ToLower(strings.TrimSuffix(prefix, "="))
 			case strings.HasPrefix(strings.Trim(prev, `"'`), "-") && !strings.Contains(prev, "="):
-				under = strings.ToLower(strings.Trim(prev, `"'`))
+				// A declared boolean flag takes no value: the plan after it is
+				// positional. Any other flag is read as taking the plan.
+				if p := strings.ToLower(strings.Trim(prev, `"'`)); !slices.Contains(ra.BoolFlags, p) {
+					under = p
+				}
 			}
 			okSeg = !first && programName(segFirst) == ra.Program && (under == "" || under == ra.Flag)
 			b.WriteString(prefix + "tq-read-arg")
