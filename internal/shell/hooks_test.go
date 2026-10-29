@@ -167,8 +167,60 @@ func checkLog(t *testing.T, log, sh string) {
 	}
 }
 
+// poisonProfiles points HOME, USERPROFILE, ZDOTDIR, XDG_CONFIG_HOME and
+// BASH_ENV of this test process at profile files that print PROFILE-LEAK, so a
+// shell test that forgets to isolate them fails (spec E §16: no test touches
+// a real shell profile).
+func poisonProfiles(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	leak := "echo PROFILE-LEAK\n"
+	ps := "Write-Output PROFILE-LEAK\n"
+	for rel, body := range map[string]string{
+		".zshenv":                  leak,
+		".bashrc":                  leak,
+		".bash_env":                leak,
+		".config/fish/config.fish": leak,
+		"Documents/PowerShell/Microsoft.PowerShell_profile.ps1":        ps,
+		"Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1": ps,
+	} {
+		f := filepath.Join(home, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", slash(home))
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("ZDOTDIR", slash(home))
+	t.Setenv("XDG_CONFIG_HOME", slash(filepath.Join(home, ".config")))
+	t.Setenv("BASH_ENV", slash(filepath.Join(home, ".bash_env")))
+}
+
+// shellEnv is the environment of a live shell test: the test's own, with the
+// profile locations moved to an empty folder and BASH_ENV/ENV cleared.
+func shellEnv(t *testing.T, extra ...string) []string {
+	t.Helper()
+	home := t.TempDir()
+	env := append(os.Environ(),
+		"HOME="+slash(home), "USERPROFILE="+home, "ZDOTDIR="+slash(home),
+		"XDG_CONFIG_HOME="+slash(filepath.Join(home, ".config")), "BASH_ENV=", "ENV=",
+		"TQ_MODE=", "TQ_ENABLED=", "TQ_WS=")
+	return append(env, extra...)
+}
+
+func checkNoLeak(t *testing.T, sh, out string) {
+	t.Helper()
+	if strings.Contains(out, "PROFILE-LEAK") {
+		t.Fatalf("%s read a shell profile from the real home: %s", sh, out)
+	}
+}
+
 func runPosixShell(t *testing.T, shellBin, sh, script string) {
 	t.Helper()
+	poisonProfiles(t)
 	dir := t.TempDir()
 	bin := fakeTq(t, dir)
 	hook, err := HookFor(sh, slash(bin))
@@ -180,13 +232,18 @@ func runPosixShell(t *testing.T, shellBin, sh, script string) {
 		t.Fatal(err)
 	}
 	log := filepath.Join(dir, "log")
-	cmd := exec.Command(shellBin, "-c", strings.ReplaceAll(script, "HOOK", slash(hookPath)))
-	cmd.Env = append(os.Environ(), "TQ_FAKE_LOG="+slash(log), "TQ_MODE=", "TQ_ENABLED=", "TQ_WS=")
+	args := []string{"-c", strings.ReplaceAll(script, "HOOK", slash(hookPath))}
+	if sh == "fish" {
+		args = append([]string{"--no-config"}, args...)
+	}
+	cmd := exec.Command(shellBin, args...)
+	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+slash(log))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", sh, err, out)
 	}
 	s := string(out)
+	checkNoLeak(t, sh, s)
 	if !strings.Contains(s, "A:off:") || !strings.Contains(s, "B::acme") || !strings.Contains(s, "tq: off in this window") {
 		t.Fatalf("%s: env after off/on: %s", sh, s)
 	}
@@ -242,6 +299,7 @@ tq version
 // PowerShell: pwsh when installed, else Windows PowerShell 5.1, with a fake
 // tq.cmd that logs its argv.
 func TestHook_PowerShellFunctions(t *testing.T) {
+	poisonProfiles(t)
 	sh, exe := "pwsh", ""
 	if p, err := exec.LookPath("pwsh"); err == nil {
 		exe = p
@@ -287,11 +345,12 @@ func TestHook_PowerShellFunctions(t *testing.T) {
 		"codex-off z\n" +
 		"tq version\n"
 	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", script)
-	cmd.Env = append(os.Environ(), "TQ_FAKE_LOG="+log, "TQ_MODE=", "TQ_ENABLED=", "TQ_WS=")
+	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+log)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	checkNoLeak(t, sh, string(out))
 	if s := string(out); !strings.Contains(s, "A:off:") || !strings.Contains(s, "B::acme") {
 		t.Fatalf("env after off/on: %s", s)
 	}
