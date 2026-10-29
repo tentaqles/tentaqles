@@ -3015,19 +3015,18 @@ def _no_pack_command(code: int, out: str, err: str) -> bool:
 
 
 def find_tq() -> str | None:
-    """The tq binary, resolved in the order scripts/tq_hook.sh uses, then the plugin's own
-    bin/ (as memory/jev_gate.py does) when CLAUDE_PLUGIN_ROOT is unset."""
+    """The tq binary, in the order memory/jev_gate.py:find_tq uses: $TQ_BIN, the plugin's bin/
+    ($CLAUDE_PLUGIN_ROOT, else this checkout), PATH, then the install dirs."""
     win = os.name == "nt"
     exe = ".exe" if win else ""
     cands: list[str] = []
     if os.environ.get("TQ_BIN"):
         cands += [os.environ["TQ_BIN"], os.environ["TQ_BIN"] + exe]
-    if os.environ.get("CLAUDE_PLUGIN_ROOT"):
-        cands.append(os.path.join(os.environ["CLAUDE_PLUGIN_ROOT"], "bin", "tq" + exe))
+    plug = os.environ.get("CLAUDE_PLUGIN_ROOT") or str(plugin_root())
+    cands.append(os.path.join(plug, "bin", "tq" + exe))
     found = shutil.which("tq")
     if found:
         cands.append(found)
-    cands.append(str(plugin_root() / "bin" / ("tq" + exe)))
     home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
     if home:
         cands += [os.path.join(home, ".tentaqles", "bin", "tq" + exe), os.path.join(home, ".local", "bin", "tq" + exe)]
@@ -3093,6 +3092,16 @@ def freeze_packs(root: Path) -> dict:
                 why = "no config_hash in the output"
             elif names is None:
                 why = "unexpected shape of the packs list"
+            else:
+                problems = doc.get("problems") if doc.get("problems") is not None else []
+                if not isinstance(problems, list) or not all(isinstance(x, str) for x in problems):
+                    why = "problems is not a list of strings"
+                elif problems:
+                    # tq exits 0 and lists what it ignored from tq-packs.yaml: never freeze around it
+                    shown = "; ".join(redact(x.strip())[:200] for x in problems[:PACK_FINDINGS_SHOWN])
+                    more = f" (and {len(problems) - PACK_FINDINGS_SHOWN} more)" if len(problems) > PACK_FINDINGS_SHOWN else ""
+                    raise SystemExit(f"approve refused: the pack config has {len(problems)} problem(s): {shown}{more}. "
+                                     "Run `tq pack doctor`, fix tq-packs.yaml or the manifest packs: block, then approve again.")
     if why:
         raise SystemExit(f"approve refused: `tq pack list --enabled --json` failed ({why}). Fix the pack config "
                          "(the manifest packs: block or tq-packs.yaml; `tq pack doctor` explains), then approve again.")

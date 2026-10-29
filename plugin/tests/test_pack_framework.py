@@ -48,6 +48,11 @@ if argv[:2] == ["pack", "list"]:
         sys.stderr.write('tq-packs.yaml:2: value `tq: unknown command "pack" for "tq"` is not a bool\n'); sys.exit(1)
     if mode == "list-config-error":
         sys.stderr.write("tq-packs.yaml:3: unknown key packs.data.colour\n"); sys.exit(2)
+    if mode == "list-problems":
+        # the real tq: a broken tq-packs.yaml still exits 0 and is reported under problems
+        doc = json.loads(open(os.environ["FAKE_TQ_LIST"], encoding="utf-8").read())
+        doc["problems"] = ["tq-packs.yaml:%d: unknown key packs.data.k%d" % (i, i) for i in range(1, 8)]
+        print(json.dumps(doc)); sys.exit(0)
     if mode == "list-garbage":
         print("not json"); sys.exit(0)
     print(open(os.environ["FAKE_TQ_LIST"], encoding="utf-8").read()); sys.exit(0)
@@ -611,7 +616,7 @@ def _exe(dirpath: Path, name: str) -> Path:
     return path
 
 
-def test_find_tq_order_is_tq_bin_then_path_then_the_plugin_bin(tmp_path, monkeypatch):
+def test_find_tq_order_is_tq_bin_then_the_plugin_bin_then_path(tmp_path, monkeypatch):
     # the real find_tq: undo the autouse fixture's stub, then isolate the environment again
     monkeypatch.undo()
     for k in ("HOME", "USERPROFILE", "TQ_HOME"):
@@ -631,11 +636,15 @@ def test_find_tq_order_is_tq_bin_then_path_then_the_plugin_bin(tmp_path, monkeyp
     monkeypatch.setenv("PATH", str(path_tq.parent))
     assert Path(gate.find_tq()) == bin_tq
     monkeypatch.delenv("TQ_BIN")
+    assert Path(gate.find_tq()) == plugin_tq  # the plugin's bin/ comes before PATH (jev_gate order)
+    plugin_tq.unlink()
     assert Path(gate.find_tq()).resolve() == path_tq.resolve()
     monkeypatch.setenv("PATH", str(empty))
-    assert Path(gate.find_tq()) == plugin_tq
-    plugin_tq.unlink()
     assert gate.find_tq() is None
+    alt = tmp_path / "alt-plugin"
+    alt_tq = _exe(alt / "bin", "tq.exe" if win else "tq")
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(alt))
+    assert Path(gate.find_tq()) == alt_tq
 
 
 def test_hub_approval_summary_names_the_pack_freeze(repo):
@@ -684,3 +693,19 @@ def test_baseline_growth_result_is_recorded_like_any_check(repo, fake_tq):
     item = dod_items(repo)["pack:data/baseline"]
     assert code == 0, out
     assert item["ok"] is True and "baseline-grew" in item["detail"]
+
+
+def test_approve_refuses_a_list_that_reports_problems(repo, fake_tq):
+    fake_tq.mode("list-problems")
+    with pytest.raises(SystemExit) as e:
+        gate.cmd_approve(repo, "demo")
+    msg = str(e.value)
+    assert "approve refused" in msg and "7 problem(s)" in msg and "tq pack doctor" in msg
+    assert "packs.data.k1" in msg and "packs.data.k5" in msg and "packs.data.k6" not in msg and "2 more" in msg
+    assert gate.load_approved(repo, "demo") is None
+
+
+def test_approve_accepts_an_empty_problems_list(repo, fake_tq):
+    fake_tq.lists({**LIST_OUT, "problems": []})
+    gate.cmd_approve(repo, "demo")
+    assert frozen(repo) == {"enabled": ["data", "ml"], "config_hash": HASH}
