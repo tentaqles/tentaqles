@@ -1,0 +1,3 @@
+data:
+  dbt:
+    new_model_tests: [not_null]

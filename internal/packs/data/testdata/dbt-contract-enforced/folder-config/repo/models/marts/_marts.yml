@@ -1,0 +1,8 @@
+version: 2
+models:
+  - name: fct_orders
+    columns:
+      - name: order_id
+        data_type: varchar
+      - name: amount
+        data_type: numeric

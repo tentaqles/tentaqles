@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contracted model",
+  "findings": [
+    {
+      "file": "analytics/models/marts/fct_orders.sql",
+      "line": 1,
+      "level": "error",
+      "rule": "contract-not-enforced",
+      "message": "model fct_orders is under dbt.contract_paths but its contract is not enforced: set contract: {enforced: true} in its YAML config, config() or +contract in dbt_project.yml"
+    }
+  ]
+}

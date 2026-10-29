@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 incremental model",
+  "findings": [
+    {
+      "file": "models/marts/fct_events.sql",
+      "line": 1,
+      "level": "error",
+      "rule": "incremental-no-unique-key",
+      "message": "incremental model fct_events has no unique_key and no incremental_strategy: append; a rerun duplicates rows"
+    }
+  ]
+}
