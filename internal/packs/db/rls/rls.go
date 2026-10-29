@@ -511,14 +511,47 @@ func (s *state) schemaKnown(sc string) bool {
 
 // createSchema records CREATE SCHEMA [IF NOT EXISTS] name, and CREATE
 // SCHEMA AUTHORIZATION role (the schema is named after the role).
+//
+// The schema elements that may follow (CREATE TABLE, VIEW, INDEX,
+// SEQUENCE, TRIGGER, GRANT) are replayed as statements of their own, with
+// unqualified names created in the new schema, as Postgres does.
 func (s *state) createSchema(st sqllex.Statement, i int) {
 	i = st.Skip(i, []string{"IF", "NOT", "EXISTS"})
 	if st.Match(i, "AUTHORIZATION") {
 		i++
 	}
-	if v := st.At(i).Ident(sqllex.Postgres); v != "" {
-		s.schemas[v] = true
+	v := st.At(i).Ident(sqllex.Postgres)
+	if v == "" {
+		return
 	}
+	s.schemas[v] = true
+	i++
+	if st.Match(i, "AUTHORIZATION") {
+		i += 2
+	}
+	var starts []int
+	for k := i; k < len(st.Tokens); k++ {
+		if k = st.FindTop(k, "CREATE|GRANT"); k < 0 {
+			break
+		}
+		starts = append(starts, k)
+	}
+	if len(starts) == 0 {
+		return
+	}
+	saveSet, savePath := s.localSet, s.localPath
+	s.localSet, s.localPath = true, []string{v}
+	for n, a := range starts {
+		b := len(st.Tokens)
+		if n+1 < len(starts) {
+			b = starts[n+1]
+		}
+		sub := st
+		sub.Tokens = st.Tokens[a:b]
+		sub.Line, sub.EndLine = st.Tokens[a].Line, st.Tokens[b-1].Line
+		s.statement(sub)
+	}
+	s.localSet, s.localPath = saveSet, savePath
 }
 
 // setSearchPath follows a top-level SET [SESSION|LOCAL] search_path {TO|=}
