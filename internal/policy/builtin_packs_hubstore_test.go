@@ -2,14 +2,19 @@ package policy
 
 import "testing"
 
-// hubStoreSet builds the built-in rules with only the given packs enabled.
+// hubStoreSet builds D-GR's pack rules with only the given packs enabled.
+// The framework's core tq/hub-store-write (builtin_framework.go, always
+// active, no Pack) is broader: it also denies a copy out of the store, and
+// the hook-time state-dir check denies any shell mention of hub/ or packs/.
+// These tests pin D-GR's own, destination-precise block, so they leave the
+// core rules out; TestHubStoreWriteCoreCoversPackRules checks the overlap.
 func hubStoreSet(t *testing.T, packs ...string) *Set {
 	t.Helper()
 	on := map[string]bool{}
 	for _, p := range packs {
 		on[p] = true
 	}
-	s, errs := Build(Layers{Builtin: ForPacks(Builtin(), func(p string) bool { return on[p] })})
+	s, errs := Build(Layers{Builtin: ForPacks(PackRules(), func(p string) bool { return on[p] })})
 	if len(errs) > 0 {
 		t.Fatalf("builtin rules do not compile: %v", errs)
 	}
@@ -137,5 +142,27 @@ func TestHubStoreWriteSurvivesOtherDisables(t *testing.T) {
 	d := s.Evaluate(ToolCall{Tool: "Write", Path: "/home/tester/.tentaqles/packs/acme/db/ledger.jsonl"})
 	if d.Action != Deny {
 		t.Fatalf("want deny, got %q", d.Action)
+	}
+}
+
+// Integration: every write D-GR's pack rules deny is denied by the core
+// rule too, with no pack enabled (the D-GR block is kept, and redundant for
+// these forms).
+func TestHubStoreWriteCoreCoversPackRules(t *testing.T) {
+	core, errs := Build(Layers{Builtin: ForPacks(Builtin(), func(string) bool { return false })})
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	for _, c := range []ToolCall{
+		{Tool: "Write", Path: "/home/tester/.tentaqles/hub/acme/board.db"},
+		{Tool: "Edit", Path: "/home/tester/.tentaqles/packs/acme/cloud/approvals.jsonl"},
+		{Tool: "Bash", Command: "cp forged.jsonl ~/.tentaqles/packs/acme/cloud/approvals.jsonl"},
+		{Tool: "Bash", Command: "echo '{}' >> ~/.tentaqles/packs/acme/cloud/approvals.jsonl"},
+		{Tool: "Bash", Command: "rm -f ~/.tentaqles/packs/acme/cloud/approvals.jsonl"},
+		{Tool: "PowerShell", Command: `Set-Content -Path $env:TQ_HOME\hub\acme\x -Value y`},
+	} {
+		if d := core.Evaluate(c); d.Action != Deny {
+			t.Errorf("%+v: core action %q", c, d.Action)
+		}
 	}
 }
