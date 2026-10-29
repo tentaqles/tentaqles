@@ -46,6 +46,7 @@ const (
 	EvScope       = "scope"
 	EvProject     = "pulumi_project"
 	EvStackConfig = "pulumi_stack_config"
+	EvTree        = "tree_sha256"
 )
 
 // Check is one cloud/* result over the plan (names and counts only).
@@ -80,16 +81,21 @@ type Record struct {
 	Workspace string `json:"workspace,omitempty"` // terraform workspace
 	Stack     string `json:"stack,omitempty"`     // pulumi / cfn stack
 	// Weak marks Pulumi's fallback binding (no saved update plan).
-	Weak       bool          `json:"weak,omitempty"`
-	Stacks     []Stack       `json:"stacks,omitempty"` // cdk
-	App        string        `json:"app,omitempty"`    // cdk assembly dir, repo-relative
-	Scope      string        `json:"scope,omitempty"`  // az: group:<rg> | sub | mg:<id> | tenant
-	Template   string        `json:"template,omitempty"`
-	TemplateSH string        `json:"template_sha256,omitempty"`
-	ParamsSHA  string        `json:"params_sha256,omitempty"`
-	ChangeSet  string        `json:"change_set,omitempty"` // cfn change-set ARN
-	Project    string        `json:"pulumi_project,omitempty"`
-	StackCfg   string        `json:"pulumi_stack_config,omitempty"`
+	Weak       bool    `json:"weak,omitempty"`
+	Stacks     []Stack `json:"stacks,omitempty"` // cdk
+	App        string  `json:"app,omitempty"`    // cdk assembly dir, repo-relative
+	Scope      string  `json:"scope,omitempty"`  // az: group:<rg> | sub | mg:<id> | tenant
+	Template   string  `json:"template,omitempty"`
+	TemplateSH string  `json:"template_sha256,omitempty"`
+	ParamsSHA  string  `json:"params_sha256,omitempty"`
+	ChangeSet  string  `json:"change_set,omitempty"` // cfn change-set ARN
+	Project    string  `json:"pulumi_project,omitempty"`
+	StackCfg   string  `json:"pulumi_stack_config,omitempty"`
+	// Tree lists the program files of Pulumi's weak binding (repo-relative,
+	// at most MaxTreeFiles), and TreeSHA their combined hash, which the
+	// guard recomputes (§9.5 "an unchanged tree").
+	Tree       []string      `json:"tree,omitempty"`
+	TreeSHA    string        `json:"tree_sha256,omitempty"`
 	PlanFile   string        `json:"plan_file"` // plans/<id>.<ext> under StateDir()
 	PlanSHA256 string        `json:"plan_sha256"`
 	PlanSize   int64         `json:"plan_size"`
@@ -364,6 +370,7 @@ func (r Record) Evidence(stack string) map[string]string {
 			ev[EvStack] = nonEmpty(r.Stack)
 			ev[EvProject] = nonEmpty(r.Project)
 			ev[EvStackConfig] = nonEmpty(r.StackCfg)
+			ev[EvTree] = nonEmpty(r.TreeSHA)
 		}
 	}
 	return ev

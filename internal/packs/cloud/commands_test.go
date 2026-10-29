@@ -20,6 +20,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs/cloud/plans"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
 )
 
@@ -154,6 +155,7 @@ func setup(t *testing.T, block string) *env {
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	keyring.MockInit()
 	for _, k := range []string{"TQ_HUB_TASK", "TENTAQLES_HEADLESS", "CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "AWS_PROFILE", "ARM_SUBSCRIPTION_ID", "TF_WORKSPACE", "AZURE_CONFIG_DIR"} {
 		t.Setenv(k, "")
 	}
@@ -250,7 +252,11 @@ func answer(t *testing.T, decision, choice string) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if _, err := st.AnswerHub(decision, choice, "ok", "hub:tester"); err != nil {
+	key, err := ledger.SigningKey("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AnswerPackApproval(decision, choice, "ok", "hub:tester", store.PackSigner(ledger.AnswerSigner("acme", key))); err != nil {
 		t.Fatal(err)
 	}
 }

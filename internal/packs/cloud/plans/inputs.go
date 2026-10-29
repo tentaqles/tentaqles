@@ -45,6 +45,35 @@ func InputsHash(ctx context.Context, root string, paths []string) (string, error
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// MaxTreeFiles bounds the program files of Pulumi's weak binding: the guard
+// re-reads each within its 50 ms budget.
+const MaxTreeFiles = 64
+
+// TreeFiles lists the program files under dir for Pulumi's weak binding:
+// what git tracks or would track, without .terraform/ and without dotenv
+// files (the guard never reads those). More than MaxTreeFiles is an error:
+// record an update plan (--save-plan) instead.
+func TreeFiles(ctx context.Context, root, dir string) ([]string, error) {
+	files, err := inputFiles(ctx, root, []string{dir})
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, f := range files {
+		if strings.HasPrefix(strings.ToLower(path.Base(f)), ".env") {
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) > MaxTreeFiles {
+		return nil, fmt.Errorf("plans: the Pulumi program has %d files, over the %d the weak binding re-checks; record an update plan with --save-plan", len(out), MaxTreeFiles)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("plans: no program files under %s", dir)
+	}
+	return out, nil
+}
+
 func inputFiles(ctx context.Context, root string, paths []string) ([]string, error) {
 	args := []string{"ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"}
 	if len(paths) == 0 {

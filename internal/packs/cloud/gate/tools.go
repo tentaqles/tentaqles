@@ -118,7 +118,6 @@ func parseTool(iv *Invocation) {
 		iv.Pos = pos[n:]
 		return iv.Verb
 	}
-	dry := iv.Has("dry-run")
 	switch iv.Tool {
 	case "terraform", "tofu":
 		v := verb(1)
@@ -230,9 +229,9 @@ func parseTool(iv *Invocation) {
 			iv.Op = OpDestroy
 		}
 	}
-	if dry && (iv.Op == OpApply || iv.Op == OpDestroy) {
-		iv.Op = OpDry
-	}
+	// A --dry-run flag does not make an apply a dry run (review r0 m4): no
+	// apply or destroy verb of these tools defines it, and a CLI that ignores
+	// an unknown flag would deploy. Each tool's own dry-run forms are above.
 }
 
 func isScope(s string) bool { return s == "group" || s == "sub" || s == "mg" || s == "tenant" }

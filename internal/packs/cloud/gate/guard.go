@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -59,9 +60,11 @@ func coreMatch(raw string) (applyOrDestroy, del bool) {
 	return m("tq/iac-apply") || m("tq/iac-destroy"), m("tq/cloud-delete")
 }
 
+// toolWordUnquoted reports an unquoted word that names a gate tool, also in
+// a form tq does not unwrap (aws-cdk, cdk@2, x-terraform; review r0 M1).
 func toolWordUnquoted(iv Invocation) bool {
 	for _, w := range iv.Words {
-		if !w.Quoted && Tools[ToolName(w.Text)] {
+		if !w.Quoted && looseTool(w.Text) {
 			return true
 		}
 	}
@@ -123,6 +126,32 @@ func hostFor(g packs.GuardCtx) Host {
 	return Host{Getenv: Getenv, ReadLocal: g.ReadLocal, Home: home}
 }
 
+// Getwd is the hook's working directory (tests replace it).
+var Getwd = os.Getwd
+
+// baseDir is the folder the command starts in, relative to the repo root:
+// the hook process's working directory when it is inside the repository, so
+// a relative cd or -chdir resolves from where the shell is (review r0 m2).
+// Otherwise "" (the repo root): GuardCtx does not carry the hook payload's
+// cwd, so a hook started elsewhere cannot know the session's folder (raised
+// with F; a miss falls to the default environment).
+func baseDir(g packs.GuardCtx) string {
+	root := g.RepoRoot()
+	wd, err := Getwd()
+	if root == "" || err != nil {
+		return ""
+	}
+	r, err := filepath.Rel(root, wd)
+	if err != nil || filepath.IsAbs(r) || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	r = filepath.ToSlash(r)
+	if r == "." {
+		return ""
+	}
+	return r
+}
+
 // verdict is one leaf's outcome.
 type verdict struct {
 	action  policy.Action
@@ -146,7 +175,7 @@ func ApplyEnv(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bo
 		// core ask rules (tq/iac-apply, tq/iac-destroy, tq/cloud-delete) stay.
 		return policy.Allow, "", false
 	}
-	leaves := AnalyzeShell(call.Command, call.Tool == "PowerShell")
+	leaves := AnalyzeShellAt(call.Command, call.Tool == "PowerShell", baseDir(g))
 	h := hostFor(g)
 	l := &lazyLedger{g: g}
 	handled, any := true, false
@@ -189,9 +218,13 @@ func ApplyEnv(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bo
 		}
 		seen[id] = true
 	}
-	if len(consumed) > 0 && act != policy.Allow {
+	if len(consumed) > 0 && (act != policy.Allow || !handled) {
+		// With an ask, or a command the core rules still ask about (handled
+		// false), the approval would be used up although the human may
+		// decline the ask (review r0 m3).
 		act = policy.Deny
 		reasons = append(reasons, "run the approved apply in a command of its own")
+		handled = true
 	}
 	for _, v := range vs {
 		if v.counter != "" {
@@ -229,9 +262,12 @@ func evaluate(iv Invocation, op Op, unreadable bool, gt envgate.Gate, h Host, g 
 	if op == OpDestroy {
 		action = envgate.Destroy
 	}
-	if unreadable {
+	switch {
+	case unreadable:
 		res = envgate.Resolution{Env: gt.Default()}
-	} else {
+	case iv.Unknown:
+		res = gt.ResolveFloor(action, Signals(iv, h))
+	default:
 		res = gt.Resolve(action, Signals(iv, h))
 	}
 	env := res.Env
@@ -262,7 +298,10 @@ func evaluate(iv Invocation, op Op, unreadable bool, gt envgate.Gate, h Host, g 
 		pol = envgate.Stricter(pol, envgate.Ask)
 	}
 	where := "environment " + env
-	if !res.Resolved && env != envgate.NoEnv {
+	switch {
+	case iv.Unknown && env != envgate.NoEnv:
+		where += " (an earlier statement on the line changes the environment in a way tq cannot read, such as a sourced file, declare -x, unset or a write to the Env: drive; it counts as at least the default environment, and the identity is unknown)"
+	case !res.Resolved && env != envgate.NoEnv:
 		where += " (no signal named the target; it counts as the default environment)"
 	}
 	denied := func(reason, why string) verdict {
@@ -300,6 +339,44 @@ type lazyLedger struct {
 	done    bool
 	entries []ledger.Entry
 	err     error
+	keyDone bool
+	k       []byte
+}
+
+// boundFlags are the flags an approved apply may carry in an approve
+// environment (review r0 M2): anything else can change what is deployed
+// after the evidence was checked (pulumi --config, --config-file,
+// --replace, --target, --refresh; cdk --parameters, --hotswap, --method,
+// --role-arn), so it is denied.
+var boundFlags = map[string]map[string]bool{
+	"pulumi": set("stack", "s", "yes", "y", "cwd", "C", "skip-preview", "non-interactive", "diff", "color", "message", "m", "plan"),
+	"cdk":    set("app", "a", "profile", "require-approval", "progress", "outputs-file", "O", "ci", "verbose", "v", "debug", "no-color", "json", "j", "concurrency", "exclusively", "e", "context", "c", "quiet", "q"),
+}
+
+// unboundFlags names the flags of iv outside its tool's allow-list, or "".
+func unboundFlags(iv Invocation) string {
+	allow, ok := boundFlags[family(iv.Tool)]
+	if !ok {
+		return ""
+	}
+	var bad []string
+	for f := range iv.Flags {
+		if !allow[f] {
+			bad = append(bad, "--"+f)
+		}
+	}
+	if len(bad) == 0 {
+		return ""
+	}
+	sort.Strings(bad)
+	return fmt.Sprintf("%s %s cannot be bound to the approved plan (it can change what is deployed after the check); apply without it, or plan again with it", strings.Join(bad, ", "), pluralFlag(len(bad)))
+}
+
+func pluralFlag(n int) string {
+	if n == 1 {
+		return "is a flag that"
+	}
+	return "are flags that"
 }
 
 func (l *lazyLedger) read() ([]ledger.Entry, error) {
@@ -316,6 +393,21 @@ func (l *lazyLedger) read() ([]ledger.Entry, error) {
 	}
 	return l.entries, l.err
 }
+
+// key is the workspace's ledger key from the OS keychain, read once; nil
+// when it cannot be read, and then no answer counts (fail closed).
+func (l *lazyLedger) key() []byte {
+	if !l.keyDone {
+		l.keyDone = true
+		if k, err := LoadKey(l.g.Workspace()); err == nil {
+			l.k = k
+		}
+	}
+	return l.k
+}
+
+// LoadKey reads the ledger key (tests replace it).
+var LoadKey = ledger.LoadKey
 
 func (l *lazyLedger) claimed(d string) bool {
 	_, err := l.g.ReadState(ledger.ClaimName(d))
@@ -466,6 +558,12 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 			reason: fmt.Sprintf("%s: %s to %s needs a human approval of the exact plan: %s. To apply: %s", IDApplyEnv, what, where, why, fmt.Sprintf(howTo, env))}
 	}
 	ident := ResolveIdentity(iv, h, len(gt.Match(env)["subscriptions"]) > 0)
+	if ident.Unknown {
+		return deny("the identity is unknown: an earlier statement on the line changes the environment in a way tq cannot read; run the apply in a command of its own, with the identity set by a flag, an inline NAME=value prefix or an export tq can read", "identity-drift")
+	}
+	if bad := unboundFlags(iv); bad != "" {
+		return deny(bad, "hash-mismatch")
+	}
 	type cand struct {
 		rec    plans.Record
 		ev     map[string]string
@@ -474,7 +572,6 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 	}
 	var cands []cand
 	var lastErr error
-	named := false // the command names a stored plan file
 	build := func(r plans.Record) {
 		if family(r.Tool) != family(iv.Tool) {
 			lastErr = fmt.Errorf("plan %s is a %s plan, not %s", r.ID, r.Tool, iv.Tool)
@@ -546,6 +643,17 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 					return
 				}
 				ev[plans.EvProject], ev[plans.EvStackConfig] = proj, cfg
+				// §9.5: an unchanged tree (review r0 M2)
+				if len(r.Tree) == 0 {
+					lastErr = fmt.Errorf("plan %s has no recorded program tree; re-plan with this tq", r.ID)
+					return
+				}
+				ts, err := TreeHash(h, r.Tree)
+				if err != nil {
+					lastErr = err
+					return
+				}
+				ev[plans.EvTree] = ts
 			}
 		}
 		hp, err := g.HashState(planFileFor(r, stack))
@@ -562,8 +670,10 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 		ev[plans.EvEnv] = env
 		ev[plans.EvIdentity] = ident.String()
 		act := action
-		if !named && r.Destroys() {
-			// a recorded plan that destroys needs the destroy policy too
+		if r.Destroys() {
+			// A recorded plan that destroys is always a destroy binding (what
+			// tq pack cloud approve --destroy asks for), and needs the destroy
+			// policy too (review r0 M3).
 			if envgate.Stricter(gt.Policy(env, envgate.Apply), gt.Policy(env, envgate.Destroy)) != envgate.Approve {
 				lastErr = fmt.Errorf("plan %s destroys, and environment %s's destroy policy (%s) does not allow an approved apply", r.ID, env, gt.Policy(env, envgate.Destroy))
 				return
@@ -584,7 +694,6 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 		if id == "" || rec == nil {
 			return deny("the plan file is not a plan tq recorded (it must be the stored plan path under the cloud pack's state directory)", "no-approval")
 		}
-		named = true
 		build(*rec)
 	case "pulumi":
 		if iv.Op == OpDestroy {
@@ -594,7 +703,6 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 			if id == "" || rec == nil {
 				return deny("--plan must name a plan tq recorded", "no-approval")
 			}
-			named = true
 			build(*rec)
 		} else {
 			for _, id := range l.candidates(env) {
@@ -650,12 +758,15 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 	if err != nil {
 		return deny("the approval ledger cannot be read ("+err.Error()+")", "no-approval")
 	}
+	// Only answers signed with the workspace's keychain key count; without
+	// the key nothing does (fail closed).
+	key := l.key()
 	for _, c := range cands {
 		if r := Drift(gt, env, ident, c.rec.Account, g.Manifest()); r != "" {
 			lastErr = errors.New("identity drift: " + r)
 			continue
 		}
-		a, err := approval.Find(forPlan(entries, c.rec.ID), approval.Binding{Pack: "cloud", Action: c.action, Subject: c.rec.SubjectFor(c.stack), Target: env}, c.ev, approval.Now(), l.claimed)
+		a, err := approval.Find(forPlan(entries, c.rec.ID), key, approval.Binding{Pack: "cloud", Action: c.action, Subject: c.rec.SubjectFor(c.stack), Target: env}, c.ev, approval.Now(), l.claimed)
 		if err == nil {
 			return verdict{action: policy.Allow, consume: a.Decision, counter: "apply_allowed:approve"}
 		}
@@ -710,7 +821,7 @@ func IdentityDrift(call policy.ToolCall, g packs.GuardCtx) (policy.Action, strin
 	}
 	gt := envgate.FromManifest(envgate.Cloud, g.Manifest(), g.Config())
 	h := hostFor(g)
-	for _, iv := range AnalyzeShell(call.Command, call.Tool == "PowerShell") {
+	for _, iv := range AnalyzeShellAt(call.Command, call.Tool == "PowerShell", baseDir(g)) {
 		if iv.Tool == "" || (iv.Op != OpApply && iv.Op != OpDestroy) {
 			continue
 		}
@@ -718,8 +829,15 @@ func IdentityDrift(call policy.ToolCall, g packs.GuardCtx) (policy.Action, strin
 		if iv.Op == OpDestroy {
 			action = envgate.Destroy
 		}
-		env := gt.Resolve(action, Signals(iv, h)).Env
+		var env string
+		if iv.Unknown {
+			env = gt.ResolveFloor(action, Signals(iv, h)).Env
+		} else {
+			env = gt.Resolve(action, Signals(iv, h)).Env
+		}
 		id := ResolveIdentity(iv, h, len(gt.Match(env)["subscriptions"]) > 0)
+		// An unknown identity is not drift by itself: tq/iac-apply-env floors
+		// the environment and denies it in an approve environment.
 		account := ""
 		if r, ok := savedPlanRecord(iv, g); ok {
 			account = r.Account

@@ -155,8 +155,15 @@ func TestRepoLayerFloor(t *testing.T) {
 `)
 	g := Load(Cloud, trusted, merged)
 	r := g.Resolve(Apply, []Tier{{{Key: "dirs", Value: "infra/envs/prod"}}})
-	if r.Env != "prod" {
-		t.Fatalf("a repo env loosened prod: %+v", r)
+	// a repo-only environment always denies, so it can only tighten
+	if r.Env != "sandbox" || g.Policy("sandbox", Apply) != Deny || g.Policy("sandbox", Destroy) != Deny {
+		t.Fatalf("a repo env loosened prod: %+v %s", r, g.Policy(r.Env, Apply))
+	}
+	// a repo match added to a manifest environment is dropped
+	merged = settings(t, strings.Replace(block, "dirs: [infra/envs/dev]", "dirs: [infra/envs/dev, infra/envs/qa]", 1))
+	g = Load(Cloud, trusted, merged)
+	if r := g.Resolve(Apply, []Tier{{{Key: "dirs", Value: "infra/envs/qa"}}}); r.Env != "prod" || r.Resolved {
+		t.Fatalf("a repo match routed into dev: %+v", r)
 	}
 	// repo loosening a trusted policy
 	merged = settings(t, strings.Replace(block, "match: {workspaces: [prod]", "apply: auto\n    match: {workspaces: [prod]", 1))
@@ -181,7 +188,10 @@ func TestRepoLayerFloor(t *testing.T) {
 
 func TestMergeRulesRegister(t *testing.T) {
 	m := Cloud.MergeRules()
-	for _, k := range []string{"environments.*.match.*", "environments.*.apply", "environments.*.destroy", "environments.*.approval_ttl", "environments.*.require_merged"} {
+	if _, ok := m["environments.*.match.*"]; ok {
+		t.Error("no union on match lists (ruling S1)")
+	}
+	for _, k := range []string{"environments.*", "environments.*.match", "environments.*.apply", "environments.*.destroy", "environments.*.approval_ttl", "environments.*.require_merged"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("missing %s", k)
 		}

@@ -731,6 +731,16 @@ func (p *planRun) pulumi() error {
 			return fmt.Errorf("no Pulumi.yaml in %s", dir)
 		}
 		p.rec.Project, p.rec.StackCfg = proj, cfg
+		// §9.5 "an unchanged tree": the program files, re-hashed by the guard
+		tree, err := plans.TreeFiles(p.ctx, p.in.Root, dir)
+		if err != nil {
+			return err
+		}
+		ts, err := gate.TreeHash(p.host, tree)
+		if err != nil {
+			return err
+		}
+		p.rec.Tree, p.rec.TreeSHA = tree, ts
 		p.rec.Apply = []string{"pulumi up" + cwd + " --stack " + stack + " --yes"}
 	}
 	p.raw, p.kind = res.Stdout, model.KindPulumi
@@ -816,7 +826,7 @@ func printRecord(w io.Writer, r plans.Record, asJSON bool, sd string) error {
 		fmt.Fprintln(w, "  this plan destroys: approve it with --destroy")
 	}
 	if r.Weak {
-		fmt.Fprintln(w, "  binding: the weaker Pulumi binding (preview hash, Pulumi.yaml and the stack config; the program code is not re-checked at apply)")
+		fmt.Fprintf(w, "  binding: the weaker Pulumi binding (preview hash, Pulumi.yaml, the stack config and the %d recorded program files; a file added later and the dependencies are not re-checked at apply)\n", len(r.Tree))
 	}
 	fmt.Fprintf(w, "  identity %s", r.Identity)
 	if r.Account != "" {
@@ -965,7 +975,7 @@ func askApproval(ctx context.Context, w io.Writer, in *packs.Input, sd, id strin
 		fmt.Fprintf(&sum, ", account %s", r.Account)
 	}
 	if r.Weak {
-		sum.WriteString("\nbinding: the weaker Pulumi binding (the program code is not re-checked at apply)")
+		sum.WriteString("\nbinding: the weaker Pulumi binding (the recorded program files are re-checked at apply; a file added later and the dependencies are not)")
 	}
 	dec, card, err := approval.Ask(in.Workspace(), approval.Request{Pack: "cloud", Action: action, Subject: r.SubjectFor(stack), Target: r.Env,
 		Evidence: r.Evidence(stack), Summary: sum.String(), Options: []string{"apply", "reject"}, ValidFor: gt.TTL(r.Env), ProjectDir: projectDir(in)})

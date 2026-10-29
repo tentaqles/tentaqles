@@ -16,6 +16,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs/cloud/plans"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,6 +48,7 @@ func isolate(t *testing.T) string {
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	keyring.MockInit()
 	for _, k := range []string{"TQ_HUB_TASK", "TENTAQLES_HEADLESS", "CLAUDECODE", "CLAUDE_PLUGIN_ROOT"} {
 		t.Setenv(k, "")
 	}
@@ -69,7 +71,9 @@ func newFixture(t *testing.T, block string) *fixture {
 	f.state = packs.StateDir("acme", "cloud")
 	prev := Getenv
 	Getenv = func(k string) string { return f.vars[k] }
-	t.Cleanup(func() { Getenv = prev })
+	prevWd := Getwd
+	Getwd = func() (string, error) { return repo, nil }
+	t.Cleanup(func() { Getenv, Getwd = prev, prevWd })
 	return f
 }
 
@@ -120,7 +124,11 @@ func (f *fixture) answer(id, choice string) {
 		f.t.Fatal(err)
 	}
 	defer st.Close()
-	if _, err := st.AnswerHub(id, choice, "ok", "hub:tester"); err != nil {
+	key, err := ledger.SigningKey("acme")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := st.AnswerPackApproval(id, choice, "ok", "hub:tester", store.PackSigner(ledger.AnswerSigner("acme", key))); err != nil {
 		f.t.Fatal(err)
 	}
 }

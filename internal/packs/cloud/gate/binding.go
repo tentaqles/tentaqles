@@ -171,3 +171,27 @@ func PulumiBinding(h Host, dir, stack string) (project, stackCfg string, err err
 	stackCfg, err = HashLocal(h, path.Join(dir, "Pulumi."+short+".yaml"))
 	return project, stackCfg, err
 }
+
+// TreeHash is the combined hash of Pulumi's weak-binding program files
+// (repo-relative paths): sha256 over the sorted "path sha256:<hex>" lines.
+// A file that is missing, unreadable or over the 1 MiB read cap is an
+// error, so the guard denies.
+func TreeHash(h Host, files []string) (string, error) {
+	if len(files) == 0 || len(files) > plans.MaxTreeFiles {
+		return "", fmt.Errorf("the recorded program tree has %d files (1 to %d are re-checked)", len(files), plans.MaxTreeFiles)
+	}
+	fs := append([]string(nil), files...)
+	sort.Strings(fs)
+	parts := make([]string, 0, len(fs))
+	for _, f := range fs {
+		if strings.Contains("/"+f+"/", "/../") || path.IsAbs(f) {
+			return "", fmt.Errorf("the program file %s is outside the repository", f)
+		}
+		b, err := h.ReadLocal(f, 1<<20)
+		if err != nil {
+			return "", fmt.Errorf("the program file %s cannot be re-read (%v)", f, err)
+		}
+		parts = append(parts, f+" "+packs.HashBytes(b))
+	}
+	return HashParts(parts), nil
+}

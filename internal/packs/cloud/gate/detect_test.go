@@ -81,7 +81,7 @@ func TestDetectForms(t *testing.T) {
 		{"sudo terraform apply", "terraform", OpApply},
 		{"timeout 600 terraform apply", "terraform", OpApply},
 		{"terraform apply `\n  -auto-approve", "terraform", OpApply},
-		{"pulumi up --dry-run", "pulumi", OpDry},
+		{"pulumi up --dry-run", "pulumi", OpApply}, // review r0 m4: --dry-run is not a dry run
 	}
 	for _, c := range cases {
 		got := gated(c.cmd)

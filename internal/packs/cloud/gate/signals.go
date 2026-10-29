@@ -117,6 +117,12 @@ func Signals(iv Invocation, h Host) []envgate.Tier {
 		}
 	}
 	add(&t2, "dotenv", iv.Dotenv...)
+	if iv.Unknown {
+		// An earlier statement may have changed the variables (and with
+		// TF_WORKSPACE the selected workspace): no tier 3 or 4. The caller
+		// floors the result at the default environment.
+		return []envgate.Tier{t1, t2}
+	}
 	if iv.Tool == "terraform" || iv.Tool == "tofu" {
 		add(&t3, "workspaces", h.env(iv, "TF_WORKSPACE"))
 	}
@@ -135,11 +141,19 @@ func Signals(iv Invocation, h Host) []envgate.Tier {
 type Identity struct {
 	Subscription string
 	Profile      string
+	// Unknown: an unmodelled statement may have changed the variables the
+	// identity comes from (Invocation.Unknown) and no flag names it. It never
+	// equals a recorded identity, so an approve environment denies.
+	Unknown bool
 }
 
-// String is the evidence form: "profile=<p>;subscription=<id>", or "none".
+// String is the evidence form: "profile=<p>;subscription=<id>", "none", or
+// "unknown" with whatever a flag named.
 func (id Identity) String() string {
 	var parts []string
+	if id.Unknown {
+		parts = append(parts, "unknown")
+	}
 	if id.Profile != "" {
 		parts = append(parts, "profile="+id.Profile)
 	}
@@ -161,6 +175,20 @@ func (id Identity) String() string {
 func ResolveIdentity(iv Invocation, h Host, wantSub bool) Identity {
 	var id Identity
 	aws := iv.Tool == "aws" || iv.Tool == "cdk" || iv.Tool == "cdktf" || iv.Tool == "sam"
+	if iv.Unknown {
+		// Only the flags count; the variables and the files they point at
+		// (AZURE_CONFIG_DIR) are unknown.
+		if iv.Tool == "az" {
+			id.Subscription, _ = iv.Flag("subscription")
+		}
+		if aws {
+			id.Profile, _ = iv.Flag("profile")
+		}
+		if (iv.Tool == "az" && id.Subscription == "") || (iv.Tool != "az" && id.Profile == "") || (!aws && iv.Tool != "az") {
+			id.Unknown = true
+		}
+		return id
+	}
 	if !aws {
 		if iv.Tool == "az" {
 			id.Subscription, _ = iv.Flag("subscription")

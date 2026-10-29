@@ -249,18 +249,22 @@ func (s Spec) defaults(e Env, mergedSet bool) Env {
 }
 
 // MergeRules are the tq-packs.yaml merge rules of the environments block,
-// for the pack's RegisterPack Merge map: match lists are unions, policies
-// stricter-wins, approval_ttl minimum (60m when the manifest is silent),
-// require_merged can only be switched on. Load floors every value at the
-// trusted manifest besides, so a repo file never loosens a resolution.
+// for the pack's RegisterPack Merge map (spec D §4, ruling S1): a repo file
+// may add a new environment with its own match (TrustedAdd; no union on the
+// match lists of an environment the manifest defines); a policy is
+// stricter-wins against Default deny, so a repo-only environment's policy
+// is deny whatever it writes; approval_ttl is the minimum (60m when the
+// manifest is silent); require_merged can only be switched on. Load also
+// drops the repo's match lists of every environment the manifest defines.
 func (s Spec) MergeRules() map[string]packs.MergeRule {
 	m := map[string]packs.MergeRule{
-		"environments.*.match.*":        packs.Union(),
+		"environments.*":                packs.TrustedAdd(),
+		"environments.*.match":          packs.TrustedAdd(),
 		"environments.*.approval_ttl":   packs.Min("60m"),
 		"environments.*.require_merged": packs.Or(),
 	}
 	for _, a := range s.Actions {
-		m["environments.*."+a] = packs.Ordered("", Order...)
+		m["environments.*."+a] = packs.Ordered(Deny, Order...)
 	}
 	return m
 }
@@ -295,8 +299,33 @@ func load(s Spec, st packs.Settings) set {
 
 // Load builds the gate from the trusted manifest's settings and the merged
 // settings of the pack.
+//
+// The effective environments are:
+//   - every environment the manifest defines, with the manifest's match
+//     lists only (a repo file cannot route a target into it, ruling S1) and
+//     the stricter of the two layers' policies;
+//   - every repo-only environment, with its own match lists and every policy
+//     deny: a repo file can only tighten, so such an environment can only
+//     capture a target into a deny.
 func Load(s Spec, trusted, merged packs.Settings) Gate {
-	g := Gate{spec: s, merged: load(s, merged), trusted: load(s, trusted)}
+	g := Gate{spec: s, trusted: load(s, trusted)}
+	for _, e := range load(s, merged).envs {
+		if t, ok := g.trusted.find(e.Name); ok {
+			e.Match = t.Match
+		} else {
+			for _, a := range s.Actions {
+				e.Policy[a] = Deny
+			}
+		}
+		g.merged.envs = append(g.merged.envs, e)
+	}
+	// A trusted environment missing from the merged layer (packs.Merge never
+	// drops one) is kept: the manifest always counts.
+	for _, t := range g.trusted.envs {
+		if _, ok := g.merged.find(t.Name); !ok {
+			g.merged.envs = append(g.merged.envs, t)
+		}
+	}
 	// default_environment is honoured from the manifest only.
 	g.merged.def = g.trusted.def
 	return g
@@ -461,8 +490,10 @@ func (g Gate) Default() string {
 	if len(g.merged.envs) == 0 {
 		return NoEnv
 	}
-	if d := g.trusted.def; d != "" && g.Declared(d) {
-		return d
+	if d := g.trusted.def; d != "" {
+		if _, ok := g.trusted.find(d); ok {
+			return d
+		}
 	}
 	best := ""
 	for _, e := range g.merged.envs {
@@ -522,21 +553,35 @@ func hit(e Env, sig Signal) bool {
 
 // Resolve finds the environment of a command from its signal tiers: in the
 // first tier with a hit, the stricter of the environments hit; with no hit,
-// Default(). The trusted manifest is resolved too and the stricter result
-// wins.
+// Default(). The effective environments (Load) carry only the manifest's
+// match lists for every environment it defines, and a repo-only
+// environment denies, so a repo file never resolves a target looser than
+// the manifest alone would.
 func (g Gate) Resolve(action string, tiers []Tier) Resolution {
 	if len(g.merged.envs) == 0 {
 		return Resolution{Env: NoEnv}
 	}
 	m, mby := g.merged.resolve(g, action, tiers)
-	t, tby := g.trusted.resolve(g, action, tiers)
-	if m == "" && t == "" {
+	if m == "" {
 		return Resolution{Env: g.Default()}
 	}
-	if t != "" && (m == "" || g.stricterEnv(m, t, action) == t) {
-		return Resolution{Env: t, Resolved: true, By: tby}
-	}
 	return Resolution{Env: m, Resolved: true, By: mby}
+}
+
+// ResolveFloor is Resolve floored at Default(): the caller knows that
+// something it could not read (an unmodelled environment change on the
+// command line) may have changed the target, so the result is the stricter
+// of the resolved environment and the default, and is marked unresolved
+// when the default wins.
+func (g Gate) ResolveFloor(action string, tiers []Tier) Resolution {
+	r := g.Resolve(action, tiers)
+	if len(g.merged.envs) == 0 {
+		return r
+	}
+	if d := g.Default(); d != r.Env && g.stricterEnv(r.Env, d, action) == d {
+		return Resolution{Env: d}
+	}
+	return r
 }
 
 // Norm cleans a value for comparison: slash paths without ./ and trailing /.

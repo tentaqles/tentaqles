@@ -46,6 +46,13 @@ type Invocation struct {
 	// Opaque marks a command whose payload the parser cannot open (a script
 	// file, an unknown wrapper flag, an undecodable -EncodedCommand).
 	Opaque bool
+	// Unknown marks a command whose environment an earlier statement of the
+	// line may have changed in a way the parser does not model (source, .,
+	// declare -x, unset, Set-Item Env:, [Environment]::SetEnvironmentVariable,
+	// direnv, eval of a substitution, an assignment of a computed value):
+	// its variables are unknown, the hook's own environment is not used, and
+	// the target is floored at the default environment.
+	Unknown bool
 }
 
 // Flag returns the first value of any of the names.
@@ -81,8 +88,9 @@ func (iv Invocation) Has(names ...string) bool {
 }
 
 type state struct {
-	dir string
-	env map[string]string
+	dir     string
+	env     map[string]string
+	unknown bool // an unmodelled statement may have changed the environment
 }
 
 // ToolName normalises a command word: its base name, lower case, without
@@ -96,8 +104,69 @@ func ToolName(w string) string {
 	return w
 }
 
+// pkgAliases map the npm package names of the gate's tools to the tool.
+var pkgAliases = map[string]string{"aws-cdk": "cdk", "cdktf-cli": "cdktf"}
+
+// PackageTool is the tool a package runner (npx, bunx, pnpm dlx, yarn dlx,
+// npm exec) runs for a package word: aws-cdk@2.150.0 and cdk@2 are cdk,
+// cdktf-cli is cdktf. "" when the word names no gate tool.
+func PackageTool(w string) string {
+	n := strings.ToLower(strings.ReplaceAll(w, `\`, "/"))
+	if strings.HasPrefix(n, "@") {
+		// a scoped package (@scope/name@version): the name part
+		if i := strings.Index(n, "/"); i > 0 {
+			n = n[i+1:]
+		}
+	}
+	if i := strings.Index(n, "@"); i > 0 {
+		n = n[:i]
+	}
+	n = ToolName(n)
+	if a, ok := pkgAliases[n]; ok {
+		return a
+	}
+	if Tools[n] {
+		return n
+	}
+	return ""
+}
+
+// looseTool reports a word that names a gate tool in a form tq does not
+// unwrap: a package spelling (aws-cdk, cdk@2) or a tool name behind a
+// prefix (aws-vault's -- terraform, x-cdk).
+func looseTool(w string) bool {
+	if Tools[ToolName(w)] || PackageTool(w) != "" {
+		return true
+	}
+	n := ToolName(strings.SplitN(w, "@", 2)[0])
+	if i := strings.LastIndexAny(n, "-_/"); i >= 0 && Tools[n[i+1:]] {
+		return true
+	}
+	return false
+}
+
 var assignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-var psEnvRe = regexp.MustCompile(`(?i)^\$env:([A-Za-z_][A-Za-z0-9_]*)(=(.*))?$`)
+var psEnvRe = regexp.MustCompile(`(?i)^\$(?:env:([A-Za-z_][A-Za-z0-9_]*)|\{env:([A-Za-z_][A-Za-z0-9_]*)\})(=(.*))?$`)
+
+// envProviderRe is a PowerShell word that writes the Env: drive or calls
+// the .NET environment API: Set-Item Env:X, New-Item -Path Env:\X,
+// Remove-Item env:X, [Environment]::SetEnvironmentVariable.
+var envProviderRe = regexp.MustCompile(`(?i)^(-path:?)?env:|setenvironmentvariable`)
+
+// computed reports an assigned value tq cannot know: a substitution, a
+// variable, or an empty value left by a $( ) the lexer split off.
+func computed(v string) bool {
+	return v == "" || strings.ContainsAny(v, "$`")
+}
+
+// assign records NAME=value into the line's variables, or marks the line
+// unknown when the value is computed.
+func (st *state) assign(k, v string) {
+	if computed(v) {
+		st.unknown = true
+	}
+	st.env[strings.ToUpper(k)] = v
+}
 
 // Analyze reads every simple command of a shell line, with the cd and
 // variable state the line builds up, and the commands nested in bash -c,
@@ -107,8 +176,14 @@ func Analyze(cmd string) []Invocation { return AnalyzeShell(cmd, false) }
 // AnalyzeShell is Analyze for a bash (powershell false) or PowerShell line:
 // in PowerShell a backslash is a plain character (C:\infra\plan).
 func AnalyzeShell(cmd string, powershell bool) []Invocation {
+	return AnalyzeShellAt(cmd, powershell, "")
+}
+
+// AnalyzeShellAt is AnalyzeShell for a line that starts in base, the
+// repo-relative folder the shell is in ("" the repo root, "?" unknown).
+func AnalyzeShellAt(cmd string, powershell bool, base string) []Invocation {
 	cmd = guard.BlankDataHeredocs(cmd)
-	st := &state{env: map[string]string{}}
+	st := &state{dir: base, env: map[string]string{}}
 	var out []Invocation
 	for _, seg := range splitShell(cmd, 0, powershell) {
 		out = append(out, analyzeSeg(seg, st, 0)...)
@@ -127,6 +202,14 @@ func analyzeSeg(seg Segment, st *state, depth int) []Invocation {
 		return nil
 	}
 	head := ToolName(w[0].Text)
+	leaf := func() []Invocation { return []Invocation{{Raw: seg.Raw, Words: w, Unknown: st.unknown}} }
+	// A statement that changes the environment in a way tq does not model
+	// makes every later command's variables unknown (review r0 C4).
+	for _, x := range w {
+		if envProviderRe.MatchString(x.Text) {
+			st.unknown = true
+		}
+	}
 	// cd and friends move the line's folder.
 	switch head {
 	case "cd", "set-location", "sl", "chdir", "pushd", "push-location":
@@ -138,26 +221,62 @@ func analyzeSeg(seg Segment, st *state, depth int) []Invocation {
 			}
 		}
 		st.dir = joinDir(st.dir, arg)
-		return []Invocation{{Raw: seg.Raw, Words: w}}
+		return leaf()
+	case "popd", "pop-location":
+		st.dir = "?"
+		return leaf()
 	case "export":
 		for _, x := range w[1:] {
-			if assignRe.MatchString(x.Text) {
+			switch {
+			case assignRe.MatchString(x.Text):
 				k, v, _ := strings.Cut(x.Text, "=")
-				st.env[strings.ToUpper(k)] = v
+				st.assign(k, v)
+			case strings.HasPrefix(x.Text, "-") || strings.ContainsAny(x.Text, "$`"):
+				st.unknown = true // export -n, export $(cat f)
 			}
 		}
-		return []Invocation{{Raw: seg.Raw, Words: w}}
-	}
-	// PowerShell $env:NAME = value
-	if m := psEnvRe.FindStringSubmatch(w[0].Text); m != nil {
-		v := m[3]
-		if m[2] == "" && len(w) >= 3 && w[1].Text == "=" {
-			v = w[2].Text
-		} else if m[2] == "" && len(w) == 2 && strings.HasPrefix(w[1].Text, "=") {
-			v = strings.TrimPrefix(w[1].Text, "=")
+		return leaf()
+	case "source", "declare", "typeset", "local", "readonly", "unset", "setenv", "unsetenv", "import-module", "ipmo":
+		// source runs a file in this shell; declare -x, typeset -x and unset
+		// change the exported set; a module can set variables.
+		st.unknown = true
+		return leaf()
+	case "set":
+		// set -a (or -o allexport) exports every later assignment
+		for i, x := range w[1:] {
+			t := x.Text
+			if (strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.Contains(t, "a")) ||
+				(strings.EqualFold(t, "allexport") && i > 0) {
+				st.unknown = true
+			}
 		}
-		st.env[strings.ToUpper(m[1])] = v
-		return []Invocation{{Raw: seg.Raw, Words: w}}
+		return leaf()
+	case "direnv":
+		// direnv loads a folder's .envrc; direnv exec DIR cmd runs cmd with it
+		st.unknown = true
+		return []Invocation{{Raw: seg.Raw, Words: w, Env: map[string]string{}, Dir: "?", Unknown: true, Opaque: true}}
+	case ".":
+		// bash `. file` sources a file; PowerShell `. cmd` dot-sources a
+		// script or runs a command in this scope.
+		if len(w) < 2 || !Tools[ToolName(w[1].Text)] {
+			st.unknown = true
+			return leaf()
+		}
+	}
+	// PowerShell $env:NAME = value, ${env:NAME} = value
+	if m := psEnvRe.FindStringSubmatch(w[0].Text); m != nil {
+		name := m[1] + m[2]
+		v, ok := m[4], m[3] != ""
+		if !ok && len(w) >= 3 && w[1].Text == "=" {
+			v, ok = joinWords(w[2:]), true
+		} else if !ok && len(w) == 2 && strings.HasPrefix(w[1].Text, "=") {
+			v, ok = strings.TrimPrefix(w[1].Text, "="), true
+		}
+		if !ok || len(w) > 3 || (len(w) == 3 && w[1].Text != "=") {
+			st.unknown = true // += , a pipeline, or an expression
+		}
+		st.assign(name, v)
+		return leaf()
 	}
 	// a line of bare assignments sets shell variables for the rest
 	allAssign := true
@@ -170,11 +289,11 @@ func analyzeSeg(seg Segment, st *state, depth int) []Invocation {
 	if allAssign {
 		for _, x := range w {
 			k, v, _ := strings.Cut(x.Text, "=")
-			st.env[strings.ToUpper(k)] = v
+			st.assign(k, v)
 		}
-		return []Invocation{{Raw: seg.Raw, Words: w}}
+		return leaf()
 	}
-	iv := Invocation{Raw: seg.Raw, Words: w, Env: map[string]string{}, Dir: st.dir}
+	iv := Invocation{Raw: seg.Raw, Words: w, Env: map[string]string{}, Dir: st.dir, Unknown: st.unknown}
 	for k, v := range st.env {
 		iv.Env[k] = v
 	}
@@ -206,10 +325,28 @@ func nested(iv Invocation, script string, st *state, depth int, ps bool) []Invoc
 		iv.Opaque = true
 		return []Invocation{iv}
 	}
-	sub := &state{dir: iv.Dir, env: map[string]string{}}
+	sub := &state{dir: iv.Dir, env: map[string]string{}, unknown: iv.Unknown}
 	for k, v := range iv.Env {
 		sub.env[k] = v
 	}
+	return nestedIn(iv, script, sub, depth, ps)
+}
+
+// nestedHere is nested for a script that runs in the line's own shell (eval,
+// Invoke-Expression): what it sets, its cd and anything unknown carry on to
+// the rest of the line.
+func nestedHere(iv Invocation, script string, st *state, depth int, ps bool) []Invocation {
+	if depth >= maxDepth {
+		iv.Opaque = true
+		return []Invocation{iv}
+	}
+	if iv.Unknown {
+		st.unknown = true
+	}
+	return nestedIn(iv, script, st, depth, ps)
+}
+
+func nestedIn(iv Invocation, script string, sub *state, depth int, ps bool) []Invocation {
 	var out []Invocation
 	for _, seg := range splitShell(guard.BlankDataHeredocs(script), depth+1, ps) {
 		got := analyzeSeg(seg, sub, depth+1)
@@ -237,15 +374,26 @@ func joinWords(ws []Word) string {
 // unwrap strips the wrappers in front of the tool (§9.1) and reads it.
 func unwrap(iv Invocation, i int, st *state, depth int) []Invocation {
 	w := iv.Words
+	pkg := false // the next word is a package runner's package
 	for i < len(w) {
 		t := w[i].Text
 		if assignRe.MatchString(t) {
 			k, v, _ := strings.Cut(t, "=")
 			iv.Env[strings.ToUpper(k)] = v
+			if computed(v) {
+				iv.Unknown = true
+			}
 			i++
 			continue
 		}
 		name := ToolName(t)
+		if pkg {
+			// the word after a package runner is a package spelling
+			if pt := PackageTool(t); pt != "" {
+				name = pt
+			}
+			pkg = false
+		}
 		switch {
 		case Tools[name]:
 			iv.Tool, iv.ToolAt = name, i
@@ -255,11 +403,22 @@ func unwrap(iv Invocation, i int, st *state, depth int) []Invocation {
 			i++
 			for i < len(w) {
 				x := w[i].Text
-				if x == "-u" || x == "--unset" {
-					i += 2
+				if x == "-u" || x == "--unset" || strings.HasPrefix(x, "--unset=") {
+					// an unset variable falls back to nothing, not to the
+					// hook's value: unknown
+					iv.Unknown = true
+					if x == "-u" || x == "--unset" {
+						i++
+					}
+					i++
 					continue
 				}
-				if x == "-i" || x == "--ignore-environment" || x == "-" || x == "--" {
+				if x == "-i" || x == "--ignore-environment" || x == "-" {
+					iv.Unknown = true
+					i++
+					continue
+				}
+				if x == "--" {
 					i++
 					continue
 				}
@@ -302,6 +461,7 @@ func unwrap(iv Invocation, i int, st *state, depth int) []Invocation {
 			if i < 0 {
 				return []Invocation{iv}
 			}
+			pkg = true
 		case name == "pnpm" || name == "yarn" || name == "bun" || name == "npm":
 			j := i + 1
 			if j < len(w) {
@@ -319,6 +479,7 @@ func unwrap(iv Invocation, i int, st *state, depth int) []Invocation {
 			if i < 0 {
 				return []Invocation{iv}
 			}
+			pkg = true
 		case name == "sudo" || name == "doas" || name == "nohup" || name == "time" || name == "nice" || name == "command" || name == "builtin" || name == "exec" || name == "stdbuf":
 			i++
 			for i < len(w) && strings.HasPrefix(w[i].Text, "-") {
@@ -388,7 +549,14 @@ func unwrap(iv Invocation, i int, st *state, depth int) []Invocation {
 			if j < len(w) && strings.EqualFold(w[j].Text, "-command") {
 				j++
 			}
-			return nested(iv, joinWords(w[j:]), st, depth, name != "eval")
+			script := joinWords(w[j:])
+			if strings.ContainsAny(script, "$`") {
+				// eval "$(aws configure export-credentials …)": the code is
+				// a command's output
+				st.unknown = true
+				iv.Unknown = true
+			}
+			return nestedHere(iv, script, st, depth, name != "eval")
 		case name == "&" || name == ".":
 			i++
 		case name == "xargs" || name == "start-process" || name == "saps" || name == "start" || name == "watch" || name == "parallel" || name == "ssh":
