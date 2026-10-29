@@ -7,7 +7,8 @@
   step 3) and works from the redacted summary only. Never read a plan or state
   file and never print one (`tq/plan-read`, `tq/plan-print`).
 - In an `approve` environment the checkpoint stops at `tq pack cloud approve
-  <plan-id>` and waits for the human's answer on the board. You never answer it.
+  <plan-id>` and waits for the human's answer, given in their own terminal with
+  `tq hub answer` (the board does not answer pack approvals). You never answer it.
 
 ## fix
 

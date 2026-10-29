@@ -90,8 +90,10 @@ reported by `tq doctor` as `ml-config-clamped`. The request summary also names t
      `subject: <model>@<version>`, `target: <target>`). The decision lands on the
      run's card, or on a new chore card tagged `ml-approval`.
    - It prints the decision id, the card and the evidence names.
-2. **Decide.** A human answers `approve` or `reject` on the board, in `/waiting` or
-   with `tq hub answer` in their own terminal. Agents never answer.
+2. **Decide.** A human answers `approve` or `reject` in their own terminal with
+   `tq hub answer <card> <decision> --choice approve|reject`. The board shows the
+   decision and that command but does not answer pack approvals, and agents never
+   answer.
 3. **Apply.** The human runs `tq pack ml promote apply <decision>` (human only).
    - It refuses an agent session (`CLAUDECODE`, `TENTAQLES_HEADLESS`,
      `CLAUDE_PLUGIN_ROOT`, `TQ_HUB_TASK`).
@@ -99,13 +101,16 @@ reported by `tq doctor` as `ml-config-clamped`. The request summary also names t
      answered by a human with `approve`, be unexpired and unused, and match the
      evidence. When the evidence changed, the refusal names the changed entries.
    - It prints the filled command (values limited to `[A-Za-z0-9._@-]`, never
-     starting with `-`) and asks for a typed `yes` on a terminal.
+     starting with `-`) and asks for a typed `yes` on a terminal. A declined
+     prompt leaves the approval usable.
+   - After the `yes` it claims the approval (single use, ruling N1: confirm,
+     then claim), so from here on the approval is used whatever the command does.
    - It runs the command with the workspace identity's environment (another workspace's provider variables reach it blank) and a 300 s timeout that starts at the typed `yes`.
    - On exit 0 it marks the approval used and appends a row to the card's Promotion
      history (date, version, target, decision id, `human`). It also comments on the
      hub card. Commit the card change.
-   - On a failure or a timeout the approval stays unused, and the failure is
-     commented on the card.
+   - On a failure or a timeout the approval is used (it was claimed), and the
+     failure is commented on the card: request the promotion again.
 4. **Status.** `tq pack ml promote status [<model>] [--json]` lists the requests as
    `pending`, `approved`, `rejected`, `used` or `expired`. A rejected or expired
    request needs a new one.

@@ -51,7 +51,8 @@ $_to tq pack ml promote request <model> <version> --to <target>; echo "request_e
   `promotion.protected`. Tell the user; the project's normal registry flow applies.
 - `asked: decision <id> on card <card>`: report the decision id, the card and the
   evidence names it printed, then give the human this line to run **in their own
-  terminal** after they approve on the board, in `/waiting` or with `tq hub answer`:
+  terminal** after they approve there with `tq hub answer <card> <id> --choice approve`
+  (the board shows the decision but does not answer pack approvals):
 
   ```
   tq pack ml promote apply <id>

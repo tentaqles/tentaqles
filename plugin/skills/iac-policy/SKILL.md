@@ -115,7 +115,8 @@ $_to tq pack approvals --pack cloud; echo "approvals_exit=$?"
   (the prod default) the plan's commit must already be on the default branch.
 - If a check failed, the request offers only `reject`. Only the human can pass
   `--allow-failing`, from their own terminal; never suggest you will.
-- The human answers on the board or in their terminal. You never answer it and
+- The human answers in their own terminal (`tq hub answer`); the board shows
+  the decision but does not answer pack approvals. You never answer it and
   never run `tq hub answer`. Tell the user the card and wait; then apply the
   saved plan once. A changed plan, an expired or used approval, or another
   subscription is denied again: re-plan and ask again.
