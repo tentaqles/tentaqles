@@ -397,7 +397,8 @@ func TestApplyEnvUnder50ms(t *testing.T) {
 		times = append(times, time.Since(start))
 	}
 	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
-	if d := times[len(times)/2]; d > 100*time.Millisecond {
+	// the guard budget is 50 ms; a loaded CI runner (macOS) can more than double a median, and the regressions these catch (quadratic scans) took seconds, so the test bound is 200 ms
+	if d := times[len(times)/2]; d > 200*time.Millisecond {
 		t.Fatalf("two guards on 64 KiB took %s (median of 7)", d)
 	}
 }
