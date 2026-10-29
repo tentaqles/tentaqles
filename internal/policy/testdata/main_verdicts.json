@@ -113,7 +113,7 @@
   {
     "call": {
       "Tool": "Bash",
-      "Command": "cd app && cat .env",
+      "Command": "cd app \u0026\u0026 cat .env",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -668,7 +668,7 @@
   {
     "call": {
       "Tool": "PowerShell",
-      "Command": "& \"C:\\tools\\tq.exe\" unattended --ws acme on",
+      "Command": "\u0026 \"C:\\tools\\tq.exe\" unattended --ws acme on",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -831,7 +831,7 @@
   {
     "call": {
       "Tool": "PowerShell",
-      "Command": "& \"tq\" unattended on",
+      "Command": "\u0026 \"tq\" unattended on",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -844,7 +844,7 @@
   {
     "call": {
       "Tool": "PowerShell",
-      "Command": "& 'tq.exe' unattended on",
+      "Command": "\u0026 'tq.exe' unattended on",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -935,7 +935,7 @@
   {
     "call": {
       "Tool": "Bash",
-      "Command": "tq unattended on>out.txt",
+      "Command": "tq unattended on\u003eout.txt",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -948,7 +948,7 @@
   {
     "call": {
       "Tool": "PowerShell",
-      "Command": "tq unattended on>$null",
+      "Command": "tq unattended on\u003e$null",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -961,7 +961,7 @@
   {
     "call": {
       "Tool": "Bash",
-      "Command": "tq guard set<in.txt",
+      "Command": "tq guard set\u003cin.txt",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -1137,7 +1137,7 @@
   {
     "call": {
       "Tool": "Bash",
-      "Command": "psql \"$DB\" -c \"select * from users where updated_at > now()\"",
+      "Command": "psql \"$DB\" -c \"select * from users where updated_at \u003e now()\"",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -1583,6 +1583,61 @@
     "call": {
       "Tool": "Edit",
       "Command": "",
+      "Path": "/r/x/.claude/settings.local.json",
+      "Content": "\"NODE_ENV\": \"dev\", \"TQ_MODE\": \"off\"",
+      "Exists": false
+    },
+    "action": "",
+    "ids": []
+  },
+  {
+    "call": {
+      "Tool": "MultiEdit",
+      "Command": "",
+      "Path": "/r/x/.claude/settings.json",
+      "Content": "\"TQ_ENABLED\":\"0\"",
+      "Exists": false
+    },
+    "action": "",
+    "ids": []
+  },
+  {
+    "call": {
+      "Tool": "Edit",
+      "Command": "",
+      "Path": "/r/x/.claude/settings.json",
+      "Content": "\"tentaqles@tentaqles\": false",
+      "Exists": false
+    },
+    "action": "",
+    "ids": []
+  },
+  {
+    "call": {
+      "Tool": "Write",
+      "Command": "",
+      "Path": "/r/x/.claude/settings.local.json",
+      "Content": "{\"env\": {\"X\": \"a}b\", \"TQ_MODE\": \"off\"}}",
+      "Exists": false
+    },
+    "action": "",
+    "ids": []
+  },
+  {
+    "call": {
+      "Tool": "Edit",
+      "Command": "",
+      "Path": "/r/x/.claude/settings.json",
+      "Content": "\"description\": \"TQ_MODE off is for humans\"",
+      "Exists": false
+    },
+    "action": "",
+    "ids": []
+  },
+  {
+    "call": {
+      "Tool": "Edit",
+      "Command": "",
       "Path": "/r/x/.claude/settings.json",
       "Content": "\"enabledPlugins\": {\"tentaqles@tentaqles\": true, \"x@y\": false}",
       "Exists": false
@@ -1615,7 +1670,7 @@
   {
     "call": {
       "Tool": "Bash",
-      "Command": "echo '{}' > .claude/settings.local.json",
+      "Command": "echo '{}' \u003e .claude/settings.local.json",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -1863,7 +1918,7 @@
   {
     "call": {
       "Tool": "Bash",
-      "Command": "cp x .claude/settings.json 2>&1",
+      "Command": "cp x .claude/settings.json 2\u003e\u00261",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -1964,7 +2019,7 @@
   {
     "call": {
       "Tool": "Bash",
-      "Command": "cd x && az boards work-item update --id 1 --discussion done",
+      "Command": "cd x \u0026\u0026 az boards work-item update --id 1 --discussion done",
       "Path": "",
       "Content": "",
       "Exists": false
@@ -2609,7 +2664,7 @@
       "Tool": "Edit",
       "Command": "",
       "Path": "C:\\r\\docs\\leia-me.md",
-      "Content": "Configura\u00e7\u00e3o n\u00e3o \u00e9 necess\u00e1ria \ud83d\ude80",
+      "Content": "Configuração não é necessária 🚀",
       "Exists": false
     },
     "action": "",

@@ -5,7 +5,6 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"testing"
 
@@ -17,8 +16,14 @@ import (
 // input of the main-verdicts generator (see TestDefaultModeMatchesMain).
 var writeCorpus = flag.Bool("write-corpus", false, "write testdata/default_corpus.json")
 
-// credURL is a URL with user:password in it.
-var credURL = regexp.MustCompile(`://[^/\s:@"]+:[^/\s@"]+@`)
+// notInGolden are the corpus commands the goldens leave out on purpose,
+// each with its reason. Every other corpus call must have a verdict
+// (correctness re-review r2-2).
+var notInGolden = map[string]string{
+	// A fake credential URL: the Go fixture marks it tq:allow-secret, which a
+	// JSON golden cannot carry, so the commit secret scan would block it.
+	"DATABASE_URL=postgres://u:p@localhost/db alembic upgrade head": "fake credential URL", // tq:allow-secret
+}
 
 // mainVerdict is what main (before spec E) decided for one corpus call.
 type mainVerdict struct {
@@ -51,9 +56,7 @@ var newInSpecE = map[string]bool{
 func TestDefaultModeMatchesMain(t *testing.T) {
 	var calls []policy.ToolCall
 	for _, c := range policy.BuiltinCorpus() {
-		// Fake credentials in a URL (tq:allow-secret in the Go fixtures)
-		// cannot carry that marker in JSON, so the goldens leave them out.
-		if !credURL.MatchString(c.Command + " " + c.Content + " " + c.Path) {
+		if _, skip := notInGolden[c.Command]; !skip {
 			calls = append(calls, c)
 		}
 	}
@@ -93,7 +96,10 @@ func TestDefaultModeMatchesMain(t *testing.T) {
 		}
 		want, ok := byCall[call]
 		if !ok {
-			continue // a corpus case added after the golden was made
+			// A corpus case added after the golden was made: regenerate the
+			// golden (see above), or put the case on notInGolden with a reason.
+			t.Errorf("%+v: not in testdata/main_verdicts.json", call)
+			continue
 		}
 		wantIDs := slices.Clone(want.IDs)
 		slices.Sort(wantIDs)
