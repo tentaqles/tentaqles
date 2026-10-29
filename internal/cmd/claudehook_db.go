@@ -12,5 +12,5 @@ import (
 
 func init() {
 	packs.RegisterGuard(packs.Guard{ID: gate.IDMigrate, Pack: "db", Events: gate.Events, Supersedes: gate.Supersedes, Check: gate.MigrateEnv})
-	packs.RegisterGuard(packs.Guard{ID: gate.IDRestore, Pack: "db", Events: gate.Events, Check: gate.RestoreTarget})
+	packs.RegisterGuard(packs.Guard{ID: gate.IDRestore, Default: "deny", Pack: "db", Events: gate.Events, Check: gate.RestoreTarget})
 }

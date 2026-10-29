@@ -46,6 +46,6 @@ func init() {
 	packs.Register(packs.Check{ID: idSQLFluff, Pack: "data", Kind: packs.External, Tool: "sqlfluff", Env: sqlfluffEnv,
 		Timeout: sqlfluffTimeout, Applies: sqlfluffApplies, Run: runSqlfluff})
 
-	packs.RegisterGuard(packs.Guard{ID: guardProdTarget, Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(checkProdTarget, dbtToolRe, nil, "dbt")})
-	packs.RegisterGuard(packs.Guard{ID: guardFullRefresh, Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(checkFullRefresh, dbtToolRe, nil, "dbt")})
+	packs.RegisterGuard(packs.Guard{ID: guardProdTarget, Default: "deny", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(checkProdTarget, dbtToolRe, nil, "dbt")})
+	packs.RegisterGuard(packs.Guard{ID: guardFullRefresh, Default: "ask", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(checkFullRefresh, dbtToolRe, nil, "dbt")})
 }

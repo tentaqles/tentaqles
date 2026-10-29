@@ -56,7 +56,7 @@ func init() {
 	packs.Register(packs.Check{ID: "data/dagster-validate", Pack: "data", Kind: packs.External, Tool: "dagster", Env: dagsterEnv,
 		Timeout: dagsterTimeout * time.Second, Applies: dagsterApplies, Run: runDagsterValidate})
 
-	packs.RegisterGuard(packs.Guard{ID: "tq/pipeline-run", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(pipelineRunGuard, pipelineToolRe, nil, "an orchestrator CLI (airflow, dagster, prefect, az ... create-run)")})
+	packs.RegisterGuard(packs.Guard{ID: "tq/pipeline-run", Default: "ask", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(pipelineRunGuard, pipelineToolRe, nil, "an orchestrator CLI (airflow, dagster, prefect, az ... create-run)")})
 }
 
 // raisePipeline: changed files under the dbt model paths, pipelines.paths,

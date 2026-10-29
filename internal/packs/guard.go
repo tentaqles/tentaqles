@@ -55,6 +55,10 @@ type Guard struct {
 	Events     []string
 	Supersedes []string
 	Check      func(call policy.ToolCall, g GuardCtx) (policy.Action, string, bool)
+	// Default is what tq guard list shows as the guard's action: "ask",
+	// "deny", "deny or ask", or "" when a pack policy decides (shown as
+	// "policy"). It is for listing only; Check returns the real action.
+	Default string
 
 	events []*regexp.Regexp
 }

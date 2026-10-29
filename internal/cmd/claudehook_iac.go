@@ -12,5 +12,5 @@ import (
 
 func init() {
 	packs.RegisterGuard(packs.Guard{ID: gate.IDApplyEnv, Pack: "cloud", Events: gate.Events, Supersedes: gate.Supersedes, Check: gate.ApplyEnv})
-	packs.RegisterGuard(packs.Guard{ID: gate.IDDrift, Pack: "cloud", Events: gate.Events, Check: gate.IdentityDrift})
+	packs.RegisterGuard(packs.Guard{ID: gate.IDDrift, Default: "deny", Pack: "cloud", Events: gate.Events, Check: gate.IdentityDrift})
 }

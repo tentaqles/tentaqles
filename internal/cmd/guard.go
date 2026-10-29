@@ -146,7 +146,11 @@ func knownGuardRules(m *manifest.Manifest, g guardcfg.File) []guardcfg.RuleInfo 
 	for _, pg := range packs.Guards() {
 		if !seen[pg.ID] {
 			seen[pg.ID] = true
-			out = append(out, guardcfg.RuleInfo{ID: pg.ID, Action: policy.Deny, Kind: "pack", Summary: "decision guard of the " + pg.Pack + " pack"})
+			def := pg.Default
+			if def == "" {
+				def = "policy" // the pack's environment policy decides
+			}
+			out = append(out, guardcfg.RuleInfo{ID: pg.ID, Action: policy.Action(def), Kind: "pack", Summary: "decision guard of the " + pg.Pack + " pack"})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })

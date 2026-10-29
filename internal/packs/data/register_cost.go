@@ -52,9 +52,9 @@ func init() {
 	packs.Register(packs.Check{ID: checkCostEstimate, Pack: "data", Kind: packs.External, Tool: "dbt", Timeout: 900 * time.Second,
 		Env: dbtEnv, Applies: costEstimateApplies, Run: runCostEstimate})
 	shell := []string{"Bash", "PowerShell"}
-	packs.RegisterGuard(packs.Guard{ID: GuardBQUnbounded, Pack: "data", Events: shell, Check: withScripts(checkBQUnbounded, bqToolRe, func(c costSettings) bool { return c.Engine(engBigQuery) }, "bq")})
-	packs.RegisterGuard(packs.Guard{ID: GuardWarehouseSize, Pack: "data", Events: []string{"Bash", "PowerShell", `mcp__.*`}, Check: withScripts(checkWarehouseResize, resizeToolRe, func(c costSettings) bool {
+	packs.RegisterGuard(packs.Guard{ID: GuardBQUnbounded, Default: "deny", Pack: "data", Events: shell, Check: withScripts(checkBQUnbounded, bqToolRe, func(c costSettings) bool { return c.Engine(engBigQuery) }, "bq")})
+	packs.RegisterGuard(packs.Guard{ID: GuardWarehouseSize, Default: "deny or ask", Pack: "data", Events: []string{"Bash", "PowerShell", `mcp__.*`}, Check: withScripts(checkWarehouseResize, resizeToolRe, func(c costSettings) bool {
 		return c.Engine(engSnowflake) || c.Engine(engDatabricks) || c.Engine(engSynapse) || c.Engine(engFabric)
 	}, "a warehouse CLI")})
-	packs.RegisterGuard(packs.Guard{ID: GuardWarehouseQuery, Pack: "data", Events: shell, Check: withScripts(checkWarehouseQuery, queryToolRe, nil, "a warehouse query CLI")})
+	packs.RegisterGuard(packs.Guard{ID: GuardWarehouseQuery, Default: "ask", Pack: "data", Events: shell, Check: withScripts(checkWarehouseQuery, queryToolRe, nil, "a warehouse query CLI")})
 }
