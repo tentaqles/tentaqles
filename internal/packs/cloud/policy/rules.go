@@ -507,6 +507,18 @@ func encryptionOff(r model.Resource, t string, p map[string]any) []hit {
 			!serverlessCluster(r, t, p) {
 			return h("storage encryption is off (StorageEncrypted is not set; the default is unencrypted)")
 		}
+	case "aws_rds_global_cluster", "aws:rds/globalcluster:globalcluster", "aws::rds::globalcluster":
+		// The primary DBCluster of a global database names the GlobalCluster
+		// (GlobalClusterIdentifier) and takes its encryption from it, so the
+		// GlobalCluster is judged here. One built from an existing cluster
+		// (SourceDBClusterIdentifier) inherits that cluster's encryption.
+		v := get(p, "storage_encrypted", "StorageEncrypted")
+		if isFalse(v) {
+			return h("the global database's storage encryption is off (storage_encrypted / StorageEncrypted = false)")
+		}
+		if v == nil && offByDefault(r, p, "StorageEncrypted") && !inherits(r, p, "SourceDBClusterIdentifier") {
+			return h("the global database's storage encryption is off (StorageEncrypted is not set; the default is unencrypted)")
+		}
 	case "aws_ebs_volume", "aws:ebs/volume:volume", "aws::ec2::volume":
 		v := get(p, "encrypted", "Encrypted")
 		if isFalse(v) {
