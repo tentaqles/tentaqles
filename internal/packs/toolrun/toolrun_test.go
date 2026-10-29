@@ -17,6 +17,7 @@ import (
 // TestMain doubles as the fake tool: a copy of the test binary run with
 // TQ_FAKE_TOOL set behaves as the mode says.
 func TestMain(m *testing.M) {
+	testPass = []string{"TQ_FAKE_TOOL", "TQ_FAKE_VERSION", "TQ_FAKE_PIDFILE"}
 	if mode := os.Getenv("TQ_FAKE_TOOL"); mode != "" {
 		fakeTool(mode)
 		return
@@ -34,6 +35,10 @@ func fakeTool(mode string) {
 	case "echo":
 		fmt.Println(strings.Join(args, "|"))
 		fmt.Fprintln(os.Stderr, "DO_NOT_TRACK="+os.Getenv("DO_NOT_TRACK")+" DBT="+os.Getenv("DBT_SEND_ANONYMOUS_USAGE_STATS"))
+	case "env":
+		for _, kv := range os.Environ() {
+			fmt.Println(kv)
+		}
 	case "exit3":
 		fmt.Fprintln(os.Stderr, "line one\nline two\nfailed for tester@acme.test")
 		os.Exit(3)

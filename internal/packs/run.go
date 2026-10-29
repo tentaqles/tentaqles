@@ -192,7 +192,7 @@ func runOne(ctx context.Context, c Check, in *Input, o RunOptions) (Result, bool
 			return base, false
 		}
 		cin := *in
-		cin.Tools = checkTools{ToolRunner: in.Tools, timeout: c.Timeout}
+		cin.Tools = checkTools{ToolRunner: in.Tools, timeout: c.Timeout, env: c.Env}
 		r := guarded(ctx, c, &cin, 0)
 		r.ID, r.Pack, r.Required = c.ID, c.Pack, declared
 		if r.Tool == nil {
@@ -218,12 +218,14 @@ func runOne(ctx context.Context, c Check, in *Input, o RunOptions) (Result, bool
 type checkTools struct {
 	ToolRunner
 	timeout time.Duration
+	env     []string // Check.Env
 }
 
 func (t checkTools) Run(ctx context.Context, s toolrun.Spec) (toolrun.Output, error) {
 	if s.Timeout <= 0 {
 		s.Timeout = t.timeout
 	}
+	s.PassEnv = append(append([]string(nil), s.PassEnv...), t.env...)
 	return t.ToolRunner.Run(ctx, s)
 }
 

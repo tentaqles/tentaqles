@@ -1,0 +1,67 @@
+package toolrun
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func envMap(env []string) map[string]string {
+	m := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		m[strings.ToUpper(k)] = v
+	}
+	return m
+}
+
+// Round 5 (spec C §2.6, spec D §20): a tool sees the base allow-list, the
+// locale, the names its check declares, the telemetry switches and the
+// explicit pairs; never the rest of the parent environment.
+func TestToolEnvIsFiltered(t *testing.T) {
+	isolate(t)
+	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("TQ_TEST_GITHUB_TOKEN", "x")
+	t.Setenv("TQ_TEST_DB_PASSWORD", "x")
+	t.Setenv("TQ_TEST_RANDOM", "x")
+	t.Setenv("DBT_PROFILES_DIR", "/p")
+	t.Setenv("PGSERVICE_TOKEN", "declared")
+	m := envMap(toolEnv("dbt", []string{"DBT_PROFILES_DIR", "PGSERVICE_TOKEN"}, []string{"EXTRA=1"}))
+	for _, k := range []string{"PATH", "LANG", "LC_ALL", "DBT_PROFILES_DIR", "PGSERVICE_TOKEN", "DO_NOT_TRACK", "DBT_SEND_ANONYMOUS_USAGE_STATS", "EXTRA"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("%s missing", k)
+		}
+	}
+	for _, k := range []string{"TQ_TEST_GITHUB_TOKEN", "TQ_TEST_DB_PASSWORD", "TQ_TEST_RANDOM"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("%s passed", k)
+		}
+	}
+	if m["PGSERVICE_TOKEN"] != "declared" {
+		t.Error("a declared secret-like name must pass")
+	}
+	// Undeclared, the declared names do not pass either.
+	m = envMap(toolEnv("", nil, nil))
+	if _, ok := m["DBT_PROFILES_DIR"]; ok {
+		t.Error("an undeclared name passed")
+	}
+}
+
+// The fake tool sees only what toolEnv passes (end to end).
+func TestRunPassesOnlyTheFilteredEnv(t *testing.T) {
+	isolate(t)
+	bin := fakeBin(t, t.TempDir(), "dbt")
+	r := &Runner{Root: t.TempDir(), LookPath: func(string) (string, error) { return bin, nil }}
+	t.Setenv("TQ_FAKE_TOOL", "env")
+	t.Setenv("TQ_TEST_GITHUB_TOKEN", "leak")
+	t.Setenv("DBT_PROFILES_DIR", "/p")
+	out, err := r.Run(context.Background(), Spec{Pack: "data", Tool: "dbt", PassEnv: []string{"DBT_PROFILES_DIR"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out.Stdout)
+	if strings.Contains(s, "TQ_TEST_GITHUB_TOKEN") || !strings.Contains(s, "DBT_PROFILES_DIR=/p") {
+		t.Fatalf("tool env: %s", s)
+	}
+}
