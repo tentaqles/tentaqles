@@ -23,10 +23,13 @@ func init() {
 			"seed_helper":   validateSeedHelper,
 			"data_manifest": validateRepoPath,
 		},
-		Merge: map[string]packs.MergeKind{
-			"paths.train":    packs.MergeUnion,
-			"paths.features": packs.MergeUnion,
-			"paths.eval":     packs.MergeUnion,
+		Merge: map[string]packs.MergeRule{
+			"paths.train":    packs.Union(),
+			"paths.features": packs.Union(),
+			"paths.eval":     packs.Union(),
+			// Added when the manifest lacks them, never changed.
+			"seed_helper":   packs.TrustedAdd(),
+			"data_manifest": packs.TrustedAdd(),
 		},
 		Flags: []packs.Flag{{
 			Name:      "ml",

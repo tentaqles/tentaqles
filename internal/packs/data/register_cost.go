@@ -16,15 +16,28 @@ func init() {
 			"engines": validateEngines,
 			"cost":    validateCost,
 		},
-		Merge: map[string]packs.MergeKind{
-			"engines":                      packs.MergeUnion,
-			"cost.*.max_bytes":             packs.MergeMin,
-			"cost.*.statement_timeout_s":   packs.MergeMin,
-			"cost.databricks.max_workers":  packs.MergeMin,
-			"cost.synapse.max_spark_nodes": packs.MergeMin,
-			"cost.postgres.max_plan_cost":  packs.MergeMin,
-			"cost.estimate_in_dod":         packs.MergeOr,
-			"cost.databricks.warehouse_id": packs.MergeTrusted,
+		// An unset cap is no limit (data-cost-cap-missing), so the bounds
+		// default to 0 with ZeroUnlimited: a repo file may add any cap, and
+		// only tighten one the manifest sets.
+		Merge: map[string]packs.MergeRule{
+			"engines": packs.Union(),
+			// Named per engine: a cost.*.<key> pattern would sit under
+			// cost.estimate_in_dod too.
+			"cost.bigquery.max_bytes":            {Kind: packs.MergeMin, Default: "0GB", ZeroUnlimited: true},
+			"cost.snowflake.max_bytes":           {Kind: packs.MergeMin, Default: "0GB", ZeroUnlimited: true},
+			"cost.databricks.max_bytes":          {Kind: packs.MergeMin, Default: "0GB", ZeroUnlimited: true},
+			"cost.snowflake.statement_timeout_s": {Kind: packs.MergeMin, Default: "0", ZeroUnlimited: true},
+			"cost.postgres.statement_timeout_s":  {Kind: packs.MergeMin, Default: "0", ZeroUnlimited: true},
+			"cost.databricks.max_workers":        {Kind: packs.MergeMin, Default: "0", ZeroUnlimited: true},
+			"cost.synapse.max_spark_nodes":       {Kind: packs.MergeMin, Default: "0", ZeroUnlimited: true},
+			"cost.postgres.max_plan_cost":        {Kind: packs.MergeMin, Default: "0", ZeroUnlimited: true},
+			"cost.estimate_in_dod":               packs.Or(),
+			"cost.databricks.warehouse_id":       packs.TrustedAdd(),
+			// Size scales the merge cannot order: added when the manifest
+			// is silent (no limit), never changed.
+			"cost.snowflake.max_warehouse_size": packs.TrustedAdd(),
+			"cost.fabric.max_capacity_sku":      packs.TrustedAdd(),
+			"cost.synapse.max_dwu":              packs.TrustedAdd(),
 		},
 		Flags: []packs.Flag{{
 			Name:      flagWarehouseCost,

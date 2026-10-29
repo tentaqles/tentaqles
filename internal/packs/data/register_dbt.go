@@ -11,14 +11,18 @@ func init() {
 	packs.RegisterPack(packs.Pack{
 		Name:       "data",
 		ConfigKeys: map[string]func(yaml.Node) error{"dbt": validateDBT},
-		Merge: map[string]packs.MergeKind{
+		Merge: map[string]packs.MergeRule{
 			// The repo file may add contracted folders, required key tests
 			// and production targets; it can never drop one. The other dbt
 			// keys are trusted (added when the manifest lacks them, never
 			// changed).
-			"dbt.contract_paths":  packs.MergeUnion,
-			"dbt.new_model_tests": packs.MergeUnion,
-			"dbt.prod_targets":    packs.MergeUnion,
+			"dbt.contract_paths":  packs.Union(),
+			"dbt.new_model_tests": packs.Union(),
+			"dbt.prod_targets":    packs.Union(),
+			"dbt.project":         packs.TrustedAdd(),
+			"dbt.build":           packs.TrustedAdd(),
+			"dbt.dev_target":      packs.TrustedAdd(),
+			"dbt.state":           packs.TrustedAdd(),
 		},
 		Hints:  []packs.Hint{{Glob: "dbt_project.yml", Why: "a dbt project"}},
 		Doctor: dbtDoctor,

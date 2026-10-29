@@ -13,9 +13,11 @@ func init() {
 	packs.RegisterPack(packs.Pack{
 		Name:       "data",
 		ConfigKeys: map[string]func(yaml.Node) error{"contracts": validateContractsKey},
-		Merge: map[string]packs.MergeKind{
-			"contracts.paths":       packs.MergeUnion,
-			"contracts.consumers.*": packs.MergeUnion,
+		Merge: map[string]packs.MergeRule{
+			"contracts.paths":       packs.Union(),
+			"contracts.consumers.*": packs.Union(),
+			// warn | breaking: the stricter wins; strictest default.
+			"contracts.enum_added": packs.Ordered("breaking", "warn", "breaking"),
 		},
 		Flags: []packs.Flag{
 			{Name: "data_contract", Reviewers: []string{"pipeline-reviewer"}, Raise: anyContractChange},

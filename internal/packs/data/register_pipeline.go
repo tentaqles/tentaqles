@@ -21,11 +21,11 @@ func init() {
 	packs.RegisterPack(packs.Pack{
 		Name:       "data",
 		ConfigKeys: map[string]func(yaml.Node) error{"pipelines": validatePipelines},
-		Merge: map[string]packs.MergeKind{
-			"pipelines.paths": packs.MergeUnion,
+		Merge: map[string]packs.MergeRule{
+			"pipelines.paths": packs.Union(),
 			// A repo must not declare its own masking functions: that would
 			// silence data/pipeline-pii-output.
-			"pipelines.masking": packs.MergeIgnoreRepo,
+			"pipelines.masking": {},
 		},
 		Flags: []packs.Flag{{
 			Name:      "pipeline",

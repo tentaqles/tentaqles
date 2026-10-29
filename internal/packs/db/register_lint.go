@@ -45,14 +45,14 @@ func init() {
 			"edition":       lint.ValidateEdition,
 			"sqlfluff_fail": lint.ValidateBool,
 		},
-		Merge: map[string]packs.MergeKind{
+		Merge: map[string]packs.MergeRule{
 			// More migration paths lint more: a repo file may add them.
-			"migrations": packs.MergeUnion,
+			"migrations": packs.Union(),
 			// Both loosen the lint (lock rules to warn): trusted layer only.
-			"small_tables": packs.MergeIgnoreRepo,
-			"edition":      packs.MergeIgnoreRepo,
+			"small_tables": {},
+			"edition":      {},
 			// true only tightens.
-			"sqlfluff_fail": packs.MergeOr,
+			"sqlfluff_fail": packs.Or(),
 		},
 		Flags: []packs.Flag{
 			{Name: "db_migration", Reviewers: []string{reviewer}, Raise: raiseMigration},
