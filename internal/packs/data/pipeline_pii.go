@@ -312,15 +312,32 @@ func (pc piiCtx) maskedAt(s string, i int) bool {
 				continue
 			}
 			j := k
-			for j > 0 && isWordByte(s[j-1]) {
+			for j > 0 && (isWordByte(s[j-1]) || s[j-1] == '.') {
 				j--
 			}
-			if pc.masking[strings.ToLower(s[j:k])] {
+			if pc.maskingCallee(strings.ToLower(s[j:k])) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// maskingCallee reports whether a dotted callee (`udfs.acme.mask_email`)
+// names a masking function: the whole name or any dotted suffix of it
+// (`acme.mask_email`, `mask_email`), so `F.sha2` and a configured
+// `acme.mask_email` both match.
+func (pc piiCtx) maskingCallee(name string) bool {
+	for {
+		if pc.masking[name] {
+			return true
+		}
+		d := strings.IndexByte(name, '.')
+		if d < 0 {
+			return false
+		}
+		name = name[d+1:]
+	}
 }
 
 // contractColumns reads the ODCS contracts (packs.data.contracts.paths) and
