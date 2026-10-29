@@ -82,8 +82,10 @@ func agAny(val string) func(int) string { return func(int) string { return val }
 // leaves it too: default'x', 'strict'.Replace(..), an empty quote pair before off.
 // rootSkip lists characters that may come before the value (whitespace the
 // form already allows there), so they never count as leaving at the root.
+// after, when not empty, is one more way to leave after a whole word (the
+// PowerShell pipeline continued on a later line).
 // Matching is case-sensitive: Default is not a safe value.
-func agNotSafe(words []string, rootSkip, pad, term string) string {
+func agNotSafe(words []string, rootSkip, pad, term, after string) string {
 	set := map[string]bool{}
 	for _, w := range words {
 		set[w] = true
@@ -109,6 +111,9 @@ func agNotSafe(words []string, rootSkip, pad, term string) string {
 		}
 		if set[p] {
 			alts = append(alts, pad+`[^`+term+children+`]`)
+			if after != "" {
+				alts = append(alts, after)
+			}
 		} else {
 			skip := ""
 			if p == "" {
@@ -132,17 +137,28 @@ func agModeLoose(form int) string {
 	safe := []string{"default", "strict", "'default'", "'strict'", `"default"`, `"strict"`}
 	switch form {
 	case formPwsh:
-		// A statement ends at ; | ) } & # or a line end. Anything else after
-		// the literal (an operator, a method call) makes it an expression.
-		return agNotSafe(safe, `\s`, `[ \t]*`, ` \t\r\n;|)}&#`)
+		// The right-hand side of a PowerShell assignment is a whole pipeline:
+		// $env:TQ_MODE = 'strict' | ForEach-Object { 'off' } stores off, and
+		// | Out-Null clears it. So the literal is safe only before ; ) } # or
+		// a line end; | and & (a PS7 background job) leave, and so does a
+		// later line that continues the pipeline with a leading | (past blank
+		// and comment lines). Anything else after the literal (an operator, a
+		// method call) makes it an expression.
+		return agNotSafe(safe, `\s`, `[ \t]*`, ` \t\r\n;)}#`,
+			`[ \t]*(?:#[^\r\n]*)?(?:[\r\n][ \t]*(?:#[^\r\n]*)?)+\|`)
 	case formFish:
-		return agNotSafe(safe, `\s`, ``, `\s;&|)`+bt)
+		// set -x TQ_MODE strict off exports the list "strict off": after the
+		// word only blanks, then ; & | ) or a line end, may follow.
+		return agNotSafe(safe, `\s`, `[ \t]*`, ` \t\r\n;&|)`, ``)
 	case formCmd:
-		// set "TQ_MODE=strict": the closing quote ends the value.
+		// set stores the rest of the line, trailing blanks included (set
+		// TQ_MODE=strict & x stores "strict "), so the value must end at once:
+		// & | ) a line end, or the closing quote of set "TQ_MODE=strict".
 		safe = append(safe, `default"`, `strict"`)
-		return agNotSafe(safe, ``, ``, `\s;&|)`)
+		return agNotSafe(safe, ``, ``, `\r\n&|)`, ``)
 	default:
-		return agNotSafe(safe, ``, ``, `\s;&|)`+bt)
+		// No backtick: TQ_MODE=strict`cmd` joins the command's output on.
+		return agNotSafe(safe, ``, ``, `\s;&|)`, ``)
 	}
 }
 
