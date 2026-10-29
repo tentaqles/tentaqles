@@ -1,0 +1,19 @@
+{
+	"name": "Profile",
+	"properties": {
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"bigDataPool": { "referenceName": "acmespark", "type": "BigDataPoolReference" },
+		"metadata": { "language_info": { "name": "python" } },
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {},
+				"source": ["df.count()"],
+				"outputs": [
+					{ "output_type": "execute_result", "execution_count": 1, "data": { "text/plain": "42" }, "metadata": {} }
+				]
+			}
+		]
+	}
+}

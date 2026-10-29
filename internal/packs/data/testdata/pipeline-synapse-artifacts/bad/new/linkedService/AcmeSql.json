@@ -1,0 +1,10 @@
+{
+	"name": "AcmeSql",
+	"properties": {
+		"type": "AzureSqlDatabase",
+		"typeProperties": {
+			"connectionString": "Integrated Security=False;Encrypt=True;Data Source=acme-sql.database.windows.net;Initial Catalog=orders;User ID=tester;Password=notreal"
+		},
+		"connectVia": { "referenceName": "AutoResolveIntegrationRuntime", "type": "IntegrationRuntimeReference" }
+	}
+}

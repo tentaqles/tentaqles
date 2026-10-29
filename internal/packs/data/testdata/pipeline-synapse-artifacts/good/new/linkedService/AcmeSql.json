@@ -1,0 +1,15 @@
+{
+	"name": "AcmeSql",
+	"properties": {
+		"type": "AzureSqlDatabase",
+		"parameters": { "server": { "type": "string" } },
+		"typeProperties": {
+			"connectionString": "Integrated Security=False;Encrypt=True;Data Source=@{linkedService().server};Initial Catalog=orders;User ID=tester",
+			"password": {
+				"type": "AzureKeyVaultSecret",
+				"store": { "referenceName": "AcmeKeyVault", "type": "LinkedServiceReference" },
+				"secretName": "orders-sql-password"
+			}
+		}
+	}
+}

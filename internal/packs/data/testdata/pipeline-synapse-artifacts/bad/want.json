@@ -1,0 +1,34 @@
+{
+  "status": "fail",
+  "detail": "4 Synapse resources scanned",
+  "findings": [
+    {
+      "file": "linkedService/AcmeBlob.json",
+      "line": 7,
+      "level": "error",
+      "rule": "synapse-inline-secret",
+      "message": "property accountKey holds an inline credential; reference an Azure Key Vault secret (type AzureKeyVaultSecret) or use a managed identity"
+    },
+    {
+      "file": "linkedService/AcmeSql.json",
+      "line": 6,
+      "level": "error",
+      "rule": "synapse-inline-secret",
+      "message": "connectionString holds a password or key inline; keep the secret in Azure Key Vault (type AzureKeyVaultSecret) and leave it out of the string"
+    },
+    {
+      "file": "pipeline/LoadDW.json",
+      "line": 8,
+      "level": "warn",
+      "rule": "synapse-hardcoded-pool",
+      "message": "the dedicated SQL pool is hard-coded; take it from a pipeline parameter so dev and prod use their own pool"
+    },
+    {
+      "file": "sqlscript/TopCustomers.json",
+      "line": 7,
+      "level": "warn",
+      "rule": "synapse-hardcoded-pool",
+      "message": "the SQL script is bound to a named dedicated pool; parameterise the pool per environment"
+    }
+  ]
+}
