@@ -21,7 +21,9 @@ import (
 // Properties (or the whole decoded object when it has none). Non-Resource
 // changes (hook entries) are skipped. describe-change-set is paginated: a
 // result with a NextToken is one page only and is refused with
-// ErrIncomplete (a later page could hold a Remove).
+// ErrIncomplete (a later page could hold a Remove). So is a change set that
+// is not CREATE_COMPLETE and AVAILABLE (see changeSetReady); record it after
+// `aws cloudformation wait change-set-create-complete`.
 func ChangeSet(name string, raw []byte, o Options) ([]model.Resource, error) {
 	if err := checkSize(raw); err != nil {
 		return nil, err
@@ -37,6 +39,9 @@ func ChangeSet(name string, raw []byte, o Options) ([]model.Resource, error) {
 	if nt, ok := top["NextToken"]; ok && nt != nil && str(nt) != "" {
 		// The token itself is not repeated.
 		return nil, fmt.Errorf("%s: %w: change set has more pages (NextToken); run describe-change-set without --max-items or --no-paginate", name, ErrIncomplete)
+	}
+	if err := changeSetReady(top); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	var out []model.Resource
 	for i, item := range asList(top["Changes"]) {
@@ -65,6 +70,45 @@ func ChangeSet(name string, raw []byte, o Options) ([]model.Resource, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// changeSetReady refuses a change set that is not ready to execute. Right
+// after create-change-set, Status is CREATE_PENDING or CREATE_IN_PROGRESS,
+// ExecutionStatus is UNAVAILABLE and Changes is empty, yet the same change
+// set can later execute a Remove. So a Status that is present and not
+// CREATE_COMPLETE, or an ExecutionStatus that is present and not AVAILABLE,
+// is ErrIncomplete (fail closed; FAILED is refused too). Absent fields are
+// accepted, for hand-trimmed or older outputs.
+func changeSetReady(top map[string]any) error {
+	for _, f := range [...]struct{ key, want string }{
+		{"Status", "CREATE_COMPLETE"},
+		{"ExecutionStatus", "AVAILABLE"},
+	} {
+		v, ok := top[f.key]
+		if !ok || v == nil {
+			continue
+		}
+		if s, isStr := v.(string); isStr && strings.EqualFold(s, f.want) {
+			continue
+		}
+		return fmt.Errorf("%w: change set not ready (%s %s); run `aws cloudformation wait change-set-create-complete` before describe-change-set", ErrIncomplete, f.key, statusText(v))
+	}
+	return nil
+}
+
+// statusText shows a status value in an error: the value when it looks like
+// an AWS status enum, else a placeholder (never arbitrary input).
+func statusText(v any) string {
+	s, ok := v.(string)
+	if !ok || s == "" || len(s) > 40 {
+		return "(unrecognised)"
+	}
+	for _, c := range s {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_') {
+			return "(unrecognised)"
+		}
+	}
+	return s
 }
 
 func changeSetAction(action, replacement string) string {

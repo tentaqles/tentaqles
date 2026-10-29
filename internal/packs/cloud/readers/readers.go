@@ -37,7 +37,9 @@ var (
 	// or a status other than Succeeded).
 	ErrWhatIfFailed = errors.New("what-if operation failed")
 	// ErrIncomplete: the input is one page of a paginated result (a change
-	// set with a NextToken). Reading it as complete could hide a delete.
+	// set with a NextToken), or a change set that is not ready (Status not
+	// CREATE_COMPLETE, or ExecutionStatus not AVAILABLE). Reading it as
+	// complete could hide a delete.
 	ErrIncomplete = errors.New("IaC input is incomplete")
 )
 
