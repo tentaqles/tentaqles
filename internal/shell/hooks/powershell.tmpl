@@ -1,5 +1,24 @@
 # tq shell hook (powershell)
 if (-not (Test-Path Variable:global:__tq_prev_prompt)) { $global:__tq_prev_prompt = $function:prompt }
-function global:__tq_hook { try { $o = (& '{{.Bin}}' env --shell powershell | Out-String); if ($o.Trim()) { Invoke-Expression $o } } catch { } }
+function global:__tq_hook { if ($env:TQ_MODE -eq 'off' -or $env:TQ_ENABLED -eq '0') { return }; try { $o = (& '{{.Bin}}' env --shell powershell | Out-String); if ($o.Trim()) { Invoke-Expression $o } } catch { } }
 function global:prompt { __tq_hook; & $global:__tq_prev_prompt }
+function global:tq {
+  if ($args.Count -ge 1 -and $args[0] -eq 'off') {
+    $o = (& '{{.Bin}}' env --off --shell powershell | Out-String); if ($LASTEXITCODE -ne 0) { return }
+    if ($o.Trim()) { Invoke-Expression $o }
+    Write-Host 'tq: off in this window - identity cleared, guard off, main logins in use. Run: tq on'
+    return
+  }
+  if ($args.Count -ge 1 -and $args[0] -eq 'on') {
+    Remove-Item Env:TQ_MODE -ErrorAction SilentlyContinue
+    __tq_hook
+    Write-Host 'tq: on - identity re-applied for this folder'
+    return
+  }
+  & '{{.Bin}}' @args
+}
+function global:claude { if ($env:TQ_MODE -eq 'off') { & '{{.Bin}}' run --off -- claude @args } else { & '{{.Bin}}' run . -- claude @args } }
+function global:codex  { if ($env:TQ_MODE -eq 'off') { & '{{.Bin}}' run --off -- codex @args }  else { & '{{.Bin}}' run . -- codex @args } }
+function global:claude-off { & '{{.Bin}}' run --off -- claude @args }
+function global:codex-off  { & '{{.Bin}}' run --off -- codex @args }
 __tq_hook

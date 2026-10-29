@@ -1,0 +1,7 @@
+Remove-Item -ErrorAction SilentlyContinue Env:CLAUDE_CONFIG_DIR
+Remove-Item -ErrorAction SilentlyContinue Env:GH_CONFIG_DIR
+Remove-Item -ErrorAction SilentlyContinue Env:TQ_WS
+Remove-Item -ErrorAction SilentlyContinue Env:TQ_WS_ROOT
+Remove-Item -ErrorAction SilentlyContinue Env:__TQ_STATE
+$env:TQ_MODE = 'off'
+$env:TQ_SOMETHING = 'C:\orig'

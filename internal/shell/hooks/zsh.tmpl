@@ -1,5 +1,16 @@
 # tq shell hook (zsh)
-__tq_hook() { local __o; __o="$("{{.Bin}}" env --shell zsh 2>/dev/null)"; if [ -n "$__o" ]; then eval "$__o"; fi; return 0; }
+__tq_hook() { case "${TQ_MODE:-}" in off) return 0;; esac; [ "${TQ_ENABLED:-1}" = "0" ] && return 0; local __o; __o="$("{{.Bin}}" env --shell zsh 2>/dev/null)"; if [ -n "$__o" ]; then eval "$__o"; fi; return 0; }
+tq() {
+  case "${1:-}" in
+    off) local __o; __o="$("{{.Bin}}" env --off --shell zsh)" || return $?; eval "$__o"; echo 'tq: off in this window - identity cleared, guard off, main logins in use. Run: tq on'; return 0;;
+    on)  unset TQ_MODE; __tq_hook; echo 'tq: on - identity re-applied for this folder'; return 0;;
+    *)   "{{.Bin}}" "$@";;
+  esac
+}
+claude() { if [ "${TQ_MODE:-}" = off ]; then "{{.Bin}}" run --off -- claude "$@"; else "{{.Bin}}" run . -- claude "$@"; fi; }
+codex()  { if [ "${TQ_MODE:-}" = off ]; then "{{.Bin}}" run --off -- codex "$@";  else "{{.Bin}}" run . -- codex "$@";  fi; }
+claude-off() { "{{.Bin}}" run --off -- claude "$@"; }
+codex-off()  { "{{.Bin}}" run --off -- codex "$@"; }
 autoload -Uz add-zsh-hook 2>/dev/null
 if (( ${precmd_functions[(I)__tq_hook]} == 0 )); then precmd_functions+=(__tq_hook); fi
 __tq_hook

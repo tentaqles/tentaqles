@@ -1,0 +1,7 @@
+unset CLAUDE_CONFIG_DIR
+unset GH_CONFIG_DIR
+unset TQ_WS
+unset TQ_WS_ROOT
+unset __TQ_STATE
+export TQ_MODE='off'
+export TQ_SOMETHING='C:\orig'
