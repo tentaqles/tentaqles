@@ -34,7 +34,7 @@ var packEv = map[string]string{"model_card": "sha256:aa"}
 // binding; --choice alone never answers it.
 func TestHubAnswerPackApprovalNeedsTheTerminal(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  ml: { enabled: true }\n")
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	prev, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(prev) })
 	os.Chdir(ws)
@@ -314,7 +314,7 @@ func TestHookRound3Bypasses(t *testing.T) {
 // decision stays pending for both the old and the new target.
 func TestHubAnswerRefusesARewrittenLedger(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  ml: { enabled: true }\n")
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	prev, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(prev) })
 	os.Chdir(ws)

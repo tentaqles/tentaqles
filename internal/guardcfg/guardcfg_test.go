@@ -51,12 +51,12 @@ func TestBrokenGlobalFileAppliesNothing(t *testing.T) {
 	if _, err := Load(); err == nil {
 		t.Fatal("an invalid action must not load")
 	}
-	e := Resolve(nil, "")
+	e := ResolveActions(nil, "")
 	if e.GlobalErr == nil || e.Off("tq/cloud-delete") {
 		t.Fatalf("a broken global file must apply nothing: %+v", e)
 	}
 	os.WriteFile(Path(), []byte("disable: [unterminated\n"), 0o600)
-	if e := Resolve(nil, ""); e.GlobalErr == nil || len(e.Disable) != 0 {
+	if e := ResolveActions(nil, ""); e.GlobalErr == nil || len(e.Disable) != 0 {
 		t.Fatalf("unparseable file must apply nothing: %+v", e)
 	}
 }

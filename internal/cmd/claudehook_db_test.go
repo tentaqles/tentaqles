@@ -33,7 +33,7 @@ func dbHook(t *testing.T, ws string) func(string) (int, string) {
 }
 
 func TestHookDBMigrateEnv(t *testing.T) {
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	t.Setenv("SUPABASE_PROJECT_ID", "")
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", dbHookManifest)
 	hook := dbHook(t, ws)
@@ -69,7 +69,7 @@ func TestHookDBMigrateEnv(t *testing.T) {
 }
 
 func TestHookDBGuardsWithoutEnvironments(t *testing.T) {
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "guard: { disable: [tq/example-cmd-apply] }\npacks:\n  db:\n    migrations: [{path: supabase/migrations, engine: postgres}]\n")
 	hook := dbHook(t, ws)
 	if code, out := hook("supabase db push"); code != 0 || !strings.Contains(out, "tq/remote-migration") || strings.Contains(out, "tq/db-migrate-env") {
@@ -86,7 +86,7 @@ func TestHookDBGuardsWithoutEnvironments(t *testing.T) {
 }
 
 func TestHookDBApprovedMigrationOnce(t *testing.T) {
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	t.Setenv("SUPABASE_PROJECT_ID", "")
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", dbHookManifest)
 	os.MkdirAll(filepath.Join(ws, "supabase", "migrations"), 0o755)
@@ -129,7 +129,7 @@ func TestHookDBApprovedMigrationOnce(t *testing.T) {
 // tq pack db approve only asks: an agent may run it; there is no db
 // executor, and any `tq pack db ... apply` stays denied as human-only.
 func TestHookDBApproveOnlyAsks(t *testing.T) {
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", dbHookManifest)
 	hook := dbHook(t, ws)
 	if code, out := hook("tq pack db approve --env prod"); code != 0 || strings.Contains(out, "tq/human-answer") {

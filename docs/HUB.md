@@ -105,9 +105,11 @@ out by one run at a time.
 
 Every round runs `claude -p --output-format stream-json --verbose` in the card's project folder with the
 workspace's environment plan (as `tq run` builds it), `TENTAQLES_HEADLESS=1` and
-`TQ_HUB_TASK={"hub","workspace","kind","external"}`; never with a hub token, never with
-`TENTAQLES_HEADLESS_CHILD`, never with `--dangerously-skip-permissions` unless
-`tq allow --bypass` was run for the workspace. The prompt goes to `claude` on stdin and
+`TQ_HUB_TASK={"hub","workspace","kind","external"}` and `TQ_MODE` set to the workspace's
+`guard.headless_mode` (see [Guard mode of a run](#guard-mode-of-a-run)); never with a hub token,
+never with `TENTAQLES_HEADLESS_CHILD`, never with `--dangerously-skip-permissions` unless the
+manifest's `claude.permission_mode` is `bypass` and the workspace has a mode grant
+(`tq allow --mode <ws> relaxed|custom`). The prompt goes to `claude` on stdin and
 the tools a `permission` answer allowed go in a `--settings` file; nothing free-text is
 put on the command line (a resumed round adds `--resume=<session id>`).
 The hub reads the events as they arrive and writes one masked line per step to the run
@@ -246,6 +248,31 @@ another workspace (recorded in `__TQ_STATE`) is undone and every provider config
 (`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`, cloud config homes and the rest of the catalog) is
 removed before the workspace's own are applied, so `tq hub serve --all` started from one
 client's shell never hands another client's run that client's identity.
+
+## Guard mode of a run
+
+A run uses the workspace's `guard.headless_mode`, not its interactive mode:
+
+```yaml
+guard:
+  mode: relaxed          # interactive sessions
+  headless_mode: strict  # hub runs: default (when absent), strict, relaxed or custom
+```
+
+The runner sets `TQ_MODE` to that value for every round (`default` when it is
+absent or not a stored mode) and drops a `TQ_MODE` or `TQ_ENABLED` inherited
+from the shell that started the hub. A value looser than `default` still needs
+the workspace's grant: `relaxed` for a run needs both
+`headless_mode: relaxed` in the trusted manifest and `tq allow --mode <ws>
+relaxed`. Without the grant the run is clamped to `default`. Runs are started by
+tq, not by a tool call, so the nested-agent rule does not apply to the runner's
+own launch. See `CLAUDE-HOOK.md`, "Guard modes".
+
+The page `/guard` shows the resolved mode, the category table with each value's
+source, the ceiling and the 24 h counts of skipped confirms and blocks,
+read-only: "change it with `tq mode edit` or the desktop app". It has no form and
+no POST route, because a web form is scriptable from an agent's `curl` and the hub
+API has no proof of a human. The nav links it as **Guard**, next to Settings.
 
 ## Review page
 

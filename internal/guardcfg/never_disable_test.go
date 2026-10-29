@@ -26,22 +26,24 @@ func TestNeverDisableIgnoresEveryLayer(t *testing.T) {
 	}
 }
 
-// M4: never-disable ids ignore guard.actions too, are always asked and
-// cannot be superseded.
+// M4, since spec E: the never-disable ids are locked. guard.actions may only
+// make them stricter, and they cannot be superseded.
 func TestNeverDisableIgnoresActions(t *testing.T) {
 	m := &manifest.Manifest{Guard: manifest.Guard{Actions: map[string]policy.Action{"tq/hub-store-write": policy.Ask, "tq/iac-apply": policy.Deny}}}
-	e := Merge(File{Actions: map[string]policy.Action{"tq/pack-config-change": policy.Deny}}, nil, m, "acme")
+	e := Merge(File{Actions: map[string]policy.Action{"tq/human-answer": policy.Ask}}, nil, m, "acme")
 	if _, ok := e.Actions["tq/hub-store-write"]; ok {
 		t.Fatal("guard.actions softened tq/hub-store-write")
 	}
-	if _, ok := e.Actions["tq/pack-config-change"]; ok {
-		t.Fatal("the global file changed tq/pack-config-change")
+	if _, ok := e.Actions["tq/human-answer"]; ok {
+		t.Fatal("the global file softened tq/human-answer")
 	}
 	if e.Actions["tq/iac-apply"] != policy.Deny {
 		t.Fatal("other ids keep their actions")
 	}
-	if Skippable(&manifest.Manifest{}, []string{"tq/pack-config-change"}) || Skippable(&manifest.Manifest{}, []string{"tq/hub-store-write"}) {
-		t.Fatal("unattended mode must never skip them")
+	for _, id := range []string{"tq/hub-store-write", "tq/pack-config-change", "tq/human-answer"} {
+		if Categories[id] != CatSelfProtection || !NeverDisable(id) {
+			t.Fatalf("%s: %q, want locked self-protection", id, Categories[id])
+		}
 	}
 	for _, id := range []string{"tq/hub-store-write", "tq/secret-store-read", "tq/env-file-shell", "tq/guard-file-write", "tq/settings-widen"} {
 		if !Unsupersedable(id) {
@@ -55,7 +57,7 @@ func TestNeverDisableIgnoresActions(t *testing.T) {
 
 // Final review, security m4: tq/secret-store-shell guards the pack ledger
 // signing key, the root of every pack approval, so no layer switches it off
-// or softens it, and unattended mode always asks it.
+// or softens it: it is in the locked secrets group.
 func TestSecretStoreShellIsNeverDisable(t *testing.T) {
 	const id = "tq/secret-store-shell"
 	m := &manifest.Manifest{Guard: manifest.Guard{Disable: []string{id}, Actions: map[string]policy.Action{id: policy.Ask}}}
@@ -66,11 +68,7 @@ func TestSecretStoreShellIsNeverDisable(t *testing.T) {
 	if _, ok := e.Actions[id]; ok {
 		t.Fatal("softened")
 	}
-	found := false
-	for _, a := range AlwaysAsk {
-		found = found || a == id
-	}
-	if !found {
-		t.Fatal("not in AlwaysAsk")
+	if Categories[id] != CatSecrets {
+		t.Fatalf("category %q, want secrets (locked)", Categories[id])
 	}
 }

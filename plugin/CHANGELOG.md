@@ -6,6 +6,25 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [0.15.0] — 2026-10-29
 
+Guard modes (tq spec E). Needs a `tq` build with `tq mode`.
+
+- **`TQ_MODE=off` means no tq.** `scripts/tq_hook.sh` and `scripts/tq_run.sh` exit 0 as their
+  first statement under `TQ_MODE=off` (exactly; `TQ_ENABLED=0` only skips shell activation), before resolving tq or Python, so the
+  fail-closed "no tq, no Python" block never fires in an off session (`claude-off`, `tq off`).
+  Skill scripts that run through `tq_run.sh` do nothing in such a session or window. Covered by
+  `tests/test_tq_off.py`.
+- **`/tentaqles:guard` knows the modes.** It shows `tq mode` (default, relaxed, strict, custom,
+  the locked groups identity, secrets, self-protection and privacy, the grant) and explains
+  `off`. Mode changes (`tq mode set|toggle|override|edit`, `tq allow --mode`) are human-only, so
+  the skill prints the command for the user and never runs it; single rules still go through
+  `tq guard`, which asks.
+- **CLAUDE.md.** The guard mode replaces the deprecated unattended mode in the conventions:
+  skills must not rely on a confirm or a block, the locked groups always hold, and skills never
+  start an off or loosened nested agent.
+- **Tests.** `tests/test_guard_modes_docs.py` checks that the docs, this changelog and the
+  guard skill describe the modes, and that the docs' categories table matches
+  `internal/guardcfg/categories.go`.
+
 Packs (tq specs C and D, releases 3 and 4): data, ml, cloud and db guard packs. Needs a
 `tq` build with `tq pack` (`tq pack check`, `list`, `doctor`, `crew`, `approvals`,
 `baseline` and the `data`, `ml`, `cloud` and `db` subcommands). See `docs/PACKS.md`.
@@ -31,29 +50,9 @@ Packs (tq specs C and D, releases 3 and 4): data, ml, cloud and db guard packs. 
 - **Docs.** The `auth-security`, `db-migration` and other existing skills name the pack
   checks where they apply.
 
-**tq changes this release needs to know about** (the tq release notes):
-
-- **New core rules, always on with no pack enabled, never-disable:** `tq/hub-store-write`
-  (now a core rule; `tq guard list` no longer shows it as owned by cloud or db),
-  `tq/human-answer`, `tq/pack-config-change` and `tq/secret-store-shell`. A hook-time
-  check denies agent shell and file access to `$TQ_HOME` `hub/`, `packs/`, `build-gate/`,
-  `trust/`, `guard/`, `guard.yaml`, `config.yaml` and `audit.jsonl`, in any spelling; only
-  a call of the running tq with a subcommand that never runs a child is exempt.
-- **Pack approvals are answered from the terminal only:** `tq hub answer` needs a TTY
-  and the typed binding, the answer is signed with a key in the OS keychain, and the board
-  refuses it. `packs-keychain-missing` in `tq pack doctor` means no approval can be
-  granted on that machine.
-- **Unknown global flags floor to the strictest environment** in the cloud and db gates
-  (the supabase CLI; terraform/tofu, pulumi, cdk/cdktf, az, aws and sam). Put the flag
-  after the subcommand, or report the missing flag (see `docs/PACKS.md`, Known behaviours).
-- **Telemetry opt-outs:** every pack tool gets `DO_NOT_TRACK=1`; dbt, tflint, trivy, dvc
-  and dagster also get their own switches. sqlfluff, squawk, conftest, cfn-lint, bicep,
-  datacontract, ruff, uv and poetry have no opt-out tq could confirm and get only
-  `DO_NOT_TRACK=1`.
-- **Build-gate approve now runs `tq pack list`,** even with no pack configured: it is
-  refused when the manifest is untrusted or invalid, or `tq-packs.yaml` has problems.
-- **Tools get a filtered environment;** a credential reaches a tool only through a name its
-  check declares, and never a repo-local binary.
+The tq side of the packs (always-on core rules, terminal-only approvals, the strict floor for
+unknown global flags, telemetry opt-outs, the build-gate change) is in the repository
+[`CHANGELOG.md`](../CHANGELOG.md).
 
 ## [0.14.0] — 2026-10-28
 

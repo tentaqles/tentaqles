@@ -1,11 +1,16 @@
-// Package codexcfg renders tq's unattended settings into Codex's config,
-// leaving everything the user wrote as it was.
+// Package codexcfg compiles tq's guard mode into Codex's config (spec E §12),
+// leaving everything the user wrote as it was:
 //
-// Workspace-wide setups put a marked block of top-level keys at the head of
-// config.toml. Projects-only setups write a Codex profile file,
-// $CODEX_HOME/tq-unattended.config.toml, which `codex --profile tq-unattended`
-// layers on top of config.toml (Codex 0.154 and the current docs use profile
-// files rather than [profiles.<name>] tables).
+//   - a marked block of top-level keys (approval_policy, sandbox_mode) at the
+//     head of config.toml, for the workspace-wide mode;
+//   - rules/tq.rules, tq's own exec-policy file (prompt and forbidden prefix
+//     rules); the user's other rules/*.rules files are never touched;
+//   - tq's entries in hooks.json: PreToolUse runs `tq claude-hook pre-tool-use
+//     --agent codex`, SessionStart `tq claude-hook session-start --agent codex`.
+//
+// Per-project modes are carried by the launch flags (Plan.Flags), which `tq
+// run` computes from the cwd. The old projects-only profile file,
+// tq-unattended.config.toml, is removed when tq wrote it.
 package codexcfg
 
 import (
@@ -14,14 +19,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/tentaqles/tentaqles/internal/manifest"
 )
 
 const (
-	Profile     = "tq-unattended"
-	beginMarker = "# >>> managed by tq (unattended): edit with tq unattended, not by hand"
-	endMarker   = "# <<< managed by tq (unattended)"
+	beginMarker = "# >>> managed by tq (guard mode): edit with tq mode, not by hand"
+	endMarker   = "# <<< managed by tq (guard mode)"
+
+	// The unattended-era markers and profile file, read for removal only.
+	legacyProfile = "tq-unattended"
+	legacyBegin   = "# >>> managed by tq (unattended): edit with tq unattended, not by hand"
+	legacyEnd     = "# <<< managed by tq (unattended)"
 )
 
 var (
@@ -29,41 +36,37 @@ var (
 	topKeyRe = regexp.MustCompile(`^\s*(approval_policy|sandbox_mode)\s*=`)
 )
 
+// Want is what Render brings a CODEX_HOME in line with. A nil Plan removes
+// everything tq wrote.
 type Want struct {
-	Top, Profile bool
-	Sandbox      string
+	Plan *Plan
+	// Hook writes tq's hooks.json entries (only with a Plan).
+	Hook bool
 }
 
+// Result lists the files Render changed (or would change, on a dry run) and
+// the parts it left alone because the user owns them.
 type Result struct {
-	Path     string
-	Changed  bool
-	Conflict string
+	Changed   []string
+	Conflicts []string // "<what>: <why>"
 }
 
-// Desired maps the manifest block to what the Codex config should carry.
-func Desired(m *manifest.Manifest, bypassTrusted bool) Want {
-	if m == nil || !bypassTrusted || !m.Guard.Unattended.Configured() {
-		return Want{}
-	}
-	u := m.Guard.Unattended
-	return Want{Top: u.Workspace, Profile: !u.Workspace, Sandbox: u.Sandbox()}
+func keys(approval, sandbox string) string {
+	return fmt.Sprintf("approval_policy = %q\nsandbox_mode = %q\n", approval, sandbox)
 }
 
-func keys(sandbox string) string {
-	return fmt.Sprintf("approval_policy = \"never\"\nsandbox_mode = %q\n", sandbox)
-}
-
-// strip removes every managed block (marker lines included). ok is false when
-// a begin marker has no end marker after it: nothing is then safe to remove.
+// strip removes every managed block, current or legacy (marker lines
+// included). ok is false when a begin marker has no end marker after it:
+// nothing is then safe to remove.
 func strip(s string) (string, bool) {
 	var out []string
 	in := false
 	for _, l := range strings.SplitAfter(s, "\n") {
 		t := strings.TrimRight(l, "\r\n")
 		switch {
-		case t == beginMarker:
+		case t == beginMarker || t == legacyBegin:
 			in = true
-		case t == endMarker:
+		case t == endMarker || t == legacyEnd:
 			in = false
 		case !in:
 			out = append(out, l)
@@ -72,11 +75,11 @@ func strip(s string) (string, bool) {
 	return strings.Join(out, ""), !in
 }
 
-// ownedProfile reports whether s is exactly the block tq writes into the
-// profile file, for any allowed sandbox, with nothing else in it.
+// ownedProfile reports whether s is exactly the block tq's unattended mode
+// wrote into the profile file, for any sandbox, with nothing else in it.
 func ownedProfile(s string) bool {
 	for _, sb := range []string{"read-only", "workspace-write", "danger-full-access"} {
-		if s == beginMarker+"\n"+keys(sb)+endMarker+"\n" {
+		if s == legacyBegin+"\n"+keys("never", sb)+legacyEnd+"\n" {
 			return true
 		}
 	}
@@ -86,12 +89,12 @@ func ownedProfile(s string) bool {
 // OwnsProfile reports whether dir holds a tq-unattended profile file that tq
 // wrote and nobody edited.
 func OwnsProfile(dir string) bool {
-	b, err := os.ReadFile(filepath.Join(dir, Profile+".config.toml"))
+	b, err := os.ReadFile(filepath.Join(dir, legacyProfile+".config.toml"))
 	return err == nil && ownedProfile(string(b))
 }
 
-func writeAtomic(dir, p, content string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+func writeAtomic(p, content string) error {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
 	tmp := p + ".tq.tmp"
@@ -105,89 +108,125 @@ func writeAtomic(dir, p, content string) error {
 	return nil
 }
 
-// Render brings dir/config.toml and dir/tq-unattended.config.toml in line with
-// w. A user's own top-level approval_policy/sandbox_mode, or their own
-// tq-unattended profile file, is a conflict: nothing is written and Conflict
-// says why.
-func Render(dir string, w Want, dryRun bool) (Result, error) {
-	p := filepath.Join(dir, "config.toml")
-	pp := filepath.Join(dir, Profile+".config.toml")
-	res := Result{Path: p}
+// change is one file operation Render plans: content to write, or remove.
+type change struct {
+	path    string
+	content string
+	remove  bool
+}
 
-	raw, err := os.ReadFile(p)
-	if err != nil && !os.IsNotExist(err) {
+func readOpt(p string) (string, bool, error) {
+	b, err := os.ReadFile(p)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return string(b), true, nil
+}
+
+// Render brings dir (a CODEX_HOME) in line with w. Each part is independent:
+// a user-owned key or file is a conflict for that part only, and the others
+// are still written, so a user approval_policy never keeps tq's hook out.
+func Render(dir string, w Want, dryRun bool) (Result, error) {
+	var res Result
+	var plan []change
+
+	// config.toml: the top-level block.
+	p := filepath.Join(dir, "config.toml")
+	cur, _, err := readOpt(p)
+	if err != nil {
 		return res, err
 	}
-	cur := string(raw)
-	rest, ok := strip(cur)
-	if !ok {
-		res.Conflict = "tq's managed block in " + p + " has no end marker; fix it by hand"
-		return res, nil
-	}
-	if w.Top {
-		for _, l := range strings.Split(rest, "\n") {
-			if tableRe.MatchString(l) {
-				break
+	if rest, ok := strip(cur); !ok {
+		res.Conflicts = append(res.Conflicts, "config.toml: tq's managed block in "+p+" has no end marker; fix it by hand")
+	} else {
+		conflict := ""
+		if w.Plan != nil {
+			for _, l := range strings.Split(rest, "\n") {
+				if tableRe.MatchString(l) {
+					break
+				}
+				if topKeyRe.MatchString(l) {
+					conflict = "config.toml already sets " + strings.TrimSpace(strings.SplitN(l, "=", 2)[0]) + "; remove it to let tq manage it (" + p + ")"
+					break
+				}
 			}
-			if topKeyRe.MatchString(l) {
-				res.Conflict = "config.toml already sets " + strings.TrimSpace(strings.SplitN(l, "=", 2)[0]) + "; remove it to let tq manage it"
-				return res, nil
+		}
+		if conflict != "" {
+			res.Conflicts = append(res.Conflicts, conflict)
+		} else {
+			next := rest
+			if w.Plan != nil {
+				next = beginMarker + "\n" + keys(w.Plan.Approval, w.Plan.Sandbox) + endMarker + "\n" + rest
+			}
+			if next != cur {
+				plan = append(plan, change{path: p, content: next, remove: next == ""})
 			}
 		}
 	}
-	next := rest
-	if w.Top {
-		next = beginMarker + "\n" + keys(w.Sandbox) + endMarker + "\n" + next
+
+	// The legacy profile file: removed when tq wrote it, else left alone.
+	if OwnsProfile(dir) {
+		plan = append(plan, change{path: filepath.Join(dir, legacyProfile+".config.toml"), remove: true})
 	}
 
-	praw, perr := os.ReadFile(pp)
-	if perr != nil && !os.IsNotExist(perr) {
-		return res, perr
+	// rules/tq.rules.
+	rp := filepath.Join(dir, filepath.FromSlash(RulesFile))
+	rcur, rexists, err := readOpt(rp)
+	if err != nil {
+		return res, err
 	}
-	pexists := perr == nil
-	ours := pexists && ownedProfile(string(praw))
+	ours := rexists && strings.HasPrefix(strings.ReplaceAll(rcur, "\r\n", "\n"), rulesBegin+"\n")
 	switch {
-	case pexists && !ours && strings.Contains(string(praw), beginMarker):
-		res.Conflict = Profile + ".config.toml has content besides tq's managed block; remove the extra lines to let tq manage it"
-		res.Path = pp
-		return res, nil
-	case pexists && !ours && w.Profile:
-		res.Conflict = Profile + ".config.toml already exists and is not managed by tq"
-		res.Path = pp
-		return res, nil
-	}
-	pnext := ""
-	if w.Profile {
-		pnext = beginMarker + "\n" + keys(w.Sandbox) + endMarker + "\n"
+	case rexists && !ours:
+		if w.Plan != nil {
+			res.Conflicts = append(res.Conflicts, "tq.rules: "+rp+" exists and is not written by tq; rename it to let tq manage it")
+		}
+	case w.Plan != nil:
+		if next := RenderRules(w.Plan.Mode, w.Plan.Rules); next != rcur {
+			plan = append(plan, change{path: rp, content: next})
+		}
+	case ours:
+		plan = append(plan, change{path: rp, remove: true})
 	}
 
-	cfgChanged := next != cur
-	profChanged := (w.Profile && (!pexists || string(praw) != pnext)) || (!w.Profile && ours)
-	if !cfgChanged && !profChanged {
-		return res, nil
+	// hooks.json.
+	hp := filepath.Join(dir, HooksFile)
+	hcur, hexists, err := readOpt(hp)
+	if err != nil {
+		return res, err
 	}
-	res.Changed = true
-	if !cfgChanged && profChanged {
-		res.Path = pp
+	wantHook := w.Plan != nil && w.Hook
+	if hexists || wantHook {
+		next, remove, conflict := planHooks([]byte(hcur), hexists, wantHook)
+		switch {
+		case conflict != "":
+			res.Conflicts = append(res.Conflicts, conflict+" ("+hp+")")
+		case remove:
+			if hexists {
+				plan = append(plan, change{path: hp, remove: true})
+			}
+		case !hexists || !sameJSON([]byte(hcur), next):
+			plan = append(plan, change{path: hp, content: string(next)})
+		}
+	}
+
+	for _, c := range plan {
+		res.Changed = append(res.Changed, c.path)
 	}
 	if dryRun {
 		return res, nil
 	}
-	if cfgChanged {
-		if next == "" {
-			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+	for _, c := range plan {
+		if c.remove {
+			if err := os.Remove(c.path); err != nil && !os.IsNotExist(err) {
 				return res, err
 			}
-		} else if err := writeAtomic(dir, p, next); err != nil {
-			return res, err
+			continue
 		}
-	}
-	if profChanged {
-		if w.Profile {
-			if err := writeAtomic(dir, pp, pnext); err != nil {
-				return res, err
-			}
-		} else if err := os.Remove(pp); err != nil && !os.IsNotExist(err) {
+		if err := writeAtomic(c.path, c.content); err != nil {
 			return res, err
 		}
 	}

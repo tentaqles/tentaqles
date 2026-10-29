@@ -6,11 +6,12 @@ package cmd
 // claudehook_policy.go runs them for workspaces with packs.db enabled.
 
 import (
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/db/gate"
 )
 
 func init() {
-	packs.RegisterGuard(packs.Guard{ID: gate.IDMigrate, Pack: "db", Events: gate.Events, Supersedes: gate.Supersedes, Check: gate.MigrateEnv})
-	packs.RegisterGuard(packs.Guard{ID: gate.IDRestore, Default: "deny", Pack: "db", Events: gate.Events, Check: gate.RestoreTarget})
+	packs.RegisterGuard(packs.Guard{ID: gate.IDMigrate, Category: guardcfg.CatDBDestructive, Pack: "db", Events: gate.Events, Supersedes: gate.Supersedes, Check: gate.MigrateEnv})
+	packs.RegisterGuard(packs.Guard{ID: gate.IDRestore, Category: guardcfg.CatDBDestructive, Default: "deny", Pack: "db", Events: gate.Events, Check: gate.RestoreTarget})
 }

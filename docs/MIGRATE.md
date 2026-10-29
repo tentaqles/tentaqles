@@ -161,15 +161,21 @@ if ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue))
 ```
 
 Everything outside the located block survives byte for byte — BOM, CRLF,
-unrelated aliases and functions. Inside it, two things are carried over:
+unrelated aliases and functions. Inside it, one thing is carried over:
 
 - **The legacy `TQ_ENABLED=0` branch, verbatim**, wrapped in
   `# >>> tq-legacy >>>` / `# <<< tq-legacy <<<`. See the kill switch section
   below.
-- **Your `claude` wrapper function**, under the same `if ($env:TQ_ENABLED
-  -ne '0')` guard it used to sit behind. Without the guard, `TQ_ENABLED=0`
-  would hand control to the legacy launcher and then have the legacy
-  launcher's own `claude` router clobbered by the carried wrapper.
+
+**Your `claude` wrapper function is not carried over.** It would replace the
+`claude` launcher that `tq activate` defines, which already starts claude in
+bypass under tq's guard mode. The plan prints a warning for it. An older
+`tq migrate` did carry it, after the managed block under the comment
+`# carried over by tq migrate; ...`: the shell step now removes that block
+(change `remove-carried-wrapper`, journalled like every write), but only
+when it is exactly the text migrate wrote. A wrapper you edited or wrote
+yourself is never touched; `tq doctor` reports it as `claude-alias-shadow`
+with the line to delete.
 
 **What gets dropped: the hand-rolled PATH lines.** The managed block does
 not put `%LOCALAPPDATA%\tentaqles\bin` on `PATH`; `tq`'s installer puts it on
@@ -320,8 +326,7 @@ if ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue))
 ```
 
 So `$env:TQ_ENABLED = '0'` in a new shell gives you exactly the pre-`tq`
-behaviour, and unsetting it gives you `tq`. Both `tq`'s managed block and
-the carried `claude` wrapper honour the same variable. bash and zsh have no
+behaviour, and unsetting it gives you `tq`. bash and zsh have no
 legacy branch to preserve — their hand-installed block was a single
 conditional — so there `TQ_ENABLED=0` simply switches `tq` off, with nothing
 to fall back to.
@@ -330,10 +335,145 @@ to fall back to.
 `TQ_ENABLED=0`, so a shell you left switched off does not look like a broken
 migration.
 
+`tq off` and `tq on` (see `CLAUDE-HOOK.md`, "Launchers") now do the same job
+in the window you are in, without opening a new shell: `tq off` clears the
+identity env, pauses the prompt hook and makes `claude` start with no tq;
+`tq on` brings tq back on the next prompt. `claude-off` does it for one
+launch. The `TQ_ENABLED=0` branch keeps working, with its one meaning: no
+shell activation (no `tq env`, no identity on the prompt). The Claude Code
+hooks and the plugin's skill scripts still run under it, so a `claude`
+started from such a shell is still guarded; only `TQ_MODE=off` (set by
+`tq off`, `claude-off` and `tq run --off`) switches them off.
+
 One honest caveat: `tq` cannot verify the preserved branch still works. It
 kept your bytes, it did not test them. Nothing removes the branch
 automatically either — it is your fallback, and it stays until you delete it
 by hand.
+
+## Migrating from unattended mode
+
+Unattended mode (`guard.unattended`, `tq unattended`) is replaced by the
+**relaxed** guard mode, one of five modes (see `CLAUDE-HOOK.md`, "Guard
+modes"). Nothing has to be done by hand: tq reads the old settings as the new
+ones. This section says what maps to what, and what behaves differently.
+
+### Manifest
+
+The legacy block is read in memory; the file is not touched until the next
+`tq mode` write, which rewrites it in the new form, re-trusts the manifest
+and carries the grant.
+
+| Legacy (`guard.unattended`) | Read as |
+|---|---|
+| `workspace: true` | `guard.mode: relaxed` |
+| `projects: [demo-todo]` | `guard.projects.demo-todo.mode: relaxed` |
+| `keep_asking: [ids]` | `guard.rules_override: {id: rule}` for each id |
+| no `keep_asking` key | the old default: `tq/iac-apply` and `tq/remote-migration` become `rule` (they keep asking) |
+| `keep_asking: []` | nothing |
+| a PII id in `keep_asking` (`tq/commit-pii`, `tq/push-pii`, `tq/text-pii`, `tq/pii-fixture-dump`) | dropped: privacy is locked, so the entry is redundant |
+| `codex_sandbox: <s>` | `guard.codex.sandbox: <s>` |
+| a custom rule with `unattended: enforce` | no category, so always applied (the key is deprecated: use `category:`) |
+
+A manifest that has both `guard.unattended` and `guard.mode` fails to load.
+
+```yaml
+# before (legacy)                       # after the next tq mode write
+guard:                                  guard:
+  unattended:                             projects:
+    projects: [demo-todo]                   demo-todo: { mode: relaxed }
+    codex_sandbox: workspace-write        rules_override:
+                                            tq/iac-apply: rule
+                                            tq/remote-migration: rule
+                                          codex:
+                                            sandbox: workspace-write
+```
+
+### Grants
+
+A legacy `$TQ_HOME/trust/<hash>.bypass` file is read as a relaxed grant. The
+first hook session that reads it, or the next tq manifest writer, converts
+it to `<hash>.mode`. `tq allow --bypass <ws>` is a deprecated alias of
+`tq allow --mode <ws> relaxed` and prints
+`deprecated: use tq allow --mode <ws> relaxed`; it is human-only now (it
+refuses agent sessions and needs a terminal).
+
+After a hand edit of the manifest, a plain `tq allow <ws>` drops the grant
+and says `mode grant dropped (was relaxed): run tq allow --mode <ws> relaxed`.
+One gap: a `.bypass` file that no hook session read since the upgrade, then
+a hand edit, drops silently. The stale file is harmless: it is keyed to a
+hash that no longer matches.
+
+### Commands
+
+Each deprecated alias prints `deprecated: use tq mode …` to stderr.
+
+| Deprecated | Use instead |
+|---|---|
+| `tq unattended on [--project D] [--codex-sandbox S]` | `tq mode set relaxed [--project D]` (and `guard.codex.sandbox`) |
+| `tq unattended off [--project D]` | `tq mode set default` for the scope; for the workspace it also resets every relaxed project |
+| `tq unattended status` | `tq mode` |
+| `tq unattended log [--since 24h]` | `tq mode log` |
+| `tq allow --bypass <ws>` | `tq allow --mode <ws> relaxed` |
+
+`on` and `off` are human-only, like `tq mode set`.
+
+### Logs and doctor
+
+- New audit records go to `$TQ_HOME/guard/mode.jsonl`. `tq mode log` and the
+  skip counts also read the legacy `unattended.jsonl` until it ages out of
+  the window.
+- Doctor checks renamed: `unattended-not-effective` → `mode-not-granted`,
+  `unattended-unknown-rule` → `mode-unknown-rule`, `unattended-cloud` →
+  `mode-cloud`. New: `guard-locked-override`, `claude-alias-shadow`,
+  `permission-mode-overridden`, `codex-hooks-missing`,
+  `codex-hooks-disabled`, `codex-hooks-untrusted` (see `CLAUDE-SETTINGS.md`).
+- The SessionStart line `Unattended: …` (deprecated) is replaced by
+  `Guard: …`, printed in every workspace.
+
+### Codex
+
+- The old `tq-unattended.config.toml` profile is removed when tq owns it, and
+  the old `config.toml` block is replaced by the
+  `# >>> managed by tq (guard mode)` block. Per-project modes now travel as
+  launch flags of `tq run . -- codex`.
+- Every workspace with a Codex identity is now rendered, also with no mode
+  set: `tq settings render`, `tq allow` and `tq deny` write the
+  `config.toml` block, `rules/tq.rules` and tq's `hooks.json` entries. Trust
+  tq's hook once in Codex's `/hooks`.
+
+### Behaviour changes
+
+- **Every Claude mode.** Unattended mode applied only in `bypassPermissions`
+  and `auto` sessions. A tq mode applies in every Claude permission mode.
+- **Relaxed skips denies too.** The released unattended mode skipped only
+  confirms. Relaxed skips confirms and denies, except in `git-history` and
+  `system`, which ask: a force push to main, `gh repo delete`, a write under a
+  system folder and a recursive delete outside the workspace get a confirm.
+- **Privacy is locked.** `tq/commit-pii`, `tq/push-pii`, `tq/text-pii` and
+  `tq/pii-fixture-dump` are enforced in every mode. A `guard.disable` or a
+  looser `guard.actions` entry naming one of them, or any other locked rule,
+  is ignored, with a `guard-locked-override` doctor warning.
+- **The launcher always starts in bypass.** `tq run . -- claude` and the
+  `claude` function add `--dangerously-skip-permissions` whatever
+  `claude.permission_mode` says (doctor note `permission-mode-overridden`).
+  `tq settings render` writes `skipDangerousModePermissionPrompt: true`, so
+  `tq doctor` reports `settings-drift` until you run
+  `tq settings render --all` once. A PowerShell alias, or a function named
+  `claude` or `codex` defined after the tq block in any shell (such as the
+  wrapper an older `tq migrate` carried over), replaces the launcher:
+  `tq doctor` reports it as `claude-alias-shadow`, and `tq migrate` removes
+  the carried wrapper when it is unchanged.
+- **Mode commands are denied in tool calls.** `tq unattended on|off`,
+  `tq allow --bypass` and `tq allow --mode` from an agent are blocked by
+  `tq/mode-change` (they used to ask through `tq/guard-change`), and the
+  binaries refuse agent sessions.
+- **New rules in every mode, default included:** `tq/outside-path-write`
+  (ask), `tq/elevation` (ask), `tq/system-dir-write` (deny) and
+  `tq/nested-agent-loosened` (deny).
+- **Codex is stricter.** A tq confirm that Codex cannot prompt for becomes a
+  block (`CLAUDE-SETTINGS.md`, "Codex").
+- **Off is new.** `claude-off`, `codex-off`, `tq off` and `tq on` start an
+  agent, or switch a window, to no tq at all. Nothing stores off.
 
 ## This machine, before and after
 
@@ -411,8 +551,8 @@ git: 14 changes
   skip: include.path C:/Users/renato/AppData/Local/Temp/tmp.CCyykuuQB6/.gitconfig-tentaqles exists and is not tq's; left alone
 shell: 3 changes
   ~ adopt-hook         C:\Users\renato\.bashrc -> replace hand-installed block with the managed one
-  ~ adopt-hook         C:\Users\renato\Documents\PowerShell\Microsoft.PowerShell_profile.ps1 -> replace hand-installed block with the managed one; keep legacy launcher verbatim; carry over the claude wrapper
-  ~ adopt-hook         C:\Users\renato\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 -> replace hand-installed block with the managed one; keep legacy launcher verbatim; carry over the claude wrapper
+  ~ adopt-hook         C:\Users\renato\Documents\PowerShell\Microsoft.PowerShell_profile.ps1 -> replace hand-installed block with the managed one; keep legacy launcher verbatim; drop the claude wrapper (tq's launcher replaces it)
+  ~ adopt-hook         C:\Users\renato\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 -> replace hand-installed block with the managed one; keep legacy launcher verbatim; drop the claude wrapper (tq's launcher replaces it)
   warn: bash: dropped from the old block: case ":$PATH:" in *"/tentaqles/bin:"*) ;; *) PATH="$PATH:$LOCALAPPDATA/tentaqles/bin";; esac
   warn: pwsh: dropped from the old block: $tqBin = Join-Path $env:LOCALAPPDATA 'tentaqles\bin'
   warn: pwsh: dropped from the old block: if (($env:Path -split ';') -notcontains $tqBin) { $env:Path = "$env:Path;$tqBin" }

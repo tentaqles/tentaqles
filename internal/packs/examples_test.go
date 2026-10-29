@@ -6,6 +6,7 @@ package packs
 import (
 	"context"
 	"errors"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,7 +122,7 @@ func init() {
 	Register(Check{ID: "ml/example-dvc", Pack: "ml", Kind: External, Tool: "dvc",
 		Run: func(ctx context.Context, in *Input) Result { return Result{Status: OK} }})
 
-	RegisterGuard(Guard{ID: "tq/example-bq", Pack: "data", Events: []string{"Bash", "PowerShell"}, Supersedes: []string{"tq/iac-apply"},
+	RegisterGuard(Guard{Category: guardcfg.CatPacks, ID: "tq/example-bq", Pack: "data", Events: []string{"Bash", "PowerShell"}, Supersedes: []string{"tq/iac-apply"},
 		Check: func(call policy.ToolCall, g GuardCtx) (policy.Action, string, bool) {
 			c := call.Command
 			switch {
@@ -142,7 +143,7 @@ func init() {
 			}
 			return policy.Allow, "", false
 		}})
-	RegisterGuard(Guard{ID: "tq/example-mcp", Pack: "ml", Events: []string{`mcp__.*__promote`},
+	RegisterGuard(Guard{Category: guardcfg.CatPacks, ID: "tq/example-mcp", Pack: "ml", Events: []string{`mcp__.*__promote`},
 		Check: func(call policy.ToolCall, g GuardCtx) (policy.Action, string, bool) {
 			return policy.Deny, "promotion through MCP", true
 		}})

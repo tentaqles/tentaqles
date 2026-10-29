@@ -3,6 +3,7 @@ package packs
 import (
 	"context"
 	"errors"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,7 +155,7 @@ func TestUnsupersedableIDs(t *testing.T) {
 					t.Fatalf("%s accepted in Supersedes", id)
 				}
 			}()
-			RegisterGuard(Guard{ID: "tq/x-" + strings.ReplaceAll(id, "/", "-"), Pack: "db", Supersedes: []string{id},
+			RegisterGuard(Guard{Category: guardcfg.CatPacks, ID: "tq/x-" + strings.ReplaceAll(id, "/", "-"), Pack: "db", Supersedes: []string{id},
 				Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return policy.Allow, "", true }})
 		}()
 	}

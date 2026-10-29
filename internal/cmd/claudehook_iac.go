@@ -6,11 +6,12 @@ package cmd
 // claudehook_policy.go runs them for workspaces with packs.cloud enabled.
 
 import (
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/cloud/gate"
 )
 
 func init() {
-	packs.RegisterGuard(packs.Guard{ID: gate.IDApplyEnv, Pack: "cloud", Events: gate.Events, Supersedes: gate.Supersedes, Check: gate.ApplyEnv})
-	packs.RegisterGuard(packs.Guard{ID: gate.IDDrift, Default: "deny", Pack: "cloud", Events: gate.Events, Check: gate.IdentityDrift})
+	packs.RegisterGuard(packs.Guard{ID: gate.IDApplyEnv, Category: guardcfg.CatCloudDestructive, Pack: "cloud", Events: gate.Events, Supersedes: gate.Supersedes, Check: gate.ApplyEnv})
+	packs.RegisterGuard(packs.Guard{ID: gate.IDDrift, Category: guardcfg.CatIdentity, Default: "deny", Pack: "cloud", Events: gate.Events, Check: gate.IdentityDrift})
 }

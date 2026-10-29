@@ -1,0 +1,7 @@
+set "CLAUDE_CONFIG_DIR="
+set "GH_CONFIG_DIR="
+set "TQ_WS="
+set "TQ_WS_ROOT="
+set "__TQ_STATE="
+set "TQ_MODE=off"
+set "TQ_SOMETHING=C:\orig"

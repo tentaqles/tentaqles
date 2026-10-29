@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,7 +80,7 @@ func init() {
 		}})
 	packs.Register(packs.Check{ID: "data/example-cmd-tool", Pack: "data", Kind: packs.External, Tool: "tq-fake-tool-xyz",
 		Run: func(ctx context.Context, in *packs.Input) packs.Result { return packs.Result{Status: packs.OK} }})
-	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-find", Pack: "db", Events: []string{"Bash"},
+	packs.RegisterGuard(packs.Guard{Category: guardcfg.CatPacks, ID: "tq/example-cmd-find", Pack: "db", Events: []string{"Bash"},
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 			if !strings.Contains(call.Command, "find-approval") {
 				return policy.Allow, "", false
@@ -92,7 +93,7 @@ func init() {
 			return policy.Allow, "approved", true
 		}})
 	// Round 5: a guard that verifies a stored plan and names it as a read arg.
-	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-plan", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
+	packs.RegisterGuard(packs.Guard{Category: guardcfg.CatPacks, ID: "tq/example-cmd-plan", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
 		Supersedes: []string{"tq/iac-apply"},
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 			if !strings.Contains(call.Command, "tofu apply") && !strings.Contains(call.Command, "pulumi up") && !strings.Contains(call.Command, "terraform apply -") {
@@ -122,7 +123,7 @@ func init() {
 			}
 			return policy.Deny, "no stored plan", true
 		}})
-	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-apply", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
+	packs.RegisterGuard(packs.Guard{Category: guardcfg.CatPacks, ID: "tq/example-cmd-apply", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
 		Supersedes: []string{"tq/iac-apply"},
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 			c := call.Command
@@ -139,7 +140,7 @@ func init() {
 		}})
 }
 
-func clearAgentMarkers(t *testing.T) {
+func clearPackAgentMarkers(t *testing.T) {
 	for _, k := range []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK", "TQ_BUILD_ACTOR", "TQ_BUILD_TOKEN"} {
 		t.Setenv(k, "")
 	}
@@ -161,7 +162,7 @@ func packRepo(t *testing.T, packsBlock string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", packsBlock)
 	packGit(t, ws, "init", "-q")
 	os.WriteFile(filepath.Join(ws, "README.md"), []byte("acme\n"), 0o644)
@@ -448,7 +449,7 @@ func TestPackFlagErrorsAndApprovalsOutside(t *testing.T) {
 		}
 	}
 	isolateHome(t)
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	dir := t.TempDir()
 	prev, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(prev) })

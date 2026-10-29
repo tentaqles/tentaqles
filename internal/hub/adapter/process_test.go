@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/tentaqles/tentaqles/internal/envplan"
 )
 
 // TestMain doubles as the helper process the process adapter runs (the test binary re-executed).
@@ -154,5 +156,40 @@ func TestLaunchEnv(t *testing.T) {
 	}
 	if !strings.Contains(joined, "TENTAQLES_HEADLESS=1") || !strings.Contains(joined, `TQ_HUB_TASK={"hub":"c-abcdefghijkl"}`) || !strings.Contains(joined, "PATH=/bin") {
 		t.Fatalf("env %v", got)
+	}
+}
+
+// spec E §6.4: a hub round runs with TQ_MODE set to the workspace's
+// guard.headless_mode (carried by envplan.Environ), default when absent or
+// invalid; an inherited TQ_MODE or TQ_ENABLED never reaches the round.
+func TestLaunchEnvHeadlessMode(t *testing.T) {
+	isolate(t)
+	cases := []struct {
+		base []string
+		want string
+	}{
+		{[]string{"PATH=/bin"}, "default"},
+		{[]string{"PATH=/bin", "TQ_MODE=off", "TQ_ENABLED=0"}, "default"},
+		{[]string{"PATH=/bin", envplan.HeadlessModeVar + "=strict"}, "strict"},
+		{[]string{"PATH=/bin", envplan.HeadlessModeVar + "=relaxed", "TQ_MODE=off"}, "relaxed"},
+		{[]string{"PATH=/bin", envplan.HeadlessModeVar + "=custom"}, "custom"},
+		{[]string{"PATH=/bin", envplan.HeadlessModeVar + "=off"}, "default"},
+		{[]string{"PATH=/bin", envplan.HeadlessModeVar + "=bogus"}, "default"},
+	}
+	for _, c := range cases {
+		got := LaunchEnv(c.base, `{"hub":"c-x"}`)
+		var modes []string
+		for _, kv := range got {
+			k, v, _ := strings.Cut(kv, "=")
+			switch strings.ToUpper(k) {
+			case "TQ_MODE":
+				modes = append(modes, v)
+			case "TQ_ENABLED", envplan.HeadlessModeVar:
+				t.Errorf("%v: %s reached the round", c.base, k)
+			}
+		}
+		if len(modes) != 1 || modes[0] != c.want {
+			t.Errorf("%v: TQ_MODE %v, want [%s]", c.base, modes, c.want)
+		}
 	}
 }

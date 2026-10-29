@@ -16,8 +16,9 @@ A workspace with no `packs:` block has no packs: `tq pack check` prints
 `no packs enabled` and exits 0.
 
 **Always on, with or without a pack.** These core rules protect the pack
-approvals and config. They apply in every workspace and are never-disable
-(`guard.disable` and `guard.actions` skip them):
+approvals and config. They apply in every workspace and are in the locked guard
+groups: every guard mode applies them, `guard.disable` of them is ignored and
+`guard.actions` may only make them stricter:
 
 - `tq/hub-store-write`: agents cannot write tq's hub store, pack ledgers,
   claims or plans. A hook-time check also denies any agent shell or file access

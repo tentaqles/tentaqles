@@ -55,6 +55,10 @@ type Guard struct {
 	Events     []string
 	Supersedes []string
 	Check      func(call policy.ToolCall, g GuardCtx) (policy.Action, string, bool)
+	// Category is the guard-mode category (spec E §14): one of the
+	// thirteen, equal to the guard id's entry in guardcfg.Categories. The
+	// mode maps the guard's verdict by it like a built-in rule's.
+	Category guardcfg.Category
 	// Default is what tq guard list shows as the guard's action: "ask",
 	// "deny", "deny or ask", or "" when a pack policy decides (shown as
 	// "policy"). It is for listing only; Check returns the real action.
@@ -77,6 +81,21 @@ func RegisterGuard(g Guard) {
 	}
 	if g.Check == nil {
 		panic("packs.RegisterGuard " + g.ID + ": Check is nil")
+	}
+	if _, ok := guardcfg.ParseCategory(string(g.Category)); !ok {
+		panic(fmt.Sprintf("packs.RegisterGuard %s: unknown or empty Category %q", g.ID, g.Category))
+	}
+	// The table is the one source the mode reads: a shipped guard's Category
+	// must match its entry, so a pack can never place itself in a looser
+	// category. An id the table does not name (a test guard) may not claim a
+	// locked category; cmd's TestPackGuardCategories checks that every
+	// shipped guard is in the table.
+	want, inTable := guardcfg.Categories[g.ID]
+	switch {
+	case inTable && want != g.Category:
+		panic(fmt.Sprintf("packs.RegisterGuard %s: Category %q, but guardcfg.Categories has %q", g.ID, g.Category, want))
+	case !inTable && guardcfg.Locked(g.Category):
+		panic(fmt.Sprintf("packs.RegisterGuard %s: the locked category %q is only for ids guardcfg.Categories locks", g.ID, g.Category))
 	}
 	for _, id := range g.Supersedes {
 		if guardcfg.Unsupersedable(id) {

@@ -1,0 +1,34 @@
+{{define "guard"}}{{template "head" .}}{{template "guard-main" .}}{{template "foot" .}}{{end}}
+{{define "guard-main"}}{{$ws := .WS}}{{with .Data}}
+<div class="set">
+  {{with .Error}}<div class="err" role="alert">The guard mode could not be read: {{.}}</div>{{else}}{{$v := .View}}
+  <section class="panel"><h2>Guard mode</h2>
+    <dl class="kv">
+      <dt>Mode</dt><dd><b>{{$v.Label}}</b>{{if and $v.Requested (ne $v.Requested $v.Mode)}} <span class="note">{{$v.Requested}} requested, not granted</span>{{else if $v.ModeSource}} <span class="note">set by {{$v.ModeSource}}</span>{{end}}</dd>
+      <dt>Ceiling</dt><dd>{{if $v.Granted}}{{$v.Ceiling}} grant{{with $v.GrantedAt}} <span class="note">granted {{.}}</span>{{end}}{{else}}default <span class="note">no grant</span>{{end}}</dd>
+      <dt>Last 24 h</dt><dd>{{.Counts}} skipped or lowered</dd>
+      <dt>Locked</dt><dd>{{range $i, $l := $v.Locked}}{{if $i}}, {{end}}{{$l}}{{end}} <span class="note">enforced in every mode</span></dd>
+    </dl>
+    {{if $v.NeedsGrant}}<p class="note" role="status">Looser than the ceiling: the session runs clamped until you run <code class="m">tq allow --mode {{$ws}} {{or $v.Proposal $v.Requested}}</code> in your own terminal.</p>{{end}}
+    <p class="note">This page is read-only: change it with <code class="m">tq mode edit</code> or the desktop app.</p>
+  </section>
+
+  <section class="panel"><h2>Categories</h2>
+    <div class="tw"><table class="map"><tr><th>Category</th><th>Value</th><th>Set by</th></tr>
+      {{range $v.Categories}}<tr{{if .Locked}} data-locked="true"{{end}}><td>{{.Name}}{{if .Locked}} <span class="pill p-queue" title="locked: enforced in every mode">locked</span>{{end}}</td><td><code class="m">{{.Value}}</code></td><td>{{.Source}}</td></tr>
+      {{end}}
+    </table></div>
+    <p class="note"><b>rule</b> is the rule's own action, <b>skip</b> lets the call through, <b>ask</b> confirms, <b>deny</b> blocks.</p>
+  </section>
+
+  <section class="panel"><h2>Rule overrides</h2>
+    {{if $v.Overrides}}<div class="tw"><table class="map"><tr><th>Rule</th><th>Value</th><th>Set by</th></tr>
+      {{range $v.Overrides}}<tr><td><code class="m">{{.ID}}</code></td><td><code class="m">{{.Value}}</code></td><td>{{.Source}}</td></tr>
+      {{end}}
+    </table></div>{{else}}<p class="note">None.</p>{{end}}
+    {{if $v.Clamped}}<p class="note">Clamped to the ceiling: {{range $i, $c := $v.Clamped}}{{if $i}}, {{end}}{{$c}}{{end}}</p>{{end}}
+    {{if $v.Ignored}}<p class="note">The repo file tried to loosen: {{range $i, $c := $v.Ignored}}{{if $i}}, {{end}}{{$c}}{{end}} (ignored)</p>{{end}}
+  </section>
+  {{end}}
+</div>
+{{end}}{{end}}

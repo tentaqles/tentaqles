@@ -25,7 +25,7 @@ packs:
 `
 
 func TestHookIaCApplyEnv(t *testing.T) {
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", iacManifest)
 	for _, k := range []string{"ARM_SUBSCRIPTION_ID", "AWS_PROFILE", "TF_WORKSPACE", "AZURE_CONFIG_DIR"} {
 		t.Setenv(k, "")
@@ -59,7 +59,7 @@ func TestHookIaCApplyEnv(t *testing.T) {
 }
 
 func TestHookIaCGuardsOffWithoutThePack(t *testing.T) {
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "guard: { disable: [tq/example-cmd-apply] }\n")
 	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform -chdir=infra/envs/prod apply"))
 	if code != 0 || strings.Contains(out, "tq/iac-apply-env") || !strings.Contains(out, "tq/iac-apply") {
@@ -91,7 +91,7 @@ func iacRecord(t *testing.T, env, dir, identity string) (plans.Record, string) {
 // that one path through; the gap that stopped the approve flow end to end
 // (round 1, C2.4) is closed through the real hook.
 func TestHookIaCStoredPlanApply(t *testing.T) {
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", iacManifest)
 	for _, k := range []string{"AWS_PROFILE", "TF_WORKSPACE", "AZURE_CONFIG_DIR"} {
 		t.Setenv(k, "")
@@ -154,7 +154,7 @@ func TestHookIaCStoredPlanApply(t *testing.T) {
 // denied). The command itself only asking is TestApproveOnlyAsks in the
 // cloud package (this test binary does not link the cloud pack).
 func TestHookIaCApproveOnlyAsks(t *testing.T) {
-	clearAgentMarkers(t)
+	clearPackAgentMarkers(t)
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", `guard: { disable: [tq/example-cmd-apply] }
 packs:
   cloud:

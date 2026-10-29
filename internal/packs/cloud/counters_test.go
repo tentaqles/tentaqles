@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -273,7 +274,7 @@ const probeID = "tq/d-oi-counter-probe"
 // The guard's counters reach the outcome the hook writes from.
 func TestApplyGuardCountersReachTheOutcome(t *testing.T) {
 	probeOnce.Do(func() {
-		packs.RegisterGuard(packs.Guard{ID: probeID, Pack: "cloud", Check: gate.ApplyEnv})
+		packs.RegisterGuard(packs.Guard{ID: probeID, Pack: "cloud", Category: guardcfg.CatPacks, Check: gate.ApplyEnv})
 	})
 	e := setup(t, testBlock)
 	cases := map[string]string{

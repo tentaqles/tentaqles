@@ -1,0 +1,55 @@
+# tq shell hook (powershell)
+if (-not (Test-Path Variable:global:__tq_prev_prompt)) { $global:__tq_prev_prompt = $function:prompt }
+function global:__tq_hook { if ($env:TQ_MODE -ceq 'off' -or $env:TQ_ENABLED -eq '0') { return }; try { $o = (& '/opt/tq/bin/tq' env --shell powershell | Out-String); if ($o.Trim()) { Invoke-Expression $o } } catch { } }
+function global:prompt { __tq_hook; & $global:__tq_prev_prompt }
+# A simple function's $args never holds a literal --: the parameter binder
+# eats it. For tq run, tq dotenv run and tq redact run, __tq_args puts it
+# back before the command word, so the command's own flags stay its own.
+function global:__tq_args {
+  $a = @($args[0]); $out = New-Object System.Collections.ArrayList; $i = 0
+  if ($a.Count -ge 1 -and $a[0] -ceq 'run') {
+    [void]$out.Add('run'); $i = 1; $ws = $false; $off = $false
+    while ($i -lt $a.Count) {
+      $t = [string]$a[$i]
+      if ($t -ceq '--') { break }
+      if ($t -ceq '--off') { $off = $true; [void]$out.Add($t); $i++; continue }
+      if ($t -ceq '-h' -or $t -ceq '--help' -or $t.StartsWith('--tq-mode=')) { [void]$out.Add($t); $i++; continue }
+      if ($t -ceq '--tq-mode' -and $i + 1 -lt $a.Count) { [void]$out.Add($t); [void]$out.Add([string]$a[$i + 1]); $i += 2; continue }
+      if (-not $ws -and -not $off) { [void]$out.Add($t); $ws = $true; $i++; continue }
+      break
+    }
+  } elseif ($a.Count -ge 2 -and ($a[0] -ceq 'dotenv' -or $a[0] -ceq 'redact') -and $a[1] -ceq 'run') {
+    [void]$out.Add([string]$a[0]); [void]$out.Add('run'); $i = 2
+    while ($i -lt $a.Count) {
+      $t = [string]$a[$i]
+      if ($t -ceq '--') { break }
+      if (($t -ceq '--file' -or $t -ceq '--classes') -and $i + 1 -lt $a.Count) { [void]$out.Add($t); [void]$out.Add([string]$a[$i + 1]); $i += 2; continue }
+      if ($t.StartsWith('-')) { [void]$out.Add($t); $i++; continue }
+      break
+    }
+  } else { return ,$a }
+  if ($i -lt $a.Count -and [string]$a[$i] -ceq '--') { $i++ }
+  if ($i -lt $a.Count) { [void]$out.Add('--'); foreach ($x in $a[$i..($a.Count - 1)]) { [void]$out.Add($x) } }
+  return ,$out.ToArray()
+}
+function global:tq {
+  if ($args.Count -ge 1 -and $args[0] -ceq 'off') {
+    $o = (& '/opt/tq/bin/tq' env --off --shell powershell | Out-String); if ($LASTEXITCODE -ne 0) { return }
+    if ($o.Trim()) { Invoke-Expression $o }
+    Write-Host 'tq: off in this window - identity cleared, guard off, main logins in use. Run: tq on'
+    return
+  }
+  if ($args.Count -ge 1 -and $args[0] -ceq 'on') {
+    Remove-Item Env:TQ_MODE -ErrorAction SilentlyContinue
+    __tq_hook
+    Write-Host 'tq: on - identity re-applied for this folder'
+    return
+  }
+  $__a = __tq_args $args
+  & '/opt/tq/bin/tq' @__a
+}
+function global:claude { if ($env:TQ_MODE -ceq 'off') { & '/opt/tq/bin/tq' run --off -- claude @args } else { & '/opt/tq/bin/tq' run . -- claude @args } }
+function global:codex  { if ($env:TQ_MODE -ceq 'off') { & '/opt/tq/bin/tq' run --off -- codex @args }  else { & '/opt/tq/bin/tq' run . -- codex @args } }
+function global:claude-off { & '/opt/tq/bin/tq' run --off -- claude @args }
+function global:codex-off  { & '/opt/tq/bin/tq' run --off -- codex @args }
+__tq_hook

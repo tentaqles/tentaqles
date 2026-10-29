@@ -14,7 +14,15 @@ var DefaultKeepAsking = []string{"tq/iac-apply", "tq/remote-migration"}
 // CodexSandboxes are the sandbox_mode values tq writes for Codex.
 var CodexSandboxes = []string{"read-only", "workspace-write", "danger-full-access"}
 
-// Unattended is the guard.unattended block. KeepAsking is a pointer so an
+// isAbsLike reports whether a projects entry is an absolute path in any
+// spelling (POSIX, a Windows drive or a UNC/volume name).
+func isAbsLike(raw string) bool {
+	c := CleanProject(raw)
+	return filepath.IsAbs(raw) || strings.HasPrefix(c, "/") || filepath.VolumeName(raw) != "" || (len(raw) > 1 && raw[1] == ':')
+}
+
+// Unattended is the legacy guard.unattended block (deprecated by spec E: it
+// is read as guard modes through Guard.ModeView). KeepAsking is a pointer so an
 // absent list (defaults) differs from an explicit empty one (ask nothing).
 type Unattended struct {
 	Workspace    bool      `yaml:"workspace"`
@@ -55,17 +63,11 @@ func (u *Unattended) Validate() error {
 		return nil
 	}
 	for _, p := range u.Projects {
-		raw := strings.TrimSpace(p)
-		c := CleanProject(p)
-		switch {
-		case raw == "":
-			return fmt.Errorf("projects: empty entry")
-		case filepath.IsAbs(raw) || strings.HasPrefix(c, "/") || filepath.VolumeName(raw) != "" || (len(raw) > 1 && raw[1] == ':'):
-			return fmt.Errorf("projects: %q must be relative to the workspace root", p)
-		case c == ".":
+		if strings.TrimSpace(p) != "" && !isAbsLike(strings.TrimSpace(p)) && CleanProject(p) == "." {
 			return fmt.Errorf("projects: %q is the workspace root; use workspace: true", p)
-		case c == ".." || strings.HasPrefix(c, "../"):
-			return fmt.Errorf("projects: %q leaves the workspace root", p)
+		}
+		if err := validateProjectDir(p); err != nil {
+			return fmt.Errorf("projects: %w", err)
 		}
 	}
 	if u.KeepAsking != nil {

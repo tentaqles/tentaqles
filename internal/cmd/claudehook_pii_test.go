@@ -177,12 +177,14 @@ func TestPiiFixtureDump_AllowedCases(t *testing.T) {
 	}
 }
 
-func TestPIIRules_CanBeDisabledInManifest(t *testing.T) {
+// The PII rules are in the locked privacy group (spec E §11.1): a
+// guard.disable of one is ignored (doctor reports guard-locked-override).
+func TestPIIRules_DisableIsIgnored(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", piiData+"guard:\n  disable: [tq/commit-pii]\n")
 	run := gitRepo(t, ws)
 	stage(t, ws, run, "seed.sql", "insert into c values ('529.982.247-25');\n") // tq:allow-pii
-	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: seed"`)); code != 0 {
-		t.Fatalf("disable by id must work: %q", errOut)
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat: seed"`)); code != 2 || !strings.Contains(errOut, "tq/commit-pii") {
+		t.Fatalf("a locked rule cannot be disabled: code %d %q", code, errOut)
 	}
 }
 

@@ -141,7 +141,7 @@ func TestRound2_BudgetFromEntryAndClamp(t *testing.T) {
 	gitRepo(t, ws)
 	call := policy.ToolCall{Tool: "Bash", Command: `git commit -m "feat: x"`}
 	ws2, cfg := resolveTrusted(ws)
-	d := policyDecision(ws, ws2, cfg, call, time.Now().Add(-time.Second))
+	d := policyDecision(ws, ws2, cfg, call, time.Now().Add(-time.Second), nil)
 	if d.Action != policy.Ask || !strings.Contains(d.Reason(), "scan did not finish in time") {
 		t.Fatalf("an exhausted entry budget must ask: %+v %q", d.Action, d.Reason())
 	}

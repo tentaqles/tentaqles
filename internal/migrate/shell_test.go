@@ -146,7 +146,7 @@ func TestShellPlanAdoptsThreeRealProfiles(t *testing.T) {
 			continue
 		}
 		if !strings.Contains(c.Detail, "keep legacy launcher verbatim") ||
-			!strings.Contains(c.Detail, "carry over the claude wrapper") {
+			!strings.Contains(c.Detail, "drop the claude wrapper") {
 			t.Errorf("powershell detail = %q", c.Detail)
 		}
 	}
@@ -277,8 +277,7 @@ func TestShellApplyMakesStatusInstalledAndRestoreIsByteExact(t *testing.T) {
 		hooks.LegacyStartMarker,
 		hooks.LegacyEndMarker,
 		"function Get-ClientContext",
-		hooks.CarryComment,
-		"--dangerously-skip-permissions",
+		"--dangerously-skip-permissions", // the legacy launcher, kept verbatim
 	} {
 		if !strings.Contains(ps, want) {
 			t.Errorf("adopted powershell profile is missing %q", want)
@@ -437,5 +436,43 @@ func TestShellStepIsRegistered(t *testing.T) {
 	}
 	if len(steps) != 1 || steps[0].Name() != "shell" {
 		t.Fatalf("Steps([shell]) = %+v", steps)
+	}
+}
+
+// A profile an older tq migrate adopted carries the claude wrapper after
+// the managed block. The shell step removes exactly that text, journalled,
+// and the result is what an adoption writes today (final review M2).
+func TestShellRemovesTheCarriedWrapper(t *testing.T) {
+	home := tqHome(t)
+	p := stageProfiles(t, home, []shellFixture{
+		{"powershell", "real_powershell_profile.carried.ps1", []string{"Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"}},
+	})
+	step := shellStep{}
+	plan, err := step.Plan(Deps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := changePaths(plan, "remove-carried-wrapper"); len(got) != 1 || got[0] != p["powershell"] {
+		t.Fatalf("changes = %+v", plan.Changes)
+	}
+	j, err := Open("20260830-000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := step.Apply(Deps{}, plan, j); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(p["powershell"])
+	if want := hooksFixture(t, "real_powershell_profile.adopted.ps1"); !bytes.Equal(got, want) {
+		t.Fatalf("got:\n%s", got)
+	}
+	if again, _ := step.Plan(Deps{}); len(changePaths(again, "remove-carried-wrapper")) != 0 {
+		t.Fatal("a second plan must find nothing to remove")
+	}
+	if _, err := j.Restore(Runner{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(p["powershell"]); !bytes.Equal(got, hooksFixture(t, "real_powershell_profile.carried.ps1")) {
+		t.Fatal("restore is not byte-exact")
 	}
 }

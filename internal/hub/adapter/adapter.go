@@ -12,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 )
 
 // DefaultGrace is how long a cancelled run gets between the termination signal and the kill.
@@ -134,15 +137,28 @@ func envKey(kv string) string {
 
 // LaunchEnv is the environment of every hub-launched round: the workspace's plan (base), never a
 // hub token, never the plugin's headless-child marker (the session hooks must run), plus the
-// headless switch and the card.
+// headless switch, the card and the guard mode (spec E §6.4): TQ_MODE is the workspace's
+// guard.headless_mode, which envplan.Environ carries in envplan.HeadlessModeVar, or default when
+// it is absent or not a stored mode. An inherited TQ_MODE or TQ_ENABLED never reaches the round,
+// so a hub started from an off window still runs guarded. A mode looser than default is clamped
+// by the workspace grant in the hook, as for any launch.
 func LaunchEnv(base []string, hubTask string) []string {
 	drop := map[string]bool{"TENTAQLES_HEADLESS_CHILD": true, "TQ_BUILD_ACTOR": true, "TQ_BUILD_TOKEN": true,
-		"TENTAQLES_HEADLESS": true, "TQ_HUB_TASK": true}
-	out := make([]string, 0, len(base)+2)
+		"TENTAQLES_HEADLESS": true, "TQ_HUB_TASK": true,
+		guardcfg.EnvMode: true, "TQ_ENABLED": true, envplan.HeadlessModeVar: true}
+	mode := guardcfg.ModeDefault
+	out := make([]string, 0, len(base)+3)
 	for _, kv := range base {
-		if !drop[strings.ToUpper(envKey(kv))] {
+		k := strings.ToUpper(envKey(kv))
+		if k == envplan.HeadlessModeVar {
+			_, v, _ := strings.Cut(kv, "=")
+			if v = strings.TrimSpace(v); guardcfg.ValidStoredMode(v) {
+				mode = v
+			}
+		}
+		if !drop[k] {
 			out = append(out, kv)
 		}
 	}
-	return append(out, "TENTAQLES_HEADLESS=1", "TQ_HUB_TASK="+hubTask)
+	return append(out, "TENTAQLES_HEADLESS=1", "TQ_HUB_TASK="+hubTask, guardcfg.EnvMode+"="+mode)
 }

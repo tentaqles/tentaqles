@@ -1,6 +1,7 @@
 package data
 
 import (
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"gopkg.in/yaml.v3"
 )
@@ -46,6 +47,6 @@ func init() {
 	packs.Register(packs.Check{ID: idSQLFluff, Pack: "data", Kind: packs.External, Tool: "sqlfluff", Env: sqlfluffEnv,
 		Timeout: sqlfluffTimeout, Applies: sqlfluffApplies, Run: runSqlfluff})
 
-	packs.RegisterGuard(packs.Guard{ID: guardProdTarget, Default: "deny", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(checkProdTarget, dbtToolRe, nil, "dbt")})
-	packs.RegisterGuard(packs.Guard{ID: guardFullRefresh, Default: "ask", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(checkFullRefresh, dbtToolRe, nil, "dbt")})
+	packs.RegisterGuard(packs.Guard{ID: guardProdTarget, Category: guardcfg.CatPacks, Default: "deny", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(checkProdTarget, dbtToolRe, nil, "dbt")})
+	packs.RegisterGuard(packs.Guard{ID: guardFullRefresh, Category: guardcfg.CatPacks, Default: "ask", Pack: "data", Events: []string{"Bash", "PowerShell"}, Check: withScripts(checkFullRefresh, dbtToolRe, nil, "dbt")})
 }

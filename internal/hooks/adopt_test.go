@@ -238,7 +238,7 @@ func TestAdopt_RealPowerShellProfile(t *testing.T) {
 		t.Fatal("expected a legacy branch")
 	}
 	if cs.Wrapper == "" {
-		t.Fatal("expected the claude wrapper to be carried over")
+		t.Fatal("expected the claude wrapper to be found")
 	}
 	if !strings.Contains(cs.Wrapper, "--dangerously-skip-permissions") {
 		t.Errorf("carried wrapper = %q", cs.Wrapper)
@@ -284,21 +284,13 @@ func TestAdopt_RealPowerShellProfile(t *testing.T) {
 		t.Error("managed activate line missing")
 	}
 
-	// carried-over wrapper, after the managed block, under its comment
-	ci := strings.Index(newContent, CarryComment)
-	if ci < strings.Index(newContent, endMarker) {
-		t.Error("carried wrapper should come after the managed block")
+	// The old claude wrapper is dropped, not carried: it would replace the
+	// launcher tq activate defines (final review M2).
+	if strings.Contains(newContent, CarryComment) || strings.Contains(newContent, carriedGuard) {
+		t.Error("the claude wrapper must not be carried over")
 	}
-	if !strings.Contains(newContent[ci:], cs.Wrapper) {
-		t.Error("carried wrapper not emitted under its comment")
-	}
-	// The wrapper lived in the old `else` branch: it must stay guarded so
-	// TQ_ENABLED=0 leaves the legacy launcher's own `claude` router in place.
-	if !strings.Contains(newContent[ci:], carriedGuard) {
-		t.Error("carried wrapper is not guarded by the inverse TQ_ENABLED check")
-	}
-	if strings.Index(newContent[ci:], carriedGuard) > strings.Index(newContent[ci:], cs.Wrapper) {
-		t.Error("guard must precede the carried wrapper")
+	if !strings.Contains(cs.Detail(), "drop the claude wrapper") {
+		t.Errorf("detail = %q", cs.Detail())
 	}
 
 	// The old else-branch scaffolding must be gone.
@@ -705,5 +697,65 @@ func TestAdopt_PreservesUTF16LE(t *testing.T) {
 	}
 	if st := StatusOf("powershell", profiles); st.State != "installed" {
 		t.Fatalf("StatusOf = %q, want installed", st.State)
+	}
+}
+
+// An older tq migrate carried the claude wrapper after the managed block.
+// RemoveCarriedFile removes exactly that text, so the result is what Adopt
+// writes today, byte for byte (BOM and CRLF included).
+func TestRemoveCarried_ExactText(t *testing.T) {
+	for _, tc := range []struct {
+		file, golden string
+		sh           Shell
+	}{
+		{"real_powershell_profile.carried.ps1", "real_powershell_profile.adopted.ps1", "powershell"},
+		{"real_pwsh_profile.carried.ps1", "real_pwsh_profile.adopted.ps1", "pwsh"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			path, _ := stageProfile(t, tc.file, tc.sh)
+			cs, err := RemoveCarriedFile(path, tc.sh)
+			if err != nil || !cs.Changed || !strings.Contains(cs.Wrapper, "function claude") {
+				t.Fatalf("%+v %v", cs.Reason, err)
+			}
+			if err := cs.Apply(); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := os.ReadFile(path)
+			want := readTestdata(t, tc.golden)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("--- got ---\n%s\n--- want ---\n%s", got, want)
+			}
+			if cs2, _ := RemoveCarriedFile(path, tc.sh); cs2.Changed {
+				t.Fatal("a second removal must be a no-op")
+			}
+		})
+	}
+}
+
+// A wrapper the user edited (or wrote) is never removed.
+func TestRemoveCarried_LeavesEditedWrapper(t *testing.T) {
+	raw := readTestdata(t, "real_powershell_profile.carried.ps1")
+	content, enc := decodeProfile(raw)
+	for name, edit := range map[string]func(string) string{
+		"flag changed": func(s string) string {
+			return strings.Replace(s, "--dangerously-skip-permissions @args }", "--permission-mode auto @args }", 1)
+		},
+		"line added":     func(s string) string { return strings.Replace(s, "@args }\r\n}", "@args }\r\nWrite-Host hi\r\n}", 1) },
+		"comment edited": func(s string) string { return strings.Replace(s, CarryComment, CarryComment+" (mine)", 1) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			ci := strings.Index(content, CarryComment)
+			edited := content[:ci] + edit(content[ci:])
+			if edited == content {
+				t.Fatal("the edit did not apply")
+			}
+			path := filepath.Join(t.TempDir(), "profile.ps1")
+			if err := os.WriteFile(path, encodeProfile(edited, enc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if cs, err := RemoveCarriedFile(path, "powershell"); err != nil || cs.Changed {
+				t.Fatalf("an edited wrapper must stay: %+v %v", cs.Reason, err)
+			}
+		})
 	}
 }

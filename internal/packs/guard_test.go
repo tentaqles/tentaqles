@@ -3,6 +3,7 @@ package packs
 import (
 	"errors"
 	"fmt"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -253,7 +254,12 @@ func TestRegisterGuardPanics(t *testing.T) {
 		"bad id":    {ID: "example", Pack: "data", Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return "", "", false }},
 		"bad pack":  {ID: "tq/x", Pack: "web", Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return "", "", false }},
 		"nil check": {ID: "tq/x", Pack: "data"},
-		"duplicate": {ID: "tq/example-bq", Pack: "data", Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return "", "", false }},
+		"duplicate": {ID: "tq/example-bq", Pack: "data", Category: guardcfg.CatPacks, Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return "", "", false }},
+		// spec E §14: every guard has a known category, matching the table
+		"no category":              {ID: "tq/x-nocat", Pack: "data", Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return "", "", false }},
+		"unknown category":         {ID: "tq/x-badcat", Pack: "data", Category: "nope", Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return "", "", false }},
+		"locked, not in the table": {ID: "tq/x-locked", Pack: "data", Category: guardcfg.CatSecrets, Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return "", "", false }},
+		"table mismatch":           {ID: "tq/iac-apply-env", Pack: "cloud", Category: guardcfg.CatPacks, Check: func(policy.ToolCall, GuardCtx) (policy.Action, string, bool) { return "", "", false }},
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {

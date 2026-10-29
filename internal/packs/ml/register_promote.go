@@ -8,6 +8,7 @@ package ml
 
 import (
 	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"gopkg.in/yaml.v3"
@@ -53,7 +54,7 @@ func init() {
 	packs.Register(packs.Check{ID: "ml/model-card", Pack: "ml", Kind: packs.Builtin, Applies: modelCardApplies, Run: runModelCard})
 	packs.Register(packs.Check{ID: "ml/drift", Pack: "ml", Kind: packs.Builtin, Applies: driftApplies, Run: runDriftCheck})
 	packs.Register(packs.Check{ID: "ml/promotion-in-code", Pack: "ml", Kind: packs.Builtin, Applies: promotionInCodeApplies, Run: runPromotionInCode})
-	packs.RegisterGuard(packs.Guard{ID: "tq/model-promote", Default: "deny", Pack: "ml", Events: []string{"Bash", "PowerShell", `mcp__.*`},
+	packs.RegisterGuard(packs.Guard{ID: "tq/model-promote", Category: guardcfg.CatPacks, Default: "deny", Pack: "ml", Events: []string{"Bash", "PowerShell", `mcp__.*`},
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 			return checkModelPromote(call, g)
 		}})

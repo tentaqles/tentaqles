@@ -34,6 +34,14 @@ export function ExistingWorkspaces() {
   return window['go']['main']['App']['ExistingWorkspaces']();
 }
 
+export function GrantMode(arg1) {
+  return window['go']['main']['App']['GrantMode'](arg1);
+}
+
+export function GuardWorkspaces() {
+  return window['go']['main']['App']['GuardWorkspaces']();
+}
+
 export function HooksStatus() {
   return window['go']['main']['App']['HooksStatus']();
 }
@@ -70,12 +78,28 @@ export function Providers() {
   return window['go']['main']['App']['Providers']();
 }
 
+export function RevokeGrant(arg1) {
+  return window['go']['main']['App']['RevokeGrant'](arg1);
+}
+
 export function ServiceCatalog() {
   return window['go']['main']['App']['ServiceCatalog']();
 }
 
+export function SetMode(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetMode'](arg1, arg2, arg3, arg4);
+}
+
+export function SetOverride(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetOverride'](arg1, arg2, arg3, arg4);
+}
+
 export function TQVersion() {
   return window['go']['main']['App']['TQVersion']();
+}
+
+export function ToggleCategory(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ToggleCategory'](arg1, arg2, arg3, arg4);
 }
 
 export function ToolCheck(arg1) {
