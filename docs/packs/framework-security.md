@@ -24,7 +24,7 @@ This page covers how the pack framework keeps an agent from granting itself a ga
   - Every web route refuses an answer for a `data.pack` decision (403), whatever the cookie, token or local key.
   - A browser session proves nothing that a same-user script cannot reproduce. **WebAuthn** with user verification (a platform passkey such as Windows Hello or Touch ID, registered from the human's terminal) is the planned way to answer from the board.
 - **Agents are stopped at the hook (defence in depth).** `tq/human-answer` is a core deny rule. It cannot be disabled or superseded, and unattended mode never skips it. It covers:
-  - `tq hub answer`, `tq pack <x> approve` and `tq pack ml promote apply`, in any spelling: global flags before the verb, `t''q`, a variable or call operator, a subprocess argv list;
+  - `tq hub answer` and every pack `apply` subcommand that executes an approved action (`tq pack ml promote apply`, `tq pack cloud apply`), in any spelling: global flags before the verb, `t''q`, a variable or call operator, a subprocess argv list. `tq pack <x> approve` and `tq pack ml promote request` are allowed: they only ask (they create the pending decision) and never answer (spec D Â§9.8);
   - HTTP clients reaching the hub's decision and answer endpoints. The URL is matched after percent-decoding and after quote and `+` folding;
   - reads of `hub/serve-*.json`.
   - `tq/secret-store-shell` denies shell commands that name the ledger key's keychain entry (`tentaqles-packs`), for example `cmdkey`, PasswordVault and CredentialManager, `secret-tool`, `security find-generic-password` and keyring libraries.
@@ -50,6 +50,7 @@ This page covers how the pack framework keeps an agent from granting itself a ga
     - a `cd` under the root, tracked cumulatively, followed by a relative path into a protected part;
     - the 8.3 names of the protected children.
   - Edit and Write are checked on the canonical path, which is resolved through the nearest existing parent's handle.
+  - **A stored plan as an argument.** A pack guard that handles a call and allows it may name the StateDir files it verified with `HashState` in that call (`GuardCtx.ReadArgs`), such as the plan in `terraform apply <TQ_HOME>/packs/<ws>/cloud/plans/<id>.tfplan`. For that call only, those exact paths (as the absolute or final path, a plain argument or a flag's `=value`) are not counted. Nothing is exempt when the command has a redirect, a write verb, a shell or interpreter, a substitution, or names the path in a second command segment; every other path is checked as usual.
 - **Single use and binding.**
   - An approval is claimed with an `O_EXCL` file before the allow or before the human-run command, so one use wins.
   - `Verify` compares pack, action, subject, target and evidence with the signed line.
