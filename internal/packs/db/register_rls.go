@@ -57,10 +57,13 @@ func init() {
 	packs.Register(packs.Check{ID: "db/rls-tests", Pack: "db", Kind: packs.Builtin,
 		Applies: func(in *packs.Input) bool { return rlsApplies(in) || testsChanged(in) },
 		Run:     runRLSTests})
+	// Env is minimal: the connection comes from test_db only (pgtap.Mode.Env).
 	packs.Register(packs.Check{ID: "db/pgtap", Pack: "db", Kind: packs.External, Tool: "pg_prove",
+		Env:     pgtap.PgProve.Env(),
 		Applies: func(in *packs.Input) bool { return pgtapApplies(in) && !supabaseMode(in) },
 		Run:     func(ctx context.Context, in *packs.Input) packs.Result { return runPgtap(ctx, in, pgtap.PgProve) }})
 	packs.Register(packs.Check{ID: "db/pgtap-supabase", Pack: "db", Kind: packs.External, Tool: "supabase",
+		Env:     pgtap.Supabase.Env(),
 		Applies: func(in *packs.Input) bool { return pgtapApplies(in) && supabaseMode(in) },
 		Run:     func(ctx context.Context, in *packs.Input) packs.Result { return runPgtap(ctx, in, pgtap.Supabase) }})
 }

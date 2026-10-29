@@ -50,6 +50,62 @@ func (m Mode) Tool() string {
 	return "pg_prove"
 }
 
+// Env are the parent variables the mode's tool may see besides toolrun's
+// base set (the check's Check.Env). It is deliberately minimal: no PG*
+// variable passes, since the connection comes from test_db only.
+//   - pg_prove: PERL5LIB and PERL_LOCAL_LIB_ROOT, so a pg_prove installed
+//     with cpanm into a local::lib finds its modules.
+//   - supabase: DOCKER_HOST, so a local daemon on a non-default socket
+//     (colima, podman) is reached; Run refuses a DOCKER_HOST that is not
+//     local (DockerHostLocal).
+func (m Mode) Env() []string {
+	if m == Supabase {
+		return []string{"DOCKER_HOST"}
+	}
+	return []string{"PERL5LIB", "PERL_LOCAL_LIB_ROOT"}
+}
+
+// DockerHostLocal reports whether a DOCKER_HOST value names a daemon on
+// this machine: unset, a unix socket, a named pipe, fd://, or tcp:// or
+// ssh:// to localhost or a loopback address.
+func DockerHostLocal(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return true
+	}
+	scheme, rest, ok := strings.Cut(v, "://")
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(scheme) {
+	case "unix", "npipe", "fd":
+		return true
+	case "tcp", "ssh":
+	default:
+		return false
+	}
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		rest = rest[:i]
+	}
+	if i := strings.LastIndex(rest, "@"); i >= 0 {
+		rest = rest[i+1:]
+	}
+	host := rest
+	if h, _, err := net.SplitHostPort(rest); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// dockerNotLocal is the refusal of a remote DOCKER_HOST; it never quotes
+// the value.
+const dockerNotLocal = "test_db is not local: DOCKER_HOST names a Docker daemon on another machine; the tests run only against a local database (unset DOCKER_HOST or point it at a local socket)"
+
 const (
 	// ProbeTimeout bounds the TCP probe.
 	ProbeTimeout = 2 * time.Second
@@ -224,6 +280,17 @@ func Run(ctx context.Context, in *packs.Input, o Options) packs.Result {
 			return fail(v + " is set in the environment: it can send libpq elsewhere than the checked host; unset it for the tests")
 		}
 	}
+	if o.Mode == Supabase && !DockerHostLocal(os.Getenv("DOCKER_HOST")) {
+		return fail(dockerNotLocal)
+	}
+	// A pg_prove inside the repository is code the repository controls: it
+	// never gets the test_db password (as toolrun withholds a declared
+	// secret from a repo-local binary).
+	if o.Mode == PgProve && target.Password != "" {
+		if p := in.Tools.Probe("db", tool); p.Found && (&toolrun.Runner{Root: in.Root}).RepoLocal(p) {
+			return fail("pg_prove resolves inside the repository; tq does not pass the test_db password to it. Install pg_prove outside the repository or set packs.db.tool_paths.pg_prove in the manifest")
+		}
+	}
 
 	// The probe address.
 	network, addr := "tcp", ""
@@ -262,14 +329,14 @@ func Run(ctx context.Context, in *packs.Input, o Options) packs.Result {
 
 	var spec toolrun.Spec
 	if o.Mode == Supabase {
-		spec = toolrun.Spec{Pack: "db", Tool: tool, Args: []string{"test", "db", "--local"}, Dir: in.Root}
+		spec = toolrun.Spec{Pack: "db", Tool: tool, Args: []string{"test", "db", "--local"}, Dir: in.Root, PassEnv: o.Mode.Env()}
 	} else {
 		dir := o.TestsDir
 		if dir == "" {
 			return fail("packs.db.rls.tests is not set: pg_prove needs the pgTAP directory")
 		}
 		args := append([]string{"--ext", ".sql", "-r", "--failures"}, target.Args()...)
-		spec = toolrun.Spec{Pack: "db", Tool: tool, Args: append(args, dir), Dir: in.Root, Env: target.Env()}
+		spec = toolrun.Spec{Pack: "db", Tool: tool, Args: append(args, dir), Dir: in.Root, Env: target.Env(), PassEnv: o.Mode.Env()}
 	}
 	out, err := in.Tools.Run(ctx, spec)
 	run := &packs.ToolRun{Name: tool, Version: out.Version, Path: out.Path, ExitCode: out.ExitCode, DurationMS: out.Duration.Milliseconds(), TimedOut: out.TimedOut}
@@ -326,7 +393,12 @@ func answers(ctx context.Context, network, addr string) bool {
 // runStart runs test_db.start (argv split on spaces, no shell).
 func runStart(ctx context.Context, in *packs.Input, start string) (packs.Result, bool) {
 	argv := strings.Fields(start)
-	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "db", Tool: argv[0], Args: argv[1:], Dir: in.Root, Timeout: StartTimeout})
+	// The start command (supabase start, docker compose up) talks to the
+	// Docker daemon: the same local-only rule applies.
+	if !DockerHostLocal(os.Getenv("DOCKER_HOST")) {
+		return packs.Result{Status: packs.Fail, Detail: dockerNotLocal}, false
+	}
+	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "db", Tool: argv[0], Args: argv[1:], Dir: in.Root, Timeout: StartTimeout, PassEnv: Supabase.Env()})
 	switch {
 	case errors.Is(err, toolrun.ErrNotFound):
 		return packs.Result{Status: packs.Fail, Detail: "test_db.start: " + argv[0] + " is not installed"}, false

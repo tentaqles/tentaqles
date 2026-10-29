@@ -31,16 +31,15 @@ func rlsCfg(t *testing.T, tools string) packs.Config {
 	return packs.Merge(packsOf(t, strings.ReplaceAll(rlsConfig, "%TOOLS%", tools)), nil)
 }
 
-// Spec D §4 declares the tool as pg_prove. The framework's tool-name rule
-// (manifest toolNameRe, ^[a-z0-9-]+$) rejects the underscore today; the
-// test is skipped until the framework accepts it (reported as NEEDS_CONTEXT).
+// Spec D §4 declares the tool as pg_prove (the framework's tool names allow
+// an underscore).
 func TestPgProveToolNameAccepted(t *testing.T) {
-	err := manifest.ValidatePacks(packsOf(t, strings.ReplaceAll(rlsConfig, "%TOOLS%", "[pg_prove]")))
-	if err != nil && strings.Contains(err.Error(), "tool names use only") {
-		t.Skip("framework: packs.<pack>.tools rejects pg_prove (underscore); needs a framework change")
-	}
-	if err != nil {
+	if err := manifest.ValidatePacks(packsOf(t, strings.ReplaceAll(rlsConfig, "%TOOLS%", "[pg_prove]"))); err != nil {
 		t.Fatalf("valid config: %v", err)
+	}
+	withPaths := "db: {tools: [pg_prove], timeouts: {pg_prove: 300}, tool_paths: {pg_prove: /usr/local/bin/pg_prove}}"
+	if err := manifest.ValidatePacks(packsOf(t, withPaths)); err != nil {
+		t.Fatalf("pg_prove in timeouts and tool_paths: %v", err)
 	}
 }
 
@@ -77,6 +76,16 @@ func TestRLSRepoMerge(t *testing.T) {
 	}
 	if s.Node("test_db") != nil {
 		t.Fatal("the repo layer set test_db")
+	}
+	// rls.tests: the repo may set it when the manifest does not, and never
+	// replaces the manifest's.
+	cfg = packs.Merge(packsOf(t, "db: {enabled: true}"), packsOf(t, "db: {rls: {tests: db/tests}}"))
+	if got := cfg.Pack("db").String("rls.tests"); got != "db/tests" {
+		t.Fatalf("repo rls.tests = %q", got)
+	}
+	cfg = packs.Merge(packsOf(t, "db: {enabled: true, rls: {tests: supabase/tests}}"), packsOf(t, "db: {rls: {tests: elsewhere}}"))
+	if got := cfg.Pack("db").String("rls.tests"); got != "supabase/tests" {
+		t.Fatalf("manifest rls.tests replaced: %q", got)
 	}
 }
 
@@ -251,6 +260,21 @@ func TestRLSRegisteredChecks(t *testing.T) {
 		c, ok := have[id]
 		if !ok || c.Tool != tool {
 			t.Errorf("%s: registered %v tool %q", id, ok, c.Tool)
+		}
+	}
+	// The tools see only what they need: no PG* variable (the connection
+	// comes from test_db), the Perl module path, and a local DOCKER_HOST.
+	if got := have["db/pgtap"].Env; !reflect.DeepEqual(got, []string{"PERL5LIB", "PERL_LOCAL_LIB_ROOT"}) {
+		t.Errorf("db/pgtap Env = %v", got)
+	}
+	if got := have["db/pgtap-supabase"].Env; !reflect.DeepEqual(got, []string{"DOCKER_HOST"}) {
+		t.Errorf("db/pgtap-supabase Env = %v", got)
+	}
+	for _, id := range []string{"db/pgtap", "db/pgtap-supabase"} {
+		for _, n := range have[id].Env {
+			if strings.HasPrefix(strings.ToUpper(n), "PG") {
+				t.Errorf("%s passes %s from the parent environment", id, n)
+			}
 		}
 	}
 }

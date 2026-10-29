@@ -44,7 +44,7 @@ func fake(mode string) {
 	if f := os.Getenv("TQ_FAKE_ENV"); f != "" {
 		var keep []string
 		for _, e := range os.Environ() {
-			if strings.HasPrefix(e, "PG") {
+			if strings.HasPrefix(e, "PG") || strings.HasPrefix(e, "DOCKER_") || strings.HasPrefix(e, "PERL") {
 				keep = append(keep, e)
 			}
 		}
@@ -121,6 +121,10 @@ func setup(t *testing.T, cfg string, tools ...string) *env {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("PGHOSTADDR", "")
 	t.Setenv("PGSERVICE", "")
+	t.Setenv("DOCKER_HOST", "")
+	// A copy of the test binary is always a fake, even in a test that does
+	// not pick a mode (a probe of the tool runs it with --version).
+	t.Setenv("TQ_FAKE_PGTAP", "fake")
 	e := &env{root: t.TempDir(), bin: t.TempDir()}
 	for _, tl := range tools {
 		fakeBin(t, e.bin, tl)
@@ -410,6 +414,126 @@ func TestHangIsKilled(t *testing.T) {
 	r := Run(context.Background(), e.in, opts(e, PgProve))
 	if r.Status != packs.Fail || !strings.Contains(r.Detail, "timed out") || time.Since(start) > 20*time.Second {
 		t.Fatalf("result = %+v after %s", r, time.Since(start))
+	}
+}
+
+// The connection comes from test_db only: PG* variables of the parent
+// environment never reach pg_prove, and neither does anything else that is
+// not declared.
+func TestParentConnectionVarsDoNotReachTheTool(t *testing.T) {
+	e := setup(t, pgCfg, "pg_prove")
+	t.Setenv("TQ_FAKE_PGTAP", "pg_prove")
+	t.Setenv("TEST_DATABASE_URL", "postgres://tester:"+secret+"@localhost:54322/postgres") // tq:allow-secret fake test fixture
+	t.Setenv("PGHOST", "db.acme.example")
+	t.Setenv("PGPASSWORD", "other-pw-acme") // tq:allow-secret fake test fixture
+	t.Setenv("PGSSLROOTCERT", "/tmp/acme.crt")
+	t.Setenv("PERL5LIB", "/home/tester/perl5/lib/perl5")
+	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+	dialer(t, e, "up")
+	if r := Run(context.Background(), e.in, opts(e, PgProve)); r.Status != packs.OK {
+		t.Fatalf("result = %+v", r)
+	}
+	envb, _ := os.ReadFile(e.envf)
+	got := strings.Split(strings.TrimSpace(string(envb)), "\n")
+	want := map[string]bool{
+		"PGHOST=localhost": true, "PGPORT=54322": true, "PGDATABASE=postgres": true, "PGUSER=tester": true,
+		"PGPASSWORD=" + secret: true, "PERL5LIB=/home/tester/perl5/lib/perl5": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("child env = %q", got)
+	}
+	for _, kv := range got {
+		if !want[kv] {
+			t.Fatalf("child env has %q (all: %q)", kv, got)
+		}
+	}
+}
+
+// A pg_prove inside the repository is code the repository controls: it
+// never gets the test_db password, and the check fails closed.
+func TestRepoLocalPgProveGetsNoPassword(t *testing.T) {
+	e := setup(t, pgCfg)
+	local := filepath.Join(e.root, "tools")
+	_ = os.MkdirAll(local, 0o755)
+	fakeBin(t, local, "pg_prove")
+	e.in.Tools.(*toolrun.Runner).LookPath = lookOnly(local)
+	t.Setenv("TQ_FAKE_PGTAP", "pg_prove")
+	t.Setenv("TEST_DATABASE_URL", "postgres://tester:"+secret+"@localhost:54322/postgres") // tq:allow-secret fake test fixture
+	dialer(t, e, "up")
+	r := Run(context.Background(), e.in, opts(e, PgProve))
+	if r.Status != packs.Fail || !strings.Contains(r.Detail, "inside the repository") || strings.Contains(r.Detail, secret) {
+		t.Fatalf("result = %+v", r)
+	}
+	if _, err := os.Stat(e.argv); err == nil {
+		t.Fatal("pg_prove ran")
+	}
+	// Without a password there is nothing to withhold: it runs.
+	t.Setenv("TEST_DATABASE_URL", "postgres://tester@localhost:54322/postgres")
+	if r := Run(context.Background(), e.in, opts(e, PgProve)); r.Status != packs.OK {
+		t.Fatalf("no password: %+v", r)
+	}
+}
+
+func TestDockerHostLocal(t *testing.T) {
+	for v, want := range map[string]bool{
+		"":                            true,
+		"unix:///var/run/docker.sock": true,
+		"unix:///home/tester/.colima/docker.sock": true,
+		"npipe:////./pipe/docker_engine":          true,
+		"tcp://localhost:2375":                    true,
+		"tcp://127.0.0.1:2376":                    true,
+		"tcp://[::1]:2375":                        true,
+		"ssh://tester@localhost":                  true,
+		"tcp://build.acme.example:2376":           false,
+		"tcp://10.0.0.5:2375":                     false,
+		"ssh://tester@build.acme.example":         false,
+		"tcp://localhost.acme.example:2375":       false,
+		"fd://":                                   true,
+		"http://localhost:2375":                   false,
+		"garbage":                                 false,
+	} {
+		if got := DockerHostLocal(v); got != want {
+			t.Errorf("DockerHostLocal(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+// Supabase mode runs the tests through the Docker daemon: a DOCKER_HOST on
+// another machine is a non-local test database, refused before anything
+// connects. A local DOCKER_HOST (colima, podman) reaches the tool.
+func TestSupabaseDockerHostMustBeLocal(t *testing.T) {
+	e := setup(t, "db:\n  tools: [supabase]\n", "supabase")
+	t.Setenv("TQ_FAKE_PGTAP", "supabase")
+	t.Setenv("DOCKER_HOST", "tcp://build.acme.example:2376")
+	dialed := dialer(t, e, "up")
+	r := Run(context.Background(), e.in, opts(e, Supabase))
+	if r.Status != packs.Fail || !strings.Contains(r.Detail, "not local") || strings.Contains(r.Detail, "acme.example") {
+		t.Fatalf("remote docker: %+v", r)
+	}
+	if len(*dialed) != 0 {
+		t.Fatalf("dialed %v", *dialed)
+	}
+	if _, err := os.Stat(e.argv); err == nil {
+		t.Fatal("supabase ran")
+	}
+	t.Setenv("DOCKER_HOST", "unix:///home/tester/.colima/docker.sock")
+	if r := Run(context.Background(), e.in, opts(e, Supabase)); r.Status != packs.OK {
+		t.Fatalf("local docker: %+v", r)
+	}
+	envb, _ := os.ReadFile(e.envf)
+	if strings.TrimSpace(string(envb)) != "DOCKER_HOST=unix:///home/tester/.colima/docker.sock" {
+		t.Fatalf("child env = %q", envb)
+	}
+	// The start command goes through the same Docker daemon.
+	e = setup(t, "db:\n  tools: [pg_prove]\n  test_db: {url_env: TEST_DATABASE_URL, start: supabase start}\n", "pg_prove", "supabase")
+	t.Setenv("TEST_DATABASE_URL", "postgres://tester@localhost:54322/postgres")
+	t.Setenv("DOCKER_HOST", "ssh://tester@build.acme.example")
+	dialer(t, e, "after-start")
+	if r := Run(context.Background(), e.in, opts(e, PgProve)); r.Status != packs.Fail || !strings.Contains(r.Detail, "not local") {
+		t.Fatalf("start with remote docker: %+v", r)
+	}
+	if _, err := os.Stat(e.started); err == nil {
+		t.Fatal("start ran")
 	}
 }
 
