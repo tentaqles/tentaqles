@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/scan"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
 
@@ -142,8 +143,20 @@ func containsWord(hay, needle string) bool {
 	}
 }
 
+// maxPwshDepth bounds how deep decoded PowerShell commands are re-read.
+const maxPwshDepth = 3
+
 // checkModelPromote is the guard function.
 func checkModelPromote(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
+	return checkModelPromoteAt(call, g, 0)
+}
+
+// checkModelPromoteAt also reads what PowerShell runs: a decoded
+// -EncodedCommand is checked like the command itself, and a script the
+// guard cannot read (-File, a pwsh bare script, stdin, an encoded command
+// that does not decode, a nest past maxPwshDepth or a command past the word
+// cap) is asked about (fail closed).
+func checkModelPromoteAt(call policy.ToolCall, g packs.GuardCtx, depth int) (policy.Action, string, bool) {
 	if call.IsMCP() {
 		name := strings.ToLower(call.Tool)
 		if mcpRe.MatchString(name) || (strings.Contains(name, "update_model_package") && strings.Contains(strings.ToLower(call.Content), "approved")) {
@@ -187,6 +200,22 @@ func checkModelPromote(call policy.ToolCall, g packs.GuardCtx) (policy.Action, s
 		for _, mk := range atStart {
 			if why == "" && startsCommand(cs, mk) {
 				why = "the declared promotion command run directly"
+			}
+		}
+	}
+	if why == "" && (has("pwsh") || has("powershell")) {
+		runs, truncated := scan.PowerShellRuns(call.Command)
+		if truncated || depth >= maxPwshDepth {
+			return policy.Ask, "tq/model-promote: a PowerShell command too long or too deeply nested to read; confirm it promotes no model. " + promoteDeny, true
+		}
+		for _, r := range runs {
+			if r.Opaque != "" {
+				return policy.Ask, "tq/model-promote: PowerShell runs " + r.Opaque + " that the guard cannot read; confirm it promotes no model. " + promoteDeny, true
+			}
+			if r.Encoded {
+				if a, reason, handled := checkModelPromoteAt(policy.ToolCall{Tool: call.Tool, Command: r.Script}, g, depth+1); handled {
+					return a, reason, handled
+				}
 			}
 		}
 	}
