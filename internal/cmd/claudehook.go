@@ -269,7 +269,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 					if exiting {
 						panic(r)
 					}
-					rerr = guardPanicAsk(c, asJSON, r)
+					rerr = guardPanicAsk(c, asJSON, agent, r)
 				}
 			}()
 			// One scan deadline from hook entry: the gh/git identity
@@ -301,6 +301,11 @@ permissionDecision JSON so Claude Code asks the user.`,
 				}
 				ws, cfg = gws, gcfg
 				if d := guard.Decide(in); d.Block {
+					if agent == hookAgentCodex && !asJSON {
+						// Exit 2 blocks in Codex too; the deny answer says so
+						// on stdout as well.
+						writeCodexDeny(c.OutOrStdout(), d.Reason)
+					}
 					emitDecision(c, asJSON, true, d.Rule, d.Reason)
 					exit(2)
 					return nil
@@ -320,10 +325,40 @@ permissionDecision JSON so Claude Code asks the user.`,
 				// deterministic rules already deny.
 				d = policy.Merge(d, jevDecision(ws, call, gate))
 			}
+			// A Codex apply_patch names its files only in the patch text: the
+			// file and path rules run on every file it writes, under that
+			// file's mode, and a patch tq cannot read is denied.
+			type judged struct {
+				gate *modeGate
+				call policy.ToolCall
+			}
+			var subs []judged
+			if isApplyPatch(call) {
+				files, err := parseApplyPatch(call.Command)
+				if err != nil {
+					reason := "BLOCKED [" + guardErrorID + "]: " + err.Error() + "; tq denies an edit it cannot judge"
+					if agent == hookAgentCodex && !asJSON {
+						writeCodexDeny(c.OutOrStdout(), reason)
+					}
+					emitDecision(c, asJSON, true, guardErrorID, reason)
+					exit(2)
+					return nil
+				}
+				for _, fc := range patchCalls(files, cwd) {
+					fg := modeGateFor(ws, cwd, fc, launchMode())
+					d = policy.Merge(d, hookPolicyDecision(cwd, ws, cfg, fc, scanDeadline, fg))
+					subs = append(subs, judged{fg, fc})
+				}
+			}
 			skipped := gate.audit(p.PermissionMode, call, d)
+			for _, s := range subs {
+				skipped = append(skipped, s.gate.audit(p.PermissionMode, s.call, d)...)
+			}
 			if agent == hookAgentCodex && !asJSON && d.Action != policy.Allow {
-				// Codex fails open on a hook ask: codexHookOutput never sends one.
-				if code := codexHookOutput(c.OutOrStdout(), call, d); code != 0 {
+				// Codex fails open on a hook ask: codexAnswer never sends one,
+				// and lets Codex's own prompt rule ask only in a permission
+				// mode where Codex prompts.
+				if code := codexAnswer(c.OutOrStdout(), call, d, codexHookCtx{CodexHome: codexRulesHome(), PermissionMode: p.PermissionMode, GOOS: codexPromptOS, WS: ws, Cwd: cwd}); code != 0 {
 					exit(code)
 				}
 				return nil
@@ -372,8 +407,9 @@ const guardErrorID = guardcfg.GuardErrorID
 
 // guardPanicAsk answers a panic in the hook's analysis with an ask: never an
 // allow, never a crash, and never a mode's skip (tq/guard-error is locked). It only formats the
-// panic value (no stack walk), so it stays cheap.
-func guardPanicAsk(c *cobra.Command, asJSON bool, r any) error {
+// panic value (no stack walk), so it stays cheap. Under --agent codex it is a
+// deny: Codex lets a hook ask run, so an ask there would fail open.
+func guardPanicAsk(c *cobra.Command, asJSON bool, agent string, r any) error {
 	detail := fmt.Sprint(r)
 	if len(detail) > 200 {
 		detail = detail[:200] + "…"
@@ -382,6 +418,10 @@ func guardPanicAsk(c *cobra.Command, asJSON bool, r any) error {
 	fmt.Fprintln(c.ErrOrStderr(), "tq: guard panic: "+detail)
 	if asJSON {
 		emitDecision(c, asJSON, false, guardErrorID, reason)
+		return nil
+	}
+	if agent == hookAgentCodex {
+		writeCodexDeny(c.OutOrStdout(), codexAskPrefix+"\n"+reason)
 		return nil
 	}
 	return writeAsk(c.OutOrStdout(), reason)
