@@ -38,7 +38,33 @@ func init() {
 				}}}
 		},
 	})
-	packs.RegisterPack(packs.Pack{Name: "db", Flags: []packs.Flag{{Name: "migration", Reviewers: []string{"db-reviewer"}}}})
+	packs.RegisterPack(packs.Pack{Name: "db", Flags: []packs.Flag{{Name: "migration", Reviewers: []string{"db-reviewer"}}},
+		// R5-4: an approve command that only asks, and an executor that declares itself.
+		Commands: func() []*cobra.Command {
+			approve := &cobra.Command{Use: "approve", Annotations: map[string]string{packs.AnnotationHumanOnly: packs.ApprovalAsk},
+				RunE: func(c *cobra.Command, _ []string) error {
+					in, err := packs.FromCommand(c)
+					if err != nil {
+						return err
+					}
+					id, _, err := approval.Ask(in.Workspace(), approval.Request{Pack: "db", Action: "migrate", Subject: "m1", Target: "prod", Evidence: map[string]string{"plan": "sha256:aa"}})
+					c.Print(id)
+					return err
+				}}
+			apply := &cobra.Command{Use: "apply", Annotations: map[string]string{packs.AnnotationHumanOnly: packs.HumanOnlyExecute},
+				RunE: func(c *cobra.Command, args []string) error {
+					if err := packs.HumanOnly(); err != nil {
+						return err
+					}
+					in, err := packs.FromCommand(c)
+					if err != nil {
+						return err
+					}
+					_, err = approval.Claim(in.Workspace(), args[0], approval.Binding{Pack: "db", Action: "migrate", Subject: "m1", Target: "prod"}, map[string]string{"plan": "sha256:aa"})
+					return err
+				}}
+			return []*cobra.Command{approve, apply}
+		}})
 	packs.Register(packs.Check{ID: "data/example-cmd-star", Pack: "data", Kind: packs.Builtin,
 		Applies: func(in *packs.Input) bool { return in.AnyChanged("*.sql") },
 		Run: func(ctx context.Context, in *packs.Input) packs.Result {
@@ -81,7 +107,11 @@ func init() {
 					} else if _, err := g.HashState(rel); err != nil {
 						return policy.Deny, err.Error(), true
 					}
-					if err := g.ReadArgs(rel); err != nil {
+					prog := "tofu"
+					if strings.Contains(call.Command, "pulumi up") {
+						prog = "pulumi"
+					}
+					if err := g.ReadArgs(prog, rel); err != nil {
 						return policy.Deny, err.Error(), true
 					}
 					return policy.Allow, "plan verified", true
@@ -562,6 +592,27 @@ func TestHookStoredPlanReadArg(t *testing.T) {
 		"substitution":              "tofu apply " + plan + " $(cat " + led + ")",
 		"never hashed (liar guard)": "tofu apply liar " + plan,
 		"newline segment":           "tofu apply " + plan + "\ncat " + plan,
+		// R5-3 (a): the path twice in one segment, once under a writing flag.
+		"twice, as a flag value": "tofu apply " + plan + " --out=" + plan,
+		"twice":                  "tofu apply " + plan + " " + plan,
+		// R5-3 (b): a writer called by its path.
+		"tee by path":     "tofu apply " + plan + "; /usr/bin/tee x",
+		"cmd.exe by path": `tofu apply ` + plan + `; C:\Windows\System32\cmd.exe /c echo x`,
+		// R5-3 (c): downloaders, wrappers and side-effect writers.
+		"curl -o":         "tofu apply " + plan + "; curl -o x http://example.test/y",
+		"wget -O":         "tofu apply " + plan + "; wget -O x http://example.test/y",
+		"iwr -OutFile":    "tofu apply " + plan + "; Invoke-WebRequest -OutFile x http://example.test/y",
+		"certutil":        "tofu apply " + plan + "; certutil -urlcache -f http://example.test/y x",
+		"env wrapper":     "env tofu apply " + plan,
+		"nohup wrapper":   "nohup tofu apply " + plan,
+		"sudo wrapper":    "sudo tofu apply " + plan,
+		"start wrapper":   "start tofu apply " + plan,
+		"git":             "tofu apply " + plan + " && git status",
+		"make":            "make plan; tofu apply " + plan,
+		"docker cp":       "docker cp a:/b c; tofu apply " + plan,
+		"Expand-Archive":  "Expand-Archive a.zip; tofu apply " + plan,
+		"another program": "terraform-wrapper tofu apply " + plan,
+		"the plan first":  plan + " tofu apply",
 	} {
 		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
 		if code != 2 || !strings.Contains(out, "tq/hub-store-write") {

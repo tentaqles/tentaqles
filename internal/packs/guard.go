@@ -156,7 +156,7 @@ type guardState struct {
 	counters  []Counter
 	hashSpent atomic.Int64
 	hashed    map[string]string // HashState names verified in this call -> absolute path
-	readArgs  []string
+	readArgs  []ReadArg
 }
 
 // Counter is a pack counter a guard asked for.
@@ -201,15 +201,32 @@ func (g GuardCtx) Cwd() string {
 	return filepath.Clean(c)
 }
 
-// ReadArgs names StateDir files this guard verified with HashState in this
-// call and that the allowed command reads as plain arguments (a stored plan:
-// terraform apply <plan>). For this call only, the core state-dir rule
-// (tq/hub-store-write) does not count those exact paths, provided the
-// command writes nothing (no redirect, no write verb, no substitution) and
-// no other command segment names them; every other path is checked as
-// usual. It takes effect only when the guard handles the call and allows
-// it. A name not hashed in this call is an error (the guard should deny).
-func (g GuardCtx) ReadArgs(names ...string) error {
+// ReadArg is one stored file an allowed command reads: the program that
+// reads it (its first word, such as tofu, terraform or pulumi) and the
+// file's absolute path under the pack's plans/ directory.
+type ReadArg struct {
+	Program string
+	Path    string
+}
+
+// ReadArgs names stored plans this guard verified with HashState in this
+// call and that program reads as a plain argument (terraform apply <plan>,
+// pulumi up --plan <plan>). For this call only, the core state-dir rule
+// (tq/hub-store-write) does not count that exact path, provided:
+//   - the command writes nothing (no redirect, no write verb, shell,
+//     interpreter, downloader or wrapper, no substitution);
+//   - the path occurs exactly once, in a segment whose first word is
+//     program;
+//
+// every other path is checked as usual. It takes effect only when the guard
+// handles the call and allows it. Only files under the pack's plans/
+// directory can be named; a name not hashed in this call, outside plans/,
+// or an empty program is an error (the guard should deny).
+func (g GuardCtx) ReadArgs(program string, names ...string) error {
+	program = strings.ToLower(strings.TrimSpace(program))
+	if program == "" || strings.ContainsAny(program, `/\ `) || len(names) == 0 {
+		return fmt.Errorf("%w: ReadArgs needs the program name that reads the file and at least one file", ErrRefused)
+	}
 	g.st.mu.Lock()
 	defer g.st.mu.Unlock()
 	for _, n := range names {
@@ -217,11 +234,14 @@ func (g GuardCtx) ReadArgs(names ...string) error {
 		if err != nil {
 			return err
 		}
+		if s := filepath.ToSlash(rel); !strings.HasPrefix(s, "plans/") || len(s) == len("plans/") {
+			return fmt.Errorf("%w: %q is not a stored plan (only files under plans/ can be read args)", ErrRefused, n)
+		}
 		abs, ok := g.st.hashed[rel]
 		if !ok {
 			return fmt.Errorf("%w: %q was not verified with HashState in this call", ErrRefused, n)
 		}
-		g.st.readArgs = append(g.st.readArgs, abs)
+		g.st.readArgs = append(g.st.readArgs, ReadArg{Program: program, Path: abs})
 	}
 	return nil
 }
@@ -682,7 +702,7 @@ type GuardOutcome struct {
 	// ReadArgs are StateDir files (absolute paths) the guard verified and the
 	// allowed command reads as arguments (GuardCtx.ReadArgs); set only on a
 	// handled allow.
-	ReadArgs []string
+	ReadArgs []ReadArg
 	Counters []Counter
 	Failed   bool // a panic, a timeout: the outcome is a deny
 }
@@ -775,7 +795,7 @@ func runGuard(g Guard, call policy.ToolCall, env GuardEnv, deadline time.Time) G
 			o.Counters = append([]Counter(nil), ctx.st.counters...)
 			ctx.st.mu.Unlock()
 			if o.Handled && o.Action == policy.Allow {
-				o.ReadArgs = append([]string(nil), ctx.st.readArgs...)
+				o.ReadArgs = append([]ReadArg(nil), ctx.st.readArgs...)
 			}
 			if o.Action != policy.Allow {
 				o.Consume = nil // an approval is only used by an allow

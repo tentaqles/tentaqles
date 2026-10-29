@@ -353,7 +353,7 @@ var (
 // no empty segment, which the loops skipped anyway); isWordSep separates
 // words (whitespace and ()<>=,).
 func isSpace(r rune) bool {
-	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' || r == '\v'
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' // Go's \s
 }
 func isTokenSep(r rune) bool { return isSpace(r) || strings.ContainsRune(";&|()<>,=", r) }
 func isSegSep(r rune) bool   { return r == ';' || r == '&' || r == '|' || r == '\n' }
@@ -431,9 +431,9 @@ func foldPaths(n string, re *rootMatcher) (string, bool) {
 	return n, dotdot
 }
 
-// rawDots is the command with only quotes folded, for the .. check (the
-// folded form has already resolved them).
-func rawDots(raw string) string { return normShell(raw) }
+// rawDots is the command with only quotes, backticks and + concatenation
+// folded, for the .. check (the folded form has already resolved them).
+func rawDots(raw string) string { return strings.ReplaceAll(normShell(raw), "+", "") }
 
 // protectedMention reports whether a folded command can reach a protected
 // part of the state directory:
@@ -451,7 +451,8 @@ func protectedMention(raw string) bool {
 	n, dotdot := foldPaths(normShell(proseFree(raw)), re)
 	// Fail closed: a root spelling and a `..` path in one command (a
 	// variable set to a path under the root, then `/../packs`).
-	if dotdot || (strings.Contains(raw, "..") && dotdotRe.MatchString(rawDots(raw)) && re.MatchString(n)) {
+	// R5-1: the prefilter reads the folded text (a quote between the dots).
+	if rd := rawDots(raw); dotdot || (strings.Contains(rd, "..") && dotdotRe.MatchString(rd) && re.MatchString(n)) {
 		return true
 	}
 	bare := false
@@ -535,7 +536,7 @@ func protectedMention(raw string) bool {
 }
 
 var (
-	humanAnswerRe = regexp.MustCompile(`\bhub[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+(\S+[\s,]+)?)*answer\b|\bpack[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+)*\S+[\s,]+(\S+[\s,]+)?apply\b`)
+	humanAnswerRe = regexp.MustCompile(`\bhub[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+(\S+[\s,]+)?)*answer\b|\bpack[\s,]+\S+[^;&|\n]*\bapply\b`)
 	httpClientRe  = regexp.MustCompile(`\b(curl|wget|http|https|invoke-webrequest|iwr|invoke-restmethod|irm|python3?|py|node|deno|bun|ruby|perl|php|pwsh|powershell|urlopen|requests|fetch)\b`)
 	pctRe         = regexp.MustCompile(`%([0-9a-f]{2})`)
 )
@@ -632,7 +633,7 @@ var readOnlyVerb = regexp.MustCompile(`^\s*(cat|type|more|less|head|tail|bat|nl|
 // stateDirDecision is the hook-time check of the three never-disable ids.
 // readArgs are the StateDir files a pack guard verified for this call
 // (packs.GuardCtx.ReadArgs); see withoutReadArgs.
-func stateDirDecision(call policy.ToolCall, cwd string, readArgs ...string) policy.Decision {
+func stateDirDecision(call policy.ToolCall, cwd string, readArgs ...packs.ReadArg) policy.Decision {
 	var d policy.Decision
 	deny := func(id, reason string) { d = policy.Merge(d, ruleDecision(policy.Deny, id, reason)) }
 	ask := func(id, reason string) { d = policy.Merge(d, ruleDecision(policy.Ask, id, reason)) }
