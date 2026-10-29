@@ -2,11 +2,13 @@
 // replays the Postgres migrations of one packs.db.migrations entry in apply
 // order, builds the state of the tables, policies, views and functions in
 // the exposed schemas, and judges what the changed migrations create or
-// touch (every migration with --all) against the RLS001…RLS010 rules.
+// touch (every migration with --all) against the RLS001…RLS011 rules.
 //
 // There is no grammar: the replay matches token patterns per statement over
 // the shared lexer (internal/packs/db/sqllex). Dynamic SQL (EXECUTE inside a
-// DO block or a function body) is not seen.
+// DO block or a routine body) is not replayed; a judged DO block or routine
+// body that mentions RLS-relevant DDL is reported instead (RLS011), so it
+// never passes silently.
 //
 // Markers, in the comments before a statement (and, for the deny-all marker,
 // a comment on the statement's own last line):
@@ -21,6 +23,7 @@ package rls
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -40,6 +43,7 @@ const (
 	RLS008 = "RLS008"
 	RLS009 = "RLS009"
 	RLS010 = "RLS010"
+	RLS011 = "RLS011"
 	// SUP001 is a tq:allow with no reason (the same id as the migration lint).
 	SUP001 = "SUP001"
 )
@@ -52,11 +56,12 @@ func Rules() map[string]string {
 		RLS003: "DISABLE / NO FORCE ROW LEVEL SECURITY or DROP POLICY with no replacement in the same migration",
 		RLS004: "a policy for anon or authenticated with USING (true) or WITH CHECK (true)",
 		RLS005: "a policy that reads user_metadata / raw_user_meta_data, which users can edit",
-		RLS006: "GRANT ALL or a write grant to anon, GRANT … TO public in an exposed schema, or default privileges to anon",
-		RLS007: "a view in an exposed schema without security_invoker = true (it bypasses RLS)",
+		RLS006: "GRANT ALL or a write grant to anon, GRANT … TO public in an exposed schema, default privileges to anon, or a role granted to anon or public",
+		RLS007: "a view in an exposed schema without security_invoker = true, or a materialized view there (both bypass RLS)",
 		RLS008: "a SECURITY DEFINER function in an exposed schema without SET search_path, or one anon can execute",
 		RLS009: "auth.uid() called per row instead of (select auth.uid())",
 		RLS010: "a service_role reference in a policy (service_role bypasses RLS)",
+		RLS011: "a DO block or routine body with dynamic RLS-relevant DDL (policies, row level security, grants, security definer, set schema) the gate cannot judge",
 	}
 }
 
@@ -299,6 +304,7 @@ func (s *state) statement(st sqllex.Statement) {
 	if len(st.Tokens) == 0 {
 		return
 	}
+	s.dynamicSQL(st)
 	switch st.Keyword() {
 	case "CREATE":
 		i := st.Skip(1, []string{"OR", "REPLACE"})
@@ -309,6 +315,8 @@ func (s *state) statement(st sqllex.Statement) {
 			s.createTable(st, i+1)
 		case st.Match(i, "VIEW") && !temp:
 			s.createView(st, i+1)
+		case st.Match(i, "MATERIALIZED", "VIEW"):
+			s.createMatView(st, i+2)
 		case st.Match(i, "POLICY"):
 			s.createPolicy(st, i+1)
 		case st.Match(i, "FUNCTION|PROCEDURE"):
@@ -424,21 +432,33 @@ func (s *state) alterTable(st sqllex.Statement, i int) {
 		case st.Match(a, "RENAME", "TO"):
 			to := st.At(a + 2).Ident(sqllex.Postgres)
 			if to != "" {
-				s.moveTable(t, sqllex.Name{Schema: t.Name.Schema, Object: to})
+				s.moveTable(st, t, sqllex.Name{Schema: t.Name.Schema, Object: to})
 			}
 		case st.Match(a, "SET", "SCHEMA"):
 			to := st.At(a + 2).Ident(sqllex.Postgres)
 			if to != "" {
-				s.moveTable(t, sqllex.Name{Schema: to, Object: t.Name.Object})
+				s.moveTable(st, t, sqllex.Name{Schema: to, Object: t.Name.Object})
 			}
 		}
 	}
 }
 
-func (s *state) moveTable(t *Table, to sqllex.Name) {
+// moveTable renames or moves t. A judged migration that moves a table into
+// an exposed schema from one that is not exposes it there: that statement
+// counts as the table's creation for RLS001 (the table must arrive with RLS
+// on, or have it enabled in the same migration).
+func (s *state) moveTable(st sqllex.Statement, t *Table, to sqllex.Name) {
+	into := !s.exposed[t.Name.Schema] && s.exposed[to.Schema]
 	delete(s.tables, t.Name.String())
 	t.Name = to
 	s.tables[to.String()] = t
+	if into && s.judge && t.create.File != s.path {
+		t.Created = true
+		t.create = s.at(st)
+		if t.RLS {
+			t.enabledIn[s.path] = true
+		}
+	}
 }
 
 // resolve clears this file's pending DISABLE / NO FORCE on t (a later
@@ -798,7 +818,54 @@ func (s *state) alterView(st sqllex.Statement, i int) {
 			delete(s.views, n.String())
 			v.name.Schema = to
 			s.views[v.name.String()] = v
-			v.judged = v.judged || s.judge
+			// Moving a view into an exposed schema exposes it: the move is
+			// judged where it happens.
+			if s.judge {
+				v.judged = true
+				v.at = s.at(st)
+			}
+		}
+	}
+}
+
+// createMatView reports a materialized view in an exposed schema: it has no
+// row-level security at all (and cannot be made security_invoker), so the
+// API serves every row it holds.
+func (s *state) createMatView(st sqllex.Statement, i int) {
+	i = st.Skip(i, []string{"IF", "NOT", "EXISTS"})
+	n, _ := st.Name(i, sqllex.Postgres)
+	if n.IsZero() || !s.judge || !s.exposed[n.Schema] {
+		return
+	}
+	s.report(s.at(st), RLS007, packs.LevelError, fmt.Sprintf("materialized view %s is in an exposed schema and has no row-level security: the API serves every row; move it to a private schema and expose it through a security_invoker view or a function", n))
+}
+
+// dynamicRe matches the DDL the gate would judge if it were not inside a
+// string: policies, row level security, grants, security definer and set
+// schema.
+var dynamicRe = regexp.MustCompile(`(?is)\brow\s+level\s+security\b|\b(?:create|alter|drop)\s+policy\b|\bgrant\b|\bsecurity\s+definer\b|\bset\s+schema\b`)
+
+// dynamicSQL reports a judged DO block or routine whose body mentions DDL
+// the replay cannot see (RLS011). It fails closed: the reviewer judges the
+// body and suppresses the finding with -- tq:allow RLS011: <reason>.
+func (s *state) dynamicSQL(st sqllex.Statement) {
+	if !s.judge {
+		return
+	}
+	switch st.Keyword() {
+	case "DO":
+	case "CREATE":
+		i := st.Skip(1, []string{"OR", "REPLACE"})
+		if !st.Match(i, "FUNCTION|PROCEDURE") {
+			return
+		}
+	default:
+		return
+	}
+	for _, t := range st.Tokens {
+		if t.Kind == sqllex.String && dynamicRe.MatchString(t.Text) {
+			s.report(s.at(st), RLS011, packs.LevelError, "this DO block or routine body runs DDL the RLS gate cannot judge (policies, row level security, grants, security definer or set schema inside a string); review it and mark it -- tq:allow RLS011: <what it does>, or write the DDL as plain statements")
+			return
 		}
 	}
 }
@@ -984,17 +1051,32 @@ func (s *state) grant(st sqllex.Statement, defaults bool) {
 		}
 		start++
 	}
+	if !defaults && st.FindTop(start, "ON") < 0 {
+		s.roleGrant(st, start)
+		return
+	}
 	g, ok := parseGrant(st, start, "TO")
 	if !ok {
 		return
 	}
 	if !defaults && isFuncKind(g.objKind) && hasWord(g.privs, "EXECUTE", "ALL") {
+		toAnon := hasRole(g.roles, "anon", "public")
 		for _, f := range s.funcsOf(g) {
 			if hasRole(g.roles, "anon") {
 				f.grantedAnon = true
 			}
 			if hasRole(g.roles, "public") {
 				f.grantedPublic = true
+			}
+			// A judged grant that lets anon call the function judges the
+			// function there (RLS008), wherever it was created.
+			if toAnon && s.judge {
+				l := s.at(st)
+				if !f.judged || f.at.File != s.path {
+					f.at = l
+				}
+				f.judged = true
+				f.reason = f.reason || hasMarker(l, "rls-anon-exec")
 			}
 		}
 	}
@@ -1016,6 +1098,38 @@ func (s *state) grant(st sqllex.Statement, defaults bool) {
 	case hasRole(g.roles, "public") && (exposed || (defaults && len(g.schemas) == 0)):
 		s.report(l, RLS006, packs.LevelError, "GRANT … TO public in an exposed schema: public includes anon; grant to the roles that need it")
 	}
+}
+
+// roleGrant judges GRANT role [, …] TO role [, …] (a membership grant, no
+// ON): granted to anon or public, it gives anon every privilege of those
+// roles and lets it pass the policies written TO them (RLS006).
+func (s *state) roleGrant(st sqllex.Statement, start int) {
+	to := st.FindTop(start, "TO")
+	if to < 0 || !s.judge {
+		return
+	}
+	var granted, grantees []string
+	for i := start; i < to; i++ {
+		if v := st.At(i).Ident(sqllex.Postgres); v != "" {
+			granted = append(granted, v)
+		}
+	}
+	for i := to + 1; i < len(st.Tokens); i++ {
+		t := st.At(i)
+		if t.Is("WITH", "GRANTED") {
+			break
+		}
+		if t.Is("GROUP") || t.IsPunct(",") {
+			continue
+		}
+		if v := t.Ident(sqllex.Postgres); v != "" {
+			grantees = append(grantees, v)
+		}
+	}
+	if len(granted) == 0 || !hasRole(grantees, "anon", "public") {
+		return
+	}
+	s.report(s.at(st), RLS006, packs.LevelError, fmt.Sprintf("GRANT %s to anon or public: the anonymous key inherits every privilege of %s and passes the policies written for it; grant per object instead", strings.Join(granted, ", "), strings.Join(granted, ", ")))
 }
 
 func (s *state) defaultPrivileges(st sqllex.Statement) {

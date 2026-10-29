@@ -50,7 +50,8 @@ func TestExposedSchemas(t *testing.T) {
 		supabase bool
 		want     []string
 	}{
-		{"explicit wins", []string{"public", "acme"}, "[api]\nschemas = [\"other\"]\n", true, []string{"acme", "public"}},
+		{"explicit wins over config.toml, public and storage stay", []string{"acme"}, "[api]\nschemas = [\"other\"]\n", true, []string{"acme", "public", "storage"}},
+		{"explicit on plain postgres", []string{"acme"}, "", false, []string{"acme"}},
 		{"plain postgres default", nil, "", false, []string{"public"}},
 		{"supabase config, public and storage always included", nil, "[api]\nschemas = [\"api\"]\n", true, []string{"api", "public", "storage"}},
 		{"supabase without the key", nil, "[api]\nport = 1\n", true, []string{"graphql_public", "public", "storage"}},
@@ -88,6 +89,9 @@ func TestValidateRLS(t *testing.T) {
 		"{tests: /abs}",
 		"{tests: ../out}",
 		"{tests: [a]}",
+		"{tests: -x}",
+		"{tests: '--psql-bin=evil'}",
+		"{tests: db/-x/t}",
 	} {
 		if err := ValidateRLS(node(t, bad)); err == nil {
 			t.Errorf("%s accepted", bad)

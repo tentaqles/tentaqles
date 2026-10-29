@@ -1,4 +1,4 @@
--- want:
+-- want: RLS011:error:5 RLS011:error:6
 create table public.notes (id bigint primary key);
 alter table public.notes enable row level security;
 create policy own on public.notes for select to authenticated using (id > 0);

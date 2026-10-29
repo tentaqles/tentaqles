@@ -105,14 +105,20 @@ func stringArray(v string) []string {
 }
 
 // ExposedSchemas resolves the exposed schemas: packs.db.rls.exposed_schemas
-// when set; else, on Supabase, config.toml [api] schemas (its default when
-// the key is absent) plus the schemas Supabase always exposes; else public.
+// when set (on Supabase, plus the schemas the platform always exposes); else,
+// on Supabase, config.toml [api] schemas (its default when the key is
+// absent) plus the schemas Supabase always exposes; else public.
 func ExposedSchemas(cfg []string, toml *SupabaseConfig, supabase bool) []string {
 	set := map[string]bool{}
 	switch {
 	case len(cfg) > 0:
 		for _, s := range cfg {
 			set[s] = true
+		}
+		if supabase {
+			for _, s := range supabaseAlways {
+				set[s] = true
+			}
 		}
 	case supabase:
 		list := supabaseDefaultSchemas
@@ -184,6 +190,11 @@ func RelPath(p string) error {
 	for _, seg := range strings.Split(p, "/") {
 		if seg == ".." {
 			return fmt.Errorf("%q must not contain ..", p)
+		}
+		// pg_prove gets the directory as an argument: a segment that starts
+		// with "-" could read as one of its options.
+		if strings.HasPrefix(strings.TrimSpace(seg), "-") {
+			return errors.New("the path must not have a segment starting with \"-\"")
 		}
 	}
 	return nil
