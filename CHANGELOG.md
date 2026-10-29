@@ -88,6 +88,27 @@ or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
   identity: the codex identity's `rules/`, `hooks.json` and `config.toml`, and the Claude
   identity's `settings.json` and `settings.local.json` (also through `$CLAUDE_CONFIG_DIR`
   and `$CODEX_HOME`), and the Codex config layers (`.codex/` in a repo and `~/.codex`).
+- Only `TQ_MODE=off` (exactly `off`) switches the hooks and plugin scripts off. `TQ_ENABLED=0`
+  keeps its one meaning, the shell-activation kill switch: a `claude` started there is guarded.
+- `tq run` reads its own flags only before the command word: after `<workspace>` only
+  `--tq-mode MODE` and an optional `--` may come first, so the command's flags are its own
+  (the PowerShell `tq` function puts back the `--` PowerShell removes).
+- `tq activate bash|zsh` defines `function claude { ...; }`, so an earlier `alias claude=...`
+  no longer aborts the block.
+- `tq migrate` no longer carries the `claude` wrapper over, and removes one an older migrate
+  carried when it is unchanged. `claude-alias-shadow` also reports functions that replace the
+  launcher.
+- `tq allow --mode` refuses a manifest that is not trusted yet (run `tq allow <ws>` first).
+  Grants record the workspace root and do not apply to a copied manifest elsewhere.
+- The global grant applies only outside every workspace; a folder under a base with a missing,
+  invalid or untrusted manifest gets the default ceiling.
+- In a `strict` session `TQ_MODE=default` before a nested agent is denied, and so is `env -i`
+  before `claude` or `codex`. Settings that disable the plugin, set `TQ_MODE`/`TQ_ENABLED` in
+  `env` or a looser `defaultMode` are denied in files and in inline `--settings`.
+- An `apply_patch` with more than 256 files is denied ("split the patch"); patch paths are
+  judged where they land, relative to the session folder.
+- Writes to Claude's memory, plans and todos under `CLAUDE_CONFIG_DIR` (and Codex's sessions)
+  no longer ask under `tq/outside-path-write`.
 - After the upgrade `tq doctor` reports `settings-drift` until `tq settings render --all`
   runs once.
 - The SessionStart guard line appears in every workspace session.
