@@ -69,6 +69,7 @@ func init() {
 		packs.Register(packs.Check{
 			ID: "cloud/" + e.name, Pack: "cloud", Kind: packs.External,
 			Tool: e.tool, MinVersion: e.min, Timeout: e.timeout,
+			Env:     tools.Env[e.tool],
 			Applies: tools.Applies(e.tool),
 			Run:     e.run,
 		})

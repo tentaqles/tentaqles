@@ -37,6 +37,28 @@ var KindsFor = map[string][]string{
 	CfnLint:  {policy.KindCloudFormation, policy.KindCDK},
 }
 
+// Env is what each tool needs from the parent environment beyond
+// toolrun.BaseEnv (packs.Check.Env). Nothing here holds a credential: the
+// tools read local files only, so no cloud, registry or GitHub credential
+// is passed (TF_VAR_*, GITHUB_TOKEN, BC_API_KEY and the AWS_*/ARM_* keys
+// stay out).
+//   - checkov, cfn-lint (Python): APPDATA, where a Windows `pip install
+//     --user` puts its site-packages (%APPDATA%\Python); cfn-lint also reads
+//     the region it validates from AWS_REGION, then AWS_DEFAULT_REGION.
+//   - trivy: TRIVY_CACHE_DIR, else os.UserCacheDir (XDG_CACHE_HOME on
+//     Linux, LOCALAPPDATA on Windows).
+//   - tflint: TFLINT_PLUGIN_DIR and TFLINT_CONFIG_FILE, plus TF_DATA_DIR
+//     and TF_WORKSPACE, which it reads as Terraform does.
+//   - conftest, bicep: nothing beyond BaseEnv.
+var Env = map[string][]string{
+	Checkov:  {"APPDATA"},
+	Trivy:    {"TRIVY_CACHE_DIR", "XDG_CACHE_HOME", "LOCALAPPDATA"},
+	Conftest: nil,
+	Tflint:   {"TFLINT_PLUGIN_DIR", "TFLINT_CONFIG_FILE", "TF_DATA_DIR", "TF_WORKSPACE"},
+	Bicep:    nil,
+	CfnLint:  {"APPDATA", "AWS_REGION", "AWS_DEFAULT_REGION"},
+}
+
 // MinConftest is the first Conftest release that evaluates Rego v1 by
 // default (it bundles OPA 1.x).
 const MinConftest = "0.60.0"

@@ -74,6 +74,15 @@ func fakeTool() {
 			}
 		}
 	}
+	if d, names := os.Getenv("TQ_FAKE_ARGV_DIR"), os.Getenv("TQ_FAKE_ENV_NAMES"); d != "" && names != "" {
+		var seen []string
+		for _, n := range strings.Split(names, ",") {
+			if _, ok := os.LookupEnv(n); ok {
+				seen = append(seen, n)
+			}
+		}
+		_ = os.WriteFile(filepath.Join(d, tool+".env"), []byte(strings.Join(seen, ",")), 0o600)
+	}
 	if os.Getenv("TQ_FAKE_HANG_"+k) == "1" {
 		time.Sleep(60 * time.Second)
 	}
@@ -618,11 +627,16 @@ func TestFlags(t *testing.T) {
 	if crew := packs.Crew(cfg, []string{"iac"}); !contains(crew, "iac-reviewer") {
 		t.Errorf("crew(iac) = %v", crew)
 	}
-	if crew := packs.Crew(cfg, []string{"baseline_change:cloud"}); !reflect.DeepEqual(crew, []string{"iac-reviewer"}) {
-		t.Errorf("crew(baseline_change:cloud) = %v", crew)
+	// baseline_change carries the packs whose baseline grew as its detail.
+	bc := []string{packs.FlagBaselineChange}
+	if crew := packs.CrewDetail(cfg, bc, map[string]string{packs.FlagBaselineChange: "cloud"}); !reflect.DeepEqual(crew, []string{"iac-reviewer"}) {
+		t.Errorf("crew(baseline_change, cloud grew) = %v", crew)
 	}
-	if crew := packs.Crew(cfg, []string{"baseline_change:db"}); contains(crew, "iac-reviewer") {
-		t.Errorf("crew(baseline_change:db) = %v", crew)
+	if crew := packs.CrewDetail(cfg, bc, map[string]string{packs.FlagBaselineChange: "db"}); contains(crew, "iac-reviewer") {
+		t.Errorf("crew(baseline_change, db grew) = %v", crew)
+	}
+	if crew := packs.Crew(cfg, bc); !contains(crew, "iac-reviewer") {
+		t.Errorf("crew(baseline_change, no detail) = %v; fail safe adds every pack's reviewers", crew)
 	}
 }
 
