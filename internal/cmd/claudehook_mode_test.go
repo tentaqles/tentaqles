@@ -554,3 +554,26 @@ func TestHookUntrustedOrBrokenManifestIgnoresGlobalGrant(t *testing.T) {
 		t.Fatalf("a neutral folder runs at the granted global relaxed: code %d out %q", code, out)
 	}
 }
+
+// A nested agent may start only at its parent's mode or a stricter one:
+// TQ_MODE=default is fine from default, relaxed or custom, and denied from
+// strict (final security review m1). The regex alone cannot know the
+// parent, so the hook checks it against the resolved mode.
+func TestHookNestedAgentNeverLoosensAStrictParent(t *testing.T) {
+	_, proj := modeWS(t, "guard:\n  mode: strict\n", "")
+	for _, cmd := range []string{"TQ_MODE=default claude -p x", "export TQ_MODE=default; claude -p x", "set -x TQ_MODE default; claude"} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, cmd, ""))
+		if code != 2 || !strings.Contains(errOut, "tq/nested-agent-loosened") {
+			t.Fatalf("%s under strict: code %d stderr %q", cmd, code, errOut)
+		}
+	}
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "TQ_MODE=strict claude -p x", ""))
+	if code == 2 {
+		t.Fatalf("strict under strict is allowed: %q", errOut)
+	}
+	_, proj = modeWS(t, "", "")
+	code, _, errOut = runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "TQ_MODE=default claude -p x", ""))
+	if code == 2 {
+		t.Fatalf("default under default is allowed: %q", errOut)
+	}
+}

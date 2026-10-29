@@ -207,6 +207,16 @@ func policyDecisionWith(pb builtPolicy, cwd string, ws *resolve.Workspace, cfg *
 	d, changed := set.EvaluateMapped(call, gate.mapFunc())
 	gate.note(changed)
 
+	// A nested agent starts at its parent's mode or a stricter one: the
+	// nested-agent rule lets TQ_MODE=default through, so a strict session
+	// denies it here (locked self-protection, never mapped by the mode).
+	if call.IsShell() && policy.AssignsTQModeDefault(call.Command) {
+		if parent := gate.resolved().Mode; !noLooser(guardcfg.ModeDefault, parent) {
+			d = policy.Merge(d, ruleDecision(policy.Deny, policy.NestedAgentRuleID,
+				"this session runs at "+parent+": a nested agent may start only at that mode or a stricter one, not default"))
+		}
+	}
+
 	// One budget for every scan in this invocation (commit and push rules).
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()

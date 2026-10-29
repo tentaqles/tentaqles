@@ -205,6 +205,9 @@ func nestedAgentCommand() string {
 		// strict launch layer), TQ_ENABLED=0, Claude's simple/safe modes.
 		agAssign(`TQ_MODE`, agModeLoose),
 		agUnset(`TQ_MODE`),
+		// env -i / env - before an agent drops CLAUDE_CONFIG_DIR, CODEX_HOME
+		// and TQ_MODE at once: the main install, and no strict launch layer.
+		agCmdStart + `(?:(?:nohup|time|command|exec|sudo)\s+)*env\s+(?:\S+\s+)*?(?:-i|--ignore-environment|-)\s+(?:\S+\s+)*?` + agProg + `(?:claude|codex)` + agEnd,
 		agAssign(`TQ_ENABLED`, agAny(`["']?0\b`)),
 		agAssign(`CLAUDE_CODE_SIMPLE|CLAUDE_CODE_SAFE_MODE`, agAny(`["']?(?:1|true)\b`)),
 		// The agent config homes: any reassignment or clearing.
@@ -243,3 +246,12 @@ func init() {
 		Reason:          "an agent may not start another agent in off mode or with loosened settings (TQ_MODE, claude-off, --dangerously-skip-permissions, a cleared config home, ...); run it yourself in your own terminal",
 	})
 }
+
+// tqModeDefaultRe is a TQ_MODE assignment of exactly default, in any form
+// agAssign knows.
+var tqModeDefaultRe = regexp.MustCompile(`(?i)` + agAssign(`TQ_MODE`, agAny(`(?-i:["']?default)(?:["']|\b)`)))
+
+// AssignsTQModeDefault reports whether command sets TQ_MODE to default. The
+// nested-agent rule allows that (it is no looser than default), so the hook
+// denies it itself when the session's own mode is stricter (strict).
+func AssignsTQModeDefault(command string) bool { return tqModeDefaultRe.MatchString(command) }

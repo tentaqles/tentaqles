@@ -68,6 +68,10 @@ func TestNestedAgentLoosened(t *testing.T) {
 		{Tool: "Bash", Command: `claude --settings '{"enabledPlugins":{"tentaqles@tentaqles":false}}' -p x`},
 		{Tool: "Bash", Command: `claude -p x --settings '{"disableAllHooks":true}'`},
 		{Tool: "Bash", Command: `claude --settings '{"hooks": {}}' -p x`},
+		// env -i or env - drops CLAUDE_CONFIG_DIR, CODEX_HOME and TQ_MODE (security m2)
+		{Tool: "Bash", Command: "env -i PATH=$PATH claude -p x"},
+		{Tool: "Bash", Command: "env - HOME=/h codex exec x"},
+		{Tool: "Bash", Command: "cd x && env --ignore-environment PATH=/bin /usr/local/bin/claude -p x"},
 		// inline settings that switch tq off or loosen the mode (final review M2)
 		{Tool: "Bash", Command: `claude --settings '{"env":{"TQ_MODE":"off"}}' -p x`},
 		{Tool: "Bash", Command: `claude --settings '{"env": {"TQ_ENABLED": "0"}}' -p x`},
