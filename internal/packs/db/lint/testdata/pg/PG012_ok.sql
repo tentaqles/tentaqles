@@ -1,0 +1,3 @@
+-- want:
+REINDEX TABLE CONCURRENTLY orders;
+VACUUM orders;

@@ -1,0 +1,7 @@
+-- want: MS007:error:3 MS007:error:4 MS007:error:5
+SET LOCK_TIMEOUT 5000
+;WITH c AS (SELECT TOP 10 * FROM dbo.Orders) DELETE FROM c
+WITH c AS (SELECT * FROM dbo.Orders) UPDATE c SET Total = 0
+WITH c AS (SELECT * FROM dbo.Orders)
+DELETE FROM c
+WITH c AS (SELECT * FROM dbo.Orders) DELETE FROM c WHERE Total = 0
