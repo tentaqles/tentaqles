@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"os"
 	"slices"
+	"sync"
 
 	"github.com/tentaqles/tentaqles/internal/codexcfg"
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
@@ -46,18 +48,73 @@ func codexRuleSet(ws *resolve.Workspace) []policy.Rule {
 	return out
 }
 
-// codexPlan compiles ws's guard mode at cwd. An untrusted workspace (or a
-// nil one) is default: a grant or a looser layer only counts once trusted.
+// codexPlan compiles ws's guard mode at cwd for a launch: the per-launch
+// override (TQ_MODE) counts. An untrusted workspace (or a nil one) is
+// default: a grant or a looser layer only counts once trusted.
 func codexPlan(ws *resolve.Workspace, cwd string) codexcfg.Plan {
-	mode, eff := guardcfg.ModeDefault, func(r *policy.Rule) policy.Action { return r.Action }
+	return codexPlanAt(ws, cwd, true)
+}
+
+// codexFilePlan compiles ws's workspace-wide mode for the files tq writes
+// into CODEX_HOME (config.toml block, rules/tq.rules). A one-launch override
+// never reaches them: TQ_MODE and TENTAQLES_HEADLESS are ignored, so a
+// render run from a launched shell writes the persistent mode.
+func codexFilePlan(ws *resolve.Workspace) codexcfg.Plan {
+	root := ""
+	if ws != nil {
+		root = ws.Root
+	}
+	return codexPlanAt(ws, root, false)
+}
+
+func codexPlanAt(ws *resolve.Workspace, cwd string, launch bool) codexcfg.Plan {
 	sandbox := codexcfg.SandboxWorkspace
-	if ws != nil && ws.Manifest != nil {
-		sandbox = ws.Manifest.Guard.CodexSandbox()
-		if trust.IsTrusted(ws.Hash) {
-			mode, eff = codexModeAt(ws, cwd)
+	if ws == nil || ws.Manifest == nil || !trust.IsTrusted(ws.Hash) {
+		if ws != nil && ws.Manifest != nil {
+			sandbox = ws.Manifest.Guard.CodexSandbox()
+		}
+		return codexcfg.Compile(guardcfg.ModeDefault, codexRuleSet(ws), func(r *policy.Rule) policy.Action { return r.Action }, sandbox)
+	}
+	sandbox = ws.Manifest.Guard.CodexSandbox()
+	var p codexcfg.Plan
+	compile := func() {
+		mode, eff := codexModeAt(ws, cwd)
+		p = codexcfg.Compile(mode, codexRuleSet(ws), eff, sandbox)
+	}
+	if launch {
+		compile()
+	} else {
+		withoutLaunchEnv(compile)
+	}
+	return p
+}
+
+// launchEnv are the env vars that carry a one-launch mode (spec E §6.1).
+var launchEnv = []string{guardcfg.EnvMode, "TENTAQLES_HEADLESS"}
+
+var launchEnvMu sync.Mutex
+
+// withoutLaunchEnv runs f with the launch env vars unset, restoring them
+// afterwards. tq is a short-lived CLI and resolveMode reads TQ_MODE itself,
+// so this is the one way to resolve the persistent layers only.
+// TODO(merge with WS1): call resolveModeFor(ws, cwd, "", "") with the
+// headless default skipped instead.
+func withoutLaunchEnv(f func()) {
+	launchEnvMu.Lock()
+	defer launchEnvMu.Unlock()
+	saved := map[string]string{}
+	for _, k := range launchEnv {
+		if v, ok := os.LookupEnv(k); ok {
+			saved[k] = v
+			os.Unsetenv(k)
 		}
 	}
-	return codexcfg.Compile(mode, codexRuleSet(ws), eff, sandbox)
+	defer func() {
+		for k, v := range saved {
+			os.Setenv(k, v)
+		}
+	}()
+	f()
 }
 
 // codexIsolated reports whether ws gives Codex its own CODEX_HOME.

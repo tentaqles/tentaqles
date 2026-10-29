@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/codexcfg"
@@ -107,4 +108,20 @@ func TestCodexCheckRegistered(t *testing.T) {
 		}
 	}
 	t.Fatal("the codex check must be registered")
+}
+
+// The trust hash format is undocumented (A8): the check cannot tell a stale
+// record from a current one, and its message says so (review r0, Minor 4).
+func TestCodexCheckUntrustedMessageNamesStaleLimit(t *testing.T) {
+	w, dir := codexDoctorWS(t, true)
+	renderHook(t, dir)
+	msg := ""
+	codexWorkspaceCheck(w, Deps{}, func(level, code, ws, m, fix string) {
+		if code == "codex-hooks-untrusted" {
+			msg = m
+		}
+	})
+	if !strings.Contains(msg, "stale") || !strings.Contains(msg, "/hooks") {
+		t.Fatalf("the message must say a stale record is not detected: %q", msg)
+	}
 }

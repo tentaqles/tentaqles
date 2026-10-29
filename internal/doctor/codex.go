@@ -37,6 +37,10 @@ var (
 //     a trusted_hash for tq's handler. Codex silently skips an untrusted hook.
 //     The record format is not in the Codex docs (A8): it follows Codex 0.13x
 //     as third-party tools describe it, so the message says how to check.
+//     The trusted_hash is Codex's hash of the hook definition, whose
+//     algorithm is not documented and changes between Codex versions, so the
+//     check finds a missing record only: a stale one (tq's hook changed
+//     since you trusted it, and Codex now skips it) still reads as trusted.
 //
 // It reads files only (no subprocess).
 func codexWorkspaceCheck(w *resolve.Workspace, d Deps, add AddFunc) {
@@ -66,7 +70,7 @@ func codexWorkspaceCheck(w *resolve.Workspace, d Deps, add AddFunc) {
 	}
 	if !hookTrusted(lines, g, h) {
 		add("warn", "codex-hooks-untrusted", w.Name,
-			"no Codex trust record found for tq's PreToolUse hook: Codex skips a hook until you trust it, and again after it changes",
+			"no Codex trust record found for tq's PreToolUse hook: Codex skips a hook until you trust it, and again after it changes (this check sees a missing record only, not a stale one: /hooks shows both)",
 			"start codex in "+w.Name+" (tq run "+w.Name+" -- codex) and trust tq's hooks in /hooks; tq never passes --dangerously-bypass-hook-trust")
 	}
 }

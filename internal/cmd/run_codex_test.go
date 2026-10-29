@@ -244,3 +244,88 @@ func TestRenderCodexNoopWithoutCodexIdentity(t *testing.T) {
 		t.Fatal("must not create a codex identity dir")
 	}
 }
+
+// The files tq writes into CODEX_HOME hold the persistent mode: a render run
+// from a launched shell never sees the one-launch override (review r0,
+// Minor 3). The launch flags still do.
+func TestRenderCodexIgnoresLaunchOverride(t *testing.T) {
+	w := codexWS(t)
+	if err := os.MkdirAll(paths.IdentityDir("acme", "codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(guardcfg.EnvMode, guardcfg.ModeRelaxed)
+	t.Setenv("TENTAQLES_HEADLESS", "1")
+	var seen []string
+	prev := codexModeAt
+	codexModeAt = func(ws *resolve.Workspace, cwd string) (string, func(*policy.Rule) policy.Action) {
+		seen = append(seen, os.Getenv(guardcfg.EnvMode)+"|"+os.Getenv("TENTAQLES_HEADLESS"))
+		return prev(ws, cwd)
+	}
+	t.Cleanup(func() { codexModeAt = prev })
+
+	renderOut(t, w, false)
+	if len(seen) == 0 || seen[len(seen)-1] != "|" {
+		t.Fatalf("render resolved with the launch env: %q", seen)
+	}
+	if os.Getenv(guardcfg.EnvMode) != guardcfg.ModeRelaxed || os.Getenv("TENTAQLES_HEADLESS") != "1" {
+		t.Fatal("the launch env must be restored after a render")
+	}
+	seen = nil
+	codexArgs(w, w.Root, []string{"hi"})
+	if len(seen) != 1 || seen[0] != guardcfg.ModeRelaxed+"|1" {
+		t.Fatalf("launch flags resolve with the launch env: %q", seen)
+	}
+}
+
+// A workspace that stops isolating codex gets tq's files removed from the
+// old identity dir; the user's own config stays (review r0, Minor 5).
+func TestRenderCodexRemovesWhenNoLongerIsolated(t *testing.T) {
+	w := codexWS(t)
+	dir := paths.IdentityDir("acme", "codex")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config.toml")
+	userCfg := "model = \"gpt-5\"\n"
+	if err := os.WriteFile(cfg, []byte(userCfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	renderOut(t, w, false)
+	if _, err := codexcfg.ReadRules(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	delete(w.Manifest.Identities, "codex")
+	if out := renderOut(t, w, true); !strings.Contains(out, "would change") {
+		t.Fatalf("dry run of the removal: %q", out)
+	}
+	if _, err := codexcfg.ReadRules(dir); err != nil {
+		t.Fatal("a dry run removes nothing")
+	}
+	if out := renderOut(t, w, false); !strings.Contains(out, "updated") {
+		t.Fatalf("removal: %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(codexcfg.RulesFile))); !os.IsNotExist(err) {
+		t.Fatalf("tq.rules must be gone: %v", err)
+	}
+	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); ok {
+		t.Fatal("tq's hook entry must be gone")
+	}
+	if b, _ := os.ReadFile(cfg); string(b) != userCfg {
+		t.Fatalf("config.toml keeps the user's part only:\n%s", b)
+	}
+	if out := renderOut(t, w, false); out != "" {
+		t.Fatalf("nothing left to remove: %q", out)
+	}
+
+	// No identity dir at all: nothing to do.
+	w2 := codexWS(t)
+	delete(w2.Manifest.Identities, "codex")
+	w2.Name = "other"
+	if out := renderOut(t, w2, false); out != "" {
+		t.Fatalf("no identity dir: %q", out)
+	}
+	if _, err := os.Stat(paths.IdentityDir("other", "codex")); !os.IsNotExist(err) {
+		t.Fatal("the removal path must not create the identity dir")
+	}
+}
