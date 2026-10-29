@@ -166,6 +166,24 @@ func unboundSource(l Leaf, g packs.GuardCtx) string {
 		}
 	}
 	switch l.Prog {
+	case "dbmate", "goose":
+		// both load a dotenv file (.env by default, dbmate --env-file) that
+		// can set the migrations folder; tq never reads dotenv files, so the
+		// folder must come from the command line or an inline variable,
+		// which take precedence over the file (and were checked above)
+		explicit := len(flagValues(l, dirSelectors[l.Prog]...)) > 0
+		for k, prog := range envSelectors {
+			if prog == l.Prog && lookup(l, k) != "" {
+				explicit = true
+			}
+		}
+		if !explicit {
+			flag := "--migrations-dir"
+			if l.Prog == "goose" {
+				flag = "-dir"
+			}
+			return l.Prog + " reads its migrations folder from a dotenv file tq cannot bind to the approval; name the approved folder with " + flag + " (" + strings.Join(roots, ", ") + ")"
+		}
 	case "supabase":
 		wd, _ := l.Flag("--workdir")
 		if wd == "" {

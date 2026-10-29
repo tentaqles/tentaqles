@@ -675,3 +675,70 @@ func TestApprovalBindsMigratorConfigFiles(t *testing.T) {
 		})
 	}
 }
+
+// ---- fix round 3 -----------------------------------------------------------
+
+// A glued value flag whose value ends in c or l (-dportal, -Uetl) is not
+// psql -c or -l: the pipe still feeds psql.
+func TestPipedPsqlGluedValueFlags(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		deny bool
+	}{
+		{"gunzip -c x.gz | ssh box psql -dportal", true},
+		{"gunzip -c x.gz | ssh box psql -Uetl acme", true},
+		{"gunzip -c x.gz | ssh box psql -hlocal acme", true},
+		{"gunzip -c x.gz | docker exec -i pg psql -Uetl -dportal", true},
+		{"docker exec -i pg psql -Xc 'select 1' | grep 1", false},
+		{"ssh box psql -Xl | grep acme", false},
+		{"ssh box psql -el | grep acme", false},
+		{"ssh box psql -Uetl -l | grep acme", false},
+	}
+	for _, c := range cases {
+		t.Run(c.cmd, func(t *testing.T) {
+			f := newFixture(t, dbBlock)
+			a, r, h := f.restore("Bash", c.cmd)
+			if (a == policy.Deny) != c.deny || (c.deny && (!h || !strings.Contains(r, IDRestore))) {
+				t.Fatalf("got %s handled=%v %q, want deny=%v", a, h, r, c.deny)
+			}
+		})
+	}
+}
+
+// dbmate and goose read their migrations folder from a dotenv file tq never
+// reads, so under approve they must name the folder on the command line.
+func TestApprovalDbmateGooseNeedAnExplicitFolder(t *testing.T) {
+	pool := "postgres://postgres." + prodRef + "@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+	for _, cmd := range []string{
+		"DATABASE_URL=" + pool + " dbmate up",
+		"DATABASE_URL=" + pool + " dbmate --env-file other.conf up",
+		"goose postgres " + pool + " up",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			f := approvedProd(t)
+			a, r, _ := f.migrate("Bash", cmd)
+			if a != policy.Deny || !strings.Contains(r, IDMigrate) || !strings.Contains(r, "dotenv") {
+				t.Fatalf("got %s (%s), want deny naming the dotenv file", a, r)
+			}
+			if strings.Contains(r, "postgres://") || strings.Contains(r, prodRef+"@") {
+				t.Fatalf("the reason prints the connection: %s", r)
+			}
+			if a, r, _ := f.migrate("Bash", "supabase db push"); a != policy.Allow {
+				t.Fatalf("the approval was used by a denied command: %s %s", a, r)
+			}
+		})
+	}
+	for _, cmd := range []string{
+		"DATABASE_URL=" + pool + " dbmate --migrations-dir supabase/migrations up",
+		"DATABASE_URL=" + pool + " dbmate -d supabase/migrations up",
+		"DATABASE_URL=" + pool + " DBMATE_MIGRATIONS_DIR=supabase/migrations dbmate up",
+		"goose -dir supabase/migrations postgres " + pool + " up",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			f := approvedProd(t)
+			if a, r, _ := f.migrate("Bash", cmd); a != policy.Allow {
+				t.Fatalf("got %s (%s), want allow", a, r)
+			}
+		})
+	}
+}

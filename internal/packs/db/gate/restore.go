@@ -19,10 +19,12 @@ var restoreWordRe = regexp.MustCompile(`(?i)\b(pg_restore\b|sqlpackage\b[^\n]*[/
 var restoreDBRe = regexp.MustCompile(`restore\s+database\b`)
 
 // psqlWordRe spots psql in an opaque payload; psqlOtherRe a psql -c or -l,
-// which give psql something other than its stdin to run.
+// which give psql something other than its stdin to run. Only the no-value
+// switches may come before them in a bundle (-Xc, -Xl, -el): a glued value
+// flag whose value ends in c or l (-dportal, -Uetl) is not -c or -l.
 var (
 	psqlWordRe  = regexp.MustCompile(`(?i)(^|[\s"'/\\=;(&|])psql(\.exe)?($|[\s"';)&|])`)
-	psqlOtherRe = regexp.MustCompile(`(^|\s)(-[a-zA-Z0-9]*[cl]|--command|--list)([\s=]|$)`)
+	psqlOtherRe = regexp.MustCompile(`(^|\s)(-[` + psqlSwitches + `]*(l|c\S*)|--command|--list)([\s=]|$)`)
 )
 
 // pipedPsql: a piped opaque leaf runs psql on its stdin. Only the words after

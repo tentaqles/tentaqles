@@ -57,6 +57,9 @@ var ErrHashBudget = errors.New("the migrations could not be hashed within the gu
 // migrations folder (alembic.ini script_location, package.json prisma.schema,
 // drizzle.config out, knexfile migrations.directory, flyway.conf locations,
 // config/database.yml migrations_paths, ...), so the approval binds them too.
+// Each evaluation stats or reads every one of them inside HashBudget: on a
+// slow file system the budget can run out over these reads, and the
+// ErrHashBudget that follows is expected to deny (fail closed).
 var MigratorConfigFiles = []string{
 	"alembic.ini",
 	"atlas.hcl",

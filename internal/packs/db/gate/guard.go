@@ -106,9 +106,21 @@ func isMigration(l Leaf) bool {
 			return true
 		}
 	}
+	if l.Prog == "goose" {
+		// goose [flags] DRIVER DBSTRING up: the driver and the connection
+		// come between the program and the command
+		for _, a := range l.Args {
+			if gooseCommands[strings.ToLower(a)] {
+				return true
+			}
+		}
+	}
 	t := migrationText(l)
 	return l.Prog == "migrate" && (l.Has("-database", "--database") || l.Has("-path", "--path", "-source", "--source")) && golangMigrateRe.MatchString(t)
 }
+
+// gooseCommands are the goose commands that change the schema.
+var gooseCommands = map[string]bool{"up": true, "up-by-one": true, "up-to": true, "down": true, "down-to": true, "redo": true, "reset": true}
 
 func lookup(l Leaf, name string) string {
 	if v, ok := l.Env[name]; ok {
@@ -347,6 +359,15 @@ func describe(l Leaf) string {
 	}
 	if len(f) == 0 {
 		return "a migration command"
+	}
+	// a connection string among the words (goose DRIVER DBSTRING up) may
+	// hold a password: the reason never prints it
+	f = append([]string(nil), f...)
+	for i, w := range f {
+		lw := strings.ToLower(w)
+		if urlRe.MatchString(w) || strings.Contains(w, "@") || strings.Contains(lw, "password") || strings.Contains(lw, "pwd=") {
+			f[i] = "<connection>"
+		}
 	}
 	return "`" + strings.Join(f, " ") + "`"
 }
