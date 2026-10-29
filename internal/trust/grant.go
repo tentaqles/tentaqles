@@ -36,6 +36,11 @@ type Grant struct {
 	// tell the human a re-trust dropped it. Empty for the global grant and
 	// for grants read from a legacy .bypass file.
 	Workspace string `json:"workspace,omitempty"`
+	// Root is the workspace root the grant was made for. A grant is keyed by
+	// the manifest hash and this root together: a byte copy of a granted
+	// manifest in another folder hashes the same but gets no grant
+	// (security review m4). Empty for the global grant and legacy grants.
+	Root string `json:"root,omitempty"`
 
 	// FromBypass is set on a grant read from a legacy <hash>.bypass file
 	// (spec E §11.1): a relaxed grant with no table.
@@ -109,15 +114,15 @@ func DeleteGrant(key string) error {
 }
 
 // AdoptBypass files a legacy <hash>.bypass grant as a .mode grant named for
-// workspace ws (a relaxed grant with no table, which reads exactly as the
-// .bypass file does), so GrantsFor finds it after a re-trust. It does
-// nothing when hash has a .mode grant already, has no .bypass file, or is
-// the global key.
-func AdoptBypass(hash, ws string) error {
+// workspace ws at root (a relaxed grant with no table, which reads exactly
+// as the .bypass file does), so GrantsFor finds it after a re-trust and it
+// is pinned to that folder. It does nothing when hash has a .mode grant
+// already, has no .bypass file, or is the global key.
+func AdoptBypass(hash, ws, root string) error {
 	if hash == "" || ws == "" || hash == GlobalGrantKey || exists(GrantPath(hash)) || !exists(file(hash, ".bypass")) {
 		return nil
 	}
-	return SaveGrant(hash, Grant{Mode: "relaxed", Workspace: ws})
+	return SaveGrant(hash, Grant{Mode: "relaxed", Workspace: ws, Root: root})
 }
 
 // KeyedGrant is a stored grant with the key (manifest hash) it is filed under.

@@ -78,7 +78,7 @@ func TestLegacyBypassReadsAsRelaxedGrant(t *testing.T) {
 
 func TestAdoptBypassNamesTheWorkspace(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
-	if err := AdoptBypass("none", "acme"); err != nil {
+	if err := AdoptBypass("none", "acme", "/r/acme"); err != nil {
 		t.Fatal("nothing to adopt is not an error")
 	}
 	if g, _ := LoadGrant("none"); g != nil {
@@ -87,7 +87,7 @@ func TestAdoptBypassNamesTheWorkspace(t *testing.T) {
 	if err := AllowBypass("h3"); err != nil {
 		t.Fatal(err)
 	}
-	if err := AdoptBypass("h3", "acme"); err != nil {
+	if err := AdoptBypass("h3", "acme", "/r/acme"); err != nil {
 		t.Fatal(err)
 	}
 	g, err := LoadGrant("h3")
@@ -97,11 +97,11 @@ func TestAdoptBypassNamesTheWorkspace(t *testing.T) {
 	// A .mode grant is never replaced.
 	_ = SaveGrant("h4", Grant{Mode: "custom", Workspace: "beta"})
 	_ = AllowBypass("h4")
-	_ = AdoptBypass("h4", "acme")
+	_ = AdoptBypass("h4", "acme", "/r/acme")
 	if g, _ := LoadGrant("h4"); g.Mode != "custom" || g.Workspace != "beta" {
 		t.Fatalf("the .mode file is kept: %+v", g)
 	}
-	if err := AdoptBypass(GlobalGrantKey, "acme"); err != nil {
+	if err := AdoptBypass(GlobalGrantKey, "acme", "/r/acme"); err != nil {
 		t.Fatal(err)
 	}
 }

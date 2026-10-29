@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
@@ -324,36 +323,11 @@ func copyMap(m map[string]string) map[string]string {
 	return out
 }
 
-// ---- strictness and layers ------------------------------------------------
+// ---- layers -----------------------------------------------------------------
 
-// rank orders values from loosest to strictest. rule (a rule's own action,
-// ask or deny) sits between ask and deny, so comparisons are conservative:
-// ask below rule counts as looser even for a rule that asks anyway.
-func rank(v guardcfg.Value) int {
-	switch v {
-	case guardcfg.ValueSkip:
-		return 0
-	case guardcfg.ValueAsk:
-		return 1
-	case guardcfg.ValueDeny:
-		return 3
-	}
-	return 2
-}
-
-func loosest(a, b guardcfg.Value) guardcfg.Value {
-	if rank(b) < rank(a) {
-		return b
-	}
-	return a
-}
-
-// layer is one effective layer: a category table plus the overrides it sees.
-type layer struct {
-	table     guardcfg.Table
-	overrides map[string]guardcfg.Value
-}
-
+// tableFor is the category table a layer's mode keys give on top of parent.
+// It only feeds the writers and views here; grants and ceilings are
+// guardcfg's (GrantFor, WithinGrant, CarryGrant).
 func tableFor(mode, base string, cats map[string]string, parent guardcfg.Table) guardcfg.Table {
 	switch mode {
 	case "":
@@ -377,19 +351,6 @@ func tableFor(mode, base string, cats map[string]string, parent guardcfg.Table) 
 		t, _ = guardcfg.Preset(guardcfg.ModeDefault)
 	}
 	return t
-}
-
-func mergeOverrides(dst map[string]guardcfg.Value, src map[string]string) map[string]guardcfg.Value {
-	out := map[string]guardcfg.Value{}
-	for k, v := range dst {
-		out[k] = v
-	}
-	for id, val := range src {
-		if v, ok := guardcfg.ParseValue(val); ok && !lockedID(id) {
-			out[id] = v
-		}
-	}
-	return out
 }
 
 func globalKeys(g guardcfg.File) modeKeys {
@@ -483,25 +444,6 @@ func manifestKeys(m *manifest.Manifest) (modeKeys, map[string]modeKeys) {
 	return wsKeys(m.Guard), ps
 }
 
-// layersOf returns the effective workspace layer and each project layer of
-// m on top of the global file g.
-func layersOf(m *manifest.Manifest, g guardcfg.File) []layer {
-	def, _ := guardcfg.Preset(guardcfg.ModeDefault)
-	gk := globalKeys(g)
-	gl := layer{table: tableFor(gk.Mode, gk.Base, gk.Categories, def), overrides: mergeOverrides(nil, gk.RulesOverride)}
-	if m == nil {
-		return []layer{gl}
-	}
-	wk, ps := manifestKeys(m)
-	wl := layer{table: tableFor(wk.Mode, wk.Base, wk.Categories, gl.table), overrides: mergeOverrides(gl.overrides, wk.RulesOverride)}
-	out := []layer{wl}
-	for _, dir := range sortedKeys(ps) {
-		p := ps[dir]
-		out = append(out, layer{table: tableFor(p.Mode, p.Base, p.Categories, wl.table), overrides: mergeOverrides(wl.overrides, p.RulesOverride)})
-	}
-	return out
-}
-
 func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -509,11 +451,6 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func relaxedGrant() *trust.Grant {
-	t, _ := guardcfg.Preset(guardcfg.ModeRelaxed)
-	return &trust.Grant{Mode: guardcfg.ModeRelaxed, Table: tableStrings(t)}
 }
 
 func tableStrings(t guardcfg.Table) map[string]string {
@@ -524,206 +461,35 @@ func tableStrings(t guardcfg.Table) map[string]string {
 	return out
 }
 
-// ceilingOf turns a grant into the loosest layer it allows; nil is default.
-func ceilingOf(g *trust.Grant) layer {
-	def, _ := guardcfg.Preset(guardcfg.ModeDefault)
-	if g == nil {
-		return layer{table: def}
-	}
-	if len(g.Table) == 0 && g.Mode == guardcfg.ModeRelaxed {
-		g = relaxedGrant()
-	}
-	t := guardcfg.Table{}
-	for _, c := range guardcfg.AllCategories() {
-		v, ok := guardcfg.ParseValue(g.Table[string(c)])
-		if !ok || guardcfg.Locked(c) {
-			v = guardcfg.ValueRule
-		}
-		t[c] = v
-	}
-	l := layer{table: t, overrides: map[string]guardcfg.Value{}}
-	for id, val := range g.Overrides {
-		if v, ok := guardcfg.ParseValue(val); ok {
-			l.overrides[id] = v
-		}
-	}
-	return l
-}
-
-// idValue is the value a layer gives rule id: its override, else its
-// category's value (rule for an unclassified id).
-func (l layer) idValue(id string) guardcfg.Value {
-	if v, ok := l.overrides[id]; ok {
-		return v
-	}
-	if c, ok := guardcfg.Categories[id]; ok {
-		return l.table.Get(c)
-	}
-	return guardcfg.ValueRule
-}
-
-// ownActions returns the own actions of the rules in each category and of
-// each known id (computed once). A category with no known rule may hold
-// either.
-var ownActions = sync.OnceValues(func() (map[guardcfg.Category][]policy.Action, map[string][]policy.Action) {
-	byCat := map[guardcfg.Category]map[policy.Action]bool{}
-	byID := map[string][]policy.Action{}
-	for _, r := range guardcfg.Known(nil, guardcfg.File{}) {
-		if r.Action != policy.Ask && r.Action != policy.Deny {
-			continue
-		}
-		byID[r.ID] = append(byID[r.ID], r.Action)
-		if c, ok := guardcfg.Categories[r.ID]; ok {
-			if byCat[c] == nil {
-				byCat[c] = map[policy.Action]bool{}
-			}
-			byCat[c][r.Action] = true
-		}
-	}
-	cats := map[guardcfg.Category][]policy.Action{}
-	for c, set := range byCat {
-		for _, a := range []policy.Action{policy.Ask, policy.Deny} {
-			if set[a] {
-				cats[c] = append(cats[c], a)
-			}
-		}
-	}
-	return cats, byID
-})
-
-var bothActions = []policy.Action{policy.Ask, policy.Deny}
-
-func catOwns(c guardcfg.Category) []policy.Action {
-	cats, _ := ownActions()
-	if a := cats[c]; len(a) > 0 {
-		return a
-	}
-	return bothActions
-}
-
-func idOwns(id string) []policy.Action {
-	_, ids := ownActions()
-	if a := ids[id]; len(a) > 0 {
-		return a
-	}
-	return bothActions
-}
-
-// strictness is how strict v makes a rule whose own action is own.
-func strictness(v guardcfg.Value, own policy.Action) int {
-	switch v.Apply(own) {
-	case policy.Allow:
-		return 0
-	case policy.Ask:
-		return 1
-	}
-	return 2
-}
-
-// looser reports whether any layer gives some rule (by category or by id) an
-// action looser than the ceiling allows.
-func looser(ls []layer, ceil layer) bool {
-	idLooser := func(l layer, id string) bool {
-		for _, own := range idOwns(id) {
-			if strictness(l.idValue(id), own) < strictness(ceil.idValue(id), own) {
-				return true
-			}
-		}
-		return false
-	}
-	for _, l := range ls {
-		for _, c := range guardcfg.AllCategories() {
-			if guardcfg.Locked(c) {
-				continue
-			}
-			for _, own := range catOwns(c) {
-				if strictness(l.table.Get(c), own) < strictness(ceil.table.Get(c), own) {
-					return true
-				}
-			}
-		}
-		for id := range l.overrides {
-			if idLooser(l, id) {
-				return true
-			}
-		}
-		for id := range ceil.overrides {
-			if idLooser(l, id) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// proposal is the grant that covers every layer: a custom table of the
-// loosest value per category and id, so the human grants exactly what they
-// see (spec E §6.3). It is relaxed only when that table is the relaxed preset
-// itself (overrides may only tighten it). nil when no layer is looser than
-// default.
-func proposal(ls []layer) *trust.Grant {
-	if !looser(ls, ceilingOf(nil)) {
+// proposalFor is the grant that covers what m asks for (the root and each
+// guard.projects folder) on top of g: relaxed when that is the relaxed preset
+// on every unlocked category and nothing is looser than relaxed, else the
+// custom table of the loosest value per category and id, so the human grants
+// exactly what they see (spec E §6.3). nil when nothing is looser than
+// default. It is guardcfg's GrantFor, the grant tq allow --mode stores.
+func proposalFor(m *manifest.Manifest, ws, root string, g guardcfg.File) *trust.Grant {
+	if guardcfg.WithinGrant(m, ws, root, g, nil) {
 		return nil
 	}
-	merged := guardcfg.Table{}
-	for _, c := range guardcfg.AllCategories() {
-		v := guardcfg.ValueDeny
-		if guardcfg.Locked(c) {
-			v = guardcfg.ValueRule
-		} else {
-			for _, l := range ls {
-				v = loosest(v, l.table.Get(c))
-			}
-		}
-		merged[c] = v
+	custom, _ := guardcfg.GrantFor(m, ws, root, g, guardcfg.ModeCustom)
+	relaxed, _ := guardcfg.GrantFor(m, ws, root, g, guardcfg.ModeRelaxed)
+	if sameStrings(custom.Table, relaxed.Table) && guardcfg.WithinGrant(m, ws, root, g, &relaxed) {
+		return &relaxed
 	}
-	if isRelaxedTable(merged) && !looser(ls, ceilingOf(relaxedGrant())) {
-		return relaxedGrant()
-	}
-	ids := map[string]bool{}
-	for _, l := range ls {
-		for id := range l.overrides {
-			ids[id] = true
-		}
-	}
-	g := &trust.Grant{Mode: guardcfg.ModeCustom, Table: tableStrings(merged)}
-	for _, id := range sortedKeys(ids) {
-		v := guardcfg.ValueDeny
-		for _, l := range ls {
-			v = loosest(v, l.idValue(id))
-		}
-		if v != (layer{table: merged}).idValue(id) {
-			if g.Overrides == nil {
-				g.Overrides = map[string]string{}
-			}
-			g.Overrides[id] = string(v)
-		}
-	}
-	return g
+	return &custom
 }
 
-// isRelaxedTable reports whether t gives every unlocked category the relaxed
-// preset's value.
-func isRelaxedTable(t guardcfg.Table) bool {
-	rt, _ := guardcfg.Preset(guardcfg.ModeRelaxed)
-	for _, c := range guardcfg.AllCategories() {
-		if !guardcfg.Locked(c) && t.Get(c) != rt.Get(c) {
+// sameStrings reports whether a and b hold the same pairs.
+func sameStrings(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
 			return false
 		}
 	}
 	return true
-}
-
-// currentGrant is hash's grant: the .mode file, else a legacy bypass trust
-// read as relaxed (spec E §11.1). An unreadable grant is none.
-func currentGrant(hash string) *trust.Grant {
-	if g, err := trust.LoadGrant(hash); err == nil && g != nil {
-		return g
-	}
-	if trust.IsBypassAllowed(hash) {
-		return relaxedGrant()
-	}
-	return nil
 }
 
 // ---- writers ----------------------------------------------------------------
@@ -775,13 +541,8 @@ func applyGlobal(op GuardOp) (GuardResult, error) {
 		return GuardResult{}, err
 	}
 	res := GuardResult{Scope: GuardScope{Global: true}.String(), Warnings: unknownIDWarning(nil, g, op)}
-	ls := layersOf(nil, g)
-	var ceil *trust.Grant
-	if gg, err := trust.LoadGrant(trust.GlobalGrantKey); err == nil {
-		ceil = gg
-	}
-	if looser(ls, ceilingOf(ceil)) {
-		res.Looser, res.Grant = true, proposal(ls)
+	if !guardcfg.WithinGrant(nil, "", "", g, guardcfg.GlobalGrant(g)) {
+		res.Looser, res.Grant = true, proposalFor(nil, "", "", g)
 	}
 	return res, nil
 }
@@ -923,21 +684,21 @@ func applyWorkspace(w *resolve.Workspace, scope GuardScope, op GuardOp) (GuardRe
 	}
 
 	res := GuardResult{Workspace: w.Name, Scope: GuardScope{Project: project}.String(), Hash: newHash, Warnings: unknownIDWarning(m, g, op)}
-	ls := layersOf(m, g)
+	// The grant carry is guardcfg's, the one tq guard --ws and the hook use
+	// (final review m7, security m8).
+	old, carried, err := guardcfg.CarryGrant(oldHash, newHash, m, w.Name, w.Root, g)
 	var ceil *trust.Grant
-	if old := currentGrant(oldHash); old != nil {
-		if looser(ls, ceilingOf(old)) {
-			res.Dropped = old.Mode
-		} else {
-			carried := *old
-			if err := trust.SaveGrant(newHash, carried); err != nil {
-				return res, fmt.Errorf("manifest re-trusted, but the %s grant could not be carried: %w", old.Mode, err)
-			}
-			res.Carried, res.CarriedMode, ceil = true, old.Mode, &carried
-		}
+	switch {
+	case err != nil:
+		return res, fmt.Errorf("manifest re-trusted, but the %s grant could not be carried: %w", old.Mode, err)
+	case old != nil && carried:
+		res.Carried, res.CarriedMode = true, old.Mode
+		ceil = guardcfg.WorkspaceGrant(newHash, w.Name, w.Root)
+	case old != nil:
+		res.Dropped = old.Mode
 	}
-	if looser(ls, ceilingOf(ceil)) {
-		res.Looser, res.Grant = true, proposal(ls)
+	if !guardcfg.WithinGrant(m, w.Name, w.Root, g, ceil) {
+		res.Looser, res.Grant = true, proposalFor(m, w.Name, w.Root, g)
 	}
 	return res, nil
 }
@@ -960,7 +721,7 @@ func clearLooseProjects(gm *yaml.Node, ws modeKeys) {
 		if pk.Mode == "" {
 			continue
 		}
-		if looser([]layer{{table: tableFor(pk.Mode, pk.Base, pk.Categories, wsTable)}}, ceilingOf(nil)) {
+		if (guardcfg.Resolved{Table: tableFor(pk.Mode, pk.Base, pk.Categories, wsTable)}).LooserThanDefault() {
 			pk.Mode, pk.Base, pk.Categories = "", "", nil
 			writeKeys(pm, pk)
 		}
@@ -1036,7 +797,7 @@ func GrantMode(w *resolve.Workspace) (trust.Grant, error) {
 	if gerr != nil {
 		g = guardcfg.File{}
 	}
-	p := proposal(layersOf(m, g))
+	p := proposalFor(m, w.Name, w.Root, g)
 	if p == nil {
 		return trust.Grant{}, fmt.Errorf("%s runs no looser than default: nothing to grant", w.Name)
 	}
@@ -1227,7 +988,7 @@ func SkipCounts(ws string, now time.Time) (confirms, blocks int) {
 // ResolveWorkspace resolves w's mode at its root, as the hook would for a
 // session there with no launch override and no repo file.
 func ResolveWorkspace(w *resolve.Workspace, g guardcfg.File) guardcfg.Resolved {
-	return guardcfg.Resolve(w.Manifest, w.Name, w.Root, w.Root, "", g, guardcfg.RepoFile{}, "", currentGrant(w.Hash))
+	return guardcfg.Resolve(w.Manifest, w.Name, w.Root, w.Root, "", g, guardcfg.RepoFile{}, "", guardcfg.WorkspaceGrant(w.Hash, w.Name, w.Root))
 }
 
 // WorkspaceFacts gathers the view facts for w: counts, projects, and whether
@@ -1237,10 +998,9 @@ func WorkspaceFacts(w *resolve.Workspace, g guardcfg.File, now time.Time) GuardF
 	f.Confirms, f.Blocks = SkipCounts(w.Name, now)
 	_, ps := manifestKeys(w.Manifest)
 	f.Projects = sortedKeys(ps)
-	ls := layersOf(w.Manifest, g)
-	if looser(ls, ceilingOf(currentGrant(w.Hash))) {
+	if !guardcfg.WithinGrant(w.Manifest, w.Name, w.Root, g, guardcfg.WorkspaceGrant(w.Hash, w.Name, w.Root)) {
 		f.NeedsGrant = true
-		if p := proposal(ls); p != nil {
+		if p := proposalFor(w.Manifest, w.Name, w.Root, g); p != nil {
 			f.Proposal = p.Mode
 		}
 	}

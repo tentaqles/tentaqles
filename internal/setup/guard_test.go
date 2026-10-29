@@ -515,7 +515,11 @@ func TestGuardCustomTableGrantsExactlyCustom(t *testing.T) {
 			want = "skip"
 		}
 		if guardcfg.Locked(c) {
-			want = string(guardcfg.ValueRule)
+			// A grant never holds a locked category (guardcfg drops it).
+			if got, ok := res.Grant.Table[string(c)]; ok && got != string(guardcfg.ValueRule) {
+				t.Fatalf("proposal %s = %q: a locked category is never granted", c, got)
+			}
+			continue
 		}
 		if got := res.Grant.Table[string(c)]; got != want {
 			t.Fatalf("proposal %s = %q, want %q", c, got, want)
@@ -541,11 +545,16 @@ func TestGuardCustomTableGrantsExactlyCustom(t *testing.T) {
 }
 
 // A relaxed workspace still proposes relaxed, also with a tightening override.
+// The grant names its workspace and root, so tq allow can report it dropped
+// and a copied manifest elsewhere does not get it (final review m1, m4).
 func TestGuardRelaxedProposesRelaxed(t *testing.T) {
 	w := guardWorkspace(t, "guard:\n  mode: relaxed\n  rules_override: { tq/cloud-delete: ask }\n")
 	g, err := GrantMode(w)
-	if err != nil || g.Mode != "relaxed" {
+	if err != nil || g.Mode != "relaxed" || g.Workspace != w.Name || g.Root != w.Root {
 		t.Fatalf("grant: %+v %v", g, err)
+	}
+	if kg := trust.GrantsFor(w.Name); len(kg) != 1 || kg[0].Key != w.Hash {
+		t.Fatalf("GrantsFor finds the grant: %+v", kg)
 	}
 }
 

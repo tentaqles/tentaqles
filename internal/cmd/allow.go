@@ -118,7 +118,7 @@ func trustWorkspace(c *cobra.Command, name string) (*resolve.Workspace, error) {
 // dropped its mode grant (grants are keyed by the manifest hash), and removes
 // the stale grant files so the message is said once.
 func reportDroppedGrants(c *cobra.Command, ws *resolve.Workspace) {
-	if guardcfg.WorkspaceGrant(ws.Hash) != nil {
+	if guardcfg.WorkspaceGrant(ws.Hash, ws.Name, ws.Root) != nil {
 		return
 	}
 	for _, kg := range trust.GrantsFor(ws.Name) {
@@ -151,9 +151,15 @@ func allowMode(c *cobra.Command, name, m string) error {
 	if err := requireHuman(c.InOrStdin(), c.OutOrStdout(), "tq allow --mode"); err != nil {
 		return err
 	}
-	ws, err := trustWorkspace(c, name)
+	// A grant is for a manifest the human already reviewed: tq allow --mode
+	// never trusts an edited one on the way (security review m5), the same
+	// rule tq mode set follows.
+	ws, err := findWorkspace(name)
 	if err != nil {
 		return err
+	}
+	if !trust.IsTrusted(ws.Hash) {
+		return fmt.Errorf("%s changed since it was trusted (or was never trusted): review it and run tq allow %s first, then tq allow --mode %s %s", ws.ManifestPath, ws.Name, ws.Name, m)
 	}
 	if m == guardcfg.ModeDefault {
 		if err := trust.DeleteGrant(ws.Hash); err != nil {

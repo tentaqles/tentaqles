@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -72,7 +74,7 @@ func GrantFor(m *manifest.Manifest, ws, root string, g File, mode string) (Grant
 	switch mode {
 	case ModeRelaxed:
 		t, _ := Preset(ModeRelaxed)
-		return Grant{Mode: ModeRelaxed, Table: tableStrings(t), Workspace: ws}, true
+		return Grant{Mode: ModeRelaxed, Table: tableStrings(t), Workspace: ws, Root: root}, true
 	case ModeCustom:
 	default:
 		return Grant{}, false
@@ -107,7 +109,7 @@ func GrantFor(m *manifest.Manifest, ws, root string, g File, mode string) (Grant
 		}
 		ov[id] = string(v)
 	}
-	return Grant{Mode: ModeCustom, Table: tableStrings(t), Overrides: ov, Workspace: ws}, true
+	return Grant{Mode: ModeCustom, Table: tableStrings(t), Overrides: ov, Workspace: ws, Root: root}, true
 }
 
 func tableStrings(t Table) map[string]string {
@@ -150,17 +152,43 @@ func WithinGrant(m *manifest.Manifest, ws, root string, g File, grant *Grant) bo
 	return true
 }
 
-// WorkspaceGrant loads the grant for a manifest hash (a legacy .bypass file
-// reads as relaxed). Errors are no grant (fail closed).
-func WorkspaceGrant(hash string) *Grant {
+// WorkspaceGrant loads the grant for workspace ws at root with manifest hash
+// (a legacy .bypass file reads as relaxed). A grant is keyed by the hash and
+// the root together: one made for another root, or (with no root recorded)
+// for another workspace name, is no grant, so a byte copy of a granted
+// manifest elsewhere gets none (security review m4). Errors are no grant
+// (fail closed).
+func WorkspaceGrant(hash, ws, root string) *Grant {
 	if hash == "" {
 		return nil
 	}
 	g, err := trust.LoadGrant(hash)
-	if err != nil {
+	if err != nil || g == nil {
 		return nil
 	}
+	switch {
+	case g.Root != "":
+		if !sameRoot(g.Root, root) {
+			return nil
+		}
+	case g.Workspace != "":
+		if g.Workspace != ws {
+			return nil
+		}
+	}
 	return g
+}
+
+// sameRoot compares two workspace roots the way the file system does.
+func sameRoot(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // CarryGrant moves the mode grant of oldHash to newHash after one of tq's
@@ -168,7 +196,7 @@ func WorkspaceGrant(hash string) *Grant {
 // configuration is no looser than the grant (spec E §6.3). It returns the
 // old grant and whether it was carried; (nil, false) when there was none.
 func CarryGrant(oldHash, newHash string, m *manifest.Manifest, ws, root string, g File) (*Grant, bool, error) {
-	old := WorkspaceGrant(oldHash)
+	old := WorkspaceGrant(oldHash, ws, root)
 	if old == nil {
 		return nil, false, nil
 	}
@@ -180,9 +208,7 @@ func CarryGrant(oldHash, newHash string, m *manifest.Manifest, ws, root string, 
 	}
 	carried := *old
 	carried.FromBypass = false
-	if carried.Workspace == "" {
-		carried.Workspace = ws
-	}
+	carried.Workspace, carried.Root = ws, root
 	if old.FromBypass {
 		t, _ := Preset(ModeRelaxed)
 		carried.Table = tableStrings(t)
@@ -223,7 +249,7 @@ func GlobalGrantFor(f File, mode string) (Grant, bool) {
 	if !ok {
 		return Grant{}, false
 	}
-	gr.Workspace = ""
+	gr.Workspace, gr.Root = "", ""
 	gr.Digest = GlobalDigest(f)
 	return gr, true
 }

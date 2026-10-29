@@ -39,7 +39,7 @@ func modeChecks(w *resolve.Workspace, _ Deps, add AddFunc) {
 	}
 	m := w.Manifest
 	g := loadGuardFile()
-	grant := guardcfg.WorkspaceGrant(w.Hash)
+	grant := guardcfg.WorkspaceGrant(w.Hash, w.Name, w.Root)
 
 	scopes := []string{w.Root}
 	gv := m.Guard.ModeView()
