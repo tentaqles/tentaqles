@@ -114,6 +114,11 @@ describe('ceilingBanner', () => {
     expect(b?.text).toMatch(/Looser than your grant/)
     expect(b?.text).toMatch(/relaxed for acme/)
   })
+  it('never falls back to relaxed when no proposal is known', () => {
+    const b = ceilingBanner(view('default', {needs_grant: true, clamped: ['db-destructive'], proposal: '', requested: ''}))
+    expect(b?.grant).toBe('the current layers')
+    expect(b?.text).not.toMatch(/relaxed/)
+  })
 })
 
 describe('text', () => {

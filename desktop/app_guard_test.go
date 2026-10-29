@@ -143,3 +143,24 @@ func TestGuardGlobalScopeBinding(t *testing.T) {
 		t.Fatalf("change = %+v", ch)
 	}
 }
+
+// A custom table that relaxed would cover is granted as custom (review r0 M1).
+func TestGuardGrantBindingCustomTable(t *testing.T) {
+	root := guardWS(t, "")
+	a := NewApp()
+	if _, err := a.ToggleCategory("acme", "workspace", "db-destructive", "skip"); err != nil {
+		t.Fatal(err)
+	}
+	views, _ := a.GuardWorkspaces()
+	if !views[0].NeedsGrant || views[0].Proposal != "custom" {
+		t.Fatalf("view proposal = %q (needs %v)", views[0].Proposal, views[0].NeedsGrant)
+	}
+	mode, err := a.GrantMode("acme")
+	if err != nil || mode != "custom" {
+		t.Fatalf("grant: %q %v", mode, err)
+	}
+	h, _ := trust.HashFile(filepath.Join(root, manifest.FileName))
+	if g, _ := trust.LoadGrant(h); g == nil || g.Mode != "custom" || g.Table["prod-changes"] == "skip" {
+		t.Fatalf("stored grant = %+v", g)
+	}
+}

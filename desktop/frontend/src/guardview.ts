@@ -133,7 +133,8 @@ export function scopeChoices(view: GuardView): {value: string; label: string}[] 
 // the grant allows; null when nothing needs a grant.
 export function ceilingBanner(view: GuardView): {text: string; grant: string} | null {
   if (!view.needs_grant) return null
-  const grant = view.proposal || view.requested || 'relaxed'
+  // Name only what GrantMode will grant (the proposal); never guess relaxed.
+  const grant = view.proposal || 'the current layers'
   const ws = view.workspace ?? 'this workspace'
   return {text: `Looser than your grant: the session runs at ${view.ceiling} until you grant ${grant} for ${ws}.`, grant}
 }

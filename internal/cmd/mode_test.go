@@ -438,3 +438,20 @@ func TestUnattendedAliases(t *testing.T) {
 		t.Error("bad sandbox must be refused")
 	}
 }
+
+// A toggle on a default workspace asks for and grants the custom table, never
+// relaxed (review r0 M1, spec §6.3).
+func TestModeToggleGrantsCustomNotRelaxed(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	asHuman(t)
+	out, err := runModeCmd(t, "y\n", "mode", "toggle", "db-destructive", "skip", "--ws", "acme")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "grant custom for acme? [y/N]") || strings.Contains(out, "grant relaxed") {
+		t.Fatalf("out:\n%s", out)
+	}
+	if g, _ := trust.LoadGrant(manifestHash(t, root)); g == nil || g.Mode != "custom" || g.Table["db-destructive"] != "skip" || g.Table["prod-changes"] == "skip" {
+		t.Fatalf("grant = %+v", g)
+	}
+}

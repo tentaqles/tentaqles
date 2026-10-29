@@ -137,6 +137,32 @@ func lockedID(id string) bool {
 	return ok && guardcfg.Locked(c)
 }
 
+// lockedDeclared reports whether a custom rule in m or g declares id with a
+// locked category (`category: secrets` and so on): such a rule is enforced in
+// every mode, so it takes no override either.
+func lockedDeclared(m *manifest.Manifest, g guardcfg.File, id string) bool {
+	rules := append([]policy.Rule{}, g.Rules...)
+	if m != nil {
+		rules = append(rules, m.Guard.Rules...)
+	}
+	for i := range rules {
+		if rules[i].ID == id && guardcfg.Locked(guardcfg.CategoryOf(&rules[i])) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkOverrideLocked refuses an override of a custom rule that declares a
+// locked category (lockedID covers the built-in ids).
+func checkOverrideLocked(m *manifest.Manifest, g guardcfg.File, op GuardOp) error {
+	id := strings.TrimSpace(op.RuleID)
+	if op.Kind != GuardOpOverride || op.Value == ClearOverride || !lockedDeclared(m, g, id) {
+		return nil
+	}
+	return fmt.Errorf("rule %s: %w (it declares a category among %s)", id, ErrLockedCategory, lockedNames())
+}
+
 func lockedNames() string {
 	var s []string
 	for _, c := range guardcfg.LockedCategories() {
@@ -630,15 +656,14 @@ func looser(ls []layer, ceil layer) bool {
 	return false
 }
 
-// proposal is the grant that covers every layer: relaxed when the relaxed
-// preset does, else a custom table of the loosest value per category and id.
-// nil when no layer is looser than default.
+// proposal is the grant that covers every layer: a custom table of the
+// loosest value per category and id, so the human grants exactly what they
+// see (spec E §6.3). It is relaxed only when that table is the relaxed preset
+// itself (overrides may only tighten it). nil when no layer is looser than
+// default.
 func proposal(ls []layer) *trust.Grant {
 	if !looser(ls, ceilingOf(nil)) {
 		return nil
-	}
-	if !looser(ls, ceilingOf(relaxedGrant())) {
-		return relaxedGrant()
 	}
 	merged := guardcfg.Table{}
 	for _, c := range guardcfg.AllCategories() {
@@ -651,6 +676,9 @@ func proposal(ls []layer) *trust.Grant {
 			}
 		}
 		merged[c] = v
+	}
+	if isRelaxedTable(merged) && !looser(ls, ceilingOf(relaxedGrant())) {
+		return relaxedGrant()
 	}
 	ids := map[string]bool{}
 	for _, l := range ls {
@@ -672,6 +700,18 @@ func proposal(ls []layer) *trust.Grant {
 		}
 	}
 	return g
+}
+
+// isRelaxedTable reports whether t gives every unlocked category the relaxed
+// preset's value.
+func isRelaxedTable(t guardcfg.Table) bool {
+	rt, _ := guardcfg.Preset(guardcfg.ModeRelaxed)
+	for _, c := range guardcfg.AllCategories() {
+		if !guardcfg.Locked(c) && t.Get(c) != rt.Get(c) {
+			return false
+		}
+	}
+	return true
 }
 
 // currentGrant is hash's grant: the .mode file, else a legacy bypass trust
@@ -721,6 +761,9 @@ func applyGlobal(op GuardOp) (GuardResult, error) {
 	g, err := guardcfg.Load()
 	if err != nil {
 		return GuardResult{}, fmt.Errorf("the global guard file cannot be read, nothing changed: %w", err)
+	}
+	if err := checkOverrideLocked(nil, g, op); err != nil {
+		return GuardResult{}, err
 	}
 	k := globalKeys(g)
 	applyOp(&k, op, modeKeys{})
@@ -799,6 +842,9 @@ func applyWorkspace(w *resolve.Workspace, scope GuardScope, op GuardOp) (GuardRe
 	g, gerr := guardcfg.Load()
 	if gerr != nil {
 		g = guardcfg.File{}
+	}
+	if err := checkOverrideLocked(w.Manifest, g, op); err != nil {
+		return GuardResult{}, err
 	}
 	raw, err := os.ReadFile(w.ManifestPath)
 	if err != nil {
@@ -886,9 +932,6 @@ func applyWorkspace(w *resolve.Workspace, scope GuardScope, op GuardOp) (GuardRe
 			carried := *old
 			if err := trust.SaveGrant(newHash, carried); err != nil {
 				return res, fmt.Errorf("manifest re-trusted, but the %s grant could not be carried: %w", old.Mode, err)
-			}
-			if trust.IsBypassAllowed(oldHash) {
-				_ = trust.AllowBypass(newHash)
 			}
 			res.Carried, res.CarriedMode, ceil = true, old.Mode, &carried
 		}

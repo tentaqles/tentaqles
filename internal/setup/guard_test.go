@@ -496,3 +496,91 @@ func TestGuardErrorsAreReadable(t *testing.T) {
 	}
 	_ = paths.Home()
 }
+
+// A custom table is granted as custom with exactly what the human sees, not
+// as relaxed because relaxed happens to cover it (review r0 M1, spec §6.3).
+func TestGuardCustomTableGrantsExactlyCustom(t *testing.T) {
+	w := guardWorkspace(t, "")
+	res, err := ApplyGuardOp(w, GuardScope{}, GuardOp{Kind: GuardOpCategory, Category: "db-destructive", Value: "skip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Looser || res.Grant == nil || res.Grant.Mode != "custom" {
+		t.Fatalf("default + db-destructive skip must propose custom: %+v", res.Grant)
+	}
+	def, _ := guardcfg.Preset(guardcfg.ModeDefault)
+	for _, c := range guardcfg.AllCategories() {
+		want := string(def.Get(c))
+		if c == guardcfg.CatDBDestructive {
+			want = "skip"
+		}
+		if guardcfg.Locked(c) {
+			want = string(guardcfg.ValueRule)
+		}
+		if got := res.Grant.Table[string(c)]; got != want {
+			t.Fatalf("proposal %s = %q, want %q", c, got, want)
+		}
+	}
+	w = reload(t, w.Root)
+	g, err := GrantMode(w)
+	if err != nil || g.Mode != "custom" || g.Table["db-destructive"] != "skip" || g.Table["prod-changes"] == "skip" {
+		t.Fatalf("grant must be the custom table: %+v %v", g, err)
+	}
+	// A later toggle that also skips prod-changes loosens past the grant.
+	res, err = ApplyGuardOp(w, GuardScope{}, GuardOp{Kind: GuardOpCategory, Category: "prod-changes", Value: "skip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = reload(t, w.Root)
+	if res.Carried || !res.Looser || res.Dropped != "custom" {
+		t.Fatalf("skipping prod-changes must drop the custom grant: %+v", res)
+	}
+	if got, _ := trust.LoadGrant(w.Hash); got != nil {
+		t.Fatalf("no grant at the loosened hash: %+v", got)
+	}
+}
+
+// A relaxed workspace still proposes relaxed, also with a tightening override.
+func TestGuardRelaxedProposesRelaxed(t *testing.T) {
+	w := guardWorkspace(t, "guard:\n  mode: relaxed\n  rules_override: { tq/cloud-delete: ask }\n")
+	g, err := GrantMode(w)
+	if err != nil || g.Mode != "relaxed" {
+		t.Fatalf("grant: %+v %v", g, err)
+	}
+}
+
+// A custom rule declaring a locked category takes no override (review r0 m3).
+func TestGuardOverrideRefusesDeclaredLockedRule(t *testing.T) {
+	w := guardWorkspace(t, "guard:\n  rules:\n    - id: acme/no-vault\n      action: deny\n      command: 'vault read'\n      reason: no vault\n      category: secrets\n")
+	_, err := ApplyGuardOp(w, GuardScope{}, GuardOp{Kind: GuardOpOverride, RuleID: "acme/no-vault", Value: "skip"})
+	if !errors.Is(err, ErrLockedCategory) {
+		t.Fatalf("override of a secrets rule must be refused as locked, got %v", err)
+	}
+	if got := reload(t, w.Root); got.Manifest.Guard.RulesOverride["acme/no-vault"] != "" {
+		t.Fatal("nothing may be written")
+	}
+	// Clearing is always allowed.
+	if _, err := ApplyGuardOp(w, GuardScope{}, GuardOp{Kind: GuardOpOverride, RuleID: "acme/no-vault", Value: ClearOverride}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The next writer converts a legacy .bypass to .mode and does not re-create
+// .bypass at the new hash (review r0 m4, spec §11.1).
+func TestGuardWriterConvertsBypassToMode(t *testing.T) {
+	w := guardWorkspace(t, "guard:\n  mode: relaxed\n")
+	if err := trust.AllowBypass(w.Hash); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ApplyGuardOp(w, GuardScope{}, GuardOp{Kind: GuardOpCategory, Category: "db-destructive", Value: "ask"})
+	if err != nil || !res.Carried {
+		t.Fatalf("carry: %+v %v", res, err)
+	}
+	w = reload(t, w.Root)
+	if g, _ := trust.LoadGrant(w.Hash); g == nil || g.Mode != "relaxed" {
+		t.Fatalf(".mode at the new hash = %+v", g)
+	}
+	if _, err := os.Stat(filepath.Join(paths.TrustDir(), w.Hash+".bypass")); !os.IsNotExist(err) {
+		t.Fatalf("no .bypass at the new hash (err %v)", err)
+	}
+}
