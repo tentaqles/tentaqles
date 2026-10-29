@@ -60,7 +60,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					_, err = approval.Claim(in.Workspace(), args[0], approval.Binding{Pack: "db", Action: "migrate", Subject: "m1", Target: "prod"}, map[string]string{"plan": "sha256:aa"})
+					_, err = approval.Claim(c, in.Workspace(), args[0], approval.Binding{Pack: "db", Action: "migrate", Subject: "m1", Target: "prod"}, map[string]string{"plan": "sha256:aa"})
 					return err
 				}}
 			return []*cobra.Command{approve, apply}
@@ -95,7 +95,7 @@ func init() {
 	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-plan", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
 		Supersedes: []string{"tq/iac-apply"},
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
-			if !strings.Contains(call.Command, "tofu apply") && !strings.Contains(call.Command, "pulumi up") {
+			if !strings.Contains(call.Command, "tofu apply") && !strings.Contains(call.Command, "pulumi up") && !strings.Contains(call.Command, "terraform apply -") {
 				return policy.Allow, "", false
 			}
 			for _, f := range strings.Fields(strings.NewReplacer("=", " ", ";", " ", "&", " ").Replace(call.Command)) {
@@ -107,11 +107,14 @@ func init() {
 					} else if _, err := g.HashState(rel); err != nil {
 						return policy.Deny, err.Error(), true
 					}
-					prog := "tofu"
-					if strings.Contains(call.Command, "pulumi up") {
-						prog = "pulumi"
+					spec := packs.ReadSpec{Program: "tofu", BoolFlags: []string{"-auto-approve", "-no-color"}}
+					switch {
+					case strings.Contains(call.Command, "pulumi up"):
+						spec = packs.ReadSpec{Program: "pulumi", Flag: "--plan", BoolFlags: []string{"--yes", "-y", "--skip-preview"}}
+					case strings.Contains(call.Command, "terraform apply"):
+						spec.Program = "terraform"
 					}
-					if err := g.ReadArgs(prog, rel); err != nil {
+					if err := g.ReadArgs(spec, rel); err != nil {
 						return policy.Deny, err.Error(), true
 					}
 					return policy.Allow, "plan verified", true
@@ -124,7 +127,7 @@ func init() {
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 			c := call.Command
 			switch {
-			case !strings.Contains(c, "terraform apply"):
+			case !strings.Contains(c, "terraform apply"), strings.Contains(strings.ReplaceAll(c, `\`, "/"), "/plans/"):
 				return policy.Allow, "", false
 			case strings.Contains(c, "panic.tfplan"):
 				panic("example guard exploded")
@@ -573,6 +576,14 @@ func TestHookStoredPlanReadArg(t *testing.T) {
 		"tofu apply " + q(plan),
 		"pulumi up --plan " + plan,
 		"pulumi up --plan=" + plan,
+		"pulumi up " + plan,
+		"pulumi up --yes --plan " + plan,
+		// Declared boolean flags before a positional plan (and an =value flag).
+		"terraform apply -auto-approve " + plan,
+		"tofu apply -auto-approve -input=false " + plan,
+		"tofu apply -input=false -auto-approve " + plan,
+		"pulumi up --yes " + plan,
+		"pulumi up --yes --skip-preview --plan=" + plan,
 		"cd infra && tofu apply " + plan,
 	} {
 		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
@@ -613,6 +624,15 @@ func TestHookStoredPlanReadArg(t *testing.T) {
 		"Expand-Archive":  "Expand-Archive a.zip; tofu apply " + plan,
 		"another program": "terraform-wrapper tofu apply " + plan,
 		"the plan first":  plan + " tofu apply",
+		// R6-4: the plan only as a positional argument or the declared flag's value.
+		"another flag, =":       "tofu apply --out=" + plan,
+		"another flag":          "tofu apply -out " + plan,
+		"pulumi, another flag":  "pulumi up --save " + plan,
+		"pulumi, another flag=": "pulumi up --save=" + plan,
+		// An undeclared flag before the plan keeps the fail-closed reading.
+		"undeclared flag before":  "tofu apply -state-out " + plan,
+		"undeclared, terraform":   "terraform apply -backup " + plan,
+		"a bool flag is not -out": "pulumi up --yes --save " + plan,
 	} {
 		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
 		if code != 2 || !strings.Contains(out, "tq/hub-store-write") {

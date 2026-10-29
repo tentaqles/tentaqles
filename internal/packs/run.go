@@ -219,6 +219,9 @@ func runOne(ctx context.Context, c Check, in *Input, o RunOptions) (Result, bool
 	return normalise(r, 0), false
 }
 
+// toolrun resolves a tool's final path with the handle-based FinalPath.
+func init() { toolrun.FinalPath = FinalPath }
+
 // checkTools gives a check's tool runs the check's default timeout.
 type checkTools struct {
 	ToolRunner

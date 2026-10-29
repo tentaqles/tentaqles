@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -93,7 +95,7 @@ func TestAskAnswerVerifyClaim(t *testing.T) {
 	if _, err := Find(es, tr, Binding{Pack: "ml", Action: "promote", Target: "production"}, ev, Now(), nil); err != nil {
 		t.Fatalf("find without subject: %v", err)
 	}
-	if _, err := Claim("acme", id, want, ev); err != nil {
+	if _, err := Claim(execCmd, "acme", id, want, ev); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrUsed) {
@@ -189,7 +191,7 @@ func TestConcurrentClaims(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := Claim("acme", id, want, ev); err == nil {
+			if _, err := Claim(execCmd, "acme", id, want, ev); err == nil {
 				mu.Lock()
 				wins++
 				mu.Unlock()
@@ -287,19 +289,19 @@ func TestConfirm(t *testing.T) {
 	in.WriteString("yes\n")
 	in.Seek(0, 0)
 	var out bytes.Buffer
-	if err := Confirm(in, &out, "python promote.py"); err == nil {
+	if err := Confirm(execCmd, in, &out, "python promote.py"); err == nil {
 		t.Fatal("a file is not a terminal")
 	}
 	prev := isTerminal
 	isTerminal = func(*os.File) bool { return true }
 	defer func() { isTerminal = prev }()
 	in.Seek(0, 0)
-	if err := Confirm(in, &out, "python promote.py"); err != nil || !strings.Contains(out.String(), "python promote.py") {
+	if err := Confirm(execCmd, in, &out, "python promote.py"); err != nil || !strings.Contains(out.String(), "python promote.py") {
 		t.Fatal(err)
 	}
 	t.Setenv("CLAUDECODE", "1")
 	in.Seek(0, 0)
-	if err := Confirm(in, &out, "x"); !errors.Is(err, packs.ErrHumanOnly) {
+	if err := Confirm(execCmd, in, &out, "x"); !errors.Is(err, packs.ErrHumanOnly) {
 		t.Fatalf("agent: %v", err)
 	}
 }
@@ -386,7 +388,7 @@ func TestUsedApprovalStaysUsed(t *testing.T) {
 	id, _ := ask(t)
 	answer(t, id, "approve", "hub:tester")
 	saved, _ := ledger.Read("acme", "ml")
-	if _, err := Claim("acme", id, want, ev); err != nil {
+	if _, err := Claim(execCmd, "acme", id, want, ev); err != nil {
 		t.Fatal(err)
 	}
 	if err := MarkUsed("acme", "ml", id); err != nil {
@@ -450,10 +452,39 @@ func TestClaimRefusesWhenTheMarkCannotBeWritten(t *testing.T) {
 	answer(t, id, "approve", "hub:tester")
 	restore := ledger.FailKeychainWritesForTest(errors.New("read-only keychain"))
 	defer restore()
-	if _, err := Claim("acme", id, want, ev); err == nil || !strings.Contains(err.Error(), "do not run the command") {
+	if _, err := Claim(execCmd, "acme", id, want, ev); err == nil || !strings.Contains(err.Error(), "do not run the command") {
 		t.Fatalf("claim with no mark: %v", err)
 	}
 	if err := MarkUsed("acme", "ml", id); err == nil {
 		t.Fatal("MarkUsed with no mark")
+	}
+}
+
+// execCmd is a pack command that declares it executes an approved action.
+var execCmd = &cobra.Command{Use: "apply", Annotations: map[string]string{packs.AnnotationHumanOnly: packs.HumanOnlyExecute}}
+
+// R6-1: Confirm and Claim refuse a command that does not declare execute.
+func TestConfirmAndClaimNeedAnExecutor(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	for name, c := range map[string]*cobra.Command{
+		"nil":          nil,
+		"unannotated":  {Use: "promote"},
+		"an asker":     {Use: "approve", Annotations: map[string]string{packs.AnnotationHumanOnly: packs.ApprovalAsk}},
+		"another note": {Use: "apply", Annotations: map[string]string{packs.AnnotationHumanOnly: "yes"}},
+	} {
+		if _, err := Claim(c, "acme", id, want, ev); !errors.Is(err, ErrNotExecutor) {
+			t.Fatalf("Claim from %s: %v", name, err)
+		}
+		if err := Confirm(c, nil, io.Discard, "x"); !errors.Is(err, ErrNotExecutor) {
+			t.Fatalf("Confirm from %s: %v", name, err)
+		}
+	}
+	if ledger.Claimed("acme", "ml", id) {
+		t.Fatal("a refused Claim claimed the approval")
+	}
+	if _, err := Claim(execCmd, "acme", id, want, ev); err != nil {
+		t.Fatal(err)
 	}
 }

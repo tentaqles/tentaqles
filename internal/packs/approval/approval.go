@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
@@ -330,7 +331,10 @@ func FindGuard(g packs.GuardCtx, want Binding, evidence map[string]string) (Appr
 // write is an error: do not run the command). Call MarkUsed after the
 // command. The order of a human-run apply is FromCommand, HumanOnly,
 // Verify (to show what will run), Confirm, Claim, run, MarkUsed, Comment.
-func Claim(ws, id string, want Binding, evidence map[string]string) (Approval, error) {
+func Claim(c *cobra.Command, ws, id string, want Binding, evidence map[string]string) (Approval, error) {
+	if err := executor(c); err != nil {
+		return Approval{}, err
+	}
 	a, err := Verify(ws, id, want, evidence)
 	if err != nil {
 		return a, err
@@ -437,10 +441,27 @@ var ErrNotConfirmed = errors.New("not confirmed")
 // isTerminal tells a terminal from a pipe or a file (tests replace it).
 var isTerminal = func(f *os.File) bool { return f != nil && term.IsTerminal(f.Fd()) }
 
+// ErrNotExecutor refuses Confirm and Claim from a command that does not
+// declare itself an executor (R6-1): tq/human-answer denies agents exactly
+// the commands that declare it, so an undeclared caller would slip past it.
+var ErrNotExecutor = errors.New("approval: only a pack command annotated " + packs.AnnotationHumanOnly + ": " + packs.HumanOnlyExecute + " (named ... apply) may confirm or claim an approval")
+
+// executor checks that c declares packs.HumanOnlyExecute.
+func executor(c *cobra.Command) error {
+	if c == nil || c.Annotations[packs.AnnotationHumanOnly] != packs.HumanOnlyExecute {
+		return ErrNotExecutor
+	}
+	return nil
+}
+
 // Confirm shows the exact command a human-run apply will run and asks for a
-// typed "yes". It refuses unless in is a terminal (it checks itself: an
-// apply never runs from a pipe), and in an agent session.
-func Confirm(in *os.File, out io.Writer, command string) error {
+// typed "yes". c is the running pack command, which must declare
+// packs.HumanOnlyExecute. It refuses unless in is a terminal (it checks
+// itself: an apply never runs from a pipe), and in an agent session.
+func Confirm(c *cobra.Command, in *os.File, out io.Writer, command string) error {
+	if err := executor(c); err != nil {
+		return err
+	}
 	if err := packs.HumanOnly(); err != nil {
 		return err
 	}

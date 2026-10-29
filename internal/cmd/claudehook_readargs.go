@@ -3,6 +3,7 @@ package cmd
 import (
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -46,14 +47,14 @@ func withoutReadArgs(cmd string, readArgs []packs.ReadArg) (string, bool) {
 	if readArgWriteRe.MatchString(normShell(cmd)) {
 		return cmd, false
 	}
-	program := map[string]string{} // path form -> program
+	program := map[string]packs.ReadArg{} // path form -> its read arg
 	for _, a := range readArgs {
 		if a.Program == "" {
 			continue
 		}
-		program[normPathForm(a.Path)] = a.Program
+		program[normPathForm(a.Path)] = a
 		if fp, err := packs.FinalPath(a.Path); err == nil {
-			program[normPathForm(fp)] = a.Program
+			program[normPathForm(fp)] = a
 		}
 	}
 	s := strings.NewReplacer("\r", " ", "\n", " ; ").Replace(cmd) // a newline separates segments
@@ -61,7 +62,7 @@ func withoutReadArgs(cmd string, readArgs []packs.ReadArg) (string, bool) {
 	isBlank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\f' || c == '\v' }
 	var b strings.Builder
 	matches, okSeg := 0, false
-	segFirst, atStart := "", true
+	segFirst, atStart, prev := "", true, ""
 	for i := 0; i < len(s); {
 		c := s[i]
 		if isSep(c) {
@@ -82,7 +83,7 @@ func withoutReadArgs(cmd string, readArgs []packs.ReadArg) (string, bool) {
 		tok := s[i:j]
 		first := atStart
 		if atStart {
-			segFirst, atStart = tok, false
+			segFirst, atStart, prev = tok, false, ""
 		}
 		prefix, val := "", strings.Trim(tok, `"'`)
 		if strings.HasPrefix(val, "-") {
@@ -90,13 +91,28 @@ func withoutReadArgs(cmd string, readArgs []packs.ReadArg) (string, bool) {
 				prefix, val = val[:k+1], strings.Trim(val[k+1:], `"'`)
 			}
 		}
-		if prog, hit := program[normPathForm(val)]; hit && val != "" && !strings.ContainsAny(val, "$%*?~") && !strings.Contains(val, "..") {
+		if ra, hit := program[normPathForm(val)]; hit && val != "" && !strings.ContainsAny(val, "$%*?~") && !strings.Contains(val, "..") {
 			matches++
-			okSeg = !first && programName(segFirst) == prog
+			// R6-4: the value of the declared flag (--plan=P, or --plan P), or
+			// a positional argument (not after any other flag, whose value it
+			// would be).
+			var under string
+			switch {
+			case prefix != "":
+				under = strings.ToLower(strings.TrimSuffix(prefix, "="))
+			case strings.HasPrefix(strings.Trim(prev, `"'`), "-") && !strings.Contains(prev, "="):
+				// A declared boolean flag takes no value: the plan after it is
+				// positional. Any other flag is read as taking the plan.
+				if p := strings.ToLower(strings.Trim(prev, `"'`)); !slices.Contains(ra.BoolFlags, p) {
+					under = p
+				}
+			}
+			okSeg = !first && programName(segFirst) == ra.Program && (under == "" || under == ra.Flag)
 			b.WriteString(prefix + "tq-read-arg")
 		} else {
 			b.WriteString(tok)
 		}
+		prev = tok
 		i = j
 	}
 	if matches != 1 || !okSeg {
