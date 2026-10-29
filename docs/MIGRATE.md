@@ -330,10 +330,140 @@ to fall back to.
 `TQ_ENABLED=0`, so a shell you left switched off does not look like a broken
 migration.
 
+`tq off` and `tq on` (see `CLAUDE-HOOK.md`, "Launchers") now do the same job
+in the window you are in, without opening a new shell: `tq off` clears the
+identity env, pauses the prompt hook and makes `claude` start with no tq;
+`tq on` brings tq back on the next prompt. `claude-off` does it for one
+launch. The `TQ_ENABLED=0` branch keeps working, and every tq hook and
+`tq_run.sh` exit at once under it, so skill scripts do nothing in such a
+shell.
+
 One honest caveat: `tq` cannot verify the preserved branch still works. It
 kept your bytes, it did not test them. Nothing removes the branch
 automatically either — it is your fallback, and it stays until you delete it
 by hand.
+
+## Migrating from unattended mode
+
+Unattended mode (`guard.unattended`, `tq unattended`) is replaced by the
+**relaxed** guard mode, one of five modes (see `CLAUDE-HOOK.md`, "Guard
+modes"). Nothing has to be done by hand: tq reads the old settings as the new
+ones. This section says what maps to what, and what behaves differently.
+
+### Manifest
+
+The legacy block is read in memory; the file is not touched until the next
+`tq mode` write, which rewrites it in the new form, re-trusts the manifest
+and carries the grant.
+
+| Legacy (`guard.unattended`) | Read as |
+|---|---|
+| `workspace: true` | `guard.mode: relaxed` |
+| `projects: [demo-todo]` | `guard.projects.demo-todo.mode: relaxed` |
+| `keep_asking: [ids]` | `guard.rules_override: {id: rule}` for each id |
+| no `keep_asking` key | the old default: `tq/iac-apply` and `tq/remote-migration` become `rule` (they keep asking) |
+| `keep_asking: []` | nothing |
+| a PII id in `keep_asking` (`tq/commit-pii`, `tq/push-pii`, `tq/text-pii`, `tq/pii-fixture-dump`) | dropped: privacy is locked, so the entry is redundant |
+| `codex_sandbox: <s>` | `guard.codex.sandbox: <s>` |
+| a custom rule with `unattended: enforce` | no category, so always applied (the key is deprecated: use `category:`) |
+
+A manifest that has both `guard.unattended` and `guard.mode` fails to load.
+
+```yaml
+# before (legacy)                       # after the next tq mode write
+guard:                                  guard:
+  unattended:                             projects:
+    projects: [demo-todo]                   demo-todo: { mode: relaxed }
+    codex_sandbox: workspace-write        rules_override:
+                                            tq/iac-apply: rule
+                                            tq/remote-migration: rule
+                                          codex:
+                                            sandbox: workspace-write
+```
+
+### Grants
+
+A legacy `$TQ_HOME/trust/<hash>.bypass` file is read as a relaxed grant. The
+first hook session that reads it, or the next tq manifest writer, converts
+it to `<hash>.mode`. `tq allow --bypass <ws>` is a deprecated alias of
+`tq allow --mode <ws> relaxed` and prints
+`deprecated: use tq allow --mode <ws> relaxed`; it is human-only now (it
+refuses agent sessions and needs a terminal).
+
+After a hand edit of the manifest, a plain `tq allow <ws>` drops the grant
+and says `mode grant dropped (was relaxed): run tq allow --mode <ws> relaxed`.
+One gap: a `.bypass` file that no hook session read since the upgrade, then
+a hand edit, drops silently. The stale file is harmless: it is keyed to a
+hash that no longer matches.
+
+### Commands
+
+Each deprecated alias prints `deprecated: use tq mode …` to stderr.
+
+| Deprecated | Use instead |
+|---|---|
+| `tq unattended on [--project D] [--codex-sandbox S]` | `tq mode set relaxed [--project D]` (and `guard.codex.sandbox`) |
+| `tq unattended off [--project D]` | `tq mode set default` for the scope; for the workspace it also resets every relaxed project |
+| `tq unattended status` | `tq mode` |
+| `tq unattended log [--since 24h]` | `tq mode log` |
+| `tq allow --bypass <ws>` | `tq allow --mode <ws> relaxed` |
+
+`on` and `off` are human-only, like `tq mode set`.
+
+### Logs and doctor
+
+- New audit records go to `$TQ_HOME/guard/mode.jsonl`. `tq mode log` and the
+  skip counts also read the legacy `unattended.jsonl` until it ages out of
+  the window.
+- Doctor checks renamed: `unattended-not-effective` → `mode-not-granted`,
+  `unattended-unknown-rule` → `mode-unknown-rule`, `unattended-cloud` →
+  `mode-cloud`. New: `guard-locked-override`, `claude-alias-shadow`,
+  `permission-mode-overridden`, `codex-hooks-missing`,
+  `codex-hooks-disabled`, `codex-hooks-untrusted` (see `CLAUDE-SETTINGS.md`).
+- The SessionStart line `Unattended: …` (deprecated) is replaced by
+  `Guard: …`, printed in every workspace.
+
+### Codex
+
+- The old `tq-unattended.config.toml` profile is removed when tq owns it, and
+  the old `config.toml` block is replaced by the
+  `# >>> managed by tq (guard mode)` block. Per-project modes now travel as
+  launch flags of `tq run . -- codex`.
+- Every workspace with a Codex identity is now rendered, also with no mode
+  set: `tq settings render`, `tq allow` and `tq deny` write the
+  `config.toml` block, `rules/tq.rules` and tq's `hooks.json` entries. Trust
+  tq's hook once in Codex's `/hooks`.
+
+### Behaviour changes
+
+- **Every Claude mode.** Unattended mode applied only in `bypassPermissions`
+  and `auto` sessions. A tq mode applies in every Claude permission mode.
+- **Relaxed skips denies too.** The released unattended mode skipped only
+  confirms. Relaxed skips confirms and denies, except in `git-history` and
+  `system`, which ask: a force push to main, `gh repo delete`, a write under a
+  system folder and a recursive delete outside the workspace get a confirm.
+- **Privacy is locked.** `tq/commit-pii`, `tq/push-pii`, `tq/text-pii` and
+  `tq/pii-fixture-dump` are enforced in every mode. A `guard.disable` or a
+  looser `guard.actions` entry naming one of them, or any other locked rule,
+  is ignored, with a `guard-locked-override` doctor warning.
+- **The launcher always starts in bypass.** `tq run . -- claude` and the
+  `claude` function add `--dangerously-skip-permissions` whatever
+  `claude.permission_mode` says (doctor note `permission-mode-overridden`).
+  `tq settings render` writes `skipDangerousModePermissionPrompt: true`, so
+  `tq doctor` reports `settings-drift` until you run
+  `tq settings render --all` once. Shell aliases named `claude` skip the
+  launcher (`claude-alias-shadow`).
+- **Mode commands are denied in tool calls.** `tq unattended on|off`,
+  `tq allow --bypass` and `tq allow --mode` from an agent are blocked by
+  `tq/mode-change` (they used to ask through `tq/guard-change`), and the
+  binaries refuse agent sessions.
+- **New rules in every mode, default included:** `tq/outside-path-write`
+  (ask), `tq/elevation` (ask), `tq/system-dir-write` (deny) and
+  `tq/nested-agent-loosened` (deny).
+- **Codex is stricter.** A tq confirm that Codex cannot prompt for becomes a
+  block (`CLAUDE-SETTINGS.md`, "Codex").
+- **Off is new.** `claude-off`, `codex-off`, `tq off` and `tq on` start an
+  agent, or switch a window, to no tq at all. Nothing stores off.
 
 ## This machine, before and after
 
