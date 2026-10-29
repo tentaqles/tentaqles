@@ -42,8 +42,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, ": connected\n\n")
-	fl.Flush()
 	send := func(event string, v any) {
 		b, _ := json.Marshal(v)
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
@@ -84,6 +82,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			offset = 0
 		}
 	}
+	// ": connected" only once every store is subscribed and stamped, so a
+	// change made right after the client sees it is never lost (CI caught a
+	// comment landing between an earlier write and the subscription).
+	fmt.Fprint(w, ": connected\n\n")
+	fl.Flush()
 	poll := time.NewTicker(s.opts.PollEvery)
 	defer poll.Stop()
 	beat := time.NewTicker(15 * time.Second)

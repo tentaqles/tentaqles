@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -106,7 +107,7 @@ func unboundSource(l Leaf, g packs.GuardCtx) string {
 			}
 			abs = filepath.Join(dir, abs)
 		}
-		rel, err := filepath.Rel(repo, abs)
+		rel, err := paths.Rel(repo, abs)
 		if err != nil {
 			return false
 		}

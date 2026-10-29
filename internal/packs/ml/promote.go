@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"io"
 	"os"
 	"path/filepath"
@@ -100,7 +101,7 @@ func (e *promoteEnv) projectDir() string {
 	if e.WS == nil || e.WS.Root == "" {
 		return ""
 	}
-	rel, err := filepath.Rel(e.WS.Root, e.In.Root)
+	rel, err := paths.Rel(e.WS.Root, e.In.Root)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return ""
 	}

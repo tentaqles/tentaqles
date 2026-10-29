@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"io"
 	"os"
 	"path"
@@ -188,7 +189,7 @@ func cwdRel(root string) string {
 	if err != nil {
 		return "?"
 	}
-	r, err := filepath.Rel(root, wd)
+	r, err := paths.Rel(root, wd) // a symlinked root (macOS /var) still nests
 	if err != nil || strings.HasPrefix(r, "..") {
 		return "?"
 	}
@@ -1058,7 +1059,7 @@ func askApproval(ctx context.Context, w io.Writer, in *packs.Input, sd, id strin
 // projectDir is the repo's folder relative to the workspace root ("" when
 // they are the same or the repo is outside it).
 func projectDir(in *packs.Input) string {
-	r, err := filepath.Rel(in.WorkspaceRoot(), in.Root)
+	r, err := paths.Rel(in.WorkspaceRoot(), in.Root)
 	if err != nil || r == "." || strings.HasPrefix(r, "..") || filepath.IsAbs(r) {
 		return ""
 	}

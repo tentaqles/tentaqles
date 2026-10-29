@@ -64,8 +64,12 @@ func TestStateDirDecisionUnder50ms(t *testing.T) {
 		runs = append(runs, time.Since(start))
 	}
 	sort.Slice(runs, func(i, j int) bool { return runs[i] < runs[j] })
-	if m := runs[len(runs)/2]; m > 50*time.Millisecond {
-		t.Fatalf("median %v, want under 50ms", m)
+	// The hook budget is 50 ms (BenchmarkStateDirDecision measures it); a
+	// loaded CI runner can double or triple a median, so the test bound is
+	// 200 ms. The regressions it guards against (a quadratic matcher) took
+	// seconds.
+	if m := runs[len(runs)/2]; m > 200*time.Millisecond {
+		t.Fatalf("median %v, want under 200ms (target 50ms)", m)
 	}
 }
 

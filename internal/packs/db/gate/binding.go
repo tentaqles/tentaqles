@@ -30,10 +30,12 @@ const (
 	MaxMigrationFiles = 512
 	MaxMigrationDepth = 3
 	MaxMigrationBytes = 1 << 20
-	// HashBudget is the guard's own time limit for hashing, inside the 50 ms
-	// guard bound.
-	HashBudget = 30 * time.Millisecond
 )
+
+// HashBudget is the guard's own time limit for hashing, inside the 50 ms
+// guard bound. A variable only so tests can give a loaded CI runner more
+// time; nothing else changes it.
+var HashBudget = 30 * time.Millisecond
 
 // Entry is a directory entry.
 type Entry struct {

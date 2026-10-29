@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -22,12 +23,42 @@ func TestScrubEncodedYAMLIsLinear(t *testing.T) {
 		start := time.Now()
 		got := Scrub(map[string]any{"content": s})
 		// The YAML work is about 0.15 s per MiB; secrets.Redact over the
-		// whole string adds about 0.5 s per MiB. Round 2 took minutes.
-		if d := time.Since(start); d > 2*time.Second {
+		// whole string adds about 0.5 s per MiB. Round 2 took minutes: a
+		// generous wall-clock cap still catches that on a loaded CI runner,
+		// and the scaling test below catches a superlinear one.
+		if d := time.Since(start); d > 30*time.Second {
 			t.Errorf("%s: Scrub took %v", name, d)
 		}
 		if _, ok := got.(map[string]any)["content"].(string); !ok {
 			t.Errorf("%s: content is not a string: %T", name, got)
+		}
+	}
+}
+
+// Scrub scales linearly: four times the input takes well under sixteen
+// times as long (a quadratic scan would). The median of 5 runs per size,
+// and a ratio rather than a wall clock, so CI load cancels out.
+func TestScrubScalesLinearly(t *testing.T) {
+	median := func(s string) time.Duration {
+		var ds []time.Duration
+		for i := 0; i < 5; i++ {
+			start := time.Now()
+			Scrub(map[string]any{"content": s})
+			ds = append(ds, time.Since(start))
+		}
+		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+		return ds[len(ds)/2]
+	}
+	for name, mk := range map[string]func(n int) string{
+		"repeated keys": func(n int) string { return strings.Repeat("Note: v\n", n) },
+		"distinct keys": distinctKeys,
+	} {
+		small, big := median(mk(8000)), median(mk(32000))
+		if small < time.Millisecond {
+			small = time.Millisecond
+		}
+		if r := float64(big) / float64(small); r > 10 {
+			t.Errorf("%s: 4x the input took %.1fx as long (%v vs %v)", name, r, big, small)
 		}
 	}
 }

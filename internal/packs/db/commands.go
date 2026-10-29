@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"io"
 	"os"
 	"path/filepath"
@@ -324,7 +325,7 @@ func dbChecks(ctx context.Context, in *packs.Input) (failed []string, line strin
 // projectDir is the repo's folder relative to the workspace root ("" when
 // they are the same or the repo is outside it).
 func projectDir(in *packs.Input) string {
-	r, err := filepath.Rel(in.WorkspaceRoot(), in.Root)
+	r, err := paths.Rel(in.WorkspaceRoot(), in.Root)
 	if err != nil || r == "." || strings.HasPrefix(r, "..") || filepath.IsAbs(r) {
 		return ""
 	}

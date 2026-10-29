@@ -144,7 +144,7 @@ func baseDir(g packs.GuardCtx) string {
 		return ""
 	}
 	inside := func(root string) (string, bool) {
-		r, err := filepath.Rel(root, wd)
+		r, err := paths.Rel(root, wd)
 		if err != nil || filepath.IsAbs(r) || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 			return "", false
 		}
