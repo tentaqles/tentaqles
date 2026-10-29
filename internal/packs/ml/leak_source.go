@@ -18,11 +18,14 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs/scan"
 )
 
+// maxFiles caps the files one check scans (the built-in budget is 10 s). A
+// variable so a test can lower it; a check that hits it says so with a
+// scan-limit finding.
+var maxFiles = 500
+
 const (
 	// maxFileBytes caps one scanned file.
 	maxFileBytes = 8 << 20
-	// maxFiles caps the files one check scans (the built-in budget is 10 s).
-	maxFiles = 500
 	// maxFeatureFiles caps the paths.features files read for L7.
 	maxFeatureFiles = 200
 	// flagProbeFiles and flagProbeBytes bound the ml flag's content probe.
@@ -44,7 +47,47 @@ type pyFile struct {
 	cellLine func(int) (int, int)
 	consts   map[string]string   // name = "literal"
 	lists    map[string][]string // name = ["a", "b"]
-	fromImp  map[string]string   // from-imported name -> module
+	fromImp  map[string]string   // from-imported local name -> module
+	fromName map[string]string   // from-imported local name -> imported name (`load as jl_load`)
+	modAlias map[string]string   // `import pickle as pkl`: pkl -> pickle
+}
+
+// resolveRecv rewrites the first segment of a call receiver through the
+// module aliases: `pkl` -> `pickle`, `jl.x` -> `joblib.x`.
+func (f *pyFile) resolveRecv(recv string) string {
+	head, rest := recv, ""
+	if i := strings.Index(recv, "."); i >= 0 {
+		head, rest = recv[:i], recv[i:]
+	}
+	if m, ok := f.modAlias[head]; ok {
+		return m + rest
+	}
+	return recv
+}
+
+// fromImports parses the from-imports of one logical line with their local
+// names: `from joblib import load as jl_load` -> {jl_load: load}. The
+// framework's scan.Import keeps the imported names only.
+func fromImports(code string) (module string, local map[string]string) {
+	if !strings.HasPrefix(code, "from ") {
+		return "", nil
+	}
+	rest := strings.TrimPrefix(code, "from ")
+	i := strings.Index(rest, " import ")
+	if i < 0 {
+		return "", nil
+	}
+	module = strings.TrimSpace(rest[:i])
+	local = map[string]string{}
+	for _, n := range strings.Split(strings.Trim(strings.TrimSpace(rest[i+8:]), "()"), ",") {
+		switch fs := strings.Fields(n); {
+		case len(fs) == 3 && fs[1] == "as":
+			local[fs[2]] = fs[0]
+		case len(fs) >= 1:
+			local[fs[0]] = fs[0]
+		}
+	}
+	return module, local
 }
 
 // loadPy reads and parses one changed file.
@@ -74,7 +117,15 @@ func parsePy(p string, b []byte) (*pyFile, error) {
 	f.consts = map[string]string{}
 	f.lists = map[string][]string{}
 	f.fromImp = map[string]string{}
+	f.fromName = map[string]string{}
+	f.modAlias = map[string]string{}
 	for i, l := range f.Lines {
+		if mod, local := fromImports(l.Code); mod != "" {
+			for ln, orig := range local {
+				f.fromImp[ln] = mod
+				f.fromName[ln] = orig
+			}
+		}
 		f.Calls[i] = lineCalls(l)
 		if lhs, rhs, from, ok := splitAssign(l.Code); ok && len(lhs) == 1 {
 			r := strings.TrimSpace(rhs)
@@ -89,8 +140,8 @@ func parsePy(p string, b []byte) (*pyFile, error) {
 		}
 	}
 	for _, im := range f.Imports {
-		for _, n := range im.Names {
-			f.fromImp[n] = im.Module
+		if im.Alias != "" && len(im.Names) == 0 {
+			f.modAlias[im.Alias] = im.Module
 		}
 	}
 	return f, nil
@@ -490,13 +541,16 @@ func lhsText(code string) string {
 
 // --- names ------------------------------------------------------------------
 
-var camelRe = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+var (
+	camelRe    = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+	nonAlphaRe = regexp.MustCompile(`[^A-Za-z]+`)
+)
 
 // segments splits a name into lower-case parts on _, digits and camelCase.
 func segments(id string) []string {
 	id = camelRe.ReplaceAllString(id, "${1}_${2}")
 	var out []string
-	for _, p := range regexp.MustCompile(`[^A-Za-z]+`).Split(strings.ToLower(id), -1) {
+	for _, p := range nonAlphaRe.Split(strings.ToLower(id), -1) {
 		if p != "" {
 			out = append(out, p)
 		}
@@ -636,10 +690,8 @@ func selectFiles(ctx context.Context, in *packs.Input, lint bool) ([]selected, [
 	var out []selected
 	var errs []packs.Finding
 	n := 0
+	var skip skipCounter
 	for _, p := range in.ChangedPaths() {
-		if ctx.Err() != nil || n >= maxFiles {
-			break
-		}
 		if !ps.candidate(p) {
 			continue
 		}
@@ -647,6 +699,9 @@ func selectFiles(ctx context.Context, in *packs.Input, lint bool) ([]selected, [
 		inFeat := lintMatchAny(ps.features, p)
 		inEval := lintMatchAny(ps.eval, p)
 		if len(ps.train) > 0 && !inTrain && !(lint && (inFeat || inEval)) {
+			continue
+		}
+		if skip.stop(ctx, n, p) {
 			continue
 		}
 		n++
@@ -661,7 +716,46 @@ func selectFiles(ctx context.Context, in *packs.Input, lint bool) ([]selected, [
 		}
 		out = append(out, selected{f: f, training: training, feature: inFeat || len(ps.features) == 0})
 	}
-	return out, errs
+	return out, append(errs, skip.finding(n, "candidate files")...)
+}
+
+const ruleScanLimit = "scan-limit"
+
+// skipCounter counts the candidate files a check did not scan because it hit
+// the file cap or its deadline, so the result says so instead of passing on
+// a partial scan.
+type skipCounter struct {
+	n     int
+	first string
+	late  bool // the deadline, not the cap
+}
+
+// stop reports whether the check must skip path p, and counts it.
+func (s *skipCounter) stop(ctx context.Context, scanned int, p string) bool {
+	if ctx.Err() == nil && scanned < maxFiles {
+		return false
+	}
+	if s.n == 0 {
+		s.first = p
+	}
+	if ctx.Err() != nil {
+		s.late = true
+	}
+	s.n++
+	return true
+}
+
+// finding returns the warn finding of the skipped files, if any.
+func (s *skipCounter) finding(scanned int, what string) []packs.Finding {
+	if s.n == 0 {
+		return nil
+	}
+	why := fmt.Sprintf("the %d-file cap", maxFiles)
+	if s.late {
+		why = "the check's time limit"
+	}
+	return []packs.Finding{{File: s.first, Level: packs.LevelWarn, Rule: ruleScanLimit,
+		Message: fmt.Sprintf("scanned %d of %d %s; %d skipped from here on (%s); run the check on a smaller change set", scanned, scanned+s.n, what, s.n, why)}}
 }
 
 func shortErr(err error) string {

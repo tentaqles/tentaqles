@@ -110,8 +110,14 @@ func leakFile(s selected, featGroups map[string]string) []packs.Finding {
 		}
 		for _, c := range calls {
 			if cvFuncs[c.Name] {
-				if x, ok := c.argN(1, "X"); ok && fullT[firstIdent(x.Text)] {
+				x, ok := c.argN(1, "X")
+				if !ok {
+					continue
+				}
+				if fullT[firstIdent(x.Text)] {
 					add(i, packs.LevelError, ruleL3, fmt.Sprintf("%s runs on %q, transformed with a fit on the full data; cross-validate a Pipeline that holds the transformer", c.Name, firstIdent(x.Text)))
+				} else if inner, ok := inlineFitTransform(calls, x); ok {
+					add(i, packs.LevelError, ruleL3, fmt.Sprintf("%s runs on %q, transformed inline with a fit on the full data; cross-validate a Pipeline that holds the transformer", c.Name, inner))
 				}
 			}
 		}
@@ -149,6 +155,21 @@ func leakFile(s selected, featGroups map[string]string) []packs.Finding {
 	f.l7(add, featGroups)
 	f.l8(add)
 	return out
+}
+
+// inlineFitTransform reports a fit_transform call written inside argument x
+// (cross_val_score(m, StandardScaler().fit_transform(X), y)) on data that is
+// not the training split, and the name of that data.
+func inlineFitTransform(calls []pcall, x arg) (string, bool) {
+	for _, o := range calls {
+		if o.Name != "fit_transform" || o.From < x.From || o.Close > x.To {
+			continue
+		}
+		if a, ok := o.argN(0, "X"); ok && !trainish(a.Text) {
+			return firstIdent(a.Text), true
+		}
+	}
+	return "", false
 }
 
 // at names the position of line index i: "line N", or "cell N, line M".
@@ -244,7 +265,28 @@ func splitLike(c pcall) bool {
 		return false
 	}
 	p := c.pos()
-	return len(p) > 0 && identRe.MatchString(firstIdent(p[0].Text)) && !isStrLit(p[0].Text)
+	if len(p) == 0 || len(p) > 3 || !identRe.MatchString(firstIdent(p[0].Text)) || isStrLit(p[0].Text) {
+		return false
+	}
+	// header.split(sep), line.split(delim, 1): a str.split with a separator
+	// variable is not a data split.
+	if _, ok := c.kw("maxsplit"); ok || sepName(firstIdent(p[0].Text)) || strName(c.Receiver) {
+		return false
+	}
+	return true
+}
+
+// sepName reports whether a name looks like a string separator.
+func sepName(id string) bool {
+	return id == "s" || hasSeg(id, "sep", "seps", "separator", "delim", "delimiter", "delimiters", "char", "ch", "token", "pattern", "regex", "newline", "comma", "tab")
+}
+
+// strName reports whether a receiver looks like a string, not a CV splitter.
+func strName(recv string) bool {
+	if recv == "" {
+		return false
+	}
+	return hasSeg(recv[strings.LastIndex(recv, ".")+1:], "header", "line", "lines", "text", "txt", "name", "names", "string", "str", "row", "raw", "url", "uri", "key", "msg", "message", "content", "title", "label", "s", "col", "column", "cols", "word")
 }
 
 // --- L4 -----------------------------------------------------------------------
@@ -357,7 +399,9 @@ func containsStr(xs []string, s string) bool {
 
 // --- L5 -----------------------------------------------------------------------
 
-var negIntRe = regexp.MustCompile(`^-\s*\d+$`)
+// negIntRe matches a negative shift: a literal (-7) or a named horizon
+// (-HORIZON, -n, -cfg.horizon).
+var negIntRe = regexp.MustCompile(`^-\s*(?:\d+|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)$`)
 
 func (f *pyFile) l5(add func(int, string, string, string)) {
 	for i, l := range f.Lines {

@@ -74,7 +74,8 @@ func runRuff(ctx context.Context, in *packs.Input) packs.Result {
 	if len(targets) > ruffMaxArgs {
 		targets = []string{"."}
 	}
-	args := append([]string{"check", "--no-cache", "--exit-zero", "--select", "NPY,PD", "--output-format", "json"}, targets...)
+	// "--" ends the options: a changed file named "-x.py" is a path, not a flag.
+	args := append([]string{"check", "--no-cache", "--exit-zero", "--select", "NPY,PD", "--output-format", "json", "--"}, targets...)
 	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "ml", Tool: "ruff", Args: args, Dir: in.Root, Timeout: toolTimeout})
 	if err != nil || out.TimedOut || out.ExitCode != 0 {
 		return toolFailure("ruff", out, err, fmt.Sprintf("ruff exited %d", out.ExitCode))

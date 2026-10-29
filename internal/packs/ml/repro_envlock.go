@@ -32,15 +32,22 @@ func runEnvLock(ctx context.Context, in *packs.Input) packs.Result {
 	changed := changedSet(in)
 	var fs []packs.Finding
 	n := 0
+	var skip skipCounter
 	for _, p := range in.ChangedPaths() {
-		if ctx.Err() != nil {
-			break
-		}
 		base, dir := path.Base(p), path.Dir(p)
+		if !lintMatchAny(envLockGlobs, base) || skip.stop(ctx, n, p) {
+			continue
+		}
 		var locks []string
 		switch {
 		case base == "pyproject.toml":
-			if !depsChanged(in, p) {
+			changedDeps, err := depsChanged(in, p)
+			if err != nil {
+				n++
+				fs = append(fs, packs.Finding{File: p, Level: packs.LevelWarn, Rule: "unreadable", Message: "cannot read: " + shortErr(err)})
+				continue
+			}
+			if !changedDeps {
 				continue
 			}
 			locks = []string{"uv.lock", "poetry.lock", "pdm.lock", "pixi.lock"}
@@ -78,22 +85,24 @@ func runEnvLock(ctx context.Context, in *packs.Input) packs.Result {
 				Message: fmt.Sprintf("%s dependencies changed but %s did not; re-lock and commit it", base, strings.Join(have, ", "))})
 		}
 	}
+	fs = append(fs, skip.finding(n, "manifests")...)
 	return packs.Result{Status: packs.OK, Detail: "environment lock checked for " + lintPlural(n, "manifest"), Findings: fs}
 }
 
 // depsChanged reports whether the dependency tables of a pyproject.toml
-// differ from the old side (a new file with dependencies counts).
-func depsChanged(in *packs.Input, p string) bool {
+// differ from the old side (a new file with dependencies counts). A new side
+// that cannot be read is an error, never "unchanged" (fail closed).
+func depsChanged(in *packs.Input, p string) (bool, error) {
 	nb, err := in.ReadNew(p, 4<<20)
 	if err != nil {
-		return false
+		return false, err
 	}
 	nd := depsSection(string(nb))
 	ob, err := in.ReadOld(p)
 	if err != nil {
-		return nd != ""
+		return nd != "", nil
 	}
-	return nd != depsSection(string(ob))
+	return nd != depsSection(string(ob)), nil
 }
 
 var tomlHeaderRe = regexp.MustCompile(`^\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$`)
@@ -198,9 +207,19 @@ func pinnedReqs(in *packs.Input, p string) []packs.Finding {
 		if strings.HasPrefix(l, "-") {
 			continue // -r, -c, -e, --index-url and other options
 		}
+		// The pin is in the requirement, never in its environment marker:
+		// `numpy; python_version == "3.10"` is unpinned.
+		req := l
+		if k := strings.Index(req, ";"); k >= 0 {
+			req = req[:k]
+		}
+		req = strings.TrimSpace(req)
+		if req == "" {
+			continue
+		}
 		reqs++
-		spec := strings.Fields(l)[0]
-		if strings.Contains(l, "==") || strings.Contains(l, " @ ") || strings.Contains(spec, "://") {
+		spec := strings.Fields(req)[0]
+		if strings.Contains(req, "==") || strings.Contains(req, " @ ") || strings.Contains(spec, "://") {
 			continue
 		}
 		name := spec

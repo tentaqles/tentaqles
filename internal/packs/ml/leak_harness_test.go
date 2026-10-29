@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -268,6 +269,9 @@ func lintFakeTool(mode string) {
 	if f := os.Getenv("TQ_M1_FAKE_ARGS"); f != "" {
 		wd, _ := os.Getwd()
 		_ = os.WriteFile(f, []byte(strings.Join(args, " ")+"\n"+filepath.ToSlash(wd)), 0o600)
+	}
+	if os.Getenv("TQ_M1_FAKE_SLEEP") != "" {
+		time.Sleep(30 * time.Second) // outlives any test timeout; the runner kills it
 	}
 	if f := os.Getenv("TQ_M1_FAKE_OUT"); f != "" {
 		b, _ := os.ReadFile(f)

@@ -6,9 +6,11 @@ package ml
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/packs"
 )
@@ -82,8 +84,59 @@ func TestRuffFindings(t *testing.T) {
 		t.Errorf("finding 1 = %+v", f)
 	}
 	argv, _ := readArgs(t, args)
-	if argv != "check --no-cache --exit-zero --select NPY,PD --output-format json src/train.py" {
+	if argv != "check --no-cache --exit-zero --select NPY,PD --output-format json -- src/train.py" {
 		t.Errorf("argv = %q", argv)
+	}
+}
+
+// A changed file whose name starts with "-" reaches ruff as a path, after
+// "--", never as an option.
+func TestRuffDashFileIsAPath(t *testing.T) {
+	in := toolEnv(t, "ml: {tools: [ruff]}", map[string]string{"-x.py": "x = 1\n", "a.py": "y = 2\n"}, "ruff")
+	args := fakeOut(t, "ruff", "[]", "0")
+	if r := lintResult(t, in, "ml/ruff"); r.Status != packs.OK {
+		t.Fatalf("result = %+v", r)
+	}
+	argv, _ := readArgs(t, args)
+	if !strings.HasSuffix(argv, " -- -x.py a.py") {
+		t.Errorf("argv = %q, want the paths after --", argv)
+	}
+}
+
+// noTools makes the runner find no tool at all, whatever is installed on the
+// machine, without touching PATH.
+func noTools(in *packs.Input) {
+	r := packs.NewToolRunner(in.Root, in.Config)
+	r.LookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	in.Tools = r
+}
+
+// A tool that outlives its timeout fails the check with "timed out" and a
+// ToolRun that says so, for each external check.
+func TestToolTimeoutFails(t *testing.T) {
+	cases := []struct {
+		tool, id string
+		files    map[string]string
+	}{
+		{"ruff", "ml/ruff", map[string]string{"a.py": "x = 1\n"}},
+		{"uv", "ml/lock-check", map[string]string{"pyproject.toml": "[project]\nname = \"acme\"\n", "uv.lock": "version = 1\n"}},
+		{"poetry", "ml/lock-check-poetry", map[string]string{"pyproject.toml": "[tool.poetry]\nname = \"acme\"\n", "poetry.lock": "# lock\n"}},
+		{"dvc", "ml/dvc-status", map[string]string{"dvc.yaml": "stages: {}\n"}},
+	}
+	for _, c := range cases {
+		t.Run(c.tool, func(t *testing.T) {
+			in := toolEnv(t, "ml: {tools: ["+c.tool+"], timeouts: {"+c.tool+": 1s}}", c.files, c.tool)
+			fakeOut(t, c.tool, "", "0")
+			t.Setenv("TQ_M1_FAKE_SLEEP", "1")
+			start := time.Now()
+			r := lintResult(t, in, c.id)
+			if r.Status != packs.Fail || r.Detail != c.tool+" timed out" || r.Tool == nil || !r.Tool.TimedOut {
+				t.Fatalf("result = %+v", r)
+			}
+			if d := time.Since(start); d > 20*time.Second {
+				t.Errorf("the check took %s; the timeout did not stop the tool", d)
+			}
+		})
 	}
 }
 
@@ -103,9 +156,9 @@ func TestRuffBadOutputFailsWithTail(t *testing.T) {
 
 func TestRuffUndeclaredMissingSkips(t *testing.T) {
 	lintIsolate(t)
-	t.Setenv("PATH", t.TempDir())
 	in := flagInput(t, "ml: {enabled: true}", map[string]string{"a.py": "x = 1\n"})
 	in.Tools = packs.NewToolRunner(in.Root, in.Config)
+	noTools(in)
 	r := lintResult(t, in, "ml/ruff")
 	if r.Status != packs.Skip || r.Required {
 		t.Fatalf("result = %+v", r)
@@ -192,9 +245,9 @@ func TestDVCStatus(t *testing.T) {
 
 func TestDeclaredMissingToolFails(t *testing.T) {
 	lintIsolate(t)
-	t.Setenv("PATH", t.TempDir())
 	in := flagInput(t, "ml: {tools: [dvc]}", map[string]string{"dvc.yaml": "stages: {}\n"})
 	in.Tools = packs.NewToolRunner(in.Root, in.Config)
+	noTools(in)
 	r := lintResult(t, in, "ml/dvc-status")
 	if r.Status != packs.Fail || !r.Required || r.Detail != packs.MissingDetail("ml") {
 		t.Fatalf("result = %+v", r)

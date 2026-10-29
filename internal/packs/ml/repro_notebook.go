@@ -24,11 +24,9 @@ const (
 func runNotebookOutputs(ctx context.Context, in *packs.Input) packs.Result {
 	var fs []packs.Finding
 	n := 0
+	var skip skipCounter
 	for _, p := range in.ChangedPaths() {
-		if ctx.Err() != nil || n >= maxFiles {
-			break
-		}
-		if !strings.HasSuffix(strings.ToLower(p), ".ipynb") {
+		if !strings.HasSuffix(strings.ToLower(p), ".ipynb") || skip.stop(ctx, n, p) {
 			continue
 		}
 		n++
@@ -44,6 +42,7 @@ func runNotebookOutputs(ctx context.Context, in *packs.Input) packs.Result {
 		}
 		fs = append(fs, notebookOutputs(p, cells)...)
 	}
+	fs = append(fs, skip.finding(n, "notebooks")...)
 	return packs.Result{Status: packs.OK, Detail: "outputs checked in " + lintPlural(n, "notebook"), Findings: fs}
 }
 
