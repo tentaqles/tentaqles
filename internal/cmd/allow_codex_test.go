@@ -63,6 +63,7 @@ func approvalIn(t *testing.T, cfg string) string {
 
 func TestDenyDropsCodexToDefault(t *testing.T) {
 	_, cfg := codexTrustWS(t)
+	asHuman(t)
 	if out, err := runGuardCmd(t, "allow", "--bypass", "acme"); err != nil {
 		t.Fatalf("allow --bypass: %v\n%s", err, out)
 	}
@@ -83,6 +84,7 @@ func TestDenyDropsCodexToDefault(t *testing.T) {
 
 func TestPlainAllowAfterEditDropsCodexToDefault(t *testing.T) {
 	mp, cfg := codexTrustWS(t)
+	asHuman(t)
 	if out, err := runGuardCmd(t, "allow", "--bypass", "acme"); err != nil {
 		t.Fatalf("allow --bypass: %v\n%s", err, out)
 	}
