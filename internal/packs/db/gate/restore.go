@@ -27,17 +27,36 @@ var (
 	psqlOtherRe = regexp.MustCompile(`(^|\s)(-[` + psqlSwitches + `]*(l|c\S*)|--command|--list)([\s=]|$)`)
 )
 
-// pipedPsql: a piped opaque leaf runs psql on its stdin. Only the words after
-// psql count as its flags (ssh -l user box psql acme is not psql -l).
+// pipedPsql: a piped opaque leaf runs psql on its stdin. Only that psql's
+// own words count as its flags: the words after it (ssh -l user box psql
+// acme is not psql -l), up to the first separator, quote, backtick or
+// parenthesis, so a -c or -l of a later command in the same payload does
+// not count. A word tq cannot separate that way is not read, so the psql
+// reads its stdin (fail closed). Every psql of the payload is checked.
 func pipedPsql(l Leaf) bool {
 	if !l.Piped {
 		return false
 	}
-	at := psqlWordRe.FindStringIndex(l.Raw)
-	if at == nil {
-		return false
+	raw := l.Raw
+	for {
+		at := psqlWordRe.FindStringIndex(raw)
+		if at == nil {
+			return false
+		}
+		rest := raw[at[1]-1:]
+		own := rest
+		if k := strings.IndexAny(rest, ";&|\n\r\"'`()"); k >= 0 {
+			own = rest[:k]
+		}
+		if !psqlOtherRe.MatchString(own) {
+			return true
+		}
+		raw = rest
+		if raw == "" {
+			return false
+		}
+		raw = raw[1:]
 	}
-	return !psqlOtherRe.MatchString(l.Raw[at[1]-1:])
 }
 
 // includeRe is a psql include meta-command (\i, \ir, \include,

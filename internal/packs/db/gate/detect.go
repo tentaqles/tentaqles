@@ -45,6 +45,11 @@ type Leaf struct {
 	// Moved: an earlier statement changed the folder in a way tq does not
 	// model (cd $X, cd -, cd ~, popd).
 	Moved bool
+	// Strict: a flag tq does not know comes before a non-flag word of a
+	// tool whose subcommand it reads (supabase --x v db push), so tq cannot
+	// tell the flag's value from the subcommand. The leaf counts as a
+	// migration to the strictest environment (fail closed).
+	Strict bool
 }
 
 // Words is Prog followed by Args.
@@ -446,34 +451,69 @@ func unwrap(l Leaf, w []string, st *state, depth int) []Leaf {
 		}
 		l.Prog, l.Args = name, w[i+1:]
 		if name == "supabase" {
-			l.Args = supabaseArgs(l.Args)
+			l.Args, l.Strict = supabaseArgs(l.Args)
 		}
 		return []Leaf{l}
 	}
 	return []Leaf{l}
 }
 
-// supabaseGlobals are the Supabase CLI's global flags that take a value.
-var supabaseGlobals = map[string]bool{"--workdir": true, "--profile": true, "--output": true, "-o": true, "--dns-resolver": true, "--network-id": true}
+// supabaseValueGlobals are the Supabase CLI's global flags that take a
+// value, and supabaseBoolGlobals those that do not (the CLI's global flags
+// reference: --agent, --dns-resolver, --network-id, -o/--output,
+// --profile, --workdir; --create-ticket, --debug, --experimental,
+// -h/--help, --yes).
+var (
+	supabaseValueGlobals = map[string]bool{"--agent": true, "--workdir": true, "--profile": true, "--output": true, "-o": true, "--dns-resolver": true, "--network-id": true}
+	supabaseBoolGlobals  = map[string]bool{"--create-ticket": true, "--debug": true, "--experimental": true, "-h": true, "--help": true, "--yes": true}
+)
 
-// supabaseArgs moves the global flags written before the subcommand
-// (supabase --workdir x db push) after it, so the line reads as
-// supabase db push --workdir x.
-func supabaseArgs(args []string) []string {
+// supabaseSubcommands are the word sequences of the subcommands the db
+// guards read.
+var supabaseSubcommands = [][]string{{"db", "push"}, {"db", "reset"}, {"db", "dump"}, {"db", "pull"}, {"migration", "up"}}
+
+// supabaseArgs moves the global flags written before the subcommand after
+// it (supabase --workdir x db push reads as supabase db push --workdir x).
+// A flag tq does not know may take a value, so the words after it are
+// searched for a subcommand the guards read, which then leads the
+// arguments; strict reports that an unknown flag came before a non-flag
+// word, which the caller treats as a migration to the strictest
+// environment.
+func supabaseArgs(args []string) (out []string, strict bool) {
 	var lead []string
+	unknown := false
 	i := 0
 	for i < len(args) && strings.HasPrefix(args[i], "-") {
-		lead = append(lead, args[i])
-		if supabaseGlobals[args[i]] && i+1 < len(args) {
+		a := args[i]
+		lead = append(lead, a)
+		name, _, eq := strings.Cut(a, "=")
+		switch {
+		case supabaseValueGlobals[name] && !eq && i+1 < len(args):
 			lead = append(lead, args[i+1])
 			i++
+		case supabaseValueGlobals[name], supabaseBoolGlobals[name]:
+		default:
+			unknown = true
 		}
 		i++
 	}
 	if len(lead) == 0 {
-		return args
+		return args, false
 	}
-	return append(append([]string(nil), args[i:]...), lead...)
+	rest := args[i:]
+	if unknown && len(rest) > 0 {
+		strict = true
+		for k := 0; k+1 < len(rest); k++ {
+			for _, sub := range supabaseSubcommands {
+				if strings.EqualFold(rest[k], sub[0]) && strings.EqualFold(rest[k+1], sub[1]) {
+					o := append([]string(nil), rest[k:]...)
+					o = append(o, rest[:k]...)
+					return append(o, lead...), true
+				}
+			}
+		}
+	}
+	return append(append([]string(nil), rest...), lead...), strict
 }
 
 // Flag returns the value of the first of names (--name v, --name=v, -n v,

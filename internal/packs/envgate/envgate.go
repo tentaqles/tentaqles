@@ -507,6 +507,21 @@ func (g Gate) Default() string {
 	return best
 }
 
+// Strictest is the strictest declared environment for action (then the
+// strictest policy overall), whatever default_environment says, or NoEnv
+// when none is declared. A caller uses it when it cannot even tell which
+// command runs (an unknown flag that may hide the subcommand).
+func (g Gate) Strictest(action string) string {
+	if len(g.merged.envs) == 0 {
+		return NoEnv
+	}
+	best := ""
+	for _, e := range g.merged.envs {
+		best = g.stricterEnv(best, e.Name, action)
+	}
+	return best
+}
+
 // Signal is one piece of evidence about the target: a match key and the
 // value the command carries (a dir, a stack name, a subscription id).
 type Signal struct{ Key, Value string }

@@ -289,7 +289,7 @@ func MigrateEnv(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, 
 	var vs []verdict
 	for _, l := range leaves {
 		unreadable := false
-		if !isMigration(l) {
+		if !isMigration(l) && !l.Strict {
 			// the core rule matches a command the parser did not read as a
 			// migration: behind an opaque wrapper, or a tool word in a form
 			// tq does not unwrap. It counts as a migration to the default
@@ -377,10 +377,18 @@ func evaluate(l Leaf, unreadable bool, gt envgate.Gate, g packs.GuardCtx) verdic
 	t := migrateTarget(l, g)
 	tiers := t.Tiers(l)
 	var res envgate.Resolution
+	if l.Strict {
+		// an unknown flag may hide the subcommand: a migration to the
+		// strictest environment, with no approval to match
+		unreadable = true
+	}
 	floor := unreadable || l.Opaque || l.Unknown || l.Moved || t.Unknown
-	if floor {
+	switch {
+	case l.Strict:
+		res = envgate.Resolution{Env: gt.Strictest(envgate.Migrate)}
+	case floor:
 		res = gt.ResolveFloor(envgate.Migrate, tiers)
-	} else {
+	default:
 		res = gt.Resolve(envgate.Migrate, tiers)
 	}
 	if !res.Resolved && t.Local && !floor {
@@ -393,7 +401,10 @@ func evaluate(l Leaf, unreadable bool, gt envgate.Gate, g packs.GuardCtx) verdic
 	if !res.Resolved {
 		where += " (the target could not be resolved, so it counts as the default environment)"
 	}
-	if unreadable {
+	switch {
+	case l.Strict:
+		what = "a command with a flag tq does not know before its subcommand (" + describe(l) + "), which counts as a migration to the strictest environment"
+	case unreadable:
 		what = "a migration command tq cannot read"
 	}
 	pol := gt.Policy(env, envgate.Migrate)
