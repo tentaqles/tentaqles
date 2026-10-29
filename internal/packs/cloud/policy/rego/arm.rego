@@ -40,7 +40,7 @@ deny contains lib.result("TQR001", addr(r), sprintf("missing required tags: %s",
 	some r in resources
 	count(lib.required_tags) > 0
 	taggable(r)
-	not is_string(r.tags) # an ARM expression ("[parameters('tags')]") is not judged
+	not is_string(object.get(r, "tags", null)) # an ARM expression ("[parameters('tags')]") is not judged
 	missing := lib.missing_tags(tags(r))
 	count(missing) > 0
 }

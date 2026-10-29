@@ -21,6 +21,11 @@ test_tags_present if {
 		with data.tqconfig as {"tags": ["owner"]}
 }
 
+test_tags_absent if {
+	"TQR001" in rules(arm.deny) with input as doc("Microsoft.Storage/storageAccounts", {})
+		with data.tqconfig as {"tags": ["owner"]}
+}
+
 test_tags_expression_not_judged if {
 	not "TQR001" in rules(arm.deny) with input as tagged("Microsoft.Storage/storageAccounts", "[parameters('tags')]")
 		with data.tqconfig as {"tags": ["owner"]}
