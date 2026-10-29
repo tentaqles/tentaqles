@@ -106,16 +106,23 @@ func parseApplyPatch(text string) ([]patchFile, error) {
 	return files, nil
 }
 
+// maxPatchFiles is how many files of one apply_patch the hook judges; a
+// bigger patch is denied (split it), so the hook stays within its budget.
+const maxPatchFiles = 256
+
 // patchCalls turns the files of a patch into the tool calls the file and
-// path rules judge, one per path.
+// path rules judge, one per path. A relative path is resolved against the
+// session cwd (Codex's paths are relative to it) and every path is cleaned,
+// as Claude's absolute file_path would be, so the rules see the real place.
 func patchCalls(files []patchFile, cwd string) []policy.ToolCall {
 	out := make([]policy.ToolCall, 0, len(files))
 	for _, f := range files {
-		c := policy.ToolCall{Tool: f.Tool, Path: f.Path, Content: f.Content}
-		abs := f.Path
-		if !filepath.IsAbs(abs) && cwd != "" {
+		abs := filepath.FromSlash(f.Path)
+		if !filepath.IsAbs(abs) && !winAbsRe.MatchString(abs) && cwd != "" {
 			abs = filepath.Join(cwd, abs)
 		}
+		abs = filepath.Clean(abs)
+		c := policy.ToolCall{Tool: f.Tool, Path: abs, Content: f.Content}
 		if _, err := os.Stat(abs); err == nil {
 			c.Exists = true
 		}

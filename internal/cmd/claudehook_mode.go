@@ -161,6 +161,15 @@ func modeGateFor(ws *resolve.Workspace, cwd string, call policy.ToolCall, launch
 	return &modeGate{ws: ws, res: res}
 }
 
+// fresh returns a gate with g's resolved mode and no recorded changes, so
+// one resolution serves several calls with their own audit (nil stays nil).
+func (g *modeGate) fresh() *modeGate {
+	if g == nil {
+		return nil
+	}
+	return &modeGate{ws: g.ws, res: g.res}
+}
+
 // resolved returns the gate's mode, DefaultResolved for a nil gate.
 func (g *modeGate) resolved() guardcfg.Resolved {
 	if g == nil {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -282,6 +283,10 @@ permissionDecision JSON so Claude Code asks the user.`,
 				return nil
 			}
 			if p.ToolName == "" {
+				if agent == hookAgentCodex && !asJSON {
+					// A Codex payload tq cannot read is not allowed.
+					writeCodexDeny(c.OutOrStdout(), "BLOCKED ["+guardErrorID+"]: the hook payload names no tool; tq denies a call it cannot judge")
+				}
 				return nil
 			}
 			cwd := strings.TrimSpace(p.Cwd)
@@ -334,16 +339,17 @@ permissionDecision JSON so Claude Code asks the user.`,
 			}
 			// A Codex apply_patch names its files only in the patch text: the
 			// file and path rules run on every file it writes, under that
-			// file's mode, and a patch tq cannot read is denied.
+			// file's mode, and a patch tq cannot read, or one too big to judge
+			// in the budget, is denied. The rule set is built once and the mode
+			// resolved once per folder.
 			type judged struct {
 				gate *modeGate
 				call policy.ToolCall
 			}
 			var subs []judged
-			if isApplyPatch(call) {
-				files, err := parseApplyPatch(call.Command)
-				if err != nil {
-					reason := "BLOCKED [" + guardErrorID + "]: " + err.Error() + "; tq denies an edit it cannot judge"
+			if isApplyPatch(call) || (agent == hookAgentCodex && isFileWriteTool(call.Tool) && call.Path == "") {
+				deny := func(why string) error {
+					reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies an edit it cannot judge"
 					if agent == hookAgentCodex && !asJSON {
 						writeCodexDeny(c.OutOrStdout(), reason)
 					}
@@ -351,9 +357,27 @@ permissionDecision JSON so Claude Code asks the user.`,
 					exit(2)
 					return nil
 				}
+				files, err := parseApplyPatch(call.Command)
+				if err != nil {
+					return deny(err.Error())
+				}
+				if len(files) > maxPatchFiles {
+					return deny(fmt.Sprintf("the patch writes %d files, more than the %d tq judges in one call: split the patch", len(files), maxPatchFiles))
+				}
+				pb := buildPolicy(cwd, ws)
+				gates := map[string]*modeGate{}
 				for _, fc := range patchCalls(files, cwd) {
-					fg := modeGateFor(modeWS, cwd, fc, launchMode())
-					d = policy.Merge(d, hookPolicyDecision(cwd, ws, cfg, fc, scanDeadline, fg))
+					if time.Now().After(scanDeadline) {
+						return deny("the patch took longer than the hook budget to judge: split the patch")
+					}
+					dir := filepath.Dir(fc.Path)
+					fg, ok := gates[dir]
+					if !ok {
+						fg = modeGateFor(modeWS, cwd, fc, launchMode())
+						gates[dir] = fg
+					}
+					fg = fg.fresh()
+					d = policy.Merge(d, policyDecisionWith(pb, cwd, ws, cfg, fc, scanDeadline, fg))
 					subs = append(subs, judged{fg, fc})
 				}
 			}

@@ -3,6 +3,8 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -135,5 +137,90 @@ func TestParseApplyPatch(t *testing.T) {
 		if _, err := parseApplyPatch(bad); err == nil {
 			t.Errorf("%q must not parse", bad)
 		}
+	}
+}
+
+// Codex sends apply_patch paths relative to the session cwd. They are
+// resolved against it and cleaned before the rules run, so a ../ escape
+// into a system folder, or a relative write from inside an identity dir,
+// is judged at its real place (final security review M4).
+func TestPreToolUseApplyPatchResolvesRelativePaths(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	up := strings.Repeat("../", 30)
+	sys := up + "etc/hosts"
+	if runtime.GOOS == "windows" {
+		sys = up + "Windows/System32/drivers/etc/hosts"
+	}
+	codexDir := filepath.Join(t.TempDir(), ".tentaqles", "identities", "acme", "codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, cwd, patch string }{
+		{"system folder via ../", root, "*** Begin Patch\n*** Add File: " + sys + "\n+127.0.0.1 x\n*** End Patch"},
+		{"rules from the identity dir", codexDir, "*** Begin Patch\n*** Update File: rules/tq.rules\n@@\n-a\n+b\n*** End Patch"},
+		{"config.toml from the identity dir", codexDir, "*** Begin Patch\n*** Update File: ./config.toml\n@@\n-a\n+b\n*** End Patch"},
+		{"trust store via a messy path", root, "*** Begin Patch\n*** Add File: x/../" + up + "home/u/.tentaqles/./trust/abc\n+x\n*** End Patch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, applyPatchPayload(t, tc.cwd, tc.patch))
+			if dec, _ := codexAnswerJSON(t, out); dec != "deny" {
+				t.Fatalf("want deny: code %d out %q stderr %q", code, out, errOut)
+			}
+		})
+	}
+}
+
+// A patch with more files than tq judges in one call is denied, fast: the
+// hook never runs past its budget, which would fail open (M5).
+func TestPreToolUseApplyPatchCapsTheFileCount(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	var b strings.Builder
+	b.WriteString("*** Begin Patch\n")
+	for i := 0; i < 5000; i++ {
+		b.WriteString("*** Add File: f" + strconv.Itoa(i) + ".txt\n+x\n")
+	}
+	b.WriteString("*** End Patch")
+	start := time.Now()
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, applyPatchPayload(t, root, b.String()))
+	dec, reason := codexAnswerJSON(t, out)
+	if dec != "deny" || !strings.Contains(reason, "tq/guard-error") || !strings.Contains(reason, "split the patch") {
+		t.Fatalf("code %d out %q", code, out)
+	}
+	if el := time.Since(start); el > 10*time.Second {
+		t.Fatalf("took %s", el)
+	}
+	// 256 files are still judged, within the budget.
+	b.Reset()
+	b.WriteString("*** Begin Patch\n")
+	for i := 0; i < maxPatchFiles; i++ {
+		b.WriteString("*** Add File: f" + strconv.Itoa(i) + ".txt\n+x\n")
+	}
+	b.WriteString("*** End Patch")
+	start = time.Now()
+	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, applyPatchPayload(t, root, b.String()))
+	if dec, _ := codexAnswerJSON(t, out); code != 0 || dec != "" {
+		t.Fatalf("%d files: code %d out %q", maxPatchFiles, code, out)
+	}
+	if el := time.Since(start); el > hookScanBudget() {
+		t.Fatalf("%d files took %s", maxPatchFiles, el)
+	}
+}
+
+// Codex payload shapes tq cannot judge fail closed under --agent codex: no
+// tool name, and an edit tool with neither a path nor a patch (m6).
+func TestPreToolUseAgentCodexUnknownShapesDeny(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	for name, payload := range map[string]string{
+		"no tool name":         `{"tool_name":"","cwd":` + jsonPath(t, root) + `,"tool_input":{"command":"ls"}}`,
+		"edit with no path":    `{"tool_name":"Edit","cwd":` + jsonPath(t, root) + `,"tool_input":{"patch":"*** Begin Patch"}}`,
+		"write with no path":   `{"tool_name":"Write","cwd":` + jsonPath(t, root) + `,"tool_input":{}}`,
+		"apply_patch no input": `{"tool_name":"apply_patch","cwd":` + jsonPath(t, root) + `,"tool_input":{}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, payload)
+			if dec, _ := codexAnswerJSON(t, out); dec != "deny" {
+				t.Fatalf("code %d out %q", code, out)
+			}
+		})
 	}
 }

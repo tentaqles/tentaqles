@@ -175,6 +175,19 @@ func loadProjectRules(cwd string, ws *resolve.Workspace) ([]policy.Rule, []error
 // keeps the ones it skipped or lowered for the audit; nil applies every rule
 // at its own action.
 func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time, gate *modeGate) policy.Decision {
+	return policyDecisionWith(buildPolicy(cwd, ws), cwd, ws, cfg, call, deadline, gate)
+}
+
+// builtPolicy is the rule set and effective guard of one hook call, built
+// once and shared by every file of an apply_patch.
+type builtPolicy struct {
+	eff guardcfg.Effective
+	set *policy.Set
+}
+
+// buildPolicy reads guard.yaml, the manifest's rules and the repo rule files
+// and compiles them.
+func buildPolicy(cwd string, ws *resolve.Workspace) builtPolicy {
 	eff := effectiveGuard(ws)
 	layers := policy.Layers{Builtin: policy.Builtin(), Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
 	if ws != nil {
@@ -185,6 +198,12 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	}
 	layers.Project, _ = loadProjectRules(cwd, ws)
 	set, _ := policy.Build(layers)
+	return builtPolicy{eff: eff, set: set}
+}
+
+// policyDecisionWith is policyDecision with the rule set already built.
+func policyDecisionWith(pb builtPolicy, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time, gate *modeGate) policy.Decision {
+	eff, set := pb.eff, pb.set
 	d, changed := set.EvaluateMapped(call, gate.mapFunc())
 	gate.note(changed)
 
