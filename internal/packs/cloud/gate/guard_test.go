@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -387,10 +388,16 @@ func BenchmarkApplyEnv64KiB(b *testing.B) {
 func TestApplyEnvUnder50ms(t *testing.T) {
 	f := newFixture(t, cloudBlock)
 	cmd := strings.Repeat("echo terraform plan && ", 64<<10/24) + "terraform -chdir=infra/envs/dev apply"
-	start := time.Now()
-	f.run(ApplyEnv, cmd)
-	f.run(IdentityDrift, cmd)
-	if d := time.Since(start); d > 100*time.Millisecond {
-		t.Fatalf("two guards on 64 KiB took %s", d)
+	// the median of 7 runs, so a loaded CI runner does not flake it
+	var times []time.Duration
+	for i := 0; i < 7; i++ {
+		start := time.Now()
+		f.run(ApplyEnv, cmd)
+		f.run(IdentityDrift, cmd)
+		times = append(times, time.Since(start))
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
+	if d := times[len(times)/2]; d > 100*time.Millisecond {
+		t.Fatalf("two guards on 64 KiB took %s (median of 7)", d)
 	}
 }

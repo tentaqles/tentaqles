@@ -3,6 +3,7 @@ package gate
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -425,10 +426,16 @@ func TestGuardsStayInBudget(t *testing.T) {
 	f.link(prodRef)
 	big := strings.Repeat("echo tester acme ", 4000) + "; supabase db push"
 	for _, guard := range []func(policy.ToolCall, packs.GuardCtx) (policy.Action, string, bool){MigrateEnv, RestoreTarget} {
-		start := time.Now()
-		guard(policy.ToolCall{Tool: "Bash", Command: big}, f.ctx())
-		if d := time.Since(start); d > 200*time.Millisecond {
-			t.Fatalf("a 64 KiB command took %s", d)
+		// the median of 7 runs, so a loaded CI runner does not flake it
+		var times []time.Duration
+		for i := 0; i < 7; i++ {
+			start := time.Now()
+			guard(policy.ToolCall{Tool: "Bash", Command: big}, f.ctx())
+			times = append(times, time.Since(start))
+		}
+		sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
+		if d := times[len(times)/2]; d > 200*time.Millisecond {
+			t.Fatalf("a 64 KiB command took %s (median of 7)", d)
 		}
 	}
 }
