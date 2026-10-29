@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "seeds checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 1,
+      "level": "error",
+      "rule": "seed-cuda",
+      "message": "CUDA is used but torch.cuda.manual_seed_all is not set"
+    }
+  ]
+}

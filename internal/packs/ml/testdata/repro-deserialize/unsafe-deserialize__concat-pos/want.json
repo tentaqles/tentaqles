@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "deserialization checked in 1 file",
+  "findings": [
+    {
+      "file": "serve.py",
+      "line": 5,
+      "level": "error",
+      "rule": "unsafe-deserialize",
+      "message": "joblib.load deserializes from a path outside the repo; loading runs arbitrary code. Use safetensors or skops, torch.load(weights_only=True), or a pinned repo artifact"
+    },
+    {
+      "file": "serve.py",
+      "line": 6,
+      "level": "error",
+      "rule": "unsafe-deserialize",
+      "message": "joblib.load deserializes from a path tq cannot show is repo-relative; loading runs arbitrary code. Use safetensors or skops, torch.load(weights_only=True), or a pinned repo artifact"
+    }
+  ]
+}

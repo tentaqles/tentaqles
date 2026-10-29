@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "src/train/train.py",
+      "line": 4,
+      "level": "warn",
+      "rule": "L7-group-leak",
+      "message": "train_test_split splits rows without groups while \"customer_id\" is an entity id (grouped by in src/features/agg.py); use a Group* splitter so one entity stays on one side"
+    }
+  ]
+}

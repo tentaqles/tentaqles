@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 4,
+      "level": "error",
+      "rule": "L4-target-in-features",
+      "message": "X takes every column of df, including the target \"churn\"; drop it from the features"
+    },
+    {
+      "file": "train.py",
+      "line": 7,
+      "level": "error",
+      "rule": "L4-target-in-features",
+      "message": "X_small selects the target column \"churn\" as a feature"
+    }
+  ]
+}

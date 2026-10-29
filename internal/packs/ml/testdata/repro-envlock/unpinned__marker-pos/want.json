@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "environment lock checked for 1 manifest",
+  "findings": [
+    {
+      "file": "requirements.txt",
+      "line": 2,
+      "level": "error",
+      "rule": "unpinned",
+      "message": "requirement \"numpy\" is not pinned with =="
+    },
+    {
+      "file": "requirements.txt",
+      "line": 1,
+      "level": "warn",
+      "rule": "no-hashes",
+      "message": "no --hash entries; generate the file with pip-compile --generate-hashes (or uv pip compile --generate-hashes)"
+    }
+  ]
+}

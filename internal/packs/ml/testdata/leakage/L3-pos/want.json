@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 9,
+      "level": "error",
+      "rule": "L3-cv-outside-pipeline",
+      "message": "cross_val_score runs on \"X_s\", transformed with a fit on the full data; cross-validate a Pipeline that holds the transformer"
+    },
+    {
+      "file": "train.py",
+      "line": 11,
+      "level": "error",
+      "rule": "L3-cv-outside-pipeline",
+      "message": "search.fit runs cross-validation on \"X_s\", transformed with a fit on the full data; put the transformer in a Pipeline"
+    }
+  ]
+}

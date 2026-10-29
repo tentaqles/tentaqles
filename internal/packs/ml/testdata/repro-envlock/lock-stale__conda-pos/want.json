@@ -1,0 +1,12 @@
+{
+  "status": "fail",
+  "detail": "environment lock checked for 1 manifest",
+  "findings": [
+    {
+      "file": "environment.yml",
+      "level": "error",
+      "rule": "lock-stale",
+      "message": "environment.yml dependencies changed but conda-lock.yml did not; re-lock and commit it"
+    }
+  ]
+}
