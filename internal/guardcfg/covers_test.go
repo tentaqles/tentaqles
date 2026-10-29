@@ -128,7 +128,7 @@ func TestLegacyBypassNeedsOneOwner(t *testing.T) {
 	if !BypassAllowed(h, "acme", roots[0]) {
 		t.Fatal("BypassAllowed follows WorkspaceGrant")
 	}
-	if o := BypassOwners(h); len(o) != 1 {
+	if o, err := BypassOwners(h); err != nil || len(o) != 1 {
 		t.Fatalf("owners = %v", o)
 	}
 
@@ -141,7 +141,7 @@ func TestLegacyBypassNeedsOneOwner(t *testing.T) {
 			t.Fatalf("%s: no bypass for a shared hash", n)
 		}
 	}
-	if o := BypassOwners(h); len(o) != 2 {
+	if o, err := BypassOwners(h); err != nil || len(o) != 2 {
 		t.Fatalf("owners = %v", o)
 	}
 }
@@ -157,5 +157,20 @@ func TestBypassAllowedIsRootChecked(t *testing.T) {
 	}
 	if !BypassAllowed("h9", "acme", acme) || BypassAllowed("h9", "beta", filepath.Join(t.TempDir(), "beta")) {
 		t.Fatal("BypassAllowed must check the root")
+	}
+}
+
+// An unreadable registry is no owner list, and so no legacy grant: it fails
+// closed (security re-review r3).
+func TestLegacyBypassUnreadableRegistry(t *testing.T) {
+	h, roots := bypassWorkspaces(t, "acme")
+	if err := os.WriteFile(filepath.Join(os.Getenv("TQ_HOME"), "config.yaml"), []byte("bases: [unclosed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BypassOwners(h); err == nil {
+		t.Fatal("BypassOwners must report the unreadable registry")
+	}
+	if g := WorkspaceGrant(h, "acme", roots[0]); g != nil {
+		t.Fatalf("no grant without the owner list: %+v", g)
 	}
 }

@@ -176,10 +176,13 @@ func WorkspaceGrant(hash, ws, root string) *Grant {
 		// r2). A byte copy elsewhere voids it for both, so the copy can
 		// never adopt (re-pin) it. (A writer carrying the grant has already
 		// rewritten its own manifest, so the caller's root may hash anew.)
-		if root == "" {
+		// An unreadable registry leaves the owners unknown: no grant
+		// (fail closed).
+		owners, err := BypassOwners(hash)
+		if root == "" || err != nil {
 			return nil
 		}
-		for _, o := range BypassOwners(hash) {
+		for _, o := range owners {
 			if !sameRoot(o, root) {
 				return nil
 			}
@@ -197,11 +200,12 @@ func WorkspaceGrant(hash, ws, root string) *Grant {
 }
 
 // BypassOwners returns the roots of the registered workspaces whose manifest
-// hashes to hash (an unreadable registry: none, which fails closed).
-func BypassOwners(hash string) []string {
+// hashes to hash. An unreadable registry is an error: the owners are then
+// unknown, and callers must not read that as "no other owner".
+func BypassOwners(hash string) ([]string, error) {
 	cfg, err := registry.Load()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	wss, _ := resolve.ListWorkspaces(cfg)
 	var out []string
@@ -210,7 +214,7 @@ func BypassOwners(hash string) []string {
 			out = append(out, w.Root)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // BypassAllowed reports whether workspace ws at root with manifest hash may

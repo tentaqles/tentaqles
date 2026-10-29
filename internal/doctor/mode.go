@@ -44,7 +44,7 @@ func modeChecks(w *resolve.Workspace, _ Deps, add AddFunc) {
 	if grant == nil && trust.IsBypassAllowed(w.Hash) {
 		// A legacy .bypass for a manifest hash more than one workspace has
 		// (a byte copy) is ignored for all of them (security re-review r2).
-		if owners := guardcfg.BypassOwners(w.Hash); len(owners) > 1 {
+		if owners, err := guardcfg.BypassOwners(w.Hash); err == nil && len(owners) > 1 {
 			add("warn", "mode-bypass-shared", w.Name,
 				fmt.Sprintf("the legacy bypass grant of %s is ignored: %d workspaces have the same manifest (%s)", w.Name, len(owners), strings.Join(owners, ", ")),
 				fmt.Sprintf("make the copies' manifests differ (or remove the copy), then grant the one that needs it: tq allow --mode %s relaxed", w.Name))
