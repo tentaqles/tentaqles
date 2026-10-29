@@ -1,0 +1,109 @@
+{
+    "config": {
+        "aws:region": "us-east-1",
+        "acme:dbPassword": "[secret]"
+    },
+    "steps": [
+        {
+            "op": "same",
+            "urn": "urn:pulumi:prod::acme::pulumi:pulumi:Stack::acme-prod",
+            "newState": { "urn": "urn:pulumi:prod::acme::pulumi:pulumi:Stack::acme-prod", "custom": false, "type": "pulumi:pulumi:Stack" }
+        },
+        {
+            "op": "create",
+            "urn": "urn:pulumi:prod::acme::aws:iam/policy:Policy::admin",
+            "provider": "urn:pulumi:prod::acme::pulumi:providers:aws::default_6_0_0::00000000-0000-0000-0000-000000000000",
+            "newState": {
+                "urn": "urn:pulumi:prod::acme::aws:iam/policy:Policy::admin",
+                "custom": true,
+                "type": "aws:iam/policy:Policy",
+                "inputs": {
+                    "name": "acme-admin",
+                    "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}",
+                    "tags": { "tq-allow": "IAM001: break-glass role" }
+                }
+            }
+        },
+        {
+            "op": "create-replacement",
+            "urn": "urn:pulumi:prod::acme::acme:index:Db$aws:rds/instance:Instance::main",
+            "newState": {
+                "urn": "urn:pulumi:prod::acme::acme:index:Db$aws:rds/instance:Instance::main",
+                "custom": true,
+                "type": "aws:rds/instance:Instance",
+                "inputs": {
+                    "engine": "postgres",
+                    "password": { "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270", "plaintext": "\"tester-pulumi-pass-0000\"" },
+                    "publiclyAccessible": true
+                },
+                "protect": true
+            },
+            "oldState": {
+                "urn": "urn:pulumi:prod::acme::acme:index:Db$aws:rds/instance:Instance::main",
+                "custom": true,
+                "type": "aws:rds/instance:Instance",
+                "inputs": { "engine": "postgres", "password": "[secret]", "publiclyAccessible": false }
+            },
+            "replaceReasons": ["identifier"]
+        },
+        {
+            "op": "replace",
+            "urn": "urn:pulumi:prod::acme::acme:index:Db$aws:rds/instance:Instance::main",
+            "newState": {
+                "urn": "urn:pulumi:prod::acme::acme:index:Db$aws:rds/instance:Instance::main",
+                "custom": true,
+                "type": "aws:rds/instance:Instance",
+                "inputs": { "engine": "postgres", "password": "[secret]", "publiclyAccessible": true }
+            }
+        },
+        {
+            "op": "delete-replaced",
+            "urn": "urn:pulumi:prod::acme::acme:index:Db$aws:rds/instance:Instance::main",
+            "oldState": {
+                "urn": "urn:pulumi:prod::acme::acme:index:Db$aws:rds/instance:Instance::main",
+                "custom": true,
+                "type": "aws:rds/instance:Instance",
+                "inputs": { "engine": "postgres" }
+            }
+        },
+        {
+            "op": "delete",
+            "urn": "urn:pulumi:prod::acme::aws:s3/bucketV2:BucketV2::old",
+            "oldState": {
+                "urn": "urn:pulumi:prod::acme::aws:s3/bucketV2:BucketV2::old",
+                "custom": true,
+                "type": "aws:s3/bucketV2:BucketV2",
+                "inputs": { "bucket": "acme-old" }
+            }
+        },
+        {
+            "op": "update",
+            "urn": "urn:pulumi:prod::acme::azure-native:storage:StorageAccount::sa",
+            "newState": {
+                "urn": "urn:pulumi:prod::acme::azure-native:storage:StorageAccount::sa",
+                "custom": true,
+                "type": "azure-native:storage:StorageAccount",
+                "inputs": { "allowBlobPublicAccess": true, "connectionString": "DefaultEndpointsProtocol=https;AccountName=acme;AccountKey=tester0000000000000000000000000000000000000000==" }
+            },
+            "oldState": {
+                "urn": "urn:pulumi:prod::acme::azure-native:storage:StorageAccount::sa",
+                "custom": true,
+                "type": "azure-native:storage:StorageAccount",
+                "inputs": { "allowBlobPublicAccess": false }
+            },
+            "diffReasons": ["allowBlobPublicAccess"]
+        },
+        {
+            "op": "read",
+            "urn": "urn:pulumi:prod::acme::aws:ec2/vpc:Vpc::shared",
+            "newState": { "urn": "urn:pulumi:prod::acme::aws:ec2/vpc:Vpc::shared", "custom": true, "type": "aws:ec2/vpc:Vpc", "inputs": {} }
+        },
+        {
+            "op": "import",
+            "urn": "urn:pulumi:prod::acme::aws:s3/bucketV2:BucketV2::adopted",
+            "newState": { "urn": "urn:pulumi:prod::acme::aws:s3/bucketV2:BucketV2::adopted", "custom": true, "type": "aws:s3/bucketV2:BucketV2", "inputs": { "bucket": "acme-adopted" } }
+        }
+    ],
+    "duration": 4200000000,
+    "changeSummary": { "create": 1, "delete": 1, "replace": 1, "same": 1, "update": 1, "read": 1, "import": 1 }
+}

@@ -1,0 +1,19 @@
+{
+  "properties": {
+    "changes": [
+      {
+        "after": {
+          "name": "acme-identity",
+          "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+          "apiVersion": "2018-11-30",
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/acme-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/acme-identity",
+          "location": "westus2",
+          "tags": { "owner": "tester" }
+        },
+        "changeType": "Create",
+        "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/acme-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/acme-identity"
+      }
+    ]
+  },
+  "status": "Succeeded"
+}

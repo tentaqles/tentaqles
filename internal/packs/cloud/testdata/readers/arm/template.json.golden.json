@@ -1,0 +1,216 @@
+[
+  {
+    "addr": "[format('{0}sa', parameters('prefix'))]",
+    "type": "Microsoft.Storage/storageAccounts",
+    "after": {
+      "apiVersion": "2023-01-01",
+      "kind": "StorageV2",
+      "location": "westeurope",
+      "name": "[format('{0}sa', parameters('prefix'))]",
+      "properties": {
+        "allowBlobPublicAccess": true,
+        "minimumTlsVersion": "TLS1_2"
+      },
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "tq-allow": "IAC003: public static site"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 10,
+      "pointer": "/resources/0"
+    },
+    "source": "arm"
+  },
+  {
+    "addr": "[format('{0}sa', parameters('prefix'))]/default/assets",
+    "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+    "after": {
+      "apiVersion": "2023-01-01",
+      "name": "default/assets",
+      "properties": {
+        "publicAccess": "Blob"
+      },
+      "type": "blobServices/containers"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 23,
+      "pointer": "/resources/0/resources/0"
+    },
+    "source": "arm",
+    "meta": {
+      "parent": "[format('{0}sa', parameters('prefix'))]"
+    }
+  },
+  {
+    "addr": "acme-sql",
+    "type": "Microsoft.Sql/servers",
+    "after": {
+      "apiVersion": "2022-05-01-preview",
+      "location": "westeurope",
+      "name": "acme-sql",
+      "properties": {
+        "administratorLogin": "tester",
+        "administratorLoginPassword": "[parameters('adminPassword')]",
+        "publicNetworkAccess": "Enabled"
+      },
+      "type": "Microsoft.Sql/servers"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 31,
+      "pointer": "/resources/1"
+    },
+    "source": "arm"
+  },
+  {
+    "addr": "[format('{0}/{1}', 'acme-sql', format('rule{0}', copyIndex()))]",
+    "type": "Microsoft.Sql/servers/firewallRules",
+    "after": {
+      "apiVersion": "2022-05-01-preview",
+      "copy": {
+        "count": 2,
+        "name": "rules"
+      },
+      "name": "[format('{0}/{1}', 'acme-sql', format('rule{0}', copyIndex()))]",
+      "properties": {
+        "endIpAddress": "255.255.255.255",
+        "startIpAddress": "0.0.0.0"
+      },
+      "type": "Microsoft.Sql/servers/firewallRules"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 42,
+      "pointer": "/resources/2"
+    },
+    "source": "arm",
+    "meta": {
+      "copy": "rules"
+    }
+  },
+  {
+    "addr": "rbac",
+    "type": "Microsoft.Resources/deployments",
+    "after": {
+      "apiVersion": "2022-09-01",
+      "name": "rbac",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Complete",
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0"
+        }
+      },
+      "type": "Microsoft.Resources/deployments"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 49,
+      "pointer": "/resources/3"
+    },
+    "source": "arm",
+    "meta": {
+      "deployment_mode": "Complete"
+    }
+  },
+  {
+    "addr": "00000000-0000-0000-0000-000000000001",
+    "type": "Microsoft.Authorization/roleAssignments",
+    "after": {
+      "apiVersion": "2022-04-01",
+      "name": "00000000-0000-0000-0000-000000000001",
+      "properties": {
+        "principalId": "11111111-1111-1111-1111-111111111111",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]"
+      },
+      "type": "Microsoft.Authorization/roleAssignments"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 60,
+      "pointer": "/resources/3/properties/template/resources/0"
+    },
+    "source": "arm",
+    "meta": {
+      "parent": "rbac"
+    }
+  },
+  {
+    "addr": "inner",
+    "type": "Microsoft.Resources/deployments",
+    "after": {
+      "apiVersion": "2022-09-01",
+      "name": "inner",
+      "properties": {
+        "mode": "Incremental",
+        "template": {}
+      },
+      "type": "Microsoft.Resources/deployments"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 69,
+      "pointer": "/resources/3/properties/template/resources/1"
+    },
+    "source": "arm",
+    "meta": {
+      "deployment_mode": "Incremental",
+      "parent": "rbac"
+    }
+  },
+  {
+    "addr": "acme-kv",
+    "type": "Microsoft.KeyVault/vaults",
+    "after": {
+      "apiVersion": "2023-07-01",
+      "name": "acme-kv",
+      "properties": {
+        "enablePurgeProtection": false,
+        "tenantId": "22222222-2222-2222-2222-222222222222"
+      },
+      "type": "Microsoft.KeyVault/vaults"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 77,
+      "pointer": "/resources/3/properties/template/resources/1/properties/template/resources/0"
+    },
+    "source": "arm",
+    "meta": {
+      "parent": "inner"
+    }
+  },
+  {
+    "addr": "linked",
+    "type": "Microsoft.Resources/deployments",
+    "after": {
+      "apiVersion": "2022-09-01",
+      "name": "linked",
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "https://example.com/acme.json"
+        }
+      },
+      "type": "Microsoft.Resources/deployments"
+    },
+    "pos": {
+      "file": "arm/template.json",
+      "line": 91,
+      "pointer": "/resources/4"
+    },
+    "source": "arm",
+    "meta": {
+      "deployment_mode": "Incremental"
+    }
+  }
+]
