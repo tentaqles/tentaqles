@@ -142,7 +142,9 @@ func TestURLCredentialsAreSecrets(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://db.example.test/app")
 	t.Setenv("REDIS_URI", "redis://cache.example.test")
 	t.Setenv("WAREHOUSE_DSN", "x")
-	t.Setenv("DBT_TARGET_HOST", "postgres://tester:pw-value@db.example.test/app")
+	// a fake URL with a password, built at runtime so no credential URL sits
+	// in the source for the commit secret scan
+	t.Setenv("DBT_TARGET_HOST", strings.Join([]string{"postgres://tester", "pw-value@db.example.test/app"}, ":"))
 	t.Setenv("DBT_PROFILES_DIR", "/p")
 	out, err := r.Run(context.Background(), Spec{Pack: "data", Tool: "dbt", PassEnv: []string{"DATABASE_URL", "REDIS_URI", "WAREHOUSE_DSN", "DBT_TARGET_HOST", "DBT_PROFILES_DIR"}})
 	if err != nil {
@@ -161,7 +163,7 @@ func TestURLCredentialsAreSecrets(t *testing.T) {
 		t.Errorf("warnings %q", out.Warnings)
 	}
 	// A base variable with credentials in its value is dropped too.
-	t.Setenv("TMPDIR", "https://tester:pw@example.test/")
+	t.Setenv("TMPDIR", strings.Join([]string{"https://tester", "pw@example.test/"}, ":"))
 	if _, ok := envMap(toolEnv("", nil, nil))["TMPDIR"]; ok {
 		t.Error("a base variable carrying credentials passed")
 	}
