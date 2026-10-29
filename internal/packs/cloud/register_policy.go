@@ -44,7 +44,7 @@ func init() {
 		ID: "cloud/iac-policy", Pack: "cloud", Kind: packs.Builtin,
 		Applies: func(in *packs.Input) bool {
 			cfg := policy.Load(in.Settings())
-			return cfg.Changed(in) || policy.HasPlans(in)
+			return cfg.TouchedEntry(in) || policy.HasPlans(in)
 		},
 		Run: runIaCPolicy,
 	})
@@ -92,6 +92,7 @@ func runIaCPolicy(_ context.Context, in *packs.Input) packs.Result {
 			plans++
 		}
 	}
+	fs = append(fs, removedNotes(in, cfg, plans)...)
 	res := packs.Result{Status: packs.OK, Findings: fs}
 	errs, warns := res.Counts()
 	sup := 0
@@ -108,25 +109,53 @@ func runIaCPolicy(_ context.Context, in *packs.Input) packs.Result {
 
 var cfnTemplateName = regexp.MustCompile(`(?i)(^|/)template\.ya?ml$`)
 
-// raiseIaC: a changed path under packs.cloud.iac[].path, or an IaC file by
-// name (spec D §15). A template.yaml counts when it declares
-// AWSTemplateFormatVersion.
+// iacNames are the IaC files raiseIaC knows by name.
+var iacNames = []string{"*.tf", "*.tf.json", "*.tofu", "*.bicep", "*.bicepparam", "cdk.json", "Pulumi.yaml", "Pulumi.*.yaml", "Pulumi.yml", "Pulumi.*.yml"}
+
+// raiseIaC: a touched path under packs.cloud.iac[].path, or an IaC file by
+// name (spec D §15). Deletions and the old name of a rename count: removing
+// an IaC file destroys what it declared on the next apply. A template.yaml
+// counts when it declares AWSTemplateFormatVersion (read from the side of
+// the diff that has it).
 func raiseIaC(in *packs.Input) bool {
 	cfg := policy.Load(in.Settings())
-	if cfg.Changed(in) {
+	if cfg.TouchedEntry(in) {
 		return true
 	}
-	if in.AnyChanged("*.tf", "*.tf.json", "*.tofu", "*.bicep", "*.bicepparam", "cdk.json", "Pulumi.yaml", "Pulumi.*.yaml", "Pulumi.yml", "Pulumi.*.yml") {
-		return true
-	}
-	for _, p := range in.ChangedPaths() {
-		if !cfnTemplateName.MatchString(p) {
+	for _, s := range policy.Touched(in) {
+		for _, g := range iacNames {
+			if packs.MatchGlob(g, s.Path) {
+				return true
+			}
+		}
+		if !cfnTemplateName.MatchString(s.Path) {
 			continue
 		}
-		b, err := in.ReadNew(p, 64<<10)
+		var b []byte
+		var err error
+		if s.Old {
+			b, err = in.ReadOld(s.Path)
+		} else {
+			b, err = in.ReadNew(s.Path, 64<<10)
+		}
 		if err != nil || strings.Contains(string(b), "AWSTemplateFormatVersion") {
 			return true // unreadable counts as raised (review more, never less)
 		}
 	}
 	return false
+}
+
+// removedNotes warns about each IaC file deleted (or renamed away) under
+// packs.cloud.iac[].path when no plan was recorded: nothing shows what the
+// next apply destroys.
+func removedNotes(in *packs.Input, cfg policy.Config, plans int) []packs.Finding {
+	if plans > 0 {
+		return nil
+	}
+	var out []packs.Finding
+	for _, p := range cfg.Removed(in) {
+		out = append(out, packs.Finding{File: p, Level: packs.LevelWarn, Rule: policy.IAC001,
+			Message: "the IaC file is deleted: whatever it declared is destroyed on the next apply, and no recorded plan shows what that is; record one with tq pack cloud plan"})
+	}
+	return out
 }

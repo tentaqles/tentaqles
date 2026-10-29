@@ -125,6 +125,60 @@ func (c Config) ChangedEntries(in *packs.Input, kinds ...string) []Entry {
 	return out
 }
 
+// Side is one path a diff touches, and which side of the diff holds it.
+type Side struct {
+	Path string
+	Old  bool // the path exists only at Base (a deletion, the old name of a rename)
+}
+
+// Touched lists every path the diff touches: the changed paths, the
+// deleted ones and the old name of each rename. Deleting an IaC file is the
+// most destructive IaC change there is, so triage and the iac-policy
+// trigger read this list, not ChangedPaths (which drops deletions).
+func Touched(in *packs.Input) []Side {
+	var out []Side
+	for _, c := range in.Changed {
+		switch c.Status {
+		case 'D':
+			out = append(out, Side{Path: c.Path, Old: true})
+			continue
+		case 'R':
+			if c.OldPath != "" && c.OldPath != c.Path {
+				out = append(out, Side{Path: c.OldPath, Old: true})
+			}
+		}
+		out = append(out, Side{Path: c.Path})
+	}
+	return out
+}
+
+// Removed lists the deleted paths and the old names of renames under the
+// entries of the given kinds.
+func (c Config) Removed(in *packs.Input, kinds ...string) []string {
+	var out []string
+	for _, s := range Touched(in) {
+		if !s.Old {
+			continue
+		}
+		for _, e := range c.Entries(kinds...) {
+			if Under(e.Path, s.Path) {
+				out = append(out, s.Path)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// TouchedEntry reports whether a touched path (deletions included) is under
+// one of the entries of the given kinds; with --all, whether any exists.
+func (c Config) TouchedEntry(in *packs.Input, kinds ...string) bool {
+	if in.All {
+		return len(c.Entries(kinds...)) > 0
+	}
+	return c.Changed(in, kinds...) || len(c.Removed(in, kinds...)) > 0
+}
+
 func contains(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {
