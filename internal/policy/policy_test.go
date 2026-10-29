@@ -163,6 +163,12 @@ var builtinDecisionCases = []struct {
 	{"settings env simple denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"env": {"CLAUDE_CODE_SIMPLE": "1"}`}, Deny, "tq/settings-widen"},
 	{"settings defaultMode auto denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"defaultMode": "auto"`}, Deny, "tq/settings-widen"},
 	{"settings defaultMode dontAsk denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"defaultMode": "dontAsk"`}, Deny, "tq/settings-widen"},
+	// fragment-only edits inside an existing block (security re-review r2 M2)
+	{"settings env fragment denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.local.json", Content: `"NODE_ENV": "dev", "TQ_MODE": "off"`}, Deny, "tq/settings-widen"},
+	{"settings env enabled fragment denied", ToolCall{Tool: "MultiEdit", Path: "/r/x/.claude/settings.json", Content: `"TQ_ENABLED":"0"`}, Deny, "tq/settings-widen"},
+	{"settings plugin fragment denied", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"tentaqles@tentaqles": false`}, Deny, "tq/settings-widen"},
+	{"settings env brace in value denied", ToolCall{Tool: "Write", Path: "/r/x/.claude/settings.local.json", Content: `{"env": {"X": "a}b", "TQ_MODE": "off"}}`}, Deny, "tq/settings-widen"},
+	{"settings TQ_MODE in prose ok", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"description": "TQ_MODE off is for humans"`}, Allow, ""},
 	{"settings plugin on ok", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"enabledPlugins": {"tentaqles@tentaqles": true, "x@y": false}`}, Allow, ""},
 	{"settings harmless env ok", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"env": {"NODE_ENV": "test"}`}, Allow, ""},
 	{"settings defaultMode plan ok", ToolCall{Tool: "Edit", Path: "/r/x/.claude/settings.json", Content: `"defaultMode": "plan"`}, Allow, ""},

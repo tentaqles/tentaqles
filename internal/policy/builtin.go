@@ -307,11 +307,13 @@ func coreBuiltin() []Rule {
 			Tool: "Edit|MultiEdit|Write",
 			Path: `(^|/)(\.claude/settings(\.local)?\.json|\.claude\.json|settings(\.local)?\.json)$`,
 			// Also what switches tq off for the next or a nested session: the
-			// tentaqles plugin disabled, an env block naming tq's or Claude's
-			// mode variables, a looser defaultMode.
+			// tentaqles plugin disabled, tq's or Claude's mode variables set,
+			// a looser defaultMode. The keys match anywhere in the content: an
+			// Edit's new_string is often a fragment inside an existing env or
+			// enabledPlugins block, without the enclosing key.
 			Content: `Bash\(\*\)|bypassPermissions|"disableAllHooks"\s*:\s*true|"hooks"\s*:\s*\{\s*\}|"skipDangerousModePermissionPrompt"\s*:\s*true` +
-				`|"enabledPlugins"\s*:\s*\{[^}]*"tentaqles[^"]*"\s*:\s*false` +
-				`|"env"\s*:\s*\{[^}]*"(` + agLoosenEnv + `)"` +
+				`|"tentaqles@[^"]*"\s*:\s*false` +
+				`|"(` + agLoosenEnv + `)"\s*:` +
 				`|"defaultMode"\s*:\s*"(auto|dontAsk)"`,
 			Reason: "this would widen permissions or switch hooks off from inside the session; permission changes go through `tq settings render` and the manifest",
 		},
