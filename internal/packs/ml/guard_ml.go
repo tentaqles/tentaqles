@@ -9,6 +9,7 @@ package ml
 // call and the loaded config.
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -219,8 +220,33 @@ func checkModelPromoteAt(call policy.ToolCall, g packs.GuardCtx, depth int) (pol
 			}
 		}
 	}
+	if why == "" && depth < maxPwshDepth {
+		// A shell script file the command runs (bash x.sh, ./x.sh, source
+		// x.sh): read it through ReadLocal (at most 64 KiB) and ask when its
+		// content is a promotion. A script that cannot be read stays allowed:
+		// the command line itself named no promotion.
+		for _, sp := range scan.ScriptFiles(call.Command) {
+			abs := sp
+			if !filepath.IsAbs(abs) {
+				if g.Cwd() == "" {
+					continue
+				}
+				abs = filepath.Join(g.Cwd(), filepath.FromSlash(sp))
+			}
+			b, err := g.ReadLocal(abs, maxScriptRead)
+			if err != nil {
+				continue
+			}
+			if a, _, handled := checkModelPromoteAt(policy.ToolCall{Tool: call.Tool, Command: string(b)}, g, depth+1); handled && a != policy.Allow {
+				return policy.Ask, "tq/model-promote: the script " + sp + " promotes a model, and the guard does not run scripts; confirm it. " + promoteDeny, true
+			}
+		}
+	}
 	if why == "" {
 		return policy.Allow, "", false
 	}
 	return policy.Deny, "tq/model-promote: " + why + ". " + promoteDeny, true
 }
+
+// maxScriptRead bounds the read of a shell script a command runs.
+const maxScriptRead = 64 << 10
