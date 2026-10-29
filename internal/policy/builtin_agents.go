@@ -41,43 +41,55 @@ const (
 )
 
 // agAssign matches an assignment of the variable vars (an alternation of
-// names) followed by val, in the forms bash, zsh, fish, PowerShell and cmd
-// use. It is anchored at a command start, so `git commit -m "TQ_MODE=off"`
-// is data.
-func agAssign(vars, val string) string {
+// names) whose value matches val, in the forms bash, zsh, fish, PowerShell and
+// cmd use. It is anchored at a command start, so `git commit -m "TQ_MODE=off"`
+// is data. val takes the form, because what ends a value differs between
+// shells (agModeLoose uses that); agAny wraps a value regex that does not care.
+func agAssign(vars string, val func(form int) string) string {
 	v := `(?:` + vars + `)`
 	return `(?:` +
 		// VAR=x cmd, export VAR=x, env [-i] VAR=x cmd, declare -x VAR=x
-		agCmdStart + `(?:(?:export|declare|typeset|readonly|local)\s+(?:-\w+\s+)*|env\s+(?:-{1,2}[\w-]+(?:=\S*)?\s+)*)?(?:[A-Za-z_]\w*=\S*\s+)*` + v + `=` + val +
+		agCmdStart + `(?:(?:export|declare|typeset|readonly|local)\s+(?:-\w+\s+)*|env\s+(?:-{1,2}[\w-]+(?:=\S*)?\s+)*)?(?:[A-Za-z_]\w*=\S*\s+)*` + v + `=` + val(formSh) +
 		// PowerShell: $env:VAR = x, ${env:VAR} = x
-		`|` + agCmdStart + `\$\{?env:` + v + `\}?\s*=\s*` + val +
+		`|` + agCmdStart + `\$\{?env:` + v + `\}?\s*=\s*` + val(formPwsh) +
 		// fish: set -x VAR x (not set -e)
-		`|` + agCmdStart + `set\s+(?:-[a-df-zA-Z]+\s+|--(?:export|global|universal|local|path)\s+)*` + v + `\s+` + val +
+		`|` + agCmdStart + `set\s+(?:-[a-df-zA-Z]+\s+|--(?:export|global|universal|local|path)\s+)*` + v + `\s+` + val(formFish) +
 		// cmd: set VAR=x, set "VAR=x" (unanchored: it is usually inside cmd /c "...")
-		`|\bset\s+"?` + v + `=` + val +
+		`|\bset\s+"?` + v + `=` + val(formCmd) +
 		// PowerShell providers and .NET
 		`|\b(?:set-item|si|new-item|ni)\s+(?:-path\s+)?["']?env:[\\/]?` + v + `\b` +
 		`|\[(?:system\.)?environment\]::setenvironmentvariable\(\s*["']` + v + `["']` +
 		`)`
 }
 
-// agNotWords matches a non-empty string over the characters allowed by the
-// negated class body neg (the part after `[^`) that is not one of words. It is
-// built from a trie of words, since RE2 has no lookahead: at each prefix of a
-// word, either the string stops (when the prefix is not itself a word), or
-// continues with the next character of a word, or leaves the trie with any
-// other allowed character.
-func agNotWords(words []string, neg string) string {
+// The assignment forms agAssign passes to its value function.
+const (
+	formSh = iota
+	formPwsh
+	formFish
+	formCmd
+)
+
+// agAny is a value regex that is the same in every form.
+func agAny(val string) func(int) string { return func(int) string { return val } }
+
+// agNotSafe matches the text after an assignment unless that text starts with
+// one of words followed by a safe end. It is built from a trie of words, since
+// RE2 has no lookahead. At each proper prefix of a word the text either stops
+// (an empty or partial value), continues with the next character of a word,
+// or leaves the trie with any other character. After a whole word, pad and
+// then a character outside term (and outside the word's own continuations)
+// leaves it too: default'x', 'strict'.Replace(..), an empty quote pair before off.
+// rootSkip lists characters that may come before the value (whitespace the
+// form already allows there), so they never count as leaving at the root.
+// Matching is case-sensitive: Default is not a safe value.
+func agNotSafe(words []string, rootSkip, pad, term string) string {
 	set := map[string]bool{}
 	for _, w := range words {
 		set[w] = true
 	}
 	var node func(p string) string
 	node = func(p string) string {
-		var alts []string
-		if p != "" && !set[p] {
-			alts = append(alts, ``)
-		}
 		next := map[byte]bool{}
 		for w := range set {
 			if len(w) > len(p) && strings.HasPrefix(w, p) {
@@ -89,32 +101,49 @@ func agNotWords(words []string, neg string) string {
 			cs = append(cs, string(c))
 		}
 		sort.Strings(cs)
-		other := neg
+		var alts []string
+		children := ""
 		for _, c := range cs {
 			alts = append(alts, regexp.QuoteMeta(c)+node(p+c))
-			other += regexp.QuoteMeta(c)
+			children += regexp.QuoteMeta(c)
 		}
-		alts = append(alts, `[^`+other+`][^`+neg+`]*`)
+		if set[p] {
+			alts = append(alts, pad+`[^`+term+children+`]`)
+		} else {
+			skip := ""
+			if p == "" {
+				skip = rootSkip
+			}
+			alts = append(alts, `$`, `[^`+children+skip+`]`)
+		}
 		return `(?:` + strings.Join(alts, "|") + `)`
 	}
-	return node("")
+	return `(?-i:` + node("") + `)`
 }
 
-// agModeLoose is a TQ_MODE value other than default or strict, taken whole:
-// quoted ("..." or '...', up to the closing quote) or a bare word up to the
-// next separator. Because it matches the whole value, nothing is ever cut
-// from the command (round 0 used an Except that ate the separator after
-// TQ_MODE=default and so hid the loosened command behind it).
-func agModeLoose() string {
-	safe := []string{"default", "strict"}
-	bare := `\s"';&|()<>` + bt
-	return `(?:` +
-		`"` + agNotWords(safe, `"`) + `(?:"|$)` +
-		`|'` + agNotWords(safe, `'`) + `(?:'|$)` +
-		`|` + agNotWords(safe, bare) + `(?:[` + bare + `]|$)` +
-		// default"x" is the word defaultx to a shell
-		`|(?:default|strict)["'][^\s;&|()<>` + bt + `]` +
-		`)`
+// agModeLoose is the value of a TQ_MODE assignment unless it is exactly
+// default or strict (bare, '...' or "...") followed by the end of the word or
+// statement. Everything else is denied (fail closed): the empty value, an
+// empty quoted token joined to a word (to the shell, empty quotes before off give off), a
+// PowerShell expression ('strict' -replace .., ('off'), "$x", 'a'+'b'), $null,
+// a variable. Nothing is ever cut from the command, so a safe assignment can
+// not hide what follows it (round 0's Except did).
+func agModeLoose(form int) string {
+	safe := []string{"default", "strict", "'default'", "'strict'", `"default"`, `"strict"`}
+	switch form {
+	case formPwsh:
+		// A statement ends at ; | ) } & # or a line end. Anything else after
+		// the literal (an operator, a method call) makes it an expression.
+		return agNotSafe(safe, `\s`, `[ \t]*`, ` \t\r\n;|)}&#`)
+	case formFish:
+		return agNotSafe(safe, `\s`, ``, `\s;&|)`+bt)
+	case formCmd:
+		// set "TQ_MODE=strict": the closing quote ends the value.
+		safe = append(safe, `default"`, `strict"`)
+		return agNotSafe(safe, ``, ``, `\s;&|)`)
+	default:
+		return agNotSafe(safe, ``, ``, `\s;&|)`+bt)
+	}
 }
 
 // agUnset matches clearing one of vars: env -u, unset, fish set -e,
@@ -124,7 +153,7 @@ func agUnset(vars string) string {
 	return `(?:` +
 		`\benv\s+(?:-{1,2}[\w-]+(?:=\S*)?\s+)*?(?:-u\s*|--unset[=\s])["']?` + v + `\b` +
 		`|` + agCmdStart + `unset\s+(?:-\w+\s+)*(?:[A-Za-z_]\w*\s+)*` + v + `\b` +
-		`|` + agCmdStart + `set\s+(?:-\w+\s+)*-\w*e\w*\s+(?:-\w+\s+)*` + v + `\b` +
+		`|` + agCmdStart + `set\s+(?:-\w+\s+)*(?:-\w*e\w*|--erase)\s+(?:-\w+\s+)*` + v + `\b` +
 		`|\b(?:remove-item|ri|rm|del|erase|clear-item|cli)\s+(?:-\w+\s+)*["']?env:[\\/]?` + v + `\b` +
 		`)`
 }
@@ -148,13 +177,14 @@ const agSettingsLoose = `--settings` + agVal + `(?:` +
 
 func nestedAgentCommand() string {
 	alts := []string{
-		// TQ_MODE to anything but default/strict, TQ_ENABLED=0, Claude's
-		// simple/safe modes.
-		agAssign(`TQ_MODE`, agModeLoose()),
-		agAssign(`TQ_ENABLED`, `["']?0\b`),
-		agAssign(`CLAUDE_CODE_SIMPLE|CLAUDE_CODE_SAFE_MODE`, `["']?(?:1|true)\b`),
+		// TQ_MODE to anything but default/strict, or cleared (that drops a
+		// strict launch layer), TQ_ENABLED=0, Claude's simple/safe modes.
+		agAssign(`TQ_MODE`, agModeLoose),
+		agUnset(`TQ_MODE`),
+		agAssign(`TQ_ENABLED`, agAny(`["']?0\b`)),
+		agAssign(`CLAUDE_CODE_SIMPLE|CLAUDE_CODE_SAFE_MODE`, agAny(`["']?(?:1|true)\b`)),
 		// The agent config homes: any reassignment or clearing.
-		agAssign(`CLAUDE_CONFIG_DIR|CODEX_HOME`, ``),
+		agAssign(`CLAUDE_CONFIG_DIR|CODEX_HOME`, agAny(``)),
 		agUnset(`CLAUDE_CONFIG_DIR|CODEX_HOME`),
 		// Off launchers and tq verbs.
 		agPos + agProg + `(?:claude|codex)-off` + agEnd,
