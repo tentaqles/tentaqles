@@ -104,3 +104,39 @@ func TestEnvAndArgs(t *testing.T) {
 		}
 	}
 }
+
+// psql reads a --dbname value holding "=" or a URI prefix as a whole
+// connection string, which would override the host tq checked. Such a
+// dbname (or user) is refused before anything connects, and the error
+// never quotes it.
+func TestParseTargetRefusesConnectionOverrides(t *testing.T) {
+	for _, bad := range []string{
+		"postgres://tester@localhost:5432/x%3Dy",
+		"postgres://tester@localhost/host%3Ddb.acme.example%20dbname%3Dx",
+		"postgres://tester@localhost/postgresql%3A%2F%2Fdb.acme.example%2Fx",
+		"postgres://tester@localhost/postgres:%2F%2Fdb.acme.example%2Fx",
+		"postgres://tester@localhost/-x",
+		"postgres://a%3Db@localhost/acme",
+		"postgres://-u@localhost/acme",
+		"postgres://tester@localhost/acme%0Ahost%3Devil",
+		"host=localhost dbname='host=db.acme.example dbname=x'",
+		"host=localhost dbname=postgresql://db.acme.example/x",
+		"host=localhost user='x=y' dbname=acme",
+		"postgres://tester@localhost/acme?dbname=host%3Ddb.acme.example",
+	} {
+		_, err := ParseTarget(bad)
+		if err == nil {
+			t.Errorf("%q accepted", bad)
+			continue
+		}
+		if strings.Contains(err.Error(), "acme.example") || strings.Contains(err.Error(), "x=y") {
+			t.Errorf("%q: the error quotes the value: %v", bad, err)
+		}
+	}
+	// Ordinary names still parse.
+	for _, ok := range []string{"postgres://tester@localhost/acme_test-1", "postgres://tester.acme@localhost/my%20db"} {
+		if _, err := ParseTarget(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+}

@@ -280,8 +280,10 @@ func Run(ctx context.Context, in *packs.Input, o Options) packs.Result {
 			return fail(v + " is set in the environment: it can send libpq elsewhere than the checked host; unset it for the tests")
 		}
 	}
-	if o.Mode == Supabase && !DockerHostLocal(os.Getenv("DOCKER_HOST")) {
-		return fail(dockerNotLocal)
+	if o.Mode == Supabase {
+		if ok, why := dockerLocal(); !ok {
+			return fail(why)
+		}
 	}
 	// A pg_prove inside the repository is code the repository controls: it
 	// never gets the test_db password (as toolrun withholds a declared
@@ -335,8 +337,12 @@ func Run(ctx context.Context, in *packs.Input, o Options) packs.Result {
 		if dir == "" {
 			return fail("packs.db.rls.tests is not set: pg_prove needs the pgTAP directory")
 		}
+		if !SafeDir(dir) {
+			return fail("packs.db.rls.tests must be a directory inside the repository with no path segment starting with a dash")
+		}
+		// "--" ends pg_prove's options: the directory is never one.
 		args := append([]string{"--ext", ".sql", "-r", "--failures"}, target.Args()...)
-		spec = toolrun.Spec{Pack: "db", Tool: tool, Args: append(args, dir), Dir: in.Root, Env: target.Env(), PassEnv: o.Mode.Env()}
+		spec = toolrun.Spec{Pack: "db", Tool: tool, Args: append(args, "--", dir), Dir: in.Root, Env: target.Env(), PassEnv: o.Mode.Env()}
 	}
 	out, err := in.Tools.Run(ctx, spec)
 	run := &packs.ToolRun{Name: tool, Version: out.Version, Path: out.Path, ExitCode: out.ExitCode, DurationMS: out.Duration.Milliseconds(), TimedOut: out.TimedOut}
@@ -344,15 +350,18 @@ func Run(ctx context.Context, in *packs.Input, o Options) packs.Result {
 	if target != nil {
 		secrets = target.Secrets()
 	}
+	// The harness output is parsed before masking (a short password must not
+	// mangle the counts); everything that leaves Run is masked.
+	all := append(append([]byte{}, out.Stdout...), '\n')
+	all = append(all, out.Stderr...)
 	mask(&out, secrets)
+	dropEchoedSQL(&out)
 	if err != nil {
 		return packs.Result{Status: packs.Fail, Detail: tool + " did not run: " + redact.Redact(err.Error(), nil), Tool: run, Findings: []packs.Finding{runFailed(tool, "did not run")}}
 	}
 	if out.TimedOut {
 		return packs.Result{Status: packs.Fail, Detail: tool + " timed out", Tool: run, Findings: []packs.Finding{runFailed(tool, "timed out")}}
 	}
-	all := append(append([]byte{}, out.Stdout...), '\n')
-	all = append(all, out.Stderr...)
 	tap := ParseTAP(all, MapPaths(o.TestFiles, o.TestsDir))
 	var fs []packs.Finding
 	for _, f := range tap.Failures {
@@ -361,7 +370,7 @@ func Run(ctx context.Context, in *packs.Input, o Options) packs.Result {
 			msg = "the test file failed"
 		}
 		if f.Desc != "" {
-			msg += ": " + capLen(redact.Redact(f.Desc, in.Classes()), 300)
+			msg += ": " + capLen(redact.Redact(maskString(f.Desc, secrets), in.Classes()), 300)
 		}
 		fs = append(fs, packs.Finding{File: f.File, Line: f.Test, Level: packs.LevelError, Rule: RuleNotOK, Message: msg})
 	}
@@ -372,12 +381,13 @@ func Run(ctx context.Context, in *packs.Input, o Options) packs.Result {
 		tail := out.Tail(20, in.Classes())
 		return packs.Result{Status: packs.Fail, Detail: fmt.Sprintf("%s exited %d without a TAP failure:\n%s", tool, out.ExitCode, tail), Tool: run,
 			Findings: []packs.Finding{runFailed(tool, fmt.Sprintf("exited %d", out.ExitCode))}}
+	case !tap.Passed():
+		// Fail closed: exit 0 and no "not ok" is not a pass unless the
+		// harness ran tests and said so.
+		return packs.Result{Status: packs.Fail, Detail: notPassed(tool, tap) + ":\n" + out.Tail(20, in.Classes()), Tool: run,
+			Findings: []packs.Finding{runFailed(tool, "did not pass")}}
 	}
-	detail := "pgTAP tests passed"
-	if tap.Files > 0 {
-		detail = fmt.Sprintf("%d test(s) in %d file(s) passed", tap.Tests, tap.Files)
-	}
-	return packs.Result{Status: packs.OK, Detail: detail, Tool: run}
+	return packs.Result{Status: packs.OK, Detail: fmt.Sprintf("%d test(s) in %d file(s) passed", tap.Tests, tap.Files), Tool: run}
 }
 
 func runFailed(tool, why string) packs.Finding {
@@ -395,8 +405,8 @@ func runStart(ctx context.Context, in *packs.Input, start string) (packs.Result,
 	argv := strings.Fields(start)
 	// The start command (supabase start, docker compose up) talks to the
 	// Docker daemon: the same local-only rule applies.
-	if !DockerHostLocal(os.Getenv("DOCKER_HOST")) {
-		return packs.Result{Status: packs.Fail, Detail: dockerNotLocal}, false
+	if ok, why := dockerLocal(); !ok {
+		return packs.Result{Status: packs.Fail, Detail: why}, false
 	}
 	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "db", Tool: argv[0], Args: argv[1:], Dir: in.Root, Timeout: StartTimeout, PassEnv: Supabase.Env()})
 	switch {
@@ -407,20 +417,62 @@ func runStart(ctx context.Context, in *packs.Input, start string) (packs.Result,
 	case out.TimedOut:
 		return packs.Result{Status: packs.Fail, Detail: "test_db.start timed out"}, false
 	case out.ExitCode != 0:
+		dropEchoedSQL(&out)
 		return packs.Result{Status: packs.Fail, Detail: fmt.Sprintf("test_db.start exited %d:\n%s", out.ExitCode, out.Tail(20, in.Classes()))}, false
 	}
 	return packs.Result{}, true
 }
 
-// mask replaces the connection secrets in the tool's output.
+// mask replaces the connection secrets in the tool's output, however short
+// (a short password may mask more than itself; it never stays visible).
 func mask(o *toolrun.Output, secrets []string) {
+	o.Stdout = []byte(maskString(string(o.Stdout), secrets))
+	o.Stderr = []byte(maskString(string(o.Stderr), secrets))
+}
+
+func maskString(v string, secrets []string) string {
 	for _, s := range secrets {
-		if len(s) < 3 {
-			continue
+		if s != "" {
+			v = strings.ReplaceAll(v, s, "[REDACTED:test_db]")
 		}
-		o.Stdout = []byte(strings.ReplaceAll(string(o.Stdout), s, "[REDACTED:test_db]"))
-		o.Stderr = []byte(strings.ReplaceAll(string(o.Stderr), s, "[REDACTED:test_db]"))
 	}
+	return v
+}
+
+// echoedSQL are the lines psql prints that quote SQL from the test files
+// (or the data in it): an error's LINE n: echo, its QUERY: and CONTEXT:.
+var echoedSQL = regexp.MustCompile(`(?m)^[ \t]*(?:LINE \d+:|QUERY:|CONTEXT:).*(?:\r?\n)?`)
+
+// dropEchoedSQL removes those lines from the output before any tail of it
+// is shown.
+func dropEchoedSQL(o *toolrun.Output) {
+	o.Stdout = echoedSQL.ReplaceAll(o.Stdout, nil)
+	o.Stderr = echoedSQL.ReplaceAll(o.Stderr, nil)
+}
+
+// notPassed says why a run that exited 0 with no failed test is no pass.
+func notPassed(tool string, t TAPResult) string {
+	switch {
+	case !t.Summary && t.Result == "":
+		return tool + " printed no harness summary (Files=..., Result: ...): tq cannot tell that any pgTAP test ran"
+	case t.Files == 0 || t.Tests == 0 || t.Result == "NOTESTS":
+		return tool + " ran but no pgTAP test ran (no .sql test file, or files with no test)"
+	}
+	return tool + " exited 0 but the harness did not report PASS (Result: " + capLen(t.Result, 20) + ")"
+}
+
+// SafeDir reports a tests directory that is relative, stays inside the
+// repository and has no path segment pg_prove could read as an option.
+func SafeDir(d string) bool {
+	if relErr(d) != nil {
+		return false
+	}
+	for _, seg := range strings.Split(strings.ReplaceAll(d, `\`, "/"), "/") {
+		if strings.HasPrefix(strings.TrimSpace(seg), "-") {
+			return false
+		}
+	}
+	return true
 }
 
 func capLen(s string, n int) string {

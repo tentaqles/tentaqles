@@ -1,0 +1,3 @@
+supabase/tests/database/rls_notes.test.sql .. ok
+supabase/tests/database/rls_tags.test.sql ... ok
+All tests successful.

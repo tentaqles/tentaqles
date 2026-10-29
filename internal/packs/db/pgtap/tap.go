@@ -20,8 +20,23 @@ type Failure struct {
 type TAPResult struct {
 	Failures     []Failure
 	Files, Tests int
-	// Pass is the harness's "Result: PASS".
-	Pass bool
+	// Summary reports that the harness printed its "Files=N, Tests=M" line.
+	Summary bool
+	// Result is the harness's "Result: X" word ("" when absent), and Pass
+	// is Result == "PASS".
+	Result string
+	Pass   bool
+}
+
+// Passed reports a run the harness itself calls passed: Result PASS, or,
+// with no Result line, a summary that counts at least one file and one
+// test. A run with no summary, no test, or another Result (FAIL,
+// NOTESTS) has not passed, whatever its exit code.
+func (r TAPResult) Passed() bool {
+	if r.Result != "" {
+		return r.Pass && r.Files > 0 && r.Tests > 0
+	}
+	return r.Summary && r.Files > 0 && r.Tests > 0
 }
 
 var (
@@ -73,9 +88,11 @@ func ParseTAP(out []byte, mapPath func(string) string) TAPResult {
 			m := filesRe.FindStringSubmatch(l)
 			res.Files, _ = strconv.Atoi(m[1])
 			res.Tests, _ = strconv.Atoi(m[2])
+			res.Summary = true
 			inSummary = false
 		case strings.HasPrefix(l, "Result: "):
-			res.Pass = strings.TrimSpace(strings.TrimPrefix(l, "Result: ")) == "PASS"
+			res.Result = strings.TrimSpace(strings.TrimPrefix(l, "Result: "))
+			res.Pass = res.Result == "PASS"
 		case inSummary && summaryRe.MatchString(l):
 			summary = summaryRe.FindStringSubmatch(l)[1]
 		case inSummary && summary != "" && failedRe.MatchString(l):

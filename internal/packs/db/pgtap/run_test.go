@@ -125,6 +125,14 @@ func setup(t *testing.T, cfg string, tools ...string) *env {
 	// A copy of the test binary is always a fake, even in a test that does
 	// not pick a mode (a probe of the tool runs it with --version).
 	t.Setenv("TQ_FAKE_PGTAP", "fake")
+	// A run that passes prints a harness summary (Result: PASS); a run with
+	// no summary fails closed.
+	okOut, _ := filepath.Abs(filepath.Join("testdata", "pg_prove_ok.txt"))
+	t.Setenv("TQ_FAKE_OUT", okOut)
+	t.Setenv("TQ_FAKE_EXIT", "0")
+	t.Setenv("TQ_FAKE_ECHO_SECRET", "")
+	t.Setenv("DOCKER_CONFIG", "")
+	t.Setenv("DOCKER_CONTEXT", "")
 	e := &env{root: t.TempDir(), bin: t.TempDir()}
 	for _, tl := range tools {
 		fakeBin(t, e.bin, tl)
@@ -209,7 +217,7 @@ func TestPgProveRunsAndReportsFailures(t *testing.T) {
 		t.Fatalf("dialed = %v", *dialed)
 	}
 	argv, _ := os.ReadFile(e.argv)
-	if got := strings.TrimSpace(string(argv)); got != "--ext .sql -r --failures --host localhost --port 54322 --dbname postgres --username tester supabase/tests" {
+	if got := strings.TrimSpace(string(argv)); got != "--ext .sql -r --failures --host localhost --port 54322 --dbname postgres --username tester -- supabase/tests" {
 		t.Fatalf("argv = %q", got)
 	}
 	if strings.Contains(string(argv), secret) {

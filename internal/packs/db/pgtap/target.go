@@ -236,7 +236,35 @@ func (t *Target) apply(p map[string]string) error {
 	return nil
 }
 
+// errOverride refuses a dbname or user that libpq or psql could read as
+// more connection parameters; it never quotes the value.
+var errOverride = errors.New("the test_db connection string has a dbname or user that reads as connection parameters (\"=\", \"://\", a leading \"-\" or a control character): tq cannot check where it points")
+
+// safeConnValue reports whether a dbname or user reaches pg_prove as a plain
+// name. psql reads a --dbname holding "=" or a URI prefix as a whole
+// connection string, which would override the host Local checked; a
+// leading "-" could read as an option; a control character could split a
+// line-based value.
+func safeConnValue(v string) bool {
+	if strings.Contains(v, "=") || strings.Contains(v, "://") || strings.HasPrefix(v, "-") {
+		return false
+	}
+	lv := strings.ToLower(v)
+	if strings.HasPrefix(lv, "postgres:") || strings.HasPrefix(lv, "postgresql:") {
+		return false
+	}
+	for _, r := range v {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func (t Target) finish() (Target, error) {
+	if !safeConnValue(t.DB) || !safeConnValue(t.User) {
+		return Target{}, errOverride
+	}
 	if len(t.Hosts) == 0 {
 		t.Hosts = []HostPort{{Host: "localhost"}}
 	}
