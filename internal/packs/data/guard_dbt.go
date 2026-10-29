@@ -82,6 +82,10 @@ type dbtCall struct {
 	profilesDir string
 	projectDir  string
 	profile     string
+	// the command names DBT_TARGET / DBT_FULL_REFRESH but no assignment the
+	// guard reads set it: the guard treats the value as unknown
+	targetEnvUnread      bool
+	fullRefreshEnvUnread bool
 }
 
 // writes reports a call that writes to its target, and the subcommand named.
@@ -104,9 +108,10 @@ type word struct {
 }
 
 // shellSegments splits a Bash or PowerShell command into simple commands
-// (on ; & | newlines, parentheses and braces outside quotes) of words. A
-// backslash is kept outside quotes (Windows paths); the PowerShell backtick
-// escapes the next character, and inside double quotes both escape.
+// (on ; & | newlines, parentheses and group braces outside quotes) of words.
+// A backslash is kept outside quotes (Windows paths) unless it continues the
+// line; the PowerShell backtick escapes the next character or continues the
+// line, and inside double quotes both escape.
 func shellSegments(cmd string) [][]word {
 	var segs [][]word
 	var cur []word
@@ -141,15 +146,22 @@ func shellSegments(cmd string) [][]word {
 				j++
 			}
 			i = j
-		case c == '`' && i+1 < n && cmd[i+1] != '\n' && cmd[i+1] != '\r':
+		case (c == '\\' || c == '`') && lineContinuation(cmd, i) > 0:
+			// a Bash backslash or PowerShell backtick before a line break
+			// continues the command on the next line: a word break only
+			flushWord()
+			i += lineContinuation(cmd, i)
+		case c == '`' && i+1 < n:
 			inWord = true
 			b.WriteByte(cmd[i+1])
 			i++
 		case c == ' ' || c == '\t' || c == '\r':
 			flushWord()
-		case c == ';' || c == '&' || c == '|' || c == '\n' || c == '(' || c == ')' || c == '{' || c == '}':
-			// ${NAME} is a variable, not a brace group
-			if c == '{' && i > 0 && cmd[i-1] == '$' {
+		case c == '{':
+			// ${NAME} is a variable, and a brace inside a word ({x:1},
+			// -I{}) is text; a brace that opens a group or script block
+			// ({ dbt run; }, {dbt run}) ends the segment
+			if i > 0 && cmd[i-1] == '$' {
 				if end := strings.IndexByte(cmd[i:], '}'); end > 0 {
 					inWord = true
 					b.WriteString(cmd[i : i+end+1])
@@ -157,6 +169,14 @@ func shellSegments(cmd string) [][]word {
 					continue
 				}
 			}
+			if end, literal := braceWord(cmd, i); literal {
+				inWord = true
+				b.WriteString(cmd[i:end])
+				i = end - 1
+				continue
+			}
+			flushSeg()
+		case c == ';' || c == '&' || c == '|' || c == '\n' || c == '(' || c == ')' || c == '}':
 			flushSeg()
 		default:
 			inWord = true
@@ -165,6 +185,55 @@ func shellSegments(cmd string) [][]word {
 	}
 	flushSeg()
 	return segs
+}
+
+// lineContinuation returns how many bytes after cmd[i] (a backslash or a
+// backtick) form a line break: 1 for \n, 2 for \r\n, 0 for none.
+func lineContinuation(cmd string, i int) int {
+	if i+1 < len(cmd) && cmd[i+1] == '\n' {
+		return 1
+	}
+	if i+2 < len(cmd) && cmd[i+1] == '\r' && cmd[i+2] == '\n' {
+		return 2
+	}
+	return 0
+}
+
+// braceScanLimit bounds the look-ahead of braceWord, so a long run of braces
+// stays linear.
+const braceScanLimit = 256
+
+// braceWord reports whether the brace at cmd[i] is text inside a word: its
+// matching close brace comes before any unquoted blank or command separator
+// ({x:1}, {"x": 1}, {}). end is the index after the text. A brace whose match
+// is further than braceScanLimit is one literal character.
+func braceWord(cmd string, i int) (end int, literal bool) {
+	depth := 0
+	for j := i; j < len(cmd); j++ {
+		if j-i > braceScanLimit {
+			return i + 1, true
+		}
+		switch c := cmd[j]; c {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j + 1, true
+			}
+		case '\'', '"':
+			// the quote must close within the look-ahead too; otherwise
+			// the brace is one character and the quote is read as usual
+			k := strings.IndexByte(cmd[j+1:min(len(cmd), i+braceScanLimit+1)], c)
+			if k < 0 {
+				return i + 1, true
+			}
+			j += k + 1
+		case ' ', '\t', '\r', '\n', ';', '&', '|', '(', ')', '`', '\\':
+			return 0, false
+		}
+	}
+	return 0, false
 }
 
 // baseCommand is a word's command name: no directory, no .exe/.cmd/.bat,
@@ -232,7 +301,8 @@ func expandVars(v string, env map[string]string) string {
 // dynamicValue reports a value the shell computes when it runs ($VAR,
 // $(...), %VAR%, a backtick): the guard cannot know it.
 func dynamicValue(v string) bool {
-	return strings.ContainsAny(v, "$`") || reVarRef.MatchString(v)
+	// a brace is a placeholder (xargs -I{}, find -exec {}) or an expansion
+	return strings.ContainsAny(v, "$`{}") || reVarRef.MatchString(v)
 }
 
 // dbtCommandAt reports whether seg[k] runs dbt: its command name is dbt (or
@@ -263,6 +333,7 @@ func parseDBTCalls(cmd string, depth int, inherited map[string]string) []dbtCall
 	for k, v := range inherited {
 		env[k] = v
 	}
+	mentionsTarget, mentionsFullRefresh := reMentionTarget.MatchString(cmd), reMentionFullRefresh.MatchString(cmd)
 	var out []dbtCall
 	for _, seg := range shellSegments(cmd) {
 		// a whole-segment assignment: $env:DBT_TARGET = "prod", export/set X=v
@@ -270,6 +341,11 @@ func parseDBTCalls(cmd string, depth int, inherited map[string]string) []dbtCall
 			if name, val, ok := envAssign(seg); ok {
 				env[name] = expandVars(val, env)
 			}
+			continue
+		}
+		// Set-Item / New-Item env:NAME value
+		if name, val, ok := envItemAssign(seg); ok {
+			env[name] = expandVars(val, env)
 			continue
 		}
 		// leading inline assignments: DBT_TARGET=prod dbt run, T=prod
@@ -283,6 +359,9 @@ func parseDBTCalls(cmd string, depth int, inherited map[string]string) []dbtCall
 		if i >= len(seg) || textOnly[baseCommand(seg[i].text)] {
 			continue
 		}
+		// assignments after a leading word hold for this call only:
+		// env DBT_TARGET=prod dbt run, sudo -E DBT_TARGET=prod dbt run
+		callEnv, copied := env, false
 		at := -1
 		for k := i; k < len(seg); k++ {
 			w := seg[k]
@@ -290,16 +369,99 @@ func parseDBTCalls(cmd string, depth int, inherited map[string]string) []dbtCall
 				at = k
 				continue
 			}
+			if at < 0 && k > i && reInlineAssign.MatchString(w.text) {
+				if name, val, ok := envAssign(seg[k : k+1]); ok {
+					if !copied {
+						callEnv, copied = copyEnv(env), true
+					}
+					callEnv[name] = expandVars(val, callEnv)
+				}
+				continue
+			}
 			if w.quoted && strings.ContainsAny(w.text, " \t\n") && strings.Contains(strings.ToLower(w.text), "dbt") {
-				out = append(out, parseDBTCalls(w.text, depth+1, env)...)
+				out = append(out, parseDBTCalls(w.text, depth+1, callEnv)...)
 			}
 		}
 		if at < 0 {
 			continue
 		}
-		out = append(out, readDBTArgs(dbtArgs(seg, i, at), env))
+		c := readDBTArgs(dbtArgs(seg, i, at), callEnv)
+		// the command names a variable in a form the guard did not read
+		// ([Environment]::SetEnvironmentVariable, Set-Content env:...)
+		_, setTarget := callEnv["DBT_TARGET"]
+		_, setFullRefresh := callEnv["DBT_FULL_REFRESH"]
+		c.targetEnvUnread = mentionsTarget && !setTarget
+		c.fullRefreshEnvUnread = mentionsFullRefresh && !setFullRefresh
+		out = append(out, c)
 	}
 	return out
+}
+
+// reMentionTarget and reMentionFullRefresh find the variable names anywhere
+// in a command (not DBT_TARGET_PATH).
+var (
+	reMentionTarget      = regexp.MustCompile(`(?i)\bDBT_TARGET\b`)
+	reMentionFullRefresh = regexp.MustCompile(`(?i)\bDBT_FULL_REFRESH\b`)
+)
+
+func copyEnv(env map[string]string) map[string]string {
+	m := make(map[string]string, len(env)+1)
+	for k, v := range env {
+		m[k] = v
+	}
+	return m
+}
+
+// envItemCommands are the PowerShell item cmdlets that can set env:NAME.
+var envItemCommands = map[string]bool{"set-item": true, "si": true, "new-item": true, "ni": true}
+
+// envItemAssign reads Set-Item env:NAME value, Set-Item -Path env:NAME
+// -Value v, and New-Item -Path Env: -Name NAME -Value v.
+func envItemAssign(seg []word) (string, string, bool) {
+	if !envItemCommands[strings.ToLower(seg[0].text)] {
+		return "", "", false
+	}
+	var pathArg, name, val string
+	var pos []string
+	for k := 1; k < len(seg); k++ {
+		a := strings.ToLower(seg[k].text)
+		next := ""
+		if k+1 < len(seg) {
+			next = seg[k+1].text
+		}
+		switch a {
+		case "-path", "-literalpath":
+			pathArg = next
+			k++
+		case "-name":
+			name = next
+			k++
+		case "-value":
+			val = next
+			k++
+		default:
+			if !strings.HasPrefix(a, "-") {
+				pos = append(pos, seg[k].text)
+			}
+		}
+	}
+	if pathArg == "" && len(pos) > 0 {
+		pathArg, pos = pos[0], pos[1:]
+	}
+	if val == "" && len(pos) > 0 {
+		val = pos[0]
+	}
+	p := strings.ToLower(pathArg)
+	if !strings.HasPrefix(p, "env:") {
+		return "", "", false
+	}
+	if rest := strings.TrimLeft(pathArg[4:], `\/`); rest != "" {
+		name = rest
+	}
+	if name == "" || strings.ContainsAny(name, " /\\") {
+		return "", "", false
+	}
+	return strings.ToUpper(name), val, true
 }
 
 // dbtArgs are the words after the dbt word, plus a Start-Process argument
@@ -515,6 +677,10 @@ func checkProdTarget(call policy.ToolCall, g packs.GuardCtx) (policy.Action, str
 			g.Count("dbt_prod_target:denied", 1)
 			return policy.Deny, fmt.Sprintf("dbt %s --target %s: the shell computes the target, so the guard cannot check it against packs.data.dbt.prod_targets; pass a literal --target %s", sub, target, cfg.DevTarget), true
 		}
+		if target == "" && c.targetEnvUnread {
+			g.Count("dbt_prod_target:denied", 1)
+			return policy.Deny, fmt.Sprintf("dbt %s with no --target: the command sets DBT_TARGET in a form the guard does not read; pass --target %s", sub, cfg.DevTarget), true
+		}
 		if target == "" {
 			t, err := defaultTarget(g, c, cfg)
 			if err != nil {
@@ -539,7 +705,7 @@ func checkFullRefresh(call policy.ToolCall, g packs.GuardCtx) (policy.Action, st
 		if !writes {
 			sub = c.sub
 		}
-		if c.fullRefresh && (writes || !readOnlyCommands[sub]) {
+		if (c.fullRefresh || c.fullRefreshEnvUnread) && (writes || !readOnlyCommands[sub]) {
 			g.Count("dbt_full_refresh:asked", 1)
 			t := c.target
 			if t == "" {

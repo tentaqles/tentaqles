@@ -98,6 +98,45 @@ func TestDBTProdTargetGuard(t *testing.T) {
 		{"Bash", "DBT_TARGET=$X dbt run", policy.Deny},
 		{"Bash", "dbt run -tprod", policy.Deny},
 		{"Bash", "dbt run -tdev", policy.Allow},
+
+		// review r1 Major 1: a line continuation does not end the command
+		{"Bash", "dbt run \\\n  --target prod", policy.Deny},
+		{"Bash", "dbt run \\\r\n  --target prod", policy.Deny},
+		{"Bash", "dbt run --target prod\\\n  --select x", policy.Deny},
+		{"PowerShell", "dbt run `\n --target prod", policy.Deny},
+		{"PowerShell", "dbt run `\r\n --target prod", policy.Deny},
+		{"Bash", "dbt run \\\n  --target dev", policy.Allow},
+		{"Bash", "dbt run --target dev\nls", policy.Allow},
+
+		// review r1 Major 2: assignments after a leading command word
+		{"Bash", "env DBT_TARGET=prod dbt run", policy.Deny},
+		{"Bash", "env -i DBT_TARGET=prod dbt run", policy.Deny},
+		{"Bash", "sudo -E DBT_TARGET=prod dbt run", policy.Deny},
+		{"Bash", "env DBT_TARGET=dev dbt run", policy.Allow},
+		{"Bash", "env T=prod dbt run --target $T", policy.Deny},
+
+		// review r1 Minor 1: braces inside a word do not split the call
+		{"Bash", "dbt run --vars {x:1} --target prod", policy.Deny},
+		{"Bash", `dbt run --vars {"x":1} --target prod`, policy.Deny},
+		{"Bash", "dbt run --vars={x:1} --target prod", policy.Deny},
+		{"Bash", "dbt run --vars {x:1} --target dev", policy.Allow},
+		{"Bash", "{ dbt run --target prod; }", policy.Deny},
+		{"PowerShell", "1..2 | ForEach-Object {dbt run --target prod}", policy.Deny},
+		{"PowerShell", "& {dbt run --target prod}", policy.Deny},
+		{"PowerShell", "if ($true) {dbt run --target dev}", policy.Allow},
+
+		// review r1 Minor 2: PowerShell env forms other than $env:X = v
+		{"PowerShell", "Set-Item env:DBT_TARGET prod; dbt run", policy.Deny},
+		{"PowerShell", "Set-Item -Path env:DBT_TARGET -Value prod; dbt run", policy.Deny},
+		{"PowerShell", "si Env:\\DBT_TARGET prod; dbt run", policy.Deny},
+		{"PowerShell", "New-Item -Path Env:DBT_TARGET -Value 'prod'; dbt run", policy.Deny},
+		{"PowerShell", "Set-Item env:DBT_TARGET dev; dbt run", policy.Allow},
+		{"PowerShell", "[Environment]::SetEnvironmentVariable('DBT_TARGET','prod'); dbt run", policy.Deny},
+		{"PowerShell", "[System.Environment]::SetEnvironmentVariable('DBT_TARGET', 'dev', 'Process'); dbt run", policy.Deny},
+		{"PowerShell", "[Environment]::SetEnvironmentVariable('DBT_TARGET','dev'); dbt run --target dev", policy.Allow},
+
+		// review r1 Minor 3: a placeholder target is not a literal
+		{"Bash", "ls | xargs -I{} dbt run --target {}", policy.Deny},
 	}
 	for _, c := range cases {
 		o := outcome(t, env, c.tool, c.cmd, guardProdTarget)
@@ -207,7 +246,11 @@ func TestDBTFullRefreshGuard(t *testing.T) {
 		// review r0 Major 1, Major 2 and Minor 6
 		"dbt --log-level debug run --full-refresh", "timeout 600 dbt build --full-refresh", "cmd /c dbt run --full-refresh",
 		"dbt clone --full-refresh --state prod-artifacts", "DBT_FULL_REFRESH=1 bash -c 'dbt run'",
-		"export DBT_FULL_REFRESH=true; pwsh -Command 'dbt build'"} {
+		"export DBT_FULL_REFRESH=true; pwsh -Command 'dbt build'",
+		// review r1 Major 1, Major 2 and Minor 2
+		"dbt run \\\n --full-refresh", "dbt run `\n --full-refresh", "env DBT_FULL_REFRESH=true dbt run",
+		"sudo -E DBT_FULL_REFRESH=1 dbt build", "Set-Item env:DBT_FULL_REFRESH true; dbt run",
+		"[Environment]::SetEnvironmentVariable('DBT_FULL_REFRESH','true'); dbt run"} {
 		o := outcome(t, env, "Bash", c, guardFullRefresh)
 		if o.Action != policy.Ask || !o.Handled || !strings.Contains(o.Reason, "drops and rebuilds incremental tables") {
 			t.Errorf("%q: %+v", c, o)
@@ -233,7 +276,13 @@ func TestDBTGuardsUnder50ms(t *testing.T) {
 	writeFile(t, repo, "profiles.yml", "acme:\n  target: dev\n")
 	env := guardEnv(t, repo, "data: {enabled: true}")
 	cmd := strings.Repeat("echo dbt run --target dev 'quoted text' ; ", 64<<10/40)[:64<<10] + " dbt run"
-	for _, id := range []string{guardProdTarget, guardFullRefresh} {
+	// review r1: a run of braces and open quotes stays linear
+	braces := "dbt run " + strings.Repeat("{'{", 64<<10/3) + " --target dev"
+	for _, id := range []string{guardProdTarget, guardFullRefresh, guardProdTarget + " braces"} {
+		cmd := cmd
+		if strings.HasSuffix(id, " braces") {
+			id, cmd = strings.TrimSuffix(id, " braces"), braces
+		}
 		var durs []time.Duration
 		for i := 0; i < 9; i++ {
 			start := time.Now()
@@ -274,5 +323,31 @@ func TestShellSegments(t *testing.T) {
 	want := []string{`A=1,dbt,run,--vars,{"k": 1}`, "echo,x;y", "tee", "out"}
 	if strings.Join(got, " | ") != strings.Join(want, " | ") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// review r1: continuations join lines; braces inside a word stay in it.
+func TestShellSegmentsContinuationsAndBraces(t *testing.T) {
+	for in, want := range map[string]string{
+		"dbt run \\\n --target prod":     "dbt,run,--target,prod",
+		"dbt run --target prod\\\n -s x": "dbt,run,--target,prod,-s,x",
+		"dbt run `\r\n --target prod":    "dbt,run,--target,prod",
+		"dbt run --vars {x:1} -t prod":   "dbt,run,--vars,{x:1},-t,prod",
+		"xargs -I{} dbt run":             "xargs,-I{},dbt,run",
+		"{ dbt run; }":                   "dbt,run",
+		"% {dbt run -t prod}":            "% | dbt,run,-t,prod",
+		"echo a\nls":                     "echo,a | ls",
+	} {
+		var got []string
+		for _, s := range shellSegments(in) {
+			var ws []string
+			for _, w := range s {
+				ws = append(ws, w.text)
+			}
+			got = append(got, strings.Join(ws, ","))
+		}
+		if g := strings.Join(got, " | "); g != want {
+			t.Errorf("%q: got %q, want %q", in, g, want)
+		}
 	}
 }
