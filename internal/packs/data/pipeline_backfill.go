@@ -19,6 +19,8 @@ var (
 	// Python code (strings blanked).
 	pyWallClockRe = regexp.MustCompile(`\b(?:datetime\s*\.\s*(?:now|utcnow|today)|date\s*\.\s*today|pendulum\s*\.\s*(?:now|today)|timezone\s*\.\s*utcnow|current_date|current_timestamp|getdate|now)\s*\(`)
 	pyFilterRe    = regexp.MustCompile(`\.(?:filter|where|query|isin|between)\s*\(|\.loc\s*\[|(?i:\bpartition\w*)\s*=`)
+	pySubscriptRe = regexp.MustCompile(`[\w)\]]\s*\[`) // a subscript, not a list literal
+	pyMaskOpRe    = regexp.MustCompile(`==|!=|[<>&|~]`)
 	pyAssignRe    = regexp.MustCompile(`^([A-Za-z_]\w*)\s*(?::\s*[\w.\[\], ]+)?=[^=]`)
 	// SQL text (in .sql files and Python string literals).
 	sqlWallClockRe = regexp.MustCompile(`(?i)\b(?:current_date|current_timestamp|getdate\s*\(|getutcdate\s*\(|sysdate|sysdatetime\s*\(|now\s*\(|today\s*\()`)
@@ -60,12 +62,13 @@ func backfillPython(u *unit, level string, fs *findings) {
 	for _, l := range scan.PythonLines(u.src) {
 		code := l.Code
 		wall := pyWallClockRe.MatchString(code)
-		if m := pyAssignRe.FindStringSubmatch(code); m != nil && wall && !pyFilterRe.MatchString(code) {
+		spans := filterSpans(code)
+		if m := pyAssignRe.FindStringSubmatch(code); m != nil && wall && len(spans) == 0 {
 			tainted[m[1]] = true
 			continue
 		}
 		hit := false
-		for _, span := range filterSpans(code) {
+		for _, span := range spans {
 			if pyWallClockRe.MatchString(span) {
 				hit = true
 			}
@@ -99,10 +102,19 @@ func backfillPython(u *unit, level string, fs *findings) {
 
 // filterSpans returns the argument text of every filter context in a
 // logical line: the parentheses of .filter( .where( .query( .isin(
-// .between(, the brackets of .loc[, and the value after a partition name
-// up to the next top-level comma.
+// .between(, the brackets of .loc[, the brackets of a boolean-mask
+// subscript (pandas `df[df.d == x]`: a subscript holding a comparison or a
+// & | ~ mask operator; `df["col"]`, `df[0:10]` and column lists are not
+// filters), and the value after a partition name up to the next top-level
+// comma.
 func filterSpans(code string) []string {
 	var out []string
+	for _, m := range pySubscriptRe.FindAllStringIndex(code, -1) {
+		end := m[1]
+		if span := code[end:closeOf(code, end)]; pyMaskOpRe.MatchString(span) {
+			out = append(out, span)
+		}
+	}
 	for _, m := range pyFilterRe.FindAllStringIndex(code, -1) {
 		end := m[1]
 		if c := code[end-1]; c == '(' || c == '[' {
