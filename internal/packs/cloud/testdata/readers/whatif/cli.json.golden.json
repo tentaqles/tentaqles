@@ -1,0 +1,182 @@
+[
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Storage/storageAccounts/acmesa",
+    "type": "Microsoft.Storage/storageAccounts",
+    "actions": [
+      "update"
+    ],
+    "after": {
+      "apiVersion": "2023-01-01",
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Storage/storageAccounts/acmesa",
+      "kind": "StorageV2",
+      "location": "westeurope",
+      "name": "acmesa",
+      "properties": {
+        "allowBlobPublicAccess": true,
+        "primaryAccessKey": "[REDACTED:secret_key]"
+      },
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "env": "prod"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    "before": {
+      "apiVersion": "2023-01-01",
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Storage/storageAccounts/acmesa",
+      "name": "acmesa",
+      "properties": {
+        "allowBlobPublicAccess": false
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    "pos": {
+      "file": "whatif/cli.json",
+      "line": 1,
+      "pointer": "/changes/0"
+    },
+    "source": "whatif",
+    "meta": {
+      "raw_action": "Modify"
+    }
+  },
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Sql/servers/acme-sql/databases/acme-db",
+    "type": "Microsoft.Sql/servers/databases",
+    "actions": [
+      "delete"
+    ],
+    "before": {
+      "apiVersion": "2022-05-01-preview",
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Sql/servers/acme-sql/databases/acme-db",
+      "name": "acme-sql/acme-db",
+      "type": "Microsoft.Sql/servers/databases"
+    },
+    "pos": {
+      "file": "whatif/cli.json",
+      "line": 1,
+      "pointer": "/changes/1"
+    },
+    "source": "whatif",
+    "meta": {
+      "raw_action": "Delete"
+    }
+  },
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000001",
+    "type": "Microsoft.Authorization/roleAssignments",
+    "actions": [
+      "create"
+    ],
+    "after": {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000001",
+      "name": "00000000-0000-0000-0000-000000000001",
+      "properties": {
+        "principalId": "11111111-1111-1111-1111-111111111111",
+        "roleDefinitionId": "/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      },
+      "type": "Microsoft.Authorization/roleAssignments"
+    },
+    "pos": {
+      "file": "whatif/cli.json",
+      "line": 1,
+      "pointer": "/changes/2"
+    },
+    "source": "whatif",
+    "meta": {
+      "raw_action": "Create"
+    }
+  },
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Network/virtualNetworks/acme-vnet",
+    "type": "Microsoft.Network/virtualNetworks",
+    "actions": [
+      "no-op"
+    ],
+    "pos": {
+      "file": "whatif/cli.json",
+      "line": 1,
+      "pointer": "/changes/3"
+    },
+    "source": "whatif",
+    "meta": {
+      "raw_action": "Ignore"
+    }
+  },
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.KeyVault/vaults/acme-kv",
+    "type": "Microsoft.KeyVault/vaults",
+    "actions": [
+      "no-op"
+    ],
+    "after": {
+      "name": "acme-kv",
+      "type": "Microsoft.KeyVault/vaults"
+    },
+    "before": {
+      "name": "acme-kv",
+      "type": "Microsoft.KeyVault/vaults"
+    },
+    "pos": {
+      "file": "whatif/cli.json",
+      "line": 1,
+      "pointer": "/changes/4"
+    },
+    "source": "whatif",
+    "meta": {
+      "raw_action": "NoChange"
+    }
+  },
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Web/sites/acme-app",
+    "type": "Microsoft.Web/sites",
+    "actions": [
+      "unknown"
+    ],
+    "pos": {
+      "file": "whatif/cli.json",
+      "line": 1,
+      "pointer": "/changes/5"
+    },
+    "source": "whatif",
+    "meta": {
+      "raw_action": "Unsupported",
+      "unsupported_reason": "The resource uses a reference function that cannot be evaluated."
+    }
+  },
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Network/dnsZones/acme.example",
+    "type": "Microsoft.Network/dnsZones",
+    "actions": [
+      "update"
+    ],
+    "pos": {
+      "file": "whatif/cli.json",
+      "line": 1,
+      "pointer": "/changes/6"
+    },
+    "source": "whatif",
+    "meta": {
+      "raw_action": "Deploy"
+    }
+  },
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/acme-rg/providers/Microsoft.Compute/disks/acme-disk",
+    "type": "Microsoft.Compute/disks",
+    "actions": [
+      "delete"
+    ],
+    "pos": {
+      "file": "whatif/cli.json",
+      "line": 1,
+      "pointer": "/potentialChanges/0"
+    },
+    "source": "whatif",
+    "meta": {
+      "potential": "true",
+      "raw_action": "Delete"
+    }
+  }
+]

@@ -1,0 +1,57 @@
+[
+  {
+    "addr": "33333333-3333-3333-3333-333333333333",
+    "type": "Microsoft.Authorization/roleDefinitions",
+    "after": {
+      "apiVersion": "2022-04-01",
+      "name": "33333333-3333-3333-3333-333333333333",
+      "properties": {
+        "assignableScopes": [
+          "/"
+        ],
+        "permissions": [
+          {
+            "actions": [
+              "*"
+            ],
+            "notActions": []
+          }
+        ],
+        "roleName": "acme-custom"
+      },
+      "type": "Microsoft.Authorization/roleDefinitions"
+    },
+    "pos": {
+      "file": "arm/symbolic.json",
+      "line": 19,
+      "pointer": "/resources/role"
+    },
+    "source": "arm",
+    "meta": {
+      "symbol": "role"
+    }
+  },
+  {
+    "addr": "acme-kv",
+    "type": "Microsoft.KeyVault/vaults",
+    "after": {
+      "apiVersion": "2023-07-01",
+      "location": "westeurope",
+      "name": "acme-kv",
+      "properties": {
+        "enablePurgeProtection": true,
+        "tenantId": "22222222-2222-2222-2222-222222222222"
+      },
+      "type": "Microsoft.KeyVault/vaults"
+    },
+    "pos": {
+      "file": "arm/symbolic.json",
+      "line": 6,
+      "pointer": "/resources/vault"
+    },
+    "source": "arm",
+    "meta": {
+      "symbol": "vault"
+    }
+  }
+]

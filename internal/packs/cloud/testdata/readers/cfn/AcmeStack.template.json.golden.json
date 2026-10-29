@@ -1,0 +1,44 @@
+[
+  {
+    "addr": "AssetsBucket1A2B3C4D",
+    "type": "AWS::S3::Bucket",
+    "after": {
+      "BucketEncryption": {
+        "ServerSideEncryptionConfiguration": [
+          {
+            "ServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "AES256"
+            }
+          }
+        ]
+      }
+    },
+    "pos": {
+      "file": "cfn/AcmeStack.template.json",
+      "line": 3,
+      "pointer": "/Resources/AssetsBucket1A2B3C4D"
+    },
+    "source": "cfn",
+    "meta": {
+      "cdk_path": "AcmeStack/AssetsBucket/Resource",
+      "deletion_policy": "Retain",
+      "update_replace_policy": "Retain"
+    }
+  },
+  {
+    "addr": "CDKMetadata",
+    "type": "AWS::CDK::Metadata",
+    "after": {
+      "Analytics": "v2:deflate64:H4sIAAAAAAAA"
+    },
+    "pos": {
+      "file": "cfn/AcmeStack.template.json",
+      "line": 16,
+      "pointer": "/Resources/CDKMetadata"
+    },
+    "source": "cfn",
+    "meta": {
+      "cdk_path": "AcmeStack/CDKMetadata/Default"
+    }
+  }
+]

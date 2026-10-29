@@ -1,0 +1,1 @@
+{"ChangeSetName":"acme-cs","StackName":"acme","NextToken":"tester-p2","Changes":[{"Type":"Resource","ResourceChange":{"Action":"Modify","LogicalResourceId":"Web","ResourceType":"AWS::EC2::Instance","Replacement":"False"}}]}
