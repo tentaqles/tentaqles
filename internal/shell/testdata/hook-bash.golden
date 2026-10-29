@@ -1,0 +1,18 @@
+# tq shell hook (bash)
+# The prompt hook is registered first and every function uses the
+# `function name { ...; }` form, whose name is never alias-expanded: an
+# earlier `alias claude=...` can never abort this block.
+function __tq_hook { case "${TQ_MODE:-}" in off) return 0;; esac; [ "${TQ_ENABLED:-1}" = "0" ] && return 0; local __o; __o="$('/opt/tq/bin/tq' env --shell bash 2>/dev/null)"; if [ -n "$__o" ]; then eval "$__o"; fi; return 0; }
+case ";${PROMPT_COMMAND:-};" in *";__tq_hook;"*) ;; *) PROMPT_COMMAND="__tq_hook${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac
+__tq_hook
+function tq {
+  case "${1:-}" in
+    off) local __o; __o="$('/opt/tq/bin/tq' env --off --shell bash)" || return $?; eval "$__o"; echo 'tq: off in this window - identity cleared, guard off, main logins in use. Run: tq on'; return 0;;
+    on)  unset TQ_MODE; __tq_hook; echo 'tq: on - identity re-applied for this folder'; return 0;;
+    *)   '/opt/tq/bin/tq' "$@";;
+  esac
+}
+function claude { if [ "${TQ_MODE:-}" = off ]; then '/opt/tq/bin/tq' run --off -- claude "$@"; else '/opt/tq/bin/tq' run . -- claude "$@"; fi; }
+function codex { if [ "${TQ_MODE:-}" = off ]; then '/opt/tq/bin/tq' run --off -- codex "$@"; else '/opt/tq/bin/tq' run . -- codex "$@"; fi; }
+function claude-off { '/opt/tq/bin/tq' run --off -- claude "$@"; }
+function codex-off { '/opt/tq/bin/tq' run --off -- codex "$@"; }

@@ -91,6 +91,32 @@ The Board tab lists the registered workspaces and the hubs that are running.
   It reloads the wizard, so unapplied wizard state is reset. On the wizard itself it does
   nothing.
 
+## Guard tab
+
+The Guard tab shows and changes each workspace's guard mode (see `CLAUDE-HOOK.md`,
+"Guard modes"). It calls the same code as `tq mode`.
+
+- A workspace picker and a layer picker (the workspace, one of its projects, or the
+  global `guard.yaml`).
+- A preset control: `default`, `relaxed`, `strict`, `custom`.
+- A category grid with a four-way toggle per category (`skip`, `ask`, `deny`, `rule`).
+  Toggling a preset turns it into `custom` with that preset as the base. The locked rows
+  (`identity`, `secrets`, `self-protection`, `privacy`) are greyed with a lock icon and a
+  tooltip naming the group; they cannot be changed.
+- The rule overrides (`rules_override`) with a Clear button.
+- A ceiling banner when the layers are looser than the grant, with a "Grant relaxed for
+  acme" (or "Grant custom …") button and a confirm. Revoke removes the grant.
+- The 24 h counts of confirms and blocks the mode skipped or lowered.
+
+The Go side is `desktop/app_guard.go` over `internal/setup/guard.go`; the frontend is
+`Guard.tsx`, with its toggle logic in `guardview.ts` (tests in `guardview.test.ts`; not
+`guard.ts`, which would clash with `Guard.tsx` on a case-insensitive file system).
+
+Every change re-trusts the manifest like `tq mode set`, and carries the grant only when
+the result is no looser than it. The app is a human GUI with no agent tool path into its
+bindings, so unlike the CLI it needs no terminal check to grant. `off` is not a stored
+mode and is not offered here; use `claude-off` or `tq off`.
+
 ## Install
 
 Download the installer for your OS from the

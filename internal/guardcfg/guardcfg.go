@@ -35,6 +35,13 @@ type File struct {
 	Disable []string                 `yaml:"disable,omitempty"`
 	Actions map[string]policy.Action `yaml:"actions,omitempty"`
 	Rules   []policy.Rule            `yaml:"rules,omitempty"`
+
+	// Guard mode, layer 2 (spec E §6.1, §7). Validation is WS1's: "off" is
+	// a load error, categories only with mode custom, never a locked one.
+	Mode          string             `yaml:"mode,omitempty"`
+	Base          string             `yaml:"base,omitempty"`
+	Categories    map[Category]Value `yaml:"categories,omitempty"`
+	RulesOverride map[string]Value   `yaml:"rules_override,omitempty"`
 }
 
 // HookRules are checks the hook runs in code rather than as regex rules;
@@ -47,6 +54,69 @@ var HookRules = map[string]string{
 	"tq/text-pii":         "a commit, tag or GitHub PR/issue/release text that carries personal or financial data",
 	"tq/pii-fixture-dump": "copying rows from classified data into tests/, fixtures/ or seeds/",
 	"tq/commit-message":   "a git commit whose message is not Conventional Commits",
+	OutsidePathWriteID:    "a write or recursive delete of an absolute path outside the workspace, the session folder, your repos and the temp folders",
+}
+
+// HookRuleAction is a hook rule's default action: ask for the commit
+// message and outside-path checks, deny for the rest.
+func HookRuleAction(id string) policy.Action {
+	switch id {
+	case "tq/commit-message", OutsidePathWriteID:
+		return policy.Ask
+	}
+	return policy.Deny
+}
+
+// validModeKeys checks the global file's guard-mode keys like a manifest's.
+func validModeKeys(f File) error {
+	cats := map[string]string{}
+	for c, v := range f.Categories {
+		cats[string(c)] = string(v)
+	}
+	ov := map[string]string{}
+	for id, v := range f.RulesOverride {
+		ov[id] = string(v)
+	}
+	if err := manifest.ValidateModeKeys("guard.yaml", f.Mode, f.Base, cats, ov); err != nil {
+		return err
+	}
+	for _, r := range f.Rules {
+		if r.Category != "" {
+			if _, ok := ParseCategory(r.Category); !ok {
+				return fmt.Errorf("rules[%s].category: unknown category %q", r.ID, r.Category)
+			}
+		}
+	}
+	return nil
+}
+
+// UnknownOverrides returns the rules_override ids (global, workspace,
+// projects, and the legacy keep_asking) that name no rule tq knows, sorted.
+func UnknownOverrides(m *manifest.Manifest, g File) []string {
+	known := Known(m, g)
+	ids := map[string]bool{}
+	for id := range g.RulesOverride {
+		ids[id] = true
+	}
+	if m != nil {
+		gv := m.Guard.ModeView()
+		for id := range gv.RulesOverride {
+			ids[id] = true
+		}
+		for _, p := range gv.Projects {
+			for id := range p.RulesOverride {
+				ids[id] = true
+			}
+		}
+	}
+	var out []string
+	for id := range ids {
+		if _, ok := Lookup(id, known); !ok {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Load reads the global file. A missing file is an empty File. A file that
@@ -65,6 +135,9 @@ func Load() (File, error) {
 		return File{}, fmt.Errorf("%s: %w", Path(), err)
 	}
 	if err := validActions(f.Actions); err != nil {
+		return File{}, fmt.Errorf("%s: %w", Path(), err)
+	}
+	if err := validModeKeys(f); err != nil {
 		return File{}, fmt.Errorf("%s: %w", Path(), err)
 	}
 	for i := range f.Rules {
@@ -113,6 +186,10 @@ type Effective struct {
 	DisableOrigin map[string]string
 	ActionOrigin  map[string]string
 	GlobalErr     error // the global file could not be loaded (ignored)
+	// LockedIgnored lists, sorted, the disable and looser actions entries
+	// that named a locked rule and were ignored (doctor guard-locked-override),
+	// as "disable:<id>@<origin>" or "actions:<id>@<origin>".
+	LockedIgnored []string
 }
 
 // Off reports whether id is switched off.
@@ -129,14 +206,15 @@ func (e Effective) ActionFor(id string, def policy.Action) policy.Action {
 	return def
 }
 
-// Resolve merges the global file (loaded here) with m's guard block. m may
+// ResolveActions merges the global file (loaded here) with m's guard block
+// (named Resolve before spec E, which uses Resolve for the guard mode). m may
 // be nil (no trusted workspace): then only the global file applies.
-func Resolve(m *manifest.Manifest, wsName string) Effective {
+func ResolveActions(m *manifest.Manifest, wsName string) Effective {
 	g, err := Load()
 	return Merge(g, err, m, wsName)
 }
 
-// Merge is Resolve with the global file given; split out for tests.
+// Merge is ResolveActions with the global file given; split out for tests.
 func Merge(g File, gerr error, m *manifest.Manifest, wsName string) Effective {
 	e := Effective{Actions: map[string]policy.Action{}, DisableOrigin: map[string]string{}, ActionOrigin: map[string]string{}, GlobalErr: gerr}
 	if gerr == nil {
@@ -169,6 +247,25 @@ func Merge(g File, gerr error, m *manifest.Manifest, wsName string) Effective {
 			e.ActionOrigin[id] = wsName
 		}
 	}
+	// Locked rules (spec E §6.1 step 9): guard.disable is ignored, and
+	// guard.actions may only make them stricter.
+	for id, origin := range e.DisableOrigin {
+		if LockedID(id) {
+			delete(e.DisableOrigin, id)
+			e.LockedIgnored = append(e.LockedIgnored, "disable:"+id+"@"+origin)
+		}
+	}
+	for id, a := range e.Actions {
+		if !LockedID(id) {
+			continue
+		}
+		if def, ok := BuiltinAction(id); ok && def.StricterThan(a) {
+			e.LockedIgnored = append(e.LockedIgnored, "actions:"+id+"@"+e.ActionOrigin[id])
+			delete(e.Actions, id)
+			delete(e.ActionOrigin, id)
+		}
+	}
+	sort.Strings(e.LockedIgnored)
 	for id := range e.DisableOrigin {
 		e.Disable = append(e.Disable, id)
 	}
@@ -196,7 +293,7 @@ func Known(m *manifest.Manifest, g File) []RuleInfo {
 		out = append(out, RuleInfo{ID: r.ID, Action: r.Action, Kind: "builtin", Summary: r.Reason})
 	}
 	for id, s := range HookRules {
-		out = append(out, RuleInfo{ID: id, Action: policy.Deny, Kind: "hook", Summary: s})
+		out = append(out, RuleInfo{ID: id, Action: HookRuleAction(id), Kind: "hook", Summary: s})
 	}
 	for _, r := range decide.BuiltinJudgeRules() {
 		a := policy.Ask

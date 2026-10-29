@@ -202,8 +202,10 @@ func guardChange(c *cobra.Command, wsName string, all bool, ids []string, op, ac
 		if err := guardcfg.Save(g); err != nil {
 			return err
 		}
-	} else if err := editManifestGuard(w, ids, op, action); err != nil {
+	} else if dropped, err := editManifestGuardCarry(w, ids, op, action); err != nil {
 		return err
+	} else if dropped != nil {
+		fmt.Fprintf(c.ErrOrStderr(), "mode grant dropped (was %s): run tq allow --mode %s %s\n", dropped.Mode, w.Name, dropped.Mode)
 	}
 	// Re-resolve so the report shows the real effective state.
 	if w != nil {
@@ -248,12 +250,28 @@ type guardBlock struct {
 	Rules   yaml.Node         `yaml:"rules,omitempty"`
 
 	Unattended *manifest.Unattended `yaml:"unattended,omitempty"`
+
+	// Guard-mode keys (spec E §7), carried through every rewrite.
+	Mode          string                           `yaml:"mode,omitempty"`
+	Base          string                           `yaml:"base,omitempty"`
+	Categories    map[string]string                `yaml:"categories,omitempty"`
+	RulesOverride map[string]string                `yaml:"rules_override,omitempty"`
+	Projects      map[string]manifest.GuardProject `yaml:"projects,omitempty"`
+	HeadlessMode  string                           `yaml:"headless_mode,omitempty"`
+	Codex         *manifest.GuardCodex             `yaml:"codex,omitempty"`
 }
 
 // editManifestGuard applies off/on/set for ids to w's guard block through
 // rewriteManifestGuard.
 func editManifestGuard(w *resolve.Workspace, ids []string, op, action string) error {
-	return rewriteManifestGuard(w, func(gb *guardBlock) error {
+	_, err := editManifestGuardCarry(w, ids, op, action)
+	return err
+}
+
+// editManifestGuardCarry is editManifestGuard that also returns the mode
+// grant the rewrite dropped (see rewriteManifestGuardCarry).
+func editManifestGuardCarry(w *resolve.Workspace, ids []string, op, action string) (*trust.Grant, error) {
+	return rewriteManifestGuardCarry(w, func(gb *guardBlock) error {
 		g, gerr := guardcfg.Load()
 		for _, id := range ids {
 			switch op {
@@ -287,25 +305,64 @@ func editManifestGuard(w *resolve.Workspace, ids []string, op, action string) er
 
 // rewriteManifestGuard reads w's guard block, lets mutate change it, writes
 // the manifest back (dropping an empty block), validates the result loads,
-// and re-trusts it, carrying bypass trust from the old hash to the new. It
-// refuses a manifest that is not currently trusted, so re-trusting can never
-// approve edits the user has not reviewed.
+// and re-trusts it, carrying the mode grant from the old hash to the new
+// when the new configuration is no looser (spec E §6.3). It refuses a
+// manifest that is not currently trusted, so re-trusting can never approve
+// edits the user has not reviewed.
 func rewriteManifestGuard(w *resolve.Workspace, mutate func(gb *guardBlock) error) error {
+	_, err := rewriteManifestGuardCarry(w, mutate)
+	return err
+}
+
+// rewriteManifestGuardCarry is rewriteManifestGuard that also returns the
+// grant the rewrite dropped (non-nil when the old hash had one and the new
+// configuration is looser than it), so callers can tell the human.
+func rewriteManifestGuardCarry(w *resolve.Workspace, mutate func(gb *guardBlock) error) (*trust.Grant, error) {
+	oldHash, err := rewriteManifestGuardInner(w, mutate)
+	if err != nil {
+		return nil, err
+	}
+	return carryRewriteGrant(w, oldHash)
+}
+
+// carryRewriteGrant carries the grant of oldHash (the manifest before the
+// rewrite) to the manifest now on disk.
+func carryRewriteGrant(w *resolve.Workspace, oldHash string) (*trust.Grant, error) {
+	newHash, err := trust.HashFile(w.ManifestPath)
+	if err != nil {
+		return nil, err
+	}
+	m, err := manifest.Load(w.ManifestPath)
+	if err != nil {
+		return nil, err
+	}
+	g, gerr := guardcfg.Load()
+	if gerr != nil {
+		g = guardcfg.File{}
+	}
+	old, carried, err := guardcfg.CarryGrant(oldHash, newHash, m, w.Name, w.Root, g)
+	if err != nil || carried {
+		return nil, err
+	}
+	return old, nil
+}
+
+func rewriteManifestGuardInner(w *resolve.Workspace, mutate func(gb *guardBlock) error) (string, error) {
 	path := w.ManifestPath
 	oldHash, err := trust.HashFile(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !trust.IsTrusted(oldHash) {
-		return fmt.Errorf("%s changed since it was trusted: review it and run tq allow %s first", path, w.Name)
+		return "", fmt.Errorf("%s changed since it was trusted: review it and run tq allow %s first", path, w.Name)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return fmt.Errorf("%s: not a YAML mapping", path)
+		return "", fmt.Errorf("%s: not a YAML mapping", path)
 	}
 	root := doc.Content[0]
 	var gb guardBlock
@@ -314,18 +371,19 @@ func rewriteManifestGuard(w *resolve.Workspace, mutate func(gb *guardBlock) erro
 		if root.Content[i].Value == "guard" {
 			gi = i
 			if err := root.Content[i+1].Decode(&gb); err != nil {
-				return fmt.Errorf("%s: guard block: %w", path, err)
+				return "", fmt.Errorf("%s: guard block: %w", path, err)
 			}
 		}
 	}
 	if err := mutate(&gb); err != nil {
-		return err
+		return "", err
 	}
 	var gnode yaml.Node
 	if err := gnode.Encode(gb); err != nil {
-		return err
+		return "", err
 	}
-	empty := len(gb.Disable) == 0 && len(gb.Enable) == 0 && len(gb.Actions) == 0 && gb.Rules.IsZero() && gb.Unattended == nil
+	empty := len(gb.Disable) == 0 && len(gb.Enable) == 0 && len(gb.Actions) == 0 && gb.Rules.IsZero() && gb.Unattended == nil &&
+		gb.Mode == "" && gb.Base == "" && len(gb.Categories) == 0 && len(gb.RulesOverride) == 0 && len(gb.Projects) == 0 && gb.HeadlessMode == "" && gb.Codex == nil
 	switch {
 	case gi >= 0 && empty:
 		root.Content = append(root.Content[:gi], root.Content[gi+2:]...)
@@ -338,32 +396,29 @@ func rewriteManifestGuard(w *resolve.Workspace, mutate func(gb *guardBlock) erro
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(&doc); err != nil {
-		return err
+		return "", err
 	}
 	_ = enc.Close()
 	tmp := path + ".tq-guard.tmp"
 	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := manifest.Load(tmp); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("the edited manifest would not load, nothing changed: %w", err)
+		return "", fmt.Errorf("the edited manifest would not load, nothing changed: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
-		return err
+		return "", err
 	}
 	newHash, err := trust.HashFile(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := trust.Allow(newHash); err != nil {
-		return err
+		return "", err
 	}
-	if trust.IsBypassAllowed(oldHash) {
-		_ = trust.AllowBypass(newHash)
-	}
-	return nil
+	return oldHash, nil
 }
 
 func reportGuardDiff(c *cobra.Command, before, after []guardRow, ids []string, all bool, w *resolve.Workspace) {

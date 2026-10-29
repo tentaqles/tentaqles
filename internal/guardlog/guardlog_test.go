@@ -11,7 +11,7 @@ import (
 func TestAppendMasksTruncatesAndReads(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
 	long := "psql -c \"delete from t where email='tester@example.com'\" " + strings.Repeat("x", 400)
-	Append(Record{WS: "acme", Scope: "demo-todo", Mode: "auto", Rules: []string{"tq/sql-destructive-shell"}, Tool: "Bash", Command: long}, []string{"pii"})
+	Append(Record{WS: "acme", Scope: "demo-todo", ClaudeMode: "auto", Rules: []string{"tq/sql-destructive-shell"}, Tool: "Bash", Command: long}, []string{"pii"})
 	Append(Record{WS: "other", Command: "ls"}, nil)
 	recs := Read("acme", time.Now().Add(-time.Hour), 0)
 	if len(recs) != 1 {
@@ -90,5 +90,31 @@ func TestReadAllIncludesRotatedFile(t *testing.T) {
 	}
 	if cur := Read("acme", time.Time{}, 0); len(cur) != 1 {
 		t.Fatalf("Read stays on the current file, got %+v", cur)
+	}
+}
+
+func TestReadsTheLegacyLogToo(t *testing.T) {
+	t.Setenv("TQ_HOME", t.TempDir())
+	if filepath.Base(Path()) != "mode.jsonl" || filepath.Base(LegacyPath()) != "unattended.jsonl" {
+		t.Fatalf("paths: %s %s", Path(), LegacyPath())
+	}
+	if err := os.MkdirAll(filepath.Dir(Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano)
+	legacy := `{"ts":"` + old + `","ws":"acme","scope":"workspace","mode":"auto","action":"deny","rule_ids":["tq/force-push-main"],"tool":"Bash","command":"x"}` + "\n"
+	if err := os.WriteFile(LegacyPath(), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	Append(Record{WS: "acme", Mode: "relaxed", To: "ask", Action: "deny", Rules: []string{"tq/system-dir-write"}, Command: "y"}, nil)
+	recs := Read("acme", time.Now().Add(-time.Hour), 1<<20)
+	if len(recs) != 2 || recs[0].Rules[0] != "tq/system-dir-write" || recs[1].ClaudeMode != "auto" {
+		t.Fatalf("both logs, newest first: %+v", recs)
+	}
+	if all := ReadAll("acme", time.Now().Add(-time.Hour)); len(all) != 2 || all[0].Mode != "relaxed" {
+		t.Fatalf("ReadAll: %+v", all)
+	}
+	if _, err := os.Stat(Path()); err != nil {
+		t.Fatal("new records go to mode.jsonl")
 	}
 }

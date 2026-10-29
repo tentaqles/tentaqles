@@ -28,6 +28,11 @@
 
 set -u
 
+# tq off (spec E §8.4): under TQ_MODE=off (exactly) nothing from tq
+# runs, so exit 0 before resolving tq or Python (the fail-closed "no tq, no
+# Python" exit 2 below must never fire in off).
+case "${TQ_MODE:-}" in off) exit 0 ;; esac
+
 _this="${BASH_SOURCE:-$0}"
 _self_dir="$(cd "$(dirname "$_this")" && pwd)"
 CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$_self_dir")}"

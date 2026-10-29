@@ -1,5 +1,25 @@
 # tq shell hook (fish)
 function __tq_hook --on-variable PWD
+    test "$TQ_MODE" = off; and return 0
+    test "$TQ_ENABLED" = 0; and return 0
     "{{.Bin}}" env --shell fish 2>/dev/null | source
 end
+function tq
+    switch "$argv[1]"
+        case off
+            set -l __o ("{{.Bin}}" env --off --shell fish | string collect); or return $status
+            echo $__o | source
+            echo 'tq: off in this window - identity cleared, guard off, main logins in use. Run: tq on'
+        case on
+            set -e TQ_MODE
+            __tq_hook
+            echo 'tq: on - identity re-applied for this folder'
+        case '*'
+            "{{.Bin}}" $argv
+    end
+end
+function claude;     if test "$TQ_MODE" = off; "{{.Bin}}" run --off -- claude $argv; else; "{{.Bin}}" run . -- claude $argv; end; end
+function codex;      if test "$TQ_MODE" = off; "{{.Bin}}" run --off -- codex $argv; else; "{{.Bin}}" run . -- codex $argv; end; end
+function claude-off; "{{.Bin}}" run --off -- claude $argv; end
+function codex-off;  "{{.Bin}}" run --off -- codex $argv; end
 __tq_hook

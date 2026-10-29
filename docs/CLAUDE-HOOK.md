@@ -8,12 +8,13 @@ plugin's Python code no longer switches gh/az/git identity itself.
 ## Subcommands
 
 - `tq claude-hook session-start` — prints a short identity/status preamble. Never blocks (always exits 0).
-- `tq claude-hook pre-tool-use` — decides whether to allow, ask about, or block a tool call: shell commands (Bash, PowerShell), file reads and edits, and MCP tool calls. Exits 0 (allow, or ask via JSON on stdout) or 2 (block).
+- `tq claude-hook pre-tool-use` — decides whether to allow, ask about, or block a tool call: shell commands (Bash, PowerShell), file reads and edits, and MCP tool calls. Exits 0 (allow, or ask via JSON on stdout) or 2 (block). The [guard mode](#guard-modes) decides what each matching rule does. `--agent codex` answers in Codex's format, where a confirm becomes a block (see `CLAUDE-SETTINGS.md`, "Codex").
 - `tq claude-hook stop` — Stop hook: the Jev completion-evidence check. Always exits 0; in enforce mode it may print `{"decision":"block","reason":...}` once per session. See `docs/DECIDE.md`.
 - `tq claude-hook prompt-submit` — UserPromptSubmit hook: the Jev skill picker. Always exits 0 and never blocks; in enforce mode it may add a one-line `additionalContext` hint. See `docs/DECIDE.md`.
 
 Both subcommands read a single JSON payload from stdin — the same shape
-Claude Code sends its own hooks.
+Claude Code sends its own hooks. Under `TQ_MODE=off` (exactly `off`) every
+subcommand exits 0 at once with no output (see [Guard modes](#guard-modes)).
 
 ## Protocol
 
@@ -71,7 +72,8 @@ code), `pre-tool-use` fails safe: it asks, with the reason
 `CONFIRM [tq/guard-error]: tq guard error; please review the command yourself (…)`,
 and writes `tq: guard panic: …` to stderr. It never allows the call and
 never crashes (a Go crash exits 2 with a stack trace, which Claude Code
-reads as a block). The unattended mode never skips this ask.
+reads as a block). No guard mode skips this ask: `tq/guard-error` is in the
+locked self-protection group.
 
 `session-start` writes its preamble to **stdout** and always returns 0,
 even when it can't resolve a workspace — a hook that fails a session start
@@ -180,71 +182,461 @@ command that dodges the guard still does not get another client's
 credentials. The guard's job is to catch the honest mistake - the wrong cwd,
 the stale shell, the forgotten `tq allow` - not to contain an adversary.
 
-## Unattended mode
+## Guard modes
 
-Unattended mode lets a bypass or auto session run without tq's *confirms*
-(the `ask` decisions of PreToolUse) in the workspace or folders you choose.
-It is for sandboxed demo folders and long agent runs, not for production
-work.
+A guard mode decides what tq does with each rule that matches a tool call.
+Every rule sits in one **category**, and a mode gives each category one of
+four **values**: `skip` (allow, no prompt), `ask` (confirm), `deny` (block)
+or `rule` (the rule's own action, after `guard.actions`). There are five
+modes: `off`, `default`, `relaxed`, `strict` and `custom`. With nothing
+configured, the mode is `default`: every rule at its own action.
 
-**What it skips.** Only the `ask` branch, and only when all of these hold:
+Four categories are **locked**: `identity`, `secrets`, `self-protection` and
+`privacy`. They are enforced in every mode tq is on in, no setting can toggle
+them, and a `guard.disable` or a looser `guard.actions` entry naming one of
+their rules is ignored (with a `guard-locked-override` doctor warning).
 
-- the manifest has a `guard.unattended` block that covers the session's cwd;
-- for a file tool (Edit, Write, ...), the target file's folder is covered too:
-  editing outside the covered folder still asks;
-- the workspace's current manifest is trusted, and `tq allow --bypass <ws>`
-  was run for it (a separate trust step);
-- the session's permission mode is exactly `bypassPermissions` or `auto`
-  (any other mode asks as before);
-- none of the matched rules is in the always-ask set or in `keep_asking`.
+### Two layers
 
-**What it never skips.**
+Two independent layers decide what happens to a tool call:
 
-- Deny rules: in Claude Code a blocked command stays blocked, in every mode.
-  (tq's guard does not run inside Codex; see `CLAUDE-SETTINGS.md`, "Codex".)
-- `tq/guard-change`: this confirm is always asked. It covers `tq guard`,
-  `tq allow`, `tq deny` and `tq unattended on|off`, so an agent cannot widen
-  its own permissions.
-- Anything in `keep_asking`. The default is `tq/iac-apply` and
-  `tq/remote-migration`; set `keep_asking: []` to keep nothing, or list your
-  own ids (`tq guard list` shows them; unknown ids are a `tq doctor` warning).
+| | Claude Code permission mode | tq guard mode |
+|---|---|---|
+| Who owns it | Claude Code (`--permission-mode`, `--dangerously-skip-permissions`, `permissions.defaultMode`) | tq (`guard.mode`, `TQ_MODE`, `tq mode`) |
+| Values | `default`, `acceptEdits`, `plan`, `auto`, `dontAsk`, `bypassPermissions` | `off`, `default`, `relaxed`, `strict`, `custom` |
+| What it decides | when Claude asks you about calls no rule covers | allow, ask or deny for each tq rule that matches |
+| Per rule | settings allow, ask and deny lists; auto mode adds a classifier you can only partly tune | yes: categories and `rules_override` |
+| In bypass | settings deny and ask rules still apply; allow rules have no effect | yes: the PreToolUse hook runs in every Claude mode |
 
-**Manifest block** (edit with `tq unattended`, or by hand and then `tq allow`):
+The recommended setup is **Claude in `bypassPermissions`, tq in the mode
+you want**. tq is then the single policy layer: a tq confirm is the only
+prompt you see, apart from the few calls Claude Code never auto-approves
+(critical-path `rm`, `AskUserQuestion`, MCP tools that require user
+interaction). The `claude` launcher (see [Launchers](#launchers-tq-off-and-tq-on))
+always starts Claude with `--dangerously-skip-permissions` for this reason.
+Auto mode only adds classifier prompts that tq cannot configure.
+
+The tq mode applies whatever Claude's permission mode is. A `relaxed`
+workspace run in Claude's `default` mode skips tq's confirms, and Claude
+itself still prompts for calls it does not allow.
+
+Two things still need a manual check in a real bypass session before you
+rely on them: that a hook `ask` still prompts in `bypassPermissions`, and
+that a hook deny blocks there. The Claude Code docs say a blocking hook
+stops the call before permission rules run, but do not say it for a hook ask
+in bypass.
+
+### The modes
+
+#### `off`
+
+No tq at all for one launch or one terminal window: no identity env
+(`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`, `AZURE_CONFIG_DIR`, `CODEX_HOME`, …),
+the main user install (`~/.claude`, `~/.codex`), no guard, no SessionStart
+preamble, no memory hooks, the tentaqles plugin switched off and the session
+in bypass. You get it from `claude-off`, `codex-off`, `tq run --off` or
+`tq off` (see [Launchers](#launchers-tq-off-and-tq-on)).
+
+`off` is never stored. It is not a valid `guard.mode` in any file (a
+manifest or `guard.yaml` with `mode: off` fails to load), so no edit or sync
+can make a workspace off.
+
+**What off gives up.** git, gh, cloud CLIs and MCP servers use your main
+logins and the main install's credentials. A command in a client folder can
+push with the wrong email, deploy to the wrong subscription or call another
+client's MCP server, and nothing blocks a secret read, a force push to main
+or a repo delete. Use off for tq-free work and debugging, not for client
+work. Every off launch prints
+`tq: off — main logins, no guard (git, cloud and MCP use your default accounts)`.
+
+#### `default`
+
+Every rule at its own action: confirms for prod changes, cloud deletes, IaC
+apply and destroy, admin merges, force pushes and destructive SQL; blocks for
+a force push to main, a repo delete and the rest of the deny rules below.
+It applies when no layer sets a mode, in untrusted and unmanaged folders, and
+for headless hub runs unless the workspace opts in.
+
+#### `relaxed`
+
+Every toggleable category is `skip`, except `git-history` and `system`,
+which `ask`:
+
+- **git-history**: the blocks `tq/force-push-main` and `tq/gh-repo-delete`
+  become confirms, and `tq/force-push` and `tq/gh-admin-merge` stay confirms.
+- **system**: `tq/system-dir-write` (a block by default) becomes a confirm,
+  and `tq/outside-path-write`, `tq/elevation` and `tq/registry-write` stay
+  confirms.
+
+Everything else that is not locked is skipped, blocks included: destructive
+SQL, cloud deletes, IaC apply and destroy, migrations, MCP and tracker
+writes, GitHub Actions pins and the commit-message check. The locked groups
+stay, so the PII denies, the `.env` and secret-store denies and tq's own
+protections still hold. When a skipped rule hid a weaker rule that still
+applies, that rule decides: `git push --force origin main; tq guard off`
+still asks through `tq/guard-change`.
+
+Relaxed is looser than default, so it needs a grant (`tq allow --mode <ws>
+relaxed`). Without one the session runs at `default` and SessionStart says
+so.
+
+#### `strict`
+
+Default plus: `prod-changes`, `cloud-destructive` and `git-history` deny, and
+`external-writes` asks. These four are pinned: a looser `rules_override`
+entry for one of their rules does not loosen it under strict, while a
+stricter one still applies. Strict needs no grant.
+
+#### `custom`
+
+A base preset plus per-category values:
 
 ```yaml
 guard:
-  unattended:
-    workspace: false            # true covers the whole workspace
-    projects: [demo-todo]       # or only these folders, relative to the root
-    keep_asking: [tq/iac-apply, tq/remote-migration]
-    codex_sandbox: workspace-write   # read-only|workspace-write|danger-full-access
+  mode: custom
+  base: relaxed                # default | relaxed | strict (default: default)
+  categories:
+    db-destructive: ask
+    external-writes: rule
 ```
 
-**Commands.**
+`tq mode toggle` on a preset turns it into `custom` with that preset as the
+base. `base` and `categories` are only valid with `mode: custom`, and a
+locked category in `categories` is a load error. A custom table that is
+looser than default anywhere needs a grant for that exact table.
+
+### Presets
+
+`rule` means the rule's own action.
+
+| Category | default | relaxed | strict |
+|---|---|---|---|
+| `identity` | rule | rule | rule |
+| `secrets` | rule | rule | rule |
+| `self-protection` | rule | rule | rule |
+| `privacy` | rule | rule | rule |
+| `git-history` | rule | ask | deny |
+| `prod-changes` | rule | skip | deny |
+| `cloud-destructive` | rule | skip | deny |
+| `db-destructive` | rule | skip | rule |
+| `system` | rule | ask | rule |
+| `external-writes` | rule | skip | ask |
+| `ci-supply-chain` | rule | skip | rule |
+| `hygiene` | rule | skip | rule |
+| `packs` | rule | skip | rule |
+
+### Categories
+
+Every rule has exactly one category (`internal/guardcfg/categories.go`; a
+test fails on a built-in rule without one). The own action of each rule is
+in brackets.
+
+| Category | Locked | Rules |
+|---|---|---|
+| `identity` | locked | the identity guard: `guard/blocked-command`, `guard/wrong-cloud`, `guard/neutral-remote`, `guard/untrusted`, `guard/env-drift`, `guard/claude-config-drift`, `guard/git-email-drift`, `guard/gh-user` (deny; it runs before any mode logic); `plugin/identity-guard` (the fallback with no tq binary, deny); `tq/cross-client-mcp` (deny); `tq/iac-identity-drift`¹ |
+| `secrets` | locked | `tq/secret-store-read`, `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`, `tq/commit-secret` (deny); `jev/service-role-client`, `jev/n8n-inline-credentials` (ask) |
+| `self-protection` | locked | `tq/guard-change` (ask), `tq/guard-file-write`, `tq/settings-widen`, `tq/settings-shell-write`, `tq/trust-store-write` (deny), `tq/guard-error` (the fail-safe ask), `tq/nested-agent-loosened`, `tq/mode-change` (deny), `plugin/headless-manifest-guard` (deny); `tq/hub-store-write`, `tq/pack-config-change`, `tq/human-answer`¹ |
+| `privacy` | locked | `tq/commit-pii`, `tq/push-pii`, `tq/text-pii`, `tq/pii-fixture-dump` (deny) |
+| `git-history` | | `tq/force-push-main` (deny), `tq/force-push` (ask), `tq/gh-admin-merge` (ask), `tq/gh-repo-delete` (deny) |
+| `prod-changes` | | `tq/iac-apply`, `tq/remote-migration` (ask); `tq/dbt-prod-target`, `tq/model-promote`, `tq/pipeline-run`, `tq/iac-apply-env`, `tq/db-migrate-env`, `tq/restore-target`¹ |
+| `cloud-destructive` | | `tq/cloud-delete`, `tq/iac-destroy` (ask) |
+| `db-destructive` | | `tq/sql-destructive-shell`, `tq/migration-edit`, `tq/mcp-sql-write`, `tq/mcp-apply-migration` (ask); `jev/destructive-sql`, `jev/rls-weakened` (Jev ask); `tq/dbt-full-refresh`¹ |
+| `system` | | `tq/registry-write`, `tq/outside-path-write`, `tq/elevation` (ask); `tq/system-dir-write` (deny) |
+| `external-writes` | | `tq/mcp-github-write`, `tq/mcp-n8n-write`, `tq/mcp-hosting-exec`, `tq/tracker-cli-write` (ask) |
+| `ci-supply-chain` | | `tq/gha-unpinned`, `tq/gha-pr-target` (ask); `tq/gha-branch-ref` (deny) |
+| `hygiene` | | `tq/commit-message` (ask) |
+| `packs` | | the fallback for a pack guard that fits no other category: `tq/warehouse-resize`, `tq/bq-unbounded-query`, `tq/warehouse-query-unbounded`¹ |
+
+¹ Rules of the packs work, classified ahead of its merge.
+
+**Custom rules** (`guard.rules` in the manifest or `guard.yaml`, and
+`.claude/tq-rules.yaml`) may declare `category:` with one of the thirteen
+names. A rule without one is applied at its own action in every mode (fail
+closed). In the manifest and `guard.yaml`, a locked category is allowed and
+means "always applied".
+
+```yaml
+guard:
+  rules:
+    - id: acme/no-prod-db
+      action: deny
+      command: '\bprod-db\b'
+      reason: the production database is off limits
+      category: prod-changes      # strict denies it, relaxed skips it
+```
+
+### Precedence and grants
+
+**Layers**, from least to most specific. A later layer replaces the mode of
+an earlier one:
+
+1. built-in: `default`;
+2. global `~/.tentaqles/guard.yaml`: `mode`, `base`, `categories`,
+   `rules_override` (every workspace and neutral folders);
+3. the workspace manifest's `guard:` block, the same keys;
+4. a project: `guard.projects.<dir>` in the manifest (`<dir>` relative to the
+   root; the deepest match wins). For a file tool the target's folder must be
+   inside the project too, otherwise the workspace layer applies;
+5. the per-launch override, `TQ_MODE` in the agent process's env, set by
+   `claude --tq-mode <m>`, `tq run <ws> --tq-mode <m> -- claude` or the hub
+   runner;
+6. the repo file `.claude/tq-rules.yaml`: `mode`, `categories` and
+   `rules_override`, which can **only tighten**. A value looser than the
+   result of the layers above is ignored, and SessionStart names it.
+
+Then `rules_override` (id to `skip|ask|deny|rule`, never a locked id) is
+applied per rule, each rule is clamped to the ceiling, and the locked groups
+get their own action. `guard.disable` and `guard.actions` keep working: they
+change the rule's own action, which is what `rule` means.
+
+The hook reads `TQ_MODE` from its own process env, inherited from the Claude
+process, never from the command being checked: `TQ_MODE=relaxed git push
+--force` in a Bash call changes nothing (and is denied by
+`tq/nested-agent-loosened`). An untrusted manifest contributes no workspace
+layer and no grant; a global `strict` still applies there. An unreadable or
+invalid mode setting resolves to `default`, never looser.
+
+**Grants.** A mode looser than `default` needs a one-time grant from you:
+
+```
+tq allow --mode acme relaxed     # or custom: grants the table tq mode shows now
+tq allow --mode acme default     # removes the grant
+tq allow --mode --global relaxed # for the mode in guard.yaml
+```
+
+- The grant is stored in `$TQ_HOME/trust/<manifest-hash>.mode` as JSON
+  (`mode`, `table`, `overrides`, `granted_at`). For `custom` it holds the
+  loosest table across the workspace and its projects, exactly what
+  `tq mode` shows.
+- It is the **ceiling**: the loosest the workspace may go. With no grant the
+  ceiling is `default`, so a manifest that asks for relaxed runs at default.
+  A custom grant that skips `db-destructive` does not cover a later edit that
+  also skips `system`.
+- It is **hash-keyed**, like trust. A hand edit of `.tentaqles.yaml` and a
+  reflex `tq allow acme` drop it, and `tq allow` says
+  `mode grant dropped (was relaxed): run tq allow --mode acme relaxed`.
+  tq's own writers (`tq mode set|toggle|override|edit`, `tq guard … --ws`)
+  carry the grant to the new hash only when the result is no looser than it.
+- A global grant, `$TQ_HOME/trust/global.mode`, carries a SHA-256 of the
+  mode keys of `guard.yaml`; an edit of those keys voids it. It is the
+  ceiling for neutral folders only: outside every registered base, or a
+  base folder itself. Inside a workspace the workspace's own grant is the
+  ceiling, so a global relaxed loosens only workspaces that have a grant
+  too. A folder under a base whose manifest is missing, invalid or untrusted
+  (an edited manifest) gets the default ceiling, on every tool path.
+- `tq deny <ws>` removes the grant. `strict` never needs one
+  (`tq allow --mode acme strict` is an error).
+- The trust store is protected by `tq/trust-store-write` (locked), so an agent
+  cannot write a grant.
+
+**Headless hub runs** use the workspace's `guard.headless_mode` (`default`
+when absent; `strict`, `relaxed` or `custom` allowed). A looser value still
+needs the workspace grant. See `HUB.md`.
+
+### Launchers, `tq off` and `tq on`
+
+`tq activate` defines shell functions in bash, zsh, fish, PowerShell 7 and
+Windows PowerShell 5.1:
+
+| Function | What it runs |
+|---|---|
+| `claude …`, `codex …` | `tq run . -- claude …` (the folder's identity and guard), or the off launch when the window is off |
+| `claude-off …`, `codex-off …` | `tq run --off -- claude …`: no tq for that process only |
+| `tq off` | clears the identity env in this window (each variable back to its pre-tq value), sets `TQ_MODE=off` and pauses the prompt hook; `claude` then starts the off launch |
+| `tq on` | unsets `TQ_MODE` and re-applies the folder's identity at once |
+| `tq …` | anything else goes to the binary |
+
+`tq off` prints
+`tq: off in this window - identity cleared, guard off, main logins in use. Run: tq on`.
+No window has to be reopened. cmd.exe has no functions: use
+`tq run . -- claude` and `tq run --off -- claude` there.
+
+| Action | Identity env | Prompt hook | Guard in the next `claude` |
+|---|---|---|---|
+| `tq off` | cleared now | paused | none: `claude` starts the off launch |
+| `cd` while off | stays cleared | paused | none |
+| `tq on` | re-applied for the cwd | resumed | the resolved mode |
+| `claude-off` from a normal window | cleared for that process only | unaffected | none |
+| `claude --tq-mode strict` | the folder's | unaffected | strict (any mode, clamped by the grant) |
+
+A `claude` session started before `tq off` keeps its guard: its env was
+fixed at launch.
+
+**`tq run <ws>|. [--tq-mode <m>] -- <cmd>`.** `.` is the current folder's
+workspace (an untrusted one gives a warning and a neutral launch). For
+`claude`:
+
+- `--tq-mode <m>` is also stripped from the claude arguments, so
+  `claude --tq-mode strict` works through the function. It sets `TQ_MODE`;
+  `off` is refused here (use `--off`). With no mode, the layers decide.
+- The launcher **always adds `--dangerously-skip-permissions`**, whatever the
+  manifest's `claude.permission_mode` says. Only a `--permission-mode` or
+  `--dangerously-skip-permissions` you type on that command line replaces it,
+  and claude subcommands, `--help` and `--version` get no flag. Bypass no
+  longer needs bypass trust: tq's mode is the policy layer, and the grant
+  gates what is looser than default. `claude.permission_mode` still becomes
+  `permissions.defaultMode` for sessions started outside the launcher (IDE,
+  desktop, the hub runner); `tq doctor` notes the override as
+  `permission-mode-overridden`.
+- Started from an agent session, `tq run` passes the parent's `TQ_MODE`
+  through, refuses a `--tq-mode` looser than the parent's mode, and adds no
+  bypass flag.
+
+**`tq run --off -- claude|codex [args]`** starts the agent with
+`envplan.Clean` of your env plus `TQ_MODE=off`, without `CLAUDE_CONFIG_DIR`
+and `CODEX_HOME` (so the main install is used). Claude gets
+`--dangerously-skip-permissions --settings '{"enabledPlugins":{"tentaqles@tentaqles":false}}'`,
+Codex gets `--dangerously-bypass-approvals-and-sandbox`. It starts only
+`claude` or `codex`, and it refuses inside an agent session (`CLAUDECODE`,
+`CLAUDE_PLUGIN_ROOT`, `TENTAQLES_HEADLESS`, `TQ_HUB_TASK`, `CODEX_SANDBOX*`).
+Whether `--settings` merges `enabledPlugins` per plugin (so your other
+plugins stay on) is still a manual check; either way nothing tq does runs,
+because of the next point.
+
+**Every tq hook exits at once under `TQ_MODE=off`**, with no output. The
+value must be exactly `off` (no other case, no spaces): the hooks, the
+statusline, the plugin scripts and the shell functions all use that one
+matcher. `TQ_ENABLED=0` keeps its one meaning, the legacy shell-activation
+kill switch: `tq env` prints nothing and the prompt hook does not apply an
+identity, but the Claude Code hooks and skill scripts still run, so a
+`claude` started from such a window is still guarded. The off launch
+(`claude-off`, `tq run --off`, `tq off`) sets `TQ_MODE=off`. Under off: `tq claude-hook <event>`, `tq env` (prints nothing),
+`plugin/scripts/tq_hook.sh` and `tq_run.sh` (before they look for tq or
+Python, so the fail-closed "no tq, no Python" block never fires in off), and
+`tq statusline` (prints `tq: off`). Skill scripts that run through
+`tq_run.sh` therefore do nothing in an off window.
+
+`tq env --off --shell <sh>` prints the shell code of `tq off` and
+`tq env --on` prints `unset TQ_MODE`; the functions call them, and
+`--off` refuses agent sessions.
+
+The functions are defined as `function claude { ...; }` in bash and zsh,
+after the prompt hook is registered, so an `alias claude=...` defined
+earlier in the profile can never abort the block. Such an alias, when it
+calls `claude` itself (`alias claude='claude --dangerously-skip-permissions'`),
+expands to the launcher with extra flags: `tq doctor` notes it
+(`claude-alias-shadow`, info). An alias that runs something else, any
+PowerShell alias (aliases resolve before functions), or a function named
+`claude` or `codex` defined after tq's activation (for example the wrapper
+an older `tq migrate` carried over) replaces the launcher: `tq doctor`
+warns with `claude-alias-shadow` and names the line to delete.
+
+PowerShell's parameter binder removes a literal `--` from a function's
+arguments, so the `tq` function puts it back before the command word of
+`tq run`, `tq dotenv run` and `tq redact run`. `tq run` itself stops reading
+its own flags at the workspace: after `<workspace>` only `--tq-mode MODE`
+and an optional `--` may come before the command, and everything after the
+command word is the command's own.
+
+### Nested agents
+
+**`tq/nested-agent-loosened`** (deny, self-protection, locked) stops an agent
+from starting another agent in off mode or with loosened settings from a
+Bash or PowerShell call:
+
+- assigning `TQ_MODE` to anything but exactly `default` or `strict`
+  (`TQ_MODE=off cmd`, `export`, `$env:TQ_MODE=…`, `set -x`, `env TQ_MODE=…`,
+  an empty value, `unset`, `Remove-Item Env:TQ_MODE`), or `TQ_ENABLED=0`;
+  and `TQ_MODE=default` or `TQ_MODE=strict` when that preset is looser than
+  the session's own resolved table in any category or rule override: a
+  nested agent starts only at its parent's mode or a stricter one, compared
+  category by category (so a `custom` session with a `deny` somewhere cannot
+  start a `default` child);
+- `env -i`, `env -` or `env --ignore-environment` before `claude` or `codex`
+  (it drops `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `TQ_MODE` at once);
+- `claude-off`, `codex-off`, `tq off`, `tq run --off`, `tq env --off`, and
+  `--tq-mode off|relaxed|custom` on `tq run` or `claude`;
+- `claude` with `--dangerously-skip-permissions`,
+  `--allow-dangerously-skip-permissions`,
+  `--permission-mode bypassPermissions|auto|dontAsk`, `--bare`,
+  `--safe-mode`, `--setting-sources` without `user`, `--settings` with inline
+  JSON that switches tentaqles off, empties hooks, sets `TQ_MODE`,
+  `TQ_ENABLED`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_SIMPLE` or
+  `CLAUDE_CODE_SAFE_MODE` in `env`, or sets `permissions.defaultMode` to
+  `bypassPermissions`, `auto` or `dontAsk` (a `--settings` file is
+  always denied, because the rule cannot read it), and
+  `CLAUDE_CODE_SIMPLE=1` or `CLAUDE_CODE_SAFE_MODE=1`;
+- clearing or reassigning `CLAUDE_CONFIG_DIR` or `CODEX_HOME`;
+- `codex` with `--dangerously-bypass-approvals-and-sandbox`, `--yolo`,
+  `-a never`, `-s danger-full-access`, `--disable hooks`,
+  `-c features.hooks=false`, `--ignore-rules` or
+  `--dangerously-bypass-hook-trust`.
+
+A plain nested `claude -p "…"` or `codex exec "…"` is allowed: it inherits
+the parent's identity env and `TQ_MODE`, and so the parent's guard. Commit
+messages and heredoc data that only mention these words are allowed too.
+
+Like every shell rule this is a heuristic (`sh -c`, a script written to disk,
+an encoded `Start-Process`, aliases and variables evade it). The second line
+is that `tq run --off`, `tq env --off` and the `tq mode` writers refuse agent
+sessions, and the third that a Claude child of an agent inherits
+`CLAUDECODE=1`. Headless hub runs are started by tq, not by a tool call, so
+the rule does not apply to them. The Agent tool (subagents) runs in the same
+session and the same hooks and needs no rule.
+
+### Controls
+
+**CLI: `tq mode`.**
 
 | Command | What it does |
 |---|---|
-| `tq unattended on [--project <dir>] [--codex-sandbox <mode>]` | turn it on for the workspace, or for one folder |
-| `tq unattended off [--project <dir>]` | turn it off for one folder (an error if it is not listed), or for the workspace and every folder; `keep_asking` and `codex_sandbox` stay for the next `on` |
-| `tq unattended status` | what is covered and whether it is effective |
-| `tq unattended log [--since 24h]` | the confirms it skipped (reads the current and the rotated file) |
+| `tq mode [--ws NAME] [--json] [--agent codex]` | the resolved mode for the cwd: its name (`relaxed`, `custom (relaxed + 2)`), each category's value and source, `rules_override`, the ceiling (the grant or `default`), clamped and ignored values, and the 24h skip counts. `--agent codex` also lists the confirms that become blocks in Codex. Read-only, so agents may run it |
+| `tq mode set default\|relaxed\|strict\|custom [--ws NAME \| --project DIR \| --global] [--base P]` | writes the layer and re-trusts the manifest, carrying a grant forward when it is not loosened. When the result is looser than the ceiling it asks `grant relaxed for acme? [y/N]` and grants on yes; otherwise it prints the `tq allow --mode` line |
+| `tq mode toggle CATEGORY skip\|ask\|deny\|rule [scope]` | sets one category; a preset becomes `custom` with it as the base. A locked category is an error |
+| `tq mode override RULE-ID skip\|ask\|deny\|rule\|clear [scope]` | edits `rules_override`. A locked id is an error |
+| `tq mode edit [scope]` | an interactive form: the preset, then one four-way choice per category (locked rows shown and fixed), then a diff and a confirm |
+| `tq mode log [--ws NAME] [--since 24h]` | the confirms and blocks the mode skipped or lowered, with an action column (`deny -> ask`, `ask -> allow`) |
 
-`on` and `off` re-trust the manifest like `tq guard --ws` does, so they print
-only the bypass hint when `tq allow --bypass` is still missing.
+`set`, `toggle`, `override`, `edit` and `tq allow --mode` are **human-only**:
+they refuse agent sessions and need an interactive terminal. In a tool call
+they are denied first by **`tq/mode-change`** (deny, self-protection), which
+also covers `tq allow --bypass` and `tq unattended on|off` (the deprecated
+alias), so the agent gets a clear block instead of a terminal error. Writes
+to the codex identity follow each workspace write (see `CLAUDE-SETTINGS.md`,
+"Codex").
 
-**Audit.** Every skipped confirm is appended to
-`$TQ_HOME/guard/unattended.jsonl` (time, workspace, scope, mode, rule ids,
-tool, command). The command is masked with the workspace's data classes and
-cut to 200 characters; the file rotates to `unattended.jsonl.1` at 5 MB.
-Write errors never fail the hook.
+**SessionStart** prints one line in every workspace (and in a neutral folder
+when the mode is not default):
 
-**Visibility.** SessionStart adds one line for a workspace with the block:
-`Unattended: on (demo-todo) · 2 confirms skipped in 24h · applies in bypass
-and auto sessions`, or `Unattended: configured, not effective (needs tq allow
---bypass <ws>)`, or `Unattended: on for demo-todo (not this folder)` (`on for
-the workspace (not this folder)` when the cwd is outside the workspace root).
-`tq doctor` warns with `unattended-not-effective`, `unattended-unknown-rule`
-and `unattended-cloud` (unattended plus a cloud identity).
+```
+Guard: relaxed (workspace, granted) · 3 confirms and 1 block skipped in 24h · locked: identity, secrets, self-protection, privacy
+Guard: default (relaxed requested, not granted: tq allow --mode acme relaxed) · locked: …
+Guard: strict (launch override) · locked: …
+Guard: custom (relaxed + db-destructive ask; workspace, granted) · repo file tried to loosen: system · locked: …
+```
+
+It adds `Claude mode: auto (adds classifier prompts tq cannot configure)`
+when Claude is not in bypass, and `asks become blocks in Codex: N rules` in
+Codex.
+
+**Statusline**: `tq: relaxed · 4 skipped` after the client (dim for
+default, yellow when looser than default, cyan for strict), and `tq: off` in
+red under `TQ_MODE=off`. See `CLAUDE-SETTINGS.md`.
+
+**Desktop app**: the Guard tab changes the mode, the categories and the
+overrides, and grants or revokes (see `DESKTOP.md`). It is a human GUI with
+no agent path, so it may grant.
+
+**Hub page**: `/guard` shows the resolved mode, the table and the 24h counts
+read-only, with no form and no POST route (see `HUB.md`).
+
+### Audit
+
+Every call whose confirm or block the mode skipped or lowered is appended to
+`$TQ_HOME/guard/mode.jsonl`: time, workspace, scope (`workspace`,
+`project:<dir>`, `launch`, `global`), the tq mode, Claude's permission mode,
+the action skipped, the action applied (`to`), rule ids, tool and command.
+The command is masked with the workspace's data classes and cut to 200
+characters; the file rotates to `mode.jsonl.1` at 5 MB, and write errors
+never fail the hook. `tq mode log` and the counts also read the
+legacy `unattended.jsonl`, until it ages out.
+
+`tq doctor` warns with `mode-not-granted`, `mode-unknown-rule`, `mode-cloud`
+(a mode that skips prod-changes or cloud-destructive in a workspace with a
+cloud identity) and `guard-locked-override`; see `CLAUDE-SETTINGS.md`.
+
+Coming from unattended mode? See `MIGRATE.md`, "Migrating from unattended
+mode".
 
 ## `session-start` output
 
@@ -260,7 +652,10 @@ tq doctor:
 - [ok] all checks passed
 
 Rules: tq blocks git/gh/cloud commands on identity drift (exit 2). Run `tq doctor` for details.
+Guard: default · locked: identity, secrets, self-protection, privacy
 ```
+
+The `Guard:` line is described in [Controls](#controls).
 
 Sample for a neutral cwd (outside any registered base):
 
@@ -276,6 +671,9 @@ Rules: remote git, gh and cloud CLI commands are blocked here until you cd into 
 resolves a `tq` binary (env var → plugin-bundled binary → `PATH` → known
 install dirs) and runs `tq claude-hook <event>`, passing stdin through and
 propagating the exit code.
+
+Under `TQ_MODE=off` the script exits 0 before it looks
+for tq or Python, so none of the fallbacks below applies in an off window.
 
 If no `tq` binary can be found or run:
 
@@ -342,7 +740,7 @@ listed in the reason.
 |---|---|---|---|
 | Built-in | compiled into `tq` (`internal/policy/builtin.go`) | yes | default rules, ids `tq/...` |
 | Manifest | `guard:` in `.tentaqles.yaml` (hash-pinned by `tq allow`) | yes | add rules, **disable** built-ins by id |
-| Project | every `.claude/tq-rules.yaml` from cwd up to the workspace root | no (repo content) | **add** rules only |
+| Project | every `.claude/tq-rules.yaml` from cwd up to the workspace root | no (repo content) | **add** rules, and set a guard mode that only **tightens** |
 
 Nothing in a repository can loosen the guard: a project file's `disable`
 key is ignored, and an untrusted manifest contributes no rules at all. A
@@ -379,7 +777,7 @@ Matchers (all regexes, case-insensitive; every one present must match):
 | id | action | catches |
 |---|---|---|
 | `tq/secret-store-read`, `tq/secret-store-shell` | deny | SSH private keys, `~/.aws/credentials`, `.git-credentials`, `.netrc`, docker/gh/azure token files, the tq catalog |
-| `tq/env-file-read`, `tq/env-file-shell` | ask | reading or printing `.env*` (templates such as `.env.example` exempt) |
+| `tq/env-file-read`, `tq/env-file-shell` | deny | reading or printing `.env*` (templates such as `.env.example` exempt) |
 | `tq/env-dump` | deny | `printenv`, `env`, `set`, `export -p`, `declare -p`, `typeset -p`, `cmd /c set`, `Get-ChildItem`/`gci`/`dir`/`ls env:`, each as the command word of a segment (start, or after `;` `&` `\|` `(` a backtick or a newline, or as the first word of a quoted `-c` script: `bash -c 'set'`) with no arguments; and `[Environment]::GetEnvironmentVariables(` anywhere. `set -e`, `echo set` or `git commit -m "set the flag"` are not dumps. Bash heredoc bodies in the data shapes below are not read |
 | `tq/force-push-main` | deny | any force push (incl. `--force-with-lease`, `+main`) to main/master |
 | `tq/force-push` | ask | plain `--force`/`-f` push elsewhere (`--force-with-lease` is fine) |
@@ -388,7 +786,7 @@ Matchers (all regexes, case-insensitive; every one present must match):
 | `tq/cloud-delete`, `tq/iac-destroy` | ask | `az/aws/gcloud/doctl/databricks … delete/rm/purge/…`, `terraform/cdk/pulumi destroy` |
 | `tq/iac-apply` | ask | applying infrastructure to a live environment: `terraform/tofu apply`, `pulumi up`, `cdk/cdktf deploy`, `kubectl apply`, `helm install/upgrade`, `sam/serverless/sls deploy`, CloudFormation, Azure and Deployment Manager deployments (`--dry-run` exempt) |
 | `tq/remote-migration` | ask | running migrations (`prisma migrate deploy`, `alembic upgrade`, `flyway migrate`, `supabase db push`, `rails db:migrate`, `manage.py migrate`, …) against a connection that is not local; a command naming `localhost`, `127.0.0.1` or `--local` is exempt |
-| `tq/settings-widen` | deny | Edit/Write of Claude Code settings (`.claude/settings[.local].json`, `.claude.json`, or a bare `settings[.local].json`) that adds `Bash(*)`, `bypassPermissions`, `disableAllHooks: true`, empty `hooks`, or `skipDangerousModePermissionPrompt: true`; permission changes go through `tq settings render` and the manifest |
+| `tq/settings-widen` | deny | Edit/Write of Claude Code settings (`.claude/settings[.local].json`, `.claude.json`, or a bare `settings[.local].json`) that adds `Bash(*)`, `bypassPermissions`, `disableAllHooks: true`, empty `hooks`, `skipDangerousModePermissionPrompt: true`, a `tentaqles@…` plugin set to `false`, a `TQ_MODE`, `TQ_ENABLED`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_SIMPLE` or `CLAUDE_CODE_SAFE_MODE` key (matched anywhere in the written text, so an Edit inside an existing `env` or `enabledPlugins` block counts), or `defaultMode` `auto` or `dontAsk`; permission changes go through `tq settings render` and the manifest |
 | `tq/settings-shell-write` | deny | writing `.claude/settings[.local].json`, `.claude/tq-rules.yaml` or `.claude.json` from the shell (redirects, `tee`, `sed -i`, `cp`/`mv` onto them) |
 | `tq/registry-write` | ask | `reg add/delete`, registry writes from PowerShell |
 | `tq/tracker-cli-write` | ask | a write to the company tracker from its CLI, outside the hub's sync engine (so the `sync.policy.*` settings and the outbound redaction do not apply): `az boards work-item create/update/delete/relation add\|remove`; `az rest` with a write method (`--method`, `-m`) on `dev.azure.com` or `visualstudio.com`; `az devops invoke --http-method` with a write; `gh issue edit/close/create/comment/reopen/delete/transfer/lock/unlock/pin/unpin/develop`; `gh project item-edit/add/create/delete/archive`; `gh api` with a write (`-X`/`--method` POST, PATCH, PUT or DELETE, also `-XPATCH`, or a field flag, which makes gh POST) on an issues or projects path; `gh api graphql` with a `mutation`, or with a query read from a file (`-F query=@…`, `--input`), which the rule cannot read; `acli jira workitem edit/transition/create/comment/delete/assign/clone/link/archive/unarchive`. The tool must be the command word (bare, path-prefixed or quoted; flags may sit before the subcommand, as in `gh -R acme/app issue edit`), so a PR title that only mentions "issue create" is not a write. Use `tq hub sync` or `/tentaqles:sync` instead |
@@ -400,6 +798,10 @@ Matchers (all regexes, case-insensitive; every one present must match):
 | `tq/gha-branch-ref` | deny | workflow actions pinned to a branch: `@main` or `@master` |
 | `tq/gha-unpinned` | ask | workflow actions pinned to `@latest` or `@head` |
 | `tq/gha-pr-target` | ask | `pull_request_target` in a workflow |
+| `tq/system-dir-write` | deny | an Edit or Write under a system folder, and a shell write or delete there (redirect, `tee`, `rm`, `mv`, `Set-Content`, `Remove-Item`, …; a copy only when the system folder is the destination): `C:\Windows`, `C:\Program Files`, `C:\Program Files (x86)`, `C:\ProgramData` (also as `/c/...`), `/etc`, `/usr`, `/bin`, `/sbin`, `/boot`, `/System`, `/Library`. Reads are fine |
+| `tq/elevation` | ask | `sudo`, `doas`, `su -c`, `runas`, `gsudo`, `Start-Process … -Verb RunAs`, `pkexec` |
+| `tq/mode-change` | deny | `tq mode set\|toggle\|override\|edit`, `tq allow --mode\|--bypass` and `tq unattended on\|off` (the deprecated alias) as a command word: they are human-only (see [Controls](#controls)). `tq mode`, `tq mode log` and an `echo` or commit message that mentions them stay allowed |
+| `tq/nested-agent-loosened` | deny | starting an agent in off mode or with loosened settings (see [Nested agents](#nested-agents)) |
 
 More checks need I/O and are not regex rules (each can be disabled by id in
 the manifest):
@@ -452,6 +854,22 @@ the manifest):
   `-m`/`-F`, `-F -`, and a message built by a shell substitution.
 - `tq/cross-client-mcp` (deny) — an MCP server that another client's
   bundle declares, and this workspace's bundle does not, is refused.
+- `tq/outside-path-write` (ask) — a write or recursive delete on an
+  **absolute** path outside the workspace root, the session's cwd, the
+  registered bases (`tq` registry), the temp folders (`$TMPDIR`/`%TEMP%`,
+  `/tmp`, `/var/tmp`) and the agents' own working folders (`projects/`,
+  which holds the auto-memory, `plans/` and `todos/` under
+  `$CLAUDE_CONFIG_DIR`, else `~/.claude`; `sessions/` and `memories/` under
+  `$CODEX_HOME`, else `~/.codex`; the config dirs themselves are not roots,
+  so their settings files keep the confirm): `rm -r`, `Remove-Item -Recurse`, `rmdir /s`, a
+  redirect, `tee`, a `cp`/`mv` destination, `Set-Content`/`Out-File`/
+  `Add-Content`, `sed -i`, and Edit or Write with such a `file_path`. `~` and
+  `$HOME` count as absolute, and Git Bash `/c/...` paths are understood. It
+  needs the roots, so the hook computes it instead of a regex.
+
+Every rule, built-in or not, also has a category; the
+[guard mode](#guard-modes) maps each category to skip, ask, deny or the
+rule's own action.
 
 ### Limits
 
@@ -572,7 +990,14 @@ Three trusted layers decide, most specific last:
    and `rules`. It wins over the global file.
 
 A repo's `.claude/tq-rules.yaml` is not a layer here. It is repo content,
-so it can only add rules and can never turn one off.
+so it can only add rules (and tighten the guard mode) and can never turn one
+off.
+
+The locked rules (categories `identity`, `secrets`, `self-protection` and
+`privacy`, see [Categories](#categories)) cannot be switched off or loosened:
+a `disable` entry or a looser `actions` entry naming one is ignored, and
+`tq doctor` warns with `guard-locked-override`. Switching a whole category,
+or the mode, is `tq mode` (see [Guard modes](#guard-modes)).
 
 `--ws` edits only a manifest that is currently trusted, checks that the
 result still loads, and re-trusts it; a manifest with unreviewed edits is
@@ -580,16 +1005,35 @@ refused. A global file that does not parse is ignored as a whole, so every
 rule it changed is back to its default.
 
 The guard protects its own settings: `tq guard off|on|set`, `tq allow` and
-`tq deny` ask before they run (`tq/guard-change`), and direct edits to
+`tq deny` ask before they run (`tq/guard-change`), the mode writers and
+`tq allow --mode` are denied (`tq/mode-change`, human-only), and direct edits to
 `guard.yaml` from file tools or the shell are denied
 (`tq/guard-file-write`). An agent can propose a change; you confirm it.
 The shell rule denies any command line that names the file, but not a
 heredoc body that is only data and mentions it (see below).
 
+The same goes for tq's trust store (`$TQ_HOME/trust/`, which holds the
+trust markers and the mode grants), its registry (`$TQ_HOME/config.yaml`)
+and the files tq renders into an identity (`identities/<ws>/codex/rules/`,
+`hooks.json` and `config.toml`, and `identities/<ws>/claude/settings.json`
+and `settings.local.json`, also named as `$CLAUDE_CONFIG_DIR/…` and
+`$CODEX_HOME/…`, which are those identity dirs in a tq session), and the
+Codex config layers (a repo's `.codex/config.toml`, `.codex/hooks.json` and
+`.codex/rules/`, and the same files under `~/.codex`): `tq/trust-store-write` denies Edit, Write, MultiEdit and NotebookEdit on
+them, and shell writes: redirects, `tee`, `sed -i`, `rm`, `mv`, `cp` onto
+them, `Set-Content`, `Add-Content`, `Out-File`, `Remove-Item`,
+`Move-Item`, `Copy-Item` onto them, and `python -c` / `node -e` one-liners
+that name them and call a write. Both the `~/.tentaqles` and the
+`$TQ_HOME` (`${TQ_HOME}`, `$env:TQ_HOME`, `%TQ_HOME%`) spellings match, and
+the same four spellings of `CLAUDE_CONFIG_DIR` and `CODEX_HOME`; a
+custom `TQ_HOME` written out as a literal path does not. Reads (`cat`,
+`Get-Content`, Read, `cp` from them) stay allowed. `tq allow`, `tq deny`,
+`tq init` and `tq settings render` change these files.
+
 ### Heredocs: data and code
 
-For the **Bash** tool only, `tq/guard-file-write` (shell rule) and
-`tq/env-dump` skip heredoc bodies when the *whole command* is a single
+For the **Bash** tool only, `tq/guard-file-write` and
+`tq/trust-store-write` (shell rules) and `tq/env-dump` skip heredoc bodies when the *whole command* is a single
 command (no `;`, `&&`, `||`, `|`, `&` or second line outside the bodies)
 of one of these shapes, and only then:
 

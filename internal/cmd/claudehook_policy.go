@@ -107,6 +107,17 @@ func nonEmpty(xs []string) []string {
 	return out
 }
 
+// resolveForHook maps cwd to its trusted workspace, or to the untrusted
+// one it is in (nil, nil when neutral or on error).
+func resolveForHook(cwd string) (trusted, untrusted *resolve.Workspace, cfg *registry.Config) {
+	cfg, err := registry.Load()
+	if err != nil {
+		return nil, nil, nil
+	}
+	res := resolve.Resolve(cwd, cfg)
+	return res.Workspace, res.Untrusted, cfg
+}
+
 // resolveTrusted maps cwd to its trusted workspace, or nil. Errors mean nil:
 // the built-in rules still apply without a workspace.
 func resolveTrusted(cwd string) (*resolve.Workspace, *registry.Config) {
@@ -159,7 +170,24 @@ func loadProjectRules(cwd string, ws *resolve.Workspace) ([]policy.Rule, []error
 //
 // deadline ends every scan; the hook computes it at entry (start plus the
 // scan budget), so the identity lookups that ran before count against it.
-func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
+//
+// gate maps every matching rule to the guard mode's effective action and
+// keeps the ones it skipped or lowered for the audit; nil applies every rule
+// at its own action.
+func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time, gate *modeGate) policy.Decision {
+	return policyDecisionWith(buildPolicy(cwd, ws), cwd, ws, cfg, call, deadline, gate)
+}
+
+// builtPolicy is the rule set and effective guard of one hook call, built
+// once and shared by every file of an apply_patch.
+type builtPolicy struct {
+	eff guardcfg.Effective
+	set *policy.Set
+}
+
+// buildPolicy reads guard.yaml, the manifest's rules and the repo rule files
+// and compiles them.
+func buildPolicy(cwd string, ws *resolve.Workspace) builtPolicy {
 	eff := effectiveGuard(ws)
 	layers := policy.Layers{Builtin: policy.Builtin(), Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
 	if ws != nil {
@@ -170,7 +198,29 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	}
 	layers.Project, _ = loadProjectRules(cwd, ws)
 	set, _ := policy.Build(layers)
-	d := set.Evaluate(call)
+	return builtPolicy{eff: eff, set: set}
+}
+
+// policyDecisionWith is policyDecision with the rule set already built.
+func policyDecisionWith(pb builtPolicy, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time, gate *modeGate) policy.Decision {
+	eff, set := pb.eff, pb.set
+	d, changed := set.EvaluateMapped(call, gate.mapFunc())
+	gate.note(changed)
+
+	// A nested agent starts at its parent's mode or a stricter one: the
+	// nested-agent rule lets TQ_MODE=default through, so a strict session
+	// denies it here (locked self-protection, never mapped by the mode).
+	if call.IsShell() {
+		// Compared table by table, not by name: a custom session stricter
+		// than default in one category must not start a default child.
+		parent := gate.resolved()
+		for _, m := range policy.AssignedTQModes(call.Command) {
+			if !guardcfg.PresetResolved(m).NoLooserThan(parent) {
+				d = policy.Merge(d, ruleDecision(policy.Deny, policy.NestedAgentRuleID,
+					"a nested agent may start only at this session's mode ("+orDefault(parent.Mode)+") or stricter, in every category; "+m+" is looser somewhere"))
+			}
+		}
+	}
 
 	// One budget for every scan in this invocation (commit and push rules).
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
@@ -183,9 +233,9 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 		hits, err := commitscan.ScanCtx(ctx, cwd, call.Command, commitRun)
 		switch {
 		case len(hits) > 0:
-			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits)))
+			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits))))
 		case err != nil:
-			d = policy.Merge(d, ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err)))
+			d = policy.Merge(d, gate.apply(ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err))))
 		}
 	}
 	for _, r := range []struct {
@@ -203,18 +253,24 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 			continue
 		}
 		if pd, ok := r.fn(eff.ActionFor(r.id, policy.Deny)); ok {
-			d = policy.Merge(d, pd)
+			d = policy.Merge(d, gate.apply(pd))
 		}
 	}
 	if call.IsShell() && !eff.Off("tq/commit-message") {
 		if r := commitmsg.Check(call.Command, cwd); r.Checked && !r.OK {
-			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/commit-message", policy.Ask), "tq/commit-message", "commit message: "+r.Why))
+			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/commit-message", policy.Ask), "tq/commit-message", "commit message: "+r.Why)))
+		}
+	}
+	if !eff.Off(outsidePathWriteID) {
+		if ts := outsideWriteTargets(call, writeRoots(ws, cfg, cwd)); len(ts) > 0 {
+			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor(outsidePathWriteID, policy.Ask), outsidePathWriteID,
+				"this writes or deletes outside the workspace, the session folder, your repos and the temp folders: "+strings.Join(ts, ", "))))
 		}
 	}
 	if call.IsMCP() && !eff.Off("tq/cross-client-mcp") {
 		if other := mcpOwner(ws, cfg, call.MCPServer()); other != "" {
-			d = policy.Merge(d, ruleDecision(eff.ActionFor("tq/cross-client-mcp", policy.Deny), "tq/cross-client-mcp",
-				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other)))
+			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/cross-client-mcp", policy.Deny), "tq/cross-client-mcp",
+				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other))))
 		}
 	}
 	return d
@@ -278,7 +334,7 @@ func writeAsk(w io.Writer, reason string) error {
 // manifest (nil ws: the global file alone).
 func effectiveGuard(ws *resolve.Workspace) guardcfg.Effective {
 	if ws == nil || ws.Manifest == nil {
-		return guardcfg.Resolve(nil, "")
+		return guardcfg.ResolveActions(nil, "")
 	}
-	return guardcfg.Resolve(ws.Manifest, ws.Name)
+	return guardcfg.ResolveActions(ws.Manifest, ws.Name)
 }

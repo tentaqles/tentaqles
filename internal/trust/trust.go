@@ -28,8 +28,14 @@ func file(hash, suffix string) string { return filepath.Join(paths.TrustDir(), h
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
-func IsTrusted(hash string) bool       { return exists(file(hash, "")) }
-func IsBypassAllowed(hash string) bool { return exists(file(hash, ".bypass")) }
+func IsTrusted(hash string) bool { return exists(file(hash, "")) }
+
+// IsBypassAllowed reports whether a legacy .bypass file or a mode grant file
+// exists for hash. It does not check which workspace the grant is for:
+// decisions use guardcfg.BypassAllowed, which is root-checked.
+func IsBypassAllowed(hash string) bool {
+	return exists(file(hash, ".bypass")) || exists(file(hash, GrantSuffix))
+}
 
 func touch(p string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -41,8 +47,9 @@ func touch(p string) error {
 func Allow(hash string) error       { return touch(file(hash, "")) }
 func AllowBypass(hash string) error { return touch(file(hash, ".bypass")) }
 
+// Deny removes hash's trust, its bypass trust and its mode grant.
 func Deny(hash string) error {
-	for _, s := range []string{"", ".bypass"} {
+	for _, s := range []string{"", ".bypass", GrantSuffix} {
 		if err := os.Remove(file(hash, s)); err != nil && !os.IsNotExist(err) {
 			return err
 		}

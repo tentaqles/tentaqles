@@ -37,12 +37,36 @@ const trackerAzureHost = `\b(dev\.azure\.com|visualstudio\.com)\b`
 // envExcept exempts the conventional committed templates of a .env file.
 const envExcept = `\.env\.(example|sample|template|dist|defaults|schema)\b`
 
+// tqHomeVar is the TQ_HOME variable as bash, PowerShell or cmd spell it.
+const tqHomeVar = `(\$\{?(env:)?tq_home\}?|%tq_home%)`
+
+// tqStore is tq's trust store or registry under ~/.tentaqles or $TQ_HOME,
+// or a file tq renders into an identity (tqIdentityFile), named through the
+// identity's CLAUDE_CONFIG_DIR or CODEX_HOME too (agentDirVar), or a Codex
+// config layer: a repo's .codex/ or ~/.codex.
+const tqStore = `((\.tentaqles|` + tqHomeVar + `)[/\\]+(trust\b|config\.yaml\b|` + tqIdentityFile + `)` +
+	`|` + agentDirVar + `[/\\]+(settings(\.local)?\.json\b|config\.toml\b|hooks\.json\b|rules\b)` +
+	`|\.codex[/\\]+(config\.toml\b|hooks\.json\b|rules\b))`
+
+// agentDirVar is CLAUDE_CONFIG_DIR or CODEX_HOME as bash, PowerShell or cmd
+// spell it: in a tq session they are the identity dirs.
+const agentDirVar = `(\$\{?(env:)?(claude_config_dir|codex_home)\}?|%(claude_config_dir|codex_home)%)`
+
+// tqIdentityFile is, under identities/<ws>/, the codex identity's rules/,
+// hooks.json and config.toml, or the Claude identity's settings files: tq
+// renders them, and an agent that edits them widens its own session.
+const tqIdentityFile = `identities[/\\]+[^/\\\s'"]+[/\\]+(codex[/\\]+(rules\b|hooks\.json\b|config\.toml\b)|claude[/\\]+settings(\.local)?\.json\b)`
+
+// scriptWrite is a call in a python/node one-liner that writes or removes a
+// file, or an open() in a write mode.
+const scriptWrite = `(\bwrite|\bunlink|\bremove|\brename|\brmtree|\breplace\(|\bmove\(|\bcopy(file)?\(|\brmSync|\bappendFile|\bmkdir|\bchmod|\btouch\(|,\s*["'][wax]b?\+?["'])`
+
 // readVerbs are commands (bash, cmd and PowerShell) that print a file.
 const readVerbs = `\b(cat|type|more|less|head|tail|bat|nl|strings|xxd|od|grep|rg|findstr|gc|get-content|select-string|sls)\b`
 
-// Builtin returns tq's default rules. IDs are stable: manifests disable them
+// coreBuiltin returns the rules defined in this file. IDs are stable: manifests disable them
 // by id (guard.disable) and tests pin them.
-func Builtin() []Rule {
+func coreBuiltin() []Rule {
 	return []Rule{
 		// --- secrets: reading ------------------------------------------------
 		{
@@ -103,6 +127,22 @@ func Builtin() []Rule {
 			Reason:  "this changes what tq's guard checks or trusts; confirm it is what you want",
 		},
 		{
+			ID: "tq/mode-change", Action: Deny,
+			// tq's guard mode and its grants are human-only (spec E §10.1):
+			// the binary refuses agent sessions and needs a terminal, and
+			// this rule gives the agent a clear block first. Only a command
+			// word counts (after a separator, sudo/env/..., or the quote of
+			// `sh -c "…"`), so a commit message or an echo that mentions the
+			// verbs does not. `tq mode`, `tq mode log` and `tq allow <ws>`
+			// stay allowed (the last asks through tq/guard-change).
+			Command: cmdStart + `["']?(\S*[/\\])?tq(\.exe)?["']?\s+(` +
+				`["']?mode\b["']?` + gseg + `[\s"'=](set|toggle|override|edit)` + verbEnd +
+				`|["']?allow\b` + gseg + `\s--?(mode|bypass)\b` +
+				`|["']?unattended\b["']?` + gseg + `[\s"'=](on|off)` + verbEnd + `)`,
+			SkipHeredocData: true,
+			Reason:          "tq's guard mode and mode grants are changed by a human in a terminal (tq mode set|toggle|override|edit, tq allow --mode), never from an agent session",
+		},
+		{
 			ID: "tq/guard-file-write", Action: Deny,
 			Tool:   "Edit|Write|MultiEdit|NotebookEdit",
 			Path:   `(^|/)\.tentaqles/guard\.yaml$`,
@@ -119,6 +159,30 @@ func Builtin() []Rule {
 			Command:         `\.tentaqles[/\\]+guard\.yaml`,
 			SkipHeredocData: true,
 			Reason:          "the global guard file is changed with `tq guard off|on|set --all`, not from the shell",
+		},
+		// --- tq's trust store and registry ----------------------------------------
+		// $TQ_HOME/trust holds the trust and bypass markers, $TQ_HOME/config.yaml
+		// the registry: only tq (tq allow, tq init, ...) writes them. Reads stay
+		// allowed. A custom TQ_HOME is matched by its variable spelling only.
+		{
+			ID: "tq/trust-store-write", Action: Deny,
+			Tool: "Edit|Write|MultiEdit|NotebookEdit",
+			Path: `(^|/)(\.tentaqles|` + tqHomeVar + `)/(trust(/|$)|config\.yaml$|identities/[^/]+/(codex/(rules(/|$)|hooks\.json$|config\.toml$)|claude/settings(\.local)?\.json$))` +
+				`|(^|/)\.codex/(config\.toml$|hooks\.json$|rules(/|$))`,
+			Reason: "tq's trust store, registry and rendered identity settings are changed with tq (tq allow, tq deny, tq init, tq settings render), not edited directly",
+		},
+		{
+			ID: "tq/trust-store-write", Action: Deny,
+			// Redirects and in-place writers deny on any mention of the target;
+			// mv, rm and their PowerShell forms on any mention (moving the store
+			// away is a write too); cp only when the target is the destination,
+			// so `cp ~/.tentaqles/config.yaml backup` is a read. A python/node
+			// one-liner denies when it names the target and a write call.
+			Command: `(>{1,2}\s*|\b(tee|sed\s+-i|set-content|add-content|out-file|sc|ac|new-item|ni|rm|rmdir|del|erase|rd|remove-item|ri|mv|move|move-item|mi|rename-item|ren)\b` + seg + `)\S*` + tqStore +
+				`|\b(cp|copy|copy-item|cpi)\b` + seg + `\S*` + tqStore + `\S*` + destTail +
+				`|\b(python[0-9.]*|py|node|deno|bun)(\.exe)?\b[^\n]*\s-(c|e|p|-eval)\b[^\n]*(` + tqStore + `[^\n]*` + scriptWrite + `|` + scriptWrite + `[^\n]*` + tqStore + `)`,
+			SkipHeredocData: true,
+			Reason:          "tq's trust store, registry and rendered identity settings are changed with tq (tq allow, tq deny, tq init, tq settings render), not from the shell",
 		},
 		// --- git ---------------------------------------------------------------
 		{
@@ -240,10 +304,18 @@ func Builtin() []Rule {
 		// --- Claude Code settings ---------------------------------------------------
 		{
 			ID: "tq/settings-widen", Action: Deny,
-			Tool:    "Edit|MultiEdit|Write",
-			Path:    `(^|/)(\.claude/settings(\.local)?\.json|\.claude\.json|settings(\.local)?\.json)$`,
-			Content: `Bash\(\*\)|bypassPermissions|"disableAllHooks"\s*:\s*true|"hooks"\s*:\s*\{\s*\}|"skipDangerousModePermissionPrompt"\s*:\s*true`,
-			Reason:  "this would widen permissions or switch hooks off from inside the session; permission changes go through `tq settings render` and the manifest",
+			Tool: "Edit|MultiEdit|Write",
+			Path: `(^|/)(\.claude/settings(\.local)?\.json|\.claude\.json|settings(\.local)?\.json)$`,
+			// Also what switches tq off for the next or a nested session: the
+			// tentaqles plugin disabled, tq's or Claude's mode variables set,
+			// a looser defaultMode. The keys match anywhere in the content: an
+			// Edit's new_string is often a fragment inside an existing env or
+			// enabledPlugins block, without the enclosing key.
+			Content: `Bash\(\*\)|bypassPermissions|"disableAllHooks"\s*:\s*true|"hooks"\s*:\s*\{\s*\}|"skipDangerousModePermissionPrompt"\s*:\s*true` +
+				`|"tentaqles@[^"]*"\s*:\s*false` +
+				`|"(` + agLoosenEnv + `)"\s*:` +
+				`|"defaultMode"\s*:\s*"(auto|dontAsk)"`,
+			Reason: "this would widen permissions or switch hooks off from inside the session; permission changes go through `tq settings render` and the manifest",
 		},
 		{
 			ID: "tq/settings-shell-write", Action: Deny,

@@ -12,7 +12,6 @@ package policy
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/guard"
@@ -26,6 +25,13 @@ const (
 	Ask   Action = "ask"
 	Deny  Action = "deny"
 )
+
+// UnattendedEnforce is the deprecated Rule.Unattended value ("always
+// applied"); manifests still accept it.
+const UnattendedEnforce = "enforce"
+
+// StricterThan reports whether a is a stricter verdict than b.
+func (a Action) StricterThan(b Action) bool { return a.rank() > b.rank() }
 
 func (a Action) rank() int {
 	switch a {
@@ -88,7 +94,16 @@ type Rule struct {
 	// are matched as they are.
 	SkipHeredocData bool   `yaml:"-"`
 	Reason          string `yaml:"reason"`
-	Source          string `yaml:"-"` // "builtin", the manifest path, or the project rules path
+	// Unattended is deprecated (spec E): on a custom rule, any value means
+	// "no category", so every mode applies the rule at its own action. Use
+	// Category instead.
+	Unattended string `yaml:"unattended,omitempty"`
+	// Category (spec E §5.1) is a custom rule's guardcfg category name (one
+	// of the thirteen). Built-in rules are classified in guardcfg.Categories
+	// and ignore it. Empty: unclassified, applied at its own action in every
+	// mode (fail closed).
+	Category string `yaml:"category,omitempty"`
+	Source   string `yaml:"-"` // "builtin", the manifest path, or the project rules path
 
 	tool, command, path, content, except *regexp.Regexp
 }
@@ -248,22 +263,10 @@ func (d Decision) Reason() string {
 	return b.String()
 }
 
-// Evaluate applies every rule in s to call.
+// Evaluate applies every rule in s to call at its own action. It is
+// EvaluateMapped with no mapper.
 func (s *Set) Evaluate(call ToolCall) Decision {
-	var d Decision
-	for _, r := range s.Rules {
-		if !r.Match(call) {
-			continue
-		}
-		switch {
-		case r.Action.rank() > d.Action.rank():
-			d.Action = r.Action
-			d.Matched = []*Rule{r}
-		case r.Action.rank() == d.Action.rank():
-			d.Matched = append(d.Matched, r)
-		}
-	}
-	sort.SliceStable(d.Matched, func(i, j int) bool { return d.Matched[i].ID < d.Matched[j].ID })
+	d, _ := s.EvaluateMapped(call, nil)
 	return d
 }
 

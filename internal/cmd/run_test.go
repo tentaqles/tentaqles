@@ -2,13 +2,16 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -32,6 +35,10 @@ func isolateHome(t *testing.T) string {
 	// __TQ_STATE. `tq env` would then "restore" that shell's variables and
 	// emit unsets for a neutral cwd, so start every test from a clean slate.
 	unsetenv(t, envplan.StateVar)
+	// Nor from an off window or a per-launch mode (spec E §8).
+	for _, k := range []string{"TQ_MODE", "TQ_ENABLED", envplan.HeadlessModeVar} {
+		unsetenv(t, k)
+	}
 	return home
 }
 
@@ -111,6 +118,8 @@ func ws(t *testing.T, mode string) *resolve.Workspace {
 	return &resolve.Workspace{
 		Name: "acme",
 		Hash: "hash-" + mode,
+		// A grant is read for a workspace root (security re-review r2).
+		Root: t.TempDir(),
 		Manifest: &manifest.Manifest{
 			Schema: "tentaqles-client-v2", Client: "acme",
 			Claude: manifest.Claude{PermissionMode: mode},
@@ -162,4 +171,395 @@ func TestClaudeArgs(t *testing.T) {
 			t.Fatalf("got %v", got)
 		}
 	})
+}
+
+// --- spec E §8.1: the launcher -------------------------------------------
+
+// clearAgentMarkers unsets every agent marker (the test binary may run under Claude Code).
+func clearAgentMarkers(t *testing.T) {
+	t.Helper()
+	for _, k := range agentMarkers {
+		unsetenv(t, k)
+	}
+}
+
+// launched is one call of the execCommand seam.
+type launched struct {
+	name string
+	args []string
+	env  map[string]string
+}
+
+// String names the call without its env: a failure message must never print
+// the environment (it carries the developer's tokens).
+func (l launched) String() string {
+	return l.name + " " + strings.Join(l.args, " ") + " (TQ_MODE=" + l.env["TQ_MODE"] + ")"
+}
+
+// fakeExec replaces execCommand for the test and returns the recorded calls.
+func fakeExec(t *testing.T) *[]launched {
+	t.Helper()
+	var calls []launched
+	prev := execCommand
+	execCommand = func(name string, args []string, env []string) error {
+		m := map[string]string{}
+		for _, kv := range env {
+			k, v, _ := strings.Cut(kv, "=")
+			m[strings.ToUpper(k)] = v
+		}
+		calls = append(calls, launched{name, append([]string(nil), args...), m})
+		return nil
+	}
+	t.Cleanup(func() { execCommand = prev })
+	return &calls
+}
+
+// mkLaunchWS writes and trusts a workspace with claude and codex identities
+// and the given claude.permission_mode; it returns the root.
+func mkLaunchWS(t *testing.T, name, permMode string) string {
+	t.Helper()
+	root := mkUntrusted(t, name)
+	body := "schema: tentaqles-client-v2\nclient: " + name + "\ngit: { email: tester@example.com }\nidentities: { claude: {}, codex: {} }\n"
+	if permMode != "" {
+		body += "claude: { permission_mode: " + permMode + " }\n"
+	}
+	mp := filepath.Join(root, manifest.FileName)
+	if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, err := trust.HashFile(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := trust.Allow(h); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func runTq(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	root := NewRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs(args)
+	err := root.Execute()
+	return out.String(), err
+}
+
+func TestLaunchClaudeArgs(t *testing.T) {
+	cases := []struct {
+		in       []string
+		agent    bool
+		want     string
+		wantMode string
+	}{
+		{[]string{"-p", "hi"}, false, "--dangerously-skip-permissions -p hi", ""},
+		{nil, false, "--dangerously-skip-permissions", ""},
+		{[]string{"--tq-mode", "strict", "-p", "hi"}, false, "--dangerously-skip-permissions -p hi", "strict"},
+		{[]string{"-p", "hi", "--tq-mode=relaxed"}, false, "--dangerously-skip-permissions -p hi", "relaxed"},
+		{[]string{"--permission-mode", "plan", "-p", "hi"}, false, "--permission-mode plan -p hi", ""},
+		{[]string{"--permission-mode=acceptEdits"}, false, "--permission-mode=acceptEdits", ""},
+		{[]string{"--dangerously-skip-permissions", "-p", "x"}, false, "--dangerously-skip-permissions -p x", ""},
+		{[]string{"--version"}, false, "--version", ""},
+		{[]string{"-h"}, false, "-h", ""},
+		{[]string{"mcp", "list"}, false, "mcp list", ""},
+		{[]string{"update"}, false, "update", ""},
+		// An agent's nested claude never gets bypass from the launcher.
+		{[]string{"-p", "hi"}, true, "-p hi", ""},
+		// A prompt that happens to say "update" is not a subcommand.
+		{[]string{"-p", "update the docs"}, false, "--dangerously-skip-permissions -p update the docs", ""},
+	}
+	for _, c := range cases {
+		got, mode := launchClaudeArgs(c.in, c.agent)
+		if strings.Join(got, " ") != c.want || mode != c.wantMode {
+			t.Errorf("launchClaudeArgs(%q, agent=%v) = %q, %q; want %q, %q", c.in, c.agent, got, mode, c.want, c.wantMode)
+		}
+	}
+}
+
+// The launcher starts claude in bypass whatever claude.permission_mode says.
+func TestRunClaudeAlwaysBypass(t *testing.T) {
+	for _, pm := range manifest.PermissionModes {
+		t.Run("mode="+pm, func(t *testing.T) {
+			mkLaunchWS(t, "acme", pm)
+			clearAgentMarkers(t)
+			calls := fakeExec(t)
+			if out, err := runTq(t, "run", "acme", "--", "claude", "-p", "hi"); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			if len(*calls) != 1 || (*calls)[0].name != "claude" {
+				t.Fatalf("calls %+v", *calls)
+			}
+			if got := strings.Join((*calls)[0].args, " "); got != "--dangerously-skip-permissions -p hi" {
+				t.Fatalf("args %q", got)
+			}
+			if (*calls)[0].env["TQ_WS"] != "acme" || (*calls)[0].env["CLAUDE_CONFIG_DIR"] == "" {
+				t.Fatalf("identity env missing: TQ_WS=%q", (*calls)[0].env["TQ_WS"])
+			}
+		})
+	}
+}
+
+func TestRunTqMode(t *testing.T) {
+	mkLaunchWS(t, "acme", "")
+	clearAgentMarkers(t)
+	t.Setenv("TQ_MODE", "relaxed") // inherited: a human launch without a mode drops it
+
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--", "claude", "-p", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, set := (*calls)[0].env["TQ_MODE"]; set {
+		t.Fatalf("no mode given: TQ_MODE must be unset, got %q", (*calls)[0].env["TQ_MODE"])
+	}
+
+	for _, args := range [][]string{
+		{"run", "acme", "--tq-mode", "strict", "--", "claude", "-p", "x"},
+		{"run", "acme", "--", "claude", "--tq-mode", "strict", "-p", "x"},
+	} {
+		calls := fakeExec(t)
+		if out, err := runTq(t, args...); err != nil {
+			t.Fatalf("%v: %v %s", args, err, out)
+		}
+		c := (*calls)[0]
+		if c.env["TQ_MODE"] != "strict" || strings.Join(c.args, " ") != "--dangerously-skip-permissions -p x" {
+			t.Fatalf("%v: env TQ_MODE=%q args %q", args, c.env["TQ_MODE"], c.args)
+		}
+	}
+
+	// codex: the flag is stripped too
+	calls = fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--", "codex", "--tq-mode=strict", "exec", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; c.env["TQ_MODE"] != "strict" || slices.Contains(c.args, "--tq-mode=strict") {
+		t.Fatalf("codex: %+v", c)
+	}
+
+	for _, bad := range []string{"off", "bogus"} {
+		fakeExec(t)
+		if _, err := runTq(t, "run", "acme", "--tq-mode", bad, "--", "claude"); err == nil {
+			t.Errorf("--tq-mode %s must be refused", bad)
+		}
+	}
+}
+
+func TestRunDotResolvesCwd(t *testing.T) {
+	root := mkLaunchWS(t, "acme", "")
+	clearAgentMarkers(t)
+	sub := filepath.Join(root, "app")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, sub)
+	calls := fakeExec(t)
+	if out, err := runTq(t, "run", ".", "--", "claude"); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	if (*calls)[0].env["TQ_WS"] != "acme" {
+		t.Fatalf("want acme's identity: TQ_WS=%q", (*calls)[0].env["TQ_WS"])
+	}
+
+	// neutral folder: no identity, still the launcher
+	chdir(t, t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "/other/client")
+	calls = fakeExec(t)
+	if out, err := runTq(t, "run", ".", "--", "claude"); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	c := (*calls)[0]
+	if _, ok := c.env["TQ_WS"]; ok {
+		t.Fatalf("neutral run carries a workspace: TQ_WS=%q", c.env["TQ_WS"])
+	}
+	if _, ok := c.env["CLAUDE_CONFIG_DIR"]; ok {
+		t.Fatalf("another client's config dir leaked")
+	}
+	if strings.Join(c.args, " ") != "--dangerously-skip-permissions" {
+		t.Fatalf("args %q", c.args)
+	}
+}
+
+func TestRunDotUntrustedRunsNeutralWithWarning(t *testing.T) {
+	root := mkUntrusted(t, "evil")
+	clearAgentMarkers(t)
+	chdir(t, root)
+	calls := fakeExec(t)
+	out, err := runTq(t, "run", ".", "--", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "untrusted") || len(*calls) != 1 {
+		t.Fatalf("want a warning and a neutral launch: %q %+v", out, *calls)
+	}
+	if _, ok := (*calls)[0].env["TQ_WS"]; ok {
+		t.Fatal("an untrusted workspace's identity must not be applied")
+	}
+}
+
+func TestRunOff(t *testing.T) {
+	mkLaunchWS(t, "acme", "acceptEdits")
+	clearAgentMarkers(t)
+	st := envplan.State{WS: "acme", Prev: map[string]*string{"TQ_WS": nil, "CLAUDE_CONFIG_DIR": nil}}
+	t.Setenv(envplan.StateVar, st.Encode())
+	t.Setenv("TQ_WS", "acme")
+	t.Setenv("CLAUDE_CONFIG_DIR", "/id/acme/claude")
+	t.Setenv("CODEX_HOME", "/id/acme/codex")
+
+	calls := fakeExec(t)
+	out, err := runTq(t, "run", "--off", "--", "claude", "-p", "x")
+	if err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	if !strings.Contains(out, "tq: off") || !strings.Contains(out, "main logins") {
+		t.Fatalf("missing the off banner: %q", out)
+	}
+	c := (*calls)[0]
+	want := `--dangerously-skip-permissions --settings {"enabledPlugins":{"tentaqles@tentaqles":false}} -p x`
+	if c.name != "claude" || strings.Join(c.args, " ") != want {
+		t.Fatalf("claude off args: %q", c.args)
+	}
+	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "TQ_WS", envplan.StateVar} {
+		if _, ok := c.env[k]; ok {
+			t.Errorf("%s must be removed in off", k)
+		}
+	}
+	if c.env["TQ_MODE"] != "off" {
+		t.Fatalf("TQ_MODE = %q", c.env["TQ_MODE"])
+	}
+
+	calls = fakeExec(t)
+	if _, err := runTq(t, "run", "--off", "--", "codex", "exec", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; strings.Join(c.args, " ") != "--dangerously-bypass-approvals-and-sandbox exec x" || c.env["TQ_MODE"] != "off" {
+		t.Fatalf("codex off: %+v", c)
+	}
+
+	// --off takes no workspace
+	fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--off", "--", "claude"); err == nil {
+		t.Fatal("tq run <ws> --off must be refused")
+	}
+
+	// --off starts claude or codex only (spec E §8.1); a path or an
+	// extension still names them and still gets the off flags.
+	for _, name := range []string{"bash", "pwsh", "claudex", "sh"} {
+		calls = fakeExec(t)
+		if _, err := runTq(t, "run", "--off", "--", name); err == nil || len(*calls) != 0 {
+			t.Fatalf("tq run --off -- %s must be refused, got %v %+v", name, err, *calls)
+		}
+	}
+	calls = fakeExec(t)
+	if _, err := runTq(t, "run", "--off", "--", "/opt/bin/claude.exe", "-p", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; c.name != "/opt/bin/claude.exe" || !strings.HasPrefix(strings.Join(c.args, " "), "--dangerously-skip-permissions --settings") {
+		t.Fatalf("claude by path: %+v", c)
+	}
+}
+
+func TestRunOffRefusesAgents(t *testing.T) {
+	mkLaunchWS(t, "acme", "")
+	for _, k := range agentMarkers {
+		t.Run(k, func(t *testing.T) {
+			clearAgentMarkers(t)
+			t.Setenv(k, "1")
+			calls := fakeExec(t)
+			_, err := runTq(t, "run", "--off", "--", "claude")
+			if !errors.Is(err, runner.ErrHumanOnly) || len(*calls) != 0 {
+				t.Fatalf("%s: want ErrHumanOnly and no launch, got %v %+v", k, err, *calls)
+			}
+		})
+	}
+}
+
+func TestRunFromAgentSession(t *testing.T) {
+	mkLaunchWS(t, "acme", "")
+	clearAgentMarkers(t)
+	t.Setenv("CLAUDECODE", "1")
+
+	// the parent's TQ_MODE passes through, and no bypass is added
+	t.Setenv("TQ_MODE", "strict")
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--", "claude", "-p", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; c.env["TQ_MODE"] != "strict" || strings.Join(c.args, " ") != "-p x" {
+		t.Fatalf("agent launch: %+v", c)
+	}
+	// looser than the parent: refused
+	for _, m := range []string{"default", "relaxed", "custom"} {
+		calls := fakeExec(t)
+		if _, err := runTq(t, "run", "acme", "--tq-mode", m, "--", "claude"); err == nil || len(*calls) != 0 {
+			t.Errorf("parent strict: --tq-mode %s must be refused (%v)", m, err)
+		}
+	}
+	// the same or stricter: fine
+	t.Setenv("TQ_MODE", "")
+	calls = fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--tq-mode", "strict", "--", "claude"); err != nil || (*calls)[0].env["TQ_MODE"] != "strict" {
+		t.Fatalf("parent default -> strict: %v %+v", err, *calls)
+	}
+	fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--tq-mode", "relaxed", "--", "claude"); err == nil {
+		t.Fatal("parent default -> relaxed must be refused")
+	}
+}
+
+// The PowerShell tq function cannot pass a literal `--` (the parameter
+// binder eats it), so tq run never parses the command's own flags as its
+// own: everything after the command word belongs to the command, with or
+// without `--` (final review M1).
+func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
+	isolateHome(t)
+	clearAgentMarkers(t)
+	mkLaunchWS(t, "acme", "")
+	for _, args := range [][]string{
+		{"run", "acme", "--", "npm", "test", "-p", "x", "--watch"},
+		{"run", "acme", "npm", "test", "-p", "x", "--watch"},
+		{"run", "acme", "--tq-mode", "strict", "npm", "test", "-p", "x", "--watch"},
+		{"run", "acme", "--tq-mode=strict", "--", "npm", "test", "-p", "x", "--watch"},
+		{"run", "--tq-mode", "strict", "acme", "npm", "test", "-p", "x", "--watch"},
+	} {
+		calls := fakeExec(t)
+		if out, err := runTq(t, args...); err != nil {
+			t.Fatalf("%v: %v %s", args, err, out)
+		}
+		if c := (*calls)[0]; c.name != "npm" || strings.Join(c.args, " ") != "test -p x --watch" {
+			t.Fatalf("%v: %v", args, c)
+		}
+	}
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "--off", "claude", "--resume", "-p", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; !strings.Contains(strings.Join(c.args, " "), "--resume -p x") {
+		t.Fatalf("--off without --: %v", c)
+	}
+	if _, err := runTq(t, "run", "acme", "--off", "claude"); err == nil {
+		t.Fatal("--off after a workspace must be refused")
+	}
+}
+
+// An agent's tq run --tq-mode is compared with the session by the resolved
+// tables: under a custom parent that denies a category, --tq-mode default
+// is looser there and is refused (security re-review r3, R3-2).
+func TestAgentRunTqModeComparesTables(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "guard:\n  mode: custom\n  base: default\n  categories: { db-destructive: deny }\n")
+	t.Chdir(root) // the agent session runs in the workspace
+	clearAgentMarkers(t)
+	t.Setenv("TQ_MODE", "")
+	t.Setenv("CLAUDECODE", "1")
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--tq-mode", "default", "--", "claude", "-p", "x"); err == nil || !strings.Contains(err.Error(), "looser") {
+		t.Fatalf("an agent may not launch looser in a category: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatal("nothing may be launched")
+	}
+	if _, err := runTq(t, "run", "acme", "--", "claude", "-p", "x"); err != nil {
+		t.Fatalf("the parent's own mode is allowed: %v", err)
+	}
 }

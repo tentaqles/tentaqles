@@ -70,8 +70,3 @@ if ($env:TQ_ENABLED -eq '0') {
 # >>> tq >>>
 if ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue)) { tq activate powershell | Out-String | Invoke-Expression }
 # <<< tq <<<
-
-# carried over by tq migrate; permission_mode will move into the manifest
-if ($env:TQ_ENABLED -ne '0') {
-function claude { & "$env:USERPROFILE\.local\bin\claude.exe" --dangerously-skip-permissions @args }
-}

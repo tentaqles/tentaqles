@@ -1,0 +1,1528 @@
+[
+  {
+    "Tool": "Read",
+    "Command": "",
+    "Path": "C:\\Users\\renato\\.ssh\\id_ed25519",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Read",
+    "Command": "",
+    "Path": "C:\\Users\\renato\\.ssh\\id_ed25519.pub",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Read",
+    "Command": "",
+    "Path": "C:/Users/renato/.tentaqles/bundles/catalog.yaml",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cat ~/.aws/credentials",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "Get-Content $HOME\\.ssh\\id_rsa",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Read",
+    "Command": "",
+    "Path": "C:\\repos\\x\\.env",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Read",
+    "Command": "",
+    "Path": "/r/x/.env.local",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Read",
+    "Command": "",
+    "Path": "C:\\repos\\x\\.env.example",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Read",
+    "Command": "",
+    "Path": "/r/x/.envrc",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cd app \u0026\u0026 cat .env",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cat .env.example",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cat .env.example .env",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "grep -rn \"process.env\" src",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cp .env.example .env",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "Get-Content .\\.env",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "printenv",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "env | sort",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "env FOO=1 node x.js",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "printenv PATH",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "Get-ChildItem Env:",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "git push --force origin main",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "git push origin main -f",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "git push origin +main",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "git push --force-with-lease origin master",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "git push --force origin feat/x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "git push --force-with-lease origin feat/x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "git push origin main",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh pr merge 12 --squash --admin",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh pr merge 12 --squash",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh repo delete org/x --yes",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended off --project demo-todo",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "tq.exe unattended on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended status",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended log",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws acme on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --codex-sandbox danger-full-access on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended -h on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "tq.exe unattended --ws=acme off",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard --ws acme off tq/x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard --all set tq/x ask",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended status --ws acme",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws acme status",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended log --ws acme",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard list --ws acme",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard --ws acme list",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project \"my dir\" on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project 'my dir' on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project=my\\ dir on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws \"$(echo acme)\" on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard --ws \"a b\" set tq/x ask",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended \"on\"",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws acme 'on'",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard 'off' tq/x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "\u0026 \"C:\\tools\\tq.exe\" unattended --ws acme on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "\"/opt/bin/tq\" allow acme",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended status --ws \"my ws\"",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended log --since 24h",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard list --ws acme",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project .\\ on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project C:\\repos\\x\\ on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project \\\\nas\\proj on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project \\\\nas\\proj\\ on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project \\tmp\\x on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws 'a'\"b\" on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "tq unattended --ws \"a`\"b\" on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --project=C:\\x\\ on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "\u0026 \"tq\" unattended on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "\u0026 'tq.exe' unattended on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "\"tq\" allow acme",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws \"$(echo \"acme\")\" on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws a\"b c\" on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "$(tq unattended on)",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "x=$(tq unattended on)",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "(tq unattended on)",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended on\u003eout.txt",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "tq unattended on\u003e$null",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard set\u003cin.txt",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "$(tq guard off tq/x)",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "`tq unattended on`",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws acme \\\n on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq unattended --ws acme \\\r\n on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "tq unattended `\n on",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "$(tq unattended status)",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq guard list",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az postgres flexible-server delete -g rg-prod -n db",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "aws s3 rm s3://bucket/x --recursive",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az group list -o table",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "npx cdk destroy MyStack",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "reg add HKCU\\Software\\X /v Y /d 1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "psql \"$DB\" -c \"DROP TABLE users\"",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "psql \"$DB\" -c \"select * from users where updated_at \u003e now()\"",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "C:\\r\\app\\supabase\\migrations\\0001_init.sql",
+    "Content": "",
+    "Exists": true
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "C:\\r\\app\\supabase\\migrations\\0002_add.sql",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__postgres__query",
+    "Command": "",
+    "Path": "",
+    "Content": "{\"sql\":\"DELETE FROM orders WHERE id=1\"}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__postgres__query",
+    "Command": "",
+    "Path": "",
+    "Content": "{\"sql\":\"select count(*) from orders\"}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__plugin_supabase_supabase__apply_migration",
+    "Command": "",
+    "Path": "",
+    "Content": "{}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__n8n__publish_workflow",
+    "Command": "",
+    "Path": "",
+    "Content": "{\"id\":\"1\"}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__n8n-mcp__n8n_create_workflow",
+    "Command": "",
+    "Path": "",
+    "Content": "{}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__plugin_n8n_n8n__n8n_update_partial_workflow",
+    "Command": "",
+    "Path": "",
+    "Content": "{}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__n8n-mcp__n8n_get_workflow",
+    "Command": "",
+    "Path": "",
+    "Content": "{}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__n8n__get_workflow_details",
+    "Command": "",
+    "Path": "",
+    "Content": "{\"id\":\"1\"}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__github__merge_pull_request",
+    "Command": "",
+    "Path": "",
+    "Content": "{}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__github__get_pull_request",
+    "Command": "",
+    "Path": "",
+    "Content": "{}",
+    "Exists": false
+  },
+  {
+    "Tool": "mcp__hostinger-mcp__execute",
+    "Command": "",
+    "Path": "",
+    "Content": "{}",
+    "Exists": false
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "C:\\r\\.github\\workflows\\ci.yml",
+    "Content": "steps:\n  - uses: foo/bar@main\n",
+    "Exists": false
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "C:\\r\\.github\\workflows\\ci.yml",
+    "Content": "steps:\n  - uses: actions/checkout@v4\n",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "terraform apply -auto-approve",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "pulumi up --yes --stack prod",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az deployment group create -g rg -f main.bicep",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "aws cloudformation deploy --stack-name x --template-file t.yml",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "terraform plan",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "npx prisma migrate deploy",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "supabase db push --linked",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "alembic upgrade head",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "supabase db reset --local",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"allow\": [\"Bash(*)\"]",
+    "Exists": false
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "C:\\r\\x\\.claude\\settings.local.json",
+    "Content": "{\"permissions\": {\"defaultMode\": \"bypassPermissions\"}}",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"disableAllHooks\": true",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"theme\": \"dark\"",
+    "Exists": false
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.local.json",
+    "Content": "{\"enabledPlugins\": {\"tentaqles@tentaqles\": false}}",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"enabledPlugins\": {\n  \"other@x\": true,\n  \"tentaqles@tentaqles\": false\n}",
+    "Exists": false
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.local.json",
+    "Content": "{\"env\": {\"TQ_MODE\": \"off\"}}",
+    "Exists": false
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.local.json",
+    "Content": "{\"env\": {\"FOO\": \"1\", \"TQ_ENABLED\": \"0\"}}",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"env\": {\"CLAUDE_CONFIG_DIR\": \"/home/u/.claude\"}",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"env\": {\"CLAUDE_CODE_SIMPLE\": \"1\"}",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"defaultMode\": \"auto\"",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"defaultMode\": \"dontAsk\"",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.local.json",
+    "Content": "\"NODE_ENV\": \"dev\", \"TQ_MODE\": \"off\"",
+    "Exists": false
+  },
+  {
+    "Tool": "MultiEdit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"TQ_ENABLED\":\"0\"",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"tentaqles@tentaqles\": false",
+    "Exists": false
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.local.json",
+    "Content": "{\"env\": {\"X\": \"a}b\", \"TQ_MODE\": \"off\"}}",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"description\": \"TQ_MODE off is for humans\"",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"enabledPlugins\": {\"tentaqles@tentaqles\": true, \"x@y\": false}",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"env\": {\"NODE_ENV\": \"test\"}",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/x/.claude/settings.json",
+    "Content": "\"defaultMode\": \"plan\"",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "echo '{}' \u003e .claude/settings.local.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "Set-Content .claude\\settings.json '{}'",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cat .claude/settings.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/.github/workflows/ci.yml",
+    "Content": "uses: actions/checkout@main",
+    "Exists": false
+  },
+  {
+    "Tool": "Write",
+    "Command": "",
+    "Path": "/r/.github/workflows/ci.yml",
+    "Content": "- uses: foo/bar@master",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/.github/workflows/ci.yml",
+    "Content": "uses: foo/bar@latest",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "/r/.github/workflows/ci.yml",
+    "Content": "uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cp .claude/settings.json /tmp/backup.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cp /tmp/x.json .claude/settings.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "Copy-Item .claude\\settings.json backup.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "terraform -chdir=infra apply",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "kubectl -n prod apply -f x.yaml",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "kubectl --context prod apply -f x.yaml",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "helm -n x upgrade rel chart",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "pulumi --stack prod up",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "kubectl apply --dry-run=client -f x.yaml",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "terraform apply -auto-approve # --dry-run",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "kubectl apply -f x.yaml --dry-run=client # note",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "alembic upgrade head # localhost",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "Copy-Item x .claude\\settings.json -Force",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cp x .claude/settings.json 2\u003e\u00261",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cp x .claude/settings.json # c",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cp .claude/settings.json backup.json -f",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cp .claude/settings.json /tmp/backup.json -v",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az boards work-item update --id 123 --state Active",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "az boards work-item create --title \"Export\" --type Task --org https://dev.azure.com/acme",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az boards work-item delete --id 123 --yes",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az --only-show-errors boards work-item update --id 1 --state Done",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "cd x \u0026\u0026 az boards work-item update --id 1 --discussion done",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue edit 12 --add-label agent-ready",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue close 12 --comment done",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "gh issue create --title \"Export\" --body \"CSV\"",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue comment 12 --body 'approved'",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh -R acme/app issue comment 12 -b x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh project item-edit --id PVTI_1 --field-id F --single-select-option-id O",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "acli jira workitem edit --key PLAT-1 --summary x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "acli jira workitem transition --key PLAT-1 --status \"In Review\"",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "acli jira workitem create --project PLAT --type Task --summary x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "acli jira workitem comment create --key PLAT-1 --body x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az boards work-item show --id 123 -o json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az boards query --wiql 'select [System.Id] from WorkItems'",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue view 12 --json title,body",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue list --assignee @me",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh pr create --title \"fix issue create flow\" --body x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh project item-list 3 --owner acme",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "acli jira workitem view PLAT-1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "tq hub sync now --json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api -X PATCH repos/acme/app/issues/12 -f state=closed",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api --method POST repos/acme/app/issues/12/comments -f body=x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "gh api repos/acme/app/issues -f title=\"Export\" -f body=x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api repos/acme/app/issues/12/labels/bug --method=DELETE",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api graphql -f query='mutation { updateProjectV2ItemFieldValue(input: {}) { clientMutationId } }'",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api -X PUT orgs/acme/projects/3 --input p.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue transfer 12 acme/other",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue lock 12",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue pin 12",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh issue develop 12 --checkout",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az boards work-item relation add --id 1 --relation-type parent --target-id 2",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az boards work-item relation remove --id 1 --relation-type parent --target-id 2 --yes",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "az rest --method patch --url \"https://dev.azure.com/acme/app/_apis/wit/workitems/1?api-version=7.1\" --body @p.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az devops invoke --area wit --resource workitems --route-parameters id=1 --http-method PATCH --in-file p.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "acli jira workitem clone --key PLAT-1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "acli jira workitem link create --out PLAT-1 --in PLAT-2 --type Blocks",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "acli jira workitem archive --key PLAT-1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api -XPATCH repos/acme/app/issues/1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api -X=POST repos/acme/app/issues/1/lock",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az rest -m patch --uri https://dev.azure.com/acme/app/_apis/wit/workitems/1 --body @p.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "PowerShell",
+    "Command": "az rest --uri \"https://acme.visualstudio.com/_apis/wit/workitems/1\" -m=DELETE",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api graphql -F query=@m.graphql",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api graphql -F owner=acme --field query=@q.graphql",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api graphql --input body.json",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az rest -m get --uri https://dev.azure.com/acme/app/_apis/wit/workitems/1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api graphql -F owner=acme -f query='query { viewer { login } }'",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api -XGET repos/acme/app/issues/1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api repos/acme/app/issues",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api graphql -f query='query { viewer { login } }'",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "gh api -X POST repos/acme/app/pulls/3/comments -f body=x",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az rest --method get --url \"https://dev.azure.com/acme/app/_apis/wit/workitems/1\"",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az devops invoke --area wit --resource workitems --route-parameters id=1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "az boards work-item relation show --id 1",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  },
+  {
+    "Tool": "Edit",
+    "Command": "",
+    "Path": "C:\\r\\docs\\leia-me.md",
+    "Content": "Configuração não é necessária 🚀",
+    "Exists": false
+  },
+  {
+    "Tool": "Bash",
+    "Command": "ls -la",
+    "Path": "",
+    "Content": "",
+    "Exists": false
+  }
+]

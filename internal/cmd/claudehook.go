@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/guard"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
@@ -95,7 +97,25 @@ func dropKey(drop map[string]bool, k string) bool {
 func newClaudeHookCmd() *cobra.Command {
 	c := &cobra.Command{Use: "claude-hook", Short: "Claude Code hook adapter (reads the hook JSON on stdin)"}
 	c.AddCommand(newPreToolUseCmd(), newSessionStartCmd(), newStopCmd(), newPromptSubmitCmd())
+	for _, sc := range c.Commands() {
+		wrapHookOff(sc)
+	}
 	return c
+}
+
+// wrapHookOff makes sc exit 0 with no output, before reading stdin, when tq
+// is off for this process (hookOff, spec E §8.4).
+func wrapHookOff(sc *cobra.Command) {
+	run := sc.RunE
+	if run == nil {
+		return
+	}
+	sc.RunE = func(c *cobra.Command, args []string) error {
+		if hookOff() {
+			return nil
+		}
+		return run(c, args)
+	}
 }
 
 // newSessionStartCmd prints the identity preamble Claude Code shows at the
@@ -103,7 +123,8 @@ func newClaudeHookCmd() *cobra.Command {
 // stdout and the command still exits 0, because a SessionStart hook must
 // never block the session from starting.
 func newSessionStartCmd() *cobra.Command {
-	return &cobra.Command{
+	agent := hookAgentClaude
+	c := &cobra.Command{
 		Use:   "session-start",
 		Short: "SessionStart hook: print the workspace identity preamble",
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -135,12 +156,14 @@ func newSessionStartCmd() *cobra.Command {
 				expectedDir = envplan.Desired(rep.Result.Workspace)["CLAUDE_CONFIG_DIR"]
 			}
 			fmt.Fprint(c.OutOrStdout(), renderSessionStart(rep, expectedDir))
-			if line := unattendedLine(rep.Result.Workspace, cwd, time.Now()); line != "" {
+			if line := modeLine(modeLineInput{WS: rep.Result.Workspace, Cwd: cwd, Resolved: resolveMode(rep.Result.Workspace, cwd, ""), ClaudeMode: p.PermissionMode, Agent: agent, Now: time.Now()}); line != "" {
 				fmt.Fprintln(c.OutOrStdout(), line)
 			}
 			return nil
 		},
 	}
+	c.Flags().StringVar(&agent, "agent", hookAgentClaude, "the agent calling the hook: claude or codex")
+	return c
 }
 
 // renderSessionStart is the pure formatter behind session-start: given the
@@ -220,6 +243,7 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 
 func newPreToolUseCmd() *cobra.Command {
 	var asJSON bool
+	agent := hookAgentClaude
 	c := &cobra.Command{
 		Use:   "pre-tool-use",
 		Short: "Allow (exit 0), ask (JSON on stdout) or block (exit 2) the tool call in the PreToolUse payload",
@@ -246,7 +270,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 					if exiting {
 						panic(r)
 					}
-					rerr = guardPanicAsk(c, asJSON, r)
+					rerr = guardPanicAsk(c, asJSON, agent, r)
 				}
 			}()
 			// One scan deadline from hook entry: the gh/git identity
@@ -259,6 +283,10 @@ permissionDecision JSON so Claude Code asks the user.`,
 				return nil
 			}
 			if p.ToolName == "" {
+				if agent == hookAgentCodex && !asJSON {
+					// A Codex payload tq cannot read is not allowed.
+					writeCodexDeny(c.OutOrStdout(), "BLOCKED ["+guardErrorID+"]: the hook payload names no tool; tq denies a call it cannot judge")
+				}
 				return nil
 			}
 			cwd := strings.TrimSpace(p.Cwd)
@@ -267,7 +295,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 			}
 			call := toolCallFrom(p, cwd)
 
-			var ws *resolve.Workspace
+			var ws, untrusted *resolve.Workspace
 			var cfg *registry.Config
 			if cmdline != "" {
 				in, gws, gcfg, err := gatherGuardInput(cwd, cmdline)
@@ -278,37 +306,111 @@ permissionDecision JSON so Claude Code asks the user.`,
 				}
 				ws, cfg = gws, gcfg
 				if d := guard.Decide(in); d.Block {
+					if agent == hookAgentCodex && !asJSON {
+						// Exit 2 blocks in Codex too; the deny answer says so
+						// on stdout as well.
+						writeCodexDeny(c.OutOrStdout(), d.Reason)
+					}
 					emitDecision(c, asJSON, true, d.Rule, d.Reason)
 					exit(2)
 					return nil
 				}
 			} else {
-				ws, cfg = resolveTrusted(cwd)
+				ws, untrusted, cfg = resolveForHook(cwd)
+			}
+			// The mode resolves for the workspace the call is in, trusted or
+			// not: an untrusted one gets the default ceiling, never the
+			// global grant. The rules only ever read a trusted manifest.
+			modeWS := ws
+			if modeWS == nil && untrusted != nil {
+				modeWS = untrusted
 			}
 
-			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline)
+			// The guard mode (spec E): the gate maps every rule to its
+			// effective action under the resolved mode, whatever Claude's
+			// permission mode is; nil (the fast path) when it resolves to
+			// default. The identity guard above never goes through it.
+			gate := modeGateFor(modeWS, cwd, call, launchMode())
+			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline, gate)
 			if d.Action != policy.Deny {
 				// Jev can only add strictness, so it is skipped when the
 				// deterministic rules already deny.
-				d = policy.Merge(d, jevDecision(ws, call))
+				d = policy.Merge(d, jevDecision(ws, call, gate))
+			}
+			// A Codex apply_patch names its files only in the patch text: the
+			// file and path rules run on every file it writes, under that
+			// file's mode, and a patch tq cannot read, or one too big to judge
+			// in the budget, is denied. The rule set is built once and the mode
+			// resolved once per folder.
+			type judged struct {
+				gate *modeGate
+				call policy.ToolCall
+			}
+			var subs []judged
+			if isApplyPatch(call) || (agent == hookAgentCodex && isFileWriteTool(call.Tool) && call.Path == "") {
+				deny := func(why string) error {
+					reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies an edit it cannot judge"
+					if agent == hookAgentCodex && !asJSON {
+						writeCodexDeny(c.OutOrStdout(), reason)
+					}
+					emitDecision(c, asJSON, true, guardErrorID, reason)
+					exit(2)
+					return nil
+				}
+				files, err := parseApplyPatch(call.Command)
+				if err != nil {
+					return deny(err.Error())
+				}
+				if len(files) > maxPatchFiles {
+					return deny(fmt.Sprintf("the patch writes %d files, more than the %d tq judges in one call: split the patch", len(files), maxPatchFiles))
+				}
+				pb := buildPolicy(cwd, ws)
+				gates := map[string]*modeGate{}
+				for _, fc := range patchCalls(files, cwd) {
+					if time.Now().After(scanDeadline) {
+						return deny("the patch took longer than the hook budget to judge: split the patch")
+					}
+					dir := filepath.Dir(fc.Path)
+					fg, ok := gates[dir]
+					if !ok {
+						fg = modeGateFor(modeWS, cwd, fc, launchMode())
+						gates[dir] = fg
+					}
+					fg = fg.fresh()
+					d = policy.Merge(d, policyDecisionWith(pb, cwd, ws, cfg, fc, scanDeadline, fg))
+					subs = append(subs, judged{fg, fc})
+				}
+			}
+			skipped := gate.audit(p.PermissionMode, call, d)
+			for _, s := range subs {
+				skipped = append(skipped, s.gate.audit(p.PermissionMode, s.call, d)...)
+			}
+			if agent == hookAgentCodex && !asJSON && d.Action != policy.Allow {
+				// Codex fails open on a hook ask: codexAnswer never sends one,
+				// and lets Codex's own prompt rule ask only in a permission
+				// mode where Codex prompts.
+				if code := codexAnswer(c.OutOrStdout(), call, d, codexHookCtx{CodexHome: codexRulesHome(), PermissionMode: p.PermissionMode, GOOS: codexPromptOS, WS: ws, Cwd: cwd}); code != 0 {
+					exit(code)
+				}
+				return nil
 			}
 			switch d.Action {
 			case policy.Deny:
 				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
 				exit(2)
 			case policy.Ask:
-				if unattendedSkip(ws, cwd, p.PermissionMode, call, d) {
-					if asJSON {
-						emitDecision(c, asJSON, false, d.Matched[0].ID, "unattended: "+d.Reason())
-					}
-					return nil
-				}
 				if asJSON {
 					emitDecision(c, asJSON, false, d.Matched[0].ID, d.Reason())
 					return nil
 				}
 				return writeAsk(c.OutOrStdout(), d.Reason())
 			default:
+				if len(skipped) > 0 {
+					if asJSON {
+						emitDecision(c, asJSON, false, skipped[0].Rule.ID, "mode "+gate.resolved().Mode+": "+skippedReason(skipped))
+					}
+					return nil
+				}
 				if asJSON {
 					emitDecision(c, asJSON, false, "", "")
 					return nil
@@ -323,6 +425,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "print the decision as JSON")
+	c.Flags().StringVar(&agent, "agent", hookAgentClaude, "the agent calling the hook: claude or codex (Codex never gets an ask)")
 	return c
 }
 
@@ -331,12 +434,13 @@ permissionDecision JSON so Claude Code asks the user.`,
 var hookPolicyDecision = policyDecision
 
 // guardErrorID names the fail-safe ask of a guard panic.
-const guardErrorID = "tq/guard-error"
+const guardErrorID = guardcfg.GuardErrorID
 
 // guardPanicAsk answers a panic in the hook's analysis with an ask: never an
-// allow, never a crash, and never the unattended skip. It only formats the
-// panic value (no stack walk), so it stays cheap.
-func guardPanicAsk(c *cobra.Command, asJSON bool, r any) error {
+// allow, never a crash, and never a mode's skip (tq/guard-error is locked). It only formats the
+// panic value (no stack walk), so it stays cheap. Under --agent codex it is a
+// deny: Codex lets a hook ask run, so an ask there would fail open.
+func guardPanicAsk(c *cobra.Command, asJSON bool, agent string, r any) error {
 	detail := fmt.Sprint(r)
 	if len(detail) > 200 {
 		detail = detail[:200] + "…"
@@ -345,6 +449,10 @@ func guardPanicAsk(c *cobra.Command, asJSON bool, r any) error {
 	fmt.Fprintln(c.ErrOrStderr(), "tq: guard panic: "+detail)
 	if asJSON {
 		emitDecision(c, asJSON, false, guardErrorID, reason)
+		return nil
+	}
+	if agent == hookAgentCodex {
+		writeCodexDeny(c.OutOrStdout(), codexAskPrefix+"\n"+reason)
 		return nil
 	}
 	return writeAsk(c.OutOrStdout(), reason)
