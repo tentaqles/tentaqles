@@ -6,7 +6,7 @@ import (
 )
 
 // tq/hub-store-write end to end (spec D §16, assumption 6): denied while
-// cloud or db is on, and by the core rule otherwise; the manifest's
+// cloud or db is on, and with the packs off (the core rule); the manifest's
 // guard.disable can't switch it off.
 func TestHookHubStoreWrite(t *testing.T) {
 	const write = `sqlite3 ~/.tentaqles/hub/acme/board.db "update tasks set state='done'"`
@@ -30,7 +30,7 @@ func TestHookHubStoreWrite(t *testing.T) {
 	// Since F round 1 tq/hub-store-write is also a core rule (no Pack), and
 	// the hook-time state-dir check denies any shell reach into hub/ or
 	// packs/ (F round 2): with the packs off the write is still denied, and
-	// so is a read of the store. D-GR's pack block stays as a second layer.
+	// so is a read of the store. (D-GR's pack block was dropped in integration round 3.)
 	if code, out := hook("", write); code != 2 || !strings.Contains(out, "tq/hub-store-write") {
 		t.Fatalf("packs off: the core rule still denies: %d %s", code, out)
 	}
