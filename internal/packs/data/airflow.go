@@ -41,9 +41,10 @@ func airflowRules(u *unit, fs *findings) {
 	lines := scan.PythonLines(u.src)
 	dagLine := 0
 	catchup, retries := false, false
+	tainted := wallClockNames(lines)
 	for _, l := range lines {
 		hasStart := strings.Contains(l.Code, "start_date") || containsString(l.Strings, "start_date")
-		if hasStart && dynamicTimeRe.MatchString(l.Code) {
+		if hasStart && (dynamicTimeRe.MatchString(l.Code) || mentionsAny(l.Code, tainted)) {
 			fs.add(u, l.Line, packs.LevelError, ruleAirflowStartDate,
 				"start_date is computed from the wall clock; use a fixed date (pendulum.datetime(2026, 1, 1, tz=\"UTC\")) so runs and backfills are stable")
 		}
@@ -80,6 +81,40 @@ func airflowRules(u *unit, fs *findings) {
 	if !retries {
 		fs.add(u, dagLine, packs.LevelWarn, ruleAirflowRetries, "no retries in default_args or on any task; set retries and retry_delay")
 	}
+}
+
+// wallClockNames returns the names assigned from the wall clock
+// (`YESTERDAY = datetime.now() - timedelta(days=1)`), transitively
+// (`START = YESTERDAY.replace(hour=0)`), so a start_date that references
+// one is dynamic too. A line naming start_date is not an assignment source.
+func wallClockNames(lines []scan.PyLine) map[string]bool {
+	tainted := map[string]bool{}
+	// A few passes catch chains written in any order; each pass is linear.
+	for pass, changed := 0, true; changed && pass < 4; pass++ {
+		changed = false
+		for _, l := range lines {
+			m := pyAssignRe.FindStringSubmatch(l.Code)
+			if m == nil || tainted[m[1]] || strings.Contains(l.Code, "start_date") || containsString(l.Strings, "start_date") {
+				continue
+			}
+			rhs := l.Code[len(m[0])-1:]
+			if dynamicTimeRe.MatchString(rhs) || mentionsAny(rhs, tainted) {
+				tainted[m[1]] = true
+				changed = true
+			}
+		}
+	}
+	return tainted
+}
+
+// mentionsAny reports whether code holds any of the names as a whole word.
+func mentionsAny(code string, names map[string]bool) bool {
+	for v := range names {
+		if wordIn(code, v) {
+			return true
+		}
+	}
+	return false
 }
 
 func topLevelIO(c scan.Call) bool {
