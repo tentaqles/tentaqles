@@ -153,6 +153,19 @@ one. A tq confirm becomes:
   matches one of tq's curated prefixes as `prompt`. Then the hook lets the
   call through and Codex's rule prompts.
 
+The permission mode comes from the hook payload, so a Codex session in
+`bypassPermissions`, or one whose mode tq does not know, gets a block for
+every confirm, never a prompt. A guard error (the `tq/guard-error`
+fail-safe confirm) is a block in Codex too, and an identity-guard block
+(wrong git email, blocked command, untrusted workspace) answers Codex with
+a deny as well as exit 2.
+
+**`apply_patch`.** Codex sends the patch text, not a file path. The hook
+reads its file headers (`*** Add File:`, `*** Update File:`,
+`*** Delete File:`, `*** Move to:`) and runs the file and path rules on
+every file the patch writes, under that file's mode. A patch whose file
+list tq cannot read is blocked (`tq/guard-error`).
+
 So every mode is stricter in Codex than in Claude for confirms that cannot be
 expressed as a prefix: they block. This is accepted. `tq mode --agent codex`
 lists the affected rule ids for the cwd, and the SessionStart line in Codex
@@ -169,8 +182,6 @@ What else Codex cannot express:
 - rules that match a flag anywhere in the command, a regex, file content, a
   path, heredoc data or a cwd, and the commit and push scans (secret, PII)
   beyond what the hook does on the shell call;
-- the file and path rules on `apply_patch` edits are not reliable yet, since
-  Codex sends the patch text, not a file path;
 - whether a `prompt` rule still prompts under `approval_policy = "never"`,
   and whether `forbidden` applies under
   `--dangerously-bypass-approvals-and-sandbox`, are not documented. Check

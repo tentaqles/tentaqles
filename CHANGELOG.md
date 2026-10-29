@@ -45,12 +45,14 @@ or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
 - **Controls.** A SessionStart line (`Guard: relaxed (workspace, granted) · … · locked:
   identity, secrets, self-protection, privacy`), a statusline segment
   (`tq: relaxed · 4 skipped`, `tq: off`), a desktop **Guard** tab, and a read-only `/guard`
-  page on the hub.
+  page on the hub, linked from the nav.
 - **Hub runs** use `guard.headless_mode` (default when absent), clamped by the grant.
 - **Codex.** The mode is compiled into the Codex identity: launch flags, a `config.toml`
   block, `rules/tq.rules` (exec-policy `prompt` / `forbidden`) and tq's `hooks.json`
   entries (`tq claude-hook … --agent codex`). Codex hooks cannot ask, so a confirm Codex
-  cannot prompt for becomes a block. Trust tq's hook once in Codex's `/hooks`.
+  cannot prompt for becomes a block. Trust tq's hook once in Codex's `/hooks`. The hook
+  runs the file and path rules on every file an `apply_patch` writes, and blocks a patch
+  it cannot read; a guard error is a block in Codex.
 - **Doctor.** `mode-not-granted`, `mode-unknown-rule`, `mode-cloud`,
   `guard-locked-override`, `claude-alias-shadow`, `permission-mode-overridden`,
   `codex-hooks-missing`, `codex-hooks-disabled`, `codex-hooks-untrusted`.
@@ -82,6 +84,9 @@ or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
 - Every workspace with a Codex identity is rendered (`config.toml` block, `rules/tq.rules`,
   `hooks.json`), also with no mode set; the old `tq-unattended.config.toml` profile is
   removed when tq owns it. In Codex, confirms that cannot be prompted for become blocks.
+- `tq/trust-store-write` also denies agent writes to the files tq renders into an
+  identity: the codex identity's `rules/`, `hooks.json` and `config.toml`, and the Claude
+  identity's `settings.json` and `settings.local.json`.
 - After the upgrade `tq doctor` reports `settings-drift` until `tq settings render --all`
   runs once.
 - The SessionStart guard line appears in every workspace session.
