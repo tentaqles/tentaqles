@@ -241,7 +241,7 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	// A guard that handled and allowed the call may name the StateDir files it
 	// verified and the command reads (a stored plan): only those exact paths,
 	// for this call only, are not counted by tq/hub-store-write.
-	var readArgs []string
+	var readArgs []packs.ReadArg
 	for _, o := range outcomes {
 		if o.Handled && o.Action == policy.Allow && !o.Failed {
 			readArgs = append(readArgs, o.ReadArgs...)

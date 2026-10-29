@@ -332,17 +332,32 @@ func TestReadArgsNeedHashState(t *testing.T) {
 	env := dataEnv(t)
 	dir := StateDir(env.Workspace, "cloud")
 	writeFile(t, dir, "plans/p1.tfplan", "plan")
+	writeFile(t, dir, "ledger.jsonl", "{}")
+	writeFile(t, dir, "claims/d1", "")
 	g := NewGuardCtx(env, "cloud")
-	if err := g.ReadArgs("plans/p1.tfplan"); !errors.Is(err, ErrRefused) {
+	if err := g.ReadArgs("tofu", "plans/p1.tfplan"); !errors.Is(err, ErrRefused) {
 		t.Fatalf("unhashed: %v", err)
 	}
-	if _, err := g.HashState("plans/p1.tfplan"); err != nil {
+	for _, n := range []string{"plans/p1.tfplan", "ledger.jsonl", "claims/d1"} {
+		if _, err := g.HashState(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := g.ReadArgs("tofu", "plans/p1.tfplan"); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.ReadArgs("plans/p1.tfplan"); err != nil {
-		t.Fatal(err)
-	}
-	if err := g.ReadArgs("../x"); !errors.Is(err, ErrRefused) {
-		t.Fatalf("..: %v", err)
+	// R5-3 (d): only stored plans, a declared program and a name.
+	for name, call := range map[string]func() error{
+		"..":           func() error { return g.ReadArgs("tofu", "../x") },
+		"ledger":       func() error { return g.ReadArgs("tofu", "ledger.jsonl") },
+		"claim":        func() error { return g.ReadArgs("tofu", "claims/d1") },
+		"plans itself": func() error { return g.ReadArgs("tofu", "plans") },
+		"no program":   func() error { return g.ReadArgs("", "plans/p1.tfplan") },
+		"a path":       func() error { return g.ReadArgs("/usr/bin/tofu", "plans/p1.tfplan") },
+		"no file":      func() error { return g.ReadArgs("plans/p1.tfplan") },
+	} {
+		if err := call(); !errors.Is(err, ErrRefused) {
+			t.Fatalf("%s: %v", name, err)
+		}
 	}
 }

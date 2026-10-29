@@ -20,6 +20,20 @@ func AgentSession() bool {
 		os.Getenv("CLAUDECODE") == "1" || strings.TrimSpace(os.Getenv("TQ_HUB_TASK")) != ""
 }
 
+// AnnotationHumanOnly is the cobra annotation a pack command sets to
+// declare what it does with an approval:
+//   - HumanOnlyExecute: it executes an approved action (it calls
+//     approval.Confirm or approval.Claim). Its name must contain apply, so
+//     tq/human-answer denies it to agents; a framework test walks the
+//     command tree and asserts the rule matches every such command.
+//   - ApprovalAsk: an approve or request command; it only calls
+//     approval.Ask (it creates the pending decision) and never answers.
+const (
+	AnnotationHumanOnly = "tq.human-only"
+	HumanOnlyExecute    = "execute"
+	ApprovalAsk         = "ask"
+)
+
 // HumanOnly returns ErrHumanOnly in an agent session. Every human-only pack
 // subcommand calls it before anything else.
 func HumanOnly() error {
