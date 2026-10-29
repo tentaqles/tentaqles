@@ -35,6 +35,10 @@ func init() {
 		"azurerm_key_vault", "azurerm_key_vault_key", "azurerm_managed_disk", "azurerm_dns_zone",
 		"azurerm_private_dns_zone", "azurerm_redis_cache", "azurerm_recovery_services_vault",
 		"azurerm_data_protection_backup_vault", "azurerm_storage_data_lake_gen2_filesystem",
+		"azurerm_key_vault_secret", "azurerm_key_vault_certificate", "azurerm_storage_table",
+		"azurerm_storage_queue", "azurerm_cosmosdb_mongo_collection", "azurerm_cosmosdb_cassandra_keyspace",
+		"azurerm_cosmosdb_cassandra_table", "azurerm_cosmosdb_gremlin_database", "azurerm_cosmosdb_gremlin_graph",
+		"azurerm_cosmosdb_table",
 		// Terraform google
 		"google_sql_database_instance", "google_sql_database", "google_storage_bucket",
 		"google_kms_key_ring", "google_kms_crypto_key", "google_compute_disk",
@@ -52,6 +56,7 @@ func init() {
 		"AWS::OpenSearchService::Domain", "AWS::Elasticsearch::Domain",
 		"AWS::SecretsManager::Secret", "AWS::Backup::BackupVault", "AWS::FSx::FileSystem",
 		"AWS::MemoryDB::Cluster", "AWS::Cassandra::Table", "AWS::Timestream::Database",
+		"AWS::Serverless::SimpleTable",
 	} {
 		statefulExact[t] = true
 	}
@@ -68,7 +73,18 @@ func init() {
 		"Microsoft.KeyVault/vaults/keys", "Microsoft.KeyVault/managedHSMs", "Microsoft.Compute/disks",
 		"Microsoft.Network/dnsZones", "Microsoft.Network/privateDnsZones", "Microsoft.Cache/redis",
 		"Microsoft.Cache/redisEnterprise", "Microsoft.RecoveryServices/vaults",
-		"Microsoft.DataProtection/backupVaults",
+		"Microsoft.DataProtection/backupVaults", "Microsoft.KeyVault/vaults/secrets",
+		"Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+		"Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+		"Microsoft.DocumentDB/databaseAccounts/mongodbDatabases",
+		"Microsoft.DocumentDB/databaseAccounts/mongodbDatabases/collections",
+		"Microsoft.DocumentDB/databaseAccounts/cassandraKeyspaces",
+		"Microsoft.DocumentDB/databaseAccounts/cassandraKeyspaces/tables",
+		"Microsoft.DocumentDB/databaseAccounts/gremlinDatabases",
+		"Microsoft.DocumentDB/databaseAccounts/gremlinDatabases/graphs",
+		"Microsoft.DocumentDB/databaseAccounts/tables",
+		"Microsoft.Storage/storageAccounts/tableServices/tables",
+		"Microsoft.Storage/storageAccounts/queueServices/queues",
 	} {
 		statefulExact[strings.ToLower(t)] = true
 	}
@@ -86,6 +102,10 @@ func init() {
 		"azure:cosmosdb/account:", "azure:storage/account:", "azure:storage/container:",
 		"azure:storage/share:", "azure:keyvault/keyvault:", "azure:keyvault/key:",
 		"azure:compute/manageddisk:", "azure:dns/zone:", "azure:privatedns/zone:", "azure:redis/cache:",
+		"azure:keyvault/secret:", "azure:keyvault/certificate:", "azure:storage/table:", "azure:storage/queue:",
+		"azure:cosmosdb/sqldatabase:", "azure:cosmosdb/sqlcontainer:", "azure:cosmosdb/mongodatabase:",
+		"azure:cosmosdb/mongocollection:", "azure:cosmosdb/cassandrakeyspace:", "azure:cosmosdb/cassandratable:",
+		"azure:cosmosdb/gremlindatabase:", "azure:cosmosdb/gremlingraph:", "azure:cosmosdb/table:",
 		"gcp:sql/databaseinstance:", "gcp:sql/database:", "gcp:storage/bucket:", "gcp:kms/keyring:",
 		"gcp:kms/cryptokey:", "gcp:compute/disk:", "gcp:compute/regiondisk:", "gcp:dns/managedzone:",
 		"gcp:bigquery/dataset:", "gcp:bigquery/table:", "gcp:spanner/instance:", "gcp:spanner/database:", "gcp:bigtable/instance:", "gcp:bigtable/table:",
@@ -98,6 +118,12 @@ func init() {
 		"azure-native:storage:blobcontainer", "azure-native:storage:fileshare",
 		"azure-native:keyvault:vault", "azure-native:keyvault:key", "azure-native:compute:disk",
 		"azure-native:network:zone", "azure-native:network:privatezone", "azure-native:cache:redis",
+		"azure-native:keyvault:secret", "azure-native:storage:table", "azure-native:storage:queue",
+		"azure-native:documentdb:sqlresourcesqldatabase", "azure-native:documentdb:sqlresourcesqlcontainer",
+		"azure-native:documentdb:mongodbresourcemongodbdatabase", "azure-native:documentdb:mongodbresourcemongodbcollection",
+		"azure-native:documentdb:cassandraresourcecassandrakeyspace", "azure-native:documentdb:cassandraresourcecassandratable",
+		"azure-native:documentdb:gremlinresourcegremlindatabase", "azure-native:documentdb:gremlinresourcegremlingraph",
+		"azure-native:documentdb:tableresourcetable",
 		"aws-native:rds:dbinstance", "aws-native:rds:dbcluster", "aws-native:dynamodb:table", "aws-native:dynamodb:globaltable",
 		"aws-native:s3:bucket", "aws-native:kms:key", "aws-native:efs:filesystem",
 	}

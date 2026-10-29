@@ -166,6 +166,11 @@ func Mask(v, mask any, known *Known) any {
 //   - every scalar under a key for which SecretKey is true becomes
 //     RedactedKey (booleans and nulls are kept: they carry no secret, and
 //     rules read flags such as manage_master_user_password);
+//   - a string that holds a JSON object or array (jsonencode, ECS and Batch
+//     container definitions, policy documents), or a multi-line YAML
+//     mapping (helm values, yamlencode), is decoded, scrubbed the same way
+//     and re-encoded in its format; it is kept as it is (after
+//     secrets.Redact) when nothing in it changes;
 //   - every other string passes through secrets.Redact.
 //
 // Map keys are kept as they are.
@@ -185,6 +190,9 @@ func scrub(v any, under bool) any {
 				return RedactString(t)
 			}
 			return RedactedKey
+		}
+		if e, ok := scrubEncoded(t); ok {
+			return e
 		}
 		return RedactString(t)
 	case json.Number:

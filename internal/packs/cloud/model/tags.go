@@ -65,14 +65,25 @@ var ruleIDRe = regexp.MustCompile(`^[A-Z]{2,5}[0-9]{3}$`)
 
 // Suppressions parses the resource's tq-allow tag (the key is matched
 // without regard to case, and tq_allow is accepted for providers that
-// reject "-" in keys). Entries are returned sorted by rule.
+// reject "-" in keys). When several keys match, "tq-allow" wins, then
+// another case of it, then "tq_allow". Entries are returned sorted by rule.
 func (r Resource) Suppressions() []Suppression {
-	var raw string
+	// A fixed order when several keys match: "tq-allow" exactly, then
+	// "tq-allow" in another case, then "tq_allow" in any case; ties by key.
+	var raw, best string
+	bestRank := 99
 	for k, v := range r.Tags() {
-		lk := strings.ToLower(k)
-		if lk == AllowTag || lk == "tq_allow" {
-			raw = v
-			break
+		rank := 99
+		switch lk := strings.ToLower(k); {
+		case k == AllowTag:
+			rank = 0
+		case lk == AllowTag:
+			rank = 1
+		case lk == "tq_allow":
+			rank = 2
+		}
+		if rank < bestRank || (rank == bestRank && rank < 99 && k < best) {
+			raw, best, bestRank = v, k, rank
 		}
 	}
 	return ParseSuppressions(raw)

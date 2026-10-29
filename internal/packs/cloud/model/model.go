@@ -131,6 +131,10 @@ func (r Resource) Has(a string) bool {
 // Destroys reports a delete or a replace: the existing object goes away.
 func (r Resource) Destroys() bool { return r.Has(ActDelete) || r.Has(ActReplace) }
 
+// MayDestroy reports Destroys, or an unknown action: the existing object
+// may go away. Gates that fail closed use this, not Destroys.
+func (r Resource) MayDestroy() bool { return r.Destroys() || r.Has(ActUnknown) }
+
 // Planned reports whether the resource came from a plan-like input (it has
 // actions), as opposed to a plain template.
 func (r Resource) Planned() bool { return r.Actions != nil }
@@ -208,10 +212,14 @@ type Summary struct {
 	Counts           map[string]int `json:"counts"`
 	StatefulDeletes  []Ref          `json:"stateful_deletes,omitempty"`
 	StatefulReplaces []Ref          `json:"stateful_replaces,omitempty"`
+	// StatefulUnknown are stateful resources whose action is unknown (a
+	// change set Dynamic, a what-if Unsupported, an op the reader does not
+	// know): they may be destroyed, so they count as a possible destroy.
+	StatefulUnknown []Ref `json:"stateful_unknown,omitempty"`
 }
 
 // Summarize counts the resources per primary action and lists the stateful
-// deletes and replaces. Template resources (no actions) count as "declared".
+// deletes, replaces and unknown actions. Template resources (no actions) count as "declared".
 // Addresses pass through RedactString.
 func Summarize(rs []Resource) Summary {
 	s := Summary{Counts: map[string]int{}}
@@ -231,14 +239,17 @@ func Summarize(rs []Resource) Summary {
 			s.StatefulReplaces = append(s.StatefulReplaces, ref)
 		case r.Has(ActDelete):
 			s.StatefulDeletes = append(s.StatefulDeletes, ref)
+		case r.Has(ActUnknown):
+			s.StatefulUnknown = append(s.StatefulUnknown, ref)
 		}
 	}
 	return s
 }
 
-// HasStatefulDestroy reports a stateful delete or replace in the summary.
+// HasStatefulDestroy reports a stateful delete, replace or unknown action
+// in the summary (an unknown action may destroy: fail closed).
 func (s Summary) HasStatefulDestroy() bool {
-	return len(s.StatefulDeletes) > 0 || len(s.StatefulReplaces) > 0
+	return len(s.StatefulDeletes) > 0 || len(s.StatefulReplaces) > 0 || len(s.StatefulUnknown) > 0
 }
 
 // Text is a one-line rendering: "3 resources: 1 create, 1 delete, 1 update;
@@ -262,6 +273,9 @@ func (s Summary) Text() string {
 	}
 	if len(s.StatefulReplaces) > 0 {
 		out += "; stateful replace: " + joinRefs(s.StatefulReplaces)
+	}
+	if len(s.StatefulUnknown) > 0 {
+		out += "; stateful unknown: " + joinRefs(s.StatefulUnknown)
 	}
 	return out
 }
