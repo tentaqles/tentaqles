@@ -177,7 +177,7 @@ func codexAskIDs(res guardcfg.Resolved, m *manifest.Manifest) []string {
 // "off" under TQ_MODE=off, else the resolved mode and the 24h skip count.
 // It reads local files only, like the rest of the status line.
 func statuslineModeFacts(f *statusline.Facts, ws *resolve.Workspace, cwd string) {
-	if launchMode() == guardcfg.ModeOff {
+	if guardcfg.IsOff(launchMode()) {
 		f.Mode = statusline.ModeOff
 		return
 	}

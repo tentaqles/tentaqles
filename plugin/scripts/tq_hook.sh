@@ -28,11 +28,10 @@
 
 set -u
 
-# tq off (spec E §8.4): under TQ_MODE=off or TQ_ENABLED=0 nothing from tq
+# tq off (spec E §8.4): under TQ_MODE=off (exactly) nothing from tq
 # runs, so exit 0 before resolving tq or Python (the fail-closed "no tq, no
 # Python" exit 2 below must never fire in off).
-case "${TQ_MODE:-}" in [Oo][Ff][Ff]) exit 0 ;; esac
-[ "${TQ_ENABLED:-1}" = "0" ] && exit 0
+case "${TQ_MODE:-}" in off) exit 0 ;; esac
 
 _this="${BASH_SOURCE:-$0}"
 _self_dir="$(cd "$(dirname "$_this")" && pwd)"

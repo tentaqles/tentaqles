@@ -14,6 +14,11 @@ const (
 // process env, never from a tool call's command line.
 const EnvMode = "TQ_MODE"
 
+// IsOff reports whether a TQ_MODE value means off: exactly "off", the one
+// matcher the hooks, the statusline, the plugin scripts and the shell
+// functions all use (no case folding, no trimming).
+func IsOff(v string) bool { return v == ModeOff }
+
 // StoredModes are the values guard.mode may take in a file, in display order.
 func StoredModes() []string { return []string{ModeDefault, ModeRelaxed, ModeStrict, ModeCustom} }
 

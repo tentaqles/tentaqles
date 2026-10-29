@@ -1,13 +1,18 @@
 package cmd
 
-import "testing"
+import (
+	"testing"
 
-// Under TQ_MODE=off or TQ_ENABLED=0 every claude-hook event exits 0 with no
-// output, even for a payload the guard would deny (spec E §8.4).
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
+)
+
+// Under TQ_MODE=off every claude-hook event exits 0 with no output, even
+// for a payload the guard would deny (spec E §8.4). TQ_ENABLED=0 only skips
+// shell activation: the hooks still run (security m3).
 func TestClaudeHookOffExitsSilently(t *testing.T) {
 	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
 	payload := hookPayloadFor(t, root, "cat .env")
-	for _, env := range []struct{ k, v string }{{"TQ_MODE", "off"}, {"TQ_ENABLED", "0"}, {"TQ_MODE", " Off "}} {
+	for _, env := range []struct{ k, v string }{{"TQ_MODE", "off"}} {
 		for _, ev := range []string{"pre-tool-use", "session-start", "stop", "prompt-submit"} {
 			t.Run(env.k+"="+env.v+"/"+ev, func(t *testing.T) {
 				t.Setenv("TQ_MODE", "")
@@ -29,13 +34,16 @@ func TestHookOff(t *testing.T) {
 	}{
 		{"", "", false},
 		{"off", "", true},
-		{"OFF", "", true},
+		// one matcher everywhere: exactly off (correctness m6)
+		{"OFF", "", false},
+		{" off ", "", false},
 		{"default", "", false},
 		{"relaxed", "", false},
-		{"", "0", true},
-		{"", " 0 ", true},
+		// TQ_ENABLED=0 is shell activation only (security m3)
+		{"", "0", false},
 		{"", "1", false},
-		{"strict", "0", true},
+		{"strict", "0", false},
+		{"off", "0", true},
 	}
 	for _, c := range cases {
 		t.Setenv("TQ_MODE", c.mode)
@@ -51,5 +59,19 @@ func TestHookOff(t *testing.T) {
 	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, root, "cat .env"))
 	if code == 0 {
 		t.Fatal("with tq on, cat .env must be blocked")
+	}
+}
+
+// TQ_ENABLED=0 no longer switches the guard off: a deny payload is still
+// denied from a legacy kill-switch window (security m3).
+func TestHookRunsUnderTQEnabledZero(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	t.Setenv("TQ_MODE", "")
+	t.Setenv("TQ_ENABLED", "0")
+	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, root, "cat .env")); code != 2 {
+		t.Fatalf("TQ_ENABLED=0 must not switch the guard off: code %d", code)
+	}
+	if !guardcfg.IsOff("off") || guardcfg.IsOff("OFF") || guardcfg.IsOff(" off") {
+		t.Fatal("IsOff is exactly off")
 	}
 }

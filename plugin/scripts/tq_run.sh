@@ -6,11 +6,10 @@
 # Automatically finds the right Python, sets PYTHONPATH, and installs
 # deps on first run — so hooks/skills never depend on bare `python`.
 
-# tq off (spec E §8.4): under TQ_MODE=off or TQ_ENABLED=0 nothing from tq
+# tq off (spec E §8.4): under TQ_MODE=off (exactly) nothing from tq
 # runs, so exit 0 before resolving Python or installing deps (the off
 # launcher also switches the plugin off; this holds if it stays loaded).
-case "${TQ_MODE:-}" in [Oo][Ff][Ff]) exit 0 ;; esac
-[ "${TQ_ENABLED:-1}" = "0" ] && exit 0
+case "${TQ_MODE:-}" in off) exit 0 ;; esac
 
 # Resolve own directory (POSIX-safe: no array subscript on BASH_SOURCE)
 _this="${BASH_SOURCE:-$0}"

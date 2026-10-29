@@ -177,10 +177,12 @@ hand-installed hook lines are never duplicated.
 
 The installed hook line respects a kill switch: setting `TQ_ENABLED=0` in
 your environment makes the hook skip calling `tq activate` entirely for that
-shell session, without needing to uninstall anything. Under it every tq
-Claude Code hook exits at once, and the plugin's skill scripts (run through
-`tq_run.sh`) silently do nothing. `tq off` / `tq on` switch tq off and on in
-the current window without editing profiles.
+shell session, without needing to uninstall anything. That is all it does:
+tq's Claude Code hooks and the plugin's skill scripts still run, so a
+`claude` started there is still guarded. To switch tq off in the current
+window use `tq off` / `tq on`: they set `TQ_MODE=off`, under which every tq
+hook exits at once and the skill scripts (run through `tq_run.sh`) silently
+do nothing.
 
 See [`docs/SETUP.md`](docs/SETUP.md) for the full plan YAML schema and field
 reference.

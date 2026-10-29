@@ -71,7 +71,8 @@ func TestEnv_PrintsNothingWhenOff(t *testing.T) {
 			chdir(t, root)
 			t.Setenv(kv[0], kv[1])
 			if got := runEnv(t, "env", "--shell", "bash"); got != "" {
-				t.Fatalf("tq env under %s=%s must print nothing, got %q", kv[0], kv[1], got)
+				// The output holds env values: never print it (rules).
+				t.Fatalf("tq env under %s=%s must print nothing, got %d bytes", kv[0], kv[1], len(got))
 			}
 		})
 	}

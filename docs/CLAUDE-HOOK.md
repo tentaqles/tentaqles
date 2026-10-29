@@ -13,7 +13,7 @@ plugin's Python code no longer switches gh/az/git identity itself.
 - `tq claude-hook prompt-submit` — UserPromptSubmit hook: the Jev skill picker. Always exits 0 and never blocks; in enforce mode it may add a one-line `additionalContext` hint. See `docs/DECIDE.md`.
 
 Both subcommands read a single JSON payload from stdin — the same shape
-Claude Code sends its own hooks. Under `TQ_MODE=off` or `TQ_ENABLED=0` every
+Claude Code sends its own hooks. Under `TQ_MODE=off` (exactly `off`) every
 subcommand exits 0 at once with no output (see [Guard modes](#guard-modes)).
 
 ## Protocol
@@ -493,12 +493,18 @@ Whether `--settings` merges `enabledPlugins` per plugin (so your other
 plugins stay on) is still a manual check; either way nothing tq does runs,
 because of the next point.
 
-**Every tq hook exits at once under `TQ_MODE=off` or `TQ_ENABLED=0`**, with
-no output: `tq claude-hook <event>`, `tq env` (prints nothing),
+**Every tq hook exits at once under `TQ_MODE=off`**, with no output. The
+value must be exactly `off` (no other case, no spaces): the hooks, the
+statusline, the plugin scripts and the shell functions all use that one
+matcher. `TQ_ENABLED=0` keeps its one meaning, the legacy shell-activation
+kill switch: `tq env` prints nothing and the prompt hook does not apply an
+identity, but the Claude Code hooks and skill scripts still run, so a
+`claude` started from such a window is still guarded. The off launch
+(`claude-off`, `tq run --off`, `tq off`) sets `TQ_MODE=off`. Under off: `tq claude-hook <event>`, `tq env` (prints nothing),
 `plugin/scripts/tq_hook.sh` and `tq_run.sh` (before they look for tq or
 Python, so the fail-closed "no tq, no Python" block never fires in off), and
 `tq statusline` (prints `tq: off`). Skill scripts that run through
-`tq_run.sh` therefore do nothing in an off or kill-switch window.
+`tq_run.sh` therefore do nothing in an off window.
 
 `tq env --off --shell <sh>` prints the shell code of `tq off` and
 `tq env --on` prints `unset TQ_MODE`; the functions call them, and
@@ -664,7 +670,7 @@ resolves a `tq` binary (env var → plugin-bundled binary → `PATH` → known
 install dirs) and runs `tq claude-hook <event>`, passing stdin through and
 propagating the exit code.
 
-Under `TQ_MODE=off` or `TQ_ENABLED=0` the script exits 0 before it looks
+Under `TQ_MODE=off` the script exits 0 before it looks
 for tq or Python, so none of the fallbacks below applies in an off window.
 
 If no `tq` binary can be found or run:

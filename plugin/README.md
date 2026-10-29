@@ -307,7 +307,7 @@ All hooks are automatic and run silently.
 
 All hooks and skills use `tq_run.sh` → `tq_env.sh` to resolve a working Python interpreter, bypassing broken venv shims and machines where only `python3` exists (macOS). POSIX-compatible, tested on Windows (Git Bash), macOS, and Linux.
 
-Under `TQ_MODE=off` (`tq off`, `claude-off`) or the legacy `TQ_ENABLED=0` kill switch, `tq_hook.sh` and `tq_run.sh` exit 0 before they look for tq or Python: every hook and every skill script silently does nothing in that window, with no error.
+Under `TQ_MODE=off` (`tq off`, `claude-off`, exactly `off`), `tq_hook.sh` and `tq_run.sh` exit 0 before they look for tq or Python: every hook and every skill script silently does nothing in that window, with no error. The legacy `TQ_ENABLED=0` kill switch only skips shell activation; hooks and skill scripts still run under it.
 
 ## CLI
 

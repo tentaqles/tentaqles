@@ -7,7 +7,7 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 Guard modes (tq spec E). Needs a `tq` build with `tq mode`.
 
 - **`TQ_MODE=off` means no tq.** `scripts/tq_hook.sh` and `scripts/tq_run.sh` exit 0 as their
-  first statement under `TQ_MODE=off` or `TQ_ENABLED=0`, before resolving tq or Python, so the
+  first statement under `TQ_MODE=off` (exactly; `TQ_ENABLED=0` only skips shell activation), before resolving tq or Python, so the
   fail-closed "no tq, no Python" block never fires in an off session (`claude-off`, `tq off`).
   Skill scripts that run through `tq_run.sh` do nothing in such a session or window. Covered by
   `tests/test_tq_off.py`.

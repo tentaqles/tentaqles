@@ -47,9 +47,10 @@ func newEnvCmd() *cobra.Command {
 				_, err = fmt.Fprint(c.OutOrStdout(), out)
 				return err
 			}
-			if envOff() {
-				// tq off in this window (or the legacy kill switch): the prompt
-				// hook is paused, and a direct call changes nothing either.
+			if envOff() || os.Getenv("TQ_ENABLED") == "0" {
+				// tq off in this window, or the legacy kill switch (whose one
+				// meaning is shell activation): the prompt hook is paused, and
+				// a direct call changes nothing either.
 				return nil
 			}
 			cfg, err := registry.Load()

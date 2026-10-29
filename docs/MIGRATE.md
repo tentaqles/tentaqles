@@ -339,9 +339,11 @@ migration.
 in the window you are in, without opening a new shell: `tq off` clears the
 identity env, pauses the prompt hook and makes `claude` start with no tq;
 `tq on` brings tq back on the next prompt. `claude-off` does it for one
-launch. The `TQ_ENABLED=0` branch keeps working, and every tq hook and
-`tq_run.sh` exit at once under it, so skill scripts do nothing in such a
-shell.
+launch. The `TQ_ENABLED=0` branch keeps working, with its one meaning: no
+shell activation (no `tq env`, no identity on the prompt). The Claude Code
+hooks and the plugin's skill scripts still run under it, so a `claude`
+started from such a shell is still guarded; only `TQ_MODE=off` (set by
+`tq off`, `claude-off` and `tq run --off`) switches them off.
 
 One honest caveat: `tq` cannot verify the preserved branch still works. It
 kept your bytes, it did not test them. Nothing removes the branch

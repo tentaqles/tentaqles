@@ -65,7 +65,7 @@ tests/                  pytest suite
 
 - **tq's PreToolUse may skip confirms and blocks**: the workspace's guard mode (`default`, `relaxed`, `strict`, `custom`; see `docs/CLAUDE-HOOK.md`, "Guard modes") maps each rule category to skip, ask, deny or the rule's own action, in every Claude permission mode. Skills must not rely on a confirm or a block. The locked groups, identity, secrets, self-protection and privacy (the identity guard, `tq/cross-client-mcp`, the `.env`/env-dump/secret-store/commit-secret rules, the PII exit rules, `tq/guard-change`, `tq/mode-change`, `tq/nested-agent-loosened`, guard-file, trust-store and settings rules), are never skipped.
 - **Mode changes are human-only**: `tq mode set|toggle|override|edit` and `tq allow --mode` refuse agent sessions and are denied in tool calls; skills print them for the user and never run them. Skills never start `claude-off`/`codex-off`, `tq off`, or a nested agent with loosened flags.
-- **`TQ_MODE=off` (and `TQ_ENABLED=0`) means no tq**: `scripts/tq_hook.sh` and `scripts/tq_run.sh` exit 0 as their first statement, before resolving tq or Python, so hooks and skill scripts do nothing in an off session or window.
+- **`TQ_MODE=off` (exactly `off`) means no tq** (`TQ_ENABLED=0` only skips shell activation; hooks still run): `scripts/tq_hook.sh` and `scripts/tq_run.sh` exit 0 as their first statement, before resolving tq or Python, so hooks and skill scripts do nothing in an off session or window.
 
 - **Every hook in hooks.json declares a short `timeout`**; capture-only hooks are `async`. A hook without one waits up to 10 minutes when something hangs.
 
