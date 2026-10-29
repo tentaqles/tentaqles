@@ -221,7 +221,9 @@ func workspaceDoctor(w *resolve.Workspace) []doctor.Finding {
 	cfg, rerr := LoadConfig(w.Manifest, w.Root)
 	in := &Input{Root: w.Root, Manifest: w.Manifest, Config: cfg, Budget: time.Now().Add(30 * time.Second)}
 	in.SetWorkspace(w.Name, w.Root)
-	in.Tools = NewToolRunner(w.Root, cfg)
+	tr := NewToolRunner(w.Root, cfg)
+	tr.NoExecRepo = true // doctor never runs a repo-local binary
+	in.Tools = tr
 	if root, err := RepoRoot(context.Background(), w.Root); err == nil {
 		in.Git = GitRepo{Root: root}
 	}

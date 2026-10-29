@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +25,15 @@ func init() {
 			{Name: "example_cmd_sql", Reviewers: []string{"pipeline-reviewer"}, Raise: func(in *packs.Input) bool { return in.AnyChanged("*.sql") }},
 		},
 		Commands: func() []*cobra.Command {
-			return []*cobra.Command{{Use: "example-cmd", RunE: func(c *cobra.Command, _ []string) error { c.Print("example-cmd ran"); return nil }}}
+			return []*cobra.Command{{Use: "example-cmd", RunE: func(c *cobra.Command, _ []string) error { c.Print("example-cmd ran"); return nil }},
+				{Use: "example-ctx", RunE: func(c *cobra.Command, _ []string) error {
+					in, err := packs.FromCommand(c)
+					if err != nil {
+						return err
+					}
+					c.Print(in.Workspace() + " " + in.Pack() + " " + fmt.Sprint(in.Settings().Enabled))
+					return nil
+				}}}
 		},
 	})
 	packs.RegisterPack(packs.Pack{Name: "db", Flags: []packs.Flag{{Name: "migration", Reviewers: []string{"db-reviewer"}}}})
@@ -305,5 +314,150 @@ func TestPackParentsMounted(t *testing.T) {
 		if c, _, err := root.Find([]string{"pack", p}); err != nil || c.Name() != p {
 			t.Fatalf("tq pack %s: %v", p, err)
 		}
+	}
+}
+
+// --- fix round 1 -----------------------------------------------------------
+
+// F5: an invalid or untrusted manifest is a config error (exit 2), never
+// "no packs enabled".
+func TestPackInvalidOrUntrustedManifestExits2(t *testing.T) {
+	ws := packRepo(t, "packs:\n  data: { enabled: true }\n")
+	// Edited after tq allow: untrusted.
+	mp := filepath.Join(ws, ".tentaqles.yaml")
+	raw, _ := os.ReadFile(mp)
+	os.WriteFile(mp, append(raw, []byte("\n# edited\n")...), 0o600)
+	for _, args := range [][]string{{"pack", "check"}, {"pack", "list", "--json"}, {"pack", "doctor"}, {"pack", "approvals"}, {"pack", "data", "example-cmd"}} {
+		code, out, errOut := runHook(t, args, "")
+		if code != 2 || !strings.Contains(errOut, "not trusted") {
+			t.Fatalf("%v untrusted: %d %q %q", args, code, out, errOut)
+		}
+	}
+	// Invalid packs block.
+	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\npacks: { data: { timeouts: { dbt: 3600s } } }\n"), 0o600)
+	code, _, errOut := runHook(t, []string{"pack", "check"}, "")
+	if code != 2 || !strings.Contains(errOut, "manifest invalid") {
+		t.Fatalf("invalid: %d %q", code, errOut)
+	}
+}
+
+// F12: cobra flag errors exit 2; approvals outside a workspace exit 0.
+func TestPackFlagErrorsAndApprovalsOutside(t *testing.T) {
+	packRepo(t, "packs:\n  data: { enabled: true }\n")
+	for _, args := range [][]string{{"pack", "check", "--budget", "600"}, {"pack", "check", "--nope"}, {"pack", "list", "--bogus"}} {
+		code, _, _ := runHook(t, args, "")
+		if code != 2 {
+			t.Fatalf("%v: %d", args, code)
+		}
+	}
+	isolateHome(t)
+	clearAgentMarkers(t)
+	dir := t.TempDir()
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	os.Chdir(dir)
+	code, out, _ := runHook(t, []string{"pack", "approvals"}, "")
+	if code != 0 || !strings.Contains(out, "not in a workspace") {
+		t.Fatalf("%d %q", code, out)
+	}
+}
+
+// F10, F12: --paths takes a directory and keeps commas.
+func TestPackCheckPathsDirectoryAndComma(t *testing.T) {
+	ws := packRepo(t, "packs:\n  data: { enabled: true }\n")
+	os.MkdirAll(filepath.Join(ws, "models"), 0o755)
+	os.WriteFile(filepath.Join(ws, "models", "a,b.sql"), []byte("select * from t\n"), 0o644)
+	code, out, _ := runHook(t, []string{"pack", "check", "--json", "--paths", "models"}, "")
+	if code != 1 || !strings.Contains(out, `"models/a,b.sql"`) {
+		t.Fatalf("directory with a comma file: %d %s", code, out)
+	}
+}
+
+// C1: the repo layer can never enable a pack (and so never a guard).
+func TestRepoLayerCannotEnable(t *testing.T) {
+	ws := packRepo(t, "")
+	os.WriteFile(filepath.Join(ws, "tq-packs.yaml"), []byte("cloud: { enabled: true }\ndata: { enabled: true }\n"), 0o644)
+	_, out, _ := runHook(t, []string{"pack", "list", "--enabled", "--json"}, "")
+	var lr packs.ListReport
+	if err := json.Unmarshal([]byte(out), &lr); err != nil || len(lr.Packs) != 0 {
+		t.Fatalf("%v %s", err, out)
+	}
+	code, hout, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply prod.tfplan"))
+	if code != 0 || !strings.Contains(hout, "tq/iac-apply") || strings.Contains(hout, "example-cmd-apply") {
+		t.Fatalf("a repo-enabled pack guard ran or superseded: %d %s", code, hout)
+	}
+}
+
+// C1: with no trusted workspace, no pack guard runs and the repo file is ignored.
+func TestHookNoWorkspaceNoPackGuards(t *testing.T) {
+	isolateHome(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "tq-packs.yaml"), []byte("cloud: { enabled: true }\n"), 0o644)
+	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, dir, "terraform apply approved.tfplan"))
+	if code != 0 || !strings.Contains(out, "tq/iac-apply") {
+		t.Fatalf("%d %s", code, out)
+	}
+}
+
+// M2: the hook claims the approval; a second hook with the same approval is denied.
+func TestHookClaimIsSingleUse(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply approved.tfplan"))
+	if code != 0 || !ledger.Claimed("acme", "cloud", "d-example") {
+		t.Fatalf("first use: %d", code)
+	}
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply approved.tfplan"))
+	if code != 2 || !strings.Contains(out, "already used") {
+		t.Fatalf("second use: %d %s", code, out)
+	}
+}
+
+// C1(d), M4: the core rules are on with no pack enabled, and unattended
+// mode or guard.actions cannot soften them.
+func TestHookCoreFrameworkRules(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "guard: { actions: { tq/hub-store-write: ask }, disable: [tq/pack-config-change] }\n")
+	payload := `{"tool_name":"Write","cwd":` + jsonPath(t, ws) + `,"tool_input":{"file_path":` + jsonPath(t, filepath.Join(ws, "tq-packs.yaml")) + `,"content":"cloud: {}"}}`
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, payload)
+	if code != 0 || !strings.Contains(out, "tq/pack-config-change") {
+		t.Fatalf("pack-config-change: %d %s", code, out)
+	}
+	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, `echo x >> ~/.tentaqles/packs/acme/ml/ledger.jsonl`))
+	if code != 2 || !strings.Contains(out, "tq/hub-store-write") {
+		t.Fatalf("hub-store-write stays a deny: %d %s", code, out)
+	}
+}
+
+// F6: an invalid tq-packs.yaml keeps the manifest flags and raises
+// packs_config_invalid.
+func TestTriageInvalidRepoFileKeepsFlags(t *testing.T) {
+	ws := packRepo(t, "packs:\n  data: { enabled: true }\n")
+	os.WriteFile(filepath.Join(ws, "tq-packs.yaml"), []byte("web: {}\n"), 0o644)
+	os.WriteFile(filepath.Join(ws, "orders.sql"), []byte("select 1\n"), 0o644)
+	packGit(t, ws, "add", "orders.sql")
+	code, out, _ := runHook(t, []string{"decide", "triage", "--staged"}, "")
+	if code != 3 || !strings.Contains(out, "example_cmd_sql") || !strings.Contains(out, "packs_config_invalid") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+}
+
+// F8: a pack subcommand gets its run context from FromCommand.
+func TestPackSubcommandFromCommand(t *testing.T) {
+	packRepo(t, "packs:\n  data: { enabled: true }\n")
+	_, out, _ := runHook(t, []string{"pack", "data", "example-ctx"}, "")
+	if out != "acme data true" {
+		t.Fatalf("%q", out)
+	}
+}
+
+func TestPackBadBaseAndBaselineRefusal(t *testing.T) {
+	packRepo(t, "packs:\n  data: { tools: [tq-fake-tool-xyz], baseline: .tq/base.json }\n")
+	code, _, _ := runHook(t, []string{"pack", "check", "--base", "no-such-ref"}, "")
+	if code != 2 {
+		t.Fatalf("bad --base: %d", code)
+	}
+	code, _, errOut := runHook(t, []string{"pack", "baseline"}, "")
+	if code != 2 || !strings.Contains(errOut, "did not run cleanly") {
+		t.Fatalf("baseline with a missing declared tool: %d %q", code, errOut)
 	}
 }

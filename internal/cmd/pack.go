@@ -18,6 +18,8 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/approval"
 	"github.com/tentaqles/tentaqles/internal/packs/baseline"
+	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
+	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
@@ -33,13 +35,36 @@ func newPackCmd() *cobra.Command {
 		Use:   "pack",
 		Short: "Pack checks, doctor, crew, approvals and baselines (data, ml, cloud, db)",
 		Long: `Packs add checks, guard rules, reviewers and commands for one kind of work.
-Enable them in the manifest's packs: block; a repo may add to it (never
-loosen it) with tq-packs.yaml at its root. See docs/PACKS.md.`,
+Only the manifest's packs: block enables a pack; a repo may tighten it (never
+loosen or enable) with tq-packs.yaml at its root. See docs/PACKS.md.`,
 	}
+	// A usage error of any tq pack command (an unknown flag, a bad --budget)
+	// exits 2, never 1 (1 means a required check failed).
+	c.SetFlagErrorFunc(func(cc *cobra.Command, err error) error {
+		fmt.Fprintln(cc.ErrOrStderr(), "tq pack: "+err.Error())
+		exitFunc(2)
+		return err
+	})
 	c.AddCommand(newPackListCmd(), newPackCheckCmd(), newPackDoctorCmd(), newPackCrewCmd(), newPackApprovalsCmd(), newPackBaselineCmd())
 	for _, name := range packs.Names() {
-		sub := &cobra.Command{Use: name, Short: "Commands of the " + name + " pack"}
-		for _, pc := range packs.Commands(name) {
+		pack := name
+		sub := &cobra.Command{Use: pack, Short: "Commands of the " + pack + " pack",
+			// The run context of every subcommand (packs.FromCommand). A
+			// config error (invalid or untrusted manifest, invalid
+			// tq-packs.yaml) stops the subcommand with exit 2.
+			PersistentPreRunE: func(cc *cobra.Command, _ []string) error {
+				cwd, _ := os.Getwd()
+				in, err := packContext(cwd)
+				in = in.ForPack(pack)
+				cc.SetContext(packs.WithInput(cc.Context(), in, err))
+				if err != nil {
+					fmt.Fprintln(cc.ErrOrStderr(), "tq pack: "+err.Error())
+					exitFunc(2)
+					return err
+				}
+				return nil
+			}}
+		for _, pc := range packs.Commands(pack) {
 			sub.AddCommand(pc)
 		}
 		c.AddCommand(sub)
@@ -55,15 +80,30 @@ func packRepoRoot(cwd string) string {
 	return cwd
 }
 
-// packInputFor builds the Input for cwd: the trusted workspace's manifest
-// (nil outside one), the repo layer, git, the tool runner. ok is false only
-// when the repo file is invalid (the Input still carries the manifest-only
-// config).
-func packInputFor(cwd string, ws *resolve.Workspace) (*packs.Input, bool) {
-	in, err := packInput(cwd, ws)
-	return in, err == nil
+// packWorkspace resolves cwd's workspace. No workspace (outside a base, no
+// manifest) is (nil, nil); a manifest that is invalid or untrusted is an
+// error: tq pack never runs as if the packs were off.
+func packWorkspace(cwd string) (*resolve.Workspace, error) {
+	cfg, err := registry.Load()
+	if err != nil {
+		return nil, nil
+	}
+	res := resolve.Resolve(cwd, cfg)
+	switch {
+	case res.Workspace != nil:
+		return res.Workspace, nil
+	case res.Untrusted != nil:
+		return nil, fmt.Errorf("the workspace manifest of %s is not trusted: review it, then tq allow %s", res.Untrusted.Name, res.Untrusted.Name)
+	case strings.HasPrefix(res.Reason, "manifest invalid"):
+		return nil, errors.New(res.Reason)
+	}
+	return nil, nil
 }
 
+// packInput builds the Input for cwd and ws (nil outside a workspace): the
+// manifest, the repo layer, git, the tool runner, the exit classes. The
+// error is a config error (an invalid repo file, a config that cannot be
+// hashed); the Input then holds the manifest-only config.
 func packInput(cwd string, ws *resolve.Workspace) (*packs.Input, error) {
 	root := packRepoRoot(cwd)
 	in := &packs.Input{Root: root, Git: packs.GitRepo{Root: root}}
@@ -72,16 +112,28 @@ func packInput(cwd string, ws *resolve.Workspace) (*packs.Input, error) {
 		in.SetWorkspace(ws.Name, ws.Root)
 		packs.SetEventWorkspace(ws.Name)
 	}
+	in.SetClasses(hubClasses(ws))
 	cfg, err := packs.LoadConfig(in.Manifest, root)
 	in.Config = cfg
 	in.Tools = packs.NewToolRunner(root, cfg)
 	return in, err
 }
 
-func packCwd() (string, *resolve.Workspace) {
-	cwd, _ := os.Getwd()
-	ws, _ := resolveTrusted(cwd)
-	return cwd, ws
+// packContext is packWorkspace plus packInput; any error is a config error.
+func packContext(cwd string) (*packs.Input, error) {
+	ws, werr := packWorkspace(cwd)
+	in, err := packInput(cwd, ws)
+	if werr != nil {
+		return in, werr
+	}
+	return in, err
+}
+
+// packInputFor is the Input triage uses; ok is false when the repo layer is
+// invalid (the Input keeps the manifest-only config).
+func packInputFor(cwd string, ws *resolve.Workspace) (*packs.Input, bool) {
+	in, err := packInput(cwd, ws)
+	return in, err == nil
 }
 
 // packRun runs fn and maps a packCLIError to exit 2.
@@ -103,46 +155,48 @@ func newPackListCmd() *cobra.Command {
 		Short: "The packs, the merged config and its config_hash, and each check",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			cwd, ws := packCwd()
-			in, err := packInput(cwd, ws)
-			rep := packs.List(in.Config, in.Workspace(), enabledOnly)
-			if err != nil {
-				rep.Problems = append(rep.Problems, err.Error())
-			}
-			out := c.OutOrStdout()
-			if asJSON {
-				return packs.EncodeListJSON(out, rep)
-			}
-			if len(rep.Packs) == 0 {
-				fmt.Fprintln(out, "no packs enabled")
-			}
-			for _, p := range rep.Packs {
-				st := "disabled"
-				if p.Enabled {
-					st = "enabled"
+			return packRun(c, func() error {
+				cwd, _ := os.Getwd()
+				in, err := packContext(cwd)
+				if err != nil {
+					return usageErr("%v", err)
 				}
-				tools := "-"
-				if len(p.Tools) > 0 {
-					tools = strings.Join(p.Tools, ", ")
+				rep := packs.List(in.Config, in.Workspace(), enabledOnly)
+				out := c.OutOrStdout()
+				if asJSON {
+					return packs.EncodeListJSON(out, rep)
 				}
-				fmt.Fprintf(out, "%-6s %-8s tools: %s\n", p.Name, st, tools)
-				for _, ch := range p.Checks {
-					req := "advisory"
-					if ch.Required {
-						req = "required"
+				if len(rep.Packs) == 0 {
+					fmt.Fprintln(out, "no packs enabled")
+				}
+				for _, p := range rep.Packs {
+					st := "disabled"
+					if p.Enabled {
+						st = "enabled"
 					}
-					tool := ""
-					if ch.Tool != "" {
-						tool = " (" + ch.Tool + ")"
+					tools := "-"
+					if len(p.Tools) > 0 {
+						tools = strings.Join(p.Tools, ", ")
 					}
-					fmt.Fprintf(out, "  %-34s %-8s %s%s\n", ch.ID, ch.Kind, req, tool)
+					fmt.Fprintf(out, "%-6s %-8s tools: %s\n", p.Name, st, tools)
+					for _, ch := range p.Checks {
+						req := "advisory"
+						if ch.Required {
+							req = "required"
+						}
+						tool := ""
+						if ch.Tool != "" {
+							tool = " (" + ch.Tool + ")"
+						}
+						fmt.Fprintf(out, "  %-34s %-8s %s%s\n", ch.ID, ch.Kind, req, tool)
+					}
 				}
-			}
-			fmt.Fprintf(out, "config_hash %s\n", rep.ConfigHash)
-			for _, p := range rep.Problems {
-				fmt.Fprintln(out, "warning: "+p)
-			}
-			return nil
+				fmt.Fprintf(out, "config_hash %s\n", rep.ConfigHash)
+				for _, p := range rep.Problems {
+					fmt.Fprintln(out, "warning: "+p)
+				}
+				return nil
+			})
 		},
 	}
 	c.Flags().BoolVar(&enabledOnly, "enabled", false, "only the enabled packs")
@@ -184,8 +238,8 @@ as an advisory check. --json prints tq.packs/v1.`,
 						return usageErr("--pack %q: unknown pack (known: %s)", p, strings.Join(packs.Names(), ", "))
 					}
 				}
-				cwd, ws := packCwd()
-				in, err := packInput(cwd, ws)
+				cwd, _ := os.Getwd()
+				in, err := packContext(cwd)
 				if err != nil {
 					return usageErr("%v", err)
 				}
@@ -207,7 +261,7 @@ as an advisory check. --json prints tq.packs/v1.`,
 					in.Baseline = set
 				}
 				in.Budget = time.Now().Add(budget)
-				rep := packs.RunChecks(ctx, in, packs.RunOptions{Packs: packFilter, BuiltinOnly: builtinOnly, Classes: hubClasses(ws)})
+				rep := packs.RunChecks(ctx, in, packs.RunOptions{Packs: packFilter, BuiltinOnly: builtinOnly, Classes: in.Classes()})
 				if asJSON {
 					if err := packs.EncodeJSON(out, rep); err != nil {
 						return err
@@ -226,7 +280,7 @@ as an advisory check. --json prints tq.packs/v1.`,
 	}
 	c.Flags().StringArrayVar(&packFilter, "pack", nil, "only this pack (repeatable)")
 	c.Flags().BoolVar(&staged, "staged", false, "check the staged changes")
-	c.Flags().StringSliceVar(&paths, "paths", nil, "check these paths (further arguments are paths too)")
+	c.Flags().StringArrayVar(&paths, "paths", nil, "check this path (repeatable; further arguments are paths too); a directory means its files")
 	c.Flags().StringVar(&base, "base", "", "check the working tree against this ref")
 	c.Flags().BoolVar(&all, "all", false, "check every tracked file")
 	c.Flags().BoolVar(&asJSON, "json", false, "print tq.packs/v1 JSON")
@@ -251,8 +305,17 @@ func newPackDoctorCmd() *cobra.Command {
 		Short: "Per tool: declared, installed, path, version, minimum; plus the packs' own probes",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			cwd, ws := packCwd()
+			cwd, _ := os.Getwd()
+			ws, werr := packWorkspace(cwd)
+			if werr != nil {
+				fmt.Fprintln(c.ErrOrStderr(), "tq pack: "+werr.Error())
+				exitFunc(2)
+				return nil
+			}
 			in, rerr := packInput(cwd, ws)
+			if r, ok := in.Tools.(*toolrun.Runner); ok {
+				r.NoExecRepo = true // doctor never runs a repo-local binary
+			}
 			tools := packs.Tools(in)
 			files, _ := packs.GitRepo{Root: in.Root}.ListFiles()
 			if files == nil {
@@ -320,8 +383,14 @@ func newPackCrewCmd() *cobra.Command {
 		Short: "The reviewer agents the triage flags map to in the enabled packs",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			cwd, ws := packCwd()
-			in, _ := packInput(cwd, ws)
+			cwd, _ := os.Getwd()
+			ws, werr := packWorkspace(cwd)
+			if werr != nil {
+				fmt.Fprintln(c.ErrOrStderr(), "tq pack: "+werr.Error())
+				exitFunc(2)
+				return nil
+			}
+			in, _ := packInput(cwd, ws) // an invalid repo file keeps the manifest crew
 			crew := packs.Crew(in.Config, flags)
 			out := c.OutOrStdout()
 			if asJSON {
@@ -349,9 +418,19 @@ func newPackApprovalsCmd() *cobra.Command {
 		Short: "Pending, approved, rejected, used and expired pack approvals of this workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			_, ws := packCwd()
+			cwd, _ := os.Getwd()
+			ws, werr := packWorkspace(cwd)
+			if werr != nil {
+				fmt.Fprintln(c.ErrOrStderr(), "tq pack: "+werr.Error())
+				exitFunc(2)
+				return nil
+			}
 			if ws == nil {
-				return errors.New("not in a trusted workspace: pack approvals belong to a workspace")
+				if asJSON {
+					return json.NewEncoder(c.OutOrStdout()).Encode(map[string]any{"schema": packs.Schema, "workspace": "", "approvals": []any{}})
+				}
+				fmt.Fprintln(c.OutOrStdout(), "no pack approvals (not in a workspace)")
+				return nil
 			}
 			rows, err := approval.List(ws.Name, pack)
 			if err != nil {
@@ -393,12 +472,12 @@ warn; new ones keep their level. Agent sessions are refused.`,
 				return runner.ErrHumanOnly
 			}
 			return packRun(c, func() error {
-				cwd, ws := packCwd()
-				in, err := packInput(cwd, ws)
+				cwd, _ := os.Getwd()
+				in, err := packContext(cwd)
 				if err != nil {
 					return usageErr("%v", err)
 				}
-				return writeBaselines(c.Context(), c.OutOrStdout(), in, pack, hubClasses(ws))
+				return writeBaselines(c.Context(), c.OutOrStdout(), in, pack, in.Classes())
 			})
 		},
 	}
@@ -435,6 +514,9 @@ func writeBaselines(ctx context.Context, out io.Writer, in *packs.Input, only st
 		for _, r := range rep.Results {
 			if r.Tool == nil {
 				continue // built-in checks use inline suppressions, not the baseline
+			}
+			if r.Status == packs.Skip || (r.Status == packs.Fail && len(r.Findings) == 0) {
+				return usageErr("%s did not run cleanly (%s: %s); the %s baseline is left as it is", r.Tool.Name, r.ID, r.Detail, p)
 			}
 			for _, f := range r.Findings {
 				entries = append(entries, baseline.EntryFor(r.ID, r.Tool.Name, f))

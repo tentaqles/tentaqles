@@ -169,6 +169,34 @@ func ValidatePacks(packs map[string]PackConfig) error {
 	return nil
 }
 
+// plainYAML refuses anchors, aliases, merge keys (<<) and deep nesting: the
+// untrusted repo layer has no need for them, and they would bypass the
+// per-key merge rules or recurse without end.
+func plainYAML(n *yaml.Node, depth int) error {
+	if depth > 64 {
+		return fmt.Errorf("line %d: nested too deep", n.Line)
+	}
+	if n.Kind == yaml.AliasNode {
+		return fmt.Errorf("line %d: aliases are not allowed in %s", n.Line, RepoPacksFile)
+	}
+	if n.Anchor != "" {
+		return fmt.Errorf("line %d: anchors are not allowed in %s", n.Line, RepoPacksFile)
+	}
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == "<<" || n.Content[i].Tag == "!!merge" {
+				return fmt.Errorf("line %d: merge keys (<<) are not allowed in %s", n.Content[i].Line, RepoPacksFile)
+			}
+		}
+	}
+	for _, c := range n.Content {
+		if err := plainYAML(c, depth+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RepoPacksFile is the add-only repo layer at a repository root (spec C §2.3).
 const RepoPacksFile = "tq-packs.yaml"
 
@@ -186,6 +214,9 @@ func ParseRepoPacks(raw []byte) (map[string]PackConfig, error) {
 	out := map[string]PackConfig{}
 	if len(doc.Content) == 0 {
 		return out, nil
+	}
+	if err := plainYAML(&doc, 0); err != nil {
+		return nil, fmt.Errorf("%s: %w", RepoPacksFile, err)
 	}
 	top := doc.Content[0]
 	if top.Kind != yaml.MappingNode {

@@ -2,6 +2,7 @@ package packs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +55,16 @@ type Input struct {
 	Budget   time.Time // deadline for the whole run
 
 	ws, wsRoot, pack string
+	classes          []string
 }
+
+// Classes are the workspace's exit classes, for redact on anything that
+// leaves the process (tool output tails: out.Tail(20, in.Classes())). Nil
+// means every detector.
+func (in *Input) Classes() []string { return in.classes }
+
+// SetClasses sets the exit classes (the CLI does; RunOptions.Classes too).
+func (in *Input) SetClasses(c []string) { in.classes = c }
 
 // SetWorkspace records the workspace (registry name and the folder holding
 // .tentaqles.yaml). The CLI calls it; tests use it to point StateDir at
@@ -142,7 +152,7 @@ func (in *Input) AnyChanged(globs ...string) bool {
 // with no slash matches the base name at any depth; a trailing slash means
 // "under this directory".
 func MatchGlob(glob, p string) bool {
-	glob = strings.ReplaceAll(strings.TrimSpace(glob), `\`, "/")
+	glob = strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(glob), `\`, "/"), "./")
 	p = strings.TrimPrefix(strings.ReplaceAll(p, `\`, "/"), "./")
 	if glob == "" {
 		return false
@@ -164,17 +174,22 @@ func MatchGlob(glob, p string) bool {
 // ReadNew reads the new side of path: the index with --staged, otherwise the
 // working tree. Reads are capped at max bytes (64 MiB when max <= 0).
 func (in *Input) ReadNew(path string, max int64) ([]byte, error) {
-	if in.Staged && in.Git != nil {
-		return in.Git.Show(":", path)
-	}
 	if max <= 0 {
 		max = 64 << 20
+	}
+	if in.Staged && in.Git != nil {
+		b, err := in.Git.Show(":", path)
+		if err == nil && int64(len(b)) > max {
+			return nil, fmt.Errorf("%s is larger than %d bytes", path, max)
+		}
+		return b, err
 	}
 	return readCapped(filepath.Join(in.Root, filepath.FromSlash(path)), max)
 }
 
-// ReadOld reads the old side of path at Base; it fails when there is no old
-// side (Base "" or --all) or the path is absent there.
+// ReadOld reads the old side of path at Base. The error wraps os.ErrNotExist
+// when there is no old side (Base "" or --all) or the path is absent at Base
+// (an added file). A renamed file's old side is ReadOld(c.OldPath).
 func (in *Input) ReadOld(path string) ([]byte, error) {
 	if in.Base == "" || in.Git == nil {
 		return nil, os.ErrNotExist

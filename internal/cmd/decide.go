@@ -422,9 +422,19 @@ func classifiedFlag(files []string, data manifest.Data) bool {
 // returns the raised pack flags and the enabled packs' Jev questions. Any
 // failure yields none: core triage still runs.
 func triagePackFlags(cwd string, ws *resolve.Workspace, changed []string, staged bool, rng string) ([]string, map[string]decide.Question) {
-	in, ok := packInputFor(cwd, ws)
-	if !ok || len(in.Config.Enabled()) == 0 {
+	if ws == nil || ws.Manifest == nil {
 		return nil, nil
+	}
+	// An invalid tq-packs.yaml keeps the manifest-only config and its flags,
+	// and raises packs_config_invalid (risk high): untrusted repo content can
+	// never switch the trusted packs' review off.
+	in, ok := packInputFor(cwd, ws)
+	var extra []string
+	if !ok {
+		extra = append(extra, "packs_config_invalid")
+	}
+	if len(in.Config.Enabled()) == 0 {
+		return extra, nil
 	}
 	in.Base, in.Staged = "HEAD", staged
 	if rng != "" {
@@ -434,7 +444,7 @@ func triagePackFlags(cwd string, ws *resolve.Workspace, changed []string, staged
 	for _, f := range changed {
 		in.Changed = append(in.Changed, packs.ChangedFile{Path: f, Status: 'M'})
 	}
-	return packs.RaiseFlags(in), packs.Questions(in.Config)
+	return append(packs.RaiseFlags(in), extra...), packs.Questions(in.Config)
 }
 
 // triageGit runs git for triage; tests replace it.

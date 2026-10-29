@@ -36,15 +36,18 @@ func init() {
 			"example_command": nil,
 			"example_secret":  nil,
 			"example_block":   nil,
+			"example_extra":   nil,
+			"x":               nil,
 		},
-		Merge: map[string]MergeKind{
-			"example_paths":          MergeUnion,
-			"example_cap":            MergeMin,
-			"example_floor":          MergeMax,
-			"example_command":        MergeRepo,
-			"example_secret":         MergeIgnoreRepo,
-			"example_block.*.limit":  MergeMin,
-			"example_block.*.strict": MergeOr,
+		Merge: map[string]MergeRule{
+			"example_paths":          Union(),
+			"example_cap":            {Kind: MergeMin, Default: "50GB", ZeroUnlimited: true},
+			"example_floor":          Max("0.5"),
+			"example_command":        RepoValue(),
+			"example_extra":          TrustedAdd(),
+			"example_block.*.limit":  Min("100"),
+			"example_block.*.strict": Or(),
+			"example_block.*.apply":  Ordered("ask", "auto", "ask", "approve", "deny"),
 		},
 		Flags: []Flag{
 			{Name: "example_sql", Reviewers: []string{"pipeline-reviewer"}, Raise: func(in *Input) bool { return in.AnyChanged("*.sql") }},
@@ -97,7 +100,7 @@ func init() {
 			<-ctx.Done()
 			return Result{Status: OK}
 		}})
-	Register(Check{ID: "data/example-sqlfluff", Pack: "data", Kind: External, Tool: "sqlfluff",
+	Register(Check{ID: "data/example-sqlfluff", Pack: "data", Kind: External, Tool: "sqlfluff", Timeout: 300 * time.Second,
 		Applies: func(in *Input) bool { return in.AnyChanged("*.sql") },
 		Run: func(ctx context.Context, in *Input) Result {
 			out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "data", Tool: "sqlfluff", Args: []string{"lint", "--format", "json"}})
@@ -168,9 +171,14 @@ type fakeTools struct {
 	probes map[string]toolrun.Probe
 	outs   map[string]toolrun.Output
 	slow   map[string]bool
+	seen   map[string]time.Duration // tool -> Spec.Timeout it was run with
+	probed map[string]int
 }
 
 func (f fakeTools) Probe(pack, tool string) toolrun.Probe {
+	if f.probed != nil {
+		f.probed[tool]++
+	}
 	if p, ok := f.probes[tool]; ok {
 		return p
 	}
@@ -178,6 +186,9 @@ func (f fakeTools) Probe(pack, tool string) toolrun.Probe {
 }
 
 func (f fakeTools) Run(ctx context.Context, s toolrun.Spec) (toolrun.Output, error) {
+	if f.seen != nil {
+		f.seen[s.Tool] = s.Timeout
+	}
 	if f.slow[s.Tool] {
 		<-ctx.Done()
 		return toolrun.Output{TimedOut: true}, nil

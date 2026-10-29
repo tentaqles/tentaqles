@@ -10,14 +10,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
 
 var bqUnbounded = regexp.MustCompile(`\bbq\s+query\b`)
 
 func dataEnv(t testing.TB) GuardEnv {
-	cfg := Merge(packsOf(t, "data: { enabled: true }\nml: { enabled: true }\n"), nil)
-	return GuardEnv{Config: cfg, Workspace: "acme"}
+	return envFor(t, "data: { enabled: true }\nml: { enabled: true }\n")
+}
+
+// envFor is a hook env with a trusted manifest holding the packs block.
+func envFor(t testing.TB, packsBlock string) GuardEnv {
+	m := &manifest.Manifest{Packs: packsOf(t, packsBlock)}
+	return GuardEnv{Config: Merge(m.Packs, nil), Manifest: m, Workspace: "acme"}
 }
 
 func outcome(os []GuardOutcome, id string) *GuardOutcome {
@@ -58,7 +64,7 @@ func TestGuardDecisions(t *testing.T) {
 		t.Fatalf("mcp event: %+v", o)
 	}
 	// A disabled pack's guards never run.
-	off := GuardEnv{Config: Merge(packsOf(t, "data: { enabled: false }\n"), nil)}
+	off := envFor(t, "data: { enabled: false }\n")
 	if os := EvaluateGuards(bash("bq query x"), off, nil, nil); len(os) != 0 {
 		t.Fatalf("disabled pack: %+v", os)
 	}
@@ -134,7 +140,8 @@ func TestReadLocalRefusals(t *testing.T) {
 	writeFile(t, home, ".aws/credentials", "[default]")
 	writeFile(t, home, ".azure/azureProfile.json", "{}")
 	writeFile(t, home, "outside/file.txt", "no")
-	env := GuardEnv{Config: dataEnv(t).Config, Workspace: "acme", WorkspaceRoot: ws, RepoRoot: ws}
+	env := dataEnv(t)
+	env.WorkspaceRoot, env.RepoRoot = ws, ws
 	g := NewGuardCtx(env, "cloud")
 	if b, err := g.ReadLocal(".terraform/environment", 0); err != nil || string(b) != "prod" {
 		t.Fatalf("%q %v", b, err)

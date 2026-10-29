@@ -2,7 +2,7 @@
   "schema": "tq.packs/v1",
   "workspace": "acme",
   "base": "HEAD",
-  "config_hash": "sha256:d72e19dd77287865cfc8b1ecfa280c6b7892182c8a06d05fc4b0be1031a8013c",
+  "config_hash": "sha256:55f9441ee93c4271173ccf02bd23842b13ba1a14c9a70634ec6e6db7aff5458b",
   "results": [
     {
       "id": "data/example-select-star",
@@ -45,7 +45,7 @@
     {
       "id": "data/example-warn",
       "pack": "data",
-      "status": "ok",
+      "status": "fail",
       "required": true,
       "detail": "style notes",
       "findings": [
@@ -83,9 +83,9 @@
     }
   ],
   "summary": {
-    "ok": 1,
-    "fail": 3,
+    "ok": 0,
+    "fail": 4,
     "skip": 1,
-    "required_fail": 2
+    "required_fail": 3
   }
 }

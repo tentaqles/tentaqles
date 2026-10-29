@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -25,8 +28,8 @@ type Settings struct {
 	Tools     []string
 	Timeouts  map[string]time.Duration
 	ToolPaths map[string]string // trusted layer only
-	Baseline  string
-	// Raw is the merged packs.<name> mapping node. Decode it with Decode.
+	Baseline  string            // repo-relative slash path, cleaned
+	// Raw is the merged packs.<name> mapping node (the pack's own keys only).
 	Raw yaml.Node
 }
 
@@ -42,9 +45,13 @@ func (s Settings) Decode(v any) error {
 }
 
 // Node returns the merged node at a dotted path ("contracts.paths"), or nil.
-func (s Settings) Node(path string) *yaml.Node {
+// Use NodeAt for keys that contain a dot.
+func (s Settings) Node(dotted string) *yaml.Node { return s.NodeAt(strings.Split(dotted, ".")...) }
+
+// NodeAt returns the merged node at a key path, or nil.
+func (s Settings) NodeAt(keys ...string) *yaml.Node {
 	n := &s.Raw
-	for _, k := range strings.Split(path, ".") {
+	for _, k := range keys {
 		if n.Kind != yaml.MappingNode {
 			return nil
 		}
@@ -62,27 +69,33 @@ func (s Settings) Node(path string) *yaml.Node {
 	return n
 }
 
-// Strings returns the string list at a dotted path.
-func (s Settings) Strings(path string) []string {
-	n := s.Node(path)
+// Strings returns the string list at a dotted path (a scalar is a one-item
+// list; a mapping returns nil).
+func (s Settings) Strings(dotted string) []string {
+	n := s.Node(dotted)
 	if n == nil {
 		return nil
 	}
-	if n.Kind == yaml.ScalarNode && n.Value != "" {
-		return []string{n.Value}
-	}
-	var out []string
-	for _, c := range n.Content {
-		if c.Kind == yaml.ScalarNode {
-			out = append(out, c.Value)
+	switch n.Kind {
+	case yaml.ScalarNode:
+		if n.Value != "" && n.Tag != "!!null" {
+			return []string{n.Value}
 		}
+	case yaml.SequenceNode:
+		var out []string
+		for _, c := range n.Content {
+			if c.Kind == yaml.ScalarNode {
+				out = append(out, c.Value)
+			}
+		}
+		return out
 	}
-	return out
+	return nil
 }
 
 // String returns the scalar at a dotted path, or "".
-func (s Settings) String(path string) string {
-	if n := s.Node(path); n != nil && n.Kind == yaml.ScalarNode {
+func (s Settings) String(dotted string) string {
+	if n := s.Node(dotted); n != nil && n.Kind == yaml.ScalarNode {
 		return n.Value
 	}
 	return ""
@@ -96,7 +109,7 @@ type Problem struct {
 
 func (p Problem) String() string {
 	if p.Key == "" {
-		return p.Message
+		return "packs." + p.Pack + ": " + p.Message
 	}
 	return fmt.Sprintf("packs.%s.%s: %s", p.Pack, p.Key, p.Message)
 }
@@ -108,6 +121,8 @@ type Config struct {
 	Problems []Problem
 	// RepoFile is the tq-packs.yaml path that was merged, "" when none.
 	RepoFile string
+	hash     string
+	hashErr  error
 }
 
 // Pack returns a pack's settings (zero when absent).
@@ -118,7 +133,8 @@ func (c Config) Pack(name string) Settings {
 	return Settings{Name: name}
 }
 
-// IsEnabled reports whether pack is enabled.
+// IsEnabled reports whether pack is enabled. Only the trusted manifest
+// enables a pack; the repo layer never does.
 func (c Config) IsEnabled(name string) bool { return c.Pack(name).Enabled }
 
 // Enabled returns the enabled pack names, sorted.
@@ -133,8 +149,8 @@ func (c Config) Enabled() []string {
 	return out
 }
 
-// Canonical is the merged config as plain data (what the hash covers and
-// what `tq pack list --json` prints).
+// Canonical is the merged config as plain data, for display (tq pack list).
+// Scalars are their YAML text; non-finite numbers stay strings.
 func (c Config) Canonical() map[string]any {
 	out := map[string]any{}
 	for _, n := range Names() {
@@ -142,93 +158,152 @@ func (c Config) Canonical() map[string]any {
 		if !ok {
 			continue
 		}
-		var raw any
+		m := map[string]any{}
 		if s.Raw.Kind != 0 {
-			raw = nodeValue(&s.Raw)
+			if v, err := nodeValue(&s.Raw, 0, false); err == nil {
+				if mm, ok := v.(map[string]any); ok {
+					m = mm
+				}
+			}
 		}
-		m, _ := raw.(map[string]any)
-		if m == nil {
-			m = map[string]any{}
+		for k, v := range frameworkValues(s) {
+			m[k] = v
 		}
-		m["enabled"] = s.Enabled
-		tools := append([]string{}, s.Tools...)
-		sort.Strings(tools)
-		m["tools"] = tools
-		to := map[string]any{}
-		for k, v := range s.Timeouts {
-			to[k] = v.String()
-		}
-		m["timeouts"] = to
-		tp := map[string]any{}
-		for k, v := range s.ToolPaths {
-			tp[k] = v
-		}
-		m["tool_paths"] = tp
-		m["baseline"] = s.Baseline
 		out[n] = m
 	}
 	return out
 }
 
-// Hash is the config_hash: sha256 over the canonical JSON of the merged config.
-func (c Config) Hash() string {
-	b, _ := json.Marshal(c.Canonical()) // encoding/json sorts map keys
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:])
+func frameworkValues(s Settings) map[string]any {
+	tools := append([]string{}, s.Tools...)
+	sort.Strings(tools)
+	to := map[string]any{}
+	for k, v := range s.Timeouts {
+		to[k] = v.String()
+	}
+	tp := map[string]any{}
+	for k, v := range s.ToolPaths {
+		tp[k] = v
+	}
+	return map[string]any{"enabled": s.Enabled, "tools": tools, "timeouts": to, "tool_paths": tp, "baseline": s.Baseline}
 }
 
-// nodeValue turns a YAML node into plain data with sorted-key maps.
-func nodeValue(n *yaml.Node) any {
+// Hash is the config_hash: sha256 over a canonical JSON where every scalar
+// is its resolved YAML tag plus its text, so no value can make the encoding
+// fail or collapse. It is "" when Err() is set.
+func (c Config) Hash() string { return c.hash }
+
+// Err reports a config that cannot be hashed (too deep, a cycle): treat it
+// as invalid (exit 2) and fail closed.
+func (c Config) Err() error { return c.hashErr }
+
+func (c *Config) computeHash() {
+	doc := map[string]any{}
+	for _, n := range Names() {
+		s, ok := c.Packs[n]
+		if !ok {
+			continue
+		}
+		var raw any = map[string]any{}
+		if s.Raw.Kind != 0 {
+			v, err := nodeValue(&s.Raw, 0, true)
+			if err != nil {
+				c.hash, c.hashErr = "", fmt.Errorf("packs.%s: %w", n, err)
+				return
+			}
+			raw = v
+		}
+		doc[n] = map[string]any{"framework": frameworkValues(s), "pack": raw}
+	}
+	b, err := json.Marshal(doc)
+	if err != nil || len(b) == 0 {
+		c.hash, c.hashErr = "", fmt.Errorf("packs: config cannot be hashed: %v", err)
+		return
+	}
+	sum := sha256.Sum256(b)
+	c.hash = "sha256:" + hex.EncodeToString(sum[:])
+}
+
+const maxNodeDepth = 64
+
+// nodeValue turns a YAML node into plain data. tagged: scalars become
+// [tag, text] pairs (the hash form); otherwise text (finite numbers and
+// booleans decoded for display).
+func nodeValue(n *yaml.Node, depth int, tagged bool) (any, error) {
+	if depth > maxNodeDepth {
+		return nil, errors.New("nesting too deep (or an alias cycle)")
+	}
 	switch n.Kind {
 	case yaml.DocumentNode:
 		if len(n.Content) > 0 {
-			return nodeValue(n.Content[0])
+			return nodeValue(n.Content[0], depth+1, tagged)
 		}
-		return nil
+		return nil, nil
 	case yaml.MappingNode:
 		m := map[string]any{}
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			m[n.Content[i].Value] = nodeValue(n.Content[i+1])
+			v, err := nodeValue(n.Content[i+1], depth+1, tagged)
+			if err != nil {
+				return nil, err
+			}
+			m[n.Content[i].Value] = v
 		}
-		return m
+		return m, nil
 	case yaml.SequenceNode:
 		out := make([]any, 0, len(n.Content))
 		for _, c := range n.Content {
-			out = append(out, nodeValue(c))
+			v, err := nodeValue(c, depth+1, tagged)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, v)
 		}
-		return out
+		return out, nil
 	case yaml.AliasNode:
-		if n.Alias != nil {
-			return nodeValue(n.Alias)
+		if n.Alias == nil {
+			return nil, nil
 		}
-		return nil
+		return nodeValue(n.Alias, depth+1, tagged)
 	}
-	var v any
-	if err := n.Decode(&v); err != nil {
-		return n.Value
+	if tagged {
+		return []string{n.ShortTag(), n.Value}, nil
 	}
-	return v
+	switch n.ShortTag() {
+	case "!!int", "!!float":
+		if f, err := strconv.ParseFloat(strings.ReplaceAll(n.Value, "_", ""), 64); err == nil && !math.IsInf(f, 0) && !math.IsNaN(f) {
+			return f, nil
+		}
+		return n.Value, nil
+	case "!!bool":
+		var b bool
+		if n.Decode(&b) == nil {
+			return b, nil
+		}
+	case "!!null":
+		return nil, nil
+	}
+	return n.Value, nil
 }
 
 // ErrRepoFile wraps a tq-packs.yaml that does not parse or validate.
 var ErrRepoFile = errors.New("tq-packs.yaml is invalid")
 
 // LoadConfig merges the manifest's packs: block (m may be nil outside a
-// trusted workspace) with repoRoot/tq-packs.yaml when present. An invalid
-// repo file returns the manifest-only config and an error wrapping
-// ErrRepoFile; callers that must fail closed (tq pack check) treat it as a
-// config error, the hook uses the manifest-only config.
+// trusted workspace, and then the repo layer is not read: no pack is
+// enabled) with repoRoot/tq-packs.yaml when present. An invalid repo file
+// returns the manifest-only config and an error wrapping ErrRepoFile;
+// callers that must fail closed (tq pack check) treat it as a config error.
+// A config that cannot be hashed is an error too (Config.Err).
 func LoadConfig(m *manifest.Manifest, repoRoot string) (Config, error) {
-	var trusted map[string]manifest.PackConfig
-	if m != nil {
-		trusted = m.Packs
+	if m == nil {
+		return Merge(nil, nil), nil
 	}
 	var repo map[string]manifest.PackConfig
 	var rerr error
 	file := ""
 	if repoRoot != "" {
 		p := filepath.Join(repoRoot, manifest.RepoPacksFile)
-		if raw, err := readCapped(p, 1<<20); err == nil {
+		if raw, err := readRegular(p, 1<<20); err == nil {
 			file = p
 			repo, rerr = manifest.ParseRepoPacks(raw)
 			if rerr != nil {
@@ -239,15 +314,31 @@ func LoadConfig(m *manifest.Manifest, repoRoot string) (Config, error) {
 			rerr = fmt.Errorf("%w: %v", ErrRepoFile, err)
 		}
 	}
-	c := Merge(trusted, repo)
+	c := Merge(m.Packs, repo)
 	if repo != nil {
 		c.RepoFile = file
+	}
+	if rerr == nil && c.Err() != nil {
+		rerr = c.Err()
 	}
 	return c, rerr
 }
 
+// readRegular reads a regular file (never a FIFO or a device, which could
+// block the caller), at most max bytes.
+func readRegular(p string, max int64) ([]byte, error) {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", p)
+	}
+	return readCapped(p, max)
+}
+
 func readCapped(p string, max int64) ([]byte, error) {
-	f, err := os.Open(p)
+	f, err := openNoBlock(p)
 	if err != nil {
 		return nil, err
 	}
@@ -256,69 +347,90 @@ func readCapped(p string, max int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", p)
+	}
 	if fi.Size() > max {
 		return nil, fmt.Errorf("%s is larger than %d bytes", p, max)
 	}
-	buf := make([]byte, fi.Size())
-	n, err := f.Read(buf)
-	if err != nil && n == 0 && fi.Size() > 0 {
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
 		return nil, err
 	}
-	return buf[:n], nil
+	if int64(len(b)) > max {
+		return nil, fmt.Errorf("%s is larger than %d bytes", p, max)
+	}
+	return b, nil
 }
 
-// Merge applies the add-only rules of spec C §2.3: the repo layer may enable
-// a pack, add tools and path lists and tighten bounds, never loosen a trusted
-// value. Ignored repo values are listed in Problems.
+// normRepoPath is a repo-relative slash path without ./ (baselines).
+func normRepoPath(p string) string {
+	p = strings.TrimSpace(strings.ReplaceAll(p, `\`, "/"))
+	if p == "" {
+		return ""
+	}
+	return strings.TrimPrefix(path.Clean(p), "./")
+}
+
+// Merge applies the add-only rules of spec C §2.3 as ruled at review: only
+// the trusted manifest enables a pack (a repo block for a pack the manifest
+// does not configure is ignored); the repo may add tools and path lists and
+// tighten bounds, never loosen a trusted value or a pack default. Every
+// pack key without a registered rule is trusted-layer only. Ignored repo
+// values are listed in Problems.
 func Merge(trusted, repo map[string]manifest.PackConfig) Config {
 	c := Config{Packs: map[string]Settings{}}
+	problem := func(pack, key, msg string) { c.Problems = append(c.Problems, Problem{pack, key, msg}) }
 	for _, name := range Names() {
 		t, tok := trusted[name]
 		r, rok := repo[name]
-		if !tok && !rok {
+		if !tok {
+			if rok {
+				problem(name, "", "the repo file cannot enable or configure a pack the manifest does not configure (ignored)")
+			}
 			continue
 		}
-		s := Settings{Name: name, Timeouts: map[string]time.Duration{}, ToolPaths: map[string]string{}}
-		s.Enabled = (tok && t.IsEnabled()) || (rok && r.IsEnabled())
-		if tok && rok && t.Enabled != nil && *t.Enabled && r.Enabled != nil && !*r.Enabled {
-			c.Problems = append(c.Problems, Problem{name, "enabled", "the repo file cannot disable a pack the manifest enabled (ignored)"})
-		}
-		s.Tools = union(t.Tools, r.Tools)
+		s := Settings{Name: name, Enabled: t.IsEnabled(), Timeouts: map[string]time.Duration{}, ToolPaths: map[string]string{}}
+		s.Tools = append([]string{}, t.Tools...)
 		for k, v := range t.Timeouts {
 			s.Timeouts[k] = time.Duration(v)
-		}
-		for k, v := range r.Timeouts {
-			rv := time.Duration(v)
-			if cur, ok := s.Timeouts[k]; !ok || rv < cur {
-				s.Timeouts[k] = rv
-			} else if rv > cur {
-				c.Problems = append(c.Problems, Problem{name, "timeouts." + k, "the repo file cannot raise a timeout (ignored)"})
-			}
 		}
 		for k, v := range t.ToolPaths {
 			s.ToolPaths[k] = v
 		}
-		if len(r.ToolPaths) > 0 {
-			c.Problems = append(c.Problems, Problem{name, "tool_paths", "tool_paths is trusted-layer only; the repo file's value is ignored"})
-		}
-		s.Baseline = t.Baseline
-		if s.Baseline == "" {
-			s.Baseline = r.Baseline
-		} else if r.Baseline != "" && r.Baseline != t.Baseline {
-			c.Problems = append(c.Problems, Problem{name, "baseline", "the repo file cannot move the manifest's baseline (ignored)"})
-		}
-		kinds := mergeKinds(name)
-		var tn, rn *yaml.Node
-		if tok {
-			tn = &t.Raw
-		}
+		s.Baseline = normRepoPath(t.Baseline)
 		if rok {
-			rn = &r.Raw
+			if r.Enabled != nil && *r.Enabled != s.Enabled {
+				problem(name, "enabled", "only the manifest enables or disables a pack (ignored)")
+			}
+			s.Tools = union(s.Tools, r.Tools)
+			for k, v := range r.Timeouts {
+				rv := time.Duration(v)
+				limit, ok := s.Timeouts[k]
+				if !ok {
+					limit = defaultToolTimeout(name, k)
+				}
+				if rv <= limit {
+					s.Timeouts[k] = rv
+				} else {
+					problem(name, "timeouts."+k, "the repo file cannot raise a timeout above "+limit.String()+" (ignored)")
+				}
+			}
+			if len(r.ToolPaths) > 0 {
+				problem(name, "tool_paths", "tool_paths is trusted-layer only; the repo file's value is ignored")
+			}
+			if r.Baseline != "" && normRepoPath(r.Baseline) != s.Baseline {
+				problem(name, "baseline", "the baseline is trusted-layer only (ignored)")
+			}
 		}
-		merged := mergeNode(tn, rn, "", kinds, func(key, msg string) {
-			c.Problems = append(c.Problems, Problem{name, key, msg})
-		})
-		// Framework keys live in the typed fields only, already merged.
+		rules := mergeRules(name)
+		merged := cloneNode(&t.Raw)
+		if merged == nil || merged.Kind != yaml.MappingNode {
+			merged = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		}
+		if rok && r.Raw.Kind == yaml.MappingNode {
+			merged = mergeMapping(merged, &r.Raw, nil, rules, func(key, msg string) { problem(name, key, msg) })
+		}
 		var keep []*yaml.Node
 		for i := 0; i+1 < len(merged.Content); i += 2 {
 			if !contains(manifest.FrameworkPackKeys, merged.Content[i].Value) {
@@ -326,14 +438,37 @@ func Merge(trusted, repo map[string]manifest.PackConfig) Config {
 			}
 		}
 		merged.Content = keep
-		if merged.Kind != yaml.MappingNode {
-			merged = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		}
 		s.Raw = *merged
 		c.Packs[name] = s
 	}
+	c.computeHash()
 	return c
 }
+
+// defaultToolTimeout is the smallest default of the pack's checks using tool
+// (DefaultToolTimeout when they set none): a repo timeout may only be lower.
+func defaultToolTimeout(pack, tool string) time.Duration {
+	limit := time.Duration(0)
+	for _, ch := range Checks(pack) {
+		if ch.Kind != External || ch.Tool != tool {
+			continue
+		}
+		d := ch.Timeout
+		if d <= 0 {
+			d = DefaultToolTimeout
+		}
+		if limit == 0 || d < limit {
+			limit = d
+		}
+	}
+	if limit == 0 {
+		limit = DefaultToolTimeout
+	}
+	return limit
+}
+
+// DefaultToolTimeout is the tool timeout of a check that sets none.
+const DefaultToolTimeout = 120 * time.Second
 
 func union(a, b []string) []string {
 	var out []string
@@ -345,56 +480,69 @@ func union(a, b []string) []string {
 	return out
 }
 
-// kindFor finds the merge kind of a dotted key; * matches one segment.
-func kindFor(kinds map[string]MergeKind, key string) MergeKind {
-	if k, ok := kinds[key]; ok {
-		return k
-	}
-	segs := strings.Split(key, ".")
-	for pat, k := range kinds {
+// ruleFor finds the rule of a key path: the exact pattern first, then the
+// one with the fewest wildcards, then the lexically smallest (RegisterPack
+// refuses overlapping patterns with different rules, so ties agree).
+func ruleFor(rules map[string]MergeRule, keys []string) (MergeRule, bool) {
+	best, bestW, found := "", 0, false
+	for pat := range rules {
 		ps := strings.Split(pat, ".")
-		if len(ps) != len(segs) {
+		if len(ps) != len(keys) {
+			continue
+		}
+		w := 0
+		ok := true
+		for i := range ps {
+			if ps[i] == "*" {
+				w++
+			} else if ps[i] != keys[i] {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		if !found || w < bestW || (w == bestW && pat < best) {
+			best, bestW, found = pat, w, true
+		}
+	}
+	if !found {
+		return MergeRule{}, false
+	}
+	return rules[best], true
+}
+
+// hasRuleBelow reports whether some rule addresses a key under prefix.
+func hasRuleBelow(rules map[string]MergeRule, keys []string) bool {
+	for pat := range rules {
+		ps := strings.Split(pat, ".")
+		if len(ps) <= len(keys) {
 			continue
 		}
 		ok := true
-		for i := range ps {
-			if ps[i] != "*" && ps[i] != segs[i] {
+		for i := range keys {
+			if ps[i] != "*" && ps[i] != keys[i] {
 				ok = false
 				break
 			}
 		}
 		if ok {
-			return k
+			return true
 		}
 	}
-	return MergeTrusted
+	return false
 }
 
-// mergeNode merges two pack nodes (either may be nil). Framework keys are
-// merged by Merge itself and copied from the trusted side here.
-func mergeNode(t, r *yaml.Node, prefix string, kinds map[string]MergeKind, problem func(key, msg string)) *yaml.Node {
-	switch {
-	case t == nil && r == nil:
-		return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	case t == nil || t.Kind == 0 || isNull(t):
-		if r == nil || isNull(r) {
-			return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		}
-		return stripRepoOnly(cloneNode(r), prefix, kinds, problem)
-	case r == nil || r.Kind == 0 || isNull(r):
-		return cloneNode(t)
-	}
-	if t.Kind != yaml.MappingNode || r.Kind != yaml.MappingNode {
-		return cloneNode(t)
-	}
+// mergeMapping merges the repo mapping r into the trusted mapping t (t may
+// be an empty mapping when the manifest is silent).
+func mergeMapping(t, r *yaml.Node, prefix []string, rules map[string]MergeRule, problem func(key, msg string)) *yaml.Node {
 	out := cloneNode(t)
 	for i := 0; i+1 < len(r.Content); i += 2 {
 		k := r.Content[i].Value
-		key := k
-		if prefix != "" {
-			key = prefix + "." + k
-		}
-		if prefix == "" && contains(manifest.FrameworkPackKeys, k) {
+		keys := append(append([]string(nil), prefix...), k)
+		key := strings.Join(keys, ".")
+		if len(prefix) == 0 && contains(manifest.FrameworkPackKeys, k) {
 			continue
 		}
 		rv := r.Content[i+1]
@@ -404,75 +552,140 @@ func mergeNode(t, r *yaml.Node, prefix string, kinds map[string]MergeKind, probl
 				idx = j + 1
 			}
 		}
-		kind := kindFor(kinds, key)
-		if idx < 0 {
-			if kind == MergeIgnoreRepo {
-				problem(key, "trusted-layer only; the repo file's value is ignored")
+		var tv *yaml.Node
+		if idx >= 0 {
+			tv = out.Content[idx]
+		}
+		rule, explicit := ruleFor(rules, keys)
+		if !explicit && rv.Kind == yaml.MappingNode && (tv == nil || tv.Kind == yaml.MappingNode) && hasRuleBelow(rules, keys) {
+			base := tv
+			if base == nil {
+				base = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Line: rv.Line, Column: rv.Column}
+			}
+			m := mergeMapping(base, rv, keys, rules, problem)
+			if tv == nil && len(m.Content) == 0 {
 				continue
 			}
-			out.Content = append(out.Content, cloneNode(r.Content[i]), stripRepoOnly(cloneNode(rv), key, kinds, problem))
+			if idx >= 0 {
+				out.Content[idx] = m
+			} else {
+				out.Content = append(out.Content, cloneNode(r.Content[i]), m)
+			}
 			continue
 		}
-		tv := out.Content[idx]
-		switch kind {
-		case MergeUnion:
-			out.Content[idx] = unionNode(tv, rv)
-		case MergeMin, MergeMax:
-			a, aok := numeric(tv.Value)
-			b, bok := numeric(rv.Value)
-			switch {
-			case !aok || !bok:
-				problem(key, "not a comparable value; the manifest's value is kept")
-			case (kind == MergeMin && b < a) || (kind == MergeMax && b > a):
-				out.Content[idx] = cloneNode(rv)
-			case b != a:
-				problem(key, "the repo file cannot loosen this bound (ignored)")
-			}
-		case MergeOr:
-			if rv.Value == "true" {
-				out.Content[idx] = cloneNode(rv)
-			} else if tv.Value == "true" {
-				problem(key, "the repo file cannot switch this off (ignored)")
-			}
-		case MergeRepo:
-			out.Content[idx] = cloneNode(rv)
-		case MergeIgnoreRepo:
-			problem(key, "trusted-layer only; the repo file's value is ignored")
-		default:
-			if tv.Kind == yaml.MappingNode && rv.Kind == yaml.MappingNode {
-				out.Content[idx] = mergeNode(tv, rv, key, kinds, problem)
-			} else if !sameNode(tv, rv) {
-				problem(key, "set by the manifest; the repo file cannot change it (ignored)")
-			}
+		val, ok, msg := mergeValue(rule, tv, rv)
+		if msg != "" {
+			problem(key, msg)
+		}
+		if !ok {
+			continue
+		}
+		if idx >= 0 {
+			out.Content[idx] = val
+		} else {
+			out.Content = append(out.Content, cloneNode(r.Content[i]), val)
 		}
 	}
 	return out
 }
 
-// stripRepoOnly drops trusted-layer-only keys from a node the repo adds.
-func stripRepoOnly(n *yaml.Node, prefix string, kinds map[string]MergeKind, problem func(key, msg string)) *yaml.Node {
-	if n.Kind != yaml.MappingNode {
-		return n
+// mergeValue applies one rule. tv is nil when the manifest is silent, and
+// then bounds compare against the rule's pack default. It returns the value
+// to keep, whether to set it, and a problem message.
+func mergeValue(rule MergeRule, tv, rv *yaml.Node) (*yaml.Node, bool, string) {
+	same := tv != nil && sameNode(tv, rv)
+	if same {
+		return tv, false, ""
 	}
-	var keep []*yaml.Node
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		k := n.Content[i].Value
-		key := k
-		if prefix != "" {
-			key = prefix + "." + k
+	isMap := rv.Kind == yaml.MappingNode || (tv != nil && tv.Kind == yaml.MappingNode)
+	switch rule.Kind {
+	case MergeIgnoreRepo:
+		return nil, false, "trusted-layer only; the repo file cannot set or change it (ignored)"
+	case MergeTrusted:
+		if tv == nil {
+			return cloneNode(rv), true, ""
 		}
-		if kindFor(kinds, key) == MergeIgnoreRepo {
-			problem(key, "trusted-layer only; the repo file's value is ignored")
-			continue
+		return nil, false, "set by the manifest; the repo file cannot change it (ignored)"
+	case MergeRepo:
+		return cloneNode(rv), true, ""
+	case MergeUnion:
+		if isMap {
+			return nil, false, "a union applies to lists, not mappings (ignored)"
 		}
-		keep = append(keep, n.Content[i], stripRepoOnly(n.Content[i+1], key, kinds, problem))
+		if tv == nil {
+			return unionNode(&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}, rv), true, ""
+		}
+		return unionNode(tv, rv), true, ""
+	case MergeOr:
+		if rv.Kind != yaml.ScalarNode || (rv.Value != "true" && rv.Value != "false") {
+			return nil, false, "not a boolean (ignored)"
+		}
+		if rv.Value == "true" {
+			return cloneNode(rv), true, ""
+		}
+		return nil, false, "the repo file cannot switch this off (ignored)"
+	case MergeMin, MergeMax:
+		if isMap || rv.Kind != yaml.ScalarNode {
+			return nil, false, "not a comparable value (ignored)"
+		}
+		b, bok := numeric(rv.Value)
+		if !bok {
+			return nil, false, "not a comparable value (ignored)"
+		}
+		if rule.ZeroUnlimited && b <= 0 {
+			return nil, false, "0 or a negative value means no limit here; the repo file cannot remove a limit (ignored)"
+		}
+		if b < 0 {
+			return nil, false, "a negative bound (ignored)"
+		}
+		ref := ""
+		if tv != nil {
+			ref = tv.Value
+		} else {
+			ref = rule.Default
+		}
+		if ref == "" {
+			return cloneNode(rv), true, "" // no default: any bound tightens
+		}
+		a, aok := numeric(ref)
+		if !aok {
+			return nil, false, "the trusted value is not comparable; it is kept"
+		}
+		if (rule.Kind == MergeMin && b <= a) || (rule.Kind == MergeMax && b >= a) {
+			return cloneNode(rv), true, ""
+		}
+		return nil, false, "the repo file cannot loosen this bound (ignored)"
+	case MergeOrdered:
+		if rv.Kind != yaml.ScalarNode {
+			return nil, false, "not one of " + strings.Join(rule.Order, ", ") + " (ignored)"
+		}
+		ri := indexOf(rule.Order, rv.Value)
+		if ri < 0 {
+			return nil, false, "not one of " + strings.Join(rule.Order, ", ") + " (ignored)"
+		}
+		ref := rule.Default
+		if tv != nil {
+			ref = tv.Value
+		}
+		ti := indexOf(rule.Order, ref)
+		if ref != "" && ti < 0 {
+			return nil, false, "the trusted value is not in the order; it is kept"
+		}
+		if ri >= ti {
+			return cloneNode(rv), true, ""
+		}
+		return nil, false, "the repo file cannot loosen this value (ignored)"
 	}
-	n.Content = keep
-	return n
+	return nil, false, "unknown merge rule (ignored)"
 }
 
-func isNull(n *yaml.Node) bool {
-	return n.Kind == yaml.ScalarNode && (n.Tag == "!!null" || (n.Value == "" && n.Tag == ""))
+func indexOf(xs []string, s string) int {
+	for i, x := range xs {
+		if x == s {
+			return i
+		}
+	}
+	return -1
 }
 
 func cloneNode(n *yaml.Node) *yaml.Node {
@@ -488,9 +701,14 @@ func cloneNode(n *yaml.Node) *yaml.Node {
 }
 
 func sameNode(a, b *yaml.Node) bool {
-	x, _ := json.Marshal(nodeValue(a))
-	y, _ := json.Marshal(nodeValue(b))
-	return string(x) == string(y)
+	x, errA := nodeValue(a, 0, true)
+	y, errB := nodeValue(b, 0, true)
+	if errA != nil || errB != nil {
+		return false
+	}
+	xa, _ := json.Marshal(x)
+	ya, _ := json.Marshal(y)
+	return string(xa) == string(ya)
 }
 
 func unionNode(a, b *yaml.Node) *yaml.Node {
@@ -502,7 +720,11 @@ func unionNode(a, b *yaml.Node) *yaml.Node {
 			items = []*yaml.Node{n}
 		}
 		for _, it := range items {
-			k, _ := json.Marshal(nodeValue(it))
+			v, err := nodeValue(it, 0, true)
+			if err != nil {
+				continue
+			}
+			k, _ := json.Marshal(v)
 			if !seen[string(k)] {
 				seen[string(k)] = true
 				out.Content = append(out.Content, cloneNode(it))
@@ -514,22 +736,23 @@ func unionNode(a, b *yaml.Node) *yaml.Node {
 	return out
 }
 
-var sizeRe = regexp.MustCompile(`^(?i)\s*([0-9]+(?:\.[0-9]+)?)\s*([kmgtp]i?b|b)?\s*$`)
+var sizeRe = regexp.MustCompile(`^(?i)\s*(-?[0-9]+(?:\.[0-9]+)?)\s*([kmgtp]i?b|b)?\s*$`)
 
 // numeric reads a bound: a number, a duration (600s, 7d) or a byte size
-// (10GB, 512MiB). Units of one kind compare correctly; mixed kinds are a
-// configuration mistake either way.
+// (10GB, 512MiB).
 func numeric(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		if math.IsInf(f, 0) || math.IsNaN(f) {
+			return 0, false
+		}
 		return f, true
 	}
 	if m := sizeRe.FindStringSubmatch(s); m != nil && m[2] != "" {
 		f, _ := strconv.ParseFloat(m[1], 64)
 		u := strings.ToLower(m[2])
-		bin := strings.Contains(u, "i")
 		base := 1000.0
-		if bin {
+		if strings.Contains(u, "i") {
 			base = 1024
 		}
 		pow := strings.IndexByte("bkmgtp", u[0])

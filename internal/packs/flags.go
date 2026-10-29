@@ -6,7 +6,7 @@ import (
 )
 
 // RaiseFlags evaluates the deterministic flags of the enabled packs over
-// in's changed set, plus the framework's baseline_change, and returns the
+// in's changed set, plus the framework's baseline_change:<pack>, and returns the
 // raised names, sorted and de-duplicated. A Raise that panics counts as
 // raised (fail safe: review more, never less).
 func RaiseFlags(in *Input) []string {
@@ -19,7 +19,8 @@ func RaiseFlags(in *Input) []string {
 			}
 		}
 		if BaselineGrew(pin) {
-			set[FlagBaselineChange] = true
+			// Per pack, so the crew adds only that pack's reviewer.
+			set[FlagBaselineChange+":"+p] = true
 		}
 	}
 	out := make([]string, 0, len(set))
@@ -52,7 +53,7 @@ func Crew(cfg Config, flags []string) []string {
 	set := map[string]bool{}
 	for _, p := range cfg.Enabled() {
 		for _, f := range Flags(p) {
-			if want[f.Name] {
+			if want[f.Name] || (f.Name == FlagBaselineChange && want[FlagBaselineChange+":"+p]) {
 				for _, r := range f.Reviewers {
 					set[r] = true
 				}

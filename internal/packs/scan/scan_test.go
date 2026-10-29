@@ -262,3 +262,15 @@ func contains(xs []string, s string) bool {
 	}
 	return false
 }
+
+func TestSQLNestedBlockComments(t *testing.T) {
+	st := SQLStatements([]byte("/* a /* b */ still comment */ select 1;\n/* x */ drop table t;"))
+	if len(st) != 2 || st[0].Keyword() != "SELECT" || st[1].Keyword() != "DROP" {
+		t.Fatalf("%d %v", len(st), st)
+	}
+	for _, tk := range st[0].Tokens {
+		if tk.Text == "still" || tk.Text == "*" {
+			t.Fatalf("comment leaked: %+v", st[0].Tokens)
+		}
+	}
+}

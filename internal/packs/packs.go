@@ -9,6 +9,7 @@ package packs
 import (
 	"context"
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -146,19 +147,42 @@ type Hint struct {
 }
 
 // MergeKind is how a pack-specific key of tq-packs.yaml merges with the
-// manifest (spec C §2.3). Keys with no registered kind are trusted: the
-// repo file may add them when the manifest lacks them, never change them.
+// manifest (spec C §2.3). A key with no registered rule is trusted-layer
+// only (MergeIgnoreRepo, the zero value): packs opt keys in.
 type MergeKind int
 
 const (
-	MergeTrusted    MergeKind = iota
-	MergeUnion                // lists: union (path lists)
-	MergeMin                  // upper bounds: the smaller wins
-	MergeMax                  // lower bounds: the larger wins
-	MergeRepo                 // commands: the repo value is allowed
-	MergeOr                   // booleans that only tighten when true
-	MergeIgnoreRepo           // trusted-layer only (like tool_paths)
+	MergeIgnoreRepo MergeKind = iota // trusted-layer only (the default)
+	MergeTrusted                     // the repo may add it when the manifest lacks it, never change it
+	MergeUnion                       // lists: union (path lists)
+	MergeMin                         // upper bounds: the smaller wins (vs Default when the manifest is silent)
+	MergeMax                         // lower bounds: the larger wins (vs Default when the manifest is silent)
+	MergeRepo                        // commands: the repo value is allowed
+	MergeOr                          // booleans: the repo may only set true
+	MergeOrdered                     // an enum ordered loosest -> strictest (Order): the stricter wins
 )
+
+// MergeRule is the merge of one pack key. Default is the pack's own default
+// for the key (what the pack uses when the manifest is silent): Min, Max and
+// Ordered compare the repo value against it. ZeroUnlimited marks a Min/Max
+// key where 0 (or less) means "no limit": the repo can never set it.
+type MergeRule struct {
+	Kind          MergeKind
+	Default       string
+	Order         []string // MergeOrdered: loosest first, e.g. auto, ask, approve, deny
+	ZeroUnlimited bool
+}
+
+// Merge rule shorthands.
+func Union() MergeRule         { return MergeRule{Kind: MergeUnion} }
+func Min(def string) MergeRule { return MergeRule{Kind: MergeMin, Default: def} }
+func Max(def string) MergeRule { return MergeRule{Kind: MergeMax, Default: def} }
+func Or() MergeRule            { return MergeRule{Kind: MergeOr} }
+func RepoValue() MergeRule     { return MergeRule{Kind: MergeRepo} }
+func TrustedAdd() MergeRule    { return MergeRule{Kind: MergeTrusted} }
+func Ordered(def string, order ...string) MergeRule {
+	return MergeRule{Kind: MergeOrdered, Default: def, Order: order}
+}
 
 // Pack is one pack's registration. Several register_*.go files may each
 // register parts of one pack: RegisterPack merges by Name.
@@ -169,7 +193,7 @@ type Pack struct {
 	ConfigKeys map[string]func(yaml.Node) error
 	// Merge sets how pack keys merge with tq-packs.yaml, by dotted path
 	// ("contracts.paths", "drift.metrics.*.min"; * is one key).
-	Merge    map[string]MergeKind
+	Merge    map[string]MergeRule
 	Flags    []Flag
 	Hints    []Hint
 	Doctor   func(in *Input) []doctor.Finding
@@ -179,7 +203,7 @@ type Pack struct {
 type packEntry struct {
 	name       string
 	keys       map[string]func(yaml.Node) error
-	merge      map[string]MergeKind
+	merge      map[string]MergeRule
 	flags      []Flag
 	hints      []Hint
 	doctors    []func(*Input) []doctor.Finding
@@ -238,7 +262,7 @@ func Register(c Check) {
 func entry(name string) *packEntry {
 	e := pks[name]
 	if e == nil {
-		e = &packEntry{name: name, keys: map[string]func(yaml.Node) error{}, merge: map[string]MergeKind{}, cmdNames: map[string]bool{}}
+		e = &packEntry{name: name, keys: map[string]func(yaml.Node) error{}, merge: map[string]MergeRule{}, cmdNames: map[string]bool{}}
 		pks[name] = e
 	}
 	return e
@@ -270,6 +294,14 @@ func RegisterPack(p Pack) {
 		if _, dup := e.merge[k]; dup {
 			panic("packs.RegisterPack " + p.Name + ": duplicate merge path " + k)
 		}
+		for other, om := range e.merge {
+			if patternsOverlap(k, other) && !sameRule(m, om) {
+				panic("packs.RegisterPack " + p.Name + ": merge paths " + k + " and " + other + " overlap with different rules")
+			}
+		}
+		if m.Kind == MergeOrdered && (len(m.Order) < 2 || (m.Default != "" && indexOf(m.Order, m.Default) < 0)) {
+			panic("packs.RegisterPack " + p.Name + ": ordered merge " + k + " needs an order that holds its default")
+		}
 		e.merge[k] = m
 	}
 	for _, f := range p.Flags {
@@ -289,6 +321,9 @@ func RegisterPack(p Pack) {
 	for _, h := range p.Hints {
 		if h.Glob == "" {
 			panic("packs.RegisterPack " + p.Name + ": a hint needs a glob")
+		}
+		if _, err := path.Match(strings.TrimPrefix(h.Glob, "./"), ""); err != nil {
+			panic("packs.RegisterPack " + p.Name + ": bad hint glob " + h.Glob)
 		}
 		if h.Contains != "" {
 			re, err := regexp.Compile(h.Contains)
@@ -420,10 +455,10 @@ func doctors(pack string) []func(*Input) []doctor.Finding {
 	return nil
 }
 
-func mergeKinds(pack string) map[string]MergeKind {
+func mergeRules(pack string) map[string]MergeRule {
 	regMu.RLock()
 	defer regMu.RUnlock()
-	out := map[string]MergeKind{}
+	out := map[string]MergeRule{}
 	if e := pks[pack]; e != nil {
 		for k, v := range e.merge {
 			out[k] = v
@@ -453,4 +488,22 @@ func contains(xs []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// patternsOverlap reports whether two dotted patterns can address one key.
+func patternsOverlap(a, b string) bool {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	if len(as) != len(bs) {
+		return false
+	}
+	for i := range as {
+		if as[i] != "*" && bs[i] != "*" && as[i] != bs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameRule(a, b MergeRule) bool {
+	return a.Kind == b.Kind && a.Default == b.Default && a.ZeroUnlimited == b.ZeroUnlimited && strings.Join(a.Order, "\x00") == strings.Join(b.Order, "\x00")
 }

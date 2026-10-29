@@ -51,13 +51,22 @@ func SQLTokens(src []byte) []Token {
 				i++
 			}
 		case c == '/' && i+1 < n && s[i+1] == '*':
-			j := strings.Index(s[i+2:], "*/")
-			end := n
-			if j >= 0 {
-				end = i + 2 + j + 2
+			// Block comments nest (Postgres and T-SQL): /* a /* b */ c */.
+			depth, j := 1, i+2
+			for j < n && depth > 0 {
+				switch {
+				case s[j] == '/' && j+1 < n && s[j+1] == '*':
+					depth++
+					j += 2
+				case s[j] == '*' && j+1 < n && s[j+1] == '/':
+					depth--
+					j += 2
+				default:
+					j++
+				}
 			}
-			line += strings.Count(s[i:end], "\n")
-			i = end
+			line += strings.Count(s[i:j], "\n")
+			i = j
 		case c == '{' && i+1 < n && (s[i+1] == '{' || s[i+1] == '%' || s[i+1] == '#'):
 			closer := map[byte]string{'{': "}}", '%': "%}", '#': "#}"}[s[i+1]]
 			j := strings.Index(s[i+2:], closer)

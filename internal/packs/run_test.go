@@ -61,7 +61,7 @@ func TestCheckGoldenJSON(t *testing.T) {
 	if got := strings.ReplaceAll(buf.String(), "\r\n", "\n"); got != strings.ReplaceAll(string(want), "\r\n", "\n") {
 		t.Fatalf("tq.packs/v1 output changed (the plugin gate reads it):\n%s\nwant:\n%s", got, want)
 	}
-	if !rep.Failed() || rep.Summary.RequiredFail != 2 {
+	if !rep.Failed() || rep.Summary.RequiredFail != 3 {
 		t.Fatalf("summary %+v", rep.Summary)
 	}
 }
@@ -76,8 +76,8 @@ func TestRunStatusesAndRequired(t *testing.T) {
 	if r := got["data/example-select-star"]; r.Status != Fail || !r.Required || len(r.Findings) != 1 || r.Findings[0].Line != 1 {
 		t.Fatalf("built-in error finding fails, required: %+v", r)
 	}
-	if r := got["data/example-warn"]; r.Status != OK {
-		t.Fatalf("only warn findings never fail: %+v", r)
+	if r := got["data/example-warn"]; r.Status != Fail || r.Findings[0].Level != LevelWarn {
+		t.Fatalf("an explicit Fail stays Fail, even with only warn findings (F13): %+v", r)
 	}
 	if r := got["data/example-sqlfluff"]; r.Status != Fail || !r.Required || r.Tool == nil || r.Tool.Version != "3.2.0" {
 		t.Fatalf("declared tool: %+v", r)
@@ -222,7 +222,7 @@ func TestBaselineGrewWarnsAndRaisesFlag(t *testing.T) {
 	if r == nil || r.Status != OK || len(r.Findings) != 1 || r.Findings[0].Rule != "baseline-grew" || r.Findings[0].Level != LevelWarn {
 		t.Fatalf("%+v", r)
 	}
-	if flags := RaiseFlags(in); !contains(flags, FlagBaselineChange) {
+	if flags := RaiseFlags(in); !contains(flags, FlagBaselineChange+":data") {
 		t.Fatalf("flags %v", flags)
 	}
 }

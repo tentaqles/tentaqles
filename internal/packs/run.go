@@ -66,6 +66,7 @@ func MissingDetail(pack string) string {
 // event line per result. Results are sorted by id.
 func RunChecks(ctx context.Context, in *Input, o RunOptions) Report {
 	rep := Report{Schema: Schema, Workspace: in.Workspace(), Base: in.Base, ConfigHash: in.Config.Hash(), Results: []Result{}}
+	in.classes = o.Classes
 	if !in.Budget.IsZero() {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(ctx, in.Budget)
@@ -159,6 +160,11 @@ func applies(c Check, in *Input) (ok bool) {
 // runOne runs one check; the bool reports a declared-missing tool.
 func runOne(ctx context.Context, c Check, in *Input, o RunOptions) (Result, bool) {
 	base := Result{ID: c.ID, Pack: c.Pack, Findings: []Finding{}}
+	if ctx.Err() != nil {
+		// The run's budget is spent: no probe, no tool, a fail.
+		base.Status, base.Detail, base.Required = Fail, "timed out", c.Kind == Builtin || in.Settings().Declared(c.Tool)
+		return base, false
+	}
 	if c.Kind == External {
 		declared := in.Settings().Declared(c.Tool)
 		base.Required = declared
@@ -185,23 +191,40 @@ func runOne(ctx context.Context, c Check, in *Input, o RunOptions) (Result, bool
 			base.Tool = &ToolRun{Name: c.Tool, Version: p.Version, Path: p.Path}
 			return base, false
 		}
-		r := guarded(ctx, c, in, 0)
+		cin := *in
+		cin.Tools = checkTools{ToolRunner: in.Tools, timeout: c.Timeout}
+		r := guarded(ctx, c, &cin, 0)
 		r.ID, r.Pack, r.Required = c.ID, c.Pack, declared
 		if r.Tool == nil {
 			r.Tool = &ToolRun{Name: c.Tool, Version: p.Version, Path: p.Path}
 		}
+		downgraded := 0
 		if in.Baseline != nil {
 			for i, f := range r.Findings {
 				if f.Level == LevelError && in.Baseline.Match(c.ID, f) {
 					r.Findings[i].Level = LevelWarn
+					downgraded++
 				}
 			}
 		}
-		return normalise(r), false
+		return normalise(r, downgraded), false
 	}
 	r := guarded(ctx, c, in, BuiltinTimeout)
 	r.ID, r.Pack, r.Required = c.ID, c.Pack, true
-	return normalise(r), false
+	return normalise(r, 0), false
+}
+
+// checkTools gives a check's tool runs the check's default timeout.
+type checkTools struct {
+	ToolRunner
+	timeout time.Duration
+}
+
+func (t checkTools) Run(ctx context.Context, s toolrun.Spec) (toolrun.Output, error) {
+	if s.Timeout <= 0 {
+		s.Timeout = t.timeout
+	}
+	return t.ToolRunner.Run(ctx, s)
 }
 
 func orUnknown(v string) string {
@@ -244,9 +267,10 @@ func guarded(ctx context.Context, c Check, in *Input, timeout time.Duration) Res
 	}
 }
 
-// normalise applies "a check fails only on an error finding": with findings,
-// the status follows their levels; without, the check's own status stands.
-func normalise(r Result) Result {
+// normalise: an error finding fails the check; an explicit Fail stays Fail,
+// unless every error finding it had was downgraded by the baseline
+// (downgraded > 0 and none is left), which makes it OK.
+func normalise(r Result, downgraded int) Result {
 	if r.Findings == nil {
 		r.Findings = []Finding{}
 	}
@@ -263,13 +287,12 @@ func normalise(r Result) Result {
 			r.Detail = "check returned no status"
 		}
 	}
-	if len(r.Findings) > 0 && r.Status != Skip {
-		errs, _ := r.Counts()
-		if errs > 0 {
-			r.Status = Fail
-		} else if r.Detail != "timed out" && (r.Tool == nil || !r.Tool.TimedOut) {
-			r.Status = OK
-		}
+	errs, _ := r.Counts()
+	switch {
+	case errs > 0 && r.Status != Skip:
+		r.Status = Fail
+	case r.Status == Fail && downgraded > 0 && errs == 0 && r.Detail != "timed out" && (r.Tool == nil || !r.Tool.TimedOut):
+		r.Status = OK
 	}
 	return r
 }
@@ -280,30 +303,37 @@ func levelCounts(r Result) map[string]int {
 }
 
 // baselineGrew is the framework's <pack>/baseline result: a warn finding
-// baseline-grew when the diff adds entries to the pack's baseline file.
+// baseline-grew when the diff adds entries (by check and fingerprint) that
+// the old side does not have.
 func baselineGrew(in *Input) (Result, bool) {
-	b := in.Settings().Baseline
+	b := normRepoPath(in.Settings().Baseline)
 	if b == "" || in.All || in.Base == "" {
 		return Result{}, false
 	}
 	changed := false
 	for _, c := range in.Changed {
-		if c.Path == b && c.Status != 'D' {
+		if normRepoPath(c.Path) == b && c.Status != 'D' {
 			changed = true
 		}
 	}
 	if !changed {
 		return Result{}, false
 	}
-	n := countEntries(in, b, false)
-	old := countEntries(in, b, true)
+	now := baselineKeys(in, b, false)
+	old := baselineKeys(in, b, true)
+	added := 0
+	for k := range now {
+		if !old[k] {
+			added++
+		}
+	}
 	r := Result{ID: in.Pack() + "/baseline", Pack: in.Pack(), Status: OK, Required: false, Findings: []Finding{}}
-	if n > old {
-		r.Detail = fmt.Sprintf("baseline grew by %d entries", n-old)
+	if added > 0 {
+		r.Detail = fmt.Sprintf("baseline gained %d entries", added)
 		r.Findings = append(r.Findings, Finding{File: b, Level: LevelWarn, Rule: "baseline-grew",
-			Message: fmt.Sprintf("the baseline gained %d entries (%d -> %d); a reviewer must accept them", n-old, old, n)})
+			Message: fmt.Sprintf("the baseline gained %d entries (%d before, %d now); a reviewer must accept them", added, len(old), len(now))})
 	} else {
-		r.Detail = fmt.Sprintf("baseline has %d entries (was %d)", n, old)
+		r.Detail = fmt.Sprintf("baseline has %d entries (was %d), none new", len(now), len(old))
 	}
 	return r, true
 }
@@ -315,7 +345,9 @@ func BaselineGrew(in *Input) bool {
 	return ok && len(r.Findings) > 0
 }
 
-func countEntries(in *Input, p string, old bool) int {
+// baselineKeys reads the entries' check+fingerprint keys of one side. An
+// unreadable new side counts every entry as unknown (growth).
+func baselineKeys(in *Input, p string, old bool) map[string]bool {
 	var raw []byte
 	var err error
 	if old {
@@ -323,16 +355,32 @@ func countEntries(in *Input, p string, old bool) int {
 	} else {
 		raw, err = in.ReadNew(p, 16<<20)
 	}
+	out := map[string]bool{}
 	if err != nil {
-		return 0
+		return out
 	}
 	var f struct {
-		Entries []json.RawMessage `json:"entries"`
+		Entries []struct {
+			Check       string `json:"check"`
+			Fingerprint string `json:"fingerprint"`
+			Rule        string `json:"rule"`
+			Location    string `json:"location"`
+		} `json:"entries"`
 	}
 	if json.Unmarshal(raw, &f) != nil {
-		return 0
+		if !old {
+			out["\x00unparsable"] = true
+		}
+		return out
 	}
-	return len(f.Entries)
+	for i, e := range f.Entries {
+		k := e.Check + "\x00" + e.Fingerprint
+		if e.Fingerprint == "" {
+			k = fmt.Sprintf("%s\x00%s\x00%s\x00#%d", e.Check, e.Rule, e.Location, i)
+		}
+		out[k] = true
+	}
+	return out
 }
 
 // EncodeJSON writes the report as tq.packs/v1 (two-space indent), the exact

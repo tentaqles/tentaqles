@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -27,7 +29,8 @@ func Git(ctx context.Context, root string, args ...string) ([]byte, error) {
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0")
 	var out, errb bytes.Buffer
-	cmd.Stdout = &limited{w: &out, n: maxShow}
+	lim := &limited{w: &out, n: maxShow}
+	cmd.Stdout = lim
 	cmd.Stderr = &limited{w: &errb, n: 64 << 10}
 	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Run(); err != nil {
@@ -40,21 +43,28 @@ func Git(ctx context.Context, root string, args ...string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("git %s: %v: %s", args[0], err, msg)
 	}
+	if lim.over {
+		return nil, fmt.Errorf("git %s: output over %d bytes", args[0], maxShow)
+	}
 	return out.Bytes(), nil
 }
 
 type limited struct {
-	w *bytes.Buffer
-	n int
+	w    *bytes.Buffer
+	n    int
+	over bool
 }
 
 func (l *limited) Write(p []byte) (int, error) {
 	if room := l.n - l.w.Len(); room > 0 {
 		if len(p) > room {
 			l.w.Write(p[:room])
+			l.over = true
 		} else {
 			l.w.Write(p)
 		}
+	} else if len(p) > 0 {
+		l.over = true
 	}
 	return len(p), nil
 }
@@ -87,7 +97,18 @@ func (g GitRepo) Show(ref, path string) ([]byte, error) {
 	if ref == ":" {
 		spec = ":" + path
 	}
-	return Git(g.ctx(), g.Root, "show", spec)
+	b, err := Git(g.ctx(), g.Root, "show", spec)
+	if err != nil && absentAtRef(err) {
+		return nil, fmt.Errorf("%w: %s is absent at %s", os.ErrNotExist, path, ref)
+	}
+	return b, err
+}
+
+// absentAtRef recognises git's "path does not exist" messages.
+func absentAtRef(err error) bool {
+	m := err.Error()
+	return strings.Contains(m, "does not exist in") || strings.Contains(m, "exists on disk, but not in") ||
+		strings.Contains(m, "not in the index") || strings.Contains(m, "does not exist (neither on disk nor in the index)")
 }
 
 // ListFiles lists the tracked files.
@@ -150,24 +171,7 @@ func Select(ctx context.Context, root string, s Selection) ([]ChangedFile, strin
 		}
 		return out, "", nil
 	case len(s.Paths) > 0:
-		var out []ChangedFile
-		for _, p := range s.Paths {
-			p = strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(p), `\`, "/"), "./")
-			if p == "" {
-				continue
-			}
-			if filepath.IsAbs(p) || p == ".." || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "-") {
-				return nil, "", fmt.Errorf("%w: --paths %q must be relative to the repository", ErrSelection, p)
-			}
-			st := byte('A')
-			if head != "" {
-				if _, err := Git(ctx, root, "cat-file", "-e", head+":"+p); err == nil {
-					st = 'M'
-				}
-			}
-			out = append(out, ChangedFile{Path: p, Status: st})
-		}
-		return out, head, nil
+		return selectPaths(ctx, root, head, s.Paths)
 	case s.Staged:
 		// With no commit yet, git compares the index with the empty tree.
 		out, err := Git(ctx, root, "diff", "--cached", "--name-status", "-z")
@@ -243,3 +247,97 @@ func parseNameStatus(b []byte) []ChangedFile {
 }
 
 func slash(p string) string { return strings.ReplaceAll(p, `\`, "/") }
+
+// selectPaths resolves --paths: each path is cleaned and must stay inside
+// the repository (an absolute path inside root is made relative); a
+// directory expands to its tracked and untracked files; the status (M when
+// present at HEAD, else A) comes from one ls-tree call, matched
+// case-insensitively on Windows with git's own spelling kept.
+func selectPaths(ctx context.Context, root, head string, in []string) ([]ChangedFile, string, error) {
+	absRoot, _ := filepath.Abs(root)
+	var rels []string
+	for _, raw := range in {
+		p := strings.TrimSpace(raw)
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "-") {
+			return nil, "", fmt.Errorf("%w: --paths %q is not a path", ErrSelection, raw)
+		}
+		if filepath.IsAbs(p) {
+			r, err := filepath.Rel(absRoot, p)
+			if err != nil {
+				return nil, "", fmt.Errorf("%w: --paths %q is outside the repository", ErrSelection, raw)
+			}
+			p = r
+		}
+		p = path.Clean(strings.ReplaceAll(p, `\`, "/"))
+		if p == ".." || strings.HasPrefix(p, "../") || path.IsAbs(p) || (len(p) > 1 && p[1] == ':') {
+			return nil, "", fmt.Errorf("%w: --paths %q is outside the repository", ErrSelection, raw)
+		}
+		if fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err == nil && fi.IsDir() {
+			args := []string{"ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"}
+			if p != "." {
+				args = append(args, p)
+			}
+			out, err := Git(ctx, root, args...)
+			if err != nil {
+				return nil, "", err
+			}
+			rels = append(rels, splitZ(out)...)
+			continue
+		}
+		rels = append(rels, p)
+	}
+	atHead := map[string]string{} // key -> git's spelling
+	key := func(s string) string {
+		if runtime.GOOS == "windows" {
+			return strings.ToLower(s)
+		}
+		return s
+	}
+	if runtime.GOOS == "windows" && len(rels) > 0 {
+		// Git pathspecs are case-sensitive; take git's own spelling of each
+		// tracked path first (one call, :(icase) magic).
+		args := []string{"ls-files", "-z", "--"}
+		for _, p := range rels {
+			args = append(args, ":(icase,literal)"+p)
+		}
+		if out, err := Git(ctx, root, args...); err == nil {
+			spell := map[string]string{}
+			for _, f := range splitZ(out) {
+				spell[strings.ToLower(f)] = f
+			}
+			for i, p := range rels {
+				if g, ok := spell[strings.ToLower(p)]; ok {
+					rels[i] = g
+				}
+			}
+		}
+	}
+	if head != "" && len(rels) > 0 {
+		args := append([]string{"ls-tree", "-r", "--name-only", "-z", head, "--"}, rels...)
+		if out, err := Git(ctx, root, args...); err == nil {
+			for _, f := range splitZ(out) {
+				atHead[key(f)] = f
+			}
+		} else {
+			return nil, "", err
+		}
+	}
+	seen := map[string]bool{}
+	var out []ChangedFile
+	for _, p := range rels {
+		k := key(p)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if g, ok := atHead[k]; ok {
+			out = append(out, ChangedFile{Path: g, Status: 'M'})
+		} else {
+			out = append(out, ChangedFile{Path: p, Status: 'A'})
+		}
+	}
+	return out, head, nil
+}

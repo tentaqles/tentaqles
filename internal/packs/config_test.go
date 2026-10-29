@@ -2,6 +2,8 @@ package packs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/exec"
@@ -34,12 +36,12 @@ data:
   tools: [dbt]
   timeouts: { dbt: 600s }
   tool_paths: { dbt: C:/tools/dbt.exe }
+  baseline: ./.tq\base.json
   example_paths: [models/]
   example_cap: 10GB
   example_floor: 0.5
   example_command: python a.py
-  example_secret: s
-  example_block: { prod: { limit: 100, strict: true } }
+  example_block: { prod: { limit: 100, strict: true, apply: ask } }
 cloud: { enabled: true }
 `)
 	repo := packsOf(t, `
@@ -48,23 +50,24 @@ data:
   tools: [sqlfluff]
   timeouts: { dbt: 900s, sqlfluff: 60s }
   tool_paths: { dbt: /tmp/evil }
+  baseline: other.json
   example_paths: [snapshots/]
   example_cap: 20GB
   example_floor: 0.8
   example_command: python b.py
-  example_block: { prod: { limit: 50, strict: false }, dev: { limit: 1 } }
-ml: { tools: [ruff] }
+  example_block: { prod: { limit: 50, strict: false, apply: auto }, dev: { limit: 1 } }
+ml: { enabled: true, tools: [ruff] }
 `)
 	c := Merge(trusted, repo)
 	d := c.Pack("data")
 	if !d.Enabled || !reflect.DeepEqual(d.Tools, []string{"dbt", "sqlfluff"}) {
-		t.Fatalf("enabled OR, tools union: %+v", d)
+		t.Fatalf("enabled from the manifest only, tools union: %+v", d)
 	}
 	if d.Timeouts["dbt"] != 600*time.Second || d.Timeouts["sqlfluff"] != 60*time.Second {
 		t.Fatalf("timeouts min: %v", d.Timeouts)
 	}
-	if d.ToolPaths["dbt"] != "C:/tools/dbt.exe" {
-		t.Fatalf("tool_paths trusted only: %v", d.ToolPaths)
+	if d.ToolPaths["dbt"] != "C:/tools/dbt.exe" || d.Baseline != ".tq/base.json" {
+		t.Fatalf("tool_paths and baseline are trusted only, the baseline normalised: %v %q", d.ToolPaths, d.Baseline)
 	}
 	if got := d.Strings("example_paths"); !reflect.DeepEqual(got, []string{"models/", "snapshots/"}) {
 		t.Fatalf("path union: %v", got)
@@ -72,13 +75,13 @@ ml: { tools: [ruff] }
 	if d.String("example_cap") != "10GB" || d.String("example_floor") != "0.8" || d.String("example_command") != "python b.py" {
 		t.Fatalf("min/max/repo: cap %s floor %s cmd %s", d.String("example_cap"), d.String("example_floor"), d.String("example_command"))
 	}
-	if d.String("example_block.prod.limit") != "50" || d.String("example_block.prod.strict") != "true" || d.String("example_block.dev.limit") != "1" {
-		t.Fatalf("nested: %v / %v / %v", d.String("example_block.prod.limit"), d.String("example_block.prod.strict"), d.String("example_block.dev.limit"))
+	if d.String("example_block.prod.limit") != "50" || d.String("example_block.prod.strict") != "true" || d.String("example_block.prod.apply") != "ask" || d.String("example_block.dev.limit") != "1" {
+		t.Fatalf("nested: limit %v strict %v apply %v dev %v", d.String("example_block.prod.limit"), d.String("example_block.prod.strict"), d.String("example_block.prod.apply"), d.String("example_block.dev.limit"))
 	}
-	if !c.IsEnabled("ml") || !c.IsEnabled("cloud") || c.IsEnabled("db") {
-		t.Fatalf("enabled: %v", c.Enabled())
+	if !c.IsEnabled("data") || !c.IsEnabled("cloud") || c.IsEnabled("ml") || c.IsEnabled("db") {
+		t.Fatalf("the repo cannot enable a pack: %v", c.Enabled())
 	}
-	want := []string{"data.enabled", "data.example_block.prod.strict", "data.example_cap", "data.timeouts.dbt", "data.tool_paths"}
+	want := []string{"data.baseline", "data.enabled", "data.example_block.prod.apply", "data.example_block.prod.strict", "data.example_cap", "data.timeouts.dbt", "data.tool_paths", "ml."}
 	if got := problemKeys(c); !reflect.DeepEqual(got, want) {
 		t.Fatalf("problems %v want %v", got, want)
 	}
@@ -87,33 +90,53 @@ ml: { tools: [ruff] }
 	}
 }
 
-func TestMergeTrustedKeysAndRepoAdds(t *testing.T) {
-	c := Merge(packsOf(t, "data: { example_command: a }\n"), packsOf(t, "data: { unknown_key: x, example_secret: y }\n"))
-	d := c.Pack("data")
-	if d.String("unknown_key") != "x" {
-		t.Fatal("the repo may add a key the manifest lacks")
+// F1: when the manifest is silent, a bound compares against the pack
+// default; Or accepts only true; ordered values only tighten; unregistered
+// keys are trusted-layer only.
+func TestMergeAbsentKeysUseThePackDefault(t *testing.T) {
+	trusted := packsOf(t, "data: { enabled: true }\n")
+	for name, tc := range map[string]struct {
+		repo, key, want string
+		problem         bool
+	}{
+		"min under the default":       {"example_cap: 10GB", "example_cap", "10GB", false},
+		"min over the default":        {"example_cap: 100GB", "example_cap", "", true},
+		"zero means unlimited":        {"example_cap: 0", "example_cap", "", true},
+		"negative cap":                {"example_cap: -1", "example_cap", "", true},
+		"max above the default":       {"example_floor: 0.9", "example_floor", "0.9", false},
+		"max below the default":       {"example_floor: 0.1", "example_floor", "", true},
+		"or true":                     {"example_block: { prod: { strict: true } }", "example_block.prod.strict", "true", false},
+		"or false":                    {"example_block: { prod: { strict: false } }", "example_block.prod.strict", "", true},
+		"nested min over the default": {"example_block: { prod: { limit: 999999 } }", "example_block.prod.limit", "", true},
+		"ordered stricter":            {"example_block: { prod: { apply: approve } }", "example_block.prod.apply", "approve", false},
+		"ordered looser":              {"example_block: { prod: { apply: auto } }", "example_block.prod.apply", "", true},
+		"ordered unknown value":       {"example_block: { prod: { apply: yolo } }", "example_block.prod.apply", "", true},
+		"trusted add":                 {"example_extra: x", "example_extra", "x", false},
+		"unregistered key":            {"unknown_key: x", "unknown_key", "", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := Merge(trusted, packsOf(t, "data: { "+tc.repo+" }\n"))
+			if got := c.Pack("data").String(tc.key); got != tc.want {
+				t.Fatalf("%s = %q want %q (problems %v)", tc.key, got, tc.want, c.Problems)
+			}
+			if (len(c.Problems) > 0) != tc.problem {
+				t.Fatalf("problems %v", c.Problems)
+			}
+		})
 	}
-	if d.String("example_secret") != "" || len(c.Problems) != 1 {
-		t.Fatalf("trusted-only key from the repo: %q %v", d.String("example_secret"), c.Problems)
+	// A repo-only timeout may not exceed the check default (sqlfluff's is 300s here).
+	c := Merge(trusted, packsOf(t, "data: { timeouts: { sqlfluff: 1800s } }\n"))
+	if _, ok := c.Pack("data").Timeouts["sqlfluff"]; ok || len(c.Problems) != 1 {
+		t.Fatalf("repo-only timeout above the check default: %v %v", c.Pack("data").Timeouts, c.Problems)
 	}
-	c = Merge(packsOf(t, "data: { other: a }\n"), packsOf(t, "data: { other: b }\n"))
-	if c.Pack("data").String("other") != "a" || len(c.Problems) != 1 {
-		t.Fatal("default kind: manifest wins, change reported")
+	c = Merge(trusted, packsOf(t, "data: { timeouts: { sqlfluff: 60s } }\n"))
+	if c.Pack("data").Timeouts["sqlfluff"] != 60*time.Second {
+		t.Fatal("a lower repo timeout tightens")
 	}
-}
-
-func TestConfigHashStable(t *testing.T) {
-	a := Merge(packsOf(t, "data: { tools: [dbt, sqlfluff], example_paths: [b, a] }\nml: { enabled: true }\n"), nil)
-	b := Merge(packsOf(t, "ml: { enabled: true }\ndata:\n  example_paths: [b, a]\n  tools: [sqlfluff, dbt]\n"), nil)
-	if a.Hash() != b.Hash() || !strings.HasPrefix(a.Hash(), "sha256:") {
-		t.Fatalf("%s != %s", a.Hash(), b.Hash())
-	}
-	c := Merge(packsOf(t, "data: { tools: [dbt, sqlfluff], example_paths: [a, b] }\nml: { enabled: true }\n"), nil)
-	if c.Hash() == a.Hash() {
-		t.Fatal("list order is config, the hash must change")
-	}
-	if Merge(nil, nil).Hash() == a.Hash() {
-		t.Fatal("empty")
+	// A union on a mapping is a problem, not garbage.
+	c = Merge(packsOf(t, "data: { example_paths: [a] }\n"), packsOf(t, "data: { example_paths: { x: 1 } }\n"))
+	if got := c.Pack("data").Strings("example_paths"); !reflect.DeepEqual(got, []string{"a"}) || len(c.Problems) != 1 {
+		t.Fatalf("union on a mapping: %v %v", got, c.Problems)
 	}
 }
 
@@ -124,21 +147,69 @@ func TestLoadConfigRepoFile(t *testing.T) {
 	if err != nil || c.RepoFile != "" || !c.IsEnabled("data") {
 		t.Fatalf("%v %+v", err, c)
 	}
-	writeFile(t, root, "tq-packs.yaml", "ml: { tools: [ruff] }\n")
+	writeFile(t, root, "tq-packs.yaml", "data: { tools: [ruff] }\nml: { tools: [ruff] }\n")
 	c, err = LoadConfig(m, root)
-	if err != nil || !c.IsEnabled("ml") || c.RepoFile == "" {
+	if err != nil || c.IsEnabled("ml") || c.RepoFile == "" || !c.Pack("data").Declared("ruff") {
 		t.Fatalf("%v %+v", err, c)
 	}
 	writeFile(t, root, "tq-packs.yaml", "web: {}\n")
 	c, err = LoadConfig(m, root)
-	if !errors.Is(err, ErrRepoFile) || !c.IsEnabled("data") || c.IsEnabled("ml") {
+	if !errors.Is(err, ErrRepoFile) || !c.IsEnabled("data") {
 		t.Fatalf("an invalid repo file keeps the manifest config: %v %+v", err, c.Enabled())
 	}
-	// The pack validator runs on the repo file too.
 	writeFile(t, root, "tq-packs.yaml", "data: { example_paths: notalist }\n")
 	if _, err := LoadConfig(m, root); !errors.Is(err, ErrRepoFile) {
 		t.Fatalf("validator: %v", err)
 	}
+	// No trusted manifest: the repo layer is not read at all.
+	writeFile(t, root, "tq-packs.yaml", "data: { enabled: true }\n")
+	c, err = LoadConfig(nil, root)
+	if err != nil || len(c.Enabled()) != 0 || c.RepoFile != "" {
+		t.Fatalf("no manifest: %v %+v", err, c)
+	}
+	// F15: anchors, aliases and merge keys are refused.
+	for _, body := range []string{"data: { x: &a 1, y: *a }\n", "data:\n  loop: &x {b: 1}\n", "base: &b {tools: [ruff]}\ndata:\n  <<: *b\n"} {
+		writeFile(t, root, "tq-packs.yaml", body)
+		if _, err := LoadConfig(m, root); !errors.Is(err, ErrRepoFile) {
+			t.Fatalf("%q accepted: %v", body, err)
+		}
+	}
+}
+
+// F2: a non-finite number neither breaks nor collapses the hash.
+func TestConfigHashNonFinite(t *testing.T) {
+	a := Merge(packsOf(t, "data: { x: .inf }\n"), nil)
+	b := Merge(packsOf(t, "data: { x: .inf, tools: [dbt] }\nml: { x: .nan }\n"), nil)
+	empty := sha256.Sum256(nil)
+	if a.Err() != nil || b.Err() != nil || a.Hash() == "" || a.Hash() == b.Hash() || a.Hash() == "sha256:"+hex.EncodeToString(empty[:]) {
+		t.Fatalf("%v %v %s %s", a.Err(), b.Err(), a.Hash(), b.Hash())
+	}
+	if c := Merge(packsOf(t, "data: { x: '.inf' }\n"), nil); c.Hash() == a.Hash() {
+		t.Fatal("a string and a float must hash apart")
+	}
+	if List(a, "", false).ConfigHash != a.Hash() {
+		t.Fatal("list hash")
+	}
+}
+
+// F3: overlapping merge patterns resolve deterministically, and different
+// rules on overlapping patterns panic.
+func TestMergePatternResolution(t *testing.T) {
+	rules := map[string]MergeRule{"a.*.c": Min(""), "a.b.*": RepoValue(), "a.b.c": Union()}
+	for i := 0; i < 50; i++ {
+		if r, _ := ruleFor(rules, []string{"a", "b", "c"}); r.Kind != MergeUnion {
+			t.Fatal("the exact pattern wins")
+		}
+		if r, _ := ruleFor(map[string]MergeRule{"a.*.c": Min(""), "a.b.*": Min("")}, []string{"a", "b", "c"}); r.Kind != MergeMin {
+			t.Fatal("deterministic")
+		}
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("overlapping patterns with different rules must panic")
+		}
+	}()
+	RegisterPack(Pack{Name: "db", Merge: map[string]MergeRule{"q.*.c": Min(""), "q.b.*": RepoValue()}})
 }
 
 func TestManifestValidatorFromRegisterPack(t *testing.T) {

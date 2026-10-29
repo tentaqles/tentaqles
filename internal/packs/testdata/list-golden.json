@@ -1,7 +1,7 @@
 {
   "schema": "tq.packs/v1",
   "workspace": "acme",
-  "config_hash": "sha256:d72e19dd77287865cfc8b1ecfa280c6b7892182c8a06d05fc4b0be1031a8013c",
+  "config_hash": "sha256:55f9441ee93c4271173ccf02bd23842b13ba1a14c9a70634ec6e6db7aff5458b",
   "packs": [
     {
       "name": "data",
