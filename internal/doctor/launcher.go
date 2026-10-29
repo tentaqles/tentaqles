@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/tentaqles/tentaqles/internal/hooks"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
@@ -135,12 +136,60 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 						break
 					}
 				}
+				first := strings.Count(text[:loc[0]], "\n") + 1
+				fix := fmt.Sprintf("delete lines %d-%d of %s (function %s) by hand; tq activate defines %s", first, funcEndLine(text, loc[0], pf[1]), pf[0], name, name)
+				if cl, ok := hooks.CarriedWrapperLine(string(raw)); ok && cl == first && pf[1] == "powershell" {
+					fix = fmt.Sprintf("tq migrate removes it: it is the %s wrapper an older tq migrate carried over into %s (line %d); run tq migrate (tq activate defines %s)", name, pf[0], first, name)
+				}
 				add("warn", "claude-alias-shadow", "",
 					fmt.Sprintf("function %s, defined after tq's activation, replaces tq's %s launcher (%s)", name, name, pf[0]),
-					fmt.Sprintf("delete function %s from %s (tq migrate removes the copy it carried over, if unchanged); tq activate defines %s", name, pf[0], name))
+					fix)
 			}
 		}
 	}
+}
+
+// funcEndLine is the 1-based line where the function starting at off ends:
+// the line of its closing brace (fish: its `end` line), or the start line
+// when that cannot be found.
+func funcEndLine(text string, off int, kind string) int {
+	start := strings.Count(text[:off], "\n") + 1
+	if kind == "fish" {
+		depth := 0
+		for i, ln := range strings.Split(text[off:], "\n") {
+			f := strings.Fields(ln)
+			if len(f) == 0 {
+				continue
+			}
+			switch f[0] {
+			case "function", "if", "for", "while", "switch", "begin":
+				depth++
+			case "end":
+				depth--
+				if depth == 0 {
+					return start + i
+				}
+			}
+		}
+		return start
+	}
+	open := strings.IndexByte(text[off:], '{')
+	if open < 0 {
+		return start
+	}
+	depth := 0
+	for i := off + open; i < len(text); i++ {
+		switch text[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return strings.Count(text[:i], "\n") + 1
+			}
+		}
+	}
+	return start
 }
 
 // permissionModeOverridden notes a claude.permission_mode other than bypass

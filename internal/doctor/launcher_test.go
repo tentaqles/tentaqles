@@ -124,3 +124,33 @@ func TestPermissionModeOverridden(t *testing.T) {
 		}
 	}
 }
+
+// The fix line is accurate (correctness re-review r2-1): a wrapper that tq
+// migrate removes (the exact text it carried, with
+// --dangerously-skip-permissions) says so; any other function names the
+// profile and the lines to delete by hand. The profiles are fixtures under a
+// temp home, never real ones.
+func TestClaudeAliasShadowFixLine(t *testing.T) {
+	ps := filepath.Join("Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1")
+	block := "# >>> tq >>>\r\nif ($env:TQ_ENABLED -ne '0') { tq activate pwsh | Out-String | Invoke-Expression }\r\n# <<< tq <<<\r\n"
+	carried := "\r\n# carried over by tq migrate; permission_mode will move into the manifest\r\nif ($env:TQ_ENABLED -ne '0') {\r\nfunction claude { & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" --dangerously-skip-permissions @args }\r\n}\r\n"
+	cases := []struct{ name, body, want string }{
+		{"removable carry", block + carried, "tq migrate removes it"},
+		{"carry with another flag", block + strings.Replace(carried, "--dangerously-skip-permissions", "--permission-mode auto", 1), "delete lines 7-7 of "},
+		{"hand-written, three lines", block + "\r\nfunction claude {\r\n  & claude.exe @args\r\n}\r\n", "delete lines 5-7 of "},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeLauncherFile(t, filepath.Join(home, ps), c.body)
+			fs, add := collectLauncher()
+			claudeAliasShadow(launcherHomeDeps(home), add)
+			if len(*fs) != 1 {
+				t.Fatalf("findings = %+v", *fs)
+			}
+			if f := (*fs)[0]; !strings.Contains(f.fix, c.want) || (c.want != "tq migrate removes it" && strings.Contains(f.fix, "tq migrate")) {
+				t.Fatalf("fix = %q, want %q", f.fix, c.want)
+			}
+		})
+	}
+}

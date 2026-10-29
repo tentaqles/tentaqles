@@ -697,6 +697,22 @@ func RemoveCarriedFile(path string, sh Shell) (ChangeSet, error) {
 	return cs, nil
 }
 
+// CarriedWrapperLine returns the 1-based line where the claude wrapper that
+// RemoveCarriedFile would remove starts in content (ok false when there is
+// none, or it is not exactly the text migrate wrote). Doctor uses it to say
+// truthfully whether tq migrate removes a shadowing function.
+func CarriedWrapperLine(content string) (line int, ok bool) {
+	i, q, fn, found := findCarried(content)
+	if !found {
+		return 0, false
+	}
+	p := strings.Index(content[i:q], fn)
+	if p < 0 {
+		return 0, false
+	}
+	return strings.Count(content[:i+p], "\n") + 1, true
+}
+
 // findCarried locates the carried-wrapper text Adopt used to write right
 // after the managed block's end marker.
 func findCarried(content string) (start, end int, fn string, ok bool) {
