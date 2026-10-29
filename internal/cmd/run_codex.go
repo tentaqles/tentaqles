@@ -117,6 +117,30 @@ func withoutLaunchEnv(f func()) {
 	f()
 }
 
+// withLaunchMode runs f with tq's own TQ_MODE set to what a launch's child
+// gets: mode when given, else unset for a human launch (the layers decide)
+// and the inherited value for an agent's nested launch. It is restored
+// afterwards.
+func withLaunchMode(mode string, agent bool, f func()) {
+	launchEnvMu.Lock()
+	defer launchEnvMu.Unlock()
+	prev, had := os.LookupEnv(guardcfg.EnvMode)
+	switch {
+	case mode != "":
+		os.Setenv(guardcfg.EnvMode, mode)
+	case !agent:
+		os.Unsetenv(guardcfg.EnvMode)
+	}
+	defer func() {
+		if had {
+			os.Setenv(guardcfg.EnvMode, prev)
+		} else {
+			os.Unsetenv(guardcfg.EnvMode)
+		}
+	}()
+	f()
+}
+
 // codexIsolated reports whether ws gives Codex its own CODEX_HOME.
 func codexIsolated(ws *resolve.Workspace) bool {
 	return ws != nil && ws.Manifest != nil && slices.Contains(ws.Manifest.IdentityNames(), "codex")

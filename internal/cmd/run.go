@@ -235,10 +235,6 @@ func (l launch) run() error {
 		if mode == "" {
 			mode = m
 		}
-		if l.ws != nil {
-			cwd, _ := os.Getwd()
-			args = codexArgs(l.ws, cwd, args)
-		}
 	}
 	if mode != "" {
 		if mode == guardcfg.ModeOff {
@@ -258,6 +254,11 @@ func (l launch) run() error {
 		if mode != "" && !noLooser(mode, parent) {
 			return fmt.Errorf("--tq-mode %s is looser than this agent session's mode (%s); an agent may only launch at its own mode or stricter", mode, orDefault(parent))
 		}
+	}
+	if agentProg(l.name) == "codex" && l.ws != nil {
+		// The flags follow the mode the child gets in TQ_MODE.
+		cwd, _ := os.Getwd()
+		withLaunchMode(mode, agent, func() { args = codexArgs(l.ws, cwd, args) })
 	}
 	if mode != "" || !agent {
 		env = withoutVars(env, guardcfg.EnvMode)

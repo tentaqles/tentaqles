@@ -329,3 +329,35 @@ func TestRenderCodexRemovesWhenNoLongerIsolated(t *testing.T) {
 		t.Fatal("the removal path must not create the identity dir")
 	}
 }
+
+// The Codex launch flags follow this launch's mode, the one the child gets
+// in TQ_MODE: --tq-mode when given, and for a human launch without it the
+// layers alone (an inherited TQ_MODE is dropped for the child, so it must
+// not pick the flags either).
+func TestLaunchCodexFlagsFollowTheLaunchMode(t *testing.T) {
+	isolateHome(t)
+	clearAgentMarkers(t)
+	root := mkLaunchWS(t, "acme", "")
+	t.Chdir(root)
+	if err := trust.SaveGrant(manifestHash(t, root), trust.Grant{Mode: "relaxed", Workspace: "acme"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--tq-mode", "relaxed", "--", "codex", "exec", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; c.env["TQ_MODE"] != "relaxed" || !strings.HasPrefix(strings.Join(c.args, " "), "-a never ") {
+		t.Fatalf("--tq-mode relaxed: %v", c)
+	}
+	t.Setenv(guardcfg.EnvMode, guardcfg.ModeRelaxed)
+	calls = fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--", "codex", "exec", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; c.env["TQ_MODE"] != "" || !strings.HasPrefix(strings.Join(c.args, " "), "-a on-request ") {
+		t.Fatalf("an inherited TQ_MODE must not pick the flags of a human launch: %v", c)
+	}
+	if os.Getenv(guardcfg.EnvMode) != guardcfg.ModeRelaxed {
+		t.Fatal("tq's own env must be restored")
+	}
+}
