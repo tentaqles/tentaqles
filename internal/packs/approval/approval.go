@@ -129,9 +129,9 @@ func Ask(ws string, r Request) (decisionID, cardID string, err error) {
 		return "", "", err
 	}
 	// Keep the ledger under the guards' 1 MiB read cap (finished decisions go).
-	if err := ledger.CompactIfLarge(ws, r.Pack, Now()); err != nil {
-		return "", "", fmt.Errorf("approval: the %s ledger cannot be compacted: %w", r.Pack, err)
-	}
+	// Best-effort: a busy ledger is compacted next time; only the read cap is
+	// a hard stop, and it fails closed.
+	_ = ledger.CompactIfLarge(ws, r.Pack, Now())
 	st, err := OpenStore(ws)
 	if err != nil {
 		return "", "", err

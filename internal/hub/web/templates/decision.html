@@ -11,6 +11,7 @@
   <p class="q text">{{$d.Text}}</p>
   {{with .Pack}}<div class="note evidence">{{.Pack}} pack approval: <b>{{.Action}}</b> <code class="m">{{.Subject}}</code> → <code class="m">{{.Target}}</code>{{with .ExpiresAt}} · expires {{.}}{{end}}</div>
   <ul class="evidence">{{range .Evidence}}<li><code class="m">{{.Name}}</code> <code class="m">{{.Hash}}</code></li>{{end}}</ul>{{end}}
+  {{with .CSRF}}<input type="hidden" name="csrf" value="{{.}}">{{end}}
   <div class="acts">{{range $i, $o := $d.Options}}<button class="btn{{if eq $i 0}} warm{{else if eq $o "stop"}} danger{{end}}" name="choice" value="{{$o}}">{{optionLabel $o}}</button>{{end}}<input class="f" name="note" autocomplete="off" aria-label="Note" placeholder="{{if .OverBudget}}new limits, e.g. rounds=6,usd=15 (empty keeps the same budget){{else if .Sync}}Note (optional; stays in the hub){{else if and $d.HubOwned (eq $d.Kind "question")}}Your answer (required for Answer; it is posted on the card for the run){{else}}Note to the agent (optional){{end}}"></div>
   <div class="note">{{if .Sync}}Answering records your choice in the hub; the sync sends or skips the write on its next pass.{{else if .Pack}}Answering records your choice in the hub and the pack ledger; the approval is bound to the evidence above and used once.{{else if $d.HubOwned}}Answering records your choice in the hub; the run resumes or stops on it.{{else}}Answering signs it with your hub token and records it in the gate.{{end}} An agent session cannot do this.</div>
 </form>{{end}}

@@ -84,11 +84,14 @@ func Append(ws string, e Entry) error {
 	if err != nil {
 		return err
 	}
-	appendMu.Lock()
-	defer appendMu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
+	release, err := lockPack(filepath.Dir(p))
+	if err != nil {
+		return err
+	}
+	defer release()
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -365,44 +368,119 @@ func Claimed(ws, pack, decision string) bool {
 // reads at most 1 MiB).
 const CompactAt = 512 << 10
 
+// LockWait bounds the wait for the ledger lock.
+var LockWait = 2 * time.Second
+
+// ErrLocked is returned when the ledger lock was not taken within LockWait.
+var ErrLocked = errors.New("ledger: locked by another tq process")
+
+// lockPack takes the pack's OS file lock (<pack>/ledger.lock: LockFileEx on
+// Windows, flock elsewhere), across processes, waiting at most LockWait.
+func lockPack(dir string) (func(), error) {
+	appendMu.Lock()
+	f, err := os.OpenFile(filepath.Join(dir, "ledger.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		appendMu.Unlock()
+		return nil, err
+	}
+	deadline := time.Now().Add(LockWait)
+	for !tryLock(f) {
+		if time.Now().After(deadline) {
+			f.Close()
+			appendMu.Unlock()
+			return nil, ErrLocked
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return func() {
+		unlock(f)
+		f.Close()
+		appendMu.Unlock()
+	}, nil
+}
+
+// ErrCompactSkipped is returned when the ledger could not be replaced this
+// time (Windows: another process has it open). Nothing is lost.
+var ErrCompactSkipped = errors.New("ledger: compaction skipped (the ledger is in use)")
+
 // Compact rewrites the pack ledger without the decisions that are finished
 // (consumed, or expired at now), so it never reaches the read cap. A
 // finished decision cannot be granted again: its claim file stays, and a
-// decision without an asked line is unknown. It writes a temp file and
-// renames it over the ledger; a corrupt ledger is left alone.
+// decision without an asked line is unknown. It holds the pack lock while it
+// reads and replaces the file, so no concurrent Append is lost; it writes a
+// fresh temp file, fsyncs it and renames it over the ledger (retrying a
+// Windows sharing violation for about 50 ms, then skipping).
 func Compact(ws, pack string, now time.Time) error {
-	es, err := Read(ws, pack)
+	p, err := Path(ws, pack)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(p)
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		return nil
+	}
+	release, err := lockPack(dir)
+	if err != nil {
+		return err
+	}
+	defer release()
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	es, err := Parse(raw)
 	if err != nil {
 		return err
 	}
 	st := Resolve(es)
-	var keep []Entry
+	var buf bytes.Buffer
+	kept := 0
 	for _, e := range es {
 		s := st[e.Decision]
 		if s.Used() || s.Expired(now) {
 			continue
 		}
-		keep = append(keep, e)
-	}
-	if len(keep) == len(es) {
-		return nil
-	}
-	p, _ := Path(ws, pack)
-	var buf bytes.Buffer
-	for _, e := range keep {
 		b, err := json.Marshal(e)
 		if err != nil {
 			return err
 		}
 		buf.Write(append(b, '\n'))
+		kept++
 	}
-	appendMu.Lock()
-	defer appendMu.Unlock()
-	tmp := p + ".compact"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+	if kept == len(es) {
+		return nil
+	}
+	tmp, err := os.CreateTemp(dir, "ledger-*.compact")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, p)
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	for i := 0; ; i++ {
+		err = os.Rename(name, p)
+		if err == nil {
+			return syncDir(dir)
+		}
+		if !renameRetryable(err) || i >= 10 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if renameRetryable(err) {
+		return ErrCompactSkipped
+	}
+	return err
 }
 
 // CompactIfLarge compacts the ledger when it is over CompactAt.

@@ -97,7 +97,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "cross-origin request refused", http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, s.withSession(w, r))
 	})
 }
 

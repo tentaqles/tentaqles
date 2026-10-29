@@ -83,6 +83,9 @@ type Server struct {
 	tpl     *template.Template
 	mux     *http.ServeMux
 	syncing syncFlights // Sync now passes in flight, per workspace (sync.go)
+	// packSessions are the browser sessions that may answer a pack approval
+	// (packanswer.go).
+	packSessions sessions
 }
 
 // extraRoutes lets later files (review, runs, activity) add their handlers.
