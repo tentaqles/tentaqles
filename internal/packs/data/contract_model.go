@@ -80,10 +80,45 @@ type odcsProp struct {
 
 type odcsQuality struct {
 	ID, Metric, Name, Type string
-	Ops                    map[string]*yaml.Node
-	Args                   map[string]*yaml.Node
-	Line                   int
+	// Query (type sql) and Impl (type custom: engine + implementation) are
+	// compared, never printed: they can carry data values.
+	Query, Impl string
+	Ops         map[string]*yaml.Node
+	Args        map[string]*yaml.Node
+	Line        int
 }
+
+// fingerprint is the rule's executable content (type, metric, query,
+// implementation, operators and arguments): two rules with the same
+// fingerprint check the same thing.
+func (q *odcsQuality) fingerprint() string {
+	var b strings.Builder
+	b.WriteString(q.Type + "\x00" + q.Metric + "\x00" + odcsSquash(q.Query) + "\x00" + q.Impl)
+	for _, op := range odcsQualityOps {
+		if v, ok := q.Ops[op]; ok {
+			b.WriteString("\x00" + op + "=" + contractNodeText(v))
+		}
+	}
+	for _, k := range odcsSortedKeys(q.Args) {
+		b.WriteString("\x00" + k + "=" + contractNodeText(q.Args[k]))
+	}
+	return b.String()
+}
+
+// shape is the matching key of last resort for an anonymous rule: its type
+// and the operators it uses.
+func (q *odcsQuality) shape() string {
+	s := q.Type
+	for _, op := range odcsQualityOps {
+		if _, ok := q.Ops[op]; ok {
+			s += "\x00" + op
+		}
+	}
+	return s
+}
+
+// odcsSquash collapses whitespace so a reformatted query is not a change.
+func odcsSquash(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 type odcsSLA struct {
 	Property, Element, Unit string
@@ -332,6 +367,10 @@ func (c *odcsContract) parseQuality(kv scan.KeyValue) []*odcsQuality {
 				q.Name = scan.Scalar(e.Value)
 			case "type":
 				q.Type = scan.Scalar(e.Value)
+			case "query":
+				q.Query = scan.Scalar(e.Value)
+			case "engine", "implementation":
+				q.Impl += e.Key + "=" + contractNodeText(e.Value) + "\x00"
 			case "arguments":
 				q.Args = map[string]*yaml.Node{}
 				for _, a := range scan.Entries(e.Value) {

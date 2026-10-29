@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 with breaking changes and no major version bump",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 43,
+      "level": "error",
+      "rule": "quality-removed",
+      "message": "property orders.amount quality rule sql (line 54) removed"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "error",
+      "rule": "version-not-bumped",
+      "message": "breaking change without a major version bump (1.2.0 -> 1.2.1); bump to 2.0.0"
+    }
+  ]
+}

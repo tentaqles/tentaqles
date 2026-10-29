@@ -90,6 +90,12 @@ func odcsPhysNarrowed(oldT, newT string) (bool, string) {
 		if n.rank < o.rank {
 			return true, "narrowed"
 		}
+		// fractional-second precision: timestamp(6) -> timestamp(3) drops digits
+		if (o.family == "temporal" || o.family == "temporal_tz") && n.rank == o.rank {
+			if op, np := odcsArg(o, 0), odcsArg(n, 0); op >= 0 && np >= 0 && np < op {
+				return true, "narrowed (fractional-second precision)"
+			}
+		}
 		return false, ""
 	case "string":
 		// no length = unbounded

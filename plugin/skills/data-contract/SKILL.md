@@ -87,7 +87,7 @@ Classify every change from the consumer's view before you edit the version:
 | `physicalType` narrowed (shorter `varchar`, `bigint` to `int`, less precision or scale) | breaking |
 | `required: true` to `false`; `unique: true` to `false`; primary key changed or reordered | breaking |
 | `logicalTypeOptions` loosened (`maxLength` up, `minimum` down, `maximum` up, `pattern` or `format` removed) | breaking |
-| enum value removed; a quality rule removed or loosened; `validValues` gained a value | breaking |
+| enum value removed; a quality rule removed or loosened (including a changed sql `query`); `validValues` gained a value | breaking |
 | an SLA loosened (latency or frequency up, retention or availability down) | breaking |
 | a server removed, or its host, database, schema, table or location changed | breaking |
 | `status: retired` while `contracts.consumers` lists anyone | breaking |

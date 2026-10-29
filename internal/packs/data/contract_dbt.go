@@ -288,14 +288,31 @@ func contractDBTModels(in *packs.Input, files []string, proj string) map[string]
 				continue
 			}
 			mod := &contractDBTModel{File: f}
+			modelNotNull := contractDBTModelNotNull(m)
 			for _, col := range scan.Items(scan.Get(m, "columns")) {
+				name := scan.Scalar(scan.Get(col, "name"))
 				mod.Columns = append(mod.Columns, contractDBTColumn{
-					Name:     scan.Scalar(scan.Get(col, "name")),
+					Name:     name,
 					DataType: scan.Scalar(scan.Get(col, "data_type")),
-					NotNull:  contractDBTNotNull(col),
+					NotNull:  contractDBTNotNull(col) || modelNotNull[strings.ToLower(name)],
 				})
 			}
 			out[name] = mod
+		}
+	}
+	return out
+}
+
+// contractDBTModelNotNull is the columns (lower case) a model-level
+// constraint makes not null: constraints: [{type: not_null | primary_key,
+// columns: [...]}].
+func contractDBTModelNotNull(m *yaml.Node) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range scan.Items(scan.Get(m, "constraints")) {
+		if t := scan.Scalar(scan.Get(c, "type")); t == "not_null" || t == "primary_key" {
+			for _, col := range scan.Strings(scan.Get(c, "columns")) {
+				out[strings.ToLower(col)] = true
+			}
 		}
 	}
 	return out

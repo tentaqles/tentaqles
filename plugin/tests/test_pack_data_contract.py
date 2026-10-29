@@ -144,3 +144,15 @@ def test_doc_lists_every_check_and_rule() -> None:
         assert f"`{rule}`" in text, rule
     for key in ("contracts.paths", "contracts.enum_added", "contracts.consumers", "data_contract", "data-contracts-none"):
         assert key in text, key
+
+
+def test_doc_lists_every_breaking_rule_the_code_emits() -> None:
+    """Every rule id data/contract-breaking can emit is documented, so a new
+    row can't ship undocumented."""
+    src = _text(REPO / "internal" / "packs" / "data" / "contract_breaking.go")
+    rules = set(re.findall(r'd\.(?:breaking|warn)\([^,]+, "([a-z-]+)"', src))
+    rules |= set(re.findall(r'Rule: "([a-z-]+)"', src))
+    assert {"contract-old-unreadable", "contract-id-changed", "version-decreased"} <= rules, rules
+    text = _text(DOC)
+    missing = sorted(r for r in rules if f"`{r}`" not in text)
+    assert not missing, missing

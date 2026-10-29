@@ -97,6 +97,10 @@ func TestPhysNarrowed(t *testing.T) {
 		{"geography", "geometry", true},
 		{"geography", "GEOGRAPHY", false},
 		{"char(2)", "varchar(2)", false},
+		{"timestamp(6)", "timestamp(3)", true},
+		{"timestamp(3)", "timestamp(6)", false},
+		{"timestamptz(6)", "timestamptz(0)", true},
+		{"timestamp(3)", "timestamp", false},
 	}
 	for _, c := range cases {
 		if bad, why := odcsPhysNarrowed(c.old, c.new); bad != c.bad {

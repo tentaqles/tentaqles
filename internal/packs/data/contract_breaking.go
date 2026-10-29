@@ -5,6 +5,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -55,7 +56,10 @@ func diffContracts(old, new *odcsContract, opt odcsDiffOptions) []odcsChange {
 	}
 	d.diffSLA(old, new)
 	d.diffServers(old, new)
-	if new.Status == "retired" && old.Status != "retired" && len(opt.Consumers) > 0 {
+	if old.ID != "" && old.ID != new.ID {
+		d.warn(new.IDLine, "contract-id-changed", "contract id changed from %s to %s: consumers, catalogs and tooling keyed by the id lose it", old.ID, odcsOrNone(new.ID))
+	}
+	if strings.EqualFold(new.Status, "retired") && !strings.EqualFold(old.Status, "retired") && len(opt.Consumers) > 0 {
 		d.breaking(new.StLine, "retired-with-consumers", "status set to retired while consumers are listed: %s", strings.Join(opt.Consumers, ", "))
 	}
 	return d.changes
@@ -165,6 +169,13 @@ func (d *odcsDiff) diffOptions(path string, o, n *odcsProp) {
 			}
 			continue
 		}
+		if k == "uniqueItems" {
+			// true -> false (or removed) lets duplicates through
+			if odcsTrue(ov) && (!ok || !odcsTrue(nv)) {
+				d.breaking(line, "type-options-loosened", "property %s logicalTypeOptions.uniqueItems loosened", path)
+			}
+			continue
+		}
 		if k == "pattern" || k == "format" {
 			if !ok {
 				d.breaking(line, "type-options-loosened", "property %s logicalTypeOptions.%s removed", path, k)
@@ -173,6 +184,11 @@ func (d *odcsDiff) diffOptions(path string, o, n *odcsProp) {
 			}
 		}
 	}
+}
+
+func odcsTrue(n *yaml.Node) bool {
+	var b bool
+	return n != nil && n.Kind == yaml.ScalarNode && n.Decode(&b) == nil && b
 }
 
 // odcsCompare returns sign(new - old) for two bounds (numbers, else ISO
@@ -243,7 +259,19 @@ func (d *odcsDiff) diffQuality(owner string, ownerLine int, olds, news []*odcsQu
 		}
 		return q.ID, q.Metric + "/" + q.Name
 	}
-	pairs, removed, _ := odcsMatch(olds, news, key)
+	pairs, removed, added := odcsMatch(olds, news, key)
+	// Rules with no id, metric or name (a type: sql rule with a query and an
+	// operator, a text or custom rule) pair by their content first (an
+	// unchanged rule), then by type and operator set in order (an edited one).
+	fp, removed, added := odcsMatch(removed, added, func(q *odcsQuality) (string, string) { return "", q.fingerprint() })
+	pairs = append(pairs, fp...)
+	sh, removed, _ := odcsMatch(removed, added, func(q *odcsQuality) (string, string) {
+		if q.ID != "" || q.Metric != "" || q.Name != "" {
+			return "", "" // a keyed rule that lost its key is removed
+		}
+		return "", "shape\x00" + q.shape()
+	})
+	pairs = append(pairs, sh...)
 	for _, q := range removed {
 		d.breaking(ownerLine, "quality-removed", "%s quality rule %s removed", owner, odcsQualityLabel(q))
 	}
@@ -252,6 +280,16 @@ func (d *odcsDiff) diffQuality(owner string, ownerLine int, olds, news []*odcsQu
 		ql := odcsQualityLabel(n)
 		if o.Metric != n.Metric {
 			d.breaking(n.Line, "quality-loosened", "%s quality rule %s metric changed", owner, ql)
+		}
+		if o.Type != n.Type {
+			d.breaking(n.Line, "quality-loosened", "%s quality rule %s type changed", owner, ql)
+		}
+		// The query and implementation text are compared, never printed.
+		if odcsSquash(o.Query) != odcsSquash(n.Query) {
+			d.breaking(n.Line, "quality-loosened", "%s quality rule %s query changed (tq cannot prove it is stricter)", owner, ql)
+		}
+		if o.Impl != n.Impl {
+			d.breaking(n.Line, "quality-loosened", "%s quality rule %s implementation changed (tq cannot prove it is stricter)", owner, ql)
 		}
 		d.diffQualityArgs(owner, ql, o, n)
 		for _, op := range odcsQualityOps {
@@ -305,6 +343,8 @@ func odcsQualityLabel(q *odcsQuality) string {
 		return q.Name
 	case q.Metric != "":
 		return q.Metric
+	case q.Type != "":
+		return fmt.Sprintf("%s (line %d)", q.Type, q.Line)
 	}
 	return fmt.Sprintf("(line %d)", q.Line)
 }
@@ -410,7 +450,14 @@ func odcsSLACompare(o, n *odcsSLA) (int, bool) {
 		if !strings.EqualFold(o.Unit, n.Unit) {
 			return 0, false
 		}
-		return odcsCompare(o.Value, n.Value)
+		// A percent (availability: 99.9%) compares as a number when both
+		// sides are percents.
+		ov, op := strings.CutSuffix(strings.TrimSpace(o.Value), "%")
+		nv, np := strings.CutSuffix(strings.TrimSpace(n.Value), "%")
+		if op != np {
+			return 0, false
+		}
+		return odcsCompare(ov, nv)
 	}
 	a, aerr := strconv.ParseFloat(o.Value, 64)
 	b, berr := strconv.ParseFloat(n.Value, 64)
@@ -592,31 +639,39 @@ func runContractBreaking(ctx context.Context, in *packs.Input) packs.Result {
 		if ch.OldPath != "" {
 			oldPath = ch.OldPath
 		}
-		switch ch.Status {
-		case 'A':
+		if ch.Status == 'A' {
 			continue // no old side: only contract-valid runs
-		case 'D':
+		}
+		// M, R and D exist at Base by definition: an old side that can't be
+		// read is a failure, never "nothing to compare".
+		old, _, err := readOldContract(in, oldPath)
+		if errors.Is(err, errContractOldRead) {
 			n++
-			old, _, err := readOldContract(in, oldPath)
-			if err != nil || !old.isContractDoc() {
+			fs = append(fs, packs.Finding{File: oldPath, Level: packs.LevelError, Rule: "contract-old-unreadable",
+				Message: "cannot read the base side of this contract; the breaking-change rules could not run"})
+			continue
+		}
+		if err != nil {
+			continue // the old side does not parse: it was not a contract
+		}
+		switch ch.Status {
+		case 'D':
+			if !old.isContractDoc() {
 				continue // the old side was not a contract either
 			}
+			n++
 			cons := contractConsumers(s, old, oldPath)
 			msg := "contract file deleted"
 			if len(cons) > 0 {
 				msg += "; consumers: " + strings.Join(cons, ", ")
 			}
-			if old.Status == "retired" && len(cons) == 0 {
+			if strings.EqualFold(old.Status, "retired") && len(cons) == 0 {
 				fs = append(fs, packs.Finding{File: oldPath, Level: packs.LevelWarn, Rule: "contract-deleted", Message: msg + " (it was retired)"})
 				continue
 			}
 			breakingFiles++
 			fs = append(fs, packs.Finding{File: oldPath, Level: packs.LevelError, Rule: "contract-deleted", Message: msg + "; set status: retired and remove the consumers first"})
 			continue
-		}
-		old, _, err := readOldContract(in, oldPath)
-		if err != nil {
-			continue // absent at base: a new file
 		}
 		nw, err := readContract(in, ch.Path)
 		if err != nil {
@@ -627,8 +682,17 @@ func runContractBreaking(ctx context.Context, in *packs.Input) packs.Result {
 			continue // contract-valid reports a file that is not a contract
 		}
 		n++
-		rows := diffContracts(old, nw, odcsDiffOptions{EnumAddedBreaking: contractEnumAddedBreaking(s), Consumers: contractConsumers(s, nw, ch.Path)})
-		f, broke := applyVersionRule(ch.Path, old, nw, rows, contractConsumers(s, nw, ch.Path))
+		cons := contractConsumers(s, nw, ch.Path)
+		if old.ID != nw.ID || oldPath != ch.Path {
+			// consumers keyed by the old id (or file) still read this contract
+			for _, c := range contractConsumers(s, old, oldPath) {
+				if !odcsContains(cons, c) {
+					cons = append(cons, c)
+				}
+			}
+		}
+		rows := diffContracts(old, nw, odcsDiffOptions{EnumAddedBreaking: contractEnumAddedBreaking(s), Consumers: cons})
+		f, broke := applyVersionRule(ch.Path, old, nw, rows, cons)
 		fs = append(fs, f...)
 		if broke {
 			breakingFiles++
@@ -637,6 +701,9 @@ func runContractBreaking(ctx context.Context, in *packs.Input) packs.Result {
 	r := packs.Result{Status: packs.OK, Findings: fs}
 	errs, _ := r.Counts()
 	switch {
+	case errs > 0 && breakingFiles == 0:
+		r.Status = packs.Fail
+		r.Detail = fmt.Sprintf("%s, %s", contractPlural(n, "contract"), contractPlural(errs, "error"))
 	case errs > 0:
 		r.Status = packs.Fail
 		r.Detail = fmt.Sprintf("%s, %d with breaking changes and no major version bump", contractPlural(n, "contract"), breakingFiles)

@@ -185,19 +185,21 @@ func readContract(in *packs.Input, p string) (*odcsContract, error) {
 }
 
 // readOldContract reads and parses the old side (Base) of a contract file.
+// A failure to read it (no GitReader, a git error or timeout) wraps
+// errContractOldRead; a YAML error on a read file does not.
 func readOldContract(in *packs.Input, p string) (*odcsContract, []byte, error) {
 	if in.Base == "" || in.Git == nil {
-		return nil, nil, contractErrNoOldSide
+		return nil, nil, fmt.Errorf("%w: no old side", errContractOldRead)
 	}
 	b, err := in.Git.Show(in.Base, p)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("%w: %v", errContractOldRead, err)
 	}
 	c, err := parseContract(p, b)
 	return c, b, err
 }
 
-var contractErrNoOldSide = errors.New("no old side")
+var errContractOldRead = errors.New("cannot read the old side")
 
 func contractPlural(n int, one string) string {
 	if n == 1 {
