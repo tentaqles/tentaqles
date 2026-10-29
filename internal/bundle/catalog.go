@@ -15,7 +15,7 @@ import (
 // Marketplace describes a plugin marketplace source, matching the shape
 // Claude Code expects under settings.extraKnownMarketplaces.
 type Marketplace struct {
-	Source string `yaml:"source"` // github|url|local
+	Source string `yaml:"source"` // github|url|directory ("local" is an older spelling of directory)
 	Repo   string `yaml:"repo,omitempty"`
 	URL    string `yaml:"url,omitempty"`
 	Path   string `yaml:"path,omitempty"`
@@ -30,7 +30,10 @@ func (m Marketplace) ToKnownMarketplace() map[string]any {
 		src["repo"] = m.Repo
 	case "url":
 		src["url"] = m.URL
-	case "local":
+	case "directory", "local":
+		// Claude Code names a local folder source "directory"; it does not
+		// know "local", so an older catalog entry is written the new way.
+		src["source"] = "directory"
 		src["path"] = m.Path
 	}
 	return map[string]any{"source": src}
@@ -102,7 +105,7 @@ func (c *Catalog) Validate() []string {
 
 	for name, mp := range c.Marketplaces {
 		switch mp.Source {
-		case "github", "url", "local":
+		case "github", "url", "directory", "local":
 		default:
 			warnings = append(warnings, fmt.Sprintf("marketplace %q: unknown source kind %q", name, mp.Source))
 		}

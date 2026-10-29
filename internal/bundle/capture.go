@@ -237,9 +237,9 @@ func marketplaceFromSource(src map[string]any) (Marketplace, bool) {
 	case "url":
 		url, _ := src["url"].(string)
 		return Marketplace{Source: "url", URL: url}, true
-	case "local":
+	case "directory", "local":
 		path, _ := src["path"].(string)
-		return Marketplace{Source: "local", Path: path}, true
+		return Marketplace{Source: "directory", Path: path}, true
 	default:
 		if url, ok := src["url"].(string); ok && url != "" {
 			return Marketplace{Source: "url", URL: url}, true

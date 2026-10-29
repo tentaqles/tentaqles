@@ -408,3 +408,19 @@ func TestMatchGlob(t *testing.T) {
 		}
 	}
 }
+
+func TestWalkFilesSkipsFixturesGeneratedStateAndAgentWorktrees(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "infra/main.bicep", "x")
+	writeFile(t, root, "internal/iam/testdata/cdk.out/Stack.template.json", "x")
+	writeFile(t, root, ".databricks/bundle/dev/terraform/bundle.tf.json", "x")
+	writeFile(t, root, ".claude/worktrees/agent-1/infra/main.bicep", "x")
+	writeFile(t, root, ".claude/settings.json", "x")
+	writeFile(t, root, "ops/worktrees/notes.md", "x")
+	got := WalkFiles(root, SuggestMaxFiles)
+	sort.Strings(got)
+	want := []string{".claude/settings.json", "infra/main.bicep", "ops/worktrees/notes.md"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}

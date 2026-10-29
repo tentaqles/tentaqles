@@ -3,6 +3,7 @@ package bundle
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -413,5 +414,65 @@ func TestSync_WarnsWhenNoSessionsDir(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected sessions warning, got %v", rep.Warnings)
+	}
+}
+
+// A marketplace repointed by hand in settings.json (here: to a local
+// checkout) is reported as source drift, since Sync would write the
+// catalog's source back over it.
+func TestDiff_ReportsMarketplaceSourceDrift(t *testing.T) {
+	isolateHome(t)
+
+	skillSrc := t.TempDir()
+	os.WriteFile(filepath.Join(skillSrc, "SKILL.md"), []byte("# s"), 0o644)
+	cat := testCatalog(t, t.TempDir(), skillSrc)
+	cat.Marketplaces["mymkt"] = Marketplace{Source: "github", Repo: "acme/old-plugin"}
+	ws, _ := setupWorkspace(t, &manifest.Bundle{Marketplaces: []string{"mymkt"}})
+	if _, err := Sync(ws, cat, Options{}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if drifts, err := Diff(ws, cat); err != nil || len(drifts) != 0 {
+		t.Fatalf("after sync: %+v %v", drifts, err)
+	}
+
+	settings := filepath.Join(identityDirForTest(ws), "settings.json")
+	writeFile(t, settings, `{"extraKnownMarketplaces": {"mymkt": {"source": {"source": "directory", "path": "C:/repos/plugin"}}}}`)
+	drifts, err := Diff(ws, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *Drift
+	for i := range drifts {
+		if drifts[i].Kind == "marketplace-source" {
+			got = &drifts[i]
+		}
+	}
+	if got == nil || got.Name != "mymkt" || !strings.Contains(got.Detail, `directory C:/repos/plugin`) || !strings.Contains(got.Detail, "github acme/old-plugin") {
+		t.Fatalf("want marketplace-source drift naming both sources, got %+v", drifts)
+	}
+}
+
+// Claude Code's own kind for a local folder is "directory": capture keeps
+// it (it used to drop it as unknown) and render writes it back unchanged.
+func TestCapture_DirectoryMarketplaceRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	src := `{"source": {"source": "directory", "path": "C:/repos/plugin"}}`
+	writeFile(t, filepath.Join(dir, "settings.json"), `{"extraKnownMarketplaces": {"local": `+src+`}}`)
+	writeFile(t, filepath.Join(dir, "plugins", "known_marketplaces.json"), `{"local": `+src+`}`)
+
+	c, err := Capture(dir)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	mp, ok := c.Catalog.Marketplaces["local"]
+	if !ok || mp.Source != "directory" || mp.Path != `C:/repos/plugin` {
+		t.Fatalf("Catalog.Marketplaces = %+v warnings %v", c.Catalog.Marketplaces, c.Warnings)
+	}
+	if w := (&Catalog{Marketplaces: c.Catalog.Marketplaces}).Validate(); len(w) != 0 {
+		t.Fatalf("directory source should validate: %v", w)
+	}
+	want := map[string]any{"source": map[string]any{"source": "directory", "path": `C:/repos/plugin`}}
+	if got := mp.ToKnownMarketplace(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("render: got %+v want %+v", got, want)
 	}
 }

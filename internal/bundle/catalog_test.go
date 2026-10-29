@@ -122,8 +122,9 @@ func TestMarketplace_ToKnownMarketplace(t *testing.T) {
 		t.Fatalf("url: got %+v want %+v", got, wantU)
 	}
 
+	// "local" is an older catalog spelling; Claude Code only knows "directory".
 	l := Marketplace{Source: "local", Path: "/some/path"}
-	wantL := map[string]any{"source": map[string]any{"source": "local", "path": "/some/path"}}
+	wantL := map[string]any{"source": map[string]any{"source": "directory", "path": "/some/path"}}
 	if got := l.ToKnownMarketplace(); !reflect.DeepEqual(got, wantL) {
 		t.Fatalf("local: got %+v want %+v", got, wantL)
 	}

@@ -148,15 +148,19 @@ func Diff(ws *resolve.Workspace, cat *Catalog) ([]Drift, error) {
 		}
 	}
 
-	currentMkts := map[string]bool{}
-	if raw, ok := current["extraKnownMarketplaces"].(map[string]any); ok {
-		for k := range raw {
-			currentMkts[k] = true
-		}
-	}
-	for name := range d.Marketplaces {
-		if !currentMkts[name] {
+	currentMkts, _ := current["extraKnownMarketplaces"].(map[string]any)
+	for name, want := range d.Marketplaces {
+		got, ok := currentMkts[name]
+		if !ok {
 			drifts = append(drifts, Drift{Kind: "marketplace-missing", Name: name})
+			continue
+		}
+		// Sync writes the catalog's source over the one in settings, so a
+		// marketplace repointed by hand (a local checkout) would silently
+		// go back; report it before that happens.
+		if !reflect.DeepEqual(normalizeJSON(got), normalizeJSON(want)) {
+			drifts = append(drifts, Drift{Kind: "marketplace-source", Name: name,
+				Detail: "settings has " + describeSource(got) + ", the catalog has " + describeSource(want)})
 		}
 	}
 
@@ -218,4 +222,21 @@ func Diff(ws *resolve.Workspace, cat *Catalog) ([]Drift, error) {
 	}
 
 	return drifts, nil
+}
+
+// describeSource renders an extraKnownMarketplaces entry ({"source": {...}})
+// as "<kind> <repo|url|path>" for a drift detail.
+func describeSource(v any) string {
+	entry, _ := v.(map[string]any)
+	src, _ := entry["source"].(map[string]any)
+	kind, _ := src["source"].(string)
+	if kind == "" {
+		return "an unrecognized source"
+	}
+	for _, k := range []string{"repo", "url", "path"} {
+		if s, ok := src[k].(string); ok && s != "" {
+			return kind + " " + s
+		}
+	}
+	return kind
 }

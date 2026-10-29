@@ -185,7 +185,9 @@ func readHead(p string, n int64) ([]byte, error) {
 }
 
 // WalkFiles lists up to max files under root (slash, relative), skipping
-// VCS, dependency and virtualenv folders. It is the file list of tq doctor,
+// VCS, dependency and virtualenv folders, test fixtures (testdata),
+// generated Databricks bundle state (.databricks) and agent worktrees
+// (.claude/worktrees, copies of the repo). It is the file list of tq doctor,
 // which runs over a workspace folder that need not be one repository.
 func WalkFiles(root string, max int) []string {
 	var out []string
@@ -196,8 +198,13 @@ func WalkFiles(root string, max int) []string {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", ".venv", "venv", "vendor", "__pycache__", "target", "dist", "build", ".terraform":
+			case ".git", "node_modules", ".venv", "venv", "vendor", "__pycache__", "target", "dist", "build", ".terraform",
+				"testdata", ".databricks":
 				return filepath.SkipDir
+			case "worktrees":
+				if filepath.Base(filepath.Dir(p)) == ".claude" {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}

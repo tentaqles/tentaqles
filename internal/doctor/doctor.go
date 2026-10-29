@@ -117,6 +117,9 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 					parts := make([]string, len(drifts))
 					for i, dr := range drifts {
 						parts[i] = dr.Kind + ":" + dr.Name
+						if dr.Kind == "marketplace-source" {
+							parts[i] += " (" + dr.Detail + "; sync would write the catalog's)"
+						}
 					}
 					add("warn", "bundle-drift", w.Name, "bundle drift: "+strings.Join(parts, ", "), "tq bundle sync "+w.Name)
 				}
