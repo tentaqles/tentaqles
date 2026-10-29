@@ -266,3 +266,13 @@ is not part of the setup plan: add it to the workspace's `.tentaqles.yaml`
 afterwards and run `tq allow <ws>`, since editing the manifest changes its
 trust hash. The block widens what the commit, push and PR-text guards detect.
 See the `data:` section of [CLAUDE-HOOK.md](CLAUDE-HOOK.md#data-classification-data-block).
+
+## Packs
+
+Packs (data, ml, cloud, db) are not part of the setup plan either. Add a
+`packs:` block to the workspace's `.tentaqles.yaml` and run `tq allow <ws>`:
+only the manifest enables a pack, and a repo's `tq-packs.yaml` can add to it
+but never enable or loosen one. `/tentaqles:kickoff` proposes the block from the
+stack ADR. Pack approvals (a prod apply, a migration, a model promotion) are
+answered in your own terminal and need the OS keychain. See
+[PACKS.md](PACKS.md).

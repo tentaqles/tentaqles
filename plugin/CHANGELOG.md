@@ -4,6 +4,57 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-29
+
+Packs (tq specs C and D, releases 3 and 4): data, ml, cloud and db guard packs. Needs a
+`tq` build with `tq pack` (`tq pack check`, `list`, `doctor`, `crew`, `approvals`,
+`baseline` and the `data`, `ml`, `cloud` and `db` subcommands). See `docs/PACKS.md`.
+
+- **11 new skills.** `pack` (run and explain the pack checks), `data-contract` (ODCS v3
+  contracts), `pipeline-review`, `warehouse-cost` (`tq pack data cost estimate`),
+  `ml-review`, `model-card` (`MODEL_CARD.md`), `ml-promote` (request a promotion through
+  the approval gate), `drift-check`, `iac-policy` (cloud checks and the plan and approve
+  flow), `rls-tests` (pgTAP RLS tests) and `restore-drill` (`tq pack db drill`).
+- **4 new read-only reviewer agents:** `pipeline-reviewer`, `ml-reviewer`,
+  `iac-reviewer` and `db-reviewer`. The build gate accepts any `<name>-reviewer` that has
+  an agent file, and `tq pack crew --flags ...` prints which ones the triage flags call for.
+- **On-ramps.** `build`, `feature`, `fix`, `kickoff`, `dod` and `ship` read the on-ramp
+  notes of the enabled packs (`skills/pack/references/onramps/<pack>-*.md`).
+- **Definition of done.** At approval the gate freezes the enabled packs and the
+  `config_hash` (`tq pack list --enabled --json`); approval is refused when the pack config
+  can't be read or `tq pack list` reports problems. The DoD records `pack:config`,
+  `pack:run` and one `pack:<pack>/<check>` item per result (`tq pack check --json`).
+- **Templates.** `templates/packs/cloud/` (manifest snippet, `.gitignore` rows, an
+  example Rego policy and its test) and `templates/packs/db/` (manifest snippet, pgTAP RLS
+  test, `tests_tq` helpers, an empty restore-drill log); repo templates
+  `dbt-contract-starter` and `ml-starter`.
+- **Docs.** The `auth-security`, `db-migration` and other existing skills name the pack
+  checks where they apply.
+
+**tq changes this release needs to know about** (the tq release notes):
+
+- **New core rules, always on with no pack enabled, never-disable:** `tq/hub-store-write`
+  (now a core rule; `tq guard list` no longer shows it as owned by cloud or db),
+  `tq/human-answer`, `tq/pack-config-change` and `tq/secret-store-shell`. A hook-time
+  check denies agent shell and file access to `$TQ_HOME` `hub/`, `packs/`, `build-gate/`,
+  `trust/`, `guard/`, `guard.yaml`, `config.yaml` and `audit.jsonl`, in any spelling; only
+  a call of the running tq with a subcommand that never runs a child is exempt.
+- **Pack approvals are answered from the terminal only:** `tq hub answer` needs a TTY
+  and the typed binding, the answer is signed with a key in the OS keychain, and the board
+  refuses it. `packs-keychain-missing` in `tq pack doctor` means no approval can be
+  granted on that machine.
+- **Unknown global flags floor to the strictest environment** in the cloud and db gates
+  (the supabase CLI; terraform/tofu, pulumi, cdk/cdktf, az, aws and sam). Put the flag
+  after the subcommand, or report the missing flag (see `docs/PACKS.md`, Known behaviours).
+- **Telemetry opt-outs:** every pack tool gets `DO_NOT_TRACK=1`; dbt, tflint, trivy, dvc
+  and dagster also get their own switches. sqlfluff, squawk, conftest, cfn-lint, bicep,
+  datacontract, ruff, uv and poetry have no opt-out tq could confirm and get only
+  `DO_NOT_TRACK=1`.
+- **Build-gate approve now runs `tq pack list`,** even with no pack configured: it is
+  refused when the manifest is untrusted or invalid, or `tq-packs.yaml` has problems.
+- **Tools get a filtered environment;** a credential reaches a tool only through a name its
+  check declares, and never a repo-local binary.
+
 ## [0.14.0] — 2026-10-28
 
 Board sync (tq spec B). Needs a `tq` build with `tq hub sync`, `tq secret` and `tq onboard`.
