@@ -212,7 +212,7 @@ hook keeps running and the identity guard keeps blocking.
 | `mode-cloud` | the mode skips `prod-changes` or `cloud-destructive` in a workspace with a cloud identity: Claude can change or delete cloud resources without asking (the identity guard, wrong-cloud included, still applies) |
 | `guard-locked-override` | `guard.disable` or a looser `guard.actions` entry names a locked rule (identity, secrets, self-protection, privacy); it is ignored |
 | `permission-mode-overridden` | (info) `claude.permission_mode` is not bypass, and the `claude` launcher starts in bypass anyway; the value still drives `defaultMode` |
-| `claude-alias-shadow` | a shell profile defines an alias named `claude` or `codex`, which skips tq's launcher function; remove it |
+| `claude-alias-shadow` | a shell profile defines something that stands in for tq's `claude`/`codex` launcher: a PowerShell alias, an alias that runs another command, or a function of that name after tq's activation (warn: delete it), or an alias that calls the launcher with extra flags (info) |
 | `codex-hooks-missing` | tq's PreToolUse entry is not in the codex identity's `hooks.json`: Codex runs without tq's guard. Fix: `tq settings render <ws>` |
 | `codex-hooks-disabled` | the codex identity's `config.toml` sets `[features] hooks = false` |
 | `codex-hooks-untrusted` | no trust record for tq's hook was found: trust it once in Codex's `/hooks`. The check sees a missing record, not a stale one; `/hooks` shows both |

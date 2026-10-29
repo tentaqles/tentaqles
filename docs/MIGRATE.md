@@ -161,15 +161,21 @@ if ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue))
 ```
 
 Everything outside the located block survives byte for byte — BOM, CRLF,
-unrelated aliases and functions. Inside it, two things are carried over:
+unrelated aliases and functions. Inside it, one thing is carried over:
 
 - **The legacy `TQ_ENABLED=0` branch, verbatim**, wrapped in
   `# >>> tq-legacy >>>` / `# <<< tq-legacy <<<`. See the kill switch section
   below.
-- **Your `claude` wrapper function**, under the same `if ($env:TQ_ENABLED
-  -ne '0')` guard it used to sit behind. Without the guard, `TQ_ENABLED=0`
-  would hand control to the legacy launcher and then have the legacy
-  launcher's own `claude` router clobbered by the carried wrapper.
+
+**Your `claude` wrapper function is not carried over.** It would replace the
+`claude` launcher that `tq activate` defines, which already starts claude in
+bypass under tq's guard mode. The plan prints a warning for it. An older
+`tq migrate` did carry it, after the managed block under the comment
+`# carried over by tq migrate; ...`: the shell step now removes that block
+(change `remove-carried-wrapper`, journalled like every write), but only
+when it is exactly the text migrate wrote. A wrapper you edited or wrote
+yourself is never touched; `tq doctor` reports it as `claude-alias-shadow`
+with the line to delete.
 
 **What gets dropped: the hand-rolled PATH lines.** The managed block does
 not put `%LOCALAPPDATA%\tentaqles\bin` on `PATH`; `tq`'s installer puts it on
@@ -320,8 +326,7 @@ if ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue))
 ```
 
 So `$env:TQ_ENABLED = '0'` in a new shell gives you exactly the pre-`tq`
-behaviour, and unsetting it gives you `tq`. Both `tq`'s managed block and
-the carried `claude` wrapper honour the same variable. bash and zsh have no
+behaviour, and unsetting it gives you `tq`. bash and zsh have no
 legacy branch to preserve — their hand-installed block was a single
 conditional — so there `TQ_ENABLED=0` simply switches `tq` off, with nothing
 to fall back to.
@@ -451,8 +456,11 @@ Each deprecated alias prints `deprecated: use tq mode …` to stderr.
   `claude.permission_mode` says (doctor note `permission-mode-overridden`).
   `tq settings render` writes `skipDangerousModePermissionPrompt: true`, so
   `tq doctor` reports `settings-drift` until you run
-  `tq settings render --all` once. Shell aliases named `claude` skip the
-  launcher (`claude-alias-shadow`).
+  `tq settings render --all` once. A PowerShell alias, or a function named
+  `claude` or `codex` defined after the tq block in any shell (such as the
+  wrapper an older `tq migrate` carried over), replaces the launcher:
+  `tq doctor` reports it as `claude-alias-shadow`, and `tq migrate` removes
+  the carried wrapper when it is unchanged.
 - **Mode commands are denied in tool calls.** `tq unattended on|off`,
   `tq allow --bypass` and `tq allow --mode` from an agent are blocked by
   `tq/mode-change` (they used to ask through `tq/guard-change`), and the
@@ -541,8 +549,8 @@ git: 14 changes
   skip: include.path C:/Users/renato/AppData/Local/Temp/tmp.CCyykuuQB6/.gitconfig-tentaqles exists and is not tq's; left alone
 shell: 3 changes
   ~ adopt-hook         C:\Users\renato\.bashrc -> replace hand-installed block with the managed one
-  ~ adopt-hook         C:\Users\renato\Documents\PowerShell\Microsoft.PowerShell_profile.ps1 -> replace hand-installed block with the managed one; keep legacy launcher verbatim; carry over the claude wrapper
-  ~ adopt-hook         C:\Users\renato\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 -> replace hand-installed block with the managed one; keep legacy launcher verbatim; carry over the claude wrapper
+  ~ adopt-hook         C:\Users\renato\Documents\PowerShell\Microsoft.PowerShell_profile.ps1 -> replace hand-installed block with the managed one; keep legacy launcher verbatim; drop the claude wrapper (tq's launcher replaces it)
+  ~ adopt-hook         C:\Users\renato\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 -> replace hand-installed block with the managed one; keep legacy launcher verbatim; drop the claude wrapper (tq's launcher replaces it)
   warn: bash: dropped from the old block: case ":$PATH:" in *"/tentaqles/bin:"*) ;; *) PATH="$PATH:$LOCALAPPDATA/tentaqles/bin";; esac
   warn: pwsh: dropped from the old block: $tqBin = Join-Path $env:LOCALAPPDATA 'tentaqles\bin'
   warn: pwsh: dropped from the old block: if (($env:Path -split ';') -notcontains $tqBin) { $env:Path = "$env:Path;$tqBin" }

@@ -37,6 +37,18 @@ func (shellStep) Plan(d Deps) (Plan, error) {
 		case "present (unmanaged)":
 			// handled below
 		case "installed":
+			// An older tq migrate carried the claude wrapper after the managed
+			// block. It replaces tq's launcher, so it goes, but only when it is
+			// exactly the text migrate wrote (spec E §8, final review M2).
+			if cs, err := hooks.RemoveCarriedFile(st.Profile, sh); err == nil && cs.Changed {
+				p.Changes = append(p.Changes, Change{
+					Step:   "shell",
+					Kind:   "remove-carried-wrapper",
+					Path:   cs.Profile,
+					Detail: "remove the claude wrapper an older tq migrate carried over; tq activate defines claude",
+				})
+				continue
+			}
 			p.Skipped = append(p.Skipped, fmt.Sprintf("%s: already managed by tq (%s)", sh, st.Profile))
 			continue
 		case "corrupt":
@@ -77,6 +89,10 @@ func (shellStep) Plan(d Deps) (Plan, error) {
 		for _, dropped := range cs.Dropped {
 			p.Warnings = append(p.Warnings, fmt.Sprintf("%s: dropped from the old block: %s", sh, dropped))
 		}
+		if cs.Wrapper != "" {
+			p.Warnings = append(p.Warnings, fmt.Sprintf(
+				"%s: the old claude wrapper is not carried over: tq activate defines claude, which starts it in bypass under tq's guard mode", sh))
+		}
 	}
 	return p, nil
 }
@@ -88,17 +104,42 @@ func (shellStep) Plan(d Deps) (Plan, error) {
 // adopting is quietly left alone instead of being clobbered.
 func (shellStep) Apply(d Deps, p Plan, j *Journal) error {
 	planned := map[string]bool{}
+	carried := map[string]bool{}
 	for _, c := range p.Changes {
 		if c.Step == "shell" && c.Kind == "adopt-hook" {
 			planned[c.Path] = true
 		}
+		if c.Step == "shell" && c.Kind == "remove-carried-wrapper" {
+			carried[c.Path] = true
+		}
 	}
-	if len(planned) == 0 {
+	if len(planned) == 0 && len(carried) == 0 {
 		return nil
 	}
 	profiles := hooks.ProfilesFn()
 	for _, sh := range hooks.Shells {
 		path, ok := profiles[sh]
+		if ok && carried[path] {
+			// Re-read: only the exact carried text is removed.
+			cs, err := hooks.RemoveCarriedFile(path, sh)
+			if err != nil {
+				return fmt.Errorf("%s: %w", sh, err)
+			}
+			if !cs.Changed {
+				continue
+			}
+			backup, err := j.BackupFile(cs.Profile)
+			if err != nil {
+				return fmt.Errorf("%s: %w", sh, err)
+			}
+			if err := j.RecordWriteFile("shell", cs.Profile, backup); err != nil {
+				return fmt.Errorf("%s: %w", sh, err)
+			}
+			if err := cs.Apply(); err != nil {
+				return fmt.Errorf("%s: removing the carried wrapper from %s: %w", sh, cs.Profile, err)
+			}
+			continue
+		}
 		if !ok || !planned[path] {
 			continue
 		}

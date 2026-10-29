@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -15,14 +16,28 @@ func init() {
 	Register(Check{Name: "launcher", Workspace: permissionModeOverridden, Global: claudeAliasShadow})
 }
 
-// shellAliasRe matches an alias of claude or codex in a shell profile, which
-// wins over the activate block's functions (bash and zsh expand aliases
-// before functions, PowerShell resolves aliases before functions).
+// shellAliasRe matches an alias of claude or codex in a shell profile and
+// captures its value (posix and fish), or any PowerShell alias of them.
 var shellAliasRe = map[string]*regexp.Regexp{
-	"posix":      regexp.MustCompile(`(?m)^[ \t]*alias[ \t]+(claude|codex)=`),
-	"fish":       regexp.MustCompile(`(?m)^[ \t]*alias[ \t]+(claude|codex)([ \t=])`),
+	"posix":      regexp.MustCompile(`(?m)^[ \t]*alias[ \t]+(claude|codex)=['"]?([^'"\n]*)`),
+	"fish":       regexp.MustCompile(`(?m)^[ \t]*alias[ \t]+(claude|codex)(?:[ \t]+|=)['"]?([^'"\n]*)`),
 	"powershell": regexp.MustCompile(`(?mi)^[ \t]*(?:set-alias|new-alias|sal|nal)[ \t]+(?:-name[ \t]+)?["']?(claude|codex)\b`),
 }
+
+// shellFuncRe matches a function named claude or codex (not claude-off and
+// the like): defined after tq's activation, it replaces tq's launcher.
+var shellFuncRe = map[string]*regexp.Regexp{
+	"posix":      regexp.MustCompile(`(?m)^[ \t]*(?:function[ \t]+(claude|codex)(?:[ \t({]|$)|(claude|codex)[ \t]*\(\))`),
+	"fish":       regexp.MustCompile(`(?m)^[ \t]*function[ \t]+(claude|codex)(?:[ \t;]|$)`),
+	"powershell": regexp.MustCompile(`(?mi)^[ \t]*function[ \t]+(?:global:|script:)?(claude|codex)(?:[ \t({]|$)`),
+}
+
+// activationRe finds the line that runs tq activate (or tq's managed block).
+var activationRe = regexp.MustCompile(`(?m)^.*(?:tq(?:\.exe)?["']?[ \t]+activate\b|# <<< tq <<<).*$`)
+
+// legacyBlockRe is the preserved pre-tq setup tq migrate keeps; it runs only
+// under TQ_ENABLED=0, so its functions do not shadow the launcher.
+var legacyBlockRe = regexp.MustCompile(`(?s)# >>> tq-legacy >>>.*?# <<< tq-legacy <<<`)
 
 // profileFiles are the shell profiles under home that the check reads.
 func profileFiles(home string) [][2]string {
@@ -60,9 +75,16 @@ func homes(d Deps) []string {
 	return out
 }
 
-// claudeAliasShadow warns about a claude or codex alias in a shell profile:
-// it bypasses the launcher functions `tq activate` defines (spec E §8.2), so
-// that claude starts without tq's mode and bypass handling.
+// claudeAliasShadow reports what in a shell profile stands in for the
+// claude and codex launchers `tq activate` defines (spec E §8.2):
+//   - a PowerShell alias (aliases resolve before functions): warn;
+//   - a function named claude or codex defined after tq's activation, such
+//     as the wrapper an older tq migrate carried over: warn;
+//   - a posix or fish alias that runs something else (an absolute path, a
+//     different command): warn;
+//   - a posix or fish alias whose value starts with the same name (alias
+//     claude='claude --flag'): it calls tq's launcher with extra flags, so
+//     it is only a note.
 func claudeAliasShadow(d Deps, add AddFunc) {
 	read := d.ReadFile
 	if read == nil {
@@ -74,10 +96,48 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 			if err != nil {
 				continue
 			}
-			for _, m := range shellAliasRe[pf[1]].FindAllStringSubmatch(string(raw), -1) {
+			text := legacyBlockRe.ReplaceAllStringFunc(string(raw), func(b string) string {
+				return strings.Repeat("\n", strings.Count(b, "\n"))
+			})
+			for _, m := range shellAliasRe[pf[1]].FindAllStringSubmatch(text, -1) {
+				name := m[1]
+				if pf[1] == "powershell" {
+					add("warn", "claude-alias-shadow", "",
+						fmt.Sprintf("alias %s replaces tq's %s launcher: PowerShell resolves aliases before functions (%s)", name, name, pf[0]),
+						fmt.Sprintf("delete the %s alias from %s; tq activate defines %s", name, pf[0], name))
+					continue
+				}
+				if f := strings.Fields(m[2]); len(f) > 0 && f[0] == name {
+					add("info", "claude-alias-shadow", "",
+						fmt.Sprintf("alias %s adds flags to tq's %s launcher, which it calls (%s)", name, name, pf[0]),
+						fmt.Sprintf("the launcher already starts %s in bypass; delete the alias from %s if its flags were for the old setup", name, pf[0]))
+					continue
+				}
 				add("warn", "claude-alias-shadow", "",
-					fmt.Sprintf("alias %s bypasses tq's launcher; remove it (%s)", m[1], pf[0]),
-					fmt.Sprintf("delete the %s alias from %s; tq activate defines %s", m[1], pf[0], m[1]))
+					fmt.Sprintf("alias %s runs %q instead of tq's %s launcher (%s)", name, m[2], name, pf[0]),
+					fmt.Sprintf("delete the %s alias from %s; tq activate defines %s", name, pf[0], name))
+			}
+			after := -1
+			if loc := activationRe.FindAllStringIndex(text, -1); len(loc) > 0 {
+				after = loc[len(loc)-1][1]
+			}
+			if after < 0 {
+				continue
+			}
+			for _, loc := range shellFuncRe[pf[1]].FindAllStringSubmatchIndex(text, -1) {
+				if loc[0] < after {
+					continue
+				}
+				name := ""
+				for i := 2; i+1 < len(loc); i += 2 {
+					if loc[i] >= 0 {
+						name = text[loc[i]:loc[i+1]]
+						break
+					}
+				}
+				add("warn", "claude-alias-shadow", "",
+					fmt.Sprintf("function %s, defined after tq's activation, replaces tq's %s launcher (%s)", name, name, pf[0]),
+					fmt.Sprintf("delete function %s from %s (tq migrate removes the copy it carried over, if unchanged); tq activate defines %s", name, pf[0], name))
 			}
 		}
 	}

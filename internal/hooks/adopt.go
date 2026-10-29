@@ -45,8 +45,9 @@ const (
 	// written into the user's real profile and outlives this release.
 	legacyNote = "  (your pre-tq setup, kept verbatim by tq migrate; delete this block by hand when you no longer need TQ_ENABLED=0)"
 
-	// CarryComment introduces a shell function carried over verbatim from the
-	// hand-installed block.
+	// CarryComment introduced a shell function that an older tq migrate
+	// carried over verbatim from the hand-installed block. RemoveCarriedFile
+	// recognises that exact text and removes it.
 	CarryComment = "# carried over by tq migrate; permission_mode will move into the manifest"
 
 	// carriedGuard reproduces the `else` branch the carried wrapper used to
@@ -97,9 +98,10 @@ type ChangeSet struct {
 	// own line terminator. Empty when the shell has no legacy branch.
 	Legacy string
 
-	// Wrapper is the carried-over `function claude { ... }` definition,
-	// dedented to column 0 and without a trailing newline. Empty when there is
-	// none.
+	// Wrapper is the `function claude { ... }` definition found in the old
+	// block, dedented to column 0 and without a trailing newline. It is not
+	// written back: tq's launcher replaces it. For RemoveCarriedFile it is
+	// the carried copy being removed. Empty when there is none.
 	Wrapper string
 
 	// Dropped lists non-scaffolding lines from the replaced tq-activation
@@ -126,7 +128,7 @@ func (c ChangeSet) Detail() string {
 		parts = append(parts, "keep legacy launcher verbatim")
 	}
 	if c.Wrapper != "" {
-		parts = append(parts, "carry over the claude wrapper")
+		parts = append(parts, "drop the claude wrapper (tq's launcher replaces it)")
 	}
 	return strings.Join(parts, "; ")
 }
@@ -202,26 +204,9 @@ func AdoptFile(path string, sh Shell) (ChangeSet, error) {
 		b.WriteString(eol)
 	}
 	b.WriteString(normalizeEOL(Block(sh), eol))
-	if cs.Wrapper != "" {
-		b.WriteString(eol)
-		b.WriteString(CarryComment + eol)
-		// In the hand-installed block this function lived in the `else` branch,
-		// so it only took effect when the legacy launcher did not run. Keep
-		// that guard: without it, TQ_ENABLED=0 would fall back to the legacy
-		// launcher and then have its own `claude` router clobbered by this
-		// wrapper.
-		guarded := cs.Legacy != ""
-		if guarded {
-			b.WriteString(carriedGuard + eol)
-		}
-		b.WriteString(normalizeEOL(cs.Wrapper, eol))
-		if !strings.HasSuffix(cs.Wrapper, "\n") {
-			b.WriteString(eol)
-		}
-		if guarded {
-			b.WriteString("}" + eol)
-		}
-	}
+	// The old `claude` wrapper is not carried over: it would replace the
+	// launcher `tq activate` defines, which already starts claude in bypass
+	// under tq's guard mode (spec E §8). Callers report it as dropped.
 
 	cs.New = content[:lp.blockStart] + b.String() + content[lp.blockEnd:]
 	cs.Changed = cs.New != content
@@ -680,4 +665,92 @@ func dedent(s, indent string) string {
 		lines[i] = strings.TrimPrefix(l, indent)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// RemoveCarriedFile plans the removal of the `claude` wrapper an older
+// tq migrate carried over after the managed block: the blank line, the
+// CarryComment line, the optional carriedGuard line, the dedented
+// `function claude { ... }` (with --dangerously-skip-permissions) and the
+// guard's closing brace, exactly as Adopt used to write them. Anything else
+// (a wrapper the user edited or wrote) is left alone, Changed false.
+func RemoveCarriedFile(path string, sh Shell) (ChangeSet, error) {
+	content, enc, mode, exists, err := readProfile(path)
+	cs := ChangeSet{Shell: sh, Profile: path, Old: content, New: content, enc: enc, mode: mode, exists: exists}
+	if err != nil || !exists {
+		if err == nil {
+			cs.Reason = ReasonNoFile
+		}
+		return cs, err
+	}
+	cs.Reason = "no carried wrapper"
+	if sh != "powershell" && sh != "pwsh" {
+		return cs, nil
+	}
+	start, end, fn, ok := findCarried(content)
+	if !ok {
+		return cs, nil
+	}
+	cs.Reason = ""
+	cs.Found, cs.Start, cs.End, cs.Wrapper = true, start, end, fn
+	cs.New = content[:start] + content[end:]
+	cs.Changed = true
+	return cs, nil
+}
+
+// findCarried locates the carried-wrapper text Adopt used to write right
+// after the managed block's end marker.
+func findCarried(content string) (start, end int, fn string, ok bool) {
+	em := strings.Index(content, endMarker)
+	if em < 0 {
+		return 0, 0, "", false
+	}
+	for _, eol := range []string{"\r\n", "\n"} {
+		head := eol + CarryComment + eol
+		i := strings.Index(content[em:], head)
+		if i < 0 {
+			continue
+		}
+		i += em
+		// Only the end marker's own line ending may come before it.
+		if strings.TrimSpace(content[em+len(endMarker):i]) != "" {
+			return 0, 0, "", false
+		}
+		p := i + len(head)
+		guarded := strings.HasPrefix(content[p:], carriedGuard+eol)
+		if guarded {
+			p += len(carriedGuard + eol)
+		}
+		m := psClaudeWrapperRe.FindStringSubmatchIndex(content[p:])
+		if m == nil || m[0] != 0 || m[3] != m[2] {
+			return 0, 0, "", false
+		}
+		open := p + strings.IndexByte(content[p:p+m[1]], '{')
+		cl, found := psMatchBrace(content, open)
+		if !found {
+			return 0, 0, "", false
+		}
+		fn = content[p : cl+1]
+		if !strings.Contains(fn, "--dangerously-skip-permissions") {
+			return 0, 0, "", false
+		}
+		q := cl + 1
+		if !strings.HasPrefix(content[q:], eol) {
+			return 0, 0, "", false
+		}
+		q += len(eol)
+		if guarded {
+			if !strings.HasPrefix(content[q:], "}") {
+				return 0, 0, "", false
+			}
+			q++
+			if strings.HasPrefix(content[q:], eol) {
+				q += len(eol)
+			} else if q != len(content) {
+				return 0, 0, "", false
+			}
+		}
+		// i is the blank line after the end marker's line: it goes too.
+		return i, q, fn, true
+	}
+	return 0, 0, "", false
 }

@@ -46,20 +46,38 @@ func TestLauncherChecksAreRegistered(t *testing.T) {
 }
 
 func TestClaudeAliasShadow(t *testing.T) {
+	ps := filepath.Join("Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1")
+	ps5 := filepath.Join("Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1")
+	fish := filepath.Join(".config", "fish", "config.fish")
+	block := "# >>> tq >>>\nif ($env:TQ_ENABLED -ne '0') { tq activate pwsh | Out-String | Invoke-Expression }\n# <<< tq <<<\n"
 	cases := []struct {
 		file, body string
 		want       bool
+		level, msg string
 	}{
-		{".bashrc", "alias claude='claude --dangerously-skip-permissions'\neval \"$(tq activate bash)\"\n", true},
-		{".zshrc", "  alias codex=\"codex --yolo\"\n", true},
-		{".bash_aliases", "alias claude=claude\n", true},
-		{filepath.Join(".config", "fish", "config.fish"), "alias claude 'claude --x'\n", true},
-		{filepath.Join("Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"), "Set-Alias -Name claude -Value C:\\x\\claude.exe\n", true},
-		{filepath.Join("Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"), "sal codex C:\\x\\codex.exe\n", true},
-		{".bashrc", "# alias claude='old'\nalias cl=claude\nalias claudex=foo\neval \"$(tq activate bash)\"\n", false},
+		// an alias that calls the same name only adds flags to the launcher
+		{".bashrc", "alias claude='claude --dangerously-skip-permissions'\neval \"$(tq activate bash)\"\n", true, "info", "adds flags to tq's claude launcher"},
+		{".zshrc", "  alias codex=\"codex --yolo\"\n", true, "info", "adds flags"},
+		{".bash_aliases", "alias claude=claude\n", true, "info", "adds flags"},
+		{fish, "alias claude 'claude --x'\n", true, "info", "adds flags"},
+		// one that runs something else replaces it
+		{".bashrc", "alias claude='/opt/claude/bin/claude --x'\n", true, "warn", "instead of tq's claude launcher"},
+		{ps, "Set-Alias -Name claude -Value C:\\x\\claude.exe\n", true, "warn", "PowerShell resolves aliases before functions"},
+		{ps5, "sal codex C:\\x\\codex.exe\n", true, "warn", "PowerShell resolves aliases before functions"},
+		{".bashrc", "# alias claude='old'\nalias cl=claude\nalias claudex=foo\neval \"$(tq activate bash)\"\n", false, "", ""},
+		// functions after tq's activation replace the launcher (final review M2)
+		{ps, block + "\n# carried over by tq migrate; permission_mode will move into the manifest\nfunction claude { & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" --permission-mode auto @args }\n", true, "warn", "function claude, defined after tq's activation"},
+		{ps5, block + "function global:codex { codex.exe @args }\n", true, "warn", "function codex"},
+		{".bashrc", "eval \"$(tq activate bash)\"\nclaude() { command claude --x \"$@\"; }\n", true, "warn", "function claude"},
+		{".zshrc", "eval \"$(tq activate zsh)\"\nfunction codex { command codex \"$@\"; }\n", true, "warn", "function codex"},
+		{fish, "tq activate fish | source\nfunction claude\n  command claude $argv\nend\n", true, "warn", "function claude"},
+		// before the activation tq's own definition wins; claude-off is not claude;
+		// the preserved tq-legacy block runs only under TQ_ENABLED=0
+		{".bashrc", "claude() { :; }\neval \"$(tq activate bash)\"\nfunction claude-off { :; }\n", false, "", ""},
+		{ps, "# >>> tq-legacy >>>\nif ($env:TQ_ENABLED -eq '0') {\nfunction claude { x }\n}\n# <<< tq-legacy <<<\n" + block + "function claude-personal { x }\n", false, "", ""},
 	}
 	for _, c := range cases {
-		t.Run(c.file+"/"+c.body[:8], func(t *testing.T) {
+		t.Run(c.file+"/"+c.msg, func(t *testing.T) {
 			home := t.TempDir()
 			writeLauncherFile(t, filepath.Join(home, c.file), c.body)
 			fs, add := collectLauncher()
@@ -70,7 +88,7 @@ func TestClaudeAliasShadow(t *testing.T) {
 			}
 			if got {
 				f := (*fs)[0]
-				if f.level != "warn" || f.code != "claude-alias-shadow" || !strings.Contains(f.msg, "bypasses tq's launcher") {
+				if f.level != c.level || f.code != "claude-alias-shadow" || !strings.Contains(f.msg, c.msg) {
 					t.Fatalf("%+v", f)
 				}
 			}

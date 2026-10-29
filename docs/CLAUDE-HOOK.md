@@ -502,10 +502,23 @@ Python, so the fail-closed "no tq, no Python" block never fires in off), and
 `tq env --on` prints `unset TQ_MODE`; the functions call them, and
 `--off` refuses agent sessions.
 
-A shell alias named `claude` (for example `alias claude='claude
---dangerously-skip-permissions'` in `.bashrc`) wins over the function in
-interactive bash and skips the launcher. `tq doctor` warns with
-`claude-alias-shadow`; remove the alias.
+The functions are defined as `function claude { ...; }` in bash and zsh,
+after the prompt hook is registered, so an `alias claude=...` defined
+earlier in the profile can never abort the block. Such an alias, when it
+calls `claude` itself (`alias claude='claude --dangerously-skip-permissions'`),
+expands to the launcher with extra flags: `tq doctor` notes it
+(`claude-alias-shadow`, info). An alias that runs something else, any
+PowerShell alias (aliases resolve before functions), or a function named
+`claude` or `codex` defined after tq's activation (for example the wrapper
+an older `tq migrate` carried over) replaces the launcher: `tq doctor`
+warns with `claude-alias-shadow` and names the line to delete.
+
+PowerShell's parameter binder removes a literal `--` from a function's
+arguments, so the `tq` function puts it back before the command word of
+`tq run`, `tq dotenv run` and `tq redact run`. `tq run` itself stops reading
+its own flags at the workspace: after `<workspace>` only `--tq-mode MODE`
+and an optional `--` may come before the command, and everything after the
+command word is the command's own.
 
 ### Nested agents
 

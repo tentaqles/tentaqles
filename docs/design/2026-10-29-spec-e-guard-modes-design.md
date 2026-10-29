@@ -380,7 +380,7 @@ codex-off()  { "{{.Bin}}" run --off -- codex "$@"; }
 
 zsh uses the same bodies (`--shell zsh`). Its `precmd_functions` registration is unchanged.
 
-A user `alias claude=…` defined before the block wins in interactive bash (aliases expand before functions). This machine's `~/.bashrc` has `alias claude='claude --dangerously-skip-permissions'` on line 1. `tq doctor` gains `claude-alias-shadow` (warn: "alias claude bypasses tq's launcher; remove it"). The activate block does not `unalias` on its own.
+A user `alias claude=…` defined before the block is alias-expanded in a `claude() {` definition, which aborts the block in bash and zsh. So the functions use the `function claude { …; }` form, defined after the prompt hook is registered (amended 2026-10-29 after the final review). This machine's `~/.bashrc` has `alias claude='claude --dangerously-skip-permissions'` on line 1: it now expands to the launcher with extra flags. `tq doctor` gains `claude-alias-shadow`: info for an alias that calls the launcher itself; warn for an alias that runs something else, a PowerShell alias, or a function of that name defined after tq's activation (such as the wrapper an older `tq migrate` carried over, which `tq migrate` now removes when unchanged). The activate block does not `unalias` on its own.
 
 **fish**
 
