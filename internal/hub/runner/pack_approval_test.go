@@ -1,0 +1,42 @@
+package runner
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/hub/store"
+)
+
+// A pack approval (permission with data.pack, spec C §2.11) never resumes,
+// requeues or holds a run.
+func TestPackApprovalNeverDrivesTheRun(t *testing.T) {
+	t.Setenv("TQ_HOME", filepath.Join(t.TempDir(), ".tentaqles"))
+	h := newHarness(t)
+	c, r := waitingRun(t, h, "")
+	before, err := h.svc.pendingRunDecisions(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := h.st.AskHub(c.ID, r.ID, "", "ml approval: promote churn@7 -> production", []string{"approve", "reject"},
+		map[string]any{"pack": "ml", "action": "promote", "subject": "churn@7", "target": "production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := h.svc.pendingRunDecisions(c.ID); n != before {
+		t.Fatalf("a pack approval counts as a run decision: %d vs %d", n, before)
+	}
+	if h.svc.hubPending(h.run(r.ID)) {
+		t.Fatal("a pack approval holds the run")
+	}
+	out, err := h.svc.Answer(context.Background(), c.ID, d.ID, "approve", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Resumed != nil || out.Decision.Status != store.DecisionAnswered {
+		t.Fatalf("%+v", out)
+	}
+	if got := h.run(r.ID); got.Status != store.StatusWaiting {
+		t.Fatalf("the run moved: %+v", got)
+	}
+}

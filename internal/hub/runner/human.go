@@ -211,6 +211,11 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 		return AnswerOutcome{}, err
 	}
 	out := AnswerOutcome{Decision: d, Message: fmt.Sprintf("decision %s: %s by %s", d.ID, choice, s.cfg.Actor)}
+	if d.PackApproval() != "" {
+		// A pack approval (spec C §2.11) is consumed by a human-run apply or a
+		// guard; it never resumes or requeues a run.
+		return out, nil
+	}
 	r, err := s.st.Run(d.RunID)
 	if err != nil {
 		return out, nil
@@ -440,11 +445,27 @@ func (s *Service) hubPending(r store.Run) bool {
 		return false
 	}
 	for _, d := range ds {
-		if d.HubOwned() && d.Status == store.DecisionPending && d.RunID == r.ID {
+		if d.HubOwned() && d.PackApproval() == "" && d.Status == store.DecisionPending && d.RunID == r.ID {
 			return true
 		}
 	}
 	return false
+}
+
+// pendingRunDecisions counts the card's pending decisions a run waits on: a
+// pack approval (spec C §2.11) never holds or resumes a run.
+func (s *Service) pendingRunDecisions(cardID string) (int, error) {
+	ds, err := s.st.DecisionsForCard(cardID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, d := range ds {
+		if d.Status == store.DecisionPending && d.PackApproval() == "" {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func lastAnswered(st *gate.State) *gate.Decision {

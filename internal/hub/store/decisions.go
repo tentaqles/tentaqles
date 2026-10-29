@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/hub/activity"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 )
 
 const (
@@ -53,6 +55,26 @@ func (d Decision) HubOwned() bool {
 	}
 	asked, _ := d.Data[hubAsked].(bool)
 	return d.Kind == KindQuestion && d.Slug == "" && asked
+}
+
+// PackApproval returns the pack of a pack approval (a permission decision
+// whose data carries pack, spec C §2.11), or "". The runner never resumes or
+// requeues a run on one.
+func (d Decision) PackApproval() string {
+	if d.Kind != KindPermission {
+		return ""
+	}
+	p, _ := d.Data["pack"].(string)
+	return p
+}
+
+// answerActorKind is the ledger's actor kind: agent for an agent actor,
+// otherwise ActorKind's bucket (a human through the hub or the terminal).
+func answerActorKind(actor string) string {
+	if actor == "agent" || strings.HasPrefix(actor, "agent:") {
+		return "agent"
+	}
+	return ActorKind(actor)
 }
 
 type MirrorResult struct{ Inserted, NowAnswered bool }
@@ -139,8 +161,26 @@ func (s *Store) UpsertDecision(d Decision) (MirrorResult, error) {
 	if d.AnsweredAt == "" {
 		d.AnsweredAt = Now()
 	}
-	if _, err := s.DB.Exec(`UPDATE decisions SET status = 'answered', choice = ?, note = ?, actor = ?, answered_at = ? WHERE id = ? AND status = 'pending'`,
-		s.Mask(d.Choice), s.Mask(d.Note), d.Actor, d.AnsweredAt, d.ID); err != nil {
+	// A pack approval (permission with data.pack, spec C §2.11): the answer is
+	// written to the pack ledger inside the transaction, before it is
+	// acknowledged; a failed ledger write fails the answer.
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return MirrorResult{}, err
+	}
+	res, err := tx.Exec(`UPDATE decisions SET status = 'answered', choice = ?, note = ?, actor = ?, answered_at = ? WHERE id = ? AND status = 'pending'`,
+		s.Mask(d.Choice), s.Mask(d.Note), d.Actor, d.AnsweredAt, d.ID)
+	if err != nil {
+		tx.Rollback()
+		return MirrorResult{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 1 && cur.PackApproval() != "" {
+		if err := ledger.RecordAnswer(s.Workspace, d.ID, cur.Data, d.Choice, answerActorKind(d.Actor), time.Now()); err != nil {
+			tx.Rollback()
+			return MirrorResult{}, fmt.Errorf("pack approval %s: the ledger write failed (%v); the answer was not recorded, retry", d.ID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return MirrorResult{}, err
 	}
 	cur.Choice, cur.Actor = s.Mask(d.Choice), d.Actor

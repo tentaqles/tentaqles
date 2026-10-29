@@ -37,7 +37,7 @@ func (s *Service) Enqueue(ctx context.Context, cardID, reason string) (store.Run
 		if act.Status != store.StatusWaiting {
 			return act, false, nil
 		}
-		n, err := s.st.PendingCount(cardID)
+		n, err := s.pendingRunDecisions(cardID)
 		if err != nil || n > 0 {
 			return act, false, err
 		}

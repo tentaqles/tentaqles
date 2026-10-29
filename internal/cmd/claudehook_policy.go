@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"github.com/tentaqles/tentaqles/internal/commitmsg"
 	"github.com/tentaqles/tentaqles/internal/commitscan"
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
+	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -161,7 +164,23 @@ func loadProjectRules(cwd string, ws *resolve.Workspace) ([]policy.Rule, []error
 // scan budget), so the identity lookups that ran before count against it.
 func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
 	eff := effectiveGuard(ws)
-	layers := policy.Layers{Builtin: policy.Builtin(), Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
+	// Pack guards (spec C §2.10) run first so a guard that handles the call
+	// can supersede core matches; their verdicts merge in below.
+	penv := hookPackEnv(cwd, ws)
+	outcomes := packs.EvaluateGuards(call, penv, eff.Off, eff.ActionFor)
+	superseded := map[string]bool{}
+	for _, o := range outcomes {
+		for _, id := range o.Supersedes {
+			superseded[id] = true
+		}
+	}
+	var builtin []policy.Rule
+	for _, r := range policy.ForPacks(policy.Builtin(), penv.Config.IsEnabled) {
+		if !superseded[r.ID] {
+			builtin = append(builtin, r)
+		}
+	}
+	layers := policy.Layers{Builtin: builtin, Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
 	if ws != nil {
 		layers.Manifest = ws.Manifest.Guard.Rules
 		for i := range layers.Manifest {
@@ -199,7 +218,7 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 		{"tq/text-pii", func(a policy.Action) (policy.Decision, bool) { return textPIIDecision(ws, call, cwd, a) }},
 		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, cwd, a) }},
 	} {
-		if eff.Off(r.id) {
+		if eff.Off(r.id) || superseded[r.id] {
 			continue
 		}
 		if pd, ok := r.fn(eff.ActionFor(r.id, policy.Deny)); ok {
@@ -217,7 +236,74 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other)))
 		}
 	}
+	return applyPackOutcomes(d, ws, outcomes)
+}
+
+// applyPackOutcomes merges the pack guards' verdicts (strongest wins), then,
+// unless the call is denied, appends the `consumed` ledger line of every
+// single-use approval a guard allowed the call with. A failed append denies.
+func applyPackOutcomes(d policy.Decision, ws *resolve.Workspace, outcomes []packs.GuardOutcome) policy.Decision {
+	for _, o := range outcomes {
+		if o.Action != policy.Allow {
+			d = policy.Merge(d, policy.Decision{Action: o.Action, Matched: []*policy.Rule{{ID: o.ID, Action: o.Action, Reason: o.Reason, Source: "pack " + o.Pack}}})
+		}
+	}
+	if d.Action != policy.Deny {
+		for _, o := range outcomes {
+			for _, id := range o.Consume {
+				err := errors.New("no trusted workspace")
+				if ws != nil {
+					err = ledger.Append(ws.Name, ledger.Entry{Event: ledger.Consumed, Decision: id, Pack: o.Pack})
+				}
+				if err != nil {
+					d = policy.Merge(d, policy.Decision{Action: policy.Deny, Matched: []*policy.Rule{{ID: o.ID, Action: policy.Deny, Source: "pack " + o.Pack,
+						Reason: "the approval " + id + " could not be marked used (" + err.Error() + "); denied so it cannot be used twice"}}})
+				}
+			}
+		}
+	}
+	if ws != nil {
+		packs.SetEventWorkspace(ws.Name)
+	}
+	for _, o := range outcomes {
+		for _, c := range o.Counters {
+			packs.Count(c.Pack, c.Name, c.N)
+		}
+	}
 	return d
+}
+
+// hookPackEnv is what pack guards see in the hook: the manifest plus the
+// repo's tq-packs.yaml (an invalid repo file leaves the manifest layer), with
+// the repo root found by walking up to a .git entry (no git process).
+func hookPackEnv(cwd string, ws *resolve.Workspace) packs.GuardEnv {
+	env := packs.GuardEnv{}
+	var stop string
+	if ws != nil && ws.Manifest != nil {
+		env.Manifest, env.Workspace, env.WorkspaceRoot = ws.Manifest, ws.Name, ws.Root
+		stop = filepath.Clean(ws.Root)
+	}
+	dir := filepath.Clean(cwd)
+	for i := 0; i < 32 && dir != ""; i++ {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			env.RepoRoot = dir
+			break
+		}
+		if strings.EqualFold(dir, stop) {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	root := env.RepoRoot
+	if root == "" {
+		root = env.WorkspaceRoot
+	}
+	env.Config, _ = packs.LoadConfig(env.Manifest, root)
+	return env
 }
 
 func ruleDecision(a policy.Action, id, reason string) policy.Decision {

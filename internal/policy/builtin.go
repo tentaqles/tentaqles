@@ -43,7 +43,7 @@ const readVerbs = `\b(cat|type|more|less|head|tail|bat|nl|strings|xxd|od|grep|rg
 // Builtin returns tq's default rules. IDs are stable: manifests disable them
 // by id (guard.disable) and tests pin them.
 func Builtin() []Rule {
-	return []Rule{
+	return append([]Rule{
 		// --- secrets: reading ------------------------------------------------
 		{
 			ID: "tq/secret-store-read", Action: Deny,
@@ -278,5 +278,5 @@ func Builtin() []Rule {
 			Content: `\bpull_request_target\b`,
 			Reason:  "pull_request_target runs untrusted PR code with repository secrets",
 		},
-	}
+	}, packRules()...)
 }
