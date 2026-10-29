@@ -172,7 +172,8 @@ func modeWrite(c *cobra.Command, f modeScopeFlags, op setup.GuardOp, what string
 }
 
 // reportModeWrite prints what a write did, offers the grant on the TTY when
-// the layers now ask for more than the ceiling allows, and re-renders Codex.
+// the layers now ask for more than the ceiling allows, and re-renders the
+// Claude settings and the Codex files.
 func reportModeWrite(c *cobra.Command, w *resolve.Workspace, res setup.GuardResult, what string) error {
 	out := c.OutOrStdout()
 	if w == nil {
@@ -214,7 +215,7 @@ func reportModeWrite(c *cobra.Command, w *resolve.Workspace, res setup.GuardResu
 			fmt.Fprintf(out, "runs at default until you run: tq allow --mode %s %s\n", w.Name, mode)
 		}
 	}
-	renderCodex(c, fresh, false)
+	renderIdentityFiles(c, fresh)
 	return nil
 }
 

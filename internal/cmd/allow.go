@@ -88,7 +88,7 @@ removes) the mode of ~/.tentaqles/guard.yaml for neutral folders.
 			reportDroppedGrants(c, ws)
 			// Always re-render: trusting a new manifest drops the grant for
 			// it, so the Codex block and profile must go.
-			renderCodex(c, ws, false)
+			renderIdentityFiles(c, ws)
 			return nil
 		},
 	}
@@ -166,7 +166,7 @@ func allowMode(c *cobra.Command, name, m string) error {
 			return err
 		}
 		fmt.Fprintf(c.OutOrStdout(), "Mode grant removed for %s: it runs at default or stricter\n", ws.Name)
-		renderCodex(c, ws, false)
+		renderIdentityFiles(c, ws)
 		return nil
 	}
 	g, gerr := guardcfg.Load()
@@ -184,7 +184,7 @@ func allowMode(c *cobra.Command, name, m string) error {
 	if ws.Manifest.HasCloudIdentity() {
 		fmt.Fprintln(c.ErrOrStderr(), "warning: "+m+" + cloud identity — Claude can run cloud CLIs without a confirm in this workspace")
 	}
-	renderCodex(c, ws, false)
+	renderIdentityFiles(c, ws)
 	return nil
 }
 
@@ -237,7 +237,7 @@ func newDenyCmd() *cobra.Command {
 			}
 			fmt.Fprintf(c.OutOrStdout(), "Denied %s\n", ws.Name)
 			// The grant is gone: remove the Codex unattended settings.
-			renderCodex(c, ws, false)
+			renderIdentityFiles(c, ws)
 			return nil
 		},
 	}

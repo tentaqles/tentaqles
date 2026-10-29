@@ -57,13 +57,7 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.`,
 			}
 			tqExe := ""
 			if !noStatus {
-				// Prefer the installed tq on PATH: os.Executable may be a
-				// one-off build (go run, a temp dir) that later disappears.
-				if exe, err := exec.LookPath("tq"); err == nil {
-					tqExe = exe
-				} else if exe, err := os.Executable(); err == nil {
-					tqExe = exe
-				}
+				tqExe = statuslineExe()
 			}
 			n := 0
 			for i := range wss {
@@ -105,6 +99,39 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.`,
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without writing")
 	c.Flags().BoolVar(&noStatus, "no-statusline", false, "leave statusLine alone")
 	return c
+}
+
+// statuslineExe is the tq the status line runs: the installed tq on PATH,
+// since os.Executable may be a one-off build (go run, a temp dir) that later
+// disappears.
+func statuslineExe() string {
+	if exe, err := exec.LookPath("tq"); err == nil {
+		return exe
+	}
+	if exe, err := os.Executable(); err == nil {
+		return exe
+	}
+	return ""
+}
+
+// renderIdentityFiles re-renders ws's Claude identity settings and its Codex
+// files after a mode or grant change, so they match at once rather than at
+// the next tq settings render (final review m2). Errors are warnings: the
+// manifest and grant are already written, and tq doctor reports the drift.
+func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
+	if ws == nil {
+		return
+	}
+	if trust.IsTrusted(ws.Hash) {
+		dir := paths.IdentityDir(ws.Name, "claude")
+		if _, err := os.Stat(dir); err == nil {
+			d := claudesettings.Desired(ws.Manifest, trust.IsBypassAllowed(ws.Hash), statuslineExe())
+			if _, err := claudesettings.Render(dir, d, false); err != nil {
+				fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not re-rendered: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
+			}
+		}
+	}
+	renderCodex(c, ws, false)
 }
 
 func newStatuslineCmd() *cobra.Command {

@@ -14,6 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/guardlog"
 	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
@@ -429,5 +430,23 @@ func TestModeToggleGrantsCustomNotRelaxed(t *testing.T) {
 	}
 	if g, _ := trust.LoadGrant(manifestHash(t, root)); g == nil || g.Mode != "custom" || g.Table["db-destructive"] != "skip" || g.Table["prod-changes"] == "skip" {
 		t.Fatalf("grant = %+v", g)
+	}
+}
+
+// A mode write re-renders the identity's Claude settings at once, not at
+// the next tq settings render (final review m2).
+func TestModeWriteRendersClaudeSettings(t *testing.T) {
+	setupTrustedWorkspaceWithManifest(t, "acme", "")
+	asHuman(t)
+	dir := paths.IdentityDir("acme", "claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runModeCmd(t, "y\n", "mode", "set", "relaxed", "--ws", "acme"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil || !strings.Contains(string(raw), "skipDangerousModePermissionPrompt") {
+		t.Fatalf("the Claude settings must be rendered: %v", err)
 	}
 }
