@@ -1,0 +1,911 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.15.2",
+ "resource_changes": [
+  {
+   "address": "aws_iam_policy.star",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "star",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-star",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"*\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.s3all",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "s3all",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-s3all",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": [\"s3:*\"], \"Resource\": \"arn:aws:s3:::acme-logs/*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.write_any",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "write_any",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-w",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": [\"s3:PutObject\", \"s3:GetObject\"], \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.read_any",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "read_any",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-r",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": [\"ec2:Describe*\", \"s3:ListAllMyBuckets\"], \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.secret_any",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "secret_any",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-sec",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"secretsmanager:GetSecretValue\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.notaction",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "notaction",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-na",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"NotAction\": \"iam:*\", \"Resource\": \"arn:aws:s3:::acme-logs\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role_policy_attachment.admin",
+   "mode": "managed",
+   "type": "aws_iam_role_policy_attachment",
+   "name": "admin",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "role": "acme-ci",
+     "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role_policy_attachment.ro",
+   "mode": "managed",
+   "type": "aws_iam_role_policy_attachment",
+   "name": "ro",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "role": "acme-ci",
+     "policy_arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.passrole",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "passrole",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-pr",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"iam:PassRole\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.passrole_cond",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "passrole_cond",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-prc",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"iam:PassRole\", \"Resource\": \"*\", \"Condition\": {\"StringEquals\": {\"iam:PassedToService\": \"lambda.amazonaws.com\"}}}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.attach_any",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "attach_any",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-at",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"iam:Attach*\", \"Resource\": \"arn:aws:iam::111111111111:role/*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role.open",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "open",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-open",
+     "assume_role_policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"AWS\": \"*\"}, \"Action\": \"sts:AssumeRole\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role.foreign",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "foreign",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-x",
+     "assume_role_policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"AWS\": \"arn:aws:iam::222222222222:root\"}, \"Action\": \"sts:AssumeRole\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role.foreign_ext",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "foreign_ext",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-xe",
+     "assume_role_policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"AWS\": \"arn:aws:iam::222222222222:root\"}, \"Action\": \"sts:AssumeRole\", \"Condition\": {\"StringEquals\": {\"sts:ExternalId\": \"acme-ext\"}}}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role.ours",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "ours",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-own",
+     "assume_role_policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"AWS\": \"arn:aws:iam::111111111111:root\"}, \"Action\": \"sts:AssumeRole\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role.lambda",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "lambda",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-fn",
+     "assume_role_policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"Service\": \"lambda.amazonaws.com\"}, \"Action\": \"sts:AssumeRole\"}]}",
+     "inline_policy": [
+      {
+       "name": "inl",
+       "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"logs:*\", \"Resource\": \"*\"}]}"
+      }
+     ],
+     "managed_policy_arns": [
+      "arn:aws:iam::aws:policy/PowerUserAccess"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role.gh_noaud",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "gh_noaud",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-gh1",
+     "assume_role_policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"Federated\": \"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"}, \"Action\": \"sts:AssumeRoleWithWebIdentity\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_role.gh_wild",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "gh_wild",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-gh2",
+     "assume_role_policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"Federated\": \"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"}, \"Action\": \"sts:AssumeRoleWithWebIdentity\", \"Condition\": {\"StringEquals\": {\"token.actions.githubusercontent.com:aud\": \"sts.amazonaws.com\"}, \"StringLike\": {\"token.actions.githubusercontent.com:sub\": \"repo:acme/*\"}}}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_s3_bucket_policy.public",
+   "mode": "managed",
+   "type": "aws_s3_bucket_policy",
+   "name": "public",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "bucket": "acme-site",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": \"*\", \"Action\": \"s3:GetObject\", \"Resource\": \"arn:aws:s3:::acme-site/*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_s3_bucket_policy.vpce",
+   "mode": "managed",
+   "type": "aws_s3_bucket_policy",
+   "name": "vpce",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "bucket": "acme-data",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": \"*\", \"Action\": \"s3:GetObject\", \"Resource\": \"arn:aws:s3:::acme-data/*\", \"Condition\": {\"StringEquals\": {\"aws:SourceVpce\": \"vpce-1111\"}}}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_kms_key.default",
+   "mode": "managed",
+   "type": "aws_kms_key",
+   "name": "default",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "description": "acme",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"AWS\": \"arn:aws:iam::111111111111:root\"}, \"Action\": \"kms:*\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.scoped",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "scoped",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-ok",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": [\"s3:GetObject\", \"s3:PutObject\"], \"Resource\": \"arn:aws:s3:::acme-logs/*\"}, {\"Effect\": \"Deny\", \"Action\": \"*\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.allowed",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "allowed",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-al",
+     "tags": {
+      "tq-allow": "IAM002: CloudWatch PutMetricData takes no resource"
+     },
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"cloudwatch:PutMetricData\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.noreason",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "noreason",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-nr",
+     "tags": {
+      "tq-allow": "IAM002"
+     },
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"cloudwatch:PutMetricData\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.gone",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "gone",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "delete"
+    ],
+    "before": null,
+    "after": null,
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.same",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "same",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-same",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"*\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_assignment.owner_sub",
+   "mode": "managed",
+   "type": "azurerm_role_assignment",
+   "name": "owner_sub",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "scope": "/subscriptions/11111111-1111-1111-1111-111111111111",
+     "role_definition_name": "Owner",
+     "principal_id": "33333333-3333-3333-3333-333333333333"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_assignment.uaa_mg",
+   "mode": "managed",
+   "type": "azurerm_role_assignment",
+   "name": "uaa_mg",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "scope": "/providers/Microsoft.Management/managementGroups/acme",
+     "role_definition_id": "/providers/Microsoft.Authorization/roleDefinitions/18d7d88d-d35e-4fb5-a5c3-7773c20a72d9",
+     "principal_id": "33333333-3333-3333-3333-333333333333"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_assignment.contrib_rg",
+   "mode": "managed",
+   "type": "azurerm_role_assignment",
+   "name": "contrib_rg",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "scope": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-acme",
+     "role_definition_name": "Contributor",
+     "principal_id": "33333333-3333-3333-3333-333333333333"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_assignment.contrib_res",
+   "mode": "managed",
+   "type": "azurerm_role_assignment",
+   "name": "contrib_res",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "scope": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-acme/providers/Microsoft.Storage/storageAccounts/acmesa",
+     "role_definition_name": "Contributor",
+     "principal_id": "33333333-3333-3333-3333-333333333333"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_assignment.reader_sub",
+   "mode": "managed",
+   "type": "azurerm_role_assignment",
+   "name": "reader_sub",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "scope": "/subscriptions/11111111-1111-1111-1111-111111111111",
+     "role_definition_name": "Reader",
+     "principal_id": "33333333-3333-3333-3333-333333333333"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_assignment.owner_allowed",
+   "mode": "managed",
+   "type": "azurerm_role_assignment",
+   "name": "owner_allowed",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "scope": "/subscriptions/11111111-1111-1111-1111-111111111111",
+     "role_definition_name": "Owner",
+     "principal_id": "33333333-3333-3333-3333-333333333333",
+     "description": "tq-allow AZR001: landing-zone bootstrap identity"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_definition.god",
+   "mode": "managed",
+   "type": "azurerm_role_definition",
+   "name": "god",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-god",
+     "scope": "/subscriptions/11111111-1111-1111-1111-111111111111",
+     "permissions": [
+      {
+       "actions": [
+        "*"
+       ],
+       "not_actions": [],
+       "data_actions": [],
+       "not_data_actions": []
+      }
+     ],
+     "assignable_scopes": [
+      "/subscriptions/11111111-1111-1111-1111-111111111111"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_definition.contrib_copy",
+   "mode": "managed",
+   "type": "azurerm_role_definition",
+   "name": "contrib_copy",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-contrib",
+     "permissions": [
+      {
+       "actions": [
+        "*"
+       ],
+       "not_actions": [
+        "Microsoft.Authorization/*/Write",
+        "Microsoft.Authorization/*/Delete"
+       ]
+      }
+     ],
+     "assignable_scopes": [
+      "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-acme"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_definition.granter",
+   "mode": "managed",
+   "type": "azurerm_role_definition",
+   "name": "granter",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-granter",
+     "permissions": [
+      {
+       "actions": [
+        "Microsoft.Authorization/roleAssignments/write",
+        "*/read"
+       ]
+      }
+     ],
+     "assignable_scopes": [
+      "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-acme"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_definition.wide_write",
+   "mode": "managed",
+   "type": "azurerm_role_definition",
+   "name": "wide_write",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-vm",
+     "permissions": [
+      {
+       "actions": [
+        "Microsoft.Compute/virtualMachines/start/action"
+       ]
+      }
+     ],
+     "assignable_scopes": [
+      "/"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_role_definition.reader",
+   "mode": "managed",
+   "type": "azurerm_role_definition",
+   "name": "reader",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-reader",
+     "permissions": [
+      {
+       "actions": [
+        "*/read"
+       ]
+      }
+     ],
+     "assignable_scopes": [
+      "/subscriptions/11111111-1111-1111-1111-111111111111"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "azurerm_lighthouse_definition.msp",
+   "mode": "managed",
+   "type": "azurerm_lighthouse_definition",
+   "name": "msp",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "acme-msp",
+     "managing_tenant_id": "44444444-4444-4444-4444-444444444444",
+     "scope": "/subscriptions/11111111-1111-1111-1111-111111111111",
+     "authorization": [
+      {
+       "principal_id": "55555555-5555-5555-5555-555555555555",
+       "role_definition_id": "b24988ac-6180-42a0-ab88-20f7382dd24c"
+      }
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "google_project_iam_member.owner",
+   "mode": "managed",
+   "type": "google_project_iam_member",
+   "name": "owner",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "project": "acme-prod",
+     "role": "roles/owner",
+     "member": "user:tester@acme.example"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "google_storage_bucket_iam_binding.public",
+   "mode": "managed",
+   "type": "google_storage_bucket_iam_binding",
+   "name": "public",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "bucket": "acme-site",
+     "role": "roles/storage.objectViewer",
+     "members": [
+      "allUsers"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  },
+  {
+   "address": "google_project_iam_member.viewer",
+   "mode": "managed",
+   "type": "google_project_iam_member",
+   "name": "viewer",
+   "provider_name": "registry.terraform.io/hashicorp/x",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "project": "acme-prod",
+     "role": "roles/viewer",
+     "member": "user:tester@acme.example"
+    },
+    "after_unknown": {},
+    "before_sensitive": false,
+    "after_sensitive": {}
+   }
+  }
+ ]
+}

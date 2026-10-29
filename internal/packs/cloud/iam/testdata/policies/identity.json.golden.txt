@@ -1,0 +1,2 @@
+policies/identity.json:3 error IAM001 statement 0: Allow with Action "s3:*"; list the actions the role needs
+policies/identity.json:3 error IAM002 statement 0: Allow on Resource "*" for "s3:*"; scope the resources by ARN

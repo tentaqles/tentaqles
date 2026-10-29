@@ -1,0 +1,4 @@
+azuredeploy.json:5 error AZR001 [guid(subscription().id, 'owner')]: assigns Owner at subscription scope (the template's deployment scope); assign a narrower role at a resource group or resource
+azuredeploy.json:23 error AZR002 [guid(subscription().id, 'ops')]: custom role with actions "Microsoft.Compute/*", "Microsoft.Authorization/*"; list the operations it needs
+azuredeploy.json:23 error AZR003 [guid(subscription().id, 'ops')]: custom role grants "Microsoft.Authorization/roleAssignments/write", "Microsoft.Authorization/roleDefinitions/write": its holders can grant themselves any role
+azuredeploy.json:33 warn AZR004 [guid('acme-msp')]: grants access to a principal in a tenant outside packs.cloud.tenants (cross-tenant)
