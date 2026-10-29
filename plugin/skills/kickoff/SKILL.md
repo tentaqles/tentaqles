@@ -36,6 +36,16 @@ the human reviews it, applies it to `.tentaqles.yaml` and runs `tq allow <worksp
 `TQ_HUB_TASK` is not set, the plan has no `task`: if the planner wrote one anyway,
 reject the plan and re-run the planner without it (the gate refuses such a plan too).
 
+## Packs
+
+Before step 1, run the on-ramp step of the `pack` skill (`skills/pack/SKILL.md`,
+"On-ramp step"): `tq pack list --enabled --json` (timeout 10 s). A kickoff proposes
+which packs to enable, so for every pack, enabled or not, read every
+`skills/pack/references/onramps/<pack>-*.md` and follow its `## kickoff` section at
+the step it names (it says when the stack calls for the pack). A tq without the
+`pack` command: skip this. Reviewers: in step 7, the crew adds every reviewer that
+`tq pack crew --flags <the flags triage printed>` prints.
+
 ## 1. Branch, then PRD, planning-ready or nothing
 
 **The branch.** Choose the slug now (kebab-case from the project,

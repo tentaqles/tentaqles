@@ -1,0 +1,2 @@
+policies/github-trust.json:4 error IAM006 statement 0: GitHub OIDC sub condition is wildcarded at the repository level; name the repository (repo:<owner>/<repo>:...)
+policies/github-trust.json:19 error IAM006 statement 1: GitHub OIDC principal without a token.actions.githubusercontent.com:sub condition: any repository can assume the role

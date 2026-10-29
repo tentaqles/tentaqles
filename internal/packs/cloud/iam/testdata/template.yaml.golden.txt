@@ -1,0 +1,5 @@
+template.yaml:4 error IAM001 AdminRole: Policies[0]: statement 0: Allow with Action "*"; list the actions the role needs
+template.yaml:4 error IAM002 AdminRole: Policies[0]: statement 0: Allow on Resource "*" for "*"; scope the resources by ARN
+template.yaml:4 error IAM004 AdminRole: attaches the AWS managed policy AdministratorAccess; grant a scoped policy instead
+template.yaml:4 error IAM006 AdminRole: statement 0: trust policy with Principal "*": anyone can assume the role
+template.yaml:33 error IAM007 SiteBucketPolicy: statement 0: resource policy with Principal "*" and no condition makes the resource public

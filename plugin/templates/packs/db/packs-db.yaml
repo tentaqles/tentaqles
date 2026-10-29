@@ -1,0 +1,31 @@
+# packs.db snippet for .tentaqles.yaml (tentaqles db pack template, MIT).
+# Names only, never secrets: url_env and path_env are variable NAMES that
+# tq dotenv resolves. Proposed by kickoff for the human; an agent never edits the
+# manifest (headless: docs/privacy-manifest-proposal.yaml). Adapt the paths.
+packs:
+  db:
+    enabled: true
+    tools: [squawk, pg_prove]                 # declared => required DoD checks; drop what is not installed
+    migrations:
+      - {path: supabase/migrations, engine: postgres, migrator: supabase}
+      # - {path: db/mssql, engine: sqlserver, migrator: flyway}
+    small_tables: [public.feature_flags]      # lock rules downgrade to warn for these
+    rls:
+      exposed_schemas: [public]
+      tests: supabase/tests/database          # pgTAP files (rls-tests skill)
+    test_db:                                  # local or ephemeral only
+      url_env: TEST_DATABASE_URL
+      start: supabase start
+    drill:
+      - name: main
+        engine: postgres
+        source: {kind: file, path_env: BACKUP_DUMP_PATH}
+        verify: [public.orders, public.customers]
+        freshness: 30d
+    environments:
+      dev:
+        match: {dotenv: [.env], hosts: [localhost]}
+        migrate: auto
+      prod:
+        match: {dotenv: [.env.prod], project_refs: [aaaaaaaaaaaaaaaaaaaa]}
+        migrate: approve

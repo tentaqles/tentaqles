@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "deserialization checked in 1 file",
+  "findings": [
+    {
+      "file": "tests/test_model.py",
+      "line": 7,
+      "level": "warn",
+      "rule": "unsafe-deserialize",
+      "message": "pickle.load deserializes from a path tq cannot show is repo-relative; loading runs arbitrary code. Use safetensors or skops, torch.load(weights_only=True), or a pinned repo artifact"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+customer_id,customer_name,email,created_at
+1,tester,tester@acme.test,2026-01-05
+2,tester-2,tester2@acme.test,2026-02-11
+3,tester-3,tester3@acme.test,2026-03-20

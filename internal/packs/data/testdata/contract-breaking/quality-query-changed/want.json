@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 with breaking changes and no major version bump",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 54,
+      "level": "error",
+      "rule": "quality-loosened",
+      "message": "property orders.amount quality rule amount_positive query changed (tq cannot prove it is stricter)"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "error",
+      "rule": "version-not-bumped",
+      "message": "breaking change without a major version bump (1.2.0 -> 1.2.1); bump to 2.0.0"
+    }
+  ]
+}

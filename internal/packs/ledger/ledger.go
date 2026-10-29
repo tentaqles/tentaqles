@@ -5,7 +5,7 @@
 // granting option). No line carries the note text.
 //
 // It imports neither the hub store nor internal/packs, so the store's
-// answer path can call RecordAnswer without an import cycle.
+// answer path can append the signed answered line without an import cycle.
 package ledger
 
 import (
@@ -52,6 +52,11 @@ type Entry struct {
 	ActorKind string `json:"actor_kind,omitempty"` // human | agent | hub | terminal | other
 	Card      string `json:"card,omitempty"`
 	TS        string `json:"ts"`
+	// EvidenceHash, AskedTS and Sig sign an answered line (sign.go); an
+	// answered line also repeats Grant and ExpiresAt, under the signature.
+	EvidenceHash string `json:"evidence_hash,omitempty"`
+	AskedTS      string `json:"asked_ts,omitempty"`
+	Sig          string `json:"sig,omitempty"`
 }
 
 // Path is the ledger of pack in workspace ws.
@@ -84,11 +89,14 @@ func Append(ws string, e Entry) error {
 	if err != nil {
 		return err
 	}
-	appendMu.Lock()
-	defer appendMu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
+	release, err := lockPack(filepath.Dir(p))
+	if err != nil {
+		return err
+	}
+	defer release()
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -102,23 +110,6 @@ func Append(ws string, e Entry) error {
 		return err
 	}
 	return f.Close()
-}
-
-// RecordAnswer appends the answered line for a hub decision whose data marks
-// a pack approval (data.pack set). Decisions without data.pack are ignored
-// (nil error). The hub store calls it before acknowledging the answer; an
-// error must fail the answer.
-func RecordAnswer(ws, decisionID string, data map[string]any, choice, actorKind string, at time.Time) error {
-	pack, _ := data["pack"].(string)
-	if pack == "" {
-		return nil
-	}
-	e := Entry{Event: Answered, Decision: decisionID, Pack: pack, Choice: choice, ActorKind: actorKind, TS: at.UTC().Format(time.RFC3339)}
-	e.Action, _ = data["action"].(string)
-	e.Subject, _ = data["subject"].(string)
-	e.Target, _ = data["target"].(string)
-	e.ExpiresAt, _ = data["expires_at"].(string)
-	return Append(ws, e)
 }
 
 // ErrCorrupt is a ledger that cannot be read completely: a malformed or
@@ -199,8 +190,11 @@ type State struct {
 	Evidence                                map[string]string
 	ExpiresAt                               time.Time
 	Grant                                   string
-	Card                                    string
-	AskedAt                                 time.Time
+	// EvidenceHash is the signed evidence hash (ResolveSigned); empty for an
+	// unsigned resolution, which compares Evidence instead.
+	EvidenceHash string
+	Card         string
+	AskedAt      time.Time
 	// Status is the latest event: asked (pending), answered, consumed or expired.
 	Status    string
 	Choice    string
@@ -365,44 +359,133 @@ func Claimed(ws, pack, decision string) bool {
 // reads at most 1 MiB).
 const CompactAt = 512 << 10
 
+// LockWait bounds the wait for the ledger lock.
+var LockWait = 2 * time.Second
+
+// ErrLocked is returned when the ledger lock was not taken within LockWait.
+var ErrLocked = errors.New("ledger: locked by another tq process")
+
+// lockPack takes the pack's OS file lock (<pack>/ledger.lock: LockFileEx on
+// Windows, flock elsewhere), across processes, waiting at most LockWait.
+func lockPack(dir string) (func(), error) {
+	appendMu.Lock()
+	f, err := os.OpenFile(filepath.Join(dir, "ledger.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		appendMu.Unlock()
+		return nil, err
+	}
+	deadline := time.Now().Add(LockWait)
+	for !tryLock(f) {
+		if time.Now().After(deadline) {
+			f.Close()
+			appendMu.Unlock()
+			return nil, ErrLocked
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return func() {
+		unlock(f)
+		f.Close()
+		appendMu.Unlock()
+	}, nil
+}
+
+// ErrCompactSkipped is returned when the ledger could not be replaced this
+// time (Windows: another process has it open). Nothing is lost.
+var ErrCompactSkipped = errors.New("ledger: compaction skipped (the ledger is in use)")
+
 // Compact rewrites the pack ledger without the decisions that are finished
 // (consumed, or expired at now), so it never reaches the read cap. A
 // finished decision cannot be granted again: its claim file stays, and a
-// decision without an asked line is unknown. It writes a temp file and
-// renames it over the ledger; a corrupt ledger is left alone.
+// decision without an asked line is unknown. It holds the pack lock while it
+// reads and replaces the file, so no concurrent Append is lost; it writes a
+// fresh temp file, fsyncs it and renames it over the ledger (retrying a
+// Windows sharing violation for about 50 ms, then skipping).
 func Compact(ws, pack string, now time.Time) error {
-	es, err := Read(ws, pack)
+	p, err := Path(ws, pack)
 	if err != nil {
 		return err
 	}
-	st := Resolve(es)
-	var keep []Entry
+	dir := filepath.Dir(p)
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		return nil
+	}
+	release, err := lockPack(dir)
+	if err != nil {
+		return err
+	}
+	defer release()
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	es, err := Parse(raw)
+	if err != nil {
+		return err
+	}
+	// The signed state only (R4-6): a decision is dropped when its signed
+	// expiry passed or the keychain high-water mark retired it. Unsigned
+	// consumed and expired lines are ignored here, so a forged line cannot
+	// make compaction drop a live approval.
+	tr, err := LoadTrust(ws, pack)
+	if err != nil && !errors.Is(err, ErrNoKey) {
+		return err
+	}
+	var signedOnly []Entry
+	for _, e := range es {
+		if e.Event != Consumed && e.Event != Expired {
+			signedOnly = append(signedOnly, e)
+		}
+	}
+	st := ResolveSigned(signedOnly, tr)
+	var buf bytes.Buffer
+	kept := 0
 	for _, e := range es {
 		s := st[e.Decision]
 		if s.Used() || s.Expired(now) {
 			continue
 		}
-		keep = append(keep, e)
-	}
-	if len(keep) == len(es) {
-		return nil
-	}
-	p, _ := Path(ws, pack)
-	var buf bytes.Buffer
-	for _, e := range keep {
 		b, err := json.Marshal(e)
 		if err != nil {
 			return err
 		}
 		buf.Write(append(b, '\n'))
+		kept++
 	}
-	appendMu.Lock()
-	defer appendMu.Unlock()
-	tmp := p + ".compact"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+	if kept == len(es) {
+		return nil
+	}
+	tmp, err := os.CreateTemp(dir, "ledger-*.compact")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, p)
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	for i := 0; ; i++ {
+		err = os.Rename(name, p)
+		if err == nil {
+			return syncDir(dir)
+		}
+		if !renameRetryable(err) || i >= 10 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if renameRetryable(err) {
+		return ErrCompactSkipped
+	}
+	return err
 }
 
 // CompactIfLarge compacts the ledger when it is over CompactAt.
@@ -415,4 +498,25 @@ func CompactIfLarge(ws, pack string, now time.Time) error {
 		return Compact(ws, pack, now)
 	}
 	return nil
+}
+
+// Packs lists the packs of workspace ws that have a state directory.
+func Packs(ws string) ([]string, error) {
+	if !plain(ws) {
+		return nil, fmt.Errorf("ledger: invalid workspace name")
+	}
+	dirs, err := os.ReadDir(filepath.Join(paths.Home(), "packs", ws))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, d := range dirs {
+		if d.IsDir() && plain(d.Name()) {
+			out = append(out, d.Name())
+		}
+	}
+	return out, nil
 }

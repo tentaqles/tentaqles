@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 SQL model",
+  "findings": [
+    {
+      "file": "models/staging/stg_orders.sql",
+      "line": 1,
+      "level": "warn",
+      "rule": "select-star",
+      "message": "select * in model stg_orders: list the columns"
+    }
+  ]
+}

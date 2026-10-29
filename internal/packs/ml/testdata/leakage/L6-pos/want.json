@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 4,
+      "level": "warn",
+      "rule": "L6-timeseries-shuffle",
+      "message": "train_test_split shuffles time-ordered data; pass shuffle=False or use TimeSeriesSplit"
+    }
+  ]
+}

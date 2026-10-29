@@ -1,0 +1,8 @@
+packs:
+  data:
+    enabled: true
+    pipelines: { masking: [acme.mask_email] }
+data:
+  classes: [internal, pii]
+  paths:
+    - { table: crm.customers, classes: [pii] }

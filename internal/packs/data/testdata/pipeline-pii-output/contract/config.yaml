@@ -1,0 +1,6 @@
+packs:
+  data: { enabled: true }
+data:
+  classes: [internal, pii]
+  paths:
+    - { table: crm.customers, classes: [pii] }

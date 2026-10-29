@@ -59,7 +59,12 @@ def load_project_config(root: Path) -> tuple[dict, str]:
             cfg[key] = v.strip()
         elif v is not None:
             dropped.append(key)
-    known = {"commands", *_LIST_KEYS, *_STR_KEYS}
+    v = raw.get("pack_budget")  # seconds for `tq pack check --budget` in the definition of done
+    if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 1800:
+        cfg["pack_budget"] = v
+    elif v is not None:
+        dropped.append("pack_budget")
+    known = {"commands", "pack_budget", *_LIST_KEYS, *_STR_KEYS}
     dropped += [k for k in raw if k not in known]
     warn = ""
     if dropped:

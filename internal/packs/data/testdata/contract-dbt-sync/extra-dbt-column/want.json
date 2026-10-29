@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 contract object in sync with dbt",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 6,
+      "level": "warn",
+      "rule": "dbt-column-uncontracted",
+      "message": "dbt model fct_orders has column channel that the contract does not list"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 4,
+      "level": "error",
+      "rule": "L2-test-in-fit",
+      "message": "fit is called on \"X_test\", which looks like test, holdout or validation data (pass a validation set as eval_set= for early stopping)"
+    }
+  ]
+}

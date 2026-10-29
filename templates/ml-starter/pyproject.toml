@@ -1,0 +1,34 @@
+[project]
+name = "ml-starter"
+version = "0.1.0"
+description = "A leakage-free scikit-learn churn model with seeds, a pinned data snapshot, a model card, drift profiles and an MLflow alias promotion script"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scikit-learn>=1.4",
+    "skops>=0.10",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=14"]
+test = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = ["drift_profile"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ml_starter*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110

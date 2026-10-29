@@ -236,6 +236,18 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other)))
 		}
 	}
+	// The state directory, the hub answer and the pack config, checked at hook
+	// time against the real paths (never-disable).
+	// A guard that handled and allowed the call may name the StateDir files it
+	// verified and the command reads (a stored plan): only those exact paths,
+	// for this call only, are not counted by tq/hub-store-write.
+	var readArgs []packs.ReadArg
+	for _, o := range outcomes {
+		if o.Handled && o.Action == policy.Allow && !o.Failed {
+			readArgs = append(readArgs, o.ReadArgs...)
+		}
+	}
+	d = policy.Merge(d, stateDirDecision(call, cwd, readArgs...))
 	return applyPackOutcomes(d, ws, outcomes)
 }
 
@@ -258,6 +270,17 @@ func applyPackOutcomes(d policy.Decision, ws *resolve.Workspace, outcomes []pack
 					err = ledger.Claim(ws.Name, o.Pack, id)
 					if err == nil {
 						err = ledger.Append(ws.Name, ledger.Entry{Event: ledger.Consumed, Decision: id, Pack: o.Pack})
+					}
+					if err == nil {
+						// The keychain high-water mark: deleting the claim file or
+						// re-appending compacted lines cannot reopen this approval.
+						err = ledger.SetHighWater(ws.Name, o.Pack, id)
+					}
+					if err == nil && d.Action == policy.Ask {
+						// The hook cannot know whether an asked call runs, so the
+						// approval is consumed now (conservative); the prompt says so.
+						d = policy.Merge(d, policy.Decision{Action: policy.Ask, Matched: []*policy.Rule{{ID: o.ID, Action: policy.Ask, Source: "pack " + o.Pack,
+							Reason: "this call uses the single-use approval " + id + "; it is consumed now, even if you decline"}}})
 					}
 				}
 				if err != nil {
@@ -285,7 +308,7 @@ func applyPackOutcomes(d policy.Decision, ws *resolve.Workspace, outcomes []pack
 // is read under the hook deadline, and an invalid or slow one leaves the
 // manifest layer alone.
 func hookPackEnv(cwd string, ws *resolve.Workspace, deadline time.Time) packs.GuardEnv {
-	env := packs.GuardEnv{Config: packs.Merge(nil, nil)}
+	env := packs.GuardEnv{Config: packs.Merge(nil, nil), Cwd: cwd}
 	if ws == nil || ws.Manifest == nil {
 		return env
 	}

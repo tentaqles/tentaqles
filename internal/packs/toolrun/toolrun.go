@@ -62,7 +62,11 @@ type Spec struct {
 	Dir        string        // working directory ("" = Runner.Root)
 	Timeout    time.Duration // the check's default; the manifest's timeouts.<tool> wins
 	Env        []string      // extra KEY=VALUE pairs (never read from .env files)
-	Stdin      []byte
+	// PassEnv are more parent variable names the tool may see, besides the
+	// base allow-list (BaseEnv): a check's declared Check.Env. A declared
+	// name passes even when it looks like a secret.
+	PassEnv []string
+	Stdin   []byte
 }
 
 // Output is what the tool printed, capped at MaxOutput per stream.
@@ -73,6 +77,9 @@ type Output struct {
 	Duration                         time.Duration
 	TimedOut                         bool
 	Path, Version                    string
+	// Warnings are framework notes for the check, such as a declared
+	// secret not passed to a repo-local binary (names only, never values).
+	Warnings []string
 }
 
 // Tail returns the last n lines of stderr (stdout when stderr is empty),
@@ -162,7 +169,7 @@ func (r *Runner) Probe(pack, tool string) Probe {
 func Version(ctx context.Context, path string) string {
 	ctx, cancel := context.WithTimeout(ctx, VersionTimeout)
 	defer cancel()
-	out, _ := run(ctx, path, []string{"--version"}, "", toolEnv("", nil), nil)
+	out, _ := run(ctx, path, []string{"--version"}, "", toolEnv("", nil, nil), nil)
 	if v := ParseVersion(string(out.Stdout)); v != "" {
 		return v
 	}
@@ -231,8 +238,9 @@ func (r *Runner) Timeout(s Spec) time.Duration {
 
 // Run runs the tool with argv only. A timeout kills the whole process tree
 // and returns TimedOut; a non-zero exit is not an error (the check reads
-// ExitCode). The parent environment passes through unchanged, plus
-// DO_NOT_TRACK=1 and the tool's known telemetry switch.
+// ExitCode). The tool gets a filtered environment (toolEnv): the base
+// allow-list, the names in PassEnv, DO_NOT_TRACK=1, the tool's telemetry
+// switch and Env; never the rest of the parent environment.
 func (r *Runner) Run(ctx context.Context, s Spec) (Output, error) {
 	p := r.Probe(s.Pack, s.Tool)
 	if !p.Found {
@@ -247,13 +255,147 @@ func (r *Runner) Run(ctx context.Context, s Spec) (Output, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout(s))
 	defer cancel()
-	out, err := run(ctx, p.Path, s.Args, dir, toolEnv(s.Tool, s.Env), s.Stdin)
+	pass, dropped := s.PassEnv, []string(nil)
+	if r.RepoLocal(p) {
+		pass, dropped = withoutSecretNames(s.PassEnv)
+	}
+	out, err := run(ctx, p.Path, s.Args, dir, toolEnv(s.Tool, pass, s.Env), s.Stdin)
 	out.Path, out.Version = p.Path, p.Version
+	if len(dropped) > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("%s resolves inside the repository (%s); the declared secret variable(s) %s were not passed to it. Install the tool outside the repo or set packs.%s.tool_paths.%s in the manifest", s.Tool, p.Source, strings.Join(dropped, ", "), s.Pack, s.Tool))
+	}
 	return out, err
 }
 
-func toolEnv(tool string, extra []string) []string {
-	env := append(os.Environ(), "DO_NOT_TRACK=1")
+// FinalPath resolves a path to its final long, link-free form. The packs
+// package sets it to packs.FinalPath (handle based: junctions, symlinks and
+// 8.3 names); the default is EvalSymlinks.
+var FinalPath = func(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
+// RepoLocal reports whether the probed binary lives inside the repository
+// (the project .venv, node_modules/.bin, any path under Root, by its final
+// path too): code the repository controls. A path that cannot be resolved
+// counts as repo-local (fail closed: a declared secret is dropped).
+func (r *Runner) RepoLocal(p Probe) bool {
+	if p.Source == "venv" {
+		return true
+	}
+	if r.Root == "" || p.Path == "" || p.Source == "tool_paths" {
+		return false
+	}
+	in := func(path, root string) bool {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return false
+		}
+		return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	}
+	norm := func(s string) string {
+		s = filepath.Clean(s)
+		if runtime.GOOS == "windows" {
+			s = strings.ToLower(s)
+		}
+		return s
+	}
+	abs, _ := filepath.Abs(p.Path)
+	root, _ := filepath.Abs(r.Root)
+	if in(norm(abs), norm(root)) {
+		return true
+	}
+	fp, err1 := FinalPath(abs)
+	fr, err2 := FinalPath(root)
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	return in(norm(fp), norm(fr))
+}
+
+// credValue is a value that carries credentials in a URL or URI
+// (scheme://user:pass@host).
+var credValue = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]*:[^/\s@]*@`)
+
+// secretVar reports a variable that looks like a secret by its name or its
+// value.
+func secretVar(name, value string) bool {
+	return secretName.MatchString(name) || credValue.MatchString(value)
+}
+
+// withoutSecretNames splits declared names into those that may pass to a
+// repo-local binary and the secret-looking ones (by name, or by a
+// credential-bearing URL value) that may not.
+func withoutSecretNames(names []string) (keep, dropped []string) {
+	for _, n := range names {
+		if secretVar(n, os.Getenv(n)) {
+			dropped = append(dropped, n)
+		} else {
+			keep = append(keep, n)
+		}
+	}
+	return keep, dropped
+}
+
+// BaseEnv are the parent variables every tool sees (spec C Â§2.6, spec D
+// Â§20): the search path, the home and temp folders, the Windows system
+// variables a process needs, and the locale (LANG, LC_*).
+var BaseEnv = []string{"PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "SystemRoot", "ComSpec", "PATHEXT", "LANG"}
+
+// secretName is a variable name that looks like a credential. It never
+// passes unless a check declares it by name.
+var secretName = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSW(OR)?D|PASS$|PWD$|CREDENTIAL|AUTH|API_?KEY|ACCESS_?KEY|PRIVATE|SESSION|COOKIE|_KEY$|^KEY$|DSN|CONN(ECTION)?_?STR|_PAT$|_URL$|_URI$|^DATABASE_URL$|^(DB|DATABASE|REDIS|MONGO\w*|AMQP|RABBITMQ|KAFKA|ELASTIC\w*)_UR[LI])`)
+
+// localeValue is what a LANG or LC_* value may be (en_US.UTF-8, C, POSIX,
+// de_DE@euro); anything else is not a locale and is dropped (R5-5).
+var localeValue = regexp.MustCompile(`^[A-Za-z0-9_.@-]{0,64}$`)
+
+// testPass are names the package tests pass to the fake tool.
+var testPass []string
+
+// PassForTests adds names every tool run passes, for the fake tools of
+// other packages' tests (TQ_FAKE_*). Only _test.go files call it; it
+// returns the restore function.
+func PassForTests(names ...string) (restore func()) {
+	prev := testPass
+	testPass = append(append([]string(nil), prev...), names...)
+	return func() { testPass = prev }
+}
+
+// toolEnv is the environment of a tool run: the parent's BaseEnv and LC_*
+// variables, the names in pass, DO_NOT_TRACK=1, the tool's telemetry
+// switches, then extra (explicit KEY=VALUE pairs). A base or LC_* name that
+// looks like a secret is dropped; a name in pass is the check's explicit
+// declaration and passes.
+func toolEnv(tool string, pass, extra []string) []string {
+	allowed := map[string]bool{}
+	for _, n := range BaseEnv {
+		allowed[strings.ToUpper(n)] = true
+	}
+	declared := map[string]bool{}
+	for _, n := range append(append([]string(nil), pass...), testPass...) {
+		declared[strings.ToUpper(n)] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			continue
+		}
+		u := strings.ToUpper(k)
+		switch {
+		case declared[u]:
+		case allowed[u] && !secretVar(k, v) && (u != "LANG" || localeValue.MatchString(v)):
+		case strings.HasPrefix(u, "LC_") && !secretVar(k, v) && localeValue.MatchString(v):
+		default:
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "DO_NOT_TRACK=1")
 	env = append(env, Telemetry[tool]...)
 	return append(env, extra...)
 }

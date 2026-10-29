@@ -1,0 +1,93 @@
+# ODCS v3.0.2 data contract for the fct_orders mart (synthetic acme data).
+# Breaking changes (a removed or renamed property, a narrowed type, a looser
+# required/unique, a loosened quality rule or SLA) need a major version bump.
+apiVersion: v3.0.2
+kind: DataContract
+id: acme-orders-fct-orders
+name: fct_orders
+version: 1.0.0
+status: active
+domain: sales
+tenant: acme
+description:
+  purpose: Orders of known customers, for the acme finance dashboard.
+  usage: Join on customer_id; amount is in currency units.
+  limitations: Updates later than 3 days after the last load are not merged.
+customProperties:
+  - property: dbtModel
+    value: fct_orders
+schema:
+  - name: fct_orders
+    physicalName: fct_orders
+    logicalType: object
+    physicalType: table
+    description: One row per order.
+    customProperties:
+      - property: dbtModel
+        value: fct_orders
+    quality:
+      - type: library
+        rule: rowCount
+        mustBeGreaterThan: 0
+        name: The fact is never empty
+    properties:
+      - name: order_id
+        logicalType: integer
+        physicalType: integer
+        description: The order key.
+        required: true
+        unique: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        classification: internal
+        quality:
+          - type: library
+            rule: duplicateCount
+            mustBeLessThan: 1
+            unit: rows
+      - name: customer_id
+        logicalType: integer
+        physicalType: integer
+        description: The customer who placed the order.
+        required: true
+        classification: internal
+      - name: order_date
+        logicalType: date
+        physicalType: date
+        description: The day the order was placed.
+        required: true
+        classification: internal
+      - name: status
+        logicalType: string
+        physicalType: varchar
+        description: placed, shipped, completed or returned.
+        required: true
+        classification: internal
+      - name: amount
+        logicalType: number
+        physicalType: numeric(12,2)
+        description: The order amount.
+        required: false
+        classification: internal
+      - name: updated_at
+        logicalType: date
+        physicalType: timestamp
+        description: When the order last changed.
+        required: true
+        classification: internal
+slaDefaultElement: fct_orders.updated_at
+slaProperties:
+  - property: latency
+    value: 1
+    unit: d
+  - property: frequency
+    value: 1
+    unit: d
+servers:
+  - server: acme-dev
+    type: postgres
+    environment: dev
+    host: localhost
+    port: 5432
+    database: acme
+    schema: analytics_dev

@@ -1,0 +1,12 @@
+{
+	"name": "TopCustomers",
+	"properties": {
+		"content": {
+			"query": "SELECT TOP 10 customer_id FROM dbo.customers",
+			"metadata": { "language": "sql" },
+			"currentConnection": { "databaseName": "acmepool", "poolName": "acmepool" },
+			"resultLimit": 5000
+		},
+		"type": "SqlQuery"
+	}
+}

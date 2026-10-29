@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "run tracking checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 1,
+      "level": "warn",
+      "rule": "run-tracking",
+      "message": "this training run logs no params and metrics (mlflow.autolog or mlflow.log_params + log_metrics, wandb, dvclive, or a run config written next to the metrics)"
+    }
+  ]
+}

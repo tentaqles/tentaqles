@@ -119,12 +119,14 @@ func (s *Store) Decision(id string) (Decision, error) {
 
 // UpsertDecision mirrors one gate record keyed by the gate's id. A pending row flips to answered once;
 // an answered row never changes again.
-func (s *Store) UpsertDecision(d Decision) (MirrorResult, error) { return s.upsertDecision(d, false) }
+func (s *Store) UpsertDecision(d Decision) (MirrorResult, error) {
+	return s.upsertDecision(d, false, nil)
+}
 
 // upsertDecision is UpsertDecision; viaHub is set only by AskHub,
 // AskHubQuestion and AnswerHub. A hub-owned row (a permission ask, a pack
 // approval) is never answered by a mirrored record.
-func (s *Store) upsertDecision(d Decision, viaHub bool) (MirrorResult, error) {
+func (s *Store) upsertDecision(d Decision, viaHub bool, sign PackSigner) (MirrorResult, error) {
 	cur, err := s.Decision(d.ID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return MirrorResult{}, err
@@ -186,9 +188,17 @@ func (s *Store) upsertDecision(d Decision, viaHub bool) (MirrorResult, error) {
 		return MirrorResult{}, err
 	}
 	if n, _ := res.RowsAffected(); n == 1 && cur.PackApproval() != "" {
-		if err := ledger.RecordAnswer(s.Workspace, d.ID, cur.Data, d.Choice, answerActorKind(d.Actor), time.Now()); err != nil {
+		if sign == nil {
 			tx.Rollback()
-			return MirrorResult{}, fmt.Errorf("pack approval %s: the ledger write failed (%v); the answer was not recorded, retry", d.ID, err)
+			return MirrorResult{}, ErrPackAnswer
+		}
+		e, err := sign(cur.Shown(), d.ID, d.Choice, answerActorKind(d.Actor), time.Now().UTC().Format(time.RFC3339Nano))
+		if err == nil {
+			err = ledger.Append(s.Workspace, e)
+		}
+		if err != nil {
+			tx.Rollback()
+			return MirrorResult{}, fmt.Errorf("pack approval %s: the ledger write failed (%w); the answer was not recorded, retry", d.ID, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -211,7 +221,7 @@ func (s *Store) logAnswer(d Decision) error {
 func (s *Store) AskHub(cardID, runID, slug, text string, options []string, data map[string]any) (Decision, error) {
 	d := Decision{ID: NewID("d"), CardID: cardID, RunID: runID, Slug: slug, Kind: KindPermission, Text: text,
 		Options: options, Status: DecisionPending, AskedAt: Now(), Data: data}
-	if _, err := s.upsertDecision(d, true); err != nil {
+	if _, err := s.upsertDecision(d, true, nil); err != nil {
 		return Decision{}, err
 	}
 	return s.Decision(d.ID)
@@ -222,13 +232,51 @@ func (s *Store) AskHub(cardID, runID, slug, text string, options []string, data 
 func (s *Store) AskHubQuestion(cardID, runID, text string) (Decision, error) {
 	d := Decision{ID: NewID("d"), CardID: cardID, RunID: runID, Kind: KindQuestion, Text: text,
 		Options: []string{"answer", "stop"}, Status: DecisionPending, AskedAt: Now(), Data: map[string]any{hubAsked: true}}
-	if _, err := s.upsertDecision(d, true); err != nil {
+	if _, err := s.upsertDecision(d, true, nil); err != nil {
 		return Decision{}, err
 	}
 	return s.Decision(d.ID)
 }
 
+// PackSigner builds the signed answered ledger line of a pack approval (the
+// human answer path's ledger.AnswerSigner). shown is the decision as this
+// store holds it, which is what the human was shown: the signer refuses
+// unless the ledger's asked line matches it.
+type PackSigner func(shown ledger.Shown, decisionID, choice, actorKind, ts string) (ledger.Entry, error)
+
+// Shown is a pack approval as the board and tq hub answer display it.
+func (d Decision) Shown() ledger.Shown {
+	str := func(k string) string { s, _ := d.Data[k].(string); return s }
+	s := ledger.Shown{Pack: d.PackApproval(), Action: str("action"), Subject: str("subject"), Target: str("target"),
+		ExpiresAt: str("expires_at"), Evidence: map[string]string{}}
+	if len(d.Options) > 0 {
+		s.Grant = d.Options[0]
+	}
+	if ev, ok := d.Data["evidence"].(map[string]any); ok {
+		for k, v := range ev {
+			s.Evidence[k], _ = v.(string)
+		}
+	}
+	return s
+}
+
+// ErrPackAnswer refuses an answer to a pack approval that does not come
+// through AnswerPackApproval (the human, TTY-checked answer path).
+var ErrPackAnswer = errors.New("a pack approval is answered by a human at a terminal with tq hub answer; it cannot be answered here")
+
+// AnswerPackApproval answers a pack approval with a signed ledger line.
+func (s *Store) AnswerPackApproval(id, choice, note, actor string, sign PackSigner) (Decision, error) {
+	if sign == nil {
+		return Decision{}, ErrPackAnswer
+	}
+	return s.answerHub(id, choice, note, actor, sign)
+}
+
 func (s *Store) AnswerHub(id, choice, note, actor string) (Decision, error) {
+	return s.answerHub(id, choice, note, actor, nil)
+}
+
+func (s *Store) answerHub(id, choice, note, actor string, sign PackSigner) (Decision, error) {
 	d, err := s.Decision(id)
 	if err != nil {
 		return d, err
@@ -242,7 +290,10 @@ func (s *Store) AnswerHub(id, choice, note, actor string) (Decision, error) {
 	if !slices.Contains(d.Options, choice) {
 		return d, fmt.Errorf("choice must be one of %s", strings.Join(d.Options, ", "))
 	}
-	if _, err := s.upsertDecision(Decision{ID: id, Status: DecisionAnswered, Choice: choice, Note: note, Actor: actor, AnsweredAt: Now()}, true); err != nil {
+	if d.PackApproval() != "" && sign == nil {
+		return d, ErrPackAnswer
+	}
+	if _, err := s.upsertDecision(Decision{ID: id, Status: DecisionAnswered, Choice: choice, Note: note, Actor: actor, AnsweredAt: Now()}, true, sign); err != nil {
 		return d, err
 	}
 	return s.Decision(id)

@@ -10,6 +10,7 @@ import "strings"
 var neverDisable = map[string]bool{
 	"tq/hub-store-write":    true,
 	"tq/pack-config-change": true,
+	"tq/human-answer":       true,
 }
 
 // NeverDisable reports whether id ignores guard.disable and guard.actions.

@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 SQL model",
+  "findings": [
+    {
+      "file": "models/marts/fct_orders.sql",
+      "line": 3,
+      "level": "error",
+      "rule": "hardcoded-relation",
+      "message": "model fct_orders reads {{ var('db') }}.raw.customers as a literal: use ref() or source()"
+    }
+  ]
+}

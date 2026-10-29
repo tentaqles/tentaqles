@@ -1,0 +1,80 @@
+{
+  "schema": "tq.packs/v1",
+  "workspace": "acme",
+  "config_hash": "sha256:d72e19dd77287865cfc8b1ecfa280c6b7892182c8a06d05fc4b0be1031a8013c",
+  "packs": [
+    {
+      "name": "data",
+      "enabled": true,
+      "tools": [
+        "sqlfluff"
+      ],
+      "config": {
+        "baseline": "",
+        "enabled": true,
+        "example_paths": [
+          "models/"
+        ],
+        "timeouts": {},
+        "tool_paths": {},
+        "tools": [
+          "sqlfluff"
+        ]
+      },
+      "checks": [
+        {
+          "id": "data/example-panic",
+          "kind": "builtin",
+          "required": true
+        },
+        {
+          "id": "data/example-select-star",
+          "kind": "builtin",
+          "required": true
+        },
+        {
+          "id": "data/example-slow",
+          "kind": "builtin",
+          "required": true
+        },
+        {
+          "id": "data/example-sqlfluff",
+          "kind": "external",
+          "tool": "sqlfluff",
+          "required": true
+        },
+        {
+          "id": "data/example-warn",
+          "kind": "builtin",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "ml",
+      "enabled": true,
+      "tools": [],
+      "config": {
+        "baseline": "",
+        "enabled": true,
+        "timeouts": {},
+        "tool_paths": {},
+        "tools": []
+      },
+      "checks": [
+        {
+          "id": "ml/example-dvc",
+          "kind": "external",
+          "tool": "dvc",
+          "required": false
+        },
+        {
+          "id": "ml/example-ruff",
+          "kind": "external",
+          "tool": "ruff",
+          "required": false
+        }
+      ]
+    }
+  ]
+}

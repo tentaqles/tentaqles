@@ -1,0 +1,27 @@
+{
+  "status": "fail",
+  "detail": "seeds checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 6,
+      "level": "error",
+      "rule": "random-state",
+      "message": "train_test_split is built without random_state"
+    },
+    {
+      "file": "train.py",
+      "line": 7,
+      "level": "error",
+      "rule": "random-state",
+      "message": "KFold is built without random_state"
+    },
+    {
+      "file": "train.py",
+      "line": 8,
+      "level": "error",
+      "rule": "random-state",
+      "message": "RandomForestClassifier is built without random_state"
+    }
+  ]
+}

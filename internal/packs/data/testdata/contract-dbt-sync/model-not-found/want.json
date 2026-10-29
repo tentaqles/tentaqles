@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contract object mapped to dbt, 1 mismatch",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 10,
+      "level": "error",
+      "rule": "dbt-model-missing",
+      "message": "dbt model fct_missing has no YAML entry under the model-paths of the repo root"
+    }
+  ]
+}

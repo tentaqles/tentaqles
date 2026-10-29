@@ -1,0 +1,97 @@
+{
+  "created_at": "2026-10-28T00:00:00Z",
+  "features": {
+    "monthly_spend": {
+      "counts": [
+        200,
+        200,
+        199,
+        201,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "edges": [
+        10.01,
+        14.378,
+        18.706,
+        22.87,
+        32.736,
+        36.885,
+        41.902,
+        51.353,
+        55.858,
+        60.442,
+        64.98
+      ],
+      "type": "numeric"
+    },
+    "plan": {
+      "counts": {
+        "basic": 693,
+        "plus": 650,
+        "pro": 657
+      },
+      "hashed": false,
+      "type": "categorical"
+    },
+    "region": {
+      "counts": {
+        "east": 472,
+        "north": 497,
+        "south": 518,
+        "west": 513
+      },
+      "hashed": false,
+      "type": "categorical"
+    },
+    "support_tickets": {
+      "counts": [
+        1271,
+        470,
+        259
+      ],
+      "edges": [
+        0.0,
+        1.0,
+        2.0,
+        7.0
+      ],
+      "type": "numeric"
+    },
+    "tenure_days": {
+      "counts": [
+        196,
+        202,
+        202,
+        199,
+        201,
+        199,
+        201,
+        200,
+        200,
+        200
+      ],
+      "edges": [
+        1.0,
+        43.0,
+        97.0,
+        152.7,
+        211.0,
+        286.5,
+        383.0,
+        500.3,
+        654.2,
+        940.2,
+        3111.0
+      ],
+      "type": "numeric"
+    }
+  },
+  "rows": 2000,
+  "schema": "tq.drift-profile/v1",
+  "source": "churn-train"
+}

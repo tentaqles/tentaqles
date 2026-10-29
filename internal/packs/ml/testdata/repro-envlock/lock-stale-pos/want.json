@@ -1,0 +1,12 @@
+{
+  "status": "fail",
+  "detail": "environment lock checked for 1 manifest",
+  "findings": [
+    {
+      "file": "pyproject.toml",
+      "level": "error",
+      "rule": "lock-stale",
+      "message": "pyproject.toml dependencies changed but uv.lock did not; re-lock and commit it"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 contract, no breaking change",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 39,
+      "level": "warn",
+      "rule": "enum-value-added",
+      "message": "property orders.status gained 1 enum value"
+    }
+  ]
+}

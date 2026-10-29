@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 6,
+      "level": "warn",
+      "rule": "L8-torch-eval",
+      "message": "an evaluation loop over val_loader runs without model.eval() and torch.no_grad()/inference_mode()"
+    }
+  ]
+}

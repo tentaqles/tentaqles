@@ -18,6 +18,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs/scan"
 	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
 )
 
@@ -205,6 +206,7 @@ func isolate(t testing.TB) string {
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	keyring.MockInit() // never the real OS keychain in tests
 	return home
 }
 

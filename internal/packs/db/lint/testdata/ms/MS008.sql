@@ -1,0 +1,7 @@
+-- want: MS008:error:3
+SET LOCK_TIMEOUT 5000
+BEGIN TRANSACTION
+ALTER TABLE dbo.Orders ADD Note nvarchar(50) NULL
+GO
+ALTER TABLE dbo.Orders ADD Memo nvarchar(50) NULL
+COMMIT
