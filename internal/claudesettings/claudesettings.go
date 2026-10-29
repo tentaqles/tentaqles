@@ -31,6 +31,9 @@ type Managed struct {
 	Ask         []string
 	Env         map[string]string
 	StatusLine  map[string]any // nil: leave the status line alone
+	// SkipDangerousPrompt writes skipDangerousModePermissionPrompt: true (the
+	// claude launcher always starts in bypass, spec E §8.1); false removes it.
+	SkipDangerousPrompt bool
 }
 
 // Owned records what tq wrote, so the next render can take it back.
@@ -96,17 +99,24 @@ func ModeFor(m string) string {
 // Desired computes the managed settings for a workspace manifest. tqExe is
 // the tq binary the status line should call ("" to leave it alone).
 // bypassAllowed mirrors `tq allow --bypass`: without it a manifest asking for
-// bypass gets acceptEdits, exactly as `tq run` does.
+// bypass gets acceptEdits. defaultMode applies to sessions started outside
+// the launcher (IDE, desktop, the hub runner); `tq run` and the claude shell
+// function always start in bypass (spec E §8.1).
 func Desired(m *manifest.Manifest, bypassAllowed bool, tqExe string) Managed {
 	mode := ModeFor(m.Claude.PermissionMode)
 	if mode == "bypassPermissions" && !bypassAllowed {
 		mode = "acceptEdits"
 	}
 	want := Managed{
-		DefaultMode: mode,
-		Allow:       append([]string{}, baselineAllow...),
-		Deny:        append([]string{}, baselineDeny...),
-		Env:         map[string]string{},
+		DefaultMode:         mode,
+		Allow:               append([]string{}, baselineAllow...),
+		Deny:                append([]string{}, baselineDeny...),
+		Env:                 map[string]string{},
+		SkipDangerousPrompt: true,
+	}
+	if gitHistoryLoosened(m.Guard) {
+		want.Deny = minus(want.Deny, []string{ghRepoDeleteEntry})
+		want.Ask = append(want.Ask, ghRepoDeleteEntry)
 	}
 	for k, v := range baselineEnv {
 		want.Env[k] = v
@@ -119,8 +129,9 @@ func Desired(m *manifest.Manifest, bypassAllowed bool, tqExe string) Managed {
 	for k, v := range m.Claude.Env {
 		want.Env[k] = v
 	}
-	// A deny always wins over an allow for the same entry.
+	// A deny always wins over an allow or an ask for the same entry.
 	want.Allow = minus(want.Allow, want.Deny)
+	want.Ask = minus(want.Ask, want.Deny)
 	if tqExe != "" {
 		want.StatusLine = map[string]any{
 			"type":    "command",
@@ -158,8 +169,13 @@ func Apply(current map[string]any, want Managed, prev Owned) (map[string]any, Ow
 		perms["defaultMode"] = want.DefaultMode
 	}
 	next["permissions"] = perms
-	// tq manages the permission posture; this flag only hides the bypass warning.
-	delete(next, "skipDangerousModePermissionPrompt")
+	// The flag only hides Claude's bypass warning; the launcher always starts
+	// in bypass, so tq renders it, and removes it when asked not to.
+	if want.SkipDangerousPrompt {
+		next["skipDangerousModePermissionPrompt"] = true
+	} else {
+		delete(next, "skipDangerousModePermissionPrompt")
+	}
 
 	env, _ := next["env"].(map[string]any)
 	if env == nil {
@@ -251,8 +267,13 @@ func summarize(cur, next map[string]any) []string {
 			out = append(out, fmt.Sprintf("permissions.%s: -%d (%s)", k, len(rm), strings.Join(rm, ", ")))
 		}
 	}
-	if _, had := cur["skipDangerousModePermissionPrompt"]; had {
+	_, had := cur["skipDangerousModePermissionPrompt"]
+	_, has := next["skipDangerousModePermissionPrompt"]
+	switch {
+	case had && !has:
 		out = append(out, "skipDangerousModePermissionPrompt: removed")
+	case !had && has:
+		out = append(out, "skipDangerousModePermissionPrompt: true")
 	}
 	if !reflect.DeepEqual(normalize(cur["env"]), normalize(next["env"])) {
 		out = append(out, "env: updated")
