@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 incremental model",
+  "findings": [
+    {
+      "file": "models/marts/fct_events.sql",
+      "line": 4,
+      "level": "warn",
+      "rule": "incremental-no-lookback",
+      "message": "incremental model fct_events filters on max() with no lookback; late rows are dropped"
+    }
+  ]
+}

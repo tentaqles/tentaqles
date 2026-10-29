@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 SQL model",
+  "findings": [
+    {
+      "file": "models/marts/fct_orders.sql",
+      "line": 1,
+      "level": "error",
+      "rule": "select-star",
+      "message": "select * in contracted model fct_orders: list the columns the contract promises"
+    }
+  ]
+}

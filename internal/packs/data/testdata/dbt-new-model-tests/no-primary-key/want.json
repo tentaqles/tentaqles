@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 new model",
+  "findings": [
+    {
+      "file": "models/staging/_staging.yml",
+      "line": 3,
+      "level": "error",
+      "rule": "missing-primary-key",
+      "message": "new model stg_events has no identifiable primary key: mark it with constraints: [{type: primary_key}], or name it id or stg_events_id, and test it with unique + not_null"
+    }
+  ]
+}

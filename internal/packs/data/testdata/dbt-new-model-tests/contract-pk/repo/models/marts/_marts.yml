@@ -1,0 +1,8 @@
+version: 2
+models:
+  - name: fct_orders
+    description: Orders fact.
+    columns:
+      - name: order_date
+      - name: order_ref
+        data_tests: [unique, not_null]
