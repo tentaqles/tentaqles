@@ -39,11 +39,27 @@ const (
 )
 
 // Telemetry holds the known telemetry switches added to a tool's
-// environment, besides DO_NOT_TRACK=1 for every tool. dbt Core reads
-// DBT_SEND_ANONYMOUS_USAGE_STATS; dbt v2 / the Fusion engine reads
-// DBT_ENGINE_SEND_ANONYMOUS_USAGE_STATS (docs.getdbt.com usage-stats).
+// environment (its runs and its version probe), besides DO_NOT_TRACK=1 for
+// every tool. Each is confirmed in the tool's docs or source:
+//   - dbt Core reads DBT_SEND_ANONYMOUS_USAGE_STATS; dbt v2 / the Fusion
+//     engine reads DBT_ENGINE_SEND_ANONYMOUS_USAGE_STATS (usage-stats);
+//   - tflint --version checks GitHub for a newer release unless
+//     TFLINT_DISABLE_VERSION_CHECK=1 (user guide, environment variables);
+//   - trivy sends telemetry and checks check.trivy.dev for updates unless
+//     --disable-telemetry and --skip-version-check, which it also reads as
+//     TRIVY_* variables (guide, telemetry);
+//   - dvc sends usage analytics unless DVC_NO_ANALYTICS is set (user
+//     guide, analytics);
+//   - dagster uploads telemetry unless DAGSTER_DISABLE_TELEMETRY is set
+//     (any value; dagster's telemetry_upload).
+//
+// checkov is run with --skip-download, so it fetches nothing.
 var Telemetry = map[string][]string{
-	"dbt": {"DBT_SEND_ANONYMOUS_USAGE_STATS=false", "DBT_ENGINE_SEND_ANONYMOUS_USAGE_STATS=false"},
+	"dbt":     {"DBT_SEND_ANONYMOUS_USAGE_STATS=false", "DBT_ENGINE_SEND_ANONYMOUS_USAGE_STATS=false"},
+	"tflint":  {"TFLINT_DISABLE_VERSION_CHECK=1"},
+	"trivy":   {"TRIVY_DISABLE_TELEMETRY=true", "TRIVY_SKIP_VERSION_CHECK=true"},
+	"dvc":     {"DVC_NO_ANALYTICS=1"},
+	"dagster": {"DAGSTER_DISABLE_TELEMETRY=1"},
 }
 
 // Probe is where a tool was found and its version.
@@ -169,11 +185,19 @@ func (r *Runner) Probe(pack, tool string) Probe {
 func Version(ctx context.Context, path string) string {
 	ctx, cancel := context.WithTimeout(ctx, VersionTimeout)
 	defer cancel()
-	out, _ := run(ctx, path, []string{"--version"}, "", toolEnv("", nil, nil), nil)
+	// the tool's own telemetry switches apply to the probe too
+	out, _ := run(ctx, path, []string{"--version"}, "", toolEnv(probeTool(path), nil, nil), nil)
 	if v := ParseVersion(string(out.Stdout)); v != "" {
 		return v
 	}
 	return ParseVersion(string(out.Stderr))
+}
+
+// probeTool is the Telemetry key of a tool path: its base name, lower case,
+// without .exe.
+func probeTool(path string) string {
+	b := strings.ToLower(filepath.Base(path))
+	return strings.TrimSuffix(b, ".exe")
 }
 
 var versionRe = regexp.MustCompile(`(\d+)\.(\d+)(?:\.(\d+))?`)

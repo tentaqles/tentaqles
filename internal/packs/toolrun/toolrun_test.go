@@ -27,6 +27,15 @@ func TestMain(m *testing.M) {
 
 func fakeTool(mode string) {
 	args := os.Args[1:]
+	if mode == "versiontelemetry" && len(args) == 1 && args[0] == "--version" {
+		// the version probe sees the tool's telemetry switch
+		if os.Getenv("TFLINT_DISABLE_VERSION_CHECK") == "1" {
+			fmt.Println("TFLint version 0.53.0")
+		} else {
+			fmt.Println("TFLint version 0.0.1")
+		}
+		os.Exit(0)
+	}
 	if len(args) == 1 && args[0] == "--version" {
 		fmt.Println("faketool, version " + os.Getenv("TQ_FAKE_VERSION"))
 		os.Exit(0)
