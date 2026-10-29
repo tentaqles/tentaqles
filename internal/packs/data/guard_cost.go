@@ -95,7 +95,8 @@ func bqDryRun(args []string) bool {
 
 func checkBQUnbounded(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 	cs := costOf(g.Settings())
-	if !cs.Engine(engBigQuery) || !strings.Contains(strings.ToLower(call.Command), "bq") {
+	low := strings.ToLower(call.Command)
+	if !cs.Engine(engBigQuery) || (!strings.Contains(low, "bq") && !costMayNest(low)) {
 		return policy.Allow, "", false
 	}
 	limit, hasCap := cs.Cap(engBigQuery, "max_bytes")
@@ -104,7 +105,11 @@ func checkBQUnbounded(call policy.ToolCall, g packs.GuardCtx) (policy.Action, st
 		suggest = fmt.Sprintf("--maximum_bytes_billed=%.0f", limit)
 	}
 	var v costVerdict
-	for _, seg := range costSegments(call.Command) {
+	segs, opaque := costSegmentsDeep(call.Command)
+	if opaque && costNamesTool(low, "bq") {
+		v.add(policy.Ask, "a nested shell command the guard cannot read names bq; confirm it carries --maximum_bytes_billed")
+	}
+	for _, seg := range segs {
 		i := seg.find("bq")
 		if i < 0 {
 			continue
@@ -150,6 +155,11 @@ func snowflakeResize(text string, cs costSettings, v *costVerdict) {
 	for _, m := range whStmtRe.FindAllStringSubmatch(text, 50) {
 		sz := whSizeRe.FindStringSubmatch(m[2])
 		if sz == nil {
+			if strings.Contains(strings.ToLower(m[2]), "warehouse_size") {
+				// a size the guard cannot read: never allow it
+				v.add(policy.Ask, "sets a Snowflake WAREHOUSE_SIZE the guard cannot read; confirm the size")
+				continue
+			}
 			if strings.EqualFold(m[1], "CREATE") {
 				v.add(policy.Ask, "creates a Snowflake warehouse; confirm its size and auto-suspend")
 			}
@@ -175,8 +185,7 @@ func snowQueries(seg costSegment) ([]string, bool) {
 	}
 	if i := seg.find("snow"); i >= 0 {
 		args := seg.after(i)
-		pos := costPositional(args)
-		if len(pos) > 0 && pos[0] == "sql" {
+		if costSubPath(args, snowValueFlags, snowGroups) != nil {
 			return costFlagValues(args, "-q", "--query"), true
 		}
 	}
@@ -204,7 +213,7 @@ func costIntFlag(args []string, names ...string) (int, bool, bool) {
 
 // databricksResize judges clusters create|edit|resize and warehouses create|edit.
 func databricksResize(args []string, cs costSettings, v *costVerdict) {
-	pos := costPositional(args)
+	pos := costSubPath(args, dbxValueFlags, dbxGroups)
 	if len(pos) < 2 {
 		return
 	}
@@ -352,15 +361,25 @@ func checkWarehouseResize(call policy.ToolCall, g packs.GuardCtx) (policy.Action
 	var v costVerdict
 	if call.IsMCP() {
 		if cs.Engine(engSnowflake) {
-			snowflakeResize(call.Content, cs, &v)
+			// The input is JSON: judge its decoded strings, so a \n or \t
+			// escape in a multi-line statement cannot hide WAREHOUSE_SIZE.
+			for _, s := range costMCPStrings(call.Content) {
+				snowflakeResize(s, cs, &v)
+			}
 		}
 		return v.result()
 	}
 	low := strings.ToLower(call.Command)
-	if !strings.Contains(low, "snow") && !strings.Contains(low, "databricks") && !strings.Contains(low, "az") {
+	if !strings.Contains(low, "snow") && !strings.Contains(low, "databricks") && !strings.Contains(low, "az") && !costMayNest(low) {
 		return policy.Allow, "", false
 	}
-	for _, seg := range costSegments(call.Command) {
+	segs, opaque := costSegmentsDeep(call.Command)
+	if opaque && ((cs.Engine(engSnowflake) && (costNamesTool(low, "snow") || costNamesTool(low, "snowsql"))) ||
+		(cs.Engine(engDatabricks) && costNamesTool(low, "databricks")) ||
+		((cs.Engine(engSynapse) || cs.Engine(engFabric)) && costNamesTool(low, "az"))) {
+		v.add(policy.Ask, "a nested shell command the guard cannot read names a warehouse CLI; confirm the compute size")
+	}
+	for _, seg := range segs {
 		if cs.Engine(engSnowflake) {
 			if qs, ok := snowQueries(seg); ok {
 				for _, q := range qs {
@@ -375,7 +394,7 @@ func checkWarehouseResize(call policy.ToolCall, g packs.GuardCtx) (policy.Action
 		}
 		if i := seg.find("az"); i >= 0 {
 			args := seg.after(i)
-			pos := costPositional(args)
+			pos := costSubPath(args, azValueFlags, azGroups)
 			if cs.Engine(engSynapse) {
 				synapseResize(pos, args, cs, &v)
 			}
@@ -403,30 +422,60 @@ func costUnquoted(q string) string { return costQuotedRe.ReplaceAllString(q, "''
 func checkWarehouseQuery(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 	cs := costOf(g.Settings())
 	low := strings.ToLower(call.Command)
-	if !strings.Contains(low, "snow") && !strings.Contains(low, "psql") && !strings.Contains(low, "databricks") && !strings.Contains(low, "sqlcmd") {
+	if !strings.Contains(low, "snow") && !strings.Contains(low, "psql") && !strings.Contains(low, "databricks") && !strings.Contains(low, "sqlcmd") && !costMayNest(low) {
 		return policy.Allow, "", false
 	}
 	var v costVerdict
-	sfTimeout := strings.Contains(low, "statement_timeout_in_seconds")
-	pgTimeout := strings.Contains(low, "statement_timeout")
 	sf, pg, dbx := cs.Engine(engSnowflake), cs.Engine(engPostgres), cs.Engine(engDatabricks)
-	for _, seg := range costSegments(call.Command) {
-		if sf && !sfTimeout {
+	segs, opaque := costSegmentsDeep(call.Command)
+	if opaque && ((sf && (costNamesTool(low, "snow") || costNamesTool(low, "snowsql"))) || (pg && costNamesTool(low, "psql")) ||
+		(dbx && costNamesTool(low, "databricks")) || costNamesTool(low, "sqlcmd")) {
+		v.add(policy.Ask, "a nested shell command the guard cannot read runs a warehouse query; confirm it is bounded")
+	}
+	// pgEnv is a PGOPTIONS statement timeout exported by an earlier segment
+	// (export PGOPTIONS=…, $env:PGOPTIONS = …, set PGOPTIONS=…).
+	pgEnv := false
+	for _, seg := range segs {
+		if sf {
 			if qs, ok := snowQueries(seg); ok {
+				// One snow/snowsql call is one session: the timeout must be
+				// set in it, before the query, to a non-zero value.
+				bounded := false
 				for _, q := range qs {
-					q = costUnquoted(q)
-					if costSelectRe.MatchString(q) && !costLimitRe.MatchString(q) {
-						v.add(policy.Ask, "Snowflake query with no statement timeout and no LIMIT: add ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS=<s>; in the same command, or a LIMIT")
+					for _, st := range costStatements(q) {
+						if set, n := costTimeoutSet(sfTimeoutRe, sfTimeoutAnyRe, st); set {
+							bounded = n
+							continue
+						}
+						if !bounded && costUnbounded(st) {
+							v.add(policy.Ask, "Snowflake query with no statement timeout and no LIMIT: add ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS=<s>; in the same command, or a LIMIT")
+						}
 					}
 				}
 			}
 		}
-		if pg && !pgTimeout {
+		if pg {
 			if i := seg.find("psql"); i >= 0 {
+				bounded := pgEnv
+				if set, n := costPGOptions(strings.Join(seg.Words[:i], " ")); set {
+					bounded = n
+				}
 				for _, q := range costFlagValues(seg.after(i), "-c", "--command") {
-					q = costUnquoted(q)
-					if costSelectRe.MatchString(q) && !costLimitRe.MatchString(q) {
-						v.add(policy.Ask, "Postgres query with no statement timeout and no LIMIT: add -c \"SET statement_timeout = '60s'\" before it, PGOPTIONS='-c statement_timeout=60000', or a LIMIT")
+					for _, st := range costStatements(q) {
+						if set, n := costTimeoutSet(pgTimeoutRe, pgTimeoutAnyRe, st); set {
+							bounded = n
+							continue
+						}
+						if !bounded && costUnbounded(st) {
+							v.add(policy.Ask, "Postgres query with no statement timeout and no LIMIT: add -c \"SET statement_timeout = '60s'\" before it, PGOPTIONS='-c statement_timeout=60000', or a LIMIT")
+						}
+					}
+				}
+			} else if len(seg.Words) > 0 {
+				first := strings.ToLower(seg.Words[0])
+				if first == "export" || first == "set" || strings.HasPrefix(first, "$env:pgoptions") {
+					if set, n := costPGOptions(strings.Join(seg.Words, " ")); set {
+						pgEnv = n
 					}
 				}
 			}
@@ -434,9 +483,18 @@ func checkWarehouseQuery(call policy.ToolCall, g packs.GuardCtx) (policy.Action,
 		if dbx {
 			if i := seg.find("databricks"); i >= 0 {
 				args := seg.after(i)
-				pos := costPositional(args)
-				if len(pos) >= 3 && pos[0] == "api" && pos[1] == "post" && strings.Contains(pos[2], "/sql/statements") && !strings.Contains(pos[2], "/cancel") {
-					databricksStatement(costFlagValues(args, "--json"), &v)
+				pos := costSubPath(args, dbxValueFlags, dbxGroups)
+				if len(pos) >= 3 && pos[0] == "api" && pos[1] == "post" {
+					endpoint := ""
+					for _, p := range pos[2:] {
+						if strings.HasPrefix(p, "/") {
+							endpoint = p
+							break
+						}
+					}
+					if strings.Contains(endpoint, "/sql/statements") && !strings.Contains(endpoint, "/cancel") {
+						databricksStatement(costFlagValues(args, "--json"), &v)
+					}
 				}
 			}
 		}

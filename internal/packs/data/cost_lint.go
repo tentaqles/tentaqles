@@ -3,7 +3,9 @@ package data
 import (
 	"context"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,8 +23,9 @@ import (
 //   bq-cli-no-cap         `bq query` without --maximum_bytes_billed (not --dry_run)
 //   bq-cap-above-max      a literal cap above packs.data.cost.bigquery.max_bytes
 //   bq-job-config-no-cap  QueryJobConfig(...) without maximum_bytes_billed, never set later
-//   bq-query-no-cap       <client>.query(sql) with no job_config, on a client without
-//                         default_query_job_config
+//   bq-query-no-cap       <client>.query(sql) or .query_and_wait(sql) with no job_config,
+//                         on a client without default_query_job_config (also chained
+//                         bigquery.Client().query(sql))
 //   bq-read-gbq-no-cap    read_gbq(...) without configuration maximumBytesBilled
 //   bq-operator-no-cap    BigQueryInsertJobOperator(...) without maximumBytesBilled
 //   bq-magic-no-cap       a %%bigquery cell without --maximum_bytes_billed, in a
@@ -131,10 +134,11 @@ func costLiteralInt(s string) (float64, bool) {
 
 // shellLine judges one logical shell line (continuations already joined).
 func (l *bqLint) shellLine(line int, text string, allowed func(int, string) bool) {
-	if !strings.Contains(text, "bq") {
+	if !strings.Contains(text, "bq") && !costMayNest(strings.ToLower(text)) {
 		return
 	}
-	for _, seg := range costSegments(text) {
+	segs, _ := costSegmentsDeep(text)
+	for _, seg := range segs {
 		i := seg.find("bq")
 		if i < 0 {
 			continue
@@ -272,6 +276,19 @@ func (l *bqLint) lintPython(src []byte, fileLine func(int) int) {
 			l.capValue(fileLine(pl.Line), m[2], allowedAt(pl.Line))
 		}
 	}
+	// uncappedClientCall marks lines that build a bigquery Client inline
+	// without default_query_job_config (bigquery.Client().query(sql)).
+	uncappedClientCall := map[int]bool{}
+	for _, pl := range lines {
+		for _, c := range scan.LineCalls(pl) {
+			if c.Name != "Client" || (c.Receiver != "" && c.Receiver != "bigquery" && !strings.HasSuffix(c.Receiver, ".bigquery")) {
+				continue
+			}
+			if _, ok := c.Kwargs["default_query_job_config"]; !ok {
+				uncappedClientCall[pl.Line] = true
+			}
+		}
+	}
 	for _, pl := range lines {
 		al := allowedAt(pl.Line)
 		fl := fileLine(pl.Line)
@@ -287,14 +304,26 @@ func (l *bqLint) lintPython(src []byte, fileLine func(int) int) {
 				} else if assigned == "" || !setLater[assigned] {
 					l.add(fl, packs.LevelError, "bq-job-config-no-cap", "QueryJobConfig without maximum_bytes_billed; add maximum_bytes_billed="+l.suggest(), al)
 				}
-			case "query":
-				if !clients[c.Receiver] || cappedClients[c.Receiver] {
+			case "query", "query_and_wait":
+				recv := c.Receiver
+				if c.Func == "."+c.Name {
+					// bigquery.Client(...).query(...): a client made on the line
+					if !uncappedClientCall[pl.Line] {
+						continue
+					}
+					recv = "bigquery.Client()"
+				} else if !clients[c.Receiver] || cappedClients[c.Receiver] {
 					continue
 				}
-				if _, ok := c.Kwargs["job_config"]; ok || len(c.Args) >= 2 {
+				if _, ok := c.Kwargs["job_config"]; ok {
 					continue
 				}
-				l.add(fl, packs.LevelError, "bq-query-no-cap", c.Receiver+".query without job_config; pass a QueryJobConfig with maximum_bytes_billed="+l.suggest(), al)
+				// query(sql, job_config) takes it as the second positional;
+				// query_and_wait takes job_config by keyword only.
+				if c.Name == "query" && len(c.Args) >= 2 {
+					continue
+				}
+				l.add(fl, packs.LevelError, "bq-query-no-cap", recv+"."+c.Name+" without job_config; pass a QueryJobConfig with maximum_bytes_billed="+l.suggest(), al)
 			case "read_gbq", "BigQueryInsertJobOperator":
 				rule, what := "bq-read-gbq-no-cap", "read_gbq"
 				if c.Name == "BigQueryInsertJobOperator" {
@@ -384,7 +413,13 @@ func runBQJobMaxBytes(ctx context.Context, in *packs.Input) packs.Result {
 		}
 		data, err := in.ReadNew(p, lintMaxBytes)
 		if err != nil {
-			res.Findings = append(res.Findings, packs.Finding{File: p, Level: packs.LevelWarn, Rule: "bq-unreadable", Message: "file not read (too large or unreadable); not checked"})
+			// Over the size bound is a documented limit (warn); any other
+			// read failure fails the check, since the file went unchecked.
+			if fi, serr := os.Stat(filepath.Join(in.Root, filepath.FromSlash(p))); serr == nil && fi.Mode().IsRegular() && fi.Size() > lintMaxBytes {
+				res.Findings = append(res.Findings, packs.Finding{File: p, Level: packs.LevelWarn, Rule: "bq-unreadable", Message: fmt.Sprintf("file over %d bytes; not checked", lintMaxBytes)})
+			} else {
+				res.Findings = append(res.Findings, packs.Finding{File: p, Level: packs.LevelError, Rule: "bq-unreadable", Message: "file could not be read; not checked"})
+			}
 			continue
 		}
 		files++

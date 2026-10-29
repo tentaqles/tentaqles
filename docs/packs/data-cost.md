@@ -55,10 +55,18 @@ command); a panic is a deny. They honour `guard.disable` and `guard.actions`.
 | | Databricks | `databricks warehouses create\|edit` | ask (SQL warehouses size by cluster size and count, which have no cap key) |
 | | Synapse | `az synapse sql pool create\|update\|restore --performance-level`; `az synapse spark pool create\|update --node-count/--max-node-count` | deny above `max_dwu` / `max_spark_nodes`; ask otherwise |
 | | Fabric | `az fabric capacity create\|update --sku` (shorthand `{name:F64,tier:Fabric}`, or `--set sku.name=…`) | deny above `max_capacity_sku`; ask otherwise and on `--sku @file` |
-| `tq/warehouse-query-unbounded` | Snowflake | `snow sql -q`/`snowsql -q` with a SELECT, no `LIMIT`, and no `STATEMENT_TIMEOUT_IN_SECONDS` in the command | ask |
-| | Postgres | `psql -c` with a SELECT, no `LIMIT`, and no `statement_timeout` in the command (`SET statement_timeout`, `PGOPTIONS=-c statement_timeout=…`) | ask |
+| `tq/warehouse-query-unbounded` | Snowflake | `snow sql -q`/`snowsql -q` with a SELECT and no `LIMIT`, not preceded in the same call by `ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS=<n>` with `n` above 0 | ask |
+| | Postgres | `psql -c` with a SELECT and no `LIMIT`, not preceded in the same call by `SET statement_timeout = <n>` / `TO <n>` with `n` above 0, and without a non-zero `PGOPTIONS='-c statement_timeout=…'` on the call or exported earlier (`export`, `$env:`, `set`) | ask |
 | | Databricks | `databricks api post …/sql/statements` whose body lacks `wait_timeout` (not `0s`) with `on_wait_timeout: CANCEL`, or is a file | ask |
 | | Fabric, Synapse | `sqlcmd` against `*.datawarehouse.fabric.microsoft.com` / `*.sql.azuresynapse.net` with a SELECT and no `TOP` | ask |
+
+The guards read through nested shells (`bash|sh|zsh -c`, `-lc`, `pwsh -Command`,
+`pwsh -EncodedCommand`, `cmd /c`, `eval`, `Invoke-Expression`, `wsl … sh -c`,
+`xargs … sh -c`) up to four levels deep; a deeper or undecodable nest that names the
+tool asks. Global flags before the subcommand (`databricks -p prod clusters …`,
+`az --subscription s synapse …`, `snow --connection c sql …`) are skipped. An MCP
+call's input is decoded as JSON first, so a `\n` in a multi-line statement does not
+hide `WAREHOUSE_SIZE`; a `WAREHOUSE_SIZE` the guard cannot read asks.
 
 A size compares on the engine's own ordered scale. The guards cannot see queries in
 scripts, `-f` files or `.bigqueryrc` defaults: the lint and the reviewer cover those.
@@ -119,12 +127,13 @@ never the query.
 | `bq-cli-no-cap` | error | `bq query` without `--maximum_bytes_billed` (also in Python string lists such as `subprocess.run(["bq", "query", …])`) |
 | `bq-cap-above-max` | error | a literal cap above `cost.bigquery.max_bytes` |
 | `bq-job-config-no-cap` | error | `QueryJobConfig(...)` without `maximum_bytes_billed`, never set on the variable later |
-| `bq-query-no-cap` | error | `<client>.query(sql)` with no `job_config`, on a `bigquery.Client` made without `default_query_job_config` |
+| `bq-query-no-cap` | error | `<client>.query(sql)` or `<client>.query_and_wait(sql)` with no `job_config`, on a `bigquery.Client` made without `default_query_job_config` (also chained: `bigquery.Client().query(sql)`) |
 | `bq-read-gbq-no-cap` | error | `read_gbq(...)` without `configuration={"query": {"maximumBytesBilled": …}}` |
 | `bq-operator-no-cap` | error | `BigQueryInsertJobOperator(...)` without `maximumBytesBilled` |
 | `bq-magic-no-cap` | error | a `%%bigquery` cell without `--maximum_bytes_billed`, in a notebook that does not set `magics.context.default_query_job_config.maximum_bytes_billed` |
 | `bq-config-unchecked` | warn | a `configuration` passed by name, which the lint cannot see |
-| `bq-unreadable` | warn | a file over 2 MiB or a notebook that does not parse |
+| `bq-unreadable` | warn | a file over 2 MiB or a notebook that does not parse (a known bound: those files are not checked) |
+| `bq-unreadable` | error | a changed file that cannot be read for any other reason |
 
 Python rules apply to files that import `google.cloud.bigquery`, `pandas_gbq` or the
 Airflow Google provider. Suppress one finding with a comment on its line or the line

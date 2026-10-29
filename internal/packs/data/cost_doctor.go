@@ -79,12 +79,18 @@ func raiseWarehouseCost(in *packs.Input) bool {
 				continue
 			}
 			old, err := in.ReadOld(p)
-			if err != nil || !costMaterializedTableRe.Match(old) {
+			if err != nil || costMoreTables(old, nw) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// costMoreTables reports whether nw has more table materializations than
+// old (one more folder or model switched to table in the same file).
+func costMoreTables(old, nw []byte) bool {
+	return len(costMaterializedTableRe.FindAllIndex(nw, -1)) > len(costMaterializedTableRe.FindAllIndex(old, -1))
 }
 
 // costNodeChanged compares the data.cost subtree of both sides of tq-packs.yaml.
