@@ -535,10 +535,10 @@ func hasRuleBelow(rules map[string]MergeRule, keys []string) bool {
 }
 
 // mergeMapping merges the repo mapping r into the trusted mapping t (t may
-// be an empty mapping when the manifest is silent). parent is the explicit
-// rule of the mapping itself, if any: a key with no rule of its own under a
-// TrustedAdd or RepoValue parent inherits it; every other key without a
-// rule is trusted-layer only. A key whose subtree has rules is always merged
+// be an empty mapping when the manifest is silent). A key with no rule of its
+// own is trusted-layer only, at any depth, whatever its parent's rule: a
+// parent's TrustedAdd decides only whether the parent key itself may be
+// added, and is never inherited. A key whose subtree has rules is merged
 // child by child, never cloned over its children's rules.
 func mergeMapping(t, r *yaml.Node, prefix []string, rules map[string]MergeRule, parent *MergeRule, problem func(key, msg string)) *yaml.Node {
 	out := cloneNode(t)
@@ -561,9 +561,6 @@ func mergeMapping(t, r *yaml.Node, prefix []string, rules map[string]MergeRule, 
 			tv = out.Content[idx]
 		}
 		rule, explicit := ruleFor(rules, keys)
-		if !explicit && parent != nil && (parent.Kind == MergeTrusted || parent.Kind == MergeRepo) {
-			rule, explicit = *parent, true
-		}
 		if rv.Kind == yaml.MappingNode && (tv == nil || tv.Kind == yaml.MappingNode) && hasRuleBelow(rules, keys) {
 			// The parent's own rule only decides whether the key may be added.
 			if explicit {

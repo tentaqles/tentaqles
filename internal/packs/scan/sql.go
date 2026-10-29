@@ -55,6 +55,11 @@ func SQLTokens(src []byte) []Token {
 				i++
 			}
 		case c == '/' && i+1 < n && s[i+1] == '*':
+			// MySQL runs the body of an executable comment /*! ... */: code may
+			// hide there, so the statement is ambiguous (fail closed).
+			if i+2 < n && s[i+2] == '!' {
+				out = append(out, Token{TokAmbiguous, "AMBIGUOUS_COMMENT", line})
+			}
 			// Block comments nest (Postgres and T-SQL): /* a /* b */ c */.
 			depth, j := 1, i+2
 			for j < n && depth > 0 {

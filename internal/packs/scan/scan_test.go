@@ -287,3 +287,11 @@ func TestSQLAmbiguousNestedComment(t *testing.T) {
 		t.Fatalf("an agreeing nested comment is fine: %+v", clean)
 	}
 }
+
+// Q2: a MySQL executable comment is ambiguous.
+func TestSQLExecutableComment(t *testing.T) {
+	st := SQLStatements([]byte("select 1 /*!50000 DROP TABLE t */;"))
+	if len(st) != 1 || !st[0].Ambiguous() {
+		t.Fatalf("%+v", st)
+	}
+}

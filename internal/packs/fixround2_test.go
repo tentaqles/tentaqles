@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/zalando/go-keyring"
 )
 
 func init() {
@@ -57,9 +58,10 @@ func TestMergeChildRulesUnderAParent(t *testing.T) {
 	if got := c.Pack("cloud").String("environments.prod2.apply"); got != "" {
 		t.Fatalf("a new environment got apply=%q", got)
 	}
+	// Q1: an unruled key is trusted-layer only, even in a new environment.
 	c = cloudMerge(t, "", "environments: { prod2: { apply: deny, region: x } }")
-	if c.Pack("cloud").String("environments.prod2.apply") != "deny" || c.Pack("cloud").String("environments.prod2.region") != "x" {
-		t.Fatalf("a stricter new environment, with an unruled key under TrustedAdd: %v", c.Problems)
+	if c.Pack("cloud").String("environments.prod2.apply") != "deny" || c.Pack("cloud").String("environments.prod2.region") != "" {
+		t.Fatalf("a new environment keeps only its ruled keys: %v", c.Problems)
 	}
 	c = cloudMerge(t, ", environments: { prod: { apply: approve } }", "environments: { prod: { apply: auto } }")
 	if c.Pack("cloud").String("environments.prod.apply") != "approve" {
@@ -204,5 +206,37 @@ func TestFromCommandNested(t *testing.T) {
 	parent.SetArgs([]string{"plan", "show"})
 	if err := parent.ExecuteContext(context.Background()); err != nil || ran != "acme/cloud" {
 		t.Fatalf("%v %q", err, ran)
+	}
+}
+
+// Fix round 3: with no usable keychain, doctor says pack approvals cannot be granted.
+func TestDoctorKeychainMissing(t *testing.T) {
+	isolate(t)
+	keyring.MockInitWithError(errors.New("no secret service"))
+	defer keyring.MockInit()
+	in := &Input{Root: t.TempDir(), Config: Merge(packsOf(t, "ml: { enabled: true }\n"), nil), Tools: fakeTools{}}
+	in.SetWorkspace("acme", in.Root)
+	found := false
+	for _, f := range Doctor(in, nil, nil) {
+		if f.Code == "packs-keychain-missing" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no packs-keychain-missing")
+	}
+}
+
+// Q1: under an environment the manifest defines, an unruled key is refused.
+func TestMergeUnruledKeysUnderAnExistingParent(t *testing.T) {
+	for _, repo := range []string{
+		"environments: { prod: { destroy: auto } }",
+		"environments: { prod: { target: { subscription: other } } }",
+	} {
+		c := cloudMerge(t, ", environments: { prod: { apply: approve, target: { subscription: mine } } }", repo)
+		d := c.Pack("cloud")
+		if d.String("environments.prod.destroy") != "" || d.String("environments.prod.target.subscription") != "mine" || len(c.Problems) == 0 {
+			t.Fatalf("%s: destroy=%q subscription=%q problems=%v", repo, d.String("environments.prod.destroy"), d.String("environments.prod.target.subscription"), c.Problems)
+		}
 	}
 }
