@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -216,6 +218,62 @@ func TestRequestRepoLayerCannotDropRequirements(t *testing.T) {
 	es, err := ledger.Read("acme", "ml")
 	if err != nil || len(es) == 0 {
 		t.Fatalf("asked: %v", err)
+	}
+}
+
+// The promotion command gets the workspace's identity env: another
+// client's provider variable left in the parent env is blanked, and the
+// workspace's own vars win (review r0 finding 5).
+func TestIdentityEnvIsolates(t *testing.T) {
+	isolate(t)
+	vars := envplan.AllProviderVars()
+	if len(vars) == 0 {
+		t.Skip("no provider vars in the catalog")
+	}
+	other := vars[0]
+	t.Setenv(other, "other-client-config")
+	ws := &resolve.Workspace{Name: "acme", Root: t.TempDir(), Manifest: &manifest.Manifest{}}
+	env := append(os.Environ(), identityEnv(ws)...) // toolrun's order: parent, then Spec.Env
+	last := map[string]string{}
+	for _, kv := range env {
+		if i := strings.Index(kv, "="); i > 0 {
+			last[strings.ToUpper(kv[:i])] = kv[i+1:]
+		}
+	}
+	if v := last[strings.ToUpper(other)]; v != "" {
+		t.Fatalf("%s keeps another client's value %q", other, v)
+	}
+	if last["TQ_WS"] != "acme" {
+		t.Fatalf("the workspace's vars apply: %q", last["TQ_WS"])
+	}
+}
+
+// cancelReader cancels the request context when the human answers, as a
+// long wait at the yes prompt does with the request-wide timeout.
+type cancelReader struct {
+	r      io.Reader
+	cancel context.CancelFunc
+}
+
+func (c cancelReader) Read(p []byte) (int, error) {
+	c.cancel()
+	return c.r.Read(p)
+}
+
+// The 300 s run starts after the typed yes, not inside the request-wide
+// context (review r0 finding 7).
+func TestApplyRunsAfterSlowConfirm(t *testing.T) {
+	r := newPromoteRepo(t)
+	res := r.request(t, "production")
+	answer(t, res.Decision, "approve", "hub:tester")
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	err := promoteApply(ctx, r.env, res.Decision, cancelReader{strings.NewReader("yes\n"), cancel}, &out, true)
+	if err != nil {
+		t.Fatalf("a slow yes must not fail the run: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "promoted churn@7 to production") {
+		t.Fatal(out.String())
 	}
 }
 

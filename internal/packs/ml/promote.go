@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -465,18 +466,48 @@ func changedEvidence(was, now map[string]string) []string {
 	return out
 }
 
-// identityEnv is the workspace's desired environment as KEY=VALUE pairs.
+// identityEnv is the workspace's identity env as toolrun.Spec.Env pairs.
+// toolrun lays Spec.Env over os.Environ() and the last value of a key wins,
+// so this is envplan.Environ (the parent env cleaned of every other
+// workspace's shell state and provider vars, with this workspace's vars
+// applied) plus "KEY=" for each parent variable Environ dropped: another
+// client's provider variable reaches the command blank, never with its
+// value. toolrun has no env-replace mode, so a dropped key is blank rather
+// than unset (a framework follow-up).
 func identityEnv(ws *resolve.Workspace) []string {
 	if ws == nil {
 		return nil
 	}
-	d := envplan.Desired(ws)
-	out := make([]string, 0, len(d))
-	for k, v := range d {
-		out = append(out, k+"="+v)
+	parent := os.Environ()
+	want := envplan.Environ(ws, parent)
+	keep := map[string]bool{}
+	for _, kv := range want {
+		keep[envKeyOf(kv)] = true
+	}
+	var out []string
+	for _, kv := range parent {
+		if k := envKeyOf(kv); k != "" && !keep[k] {
+			out = append(out, kv[:len(k)]+"=")
+		}
 	}
 	sort.Strings(out)
-	return out
+	return append(out, want...)
+}
+
+// envKeyOf is the key of KEY=VALUE, upper-cased on Windows where the
+// environment is case-insensitive.
+func envKeyOf(kv string) string {
+	i := strings.Index(kv, "=")
+	if i == 0 { // Windows "=C:=C:\..." entries
+		i = strings.Index(kv[1:], "=") + 1
+	}
+	if i <= 0 {
+		return ""
+	}
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(kv[:i])
+	}
+	return kv[:i]
 }
 
 // promoteApply is the human-only apply.
@@ -528,7 +559,9 @@ func promoteApply(ctx context.Context, e *promoteEnv, id string, stdin io.Reader
 		return err
 	}
 	fmt.Fprintf(out, "running (timeout %s)...\n", PromotionTimeout)
-	rctx, cancel := context.WithTimeout(ctx, PromotionTimeout)
+	// The run gets its own 300 s from now: the request-wide context also
+	// covered the wait at the yes prompt, which may have used it up.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PromotionTimeout)
 	defer cancel()
 	res, err := e.In.Tools.Run(rctx, toolrun.Spec{Pack: "ml", Tool: argv[0], Args: argv[1:], Timeout: PromotionTimeout, Env: identityEnv(e.WS)})
 	classes := classesFor(e.In)
