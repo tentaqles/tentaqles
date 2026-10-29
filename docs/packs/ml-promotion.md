@@ -54,16 +54,23 @@ packs:
 | `models[]` | `name` (`[A-Za-z0-9._-]`), `card` (required), `metrics`, `paths`, `drift` | union: a repo may add a model; for a duplicate name, the manifest's entry wins |
 | `promotion.protected` | the stages or aliases that need an approval (matched without case) | union |
 | `promotion.command` | the project's promotion command. The placeholders are `{model}`, `{version}` and `{target}`. It runs without a shell, and `\| & ; < > $` and backticks are refused | may set it. It runs only after the human types `yes`, and the approval is bound to its hash |
-| `promotion.valid_for` | how long an approval stays valid: default 7d, at most 30d | minimum |
-| `promotion.require` | `model_card`, `drift`, `repro` (all three when unset) | union |
+| `promotion.valid_for` | how long an approval stays valid: default 7d, at most 30d | minimum; when the manifest leaves it out, a repo value is capped at 7d |
+| `promotion.require` | `model_card`, `drift`, `repro` (all three when unset) | union; when the manifest leaves it out, all three run whatever the repo lists |
 | `drift.reference`, `drift.current` | repo paths, each a CSV or a profile JSON | trusted: the repo may add one only when the manifest has none |
 | `drift.current_command` | refreshes `current` when it is missing or older than 24 h. The placeholder is `{model}`, and the timeout is 600 s | may set it, but a repo command needs a typed `yes` (see below) |
 | `drift.metric` | `psi` (default) or `js` | trusted |
-| `drift.warn`, `drift.fail`, `drift.features.<f>.warn\|fail`, `drift.max_warn_share` | thresholds | minimum |
+| `drift.warn`, `drift.fail`, `drift.features.<f>.warn\|fail`, `drift.max_warn_share` | thresholds | minimum; when the manifest leaves one out, a repo value is capped at the default (0.1, 0.25, 0.3), and a feature's at the effective global value |
 | `drift.metrics.<m>.min` | lower bounds on the model's metrics file | maximum |
 | `drift.in_dod` | run `ml/drift` in the definition of done | OR (a repo can switch it on, never off) |
 
 The keys `paths` and `data_manifest` are shared with the lint checks.
+
+The merge compares a repo value with the manifest's only when the manifest sets
+the key. So for the keys above that the manifest leaves out, tq clamps the repo
+value to the tq default instead of taking it as it is. Each clamp is printed by
+`promote request` and `drift` (on stderr), listed in the approval's summary, and
+reported by `tq doctor` as `ml-config-clamped`. The request summary also names the
+`require` items that ran.
 
 ## Promotion gate
 
@@ -93,7 +100,7 @@ The keys `paths` and `data_manifest` are shared with the lint checks.
      evidence. When the evidence changed, the refusal names the changed entries.
    - It prints the filled command (values limited to `[A-Za-z0-9._@-]`, never
      starting with `-`) and asks for a typed `yes` on a terminal.
-   - It runs the command with the workspace identity's environment and a 300 s timeout.
+   - It runs the command with the workspace identity's environment (another workspace's provider variables reach it blank) and a 300 s timeout that starts at the typed `yes`.
    - On exit 0 it marks the approval used and appends a row to the card's Promotion
      history (date, version, target, decision id, `human`). It also comments on the
      hub card. Commit the card change.
@@ -129,6 +136,7 @@ metrics file or the data manifest changed, and on every model with `--all`.
 | `card-metrics-empty` | error | the Metrics table has no row with a value |
 | `card-snapshot-missing` | error | Training data names no snapshot or sha256 while `data_manifest` is set |
 | `card-snapshot-mismatch` | error | the snapshot is not in the data manifest, or its sha256 differs |
+| `card-snapshot-unchecked` | warn | `data_manifest` is a `dvc.lock`: tq does not read it yet, so the snapshot was not compared |
 | `card-pii` | error | a line matches the redaction detectors (the workspace's data classes plus secrets, or all detectors). The finding names the detector, never the value |
 | `card-not-updated` | error | the model's code changed in the diff and its card did not |
 
@@ -217,6 +225,8 @@ Levels:
 - **warn:** the target is not a literal, so tq cannot read it.
 - In test files (`test_*.py`, `*_test.py`, `tests/`), every finding is a warn.
 
+Single- and double-quoted literals are read alike.
+
 `scripts/promote.py` and the scripts that `promotion.command` runs are exempt.
 
 ## Guard `tq/model-promote` (deny)
@@ -226,7 +236,9 @@ The guard covers agent Bash, PowerShell and MCP tool calls:
 - `tq pack ml promote apply` (human only);
 - MLflow REST:
   - `POST .../model-versions/transition-stage`;
-  - `POST` or `DELETE .../registered-models/alias` (a `GET` that reads an alias is
+  - `POST` or `DELETE .../registered-models/alias` through curl, Invoke-RestMethod,
+    wget (`--post-data`, `--post-file`, `--method=POST`), httpie/xh (`POST <url>`)
+    or Python's requests, httpx and urllib (a `GET` that reads an alias is
     allowed);
   - Databricks `transition-requests/approve` and Unity Catalog alias writes;
   - Vertex `:mergeVersionAliases`;
@@ -234,13 +246,19 @@ The guard covers agent Bash, PowerShell and MCP tool calls:
   `transition_model_version_stage`, `set_registered_model_alias`,
   `add_version_aliases` or `merge_version_aliases`, or
   `update_model_package ... Approved`;
-- `aws sagemaker update-model-package ... --model-approval-status Approved`;
+- `aws sagemaker update-model-package ... --model-approval-status Approved`, or with
+  an `--cli-input-json`/`--cli-input-yaml` that sets `ModelApprovalStatus` to
+  `Approved`;
 - `gcloud ai models ... --version-aliases`;
 - `databricks registered-models set-alias`;
 - `databricks model-registry transition-stage` and `approve-transition-request`;
 - `az ml model update|create ... --stage`;
+- for these CLIs, global options such as `--profile`, `--region`, `-p` or
+  `--project` may come before the service;
 - the declared `promotion.command`, matched by its script path, its `-m module`, or
-  its leading words;
+  its leading words. For a console script (`uv run promote-model ...`), the words
+  from the first non-generic one on (`promote-model`) also match where a command
+  starts;
 - MCP tools whose name contains a promotion API name.
 
 The human can still run these commands in their own terminal: the guard only sees
@@ -256,6 +274,7 @@ Doctor findings:
 - `ml-card-missing` (warn): a declared model has no card.
 - `ml-drift-reference-missing` (warn): a configured reference is absent.
 - `ml-promotion-command-missing` (warn): `protected` is set without a `command`.
+- `ml-config-clamped` (warn): a `tq-packs.yaml` value was clamped (see Config).
 
 Insights counters:
 

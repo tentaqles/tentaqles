@@ -73,5 +73,6 @@ $_to tq pack check --pack ml --builtin-only --budget 60s; echo "check_exit=$?"
 | `card-section-todo` (warn) | some lines still say TODO |
 | `card-metrics-empty` | add rows from the metrics file |
 | `card-snapshot-missing` / `card-snapshot-mismatch` | copy the snapshot name and sha256 from the data manifest; if the model was trained on another snapshot, the manifest or the training run is wrong: tell the human |
+| `card-snapshot-unchecked` (warn) | the data manifest is a `dvc.lock`, which tq does not compare yet: check the card's snapshot against `dvc.lock` yourself and say so in the summary |
 | `card-pii` | remove the value the detector names; never paste data into a card |
 | `card-not-updated` | the model's code changed: update the sections it affects (metrics, data, reproducibility) |
