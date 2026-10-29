@@ -8,7 +8,7 @@ doc(type, props) := {"resources": [{"tq_addr": "acme", "type": type, "name": "ac
 
 tagged(type, tags) := {"resources": [{"tq_addr": "acme", "type": type, "name": "acme", "tags": tags, "properties": {}}]}
 
-rules(set) := {m.rule | some m in set}
+rules(found) := {m.rule | some m in found}
 
 # TQR001
 test_tags_missing if {
@@ -51,6 +51,14 @@ test_storage_tls12 if {
 
 test_sql_old_tls if {
 	"TQR003" in rules(arm.deny) with input as doc("Microsoft.Sql/servers", {"minimalTlsVersion": "1.0"})
+}
+
+test_sql_tls_none if {
+	"TQR003" in rules(arm.deny) with input as doc("Microsoft.Sql/servers", {"minimalTlsVersion": "None"})
+}
+
+test_sql_tls12 if {
+	not "TQR003" in rules(arm.deny) with input as doc("Microsoft.Sql/servers", {"minimalTlsVersion": "1.2"})
 }
 
 test_site_old_tls if {

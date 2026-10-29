@@ -6,7 +6,7 @@ import rego.v1
 
 tpl(type, props) := {"Resources": {"AcmeRes": {"Type": type, "Properties": props}}}
 
-rules(set) := {m.rule | some m in set}
+rules(found) := {m.rule | some m in found}
 
 # TQR001
 test_tags_missing if {

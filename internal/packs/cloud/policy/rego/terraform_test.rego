@@ -10,7 +10,7 @@ plan(type, after) := {"resource_changes": [{
 	"change": {"actions": ["create"], "after": after},
 }]}
 
-rules(set) := {m.rule | some m in set}
+rules(found) := {m.rule | some m in found}
 
 # TQR001
 test_tags_missing if {
@@ -56,6 +56,18 @@ test_storage_old_tls if {
 
 test_storage_tls12 if {
 	not "TQR003" in rules(terraform.deny) with input as plan("azurerm_storage_account", {"min_tls_version": "TLS1_2"})
+}
+
+test_postgres_tls_enforcement_disabled if {
+	"TQR003" in rules(terraform.deny) with input as plan("azurerm_postgresql_server", {"ssl_minimal_tls_version_enforced": "TLSEnforcementDisabled"})
+}
+
+test_mssql_tls_disabled if {
+	"TQR003" in rules(terraform.deny) with input as plan("azurerm_mssql_server", {"minimum_tls_version": "Disabled"})
+}
+
+test_mssql_tls12 if {
+	not "TQR003" in rules(terraform.deny) with input as plan("azurerm_mssql_server", {"minimum_tls_version": "1.2"})
 }
 
 test_webapp_old_tls if {

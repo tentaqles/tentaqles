@@ -52,7 +52,12 @@ num(x) := x if is_number(x)
 num(x) := to_number(x) if is_string(x)
 
 # Legacy TLS versions, in the spellings the providers use.
-old_tls := {"1.0", "1.1", "TLS1_0", "TLS1_1", "tls1_0", "tls1_1", "TLSv1", "TLSv1.1", "Tls10", "Tls11"}
+old_tls := {"1.0", "1.1", "TLS1_0", "TLS1_1", "tls1_0", "tls1_1", "TLSv1", "TLSv1.1", "Tls10", "Tls11"} | no_tls_minimum
+
+# Values that turn the TLS minimum off altogether: azurerm_postgresql_server
+# ssl_minimal_tls_version_enforced, azurerm_mssql_server minimum_tls_version,
+# and the ARM minimalTlsVersion.
+no_tls_minimum := {"TLSEnforcementDisabled", "Disabled", "None"}
 
 # AWS load balancer security policies that allow TLS 1.0 or 1.1.
 legacy_ssl_policies := {
