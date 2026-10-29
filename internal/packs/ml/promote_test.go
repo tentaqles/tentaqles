@@ -187,6 +187,38 @@ func TestRequestRefusesMissingReproCheck(t *testing.T) {
 	}
 }
 
+// A tq-packs.yaml that drops drift and repro from require, while the
+// manifest leaves require out: every item still runs, the evidence still
+// binds drift, and the approver sees which items ran and what was clamped.
+func TestRequestRepoLayerCannotDropRequirements(t *testing.T) {
+	r := newPromoteRepo(t)
+	writeFiles(t, r.root, map[string]string{"tq-packs.yaml": "ml:\n  promotion: { require: [model_card], valid_for: 30d }\n"})
+	git(t, r.root, "add", "tq-packs.yaml")
+	git(t, r.root, "commit", "-q", "-m", "loosen")
+	r.env = r.newEnv(t)
+	if strings.Join(r.env.St.Promotion.Require, ",") != "model_card,drift,repro" || len(r.env.St.Clamped) != 2 {
+		t.Fatalf("%v %q", r.env.St.Promotion.Require, r.env.St.Clamped)
+	}
+	res := r.request(t, "production")
+	if res.Evidence["drift"] == "" {
+		t.Fatalf("drift is still bound: %v", res.Evidence)
+	}
+	if strings.Join(res.Require, ",") != "model_card,drift,repro" || len(res.Clamped) != 2 {
+		t.Fatalf("%+v", res)
+	}
+	m, _ := r.env.St.Model("churn")
+	sum := requestSummary(r.env, m, "7", "production", res.Drift)
+	for _, want := range []string{"Checks run: model_card, drift, repro", "Clamped from tq-packs.yaml", "promotion.require", "promotion.valid_for"} {
+		if !strings.Contains(sum, want) {
+			t.Fatalf("summary misses %q:\n%s", want, sum)
+		}
+	}
+	es, err := ledger.Read("acme", "ml")
+	if err != nil || len(es) == 0 {
+		t.Fatalf("asked: %v", err)
+	}
+}
+
 func TestPromoteEndToEnd(t *testing.T) {
 	r := newPromoteRepo(t)
 	res := r.request(t, "production")

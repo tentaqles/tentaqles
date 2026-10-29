@@ -56,7 +56,7 @@ func init() {
 // raiseModelPromotion: the promotion script, a model card, or tq-packs.yaml
 // (which may carry packs.ml.promotion) changed.
 func raiseModelPromotion(in *packs.Input) bool {
-	st := load(in.Settings())
+	st := loadIn(in)
 	globs := append(promotionScripts(st), "tq-packs.yaml")
 	for _, m := range st.Models {
 		globs = append(globs, m.Card)

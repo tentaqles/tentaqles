@@ -95,6 +95,33 @@ func configFrom(t testing.TB, trusted, repo string) packs.Config {
 	return packs.Merge(parse(trusted), parse(repo))
 }
 
+// manifestFrom is a manifest whose packs: block is trusted (the layer
+// tq-packs.yaml cannot loosen).
+func manifestFrom(t testing.TB, trusted string) *manifest.Manifest {
+	t.Helper()
+	m := &manifest.Manifest{}
+	if trusted == "" {
+		return m
+	}
+	if err := yaml.Unmarshal([]byte(trusted), &m.Packs); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// mlInput is an Input over root with trusted (the manifest) and repo
+// (tq-packs.yaml) merged.
+func mlInput(t testing.TB, root, trusted, repo string) *packs.Input {
+	t.Helper()
+	return &packs.Input{Root: root, Config: configFrom(t, trusted, repo), Manifest: manifestFrom(t, trusted)}
+}
+
+// setConfig rebinds in to new trusted and repo layers.
+func setConfig(t testing.TB, in *packs.Input, trusted, repo string) {
+	t.Helper()
+	in.Config, in.Manifest = configFrom(t, trusted, repo), manifestFrom(t, trusted)
+}
+
 // writeFiles writes name -> content under root.
 func writeFiles(t *testing.T, root string, files map[string]string) {
 	t.Helper()

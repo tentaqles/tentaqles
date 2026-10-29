@@ -13,7 +13,8 @@ func codeInput(t *testing.T, files map[string]string) *packs.Input {
 	t.Helper()
 	root := testutil.TempDir(t)
 	writeFiles(t, root, files)
-	in := &packs.Input{Root: root, Base: "HEAD", Config: configFrom(t, guardConfig, "")}
+	in := mlInput(t, root, guardConfig, "")
+	in.Base = "HEAD"
 	for p := range files {
 		in.Changed = append(in.Changed, packs.ChangedFile{Path: p, Status: 'M'})
 	}

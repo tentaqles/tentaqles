@@ -78,14 +78,14 @@ func driftRepo(t *testing.T, fixture string, files map[string]string) *packs.Inp
 		all[k] = v
 	}
 	writeFiles(t, root, all)
-	in := &packs.Input{Root: root, Config: configFrom(t, driftConfig, "")}
+	in := mlInput(t, root, driftConfig, "")
 	return in.ForPack("ml")
 }
 
 func TestDriftGolden(t *testing.T) {
 	isolate(t)
 	in := driftRepo(t, "drift-basic", nil)
-	st := load(in.Settings())
+	st := loadIn(in)
 	m, _ := st.Model("churn")
 	res, err := runDrift(context.Background(), in, st, m, driftOptions{})
 	if err != nil {
@@ -118,9 +118,9 @@ func TestDriftPassesAndMetricMin(t *testing.T) {
 	isolate(t)
 	cfg := strings.Replace(driftConfig, "features: { monthly_fee: { warn: 0.0005 } }", "features: { plan: { warn: 0.5, fail: 1 } }", 1)
 	in := driftRepo(t, "drift-basic", nil)
-	in.Config = configFrom(t, cfg, "")
+	setConfig(t, in, cfg, "")
 	in = in.ForPack("ml")
-	st := load(in.Settings())
+	st := loadIn(in)
 	m, _ := st.Model("churn")
 	res, err := runDrift(context.Background(), in, st, m, driftOptions{})
 	if err != nil || res.Status != "warn" {
@@ -145,9 +145,9 @@ func TestDriftMaxWarnShare(t *testing.T) {
 	cfg := strings.Replace(driftConfig, "features: { monthly_fee: { warn: 0.0005 } }", "features: { plan: { warn: 0.001, fail: 1 }, monthly_fee: { warn: 0.0005 } }", 1)
 	cfg = strings.Replace(cfg, "max_warn_share: 0.5", "max_warn_share: 0.5", 1)
 	in := driftRepo(t, "drift-basic", nil)
-	in.Config = configFrom(t, cfg, "")
+	setConfig(t, in, cfg, "")
 	in = in.ForPack("ml")
-	st := load(in.Settings())
+	st := loadIn(in)
 	m, _ := st.Model("churn")
 	res, _ := runDrift(context.Background(), in, st, m, driftOptions{})
 	// tenure, monthly_fee, plan warn: 3 of 5 > 0.5.
@@ -159,7 +159,7 @@ func TestDriftMaxWarnShare(t *testing.T) {
 func TestDriftEdgesDiffer(t *testing.T) {
 	isolate(t)
 	in := driftRepo(t, "drift-edges", nil)
-	st := load(in.Settings())
+	st := loadIn(in)
 	m, _ := st.Model("churn")
 	res, _ := runDrift(context.Background(), in, st, m, driftOptions{})
 	if res.Status != "fail" || !strings.Contains(res.Features[0].Note, "reference edges") {
@@ -175,9 +175,9 @@ func TestDriftCSV(t *testing.T) {
 	})
 	cfg := strings.Replace(driftConfig, "data/profiles/churn-train.json", "data/ref.csv", 1)
 	cfg = strings.Replace(cfg, ".tq/drift/churn-current.json", "data/cur.csv", 1)
-	in.Config = configFrom(t, cfg, "")
+	setConfig(t, in, cfg, "")
 	in = in.ForPack("ml")
-	st := load(in.Settings())
+	st := loadIn(in)
 	m, _ := st.Model("churn")
 	res, err := runDrift(context.Background(), in, st, m, driftOptions{})
 	if err != nil {
@@ -235,14 +235,13 @@ func TestCurrentCommandRuns(t *testing.T) {
 	os.Chtimes(cur, old, old)
 	writeFiles(t, in.Root, map[string]string{"fresh.json": readFixture(t, "drift-basic/reference.json")})
 	cmd := `"` + fakeCLI(t) + `" copy fresh.json .tq/drift/churn-current.json`
-	cfg := strings.Replace(driftConfig, "current: .tq/drift/churn-current.json", "current: .tq/drift/churn-current.json\n    current_command: '"+cmd+"'", 1)
-	in.Config = configFrom(t, cfg, "")
+	setConfig(t, in, driftConfig, "ml:\n  drift:\n    current_command: '"+cmd+"'\n")
 	in.Tools = packs.NewToolRunner(in.Root, in.Config)
 	in = in.ForPack("ml")
-	st := load(in.Settings())
+	st := loadIn(in)
 	m, _ := st.Model("churn")
-	// The Input has no manifest, so the command is not the trusted layer's:
-	// it runs only after a confirmation.
+	// The command comes from tq-packs.yaml, not the trusted layer: it runs
+	// only after a confirmation.
 	asked := ""
 	res, err := runDrift(context.Background(), in, st, m, driftOptions{Confirm: func(c string) error { asked = c; return nil }})
 	if err != nil {
@@ -264,6 +263,14 @@ func TestCurrentCommandRuns(t *testing.T) {
 	if _, err := runDrift(context.Background(), in, st, m, driftOptions{NoRun: true}); err == nil || !strings.Contains(err.Error(), "older than") {
 		t.Fatalf("stale current: %v", err)
 	}
+	// The same command in the manifest runs without a confirmation.
+	trusted := strings.Replace(driftConfig, "current: .tq/drift/churn-current.json", "current: .tq/drift/churn-current.json\n    current_command: '"+cmd+"'", 1)
+	setConfig(t, in, trusted, "")
+	in = in.ForPack("ml")
+	st = loadIn(in)
+	if _, err := runDrift(context.Background(), in, st, m, driftOptions{}); err != nil {
+		t.Fatalf("a manifest command runs unasked: %v", err)
+	}
 }
 
 func TestDriftCheckInDoD(t *testing.T) {
@@ -272,7 +279,7 @@ func TestDriftCheckInDoD(t *testing.T) {
 	if driftApplies(in) {
 		t.Fatal("in_dod is false by default")
 	}
-	in.Config = configFrom(t, driftConfig+"    in_dod: true\n", "")
+	setConfig(t, in, driftConfig+"    in_dod: true\n", "")
 	in = in.ForPack("ml")
 	if !driftApplies(in) {
 		t.Fatal("in_dod: true applies")

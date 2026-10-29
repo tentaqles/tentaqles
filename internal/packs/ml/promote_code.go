@@ -203,7 +203,7 @@ func isWord(b byte) bool {
 }
 
 func runPromotionInCode(ctx context.Context, in *packs.Input) packs.Result {
-	st := load(in.Settings())
+	st := loadIn(in)
 	allowed := promotionScripts(st)
 	var fs []packs.Finding
 	n := 0

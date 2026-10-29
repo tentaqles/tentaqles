@@ -17,6 +17,8 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/approval"
+	"github.com/tentaqles/tentaqles/internal/packs/scan"
 	"gopkg.in/yaml.v3"
 )
 
@@ -78,6 +80,9 @@ type Settings struct {
 	Models       []Model   `yaml:"models"`
 	Promotion    Promotion `yaml:"promotion"`
 	Drift        Drift     `yaml:"drift"`
+	// Clamped lists the tq-packs.yaml values load tightened because the
+	// manifest did not set the key (spec C §2.3: the repo cannot loosen).
+	Clamped []string `yaml:"-"`
 }
 
 // Drift defaults (spec C §4.1).
@@ -93,9 +98,26 @@ const (
 // RequireItems are the promotion.require values.
 var RequireItems = []string{"model_card", "drift", "repro"}
 
+// loadIn is load for a check, flag, doctor probe or command input.
+func loadIn(in *packs.Input) Settings { return load(in.Settings(), in.Manifest) }
+
+// trustedRoot is the manifest's own packs.ml block, or nil (no manifest, or
+// the manifest does not configure ml).
+func trustedRoot(man *manifest.Manifest) *yaml.Node {
+	if man == nil {
+		return nil
+	}
+	pc, ok := man.Packs["ml"]
+	if !ok {
+		return nil
+	}
+	return &pc.Raw
+}
+
 // load decodes the merged packs.ml settings. A decode error leaves the zero
-// value: the validators already rejected bad manifests.
-func load(s packs.Settings) Settings {
+// value: the validators already rejected bad manifests. man is the trusted
+// layer; what only tq-packs.yaml set is clamped by clampRepoOnly.
+func load(s packs.Settings, man *manifest.Manifest) Settings {
 	var out Settings
 	_ = s.Decode(&out)
 	// The first entry of a name wins: the manifest's entries come before the
@@ -110,6 +132,7 @@ func load(s packs.Settings) Settings {
 		models = append(models, m)
 	}
 	out.Models = models
+	clampRepoOnly(&out, trustedRoot(man))
 	if len(out.Promotion.Require) == 0 {
 		out.Promotion.Require = append([]string(nil), RequireItems...)
 	}
@@ -117,6 +140,68 @@ func load(s packs.Settings) Settings {
 		out.Drift.Metric = "psi"
 	}
 	return out
+}
+
+// clampRepoOnly tightens what only tq-packs.yaml set. MergeUnion, MergeMin
+// and MergeMax compare only when the manifest sets the key; when it does
+// not, the merge takes the repo value as it is and the tq default would
+// apply only afterwards. So a repo-only promotion.require is united with the
+// default set, a repo-only valid_for is capped at the ml approval default,
+// and a repo-only drift threshold is capped at the tq default (a feature's
+// at the effective global value). Each clamp is recorded in out.Clamped.
+func clampRepoOnly(out *Settings, tr *yaml.Node) {
+	set := func(p ...string) bool { return scan.Get(tr, p...) != nil }
+	note := func(f string, a ...any) { out.Clamped = append(out.Clamped, fmt.Sprintf(f, a...)) }
+	if !set("promotion", "require") {
+		var missing []string
+		for _, it := range RequireItems {
+			if !out.Requires(it) {
+				missing = append(missing, it)
+			}
+		}
+		if len(out.Promotion.Require) > 0 && len(missing) > 0 {
+			note("promotion.require in tq-packs.yaml cannot drop %s: every item runs (set require in the manifest)", strings.Join(missing, ", "))
+		}
+		out.Promotion.Require = append([]string(nil), RequireItems...)
+	}
+	if !set("promotion", "valid_for") {
+		if def := approval.PackLimits["ml"].Default; out.ValidFor() > def {
+			note("promotion.valid_for %s in tq-packs.yaml is over the default: clamped to %s", out.Promotion.ValidFor, def)
+			out.Promotion.ValidFor = def.String()
+		}
+	}
+	clamp := func(p **float64, max float64, key string) {
+		if *p != nil && **p > max {
+			note("%s %g in tq-packs.yaml is looser than %g: clamped (set it in the manifest)", key, **p, max)
+			v := max
+			*p = &v
+		}
+	}
+	for _, c := range []struct {
+		key string
+		p   **float64
+		def float64
+	}{{"warn", &out.Drift.Warn, DefaultWarn}, {"fail", &out.Drift.Fail, DefaultFail}, {"max_warn_share", &out.Drift.MaxWarnShare, DefaultMaxWarnShare}} {
+		if !set("drift", c.key) {
+			clamp(c.p, c.def, "drift."+c.key)
+		}
+	}
+	gw, gf := fl(out.Drift.Warn, DefaultWarn), fl(out.Drift.Fail, DefaultFail)
+	names := make([]string, 0, len(out.Drift.Features))
+	for n := range out.Drift.Features {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		th := out.Drift.Features[n]
+		if !set("drift", "features", n, "warn") {
+			clamp(&th.Warn, gw, "drift.features."+n+".warn")
+		}
+		if !set("drift", "features", n, "fail") {
+			clamp(&th.Fail, gf, "drift.features."+n+".fail")
+		}
+		out.Drift.Features[n] = th
+	}
 }
 
 // Model returns the named model.

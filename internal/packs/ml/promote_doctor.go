@@ -9,9 +9,10 @@ import (
 )
 
 // promoteDoctor: ml-card-missing, ml-drift-reference-missing,
-// ml-promotion-command-missing (spec C §7).
+// ml-promotion-command-missing (spec C §7), and ml-config-clamped for each
+// tq-packs.yaml value load tightened.
 func promoteDoctor(in *packs.Input) []doctor.Finding {
-	st := load(in.Settings())
+	st := loadIn(in)
 	var out []doctor.Finding
 	exists := func(p string) bool {
 		_, err := os.Stat(filepath.Join(in.Root, filepath.FromSlash(p)))
@@ -26,6 +27,10 @@ func promoteDoctor(in *packs.Input) []doctor.Finding {
 			out = append(out, doctor.Finding{Level: "warn", Code: "ml-drift-reference-missing", Workspace: in.Workspace(),
 				Msg: "model " + m.Name + ": drift.reference " + d.Reference + " is missing", Fix: "build the reference profile from the training snapshot (skill drift-check)"})
 		}
+	}
+	for _, c := range st.Clamped {
+		out = append(out, doctor.Finding{Level: "warn", Code: "ml-config-clamped", Workspace: in.Workspace(),
+			Msg: c, Fix: "set the key in the manifest's packs.ml block, or drop the looser value from tq-packs.yaml"})
 	}
 	if len(st.Promotion.Protected) > 0 && st.Promotion.Command == "" {
 		out = append(out, doctor.Finding{Level: "warn", Code: "ml-promotion-command-missing", Workspace: in.Workspace(),

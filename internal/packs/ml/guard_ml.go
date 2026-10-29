@@ -136,7 +136,7 @@ func checkModelPromote(call policy.ToolCall, g packs.GuardCtx) (policy.Action, s
 	case has(" ml ") && has("model") && azmlRe.MatchString(c):
 		why = "an Azure ML model stage change"
 	default:
-		st := load(g.Settings())
+		st := load(g.Settings(), g.Manifest())
 		for _, mk := range commandMarkers(st.Promotion.Command) {
 			if containsWord(cs, mk) {
 				why = "the declared promotion command run directly"

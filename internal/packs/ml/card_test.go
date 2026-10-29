@@ -30,7 +30,7 @@ func cardInput(t *testing.T, card string, changed ...string) *packs.Input {
 		"data/snapshots.yaml":        readFixture(t, "promote-card/snapshots.yaml"),
 		"src/train/fit.py":           "print('fit')\n",
 	})
-	in := &packs.Input{Root: root, Config: configFrom(t, cardConfig, "")}
+	in := mlInput(t, root, cardConfig, "")
 	if len(changed) == 0 {
 		in.All = true
 		in.Changed = []packs.ChangedFile{{Path: "models/churn/MODEL_CARD.md", Status: 'A'}}

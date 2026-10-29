@@ -344,7 +344,7 @@ func modelTouched(in *packs.Input, st Settings, m Model) (any, code, card bool) 
 }
 
 func modelCardApplies(in *packs.Input) bool {
-	st := load(in.Settings())
+	st := loadIn(in)
 	if len(st.Models) == 0 {
 		return false
 	}
@@ -360,7 +360,7 @@ func modelCardApplies(in *packs.Input) bool {
 }
 
 func runModelCard(ctx context.Context, in *packs.Input) packs.Result {
-	st := load(in.Settings())
+	st := loadIn(in)
 	var fs []packs.Finding
 	n := 0
 	for _, m := range st.Models {

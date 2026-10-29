@@ -75,13 +75,16 @@ func newPromoteRequestCmd() *cobra.Command {
 			out := c.OutOrStdout()
 			if asJSON {
 				return json.NewEncoder(out).Encode(map[string]any{"schema": "tq.ml-promote/v1", "model": res.Model, "version": res.Version,
-					"target": res.Target, "protected": res.Protected, "decision": res.Decision, "card": res.Card, "evidence": evidenceNames(res.Evidence)})
+					"target": res.Target, "protected": res.Protected, "decision": res.Decision, "card": res.Card, "evidence": evidenceNames(res.Evidence),
+					"require": res.Require, "clamped": nonNil(res.Clamped)})
 			}
 			if !res.Protected {
 				fmt.Fprintf(out, "%s is not protected, no approval needed\n", to)
 				return nil
 			}
+			printClamped(c.ErrOrStderr(), res.Clamped)
 			fmt.Fprintf(out, "asked: decision %s on card %s\n", res.Decision, res.Card)
+			fmt.Fprintf(out, "checks run: %s\n", strings.Join(res.Require, ", "))
 			fmt.Fprintf(out, "evidence: %s\n", strings.Join(evidenceNames(res.Evidence), ", "))
 			fmt.Fprintf(out, "a human answers it on the board or with tq hub answer, then runs in their own terminal:\n  tq pack ml promote apply %s\n", res.Decision)
 			return nil
@@ -90,6 +93,20 @@ func newPromoteRequestCmd() *cobra.Command {
 	c.Flags().StringVar(&to, "to", "", "the target stage or alias")
 	c.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return c
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// printClamped names the tq-packs.yaml values load tightened.
+func printClamped(w io.Writer, clamped []string) {
+	for _, c := range clamped {
+		fmt.Fprintln(w, "note: "+c)
+	}
 }
 
 func evidenceNames(ev map[string]string) []string {
@@ -191,6 +208,7 @@ Output names features and numbers only, never category labels.`,
 				return usage(fmt.Errorf("model %q is not declared in packs.ml.models", args[0]))
 			}
 			out := c.OutOrStdout()
+			printClamped(c.ErrOrStderr(), e.St.Clamped)
 			in := bufio.NewReader(c.InOrStdin())
 			opts := driftOptions{}
 			if stdinTTY() && !packs.AgentSession() {

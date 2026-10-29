@@ -545,14 +545,7 @@ var ErrNoDrift = errors.New("no drift reference configured")
 // trustedValue is the manifest's own value at a dotted path of packs.ml,
 // or "" (the repo layer added it, or there is no manifest).
 func trustedValue(in *packs.Input, path ...string) string {
-	if in.Manifest == nil {
-		return ""
-	}
-	pc, ok := in.Manifest.Packs["ml"]
-	if !ok {
-		return ""
-	}
-	return scan.Scalar(scan.Get(&pc.Raw, path...))
+	return scan.Scalar(scan.Get(trustedRoot(in.Manifest), path...))
 }
 
 func trustedCurrentCommand(in *packs.Input, st Settings, m Model, cmd string) bool {
@@ -709,12 +702,12 @@ func resultPath(model string) string { return resultDir + "/" + model + "-result
 // --- the ml/drift check (DoD only with drift.in_dod: true) ---
 
 func driftApplies(in *packs.Input) bool {
-	st := load(in.Settings())
+	st := loadIn(in)
 	return st.Drift.InDoD && len(st.Models) > 0
 }
 
 func runDriftCheck(ctx context.Context, in *packs.Input) packs.Result {
-	st := load(in.Settings())
+	st := loadIn(in)
 	var fs []packs.Finding
 	n := 0
 	for _, m := range st.Models {

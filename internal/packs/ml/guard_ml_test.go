@@ -20,7 +20,7 @@ ml:
 
 func guardCtx(t testing.TB, cfg string) packs.GuardCtx {
 	c := configFrom(t, cfg, "")
-	return packs.NewGuardCtx(packs.GuardEnv{Config: c, Workspace: "acme"}, "ml")
+	return packs.NewGuardCtx(packs.GuardEnv{Config: c, Manifest: manifestFrom(t, cfg), Workspace: "acme"}, "ml")
 }
 
 func TestModelPromoteGuard(t *testing.T) {

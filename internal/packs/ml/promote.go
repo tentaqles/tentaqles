@@ -79,7 +79,7 @@ func newPromoteEnv(cwd string, ws *resolve.Workspace) (*promoteEnv, error) {
 	if !cfg.IsEnabled("ml") {
 		return nil, errors.New("the ml pack is not enabled here (packs.ml in the manifest or tq-packs.yaml)")
 	}
-	return &promoteEnv{WS: ws, In: in, St: load(in.Settings())}, nil
+	return &promoteEnv{WS: ws, In: in, St: loadIn(in)}, nil
 }
 
 func (e *promoteEnv) workspace() (string, error) {
@@ -109,6 +109,8 @@ type RequestResult struct {
 	Decision, Card         string
 	Evidence               map[string]string
 	Drift                  *DriftResult
+	Require                []string // the promotion.require items that ran
+	Clamped                []string // tq-packs.yaml values load tightened
 }
 
 func checkNames(model, version, target string) error {
@@ -325,7 +327,7 @@ func evidence(ctx context.Context, e *promoteEnv, m Model, version, target strin
 
 // promoteRequest runs the require items and asks for the approval.
 func promoteRequest(ctx context.Context, e *promoteEnv, model, version, target string) (RequestResult, error) {
-	res := RequestResult{Model: model, Version: version, Target: target}
+	res := RequestResult{Model: model, Version: version, Target: target, Require: e.St.Promotion.Require, Clamped: e.St.Clamped}
 	if err := checkNames(model, version, target); err != nil {
 		return res, err
 	}
@@ -396,6 +398,13 @@ func promoteRequest(ctx context.Context, e *promoteEnv, model, version, target s
 func requestSummary(e *promoteEnv, m Model, version, target string, dr *DriftResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Promote model %s version %s to %s.\n\nModel card: %s\n", m.Name, version, target, m.Card)
+	fmt.Fprintf(&b, "Checks run: %s.\n", strings.Join(e.St.Promotion.Require, ", "))
+	if len(e.St.Clamped) > 0 {
+		b.WriteString("\nClamped from tq-packs.yaml (the repo file cannot loosen the manifest):\n")
+		for _, c := range e.St.Clamped {
+			b.WriteString("- " + c + "\n")
+		}
+	}
 	if m.Metrics != "" {
 		if raw, err := readWork(e.In, m.Metrics, cardMaxBytes); err == nil {
 			if ms, err := readMetrics(raw); err == nil && len(ms) > 0 {

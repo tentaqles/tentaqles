@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -87,7 +88,7 @@ ml:
   drift: { warn: 0.5, fail: 0.2, metrics: { auc: { min: 0.5 } }, in_dod: false, reference: other.json }
 `
 	cfg := configFrom(t, trusted, repo)
-	st := load(cfg.Pack("ml"))
+	st := load(cfg.Pack("ml"), manifestFrom(t, trusted))
 	if !st.Protected("production") || !st.Protected("champion") {
 		t.Fatalf("protected is a union: %v", st.Promotion.Protected)
 	}
@@ -111,8 +112,67 @@ ml:
 	}
 }
 
+// The manifest leaves every loosenable key out: the merge then takes the
+// repo values as they are, so load clamps them to the tq defaults.
+func TestRepoLayerCannotLoosenOmittedKeys(t *testing.T) {
+	trusted := `
+ml:
+  models: [{ name: churn, card: models/churn/MODEL_CARD.md }]
+  promotion: { protected: [production], command: "promote {model} {version} {target}" }
+  drift: { reference: r.json, current: c.json }
+`
+	repo := `
+ml:
+  promotion: { require: [model_card], valid_for: 30d }
+  drift: { warn: 99, fail: 100, max_warn_share: 1, features: { plan: { warn: 50, fail: 60 }, tenure: { warn: 0.01 } } }
+`
+	st := load(configFrom(t, trusted, repo).Pack("ml"), manifestFrom(t, trusted))
+	if strings.Join(st.Promotion.Require, ",") != "model_card,drift,repro" {
+		t.Fatalf("a repo-only require cannot drop items: %v", st.Promotion.Require)
+	}
+	if st.ValidFor() != 7*24*time.Hour {
+		t.Fatalf("a repo-only valid_for is clamped to the 7d default: %s", st.ValidFor())
+	}
+	if fl(st.Drift.Warn, 0) != DefaultWarn || fl(st.Drift.Fail, 0) != DefaultFail || fl(st.Drift.MaxWarnShare, 0) != DefaultMaxWarnShare {
+		t.Fatalf("repo-only thresholds are clamped: %v %v %v", fl(st.Drift.Warn, 0), fl(st.Drift.Fail, 0), fl(st.Drift.MaxWarnShare, 0))
+	}
+	if p := st.Drift.Features["plan"]; fl(p.Warn, 0) != DefaultWarn || fl(p.Fail, 0) != DefaultFail {
+		t.Fatalf("a repo-only feature override is clamped to the global value: %+v", p)
+	}
+	if p := st.Drift.Features["tenure"]; fl(p.Warn, 0) != 0.01 {
+		t.Fatalf("a tighter repo value stays: %+v", p)
+	}
+	if len(st.Clamped) != 7 {
+		t.Fatalf("each clamp is reported: %q", st.Clamped)
+	}
+	// With no manifest at all every value is repo-only.
+	st = load(configFrom(t, "", repo).Pack("ml"), nil)
+	if strings.Join(st.Promotion.Require, ",") != "model_card,drift,repro" || fl(st.Drift.Warn, 0) != DefaultWarn {
+		t.Fatalf("no manifest: %+v", st)
+	}
+	// The manifest may set looser values itself; a feature then clamps to the
+	// manifest's global value, and the manifest's own feature value stays.
+	trusted2 := strings.Replace(trusted, "drift: { reference: r.json, current: c.json }",
+		"drift: { reference: r.json, current: c.json, warn: 0.4, fail: 0.6, features: { tenure: { fail: 0.9 } } }", 1)
+	trusted2 = strings.Replace(trusted2, `command: "promote {model} {version} {target}" }`, `command: "promote {model} {version} {target}", require: [model_card], valid_for: 20d }`, 1)
+	st = load(configFrom(t, trusted2, repo).Pack("ml"), manifestFrom(t, trusted2))
+	if strings.Join(st.Promotion.Require, ",") != "model_card" || st.ValidFor() != 20*24*time.Hour {
+		t.Fatalf("the manifest's own require and valid_for stay: %v %s", st.Promotion.Require, st.ValidFor())
+	}
+	if fl(st.Drift.Warn, 0) != 0.4 || fl(st.Drift.Fail, 0) != 0.6 {
+		t.Fatalf("the manifest's thresholds stay: %v %v", fl(st.Drift.Warn, 0), fl(st.Drift.Fail, 0))
+	}
+	if p := st.Drift.Features["plan"]; fl(p.Warn, 0) != 0.4 || fl(p.Fail, 0) != 0.6 {
+		t.Fatalf("a repo feature clamps to the manifest's global: %+v", p)
+	}
+	if p := st.Drift.Features["tenure"]; fl(p.Fail, 0) != 0.9 || fl(p.Warn, 0) != 0.01 {
+		t.Fatalf("the manifest's own feature value stays, the repo's tighter warn too: %+v", p)
+	}
+}
+
 func TestDefaults(t *testing.T) {
-	st := load(configFrom(t, "ml: {models: [{name: churn, card: c.md}, {name: churn, card: other.md}]}\n", "").Pack("ml"))
+	src := "ml: {models: [{name: churn, card: c.md}, {name: churn, card: other.md}]}\n"
+	st := load(configFrom(t, src, "").Pack("ml"), manifestFrom(t, src))
 	if len(st.Models) != 1 || st.Models[0].Card != "c.md" {
 		t.Fatalf("the first entry of a name wins: %+v", st.Models)
 	}
@@ -159,6 +219,18 @@ ml:
 	}
 	if strings.Join(codes, ",") != "ml-card-missing,ml-drift-reference-missing,ml-promotion-command-missing" {
 		t.Fatal(codes)
+	}
+	// A repo value the loader clamps is a doctor warning.
+	trusted := "ml:\n  models: [{ name: churn, card: c.md }]\n"
+	clampIn := mlInput(t, t.TempDir(), trusted, "ml:\n  drift: { warn: 0.9 }\n").ForPack("ml")
+	n := 0
+	for _, f := range promoteDoctor(clampIn) {
+		if f.Code == "ml-config-clamped" && strings.Contains(f.Msg, "drift.warn") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("clamped warn: %d", n)
 	}
 }
 
