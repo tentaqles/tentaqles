@@ -48,6 +48,11 @@ def _bare_env(tmp_path, **extra):
         shim.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if k not in ("TENTAQLES_PY", "TQ_MODE", "TQ_ENABLED")}
     env.update(
+        # PATH is replaced, not prepended, on purpose (a deliberate exception
+        # to "prepend fakes"): the test proves the scripts exit before they
+        # look for tq or Python, so no real tq or Python may be reachable. A
+        # prepended PATH would still reach the developer's tq and python3.
+        # Only the shims and bash's own directory stay.
         PATH=os.pathsep.join([str(shims), os.path.dirname(BASH)]),
         TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
