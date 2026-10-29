@@ -443,6 +443,22 @@ func TestRunOff(t *testing.T) {
 	if _, err := runTq(t, "run", "acme", "--off", "--", "claude"); err == nil {
 		t.Fatal("tq run <ws> --off must be refused")
 	}
+
+	// --off starts claude or codex only (spec E §8.1); a path or an
+	// extension still names them and still gets the off flags.
+	for _, name := range []string{"bash", "pwsh", "claudex", "sh"} {
+		calls = fakeExec(t)
+		if _, err := runTq(t, "run", "--off", "--", name); err == nil || len(*calls) != 0 {
+			t.Fatalf("tq run --off -- %s must be refused, got %v %+v", name, err, *calls)
+		}
+	}
+	calls = fakeExec(t)
+	if _, err := runTq(t, "run", "--off", "--", "/opt/bin/claude.exe", "-p", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; c.name != "/opt/bin/claude.exe" || !strings.HasPrefix(strings.Join(c.args, " "), "--dangerously-skip-permissions --settings") {
+		t.Fatalf("claude by path: %+v", c)
+	}
 }
 
 func TestRunOffRefusesAgents(t *testing.T) {

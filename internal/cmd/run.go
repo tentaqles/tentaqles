@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -102,12 +103,26 @@ const offClaudeSettings = `{"enabledPlugins":{"tentaqles@tentaqles":false}}`
 // offBanner is printed on stderr by every off launch.
 const offBanner = "tq: off — main logins, no guard (git, cloud and MCP use your default accounts)"
 
+// agentProg names the agent a program is: "claude" or "codex" for those
+// names, with or without a directory and a .exe/.cmd/.bat/.ps1 extension,
+// and "" for any other program.
+func agentProg(name string) string {
+	b := strings.ToLower(filepath.Base(strings.ReplaceAll(name, `\`, "/")))
+	for _, ext := range []string{".exe", ".cmd", ".bat", ".ps1"} {
+		b = strings.TrimSuffix(b, ext)
+	}
+	if b == "claude" || b == "codex" {
+		return b
+	}
+	return ""
+}
+
 // offArgs is an off launch's command line: claude in bypass with the plugin
 // switched off, codex with approvals and sandbox bypassed. A permission flag
 // the user typed replaces the bypass flag; subcommands get nothing.
 func offArgs(name string, args []string) []string {
 	args, _ = stripTqMode(args)
-	switch name {
+	switch agentProg(name) {
 	case "claude":
 		if len(args) > 0 && slices.Contains(claudeSubcommands, args[0]) {
 			return args
@@ -207,7 +222,7 @@ func (l launch) run() error {
 	_, agent := agentSession()
 	args := l.args
 	mode := l.mode
-	switch l.name {
+	switch agentProg(l.name) {
 	case "claude":
 		var m string
 		args, m = launchClaudeArgs(args, agent)
@@ -265,6 +280,9 @@ func orDefault(m string) string {
 func runOff(name string, args []string, errw func(string)) error {
 	if err := refuseAgent("tq run --off"); err != nil {
 		return err
+	}
+	if agentProg(name) == "" {
+		return fmt.Errorf("tq run --off starts claude or codex only, not %q: tq run --off -- <claude|codex> [args]", name)
 	}
 	errw(offBanner)
 	return execCommand(name, offArgs(name, args), envplan.OffEnviron(os.Environ()))
