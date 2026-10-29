@@ -53,6 +53,11 @@ type Invocation struct {
 	// its variables are unknown, the hook's own environment is not used, and
 	// the target is floored at the default environment.
 	Unknown bool
+	// Strict marks an unknown flag before the verb followed by a non-flag
+	// word (parseArgs): the verb cannot be told, so the command counts as an
+	// apply (a destroy when a destroy word appears) at the strictest
+	// environment.
+	Strict bool
 	// Selections an earlier leaf of the line made with the tools' own verbs
 	// (review fin C1): terraform/tofu workspace select|new and pulumi stack
 	// select|init (for that folder), az account set (for every later leaf).

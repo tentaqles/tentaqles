@@ -81,6 +81,12 @@ const (
 
 func classify(iv Invocation) (int, Op) {
 	ad, del := coreMatch(iv.Raw)
+	if iv.Tool != "" && iv.Strict {
+		if _, d := destroyWord(iv.Raw); d || iv.Op == OpDestroy {
+			return kUnreadable, OpDestroy
+		}
+		return kUnreadable, OpApply
+	}
 	if iv.Tool != "" {
 		switch iv.Op {
 		case OpApply, OpDestroy, OpDry:
@@ -320,6 +326,8 @@ func evaluate(iv Invocation, op Op, unreadable bool, gt envgate.Gate, h Host, g 
 		action = envgate.Destroy
 	}
 	switch {
+	case unreadable && iv.Strict:
+		res = envgate.Resolution{Env: gt.Strictest(action)}
 	case unreadable:
 		res = envgate.Resolution{Env: gt.Default()}
 	case iv.Unknown:
@@ -329,7 +337,10 @@ func evaluate(iv Invocation, op Op, unreadable bool, gt envgate.Gate, h Host, g 
 	}
 	env := res.Env
 	what := describe(iv, op)
-	if unreadable {
+	switch {
+	case unreadable && iv.Strict:
+		what = "a command with a flag tq does not know before its verb (" + firstWords(iv.Raw) + "), which counts as an apply to the strictest environment"
+	case unreadable:
 		what = "a command tq cannot read (" + firstWords(iv.Raw) + ")"
 	}
 	// An apply of a saved plan whose record destroys is a destroy too.
