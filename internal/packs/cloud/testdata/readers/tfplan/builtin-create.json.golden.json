@@ -1,0 +1,30 @@
+[
+  {
+    "addr": "terraform_data.acme",
+    "type": "terraform_data",
+    "actions": [
+      "create"
+    ],
+    "after": {
+      "input": {
+        "name": "acme",
+        "password": "[REDACTED:sensitive]",
+        "tags": {
+          "tq-allow": "IAC001: test"
+        }
+      },
+      "triggers_replace": null
+    },
+    "pos": {
+      "file": "tfplan/builtin-create.json",
+      "line": 1,
+      "pointer": "/resource_changes/0"
+    },
+    "source": "tfplan",
+    "meta": {
+      "mode": "managed",
+      "provider": "terraform.io/builtin/terraform",
+      "raw_action": "create"
+    }
+  }
+]

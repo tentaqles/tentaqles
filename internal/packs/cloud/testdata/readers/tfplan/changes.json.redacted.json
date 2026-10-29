@@ -1,0 +1,375 @@
+{
+  "applyable": true,
+  "complete": true,
+  "configuration": {
+    "root_module": {
+      "variables": {
+        "db_password": {
+          "default": "[REDACTED:sensitive]",
+          "sensitive": true
+        },
+        "env": {
+          "default": "prod"
+        }
+      }
+    }
+  },
+  "errored": false,
+  "format_version": "1.2",
+  "output_changes": {
+    "db_url": {
+      "actions": [
+        "create"
+      ],
+      "after": "[REDACTED:sensitive]",
+      "after_sensitive": true,
+      "after_unknown": false,
+      "before": null,
+      "before_sensitive": true
+    }
+  },
+  "planned_values": {
+    "outputs": {
+      "bucket": {
+        "sensitive": false,
+        "type": "string",
+        "value": "acme-logs"
+      },
+      "db_url": {
+        "sensitive": true,
+        "type": "string",
+        "value": "[REDACTED:sensitive]"
+      }
+    },
+    "root_module": {
+      "child_modules": [
+        {
+          "address": "module.net",
+          "resources": [
+            {
+              "address": "module.net.aws_security_group.web",
+              "sensitive_values": {},
+              "type": "aws_security_group",
+              "values": {
+                "api_token": "[REDACTED:secret_key]",
+                "name": "web"
+              }
+            }
+          ]
+        }
+      ],
+      "resources": [
+        {
+          "address": "aws_db_instance.main",
+          "mode": "managed",
+          "name": "main",
+          "sensitive_values": {
+            "password": true
+          },
+          "type": "aws_db_instance",
+          "values": {
+            "deletion_protection": false,
+            "identifier": "acme-main",
+            "password": "[REDACTED:sensitive]"
+          }
+        }
+      ]
+    }
+  },
+  "prior_state": {
+    "format_version": "1.0",
+    "values": {
+      "outputs": {
+        "db_url": {
+          "sensitive": true,
+          "value": "[REDACTED:sensitive]"
+        }
+      },
+      "root_module": {
+        "resources": [
+          {
+            "address": "aws_db_instance.main",
+            "sensitive_values": {
+              "password": true
+            },
+            "type": "aws_db_instance",
+            "values": {
+              "password": "[REDACTED:sensitive]"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "resource_changes": [
+    {
+      "action_reason": "replace_because_cannot_update",
+      "address": "aws_db_instance.main",
+      "change": {
+        "actions": [
+          "delete",
+          "create"
+        ],
+        "after": {
+          "deletion_protection": false,
+          "identifier": "acme-main",
+          "password": "[REDACTED:sensitive]",
+          "port": 5432,
+          "tags": {
+            "tq-allow": "IAC001: rebuilt on purpose"
+          }
+        },
+        "after_sensitive": {
+          "password": true,
+          "tags": {}
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before": {
+          "deletion_protection": true,
+          "identifier": "acme-main",
+          "password": "[REDACTED:sensitive]",
+          "port": 5432
+        },
+        "before_sensitive": {
+          "password": true
+        },
+        "replace_paths": [
+          [
+            "engine_version"
+          ]
+        ]
+      },
+      "mode": "managed",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_db_instance"
+    },
+    {
+      "action_reason": "delete_because_no_resource_config",
+      "address": "aws_s3_bucket.old",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "after": null,
+        "after_sensitive": false,
+        "after_unknown": {},
+        "before": {
+          "bucket": "acme-old"
+        },
+        "before_sensitive": {}
+      },
+      "mode": "managed",
+      "name": "old",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_s3_bucket"
+    },
+    {
+      "address": "module.net.aws_security_group.web",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "api_token": "[REDACTED:secret_key]",
+          "ingress": [
+            {
+              "cidr_blocks": [
+                "0.0.0.0/0"
+              ],
+              "from_port": 22,
+              "protocol": "tcp",
+              "to_port": 22
+            }
+          ],
+          "name": "web"
+        },
+        "after_sensitive": {
+          "ingress": [
+            {}
+          ]
+        },
+        "after_unknown": {},
+        "before": {
+          "ingress": [],
+          "name": "web"
+        },
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.net",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_security_group"
+    },
+    {
+      "address": "aws_iam_role.app",
+      "change": {
+        "actions": [
+          "no-op"
+        ],
+        "after": {
+          "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+          "name": "acme-app"
+        },
+        "after_sensitive": {},
+        "after_unknown": {},
+        "before": {
+          "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+          "name": "acme-app"
+        },
+        "before_sensitive": {}
+      },
+      "mode": "managed",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_iam_role"
+    },
+    {
+      "address": "aws_instance.legacy",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "after": null,
+        "after_sensitive": false,
+        "after_unknown": {},
+        "before": {
+          "ami": "ami-00000000"
+        },
+        "before_sensitive": {}
+      },
+      "deposed": "00000000",
+      "mode": "managed",
+      "name": "legacy",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_instance"
+    },
+    {
+      "address": "aws_kms_key.whole",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": "[REDACTED:sensitive]",
+        "after_sensitive": true,
+        "after_unknown": {},
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "whole",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_kms_key"
+    },
+    {
+      "action_reason": "read_because_dependency_pending",
+      "address": "data.aws_iam_policy_document.read",
+      "change": {
+        "actions": [
+          "read"
+        ],
+        "after": {
+          "statement": [
+            {
+              "actions": [
+                "s3:GetObject"
+              ],
+              "resources": [
+                "*"
+              ]
+            }
+          ]
+        },
+        "after_sensitive": {},
+        "after_unknown": {
+          "json": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "data",
+      "name": "read",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_iam_policy_document"
+    },
+    {
+      "address": "aws_s3_bucket.adopted",
+      "change": {
+        "actions": [
+          "no-op"
+        ],
+        "after": {
+          "bucket": "acme-adopted"
+        },
+        "after_sensitive": {},
+        "after_unknown": {},
+        "before": {
+          "bucket": "acme-adopted"
+        },
+        "before_sensitive": {},
+        "importing": {
+          "id": "acme-adopted"
+        }
+      },
+      "mode": "managed",
+      "name": "adopted",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_s3_bucket"
+    },
+    {
+      "address": "aws_s3_bucket.forgotten",
+      "change": {
+        "actions": [
+          "forget"
+        ],
+        "after": null,
+        "after_sensitive": false,
+        "after_unknown": {},
+        "before": {
+          "bucket": "acme-forgotten"
+        },
+        "before_sensitive": {}
+      },
+      "mode": "managed",
+      "name": "forgotten",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "type": "aws_s3_bucket"
+    }
+  ],
+  "resource_drift": [
+    {
+      "address": "aws_db_instance.main",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "password": "[REDACTED:sensitive]"
+        },
+        "after_sensitive": {
+          "password": true
+        },
+        "before": {
+          "password": "[REDACTED:sensitive]"
+        },
+        "before_sensitive": {
+          "password": true
+        }
+      },
+      "type": "aws_db_instance"
+    }
+  ],
+  "terraform_version": "1.15.2",
+  "variables": {
+    "db_password": {
+      "value": "[REDACTED:sensitive]"
+    },
+    "env": {
+      "value": "prod"
+    }
+  }
+}
+

@@ -1,0 +1,149 @@
+[
+  {
+    "addr": "Db",
+    "type": "AWS::RDS::DBInstance",
+    "actions": [
+      "replace"
+    ],
+    "after": {
+      "DBInstanceIdentifier": "acme-db-2",
+      "MasterUserPassword": "[REDACTED:secret_key]",
+      "PubliclyAccessible": "true"
+    },
+    "before": {
+      "DBInstanceIdentifier": "acme-db",
+      "MasterUserPassword": "[REDACTED:secret_key]"
+    },
+    "pos": {
+      "file": "changeset/changeset.json",
+      "line": 3,
+      "pointer": "/Changes/0"
+    },
+    "source": "changeset",
+    "meta": {
+      "physical_id": "acme-db-0000",
+      "policy_action": "ReplaceAndDelete",
+      "raw_action": "Modify",
+      "replacement": "True"
+    }
+  },
+  {
+    "addr": "Fn",
+    "type": "AWS::Lambda::Function",
+    "actions": [
+      "replace"
+    ],
+    "pos": {
+      "file": "changeset/changeset.json",
+      "line": 20,
+      "pointer": "/Changes/1"
+    },
+    "source": "changeset",
+    "meta": {
+      "physical_id": "acme-fn",
+      "raw_action": "Modify",
+      "replacement": "Conditional"
+    }
+  },
+  {
+    "addr": "Topic",
+    "type": "AWS::SNS::Topic",
+    "actions": [
+      "update"
+    ],
+    "pos": {
+      "file": "changeset/changeset.json",
+      "line": 32,
+      "pointer": "/Changes/2"
+    },
+    "source": "changeset",
+    "meta": {
+      "physical_id": "arn:aws:sns:us-east-1:000000000000:acme",
+      "raw_action": "Modify",
+      "replacement": "False"
+    }
+  },
+  {
+    "addr": "Queue",
+    "type": "AWS::SQS::Queue",
+    "actions": [
+      "create"
+    ],
+    "pos": {
+      "file": "changeset/changeset.json",
+      "line": 44,
+      "pointer": "/Changes/3"
+    },
+    "source": "changeset",
+    "meta": {
+      "raw_action": "Add"
+    }
+  },
+  {
+    "addr": "OldBucket",
+    "type": "AWS::S3::Bucket",
+    "actions": [
+      "delete"
+    ],
+    "pos": {
+      "file": "changeset/changeset.json",
+      "line": 54,
+      "pointer": "/Changes/4"
+    },
+    "source": "changeset",
+    "meta": {
+      "physical_id": "acme-old",
+      "policy_action": "Retain",
+      "raw_action": "Remove"
+    }
+  },
+  {
+    "addr": "Imported",
+    "type": "AWS::S3::Bucket",
+    "actions": [
+      "import"
+    ],
+    "pos": {
+      "file": "changeset/changeset.json",
+      "line": 66,
+      "pointer": "/Changes/5"
+    },
+    "source": "changeset",
+    "meta": {
+      "physical_id": "acme-imported",
+      "raw_action": "Import"
+    }
+  },
+  {
+    "addr": "Nested",
+    "type": "AWS::CloudFormation::Stack",
+    "actions": [
+      "unknown"
+    ],
+    "pos": {
+      "file": "changeset/changeset.json",
+      "line": 75,
+      "pointer": "/Changes/6"
+    },
+    "source": "changeset",
+    "meta": {
+      "raw_action": "Dynamic"
+    }
+  },
+  {
+    "addr": "Synced",
+    "type": "AWS::SQS::Queue",
+    "actions": [
+      "no-op"
+    ],
+    "pos": {
+      "file": "changeset/changeset.json",
+      "line": 83,
+      "pointer": "/Changes/7"
+    },
+    "source": "changeset",
+    "meta": {
+      "raw_action": "SyncWithActual"
+    }
+  }
+]
