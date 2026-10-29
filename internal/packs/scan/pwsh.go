@@ -53,6 +53,34 @@ var pwshValueFlags = map[string]bool{
 	"-custompipename": true, "-encodedarguments": true, "-ea": true,
 }
 
+// pwshSwitches take no value.
+var pwshSwitches = []string{"-noprofile", "-nologo", "-noninteractive", "-noexit", "-mta", "-sta", "-help", "-login", "-interactive", "-nop", "-noni"}
+
+// knownPwshParam reports whether l (lower case, - prefix, maybe :value)
+// names a PowerShell parameter: no path separator, and a known name or an
+// abbreviation PowerShell accepts.
+func knownPwshParam(l string) bool {
+	if strings.ContainsAny(l[1:], `/\`) {
+		return false
+	}
+	if k := strings.IndexByte(l, ':'); k > 0 {
+		l = l[:k]
+	}
+	switch {
+	case l == "-e" || l == "-ec" || prefixOf(l, "-encodedcommand", 3),
+		l == "-c" || prefixOf(l, "-command", 3),
+		l == "-f" || prefixOf(l, "-file", 3),
+		pwshValueFlags[l], l == "-?" || l == "-h":
+		return true
+	}
+	for _, sw := range pwshSwitches {
+		if l == sw || prefixOf(l, sw, 4) {
+			return true
+		}
+	}
+	return false
+}
+
 // prefixOf reports an abbreviation of a PowerShell parameter: l is name or a
 // prefix of it at least min bytes long.
 func prefixOf(l, name string, min int) bool {
@@ -73,7 +101,9 @@ func PowerShell(prog string, args []string) PwshRun {
 		switch {
 		case strings.HasPrefix(l, "--"):
 			l = l[1:]
-		case strings.HasPrefix(l, "/") && len(l) > 1:
+		case strings.HasPrefix(l, "/") && len(l) > 1 && knownPwshParam("-"+l[1:]):
+			// a /parameter only when it names one: /home/tester/x.ps1 or
+			// /x.ps1 is a script path (pwsh on Linux or macOS)
 			l = "-" + l[1:]
 		}
 		if !strings.HasPrefix(l, "-") {

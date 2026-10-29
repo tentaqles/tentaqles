@@ -49,6 +49,13 @@ func TestPowerShellForms(t *testing.T) {
 		{"pwsh", "-", "", false, true},
 		{"pwsh", "-WorkingDirectory dags -Version", "", false, false},
 		{"pwsh", "-v", "", false, false},
+		// final review m1: an absolute Unix script path is a bare script,
+		// not a /parameter
+		{"pwsh", "/home/tester/x.ps1", "", false, true},
+		{"pwsh", "-NoProfile /tmp/x.ps1", "", false, true},
+		{"pwsh", "/x.ps1", "", false, true},
+		{"pwsh", "/NoProfile /c dbt run", "dbt run", false, false},
+		{"powershell", "/NoLogo /Command dbt run", "dbt run", false, false},
 	}
 	for _, c := range cases {
 		r := PowerShell(c.prog, strings.Fields(c.args))
