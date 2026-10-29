@@ -62,7 +62,11 @@ type Spec struct {
 	Dir        string        // working directory ("" = Runner.Root)
 	Timeout    time.Duration // the check's default; the manifest's timeouts.<tool> wins
 	Env        []string      // extra KEY=VALUE pairs (never read from .env files)
-	Stdin      []byte
+	// PassEnv are more parent variable names the tool may see, besides the
+	// base allow-list (BaseEnv): a check's declared Check.Env. A declared
+	// name passes even when it looks like a secret.
+	PassEnv []string
+	Stdin   []byte
 }
 
 // Output is what the tool printed, capped at MaxOutput per stream.
@@ -162,7 +166,7 @@ func (r *Runner) Probe(pack, tool string) Probe {
 func Version(ctx context.Context, path string) string {
 	ctx, cancel := context.WithTimeout(ctx, VersionTimeout)
 	defer cancel()
-	out, _ := run(ctx, path, []string{"--version"}, "", toolEnv("", nil), nil)
+	out, _ := run(ctx, path, []string{"--version"}, "", toolEnv("", nil, nil), nil)
 	if v := ParseVersion(string(out.Stdout)); v != "" {
 		return v
 	}
@@ -231,8 +235,9 @@ func (r *Runner) Timeout(s Spec) time.Duration {
 
 // Run runs the tool with argv only. A timeout kills the whole process tree
 // and returns TimedOut; a non-zero exit is not an error (the check reads
-// ExitCode). The parent environment passes through unchanged, plus
-// DO_NOT_TRACK=1 and the tool's known telemetry switch.
+// ExitCode). The tool gets a filtered environment (toolEnv): the base
+// allow-list, the names in PassEnv, DO_NOT_TRACK=1, the tool's telemetry
+// switch and Env; never the rest of the parent environment.
 func (r *Runner) Run(ctx context.Context, s Spec) (Output, error) {
 	p := r.Probe(s.Pack, s.Tool)
 	if !p.Found {
@@ -247,13 +252,53 @@ func (r *Runner) Run(ctx context.Context, s Spec) (Output, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout(s))
 	defer cancel()
-	out, err := run(ctx, p.Path, s.Args, dir, toolEnv(s.Tool, s.Env), s.Stdin)
+	out, err := run(ctx, p.Path, s.Args, dir, toolEnv(s.Tool, s.PassEnv, s.Env), s.Stdin)
 	out.Path, out.Version = p.Path, p.Version
 	return out, err
 }
 
-func toolEnv(tool string, extra []string) []string {
-	env := append(os.Environ(), "DO_NOT_TRACK=1")
+// BaseEnv are the parent variables every tool sees (spec C Â§2.6, spec D
+// Â§20): the search path, the home and temp folders, the Windows system
+// variables a process needs, and the locale (LANG, LC_*).
+var BaseEnv = []string{"PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "SystemRoot", "ComSpec", "PATHEXT", "LANG"}
+
+// secretName is a variable name that looks like a credential. It never
+// passes unless a check declares it by name.
+var secretName = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSW(OR)?D|PASS$|PWD$|CREDENTIAL|AUTH|API_?KEY|ACCESS_?KEY|PRIVATE|SESSION|COOKIE|_KEY$|^KEY$|DSN|CONN(ECTION)?_?STR|_PAT$)`)
+
+// testPass are names the package tests pass to the fake tool.
+var testPass []string
+
+// toolEnv is the environment of a tool run: the parent's BaseEnv and LC_*
+// variables, the names in pass, DO_NOT_TRACK=1, the tool's telemetry
+// switches, then extra (explicit KEY=VALUE pairs). A base or LC_* name that
+// looks like a secret is dropped; a name in pass is the check's explicit
+// declaration and passes.
+func toolEnv(tool string, pass, extra []string) []string {
+	allowed := map[string]bool{}
+	for _, n := range BaseEnv {
+		allowed[strings.ToUpper(n)] = true
+	}
+	declared := map[string]bool{}
+	for _, n := range append(append([]string(nil), pass...), testPass...) {
+		declared[strings.ToUpper(n)] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			continue
+		}
+		u := strings.ToUpper(k)
+		switch {
+		case declared[u]:
+		case (allowed[u] || strings.HasPrefix(u, "LC_")) && !secretName.MatchString(k):
+		default:
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "DO_NOT_TRACK=1")
 	env = append(env, Telemetry[tool]...)
 	return append(env, extra...)
 }

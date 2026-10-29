@@ -23,7 +23,7 @@ const MaxToolTimeout = 1800 * time.Second
 // key belongs to the pack and is checked by its registered validator.
 var FrameworkPackKeys = []string{"enabled", "tools", "timeouts", "tool_paths", "baseline"}
 
-var toolNameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
+var toolNameRe = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
 // Duration is a time.Duration in YAML: "600s", "10m", "1h", or a bare number
 // of seconds.
@@ -118,7 +118,7 @@ func packValidator(name string) func(yaml.Node) error {
 }
 
 // ValidatePacks checks a packs: map (the manifest block or tq-packs.yaml):
-// known pack names, tool names in [a-z0-9-], timeouts within the cap, a repo
+// known pack names, tool names in [a-z0-9_-], timeouts within the cap, a repo
 // relative baseline, then the pack's registered validator. With no validator
 // registered (a binary without that pack linked) the pack's keys are kept and
 // not checked.
@@ -135,12 +135,12 @@ func ValidatePacks(packs map[string]PackConfig) error {
 		}
 		for _, t := range p.Tools {
 			if !toolNameRe.MatchString(t) {
-				return fmt.Errorf("packs.%s.tools: %q: tool names use only a-z, 0-9 and -", name, t)
+				return fmt.Errorf("packs.%s.tools: %q: tool names use only a-z, 0-9, _ and -", name, t)
 			}
 		}
 		for t, d := range p.Timeouts {
 			if !toolNameRe.MatchString(t) {
-				return fmt.Errorf("packs.%s.timeouts: %q: tool names use only a-z, 0-9 and -", name, t)
+				return fmt.Errorf("packs.%s.timeouts: %q: tool names use only a-z, 0-9, _ and -", name, t)
 			}
 			if d <= 0 || time.Duration(d) > MaxToolTimeout {
 				return fmt.Errorf("packs.%s.timeouts.%s: must be between 1s and %s", name, t, MaxToolTimeout)
@@ -148,7 +148,7 @@ func ValidatePacks(packs map[string]PackConfig) error {
 		}
 		for t, v := range p.ToolPaths {
 			if !toolNameRe.MatchString(t) {
-				return fmt.Errorf("packs.%s.tool_paths: %q: tool names use only a-z, 0-9 and -", name, t)
+				return fmt.Errorf("packs.%s.tool_paths: %q: tool names use only a-z, 0-9, _ and -", name, t)
 			}
 			if strings.TrimSpace(v) == "" {
 				return fmt.Errorf("packs.%s.tool_paths.%s: empty path", name, t)

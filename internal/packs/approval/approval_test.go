@@ -441,3 +441,19 @@ func TestListPerPack(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// R4-3: a keychain that reads but cannot write: Claim refuses to let the
+// command run, because its use cannot be recorded.
+func TestClaimRefusesWhenTheMarkCannotBeWritten(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	restore := ledger.FailKeychainWritesForTest(errors.New("read-only keychain"))
+	defer restore()
+	if _, err := Claim("acme", id, want, ev); err == nil || !strings.Contains(err.Error(), "do not run the command") {
+		t.Fatalf("claim with no mark: %v", err)
+	}
+	if err := MarkUsed("acme", "ml", id); err == nil {
+		t.Fatal("MarkUsed with no mark")
+	}
+}

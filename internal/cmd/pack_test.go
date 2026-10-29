@@ -65,6 +65,30 @@ func init() {
 			g.Consume(a.Decision)
 			return policy.Allow, "approved", true
 		}})
+	// Round 5: a guard that verifies a stored plan and names it as a read arg.
+	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-plan", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
+		Supersedes: []string{"tq/iac-apply"},
+		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
+			if !strings.Contains(call.Command, "tofu apply") && !strings.Contains(call.Command, "pulumi up") {
+				return policy.Allow, "", false
+			}
+			for _, f := range strings.Fields(strings.NewReplacer("=", " ", ";", " ", "&", " ").Replace(call.Command)) {
+				f = strings.ReplaceAll(strings.Trim(f, `\"'`), `\`, "/")
+				if i := strings.Index(f, "/plans/"); i >= 0 {
+					rel := f[i+1:]
+					if strings.Contains(call.Command, "liar") {
+						rel = "plans/never-hashed.tfplan"
+					} else if _, err := g.HashState(rel); err != nil {
+						return policy.Deny, err.Error(), true
+					}
+					if err := g.ReadArgs(rel); err != nil {
+						return policy.Deny, err.Error(), true
+					}
+					return policy.Allow, "plan verified", true
+				}
+			}
+			return policy.Deny, "no stored plan", true
+		}})
 	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-apply", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
 		Supersedes: []string{"tq/iac-apply"},
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
@@ -500,5 +524,48 @@ func TestPackBadBaseAndBaselineRefusal(t *testing.T) {
 	code, _, errOut := runHook(t, []string{"pack", "baseline"}, "")
 	if code != 2 || !strings.Contains(errOut, "did not run cleanly") {
 		t.Fatalf("baseline with a missing declared tool: %d %q", code, errOut)
+	}
+}
+
+// Round 5: a stored plan the cloud guard verified is a plain argument, not a
+// state-dir write; every bypass is still denied.
+func TestHookStoredPlanReadArg(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	dir := packs.StateDir("acme", "cloud")
+	os.MkdirAll(filepath.Join(dir, "plans"), 0o700)
+	plan := filepath.Join(dir, "plans", "p1.tfplan")
+	os.WriteFile(plan, []byte("plan"), 0o600)
+	os.WriteFile(filepath.Join(dir, "plans", "p2.tfplan"), []byte("plan"), 0o600)
+	led := filepath.Join(dir, "ledger.jsonl")
+	q := func(s string) string { return `"` + s + `"` }
+	for _, c := range []string{
+		"tofu apply " + plan,
+		"tofu apply " + q(plan),
+		"pulumi up --plan " + plan,
+		"pulumi up --plan=" + plan,
+		"cd infra && tofu apply " + plan,
+	} {
+		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
+		if code != 0 || strings.Contains(out, "tq/hub-store-write") {
+			t.Fatalf("allowed form %q: %d %s", c, code, out)
+		}
+	}
+	for name, c := range map[string]string{
+		"extra segment, same path":  "tofu apply " + plan + "; cat " + plan,
+		"extra segment, state dir":  "tofu apply " + plan + " && ls " + filepath.Dir(plan),
+		"redirect":                  "tofu apply " + plan + " > " + plan,
+		"cp to the same path":       "tofu apply " + plan + " && cp x " + plan,
+		"tee":                       "tofu apply " + plan + " | tee " + plan,
+		"another protected path":    "tofu apply " + plan + " " + led,
+		"a path not verified":       "tofu apply " + plan + " " + filepath.Join(dir, "plans", "p2.tfplan"),
+		"a .. spelling":             "tofu apply " + filepath.Join(dir, "plans", "x") + "/../p1.tfplan",
+		"substitution":              "tofu apply " + plan + " $(cat " + led + ")",
+		"never hashed (liar guard)": "tofu apply liar " + plan,
+		"newline segment":           "tofu apply " + plan + "\ncat " + plan,
+	} {
+		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
+		if code != 2 || !strings.Contains(out, "tq/hub-store-write") {
+			t.Fatalf("%s: %d %s", name, code, out)
+		}
 	}
 }

@@ -107,6 +107,11 @@ type Check struct {
 	// MinVersion is the lowest tool version accepted (External only, optional).
 	// A declared tool below it fails.
 	MinVersion string
+	// Env are the parent variable names the check's tool may see besides
+	// the base allow-list (toolrun.BaseEnv), such as DBT_PROFILES_DIR or
+	// PGSERVICEFILE (External only). A name declared here passes even when
+	// it looks like a secret; nothing else from the parent does.
+	Env []string
 	// Timeout is the check's default tool timeout (External only; 120s when
 	// zero). packs.<p>.timeouts.<tool> overrides it, capped at 1800s.
 	Timeout time.Duration

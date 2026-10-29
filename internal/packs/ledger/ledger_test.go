@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zalando/go-keyring"
 )
 
 func isolate(t *testing.T) {
@@ -123,27 +125,45 @@ func TestClaimOnce(t *testing.T) {
 	}
 }
 
-// m3: compaction drops finished decisions and keeps live ones.
+// m3, R4-6: compaction drops finished decisions by the signed state only.
 func TestCompact(t *testing.T) {
 	isolate(t)
+	keyring.MockInit()
 	now := time.Now().UTC()
 	future := now.Add(time.Hour).Format(time.RFC3339)
 	past := now.Add(-time.Hour).Format(time.RFC3339)
+	ev := map[string]string{"plan": "sha256:aa"}
+	used := Entry{Event: Asked, Decision: "used", Pack: "ml", Action: "apply", Subject: "s", Target: "prod", Evidence: ev, Grant: "approve", ExpiresAt: future}
 	for _, e := range []Entry{
 		{Event: Asked, Decision: "live", Pack: "ml", Grant: "approve", ExpiresAt: future},
-		{Event: Asked, Decision: "used", Pack: "ml", Grant: "approve", ExpiresAt: future},
-		{Event: Consumed, Decision: "used", Pack: "ml"},
+		{Event: Consumed, Decision: "live", Pack: "ml"}, // forged: unsigned, ignored
+		{Event: Expired, Decision: "live", Pack: "ml"},  // forged: unsigned, ignored
+		used,
 		{Event: Asked, Decision: "old", Pack: "ml", Grant: "approve", ExpiresAt: past},
 	} {
 		if err := Append("acme", e); err != nil {
 			t.Fatal(err)
 		}
 	}
+	priv, _ := SigningKey("acme")
+	s, err := AnswerSigner("acme", priv)(shownOf(used), "used", "approve", "hub", now.Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatal(err)
+	}
+	Append("acme", s)
+	if err := SetHighWater("acme", "ml", "used"); err != nil {
+		t.Fatal(err)
+	}
 	if err := Compact("acme", "ml", now); err != nil {
 		t.Fatal(err)
 	}
 	es, err := Read("acme", "ml")
-	if err != nil || len(es) != 1 || es[0].Decision != "live" {
+	if err != nil || len(es) != 3 {
 		t.Fatalf("%v %+v", err, es)
+	}
+	for _, e := range es {
+		if e.Decision != "live" {
+			t.Fatalf("kept %+v", e)
+		}
 	}
 }

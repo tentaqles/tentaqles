@@ -9,10 +9,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zalando/go-keyring"
 )
 
 // TestMain doubles as the helper process of the cross-process test.
 func TestMain(m *testing.M) {
+	keyring.MockInit() // never the real keychain, in the helpers too
 	switch os.Getenv("TQ_LEDGER_HELPER") {
 	case "append":
 		n, _ := strconv.Atoi(os.Getenv("TQ_LEDGER_N"))
