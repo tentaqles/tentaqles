@@ -8,13 +8,17 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/codexcfg"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
-func codexWS(t *testing.T, u *manifest.Unattended, bypass bool) *resolve.Workspace {
+// codexWS is a trusted acme workspace with a codex identity, under an
+// isolated home.
+func codexWS(t *testing.T) *resolve.Workspace {
 	t.Helper()
 	isolateHome(t)
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "elsewhere"))
@@ -22,88 +26,62 @@ func codexWS(t *testing.T, u *manifest.Unattended, bypass bool) *resolve.Workspa
 		Schema: "tentaqles-client-v2", Client: "acme",
 		Identities: map[string]manifest.Identity{"codex": {}, "gh": {}},
 	}
-	m.Guard.Unattended = u
 	w := &resolve.Workspace{Name: "acme", Hash: "hash-codex", Root: filepath.Join(t.TempDir(), "acme"), Manifest: m}
-	if bypass {
-		if err := trust.AllowBypass(w.Hash); err != nil {
-			t.Fatal(err)
-		}
+	if err := trust.Allow(w.Hash); err != nil {
+		t.Fatal(err)
 	}
 	return w
 }
 
-// writeCodexProfile puts a tq-written ("tq"), user-authored ("user") or no
-// ("none") tq-unattended profile file in the acme codex identity dir.
-func writeCodexProfile(t *testing.T, kind string) {
+// withCodexMode makes the mode resolver return preset name (the WS1 engine
+// is a stub on this branch), for every workspace and cwd, or only below sub.
+func withCodexMode(t *testing.T, name string, under string) {
 	t.Helper()
-	dir := paths.IdentityDir("acme", "codex")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
+	tab, ok := guardcfg.Preset(name)
+	if !ok {
+		t.Fatalf("no preset %s", name)
 	}
-	p := filepath.Join(dir, codexcfg.Profile+".config.toml")
-	switch kind {
-	case "tq":
-		if _, err := codexcfg.Render(dir, codexcfg.Want{Profile: true, Sandbox: "workspace-write"}, false); err != nil {
-			t.Fatal(err)
+	prev := codexModeAt
+	codexModeAt = func(ws *resolve.Workspace, cwd string) (string, func(*policy.Rule) policy.Action) {
+		if under != "" && !strings.HasPrefix(filepath.Clean(cwd), filepath.Clean(under)) {
+			return prev(ws, cwd)
 		}
-	case "user":
-		if err := os.WriteFile(p, []byte("model = \"x\"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestCodexArgsRequiresTqProfileFile(t *testing.T) {
-	proj := &manifest.Unattended{Projects: []string{"demo-todo"}}
-	for _, tc := range []struct{ name, file, want string }{
-		{"tq-written file", "tq", "--profile tq-unattended hi"},
-		{"file missing", "none", "hi"},
-		{"user-authored file", "user", "hi"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			w := codexWS(t, proj, true)
-			writeCodexProfile(t, tc.file)
-			got := codexArgs(w, filepath.Join(w.Root, "demo-todo"), []string{"hi"})
-			if strings.Join(got, " ") != tc.want {
-				t.Fatalf("got %q want %q", strings.Join(got, " "), tc.want)
+		return name, func(r *policy.Rule) policy.Action {
+			c := guardcfg.CategoryOf(r)
+			if c == "" || guardcfg.Locked(c) {
+				return r.Action
 			}
-		})
-	}
-	t.Run("no codex identity", func(t *testing.T) {
-		w := codexWS(t, proj, true)
-		writeCodexProfile(t, "tq")
-		delete(w.Manifest.Identities, "codex")
-		got := codexArgs(w, filepath.Join(w.Root, "demo-todo"), []string{"hi"})
-		if strings.Join(got, " ") != "hi" {
-			t.Fatalf("got %v", got)
+			return tab.Get(c).Apply(r.Action)
 		}
-	})
+	}
+	t.Cleanup(func() { codexModeAt = prev })
 }
 
-func TestCodexArgs(t *testing.T) {
-	proj := &manifest.Unattended{Projects: []string{"demo-todo"}}
+func TestCodexArgsFromMode(t *testing.T) {
 	cases := []struct {
-		name   string
-		u      *manifest.Unattended
-		bypass bool
-		sub    string
-		args   []string
-		want   string
+		name, mode, sandbox string
+		args                []string
+		want                string
 	}{
-		{"covered project with bypass", proj, true, "demo-todo", []string{"exec", "hi"}, "--profile tq-unattended exec hi"},
-		{"nested folder of a covered project", proj, true, "demo-todo/src", []string{"hi"}, "--profile tq-unattended hi"},
-		{"no bypass trust", proj, false, "demo-todo", []string{"hi"}, "hi"},
-		{"workspace root is not covered", proj, true, "", []string{"hi"}, "hi"},
-		{"explicit -p wins", proj, true, "demo-todo", []string{"-p", "x"}, "-p x"},
-		{"explicit --profile= wins", proj, true, "demo-todo", []string{"--profile=x"}, "--profile=x"},
-		{"workspace-wide uses top-level keys", &manifest.Unattended{Workspace: true}, true, "demo-todo", []string{"hi"}, "hi"},
-		{"not configured", nil, true, "demo-todo", []string{"hi"}, "hi"},
+		{"default", "", "", []string{"hi"}, "-a on-request -s workspace-write hi"},
+		{"default keeps exec", "", "", []string{"exec", "hi"}, "-a on-request -s workspace-write exec hi"},
+		{"strict", "strict", "", []string{"hi"}, "-a on-request -s workspace-write hi"},
+		{"relaxed", "relaxed", "", []string{"hi"}, "-a never -s workspace-write hi"},
+		{"relaxed read-only", "relaxed", "read-only", []string{"hi"}, "-a never -s read-only hi"},
+		{"relaxed full access", "relaxed", "danger-full-access", []string{"hi"}, "--dangerously-bypass-approvals-and-sandbox hi"},
+		{"user approval wins", "relaxed", "", []string{"-a", "on-request", "hi"}, "-s workspace-write -a on-request hi"},
+		{"user yolo wins", "", "", []string{"--yolo"}, "--yolo"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w := codexWS(t, tc.u, tc.bypass)
-			writeCodexProfile(t, "tq")
-			got := codexArgs(w, filepath.Join(w.Root, filepath.FromSlash(tc.sub)), tc.args)
+			w := codexWS(t)
+			if tc.sandbox != "" {
+				w.Manifest.Guard.Codex = &manifest.GuardCodex{Sandbox: tc.sandbox}
+			}
+			if tc.mode != "" {
+				withCodexMode(t, tc.mode, "")
+			}
+			got := codexArgs(w, w.Root, tc.args)
 			if strings.Join(got, " ") != tc.want {
 				t.Fatalf("got %q want %q", strings.Join(got, " "), tc.want)
 			}
@@ -111,8 +89,84 @@ func TestCodexArgs(t *testing.T) {
 	}
 }
 
-func TestRenderCodexWritesAndRestores(t *testing.T) {
-	w := codexWS(t, &manifest.Unattended{Workspace: true}, true)
+// Per-project modes travel in the launch flags, which follow the cwd.
+func TestCodexArgsFollowCwd(t *testing.T) {
+	w := codexWS(t)
+	withCodexMode(t, "relaxed", filepath.Join(w.Root, "demo-todo"))
+	if got := strings.Join(codexArgs(w, filepath.Join(w.Root, "demo-todo", "src"), []string{"hi"}), " "); got != "-a never -s workspace-write hi" {
+		t.Fatalf("project: %q", got)
+	}
+	if got := strings.Join(codexArgs(w, w.Root, []string{"hi"}), " "); got != "-a on-request -s workspace-write hi" {
+		t.Fatalf("root: %q", got)
+	}
+}
+
+func TestCodexArgsNoCodexIdentity(t *testing.T) {
+	w := codexWS(t)
+	delete(w.Manifest.Identities, "codex")
+	if got := codexArgs(w, w.Root, []string{"hi"}); strings.Join(got, " ") != "hi" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+// The unattended profile is gone: a tq-written profile file is never
+// passed any more, even for an old projects-only setup.
+func TestCodexArgsNoLegacyProfile(t *testing.T) {
+	w := codexWS(t)
+	w.Manifest.Guard.Unattended = &manifest.Unattended{Projects: []string{"demo-todo"}}
+	if got := strings.Join(codexArgs(w, filepath.Join(w.Root, "demo-todo"), []string{"hi"}), " "); strings.Contains(got, "--profile") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// An untrusted workspace compiles to default, whatever its manifest says.
+func TestCodexPlanUntrustedIsDefault(t *testing.T) {
+	w := codexWS(t)
+	withCodexMode(t, "relaxed", "")
+	if err := trust.Deny(w.Hash); err != nil {
+		t.Fatal(err)
+	}
+	if p := codexPlan(w, w.Root); p.Mode != guardcfg.ModeDefault || p.Approval != "on-request" {
+		t.Fatalf("untrusted: %+v", p)
+	}
+}
+
+// guard.disable and guard.actions feed the compiled rules; a locked rule
+// keeps its deny whatever they say.
+func TestCodexRuleSetHonoursActions(t *testing.T) {
+	w := codexWS(t)
+	w.Manifest.Guard.Disable = []string{"tq/iac-destroy", "tq/env-file-shell"}
+	w.Manifest.Guard.Actions = map[string]policy.Action{"tq/iac-apply": policy.Deny, "tq/trust-store-write": policy.Ask}
+	got := map[string]policy.Action{}
+	for _, r := range codexRuleSet(w) {
+		got[r.ID] = r.Action
+	}
+	if _, ok := got["tq/iac-destroy"]; ok {
+		t.Error("a disabled rule is left out")
+	}
+	if got["tq/env-file-shell"] != policy.Deny {
+		t.Error("a locked rule cannot be disabled")
+	}
+	if got["tq/iac-apply"] != policy.Deny {
+		t.Error("guard.actions changes the rule's own action")
+	}
+	if got["tq/trust-store-write"] != policy.Deny {
+		t.Error("guard.actions cannot loosen a locked rule")
+	}
+}
+
+func renderOut(t *testing.T, w *resolve.Workspace, dry bool) string {
+	t.Helper()
+	cmd := &cobra.Command{}
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	renderCodex(cmd, w, dry)
+	return out.String()
+}
+
+func TestRenderCodexWritesModeFiles(t *testing.T) {
+	w := codexWS(t)
 	dir := paths.IdentityDir("acme", "codex")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -122,42 +176,69 @@ func TestRenderCodexWritesAndRestores(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(userCfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := &cobra.Command{}
-	var out strings.Builder
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
 
-	renderCodex(cmd, w, true)
-	if !strings.Contains(out.String(), "would change") {
-		t.Fatalf("dry run: %q", out.String())
+	if out := renderOut(t, w, true); !strings.Contains(out, "would change") {
+		t.Fatalf("dry run: %q", out)
 	}
 	if b, _ := os.ReadFile(cfg); string(b) != userCfg {
 		t.Fatal("dry run wrote the file")
 	}
 
-	renderCodex(cmd, w, false)
+	if out := renderOut(t, w, false); !strings.Contains(out, "updated") {
+		t.Fatalf("render: %q", out)
+	}
 	b, _ := os.ReadFile(cfg)
-	if !strings.Contains(string(b), "approval_policy = \"never\"") || !strings.HasSuffix(string(b), userCfg) {
+	if !strings.Contains(string(b), `approval_policy = "on-request"`) || !strings.HasSuffix(string(b), userCfg) {
 		t.Fatalf("config.toml:\n%s", b)
 	}
+	rules, err := codexcfg.ReadRules(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := map[string]string{}
+	for _, r := range rules {
+		dec[r.ID] = r.Decision
+	}
+	if dec["tq/gh-repo-delete"] != codexcfg.DecisionForbidden || dec["tq/iac-apply"] != codexcfg.DecisionPrompt {
+		t.Fatalf("default rules: %v", dec)
+	}
+	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); !ok {
+		t.Fatal("hooks.json must carry tq's PreToolUse entry")
+	}
+	if out := renderOut(t, w, false); out != "" {
+		t.Fatalf("an up-to-date render is silent: %q", out)
+	}
 
-	w.Manifest.Guard.Unattended = nil
-	renderCodex(cmd, w, false)
-	if b, _ := os.ReadFile(cfg); string(b) != userCfg {
-		t.Fatalf("off must restore the user file:\n%q", b)
+	withCodexMode(t, "relaxed", "")
+	renderOut(t, w, false)
+	if b, _ := os.ReadFile(cfg); !strings.Contains(string(b), `approval_policy = "never"`) {
+		t.Fatalf("relaxed:\n%s", b)
+	}
+}
+
+func TestRenderCodexReportsConflicts(t *testing.T) {
+	w := codexWS(t)
+	dir := paths.IdentityDir("acme", "codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("sandbox_mode = \"read-only\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := renderOut(t, w, false)
+	if !strings.Contains(out, "not changed") || !strings.Contains(out, "sandbox_mode") {
+		t.Fatalf("conflict: %q", out)
+	}
+	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); !ok {
+		t.Fatal("the hook is written despite the config conflict")
 	}
 }
 
 func TestRenderCodexNoopWithoutCodexIdentity(t *testing.T) {
-	w := codexWS(t, &manifest.Unattended{Workspace: true}, true)
+	w := codexWS(t)
 	delete(w.Manifest.Identities, "codex")
-	cmd := &cobra.Command{}
-	var out strings.Builder
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	renderCodex(cmd, w, false)
-	if out.Len() != 0 {
-		t.Fatalf("expected silence, got %q", out.String())
+	if out := renderOut(t, w, false); out != "" {
+		t.Fatalf("expected silence, got %q", out)
 	}
 	if _, err := os.Stat(paths.IdentityDir("acme", "codex")); !os.IsNotExist(err) {
 		t.Fatal("must not create a codex identity dir")

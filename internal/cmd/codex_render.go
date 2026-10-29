@@ -2,35 +2,41 @@ package cmd
 
 import (
 	"fmt"
-	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/codexcfg"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
-// Owned by WS4 (spec E §12, §17): moved here from unattended.go unchanged by
-// the interface commit; WS4 renders the guard mode into the identity's
-// CODEX_HOME (config.toml block, rules/tq.rules, hooks.json).
+// Owned by WS4 (spec E §12, §17).
 
-// renderCodex renders the unattended settings into ws's Codex config when the
-// workspace isolates a codex identity. Callers pass a workspace resolved after
-// any manifest rewrite so the bypass-trust check sees the current hash.
+// renderCodex renders ws's workspace-wide guard mode into its Codex identity
+// (config.toml block, rules/tq.rules, hooks.json entries) when the workspace
+// isolates a codex identity, and removes the old tq-unattended profile file
+// when tq wrote it. Callers pass a workspace resolved after any manifest
+// rewrite so the trust check sees the current hash. It prints nothing when
+// everything is up to date.
 func renderCodex(c *cobra.Command, ws *resolve.Workspace, dryRun bool) {
-	if ws == nil || ws.Manifest == nil || !slices.Contains(ws.Manifest.IdentityNames(), "codex") {
+	if !codexIsolated(ws) {
 		return
 	}
-	res, err := codexcfg.Render(paths.IdentityDir(ws.Name, "codex"), codexcfg.Desired(ws.Manifest, trust.IsBypassAllowed(ws.Hash)), dryRun)
-	switch {
-	case err != nil:
+	p := codexPlan(ws, ws.Root)
+	res, err := codexcfg.Render(paths.IdentityDir(ws.Name, "codex"), codexcfg.Want{Plan: &p, Hook: true}, dryRun)
+	if err != nil {
 		fmt.Fprintf(c.ErrOrStderr(), "%s codex: %v\n", ws.Name, err)
-	case res.Conflict != "":
-		fmt.Fprintf(c.ErrOrStderr(), "%s codex: not changed: %s (%s)\n", ws.Name, res.Conflict, res.Path)
-	case res.Changed && dryRun:
-		fmt.Fprintf(c.OutOrStdout(), "%s codex: would change (%s)\n", ws.Name, res.Path)
-	case res.Changed:
-		fmt.Fprintf(c.OutOrStdout(), "%s codex: updated (%s)\n", ws.Name, res.Path)
+		return
 	}
+	for _, conflict := range res.Conflicts {
+		fmt.Fprintf(c.ErrOrStderr(), "%s codex: not changed: %s\n", ws.Name, conflict)
+	}
+	if len(res.Changed) == 0 {
+		return
+	}
+	verb := "updated"
+	if dryRun {
+		verb = "would change"
+	}
+	fmt.Fprintf(c.OutOrStdout(), "%s codex: %s (%s)\n", ws.Name, verb, strings.Join(res.Changed, ", "))
 }
