@@ -321,8 +321,14 @@ func TestPrecedenceLayers(t *testing.T) {
 	if r := at("app/web", filepath.Join(root, "other", "x.go"), ""); r.Mode != ModeRelaxed {
 		t.Fatalf("a file target outside the project falls back to the workspace: %+v", r)
 	}
-	if r := at("app/web", filepath.Join(t.TempDir(), "x.go"), ""); r.Mode != ModeStrict || r.ModeSource != SourceGlobal {
-		t.Fatalf("a file target outside the workspace falls back to the global layer: %+v", r)
+	if r := at("app/web", filepath.Join(t.TempDir(), "x.go"), ""); r.Mode != ModeRelaxed || r.ModeSource != "acme" {
+		t.Fatalf("a file target outside the workspace drops only the project layer: %+v", r)
+	}
+	// A strict workspace stays strict for a target outside it, whatever the
+	// global layer says.
+	ms, roots := writeManifest(t, "guard:\n  mode: strict\n")
+	if r := Resolve(ms, "acme", roots, roots, filepath.Join(t.TempDir(), "x.go"), File{Mode: ModeRelaxed}, RepoFile{}, "", relaxedGrant); r.Mode != ModeStrict {
+		t.Fatalf("a strict workspace's outside target runs at the global mode: %+v", r)
 	}
 	if r := at("other", "", ModeStrict); r.Mode != ModeStrict || r.ModeSource != SourceLaunch || r.Requested != ModeStrict {
 		t.Fatalf("launch: %+v", r)

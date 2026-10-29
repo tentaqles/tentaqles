@@ -109,17 +109,19 @@ func valueFor(t Table, ov map[string]Value, id string) Value {
 }
 
 // layersFor returns the trusted layers 2-4 for a call: the global file, the
-// workspace manifest (read through its legacy view) when cwd and the file
-// target are inside root, and the deepest guard.projects entry covering cwd
-// and the target's folder.
+// workspace manifest (read through its legacy view) when cwd is inside root,
+// and the deepest guard.projects entry covering cwd and the target's folder.
 func layersFor(m *manifest.Manifest, ws, root, cwd, target string, g File) []modeLayer {
 	ls := []modeLayer{{name: SourceGlobal, mode: g.Mode, base: g.Base, cats: g.Categories, overrides: g.RulesOverride}}
 	if m == nil {
 		return ls
 	}
-	if root != "" && !(inside(cwd, root) && (target == "" || inside(targetDir(target, cwd), root))) {
-		return ls // a file outside the workspace is judged by the global layer
+	if root != "" && !inside(cwd, root) {
+		return ls // a cwd outside the workspace is a neutral folder
 	}
+	// A file target outside the workspace keeps the workspace layer (its
+	// grant is the ceiling anyway); deepestProject drops the project layer
+	// for it, as for a target outside the project.
 	gv := m.Guard.ModeView()
 	if ws == "" {
 		ws = m.Client
