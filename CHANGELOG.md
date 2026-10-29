@@ -86,7 +86,8 @@ or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
   removed when tq owns it. In Codex, confirms that cannot be prompted for become blocks.
 - `tq/trust-store-write` also denies agent writes to the files tq renders into an
   identity: the codex identity's `rules/`, `hooks.json` and `config.toml`, and the Claude
-  identity's `settings.json` and `settings.local.json`.
+  identity's `settings.json` and `settings.local.json` (also through `$CLAUDE_CONFIG_DIR`
+  and `$CODEX_HOME`), and the Codex config layers (`.codex/` in a repo and `~/.codex`).
 - After the upgrade `tq doctor` reports `settings-drift` until `tq settings render --all`
   runs once.
 - The SessionStart guard line appears in every workspace session.

@@ -41,8 +41,16 @@ const envExcept = `\.env\.(example|sample|template|dist|defaults|schema)\b`
 const tqHomeVar = `(\$\{?(env:)?tq_home\}?|%tq_home%)`
 
 // tqStore is tq's trust store or registry under ~/.tentaqles or $TQ_HOME,
-// or a file tq renders into an identity (tqIdentityFile).
-const tqStore = `(\.tentaqles|` + tqHomeVar + `)[/\\]+(trust\b|config\.yaml\b|` + tqIdentityFile + `)`
+// or a file tq renders into an identity (tqIdentityFile), named through the
+// identity's CLAUDE_CONFIG_DIR or CODEX_HOME too (agentDirVar), or a Codex
+// config layer: a repo's .codex/ or ~/.codex.
+const tqStore = `((\.tentaqles|` + tqHomeVar + `)[/\\]+(trust\b|config\.yaml\b|` + tqIdentityFile + `)` +
+	`|` + agentDirVar + `[/\\]+(settings(\.local)?\.json\b|config\.toml\b|hooks\.json\b|rules\b)` +
+	`|\.codex[/\\]+(config\.toml\b|hooks\.json\b|rules\b))`
+
+// agentDirVar is CLAUDE_CONFIG_DIR or CODEX_HOME as bash, PowerShell or cmd
+// spell it: in a tq session they are the identity dirs.
+const agentDirVar = `(\$\{?(env:)?(claude_config_dir|codex_home)\}?|%(claude_config_dir|codex_home)%)`
 
 // tqIdentityFile is, under identities/<ws>/, the codex identity's rules/,
 // hooks.json and config.toml, or the Claude identity's settings files: tq
@@ -158,8 +166,9 @@ func coreBuiltin() []Rule {
 		// allowed. A custom TQ_HOME is matched by its variable spelling only.
 		{
 			ID: "tq/trust-store-write", Action: Deny,
-			Tool:   "Edit|Write|MultiEdit|NotebookEdit",
-			Path:   `(^|/)(\.tentaqles|` + tqHomeVar + `)/(trust(/|$)|config\.yaml$|identities/[^/]+/(codex/(rules(/|$)|hooks\.json$|config\.toml$)|claude/settings(\.local)?\.json$))`,
+			Tool: "Edit|Write|MultiEdit|NotebookEdit",
+			Path: `(^|/)(\.tentaqles|` + tqHomeVar + `)/(trust(/|$)|config\.yaml$|identities/[^/]+/(codex/(rules(/|$)|hooks\.json$|config\.toml$)|claude/settings(\.local)?\.json$))` +
+				`|(^|/)\.codex/(config\.toml$|hooks\.json$|rules(/|$))`,
 			Reason: "tq's trust store, registry and rendered identity settings are changed with tq (tq allow, tq deny, tq init, tq settings render), not edited directly",
 		},
 		{

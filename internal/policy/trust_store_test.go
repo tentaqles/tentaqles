@@ -109,3 +109,54 @@ func TestTrustStoreWriteCoversIdentityFiles(t *testing.T) {
 		}
 	}
 }
+
+// The identity dirs are CLAUDE_CONFIG_DIR and CODEX_HOME in a tq session,
+// so their variable spellings name the same files (final security review
+// M3); and Codex reads a repo's .codex/ layer and ~/.codex too (m7).
+func TestTrustStoreWriteCoversAgentDirSpellings(t *testing.T) {
+	s := builtinSet(t)
+	const id = "tq/trust-store-write"
+	var deny []ToolCall
+	for _, v := range []string{"$CLAUDE_CONFIG_DIR", "${CLAUDE_CONFIG_DIR}"} {
+		deny = append(deny,
+			ToolCall{Tool: "Bash", Command: `printf '{}' > "` + v + `/settings.json"`},
+			ToolCall{Tool: "Bash", Command: "echo x >> " + v + "/settings.local.json"})
+	}
+	for _, v := range []string{"$CODEX_HOME", "${CODEX_HOME}"} {
+		deny = append(deny,
+			ToolCall{Tool: "Bash", Command: "echo '[features]' >> " + v + "/config.toml"},
+			ToolCall{Tool: "Bash", Command: "tee " + v + "/rules/x.rules"},
+			ToolCall{Tool: "Bash", Command: "rm " + v + "/hooks.json"})
+	}
+	deny = append(deny,
+		ToolCall{Tool: "PowerShell", Command: `Set-Content $env:CODEX_HOME\hooks.json '{}'`},
+		ToolCall{Tool: "PowerShell", Command: `Set-Content $env:CLAUDE_CONFIG_DIR\settings.json '{}'`},
+		ToolCall{Tool: "PowerShell", Command: `cmd /c "echo x > %CODEX_HOME%\config.toml"`},
+		ToolCall{Tool: "PowerShell", Command: `cmd /c "echo x > %CLAUDE_CONFIG_DIR%\settings.json"`},
+		// a repo's .codex layer and ~/.codex (m7)
+		ToolCall{Tool: "Write", Path: "/r/acme/.codex/config.toml", Content: "[features]\nhooks = false"},
+		ToolCall{Tool: "Edit", Path: `C:\r\acme\.codex\rules\x.rules`, Content: "x"},
+		ToolCall{Tool: "Write", Path: "/home/u/.codex/hooks.json", Content: "{}"},
+		ToolCall{Tool: "Bash", Command: "echo 'approval_policy = \"never\"' >> ~/.codex/config.toml"},
+		ToolCall{Tool: "Bash", Command: "echo x > .codex/rules/default.rules"},
+	)
+	for _, c := range deny {
+		d := s.Evaluate(c)
+		if d.Action != Deny || !hasRule(d, id) {
+			t.Errorf("%s %q %q: want deny %s, got %s %v", c.Tool, c.Path, c.Command, id, d.Action, ruleIDs(d.Matched))
+		}
+	}
+	allow := []ToolCall{
+		{Tool: "Bash", Command: "cat $CODEX_HOME/config.toml"},
+		{Tool: "Bash", Command: `ls "$CLAUDE_CONFIG_DIR"`},
+		{Tool: "Bash", Command: "echo x > $CLAUDE_CONFIG_DIR/projects/p/memory/a.md"},
+		{Tool: "Read", Path: "/r/acme/.codex/config.toml"},
+		{Tool: "Write", Path: "/r/acme/.codex-notes/config.toml", Content: "x"},
+		{Tool: "Write", Path: "/r/acme/src/codex/rules/x.go", Content: "x"},
+	}
+	for _, c := range allow {
+		if d := s.Evaluate(c); hasRule(d, id) {
+			t.Errorf("%s %q %q: must not match %s", c.Tool, c.Path, c.Command, id)
+		}
+	}
+}
