@@ -128,3 +128,16 @@ func TestDataBlockMissing_ReadBoundedToLimit(t *testing.T) {
 		t.Fatalf("readBounded len=%d", len(got))
 	}
 }
+
+func TestDataBlockMissing_SkipsAgentWorktreesAndDatabricksState(t *testing.T) {
+	root := testutil.TempDir(t)
+	write(t, root, ".claude/worktrees/agent-1/migrations/005_bronze.sql", "create table p (email text);\n")
+	write(t, root, ".databricks/bundle/dev/schema.sql", "create table p (email text);\n")
+	write(t, root, "tools/worktrees/people.sql", "create table p (email text);\n")
+	fs := collect(func(add func(string, string, string, string, string)) {
+		dataBlockMissing("acme", root, manifest.Data{}, add)
+	})
+	if len(fs) != 1 || strings.Contains(fs[0].Msg, ".claude") || strings.Contains(fs[0].Msg, ".databricks") || !strings.Contains(fs[0].Msg, "tools/worktrees/people.sql") {
+		t.Fatalf("want only the worktrees folder outside .claude, got %+v", fs)
+	}
+}

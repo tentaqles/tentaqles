@@ -20,7 +20,10 @@ const (
 var (
 	piiColumnRe  = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(email|e_mail|cpf|cnpj|rg|ssn|passport|phone|telefone|celular|birth_?date|data_nascimento|dob|address|endereco|cep|zip_?code|card_?number|iban)(?:[^a-z0-9]|$)`)
 	schemaFileRe = regexp.MustCompile(`(?i)(\.sql|\.prisma|\.dbml|\.graphql|\.proto)$|(^|/)(schema\.rb|models\.py)$`)
-	dataSkipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true, ".venv": true, "venv": true, "dist": true, "build": true, ".next": true, "target": true}
+	// .databricks is generated bundle state. Fixtures (testdata) stay in:
+	// they are where personal data leaks. .claude/worktrees (agent copies of
+	// the repo) is skipped in the walk.
+	dataSkipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true, ".venv": true, "venv": true, "dist": true, "build": true, ".next": true, "target": true, ".databricks": true}
 )
 
 // dataBlockMissing warns when a workspace has PII-looking columns in schema or
@@ -37,7 +40,7 @@ func dataBlockMissing(ws, root string, data manifest.Data, add func(level, code,
 			return nil
 		}
 		if d.IsDir() {
-			if dataSkipDirs[d.Name()] {
+			if dataSkipDirs[d.Name()] || (d.Name() == "worktrees" && filepath.Base(filepath.Dir(p)) == ".claude") {
 				return filepath.SkipDir
 			}
 			return nil
