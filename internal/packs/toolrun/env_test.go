@@ -126,3 +126,57 @@ func TestLocaleValuesAreFiltered(t *testing.T) {
 		t.Error("a non-locale LANG passed")
 	}
 }
+
+// R6-3: URL and URI credentials look like secrets, by name or by value.
+func TestURLCredentialsAreSecrets(t *testing.T) {
+	isolate(t)
+	root := t.TempDir()
+	venv := filepath.Join(root, ".venv", "bin")
+	if runtime.GOOS == "windows" {
+		venv = filepath.Join(root, ".venv", "Scripts")
+	}
+	os.MkdirAll(venv, 0o700)
+	fakeBin(t, venv, "dbt")
+	r := &Runner{Root: root, LookPath: func(string) (string, error) { return "", errors.New("no") }}
+	t.Setenv("TQ_FAKE_TOOL", "env")
+	t.Setenv("DATABASE_URL", "postgres://db.example.test/app")
+	t.Setenv("REDIS_URI", "redis://cache.example.test")
+	t.Setenv("WAREHOUSE_DSN", "x")
+	t.Setenv("DBT_TARGET_HOST", "postgres://tester:pw-value@db.example.test/app")
+	t.Setenv("DBT_PROFILES_DIR", "/p")
+	out, err := r.Run(context.Background(), Spec{Pack: "data", Tool: "dbt", PassEnv: []string{"DATABASE_URL", "REDIS_URI", "WAREHOUSE_DSN", "DBT_TARGET_HOST", "DBT_PROFILES_DIR"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out.Stdout)
+	for _, k := range []string{"DATABASE_URL=", "REDIS_URI=", "WAREHOUSE_DSN=", "pw-value"} {
+		if strings.Contains(s, k) {
+			t.Errorf("%s reached a repo binary", k)
+		}
+	}
+	if !strings.Contains(s, "DBT_PROFILES_DIR=/p") {
+		t.Error("a plain declared name was dropped")
+	}
+	if w := strings.Join(out.Warnings, " "); !strings.Contains(w, "DATABASE_URL") || !strings.Contains(w, "DBT_TARGET_HOST") || strings.Contains(w, "pw-value") {
+		t.Errorf("warnings %q", out.Warnings)
+	}
+	// A base variable with credentials in its value is dropped too.
+	t.Setenv("TMPDIR", "https://tester:pw@example.test/")
+	if _, ok := envMap(toolEnv("", nil, nil))["TMPDIR"]; ok {
+		t.Error("a base variable carrying credentials passed")
+	}
+}
+
+// R6-3: a path that cannot be resolved counts as repo-local (fail closed).
+func TestRepoLocalFailsClosed(t *testing.T) {
+	prev := FinalPath
+	FinalPath = func(string) (string, error) { return "", errors.New("cannot resolve") }
+	defer func() { FinalPath = prev }()
+	r := &Runner{Root: t.TempDir()}
+	if !r.RepoLocal(Probe{Path: filepath.Join(t.TempDir(), "dbt"), Source: "path"}) {
+		t.Fatal("an unresolvable path passed as outside the repo")
+	}
+	if r.RepoLocal(Probe{Path: "/opt/dbt", Source: "tool_paths"}) {
+		t.Fatal("tool_paths is the trusted layer")
+	}
+}

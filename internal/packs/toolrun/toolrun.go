@@ -256,7 +256,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (Output, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout(s))
 	defer cancel()
 	pass, dropped := s.PassEnv, []string(nil)
-	if r.repoLocal(p) {
+	if r.RepoLocal(p) {
 		pass, dropped = withoutSecretNames(s.PassEnv)
 	}
 	out, err := run(ctx, p.Path, s.Args, dir, toolEnv(s.Tool, pass, s.Env), s.Stdin)
@@ -267,10 +267,22 @@ func (r *Runner) Run(ctx context.Context, s Spec) (Output, error) {
 	return out, err
 }
 
-// repoLocal reports whether the probed binary lives inside the repository
-// (the project .venv, node_modules/.bin, any path under Root, its final path
-// included): code the repository controls.
-func (r *Runner) repoLocal(p Probe) bool {
+// FinalPath resolves a path to its final long, link-free form. The packs
+// package sets it to packs.FinalPath (handle based: junctions, symlinks and
+// 8.3 names); the default is EvalSymlinks.
+var FinalPath = func(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
+// RepoLocal reports whether the probed binary lives inside the repository
+// (the project .venv, node_modules/.bin, any path under Root, by its final
+// path too): code the repository controls. A path that cannot be resolved
+// counts as repo-local (fail closed: a declared secret is dropped).
+func (r *Runner) RepoLocal(p Probe) bool {
 	if p.Source == "venv" {
 		return true
 	}
@@ -279,23 +291,47 @@ func (r *Runner) repoLocal(p Probe) bool {
 	}
 	in := func(path, root string) bool {
 		rel, err := filepath.Rel(root, path)
-		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+		if err != nil {
+			return false
+		}
+		return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	}
+	norm := func(s string) string {
+		s = filepath.Clean(s)
+		if runtime.GOOS == "windows" {
+			s = strings.ToLower(s)
+		}
+		return s
 	}
 	abs, _ := filepath.Abs(p.Path)
 	root, _ := filepath.Abs(r.Root)
-	if in(abs, root) {
+	if in(norm(abs), norm(root)) {
 		return true
 	}
-	fp, err1 := filepath.EvalSymlinks(abs)
-	fr, err2 := filepath.EvalSymlinks(root)
-	return err1 == nil && err2 == nil && in(fp, fr)
+	fp, err1 := FinalPath(abs)
+	fr, err2 := FinalPath(root)
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	return in(norm(fp), norm(fr))
+}
+
+// credValue is a value that carries credentials in a URL or URI
+// (scheme://user:pass@host).
+var credValue = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]*:[^/\s@]*@`)
+
+// secretVar reports a variable that looks like a secret by its name or its
+// value.
+func secretVar(name, value string) bool {
+	return secretName.MatchString(name) || credValue.MatchString(value)
 }
 
 // withoutSecretNames splits declared names into those that may pass to a
-// repo-local binary and the secret-looking ones that may not.
+// repo-local binary and the secret-looking ones (by name, or by a
+// credential-bearing URL value) that may not.
 func withoutSecretNames(names []string) (keep, dropped []string) {
 	for _, n := range names {
-		if secretName.MatchString(n) {
+		if secretVar(n, os.Getenv(n)) {
 			dropped = append(dropped, n)
 		} else {
 			keep = append(keep, n)
@@ -311,7 +347,7 @@ var BaseEnv = []string{"PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "
 
 // secretName is a variable name that looks like a credential. It never
 // passes unless a check declares it by name.
-var secretName = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSW(OR)?D|PASS$|PWD$|CREDENTIAL|AUTH|API_?KEY|ACCESS_?KEY|PRIVATE|SESSION|COOKIE|_KEY$|^KEY$|DSN|CONN(ECTION)?_?STR|_PAT$)`)
+var secretName = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSW(OR)?D|PASS$|PWD$|CREDENTIAL|AUTH|API_?KEY|ACCESS_?KEY|PRIVATE|SESSION|COOKIE|_KEY$|^KEY$|DSN|CONN(ECTION)?_?STR|_PAT$|_URL$|_URI$|^DATABASE_URL$|^(DB|DATABASE|REDIS|MONGO\w*|AMQP|RABBITMQ|KAFKA|ELASTIC\w*)_UR[LI])`)
 
 // localeValue is what a LANG or LC_* value may be (en_US.UTF-8, C, POSIX,
 // de_DE@euro); anything else is not a locale and is dropped (R5-5).
@@ -343,8 +379,8 @@ func toolEnv(tool string, pass, extra []string) []string {
 		u := strings.ToUpper(k)
 		switch {
 		case declared[u]:
-		case allowed[u] && !secretName.MatchString(k) && (u != "LANG" || localeValue.MatchString(v)):
-		case strings.HasPrefix(u, "LC_") && !secretName.MatchString(k) && localeValue.MatchString(v):
+		case allowed[u] && !secretVar(k, v) && (u != "LANG" || localeValue.MatchString(v)):
+		case strings.HasPrefix(u, "LC_") && !secretVar(k, v) && localeValue.MatchString(v):
 		default:
 			continue
 		}
