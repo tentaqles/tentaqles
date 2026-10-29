@@ -116,15 +116,29 @@ func target(l scan.PyLine, open, pos int, kw string) (val string, literal, prese
 		return "", false, false
 	}
 	expr := strings.TrimSpace(l.Code[a.start:a.end])
-	if expr != `""` {
+	if expr != `""` && expr != `''` {
 		return "", false, true
 	}
-	lead := strings.TrimLeft(l.Code[a.start:a.end], " ")
-	idx := strings.Count(l.Code[:a.end-len(lead)], `""`)
+	lead := strings.TrimLeft(l.Code[a.start:a.end], " \t")
+	idx := countLiterals(l.Code[:a.end-len(lead)])
 	if idx < len(l.Strings) {
 		return l.Strings[idx], true, true
 	}
 	return "", false, true
+}
+
+// countLiterals counts the string literals in blanked code. scan.PythonLines
+// turns each literal into "" or '' by its quote, and every quote left in the
+// code belongs to such a pair, so the pairs are counted in source order.
+func countLiterals(code string) int {
+	n := 0
+	for i := 0; i+1 < len(code); i++ {
+		if (code[i] == '"' || code[i] == '\'') && code[i+1] == code[i] {
+			n++
+			i++
+		}
+	}
+	return n
 }
 
 // promotionFindings scans one Python source; fileLine maps source lines to

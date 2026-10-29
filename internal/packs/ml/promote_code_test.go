@@ -9,6 +9,14 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
+func repeat(s string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = s
+	}
+	return out
+}
+
 func codeInput(t *testing.T, files map[string]string) *packs.Input {
 	t.Helper()
 	root := testutil.TempDir(t)
@@ -26,7 +34,7 @@ func TestPromotionInCodeGolden(t *testing.T) {
 		file          string
 		errors, warns []string
 	}{
-		{"promote-code/positive.py", []string{"promotion-in-code", "promotion-in-code", "promotion-in-code", "promotion-in-code"}, []string{"promotion-in-code"}},
+		{"promote-code/positive.py", repeat("promotion-in-code", 10), []string{"promotion-in-code"}},
 		{"promote-code/negative.py", []string{}, []string{}},
 	}
 	for _, c := range cases {
@@ -51,7 +59,7 @@ func TestPromotionInCodeLines(t *testing.T) {
 	for _, f := range r.Findings {
 		lines = append(lines, f.Line)
 	}
-	if !reflect.DeepEqual(lines, []int{5, 6, 7, 8, 13}) {
+	if !reflect.DeepEqual(lines, []int{5, 6, 7, 8, 13, 14, 15, 16, 17, 18, 19}) {
 		t.Fatalf("lines %v", lines)
 	}
 }
