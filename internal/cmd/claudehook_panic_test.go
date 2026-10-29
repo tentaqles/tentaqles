@@ -36,7 +36,7 @@ func TestPreToolUseHeredocsDoNotCrash(t *testing.T) {
 func TestPreToolUseGuardPanicAsks(t *testing.T) {
 	isolateHome(t)
 	prev := hookPolicyDecision
-	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time, *unattendedGate) policy.Decision {
+	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time, *modeGate) policy.Decision {
 		var s []int
 		_ = s[3] // index out of range
 		return policy.Decision{}

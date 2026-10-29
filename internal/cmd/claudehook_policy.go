@@ -160,9 +160,10 @@ func loadProjectRules(cwd string, ws *resolve.Workspace) ([]policy.Rule, []error
 // deadline ends every scan; the hook computes it at entry (start plus the
 // scan budget), so the identity lookups that ran before count against it.
 //
-// gate, in an unattended session, leaves out the rules that session skips
-// and keeps them for the audit; nil applies every rule.
-func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time, gate *unattendedGate) policy.Decision {
+// gate maps every matching rule to the guard mode's effective action and
+// keeps the ones it skipped or lowered for the audit; nil applies every rule
+// at its own action.
+func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time, gate *modeGate) policy.Decision {
 	eff := effectiveGuard(ws)
 	layers := policy.Layers{Builtin: policy.Builtin(), Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
 	if ws != nil {
@@ -173,8 +174,8 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	}
 	layers.Project, _ = loadProjectRules(cwd, ws)
 	set, _ := policy.Build(layers)
-	d, skipped := set.EvaluateExcept(call, gate.skipFunc())
-	gate.note(skipped)
+	d, changed := set.EvaluateMapped(call, gate.mapFunc())
+	gate.note(changed)
 
 	// One budget for every scan in this invocation (commit and push rules).
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
@@ -187,9 +188,9 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 		hits, err := commitscan.ScanCtx(ctx, cwd, call.Command, commitRun)
 		switch {
 		case len(hits) > 0:
-			d = policy.Merge(d, gate.filter(ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits))))
+			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits))))
 		case err != nil:
-			d = policy.Merge(d, gate.filter(ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err))))
+			d = policy.Merge(d, gate.apply(ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err))))
 		}
 	}
 	for _, r := range []struct {
@@ -207,17 +208,23 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 			continue
 		}
 		if pd, ok := r.fn(eff.ActionFor(r.id, policy.Deny)); ok {
-			d = policy.Merge(d, gate.filter(pd))
+			d = policy.Merge(d, gate.apply(pd))
 		}
 	}
 	if call.IsShell() && !eff.Off("tq/commit-message") {
 		if r := commitmsg.Check(call.Command, cwd); r.Checked && !r.OK {
-			d = policy.Merge(d, gate.filter(ruleDecision(eff.ActionFor("tq/commit-message", policy.Ask), "tq/commit-message", "commit message: "+r.Why)))
+			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/commit-message", policy.Ask), "tq/commit-message", "commit message: "+r.Why)))
+		}
+	}
+	if !eff.Off(outsidePathWriteID) {
+		if ts := outsideWriteTargets(call, writeRoots(ws, cfg, cwd)); len(ts) > 0 {
+			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor(outsidePathWriteID, policy.Ask), outsidePathWriteID,
+				"this writes or deletes outside the workspace, the session folder, your repos and the temp folders: "+strings.Join(ts, ", "))))
 		}
 	}
 	if call.IsMCP() && !eff.Off("tq/cross-client-mcp") {
 		if other := mcpOwner(ws, cfg, call.MCPServer()); other != "" {
-			d = policy.Merge(d, gate.filter(ruleDecision(eff.ActionFor("tq/cross-client-mcp", policy.Deny), "tq/cross-client-mcp",
+			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/cross-client-mcp", policy.Deny), "tq/cross-client-mcp",
 				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other))))
 		}
 	}

@@ -1,5 +1,7 @@
-// Package guardlog records the confirms and blocks unattended mode skipped,
-// masked, in $TQ_HOME/guard/unattended.jsonl. Writes never fail the caller.
+// Package guardlog records the confirms and blocks a guard mode skipped or
+// lowered, masked, in $TQ_HOME/guard/mode.jsonl (spec E §11.1; before spec E
+// they went to unattended.jsonl, which reads keep covering until it ages
+// out). Writes never fail the caller.
 package guardlog
 
 import (
@@ -9,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -63,7 +66,11 @@ func (r *Record) UnmarshalJSON(b []byte) error {
 // IsBlock reports whether r records a skipped deny.
 func (r Record) IsBlock() bool { return r.Action == "deny" }
 
-func Path() string { return filepath.Join(paths.Home(), "guard", "unattended.jsonl") }
+// Path is the log new records go to.
+func Path() string { return filepath.Join(paths.Home(), "guard", "mode.jsonl") }
+
+// LegacyPath is the pre-spec-E log, still read.
+func LegacyPath() string { return filepath.Join(paths.Home(), "guard", "unattended.jsonl") }
 
 // Append masks r.Command with classes, truncates it and appends r.
 func Append(r Record, classes []string) {
@@ -92,23 +99,29 @@ func Append(r Record, classes []string) {
 }
 
 // Read returns ws's records since since, newest first, from the current
-// file only. maxBytes > 0 reads only the file's tail (the hook path stays
-// bounded); ws "" means every workspace.
+// file and the current legacy file. maxBytes > 0 reads only each file's tail
+// (the hook path stays bounded); ws "" means every workspace.
 func Read(ws string, since time.Time, maxBytes int64) []Record {
-	return newestFirst(readFile(Path(), ws, since, maxBytes))
+	return newestFirst(append(readFile(LegacyPath(), ws, since, maxBytes), readFile(Path(), ws, since, maxBytes)...))
 }
 
-// ReadAll is Read over the whole rotated file (unattended.jsonl.1) and the
-// whole current file. It is for the CLI, never for a hook.
+// ReadAll is Read over the whole rotated and current files, legacy ones
+// included. It is for the CLI, never for a hook.
 func ReadAll(ws string, since time.Time) []Record {
-	p := Path()
-	return newestFirst(append(readFile(p+".1", ws, since, 0), readFile(p, ws, since, 0)...))
+	var out []Record
+	for _, p := range []string{LegacyPath() + ".1", LegacyPath(), Path() + ".1", Path()} {
+		out = append(out, readFile(p, ws, since, 0)...)
+	}
+	return newestFirst(out)
 }
 
+// newestFirst orders records by time, newest first (stable: within one
+// timestamp, later lines first).
 func newestFirst(out []Record) []Record {
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
 	return out
 }
 

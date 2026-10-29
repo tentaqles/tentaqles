@@ -113,6 +113,22 @@ func coreBuiltin() []Rule {
 			Reason:  "this changes what tq's guard checks or trusts; confirm it is what you want",
 		},
 		{
+			ID: "tq/mode-change", Action: Deny,
+			// tq's guard mode and its grants are human-only (spec E §10.1):
+			// the binary refuses agent sessions and needs a terminal, and
+			// this rule gives the agent a clear block first. Only a command
+			// word counts (after a separator, sudo/env/..., or the quote of
+			// `sh -c "…"`), so a commit message or an echo that mentions the
+			// verbs does not. `tq mode`, `tq mode log` and `tq allow <ws>`
+			// stay allowed (the last asks through tq/guard-change).
+			Command: cmdStart + `["']?(\S*[/\\])?tq(\.exe)?["']?\s+(` +
+				`["']?mode\b["']?` + gseg + `[\s"'=](set|toggle|override|edit)` + verbEnd +
+				`|["']?allow\b` + gseg + `\s--?(mode|bypass)\b` +
+				`|["']?unattended\b["']?` + gseg + `[\s"'=](on|off)` + verbEnd + `)`,
+			SkipHeredocData: true,
+			Reason:          "tq's guard mode and mode grants are changed by a human in a terminal (tq mode set|toggle|override|edit, tq allow --mode), never from an agent session",
+		},
+		{
 			ID: "tq/guard-file-write", Action: Deny,
 			Tool:   "Edit|Write|MultiEdit|NotebookEdit",
 			Path:   `(^|/)\.tentaqles/guard\.yaml$`,

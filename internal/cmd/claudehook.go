@@ -155,9 +155,6 @@ func newSessionStartCmd() *cobra.Command {
 				expectedDir = envplan.Desired(rep.Result.Workspace)["CLAUDE_CONFIG_DIR"]
 			}
 			fmt.Fprint(c.OutOrStdout(), renderSessionStart(rep, expectedDir))
-			if line := unattendedLine(rep.Result.Workspace, cwd, time.Now()); line != "" {
-				fmt.Fprintln(c.OutOrStdout(), line)
-			}
 			if line := modeLine(modeLineInput{WS: rep.Result.Workspace, Cwd: cwd, Resolved: resolveMode(rep.Result.Workspace, cwd, ""), ClaudeMode: p.PermissionMode, Agent: agent, Now: time.Now()}); line != "" {
 				fmt.Fprintln(c.OutOrStdout(), line)
 			}
@@ -312,16 +309,18 @@ permissionDecision JSON so Claude Code asks the user.`,
 				ws, cfg = resolveTrusted(cwd)
 			}
 
-			// In an unattended session the gate leaves out every rule that
-			// is not always enforced (guardcfg.Enforced); nil otherwise.
-			gate := unattendedGateFor(ws, cwd, p.PermissionMode, call)
+			// The guard mode (spec E): the gate maps every rule to its
+			// effective action under the resolved mode, whatever Claude's
+			// permission mode is; nil (the fast path) when it resolves to
+			// default. The identity guard above never goes through it.
+			gate := modeGateFor(ws, cwd, call, launchMode())
 			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline, gate)
 			if d.Action != policy.Deny {
 				// Jev can only add strictness, so it is skipped when the
 				// deterministic rules already deny.
 				d = policy.Merge(d, jevDecision(ws, call, gate))
 			}
-			skipped := gate.audit(ws, p.PermissionMode, call, d)
+			skipped := gate.audit(p.PermissionMode, call, d)
 			if agent == hookAgentCodex && !asJSON && d.Action != policy.Allow {
 				// Codex fails open on a hook ask: codexHookOutput never sends one.
 				if code := codexHookOutput(c.OutOrStdout(), call, d); code != 0 {
@@ -342,7 +341,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 			default:
 				if len(skipped) > 0 {
 					if asJSON {
-						emitDecision(c, asJSON, false, skipped[0].ID, "unattended: "+skippedReason(skipped))
+						emitDecision(c, asJSON, false, skipped[0].Rule.ID, "mode "+gate.resolved().Mode+": "+skippedReason(skipped))
 					}
 					return nil
 				}
@@ -372,7 +371,7 @@ var hookPolicyDecision = policyDecision
 const guardErrorID = guardcfg.GuardErrorID
 
 // guardPanicAsk answers a panic in the hook's analysis with an ask: never an
-// allow, never a crash, and never the unattended skip. It only formats the
+// allow, never a crash, and never a mode's skip (tq/guard-error is locked). It only formats the
 // panic value (no stack walk), so it stays cheap.
 func guardPanicAsk(c *cobra.Command, asJSON bool, r any) error {
 	detail := fmt.Sprint(r)

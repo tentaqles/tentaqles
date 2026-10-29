@@ -3,6 +3,7 @@ package guardcfg
 import (
 	"sort"
 
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
 
@@ -179,16 +180,32 @@ var Categories = map[string]Category{
 	"tq/warehouse-query-unbounded": CatPacks,
 }
 
+// GuardErrorID names the fail-safe ask of a guard panic.
+const GuardErrorID = "tq/guard-error"
+
+func init() {
+	// manifest validation rejects a locked id in rules_override; it cannot
+	// import this package, so it asks through this hook.
+	manifest.LockedRuleID = LockedID
+}
+
+// LockedID reports whether id is a known rule in a locked category.
+func LockedID(id string) bool { return Locked(Categories[id]) }
+
 // CategoryOf returns r's category: the table entry for a built-in id, else
 // the rule's own declared category (custom rules, `category:`). "" means
 // unclassified, which every mode applies at the rule's own action (fail
-// closed). An unknown declared name is "" too.
+// closed). An unknown declared name is "" too, and so is a custom rule with
+// the deprecated `unattended:` key (any value: it meant "always applied").
 func CategoryOf(r *policy.Rule) Category {
 	if r == nil {
 		return ""
 	}
 	if c, ok := Categories[r.ID]; ok {
 		return c
+	}
+	if r.Unattended != "" {
+		return ""
 	}
 	if c, ok := ParseCategory(r.Category); ok {
 		return c

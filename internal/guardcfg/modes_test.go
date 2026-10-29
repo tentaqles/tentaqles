@@ -114,12 +114,12 @@ func TestValueApply(t *testing.T) {
 	}
 }
 
-// The interface-commit stubs: Resolve is default, Effective is the rule's own
-// action. WS1 replaces both; these pin the stub contract until then.
-func TestResolveStubIsDefault(t *testing.T) {
+// With nothing configured, Resolve is the default mode and every rule keeps
+// its own action.
+func TestResolveNothingIsDefault(t *testing.T) {
 	r := Resolve(nil, "", "", "", "", File{}, RepoFile{}, "", nil)
-	if r.Mode != ModeDefault || !r.IsDefault() || r.LooserThanDefault() {
-		t.Fatalf("stub: %+v", r)
+	if r.Mode != ModeDefault || !r.IsDefault() || r.LooserThanDefault() || r.ModeSource != SourceBuiltin {
+		t.Fatalf("nothing set: %+v", r)
 	}
 	rule := &policy.Rule{ID: "tq/force-push-main", Action: policy.Deny}
 	if got := r.Effective(rule); got != policy.Deny {

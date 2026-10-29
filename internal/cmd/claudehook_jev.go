@@ -51,9 +51,9 @@ func policyMode(p decide.Policy) string {
 // returns an empty decision unless the policy enforces and Jev escalates;
 // in shadow mode it only logs. It is bounded by the hook deadline, and the
 // breaker turns a Jev outage into one slow call per minute, not one per
-// tool call. gate, in an unattended session, leaves out the verdicts of the
-// rules that session skips (nil: none).
-func jevDecision(ws *resolve.Workspace, call policy.ToolCall, gate *unattendedGate) policy.Decision {
+// tool call. gate maps each verdict through the guard mode, like any other
+// one-source decision (nil: at its own action).
+func jevDecision(ws *resolve.Workspace, call policy.ToolCall, gate *modeGate) policy.Decision {
 	if ws == nil || ws.Manifest == nil || !ws.Manifest.Decision.Enabled() {
 		return policy.Decision{}
 	}
@@ -105,7 +105,7 @@ func jevDecision(ws *resolve.Workspace, call policy.ToolCall, gate *unattendedGa
 			continue
 		}
 		reason := fmt.Sprintf("%s (p=%.2f). It may be wrong: confirm only if this is intended", v.Rule.Reason, v.Escalation.P)
-		d = policy.Merge(d, gate.filter(ruleDecision(a, v.Rule.ID, reason)))
+		d = policy.Merge(d, gate.apply(ruleDecision(a, v.Rule.ID, reason)))
 	}
 	return d
 }

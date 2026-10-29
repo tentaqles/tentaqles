@@ -12,7 +12,6 @@ package policy
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/guard"
@@ -27,8 +26,8 @@ const (
 	Deny  Action = "deny"
 )
 
-// UnattendedEnforce is the Rule.Unattended value that keeps a rule enforced
-// in unattended sessions.
+// UnattendedEnforce is the deprecated Rule.Unattended value ("always
+// applied"); manifests still accept it.
 const UnattendedEnforce = "enforce"
 
 // StricterThan reports whether a is a stricter verdict than b.
@@ -95,10 +94,9 @@ type Rule struct {
 	// are matched as they are.
 	SkipHeredocData bool   `yaml:"-"`
 	Reason          string `yaml:"reason"`
-	// Unattended, on a manifest, global or project rule, is "enforce" to keep
-	// the rule in unattended sessions; by default such a rule is skipped
-	// there. Built-in rules are classified in guardcfg.UnattendedGroups and
-	// ignore it.
+	// Unattended is deprecated (spec E): on a custom rule, any value means
+	// "no category", so every mode applies the rule at its own action. Use
+	// Category instead.
 	Unattended string `yaml:"unattended,omitempty"`
 	// Category (spec E §5.1) is a custom rule's guardcfg category name (one
 	// of the thirteen). Built-in rules are classified in guardcfg.Categories
@@ -265,58 +263,11 @@ func (d Decision) Reason() string {
 	return b.String()
 }
 
-// Evaluate applies every rule in s to call.
+// Evaluate applies every rule in s to call at its own action. It is
+// EvaluateMapped with no mapper.
 func (s *Set) Evaluate(call ToolCall) Decision {
-	d, _ := s.EvaluateExcept(call, nil)
+	d, _ := s.EvaluateMapped(call, nil)
 	return d
-}
-
-// EvaluateExcept is Evaluate without the rules skip selects (nil: none): a
-// weaker rule that a skipped one would have hidden still decides. It also
-// returns every skipped rule that matched call.
-func (s *Set) EvaluateExcept(call ToolCall, skip func(*Rule) bool) (Decision, []*Rule) {
-	var d Decision
-	var skipped []*Rule
-	for _, r := range s.Rules {
-		if !r.Match(call) {
-			continue
-		}
-		if skip != nil && skip(r) {
-			skipped = append(skipped, r)
-			continue
-		}
-		switch {
-		case r.Action.rank() > d.Action.rank():
-			d.Action = r.Action
-			d.Matched = []*Rule{r}
-		case r.Action.rank() == d.Action.rank():
-			d.Matched = append(d.Matched, r)
-		}
-	}
-	sort.SliceStable(d.Matched, func(i, j int) bool { return d.Matched[i].ID < d.Matched[j].ID })
-	return d, skipped
-}
-
-// SplitDecision removes the rules skip selects (nil: none) from d. When none
-// is left the result is Allow. Use it on a decision from one source; a
-// merged decision has already dropped its weaker rules.
-func SplitDecision(d Decision, skip func(*Rule) bool) (Decision, []*Rule) {
-	if skip == nil || d.Action == Allow {
-		return d, nil
-	}
-	var kept Decision
-	var skipped []*Rule
-	for _, r := range d.Matched {
-		if skip(r) {
-			skipped = append(skipped, r)
-			continue
-		}
-		kept.Matched = append(kept.Matched, r)
-	}
-	if len(kept.Matched) > 0 {
-		kept.Action = d.Action
-	}
-	return kept, skipped
 }
 
 // Merge combines two decisions, keeping the stricter one (both lists when tied).

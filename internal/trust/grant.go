@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
+
+	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 // GrantSuffix names a mode grant file: $TQ_HOME/trust/<manifest-hash>.mode.
@@ -28,6 +32,14 @@ type Grant struct {
 	// Digest (global grant only) is the SHA-256 of guard.yaml's mode, base,
 	// categories and rules_override keys when the grant was made.
 	Digest string `json:"digest,omitempty"`
+	// Workspace names the workspace the grant was made for, so tq allow can
+	// tell the human a re-trust dropped it. Empty for the global grant and
+	// for grants read from a legacy .bypass file.
+	Workspace string `json:"workspace,omitempty"`
+
+	// FromBypass is set on a grant read from a legacy <hash>.bypass file
+	// (spec E §11.1): a relaxed grant with no table.
+	FromBypass bool `json:"-"`
 }
 
 // GrantPath returns the grant file for key (a manifest hash or GlobalGrantKey).
@@ -35,12 +47,14 @@ func GrantPath(key string) string { return file(key, GrantSuffix) }
 
 // LoadGrant reads key's grant. No file is (nil, nil). An unreadable or
 // invalid file is an error, which callers treat as no grant (fail closed).
-//
-// Interface commit: reads the .mode file only. WS1 adds reading a legacy
-// <hash>.bypass file as a relaxed grant (spec E §11.1).
+// A workspace key with no .mode file but a legacy .bypass file (tq allow
+// --bypass before spec E) reads as a relaxed grant.
 func LoadGrant(key string) (*Grant, error) {
 	raw, err := os.ReadFile(GrantPath(key))
 	if errors.Is(err, os.ErrNotExist) {
+		if key != GlobalGrantKey && exists(file(key, ".bypass")) {
+			return &Grant{Mode: "relaxed", FromBypass: true}, nil
+		}
 		return nil, nil
 	}
 	if err != nil {
@@ -79,10 +93,50 @@ func SaveGrant(key string, g Grant) error {
 	return os.Rename(tmp, p)
 }
 
-// DeleteGrant removes key's grant; a missing one is not an error.
+// DeleteGrant removes key's grant, and a legacy .bypass file for a
+// workspace key; a missing one is not an error.
 func DeleteGrant(key string) error {
-	if err := os.Remove(GrantPath(key)); err != nil && !os.IsNotExist(err) {
-		return err
+	suffixes := []string{GrantSuffix}
+	if key != GlobalGrantKey {
+		suffixes = append(suffixes, ".bypass")
+	}
+	for _, s := range suffixes {
+		if err := os.Remove(file(key, s)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
+}
+
+// KeyedGrant is a stored grant with the key (manifest hash) it is filed under.
+type KeyedGrant struct {
+	Key   string
+	Grant Grant
+}
+
+// GrantsFor returns the stored .mode grants made for workspace ws, sorted by
+// key. Unreadable files and the global grant are skipped.
+func GrantsFor(ws string) []KeyedGrant {
+	if ws == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(paths.TrustDir())
+	if err != nil {
+		return nil
+	}
+	var out []KeyedGrant
+	for _, e := range entries {
+		name := e.Name()
+		key, ok := strings.CutSuffix(name, GrantSuffix)
+		if !ok || e.IsDir() || key == GlobalGrantKey {
+			continue
+		}
+		g, err := LoadGrant(key)
+		if err != nil || g == nil || g.Workspace != ws {
+			continue
+		}
+		out = append(out, KeyedGrant{Key: key, Grant: *g})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }

@@ -109,8 +109,8 @@ type Guard struct {
 	// wins over the global file.
 	Actions map[string]policy.Action `yaml:"actions,omitempty"`
 	Rules   []policy.Rule            `yaml:"rules"`
-	// Unattended lets bypass/auto sessions skip tq's confirms (see
-	// guardcfg.Unattended). Nil: off.
+	// Unattended is the legacy unattended block, read as guard modes
+	// (ModeView). Deprecated: use mode and projects. Nil: absent.
 	Unattended *Unattended `yaml:"unattended,omitempty"`
 
 	// Guard mode (spec E §7), see guardmode.go. Values are guardcfg names
@@ -201,9 +201,15 @@ func Load(path string) (*Manifest, error) {
 	if err := m.Guard.Unattended.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: guard.unattended: %w", path, err)
 	}
+	if err := m.Guard.ValidateMode(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	for _, r := range m.Guard.Rules {
 		if r.Unattended != "" && r.Unattended != policy.UnattendedEnforce {
 			return nil, fmt.Errorf("%s: guard.rules[%s].unattended must be %q or absent, got %q", path, r.ID, policy.UnattendedEnforce, r.Unattended)
+		}
+		if r.Category != "" && !contains(GuardCategories, r.Category) {
+			return nil, fmt.Errorf("%s: guard.rules[%s].category must be one of %s, got %q", path, r.ID, strings.Join(GuardCategories, "|"), r.Category)
 		}
 	}
 	if err := m.validateCloud(); err != nil {

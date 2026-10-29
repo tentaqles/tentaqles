@@ -15,8 +15,10 @@ var (
 )
 
 // RegisterBuiltin adds rules to Builtin. Call it from an init func. It panics
-// on an empty id or an id already built in or registered: ids are stable and
-// unique.
+// on an empty id or an id already built in or registered by an earlier call:
+// ids are stable and unique per part. One call may pass several rules with
+// the same id (one id may span several regex rules, e.g. a file-tool and a
+// shell form).
 func RegisterBuiltin(rules ...Rule) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -34,9 +36,8 @@ func RegisterBuiltin(rules ...Rule) {
 		if seen[r.ID] {
 			panic(fmt.Sprintf("policy.RegisterBuiltin: duplicate rule id %s", r.ID))
 		}
-		seen[r.ID] = true
-		registered = append(registered, r)
 	}
+	registered = append(registered, rules...)
 }
 
 // Builtin returns tq's default rules: the ones in builtin.go, then every
