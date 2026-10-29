@@ -172,20 +172,30 @@ results and how to fix a declared tool that is missing.
 ## Known behaviours
 
 - **Relaxed mode waives the pack gates.** In a workspace where the human
-  granted `relaxed` (`tq allow --mode <ws> relaxed`), or a custom table that
-  skips the gate's category, the pack gates follow the guard mode: cloud
-  apply/destroy (`tq/iac-apply-env`), db migrate (`tq/db-migrate-env`), restore
-  target (`tq/restore-target`), model promote (`tq/model-promote`), dbt prod
-  target (`tq/dbt-prod-target`) and bq unbounded (`tq/bq-unbounded-query`) are
-  skipped, their denies included, so an agent's prod apply or migration needs
-  no approval. Without the grant, relaxed runs at default. Use the default
-  mode, `strict`, or a custom table that keeps `cloud-destructive`,
-  `db-destructive` and `packs` at `rule`, `ask` or `deny` wherever the gates
-  must hold. The locked groups still hold in every mode: agents never answer an
-  approval or run an apply (`tq/human-answer`), never touch `$TQ_HOME`, never
-  read plans or state, and are always asked before printing secrets
-  (`tq/plan-secret-print`). See [CLAUDE-HOOK.md](CLAUDE-HOOK.md#guard-modes).
-
+  granted `relaxed` (`tq allow --mode <ws> relaxed`), every pack guard outside
+  the locked groups follows the guard mode and is skipped, its denies included,
+  so an agent's prod apply or migration needs no approval: cloud apply/destroy
+  (`tq/iac-apply-env`), db migrate (`tq/db-migrate-env`), restore target
+  (`tq/restore-target`), model promote (`tq/model-promote`), dbt prod target
+  (`tq/dbt-prod-target`), dbt full refresh (`tq/dbt-full-refresh`), pipeline
+  run (`tq/pipeline-run`), bq unbounded (`tq/bq-unbounded-query`), warehouse
+  resize (`tq/warehouse-resize`) and warehouse query unbounded
+  (`tq/warehouse-query-unbounded`). Without the grant, relaxed runs at default.
+  A custom table follows its values for `cloud-destructive`, `db-destructive`
+  and `packs`. **Only `rule` (or `deny`) keeps a gate:** `ask` turns an
+  unapproved prod apply or migration, which the gate denies, into a prompt you
+  can click through, with no approval checked. One exception: `tq/iac-apply-env`
+  and `tq/db-migrate-env` supersede the core `tq/iac-apply` and
+  `tq/remote-migration`, so a custom table that skips their category but keeps
+  `prod-changes` at `rule` keeps them (the `prod-changes` value lifts the
+  verdict back). Use the default mode, `strict`, or a custom table with those
+  categories at `rule` wherever the gates must hold. The locked groups still
+  hold in every mode: agents never answer an approval or run an apply
+  (`tq/human-answer`), never touch `$TQ_HOME`, never read plans or state, and
+  are always asked before printing secrets (`tq/plan-secret-print`: state pull
+  and show, `show -json`, `output -json`/`-raw`, `output <name>`,
+  `-show-sensitive`, `pulumi ... --show-secrets` and `pulumi config get`). See
+  [CLAUDE-HOOK.md](CLAUDE-HOOK.md#guard-modes).
 - **Unknown global flags floor to the strictest environment.** The cloud and db
   gates read a tool's documented global flags. A flag tq does not know, written
   before the subcommand and followed by another word, may take that word as its

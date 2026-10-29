@@ -4,7 +4,7 @@ The db pack (release 4, spec D §10, §11, §14) lints Postgres and SQL Server
 migrations and gates migrations against declared environments. RLS is on
 [RLS](db-rls.md); restore drills on [Restore drill](db-restore-drill.md).
 
-**Relaxed mode waives this gate.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), or a custom table that skips the gate's category, the pack gates follow the mode: an agent's migration (`tq/db-migrate-env`) runs with no ask and no approval, even where the policy says `approve` or `deny`. Keep the default mode, or use `strict` or a custom table that keeps `db-destructive` at `rule`, `ask` or `deny`, wherever the gate must hold. See [PACKS.md](../PACKS.md#known-behaviours).
+**Relaxed mode waives this gate.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), `tq/db-migrate-env` follows the guard mode: it is skipped, its denies included, so an agent's migration runs with no ask and no approval, even where the policy says `approve` or `deny`. A custom table follows its `db-destructive` value. Only `rule` (or `deny`) keeps the gate: `ask` turns a call the gate denies into a prompt the human can click through, with no approval checked. One exception: `tq/db-migrate-env` supersedes the core `tq/remote-migration`, so a custom table that skips `db-destructive` but keeps `prod-changes` at `rule` keeps this gate (the `prod-changes` value lifts the verdict back). Keep the default mode, `strict`, or a custom table with `db-destructive: rule` wherever the gate must hold. See [PACKS.md](../PACKS.md#known-behaviours).
 
 ## Config
 

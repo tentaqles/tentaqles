@@ -4,7 +4,7 @@ A backup nobody has restored is a hope. The db pack restores a declared backup
 into a local scratch database on demand, records the evidence, and checks that
 the newest drill is fresh when migrations change (spec D §15).
 
-**Relaxed mode waives this gate.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), or a custom table that skips the gate's category, the pack gates follow the mode: an agent's restore into a declared environment or a non-local host (`tq/restore-target`) runs with no ask and no approval, even where the policy says `approve` or `deny`. Keep the default mode, or use `strict` or a custom table that keeps `db-destructive` at `rule`, `ask` or `deny`, wherever the gate must hold. See [PACKS.md](../PACKS.md#known-behaviours).
+**Relaxed mode waives this gate.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), `tq/restore-target` follows the guard mode: it is skipped, its denies included, so an agent's restore into a declared environment or a non-local host runs with no ask and no approval, even where the policy says `approve` or `deny`. A custom table follows its `db-destructive` value. Only `rule` (or `deny`) keeps the gate: `ask` turns a call the gate denies into a prompt the human can click through, with no approval checked. Keep the default mode, `strict`, or a custom table with `db-destructive: rule` wherever the gate must hold. See [PACKS.md](../PACKS.md#known-behaviours).
 
 ## Config
 

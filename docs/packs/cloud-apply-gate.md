@@ -5,7 +5,7 @@ create`, `aws cloudformation deploy` and `sam deploy` (and each tool's destroy)
 an agent runs resolves to an environment and gets that environment's policy
 (spec D §9). The IaC checks are on [IaC](cloud-iac.md).
 
-**Relaxed mode waives this gate.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), or a custom table that skips the gate's category, the pack gates follow the mode: an agent's cloud apply or destroy runs with no ask and no approval, even where the policy says `approve` or `deny`. Keep the default mode, or use `strict` or a custom table that keeps `cloud-destructive` at `rule`, `ask` or `deny`, wherever the gate must hold. See [PACKS.md](../PACKS.md#known-behaviours).
+**Relaxed mode waives this gate.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), `tq/iac-apply-env` follows the guard mode: it is skipped, its denies included, so an agent's cloud apply or destroy runs with no ask and no approval, even where the policy says `approve` or `deny`. A custom table follows its `cloud-destructive` value. Only `rule` (or `deny`) keeps the gate: `ask` turns a call the gate denies into a prompt the human can click through, with no approval checked. One exception: `tq/iac-apply-env` supersedes the core `tq/iac-apply`, so a custom table that skips `cloud-destructive` but keeps `prod-changes` at `rule` keeps this gate (the `prod-changes` value lifts the verdict back). Keep the default mode, `strict`, or a custom table with `cloud-destructive: rule` wherever the gate must hold. See [PACKS.md](../PACKS.md#known-behaviours).
 
 ## Environments
 

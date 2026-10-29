@@ -119,7 +119,12 @@ func planRules() []Rule {
 			// guard mode keeps the ask; plain show and output, which mask
 			// sensitive values, stay tq/plan-print (packs).
 			ID: "tq/plan-secret-print", Action: Ask, Pack: "cloud",
-			Command: `\b(terraform|tofu)(\.exe)?["']?` + iacFlags + `\s+(state\s+(pull|show)\b|show\b` + seg + `\s-{1,2}json\b|output\b` + seg + `\s-{1,2}(json|raw)\b)|\bpulumi(\.exe)?["']?` + seg + `\s--show-secrets\b`,
+			// Also (security re-review r3-m2): `output <name>`, which the
+			// Terraform CLI docs say is not redacted ("Terraform does not
+			// redact sensitive values when you specify the output by name");
+			// OpenTofu's -show-sensitive (show, output, plan, apply); and
+			// `pulumi config get <key>`, which prints a secret decrypted.
+			Command: `\b(terraform|tofu)(\.exe)?["']?` + iacFlags + `\s+(state\s+(pull|show)\b|show\b` + seg + `\s-{1,2}json\b|output\b` + seg + `\s-{1,2}(json|raw)\b|output(\s+-\S+)*\s+[^-\s;&|]|\S+` + seg + `\s-{1,2}show-sensitive\b)|\bpulumi(\.exe)?["']?` + seg + `(\s--show-secrets\b|\bconfig\s+get\b)`,
 			Reason:  "this prints state or secret outputs in clear into the transcript; use `tq pack cloud show <plan-id>` for the redacted plan summary, or confirm",
 		},
 		{

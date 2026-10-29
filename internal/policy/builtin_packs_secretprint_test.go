@@ -27,7 +27,20 @@ func TestPlanSecretPrint(t *testing.T) {
 		{"pulumi stack --show-secrets", true, false},
 		{"terraform show", false, true},
 		{"terraform output", false, true},
-		{"terraform output db_endpoint", false, true},
+		// r3-m2: the Terraform docs (CLI, terraform output): "Terraform does
+		// not redact sensitive values when you specify the output by name"
+		{"terraform output db_endpoint", true, true},
+		{"terraform output -no-color db_password", true, true},
+		{"terraform output -no-color", false, true},
+		{"terraform output -state=prod.tfstate", false, true},
+		{"pulumi config get dbPassword", true, false},
+		{"pulumi config get dbPassword -s acme-dev", true, false},
+		{"pulumi -C infra config get dbPassword", true, false},
+		{"tofu show -show-sensitive", true, true},
+		{"tofu output -show-sensitive", true, true},
+		{"tofu plan -show-sensitive", true, false},
+		{"tofu apply --show-sensitive", true, false},
+		{"pulumi config set dbPassword --secret", false, false},
 		{"terraform plan -out=x", false, false},
 		{"pulumi stack output", false, false},
 	} {

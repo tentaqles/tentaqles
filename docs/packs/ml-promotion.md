@@ -236,7 +236,7 @@ Single- and double-quoted literals are read alike.
 
 ## Guard `tq/model-promote` (deny)
 
-**Relaxed mode waives this guard.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), or a custom table that skips the `packs` category, `tq/model-promote` follows the mode: an agent's direct registry promotion runs with no ask. The same holds for the data pack's `tq/dbt-prod-target` and `tq/bq-unbounded-query`. `tq pack ml promote apply` itself stays human-only, because the locked `tq/human-answer` still denies it to agents. Keep the default mode, or use `strict` or a custom table that keeps `packs` at `rule`, `ask` or `deny`, wherever the guard must hold. See [PACKS.md](../PACKS.md#known-behaviours).
+**Relaxed mode waives this guard.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), `tq/model-promote` (like every `packs` guard: `tq/dbt-prod-target`, `tq/dbt-full-refresh`, `tq/pipeline-run` and the cost guards) follows the guard mode: it is skipped, its denies included, so an agent's direct registry promotion runs with no ask and no approval, even where the policy says `approve` or `deny`. A custom table follows its `packs` value. Only `rule` (or `deny`) keeps the guard: `ask` turns a call the guard denies into a prompt the human can click through, with no approval checked. `tq pack ml promote apply` itself stays human-only: the locked `tq/human-answer` still denies it to agents. Keep the default mode, `strict`, or a custom table with `packs: rule` wherever the guard must hold. See [PACKS.md](../PACKS.md#known-behaviours).
 
 The guard covers agent Bash, PowerShell and MCP tool calls:
 
