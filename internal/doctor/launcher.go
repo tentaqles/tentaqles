@@ -83,7 +83,8 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 	}
 }
 
-// permissionModeOverridden notes a claude.permission_mode other than bypass:
+// permissionModeOverridden notes a claude.permission_mode other than bypass
+// (or bypassPermissions, which ModeFor passes through as bypass):
 // the launcher starts claude in bypass anyway (spec E §8.1, §19 Q3), and the
 // value only sets defaultMode for sessions started outside it.
 func permissionModeOverridden(w *resolve.Workspace, _ Deps, add AddFunc) {
@@ -91,7 +92,7 @@ func permissionModeOverridden(w *resolve.Workspace, _ Deps, add AddFunc) {
 		return
 	}
 	pm := w.Manifest.Claude.PermissionMode
-	if pm == "" || pm == "bypass" {
+	if pm == "" || pm == "bypass" || pm == "bypassPermissions" {
 		return
 	}
 	add("info", "permission-mode-overridden", w.Name,

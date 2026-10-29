@@ -89,7 +89,7 @@ func TestPermissionModeOverridden(t *testing.T) {
 	for _, c := range []struct {
 		mode string
 		want bool
-	}{{"", false}, {"bypass", false}, {"default", true}, {"acceptEdits", true}, {"plan", true}, {"auto", true}, {"dontAsk", true}} {
+	}{{"", false}, {"bypass", false}, {"bypassPermissions", false}, {"default", true}, {"acceptEdits", true}, {"plan", true}, {"auto", true}, {"dontAsk", true}} {
 		w := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{Client: "acme"}}
 		w.Manifest.Claude.PermissionMode = c.mode
 		fs, add := collectLauncher()
