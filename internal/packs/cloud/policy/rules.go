@@ -213,6 +213,17 @@ func inCluster(r model.Resource, t string, p map[string]any) bool {
 	return t == "aws::rds::dbinstance" && inherits(r, p, "DBClusterIdentifier")
 }
 
+// serverlessCluster: a CFN DB cluster whose EngineMode is the literal
+// "serverless", for which CloudFormation defaults StorageEncrypted to true.
+// An intrinsic EngineMode is not resolved, so it is not exempt (fail closed).
+func serverlessCluster(r model.Resource, t string, p map[string]any) bool {
+	if r.Source != model.KindCFN || t != "aws::rds::dbcluster" {
+		return false
+	}
+	m, ok := get(p, "EngineMode").(string)
+	return ok && strings.EqualFold(strings.TrimSpace(m), "serverless")
+}
+
 // --- IAC002: ingress from anywhere to admin or database ports --------------
 
 func anywhere(s string) bool {
@@ -491,7 +502,9 @@ func encryptionOff(r model.Resource, t string, p map[string]any) []hit {
 		}
 		if v == nil && offByDefault(r, p, "StorageEncrypted") &&
 			!inherits(r, p, "KmsKeyId", "DBClusterIdentifier", "DBSnapshotIdentifier", "SourceDBInstanceIdentifier",
-				"SourceDBClusterIdentifier", "SnapshotIdentifier", "SourceDbiResourceId") {
+				"SourceDBClusterIdentifier", "SnapshotIdentifier", "SourceDbiResourceId",
+				"GlobalClusterIdentifier", "ReplicationSourceIdentifier") &&
+			!serverlessCluster(r, t, p) {
 			return h("storage encryption is off (StorageEncrypted is not set; the default is unencrypted)")
 		}
 	case "aws_ebs_volume", "aws:ebs/volume:volume", "aws::ec2::volume":

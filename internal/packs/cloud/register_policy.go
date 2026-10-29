@@ -147,7 +147,10 @@ func raiseIaC(in *packs.Input) bool {
 
 // removedNotes warns about each IaC file deleted (or renamed away) under
 // packs.cloud.iac[].path when no plan was recorded: nothing shows what the
-// next apply destroys.
+// next apply destroys. The note shares IAC001 (a delete of what the IaC
+// declared) on purpose: spec D §7 defines IAC001-IAC007 only, so one
+// "tq-allow: IAC001" covers both a planned delete and a removed file, and
+// the suppression:iac001 counter counts both.
 func removedNotes(in *packs.Input, cfg policy.Config, plans int) []packs.Finding {
 	if plans > 0 {
 		return nil
