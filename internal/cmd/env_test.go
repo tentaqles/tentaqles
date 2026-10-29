@@ -79,7 +79,7 @@ func TestEnv_PrintsNothingWhenOff(t *testing.T) {
 
 func TestEnv_Off(t *testing.T) {
 	root := mkLaunchWS(t, "acme", "")
-	asHuman(t)
+	clearAgentMarkers(t)
 	chdir(t, root)
 	st := envplan.State{WS: "acme", Prev: map[string]*string{"TQ_WS": nil, "CLAUDE_CONFIG_DIR": nil}}
 	t.Setenv(envplan.StateVar, st.Encode())
@@ -101,7 +101,7 @@ func TestEnv_Off(t *testing.T) {
 func TestEnv_OffRefusesAgents(t *testing.T) {
 	mkLaunchWS(t, "acme", "")
 	for _, k := range agentMarkers {
-		asHuman(t)
+		clearAgentMarkers(t)
 		t.Setenv(k, "1")
 		if _, err := runTq(t, "env", "--off", "--shell", "bash"); !errors.Is(err, runner.ErrHumanOnly) {
 			t.Errorf("%s: want ErrHumanOnly, got %v", k, err)

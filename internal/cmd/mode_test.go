@@ -17,21 +17,6 @@ import (
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
-var agentMarkers = []string{"CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS", "TQ_HUB_TASK", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"}
-
-// asHuman clears the agent markers (this test binary may itself run inside
-// Claude Code) and makes stdin and stdout count as a terminal.
-func asHuman(t *testing.T) {
-	t.Helper()
-	for _, k := range agentMarkers {
-		t.Setenv(k, "")
-	}
-	prevIn, prevOut := stdinIsTerminal, stdoutIsTerminal
-	stdinIsTerminal = func(io.Reader) bool { return true }
-	stdoutIsTerminal = func(io.Writer) bool { return true }
-	t.Cleanup(func() { stdinIsTerminal, stdoutIsTerminal = prevIn, prevOut })
-}
-
 func runModeCmd(t *testing.T, stdin string, args ...string) (string, error) {
 	t.Helper()
 	var out strings.Builder
@@ -51,15 +36,6 @@ func loadGuard(t *testing.T, root string) manifest.Guard {
 		t.Fatal(err)
 	}
 	return m.Guard
-}
-
-func manifestHash(t *testing.T, root string) string {
-	t.Helper()
-	h, err := trust.HashFile(filepath.Join(root, manifest.FileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return h
 }
 
 func TestModeShowDefault(t *testing.T) {

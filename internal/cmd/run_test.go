@@ -173,11 +173,8 @@ func TestClaudeArgs(t *testing.T) {
 
 // --- spec E §8.1: the launcher -------------------------------------------
 
-// agentMarkers are the env vars agentSession reads.
-var agentMarkers = []string{"CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS", "TQ_HUB_TASK", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"}
-
-// asHuman clears every agent marker (the test binary may run under Claude Code).
-func asHuman(t *testing.T) {
+// clearAgentMarkers unsets every agent marker (the test binary may run under Claude Code).
+func clearAgentMarkers(t *testing.T) {
 	t.Helper()
 	for _, k := range agentMarkers {
 		unsetenv(t, k)
@@ -285,7 +282,7 @@ func TestRunClaudeAlwaysBypass(t *testing.T) {
 	for _, pm := range manifest.PermissionModes {
 		t.Run("mode="+pm, func(t *testing.T) {
 			mkLaunchWS(t, "acme", pm)
-			asHuman(t)
+			clearAgentMarkers(t)
 			calls := fakeExec(t)
 			if out, err := runTq(t, "run", "acme", "--", "claude", "-p", "hi"); err != nil {
 				t.Fatalf("%v: %s", err, out)
@@ -305,7 +302,7 @@ func TestRunClaudeAlwaysBypass(t *testing.T) {
 
 func TestRunTqMode(t *testing.T) {
 	mkLaunchWS(t, "acme", "")
-	asHuman(t)
+	clearAgentMarkers(t)
 	t.Setenv("TQ_MODE", "relaxed") // inherited: a human launch without a mode drops it
 
 	calls := fakeExec(t)
@@ -349,7 +346,7 @@ func TestRunTqMode(t *testing.T) {
 
 func TestRunDotResolvesCwd(t *testing.T) {
 	root := mkLaunchWS(t, "acme", "")
-	asHuman(t)
+	clearAgentMarkers(t)
 	sub := filepath.Join(root, "app")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -384,7 +381,7 @@ func TestRunDotResolvesCwd(t *testing.T) {
 
 func TestRunDotUntrustedRunsNeutralWithWarning(t *testing.T) {
 	root := mkUntrusted(t, "evil")
-	asHuman(t)
+	clearAgentMarkers(t)
 	chdir(t, root)
 	calls := fakeExec(t)
 	out, err := runTq(t, "run", ".", "--", "claude")
@@ -401,7 +398,7 @@ func TestRunDotUntrustedRunsNeutralWithWarning(t *testing.T) {
 
 func TestRunOff(t *testing.T) {
 	mkLaunchWS(t, "acme", "acceptEdits")
-	asHuman(t)
+	clearAgentMarkers(t)
 	st := envplan.State{WS: "acme", Prev: map[string]*string{"TQ_WS": nil, "CLAUDE_CONFIG_DIR": nil}}
 	t.Setenv(envplan.StateVar, st.Encode())
 	t.Setenv("TQ_WS", "acme")
@@ -465,7 +462,7 @@ func TestRunOffRefusesAgents(t *testing.T) {
 	mkLaunchWS(t, "acme", "")
 	for _, k := range agentMarkers {
 		t.Run(k, func(t *testing.T) {
-			asHuman(t)
+			clearAgentMarkers(t)
 			t.Setenv(k, "1")
 			calls := fakeExec(t)
 			_, err := runTq(t, "run", "--off", "--", "claude")
@@ -478,7 +475,7 @@ func TestRunOffRefusesAgents(t *testing.T) {
 
 func TestRunFromAgentSession(t *testing.T) {
 	mkLaunchWS(t, "acme", "")
-	asHuman(t)
+	clearAgentMarkers(t)
 	t.Setenv("CLAUDECODE", "1")
 
 	// the parent's TQ_MODE passes through, and no bypass is added
