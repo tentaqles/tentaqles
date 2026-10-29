@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -46,7 +49,9 @@ func normPathForm(p string) string {
 }
 
 // stateDirForms are the spellings of tq's state directory a command may use.
-func stateDirForms() []string {
+func stateDirForms() []string { return stateInfo().forms }
+
+func computeStateDirForms() []string {
 	home := paths.Home()
 	set := map[string]bool{".tentaqles": true, "tentaq~": true, "$tq_home": true, "${tq_home}": true, "%tq_home%": true, "$env:tq_home": true}
 	var dirs []string
@@ -91,6 +96,55 @@ func stateDirForms() []string {
 	return out
 }
 
+var (
+	dotdotRe    = regexp.MustCompile(`(^|/)\.\.(/|$|\s)`)
+	proseSplit  = regexp.MustCompile(`(;|&&|\|\||\n)`)
+	shortRootRe = regexp.MustCompile(`/tentaq~[0-9]+/`)
+)
+
+// stateCache memoizes, once per process and per (TQ_HOME, environment),
+// everything the hook-time check derives from the file system and the
+// environment: the root spellings (FinalPath and 8.3 calls), the protected
+// set (8.3 names of the protected children), the inside variables and their
+// regexes. The hook is a one-shot process; tests that change TQ_HOME or the
+// environment get a fresh entry.
+type stateCache struct {
+	key   string
+	forms []string
+	re    *regexp.Regexp
+	prot  map[string]bool
+	vars  map[string]string
+	bare  map[string]*regexp.Regexp
+}
+
+var stateMemo struct {
+	sync.Mutex
+	c *stateCache
+}
+
+func stateInfo() *stateCache {
+	h := fnv.New64a()
+	h.Write([]byte(paths.Home()))
+	for _, kv := range os.Environ() {
+		h.Write([]byte{0})
+		h.Write([]byte(kv))
+	}
+	key := fmt.Sprintf("%x", h.Sum64())
+	stateMemo.Lock()
+	defer stateMemo.Unlock()
+	if c := stateMemo.c; c != nil && c.key == key {
+		return c
+	}
+	c := &stateCache{key: key, prot: computeProtectedSet(), vars: computeInsideVars(), bare: map[string]*regexp.Regexp{}}
+	c.forms = computeStateDirForms()
+	c.re = computeRootRegex(c.forms)
+	for k := range c.vars {
+		c.bare[k] = regexp.MustCompile(regexp.QuoteMeta(k) + `($|[^a-z0-9_])`)
+	}
+	stateMemo.c = c
+	return c
+}
+
 var bareTq = regexp.MustCompile(`^\s*(\S*/)?tq(\.exe)?\s`)
 
 // bareTqCommand: one tq invocation and nothing else (no chain, pipe,
@@ -110,7 +164,9 @@ func bareTqCommand(n string) bool {
 var protectedSubs = []string{"hub", "packs", "build-gate", "trust", "guard.yaml", "config.yaml", "guard", "audit.jsonl"}
 
 // protectedSet is protectedSubs plus their 8.3 short names at hook time.
-func protectedSet() map[string]bool {
+func protectedSet() map[string]bool { return stateInfo().prot }
+
+func computeProtectedSet() map[string]bool {
 	set := map[string]bool{}
 	for _, p := range protectedSubs {
 		set[p] = true
@@ -123,10 +179,14 @@ func protectedSet() map[string]bool {
 
 func isProtectedSeg(seg string) bool { return protectedSet()[seg] }
 
+func (c *stateCache) isProt(seg string) bool { return c.prot[seg] }
+
 // insideVars are the environment variables whose value points inside tq's
 // state directory (tq exports CLAUDE_CONFIG_DIR, GH_CONFIG_DIR and others
 // into identities/<id>/): name (lower case) -> the folded value.
-func insideVars() map[string]string {
+func insideVars() map[string]string { return stateInfo().vars }
+
+func computeInsideVars() map[string]string {
 	out := map[string]string{}
 	home := normPathForm(paths.Home())
 	var real string
@@ -150,7 +210,8 @@ func insideVars() map[string]string {
 // %X%, $env:X, and the bare name as in os.environ[X] or process.env.X) with
 // its folded value, so `$CLAUDE_CONFIG_DIR/../../../packs` reads as a path.
 func expandInside(n string) string {
-	vars := insideVars()
+	si := stateInfo()
+	vars := si.vars
 	names := make([]string, 0, len(vars))
 	for k := range vars {
 		names = append(names, k)
@@ -163,14 +224,16 @@ func expandInside(n string) string {
 		}
 		// The bare name (os.environ[X], process.env.X): quotes and brackets are
 		// already folded away, so no left boundary is required.
-		n = regexp.MustCompile(regexp.QuoteMeta(k)+`($|[^a-z0-9_])`).ReplaceAllString(n, v+"${1}")
+		n = si.bare[k].ReplaceAllString(n, v+"${1}")
 	}
 	return n
 }
 
 // rootRegex matches any spelling of the state directory root.
-func rootRegex() *regexp.Regexp {
-	forms := stateDirForms()
+func rootRegex() *regexp.Regexp { return stateInfo().re }
+
+func computeRootRegex(forms []string) *regexp.Regexp {
+	forms = append([]string(nil), forms...)
 	sort.Slice(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
 	alts := []string{`tentaq~[0-9]+`}
 	for _, f := range forms {
@@ -203,7 +266,7 @@ func firstSeg(s string) string {
 func proseFree(raw string) string {
 	raw = msgArg.ReplaceAllString(raw, " ")
 	var out []string
-	for _, seg := range regexp.MustCompile(`(;|&&|\|\||\n)`).Split(raw, -1) {
+	for _, seg := range proseSplit.Split(raw, -1) {
 		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") {
 			continue
 		}
@@ -253,11 +316,12 @@ func rawDots(raw string) string { return normShell(raw) }
 //   - a cd under the root (tracked cumulatively, relative cds included)
 //     followed by a relative path into a protected part.
 func protectedMention(raw string) bool {
-	re := rootRegex()
+	si := stateInfo()
+	re := si.re
 	n, dotdot := foldPaths(normShell(proseFree(raw)), re)
 	// Fail closed: a root spelling and a `..` path in one command (a
 	// variable set to a path under the root, then `/../packs`).
-	if dotdot || (re.MatchString(n) && regexp.MustCompile(`(^|/)\.\.(/|$|\s)`).MatchString(rawDots(raw))) {
+	if dotdot || (re.MatchString(n) && dotdotRe.MatchString(rawDots(raw))) {
 		return true
 	}
 	bare := false
@@ -271,13 +335,13 @@ func protectedMention(raw string) bool {
 				bare = true
 				continue
 			}
-			if isProtectedSeg(seg) || strings.ContainsAny(seg, "*?{") {
+			if si.isProt(seg) || strings.ContainsAny(seg, "*?{") {
 				return true
 			}
 			continue
 		}
 		// An argv or join list: joinpath(.tentaqles, packs, ...).
-		if strings.HasPrefix(rest, ",") && isProtectedSeg(firstSeg(strings.TrimLeft(rest, ", "))) {
+		if strings.HasPrefix(rest, ",") && si.isProt(firstSeg(strings.TrimLeft(rest, ", "))) {
 			return true
 		}
 		bare = true
@@ -291,7 +355,7 @@ func protectedMention(raw string) bool {
 				continue
 			}
 			for _, s := range strings.Split(tok, "/") {
-				if isProtectedSeg(s) {
+				if si.isProt(s) {
 					return true
 				}
 			}
@@ -318,7 +382,7 @@ func protectedMention(raw string) bool {
 			} else {
 				known = false
 			}
-			if known && isProtectedSeg(firstSeg(rel)) {
+			if known && si.isProt(firstSeg(rel)) {
 				return true
 			}
 			continue
@@ -332,7 +396,7 @@ func protectedMention(raw string) bool {
 				continue
 			}
 			full := strings.TrimPrefix(path.Clean(rel+"/"+w), "/")
-			if isProtectedSeg(firstSeg(full)) {
+			if si.isProt(firstSeg(full)) {
 				return true
 			}
 		}
@@ -411,22 +475,23 @@ func underProtected(canon string) bool {
 		return false
 	}
 	var roots []string
-	for _, f := range stateDirForms() {
+	si := stateInfo()
+	for _, f := range si.forms {
 		if strings.Contains(f, "/") && !strings.HasPrefix(f, "$") && !strings.HasPrefix(f, "%") && !strings.HasPrefix(f, "~") {
 			roots = append(roots, f)
 		}
 	}
 	for _, r := range roots {
-		if strings.HasPrefix(canon, r+"/") && isProtectedSeg(firstSeg(canon[len(r)+1:])) {
+		if strings.HasPrefix(canon, r+"/") && si.isProt(firstSeg(canon[len(r)+1:])) {
 			return true
 		}
 	}
 	for _, marker := range []string{"/.tentaqles/"} {
-		if i := strings.Index(canon, marker); i >= 0 && isProtectedSeg(firstSeg(canon[i+len(marker):])) {
+		if i := strings.Index(canon, marker); i >= 0 && si.isProt(firstSeg(canon[i+len(marker):])) {
 			return true
 		}
 	}
-	if m := regexp.MustCompile(`/tentaq~[0-9]+/`).FindStringIndex(canon); m != nil && isProtectedSeg(firstSeg(canon[m[1]:])) {
+	if m := shortRootRe.FindStringIndex(canon); m != nil && si.isProt(firstSeg(canon[m[1]:])) {
 		return true
 	}
 	return false
