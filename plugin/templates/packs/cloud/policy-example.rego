@@ -28,6 +28,9 @@ deny contains {"msg": msg, "addr": rc.address, "rule": "ACME001"} if {
 	some rc in input.resource_changes
 	rc.type == "aws_db_instance"
 	acme_writes(rc)
-	not rc.change.after.instance_class in acme_allowed_db_classes
+
+	# object.get: `not` over a missing property is undefined, so a class not
+	# known at plan time would pass; read it with a default instead.
+	not object.get(object.get(rc.change, "after", {}), "instance_class", null) in acme_allowed_db_classes
 	msg := sprintf("%s uses an instance class outside the approved list", [rc.address])
 }

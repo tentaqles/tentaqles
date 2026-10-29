@@ -23,3 +23,15 @@ test_allows_an_approved_class if {
 	denials := terraform.deny with input as acme_plan("db.t4g.small")
 	count(acme001(denials)) == 0
 }
+
+# A class not known at plan time (absent from "after") is denied too.
+test_denies_a_missing_class if {
+	plan := {"resource_changes": [{
+		"address": "aws_db_instance.main",
+		"type": "aws_db_instance",
+		"change": {"actions": ["create"], "after": {}},
+	}]}
+	denials := terraform.deny with input as plan
+	some d in acme001(denials)
+	d.addr == "aws_db_instance.main"
+}
