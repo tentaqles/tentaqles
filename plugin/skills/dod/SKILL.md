@@ -13,6 +13,16 @@ Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
 `$ARGUMENTS`, `AskUserQuestion` is never called. At every human stop you write
 the question with `build-gate ask` and end your turn (see step 3).
 
+## Packs
+
+Before step 1, run the on-ramp step of the `pack` skill (`skills/pack/SKILL.md`,
+"On-ramp step"): `tq pack list --enabled --json` (timeout 10 s); for each enabled pack
+read every `skills/pack/references/onramps/<pack>-*.md` and follow its `## dod`
+section at the step it names. No pack enabled, or a tq without the `pack` command:
+skip this. The `pack:` items are explained in the `pack` skill (step 5). Reviewers: a fix
+round that re-runs the review gate adds every reviewer that `tq pack crew --flags
+<the flags triage printed>` prints.
+
 ## 1. Run it
 
 ```bash

@@ -54,6 +54,15 @@ On resume (`/tentaqles:build resume <slug>`), read `build-gate state <slug> --js
 
 In interactive mode you write no decision records: the human stops stay `AskUserQuestion` and the terminal commands (`approve`, `finish`, `judge`, `dod --override`), as before. A pending record suspends the Stop guard, so one that no terminal command answers would switch it off for the rest of the run. The plan's top-level `task` block, `{"hub", "workspace", "kind", "external"}`, is copied verbatim from `TQ_HUB_TASK` by the on-ramp when the hub launched the run (the gate refuses a `task` the environment did not set, and the hub finds its build by `task.hub`); never invent one.
 
+## Packs
+
+Before Phase 0, run the on-ramp step of the `pack` skill (`skills/pack/SKILL.md`,
+"On-ramp step"): `tq pack list --enabled --json` (timeout 10 s); for each enabled pack
+read every `skills/pack/references/onramps/<pack>-*.md` and follow its `## build`
+section at the step it names. No pack enabled, or a tq without the `pack` command:
+skip this. Reviewers: in Phase 2 step d.3, run `tq pack crew --flags <the flags
+triage printed>` and add every reviewer it prints to the crew.
+
 ## Phase 0: Worktree and hooks
 
 1. **Resume?** If `$ARGUMENTS` is `resume <slug>`, run `build-gate status <slug>` and `build-gate ping`, then continue at the first checkpoint that isn't passed.
@@ -94,7 +103,7 @@ This records their hashes and mirrors them into `.claude/tq-rules.yaml`, so tq's
 **d. Review gate: a crew, every verdict recorded.**
 1. `build-gate review-bundle <slug> <id>` prints the bundle path and `base=<commit>`.
 2. Risk triage: `tq decide triage --range <base>..HEAD`. Exit 0 means **light**; exit 3, any error, or tq missing means **full** (when in doubt, review more). Note the flags it prints.
-3. Pick the crew. Always `build-critic` (model `sonnet` for light, `opus` for full). Add `spec-critic` when the plan's `workflow` is `feature` or `kickoff`, or it is `fix` and `changed_files` include files outside the failing path named in the fix spec. Add `security-reviewer` on flags auth, secrets, api, state, destructive, or when the diff touches `.github/workflows/` or a dependency manifest; `privacy-reviewer` on flag `classified_data` or a diff touching `classified_paths`; `llm-security-reviewer` on flag `agentic`; `breaker` only when the checkpoint is marked `"runnable": true` in the plan and Project config has a `run` command. (The security and privacy reviewers ship with the security pack; if an agent is not installed, record nothing for it and tell the user which reviewer was skipped and why.) Run the crew members in parallel, each with the prompt marker `[checkpoint <slug>#<id> review]`, the checkpoint slice, the bundle path, the spec slice path and its checklist source.
+3. Pick the crew. Always `build-critic` (model `sonnet` for light, `opus` for full). Add `spec-critic` when the plan's `workflow` is `feature` or `kickoff`, or it is `fix` and `changed_files` include files outside the failing path named in the fix spec. Add `security-reviewer` on flags auth, secrets, api, state, destructive, or when the diff touches `.github/workflows/` or a dependency manifest; `privacy-reviewer` on flag `classified_data` or a diff touching `classified_paths`; `llm-security-reviewer` on flag `agentic`; `breaker` only when the checkpoint is marked `"runnable": true` in the plan and Project config has a `run` command. (The security and privacy reviewers ship with the security pack; if an agent is not installed, record nothing for it and tell the user which reviewer was skipped and why.) Then add the pack reviewers (the Packs section above). Run the crew members in parallel, each with the prompt marker `[checkpoint <slug>#<id> review]`, the checkpoint slice, the bundle path, the spec slice path and its checklist source.
 4. Each reviewer returns the contract (`RESULT`, `BUILT-BY-ME`, `F` and `U` rows). If `BUILT-BY-ME: yes`, discard it and run a fresh instance. Record every verdict, you never skip one:
    ```
    build-gate record-review <slug> <id> --reviewer build-critic --result PASS|FAIL|BLOCKED --blockers N --majors N --minors N --unjudged N
