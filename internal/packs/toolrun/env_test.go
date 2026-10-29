@@ -2,6 +2,10 @@ package toolrun
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -63,5 +67,62 @@ func TestRunPassesOnlyTheFilteredEnv(t *testing.T) {
 	s := string(out.Stdout)
 	if strings.Contains(s, "TQ_TEST_GITHUB_TOKEN") || !strings.Contains(s, "DBT_PROFILES_DIR=/p") {
 		t.Fatalf("tool env: %s", s)
+	}
+}
+
+// R5-5: a declared secret never reaches a binary resolved inside the repo
+// (.venv); the run warns with the name only. LC_* and LANG values that are
+// not locales are dropped.
+func TestRepoLocalToolGetsNoDeclaredSecret(t *testing.T) {
+	isolate(t)
+	root := t.TempDir()
+	venv := filepath.Join(root, ".venv", "bin")
+	if runtime.GOOS == "windows" {
+		venv = filepath.Join(root, ".venv", "Scripts")
+	}
+	os.MkdirAll(venv, 0o700)
+	fakeBin(t, venv, "dbt")
+	r := &Runner{Root: root, LookPath: func(string) (string, error) { return "", errors.New("no") }}
+	t.Setenv("TQ_FAKE_TOOL", "env")
+	t.Setenv("DBT_PASSWORD", "hunter2-value")
+	t.Setenv("DBT_PROFILES_DIR", "/p")
+	out, err := r.Run(context.Background(), Spec{Pack: "data", Tool: "dbt", PassEnv: []string{"DBT_PASSWORD", "DBT_PROFILES_DIR"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out.Stdout)
+	if strings.Contains(s, "hunter2-value") || !strings.Contains(s, "DBT_PROFILES_DIR=/p") {
+		t.Fatalf("repo tool env: %s", s)
+	}
+	if w := strings.Join(out.Warnings, " "); !strings.Contains(w, "DBT_PASSWORD") || strings.Contains(w, "hunter2") {
+		t.Fatalf("warnings: %q", out.Warnings)
+	}
+	// The same declared secret reaches a tool outside the repo.
+	bin := fakeBin(t, t.TempDir(), "dbt2")
+	r2 := &Runner{Root: root, LookPath: func(string) (string, error) { return bin, nil }}
+	out, _ = r2.Run(context.Background(), Spec{Pack: "data", Tool: "dbt2", PassEnv: []string{"DBT_PASSWORD"}})
+	if !strings.Contains(string(out.Stdout), "hunter2-value") || len(out.Warnings) != 0 {
+		t.Fatalf("outside tool: %v %s", out.Warnings, out.Stdout)
+	}
+}
+
+func TestLocaleValuesAreFiltered(t *testing.T) {
+	isolate(t)
+	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("LC_MESSAGES", "de_DE@euro")
+	t.Setenv("LC_TQ_SMUGGLE", "ghp_notalocale value/with=stuff")
+	m := envMap(toolEnv("", nil, nil))
+	for _, k := range []string{"LANG", "LC_ALL", "LC_MESSAGES"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("%s dropped", k)
+		}
+	}
+	if _, ok := m["LC_TQ_SMUGGLE"]; ok {
+		t.Error("a non-locale LC_* value passed")
+	}
+	t.Setenv("LANG", "x y z")
+	if _, ok := envMap(toolEnv("", nil, nil))["LANG"]; ok {
+		t.Error("a non-locale LANG passed")
 	}
 }
