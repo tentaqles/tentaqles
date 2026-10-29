@@ -18,7 +18,18 @@ func planRuleSet(t *testing.T, packs ...string) *Set {
 
 // tq/plan-read, tq/plan-print, tq/plan-commit (spec D §16): plans and state
 // stay out of the transcript and out of git while the cloud pack is on.
+// matched reports whether a cloud-pack rule with id is among rs.
+func matched(rs []*Rule, id string) bool {
+	for _, r := range rs {
+		if r.Pack == "cloud" && r.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPlanRules(t *testing.T) {
+	t.Setenv("TQ_HOME", "") // the default home; a custom one is tested below
 	cases := []struct {
 		name string
 		call ToolCall
@@ -47,6 +58,9 @@ func TestPlanRules(t *testing.T) {
 		// tq/plan-print
 		{"terraform show", ToolCall{Tool: "Bash", Command: "terraform show -json prod.tfplan"}, "tq/plan-read", Deny},
 		{"terraform show state", ToolCall{Tool: "Bash", Command: "terraform show"}, "tq/plan-print", Ask},
+		{"terraform.exe show plan", ToolCall{Tool: "PowerShell", Command: "terraform.exe show prod.tfplan"}, "tq/plan-read", Deny},
+		{"quoted terraform.exe show plan", ToolCall{Tool: "PowerShell", Command: `& "C:\tools\terraform.exe" show -json prod.tfplan`}, "tq/plan-read", Deny},
+		{"tofu.exe show plan", ToolCall{Tool: "PowerShell", Command: "tofu.exe -chdir=infra show plan.tfplan"}, "tq/plan-read", Deny},
 		{"terraform chdir show", ToolCall{Tool: "Bash", Command: "terraform -chdir=infra show -json"}, "tq/plan-print", Ask},
 		{"tofu show", ToolCall{Tool: "Bash", Command: "tofu show -json"}, "tq/plan-print", Ask},
 		{"terraform output", ToolCall{Tool: "Bash", Command: "terraform output -json"}, "tq/plan-print", Ask},
@@ -93,6 +107,38 @@ func TestPlanRules(t *testing.T) {
 			}
 		}
 	}
+	// A custom TQ_HOME: the plan store under it is guarded too (review r0
+	// #10), in either separator, and other packs' state under it is not.
+	t.Setenv("TQ_HOME", `D:\tq`)
+	custom := planRuleSet(t, "cloud")
+	for _, c := range []struct {
+		name string
+		call ToolCall
+		id   string
+	}{
+		{"read custom store", ToolCall{Tool: "Read", Path: `D:\tq\packs\acme\cloud\plans\p1.json`}, "tq/plan-read"},
+		{"grep custom store", ToolCall{Tool: "Grep", Path: "D:/tq/packs/acme/cloud/plans"}, "tq/plan-read"},
+		{"cat custom store", ToolCall{Tool: "Bash", Command: "cat D:/tq/packs/acme/cloud/plans/p1.json"}, "tq/plan-read"},
+		{"type custom store", ToolCall{Tool: "PowerShell", Command: `type D:\tq\packs\acme\cloud\plans\p1.json`}, "tq/plan-read"},
+		{"git add custom store", ToolCall{Tool: "Bash", Command: `git add D:\tq\packs\acme\cloud\plans\p1.json`}, "tq/plan-commit"},
+		{"custom db state ok", ToolCall{Tool: "Read", Path: `D:\tq\packs\acme\db\drills.jsonl`}, ""},
+		{"lookalike ok", ToolCall{Tool: "Read", Path: `D:\tqx\packs\acme\cloud\plans\p1.json`}, ""},
+	} {
+		var id string
+		for _, m := range custom.Evaluate(c.call).Matched {
+			if m.Pack == "cloud" && (m.ID == "tq/plan-read" || m.ID == "tq/plan-commit") && m.Action == Deny {
+				id = m.ID
+			}
+		}
+		if id != c.id {
+			t.Errorf("TQ_HOME=D:\\tq %s: got %q, want %q", c.name, id, c.id)
+		}
+	}
+	t.Setenv("TQ_HOME", "/srv/tq home")
+	if d := planRuleSet(t, "cloud").Evaluate(ToolCall{Tool: "Read", Path: "/srv/tq home/packs/acme/cloud/plans/p1.json"}); !matched(d.Matched, "tq/plan-read") {
+		t.Error("TQ_HOME with a space: plan store read not denied")
+	}
+
 	// Every plan rule names its pack and points to tq pack cloud where it asks.
 	for _, r := range PackRules() {
 		switch r.ID {

@@ -1,5 +1,11 @@
 package policy
 
+import (
+	"os"
+	"regexp"
+	"strings"
+)
+
 // packRules are the static regex rules of the packs (spec C §2.10). Each
 // sets Pack: the hook drops it while that pack is not enabled. One id may
 // appear once per pack (tq/hub-store-write is listed for cloud and for db).
@@ -36,8 +42,36 @@ const planStore = `(\.tentaqles|\$\{?TQ_HOME\}?|\$env:TQ_HOME|%TQ_HOME%)[/\\]+pa
 // or a CDK asset manifest.
 const planFile = `\.tfplan\b|\.tfstate\b|` + planStore + `|cdk\.out[/\\]+(\S*[/\\])?[^/\\\s]*\.assets\.json\b`
 
-// planReadVerbs print a file: readVerbs, plus jq and `terraform show <plan>`.
-const planReadVerbs = `(` + readVerbs + `|\bjq\b|\b(terraform|tofu)\b` + iacFlags + `\s+show\b)`
+// planReadVerbs print a file: readVerbs, plus jq and `terraform show <plan>`
+// (terraform.exe and a quoted path to it too).
+const planReadVerbs = `(` + readVerbs + `|\bjq\b|\b(terraform|tofu)(\.exe)?["']?` + iacFlags + `\s+show\b)`
+
+// tqHomeStore is the plan store under a custom TQ_HOME, as a path regex
+// (slash form, for the file tools) and a command regex (either separator).
+// Both are "" when TQ_HOME is unset: the ~/.tentaqles and $TQ_HOME
+// spellings of planStore cover the default home.
+func tqHomeStore() (pathRe, cmdRe string) {
+	home := strings.TrimRight(NormalizePath(os.Getenv("TQ_HOME")), "/")
+	if home == "" {
+		return "", ""
+	}
+	var segs []string
+	for _, s := range strings.Split(home, "/") {
+		if s != "" {
+			segs = append(segs, regexp.QuoteMeta(s))
+		}
+	}
+	if len(segs) == 0 {
+		return "", ""
+	}
+	lead := ""
+	if strings.HasPrefix(home, "/") {
+		lead = "/"
+	}
+	pathRe = `(^|/)` + lead + strings.Join(segs, `/+`) + `/+packs/+[^/]+/+cloud/+plans(/|$)`
+	cmdRe = strings.Join(segs, `[/\\]+`) + `[/\\]+packs[/\\]+[^/\\\s]+[/\\]+cloud[/\\]+plans([/\\]|\b)`
+	return pathRe, cmdRe
+}
 
 // gitAddVerb is `git [flags] add|stage`.
 const gitAddVerb = `\bgit(\.exe)?["']?` + iacFlags + `\s+(add|stage)\b`
@@ -48,16 +82,23 @@ const gitAddVerb = `\bgit(\.exe)?["']?` + iacFlags + `\s+(add|stage)\b`
 const planCommitTarget = `(\.tfplan\b|\.tfstate\b|(^|[\s"'/\\=])\.terraform([/\\]|["']|\s|$)|(\.tentaqles|\$\{?TQ_HOME\}?|\$env:TQ_HOME|%TQ_HOME%)[/\\]+packs\b|\.(dump|pgdump|bacpac)\b|\btq_drill_)`
 
 func planRules() []Rule {
+	readPath := `(^|/)[^/]*\.tfplan$|(^|/)[^/]*\.tfstate(\.[^/]*)?$|(^|/)\.tentaqles/+packs/+[^/]+/+cloud/+plans(/|$)|(^|/)cdk\.out/(.*/)?[^/]*\.assets\.json$`
+	readCmd, commitTarget := planFile, planCommitTarget
+	if p, c := tqHomeStore(); p != "" {
+		readPath += `|` + p
+		readCmd += `|` + c
+		commitTarget = `(` + planCommitTarget + `|` + c + `)`
+	}
 	return []Rule{
 		{
 			ID: "tq/plan-read", Action: Deny, Pack: "cloud",
 			Tool:   "Read|Grep|NotebookRead",
-			Path:   `(^|/)[^/]*\.tfplan$|(^|/)[^/]*\.tfstate(\.[^/]*)?$|(^|/)\.tentaqles/+packs/+[^/]+/+cloud/+plans(/|$)|(^|/)cdk\.out/(.*/)?[^/]*\.assets\.json$`,
+			Path:   readPath,
 			Reason: "saved plans and state hold values in clear; they are never read into the conversation. Use `tq pack cloud show <plan-id>` for the redacted summary",
 		},
 		{
 			ID: "tq/plan-read", Action: Deny, Pack: "cloud",
-			Command:         planReadVerbs + seg + `(` + planFile + `)`,
+			Command:         planReadVerbs + seg + `(` + readCmd + `)`,
 			SkipHeredocData: true,
 			Reason:          "saved plans and state hold values in clear; they are never printed into the conversation. Use `tq pack cloud show <plan-id>` for the redacted summary",
 		},
@@ -68,7 +109,7 @@ func planRules() []Rule {
 		},
 		{
 			ID: "tq/plan-commit", Action: Deny, Pack: "cloud",
-			Command: gitAddVerb + seg + planCommitTarget,
+			Command: gitAddVerb + seg + commitTarget,
 			Reason:  "plans, state, .terraform/, the pack store and database dumps never go into git (they hold values in clear); add them to .gitignore. `git add -A` is covered by .gitignore and the cloud/no-plan-files check",
 		},
 	}
