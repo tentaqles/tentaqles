@@ -19,6 +19,10 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs/cloud/model"
 )
 
+// ErrTooDeep is wrapped by ARM when nested deployments or child resources
+// go deeper than it reads.
+var ErrTooDeep = errors.New("IaC input nested too deep")
+
 // MaxInput is the largest input a reader accepts (the framework's
 // ReadNew and HashState cap). A variable so tests can lower it.
 var MaxInput = 64 << 20
@@ -29,8 +33,12 @@ var (
 	ErrUnknownFormat = errors.New("unknown IaC input format")
 	// ErrTooLarge: the input is over MaxInput.
 	ErrTooLarge = errors.New("IaC input too large")
-	// ErrWhatIfFailed: a what-if result that carries an error and no changes.
+	// ErrWhatIfFailed: a what-if result that did not succeed (changes null,
+	// or a status other than Succeeded).
 	ErrWhatIfFailed = errors.New("what-if operation failed")
+	// ErrIncomplete: the input is one page of a paginated result (a change
+	// set with a NextToken). Reading it as complete could hide a delete.
+	ErrIncomplete = errors.New("IaC input is incomplete")
 )
 
 // Options carries what the caller knows and the bytes do not.

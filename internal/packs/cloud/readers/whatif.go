@@ -15,7 +15,9 @@ import (
 //
 // changeType maps Create→create, Delete→delete, Modify→update,
 // Deploy→update (ResourceIdOnly: may change), NoChange/Ignore/NoEffect→no-op,
-// Unsupported→unknown (with Meta unsupported_reason). Addr is resourceId;
+// Unsupported→unknown (with Meta unsupported_reason). A result whose
+// changes are null, or whose status is present and not Succeeded, is
+// ErrWhatIfFailed, never "no changes". Addr is resourceId;
 // Type is after.type, else before.type, else derived from the resource id.
 func WhatIf(name string, raw []byte, o Options) ([]model.Resource, error) {
 	if err := checkSize(raw); err != nil {
@@ -37,10 +39,12 @@ func WhatIf(name string, raw []byte, o Options) ([]model.Resource, error) {
 	if _, present := top["changes"]; !present {
 		return nil, fmt.Errorf("%s: %w: not a what-if result", name, ErrUnknownFormat)
 	}
-	if top["changes"] == nil && asMap(d.root)["error"] != nil {
-		// A failed what-if: no changes to lint, and nothing to approve. The
-		// error text is not repeated (it can quote template values).
-		return nil, fmt.Errorf("%s: %w (status %q)", name, ErrWhatIfFailed, str(asMap(d.root)["status"]))
+	status, hasStatus := asMap(d.root)["status"]
+	if top["changes"] == nil || (hasStatus && !strings.EqualFold(str(status), "Succeeded")) {
+		// A failed (or unfinished) what-if: no changes to lint, and nothing
+		// to approve. The error text is not repeated (it can quote template
+		// values).
+		return nil, fmt.Errorf("%s: %w (status %q)", name, ErrWhatIfFailed, str(status))
 	}
 	var out []model.Resource
 	for _, key := range []string{"changes", "potentialChanges"} {

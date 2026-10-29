@@ -192,7 +192,10 @@ func sensitiveVariables(top map[string]any) map[string]any {
 // masks applied in resource_changes, resource_drift and output_changes,
 // sensitive outputs and sensitive_values in planned_values and prior_state,
 // sensitive variables (value and default), then every copy of a known value
-// anywhere, then model.Scrub over the whole document.
+// anywhere except in the plan's structure (addresses, types, names, modes,
+// providers, actions and the version fields, which are restored so the copy
+// reads back to the same resources), then model.Scrub over the whole
+// document.
 func redactTFPlan(top map[string]any) any {
 	known := &model.Known{}
 	collectTFSensitive(top, known)
@@ -234,5 +237,70 @@ func redactTFPlan(top map[string]any) any {
 			vm["value"] = model.RedactedSensitive
 		}
 	}
-	return model.Scrub(known.Replace(top))
+	red, _ := known.Replace(top).(map[string]any)
+	restoreTFStructure(red, top)
+	return model.Scrub(red)
+}
+
+// tfTopFields, tfChangeFields and tfResourceFields are the structural
+// fields of a plan: identifiers and vocabulary, never attribute values.
+var (
+	tfTopFields      = []string{"format_version", "terraform_version", "applyable", "complete", "errored", "timestamp"}
+	tfChangeFields   = []string{"address", "previous_address", "module_address", "mode", "type", "name", "index", "provider_name", "deposed", "action_reason"}
+	tfResourceFields = []string{"address", "mode", "type", "name", "index", "provider_name", "schema_version"}
+)
+
+// restoreTFStructure copies the structural fields of orig back into red, a
+// Known.Replace copy of it, so that a sensitive value equal to "delete" or
+// to part of an address does not rewrite the plan's structure.
+func restoreTFStructure(red, orig map[string]any) {
+	if red == nil || orig == nil {
+		return
+	}
+	copyFields(red, orig, tfTopFields)
+	for _, list := range []string{"resource_changes", "resource_drift"} {
+		rl, ol := asList(red[list]), asList(orig[list])
+		for i := range rl {
+			if i >= len(ol) {
+				break
+			}
+			rm, om := asMap(rl[i]), asMap(ol[i])
+			copyFields(rm, om, tfChangeFields)
+			copyFields(asMap(rm["change"]), asMap(om["change"]), []string{"actions"})
+		}
+	}
+	for _, path := range [][]string{{"planned_values"}, {"prior_state", "values"}} {
+		restoreTFModule(asMap(model.Get(red, append(path, "root_module")...)), asMap(model.Get(orig, append(path, "root_module")...)))
+	}
+}
+
+func restoreTFModule(red, orig map[string]any) {
+	if red == nil || orig == nil {
+		return
+	}
+	copyFields(red, orig, []string{"address"})
+	for _, key := range []string{"resources", "child_modules"} {
+		rl, ol := asList(red[key]), asList(orig[key])
+		for i := range rl {
+			if i >= len(ol) {
+				break
+			}
+			if key == "resources" {
+				copyFields(asMap(rl[i]), asMap(ol[i]), tfResourceFields)
+			} else {
+				restoreTFModule(asMap(rl[i]), asMap(ol[i]))
+			}
+		}
+	}
+}
+
+func copyFields(dst, src map[string]any, keys []string) {
+	if dst == nil || src == nil {
+		return
+	}
+	for _, k := range keys {
+		if v, ok := src[k]; ok {
+			dst[k] = v
+		}
+	}
 }

@@ -19,7 +19,9 @@ import (
 // replacement may destroy). BeforeContext and AfterContext are JSON strings,
 // present only with --include-property-values; After and Before are their
 // Properties (or the whole decoded object when it has none). Non-Resource
-// changes (hook entries) are skipped.
+// changes (hook entries) are skipped. describe-change-set is paginated: a
+// result with a NextToken is one page only and is refused with
+// ErrIncomplete (a later page could hold a Remove).
 func ChangeSet(name string, raw []byte, o Options) ([]model.Resource, error) {
 	if err := checkSize(raw); err != nil {
 		return nil, err
@@ -31,6 +33,10 @@ func ChangeSet(name string, raw []byte, o Options) ([]model.Resource, error) {
 	top := asMap(d.root)
 	if top == nil || top["Changes"] == nil || (top["ChangeSetName"] == nil && top["ChangeSetId"] == nil && top["StackName"] == nil) {
 		return nil, fmt.Errorf("%s: %w: not a describe-change-set result", name, ErrUnknownFormat)
+	}
+	if nt, ok := top["NextToken"]; ok && nt != nil && str(nt) != "" {
+		// The token itself is not repeated.
+		return nil, fmt.Errorf("%s: %w: change set has more pages (NextToken); run describe-change-set without --max-items or --no-paginate", name, ErrIncomplete)
 	}
 	var out []model.Resource
 	for i, item := range asList(top["Changes"]) {

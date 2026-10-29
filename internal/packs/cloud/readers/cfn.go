@@ -175,13 +175,26 @@ func (c *yamlConv) value(n *yaml.Node, depth int) (any, error) {
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k := deref(n.Content[i])
 			if k.Tag == "!!merge" {
-				merged, err := c.value(n.Content[i+1], depth+1)
-				if err != nil {
-					return nil, err
+				// "<<: *a" or "<<: [*a, *b]": earlier maps win over later
+				// ones, and the mapping's own keys win over all of them.
+				mv := deref(n.Content[i+1])
+				srcs := []*yaml.Node{mv}
+				if mv != nil && mv.Kind == yaml.SequenceNode {
+					srcs = mv.Content
 				}
-				for mk, mv := range asMap(merged) {
-					if _, set := m[mk]; !set {
-						m[mk] = mv
+				for _, src := range srcs {
+					merged, err := c.value(src, depth+1)
+					if err != nil {
+						return nil, err
+					}
+					mm, ok := merged.(map[string]any)
+					if !ok {
+						return nil, fmt.Errorf("parse YAML: line %d: merge key needs a mapping or a list of mappings", n.Content[i].Line)
+					}
+					for mk, x := range mm {
+						if _, set := m[mk]; !set {
+							m[mk] = x
+						}
 					}
 				}
 				continue

@@ -30,6 +30,10 @@ var secretsInFixtures = []string{
 	"tester-pulumi-pass-0000",
 	"tester0000000000000000000000000000000000000000==",
 	"tester-literal-token-123456",
+	// tfplan/encoded.json: a jsonencode'd ECS environment and helm values.
+	"tester-ecs-pw1",
+	"tester-hp1",
+	"tester-hp2",
 }
 
 type fixture struct {

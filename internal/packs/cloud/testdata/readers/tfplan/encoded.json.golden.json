@@ -1,0 +1,54 @@
+[
+  {
+    "addr": "aws_ecs_task_definition.app",
+    "type": "aws_ecs_task_definition",
+    "actions": [
+      "create"
+    ],
+    "after": {
+      "container_definitions": "[{\"environment\":[{\"name\":\"DB_PASSWORD\",\"value\":\"[REDACTED:secret_key]\"},{\"name\":\"MODE\",\"value\":\"prod\"}],\"image\":\"acme/app:1\",\"name\":\"app\"}]",
+      "family": "acme-app"
+    },
+    "pos": {
+      "file": "tfplan/encoded.json",
+      "line": 5,
+      "pointer": "/resource_changes/0"
+    },
+    "source": "tfplan",
+    "meta": {
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "create"
+    }
+  },
+  {
+    "addr": "helm_release.acme",
+    "type": "helm_release",
+    "actions": [
+      "update"
+    ],
+    "after": {
+      "name": "acme",
+      "values": [
+        "db:\n    host: db.acme.internal\n    password: '[REDACTED:secret_key]'\n"
+      ]
+    },
+    "before": {
+      "name": "acme",
+      "values": [
+        "db:\n    host: db.acme.internal\n    password: '[REDACTED:secret_key]'\n"
+      ]
+    },
+    "pos": {
+      "file": "tfplan/encoded.json",
+      "line": 21,
+      "pointer": "/resource_changes/1"
+    },
+    "source": "tfplan",
+    "meta": {
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/helm",
+      "raw_action": "update"
+    }
+  }
+]

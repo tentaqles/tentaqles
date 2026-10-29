@@ -11,7 +11,8 @@ import (
 
 // maxNesting bounds the recursion into nested deployments and child
 // resources (ARM itself allows 500 nested templates, what-if expands that
-// far; a template deeper than this is cut, never a stack overflow).
+// far; a template deeper than this is an ErrTooDeep error, never a stack
+// overflow and never a silent cut).
 const maxNesting = 32
 
 // ARM reads an ARM template (and `bicep build` / `az bicep build --stdout`
@@ -36,7 +37,9 @@ func ARM(name string, raw []byte, o Options) ([]model.Resource, error) {
 		return nil, fmt.Errorf("%s: %w: not an ARM template", name, ErrUnknownFormat)
 	}
 	a := &armReader{name: name, d: d, env: o.Env}
-	a.resources(top["resources"], "", "", "", "/resources", 0)
+	if err := a.resources(top["resources"], "", "", "", "/resources", 0); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
 	return a.out, nil
 }
 
@@ -59,9 +62,9 @@ type armItem struct {
 
 // resources reads one resources collection. parentType/parentName are set
 // for child resources; parentAddr is the Meta parent of every resource here.
-func (a *armReader) resources(coll any, parentType, parentName, parentAddr, ptr string, depth int) {
+func (a *armReader) resources(coll any, parentType, parentName, parentAddr, ptr string, depth int) error {
 	if depth > maxNesting {
-		return
+		return fmt.Errorf("%w: resources nested more than %d levels at %s", ErrTooDeep, maxNesting, ptr)
 	}
 	var items []armItem
 	switch t := coll.(type) {
@@ -124,12 +127,17 @@ func (a *armReader) resources(coll any, parentType, parentName, parentAddr, ptr 
 		r.After = model.ScrubMap(body)
 		a.out = append(a.out, r)
 		if c := it.res["resources"]; c != nil {
-			a.resources(c, typ, nm, addr, it.ptr+"/resources", depth+1)
+			if err := a.resources(c, typ, nm, addr, it.ptr+"/resources", depth+1); err != nil {
+				return err
+			}
 		}
 		if inner != nil {
-			a.resources(inner, "", "", addr, it.ptr+"/properties/template/resources", depth+1)
+			if err := a.resources(inner, "", "", addr, it.ptr+"/properties/template/resources", depth+1); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 // stripInnerResources copies body with properties.template.resources removed.

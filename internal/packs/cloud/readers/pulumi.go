@@ -18,8 +18,10 @@ import (
 // extend-parameterize→no-op, create→create, update→update, delete→delete,
 // replace/create-replacement/delete-replaced→replace, read/read-replacement/
 // refresh→read, import/import-replacement→import. After is newState.inputs,
-// Before oldState.inputs; Pulumi secrets ("[secret]", or a secret object
-// with --show-secrets) never keep a value.
+// Before oldState.inputs. preview --json always prints a secret as
+// "[secret]", with or without --show-secrets (display/json.go masks the
+// states and serialises them with showSecrets false); Scrub turns it, and
+// any secret object (signature 4dabf181...), into RedactedSensitive.
 func Pulumi(name string, raw []byte, o Options) ([]model.Resource, error) {
 	if err := checkSize(raw); err != nil {
 		return nil, err
