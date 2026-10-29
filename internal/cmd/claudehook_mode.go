@@ -34,7 +34,8 @@ func resolveMode(ws *resolve.Workspace, cwd, target string) guardcfg.Resolved {
 
 // resolveModeFor gathers the layers (the global guard.yaml, the trusted
 // manifest, the repo files, the launch override) and the ceiling (the
-// workspace's grant, or in a neutral folder the global grant) and resolves
+// workspace's grant, in a neutral folder the global grant, in an untrusted
+// workspace none) and resolves
 // them. An unreadable guard.yaml or grant counts as absent, which never
 // loosens: the default ceiling still applies.
 func resolveModeFor(ws *resolve.Workspace, cwd, target, launch string) guardcfg.Resolved {
@@ -45,10 +46,17 @@ func resolveModeFor(ws *resolve.Workspace, cwd, target, launch string) guardcfg.
 	var m *manifest.Manifest
 	var grant *guardcfg.Grant
 	name, root := "", ""
-	if ws != nil && ws.Manifest != nil && trust.IsTrusted(ws.Hash) {
+	switch {
+	case ws != nil && ws.Manifest != nil && trust.IsTrusted(ws.Hash):
 		m, name, root = ws.Manifest, ws.Name, ws.Root
 		grant = guardcfg.WorkspaceGrant(ws.Hash)
-	} else {
+	case ws != nil && ws.Manifest != nil:
+		// An untrusted workspace (an edited manifest, a new client folder)
+		// has the default ceiling: the global grant is only for neutral
+		// folders (spec E §4.2, §6.3), so editing the manifest never
+		// reaches a global relaxed. The global layer can still tighten.
+		ws = nil
+	default:
 		ws = nil
 		grant = guardcfg.GlobalGrant(g)
 	}

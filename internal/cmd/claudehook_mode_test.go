@@ -402,6 +402,47 @@ func TestModeGateNeedsTrustedWorkspace(t *testing.T) {
 	}
 }
 
+// An untrusted workspace (an edited manifest, a new client folder) never
+// takes the global layer's grant: a global relaxed with its grant only
+// loosens neutral folders and workspaces that hold a grant of their own
+// (spec E §4.2, §6.3).
+func TestUntrustedWorkspaceIgnoresGlobalGrant(t *testing.T) {
+	root, proj := modeWS(t, relaxedWorkspace, "relaxed")
+	ws := wsFor(t, root)
+	g := guardcfg.File{Mode: guardcfg.ModeRelaxed}
+	if err := guardcfg.Save(g); err != nil {
+		t.Fatal(err)
+	}
+	gr, ok := guardcfg.GlobalGrantFor(g, guardcfg.ModeRelaxed)
+	if !ok {
+		t.Fatal("no global grant")
+	}
+	if err := trust.SaveGrant(trust.GlobalGrantKey, gr); err != nil {
+		t.Fatal(err)
+	}
+	call := policy.ToolCall{Tool: "Bash", Command: "terraform destroy"}
+	if g := modeGateFor(nil, t.TempDir(), call, ""); g == nil || g.apply(askDecision("tq/iac-destroy")).Action != policy.Allow {
+		t.Fatal("a neutral folder takes the granted global relaxed")
+	}
+	// The manifest is edited: its hash moves and it is no longer trusted.
+	if err := trust.Deny(ws.Hash); err != nil {
+		t.Fatal(err)
+	}
+	if g := modeGateFor(ws, proj, call, ""); g != nil && g.apply(askDecision("tq/iac-destroy")).Action != policy.Ask {
+		t.Fatalf("an untrusted workspace must not run at the global relaxed: %+v", g.res)
+	}
+	if r := resolveModeFor(ws, proj, "", guardcfg.ModeRelaxed); r.Ceiling != nil || r.Mode != guardcfg.ModeDefault {
+		t.Fatalf("an untrusted workspace has the default ceiling: %+v", r)
+	}
+	// Strict still applies there: it needs no grant.
+	if err := guardcfg.Save(guardcfg.File{Mode: guardcfg.ModeStrict}); err != nil {
+		t.Fatal(err)
+	}
+	if r := resolveModeFor(ws, proj, "", ""); r.Mode != guardcfg.ModeStrict {
+		t.Fatalf("a global strict still tightens an untrusted workspace: %+v", r)
+	}
+}
+
 func TestModeAuditsMCPContent(t *testing.T) {
 	root, proj := modeWS(t, relaxedWorkspace, "relaxed")
 	ws := wsFor(t, root)
