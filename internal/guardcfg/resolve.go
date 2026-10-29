@@ -376,34 +376,6 @@ func equalTables(t Table, preset string) bool {
 	return true
 }
 
-// Covers reports whether cwd is inside the part of the workspace at root that
-// m's legacy guard.unattended block turns on, and names the scope
-// ("workspace" or the project entry). Deprecated: guard.projects coverage
-// goes through Resolve.
-func Covers(m *manifest.Manifest, root, cwd string) (bool, string) {
-	if m == nil || !m.Guard.Unattended.Configured() || root == "" || cwd == "" {
-		return false, ""
-	}
-	u := m.Guard.Unattended
-	r, c := normDir(root), normDir(cwd)
-	if !within(c, r) {
-		return false, ""
-	}
-	if u.Workspace {
-		return true, "workspace"
-	}
-	for _, p := range u.Projects {
-		cp := manifest.CleanProject(p)
-		if cp == "" || cp == "." || cp == ".." || strings.HasPrefix(cp, "../") || path.IsAbs(cp) || filepath.IsAbs(cp) {
-			continue // defense in depth: Validate rejects these, but never widen coverage without it
-		}
-		if within(c, normDir(filepath.Join(root, filepath.FromSlash(cp)))) {
-			return true, cp
-		}
-	}
-	return false, ""
-}
-
 func normDir(p string) string {
 	if a, err := filepath.Abs(p); err == nil {
 		p = a

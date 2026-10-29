@@ -119,22 +119,6 @@ func UnknownOverrides(m *manifest.Manifest, g File) []string {
 	return out
 }
 
-// UnknownKeepAsking returns keep_asking ids that name no rule tq knows.
-// Deprecated: use UnknownOverrides.
-func UnknownKeepAsking(m *manifest.Manifest, g File) []string {
-	if m == nil || m.Guard.Unattended == nil {
-		return nil
-	}
-	known := Known(m, g)
-	var out []string
-	for _, id := range m.Guard.Unattended.KeepAskingIDs() {
-		if _, ok := Lookup(id, known); !ok {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
 // Load reads the global file. A missing file is an empty File. A file that
 // cannot be parsed or holds an invalid action is an error: callers must then
 // apply nothing from it, so every built-in rule stays on (fail closed).
