@@ -7,6 +7,7 @@
 package gate
 
 import (
+	"path"
 	"regexp"
 	"strings"
 
@@ -34,6 +35,16 @@ type Leaf struct {
 	Unknown bool
 	// Stdin: the segment reads a redirect (psql < dump.sql).
 	Stdin bool
+	// Piped: the line has a pipe, so the segment may read another
+	// command's output (gunzip -c x.gz | psql). Conservative: any single |
+	// on the line, quoted or not.
+	Piped bool
+	// Dir is the folder an earlier literal cd / pushd / Set-Location moved
+	// to ("" none), relative to the session's folder unless absolute.
+	Dir string
+	// Moved: an earlier statement changed the folder in a way tq does not
+	// model (cd $X, cd -, cd ~, popd).
+	Moved bool
 }
 
 // Words is Prog followed by Args.
@@ -56,6 +67,73 @@ var envProviderRe = regexp.MustCompile(`(?i)^(-path:?)?env:|setenvironmentvariab
 type state struct {
 	env     map[string]string
 	unknown bool
+	pipe    bool
+	dir     string
+	moved   bool
+}
+
+// hasPipe reports a single | anywhere on the line (|| is not a pipe).
+func hasPipe(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '|' {
+			continue
+		}
+		if i+1 < len(s) && s[i+1] == '|' {
+			i++
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// cdProgs change the folder.
+var cdProgs = map[string]bool{"cd": true, "chdir": true, "pushd": true, "set-location": true, "sl": true, "push-location": true,
+	"popd": true, "pop-location": true}
+
+// changeDir applies a cd-like statement: a literal folder is followed, any
+// other form makes the folder unknown.
+func (st *state) changeDir(prog string, args []string) {
+	if prog == "popd" || prog == "pop-location" {
+		st.moved = true
+		return
+	}
+	var dirs []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch la := strings.ToLower(a); {
+		case la == "-path" || la == "-literalpath" || la == "-lp":
+			if i+1 < len(args) {
+				dirs = append(dirs, args[i+1])
+				i++
+			}
+		case strings.HasPrefix(la, "-path:") || strings.HasPrefix(la, "-literalpath:"):
+			_, v, _ := strings.Cut(a, ":")
+			dirs = append(dirs, v)
+		case a == "-L" || a == "-P" || a == "-e" || a == "-@" || la == "-passthru":
+		default:
+			dirs = append(dirs, a)
+		}
+	}
+	if len(dirs) != 1 {
+		st.moved = true // cd alone goes home; two folders tq does not read
+		return
+	}
+	d := strings.ReplaceAll(dirs[0], `\`, "/")
+	if computed(d) || d == "-" || strings.HasPrefix(d, "~") || strings.HasPrefix(d, "-") {
+		st.moved = true
+		return
+	}
+	if isAbs(d) || st.dir == "" {
+		st.dir = d
+		return
+	}
+	st.dir = path.Join(st.dir, d)
+}
+
+// isAbs: a slash path or a drive letter path (C:/x).
+func isAbs(p string) bool {
+	return strings.HasPrefix(p, "/") || (len(p) >= 3 && p[1] == ':' && p[2] == '/')
 }
 
 func computed(v string) bool { return v == "" || strings.ContainsAny(v, "$`%") }
@@ -67,7 +145,7 @@ func Analyze(cmd string, powershell bool) []Leaf {
 		// a backslash is a plain character in PowerShell (C:\dumps\x.sql)
 		cmd = strings.ReplaceAll(cmd, `\`, "/")
 	}
-	st := &state{env: map[string]string{}}
+	st := &state{env: map[string]string{}, pipe: hasPipe(cmd)}
 	var out []Leaf
 	for _, seg := range cgate.Split(cmd) {
 		out = append(out, analyzeSeg(seg, st, 0)...)
@@ -89,11 +167,17 @@ func analyzeSeg(seg cgate.Segment, st *state, depth int) []Leaf {
 		return nil
 	}
 	stdin := strings.Contains(seg.Raw, "<")
-	leaf := func() []Leaf { return []Leaf{{Raw: seg.Raw, Args: w, Unknown: st.unknown}} }
+	leaf := func() []Leaf {
+		return []Leaf{{Raw: seg.Raw, Args: w, Unknown: st.unknown, Piped: st.pipe, Dir: st.dir, Moved: st.moved}}
+	}
 	for _, x := range w {
 		if envProviderRe.MatchString(x) {
 			st.unknown = true
 		}
+	}
+	if n := cgate.ToolName(w[0]); cdProgs[n] {
+		st.changeDir(n, w[1:])
+		return leaf()
 	}
 	switch cgate.ToolName(w[0]) {
 	case "export":
@@ -149,7 +233,7 @@ func analyzeSeg(seg cgate.Segment, st *state, depth int) []Leaf {
 		}
 		return leaf()
 	}
-	l := Leaf{Raw: seg.Raw, Env: map[string]string{}, Unknown: st.unknown, Stdin: stdin}
+	l := Leaf{Raw: seg.Raw, Env: map[string]string{}, Unknown: st.unknown, Stdin: stdin, Piped: st.pipe, Dir: st.dir, Moved: st.moved}
 	for k, v := range st.env {
 		l.Env[k] = v
 	}
@@ -161,7 +245,7 @@ func nested(l Leaf, script string, st *state, depth int, ps bool) []Leaf {
 		l.Opaque = true
 		return []Leaf{l}
 	}
-	sub := &state{env: map[string]string{}, unknown: l.Unknown || st.unknown}
+	sub := &state{env: map[string]string{}, unknown: l.Unknown || st.unknown, pipe: st.pipe || hasPipe(script), dir: l.Dir, moved: l.Moved}
 	for k, v := range l.Env {
 		sub.env[k] = v
 	}
@@ -361,9 +445,35 @@ func unwrap(l Leaf, w []string, st *state, depth int) []Leaf {
 			return []Leaf{l}
 		}
 		l.Prog, l.Args = name, w[i+1:]
+		if name == "supabase" {
+			l.Args = supabaseArgs(l.Args)
+		}
 		return []Leaf{l}
 	}
 	return []Leaf{l}
+}
+
+// supabaseGlobals are the Supabase CLI's global flags that take a value.
+var supabaseGlobals = map[string]bool{"--workdir": true, "--profile": true, "--output": true, "-o": true, "--dns-resolver": true, "--network-id": true}
+
+// supabaseArgs moves the global flags written before the subcommand
+// (supabase --workdir x db push) after it, so the line reads as
+// supabase db push --workdir x.
+func supabaseArgs(args []string) []string {
+	var lead []string
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		lead = append(lead, args[i])
+		if supabaseGlobals[args[i]] && i+1 < len(args) {
+			lead = append(lead, args[i+1])
+			i++
+		}
+		i++
+	}
+	if len(lead) == 0 {
+		return args
+	}
+	return append(append([]string(nil), args[i:]...), lead...)
 }
 
 // Flag returns the value of the first of names (--name v, --name=v, -n v,

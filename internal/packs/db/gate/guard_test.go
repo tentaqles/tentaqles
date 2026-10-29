@@ -432,3 +432,168 @@ func TestGuardsStayInBudget(t *testing.T) {
 		}
 	}
 }
+
+// ---- fix round 1 -----------------------------------------------------------
+
+func TestRestoreTargetPipesGluedFlagsAndServers(t *testing.T) {
+	cases := []struct {
+		tool, cmd string
+		vars      map[string]string
+		deny      bool
+	}{
+		// a dump fed to psql through a pipe
+		{"Bash", "gunzip -c acme.sql.gz | psql -h prod.acme.test acme", nil, true},
+		{"Bash", `pg_restore acme.dump | psql "postgres://tester@prod.acme.test/acme"`, nil, true},
+		{"Bash", "cat dump.sql | psql -h prod.acme.test acme", nil, true},
+		{"PowerShell", "Get-Content dump.sql | psql -h prod.acme.test acme", nil, true},
+		{"Bash", "cat dump.sql | psql -h localhost scratch", nil, false},
+		{"Bash", "psql -h prod.acme.test -c 'select 1' | grep 1", nil, false},
+		{"Bash", "psql -h prod.acme.test -l | grep acme", nil, false},
+		{"Bash", `ssh box "gunzip -c x.gz | psql acme"`, nil, true},
+		// glued short flags
+		{"Bash", "pg_restore -hprod.acme.test -dacme acme.dump", nil, true},
+		{"Bash", "pg_restore -Cd acme -h prod.acme.test acme.dump", nil, true},
+		{"Bash", "pg_restore -dacme acme.dump", map[string]string{"PGHOST": "prod.acme.test"}, true},
+		{"Bash", "pg_restore -Cdacme -hlocalhost acme.dump", nil, false},
+		{"Bash", "psql -Xhprod.acme.test -f dump.sql", nil, true},
+		// a keyword connection string as psql's dbname argument
+		{"Bash", `psql "host=prod.acme.test dbname=acme" -f dump.sql`, nil, true},
+		{"Bash", `pg_restore -d "host=prod.acme.test dbname=acme" acme.dump`, nil, true},
+		// a dotenv file tq does not know may set PGHOST
+		{"Bash", "tq dotenv run --file .env.other -- psql -f dump.sql", nil, true},
+		// RESTORE DATABASE: every way of naming the server
+		{"PowerShell", `Invoke-Sqlcmd -ConnectionString "Server=acme-sql.database.windows.net;Database=acme" -Query "RESTORE DATABASE acme FROM DISK='x.bak'"`, nil, true},
+		{"PowerShell", `Invoke-Sqlcmd -SERVERINSTANCE prod.acme.test -Query "RESTORE DATABASE acme FROM DISK='x.bak'"`, nil, true},
+		{"PowerShell", `Invoke-Sqlcmd -Serverinstance:prod.acme.test -Query "RESTORE DATABASE acme FROM DISK='x.bak'"`, nil, true},
+		{"PowerShell", `Invoke-Sqlcmd -Server prod.acme.test -Query "RESTORE DATABASE acme FROM DISK='x.bak'"`, nil, true},
+		{"PowerShell", `Invoke-Sqlcmd -ServerInstance localhost -Query "RESTORE DATABASE scratch FROM DISK='x.bak'"`, nil, false},
+		{"Bash", `sqlcmd --server prod.acme.test -Q "RESTORE DATABASE acme FROM DISK='x.bak'"`, nil, true},
+		{"Bash", `sqlcmd -Sprod.acme.test -Q "RESTORE DATABASE acme FROM DISK='x.bak'"`, nil, true},
+		{"Bash", `sqlcmd -Q "RESTORE  DATABASE acme FROM DISK='x.bak'" -S prod.acme.test`, nil, true},
+		{"Bash", `sqlcmd -Q "RESTORE DATABASE scratch FROM DISK='x.bak'"`, nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.cmd, func(t *testing.T) {
+			f := newFixture(t, dbBlock)
+			for k, v := range c.vars {
+				f.vars[k] = v
+			}
+			a, r, h := f.restore(c.tool, c.cmd)
+			if (a == policy.Deny) != c.deny || (c.deny && (!h || !strings.Contains(r, IDRestore))) {
+				t.Fatalf("got %s handled=%v %q, want deny=%v", a, h, r, c.deny)
+			}
+			if strings.Contains(r, "tester@") {
+				t.Fatalf("the reason prints a connection: %s", r)
+			}
+		})
+	}
+}
+
+const devRef = "cccccccccccccccccccc"
+
+// a monorepo: the root is linked to dev (migrate: auto), apps/b to prod.
+func newMonorepo(t *testing.T) *fixture {
+	t.Helper()
+	block := strings.Replace(dbBlock, "dev: {match: {dotenv: [.env], hosts: [localhost]}", "dev: {match: {dotenv: [.env], hosts: [localhost], project_refs: ["+devRef+"]}", 1)
+	f := newFixture(t, block)
+	f.link(devRef)
+	b := filepath.Join(f.repo, "apps", "b", "supabase", ".temp")
+	os.MkdirAll(b, 0o755)
+	os.WriteFile(filepath.Join(b, "project-ref"), []byte(prodRef+"\n"), 0o644)
+	os.MkdirAll(filepath.Join(f.repo, "apps", "c"), 0o755)
+	return f
+}
+
+func TestMigrateFollowsTheFolder(t *testing.T) {
+	cases := []struct {
+		tool, cmd string
+		want      policy.Action
+	}{
+		{"Bash", "supabase db push", policy.Allow},
+		{"Bash", "cd apps/b && supabase db push", policy.Deny},
+		{"Bash", "pushd apps/b; supabase db push", policy.Deny},
+		{"Bash", "chdir apps/b; supabase db push", policy.Deny},
+		{"PowerShell", "Set-Location apps/b; supabase db push", policy.Deny},
+		{"PowerShell", "sl -Path apps/b; supabase db push", policy.Deny},
+		{"Bash", `bash -c "cd apps/b && supabase db push"`, policy.Deny},
+		{"Bash", "cd apps/b && cd ../.. && supabase db push", policy.Allow},
+		// a folder tq cannot know, or one without a ref file, floors
+		{"Bash", "cd $SVC && supabase db push", policy.Deny},
+		{"Bash", "cd apps/b; popd; supabase db push", policy.Deny},
+		{"Bash", "cd apps/c && supabase db push", policy.Deny},
+		{"Bash", "supabase db push --workdir $SVC", policy.Deny},
+		// a global flag before the subcommand
+		{"Bash", "supabase --workdir apps/b db push", policy.Deny},
+		{"Bash", "supabase --debug db push --workdir apps/b", policy.Deny},
+	}
+	for _, c := range cases {
+		t.Run(c.cmd, func(t *testing.T) {
+			f := newMonorepo(t)
+			a, r, _ := f.migrate(c.tool, c.cmd)
+			if a != c.want {
+				t.Fatalf("%s: got %s (%s), want %s", c.cmd, a, r, c.want)
+			}
+		})
+	}
+}
+
+// approvedProd is a fixture with an answered prod approval of the repo's
+// migrations, the repo linked to prod.
+func approvedProd(t *testing.T) *fixture {
+	t.Helper()
+	f := newFixture(t, dbBlock)
+	f.link(prodRef)
+	f.drillLine(time.Now().Add(-time.Hour))
+	f.answer(f.ask("prod", diskEvidence(t, f, "")), "apply")
+	os.MkdirAll(filepath.Join(f.repo, "svc", "supabase", ".temp"), 0o755)
+	os.WriteFile(filepath.Join(f.repo, "svc", "supabase", ".temp", "project-ref"), []byte(prodRef+"\n"), 0o644)
+	return f
+}
+
+func TestApprovalBindsTheMigrationSource(t *testing.T) {
+	pool := "postgres://postgres." + prodRef + "@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+	deny := []struct{ tool, cmd string }{
+		{"Bash", "migrate -path /tmp/other -database " + pool + " up"},
+		{"Bash", "migrate -source file:///tmp/other -database " + pool + " up"},
+		{"Bash", "migrate -path ../other -database " + pool + " up"},
+		{"Bash", "supabase db push --workdir ../svc"},
+		{"Bash", "supabase db push --workdir svc"},
+		{"Bash", "SUPABASE_WORKDIR=svc supabase db push"},
+		{"Bash", "cd svc && supabase db push"},
+		{"PowerShell", "Set-Location svc; supabase db push"},
+		{"Bash", "DATABASE_URL=" + pool + " prisma migrate deploy --schema other/schema.prisma"},
+		{"Bash", "flyway migrate -url=jdbc:postgresql://db." + prodRef + ".supabase.co:5432/postgres -locations=filesystem:sql/other"},
+		{"Bash", "DATABASE_URL=" + pool + " dbmate --migrations-dir db/other up"},
+		{"Bash", "DATABASE_URL=" + pool + " alembic -c other.ini upgrade head"},
+		// a floored target never matches an approval
+		{"Bash", `supabase db push --db-url "$PROD_URL"`},
+		{"Bash", `migrate -path supabase/migrations -database "$PROD_URL" up`},
+		{"Bash", "cd $SVC && supabase db push"},
+	}
+	for _, c := range deny {
+		t.Run(c.cmd, func(t *testing.T) {
+			f := approvedProd(t)
+			if a, r, _ := f.migrate(c.tool, c.cmd); a != policy.Deny || !strings.Contains(r, IDMigrate) {
+				t.Fatalf("got %s (%s), want deny", a, r)
+			}
+			// the denied command did not use the approval up
+			if a, r, _ := f.migrate("Bash", "supabase db push"); a != policy.Allow {
+				t.Fatalf("the approval was used by a denied command: %s %s", a, r)
+			}
+		})
+	}
+	allow := []struct{ tool, cmd string }{
+		{"Bash", "supabase db push"},
+		{"Bash", "supabase db push --workdir ."},
+		{"Bash", "migrate -path supabase/migrations -database " + pool + " up"},
+		{"Bash", "migrate -path ./supabase/migrations/ -database " + pool + " up"},
+	}
+	for _, c := range allow {
+		t.Run(c.cmd, func(t *testing.T) {
+			f := approvedProd(t)
+			if a, r, _ := f.migrate(c.tool, c.cmd); a != policy.Allow {
+				t.Fatalf("got %s (%s), want allow", a, r)
+			}
+		})
+	}
+}

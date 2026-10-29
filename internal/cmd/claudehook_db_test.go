@@ -58,6 +58,14 @@ func TestHookDBMigrateEnv(t *testing.T) {
 	if code, out := hook("pg_restore -h localhost -d scratch acme.dump"); code != 0 || strings.Contains(out, "tq/restore-target") {
 		t.Fatalf("local restore: %d %s", code, out)
 	}
+	// a dump piped into psql is a restore too
+	if code, out := hook("gunzip -c acme.sql.gz | psql -h prod.acme.test acme"); code != 2 || !strings.Contains(out, "tq/restore-target") {
+		t.Fatalf("piped restore: %d %s", code, out)
+	}
+	// a folder tq cannot follow floors at the strictest environment
+	if code, out := hook("cd $SVC && supabase db push"); code != 2 || !strings.Contains(out, "tq/db-migrate-env") {
+		t.Fatalf("cd: %d %s", code, out)
+	}
 }
 
 func TestHookDBGuardsWithoutEnvironments(t *testing.T) {

@@ -14,7 +14,23 @@ import (
 // restoreWordRe spots a restore in a payload tq cannot open (docker exec,
 // ssh, a script argument): such a restore is denied, since its target
 // cannot be read.
-var restoreWordRe = regexp.MustCompile(`(?i)\b(pg_restore\b|sqlpackage\b[^\n]*[/-]a(ction)?:\s*import|restore\s+database\b|supabase\s+db\s+reset\b[^\n]*--(linked|db-url)|psql\b[^\n]*(\s-f|\s--file|<))`)
+var restoreWordRe = regexp.MustCompile(`(?i)\b(pg_restore\b|sqlpackage\b[^\n]*[/-]a(ction)?:\s*import|restore\s+database\b|supabase\s+db\s+reset\b[^\n]*--(linked|db-url)|psql\b[^\n]*(\s-f|\s--file|<))|\|\s*(\S*/)?psql\b`)
+
+var restoreDBRe = regexp.MustCompile(`restore\s+database\b`)
+
+// The short switches that take no value, which may come before a value
+// flag in a bundle (psql -Xf dump.sql, pg_restore -Cd acme).
+const (
+	psqlSwitches      = "aAbeEHlnqsStxXz0"
+	pgRestoreSwitches = "acCelOsxv1wW"
+)
+
+// Restore kinds.
+const (
+	kindPgRestore = "pg_restore"
+	kindPsqlFile  = "psql -f"
+	kindPsqlStdin = "psql < dump"
+)
 
 // restoreKind names what a leaf restores with, or "".
 func restoreKind(l Leaf) string {
@@ -22,19 +38,30 @@ func restoreKind(l Leaf) string {
 	switch l.Prog {
 	case "pg_restore":
 		// without -d it only prints the SQL script
-		if l.Has("-d", "--dbname") {
-			return "pg_restore"
+		if _, ok := pgFlag(l, 'd', "--dbname", pgRestoreSwitches); ok {
+			return kindPgRestore
 		}
 	case "psql":
-		if l.Has("-f", "--file") || l.Stdin || hasShortFlag(l, 'f') {
-			return "psql -f"
+		if _, ok := pgFlag(l, 'f', "--file", psqlSwitches); ok {
+			return kindPsqlFile
+		}
+		if l.Stdin {
+			return kindPsqlStdin
+		}
+		// psql runs what it reads on stdin unless -c or -l gives it
+		// something else to do: in a pipeline that is another command's
+		// output (gunzip -c x.gz | psql)
+		_, cmd := pgFlag(l, 'c', "--command", psqlSwitches)
+		_, list := pgFlag(l, 'l', "--list", psqlSwitches)
+		if l.Piped && !cmd && !list {
+			return kindPsqlStdin
 		}
 	case "sqlpackage":
 		if a, ok := spFlag(l, "a", "action"); ok && strings.EqualFold(a, "import") {
 			return "sqlpackage /a:Import"
 		}
 	case "sqlcmd", "invoke-sqlcmd", "osql":
-		if strings.Contains(t, "restore database") {
+		if restoreDBRe.MatchString(t) {
 			return "RESTORE DATABASE"
 		}
 	case "supabase":
@@ -45,25 +72,42 @@ func restoreKind(l Leaf) string {
 	return ""
 }
 
-// hasShortFlag spots a bundled short flag (psql -Xf dump.sql, -qfdump.sql):
-// every letter before it is a psql switch that takes no value.
-func hasShortFlag(l Leaf, c byte) bool {
-	const switches = "aAbeEHlnqsStxXz0"
-	for _, a := range l.Args {
-		if len(a) < 3 || a[0] != '-' || a[1] == '-' {
+// shortFlag reads a short flag in every libpq tool spelling: -d acme,
+// -dacme, and bundled after switches that take no value (-Xf dump.sql,
+// -Cd acme, -qfdump.sql). It returns the first value.
+func shortFlag(l Leaf, c byte, switches string) (string, bool) {
+	for i, a := range l.Args {
+		if len(a) < 2 || a[0] != '-' || a[1] == '-' {
 			continue
 		}
-		for i := 1; i < len(a); i++ {
-			if a[i] == c {
-				return true
+		for j := 1; j < len(a); j++ {
+			if a[j] == c {
+				if j+1 < len(a) {
+					return strings.TrimPrefix(a[j+1:], "="), true
+				}
+				if i+1 < len(l.Args) {
+					return l.Args[i+1], true
+				}
+				return "", true
 			}
-			if strings.IndexByte(switches, a[i]) < 0 {
+			if strings.IndexByte(switches, a[j]) < 0 {
 				break
 			}
 		}
 	}
-	return false
+	return "", false
 }
+
+// pgFlag reads a libpq tool flag by its long name or its short letter.
+func pgFlag(l Leaf, c byte, long, switches string) (string, bool) {
+	if v, ok := l.Flag(long); ok {
+		return v, true
+	}
+	return shortFlag(l, c, switches)
+}
+
+// conninfoRe spots a keyword connection string (host=… dbname=…).
+var conninfoRe = regexp.MustCompile(`(?i)(^|[\s;])(host|hostaddr|service)\s*=`)
 
 // restoreTarget reads where a restore writes.
 func restoreTarget(l Leaf, kind string, g packs.GuardCtx) Target {
@@ -72,22 +116,34 @@ func restoreTarget(l Leaf, kind string, g packs.GuardCtx) Target {
 	for _, u := range urls(l) {
 		t.addURL(u, extra)
 	}
-	pgHost := func() {
-		if h, ok := l.Flag("-h", "--host"); ok {
+	pgHost := func(switches string) {
+		if h, ok := pgFlag(l, 'h', "--host", switches); ok {
 			if computed(h) {
 				t.Unknown = true
 			} else {
-				t.Hosts = append(t.Hosts, h)
-				t.Tier1 = append(t.Tier1, hostSignals(h, "")...)
+				for _, x := range strings.Split(h, ",") {
+					t.Hosts = append(t.Hosts, x)
+					t.Tier1 = append(t.Tier1, hostSignals(x, "")...)
+				}
 			}
 		}
-		if d, ok := l.Flag("-d", "--dbname"); ok {
+		if d, ok := pgFlag(l, 'd', "--dbname", switches); ok {
 			switch {
 			case computed(d):
 				t.Unknown = true
 			case strings.Contains(d, "="):
 				t.connInfo(d)
 			}
+		}
+		// psql's dbname argument may be a keyword connection string
+		for _, a := range l.Args {
+			if conninfoRe.MatchString(a) {
+				t.connInfo(a)
+			}
+		}
+		if l.Dotenvs {
+			// the file may set PGHOST or PGHOSTADDR, which tq does not read
+			t.Unknown = true
 		}
 		for _, k := range []string{"PGHOST", "PGHOSTADDR"} {
 			if v := lookup(l, k); v != "" {
@@ -112,16 +168,19 @@ func restoreTarget(l Leaf, kind string, g packs.GuardCtx) Target {
 		}
 	}
 	switch kind {
-	case "pg_restore", "psql -f":
-		pgHost()
+	case kindPgRestore:
+		pgHost(pgRestoreSwitches)
+	case kindPsqlFile, kindPsqlStdin:
+		pgHost(psqlSwitches)
 	case "RESTORE DATABASE":
-		if v, ok := l.Flag("-S", "-ServerInstance", "-serverinstance"); ok {
-			t.serverFlag(v)
-		} else if v := lookup(l, "SQLCMDSERVER"); v != "" {
-			t.serverFlag(v)
-		} else if l.Unknown {
-			t.Unknown = true
-		} else {
+		named := t.sqlServers(l)
+		switch {
+		case named:
+		case l.Dotenvs || l.Unknown:
+			t.Unknown = true // SQLCMDSERVER may come from what tq did not read
+		case lookup(l, "SQLCMDSERVER") != "":
+			t.serverFlag(lookup(l, "SQLCMDSERVER"))
+		default:
 			t.Hosts = append(t.Hosts, "localhost")
 		}
 	case "sqlpackage /a:Import":
@@ -227,6 +286,59 @@ func RestoreTarget(call policy.ToolCall, g packs.GuardCtx) (policy.Action, strin
 		return policy.Allow, "", false
 	}
 	return policy.Deny, strings.Join(reasons, "; "), true
+}
+
+// sqlServers reads every way a RESTORE DATABASE line names its server:
+// sqlcmd/osql -S (also glued, -Sacme), go-sqlcmd --server, Invoke-Sqlcmd
+// -ServerInstance and -ConnectionString in any case and any unambiguous
+// abbreviation (-Server, -SERVERINSTANCE:x), and Server= / Data Source=
+// fragments anywhere on the line. It reports whether one was named.
+func (t *Target) sqlServers(l Leaf) bool {
+	named := false
+	ps := l.Prog == "invoke-sqlcmd"
+	for i, a := range l.Args {
+		if len(a) < 2 || a[0] != '-' {
+			continue
+		}
+		next := ""
+		if i+1 < len(l.Args) {
+			next = l.Args[i+1]
+		}
+		if ps {
+			name, val, colon := strings.Cut(strings.ToLower(a[1:]), ":")
+			if colon {
+				_, val, _ = strings.Cut(a, ":") // keep the value's case
+				next = val
+			}
+			switch {
+			case len(name) >= 2 && strings.HasPrefix("serverinstance", name):
+				t.serverFlag(next)
+				named = true
+			case len(name) >= 4 && strings.HasPrefix("connectionstring", name):
+				if computed(next) {
+					t.Unknown = true
+				} else {
+					t.connInfo(next)
+				}
+				named = true
+			}
+			continue
+		}
+		switch {
+		case a == "-S" || a == "--server":
+			t.serverFlag(next)
+			named = true
+		case strings.HasPrefix(a, "--server="):
+			t.serverFlag(strings.TrimPrefix(a, "--server="))
+			named = true
+		case len(a) > 2 && a[1] == 'S':
+			t.serverFlag(a[2:]) // sqlcmd's flags are one letter: -Sacme
+			named = true
+		}
+	}
+	before := len(t.Hosts)
+	t.serverFragments(l.Raw)
+	return named || len(t.Hosts) > before
 }
 
 // spFlag reads a sqlpackage parameter in any of its spellings: /a:Import,

@@ -76,6 +76,24 @@ func migrationText(l Leaf) string {
 	return strings.ToLower(strings.Join(w, " "))
 }
 
+// flagless are the leaf's match texts: as written, and with the flags
+// written before the subcommand dropped (alembic -c x.ini upgrade head,
+// dbmate --migrations-dir db up), a flag's value or not, since tq does not
+// know which flags take one.
+func flagless(l Leaf) []string {
+	out := []string{migrationText(l)}
+	if len(l.Args) == 0 || !strings.HasPrefix(l.Args[0], "-") || interpreters[l.Prog] {
+		return out
+	}
+	for k := 1; k <= len(l.Args) && k <= 8; k++ {
+		if a := l.Args[k-1]; !strings.HasPrefix(a, "-") && (k < 2 || !strings.HasPrefix(l.Args[k-2], "-")) {
+			break
+		}
+		out = append(out, strings.ToLower(strings.Join(append([]string{l.Prog}, l.Args[k:]...), " ")))
+	}
+	return out
+}
+
 // isMigration reports a leaf that runs migrations (the tools of
 // tq/remote-migration, plus golang-migrate): the match must start at the
 // program, so prose and other commands that only mention one do not count.
@@ -83,10 +101,12 @@ func isMigration(l Leaf) bool {
 	if l.Opaque || inert[l.Prog] {
 		return false
 	}
-	t := migrationText(l)
-	if loc := core().FindStringIndex(t); loc != nil && loc[0] == 0 {
-		return true
+	for _, t := range flagless(l) {
+		if loc := core().FindStringIndex(t); loc != nil && loc[0] == 0 {
+			return true
+		}
 	}
+	t := migrationText(l)
 	return l.Prog == "migrate" && (l.Has("-database", "--database") || l.Has("-path", "--path", "-source", "--source")) && golangMigrateRe.MatchString(t)
 }
 
@@ -136,19 +156,48 @@ func linkedRef(l Leaf, g packs.GuardCtx) (string, bool) {
 	if computed(wd) && wd != "" {
 		return "", false
 	}
-	// a relative workdir is read from the repo root (ReadLocal's base), an
+	dir, ok := leafDir(l, g)
+	if !ok {
+		return "", false
+	}
+	// a relative workdir is read from the folder the command runs in, an
 	// absolute one must be inside ReadLocal's roots
-	p := path.Join(strings.ReplaceAll(wd, `\`, "/"), "supabase", ".temp", "project-ref")
-	if cwd := g.Cwd(); cwd != "" && !filepath.IsAbs(filepath.FromSlash(p)) {
-		p = filepath.Join(cwd, filepath.FromSlash(p))
+	p := filepath.FromSlash(path.Join(strings.ReplaceAll(wd, `\`, "/"), "supabase", ".temp", "project-ref"))
+	if !filepath.IsAbs(p) && !isAbs(filepath.ToSlash(p)) && dir != "" {
+		p = filepath.Join(dir, p)
 	}
 	b, err := g.ReadLocal(p, 256)
 	if err != nil {
+		if l.Dir != "" || wd != "" {
+			// another folder than the session's, without a ref file tq
+			// can read: tq cannot tell which project it is linked to
+			return "", false
+		}
 		// no ref file (or one tq may not read): no signal, the target
 		// falls to the default environment
 		return "", true
 	}
 	return ReadRef(b), true
+}
+
+// leafDir is the folder a leaf runs in, made absolute; ok false when an
+// earlier statement moved to a folder tq cannot know.
+func leafDir(l Leaf, g packs.GuardCtx) (string, bool) {
+	if l.Moved {
+		return "", false
+	}
+	cwd := g.Cwd()
+	if l.Dir == "" {
+		return cwd, true
+	}
+	d := filepath.FromSlash(l.Dir)
+	if !filepath.IsAbs(d) && !isAbs(l.Dir) {
+		if cwd == "" {
+			return "", false
+		}
+		d = filepath.Join(cwd, d)
+	}
+	return filepath.Clean(d), true
 }
 
 // migrateTarget reads a migration leaf's target (§14 steps 1 to 4).
@@ -174,7 +223,11 @@ func migrateTarget(l Leaf, g packs.GuardCtx) Target {
 		}
 		if linked {
 			t.Linked = true
-			if ref, ok := linkedRef(l, g); ok && ref != "" {
+			ref, ok := linkedRef(l, g)
+			switch {
+			case !ok:
+				t.Unknown = true
+			case ref != "":
 				t.Tier3 = append(t.Tier3, envgate.Signal{Key: "project_refs", Value: ref})
 			}
 		}
@@ -303,7 +356,7 @@ func evaluate(l Leaf, unreadable bool, gt envgate.Gate, g packs.GuardCtx) verdic
 	t := migrateTarget(l, g)
 	tiers := t.Tiers(l)
 	var res envgate.Resolution
-	floor := unreadable || l.Opaque || l.Unknown || t.Unknown
+	floor := unreadable || l.Opaque || l.Unknown || l.Moved || t.Unknown
 	if floor {
 		res = gt.ResolveFloor(envgate.Migrate, tiers)
 	} else {
@@ -331,6 +384,12 @@ func evaluate(l Leaf, unreadable bool, gt envgate.Gate, g packs.GuardCtx) verdic
 	case envgate.Approve:
 		if unreadable {
 			return deny(what, where, env, "tq cannot read the command, so no approval can be matched to it; run the migration tool directly", "unreadable", res)
+		}
+		if floor {
+			return deny(what, where, env, "the target cannot be read (a computed value, a folder tq cannot follow, or an environment an earlier statement changed), so no approval can be matched to it; name the target on the command line", "unresolved-target", res)
+		}
+		if why := unboundSource(l, g); why != "" {
+			return deny(what, where, env, why, "source", res)
 		}
 		return approve(what, where, env, g, res)
 	}
