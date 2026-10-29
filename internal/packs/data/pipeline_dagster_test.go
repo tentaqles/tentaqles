@@ -14,6 +14,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
 )
 
 var (
@@ -160,5 +161,32 @@ func TestDagsterDeclaredMissing(t *testing.T) {
 	in.Tools = r
 	if res := dagsterResult(t, in); res.Status != packs.Skip || res.Required {
 		t.Fatalf("undeclared and missing: %+v", res)
+	}
+}
+
+// specSpy is a ToolRunner that records the Spec it is asked to run.
+type specSpy struct{ got toolrun.Spec }
+
+func (s *specSpy) Probe(_, tool string) toolrun.Probe {
+	return toolrun.Probe{Tool: tool, Found: true, Path: tool, Version: "1.9.3"}
+}
+
+func (s *specSpy) Run(_ context.Context, spec toolrun.Spec) (toolrun.Output, error) {
+	s.got = spec
+	return toolrun.Output{}, nil
+}
+
+// The check passes its own 120 s default to the runner, rather than
+// relying on toolrun.DefaultTimeout happening to match (review r0 m2).
+func TestDagsterValidatePassesTimeout(t *testing.T) {
+	isolatePipeline(t)
+	in := dagsterInput(t, "tools: [dagster]\n", map[string]string{"pipelines/defs.py": dagsterDefs})
+	spy := &specSpy{}
+	in.Tools = spy
+	if r := runDagsterValidate(context.Background(), in); r.Status != packs.OK {
+		t.Fatalf("%+v", r)
+	}
+	if spy.got.Timeout != 120*time.Second || spy.got.Tool != "dagster" {
+		t.Fatalf("spec %+v", spy.got)
 	}
 }

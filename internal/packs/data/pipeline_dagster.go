@@ -5,6 +5,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
@@ -49,7 +50,8 @@ func runDagsterValidate(ctx context.Context, in *packs.Input) packs.Result {
 	if !dagsterChanged(in) {
 		return packs.Result{Status: packs.Skip, Detail: "no Dagster code or config changed"}
 	}
-	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "data", Tool: "dagster", Args: []string{"definitions", "validate"}, Dir: in.Root})
+	out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "data", Tool: "dagster", Args: []string{"definitions", "validate"}, Dir: in.Root,
+		Timeout: dagsterTimeout * time.Second})
 	tool := &packs.ToolRun{Name: "dagster", Version: out.Version, Path: out.Path, ExitCode: out.ExitCode, DurationMS: out.Duration.Milliseconds(), TimedOut: out.TimedOut}
 	switch {
 	case err != nil:
