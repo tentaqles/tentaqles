@@ -249,9 +249,11 @@ func init() {
 
 // tqModeSafeRes are TQ_MODE assignments of exactly default or strict, in any
 // form agAssign knows: the values the nested-agent rule lets through.
+// A --tq-mode default|strict flag (tq run, the claude function) counts the
+// same (security re-review r3, R3-2).
 var tqModeSafeRes = map[string]*regexp.Regexp{
-	"default": regexp.MustCompile(`(?i)` + agAssign(`TQ_MODE`, agAny(`(?-i:["']?default)(?:["']|\b)`))),
-	"strict":  regexp.MustCompile(`(?i)` + agAssign(`TQ_MODE`, agAny(`(?-i:["']?strict)(?:["']|\b)`))),
+	"default": regexp.MustCompile(`(?i)` + agAssign(`TQ_MODE`, agAny(`(?-i:["']?default)(?:["']|\b)`)) + `|--tq-mode` + agVal + `(?-i:default)\b`),
+	"strict":  regexp.MustCompile(`(?i)` + agAssign(`TQ_MODE`, agAny(`(?-i:["']?strict)(?:["']|\b)`)) + `|--tq-mode` + agVal + `(?-i:strict)\b`),
 }
 
 // AssignedTQModes returns the modes (default, strict) command sets TQ_MODE

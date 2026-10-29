@@ -245,14 +245,21 @@ func (l launch) run() error {
 		}
 	}
 	env := withoutVars(envplan.Environ(l.ws, os.Environ()), envplan.HeadlessModeVar)
-	if agent {
-		parent := strings.TrimSpace(launchMode())
-		if parent == "" {
-			cwd, _ := os.Getwd()
-			parent = resolveMode(l.ws, cwd, "").Mode
+	if agent && mode != "" {
+		// Compared table by table, not by name: under a custom session that
+		// denies a category, a default child is looser there (security
+		// re-review r3, R3-2). The child is what this launch resolves to.
+		// The child is the preset it asks for (custom: what this launch
+		// resolves to), never clamped down by the ceiling first, and the
+		// name order must hold too (relaxed is never no looser).
+		cwd, _ := os.Getwd()
+		parent := resolveModeFor(l.ws, cwd, "", strings.TrimSpace(launchMode()))
+		child := guardcfg.PresetResolved(mode)
+		if mode == guardcfg.ModeCustom {
+			child = resolveModeFor(l.ws, cwd, "", mode)
 		}
-		if mode != "" && !noLooser(mode, parent) {
-			return fmt.Errorf("--tq-mode %s is looser than this agent session's mode (%s); an agent may only launch at its own mode or stricter", mode, orDefault(parent))
+		if !noLooser(mode, parent.Mode) || !child.NoLooserThan(parent) {
+			return fmt.Errorf("--tq-mode %s is looser than this agent session's mode (%s) in some category; an agent may only launch at its own mode or stricter", mode, orDefault(parent.Mode))
 		}
 	}
 	if agentProg(l.name) == "codex" && l.ws != nil {

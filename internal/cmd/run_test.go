@@ -542,3 +542,24 @@ func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
 		t.Fatal("--off after a workspace must be refused")
 	}
 }
+
+// An agent's tq run --tq-mode is compared with the session by the resolved
+// tables: under a custom parent that denies a category, --tq-mode default
+// is looser there and is refused (security re-review r3, R3-2).
+func TestAgentRunTqModeComparesTables(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "guard:\n  mode: custom\n  base: default\n  categories: { db-destructive: deny }\n")
+	t.Chdir(root) // the agent session runs in the workspace
+	clearAgentMarkers(t)
+	t.Setenv("TQ_MODE", "")
+	t.Setenv("CLAUDECODE", "1")
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--tq-mode", "default", "--", "claude", "-p", "x"); err == nil || !strings.Contains(err.Error(), "looser") {
+		t.Fatalf("an agent may not launch looser in a category: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatal("nothing may be launched")
+	}
+	if _, err := runTq(t, "run", "acme", "--", "claude", "-p", "x"); err != nil {
+		t.Fatalf("the parent's own mode is allowed: %v", err)
+	}
+}

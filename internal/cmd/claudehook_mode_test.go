@@ -655,3 +655,20 @@ func TestHookNestedAgentComparesTables(t *testing.T) {
 		})
 	}
 }
+
+// --tq-mode on tq run or claude is checked like a TQ_MODE= assignment: by
+// the resolved tables, not the mode names (security re-review r3, R3-2).
+func TestHookNestedTqModeFlagComparesTables(t *testing.T) {
+	body := "guard:\n  mode: custom\n  base: default\n  categories: { db-destructive: deny }\n"
+	_, proj := modeWS(t, body, "")
+	for _, cmd := range []string{"tq run . --tq-mode default -- claude -p x", "tq run . --tq-mode=strict -- claude -p x", "claude --tq-mode default -p x"} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, cmd, ""))
+		if code != 2 || !strings.Contains(errOut, "tq/nested-agent-loosened") {
+			t.Fatalf("%s under a custom deny: code %d stderr %q", cmd, code, errOut)
+		}
+	}
+	_, proj = modeWS(t, "", "")
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "tq run . --tq-mode strict -- claude -p x", "")); code == 2 {
+		t.Fatalf("strict under default is allowed: %q", errOut)
+	}
+}
