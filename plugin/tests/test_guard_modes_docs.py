@@ -275,22 +275,62 @@ def test_guard_skill_covers_modes():
     assert "mode" in fm
 
 
-def test_plugin_changelog_unreleased_is_filled_without_a_bump():
+def release_sections(text: str) -> list[tuple[str, str]]:
+    """(heading, body) for every `## [...]` section of a changelog, newest first."""
+    parts = re.split(r"^(## \[[^\]]+\].*)$", text, flags=re.M)
+    return [(parts[i], parts[i + 1]) for i in range(1, len(parts) - 1, 2)]
+
+
+def guard_modes_entry(text: str) -> tuple[str, str]:
+    """The newest changelog section that describes guard modes: Unreleased
+    before the release, the version heading after it (when Unreleased is
+    emptied into `## [x.y.z]`)."""
+    for heading, body in release_sections(text):
+        if re.search(r"guard mode", body, re.I):
+            return heading, body
+    raise AssertionError("no changelog section describes guard modes")
+
+
+def test_guard_modes_entry_survives_a_release():
+    # Before the release the entry is in Unreleased; after it, Unreleased is
+    # empty and the entry sits under the new version. Both must be found.
+    before = "# Changelog\n\n## [Unreleased]\n\nGuard modes.\n\n## [0.14.0]\n\nBoard sync.\n"
+    after = ("# Changelog\n\n## [Unreleased]\n\n## [0.15.0] - 2026-11-01\n\nGuard modes.\n\n"
+             "## [0.14.0]\n\nBoard sync.\n")
+    assert guard_modes_entry(before)[0] == "## [Unreleased]"
+    assert guard_modes_entry(after)[0].startswith("## [0.15.0]")
+    assert "Guard modes." in guard_modes_entry(after)[1]
+    with pytest.raises(AssertionError):
+        guard_modes_entry("## [Unreleased]\n\n## [0.14.0]\n\nBoard sync.\n")
+
+
+def test_plugin_changelog_describes_guard_modes():
     text = read(PLUGIN / "CHANGELOG.md")
-    unreleased = text.split("## [Unreleased]", 1)[1].split("\n## [", 1)[0]
+    heading, entry = guard_modes_entry(text)
     for needle in ("guard", "TQ_MODE=off", "tq_hook.sh", "tq_run.sh"):
-        assert needle in unreleased, needle
+        assert needle in entry, needle
     version = json.loads(read(PLUGIN / ".claude-plugin" / "plugin.json"))["version"]
-    assert f"## [{version}]" in text, "plugin version must not be bumped past the changelog"
+    # Always true: the manifest version has its own changelog heading. While the
+    # entry is still unreleased, that heading is an older one (no bump yet).
+    assert f"## [{version}]" in text, "plugin version has no changelog heading"
+    if heading == "## [Unreleased]":
+        assert f"## [{version}]" not in entry
 
 
 def test_root_changelog():
-    text = read(REPO / "CHANGELOG.md")
-    unreleased = text.split("## [Unreleased]", 1)[1].split("\n## [", 1)[0]
+    _, entry = guard_modes_entry(read(REPO / "CHANGELOG.md"))
     for needle in ("tq mode", "relaxed", "strict", "tq off", "claude-off", "privacy",
                    "tq/nested-agent-loosened", "tq/mode-change", "deprecated", "Codex",
                    "Behaviour changes"):
-        assert needle in unreleased, needle
+        assert needle in entry, needle
+
+
+def test_root_changelog_does_not_call_allow_mode_deprecated():
+    _, entry = guard_modes_entry(read(REPO / "CHANGELOG.md"))
+    flat = " ".join(entry.split())
+    assert "`tq allow --mode`, in a tool call" not in flat
+    assert ("`tq allow --mode`, and the deprecated `tq unattended on|off` and "
+            "`tq allow --bypass`, are denied in a tool call") in flat
 
 
 # ---- the word "unattended" ------------------------------------------------------
@@ -322,8 +362,7 @@ def test_unattended_only_as_deprecated_or_migration(path):
     assert not unattended_offenders(read(path)), unattended_offenders(read(path))
 
 
-def test_unattended_in_changelog_unreleased_only_as_deprecated():
+def test_unattended_in_changelog_entry_only_as_deprecated():
     for p in (PLUGIN / "CHANGELOG.md", REPO / "CHANGELOG.md"):
-        text = read(p)
-        unreleased = text.split("## [Unreleased]", 1)[1].split("\n## [", 1)[0]
-        assert not unattended_offenders(unreleased), (p.name, unattended_offenders(unreleased))
+        _, entry = guard_modes_entry(read(p))
+        assert not unattended_offenders(entry), (p.name, unattended_offenders(entry))

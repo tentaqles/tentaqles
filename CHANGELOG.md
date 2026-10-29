@@ -75,8 +75,8 @@ or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
 - `privacy` is locked: the PII exit rules hold in every mode. A `guard.disable` or looser
   `guard.actions` entry for any locked rule is ignored, with a doctor warning.
 - The `claude` launcher starts in bypass whatever `claude.permission_mode` says.
-- The deprecated `tq unattended on|off`, `tq allow --bypass`, and `tq allow --mode`, in a tool call are
-  denied by `tq/mode-change` (they used to ask), and they refuse agent sessions.
+- `tq allow --mode`, and the deprecated `tq unattended on|off` and `tq allow --bypass`, are
+  denied in a tool call by `tq/mode-change` (they used to ask), and they refuse agent sessions.
 - `tq/outside-path-write`, `tq/elevation`, `tq/system-dir-write` and
   `tq/nested-agent-loosened` apply in every mode, default included.
 - Every workspace with a Codex identity is rendered (`config.toml` block, `rules/tq.rules`,
