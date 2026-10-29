@@ -11,6 +11,9 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/tentaqles/tentaqles/internal/guardlog"
 )
 
 // Input is the subset of the JSON Claude Code pipes to a status line command.
@@ -50,7 +53,17 @@ func (u usage) total() int {
 type Facts struct {
 	Client   string // workspace client, "" when neutral
 	GitEmail string
+	// Mode is the tq guard mode (spec E §10.4): default|relaxed|strict|custom,
+	// ModeOff under TQ_MODE=off, "" to leave the segment out.
+	Mode string
+	// Looser: the mode may skip or lower some rule (yellow).
+	Looser bool
+	// Skipped counts the asks and denies skipped or lowered in 24h.
+	Skipped int
 }
+
+// ModeOff is Facts.Mode when tq is off for the session (TQ_MODE=off).
+const ModeOff = "off"
 
 // Bands are the context sizes (tokens) where the colour changes.
 var (
@@ -127,14 +140,49 @@ func Render(in Input, f Facts, color bool) string {
 		return code + s + reset
 	}
 	var parts []string
+	if f.Mode == ModeOff {
+		// Off: tq applies no identity and no guard, so the client and the
+		// git email it would have set are not shown.
+		parts = append(parts, c(red, "tq: off"))
+		return strings.Join(append(parts, tail(in, c)...), c(dim, " · "))
+	}
 	client := f.Client
 	if client == "" {
 		client = "no workspace"
 	}
 	parts = append(parts, c(cyan, client))
+	if seg := modeSegment(f); seg != "" {
+		colour := dim
+		switch {
+		case f.Mode == "strict":
+			colour = cyan
+		case f.Looser:
+			colour = yellow
+		}
+		parts = append(parts, c(colour, seg))
+	}
 	if f.GitEmail != "" {
 		parts = append(parts, c(dim, f.GitEmail))
 	}
+	parts = append(parts, tail(in, c)...)
+	return strings.Join(parts, c(dim, " · "))
+}
+
+// modeSegment is "tq: relaxed · 4 skipped" ("" without a mode).
+func modeSegment(f Facts) string {
+	if f.Mode == "" {
+		return ""
+	}
+	s := "tq: " + f.Mode
+	if f.Skipped > 0 {
+		s += fmt.Sprintf(" · %d skipped", f.Skipped)
+	}
+	return s
+}
+
+// tail is the model, context and cost parts.
+func tail(in Input, c func(code, s string) string) []string {
+	var parts []string
 	if m := in.Model.DisplayName; m != "" {
 		parts = append(parts, m)
 	} else if in.Model.ID != "" {
@@ -157,5 +205,15 @@ func Render(in Input, f Facts, color bool) string {
 	if in.Cost.TotalCostUSD > 0 {
 		parts = append(parts, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD))
 	}
-	return strings.Join(parts, c(dim, " · "))
+	return parts
+}
+
+// Skipped counts the asks and denies the guard mode skipped or lowered for
+// workspace ws in the 24 hours before now (0 for "", a neutral folder). It
+// reads only the log's last MiB, so the status line stays within its budget.
+func Skipped(ws string, now time.Time) int {
+	if ws == "" {
+		return 0
+	}
+	return len(guardlog.Read(ws, now.Add(-24*time.Hour), 1<<20))
 }

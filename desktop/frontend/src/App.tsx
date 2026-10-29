@@ -5,6 +5,7 @@ import {Button, ErrorList, Placeholder} from './ui'
 import {localStepError, needsFullValidation} from './validate'
 import {servicesStepError} from './services'
 import Board from './Board'
+import Guard from './Guard'
 import Welcome from './steps/Welcome'
 import Base from './steps/Base'
 import Companies from './steps/Companies'
@@ -124,7 +125,7 @@ function StepBody({step}: {step: number}) {
 
 function Shell() {
   const {state, dispatch} = usePlan()
-  const [tab, setTab] = useState<'setup' | 'board'>('setup')
+  const [tab, setTab] = useState<'setup' | 'board' | 'guard'>('setup')
 
   async function next() {
     // Only judge what the user has actually been asked for so far. The full
@@ -155,7 +156,7 @@ function Shell() {
     <div className="flex h-full">
       <nav className="w-56 shrink-0 border-r border-[var(--tq-border)] bg-[var(--tq-panel)] p-4">
         <div className="mb-5 flex gap-1 text-sm" role="tablist">
-          {(['setup', 'board'] as const).map((t) => (
+          {(['setup', 'board', 'guard'] as const).map((t) => (
             <button
               key={t}
               role="tab"
@@ -167,7 +168,7 @@ function Shell() {
                   : 'text-[var(--tq-muted)] hover:bg-black/5 dark:hover:bg-white/5'
               }`}
             >
-              {t === 'setup' ? 'Setup' : 'Board'}
+              {t === 'setup' ? 'Setup' : t === 'board' ? 'Board' : 'Guard'}
             </button>
           ))}
         </div>
@@ -207,7 +208,7 @@ function Shell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <InstallBanner />
         <main className="flex-1 overflow-auto p-8">
-          {tab === 'board' ? <Board /> : <StepBody step={state.step} />}
+          {tab === 'board' ? <Board /> : tab === 'guard' ? <Guard /> : <StepBody step={state.step} />}
         </main>
         <footer
           className={`border-t border-[var(--tq-border)] bg-[var(--tq-panel)] px-8 py-4 ${tab === 'setup' ? '' : 'hidden'}`}

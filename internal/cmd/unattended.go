@@ -1,99 +1,97 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/internal/guardcfg"
-	"github.com/tentaqles/tentaqles/internal/guardlog"
 	"github.com/tentaqles/tentaqles/internal/manifest"
-	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/setup"
 )
 
+// `tq unattended` is the deprecated alias layer of `tq mode` (spec E §11.1):
+//
+//	tq unattended on [--project D]   = tq mode set relaxed [--project D]
+//	tq unattended off [--project D]  = tq mode set default (for the scope)
+//	tq unattended status             = tq mode
+//	tq unattended log                = tq mode log
+//
+// Each prints a deprecation line to stderr. on and off are human-only, like
+// tq mode set.
 func newUnattendedCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "unattended",
-		Short: "Skip tq's confirms and blocks in bypass/auto sessions of chosen workspaces or projects",
-		Long: `Unattended mode skips tq's rules, asks and denies alike, when a Claude Code
-session runs in bypassPermissions or auto mode inside a workspace (or project
-folder) you listed. Three groups are always enforced there:
+		Short: "Deprecated: use tq mode (relaxed replaces unattended mode)",
+		Long: `Deprecated: unattended mode is now the relaxed guard mode. See tq mode --help.
 
-  identity         acting under the wrong client identity: the identity guard
-                   (git/gh identity drift, wrong cloud CLI, blocked_commands,
-                   trust) and tq/cross-client-mcp;
-  secret           .env files, environment dumps, credential stores, secrets
-                   in commits (tq/env-*, tq/secret-store-*, tq/commit-secret);
-  self-protection  the guard, its trust and the session's settings and hooks
-                   (tq/guard-change covers tq guard, tq allow, tq deny and
-                   tq unattended on|off; tq/guard-file-write, tq/settings-*).
-
-So are the rules in guard.unattended.keep_asking (default: tq/iac-apply,
-tq/remote-migration) and manifest rules that set unattended: enforce. Every
-other ask and deny is skipped and logged. It only takes effect once bypass
-trust is granted: tq allow --bypass NAME.
-
-  tq unattended on  [--ws NAME] [--project PATH] [--codex-sandbox MODE]
-  tq unattended off [--ws NAME] [--project PATH]
-  tq unattended status [--ws NAME]
-  tq unattended log [--ws NAME] [--since 24h]
-
-on and off edit the workspace manifest's guard.unattended block and re-trust it.
-Inside Claude Code, on and off ask you first (rule tq/guard-change), so an
-agent cannot switch the mode by itself.`,
+  tq unattended on [--project D]   is tq mode set relaxed [--project D]
+  tq unattended off [--project D]  is tq mode set default (for that scope)
+  tq unattended status             is tq mode
+  tq unattended log                is tq mode log`,
 	}
 	var ws, project, sandbox, since string
 	on := &cobra.Command{
-		Use: "on", Short: "Turn unattended mode on for the workspace or one project", Args: cobra.NoArgs,
+		Use: "on", Short: "Deprecated: tq mode set relaxed", Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return unattendedChange(c, ws, true, project, sandbox)
+			if err := requireHuman(c.InOrStdin(), c.OutOrStdout(), "tq unattended on"); err != nil {
+				return err
+			}
+			deprecated(c, "mode set relaxed", project)
+			if sandbox != "" && !validSandbox(sandbox) {
+				return fmt.Errorf("--codex-sandbox must be one of %s, got %q", strings.Join(manifest.CodexSandboxes, "|"), sandbox)
+			}
+			w, sc, err := modeScopeFlags{ws: ws, project: project}.target()
+			if err != nil {
+				return err
+			}
+			if sandbox != "" {
+				if _, err := setup.ApplyGuardOp(w, setup.GuardScope{}, setup.GuardOp{Kind: setup.GuardOpCodexSandbox, Sandbox: sandbox}); err != nil {
+					return err
+				}
+				if w, err = guardTarget(w.Name, false); err != nil {
+					return err
+				}
+			}
+			res, err := setup.ApplyGuardOp(w, sc, setup.GuardOp{Kind: setup.GuardOpMode, Mode: "relaxed"})
+			if err != nil {
+				return err
+			}
+			return reportModeWrite(c, w, res, "mode relaxed")
 		},
 	}
 	on.Flags().StringVar(&project, "project", "", "a folder inside the workspace (default: the whole workspace)")
 	on.Flags().StringVar(&sandbox, "codex-sandbox", "", "Codex sandbox mode: "+strings.Join(manifest.CodexSandboxes, "|"))
 	off := &cobra.Command{
-		Use: "off", Short: "Turn unattended mode off for the workspace or one project", Args: cobra.NoArgs,
+		Use: "off", Short: "Deprecated: tq mode set default", Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return unattendedChange(c, ws, false, project, "")
-		},
-	}
-	off.Flags().StringVar(&project, "project", "", "only this folder (default: the workspace and every project)")
-	status := &cobra.Command{
-		Use: "status", Short: "Show what unattended mode covers and whether it is effective", Args: cobra.NoArgs,
-		RunE: func(c *cobra.Command, _ []string) error {
-			w, err := guardTarget(ws, false)
-			if err != nil {
+			if err := requireHuman(c.InOrStdin(), c.OutOrStdout(), "tq unattended off"); err != nil {
 				return err
 			}
-			return unattendedStatus(c, w)
+			deprecated(c, "mode set default", project)
+			return modeWrite(c, modeScopeFlags{ws: ws, project: project}, setup.GuardOp{Kind: setup.GuardOpUnattendedOff}, "mode default")
+		},
+	}
+	off.Flags().StringVar(&project, "project", "", "only this folder (default: the workspace and every relaxed project)")
+	status := &cobra.Command{
+		Use: "status", Short: "Deprecated: tq mode", Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			deprecated(c, "mode", "")
+			name := ws
+			if name == "" {
+				w, err := guardTarget("", false)
+				if err != nil {
+					return err
+				}
+				name = w.Name
+			}
+			return modeShow(c, name, false, hookAgentClaude)
 		},
 	}
 	logc := &cobra.Command{
-		Use: "log", Short: "List the confirms and blocks unattended mode skipped", Args: cobra.NoArgs,
+		Use: "log", Short: "Deprecated: tq mode log", Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			w, err := guardTarget(ws, false)
-			if err != nil {
-				return err
-			}
-			d, err := time.ParseDuration(since)
-			if err != nil || d <= 0 {
-				return fmt.Errorf("--since must be a positive duration such as 24h, got %q", since)
-			}
-			for _, r := range guardlog.ReadAll(w.Name, time.Now().Add(-d)) {
-				action := "ask"
-				if r.IsBlock() {
-					action = "deny"
-				}
-				fmt.Fprintf(c.OutOrStdout(), "%s  %s  %s  %s  %s  %s  %s\n",
-					r.Time.Format(time.RFC3339), r.Scope, r.ClaudeMode, action, strings.Join(r.Rules, ","), r.Tool, r.Command)
-			}
-			return nil
+			deprecated(c, "mode log", "")
+			return modeLog(c, ws, since)
 		},
 	}
 	logc.Flags().StringVar(&since, "since", "24h", "how far back to list")
@@ -104,185 +102,20 @@ agent cannot switch the mode by itself.`,
 	return c
 }
 
-func unattendedChange(c *cobra.Command, wsName string, on bool, project, sandbox string) error {
-	w, err := guardTarget(wsName, false)
-	if err != nil {
-		return err
-	}
-	if err := unattendedEdit(w, on, project, sandbox); err != nil {
-		return err
-	}
-	w, err = guardTarget(w.Name, false)
-	if err != nil {
-		return err
-	}
-	word := "off"
-	if on {
-		word = "on"
-	}
-	scope := unattendedScopes(w.Manifest.Guard.Unattended)
-	if len(scope) == 0 {
-		scope = []string{"nothing covered"}
-	}
-	out := c.OutOrStdout()
-	fmt.Fprintf(out, "unattended %s for %s (%s); manifest re-trusted\n", word, w.Name, strings.Join(scope, ", "))
-	if on && !trust.IsBypassAllowed(w.Hash) {
-		fmt.Fprintf(out, "not effective until you run: tq allow --bypass %s\n", w.Name)
-	}
-	renderCodex(c, w, false)
-	return nil
-}
-
-// unattendedEdit turns unattended mode on or off in w's manifest: for the
-// whole workspace, or for one project folder inside it. sandbox, when set,
-// is stored as codex_sandbox (on only).
-func unattendedEdit(w *resolve.Workspace, on bool, project, sandbox string) error {
-	if sandbox != "" {
-		ok := false
-		for _, s := range manifest.CodexSandboxes {
-			ok = ok || s == sandbox
-		}
-		if !ok {
-			return fmt.Errorf("--codex-sandbox must be one of %s, got %q", strings.Join(manifest.CodexSandboxes, "|"), sandbox)
-		}
-	}
-	rel := ""
+// deprecated prints the tq mode command that replaces an unattended verb.
+func deprecated(c *cobra.Command, verb, project string) {
+	line := "deprecated: use tq " + verb
 	if project != "" {
-		var err error
-		if rel, err = resolveUnattendedProject(w.Root, project); err != nil {
-			return err
-		}
+		line += " --project " + project
 	}
-	return rewriteManifestGuard(w, func(gb *guardBlock) error {
-		u := gb.Unattended
-		if on {
-			if u == nil {
-				u = &manifest.Unattended{}
-			}
-			if rel == "" {
-				u.Workspace = true
-			} else {
-				u.Projects = appendUniq(u.Projects, rel)
-			}
-			if sandbox != "" {
-				u.CodexSandbox = sandbox
-			}
-			gb.Unattended = u
-			return nil
-		}
-		if u == nil {
-			if rel != "" {
-				return fmt.Errorf("no project %s in guard.unattended.projects", rel)
-			}
-			return nil
-		}
-		if rel == "" {
-			// Off for everything, but keep_asking and codex_sandbox are
-			// settings the user chose: they stay for the next `on`.
-			u.Workspace = false
-			u.Projects = nil
-		} else {
-			var keep []string
-			for _, p := range u.Projects {
-				if !sameProject(manifest.CleanProject(p), rel) {
-					keep = append(keep, p)
-				}
-			}
-			if len(keep) == len(u.Projects) {
-				return fmt.Errorf("no project %s in guard.unattended.projects", rel)
-			}
-			u.Projects = keep
-		}
-		if !u.Configured() && u.KeepAsking == nil && u.CodexSandbox == "" {
-			u = nil
-		}
-		gb.Unattended = u
-		return nil
-	})
+	fmt.Fprintln(c.ErrOrStderr(), line)
 }
 
-// sameProject compares two cleaned project paths, ignoring case on Windows.
-func sameProject(a, b string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
-}
-
-// resolveUnattendedProject resolves p (relative paths against root) to a slash
-// path strictly inside root. The root itself, outside paths and missing
-// folders are refused.
-func resolveUnattendedProject(root, p string) (string, error) {
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(root, p)
-	}
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return "", err
-	}
-	fi, err := os.Stat(abs)
-	if err != nil || !fi.IsDir() {
-		return "", fmt.Errorf("--project %s: not a folder", abs)
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(absRoot, abs)
-	if err != nil {
-		return "", errors.New("--project is outside the workspace")
-	}
-	rel = filepath.ToSlash(rel)
-	switch {
-	case rel == ".":
-		return "", errors.New("--project is the workspace root: use `tq unattended on` without --project")
-	case rel == ".." || strings.HasPrefix(rel, "../"):
-		return "", fmt.Errorf("--project %s is outside the workspace %s", abs, absRoot)
-	}
-	return rel, nil
-}
-
-func unattendedScopes(u *manifest.Unattended) []string {
-	var s []string
-	if u == nil {
-		return s
-	}
-	if u.Workspace {
-		s = append(s, "workspace")
-	}
-	for _, p := range u.Projects {
-		s = append(s, "project "+manifest.CleanProject(p))
-	}
-	return s
-}
-
-func unattendedStatus(c *cobra.Command, w *resolve.Workspace) error {
-	out := c.OutOrStdout()
-	u := w.Manifest.Guard.Unattended
-	fmt.Fprintf(out, "unattended mode for %s\n", w.Name)
-	if scopes := unattendedScopes(u); u.Configured() {
-		fmt.Fprintf(out, "scope: %s\n", strings.Join(scopes, ", "))
-		if trust.IsBypassAllowed(w.Hash) {
-			fmt.Fprintln(out, "effective")
-		} else {
-			fmt.Fprintf(out, "not effective (needs tq allow --bypass %s)\n", w.Name)
+func validSandbox(s string) bool {
+	for _, v := range manifest.CodexSandboxes {
+		if v == s {
+			return true
 		}
-	} else {
-		fmt.Fprintln(out, "scope: off")
 	}
-	fmt.Fprintln(out, "applies in: bypassPermissions, auto sessions")
-	fmt.Fprintln(out, "skips every other ask and deny; always enforced:")
-	enforced := guardcfg.AlwaysEnforced()
-	fmt.Fprintf(out, "  identity: the identity guard (git/gh drift, wrong cloud, blocked_commands, trust), %s\n", strings.Join(enforced[guardcfg.GroupIdentity], ", "))
-	fmt.Fprintf(out, "  secret: %s\n", strings.Join(enforced[guardcfg.GroupSecret], ", "))
-	fmt.Fprintf(out, "  self-protection: %s\n", strings.Join(enforced[guardcfg.GroupSelfProtection], ", "))
-	fmt.Fprintln(out, "  manifest rules with unattended: enforce")
-	fmt.Fprintf(out, "keeps asking: %s\n", strings.Join(u.KeepAskingIDs(), ", "))
-	g, _ := guardcfg.Load()
-	for _, id := range guardcfg.UnknownKeepAsking(w.Manifest, g) {
-		fmt.Fprintf(out, "warning: unknown rule id %s\n", id)
-	}
-	fmt.Fprintf(out, "codex sandbox: %s\n", u.Sandbox())
-	fmt.Fprintf(out, "skipped in 24h: %s\n", skippedCounts(w.Name, time.Now()))
-	return nil
+	return false
 }

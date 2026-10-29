@@ -124,12 +124,14 @@ func newStatuslineCmd() *cobra.Command {
 				cwd, _ = os.Getwd()
 			}
 			var f statusline.Facts
+			var ws *resolve.Workspace
 			if cfg, err := registry.Load(); err == nil {
-				if ws := resolve.Resolve(cwd, cfg).Workspace; ws != nil {
+				if ws = resolve.Resolve(cwd, cfg).Workspace; ws != nil {
 					f.Client = ws.Manifest.Client
 				}
 			}
 			f.GitEmail = gitEmailIn(cwd)
+			statuslineModeFacts(&f, ws, cwd)
 			fmt.Fprintln(c.OutOrStdout(), statusline.Render(in, f, os.Getenv("NO_COLOR") == ""))
 			return nil
 		},

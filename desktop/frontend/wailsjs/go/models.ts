@@ -14,6 +14,139 @@ export namespace main {
 	        this.Started = source["Started"];
 	    }
 	}
+	export class GuardChange {
+	    Workspace: string;
+	    Scope: string;
+	    Looser: boolean;
+	    Proposal: string;
+	    Carried: boolean;
+	    Dropped: string;
+	    Warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new GuardChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Workspace = source["Workspace"];
+	        this.Scope = source["Scope"];
+	        this.Looser = source["Looser"];
+	        this.Proposal = source["Proposal"];
+	        this.Carried = source["Carried"];
+	        this.Dropped = source["Dropped"];
+	        this.Warnings = source["Warnings"];
+	    }
+	}
+
+}
+
+export namespace setup {
+	
+	export class GuardCategory {
+	    name: string;
+	    value: string;
+	    source: string;
+	    locked: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuardCategory(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.value = source["value"];
+	        this.source = source["source"];
+	        this.locked = source["locked"];
+	    }
+	}
+	export class GuardOverride {
+	    id: string;
+	    value: string;
+	    source?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuardOverride(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.value = source["value"];
+	        this.source = source["source"];
+	    }
+	}
+	export class GuardView {
+	    workspace?: string;
+	    root?: string;
+	    mode: string;
+	    label: string;
+	    base?: string;
+	    requested?: string;
+	    mode_source?: string;
+	    categories: GuardCategory[];
+	    overrides: GuardOverride[];
+	    ceiling: string;
+	    granted: boolean;
+	    granted_at?: string;
+	    looser_than_default: boolean;
+	    needs_grant: boolean;
+	    proposal?: string;
+	    clamped: string[];
+	    ignored: string[];
+	    skipped_confirms_24h: number;
+	    skipped_blocks_24h: number;
+	    locked: string[];
+	    projects: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new GuardView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspace = source["workspace"];
+	        this.root = source["root"];
+	        this.mode = source["mode"];
+	        this.label = source["label"];
+	        this.base = source["base"];
+	        this.requested = source["requested"];
+	        this.mode_source = source["mode_source"];
+	        this.categories = this.convertValues(source["categories"], GuardCategory);
+	        this.overrides = this.convertValues(source["overrides"], GuardOverride);
+	        this.ceiling = source["ceiling"];
+	        this.granted = source["granted"];
+	        this.granted_at = source["granted_at"];
+	        this.looser_than_default = source["looser_than_default"];
+	        this.needs_grant = source["needs_grant"];
+	        this.proposal = source["proposal"];
+	        this.clamped = source["clamped"];
+	        this.ignored = source["ignored"];
+	        this.skipped_confirms_24h = source["skipped_confirms_24h"];
+	        this.skipped_blocks_24h = source["skipped_blocks_24h"];
+	        this.locked = source["locked"];
+	        this.projects = source["projects"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 
