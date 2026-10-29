@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 error",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "error",
+      "rule": "version-decreased",
+      "message": "version went down (1.2.0 -> 1.1.0)"
+    }
+  ]
+}

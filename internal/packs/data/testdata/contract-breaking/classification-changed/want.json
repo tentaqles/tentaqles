@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 contract, no breaking change",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 66,
+      "level": "warn",
+      "rule": "classification-changed",
+      "message": "property orders.customer.customer_ref classification changed from (none) to internal: privacy review and data/contract-pii"
+    }
+  ]
+}

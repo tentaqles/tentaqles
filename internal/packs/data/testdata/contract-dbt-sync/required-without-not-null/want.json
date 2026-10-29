@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contract object mapped to dbt, 1 mismatch",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 20,
+      "level": "error",
+      "rule": "dbt-not-null-missing",
+      "message": "property amount is required but dbt model fct_orders has no not_null test or constraint on it"
+    }
+  ]
+}

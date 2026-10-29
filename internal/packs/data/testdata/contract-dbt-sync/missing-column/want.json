@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contract object mapped to dbt, 1 mismatch",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 21,
+      "level": "error",
+      "rule": "dbt-column-missing",
+      "message": "property ordered_at has no column in dbt model fct_orders (models/marts/orders.yml)"
+    }
+  ]
+}
