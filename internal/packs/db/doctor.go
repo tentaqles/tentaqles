@@ -10,7 +10,7 @@ package db
 //   db-supabase-ref-undeclared            the linked Supabase project is in
 //                                         no environment's match.project_refs
 //   db-test-db-unset                      test_db's variable is not set
-//   db-test-db-invalid                    its connection string does not parse
+//   db-test-db-invalid                    the block is invalid, or its connection string does not parse
 //   db-test-db-not-local                  it points at a non-local host
 //   db-test-db-down                       the local test database does not answer
 //   db-drill-invalid, db-drill-log-unreadable, db-drill-stale
@@ -101,6 +101,14 @@ func (d *probe) supabaseRef(in *packs.Input) {
 // testDB: packs.db.test_db is set, local, and answers (§12).
 func (d *probe) testDB(in *packs.Input) {
 	s := in.Settings()
+	if n := s.Node("test_db"); n != nil {
+		// pgtap.Settings is nil for an invalid block too: say which it is
+		if err := pgtap.ValidateTestDB(*n); err != nil {
+			d.add("error", "db-test-db-invalid", "packs.db.test_db is invalid ("+err.Error()+"): db/pgtap has no test database",
+				"fix packs.db.test_db in the manifest: {url_env, start, hosts, dotenv}")
+			return
+		}
+	}
 	cfg := pgtap.Settings(s)
 	if cfg == nil || cfg.URLEnv == "" {
 		switch {
