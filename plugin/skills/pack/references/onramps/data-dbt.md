@@ -28,8 +28,9 @@ The dbt gates of the data pack: `data/dbt-new-model-tests`, `data/dbt-contract-e
 - Acceptance checks name the dbt tests that prove each one: a dbt unit test (`unit_tests:` in
   the model's YAML, with `is_incremental` overridden for an incremental model), a generic data
   test, or a singular test under the project's test path.
-- An incremental model's acceptance checks name its `unique_key` (or `incremental_strategy:
-  append`) and its lookback for late rows.
+- An incremental model's acceptance checks name its `unique_key` (or a strategy that needs
+  none: `append`, `microbatch`, or `insert_overwrite` with `partition_by`) and its lookback for
+  late rows.
 - Changed files under the dbt model paths raise the `pipeline` flag. The crew comes from
   `tq pack crew --flags <triage flags>`; never hard-code it.
 
@@ -76,7 +77,7 @@ The dbt gates of the data pack: `data/dbt-new-model-tests`, `data/dbt-contract-e
 |---|---|
 | `pack:data/dbt-new-model-tests` | the implementer: add the YAML entry, the description, and the key tests on the primary key |
 | `pack:data/dbt-contract-enforced` | the implementer: enforce the contract and give every column a `data_type` |
-| `pack:data/dbt-incremental` | the implementer: set `unique_key` or `incremental_strategy: append`; a lookback warning is for the reviewer |
+| `pack:data/dbt-incremental` | the implementer: set `unique_key`, or a strategy that needs none (`append`, `microbatch`, `insert_overwrite` with `partition_by`); a lookback warning is for the reviewer |
 | `pack:data/sql-select-star`, `pack:data/sql-hardcoded-relation` | the implementer: list the columns and use `ref()`/`source()`. A `-- tq:allow <rule>: <reason>` comment is the reviewer's call, never a way to pass |
 | `pack:data/dbt-parse` | the implementer, from the redacted tail. A declared-missing `dbt` means install it, or the human removes it from `tools` |
 | `pack:data/dbt-build-modified` | opt-in (`dbt.build: dev`). A missing `dbt.state` manifest is the human's export |

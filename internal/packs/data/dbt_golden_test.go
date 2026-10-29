@@ -62,6 +62,13 @@ var goldenWant = map[string]string{
 	"dbt-incremental/yaml-config":        "ok",
 	"dbt-incremental/folder-incremental": "fail incremental-no-unique-key@models/events/fct_clicks.sql:1",
 	"dbt-incremental/table-model":        "ok",
+	// review r0 Minor 4: any unique_key value; idempotent strategies
+	"dbt-incremental/var-unique-key":                 "ok",
+	"dbt-incremental/set-unique-key":                 "ok",
+	"dbt-incremental/unique-key-none":                "fail incremental-no-unique-key@models/marts/fct_events.sql:1",
+	"dbt-incremental/microbatch":                     "ok",
+	"dbt-incremental/insert-overwrite-partitioned":   "ok",
+	"dbt-incremental/insert-overwrite-unpartitioned": "fail incremental-no-unique-key@models/marts/fct_events.sql:1",
 
 	"sql-select-star/mart-star":        "fail select-star@models/marts/fct_orders.sql:1",
 	"sql-select-star/staging-source":   "ok",
@@ -75,6 +82,12 @@ var goldenWant = map[string]string{
 	"sql-hardcoded-relation/three-part":   "fail hardcoded-relation@models/marts/fct_orders.sql:2",
 	"sql-hardcoded-relation/ref-and-ctes": "ok",
 	"sql-hardcoded-relation/suppressed":   "ok",
+	// review r0 Minor 3: subqueries at any depth, Jinja-prefixed literals
+	"sql-hardcoded-relation/where-subquery":   "fail hardcoded-relation@models/marts/fct_orders.sql:4",
+	"sql-hardcoded-relation/exists-subquery":  "fail hardcoded-relation@models/marts/fct_orders.sql:3",
+	"sql-hardcoded-relation/jinja-prefix":     "fail hardcoded-relation@models/marts/fct_orders.sql:2",
+	"sql-hardcoded-relation/jinja-var-prefix": "fail hardcoded-relation@models/marts/fct_orders.sql:3",
+	"sql-hardcoded-relation/function-from":    "ok",
 }
 
 type goldenResult struct {

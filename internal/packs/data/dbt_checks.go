@@ -479,13 +479,13 @@ func runIncremental(ctx context.Context, in *packs.Input) packs.Result {
 		}
 		n++
 		name := modelName(t.file)
-		if !cfg.UniqueKey && cfg.Strategy != "append" {
+		if !cfg.UniqueKey && !idempotentStrategy(cfg) {
 			line := sqlConfig(src, py).Line
 			if line == 0 {
 				line = 1
 			}
 			fs = append(fs, packs.Finding{File: t.file, Line: line, Level: packs.LevelError, Rule: "incremental-no-unique-key",
-				Message: fmt.Sprintf("incremental model %s has no unique_key and no incremental_strategy: append; a rerun duplicates rows", name)})
+				Message: fmt.Sprintf("incremental model %s has no unique_key and no strategy that needs none (append, microbatch, insert_overwrite with partition_by); a rerun duplicates rows", name)})
 		}
 		if !py {
 			for _, l := range maxWithoutLookback(src) {
@@ -496,6 +496,20 @@ func runIncremental(ctx context.Context, in *packs.Input) packs.Result {
 	}
 	fs = newSuppressor(in, idIncremental).filter(fs)
 	return packs.Result{Status: packs.OK, Detail: plural(n, "incremental model"), Findings: fs}
+}
+
+// idempotentStrategy reports an incremental strategy that needs no
+// unique_key: append (the spec's exemption: duplicates are accepted on
+// purpose), microbatch (dbt >= 1.9 replaces each event_time batch) and
+// insert_overwrite with partition_by (each partition is replaced).
+func idempotentStrategy(c modelConfig) bool {
+	switch c.Strategy {
+	case "append", "microbatch":
+		return true
+	case "insert_overwrite":
+		return c.PartitionBy
+	}
+	return false
 }
 
 // maxWithoutLookback returns the lines of max( inside an is_incremental()

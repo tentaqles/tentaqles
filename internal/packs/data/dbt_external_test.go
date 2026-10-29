@@ -355,3 +355,39 @@ func TestFakeCLIsOnPath(t *testing.T) {
 		t.Errorf("dbt 1.7: %+v", r)
 	}
 }
+
+// TestFakeCLIsTimeout runs a hung dbt and sqlfluff through the real runner
+// (review r0 Minor 7): the per-tool timeout kills them and both checks fail
+// as timed out, well before the fake's 30 s sleep ends.
+func TestFakeCLIsTimeout(t *testing.T) {
+	isolate(t)
+	root := t.TempDir()
+	writeFile(t, root, "dbt_project.yml", "name: acme\nprofile: acme\n")
+	writeFile(t, root, ".sqlfluff", "[sqlfluff]\ndialect = postgres\n")
+	writeFile(t, root, "models/staging/stg_orders.sql", "select id as order_id from {{ ref('raw_orders') }}\n")
+	bin := t.TempDir()
+	fakeBin(t, bin, "dbt")
+	fakeBin(t, bin, "sqlfluff")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TQ_FAKE_TOOL", "sleep")
+	t.Setenv("TQ_FAKE_VERSION", "1.8.7")
+	cfg := packs.Merge(packsOf(t, "data: {tools: [dbt, sqlfluff], timeouts: {dbt: 1s, sqlfluff: 1s}}"), nil)
+	in := &packs.Input{Root: root, Base: "HEAD", Config: cfg, Tools: packs.NewToolRunner(root, cfg), Budget: time.Now().Add(time.Minute),
+		Changed: []packs.ChangedFile{{Path: "models/staging/stg_orders.sql", Status: 'A'}}}
+	in.SetWorkspace("acme", root)
+	start := time.Now()
+	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"data"}})
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("the hung tools were not killed: %v", d)
+	}
+	got := map[string]packs.Result{}
+	for _, r := range rep.Results {
+		got[r.ID] = r
+	}
+	for _, id := range []string{idDBTParse, idSQLFluff} {
+		r := got[id]
+		if r.Status != packs.Fail || !strings.Contains(r.Detail, "timed out") || r.Tool == nil || !r.Tool.TimedOut {
+			t.Errorf("%s: %+v (tool %+v)", id, r, r.Tool)
+		}
+	}
+}

@@ -194,6 +194,7 @@ type modelConfig struct {
 	Materialized string
 	UniqueKey    bool
 	Strategy     string
+	PartitionBy  bool
 	Enforced     *bool
 	Line         int // where it was set, for findings (0: unknown)
 }
@@ -208,6 +209,9 @@ func (c modelConfig) over(o modelConfig) modelConfig {
 	}
 	if o.Strategy != "" {
 		c.Strategy = o.Strategy
+	}
+	if o.PartitionBy {
+		c.PartitionBy = true
 	}
 	if o.Enforced != nil {
 		c.Enforced = o.Enforced
@@ -372,9 +376,9 @@ func yamlConfig(n *yaml.Node) modelConfig {
 			c.Materialized = strings.ToLower(scan.Scalar(kv.Value))
 			c.Line = kv.Line
 		case "unique_key":
-			if kv.Value != nil && (scan.Scalar(kv.Value) != "" || len(kv.Value.Content) > 0) {
-				c.UniqueKey = true
-			}
+			c.UniqueKey = c.UniqueKey || yamlSet(kv.Value)
+		case "partition_by":
+			c.PartitionBy = c.PartitionBy || yamlSet(kv.Value)
 		case "incremental_strategy":
 			c.Strategy = strings.ToLower(scan.Scalar(kv.Value))
 		case "contract":
@@ -387,6 +391,27 @@ func yamlConfig(n *yaml.Node) modelConfig {
 		}
 	}
 	return c
+}
+
+// nullValue is a Jinja/Python/YAML null or an empty literal.
+func nullValue(v string) bool {
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(v), `'"`)) {
+	case "", "none", "null", "~", "[]":
+		return true
+	}
+	return false
+}
+
+// yamlSet reports a YAML config value that is set: a non-null scalar, or a
+// non-empty list or mapping.
+func yamlSet(n *yaml.Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind == yaml.ScalarNode {
+		return !nullValue(n.Value) || n.Style&(yaml.SingleQuotedStyle|yaml.DoubleQuotedStyle) != 0 && n.Value != ""
+	}
+	return len(n.Content) > 0
 }
 
 // folderConfig is the dbt_project.yml models: config that applies to a
@@ -431,7 +456,8 @@ func configKeys(n *yaml.Node) *yaml.Node {
 var (
 	reConfigCall  = regexp.MustCompile(`(?s)\bconfig\s*\(`)
 	reMaterial    = regexp.MustCompile(`\bmaterialized\s*=\s*['"]([A-Za-z_]+)['"]`)
-	reUniqueKey   = regexp.MustCompile(`\bunique_key\s*=\s*[\['"(]`)
+	reUniqueKey   = regexp.MustCompile(`\bunique_key\s*=\s*([^\s,)]+)`)
+	rePartitionBy = regexp.MustCompile(`\bpartition_by\s*=\s*([^\s,)]+)`)
 	reStrategy    = regexp.MustCompile(`\bincremental_strategy\s*=\s*['"]([A-Za-z_+]+)['"]`)
 	reContractOn  = regexp.MustCompile(`(?s)\bcontract\s*=\s*(?:\{[^}]*['"]?enforced['"]?\s*:\s*(?i:true)|dict\s*\([^)]*enforced\s*=\s*(?i:true))`)
 	reContractOff = regexp.MustCompile(`(?s)\bcontract\s*=\s*(?:\{[^}]*['"]?enforced['"]?\s*:\s*(?i:false)|dict\s*\([^)]*enforced\s*=\s*(?i:false))`)
@@ -469,8 +495,13 @@ func sqlConfig(src []byte, python bool) modelConfig {
 			c.Materialized = strings.ToLower(m[1])
 			c.Line = b.line
 		}
-		if reUniqueKey.MatchString(b.text) {
+		// any value counts (a literal, a list, var('k'), a {% set %} name);
+		// only an explicit none is no key
+		if m := reUniqueKey.FindStringSubmatch(b.text); m != nil && !nullValue(m[1]) {
 			c.UniqueKey = true
+		}
+		if m := rePartitionBy.FindStringSubmatch(b.text); m != nil && !nullValue(m[1]) {
+			c.PartitionBy = true
 		}
 		if m := reStrategy.FindStringSubmatch(b.text); m != nil {
 			c.Strategy = strings.ToLower(m[1])

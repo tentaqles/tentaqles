@@ -102,6 +102,16 @@ def test_contract_matches_the_model():
     assert not re.search(r"classification: (pii|sensitive|restricted)", contract)
 
 
+def test_contract_types_match_the_model_exactly():
+    # data/contract-dbt-sync compares physicalType with data_type, so the two
+    # spell every type the same way (numeric(12,2), not numeric(12, 2))
+    contract = read("contracts/fct_orders.odcs.yaml")
+    physical = dict(re.findall(r"^      - name: (\w+)\n(?:(?!      - name:).*\n)*?\s+physicalType: ([^\n]+)$", contract, re.M))
+    marts = read("models/marts/_marts.yml")
+    dbt_types = dict(re.findall(r"- name: (\w+)\n(?:\s+description:[^\n]*\n)?\s+data_type: ([^\n]+)", marts))
+    assert physical and physical == dbt_types, (physical, dbt_types)
+
+
 def test_pack_config():
     cfg = read("tq-packs.yaml")
     assert 'contract_paths: ["models/marts/**"]' in cfg

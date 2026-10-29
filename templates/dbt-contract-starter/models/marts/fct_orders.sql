@@ -12,7 +12,7 @@ select
     o.customer_id,
     o.order_date,
     o.status,
-    cast(o.amount as numeric(12, 2)) as amount,
+    cast(o.amount as numeric(12,2)) as amount,
     o.updated_at
 from {{ ref('stg_orders') }} as o
 inner join {{ ref('stg_customers') }} as c

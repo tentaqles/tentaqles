@@ -81,7 +81,7 @@ It looks at changed incremental models, and the models of changed YAML files.
 
 | Finding | Level |
 |---|---|
-| `incremental-no-unique-key`: no `unique_key` and no `incremental_strategy: append` | error |
+| `incremental-no-unique-key`: no `unique_key` and no strategy that needs none: `append`, `microbatch`, or `insert_overwrite` with `partition_by`. Any `unique_key` value counts (a literal, a list, `var('k')`, a `{% set %}` name); only `none` is no key | error |
 | `incremental-no-lookback`: a `{% if is_incremental() %}` block compares to `max(...)` with no lookback. Any of `interval`, `dateadd`, `date_add`, `timestamp_sub`, `date_sub`, `datetime_sub`, `timestampadd`, `datediff` in the block counts as one. | warn (late rows) |
 
 ### `data/sql-select-star` (built-in)
@@ -90,7 +90,7 @@ It looks at changed incremental models, and the models of changed YAML files.
 
 ### `data/sql-hardcoded-relation` (built-in)
 
-A `FROM` or `JOIN` target written as a literal `schema.table` or `db.schema.table` in a changed `.sql` model is an error. Use `ref()` or `source()`. CTE names, subqueries and table functions are not relations.
+A `FROM` or `JOIN` target written as a literal `schema.table` or `db.schema.table` in a changed `.sql` model is an error. Use `ref()` or `source()`. Targets are read at any depth: CTE bodies, derived tables, and `IN (...)`/`EXISTS (...)` subqueries. A Jinja expression followed by `.name` (`{{ target.schema }}.orders`, `{{ var('db') }}.raw.orders`) is a literal too; only `ref()`, `source()` and `this` resolve through the DAG. CTE names, aliases, table functions and the `FROM` inside `EXTRACT(... FROM ...)` or `SUBSTRING(... FROM ...)` are not relations.
 
 ### `data/dbt-parse` (external `dbt`, timeout 180 s)
 
@@ -124,16 +124,23 @@ A comment `tq:allow <rule>: <reason>` on the finding's line, or the line above i
 
 ## Guards
 
-Both guards are active while the data pack is enabled. They read Bash and PowerShell commands: segments split on `;`, `&&`, `|` and newlines, wrappers such as `uv run`, `poetry run` and `python -m dbt`, a full path to `dbt.exe`, and command strings passed to `bash -c`, `pwsh -Command` or `cmd /c`. Text that only mentions dbt (`echo`, `git commit -m`) is not a call.
+Both guards are active while the data pack is enabled. They read Bash and PowerShell commands, split into segments on `;`, `&`, `&&`, `|`, newlines, parentheses and braces.
+
+- **What is a dbt call:** a segment is a dbt call when any word in it runs `dbt` (a bare `dbt`, a path to `dbt` or `dbt.exe`, or `dbt.cli.main` after `python -m`). So `timeout 600 dbt run`, `uv run dbt`, `cmd /c dbt run`, `pwsh -c dbt run`, `nice`/`xargs`/`then`/`!` before dbt, `docker compose run dbt dbt run` and `Start-Process dbt -ArgumentList '...'` are all calls. The exception is a segment whose command only prints or searches text (`echo`, `printf`, `Write-Host`, `Write-Output`, `git`, `gh`, `grep`, `rg`, `Select-String`, `cat`, `ls` and similar), so `echo "dbt run --target prod"` is not a call.
+- **Nested command lines:** a quoted string with spaces that mentions dbt (`bash -c "..."`, `pwsh -Command '...'`, `ssh host "..."`) is read as a command line too. Variables set earlier in the outer command (`DBT_TARGET=prod bash -c 'dbt run'`, `export DBT_FULL_REFRESH=true; pwsh -Command 'dbt build'`) carry into it.
+- **The subcommand:** it is the first positional word that is a dbt subcommand. The values of the options that take one (`--log-level debug`, `--log-format`, `--select`, `--vars`, `--state`, `--threads` and the rest) are skipped. To fail closed, a call also counts as writing when any positional word is a writing subcommand.
 
 | Id | Matches | Action |
 |---|---|---|
-| `tq/dbt-prod-target` | `dbt build\|run\|seed\|snapshot\|run-operation\|test\|clone\|retry` whose target is in `dbt.prod_targets`. The target is `--target`/`-t`, or `DBT_TARGET` set in the same command. With neither, it is the default target of the profile in a `profiles.yml` inside the repo (`--profiles-dir`, else the dbt project dir, else the repo root). | deny |
-| `tq/dbt-full-refresh` | `--full-refresh`/`-f` (or `DBT_FULL_REFRESH=true`) on `dbt build\|run\|seed`, on any target | ask: "drops and rebuilds incremental tables" |
+| `tq/dbt-prod-target` | `dbt build\|run\|seed\|snapshot\|run-operation\|test\|clone\|retry` whose target is in `dbt.prod_targets`, or cannot be known. The target is `--target`/`-t`/`-t<value>`/`--target=<value>`, or `DBT_TARGET` set in the same command. With neither, it is the default target of the profile in a `profiles.yml` inside the repo (`--profiles-dir`, else the dbt project dir, else the repo root). | deny |
+| `tq/dbt-full-refresh` | `--full-refresh`/`-f` (or `DBT_FULL_REFRESH=1\|true\|yes` set in the command) on any subcommand that can rebuild a relation (`build`, `run`, `seed`, `clone`, ...; not `compile`, `ls`, `docs` and the other read-only ones), on any target | ask: "drops and rebuilds incremental tables" |
 
-- **Default target:** the guard reads only `profiles.yml` and `dbt_project.yml` (`profile:`), through the bounded `ReadLocal`, and never `~/.dbt`.
-  - A refused read fails closed (deny, "pass --target"). That covers a `--profiles-dir` outside the workspace or a `.env` path, a file over 1 MiB, or a blown budget.
-  - With no readable `profiles.yml` and no `--target`, the call is allowed, because the guard cannot see `~/.dbt`. Keep the default target of every profile on dev.
+- **Variables:** `$NAME`, `${NAME}`, `$env:NAME` and `%NAME%` in the target are replaced by a value set earlier in the same command (`T=prod; dbt run --target $T` is denied). A value the shell still computes when it runs (an unset variable, `$(...)`, a backtick) is denied with "pass a literal --target".
+- **Default target:** the guard reads only `profiles.yml` and `dbt_project.yml` (`profile:`), through the bounded `ReadLocal`, and only inside the repository. A `profiles.yml` outside the repo, `~/.dbt` included, is never read.
+  - A `--profiles-dir` or `--project-dir` outside the repository (an absolute path outside it, `~`, `$HOME`, `$env:USERPROFILE`, `%USERPROFILE%`, a config dir) on a writing call with no `--target` is denied ("outside the repository ... pass --target dev"). With an explicit `--target` the directory does not matter.
+  - A refused read fails closed too (deny, "pass --target"): a `.env` path, a file over 1 MiB, or a blown budget.
+  - With no `--profiles-dir`, no readable `profiles.yml` in the repo and no `--target`, the call is allowed, because dbt then uses `~/.dbt`, which the guard does not read. Keep the default target of every profile on dev.
+- **Not covered:** `dbt retry` replays the previous invocation, including a `--full-refresh` it had. The full-refresh guard cannot see that and does not ask; the prod-target guard still checks the retry's own target. A dbt call hidden behind a script file, an alias or a shell function is not seen either.
 - **Extra subcommands:** `clone` and `retry` go beyond the spec's list. `clone` creates relations in the target, and `retry` replays the last invocation.
 - **Hook layers:** `guard.disable` and `guard.actions` apply as for every guard. Each guard runs in well under the 50 ms budget on a 64 KiB command, with no process or network.
 - **Counters:** `dbt_prod_target:denied` and `dbt_full_refresh:asked` appear in `tq insights` under the data pack.
