@@ -1,0 +1,98 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": { "_generator": { "name": "bicep", "version": "0.30.0.0" } },
+  "parameters": {
+    "adminPassword": { "type": "securestring" },
+    "prefix": { "type": "string", "defaultValue": "acme" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "[format('{0}sa', parameters('prefix'))]",
+      "location": "westeurope",
+      "sku": { "name": "Standard_LRS" },
+      "kind": "StorageV2",
+      "tags": { "tq-allow": "IAC003: public static site" },
+      "properties": {
+        "allowBlobPublicAccess": true,
+        "minimumTlsVersion": "TLS1_2"
+      },
+      "resources": [
+        {
+          "type": "blobServices/containers",
+          "apiVersion": "2023-01-01",
+          "name": "default/assets",
+          "properties": { "publicAccess": "Blob" }
+        }
+      ]
+    },
+    {
+      "type": "Microsoft.Sql/servers",
+      "apiVersion": "2022-05-01-preview",
+      "name": "acme-sql",
+      "location": "westeurope",
+      "properties": {
+        "administratorLogin": "tester",
+        "administratorLoginPassword": "[parameters('adminPassword')]",
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.Sql/servers/firewallRules",
+      "apiVersion": "2022-05-01-preview",
+      "name": "[format('{0}/{1}', 'acme-sql', format('rule{0}', copyIndex()))]",
+      "copy": { "name": "rules", "count": 2 },
+      "properties": { "startIpAddress": "0.0.0.0", "endIpAddress": "255.255.255.255" }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "rbac",
+      "properties": {
+        "mode": "Complete",
+        "expressionEvaluationOptions": { "scope": "inner" },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "00000000-0000-0000-0000-000000000001",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]",
+                "principalId": "11111111-1111-1111-1111-111111111111"
+              }
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2022-09-01",
+              "name": "inner",
+              "properties": {
+                "mode": "Incremental",
+                "template": {
+                  "resources": [
+                    {
+                      "type": "Microsoft.KeyVault/vaults",
+                      "apiVersion": "2023-07-01",
+                      "name": "acme-kv",
+                      "properties": { "enablePurgeProtection": false, "tenantId": "22222222-2222-2222-2222-222222222222" }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "linked",
+      "properties": { "mode": "Incremental", "templateLink": { "uri": "https://example.com/acme.json" } }
+    }
+  ]
+}

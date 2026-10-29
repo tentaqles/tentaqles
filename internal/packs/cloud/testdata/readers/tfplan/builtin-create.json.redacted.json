@@ -1,0 +1,161 @@
+{
+  "applyable": true,
+  "complete": true,
+  "configuration": {
+    "provider_config": {
+      "terraform": {
+        "full_name": "terraform.io/builtin/terraform",
+        "name": "terraform"
+      }
+    },
+    "root_module": {
+      "outputs": {
+        "pw": {
+          "expression": {
+            "references": [
+              "var.db_password"
+            ]
+          },
+          "sensitive": true
+        }
+      },
+      "resources": [
+        {
+          "address": "terraform_data.acme",
+          "expressions": {
+            "input": {
+              "references": [
+                "var.db_password"
+              ]
+            }
+          },
+          "mode": "managed",
+          "name": "acme",
+          "provider_config_key": "terraform",
+          "schema_version": 0,
+          "type": "terraform_data"
+        }
+      ],
+      "variables": {
+        "db_password": {
+          "default": "[REDACTED:sensitive]",
+          "sensitive": true
+        }
+      }
+    }
+  },
+  "errored": false,
+  "format_version": "1.2",
+  "output_changes": {
+    "pw": {
+      "actions": [
+        "create"
+      ],
+      "after": "[REDACTED:sensitive]",
+      "after_sensitive": true,
+      "after_unknown": false,
+      "before": null,
+      "before_sensitive": true
+    }
+  },
+  "planned_values": {
+    "outputs": {
+      "pw": {
+        "sensitive": true,
+        "type": "string",
+        "value": "[REDACTED:sensitive]"
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "terraform_data.acme",
+          "mode": "managed",
+          "name": "acme",
+          "provider_name": "terraform.io/builtin/terraform",
+          "schema_version": 0,
+          "sensitive_values": {
+            "input": {
+              "password": true,
+              "tags": {}
+            },
+            "output": {}
+          },
+          "type": "terraform_data",
+          "values": {
+            "input": {
+              "name": "acme",
+              "password": "[REDACTED:sensitive]",
+              "tags": {
+                "tq-allow": "IAC001: test"
+              }
+            },
+            "triggers_replace": null
+          }
+        }
+      ]
+    }
+  },
+  "prior_state": {
+    "format_version": "1.0",
+    "terraform_version": "1.15.2",
+    "values": {
+      "outputs": {
+        "pw": {
+          "sensitive": true,
+          "type": "string",
+          "value": "[REDACTED:sensitive]"
+        }
+      },
+      "root_module": {}
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "terraform_data.acme",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "input": {
+            "name": "acme",
+            "password": "[REDACTED:sensitive]",
+            "tags": {
+              "tq-allow": "IAC001: test"
+            }
+          },
+          "triggers_replace": null
+        },
+        "after_sensitive": {
+          "input": {
+            "password": true,
+            "tags": {}
+          },
+          "output": {}
+        },
+        "after_unknown": {
+          "id": true,
+          "input": {
+            "tags": {}
+          },
+          "output": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "acme",
+      "provider_name": "terraform.io/builtin/terraform",
+      "type": "terraform_data"
+    }
+  ],
+  "terraform_version": "1.15.2",
+  "timestamp": "2026-10-29T00:23:45Z",
+  "variables": {
+    "db_password": {
+      "value": "[REDACTED:sensitive]"
+    }
+  }
+}
+

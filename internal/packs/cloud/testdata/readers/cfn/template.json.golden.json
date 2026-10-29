@@ -1,0 +1,44 @@
+[
+  {
+    "addr": "Policy",
+    "type": "AWS::IAM::ManagedPolicy",
+    "after": {
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "NotAction": "iam:*",
+            "Resource": "*"
+          }
+        ],
+        "Version": "2012-10-17"
+      }
+    },
+    "pos": {
+      "file": "cfn/template.json",
+      "line": 13,
+      "pointer": "/Resources/Policy"
+    },
+    "source": "cfn"
+  },
+  {
+    "addr": "Table",
+    "type": "AWS::DynamoDB::Table",
+    "after": {
+      "BillingMode": "PAY_PER_REQUEST",
+      "SSESpecification": {
+        "SSEEnabled": false
+      },
+      "TableName": "acme-orders"
+    },
+    "pos": {
+      "file": "cfn/template.json",
+      "line": 4,
+      "pointer": "/Resources/Table"
+    },
+    "source": "cfn",
+    "meta": {
+      "deletion_policy": "Retain"
+    }
+  }
+]

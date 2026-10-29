@@ -1,0 +1,36 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.15.2",
+  "resource_changes": [
+    {
+      "address": "aws_ecs_task_definition.app",
+      "mode": "managed",
+      "type": "aws_ecs_task_definition",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "family": "acme-app",
+          "container_definitions": "[{\"environment\":[{\"name\":\"DB_PASSWORD\",\"value\":\"tester-ecs-pw1\"},{\"name\":\"MODE\",\"value\":\"prod\"}],\"image\":\"acme/app:1\",\"name\":\"app\"}]"
+        },
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "helm_release.acme",
+      "mode": "managed",
+      "type": "helm_release",
+      "name": "acme",
+      "provider_name": "registry.terraform.io/hashicorp/helm",
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "acme", "values": ["db:\n  host: db.acme.internal\n  password: tester-hp1\n"] },
+        "after": { "name": "acme", "values": ["db:\n  host: db.acme.internal\n  password: tester-hp2\n"] },
+        "after_sensitive": {},
+        "before_sensitive": {}
+      }
+    }
+  ]
+}

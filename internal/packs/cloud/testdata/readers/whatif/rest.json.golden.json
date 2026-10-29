@@ -1,0 +1,28 @@
+[
+  {
+    "addr": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/acme-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/acme-identity",
+    "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+    "actions": [
+      "create"
+    ],
+    "after": {
+      "apiVersion": "2018-11-30",
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/acme-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/acme-identity",
+      "location": "westus2",
+      "name": "acme-identity",
+      "tags": {
+        "owner": "tester"
+      },
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities"
+    },
+    "pos": {
+      "file": "whatif/rest.json",
+      "line": 4,
+      "pointer": "/properties/changes/0"
+    },
+    "source": "whatif",
+    "meta": {
+      "raw_action": "Create"
+    }
+  }
+]

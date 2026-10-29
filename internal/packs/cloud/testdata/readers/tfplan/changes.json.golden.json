@@ -1,0 +1,239 @@
+[
+  {
+    "addr": "aws_db_instance.main",
+    "type": "aws_db_instance",
+    "actions": [
+      "replace"
+    ],
+    "after": {
+      "deletion_protection": false,
+      "identifier": "acme-main",
+      "password": "[REDACTED:sensitive]",
+      "port": 5432,
+      "tags": {
+        "tq-allow": "IAC001: rebuilt on purpose"
+      }
+    },
+    "before": {
+      "deletion_protection": true,
+      "identifier": "acme-main",
+      "password": "[REDACTED:sensitive]",
+      "port": 5432
+    },
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 40,
+      "pointer": "/resource_changes/0"
+    },
+    "source": "tfplan",
+    "meta": {
+      "action_reason": "replace_because_cannot_update",
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "delete,create"
+    }
+  },
+  {
+    "addr": "aws_s3_bucket.old",
+    "type": "aws_s3_bucket",
+    "actions": [
+      "delete"
+    ],
+    "before": {
+      "bucket": "acme-old"
+    },
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 57,
+      "pointer": "/resource_changes/1"
+    },
+    "source": "tfplan",
+    "meta": {
+      "action_reason": "delete_because_no_resource_config",
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "delete"
+    }
+  },
+  {
+    "addr": "module.net.aws_security_group.web",
+    "type": "aws_security_group",
+    "actions": [
+      "update"
+    ],
+    "after": {
+      "api_token": "[REDACTED:secret_key]",
+      "ingress": [
+        {
+          "cidr_blocks": [
+            "0.0.0.0/0"
+          ],
+          "from_port": 22,
+          "protocol": "tcp",
+          "to_port": 22
+        }
+      ],
+      "name": "web"
+    },
+    "before": {
+      "ingress": [],
+      "name": "web"
+    },
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 73,
+      "pointer": "/resource_changes/2"
+    },
+    "source": "tfplan",
+    "meta": {
+      "mode": "managed",
+      "module": "module.net",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "update"
+    }
+  },
+  {
+    "addr": "aws_iam_role.app",
+    "type": "aws_iam_role",
+    "actions": [
+      "no-op"
+    ],
+    "after": {
+      "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+      "name": "acme-app"
+    },
+    "before": {
+      "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+      "name": "acme-app"
+    },
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 93,
+      "pointer": "/resource_changes/3"
+    },
+    "source": "tfplan",
+    "meta": {
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "no-op"
+    }
+  },
+  {
+    "addr": "aws_instance.legacy",
+    "type": "aws_instance",
+    "actions": [
+      "delete"
+    ],
+    "before": {
+      "ami": "ami-00000000"
+    },
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 108,
+      "pointer": "/resource_changes/4"
+    },
+    "source": "tfplan",
+    "meta": {
+      "deposed": "00000000",
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "delete"
+    }
+  },
+  {
+    "addr": "aws_kms_key.whole",
+    "type": "aws_kms_key",
+    "actions": [
+      "create"
+    ],
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 124,
+      "pointer": "/resource_changes/5"
+    },
+    "source": "tfplan",
+    "meta": {
+      "after_redacted": "true",
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "create"
+    }
+  },
+  {
+    "addr": "data.aws_iam_policy_document.read",
+    "type": "aws_iam_policy_document",
+    "actions": [
+      "read"
+    ],
+    "after": {
+      "statement": [
+        {
+          "actions": [
+            "s3:GetObject"
+          ],
+          "resources": [
+            "*"
+          ]
+        }
+      ]
+    },
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 139,
+      "pointer": "/resource_changes/6"
+    },
+    "source": "tfplan",
+    "meta": {
+      "action_reason": "read_because_dependency_pending",
+      "mode": "data",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "read"
+    }
+  },
+  {
+    "addr": "aws_s3_bucket.adopted",
+    "type": "aws_s3_bucket",
+    "actions": [
+      "no-op",
+      "import"
+    ],
+    "after": {
+      "bucket": "acme-adopted"
+    },
+    "before": {
+      "bucket": "acme-adopted"
+    },
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 155,
+      "pointer": "/resource_changes/7"
+    },
+    "source": "tfplan",
+    "meta": {
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "no-op"
+    }
+  },
+  {
+    "addr": "aws_s3_bucket.forgotten",
+    "type": "aws_s3_bucket",
+    "actions": [
+      "forget"
+    ],
+    "before": {
+      "bucket": "acme-forgotten"
+    },
+    "pos": {
+      "file": "tfplan/changes.json",
+      "line": 171,
+      "pointer": "/resource_changes/8"
+    },
+    "source": "tfplan",
+    "meta": {
+      "mode": "managed",
+      "provider": "registry.terraform.io/hashicorp/aws",
+      "raw_action": "forget"
+    }
+  }
+]
