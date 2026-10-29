@@ -78,7 +78,8 @@ func TestUnattendedKeepsBypassTrustAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"workspace", "effective", "tq/guard-change", "tq/iac-apply", "read-only"} {
+	for _, want := range []string{"workspace", "effective", "tq/guard-change", "tq/iac-apply", "read-only",
+		"always enforced", "identity: ", "tq/cross-client-mcp", "secret: ", "tq/env-file-read", "self-protection: ", "skips every other ask and deny"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status missing %q:\n%s", want, out)
 		}
@@ -94,13 +95,13 @@ func TestUnattendedLog(t *testing.T) {
 	now := time.Now().UTC()
 	guardlog.Append(guardlog.Record{Time: now.Add(-2 * time.Minute), WS: "acme", Scope: "workspace", Mode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "older"}, nil)
 	guardlog.Append(guardlog.Record{Time: now.Add(-1 * time.Minute), WS: "other", Scope: "workspace", Mode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "elsewhere"}, nil)
-	guardlog.Append(guardlog.Record{Time: now, WS: "acme", Scope: "demo-todo", Mode: "bypassPermissions", Rules: []string{"tq/a", "tq/b"}, Tool: "Bash", Command: "newer"}, nil)
+	guardlog.Append(guardlog.Record{Time: now, WS: "acme", Scope: "demo-todo", Mode: "bypassPermissions", Action: "deny", Rules: []string{"tq/a", "tq/b"}, Tool: "Bash", Command: "newer"}, nil)
 	out, err := runUnattendedCmd(t, "log", "--ws", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[0], "newer") || !strings.Contains(lines[0], "tq/a,tq/b") || !strings.Contains(lines[1], "older") {
+	if len(lines) != 2 || !strings.Contains(lines[0], "newer") || !strings.Contains(lines[0], " deny  tq/a,tq/b") || !strings.Contains(lines[1], "older") || !strings.Contains(lines[1], " ask  tq/force-push") {
 		t.Fatalf("log = %q", out)
 	}
 }

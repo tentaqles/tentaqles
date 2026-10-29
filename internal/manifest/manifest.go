@@ -191,6 +191,11 @@ func Load(path string) (*Manifest, error) {
 	if err := m.Guard.Unattended.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: guard.unattended: %w", path, err)
 	}
+	for _, r := range m.Guard.Rules {
+		if r.Unattended != "" && r.Unattended != policy.UnattendedEnforce {
+			return nil, fmt.Errorf("%s: guard.rules[%s].unattended must be %q or absent, got %q", path, r.ID, policy.UnattendedEnforce, r.Unattended)
+		}
+	}
 	if err := m.validateCloud(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}

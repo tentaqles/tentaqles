@@ -70,3 +70,18 @@ func TestUnattendedRejectsBadValues(t *testing.T) {
 		}
 	}
 }
+
+func TestGuardRuleUnattendedField(t *testing.T) {
+	ok := "guard:\n  rules:\n    - id: acme/no-bar\n      action: deny\n      command: 'bar'\n      reason: no bar\n      unattended: enforce\n"
+	m, err := loadBody(t, ok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Guard.Rules[0].Unattended; got != "enforce" {
+		t.Fatalf("unattended = %q", got)
+	}
+	bad := strings.Replace(ok, "unattended: enforce", "unattended: sometimes", 1)
+	if _, err := loadBody(t, bad); err == nil || !strings.Contains(err.Error(), "guard.rules[acme/no-bar].unattended") {
+		t.Fatalf("want a guard.rules unattended error, got %v", err)
+	}
+}

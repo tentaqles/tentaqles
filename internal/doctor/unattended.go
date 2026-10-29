@@ -16,7 +16,7 @@ func unattendedChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix s
 	}
 	effective := trust.IsBypassAllowed(w.Hash)
 	if !effective {
-		add("warn", "unattended-not-effective", w.Name, "guard.unattended is configured but bypass is not trusted: confirms are still asked", "tq allow --bypass "+w.Name)
+		add("warn", "unattended-not-effective", w.Name, "guard.unattended is configured but bypass is not trusted: every rule still applies", "tq allow --bypass "+w.Name)
 	}
 	g, _ := guardcfg.Load()
 	if bad := guardcfg.UnknownKeepAsking(w.Manifest, g); len(bad) > 0 {

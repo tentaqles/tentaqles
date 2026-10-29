@@ -23,13 +23,24 @@ import (
 func newUnattendedCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "unattended",
-		Short: "Skip tq's confirms in bypass/auto sessions of chosen workspaces or projects",
-		Long: `Unattended mode lets tq's "ask" rules pass without a prompt when a Claude Code
+		Short: "Skip tq's confirms and blocks in bypass/auto sessions of chosen workspaces or projects",
+		Long: `Unattended mode skips tq's rules, asks and denies alike, when a Claude Code
 session runs in bypassPermissions or auto mode inside a workspace (or project
-folder) you listed. Deny rules are never skipped there, and neither are the rules in
-guard.unattended.keep_asking (default: tq/iac-apply, tq/remote-migration) or
-tq/guard-change. It only takes effect once bypass trust is granted:
-tq allow --bypass NAME.
+folder) you listed. Three groups are always enforced there:
+
+  identity         acting under the wrong client identity: the identity guard
+                   (git/gh identity drift, wrong cloud CLI, blocked_commands,
+                   trust) and tq/cross-client-mcp;
+  secret           .env files, environment dumps, credential stores, secrets
+                   in commits (tq/env-*, tq/secret-store-*, tq/commit-secret);
+  self-protection  the guard, its trust and the session's settings and hooks
+                   (tq/guard-change covers tq guard, tq allow, tq deny and
+                   tq unattended on|off; tq/guard-file-write, tq/settings-*).
+
+So are the rules in guard.unattended.keep_asking (default: tq/iac-apply,
+tq/remote-migration) and manifest rules that set unattended: enforce. Every
+other ask and deny is skipped and logged. It only takes effect once bypass
+trust is granted: tq allow --bypass NAME.
 
   tq unattended on  [--ws NAME] [--project PATH] [--codex-sandbox MODE]
   tq unattended off [--ws NAME] [--project PATH]
@@ -67,7 +78,7 @@ agent cannot switch the mode by itself.`,
 		},
 	}
 	logc := &cobra.Command{
-		Use: "log", Short: "List the confirms unattended mode skipped", Args: cobra.NoArgs,
+		Use: "log", Short: "List the confirms and blocks unattended mode skipped", Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			w, err := guardTarget(ws, false)
 			if err != nil {
@@ -78,8 +89,12 @@ agent cannot switch the mode by itself.`,
 				return fmt.Errorf("--since must be a positive duration such as 24h, got %q", since)
 			}
 			for _, r := range guardlog.ReadAll(w.Name, time.Now().Add(-d)) {
-				fmt.Fprintf(c.OutOrStdout(), "%s  %s  %s  %s  %s  %s\n",
-					r.Time.Format(time.RFC3339), r.Scope, r.Mode, strings.Join(r.Rules, ","), r.Tool, r.Command)
+				action := "ask"
+				if r.IsBlock() {
+					action = "deny"
+				}
+				fmt.Fprintf(c.OutOrStdout(), "%s  %s  %s  %s  %s  %s  %s\n",
+					r.Time.Format(time.RFC3339), r.Scope, r.Mode, action, strings.Join(r.Rules, ","), r.Tool, r.Command)
 			}
 			return nil
 		},
@@ -279,14 +294,18 @@ func unattendedStatus(c *cobra.Command, w *resolve.Workspace) error {
 		fmt.Fprintln(out, "scope: off")
 	}
 	fmt.Fprintln(out, "applies in: bypassPermissions, auto sessions")
-	fmt.Fprintf(out, "always asks: %s\n", strings.Join(guardcfg.AlwaysAsk, ", "))
+	fmt.Fprintln(out, "skips every other ask and deny; always enforced:")
+	enforced := guardcfg.AlwaysEnforced()
+	fmt.Fprintf(out, "  identity: the identity guard (git/gh drift, wrong cloud, blocked_commands, trust), %s\n", strings.Join(enforced[guardcfg.GroupIdentity], ", "))
+	fmt.Fprintf(out, "  secret: %s\n", strings.Join(enforced[guardcfg.GroupSecret], ", "))
+	fmt.Fprintf(out, "  self-protection: %s\n", strings.Join(enforced[guardcfg.GroupSelfProtection], ", "))
+	fmt.Fprintln(out, "  manifest rules with unattended: enforce")
 	fmt.Fprintf(out, "keeps asking: %s\n", strings.Join(u.KeepAskingIDs(), ", "))
 	g, _ := guardcfg.Load()
 	for _, id := range guardcfg.UnknownKeepAsking(w.Manifest, g) {
 		fmt.Fprintf(out, "warning: unknown rule id %s\n", id)
 	}
 	fmt.Fprintf(out, "codex sandbox: %s\n", u.Sandbox())
-	n := len(guardlog.Read(w.Name, time.Now().Add(-24*time.Hour), 1<<20))
-	fmt.Fprintf(out, "skipped in 24h: %d\n", n)
+	fmt.Fprintf(out, "skipped in 24h: %s\n", skippedCounts(w.Name, time.Now()))
 	return nil
 }

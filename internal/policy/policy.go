@@ -27,6 +27,13 @@ const (
 	Deny  Action = "deny"
 )
 
+// UnattendedEnforce is the Rule.Unattended value that keeps a rule enforced
+// in unattended sessions.
+const UnattendedEnforce = "enforce"
+
+// StricterThan reports whether a is a stricter verdict than b.
+func (a Action) StricterThan(b Action) bool { return a.rank() > b.rank() }
+
 func (a Action) rank() int {
 	switch a {
 	case Deny:
@@ -88,7 +95,12 @@ type Rule struct {
 	// are matched as they are.
 	SkipHeredocData bool   `yaml:"-"`
 	Reason          string `yaml:"reason"`
-	Source          string `yaml:"-"` // "builtin", the manifest path, or the project rules path
+	// Unattended, on a manifest, global or project rule, is "enforce" to keep
+	// the rule in unattended sessions; by default such a rule is skipped
+	// there. Built-in rules are classified in guardcfg.UnattendedGroups and
+	// ignore it.
+	Unattended string `yaml:"unattended,omitempty"`
+	Source     string `yaml:"-"` // "builtin", the manifest path, or the project rules path
 
 	tool, command, path, content, except *regexp.Regexp
 }
@@ -250,9 +262,22 @@ func (d Decision) Reason() string {
 
 // Evaluate applies every rule in s to call.
 func (s *Set) Evaluate(call ToolCall) Decision {
+	d, _ := s.EvaluateExcept(call, nil)
+	return d
+}
+
+// EvaluateExcept is Evaluate without the rules skip selects (nil: none): a
+// weaker rule that a skipped one would have hidden still decides. It also
+// returns every skipped rule that matched call.
+func (s *Set) EvaluateExcept(call ToolCall, skip func(*Rule) bool) (Decision, []*Rule) {
 	var d Decision
+	var skipped []*Rule
 	for _, r := range s.Rules {
 		if !r.Match(call) {
+			continue
+		}
+		if skip != nil && skip(r) {
+			skipped = append(skipped, r)
 			continue
 		}
 		switch {
@@ -264,7 +289,29 @@ func (s *Set) Evaluate(call ToolCall) Decision {
 		}
 	}
 	sort.SliceStable(d.Matched, func(i, j int) bool { return d.Matched[i].ID < d.Matched[j].ID })
-	return d
+	return d, skipped
+}
+
+// SplitDecision removes the rules skip selects (nil: none) from d. When none
+// is left the result is Allow. Use it on a decision from one source; a
+// merged decision has already dropped its weaker rules.
+func SplitDecision(d Decision, skip func(*Rule) bool) (Decision, []*Rule) {
+	if skip == nil || d.Action == Allow {
+		return d, nil
+	}
+	var kept Decision
+	var skipped []*Rule
+	for _, r := range d.Matched {
+		if skip(r) {
+			skipped = append(skipped, r)
+			continue
+		}
+		kept.Matched = append(kept.Matched, r)
+	}
+	if len(kept.Matched) > 0 {
+		kept.Action = d.Action
+	}
+	return kept, skipped
 }
 
 // Merge combines two decisions, keeping the stricter one (both lists when tied).

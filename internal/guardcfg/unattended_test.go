@@ -5,10 +5,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/decide"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/policy"
 )
 
 func mWith(u *manifest.Unattended) *manifest.Manifest {
@@ -92,24 +95,107 @@ func TestUnattendedModesAndTrust(t *testing.T) {
 	}
 }
 
-func TestSkippable(t *testing.T) {
+func TestEnforcedUnattended(t *testing.T) {
 	def := mWith(&manifest.Unattended{Workspace: true})
-	if !Skippable(def, []string{"tq/pii-fixture-dump", "tq/text-pii"}) {
-		t.Error("PII confirms must be skippable")
-	}
-	if Skippable(def, []string{"tq/text-pii", "tq/iac-apply"}) {
-		t.Error("a default keep_asking id must keep asking")
-	}
 	empty := []string{}
 	none := mWith(&manifest.Unattended{Workspace: true, KeepAsking: &empty})
-	if !Skippable(none, []string{"tq/iac-apply"}) {
-		t.Error("explicit empty keep_asking skips iac-apply")
+	rule := func(id string, a policy.Action) *policy.Rule { return &policy.Rule{ID: id, Action: a} }
+	for _, c := range []struct {
+		m    *manifest.Manifest
+		r    *policy.Rule
+		want bool
+	}{
+		// identity, secret and self-protection rules are always enforced
+		{none, rule("tq/cross-client-mcp", policy.Deny), true},
+		{none, rule("tq/env-file-read", policy.Deny), true},
+		{none, rule("tq/env-dump", policy.Deny), true},
+		{none, rule("tq/commit-secret", policy.Deny), true},
+		{none, rule("tq/secret-store-read", policy.Deny), true},
+		{none, rule("tq/guard-change", policy.Ask), true},
+		{none, rule("tq/guard-file-write", policy.Deny), true},
+		{none, rule("tq/settings-widen", policy.Deny), true},
+		{none, rule("tq/guard-error", policy.Ask), true},
+		// the rest are skipped, asks and denies alike
+		{none, rule("tq/force-push-main", policy.Deny), false},
+		{none, rule("tq/gh-repo-delete", policy.Deny), false},
+		{none, rule("tq/gha-branch-ref", policy.Deny), false},
+		{none, rule("tq/text-pii", policy.Deny), false},
+		{none, rule("tq/sql-destructive-shell", policy.Ask), false},
+		{none, rule("tq/iac-apply", policy.Ask), false},
+		// keep_asking keeps a rule enforced, whatever its action
+		{def, rule("tq/iac-apply", policy.Ask), true},
+		{def, rule("tq/remote-migration", policy.Deny), true},
+		// custom rules: skipped unless they opt in
+		{def, rule("acme/no-foo", policy.Deny), false},
+		{def, &policy.Rule{ID: "acme/no-bar", Action: policy.Deny, Unattended: policy.UnattendedEnforce}, true},
+		// an unknown value fails closed
+		{def, &policy.Rule{ID: "acme/typo", Action: policy.Deny, Unattended: "enforced"}, true},
+		{def, nil, true},
+	} {
+		if got := Enforced(c.m, c.r); got != c.want {
+			id := "<nil>"
+			if c.r != nil {
+				id = c.r.ID
+			}
+			t.Errorf("Enforced(%s) = %v, want %v", id, got, c.want)
+		}
 	}
-	if Skippable(none, []string{"tq/guard-change"}) {
-		t.Error("tq/guard-change is always asked")
+}
+
+// builtinIDs lists every rule id tq ships: regex rules, hook rules, Jev
+// judgment rules and the guard's fail-safe ask.
+func builtinIDs() map[string]bool {
+	ids := map[string]bool{GuardErrorID: true}
+	for _, r := range policy.Builtin() {
+		ids[r.ID] = true
 	}
-	if Skippable(none, nil) {
-		t.Error("no matched rule ids: nothing to skip, keep asking")
+	for id := range HookRules {
+		ids[id] = true
+	}
+	for _, r := range decide.BuiltinJudgeRules() {
+		ids[r.ID] = true
+	}
+	return ids
+}
+
+// A new built-in rule must be classified for unattended mode: the table
+// cannot silently go stale, and it names no rule tq does not ship.
+func TestUnattendedGroupsClassifyEveryBuiltin(t *testing.T) {
+	ids := builtinIDs()
+	for id := range ids {
+		g, ok := UnattendedGroups[id]
+		if !ok {
+			t.Errorf("built-in rule %s is not classified in guardcfg.UnattendedGroups", id)
+			continue
+		}
+		switch g {
+		case GroupIdentity, GroupSecret, GroupSelfProtection, GroupSkippable:
+		default:
+			t.Errorf("rule %s: unknown group %q", id, g)
+		}
+	}
+	for id := range UnattendedGroups {
+		if !ids[id] {
+			t.Errorf("UnattendedGroups lists %s, which is not a built-in rule", id)
+		}
+	}
+}
+
+func TestAlwaysEnforced(t *testing.T) {
+	got := AlwaysEnforced()
+	for _, g := range []UnattendedGroup{GroupIdentity, GroupSecret, GroupSelfProtection} {
+		if len(got[g]) == 0 {
+			t.Errorf("group %s is empty", g)
+		}
+	}
+	if _, ok := got[GroupSkippable]; ok {
+		t.Error("skippable rules are not always enforced")
+	}
+	if !slices.Contains(got[GroupSelfProtection], "tq/guard-change") || !slices.Contains(got[GroupIdentity], "tq/cross-client-mcp") {
+		t.Fatalf("got %v", got)
+	}
+	if !slices.IsSorted(got[GroupSecret]) {
+		t.Errorf("ids must be sorted: %v", got[GroupSecret])
 	}
 }
 

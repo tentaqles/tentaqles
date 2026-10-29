@@ -16,6 +16,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/guard"
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
@@ -286,29 +287,33 @@ permissionDecision JSON so Claude Code asks the user.`,
 				ws, cfg = resolveTrusted(cwd)
 			}
 
-			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline)
+			// In an unattended session the gate leaves out every rule that
+			// is not always enforced (guardcfg.Enforced); nil otherwise.
+			gate := unattendedGateFor(ws, cwd, p.PermissionMode, call)
+			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline, gate)
 			if d.Action != policy.Deny {
 				// Jev can only add strictness, so it is skipped when the
 				// deterministic rules already deny.
-				d = policy.Merge(d, jevDecision(ws, call))
+				d = policy.Merge(d, jevDecision(ws, call, gate))
 			}
+			skipped := gate.audit(ws, p.PermissionMode, call, d)
 			switch d.Action {
 			case policy.Deny:
 				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
 				exit(2)
 			case policy.Ask:
-				if unattendedSkip(ws, cwd, p.PermissionMode, call, d) {
-					if asJSON {
-						emitDecision(c, asJSON, false, d.Matched[0].ID, "unattended: "+d.Reason())
-					}
-					return nil
-				}
 				if asJSON {
 					emitDecision(c, asJSON, false, d.Matched[0].ID, d.Reason())
 					return nil
 				}
 				return writeAsk(c.OutOrStdout(), d.Reason())
 			default:
+				if len(skipped) > 0 {
+					if asJSON {
+						emitDecision(c, asJSON, false, skipped[0].ID, "unattended: "+skippedReason(skipped))
+					}
+					return nil
+				}
 				if asJSON {
 					emitDecision(c, asJSON, false, "", "")
 					return nil
@@ -331,7 +336,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 var hookPolicyDecision = policyDecision
 
 // guardErrorID names the fail-safe ask of a guard panic.
-const guardErrorID = "tq/guard-error"
+const guardErrorID = guardcfg.GuardErrorID
 
 // guardPanicAsk answers a panic in the hook's analysis with an ask: never an
 // allow, never a crash, and never the unattended skip. It only formats the

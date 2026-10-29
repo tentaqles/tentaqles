@@ -1,5 +1,5 @@
-// Package guardlog records the confirms unattended mode skipped, masked, in
-// $TQ_HOME/guard/unattended.jsonl. Writes never fail the caller.
+// Package guardlog records the confirms and blocks unattended mode skipped,
+// masked, in $TQ_HOME/guard/unattended.jsonl. Writes never fail the caller.
 package guardlog
 
 import (
@@ -21,14 +21,21 @@ const (
 )
 
 type Record struct {
-	Time    time.Time `json:"ts"`
-	WS      string    `json:"ws"`
-	Scope   string    `json:"scope"`
-	Mode    string    `json:"mode"`
-	Rules   []string  `json:"rule_ids"`
-	Tool    string    `json:"tool"`
-	Command string    `json:"command"`
+	Time  time.Time `json:"ts"`
+	WS    string    `json:"ws"`
+	Scope string    `json:"scope"`
+	Mode  string    `json:"mode"`
+	// Action is the strictest verdict skipped: "deny" (a block) or "ask" (a
+	// confirm). Records written before denies could be skipped have none:
+	// they are confirms.
+	Action  string   `json:"action,omitempty"`
+	Rules   []string `json:"rule_ids"`
+	Tool    string   `json:"tool"`
+	Command string   `json:"command"`
 }
+
+// IsBlock reports whether r records a skipped deny.
+func (r Record) IsBlock() bool { return r.Action == "deny" }
 
 func Path() string { return filepath.Join(paths.Home(), "guard", "unattended.jsonl") }
 
