@@ -113,6 +113,19 @@ func TestParseRepoPacks(t *testing.T) {
 	}
 }
 
+// Round 5: tool names allow _ (spec D's pg_prove) in tools, timeouts and tool_paths.
+func TestToolNamesAllowUnderscore(t *testing.T) {
+	got, err := ParseRepoPacks([]byte("db: { tools: [pg_prove], timeouts: { pg_prove: 60s }, tool_paths: { pg_prove: /usr/bin/pg_prove } }\n"))
+	if err != nil || got["db"].Tools[0] != "pg_prove" || got["db"].ToolPaths["pg_prove"] == "" {
+		t.Fatalf("%v %+v", err, got)
+	}
+	for _, bad := range []string{"db: { tools: [pg.prove] }\n", "db: { timeouts: { Pg_prove: 60s } }\n", "db: { tool_paths: { \"pg prove\": /x } }\n"} {
+		if _, err := ParseRepoPacks([]byte(bad)); err == nil {
+			t.Fatalf("accepted %q", bad)
+		}
+	}
+}
+
 func TestParseDuration(t *testing.T) {
 	for in, want := range map[string]time.Duration{"600s": 600 * time.Second, "10m": 10 * time.Minute, "7d": 7 * 24 * time.Hour, "30": 30 * time.Second} {
 		if got, err := ParseDuration(in); err != nil || got != want {

@@ -6,8 +6,10 @@ import (
 	"strings"
 )
 
-// ErrHumanOnly refuses a human-only pack command (promote apply, a cloud
-// approve or apply) in an agent session.
+// ErrHumanOnly refuses a human-only pack command (any apply subcommand that
+// executes an approved action, such as promote apply or cloud apply) in an
+// agent session. An approve or promote request command only asks (it creates
+// the pending decision) and never answers; agents may run it.
 var ErrHumanOnly = errors.New("this command is human-only: an agent session cannot run it")
 
 // AgentSession reports the hub's agent-session markers: TENTAQLES_HEADLESS=1,
