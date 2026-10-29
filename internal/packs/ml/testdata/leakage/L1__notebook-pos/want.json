@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "notebooks/explore.ipynb",
+      "line": 14,
+      "level": "error",
+      "rule": "L1-fit-before-split",
+      "message": "cell 3, line 1: fit_transform fits a preprocessing step on \"X\" before the first train/test split (cell 3, line 2); fit it on the training split or inside a Pipeline"
+    }
+  ]
+}

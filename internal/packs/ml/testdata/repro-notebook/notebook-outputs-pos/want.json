@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "outputs checked in 1 notebook",
+  "findings": [
+    {
+      "file": "notebooks/eda.ipynb",
+      "line": 3,
+      "level": "warn",
+      "rule": "notebook-outputs",
+      "message": "stored outputs in 1 cell; clear them (nbstripout or jupyter nbconvert --clear-output)"
+    }
+  ]
+}

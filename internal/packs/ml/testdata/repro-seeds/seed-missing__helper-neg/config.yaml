@@ -1,0 +1,2 @@
+ml:
+  seed_helper: src/common/seed.py:set_seed

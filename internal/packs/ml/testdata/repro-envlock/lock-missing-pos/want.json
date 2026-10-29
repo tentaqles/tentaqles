@@ -1,0 +1,12 @@
+{
+  "status": "fail",
+  "detail": "environment lock checked for 1 manifest",
+  "findings": [
+    {
+      "file": "requirements.in",
+      "level": "error",
+      "rule": "lock-missing",
+      "message": "requirements.in changed and has no lock next to it (requirements.txt)"
+    }
+  ]
+}
