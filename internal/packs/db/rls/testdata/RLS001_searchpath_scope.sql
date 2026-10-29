@@ -1,0 +1,21 @@
+-- want: RLS001:error:5 RLS001:error:7 RLS001:error:17 RLS001:error:21
+begin;
+set local search_path = private;
+commit;
+create table t (id int);
+set search_path = nonexist, public;
+create table u (id int);
+create schema private;
+set search_path = private, public;
+select set_config('search_path', 'private', true);
+end;
+create table v (id int);
+create table private.ok (id int);
+set search_path = nowhere, public;
+select 1 into local temp scratch;
+select * into global temporary scratch2 from private.ok;
+create table w (id int);
+begin;
+select set_config('search_path', 'private', 't');
+rollback;
+create table x (id int);

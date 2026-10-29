@@ -1,0 +1,6 @@
+psql:supabase/tests/database/rls_notes.test.sql:3: ERROR:  column "acme_card" does not exist
+LINE 1: select acme_card from public.notes where owner_id = 7
+               ^
+QUERY:  select acme_card from public.notes
+CONTEXT:  PL/pgSQL function inline_code_block line 3 at SQL statement
+Dubious, test returned 3
