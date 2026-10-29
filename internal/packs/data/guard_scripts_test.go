@@ -3,7 +3,10 @@ package data
 import (
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -68,6 +71,41 @@ func TestGuardsAskOnScriptFiles(t *testing.T) {
 	} {
 		if got := action(c.id, c.cmd); got != c.want {
 			t.Errorf("%s %q: %q, want %q", c.id, c.cmd, got, c.want)
+		}
+	}
+}
+
+// Many script words on a 64 KiB command stay inside the guard budget (at
+// most MaxScripts reads, a linear split).
+func TestScriptFilesGuardBudget(t *testing.T) {
+	isolate(t)
+	repo := t.TempDir()
+	env := guardEnv(t, repo, "data: {enabled: true}")
+	env.Cwd = repo
+	cmd := strings.Repeat("bash x.sh; ./y.sh; source z.sh; ", 64<<10/32)
+	g := packs.NewGuardCtx(env, "data")
+	call := policy.ToolCall{Tool: "Bash", Command: cmd}
+	for name, fn := range map[string]func(policy.ToolCall, packs.GuardCtx) (policy.Action, string, bool){
+		"dbt-prod-target": withScripts(checkProdTarget, dbtToolRe, nil, "dbt"),
+		"pipeline-run":    withScripts(pipelineRunGuard, pipelineToolRe, nil, "x"),
+		"bq":              withScripts(checkBQUnbounded, bqToolRe, nil, "bq"),
+	} {
+		var durs []time.Duration
+		for i := 0; i < 9; i++ {
+			start := time.Now()
+			fn(call, g)
+			durs = append(durs, time.Since(start))
+		}
+		sort.Slice(durs, func(i, j int) bool { return durs[i] < durs[j] })
+		t.Logf("%s median %v", name, durs[len(durs)/2])
+		if med := durs[len(durs)/2]; med > packs.GuardBudget {
+			t.Fatalf("%s median %v", name, med)
+		}
+	}
+	// The whole hook-side evaluation is not failed by a blown budget.
+	for _, o := range packs.EvaluateGuards(call, env, nil, nil) {
+		if o.Failed {
+			t.Fatalf("guard failed on the budget: %+v", o)
 		}
 	}
 }

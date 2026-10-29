@@ -28,6 +28,12 @@ var scriptExts = []string{".sh", ".bash", ".zsh", ".ksh"}
 // command's cwd). Words with $, `, *, ? or ~ are skipped (the shell
 // computes them).
 func ScriptFiles(cmd string) []string {
+	// Cheap prefilter: every form names "sh" (bash, sh, zsh, .sh, .bash,
+	// .zsh, .ksh), "source" or a leading dot.
+	low := strings.ToLower(cmd)
+	if !strings.Contains(low, "sh") && !strings.Contains(low, "source") && !strings.Contains(cmd, ". ") {
+		return nil
+	}
 	var out []string
 	seen := map[string]bool{}
 	add := func(p string) {
