@@ -13,7 +13,7 @@ import (
 // Each fixture X.sql states its expected findings on its first line,
 // "-- want: RULE:level:line ... [| opts: k=v ...]". X.before.sql, when
 // present, is replayed first and not judged. The exposed schema is public
-// (plus storage with supabase=1).
+// (plus storage with supabase=1), or the list in exposed=a,b.
 func TestGoldenFixtures(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("testdata", "*.sql"))
 	if err != nil || len(files) == 0 {
@@ -35,6 +35,9 @@ func TestGoldenFixtures(t *testing.T) {
 			if opts["supabase"] == "1" {
 				o.Supabase = true
 				o.Exposed = append(o.Exposed, "storage")
+			}
+			if e := opts["exposed"]; e != "" {
+				o.Exposed = strings.Split(e, ",")
 			}
 			if m := opts["migrator"]; m != "" {
 				migrator = m
@@ -110,5 +113,25 @@ func TestReplayOnlyIsNotJudged(t *testing.T) {
 	res := Run([]Unit{{Path: "old.sql", Src: []byte(old)}, {Path: "new.sql", Src: []byte("select 1;\n"), Judge: true}}, Options{Exposed: []string{"public"}})
 	if len(res.Findings) != 0 {
 		t.Fatalf("findings on replay-only file: %v", res.Findings)
+	}
+}
+
+// A SET search_path holds for its own file only: the next migration runs in
+// a new session, where unqualified names are in public again.
+func TestSearchPathIsPerFile(t *testing.T) {
+	units := []Unit{
+		{Path: "a.sql", Src: []byte("set search_path = api;\ncreate table t (id int);\nalter table t enable row level security;\n")},
+		{Path: "b.sql", Src: []byte("create table u (id int);\n"), Judge: true},
+	}
+	res := Run(units, Options{Exposed: []string{"api"}})
+	if len(res.Findings) != 0 {
+		t.Fatalf("findings = %v", res.Findings)
+	}
+	var names []string
+	for _, tb := range res.Tables {
+		names = append(names, tb.Name.String())
+	}
+	if !reflect.DeepEqual(names, []string{"api.t"}) {
+		t.Fatalf("tables = %v", names)
 	}
 }

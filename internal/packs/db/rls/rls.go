@@ -57,11 +57,11 @@ func Rules() map[string]string {
 		RLS004: "a policy for anon or authenticated with USING (true) or WITH CHECK (true)",
 		RLS005: "a policy that reads user_metadata / raw_user_meta_data, which users can edit",
 		RLS006: "GRANT ALL or a write grant to anon, GRANT … TO public in an exposed schema, default privileges to anon, or a role granted to anon or public",
-		RLS007: "a view in an exposed schema without security_invoker = true, or a materialized view there (both bypass RLS)",
+		RLS007: "a view in an exposed schema without security_invoker = true, or a materialized view or foreign table there (all bypass RLS)",
 		RLS008: "a SECURITY DEFINER function in an exposed schema without SET search_path, or one anon can execute",
 		RLS009: "auth.uid() called per row instead of (select auth.uid())",
 		RLS010: "a service_role reference in a policy (service_role bypasses RLS)",
-		RLS011: "a DO block or routine body with dynamic RLS-relevant DDL (policies, row level security, grants, security definer, set schema, CREATE TABLE or VIEW) the gate cannot judge",
+		RLS011: "a DO block or routine body with dynamic RLS-relevant DDL (policies, row level security, grants, security definer, set schema, CREATE TABLE or VIEW, IMPORT FOREIGN SCHEMA) the gate cannot judge",
 	}
 }
 
@@ -151,12 +151,17 @@ type function struct {
 }
 
 type state struct {
-	o          Options
-	exposed    map[string]bool
-	tables     map[string]*Table
-	views      map[string]*view
-	matviews   map[string]bool // every materialized view the replay knows, by name
-	funcs      map[string]*function
+	o        Options
+	exposed  map[string]bool
+	tables   map[string]*Table
+	views    map[string]*view
+	matviews map[string]bool // every materialized view the replay knows, by name
+	foreign  map[string]bool // every foreign table the replay knows, by name
+	funcs    map[string]*function
+	// pathSet and searchPath are the file's top-level SET search_path:
+	// unqualified names resolve against it (public when it is not set).
+	pathSet    bool
+	searchPath []string
 	out        []packs.Finding
 	supp       []string
 	file       *sqllex.File
@@ -180,7 +185,7 @@ type pending struct {
 
 // Run replays the units in order and judges those marked Judge.
 func Run(units []Unit, o Options) Result {
-	s := &state{o: o, exposed: map[string]bool{}, tables: map[string]*Table{}, views: map[string]*view{}, matviews: map[string]bool{}, funcs: map[string]*function{}, judgedFile: map[string]bool{}}
+	s := &state{o: o, exposed: map[string]bool{}, tables: map[string]*Table{}, views: map[string]*view{}, matviews: map[string]bool{}, foreign: map[string]bool{}, funcs: map[string]*function{}, judgedFile: map[string]bool{}}
 	for _, e := range o.Exposed {
 		s.exposed[e] = true
 	}
@@ -189,6 +194,7 @@ func Run(units []Unit, o Options) Result {
 		f := upSection(sqllex.Lex(u.Src, sqllex.Postgres), u.Migrator)
 		s.file, s.path, s.judge = f, u.Path, u.Judge
 		s.dropped, s.disabled, s.unforced = map[string][]droppedPolicy{}, map[string][]pending{}, map[string][]pending{}
+		s.pathSet, s.searchPath = false, nil
 		if u.Judge {
 			files++
 			s.judgedFile[u.Path] = true
@@ -318,11 +324,19 @@ func (s *state) statement(st sqllex.Statement) {
 			s.createView(st, i+1)
 		case st.Match(i, "MATERIALIZED", "VIEW"):
 			s.createMatView(st, i+2)
+		case st.Match(i, "FOREIGN", "TABLE"):
+			s.createForeign(st, i+2)
 		case st.Match(i, "POLICY"):
 			s.createPolicy(st, i+1)
 		case st.Match(i, "FUNCTION|PROCEDURE"):
 			s.createFunction(st, i+1)
 		}
+	case "SELECT", "WITH":
+		s.selectInto(st)
+	case "SET", "RESET":
+		s.setSearchPath(st)
+	case "IMPORT":
+		s.importForeign(st)
 	case "ALTER":
 		switch {
 		case st.Match(1, "TABLE"):
@@ -331,6 +345,8 @@ func (s *state) statement(st sqllex.Statement) {
 			s.alterView(st, 2)
 		case st.Match(1, "MATERIALIZED", "VIEW"):
 			s.alterMatView(st, 3)
+		case st.Match(1, "FOREIGN", "TABLE"):
+			s.alterForeign(st, 3)
 		case st.Match(1, "POLICY"):
 			s.alterPolicy(st, 2)
 		case st.Match(1, "FUNCTION|PROCEDURE|ROUTINE"):
@@ -352,6 +368,10 @@ func (s *state) statement(st sqllex.Statement) {
 			for _, n := range s.names(st, st.Skip(3, []string{"IF", "EXISTS"})) {
 				delete(s.matviews, n.String())
 			}
+		case st.Match(1, "FOREIGN", "TABLE"):
+			for _, n := range s.names(st, st.Skip(3, []string{"IF", "EXISTS"})) {
+				delete(s.foreign, n.String())
+			}
 		case st.Match(1, "FUNCTION|PROCEDURE|ROUTINE"):
 			for _, n := range s.names(st, st.Skip(2, []string{"IF", "EXISTS"})) {
 				delete(s.funcs, n.String())
@@ -366,11 +386,129 @@ func (s *state) statement(st sqllex.Statement) {
 	}
 }
 
+// name reads the name of an existing object at i. An unqualified name
+// resolves against the file's search_path the way Postgres looks it up: the
+// first schema on the path that holds a known object of that name, else the
+// first schema on the path.
+func (s *state) name(st sqllex.Statement, i int) (sqllex.Name, int) {
+	n, j := st.Name(i, sqllex.Postgres)
+	if n.IsZero() || j != i+1 || !s.pathSet {
+		return n, j
+	}
+	for _, sc := range s.searchPath {
+		k := sc + "." + n.Object
+		if s.tables[k] != nil || s.views[k] != nil || s.matviews[k] || s.foreign[k] || s.funcs[k] != nil {
+			return sqllex.Name{Schema: sc, Object: n.Object}, j
+		}
+	}
+	return s.newName(st, i)
+}
+
+// newName reads the name of an object being created at i: an unqualified
+// one is created in the first schema of the file's search_path (public when
+// it is not set). With an empty path Postgres refuses the CREATE; the name
+// then lands in pg_catalog, which is never exposed.
+func (s *state) newName(st sqllex.Statement, i int) (sqllex.Name, int) {
+	n, j := st.Name(i, sqllex.Postgres)
+	if n.IsZero() || j != i+1 || !s.pathSet {
+		return n, j
+	}
+	if len(s.searchPath) == 0 {
+		return sqllex.Name{Schema: "pg_catalog", Object: n.Object}, j
+	}
+	return sqllex.Name{Schema: s.searchPath[0], Object: n.Object}, j
+}
+
+// setSearchPath follows a top-level SET [SESSION|LOCAL] search_path {TO|=}
+// …, SET search_path TO DEFAULT, RESET search_path and RESET ALL.
+func (s *state) setSearchPath(st sqllex.Statement) {
+	if st.Match(0, "RESET") {
+		if st.Match(1, "SEARCH_PATH|ALL") {
+			s.pathSet, s.searchPath = false, nil
+		}
+		return
+	}
+	i := st.Skip(1, []string{"SESSION|LOCAL"})
+	if !st.Match(i, "SEARCH_PATH") || !(st.Match(i+1, "TO") || st.Match(i+1, "=")) {
+		return
+	}
+	if st.Match(i+2, "DEFAULT") {
+		s.pathSet, s.searchPath = false, nil
+		return
+	}
+	var path []string
+	for k := i + 2; k < len(st.Tokens); k++ {
+		t := st.At(k)
+		switch {
+		case t.IsPunct(","):
+		case t.Kind == sqllex.String:
+			path = append(path, pathList(sqllex.StringValue(t))...)
+		default:
+			if v := t.Ident(sqllex.Postgres); v != "" {
+				path = append(path, v)
+			}
+		}
+	}
+	s.setPath(path)
+}
+
+// setPath sets the file's search_path, without "$user" (a schema named after
+// the role, which migrations do not create) and empty entries.
+func (s *state) setPath(path []string) {
+	s.pathSet, s.searchPath = true, nil
+	for _, p := range path {
+		if p != "" && p != "$user" {
+			s.searchPath = append(s.searchPath, p)
+		}
+	}
+}
+
+// pathList splits a search_path string value ("api, public", "\"$user\"").
+func pathList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		p = strings.TrimSpace(p)
+		if len(p) >= 2 && p[0] == '"' && p[len(p)-1] == '"' {
+			p = strings.ReplaceAll(p[1:len(p)-1], `""`, `"`)
+		} else {
+			p = strings.ToLower(p)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// selectInto handles a top-level SELECT … INTO [TEMP|TEMPORARY|UNLOGGED]
+// [TABLE] name (after an optional CTE list), which creates and fills a
+// table the same as CREATE TABLE … AS, and a SELECT set_config('search_path',
+// '…', …) (pg_dump writes one at the top of a dump).
+func (s *state) selectInto(st sqllex.Statement) {
+	k := sqllex.AfterCTE(st)
+	if !st.Match(k, "SELECT") {
+		return
+	}
+	for i := k; i+4 < len(st.Tokens); i++ {
+		if st.At(i).Ident(sqllex.Postgres) == "set_config" && st.At(i+1).IsPunct("(") && st.At(i+2).Kind == sqllex.String &&
+			strings.EqualFold(sqllex.StringValue(st.At(i+2)), "search_path") && st.At(i+3).IsPunct(",") && st.At(i+4).Kind == sqllex.String {
+			s.setPath(pathList(sqllex.StringValue(st.At(i + 4))))
+		}
+	}
+	in := st.FindTop(k, "INTO")
+	if in < 0 {
+		return
+	}
+	i := in + 1
+	if st.Match(i, "TEMP|TEMPORARY") {
+		return
+	}
+	s.createTable(st, st.Skip(i, []string{"UNLOGGED"}, []string{"TABLE"}))
+}
+
 // names reads a comma-separated list of (possibly argument-carrying) names.
 func (s *state) names(st sqllex.Statement, i int) []sqllex.Name {
 	var out []sqllex.Name
 	for {
-		n, j := st.Name(i, sqllex.Postgres)
+		n, j := s.name(st, i)
 		if n.IsZero() {
 			return out
 		}
@@ -391,7 +529,7 @@ func (s *state) names(st sqllex.Statement, i int) []sqllex.Name {
 func (s *state) createTable(st sqllex.Statement, i int) {
 	ifNot := st.Match(i, "IF", "NOT", "EXISTS")
 	i = st.Skip(i, []string{"IF", "NOT", "EXISTS"})
-	n, _ := st.Name(i, sqllex.Postgres)
+	n, _ := s.newName(st, i)
 	if n.IsZero() {
 		return
 	}
@@ -408,7 +546,7 @@ func (s *state) createTable(st sqllex.Statement, i int) {
 
 func (s *state) alterTable(st sqllex.Statement, i int) {
 	i = st.Skip(i, []string{"IF", "EXISTS"}, []string{"ONLY"})
-	n, j := st.Name(i, sqllex.Postgres)
+	n, j := s.name(st, i)
 	if n.IsZero() {
 		return
 	}
@@ -418,6 +556,9 @@ func (s *state) alterTable(st sqllex.Statement, i int) {
 		switch {
 		case s.matviews[n.String()]:
 			s.alterMatView(st, i)
+			return
+		case s.foreign[n.String()]:
+			s.alterForeign(st, i)
 			return
 		case s.views[n.String()] != nil:
 			s.alterView(st, i)
@@ -572,7 +713,7 @@ func (s *state) createPolicy(st sqllex.Statement, i int) {
 	if !st.Match(i+1, "ON") {
 		return
 	}
-	n, j := st.Name(i+2, sqllex.Postgres)
+	n, j := s.name(st, i+2)
 	if name == "" || n.IsZero() {
 		return
 	}
@@ -607,7 +748,7 @@ func (s *state) alterPolicy(st sqllex.Statement, i int) {
 	if !st.Match(i+1, "ON") {
 		return
 	}
-	n, j := st.Name(i+2, sqllex.Postgres)
+	n, j := s.name(st, i+2)
 	if name == "" || n.IsZero() {
 		return
 	}
@@ -644,7 +785,7 @@ func (s *state) dropPolicy(st sqllex.Statement, i int) {
 	if !st.Match(i+1, "ON") {
 		return
 	}
-	n, _ := st.Name(i+2, sqllex.Postgres)
+	n, _ := s.name(st, i+2)
 	if name == "" || n.IsZero() {
 		return
 	}
@@ -680,18 +821,91 @@ func hasRole(roles []string, want ...string) bool {
 	return false
 }
 
-// isTrue reports an expression that is the constant true.
-func isTrue(st sqllex.Statement, r [2]int) bool {
-	a, b := r[0], r[1]
+// isTrue reports an expression that is the constant true: TRUE (or a true
+// boolean literal such as 't'), a ::bool cast of one, NOT of a false one, a
+// literal compared to itself (1 = 1, 'a' = 'a'), an OR with a true operand
+// and an AND of true operands. It is a fold of constants, not a prover.
+func isTrue(st sqllex.Statement, r [2]int) bool { return constBool(st, r[0], r[1], true) }
+
+// constBool reports whether tokens [a, b) are the boolean constant want.
+func constBool(st sqllex.Statement, a, b int, want bool) bool {
 	for a < b && st.At(a).IsPunct("(") && st.Close(a) == b-1 {
 		a, b = a+1, b-1
 	}
-	w := st.Words(a, b)
-	switch strings.Join(w, " ") {
-	case "TRUE", "1 = 1", "'t'", "'true'":
-		return true
+	if a >= b {
+		return false
+	}
+	// OR binds loosest, then AND, then NOT; :: binds tightest.
+	for _, op := range []string{"OR", "AND"} {
+		parts := splitWord(st, a, b, op)
+		if len(parts) < 2 {
+			continue
+		}
+		// a OR b is true when one operand is, false when both are; AND the
+		// other way round.
+		one := (op == "OR") == want
+		for _, p := range parts {
+			v := constBool(st, p[0], p[1], want)
+			if one && v {
+				return true
+			}
+			if !one && !v {
+				return false
+			}
+		}
+		return !one
+	}
+	if st.At(a).Is("NOT") {
+		return constBool(st, a+1, b, !want)
+	}
+	if b-a >= 3 && st.At(b-2).IsPunct("::") && st.At(b-1).Is("BOOL", "BOOLEAN") {
+		return constBool(st, a, b-2, want)
+	}
+	if b-a == 1 {
+		t := st.At(a)
+		v := strings.ToLower(t.Text)
+		if t.Kind == sqllex.String {
+			v = strings.ToLower(sqllex.StringValue(t))
+		} else if t.Kind != sqllex.Word {
+			return false
+		}
+		if want {
+			return v == "true" || (t.Kind == sqllex.String && (v == "t" || v == "on" || v == "yes" || v == "y" || v == "1"))
+		}
+		return v == "false" || (t.Kind == sqllex.String && (v == "f" || v == "off" || v == "no" || v == "n" || v == "0"))
+	}
+	if b-a == 3 && want && st.At(a+1).IsPunct("=") {
+		l, r := st.At(a), st.At(a+2)
+		literal := func(t sqllex.Token) bool {
+			return t.Kind == sqllex.Number || t.Kind == sqllex.String || t.Is("TRUE", "FALSE")
+		}
+		return literal(l) && literal(r) && l.Kind == r.Kind && strings.EqualFold(l.Text, r.Text)
 	}
 	return false
+}
+
+// splitWord splits tokens [a, b) at the top-level word op. The AND of an
+// x BETWEEN y AND z is not a conjunction and is skipped.
+func splitWord(st sqllex.Statement, a, b int, op string) [][2]int {
+	var out [][2]int
+	depth, start, between := 0, a, false
+	for i := a; i < b; i++ {
+		t := st.At(i)
+		switch {
+		case t.IsPunct("("):
+			depth++
+		case t.IsPunct(")"):
+			depth--
+		case depth == 0 && t.Is("BETWEEN"):
+			between = true
+		case depth == 0 && t.Is("AND") && between:
+			between = false
+		case depth == 0 && t.Is(op):
+			out = append(out, [2]int{start, i})
+			start = i + 1
+		}
+	}
+	return append(out, [2]int{start, b})
 }
 
 func (s *state) judgePolicy(st sqllex.Statement, n sqllex.Name, p *Policy, c clauses) {
@@ -782,7 +996,7 @@ func viewOption(st sqllex.Statement, open int) (invoker, found bool) {
 }
 
 func (s *state) createView(st sqllex.Statement, i int) {
-	n, j := st.Name(i, sqllex.Postgres)
+	n, j := s.newName(st, i)
 	if n.IsZero() {
 		return
 	}
@@ -804,10 +1018,21 @@ func (s *state) createView(st sqllex.Statement, i int) {
 
 func (s *state) alterView(st sqllex.Statement, i int) {
 	i = st.Skip(i, []string{"IF", "EXISTS"})
-	n, j := st.Name(i, sqllex.Postgres)
-	v := s.views[n.String()]
-	if n.IsZero() || v == nil {
+	n, j := s.name(st, i)
+	if n.IsZero() {
 		return
+	}
+	v := s.views[n.String()]
+	if v == nil {
+		// A view the replay never saw created (it exists outside the
+		// migrations): its options are unknown, so a judged move into an
+		// exposed schema or a change of security_invoker is judged as if it
+		// ran with its owner's rights, unless the statement sets it on.
+		if !s.judge || !(st.Match(j, "SET", "SCHEMA") || st.Match(j, "SET", "(") || st.Match(j, "RESET", "(")) {
+			return
+		}
+		v = &view{name: n, at: s.at(st)}
+		s.views[n.String()] = v
 	}
 	switch {
 	case st.Match(j, "SET", "("):
@@ -852,7 +1077,7 @@ func (s *state) alterView(st sqllex.Statement, i int) {
 // API serves every row it holds.
 func (s *state) createMatView(st sqllex.Statement, i int) {
 	i = st.Skip(i, []string{"IF", "NOT", "EXISTS"})
-	n, _ := st.Name(i, sqllex.Postgres)
+	n, _ := s.newName(st, i)
 	if n.IsZero() {
 		return
 	}
@@ -869,12 +1094,76 @@ func (s *state) exposedMatView(st sqllex.Statement, n sqllex.Name) {
 	s.report(s.at(st), RLS007, packs.LevelError, fmt.Sprintf("materialized view %s is in an exposed schema and has no row-level security: the API serves every row; move it to a private schema and expose it through a security_invoker view or a function", n))
 }
 
+// createForeign follows CREATE FOREIGN TABLE [IF NOT EXISTS] name. A foreign
+// table cannot have row-level security, so one in an exposed schema is
+// reported like a materialized view (RLS007).
+func (s *state) createForeign(st sqllex.Statement, i int) {
+	i = st.Skip(i, []string{"IF", "NOT", "EXISTS"})
+	n, _ := s.newName(st, i)
+	if n.IsZero() {
+		return
+	}
+	s.foreign[n.String()] = true
+	if s.judge && s.exposed[n.Schema] {
+		s.exposedForeign(st, n.String())
+	}
+}
+
+// exposedForeign reports foreign table what, now in an exposed schema.
+func (s *state) exposedForeign(st sqllex.Statement, what string) {
+	s.report(s.at(st), RLS007, packs.LevelError, fmt.Sprintf("foreign table %s is in an exposed schema and cannot have row-level security: the API serves every row the remote server returns; keep it in a private schema and expose only what a caller may see through a function", what))
+}
+
+// alterForeign follows ALTER FOREIGN TABLE [IF EXISTS] [ONLY] renames and
+// moves; a move into an exposed schema is judged even when the replay never
+// saw the table created.
+func (s *state) alterForeign(st sqllex.Statement, i int) {
+	i = st.Skip(i, []string{"IF", "EXISTS"}, []string{"ONLY"})
+	n, j := s.name(st, i)
+	if n.IsZero() {
+		return
+	}
+	switch {
+	case st.Match(j, "RENAME", "TO"):
+		if to := st.At(j + 2).Ident(sqllex.Postgres); to != "" {
+			delete(s.foreign, n.String())
+			s.foreign[sqllex.Name{Schema: n.Schema, Object: to}.String()] = true
+		}
+	case st.Match(j, "SET", "SCHEMA"):
+		if to := st.At(j + 2).Ident(sqllex.Postgres); to != "" {
+			delete(s.foreign, n.String())
+			m := sqllex.Name{Schema: to, Object: n.Object}
+			s.foreign[m.String()] = true
+			if s.judge && s.exposed[to] {
+				s.exposedForeign(st, m.String())
+			}
+		}
+	}
+}
+
+// importForeign judges IMPORT FOREIGN SCHEMA remote … INTO local: it creates
+// foreign tables in local, which the replay cannot list.
+func (s *state) importForeign(st sqllex.Statement) {
+	if !st.Match(1, "FOREIGN", "SCHEMA") {
+		return
+	}
+	in := st.FindTop(3, "INTO")
+	if in < 0 {
+		return
+	}
+	local := st.At(in + 1).Ident(sqllex.Postgres)
+	if local == "" || !s.judge || !s.exposed[local] {
+		return
+	}
+	s.report(s.at(st), RLS007, packs.LevelError, fmt.Sprintf("IMPORT FOREIGN SCHEMA creates foreign tables in exposed schema %s, and a foreign table cannot have row-level security: the API serves every row the remote server returns; import into a private schema and expose only what a caller may see through a function", local))
+}
+
 // alterMatView follows a materialized view's renames and moves; moving one
 // into an exposed schema exposes it, so the move is reported like a CREATE.
 // The move is judged even when the replay never saw the view created.
 func (s *state) alterMatView(st sqllex.Statement, i int) {
 	i = st.Skip(i, []string{"IF", "EXISTS"})
-	n, j := st.Name(i, sqllex.Postgres)
+	n, j := s.name(st, i)
 	if n.IsZero() {
 		return
 	}
@@ -896,11 +1185,11 @@ func (s *state) alterMatView(st sqllex.Statement, i int) {
 
 // dynamicRe matches the DDL the gate would judge if it were not inside a
 // string: policies, row level security, grants, security definer, set
-// schema, security_invoker, and a non-temporary CREATE TABLE or CREATE
-// [MATERIALIZED|RECURSIVE] VIEW (RLS001 / RLS007). A temporary table or view
-// is never exposed and stays unflagged.
+// schema, security_invoker, a non-temporary CREATE [FOREIGN] TABLE or CREATE
+// [MATERIALIZED|RECURSIVE] VIEW, and IMPORT FOREIGN SCHEMA (RLS001 /
+// RLS007). A temporary table or view is never exposed and stays unflagged.
 var dynamicRe = regexp.MustCompile(`(?is)\brow\s+level\s+security\b|\b(?:create|alter|drop)\s+policy\b|\bgrant\b|\bsecurity\s+definer\b|\bset\s+schema\b|\bsecurity_invoker\b` +
-	`|\bcreate\s+(?:(?:unlogged|global|local)\s+)?table\b|\bcreate\s+(?:or\s+replace\s+)?(?:materialized\s+|recursive\s+)?view\b`)
+	`|\bcreate\s+(?:(?:unlogged|global|local|foreign)\s+)?table\b|\bimport\s+foreign\s+schema\b|\bcreate\s+(?:or\s+replace\s+)?(?:materialized\s+|recursive\s+)?view\b`)
 
 // dynamicSQL reports a judged DO block or routine whose body mentions DDL
 // the replay cannot see (RLS011). It fails closed: the reviewer judges the
@@ -947,7 +1236,7 @@ func functionOptions(st sqllex.Statement, i int, f *function) {
 }
 
 func (s *state) createFunction(st sqllex.Statement, i int) {
-	n, j := st.Name(i, sqllex.Postgres)
+	n, j := s.newName(st, i)
 	if n.IsZero() || !st.At(j).IsPunct("(") {
 		return
 	}
@@ -980,7 +1269,7 @@ func hasMarker(l loc, name string) bool {
 
 func (s *state) alterFunction(st sqllex.Statement, i int) {
 	i = st.Skip(i, []string{"IF", "EXISTS"})
-	n, j := st.Name(i, sqllex.Postgres)
+	n, j := s.name(st, i)
 	f := s.funcs[n.String()]
 	if n.IsZero() || f == nil {
 		return
@@ -1023,7 +1312,7 @@ type grantParts struct {
 	roles   []string
 }
 
-func parseGrant(st sqllex.Statement, start int, toWord string) (grantParts, bool) {
+func (s *state) parseGrant(st sqllex.Statement, start int, toWord string) (grantParts, bool) {
 	var g grantParts
 	on := st.FindTop(start, "ON")
 	to := -1
@@ -1065,7 +1354,7 @@ func parseGrant(st sqllex.Statement, start int, toWord string) (grantParts, bool
 			k++
 		}
 		for _, r := range st.Split(k, to) {
-			if n, _ := st.Name(r[0], sqllex.Postgres); !n.IsZero() {
+			if n, _ := s.name(st, r[0]); !n.IsZero() {
 				g.objects = append(g.objects, n)
 				g.schemas = append(g.schemas, n.Schema)
 			}
@@ -1112,7 +1401,7 @@ func (s *state) grant(st sqllex.Statement, defaults bool) {
 		s.roleGrant(st, start)
 		return
 	}
-	g, ok := parseGrant(st, start, "TO")
+	g, ok := s.parseGrant(st, start, "TO")
 	if !ok {
 		return
 	}
@@ -1217,7 +1506,7 @@ func (s *state) funcsOf(g grantParts) []*function {
 
 func (s *state) revoke(st sqllex.Statement) {
 	start := st.Skip(1, []string{"GRANT", "OPTION", "FOR"})
-	g, ok := parseGrant(st, start, "FROM")
+	g, ok := s.parseGrant(st, start, "FROM")
 	if !ok || !hasWord(g.privs, "EXECUTE", "ALL") {
 		return
 	}
