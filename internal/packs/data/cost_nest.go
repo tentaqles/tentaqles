@@ -1,13 +1,12 @@
 package data
 
 import (
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode/utf16"
+
+	"github.com/tentaqles/tentaqles/internal/packs/scan"
 )
 
 // Nested shells, global flags and JSON escapes (fix round 1 of review r0).
@@ -26,14 +25,21 @@ var costShells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": 
 // command string a nested shell in it runs (bash -c, sh -lc, pwsh -Command,
 // pwsh -EncodedCommand, cmd /c, eval, Invoke-Expression). wsl and xargs need
 // nothing special: their command words stay in the segment. opaque reports a
-// nested string the guard could not read (a nest deeper than costNestMax, or
-// an encoded command that does not decode); callers ask on an opaque command
-// that names their tool, so the guards fail closed.
-func costSegmentsDeep(cmd string) (segs []costSegment, opaque bool) {
+// nested string the guard could not read (a nest deeper than costNestMax);
+// callers ask on an opaque command that names their tool. hidden reports a
+// script whose words never appear at all (pwsh -File, a pwsh bare script,
+// stdin, an -EncodedCommand that does not decode) or a command cut at the
+// tokenizer's word cap: callers ask on it whatever it names. Both fail
+// closed.
+func costSegmentsDeep(cmd string) (segs []costSegment, opaque, hidden bool) {
 	count := 0
 	var walk func(s string, depth int)
 	walk = func(s string, depth int) {
-		for _, seg := range costSegments(s) {
+		ss, cut := costSegmentsN(s)
+		if cut {
+			hidden = true
+		}
+		for _, seg := range ss {
 			segs = append(segs, seg)
 			for k, w := range seg.Words {
 				if !costShells[costToolName(w)] {
@@ -41,7 +47,7 @@ func costSegmentsDeep(cmd string) (segs []costSegment, opaque bool) {
 				}
 				inner, ok, bad := costNested(seg.Words[k:])
 				if bad {
-					opaque = true
+					hidden = true
 				}
 				if !ok {
 					continue
@@ -56,7 +62,7 @@ func costSegmentsDeep(cmd string) (segs []costSegment, opaque bool) {
 		}
 	}
 	walk(cmd, 0)
-	return segs, opaque
+	return segs, opaque, hidden
 }
 
 // costPwshValueFlags take a value in pwsh/powershell before the command.
@@ -103,37 +109,17 @@ func costNested(words []string) (inner string, ok, bad bool) {
 		}
 		return "", false, false
 	case "pwsh", "powershell":
-		for i := 0; i < len(rest); i++ {
-			l := strings.ToLower(rest[i])
-			switch {
-			case l == "-e" || l == "-ec" || (len(l) >= 4 && strings.HasPrefix("-encodedcommand", l)):
-				if i+1 >= len(rest) {
-					return "", false, true
-				}
-				s, err := costDecodePwsh(rest[i+1])
-				if err != nil {
-					return "", false, true
-				}
-				return s, true, false
-			case costIsPwshCommandFlag(l):
-				if i+1 >= len(rest) {
-					return "", false, false
-				}
-				return strings.Join(rest[i+1:], " "), true, false
-			case l == "-f" || (len(l) > 2 && strings.HasPrefix("-file", l)):
-				return "", false, false
-			case costPwshValueFlags[l]:
-				i++
-			case strings.HasPrefix(l, "-"):
-			default:
-				if verb == "powershell" {
-					// Windows PowerShell runs a bare argument as -Command.
-					return strings.Join(rest[i:], " "), true, false
-				}
-				return "", false, false // pwsh runs a bare argument as -File
-			}
+		// scan.PowerShell reads -Command, -EncodedCommand (any spelling)
+		// and Windows PowerShell's bare command; -File, a pwsh bare script,
+		// stdin and an undecodable encoded command are opaque (bad).
+		r := scan.PowerShell(words[0], rest)
+		if r.Opaque != "" {
+			return "", false, true
 		}
-		return "", false, false
+		if r.Script == "" {
+			return "", false, false
+		}
+		return r.Script, true, false
 	}
 	// POSIX shells: -c, or a short option cluster with c (-lc, -ec, -xc).
 	// Every word is scanned (bash -o pipefail -c …); a script run with an
@@ -152,22 +138,6 @@ func costNested(words []string) (inner string, ok, bad bool) {
 		}
 	}
 	return "", false, false
-}
-
-// costDecodePwsh decodes a PowerShell -EncodedCommand (base64 of UTF-16LE).
-func costDecodePwsh(s string) (string, error) {
-	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
-	if err != nil {
-		return "", err
-	}
-	if len(b)%2 != 0 {
-		return "", errors.New("odd length")
-	}
-	u := make([]uint16, len(b)/2)
-	for i := range u {
-		u[i] = uint16(b[2*i]) | uint16(b[2*i+1])<<8
-	}
-	return string(utf16.Decode(u)), nil
 }
 
 // costMayNest reports whether a lower-cased command could hide a tool name

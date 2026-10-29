@@ -167,7 +167,8 @@ func TestPipelineRunGuardWrappersBounded(t *testing.T) {
 	}{
 		{strings.Repeat("docker exec ", 64<<10/12) + "true", policy.Ask},
 		{strings.Repeat("ssh h ", 64<<10/6) + "true", policy.Ask},
-		{"docker compose exec acme " + strings.Repeat("x ", 64<<10/2), policy.Allow},
+		// Past the scan cap the inner command is never read: fail closed (integration review).
+		{"docker compose exec acme " + strings.Repeat("x ", 64<<10/2), policy.Ask},
 		{strings.Repeat("bash -c '", 1) + strings.Repeat("echo x; ", 64<<10/8) + "'", policy.Allow},
 	} {
 		start := time.Now()

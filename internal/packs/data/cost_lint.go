@@ -137,7 +137,7 @@ func (l *bqLint) shellLine(line int, text string, allowed func(int, string) bool
 	if !strings.Contains(text, "bq") && !costMayNest(strings.ToLower(text)) {
 		return
 	}
-	segs, _ := costSegmentsDeep(text)
+	segs, _, _ := costSegmentsDeep(text)
 	for _, seg := range segs {
 		i := seg.find("bq")
 		if i < 0 {

@@ -105,9 +105,12 @@ func checkBQUnbounded(call policy.ToolCall, g packs.GuardCtx) (policy.Action, st
 		suggest = fmt.Sprintf("--maximum_bytes_billed=%.0f", limit)
 	}
 	var v costVerdict
-	segs, opaque := costSegmentsDeep(call.Command)
+	segs, opaque, hidden := costSegmentsDeep(call.Command)
 	if opaque && costNamesTool(low, "bq") {
 		v.add(policy.Ask, "a nested shell command the guard cannot read names bq; confirm it carries --maximum_bytes_billed")
+	}
+	if hidden {
+		v.add(policy.Ask, "a script the guard cannot read (a PowerShell file, stdin or encoded command, or a command past the word cap); confirm any bq query in it carries --maximum_bytes_billed")
 	}
 	for _, seg := range segs {
 		i := seg.find("bq")
@@ -373,11 +376,14 @@ func checkWarehouseResize(call policy.ToolCall, g packs.GuardCtx) (policy.Action
 	if !strings.Contains(low, "snow") && !strings.Contains(low, "databricks") && !strings.Contains(low, "az") && !costMayNest(low) {
 		return policy.Allow, "", false
 	}
-	segs, opaque := costSegmentsDeep(call.Command)
+	segs, opaque, hidden := costSegmentsDeep(call.Command)
 	if opaque && ((cs.Engine(engSnowflake) && (costNamesTool(low, "snow") || costNamesTool(low, "snowsql"))) ||
 		(cs.Engine(engDatabricks) && costNamesTool(low, "databricks")) ||
 		((cs.Engine(engSynapse) || cs.Engine(engFabric)) && costNamesTool(low, "az"))) {
 		v.add(policy.Ask, "a nested shell command the guard cannot read names a warehouse CLI; confirm the compute size")
+	}
+	if hidden && (cs.Engine(engSnowflake) || cs.Engine(engDatabricks) || cs.Engine(engSynapse) || cs.Engine(engFabric)) {
+		v.add(policy.Ask, "a script the guard cannot read (a PowerShell file, stdin or encoded command, or a command past the word cap); confirm it resizes no warehouse")
 	}
 	for _, seg := range segs {
 		if cs.Engine(engSnowflake) {
@@ -427,10 +433,13 @@ func checkWarehouseQuery(call policy.ToolCall, g packs.GuardCtx) (policy.Action,
 	}
 	var v costVerdict
 	sf, pg, dbx := cs.Engine(engSnowflake), cs.Engine(engPostgres), cs.Engine(engDatabricks)
-	segs, opaque := costSegmentsDeep(call.Command)
+	segs, opaque, hidden := costSegmentsDeep(call.Command)
 	if opaque && ((sf && (costNamesTool(low, "snow") || costNamesTool(low, "snowsql"))) || (pg && costNamesTool(low, "psql")) ||
 		(dbx && costNamesTool(low, "databricks")) || costNamesTool(low, "sqlcmd")) {
 		v.add(policy.Ask, "a nested shell command the guard cannot read runs a warehouse query; confirm it is bounded")
+	}
+	if hidden {
+		v.add(policy.Ask, "a script the guard cannot read (a PowerShell file, stdin or encoded command, or a command past the word cap); confirm every warehouse query in it is bounded")
 	}
 	// pgEnv is a PGOPTIONS statement timeout exported by an earlier segment
 	// (export PGOPTIONS=…, $env:PGOPTIONS = …, set PGOPTIONS=…).

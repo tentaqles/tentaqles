@@ -17,6 +17,12 @@ const costMaxWords = 50000
 
 // costSegments splits a Bash or PowerShell command line into segments.
 func costSegments(cmd string) []costSegment {
+	segs, _ := costSegmentsN(cmd)
+	return segs
+}
+
+// costSegmentsN is costSegments plus whether the word cap cut it short.
+func costSegmentsN(cmd string) ([]costSegment, bool) {
 	var segs []costSegment
 	var words []string
 	var cur strings.Builder
@@ -90,8 +96,9 @@ func costSegments(cmd string) []costSegment {
 			inWord = true
 		}
 	}
+	truncated := total >= costMaxWords && strings.TrimSpace(cmd) != ""
 	flushSeg()
-	return segs
+	return segs, truncated
 }
 
 // costWinPathChar reports whether the backslash at i sits inside a Windows

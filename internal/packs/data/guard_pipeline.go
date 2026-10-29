@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/scan"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
 
@@ -42,8 +43,13 @@ func pipelineRunGuard(call policy.ToolCall, _ packs.GuardCtx) (policy.Action, st
 	}
 	m := &wrapMatcher{steps: maxWrapSteps}
 	rc, ok := m.script(call.Command, 0)
+	if m.opaque != "" {
+		// Fail closed: PowerShell runs a script the guard cannot read.
+		return policy.Ask, "PowerShell runs " + m.opaque + " that tq/pipeline-run cannot read; confirm it starts no pipeline run or backfill", true
+	}
 	if m.exhausted {
-		// Fail closed: a command wrapped too deeply to see through.
+		// Fail closed: a command wrapped too deeply, or with more wrapper
+		// words than the scan reads, to see through.
 		return policy.Ask, "the command nests more wrappers (shells, containers, ssh, tq dotenv run) than tq/pipeline-run looks through; confirm it starts no pipeline run or backfill", true
 	}
 	if !ok {
@@ -68,15 +74,21 @@ const (
 )
 
 // wrapMatcher matches commands through wrappers within a step budget.
+// exhausted is set when a bound cut the scan short, opaque when PowerShell
+// runs a script the guard cannot read; both fail closed.
 type wrapMatcher struct {
 	steps     int
 	exhausted bool
+	opaque    string
 }
+
+// stop reports a scan that must end (and fail closed).
+func (m *wrapMatcher) stop() bool { return m.exhausted || m.opaque != "" }
 
 // script splits a shell string into segments and matches each.
 func (m *wrapMatcher) script(script string, depth int) (runCommand, bool) {
 	for _, seg := range pipeShellSegments(script) {
-		if rc, ok := m.words(shellWords(seg), depth); ok || m.exhausted {
+		if rc, ok := m.words(shellWords(seg), depth); ok || m.stop() {
 			return rc, ok
 		}
 	}
@@ -90,7 +102,7 @@ func (m *wrapMatcher) script(script string, depth int) (runCommand, bool) {
 // exec`, `ssh`, `tq dotenv run`) are matched at every later word, because
 // their own flags may take values.
 func (m *wrapMatcher) words(w []string, depth int) (runCommand, bool) {
-	if m.exhausted {
+	if m.stop() {
 		return runCommand{}, false
 	}
 	if depth > maxWrapDepth {
@@ -115,12 +127,17 @@ func (m *wrapMatcher) words(w []string, depth int) (runCommand, bool) {
 				return m.script(w[i+1], depth+1)
 			}
 		}
-	case prog == "pwsh" || prog == "powershell":
-		for i := 1; i < len(w); i++ {
-			a := strings.ToLower(w[i])
-			if a == "-c" || a == "--command" || (len(a) >= 4 && strings.HasPrefix("-command", a)) {
-				return m.script(strings.Join(w[i+1:], " "), depth+1)
-			}
+	case scan.IsPowerShell(prog):
+		// -Command, a decoded -EncodedCommand or Windows PowerShell's bare
+		// command is read; -File, stdin or an undecodable encoded command
+		// is opaque.
+		r := scan.PowerShell(w[0], w[1:])
+		if r.Opaque != "" {
+			m.opaque = r.Opaque
+			return runCommand{}, false
+		}
+		if r.Script != "" {
+			return m.script(r.Script, depth+1)
 		}
 	case prog == "cmd":
 		for i := 1; i < len(w); i++ {
@@ -136,7 +153,7 @@ func (m *wrapMatcher) words(w []string, depth int) (runCommand, bool) {
 			rest = rest[1:]
 		}
 		return m.words(append([]string{"airflow"}, rest[1:]...), depth+1)
-	case wrapperProg(prog, w):
+	case m.wrapperProg(prog, w):
 		for i := 1; i < len(w) && i <= maxWrapScan; i++ {
 			// Only this scan branches; shell re-splits are linear in the
 			// command, so the steps count wrapper suffixes alone.
@@ -144,15 +161,19 @@ func (m *wrapMatcher) words(w []string, depth int) (runCommand, bool) {
 				m.exhausted = true
 				return runCommand{}, false
 			}
-			if rc, ok := m.words(w[i:], depth+1); ok || m.exhausted {
+			if rc, ok := m.words(w[i:], depth+1); ok || m.stop() {
 				return rc, ok
 			}
 			// A quoted remote command (`ssh host 'airflow dags trigger x'`).
 			if strings.ContainsAny(w[i], " \t;&|") {
-				if rc, ok := m.script(w[i], depth+1); ok || m.exhausted {
+				if rc, ok := m.script(w[i], depth+1); ok || m.stop() {
 					return rc, ok
 				}
 			}
+		}
+		if len(w)-1 > maxWrapScan {
+			// The words past the scan cap were never tried: fail closed.
+			m.exhausted = true
 		}
 	}
 	return runCommand{}, false
@@ -162,13 +183,15 @@ func (m *wrapMatcher) words(w []string, depth int) (runCommand, bool) {
 var shellProgs = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true, "ksh": true, "fish": true}
 
 // wrapperProg reports a container or remote wrapper whose inner command is
-// somewhere in its arguments.
-func wrapperProg(prog string, w []string) bool {
+// somewhere in its arguments. A subcommand search cut short by the scan cap
+// sets m.exhausted (fail closed).
+func (m *wrapMatcher) wrapperProg(prog string, w []string) bool {
 	// Global flags may sit before the subcommand and take values
 	// (`kubectl -n acme exec`), so any word naming it counts.
 	hasWord := func(subs ...string) bool {
 		for i, a := range w[1:] {
 			if i >= maxWrapScan {
+				m.exhausted = true
 				break
 			}
 			for _, s := range subs {

@@ -75,6 +75,10 @@ var pathCommandPrefix = map[string]bool{"-filepath": true, "start-process": true
 // had the variables set earlier in the command expanded; a value that still
 // holds an expansion is dynamic (see dynamicValue).
 type dbtCall struct {
+	// opaque: a script the guard cannot read (a PowerShell file, stdin or
+	// undecodable encoded command, or a nest past the depth). Both dbt
+	// guards ask on it (fail closed).
+	opaque      string
 	sub         string // the subcommand ("" when none was found)
 	write       string // the first positional word that is a writing subcommand
 	target      string // --target / -t, else DBT_TARGET set in the command
@@ -326,15 +330,47 @@ func dbtCommandAt(seg []word, k, first int) bool {
 // "...", ssh host "...") is read as a command line too, with the variables
 // set so far. env holds the variables set by an enclosing command.
 func parseDBTCalls(cmd string, depth int, inherited map[string]string) []dbtCall {
-	if depth > 3 || !strings.Contains(strings.ToLower(cmd), "dbt") {
+	low := strings.ToLower(cmd)
+	mentions := strings.Contains(low, "dbt")
+	pwsh := strings.Contains(low, "pwsh") || strings.Contains(low, "powershell")
+	if !mentions && !pwsh {
 		return nil
+	}
+	if depth > 3 {
+		// Fail closed: nested deeper than the guard reads.
+		return []dbtCall{{opaque: "shells nested deeper than the guard reads"}}
+	}
+	var out []dbtCall
+	if pwsh {
+		// An -EncodedCommand hides the dbt words; -File and stdin hide the
+		// whole script.
+		for _, seg := range shellSegments(cmd) {
+			for k := range seg {
+				if !scan.IsPowerShell(seg[k].text) {
+					continue
+				}
+				args := make([]string, 0, len(seg)-k-1)
+				for _, w := range seg[k+1:] {
+					args = append(args, w.text)
+				}
+				switch r := scan.PowerShell(seg[k].text, args); {
+				case r.Opaque != "":
+					out = append(out, dbtCall{opaque: "PowerShell runs " + r.Opaque})
+				case r.Encoded:
+					out = append(out, parseDBTCalls(r.Script, depth+1, inherited)...)
+				}
+				break
+			}
+		}
+	}
+	if !mentions {
+		return out
 	}
 	env := make(map[string]string, len(inherited))
 	for k, v := range inherited {
 		env[k] = v
 	}
 	mentionsTarget, mentionsFullRefresh := reMentionTarget.MatchString(cmd), reMentionFullRefresh.MatchString(cmd)
-	var out []dbtCall
 	for _, seg := range shellSegments(cmd) {
 		// a whole-segment assignment: $env:DBT_TARGET = "prod", export/set X=v
 		if first := strings.ToLower(seg[0].text); strings.HasPrefix(first, "$env:") || first == "export" || first == "set" || first == "setx" {
@@ -668,6 +704,10 @@ func checkProdTarget(call policy.ToolCall, g packs.GuardCtx) (policy.Action, str
 	}
 	cfg := dbtSettings(g.Settings())
 	for _, c := range calls {
+		if c.opaque != "" {
+			g.Count("dbt_prod_target:asked", 1)
+			return policy.Ask, c.opaque + ", which tq/dbt-prod-target cannot read; confirm no dbt command in it writes to a production target", true
+		}
 		sub, ok := c.writes()
 		if !ok {
 			continue
@@ -701,6 +741,10 @@ func checkProdTarget(call policy.ToolCall, g packs.GuardCtx) (policy.Action, str
 // target and any subcommand that can rebuild a relation.
 func checkFullRefresh(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 	for _, c := range parseDBTCalls(call.Command, 0, nil) {
+		if c.opaque != "" {
+			g.Count("dbt_full_refresh:asked", 1)
+			return policy.Ask, c.opaque + ", which tq/dbt-full-refresh cannot read; confirm no dbt command in it runs --full-refresh", true
+		}
 		sub, writes := c.writes()
 		if !writes {
 			sub = c.sub
