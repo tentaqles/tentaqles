@@ -1,0 +1,4 @@
+-- want:
+SET LOCK_TIMEOUT 5000;
+ALTER TABLE dbo.Orders WITH NOCHECK ADD CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES dbo.Customers (Id);
+ALTER TABLE dbo.Orders CHECK CONSTRAINT FK_Orders_Customers;
