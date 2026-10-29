@@ -1,0 +1,7 @@
+set -e CLAUDE_CONFIG_DIR
+set -e GH_CONFIG_DIR
+set -e TQ_WS
+set -e TQ_WS_ROOT
+set -e __TQ_STATE
+set -gx TQ_MODE 'off'
+set -gx TQ_SOMETHING 'C:\\orig'
