@@ -558,6 +558,49 @@ func decodePct(s string) string {
 	})
 }
 
+// foldContinuations joins continued lines back into one command line: bash
+// backslash-newline, PowerShell backtick-newline and cmd caret-newline
+// (R6-2), so a match that stops at a newline cannot be split by one.
+func foldContinuations(s string) string {
+	return strings.NewReplacer("\\\r\n", " ", "\\\n", " ", "`\r\n", " ", "`\n", " ", "^\r\n", " ", "^\n", " ").Replace(s)
+}
+
+// humanMsgArg is a message or note flag value; humanProseSplit and
+// echoSeg find echo segments (R6-5).
+var humanMsgArg = regexp.MustCompile(`(?i)\s(-m|-am|--message|--note|--reason|--comment)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
+
+// executes reports text a shell runs even inside a message or an echo:
+// command substitution, a backtick, process substitution.
+func executes(s string) bool {
+	return strings.Contains(s, "$(") || strings.Contains(s, "`") || strings.Contains(s, "<(") || strings.Contains(s, ">(")
+}
+
+// humanProseFree blanks prose that only mentions a command: a commit message
+// or a --note/--reason/--comment value, and an echo segment that redirects
+// nowhere, unless the text runs something ($(...), a backtick).
+func humanProseFree(raw string) string {
+	raw = humanMsgArg.ReplaceAllStringFunc(raw, func(m string) string {
+		if executes(m) {
+			return m
+		}
+		return " "
+	})
+	var out []string
+	for _, seg := range proseSplit.Split(raw, -1) {
+		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") && !executes(seg) {
+			continue
+		}
+		out = append(out, seg)
+	}
+	return strings.Join(out, " ; ")
+}
+
+// humanAnswerCommand is the hook's tq/human-answer check of a shell command:
+// continuations folded, prose blanked, then humanAnswerShell.
+func humanAnswerCommand(cmd string) bool {
+	return humanAnswerShell(normShell(humanProseFree(foldContinuations(cmd))))
+}
+
 // humanAnswerShell is the folded half of tq/human-answer: a tq hub answer
 // or a pack apply subcommand (promote apply, cloud apply) in any spelling (global flags before the
 // verb, t”q, a variable or call operator, a subprocess argv list), and an
@@ -643,7 +686,7 @@ func stateDirDecision(call policy.ToolCall, cwd string, readArgs ...packs.ReadAr
 			cmd = guard.BlankDataHeredocs(cmd)
 		}
 		n := normShell(cmd)
-		if humanAnswerShell(n) {
+		if humanAnswerCommand(cmd) {
 			deny("tq/human-answer", "answering an approval and applying an approved action are done by a human in their own terminal, never by an agent")
 		}
 		if strings.Contains(strings.ReplaceAll(n, "+", ""), "tentaqles-packs") {

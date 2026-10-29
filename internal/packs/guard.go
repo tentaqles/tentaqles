@@ -206,12 +206,18 @@ func (g GuardCtx) Cwd() string {
 // file's absolute path under the pack's plans/ directory.
 type ReadArg struct {
 	Program string
-	Path    string
+	// Flag is the one flag whose value the file may be (--plan); empty: a
+	// positional argument only. A positional argument is always accepted.
+	Flag string
+	Path string
 }
 
+var flagNameRe = regexp.MustCompile(`^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$`)
+
 // ReadArgs names stored plans this guard verified with HashState in this
-// call and that program reads as a plain argument (terraform apply <plan>,
-// pulumi up --plan <plan>). For this call only, the core state-dir rule
+// call and that program reads as a positional argument (terraform apply
+// <plan>) or as the value of flag (pulumi up --plan <plan>, --plan=<plan>;
+// flag "" allows the positional form only). For this call only, the core state-dir rule
 // (tq/hub-store-write) does not count that exact path, provided:
 //   - the command writes nothing (no redirect, no write verb, shell,
 //     interpreter, downloader or wrapper, no substitution);
@@ -222,10 +228,13 @@ type ReadArg struct {
 // handles the call and allows it. Only files under the pack's plans/
 // directory can be named; a name not hashed in this call, outside plans/,
 // or an empty program is an error (the guard should deny).
-func (g GuardCtx) ReadArgs(program string, names ...string) error {
+func (g GuardCtx) ReadArgs(program, flag string, names ...string) error {
 	program = strings.ToLower(strings.TrimSpace(program))
 	if program == "" || strings.ContainsAny(program, `/\ `) || len(names) == 0 {
 		return fmt.Errorf("%w: ReadArgs needs the program name that reads the file and at least one file", ErrRefused)
+	}
+	if flag != "" && !flagNameRe.MatchString(flag) {
+		return fmt.Errorf("%w: %q is not a flag name", ErrRefused, flag)
 	}
 	g.st.mu.Lock()
 	defer g.st.mu.Unlock()
@@ -241,7 +250,7 @@ func (g GuardCtx) ReadArgs(program string, names ...string) error {
 		if !ok {
 			return fmt.Errorf("%w: %q was not verified with HashState in this call", ErrRefused, n)
 		}
-		g.st.readArgs = append(g.st.readArgs, ReadArg{Program: program, Path: abs})
+		g.st.readArgs = append(g.st.readArgs, ReadArg{Program: program, Flag: strings.ToLower(flag), Path: abs})
 	}
 	return nil
 }

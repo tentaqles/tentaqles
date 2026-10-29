@@ -60,7 +60,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					_, err = approval.Claim(in.Workspace(), args[0], approval.Binding{Pack: "db", Action: "migrate", Subject: "m1", Target: "prod"}, map[string]string{"plan": "sha256:aa"})
+					_, err = approval.Claim(c, in.Workspace(), args[0], approval.Binding{Pack: "db", Action: "migrate", Subject: "m1", Target: "prod"}, map[string]string{"plan": "sha256:aa"})
 					return err
 				}}
 			return []*cobra.Command{approve, apply}
@@ -107,11 +107,11 @@ func init() {
 					} else if _, err := g.HashState(rel); err != nil {
 						return policy.Deny, err.Error(), true
 					}
-					prog := "tofu"
+					prog, flag := "tofu", ""
 					if strings.Contains(call.Command, "pulumi up") {
-						prog = "pulumi"
+						prog, flag = "pulumi", "--plan"
 					}
-					if err := g.ReadArgs(prog, rel); err != nil {
+					if err := g.ReadArgs(prog, flag, rel); err != nil {
 						return policy.Deny, err.Error(), true
 					}
 					return policy.Allow, "plan verified", true
@@ -573,6 +573,8 @@ func TestHookStoredPlanReadArg(t *testing.T) {
 		"tofu apply " + q(plan),
 		"pulumi up --plan " + plan,
 		"pulumi up --plan=" + plan,
+		"pulumi up " + plan,
+		"pulumi up --yes --plan " + plan,
 		"cd infra && tofu apply " + plan,
 	} {
 		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
@@ -613,6 +615,11 @@ func TestHookStoredPlanReadArg(t *testing.T) {
 		"Expand-Archive":  "Expand-Archive a.zip; tofu apply " + plan,
 		"another program": "terraform-wrapper tofu apply " + plan,
 		"the plan first":  plan + " tofu apply",
+		// R6-4: the plan only as a positional argument or the declared flag's value.
+		"another flag, =":       "tofu apply --out=" + plan,
+		"another flag":          "tofu apply -out " + plan,
+		"pulumi, another flag":  "pulumi up --save " + plan,
+		"pulumi, another flag=": "pulumi up --save=" + plan,
 	} {
 		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
 		if code != 2 || !strings.Contains(out, "tq/hub-store-write") {

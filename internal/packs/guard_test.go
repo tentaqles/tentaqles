@@ -335,7 +335,7 @@ func TestReadArgsNeedHashState(t *testing.T) {
 	writeFile(t, dir, "ledger.jsonl", "{}")
 	writeFile(t, dir, "claims/d1", "")
 	g := NewGuardCtx(env, "cloud")
-	if err := g.ReadArgs("tofu", "plans/p1.tfplan"); !errors.Is(err, ErrRefused) {
+	if err := g.ReadArgs("tofu", "", "plans/p1.tfplan"); !errors.Is(err, ErrRefused) {
 		t.Fatalf("unhashed: %v", err)
 	}
 	for _, n := range []string{"plans/p1.tfplan", "ledger.jsonl", "claims/d1"} {
@@ -343,18 +343,20 @@ func TestReadArgsNeedHashState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := g.ReadArgs("tofu", "plans/p1.tfplan"); err != nil {
+	if err := g.ReadArgs("tofu", "", "plans/p1.tfplan"); err != nil {
 		t.Fatal(err)
 	}
 	// R5-3 (d): only stored plans, a declared program and a name.
 	for name, call := range map[string]func() error{
-		"..":           func() error { return g.ReadArgs("tofu", "../x") },
-		"ledger":       func() error { return g.ReadArgs("tofu", "ledger.jsonl") },
-		"claim":        func() error { return g.ReadArgs("tofu", "claims/d1") },
-		"plans itself": func() error { return g.ReadArgs("tofu", "plans") },
-		"no program":   func() error { return g.ReadArgs("", "plans/p1.tfplan") },
-		"a path":       func() error { return g.ReadArgs("/usr/bin/tofu", "plans/p1.tfplan") },
-		"no file":      func() error { return g.ReadArgs("plans/p1.tfplan") },
+		"..":           func() error { return g.ReadArgs("tofu", "", "../x") },
+		"ledger":       func() error { return g.ReadArgs("tofu", "", "ledger.jsonl") },
+		"claim":        func() error { return g.ReadArgs("tofu", "", "claims/d1") },
+		"plans itself": func() error { return g.ReadArgs("tofu", "", "plans") },
+		"no program":   func() error { return g.ReadArgs("", "", "plans/p1.tfplan") },
+		"a path":       func() error { return g.ReadArgs("/usr/bin/tofu", "", "plans/p1.tfplan") },
+		"no file":      func() error { return g.ReadArgs("tofu", "plans/p1.tfplan") },
+		"bad flag":     func() error { return g.ReadArgs("pulumi", "plan", "plans/p1.tfplan") },
+		"flag value":   func() error { return g.ReadArgs("pulumi", "--plan=x", "plans/p1.tfplan") },
 	} {
 		if err := call(); !errors.Is(err, ErrRefused) {
 			t.Fatalf("%s: %v", name, err)

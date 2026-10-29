@@ -28,7 +28,7 @@ func TestHumanAnswerCoversEveryExecutor(t *testing.T) {
 	denied := func(line string) bool {
 		d := set.Evaluate(policy.ToolCall{Tool: "Bash", Command: line})
 		static := d.Action == policy.Deny && len(d.Matched) > 0 && d.Matched[0].ID == "tq/human-answer"
-		return static && humanAnswerShell(normShell(line))
+		return static && humanAnswerCommand(line)
 	}
 	executors, askers := 0, 0
 	walk(NewRoot(), func(c *cobra.Command) {
@@ -45,6 +45,20 @@ func TestHumanAnswerCoversEveryExecutor(t *testing.T) {
 			for _, l := range []string{line + " d1", flagged} {
 				if !denied(l) {
 					t.Errorf("%s executes an approved action but tq/human-answer does not deny %q (name executors ... apply)", c.CommandPath(), l)
+				}
+			}
+			// R6-2: line continuations (bash, PowerShell, cmd) fold back.
+			head, verb := "tq "+strings.Join(path[1:len(path)-1], " "), path[len(path)-1]
+			for _, cont := range []string{"\\\n", "\\\r\n", "`\n", "`\r\n", "^\n", "^\r\n"} {
+				l := head + " " + cont + "  " + verb + " d1"
+				if !humanAnswerCommand(l) {
+					t.Errorf("%s: a continued line %q is not denied", c.CommandPath(), l)
+				}
+			}
+			// R6-5: prose that runs the executor is still denied.
+			for _, l := range []string{`git commit -m "$(` + line + ` d1)"`, "echo `" + line + " d1`", `echo $(` + line + ` d1)`} {
+				if !humanAnswerCommand(l) {
+					t.Errorf("%s: %q runs the executor but is not denied", c.CommandPath(), l)
 				}
 			}
 		case packs.ApprovalAsk:
@@ -113,4 +127,27 @@ func TestApproveCommandOnlyAsks(t *testing.T) {
 			t.Fatalf("%v %s", err, out)
 		}
 	})
+}
+
+// R6-5: prose that only mentions an executor is not denied.
+func TestHumanAnswerIgnoresProse(t *testing.T) {
+	for _, l := range []string{
+		`git commit -m "pack ml: apply the promote after review"`,
+		`git commit -am 'fix(pack): cloud apply uses the stored plan'`,
+		`tq pack ml promote request churn@7 --note "will apply after review"`,
+		`echo "run tq pack cloud apply d1 in your terminal"`,
+	} {
+		if humanAnswerCommand(l) {
+			t.Errorf("prose denied: %s", l)
+		}
+	}
+	for _, l := range []string{
+		`git commit -m "x" && tq pack cloud apply d1`,
+		`echo ok; tq pack ml promote apply churn@7`,
+		`echo "x" > /tmp/o; tq hub answer c1 d1 --choice approve`,
+	} {
+		if !humanAnswerCommand(l) {
+			t.Errorf("not denied: %s", l)
+		}
+	}
 }
