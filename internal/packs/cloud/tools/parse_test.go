@@ -142,7 +142,7 @@ func TestParseSARIF(t *testing.T) {
 }
 
 func TestParseCfnLint(t *testing.T) {
-	fs, err := ParseCfnLint(fixture(t, "cfn-lint.json"), t.TempDir())
+	fs, err := ParseCfnLint(fixture(t, "cfn-lint.json"), t.TempDir(), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestParseCfnLint(t *testing.T) {
 		"infra/cfn/template.yaml:8 error cfn-lint:E3002 Additional properties are not allowed ('BucketNam' was unexpected)",
 		"infra/cfn/template.yaml:3 warn cfn-lint:W2001 Parameter AcmeUnused not used.",
 	})
-	if fs, err := ParseCfnLint(nil, ""); err != nil || len(fs) != 0 {
+	if fs, err := ParseCfnLint(nil, "", 0); err != nil || len(fs) != 0 {
 		t.Errorf("empty = %v %v", fs, err)
 	}
 	for c, want := range map[int]bool{0: true, 2: true, 4: true, 6: true, 8: true, 14: true, 1: false, 16: false, 32: false, -1: false} {
@@ -163,7 +163,7 @@ func TestParseCfnLint(t *testing.T) {
 func TestMessagesAreRedacted(t *testing.T) {
 	// A tool that echoes a credential into its message never puts it in a finding.
 	raw := []byte(`[{"Filename":"t.yaml","Level":"Error","Location":{"Start":{"LineNumber":1}},"Message":"bad value AKIAABCDEFGHIJKLMNOP here","Rule":{"Id":"E1"}}]`) // tq:allow-secret (fake fixture)
-	fs, err := ParseCfnLint(raw, "")
+	fs, err := ParseCfnLint(raw, "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}

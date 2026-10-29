@@ -322,7 +322,7 @@ func RunCfnLint(ctx context.Context, in *packs.Input) packs.Result {
 		if !ok {
 			continue
 		}
-		fs, err := ParseCfnLint(out.Stdout, root)
+		fs, err := ParseCfnLint(out.Stdout, root, out.ExitCode)
 		if err != nil {
 			r.fail(CfnLint, err.Error()+": "+out.Tail(20, in.Classes()))
 			continue

@@ -28,6 +28,18 @@ type checkovReport struct {
 	} `json:"results"`
 }
 
+// checkovRel: checkov's file_path is relative to the -d directory and
+// written with a leading slash ("/main.tf"). On Linux that looks absolute
+// and would escape the repository, so the slash is dropped; a Windows drive
+// path or a file: URI is left to repoPath.
+func checkovRel(p string) string {
+	s := strings.ReplaceAll(strings.TrimSpace(p), `\`, "/")
+	if strings.HasPrefix(s, "file:") || (len(s) > 1 && s[1] == ':') {
+		return p
+	}
+	return strings.TrimLeft(s, "/")
+}
+
 // ParseCheckov parses `checkov -o json`: one report object, or a list of
 // them (one per framework); a summary-only object (nothing scanned) has no
 // findings. Every failed check is an error: Checkov's open-source output has
@@ -62,7 +74,7 @@ func ParseCheckov(stdout []byte, root, base, display string) ([]packs.Finding, e
 			case c.FileAbsPath != "":
 				f.File = repoPath(root, base, c.FileAbsPath)
 			default:
-				f.File = repoPath(root, base, c.FilePath)
+				f.File = repoPath(root, base, checkovRel(c.FilePath))
 			}
 			if display == "" && len(c.FileLineRange) > 0 && c.FileLineRange[0] > 0 {
 				f.Line = c.FileLineRange[0]
@@ -309,9 +321,14 @@ type cfnLintMatch struct {
 
 // ParseCfnLint parses `cfn-lint -f json`. Level Error fails; Warning and
 // Informational warn.
-func ParseCfnLint(stdout []byte, root string) ([]packs.Finding, error) {
+// An empty stdout is zero findings only with exit 0: a non-zero exit says
+// cfn-lint found something, so silence there is a failed run.
+func ParseCfnLint(stdout []byte, root string, exit int) ([]packs.Finding, error) {
 	t := bytes.TrimSpace(stdout)
 	if len(t) == 0 {
+		if exit != 0 {
+			return nil, fmt.Errorf("cfn-lint exited %d but printed no JSON", exit)
+		}
 		return []packs.Finding{}, nil // no matches: cfn-lint may print nothing
 	}
 	var ms []cfnLintMatch
