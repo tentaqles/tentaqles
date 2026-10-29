@@ -356,3 +356,137 @@ func TestHook_PowerShellFunctions(t *testing.T) {
 	}
 	checkLog(t, log, sh)
 }
+
+// An alias named claude (or codex) defined before the hook must not abort
+// it: bash and zsh alias-expand the name in `claude() {`, which made the
+// whole block a syntax error, prompt hook included (final review C1). The
+// tq path is quoted per shell, so a quote or space in it is data (m5).
+func TestHook_BashAliasFirstAndQuotedPath(t *testing.T) {
+	b := findBash()
+	if b == "" {
+		t.Skip("no usable bash")
+	}
+	poisonProfiles(t)
+	dir := filepath.Join(t.TempDir(), "it's a $dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := fakeTq(t, dir)
+	hook, err := HookFor("bash", slash(bin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(t.TempDir(), "hook.bash")
+	if err := os.WriteFile(hookPath, []byte(hook), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "log")
+	script := "shopt -s expand_aliases\n" +
+		"alias claude='claude --dangerously-skip-permissions'\nalias codex='codex --yolo'\n" +
+		". '" + slash(hookPath) + "'\n" +
+		"echo \"S:$?:${TQ_WS:-}\"\n" +
+		"case \";$PROMPT_COMMAND;\" in *';__tq_hook;'*) echo P:ok;; esac\n" +
+		"type claude-off >/dev/null 2>&1 && echo F:ok\n" +
+		"claude x\n"
+	cmd := exec.Command(b, "-c", script)
+	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+slash(log))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	s := string(out)
+	checkNoLeak(t, "bash", s)
+	for _, want := range []string{"S:0:acme", "P:ok", "F:ok"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q in:\n%s", want, s)
+		}
+	}
+	raw, _ := os.ReadFile(log)
+	if !strings.Contains(string(raw), "run . -- claude --dangerously-skip-permissions x") {
+		t.Fatalf("the alias must reach tq's launcher: %q", raw)
+	}
+}
+
+func TestBinWordQuotesPerShell(t *testing.T) {
+	cases := []struct{ sh, bin, want string }{
+		{"bash", `/o/it's $x/tq`, `'/o/it'\''s $x/tq'`},
+		{"zsh", "", "command tq"},
+		{"fish", `/o/it's\x/tq`, `'/o/it\'s\\x/tq'`},
+		{"fish", "", "command tq"},
+		{"powershell", `C:\it's\tq.exe`, `'C:\it''s\tq.exe'`},
+		{"pwsh", "", "(Get-Command -CommandType Application -Name tq -ErrorAction Stop | Select-Object -First 1).Source"},
+		{"cmd", `C:\a b\tq.exe`, `"C:\a b\tq.exe"`},
+	}
+	for _, c := range cases {
+		if got := binWord(c.sh, c.bin); got != c.want {
+			t.Errorf("%s %q: got %s want %s", c.sh, c.bin, got, c.want)
+		}
+	}
+}
+
+// A simple PowerShell function's $args never holds a literal --, so the tq
+// function puts it back before the command word of tq run, tq dotenv run
+// and tq redact run (final review M1), live through the function.
+func TestHook_PowerShellRebuildsDash(t *testing.T) {
+	poisonProfiles(t)
+	sh, exe := "pwsh", ""
+	if p, err := exec.LookPath("pwsh"); err == nil {
+		exe = p
+	} else if runtime.GOOS == "windows" {
+		if p, err := exec.LookPath("powershell"); err == nil {
+			sh, exe = "powershell", p
+		}
+	}
+	if exe == "" || runtime.GOOS != "windows" {
+		t.Skip("needs PowerShell on Windows (the fake tq is a .cmd)")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "tq.cmd")
+	if err := os.WriteFile(bin, []byte("@echo off\r\n>>\"%TQ_FAKE_LOG%\" echo %*\r\nexit /b 0\r\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook, err := HookFor(sh, bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(dir, "hook.ps1")
+	if err := os.WriteFile(hookPath, []byte(hook), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, "log")
+	script := "Invoke-Expression ([IO.File]::ReadAllText('" + hookPath + "'))\n" +
+		"Remove-Item -ErrorAction SilentlyContinue '" + log + "'\n" +
+		"tq run . -- cmd /c echo func -p x\n" +
+		"tq run . npm test -p x\n" +
+		"tq run acme --tq-mode strict -- claude -p q\n" +
+		"tq run --off -- claude --resume\n" +
+		"tq dotenv run --file a.env -- psql -c x\n" +
+		"tq redact run --classes pii -- cat -n\n" +
+		"tq doctor --json\n"
+	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+log)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(raw), "\r\n", "\n")), "\n")
+	for i := range got {
+		got[i] = strings.TrimSpace(got[i])
+	}
+	want := []string{
+		"run . -- cmd /c echo func -p x",
+		"run . -- npm test -p x",
+		"run acme --tq-mode strict -- claude -p q",
+		"run --off -- claude --resume",
+		"dotenv run --file a.env -- psql -c x",
+		"redact run --classes pii -- cat -n",
+		"doctor --json",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("tq calls\n got  %q\n want %q\n%s", got, want, out)
+	}
+}

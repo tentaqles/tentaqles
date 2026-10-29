@@ -2,12 +2,12 @@
 function __tq_hook --on-variable PWD
     test "$TQ_MODE" = off; and return 0
     test "$TQ_ENABLED" = 0; and return 0
-    "/opt/tq/bin/tq" env --shell fish 2>/dev/null | source
+    "'/opt/tq/bin/tq'" env --shell fish 2>/dev/null | source
 end
 function tq
     switch "$argv[1]"
         case off
-            set -l __o ("/opt/tq/bin/tq" env --off --shell fish | string collect); or return $status
+            set -l __o ("'/opt/tq/bin/tq'" env --off --shell fish | string collect); or return $status
             echo $__o | source
             echo 'tq: off in this window - identity cleared, guard off, main logins in use. Run: tq on'
         case on
@@ -15,11 +15,11 @@ function tq
             __tq_hook
             echo 'tq: on - identity re-applied for this folder'
         case '*'
-            "/opt/tq/bin/tq" $argv
+            "'/opt/tq/bin/tq'" $argv
     end
 end
-function claude;     if test "$TQ_MODE" = off; "/opt/tq/bin/tq" run --off -- claude $argv; else; "/opt/tq/bin/tq" run . -- claude $argv; end; end
-function codex;      if test "$TQ_MODE" = off; "/opt/tq/bin/tq" run --off -- codex $argv; else; "/opt/tq/bin/tq" run . -- codex $argv; end; end
-function claude-off; "/opt/tq/bin/tq" run --off -- claude $argv; end
-function codex-off;  "/opt/tq/bin/tq" run --off -- codex $argv; end
+function claude;     if test "$TQ_MODE" = off; "'/opt/tq/bin/tq'" run --off -- claude $argv; else; "'/opt/tq/bin/tq'" run . -- claude $argv; end; end
+function codex;      if test "$TQ_MODE" = off; "'/opt/tq/bin/tq'" run --off -- codex $argv; else; "'/opt/tq/bin/tq'" run . -- codex $argv; end; end
+function claude-off; "'/opt/tq/bin/tq'" run --off -- claude $argv; end
+function codex-off;  "'/opt/tq/bin/tq'" run --off -- codex $argv; end
 __tq_hook
