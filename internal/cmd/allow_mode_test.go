@@ -216,3 +216,16 @@ func TestRewriteConvertsLegacyBypass(t *testing.T) {
 		t.Fatalf("converted grant: %+v %v", g, err)
 	}
 }
+
+// tq guard … --ws re-trusts through the carry and names a grant it drops.
+func TestGuardEditReportsADroppedGrant(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", relaxedWorkspace)
+	// A grant narrower than the manifest asks: the rewrite cannot carry it.
+	if err := trust.SaveGrant(manifestHash(t, root), trust.Grant{Mode: "custom", Workspace: "acme", Table: map[string]string{"prod-changes": "ask"}}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runGuardCmd(t, "guard", "off", "tq/force-push", "--ws", "acme")
+	if err != nil || !strings.Contains(out, "mode grant dropped (was custom)") {
+		t.Fatalf("err %v, out:\n%s", err, out)
+	}
+}

@@ -202,8 +202,10 @@ func guardChange(c *cobra.Command, wsName string, all bool, ids []string, op, ac
 		if err := guardcfg.Save(g); err != nil {
 			return err
 		}
-	} else if err := editManifestGuard(w, ids, op, action); err != nil {
+	} else if dropped, err := editManifestGuardCarry(w, ids, op, action); err != nil {
 		return err
+	} else if dropped != nil {
+		fmt.Fprintf(c.ErrOrStderr(), "mode grant dropped (was %s): run tq allow --mode %s %s\n", dropped.Mode, w.Name, dropped.Mode)
 	}
 	// Re-resolve so the report shows the real effective state.
 	if w != nil {
@@ -262,7 +264,14 @@ type guardBlock struct {
 // editManifestGuard applies off/on/set for ids to w's guard block through
 // rewriteManifestGuard.
 func editManifestGuard(w *resolve.Workspace, ids []string, op, action string) error {
-	return rewriteManifestGuard(w, func(gb *guardBlock) error {
+	_, err := editManifestGuardCarry(w, ids, op, action)
+	return err
+}
+
+// editManifestGuardCarry is editManifestGuard that also returns the mode
+// grant the rewrite dropped (see rewriteManifestGuardCarry).
+func editManifestGuardCarry(w *resolve.Workspace, ids []string, op, action string) (*trust.Grant, error) {
+	return rewriteManifestGuardCarry(w, func(gb *guardBlock) error {
 		g, gerr := guardcfg.Load()
 		for _, id := range ids {
 			switch op {
