@@ -2,6 +2,8 @@ package toolrun
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -44,5 +46,27 @@ func TestTelemetrySwitches(t *testing.T) {
 	}
 	if !found {
 		t.Error("trivy: TRIVY_SKIP_VERSION_CHECK=true missing")
+	}
+}
+
+// Final review, security m2: with NoExecRepo a tool found through PATH in
+// a folder inside the repository (direnv PATH_add bin) is not run either.
+func TestNoExecRepoSkipsRepoLocalPathVersion(t *testing.T) {
+	isolate(t)
+	t.Setenv("TQ_FAKE_TOOL", "echo")
+	t.Setenv("TQ_FAKE_VERSION", "9.9.9")
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	os.MkdirAll(bin, 0o755)
+	tool := fakeBin(t, bin, "tflint")
+	p := (&Runner{Root: root, NoExecRepo: true, LookPath: func(string) (string, error) { return tool, nil }}).Probe("cloud", "tflint")
+	if !p.Found || p.Source != "path" || p.Version != "" {
+		t.Fatalf("a repo-local PATH binary was run: %+v", p)
+	}
+	// outside the repository it still runs
+	out := fakeBin(t, t.TempDir(), "tflint")
+	p = (&Runner{Root: root, NoExecRepo: true, LookPath: func(string) (string, error) { return out, nil }}).Probe("cloud", "tflint")
+	if p.Version != "9.9.9" {
+		t.Fatalf("an outside binary: %+v", p)
 	}
 }

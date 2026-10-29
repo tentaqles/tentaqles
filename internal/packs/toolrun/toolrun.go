@@ -166,7 +166,7 @@ func (r *Runner) Probe(pack, tool string) Probe {
 			p.Found, p.Path, p.Source = true, lp, "path"
 		}
 	}
-	if p.Found && !(r.NoExecRepo && p.Source == "venv") {
+	if p.Found && !(r.NoExecRepo && r.RepoLocal(p)) { // any repo-local binary, also one found through PATH
 		ctx, cancel := context.WithTimeout(context.Background(), VersionTimeout)
 		p.Version = Version(ctx, p.Path)
 		cancel()
