@@ -16,17 +16,20 @@ import (
 func TestRegisteredChecks(t *testing.T) {
 	want := []string{"ml/data-snapshot", "ml/dvc-status", "ml/env-lock", "ml/leakage", "ml/lock-check", "ml/lock-check-poetry",
 		"ml/notebook-outputs", "ml/ruff", "ml/run-tracking", "ml/seeds", "ml/unsafe-deserialize"}
-	var got []string
+	// Other workstreams register ml checks too: assert ours are present.
+	got := map[string]bool{}
 	tools := map[string]string{}
 	for _, c := range packs.Checks("ml") {
-		got = append(got, c.ID)
+		got[c.ID] = true
 		if c.Kind == packs.External {
 			tools[c.ID] = c.Tool
 		}
 	}
-	sort.Strings(got)
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("checks = %v, want %v", got, want)
+	sort.Strings(want)
+	for _, id := range want {
+		if !got[id] {
+			t.Errorf("check %s is not registered", id)
+		}
 	}
 	for id, tool := range map[string]string{"ml/ruff": "ruff", "ml/lock-check": "uv", "ml/lock-check-poetry": "poetry", "ml/dvc-status": "dvc"} {
 		if tools[id] != tool {
@@ -110,7 +113,7 @@ func raised(in *packs.Input) bool {
 }
 
 func TestMLFlag(t *testing.T) {
-	isolate(t)
+	lintIsolate(t)
 	if !raised(flagInput(t, "ml: {paths: {features: [src/features/**]}}", map[string]string{"src/features/f.py": "x = 1\n"})) {
 		t.Error("a change under paths.features does not raise ml")
 	}
@@ -143,7 +146,7 @@ func TestSuppressionNeedsReason(t *testing.T) {
 
 func TestFindingsCarryNoValues(t *testing.T) {
 	// A notebook output with an e-mail must never be echoed into a finding.
-	isolate(t)
+	lintIsolate(t)
 	in := caseInput(t, filepath.Join("testdata", "repro-notebook", "notebook-output-pii-pos"))
 	r := runCase(t, "ml/notebook-outputs", in)
 	for _, f := range r.Findings {
@@ -154,7 +157,7 @@ func TestFindingsCarryNoValues(t *testing.T) {
 }
 
 func TestBuiltinChecksSkipWhenNothingApplies(t *testing.T) {
-	isolate(t)
+	lintIsolate(t)
 	in := flagInput(t, "ml: {enabled: true}", map[string]string{"README.md": "acme\n"})
 	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"ml"}, BuiltinOnly: true})
 	if len(rep.Results) != 0 {

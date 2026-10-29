@@ -35,21 +35,21 @@ func ruleKeys(rule string) []string {
 
 // preprocessors are the preprocessing objects of L1 (spec list plus a few
 // close relatives).
-var preprocessors = set("StandardScaler", "MinMaxScaler", "RobustScaler", "MaxAbsScaler", "OneHotEncoder", "OrdinalEncoder",
+var preprocessors = strSet("StandardScaler", "MinMaxScaler", "RobustScaler", "MaxAbsScaler", "OneHotEncoder", "OrdinalEncoder",
 	"LabelEncoder", "SimpleImputer", "KNNImputer", "IterativeImputer", "PCA", "TfidfVectorizer", "CountVectorizer", "SelectKBest",
 	"SelectPercentile", "TargetEncoder", "QuantileTransformer", "PowerTransformer", "KBinsDiscretizer")
 
 // splitters are the splitter classes; groupSplitters keep groups together.
-var splitters = set("KFold", "StratifiedKFold", "GroupKFold", "StratifiedGroupKFold", "TimeSeriesSplit", "ShuffleSplit",
+var splitters = strSet("KFold", "StratifiedKFold", "GroupKFold", "StratifiedGroupKFold", "TimeSeriesSplit", "ShuffleSplit",
 	"StratifiedShuffleSplit", "GroupShuffleSplit", "RepeatedKFold", "RepeatedStratifiedKFold", "LeaveOneGroupOut", "LeavePGroupsOut")
 
-var groupSplitters = set("GroupKFold", "StratifiedGroupKFold", "GroupShuffleSplit", "LeaveOneGroupOut", "LeavePGroupsOut")
+var groupSplitters = strSet("GroupKFold", "StratifiedGroupKFold", "GroupShuffleSplit", "LeaveOneGroupOut", "LeavePGroupsOut")
 
-var searchers = set("GridSearchCV", "RandomizedSearchCV", "HalvingGridSearchCV", "HalvingRandomSearchCV", "BayesSearchCV")
+var searchers = strSet("GridSearchCV", "RandomizedSearchCV", "HalvingGridSearchCV", "HalvingRandomSearchCV", "BayesSearchCV")
 
-var cvFuncs = set("cross_val_score", "cross_validate", "cross_val_predict", "learning_curve", "validation_curve", "permutation_test_score")
+var cvFuncs = strSet("cross_val_score", "cross_validate", "cross_val_predict", "learning_curve", "validation_curve", "permutation_test_score")
 
-func set(xs ...string) map[string]bool {
+func strSet(xs ...string) map[string]bool {
 	m := map[string]bool{}
 	for _, x := range xs {
 		m[x] = true
@@ -67,7 +67,7 @@ func runLeakage(ctx context.Context, in *packs.Input) packs.Result {
 	for _, s := range files {
 		fs = append(fs, leakFile(s, featGroups)...)
 	}
-	return packs.Result{Status: packs.OK, Detail: "leakage lint over " + plural(len(files), "file"), Findings: fs}
+	return packs.Result{Status: packs.OK, Detail: "leakage lint over " + lintPlural(len(files), "file"), Findings: fs}
 }
 
 // leakFile runs L1–L8 over one file.
@@ -262,11 +262,11 @@ func featureName(v string) bool {
 	return v == "X" || v == "x" || hasSeg(v, "x", "features", "feature", "feats")
 }
 
-type target struct{ frame, col, constName string }
+type leakTarget struct{ frame, col, constName string }
 
 // l4 finds a target column that stays in the feature frame.
 func (f *pyFile) l4(add func(int, string, string, string)) []packs.Finding {
-	var targets []target
+	var targets []leakTarget
 	for i, l := range f.Lines {
 		lhs, rhs, from, ok := splitAssign(l.Code)
 		if !ok || len(lhs) != 1 || !targetName(lhs[0]) {
@@ -276,7 +276,7 @@ func (f *pyFile) l4(add func(int, string, string, string)) []packs.Finding {
 		if m == nil {
 			continue
 		}
-		t := target{frame: m[1]}
+		t := leakTarget{frame: m[1]}
 		if isStrLit(m[2]) {
 			if v := stringsIn(l, from, len(l.Code)); len(v) == 1 {
 				t.col = v[0]
@@ -329,7 +329,7 @@ func (f *pyFile) l4(add func(int, string, string, string)) []packs.Finding {
 
 // dropsTarget reports whether the file drops, pops or deletes the target
 // column from the frame or the feature variable anywhere.
-func (f *pyFile) dropsTarget(t target, x string) bool {
+func (f *pyFile) dropsTarget(t leakTarget, x string) bool {
 	for _, l := range f.Lines {
 		c := l.Code
 		if !strings.Contains(c, "drop") && !strings.Contains(c, "pop") && !strings.HasPrefix(c, "del ") {
@@ -526,7 +526,7 @@ func featureGroupBys(ctx context.Context, in *packs.Input, globs []string) map[s
 		if ctx.Err() != nil || n >= maxFeatureFiles {
 			break
 		}
-		if !pyLike(p) || !matchAny(globs, p) {
+		if !pyLike(p) || !lintMatchAny(globs, p) {
 			continue
 		}
 		n++

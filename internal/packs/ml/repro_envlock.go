@@ -62,7 +62,7 @@ func runEnvLock(ctx context.Context, in *packs.Input) packs.Result {
 		fresh := false
 		for _, l := range locks {
 			lp := joinDir(dir, l)
-			if exists(in, lp) {
+			if existsNew(in, lp) {
 				have = append(have, lp)
 				if changed[lp] {
 					fresh = true
@@ -78,7 +78,7 @@ func runEnvLock(ctx context.Context, in *packs.Input) packs.Result {
 				Message: fmt.Sprintf("%s dependencies changed but %s did not; re-lock and commit it", base, strings.Join(have, ", "))})
 		}
 	}
-	return packs.Result{Status: packs.OK, Detail: "environment lock checked for " + plural(n, "manifest"), Findings: fs}
+	return packs.Result{Status: packs.OK, Detail: "environment lock checked for " + lintPlural(n, "manifest"), Findings: fs}
 }
 
 // depsChanged reports whether the dependency tables of a pyproject.toml

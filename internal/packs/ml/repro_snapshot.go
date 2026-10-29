@@ -22,11 +22,11 @@ const (
 )
 
 // fileReaders read a file or a URI given as the first argument.
-var fileReaders = set("read_csv", "read_parquet", "read_json", "read_excel", "read_feather", "read_table", "read_orc",
+var fileReaders = strSet("read_csv", "read_parquet", "read_json", "read_excel", "read_feather", "read_table", "read_orc",
 	"read_hdf", "read_fwf", "scan_parquet", "scan_csv", "scan_ndjson", "read_ndjson", "load_dataset", "loadtxt", "genfromtxt")
 
 // sparkFileReaders are DataFrameReader methods (spark.read.parquet(...)).
-var sparkFileReaders = set("parquet", "csv", "json", "orc", "text", "load")
+var sparkFileReaders = strSet("parquet", "csv", "json", "orc", "text", "load")
 
 var (
 	latestRe = regexp.MustCompile(`(?i)(^|[/:_.@=-])latest($|[/:_.@-])`)
@@ -137,7 +137,7 @@ func (p pin) pinned(in *packs.Input, src string) bool {
 		return false
 	}
 	for d := s; d != "." && d != "/" && d != ""; d = path.Dir(d) {
-		if exists(in, d+".dvc") {
+		if existsNew(in, d+".dvc") {
 			return true
 		}
 		if path.Dir(d) == d {
@@ -158,7 +158,7 @@ func runSnapshot(ctx context.Context, in *packs.Input) packs.Result {
 		n++
 		fs = append(fs, snapshotFile(in, s.f, pins)...)
 	}
-	return packs.Result{Status: packs.OK, Detail: "data reads checked in " + plural(n, "training file"), Findings: fs}
+	return packs.Result{Status: packs.OK, Detail: "data reads checked in " + lintPlural(n, "training file"), Findings: fs}
 }
 
 // describe names a source in a message: a repo path as is, a URI by its

@@ -16,7 +16,7 @@ import (
 
 const ruleUnsafeDeserialize = "unsafe-deserialize"
 
-var pickleModules = set("pickle", "cPickle", "_pickle", "dill", "cloudpickle", "joblib")
+var pickleModules = strSet("pickle", "cPickle", "_pickle", "dill", "cloudpickle", "joblib")
 
 var downloadRe = regexp.MustCompile(`(?i)(download|urlopen|urlretrieve|requests\.|httpx\.|urllib|wget|get_file|fetch|hf_hub|snapshot_download|boto3|s3fs|gcsfs|fsspec)`)
 
@@ -38,7 +38,7 @@ func runDeserialize(ctx context.Context, in *packs.Input) packs.Result {
 		}
 		fs = append(fs, deserializeFile(f)...)
 	}
-	return packs.Result{Status: packs.OK, Detail: "deserialization checked in " + plural(n, "file"), Findings: fs}
+	return packs.Result{Status: packs.OK, Detail: "deserialization checked in " + lintPlural(n, "file"), Findings: fs}
 }
 
 // unsafeLoad reports whether a call is a pickle-based load, and its name.
@@ -158,7 +158,7 @@ func (f *pyFile) originOf(line int, text string, depth int) origin {
 func deserializeFile(f *pyFile) []packs.Finding {
 	var out []packs.Finding
 	level := packs.LevelError
-	test := isTestPath(f.Path)
+	test := lintTestPath(f.Path)
 	if test {
 		level = packs.LevelWarn
 	}

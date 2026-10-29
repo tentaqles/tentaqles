@@ -1,7 +1,7 @@
 package ml
 
 // External checks against fake tools on PATH: the test binary copied as
-// ruff, uv, poetry and dvc (TestMain dispatches on TQ_FAKE_TOOL).
+// ruff, uv, poetry and dvc (an init in leak_harness_test.go dispatches on TQ_M1_FAKE_TOOL).
 
 import (
 	"context"
@@ -17,13 +17,13 @@ import (
 // temp repo holding files (all changed).
 func toolEnv(t *testing.T, cfg string, files map[string]string, tools ...string) *packs.Input {
 	t.Helper()
-	isolate(t)
+	lintIsolate(t)
 	bin := t.TempDir()
 	for _, tool := range tools {
-		fakeBin(t, bin, tool)
+		lintFakeBin(t, bin, tool)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("TQ_FAKE_VERSION", "1.0.0")
+	t.Setenv("TQ_M1_FAKE_VERSION", "1.0.0")
 	in := flagInput(t, cfg, files)
 	in.Tools = packs.NewToolRunner(in.Root, in.Config)
 	return in
@@ -36,14 +36,14 @@ func fakeOut(t *testing.T, mode, out, exit string) string {
 		t.Fatal(err)
 	}
 	args := filepath.Join(t.TempDir(), "args.txt")
-	t.Setenv("TQ_FAKE_TOOL", mode)
-	t.Setenv("TQ_FAKE_OUT", f)
-	t.Setenv("TQ_FAKE_EXIT", exit)
-	t.Setenv("TQ_FAKE_ARGS", args)
+	t.Setenv("TQ_M1_FAKE_TOOL", mode)
+	t.Setenv("TQ_M1_FAKE_OUT", f)
+	t.Setenv("TQ_M1_FAKE_EXIT", exit)
+	t.Setenv("TQ_M1_FAKE_ARGS", args)
 	return args
 }
 
-func result(t *testing.T, in *packs.Input, id string) packs.Result {
+func lintResult(t *testing.T, in *packs.Input, id string) packs.Result {
 	t.Helper()
 	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"ml"}})
 	for _, r := range rep.Results {
@@ -71,7 +71,7 @@ func TestRuffFindings(t *testing.T) {
 	out := `[{"cell": null, "code": "NPY002", "filename": ` + jsonStr(abs) + `, "location": {"column": 1, "row": 2}, "message": "Replace legacy ` + "`np.random.rand`" + ` call with ` + "`np.random.Generator`" + `"},
  {"cell": 3, "code": "PD011", "filename": "notebooks/eda.ipynb", "location": {"column": 1, "row": 1}, "message": "Use ` + "`.to_numpy()`" + ` instead of ` + "`.values`" + `"}]`
 	args := fakeOut(t, "ruff", out, "0")
-	r := result(t, in, "ml/ruff")
+	r := lintResult(t, in, "ml/ruff")
 	if r.Status != packs.Fail || !r.Required || len(r.Findings) != 2 {
 		t.Fatalf("result = %+v", r)
 	}
@@ -92,7 +92,7 @@ func jsonStr(s string) string { return `"` + strings.ReplaceAll(s, `\`, `\\`) + 
 func TestRuffBadOutputFailsWithTail(t *testing.T) {
 	in := toolEnv(t, "ml: {tools: [ruff]}", map[string]string{"a.py": "x = 1\n"}, "ruff")
 	fakeOut(t, "ruff", "error: unexpected config for tester@acme.test\n", "2")
-	r := result(t, in, "ml/ruff")
+	r := lintResult(t, in, "ml/ruff")
 	if r.Status != packs.Fail || !strings.Contains(r.Detail, "ruff exited 2") {
 		t.Fatalf("result = %+v", r)
 	}
@@ -102,11 +102,11 @@ func TestRuffBadOutputFailsWithTail(t *testing.T) {
 }
 
 func TestRuffUndeclaredMissingSkips(t *testing.T) {
-	isolate(t)
+	lintIsolate(t)
 	t.Setenv("PATH", t.TempDir())
 	in := flagInput(t, "ml: {enabled: true}", map[string]string{"a.py": "x = 1\n"})
 	in.Tools = packs.NewToolRunner(in.Root, in.Config)
-	r := result(t, in, "ml/ruff")
+	r := lintResult(t, in, "ml/ruff")
 	if r.Status != packs.Skip || r.Required {
 		t.Fatalf("result = %+v", r)
 	}
@@ -116,7 +116,7 @@ func TestUVLockCheck(t *testing.T) {
 	files := map[string]string{"pyproject.toml": "[project]\nname = \"acme\"\n", "uv.lock": "version = 1\n"}
 	in := toolEnv(t, "ml: {tools: [uv]}", files, "uv")
 	args := fakeOut(t, "uv", "", "0")
-	if r := result(t, in, "ml/lock-check"); r.Status != packs.OK || len(r.Findings) != 0 {
+	if r := lintResult(t, in, "ml/lock-check"); r.Status != packs.OK || len(r.Findings) != 0 {
 		t.Fatalf("clean lock: %+v", r)
 	}
 	argv, wd := readArgs(t, args)
@@ -130,7 +130,7 @@ func TestUVLockCheck(t *testing.T) {
 		}
 	}
 	fakeOut(t, "uv", "error: The lockfile at `uv.lock` needs to be updated\n", "1")
-	r := result(t, in, "ml/lock-check")
+	r := lintResult(t, in, "ml/lock-check")
 	if r.Status != packs.Fail || len(r.Findings) != 1 || r.Findings[0].File != "uv.lock" || r.Findings[0].Rule != "lock-outdated" {
 		t.Fatalf("stale lock: %+v", r)
 	}
@@ -140,7 +140,7 @@ func TestPoetryLockCheck(t *testing.T) {
 	files := map[string]string{"pyproject.toml": "[tool.poetry]\nname = \"acme\"\n", "poetry.lock": "# lock\n"}
 	in := toolEnv(t, "ml: {tools: [poetry]}", files, "poetry")
 	args := fakeOut(t, "poetry", "pyproject.toml changed significantly since poetry.lock was last generated.\n", "1")
-	r := result(t, in, "ml/lock-check-poetry")
+	r := lintResult(t, in, "ml/lock-check-poetry")
 	if r.Status != packs.Fail || len(r.Findings) != 1 || r.Findings[0].File != "poetry.lock" {
 		t.Fatalf("result = %+v", r)
 	}
@@ -152,7 +152,7 @@ func TestPoetryLockCheck(t *testing.T) {
 func TestLockCheckSkipsWithoutLock(t *testing.T) {
 	in := toolEnv(t, "ml: {tools: [uv]}", map[string]string{"pyproject.toml": "[project]\nname = \"acme\"\n"}, "uv")
 	fakeOut(t, "uv", "", "0")
-	if r := result(t, in, "ml/lock-check"); r.Status != packs.Skip {
+	if r := lintResult(t, in, "ml/lock-check"); r.Status != packs.Skip {
 		t.Fatalf("result = %+v", r)
 	}
 }
@@ -161,7 +161,7 @@ func TestDVCStatus(t *testing.T) {
 	files := map[string]string{"dvc.yaml": "stages: {}\n", "data/raw.csv.dvc": "outs: []\n"}
 	in := toolEnv(t, "ml: {tools: [dvc]}", files, "dvc")
 	args := fakeOut(t, "dvc", "{}\n", "0")
-	if r := result(t, in, "ml/dvc-status"); r.Status != packs.OK || len(r.Findings) != 0 || !strings.Contains(r.Detail, "up to date") {
+	if r := lintResult(t, in, "ml/dvc-status"); r.Status != packs.OK || len(r.Findings) != 0 || !strings.Contains(r.Detail, "up to date") {
 		t.Fatalf("clean: %+v", r)
 	}
 	if argv, _ := readArgs(t, args); argv != "status --json" {
@@ -170,7 +170,7 @@ func TestDVCStatus(t *testing.T) {
 	out := `{"train": [{"changed deps": {"data/prepared/train.parquet": "modified"}}, {"changed outs": {"models/churn.pkl": "deleted"}}],
  "data/raw.csv.dvc": [{"changed outs": {"data/raw.csv": "modified"}}], "report": ["always changed"]}`
 	fakeOut(t, "dvc", out, "0")
-	r := result(t, in, "ml/dvc-status")
+	r := lintResult(t, in, "ml/dvc-status")
 	if r.Status != packs.Fail || len(r.Findings) != 3 {
 		t.Fatalf("changed: %+v", r)
 	}
@@ -185,17 +185,17 @@ func TestDVCStatus(t *testing.T) {
 		}
 	}
 	fakeOut(t, "dvc", "not json at all\n", "0")
-	if r := result(t, in, "ml/dvc-status"); r.Status != packs.Fail || !strings.Contains(r.Detail, "cannot parse") {
+	if r := lintResult(t, in, "ml/dvc-status"); r.Status != packs.Fail || !strings.Contains(r.Detail, "cannot parse") {
 		t.Fatalf("bad output: %+v", r)
 	}
 }
 
 func TestDeclaredMissingToolFails(t *testing.T) {
-	isolate(t)
+	lintIsolate(t)
 	t.Setenv("PATH", t.TempDir())
 	in := flagInput(t, "ml: {tools: [dvc]}", map[string]string{"dvc.yaml": "stages: {}\n"})
 	in.Tools = packs.NewToolRunner(in.Root, in.Config)
-	r := result(t, in, "ml/dvc-status")
+	r := lintResult(t, in, "ml/dvc-status")
 	if r.Status != packs.Fail || !r.Required || r.Detail != packs.MissingDetail("ml") {
 		t.Fatalf("result = %+v", r)
 	}

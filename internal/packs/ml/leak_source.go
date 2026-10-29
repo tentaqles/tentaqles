@@ -564,7 +564,7 @@ func pyLike(p string) bool {
 	return strings.HasSuffix(l, ".py") || strings.HasSuffix(l, ".ipynb")
 }
 
-func matchAny(globs []string, p string) bool {
+func lintMatchAny(globs []string, p string) bool {
 	for _, g := range globs {
 		if packs.MatchGlob(g, p) {
 			return true
@@ -591,7 +591,7 @@ func (p mlPaths) candidate(path string) bool {
 	if pyLike(path) {
 		return true
 	}
-	return strings.HasSuffix(strings.ToLower(path), ".json") && matchAny(p.any(), path)
+	return strings.HasSuffix(strings.ToLower(path), ".json") && lintMatchAny(p.any(), path)
 }
 
 // trainingCall reports whether a call trains a model (§4.1): .fit(,
@@ -643,9 +643,9 @@ func selectFiles(ctx context.Context, in *packs.Input, lint bool) ([]selected, [
 		if !ps.candidate(p) {
 			continue
 		}
-		inTrain := matchAny(ps.train, p)
-		inFeat := matchAny(ps.features, p)
-		inEval := matchAny(ps.eval, p)
+		inTrain := lintMatchAny(ps.train, p)
+		inFeat := lintMatchAny(ps.features, p)
+		inEval := lintMatchAny(ps.eval, p)
 		if len(ps.train) > 0 && !inTrain && !(lint && (inFeat || inEval)) {
 			continue
 		}
@@ -673,7 +673,7 @@ func shortErr(err error) string {
 }
 
 // exists reports whether a repo path exists on the new side.
-func exists(in *packs.Input, p string) bool {
+func existsNew(in *packs.Input, p string) bool {
 	if in.Staged && in.Git != nil {
 		_, err := in.Git.Show(":", p)
 		return err == nil
@@ -698,7 +698,7 @@ func joinDir(dir, name string) string {
 	return path.Join(dir, name)
 }
 
-func plural(n int, what string) string {
+func lintPlural(n int, what string) string {
 	if n == 1 {
 		return "1 " + what
 	}
@@ -706,7 +706,7 @@ func plural(n int, what string) string {
 }
 
 // isTestPath reports whether a path is test code.
-func isTestPath(p string) bool {
+func lintTestPath(p string) bool {
 	b := path.Base(p)
 	return strings.HasPrefix(p, "tests/") || strings.HasPrefix(p, "test/") || strings.Contains(p, "/tests/") || strings.Contains(p, "/test/") ||
 		strings.HasPrefix(b, "test_") || strings.HasSuffix(b, "_test.py") || b == "conftest.py"

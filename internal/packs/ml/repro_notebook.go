@@ -44,7 +44,7 @@ func runNotebookOutputs(ctx context.Context, in *packs.Input) packs.Result {
 		}
 		fs = append(fs, notebookOutputs(p, cells)...)
 	}
-	return packs.Result{Status: packs.OK, Detail: "outputs checked in " + plural(n, "notebook"), Findings: fs}
+	return packs.Result{Status: packs.OK, Detail: "outputs checked in " + lintPlural(n, "notebook"), Findings: fs}
 }
 
 func notebookOutputs(p string, cells []scan.Cell) []packs.Finding {
@@ -75,7 +75,7 @@ func notebookOutputs(p string, cells []scan.Cell) []packs.Finding {
 	}
 	if with > 0 {
 		out = append([]packs.Finding{{File: p, Line: first, Level: packs.LevelWarn, Rule: ruleNotebookOutputs,
-			Message: "stored outputs in " + plural(with, "cell") + "; clear them (nbstripout or jupyter nbconvert --clear-output)"}}, out...)
+			Message: "stored outputs in " + lintPlural(with, "cell") + "; clear them (nbstripout or jupyter nbconvert --clear-output)"}}, out...)
 	}
 	return out
 }

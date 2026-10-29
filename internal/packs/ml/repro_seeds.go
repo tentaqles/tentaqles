@@ -24,7 +24,7 @@ const (
 // randomStateCtors are estimators and splitters whose result depends on
 // random_state by default. KFold and StratifiedKFold only with shuffle=True;
 // train_test_split unless shuffle=False.
-var randomStateCtors = set("RandomForestClassifier", "RandomForestRegressor", "ExtraTreesClassifier", "ExtraTreesRegressor",
+var randomStateCtors = strSet("RandomForestClassifier", "RandomForestRegressor", "ExtraTreesClassifier", "ExtraTreesRegressor",
 	"GradientBoostingClassifier", "GradientBoostingRegressor", "HistGradientBoostingClassifier", "HistGradientBoostingRegressor",
 	"DecisionTreeClassifier", "DecisionTreeRegressor", "AdaBoostClassifier", "AdaBoostRegressor", "BaggingClassifier",
 	"BaggingRegressor", "IsolationForest", "SGDClassifier", "SGDRegressor", "MLPClassifier", "MLPRegressor", "KMeans",
@@ -52,7 +52,7 @@ func runSeeds(ctx context.Context, in *packs.Input) packs.Result {
 		n++
 		fs = append(fs, seedFile(s.f, helper)...)
 	}
-	return packs.Result{Status: packs.OK, Detail: "seeds checked in " + plural(n, "training file"), Findings: fs}
+	return packs.Result{Status: packs.OK, Detail: "seeds checked in " + lintPlural(n, "training file"), Findings: fs}
 }
 
 func hasRealArg(c pcall) bool {

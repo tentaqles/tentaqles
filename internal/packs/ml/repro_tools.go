@@ -83,7 +83,7 @@ func runRuff(ctx context.Context, in *packs.Input) packs.Result {
 	if err := json.Unmarshal(bytes.TrimSpace(out.Stdout), &rf); err != nil {
 		return toolFailure("ruff", out, nil, "cannot parse ruff JSON output")
 	}
-	r := packs.Result{Status: packs.OK, Detail: fmt.Sprintf("ruff NPY,PD over %s: %s", plural(len(targets), "path"), plural(len(rf), "finding")), Tool: toolRunOf("ruff", out)}
+	r := packs.Result{Status: packs.OK, Detail: fmt.Sprintf("ruff NPY,PD over %s: %s", lintPlural(len(targets), "path"), lintPlural(len(rf), "finding")), Tool: toolRunOf("ruff", out)}
 	for _, f := range rf {
 		msg := f.Message
 		if f.Code == "NPY002" {
@@ -125,7 +125,7 @@ func lockDirs(in *packs.Input, lock string) []string {
 			continue
 		}
 		d := path.Dir(p)
-		if !seen[d] && exists(in, joinDir(d, lock)) && exists(in, joinDir(d, "pyproject.toml")) {
+		if !seen[d] && existsNew(in, joinDir(d, lock)) && existsNew(in, joinDir(d, "pyproject.toml")) {
 			seen[d] = true
 			out = append(out, d)
 		}
@@ -154,7 +154,7 @@ func lockCheck(tool, lock string, args []string) func(context.Context, *packs.In
 				details = append(details, out.Tail(20, nil))
 			}
 		}
-		r.Detail = fmt.Sprintf("%s %s in %s", tool, strings.Join(args, " "), plural(len(dirs), "project"))
+		r.Detail = fmt.Sprintf("%s %s in %s", tool, strings.Join(args, " "), lintPlural(len(dirs), "project"))
 		if len(details) > 0 {
 			r.Detail += "\n" + strings.Join(details, "\n")
 		}
@@ -230,7 +230,7 @@ func runDVCStatus(ctx context.Context, in *packs.Input) packs.Result {
 	if len(st) == 0 {
 		r.Detail = "dvc: data and pipelines are up to date"
 	} else {
-		r.Detail = "dvc status: " + plural(len(st), "stage") + " changed"
+		r.Detail = "dvc status: " + lintPlural(len(st), "stage") + " changed"
 	}
 	return r
 }

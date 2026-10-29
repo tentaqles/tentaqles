@@ -25,7 +25,7 @@ func runTracking(ctx context.Context, in *packs.Input) packs.Result {
 				"this training run logs no params and metrics (mlflow.autolog or mlflow.log_params + log_metrics, wandb, dvclive, or a run config written next to the metrics)"))
 		}
 	}
-	return packs.Result{Status: packs.OK, Detail: "run tracking checked in " + plural(n, "training file"), Findings: fs}
+	return packs.Result{Status: packs.OK, Detail: "run tracking checked in " + lintPlural(n, "training file"), Findings: fs}
 }
 
 // tracks reports whether a file logs params and metrics through a tracker,
