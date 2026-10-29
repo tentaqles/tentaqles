@@ -1,6 +1,7 @@
 package ml
 
 import (
+	"github.com/zalando/go-keyring"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,7 @@ func isolate(t *testing.T) string {
 	for _, k := range []string{"TQ_HUB_TASK", "TENTAQLES_HEADLESS", "CLAUDECODE", "CLAUDE_PLUGIN_ROOT"} {
 		t.Setenv(k, "")
 	}
+	keyring.MockInit() // the signed ledger's keys; never the real keychain
 	return home
 }
 

@@ -24,7 +24,6 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs/approval"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
-	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
@@ -39,15 +38,6 @@ var lookupCheck = func(id string) (packs.Check, bool) {
 		}
 	}
 	return packs.Check{}, false
-}
-
-// resolveWorkspace maps cwd to its trusted workspace, or nil.
-var resolveWorkspace = func(cwd string) *resolve.Workspace {
-	cfg, err := registry.Load()
-	if err != nil {
-		return nil
-	}
-	return resolve.Resolve(cwd, cfg).Workspace
 }
 
 // promoteEnv is what the promotion and drift commands work on.
@@ -76,9 +66,22 @@ func newPromoteEnv(cwd string, ws *resolve.Workspace) (*promoteEnv, error) {
 	}
 	in.Config = cfg
 	in.Tools = packs.NewToolRunner(root, cfg)
+	return promoteEnvFor(in)
+}
+
+// promoteEnvFor builds the env from a run context: the Input of
+// packs.FromCommand (the trusted manifest merged with tq-packs.yaml).
+func promoteEnvFor(in *packs.Input) (*promoteEnv, error) {
+	if in == nil {
+		return nil, packs.ErrNoCommandInput
+	}
 	in = in.ForPack("ml")
-	if !cfg.IsEnabled("ml") {
-		return nil, errors.New("the ml pack is not enabled here (packs.ml in the manifest or tq-packs.yaml)")
+	if !in.Config.IsEnabled("ml") {
+		return nil, errors.New("the ml pack is not enabled here (packs.ml in the manifest)")
+	}
+	var ws *resolve.Workspace
+	if in.Workspace() != "" && in.Manifest != nil {
+		ws = &resolve.Workspace{Name: in.Workspace(), Root: in.WorkspaceRoot(), Manifest: in.Manifest}
 	}
 	return &promoteEnv{WS: ws, In: in, St: loadIn(in)}, nil
 }
@@ -510,8 +513,11 @@ func envKeyOf(kv string) string {
 	return kv[:i]
 }
 
-// promoteApply is the human-only apply.
-func promoteApply(ctx context.Context, e *promoteEnv, id string, stdin io.Reader, out io.Writer, isTTY bool) error {
+// promoteApply is the human-only apply. The order (ruling N1): the caller's
+// packs.FromCommand, HumanOnly, a read-only Verify for an early answer,
+// confirm (the typed yes), Claim, run, MarkUsed, Comment. confirm is
+// approval.Confirm on the terminal (tests replace it).
+func promoteApply(ctx context.Context, e *promoteEnv, id string, confirm func(command string) error, out io.Writer) error {
 	if err := packs.HumanOnly(); err != nil {
 		return err
 	}
@@ -543,20 +549,29 @@ func promoteApply(ctx context.Context, e *promoteEnv, id string, stdin io.Reader
 	if err != nil {
 		return fmt.Errorf("cannot recompute the evidence: %v", err)
 	}
-	a, err := approval.Verify(ws, id, ev)
-	if err != nil {
+	want := approval.Binding{Pack: "ml", Action: "promote", Subject: s.Subject, Target: s.Target}
+	verr := func(err error) error {
 		if errors.Is(err, approval.ErrEvidence) {
 			return fmt.Errorf("%w (changed: %s); request a new promotion", err, strings.Join(changedEvidence(s.Evidence, ev), ", "))
 		}
 		return err
+	}
+	if _, err := approval.Verify(ws, id, want, ev); err != nil {
+		return verr(err)
 	}
 	argv, err := promotionArgv(e.St, model, version, s.Target)
 	if err != nil {
 		return err
 	}
 	shown := QuoteArgv(argv)
-	if err := approval.Confirm(stdin, out, isTTY, shown); err != nil {
+	if err := confirm(shown); err != nil {
 		return err
+	}
+	// Claim verifies again and makes the approval single use: from here on
+	// it is used, whatever the command does.
+	a, err := approval.Claim(ws, id, want, ev)
+	if err != nil {
+		return verr(err)
 	}
 	fmt.Fprintf(out, "running (timeout %s)...\n", PromotionTimeout)
 	// The run gets its own 300 s from now: the request-wide context also
@@ -573,16 +588,19 @@ func promoteApply(ctx context.Context, e *promoteEnv, id string, stdin io.Reader
 	}
 	switch {
 	case err != nil:
-		_ = approval.Comment(ws, a.Card, fmt.Sprintf("promotion %s -> %s did not run: %v", s.Subject, s.Target, err))
-		return fmt.Errorf("the promotion command did not run: %v", err)
+		_ = approval.MarkUsed(ws, "ml", id)
+		_ = approval.Comment(ws, a.Card, fmt.Sprintf("promotion %s -> %s did not run: %v; the approval is used", s.Subject, s.Target, err))
+		return fmt.Errorf("the promotion command did not run: %v (the approval is used: request a new promotion)", err)
 	case res.TimedOut:
-		_ = approval.Comment(ws, a.Card, fmt.Sprintf("promotion %s -> %s timed out after %s; the approval is still unused", s.Subject, s.Target, PromotionTimeout))
-		return fmt.Errorf("the promotion command timed out after %s (the approval is still unused)", PromotionTimeout)
+		_ = approval.MarkUsed(ws, "ml", id)
+		_ = approval.Comment(ws, a.Card, fmt.Sprintf("promotion %s -> %s timed out after %s; the approval is used", s.Subject, s.Target, PromotionTimeout))
+		return fmt.Errorf("the promotion command timed out after %s (the approval is used: request a new promotion)", PromotionTimeout)
 	case res.ExitCode != 0:
-		_ = approval.Comment(ws, a.Card, fmt.Sprintf("promotion %s -> %s failed: exit %d\n\n%s", s.Subject, s.Target, res.ExitCode, res.Tail(20, classes)))
-		return fmt.Errorf("the promotion command exited %d (the approval is still unused)", res.ExitCode)
+		_ = approval.MarkUsed(ws, "ml", id)
+		_ = approval.Comment(ws, a.Card, fmt.Sprintf("promotion %s -> %s failed: exit %d; the approval is used\n\n%s", s.Subject, s.Target, res.ExitCode, res.Tail(20, classes)))
+		return fmt.Errorf("the promotion command exited %d (the approval is used: request a new promotion)", res.ExitCode)
 	}
-	if err := approval.MarkUsed(ws, id); err != nil {
+	if err := approval.MarkUsed(ws, "ml", id); err != nil {
 		return fmt.Errorf("the promotion ran but the ledger write failed (%v): tell the team, the approval may look unused", err)
 	}
 	packs.Count("ml", "promotions_applied", 1)

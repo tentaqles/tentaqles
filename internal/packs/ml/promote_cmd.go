@@ -3,7 +3,6 @@ package ml
 // tq pack ml promote request|apply|status and tq pack ml drift.
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,12 +28,20 @@ var stdinTTY = func() bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-func envForCwd() (*promoteEnv, error) {
-	cwd, err := os.Getwd()
+// envFor is the env of a tq pack ml subcommand, from packs.FromCommand.
+func envFor(c *cobra.Command) (*promoteEnv, error) {
+	in, err := packs.FromCommand(c)
 	if err != nil {
 		return nil, err
 	}
-	return newPromoteEnv(cwd, resolveWorkspace(cwd))
+	return promoteEnvFor(in)
+}
+
+// stdinFile is the command's stdin as a file, for approval.Confirm's own
+// terminal check (anything else is not a terminal).
+func stdinFile(c *cobra.Command) *os.File {
+	f, _ := c.InOrStdin().(*os.File)
+	return f
 }
 
 func newPromoteCmd() *cobra.Command {
@@ -43,9 +50,10 @@ func newPromoteCmd() *cobra.Command {
 		Short: "Gate model promotions to protected stages or aliases behind a human approval",
 		Long: `A promotion to a target in packs.ml.promotion.protected needs a hub
 approval a human answers. request (agents may run it) checks the model card,
-drift and reproducibility, binds the evidence and asks; the human answers on
-the board or with tq hub answer; apply (human only) re-checks the evidence,
-shows the declared promotion command, asks for a typed yes and runs it.`,
+drift and reproducibility, binds the evidence and asks; the human answers in
+their own terminal with tq hub answer (never the board, never an agent);
+apply (human only) re-checks the evidence, shows the declared promotion
+command, asks for a typed yes, claims the approval and runs it.`,
 	}
 	c.AddCommand(newPromoteRequestCmd(), newPromoteApplyCmd(), newPromoteStatusCmd())
 	return c
@@ -62,7 +70,7 @@ func newPromoteRequestCmd() *cobra.Command {
 			if to == "" {
 				return errors.New("--to <target> is required")
 			}
-			e, err := envForCwd()
+			e, err := envFor(c)
 			if err != nil {
 				return err
 			}
@@ -86,7 +94,7 @@ func newPromoteRequestCmd() *cobra.Command {
 			fmt.Fprintf(out, "asked: decision %s on card %s\n", res.Decision, res.Card)
 			fmt.Fprintf(out, "checks run: %s\n", strings.Join(res.Require, ", "))
 			fmt.Fprintf(out, "evidence: %s\n", strings.Join(evidenceNames(res.Evidence), ", "))
-			fmt.Fprintf(out, "a human answers it on the board or with tq hub answer, then runs in their own terminal:\n  tq pack ml promote apply %s\n", res.Decision)
+			fmt.Fprintf(out, "a human answers it in their own terminal (agents never answer it):\n  tq hub answer %s %s --choice approve\nthen runs, in that terminal:\n  tq pack ml promote apply %s\n", res.Card, res.Decision, res.Decision)
 			return nil
 		},
 	}
@@ -124,16 +132,22 @@ func newPromoteApplyCmd() *cobra.Command {
 		Short: "Human only: verify the approval, show the promotion command, and run it after a typed yes",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			in, err := packs.FromCommand(c)
+			if err != nil {
+				return err
+			}
 			if err := packs.HumanOnly(); err != nil {
 				return err
 			}
-			e, err := envForCwd()
+			e, err := promoteEnvFor(in)
 			if err != nil {
 				return err
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
-			return promoteApply(ctx, e, args[0], bufio.NewReader(c.InOrStdin()), c.OutOrStdout(), stdinTTY())
+			out := c.OutOrStdout()
+			confirm := func(cmd string) error { return approval.Confirm(stdinFile(c), out, cmd) }
+			return promoteApply(ctx, e, args[0], confirm, out)
 		},
 	}
 }
@@ -145,7 +159,7 @@ func newPromoteStatusCmd() *cobra.Command {
 		Short: "The promotion requests of this workspace and their state",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			e, err := envForCwd()
+			e, err := envFor(c)
 			if err != nil {
 				return err
 			}
@@ -199,7 +213,7 @@ Output names features and numbers only, never category labels.`,
 				exitFunc(2)
 				return nil
 			}
-			e, err := envForCwd()
+			e, err := envFor(c)
 			if err != nil {
 				return usage(err)
 			}
@@ -209,12 +223,11 @@ Output names features and numbers only, never category labels.`,
 			}
 			out := c.OutOrStdout()
 			printClamped(c.ErrOrStderr(), e.St.Clamped)
-			in := bufio.NewReader(c.InOrStdin())
 			opts := driftOptions{}
-			if stdinTTY() && !packs.AgentSession() {
+			if f := stdinFile(c); f != nil && stdinTTY() && !packs.AgentSession() {
 				opts.Confirm = func(cmd string) error {
 					fmt.Fprintln(out, "drift.current_command comes from tq-packs.yaml, not the manifest.")
-					return approval.Confirm(in, out, true, cmd)
+					return approval.Confirm(f, out, cmd)
 				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), CurrentTimeout+time.Minute)

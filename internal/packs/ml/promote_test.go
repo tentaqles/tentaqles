@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
@@ -115,9 +117,41 @@ func answer(t *testing.T, id, choice, actor string) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if _, err := st.AnswerHub(id, choice, "ok", actor); err != nil {
+	if err := answerErr(st, id, choice, actor); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// answerErr answers a pack approval the only way one is answered: the
+// terminal path's signed store.AnswerPackApproval.
+func answerErr(st *store.Store, id, choice, actor string) error {
+	key, err := ledger.SigningKey("acme")
+	if err != nil {
+		return err
+	}
+	_, err = st.AnswerPackApproval(id, choice, "ok", actor, store.PackSigner(ledger.AnswerSigner("acme", key)))
+	return err
+}
+
+// typed is a confirm that reads what the human typed (approval.Confirm on
+// a terminal, without the terminal).
+func typed(r io.Reader, out io.Writer) func(string) error {
+	return func(cmd string) error {
+		if err := packs.HumanOnly(); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "tq will run:\n\n  %s\n\nType yes to run it: ", cmd)
+		b := make([]byte, 64)
+		n, _ := r.Read(b)
+		if strings.TrimSpace(string(b[:n])) != "yes" {
+			return approval.ErrNotConfirmed
+		}
+		return nil
+	}
+}
+
+var promoteWant = func(res RequestResult) approval.Binding {
+	return approval.Binding{Pack: "ml", Action: "promote", Subject: res.Model + "@" + res.Version, Target: res.Target}
 }
 
 func (r *promoteRepo) request(t *testing.T, target string) RequestResult {
@@ -129,9 +163,9 @@ func (r *promoteRepo) request(t *testing.T, target string) RequestResult {
 	return res
 }
 
-func (r *promoteRepo) apply(id, typed string) (string, error) {
+func (r *promoteRepo) apply(id, text string) (string, error) {
 	var out bytes.Buffer
-	err := promoteApply(context.Background(), r.env, id, strings.NewReader(typed), &out, true)
+	err := promoteApply(context.Background(), r.env, id, typed(strings.NewReader(text), &out), &out)
 	return out.String(), err
 }
 
@@ -198,19 +232,20 @@ func TestRequestRepoLayerCannotDropRequirements(t *testing.T) {
 	git(t, r.root, "add", "tq-packs.yaml")
 	git(t, r.root, "commit", "-q", "-m", "loosen")
 	r.env = r.newEnv(t)
-	if strings.Join(r.env.St.Promotion.Require, ",") != "model_card,drift,repro" || len(r.env.St.Clamped) != 2 {
+	// valid_for 30d is refused by the merge (over the 7d Default); require is clamped by load.
+	if strings.Join(r.env.St.Promotion.Require, ",") != "model_card,drift,repro" || len(r.env.St.Clamped) != 1 || r.env.St.ValidFor() > 7*24*time.Hour {
 		t.Fatalf("%v %q", r.env.St.Promotion.Require, r.env.St.Clamped)
 	}
 	res := r.request(t, "production")
 	if res.Evidence["drift"] == "" {
 		t.Fatalf("drift is still bound: %v", res.Evidence)
 	}
-	if strings.Join(res.Require, ",") != "model_card,drift,repro" || len(res.Clamped) != 2 {
+	if strings.Join(res.Require, ",") != "model_card,drift,repro" || len(res.Clamped) != 1 {
 		t.Fatalf("%+v", res)
 	}
 	m, _ := r.env.St.Model("churn")
 	sum := requestSummary(r.env, m, "7", "production", res.Drift)
-	for _, want := range []string{"Checks run: model_card, drift, repro", "Clamped from tq-packs.yaml", "promotion.require", "promotion.valid_for"} {
+	for _, want := range []string{"Checks run: model_card, drift, repro", "Clamped from tq-packs.yaml", "promotion.require"} {
 		if !strings.Contains(sum, want) {
 			t.Fatalf("summary misses %q:\n%s", want, sum)
 		}
@@ -268,7 +303,7 @@ func TestApplyRunsAfterSlowConfirm(t *testing.T) {
 	answer(t, res.Decision, "approve", "hub:tester")
 	ctx, cancel := context.WithCancel(context.Background())
 	var out bytes.Buffer
-	err := promoteApply(ctx, r.env, res.Decision, cancelReader{strings.NewReader("yes\n"), cancel}, &out, true)
+	err := promoteApply(ctx, r.env, res.Decision, typed(cancelReader{strings.NewReader("yes\n"), cancel}, &out), &out)
 	if err != nil {
 		t.Fatalf("a slow yes must not fail the run: %v\n%s", err, out.String())
 	}
@@ -347,9 +382,14 @@ func TestApplyRefusesAgentSession(t *testing.T) {
 func TestApplyRefusesAgentAnswer(t *testing.T) {
 	r := newPromoteRepo(t)
 	res := r.request(t, "production")
-	answer(t, res.Decision, "approve", "agent:builder")
-	if _, err := r.apply(res.Decision, "yes\n"); !errors.Is(err, approval.ErrAgent) {
-		t.Fatalf("agent answer: %v", err)
+	st, err := store.Open("acme", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aerr := answerErr(st, res.Decision, "approve", "agent:builder")
+	st.Close()
+	if _, err := r.apply(res.Decision, "yes\n"); !errors.Is(err, approval.ErrAgent) && !(aerr != nil && errors.Is(err, approval.ErrPending)) {
+		t.Fatalf("agent answer (%v): %v", aerr, err)
 	}
 }
 
@@ -397,11 +437,24 @@ func TestApplyCommandFailureKeepsApproval(t *testing.T) {
 	res := r.request(t, "production")
 	answer(t, res.Decision, "approve", "hub:tester")
 	t.Setenv("TQ_ML_FAKE_EXIT", "1")
-	if _, err := r.apply(res.Decision, "yes\n"); err == nil || !strings.Contains(err.Error(), "exited 1") {
+	if _, err := r.apply(res.Decision, "yes\n"); err == nil || !strings.Contains(err.Error(), "exited 1") || !strings.Contains(err.Error(), "used") {
 		t.Fatalf("failure: %v", err)
 	}
-	if _, err := approval.Verify("acme", res.Decision, res.Evidence); err != nil {
-		t.Fatalf("a failed run does not use the approval: %v", err)
+	if _, err := approval.Verify("acme", res.Decision, promoteWant(res), res.Evidence); !errors.Is(err, approval.ErrUsed) {
+		t.Fatalf("a claimed approval is used even when the run fails: %v", err)
+	}
+}
+
+// The typed yes comes before the claim: a "no" leaves the approval usable.
+func TestApplyDeclineKeepsApproval(t *testing.T) {
+	r := newPromoteRepo(t)
+	res := r.request(t, "production")
+	answer(t, res.Decision, "approve", "hub:tester")
+	if _, err := r.apply(res.Decision, "no\n"); !errors.Is(err, approval.ErrNotConfirmed) {
+		t.Fatalf("declined: %v", err)
+	}
+	if _, err := approval.Verify("acme", res.Decision, promoteWant(res), res.Evidence); err != nil {
+		t.Fatalf("a declined apply does not claim: %v", err)
 	}
 }
 
@@ -410,7 +463,8 @@ func TestApplyNeedsTTY(t *testing.T) {
 	res := r.request(t, "production")
 	answer(t, res.Decision, "approve", "hub:tester")
 	var out bytes.Buffer
-	if err := promoteApply(context.Background(), r.env, res.Decision, strings.NewReader("yes\n"), &out, false); err == nil || !strings.Contains(err.Error(), "terminal") {
+	confirm := func(cmd string) error { return approval.Confirm(nil, &out, cmd) } // not a terminal
+	if err := promoteApply(context.Background(), r.env, res.Decision, confirm, &out); err == nil || !strings.Contains(err.Error(), "terminal") {
 		t.Fatalf("no tty: %v", err)
 	}
 }

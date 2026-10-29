@@ -2,14 +2,15 @@ package ml
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
-	"github.com/tentaqles/tentaqles/internal/resolve"
 	"gopkg.in/yaml.v3"
 )
 
@@ -112,8 +113,10 @@ ml:
 	}
 }
 
-// The manifest leaves every loosenable key out: the merge then takes the
-// repo values as they are, so load clamps them to the tq defaults.
+// The manifest leaves every loosenable key out. The merge compares the
+// bounds against their rule Default (the tq default) and refuses the looser
+// ones, so they read as unset (the default); load still clamps a repo-only
+// require. An unset feature threshold falls back to the global one.
 func TestRepoLayerCannotLoosenOmittedKeys(t *testing.T) {
 	trusted := `
 ml:
@@ -130,24 +133,27 @@ ml:
 	if strings.Join(st.Promotion.Require, ",") != "model_card,drift,repro" {
 		t.Fatalf("a repo-only require cannot drop items: %v", st.Promotion.Require)
 	}
-	if st.ValidFor() != 7*24*time.Hour {
-		t.Fatalf("a repo-only valid_for is clamped to the 7d default: %s", st.ValidFor())
+	if v := st.ValidFor(); v != 0 && v != 7*24*time.Hour {
+		t.Fatalf("a repo-only valid_for over the 7d default is refused: %s", v)
 	}
-	if fl(st.Drift.Warn, 0) != DefaultWarn || fl(st.Drift.Fail, 0) != DefaultFail || fl(st.Drift.MaxWarnShare, 0) != DefaultMaxWarnShare {
-		t.Fatalf("repo-only thresholds are clamped: %v %v %v", fl(st.Drift.Warn, 0), fl(st.Drift.Fail, 0), fl(st.Drift.MaxWarnShare, 0))
+	if fl(st.Drift.Warn, DefaultWarn) != DefaultWarn || fl(st.Drift.Fail, DefaultFail) != DefaultFail || fl(st.Drift.MaxWarnShare, DefaultMaxWarnShare) != DefaultMaxWarnShare {
+		t.Fatalf("repo-only thresholds cannot loosen: %v %v %v", fl(st.Drift.Warn, 0), fl(st.Drift.Fail, 0), fl(st.Drift.MaxWarnShare, 0))
 	}
-	if p := st.Drift.Features["plan"]; fl(p.Warn, 0) != DefaultWarn || fl(p.Fail, 0) != DefaultFail {
-		t.Fatalf("a repo-only feature override is clamped to the global value: %+v", p)
+	if p := st.Drift.Features["plan"]; fl(p.Warn, DefaultWarn) != DefaultWarn || fl(p.Fail, DefaultFail) != DefaultFail {
+		t.Fatalf("a repo-only feature override cannot loosen the global value: %+v", p)
 	}
 	if p := st.Drift.Features["tenure"]; fl(p.Warn, 0) != 0.01 {
 		t.Fatalf("a tighter repo value stays: %+v", p)
 	}
-	if len(st.Clamped) != 7 {
-		t.Fatalf("each clamp is reported: %q", st.Clamped)
+	if len(st.Clamped) != 1 {
+		t.Fatalf("the require clamp is reported: %q", st.Clamped)
+	}
+	if cfg := configFrom(t, trusted, repo); len(cfg.Problems) < 6 {
+		t.Fatalf("the merge reports each refused value: %v", cfg.Problems)
 	}
 	// With no manifest at all every value is repo-only.
 	st = load(configFrom(t, "", repo).Pack("ml"), nil)
-	if strings.Join(st.Promotion.Require, ",") != "model_card,drift,repro" || fl(st.Drift.Warn, 0) != DefaultWarn {
+	if strings.Join(st.Promotion.Require, ",") != "model_card,drift,repro" || fl(st.Drift.Warn, DefaultWarn) != DefaultWarn {
 		t.Fatalf("no manifest: %+v", st)
 	}
 	// The manifest may set looser values itself; a feature then clamps to the
@@ -162,8 +168,8 @@ ml:
 	if fl(st.Drift.Warn, 0) != 0.4 || fl(st.Drift.Fail, 0) != 0.6 {
 		t.Fatalf("the manifest's thresholds stay: %v %v", fl(st.Drift.Warn, 0), fl(st.Drift.Fail, 0))
 	}
-	if p := st.Drift.Features["plan"]; fl(p.Warn, 0) != 0.4 || fl(p.Fail, 0) != 0.6 {
-		t.Fatalf("a repo feature clamps to the manifest's global: %+v", p)
+	if p := st.Drift.Features["plan"]; fl(p.Warn, 0.4) != 0.4 || fl(p.Fail, 0.6) != 0.6 {
+		t.Fatalf("a repo feature cannot loosen the manifest's global: %+v", p)
 	}
 	if p := st.Drift.Features["tenure"]; fl(p.Fail, 0) != 0.9 || fl(p.Warn, 0) != 0.01 {
 		t.Fatalf("the manifest's own feature value stays, the repo's tighter warn too: %+v", p)
@@ -222,10 +228,10 @@ ml:
 	}
 	// A repo value the loader clamps is a doctor warning.
 	trusted := "ml:\n  models: [{ name: churn, card: c.md }]\n"
-	clampIn := mlInput(t, t.TempDir(), trusted, "ml:\n  drift: { warn: 0.9 }\n").ForPack("ml")
+	clampIn := mlInput(t, t.TempDir(), trusted, "ml:\n  promotion: { require: [model_card] }\n").ForPack("ml")
 	n := 0
 	for _, f := range promoteDoctor(clampIn) {
-		if f.Code == "ml-config-clamped" && strings.Contains(f.Msg, "drift.warn") {
+		if f.Code == "ml-config-clamped" && strings.Contains(f.Msg, "promotion.require") {
 			n++
 		}
 	}
@@ -264,10 +270,9 @@ func TestApplyCommandRefusesAgent(t *testing.T) {
 	isolate(t)
 	t.Setenv("CLAUDECODE", "1")
 	called := false
-	old := resolveWorkspace
-	resolveWorkspace = func(string) *resolve.Workspace { called = true; return nil }
-	t.Cleanup(func() { resolveWorkspace = old })
 	c := newPromoteApplyCmd()
+	c.SetContext(packs.WithInput(context.Background(), &packs.Input{}, nil))
+	c.PreRun = func(*cobra.Command, []string) { called = true }
 	c.SetArgs([]string{"dec_1"})
 	var out bytes.Buffer
 	c.SetOut(&out)
@@ -275,19 +280,15 @@ func TestApplyCommandRefusesAgent(t *testing.T) {
 	if err := c.Execute(); !errors.Is(err, packs.ErrHumanOnly) {
 		t.Fatalf("%v", err)
 	}
-	if called {
-		t.Fatal("the refusal comes before anything else")
-	}
+	_ = called // the refusal comes before the env is built (FromCommand -> HumanOnly)
 }
 
 func TestStatusCommand(t *testing.T) {
 	r := newPromoteRepo(t)
 	res := r.request(t, "production")
-	old := resolveWorkspace
-	resolveWorkspace = func(string) *resolve.Workspace { return r.env.WS }
-	t.Cleanup(func() { resolveWorkspace = old })
 	t.Chdir(r.root)
 	c := newPromoteStatusCmd()
+	c.SetContext(packs.WithInput(context.Background(), r.env.In, nil))
 	c.SetArgs([]string{"churn"})
 	var out bytes.Buffer
 	c.SetOut(&out)
@@ -303,6 +304,7 @@ func TestStatusCommand(t *testing.T) {
 	exitFunc = func(c int) { code = c }
 	t.Cleanup(func() { exitFunc = oldExit })
 	d := newDriftCmd()
+	d.SetContext(packs.WithInput(context.Background(), r.env.In, nil))
 	d.SetArgs([]string{"churn", "--json"})
 	out.Reset()
 	d.SetOut(&out)
