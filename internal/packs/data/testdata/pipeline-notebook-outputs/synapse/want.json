@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 notebook scanned",
+  "findings": [
+    {
+      "file": "notebook/Profile.json",
+      "line": 9,
+      "level": "warn",
+      "rule": "notebook-outputs",
+      "message": "1 cell with stored outputs; clear them before committing (jupyter nbconvert --clear-output, or nbstripout)"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "status": "ok",
+  "detail": "2 pipeline files scanned",
+  "findings": [
+    {
+      "file": "pipelines/append.sql",
+      "line": 1,
+      "level": "warn",
+      "rule": "append-no-dedupe",
+      "message": "append write with no MERGE, delete-insert, partition overwrite or dedupe in this file; a rerun of the same interval duplicates rows"
+    },
+    {
+      "file": "pipelines/append_orders.py",
+      "line": 7,
+      "level": "warn",
+      "rule": "append-no-dedupe",
+      "message": "append write with no MERGE, delete-insert, partition overwrite or dedupe in this file; a rerun of the same interval duplicates rows"
+    },
+    {
+      "file": "pipelines/append_orders.py",
+      "line": 9,
+      "level": "warn",
+      "rule": "append-no-dedupe",
+      "message": "append write with no MERGE, delete-insert, partition overwrite or dedupe in this file; a rerun of the same interval duplicates rows"
+    },
+    {
+      "file": "pipelines/append_orders.py",
+      "line": 10,
+      "level": "warn",
+      "rule": "append-no-dedupe",
+      "message": "append write with no MERGE, delete-insert, partition overwrite or dedupe in this file; a rerun of the same interval duplicates rows"
+    }
+  ]
+}
