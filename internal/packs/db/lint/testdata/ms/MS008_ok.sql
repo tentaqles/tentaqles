@@ -1,0 +1,6 @@
+-- want:
+SET LOCK_TIMEOUT 5000
+BEGIN TRAN
+ALTER TABLE dbo.Orders ADD Note nvarchar(50) NULL
+COMMIT TRAN
+GO

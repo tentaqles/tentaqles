@@ -1,0 +1,4 @@
+-- want:
+SET LOCK_TIMEOUT 5000
+ALTER TABLE dbo.Orders ALTER COLUMN Code varchar(40) NULL
+ALTER TABLE dbo.Orders ALTER COLUMN Code varchar(40) NOT NULL
