@@ -56,6 +56,38 @@ func TestPipelineRunGuard(t *testing.T) {
 		{"az synapse pipeline show --workspace-name acme-syn -n orders", policy.Allow, false},
 		{"echo airflow-dags-trigger", policy.Allow, false},
 		{"grep -r 'airflow dags trigger' docs/", policy.Allow, false},
+		// Wrapped invocations (review r0 M1).
+		{"tq dotenv run -- airflow dags trigger orders_daily", policy.Ask, false},
+		{"tq dotenv run --file .env.local -- airflow dags backfill -s 2026-01-01 orders_daily", policy.Ask, true},
+		{"bash -c 'airflow dags trigger orders_daily'", policy.Ask, false},
+		{"bash -lc 'cd /opt/dags && airflow dags trigger orders_daily'", policy.Ask, false},
+		{"sh -c \"dagster job launch -j orders_job\"", policy.Ask, false},
+		{"pwsh -Command \"airflow dags trigger orders_daily\"", policy.Ask, false},
+		{"powershell.exe -NoProfile -c \"prefect deployment run orders/daily\"", policy.Ask, false},
+		{"cmd /c airflow dags trigger orders_daily", policy.Ask, false},
+		{"docker compose exec airflow-scheduler airflow dags trigger orders_daily", policy.Ask, false},
+		{"docker exec -it -u airflow acme-scheduler airflow dags trigger orders_daily", policy.Ask, false},
+		{"docker-compose run --rm airflow-cli airflow dags backfill -s 2026-01-01 orders_daily", policy.Ask, true},
+		{"kubectl exec -it airflow-0 -n acme -- airflow dags backfill -s 2026-01-01 orders_daily", policy.Ask, true},
+		{"kubectl exec airflow-0 -- bash -c 'airflow dags trigger orders_daily'", policy.Ask, false},
+		{"ssh tester@scheduler 'airflow dags trigger orders_daily'", policy.Ask, false},
+		{"astro dev run dags trigger orders_daily", policy.Ask, false},
+		{"astro dev run dags backfill -s 2026-01-01 orders_daily", policy.Ask, true},
+		{"python3.12 -m airflow dags trigger orders_daily", policy.Ask, false},
+		{"/usr/bin/python3.11 -m dagster job launch -j orders_job", policy.Ask, false},
+		{"tq dotenv run -- tq dotenv run -- bash -c 'airflow dags trigger orders_daily'", policy.Ask, false},
+		// Line continuations (review r0 m3).
+		{"airflow dags \\\n  trigger orders_daily", policy.Ask, false},
+		{"airflow dags `\n  trigger orders_daily", policy.Ask, false},
+		{"airflow dags \\\r\n  trigger orders_daily", policy.Ask, false},
+		// Wrapped read-only commands stay allowed.
+		{"tq dotenv run -- airflow dags list", policy.Allow, false},
+		{"bash -c 'airflow dags list'", policy.Allow, false},
+		{"docker compose exec airflow-scheduler airflow dags list", policy.Allow, false},
+		{"kubectl exec airflow-0 -- airflow dags trigger --help", policy.Allow, false},
+		{"astro dev run dags list", policy.Allow, false},
+		{"docker compose logs airflow-scheduler", policy.Allow, false},
+		{"bash -c 'grep -r \"airflow dags trigger\" docs/'", policy.Allow, false},
 	}
 	for _, c := range cases {
 		for _, tool := range []string{"Bash", "PowerShell"} {
@@ -122,6 +154,30 @@ func BenchmarkPipelineRunGuard64KiB(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		pipelineRunGuard(call, g)
+	}
+}
+
+// Nested wrappers on a 64 KiB command stay inside the guard budget; a
+// command too deeply wrapped to see through fails closed (ask).
+func TestPipelineRunGuardWrappersBounded(t *testing.T) {
+	g := packs.NewGuardCtx(guardEnv(t, "data: { enabled: true }\n"), "data")
+	for _, c := range []struct {
+		cmd  string
+		want policy.Action
+	}{
+		{strings.Repeat("docker exec ", 64<<10/12) + "true", policy.Ask},
+		{strings.Repeat("ssh h ", 64<<10/6) + "true", policy.Ask},
+		{"docker compose exec acme " + strings.Repeat("x ", 64<<10/2), policy.Allow},
+		{strings.Repeat("bash -c '", 1) + strings.Repeat("echo x; ", 64<<10/8) + "'", policy.Allow},
+	} {
+		start := time.Now()
+		a, reason, _ := pipelineRunGuard(policy.ToolCall{Tool: "Bash", Command: c.cmd}, g)
+		if d := time.Since(start); d > packs.GuardBudget {
+			t.Fatalf("%.40q: guard took %v", c.cmd, d)
+		}
+		if a != c.want {
+			t.Errorf("%.40q: action %q (%s), want %q", c.cmd, a, reason, c.want)
+		}
 	}
 }
 
