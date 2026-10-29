@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -151,6 +152,82 @@ var bareTq = regexp.MustCompile(`^\s*(\S*/)?tq(\.exe)?\s`)
 // redirect or substitution).
 func bareTqCommand(n string) bool {
 	return bareTq.MatchString(n) && !strings.ContainsAny(n, ";&|<>\n`") && !strings.Contains(n, "$(")
+}
+
+// tqSelfPath is the running tq binary; tqLookPath resolves a bare `tq` on
+// PATH. Tests replace both.
+var (
+	tqSelfPath = func() string {
+		p, err := os.Executable()
+		if err != nil {
+			return ""
+		}
+		return p
+	}
+	tqLookPath = exec.LookPath
+)
+
+// samePath compares two executables by their final paths.
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	fa, fb := a, b
+	if f, err := packs.FinalPath(a); err == nil {
+		fa = f
+	}
+	if f, err := packs.FinalPath(b); err == nil {
+		fb = f
+	}
+	return normPathForm(fa) == normPathForm(fb)
+}
+
+// isSelfTq reports whether a command word runs this tq: the running
+// binary's own path, or a bare tq (tq.exe) that resolves on PATH to it.
+// Any other path (./tq, a link elsewhere) is just a program.
+func isSelfTq(word string) bool {
+	w := strings.Trim(word, `"'`)
+	self := tqSelfPath()
+	switch strings.ToLower(w) {
+	case "tq", "tq.exe":
+		p, err := tqLookPath("tq")
+		return err == nil && samePath(p, self)
+	}
+	if !filepath.IsAbs(filepath.FromSlash(w)) && !isAbsSlash(w) {
+		return false
+	}
+	return samePath(w, self)
+}
+
+func isAbsSlash(p string) bool {
+	p = strings.ReplaceAll(p, `\`, "/")
+	return strings.HasPrefix(p, "/") || (len(p) >= 3 && p[1] == ':' && p[2] == '/')
+}
+
+// tqSafeSubcommands never run a child command or write a path argument
+// (tq run, tq dotenv run and tq redact run run one; tq redact, migrate,
+// bundle, settings and the rest are checked like any program).
+var tqSafeSubcommands = map[string]bool{"pack": true, "hub": true, "doctor": true, "guard": true, "list": true,
+	"insights": true, "version": true, "decide": true, "providers": true, "secrets": true, "help": true}
+
+// tqExempt reports a command the state-dir check leaves to tq itself: one
+// call (bareTqCommand) of this tq (isSelfTq) with a safe subcommand as its
+// first argument. A child command after -- (tq pack cloud plan -- terraform
+// plan) is checked as its own command, so its mention is not exempt.
+func tqExempt(cmd, mention string) bool {
+	if !bareTqCommand(normShell(cmd)) {
+		return false
+	}
+	w := strings.Fields(mention)
+	if len(w) < 2 || !isSelfTq(w[0]) || !tqSafeSubcommands[strings.ToLower(w[1])] {
+		return false
+	}
+	for i, x := range w {
+		if x == "--" {
+			return !protectedMention(strings.Join(w[i+1:], " "))
+		}
+	}
+	return true
 }
 
 // protectedSubs are the parts of tq's state directory whose integrity a
@@ -536,7 +613,7 @@ func protectedMention(raw string) bool {
 }
 
 var (
-	humanAnswerRe = regexp.MustCompile(`\bhub[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+(\S+[\s,]+)?)*answer\b|\bpack[\s,]+\S+[^;&|\n]*\bapply\b`)
+	humanAnswerRe = regexp.MustCompile(`\bhub[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+(\S+[\s,]+)?)*answer\b|\b` + policy.ApplyWord)
 	httpClientRe  = regexp.MustCompile(`\b(curl|wget|http|https|invoke-webrequest|iwr|invoke-restmethod|irm|python3?|py|node|deno|bun|ruby|perl|php|pwsh|powershell|urlopen|requests|fetch)\b`)
 	pctRe         = regexp.MustCompile(`%([0-9a-f]{2})`)
 )
@@ -698,7 +775,7 @@ func stateDirDecision(call policy.ToolCall, cwd string, readArgs ...packs.ReadAr
 				mention = m
 			}
 		}
-		if !bareTqCommand(n) && protectedMention(mention) {
+		if protectedMention(mention) && !tqExempt(cmd, mention) {
 			deny("tq/hub-store-write", "this command reaches a protected part of tq's state directory ("+paths.Home()+": hub, packs, build-gate, trust, guard, guard.yaml, config.yaml or audit.jsonl), which holds the hub store, the pack ledgers, approvals, plans and keys; only tq itself touches it")
 		}
 		if (strings.Contains(n, "tq-packs.y") || strings.Contains(n, "tq-pac~")) && !(readOnlyVerb.MatchString(n) && !strings.ContainsAny(n, ">;&|")) {

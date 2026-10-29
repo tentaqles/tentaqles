@@ -88,7 +88,7 @@ func TestHumanAnswerRule(t *testing.T) {
 		{Tool: "Bash", Command: "tq pack cloud apply d1"},
 		{Tool: "Bash", Command: "tq pack db migrate apply d1"},
 		{Tool: "Bash", Command: "tq pack ml --workspace acme promote apply churn@7"}, // R5-4: flags between
-		{Tool: "Bash", Command: "tq pack cloud --yes destroy --then-apply d1"},
+		{Tool: "Bash", Command: "tq pack cloud --yes destroy --then apply d1"}, // apply as a word, flags between (final review m5: not inside a flag)
 		{Tool: "Bash", Command: "curl -X POST http://127.0.0.1:8765/cards/c1/decisions/d1/answer"},
 		{Tool: "Bash", Command: `python -c "import urllib.request as u;u.urlopen(u.Request('http://127.0.0.1:8765/api/cards/c1/decisions/d1/answer',b'{}'))"`},
 		{Tool: "PowerShell", Command: "Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/cards/c1/decisions/d1/answer"},

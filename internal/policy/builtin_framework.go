@@ -16,6 +16,15 @@ const shellWriteVerbs = `(>{1,2}|\b(tee|sqlite3|sed\s+-i|perl\s+-[a-z]*i|truncat
 // tqCmd is a tq invocation (tq, tq.exe, a path to it, quoted or not).
 const tqCmd = `(^|[\s;&|(` + bt + `"'=])(\S*[/\\])?tq(\.exe)?["']?\s+`
 
+// applyWord is `pack <pack> ... apply`: apply as a whole word, every word
+// before it a whole word other than --, so apply in a path or a flag value
+// (--paths k8s/apply.yaml, -var-file=apply.tfvars) or in a child command
+// after -- is not the subcommand.
+const applyWord = ApplyWord
+
+// ApplyWord is exported for the hook-time half of tq/human-answer.
+const ApplyWord = `pack(?:[\s,]+(?:[^-\s,;&|\n][^\s,;&|\n]*|-|-[^-\s,;&|\n][^\s,;&|\n]*|--[^\s,;&|\n]+))*?[\s,]+apply(?:[\s,;&|)"']|$)`
+
 // httpClients post from the shell.
 const httpClients = `\b(curl|wget|http|https|invoke-webrequest|iwr|invoke-restmethod|irm|python3?|py|node|deno|bun|ruby|perl|php|pwsh|powershell)\b`
 
@@ -32,10 +41,10 @@ func frameworkRules() []Rule {
 		},
 		{
 			ID: "tq/human-answer", Action: Deny,
-			Command: tqCmd + `(hub\s+(answer|serve-key|key|token)\b|pack\s+\S+[^;&|\n]*\bapply\b)`,
+			Command: tqCmd + `(hub\s+(answer|serve-key|key|token)\b|` + applyWord + `)`,
 			// tq pack <x> approve and tq pack ml promote request only ask (they
 			// create the pending decision): agents may run them (spec D Â§9.8).
-			// apply anywhere after pack <x> in the segment, flags included,
+			// apply as a word after pack <x> in the segment, flags included,
 			// executes an approved action: human-only. Executors declare
 			// themselves with the packs.AnnotationHumanOnly annotation, and a
 			// test asserts this rule matches every one of them.
