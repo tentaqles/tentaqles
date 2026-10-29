@@ -36,8 +36,8 @@ func TestPackApprovalNeverDrivesTheRun(t *testing.T) {
 	if _, err := h.svc.Answer(context.Background(), c.ID, d.ID, "approve", ""); !errors.Is(err, store.ErrPackAnswer) {
 		t.Fatalf("answered without presence: %v", err)
 	}
-	sign := func(pack, id, choice, kind, ts string) (ledger.Entry, error) {
-		return ledger.Entry{Event: ledger.Answered, Decision: id, Pack: pack, Choice: choice, ActorKind: kind, TS: ts}, nil
+	sign := func(shown ledger.Shown, id, choice, kind, ts string) (ledger.Entry, error) {
+		return ledger.Entry{Event: ledger.Answered, Decision: id, Pack: shown.Pack, Choice: choice, ActorKind: kind, TS: ts}, nil
 	}
 	out, err := h.svc.Answer(WithHumanPresence(context.Background(), HumanPresence{Sign: sign}), c.ID, d.ID, "approve", "")
 	if err != nil {

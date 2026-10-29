@@ -2,6 +2,7 @@ package approval
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -88,8 +89,8 @@ func TestAskAnswerVerifyClaim(t *testing.T) {
 		t.Fatalf("evidence: %v", err)
 	}
 	es, _ := ledger.ReadAll("acme")
-	key, _ := ledger.LoadKey("acme")
-	if _, err := Find(es, key, Binding{Pack: "ml", Action: "promote", Target: "production"}, ev, Now(), nil); err != nil {
+	tr, _ := ledger.LoadTrust("acme", "ml")
+	if _, err := Find(es, tr, Binding{Pack: "ml", Action: "promote", Target: "production"}, ev, Now(), nil); err != nil {
 		t.Fatalf("find without subject: %v", err)
 	}
 	if _, err := Claim("acme", id, want, ev); err != nil {
@@ -129,8 +130,8 @@ func TestVerifyBinding(t *testing.T) {
 		t.Fatal("Verify needs the subject")
 	}
 	es, _ := ledger.Read("acme", "ml")
-	key, _ := ledger.LoadKey("acme")
-	if _, err := Find(es, key, Binding{Pack: "ml", Action: "promote", Subject: "other", Target: "production"}, ev, Now(), nil); !errors.Is(err, ErrUnknown) {
+	tr, _ := ledger.LoadTrust("acme", "ml")
+	if _, err := Find(es, tr, Binding{Pack: "ml", Action: "promote", Subject: "other", Target: "production"}, ev, Now(), nil); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("Find compares the subject when given: %v", err)
 	}
 }
@@ -303,7 +304,7 @@ func TestConfirm(t *testing.T) {
 	}
 }
 
-// R2-2: a forged answered line (right JSON, no or a wrong MAC) is refused,
+// R2-2: a forged answered line (right JSON, no or a wrong signature) is refused,
 // the plain store answer path refuses a pack approval, and a keychain
 // error leaves the approval ungranted.
 func TestForgedAnswerRefused(t *testing.T) {
@@ -320,7 +321,7 @@ func TestForgedAnswerRefused(t *testing.T) {
 	if err := ledger.Append("acme", forged); err != nil {
 		t.Fatal(err)
 	}
-	forged.MAC = strings.Repeat("ab", 32)
+	forged.Sig = strings.Repeat("ab", 64)
 	ledger.Append("acme", forged)
 	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrPending) {
 		t.Fatalf("a forged answer granted: %v", err)
@@ -337,4 +338,106 @@ func TestForgedAnswerRefused(t *testing.T) {
 		t.Fatalf("keychain error must fail closed: %v", err)
 	}
 	keyring.MockInit()
+}
+
+func rewriteAsked(t *testing.T, id string, edit func(e *ledger.Entry)) {
+	t.Helper()
+	p, _ := ledger.Path("acme", "ml")
+	es, err := ledger.Read("acme", "ml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for _, e := range es {
+		if e.Event == ledger.Asked && e.Decision == id {
+			edit(&e)
+		}
+		line, _ := json.Marshal(e)
+		b.Write(append(line, '\n'))
+	}
+	os.WriteFile(p, []byte(b.String()), 0o600)
+}
+
+// F1: a rewritten asked line cannot turn a signed reject into a grant or
+// extend a signed expiry.
+func TestTamperedAskedLine(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "reject", "hub:tester")
+	rewriteAsked(t, id, func(e *ledger.Entry) { e.Grant = "reject" })
+	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrRejected) {
+		t.Fatalf("tampered grant: %v", err)
+	}
+	id2, _ := ask(t)
+	answer(t, id2, "approve", "hub:tester")
+	rewriteAsked(t, id2, func(e *ledger.Entry) { e.ExpiresAt = Now().Add(365 * 24 * time.Hour).Format(time.RFC3339) })
+	prev := Now
+	Now = func() time.Time { return prev().Add(8 * 24 * time.Hour) }
+	defer func() { Now = prev }()
+	if _, err := Verify("acme", id2, want, ev); !errors.Is(err, ErrExpired) {
+		t.Fatalf("tampered expiry: %v", err)
+	}
+}
+
+// F3: deleting the claim, or compacting and re-appending the signed lines,
+// cannot reopen a used approval.
+func TestUsedApprovalStaysUsed(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	saved, _ := ledger.Read("acme", "ml")
+	if _, err := Claim("acme", id, want, ev); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkUsed("acme", "ml", id); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := ledger.ClaimsDir("acme", "ml")
+	os.RemoveAll(dir)
+	p, _ := ledger.Path("acme", "ml")
+	var b strings.Builder
+	for _, e := range saved { // the ledger before the use: no consumed line
+		line, _ := json.Marshal(e)
+		b.Write(append(line, '\n'))
+	}
+	os.WriteFile(p, []byte(b.String()), 0o600)
+	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrUsed) {
+		t.Fatalf("claim deleted, ledger rolled back: %v", err)
+	}
+	if _, err := FindGuard(guardCtx("ml"), want, ev); !errors.Is(err, ErrUsed) {
+		t.Fatalf("guard: %v", err)
+	}
+}
+
+// F9: FindGuard and List under a keychain error never grant.
+func TestKeychainErrorGuardAndList(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	keyring.MockInitWithError(errors.New("no secret service"))
+	defer keyring.MockInit()
+	if _, err := FindGuard(guardCtx("ml"), want, ev); !errors.Is(err, ErrPending) {
+		t.Fatalf("guard: %v", err)
+	}
+	rows, err := List("acme", "")
+	if err != nil || len(rows) != 1 || rows[0].State != "pending" {
+		t.Fatalf("list: %v %+v", err, rows)
+	}
+}
+
+// F10: List keys decisions by (pack, id).
+func TestListPerPack(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	ledger.Append("acme", ledger.Entry{Event: ledger.Asked, Decision: id, Pack: "cloud", Action: "x", Subject: "y", Target: "z", Grant: "apply",
+		ExpiresAt: Now().Add(time.Hour).Format(time.RFC3339)})
+	rows, _ := List("acme", "")
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r.Pack] = r.State
+	}
+	if got["ml"] != "approved" || got["cloud"] != "pending" {
+		t.Fatalf("%v", got)
+	}
 }

@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/packs/approval"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/zalando/go-keyring"
 )
 
 func runRoot(t *testing.T, stdin string, args ...string) (string, error) {
@@ -293,5 +295,56 @@ func TestHookRound3Bypasses(t *testing.T) {
 		if code, out := hookDecision(t, ws, c); code != 0 {
 			t.Errorf("denied (%d): %s%s\n%s", code, c.Command, c.Path, out)
 		}
+	}
+}
+
+// F2: a rewritten ledger asked line makes the terminal answer refuse, and the
+// decision stays pending for both the old and the new target.
+func TestHubAnswerRefusesARewrittenLedger(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  ml: { enabled: true }\n")
+	clearAgentMarkers(t)
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	os.Chdir(ws)
+	id, card, err := approval.Ask("acme", approval.Request{Pack: "ml", Action: "promote", Subject: "churn@7", Target: "staging", Evidence: packEv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := ledger.Path("acme", "ml")
+	raw, _ := os.ReadFile(p)
+	os.WriteFile(p, []byte(strings.Replace(string(raw), `"target":"staging"`, `"target":"production"`, 1)), 0o600)
+	prevTTY := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = prevTTY })
+	if _, err := runRoot(t, "ml promote "+subjectCode("churn@7")+"\n", "hub", "answer", card, id, "--choice", "approve"); !errors.Is(err, ledger.ErrShownMismatch) {
+		t.Fatalf("answer over a rewritten ledger: %v", err)
+	}
+	for _, target := range []string{"staging", "production"} {
+		if _, err := approval.Verify("acme", id, approval.Binding{Pack: "ml", Action: "promote", Subject: "churn@7", Target: target}, packEv); err == nil {
+			t.Fatalf("%s granted", target)
+		}
+	}
+}
+
+// F6: a guard allow merged with another rule's ask consumes the approval now
+// (the hook cannot know whether the call runs) and says so in the prompt.
+func TestHookAskConsumesAndSaysSo(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\nguard: { rules: [ { id: x/ask, action: ask, command: approved, reason: confirm } ] }\n")
+	signedApproval(t, "acme", "cloud", "d-example")
+	code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: "terraform apply approved.tfplan"})
+	if code != 0 || !strings.Contains(out, "consumed now, even if you decline") || !ledger.Claimed("acme", "cloud", "d-example") {
+		t.Fatalf("%d %s", code, out)
+	}
+}
+
+// F9: a keychain error makes a pack guard that looks up its approval deny.
+func TestHookKeychainErrorDenies(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  db: { enabled: true }\n")
+	signedApproval(t, "acme", "db", "d-find")
+	keyring.MockInitWithError(errors.New("no secret service"))
+	defer keyring.MockInit()
+	code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: "find-approval migrate prod"})
+	if code != 2 || !strings.Contains(out, "tq/example-cmd-find") {
+		t.Fatalf("%d %s", code, out)
 	}
 }

@@ -180,14 +180,15 @@ func Ask(ws string, r Request) (decisionID, cardID string, err error) {
 	return d.ID, cardID, nil
 }
 
-// signingKey is the workspace's ledger key, or nil when the keychain has none
-// or cannot be read (fail closed: no answered line then counts).
-func signingKey(ws string) []byte {
-	k, err := ledger.LoadKey(ws)
+// trustFor is the workspace's public key and pack watermarks, or an empty
+// Trust when the keychain has none or cannot be read (fail closed: no
+// answered line then counts).
+func trustFor(ws string, packs ...string) ledger.Trust {
+	t, err := ledger.LoadTrust(ws, packs...)
 	if err != nil {
-		return nil
+		return ledger.Trust{}
 	}
-	return k
+	return t
 }
 
 // Binding is what an approval must be for. Verify compares all four
@@ -219,7 +220,8 @@ func check(s ledger.State, want Binding, evidence map[string]string, now time.Ti
 		return a, fmt.Errorf("%s: %w (%s)", s.Decision, ErrRejected, s.Choice)
 	case s.Expired(now):
 		return a, fmt.Errorf("%s: %w", s.Decision, ErrExpired)
-	case !ledger.EqualEvidence(s.Evidence, evidence):
+	case s.EvidenceHash != "" && ledger.EvidenceHash(evidence) != s.EvidenceHash,
+		s.EvidenceHash == "" && !ledger.EqualEvidence(s.Evidence, evidence):
 		return a, fmt.Errorf("%s: %w", s.Decision, ErrEvidence)
 	}
 	return a, nil
@@ -247,21 +249,21 @@ func Verify(ws, id string, want Binding, evidence map[string]string) (Approval, 
 	if err != nil {
 		return Approval{}, err
 	}
-	return verifyEntries(entries, signingKey(ws), id, want, evidence, Now(), func(d string) bool { return ledger.Claimed(ws, want.Pack, d) })
+	return verifyEntries(entries, trustFor(ws, want.Pack), id, want, evidence, Now(), func(d string) bool { return ledger.Claimed(ws, want.Pack, d) })
 }
 
 // VerifyEntries is Verify over entries already read, with the workspace's
-// ledger key (nil: no answer counts); claimed reports a claim for a decision
+// Trust (no key: no answer counts); claimed reports a claim for a decision
 // id (nil: none known).
-func VerifyEntries(entries []ledger.Entry, key []byte, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
+func VerifyEntries(entries []ledger.Entry, t ledger.Trust, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
 	if err := validBinding(want); err != nil {
 		return Approval{}, err
 	}
-	return verifyEntries(entries, key, id, want, evidence, now, claimed)
+	return verifyEntries(entries, t, id, want, evidence, now, claimed)
 }
 
-func verifyEntries(entries []ledger.Entry, key []byte, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
-	s, ok := ledger.ResolveSigned(entries, key)[id]
+func verifyEntries(entries []ledger.Entry, t ledger.Trust, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
+	s, ok := ledger.ResolveSigned(entries, t)[id]
 	if !ok {
 		return Approval{Decision: id}, fmt.Errorf("%s: %w", id, ErrUnknown)
 	}
@@ -272,12 +274,12 @@ func verifyEntries(entries []ledger.Entry, key []byte, id string, want Binding, 
 // evidence (Subject "" matches any subject). When none is usable it
 // returns the error of the most recent candidate (so a guard can say
 // "expired" or "evidence changed"), or ErrUnknown when there is none.
-func Find(entries []ledger.Entry, key []byte, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
+func Find(entries []ledger.Entry, t ledger.Trust, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
 	if err := validBinding(want); err != nil {
 		return Approval{}, err
 	}
 	var lastErr error
-	for _, s := range ledger.Sorted(ledger.ResolveSigned(entries, key)) {
+	for _, s := range ledger.Sorted(ledger.ResolveSigned(entries, t)) {
 		if s.Pack != want.Pack || s.Action != want.Action || s.Target != want.Target || (want.Subject != "" && s.Subject != want.Subject) {
 			continue
 		}
@@ -319,12 +321,15 @@ func FindGuard(g packs.GuardCtx, want Binding, evidence map[string]string) (Appr
 		_, err := g.ReadState(ledger.ClaimName(d))
 		return !errors.Is(err, os.ErrNotExist) // a claim, or an error: used (fail closed)
 	}
-	return Find(entries, signingKey(g.Workspace()), want, evidence, Now(), claimed)
+	return Find(entries, trustFor(g.Workspace(), want.Pack), want, evidence, Now(), claimed)
 }
 
-// Claim is the human-run apply's single-use step: it verifies the approval
-// and claims it atomically (exactly one caller wins) before the command
-// runs. Call MarkUsed after the command.
+// Claim is the human-run apply's single-use step, after Confirm and just
+// before the command runs: it verifies the approval, claims it atomically
+// (exactly one caller wins) and raises the pack's high-water mark (a failed
+// write is an error: do not run the command). Call MarkUsed after the
+// command. The order of a human-run apply is FromCommand, HumanOnly,
+// Verify (to show what will run), Confirm, Claim, run, MarkUsed, Comment.
 func Claim(ws, id string, want Binding, evidence map[string]string) (Approval, error) {
 	a, err := Verify(ws, id, want, evidence)
 	if err != nil {
@@ -335,6 +340,9 @@ func Claim(ws, id string, want Binding, evidence map[string]string) (Approval, e
 			return a, fmt.Errorf("%s: %w", id, ErrUsed)
 		}
 		return a, err
+	}
+	if err := ledger.SetHighWater(ws, want.Pack, id); err != nil {
+		return a, fmt.Errorf("approval: %s was claimed but its use could not be recorded in the keychain (%v); do not run the command", id, err)
 	}
 	return a, nil
 }
@@ -351,6 +359,9 @@ func MarkUsed(ws, pack, id string) error {
 		return fmt.Errorf("%s: %w", id, ErrUnknown)
 	}
 	if err := ledger.Claim(ws, pack, id); err != nil && !errors.Is(err, ledger.ErrClaimed) {
+		return err
+	}
+	if err := ledger.SetHighWater(ws, pack, id); err != nil {
 		return err
 	}
 	return ledger.Append(ws, ledger.Entry{Event: ledger.Consumed, Decision: id, Pack: s.Pack, Action: s.Action, Subject: s.Subject, Target: s.Target})
@@ -374,16 +385,26 @@ type Status struct {
 
 // List returns the workspace's pack approvals (pack "" = all), newest first.
 func List(ws, pack string) ([]Status, error) {
-	entries, err := ledger.ReadAll(ws)
+	names, err := ledger.Packs(ws)
 	if err != nil {
 		return nil, err
 	}
 	now := Now()
 	out := []Status{}
-	for _, s := range ledger.Sorted(ledger.ResolveSigned(entries, signingKey(ws))) {
-		if pack != "" && s.Pack != pack {
+	var states []ledger.State
+	for _, p := range names {
+		if pack != "" && p != pack {
 			continue
 		}
+		// Per pack: decisions are keyed by (pack, id), never mixed across packs.
+		entries, err := ledger.Read(ws, p)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, ledger.Sorted(ledger.ResolveSigned(entries, trustFor(ws, p)))...)
+	}
+	sort.SliceStable(states, func(i, j int) bool { return states[i].AskedAt.After(states[j].AskedAt) })
+	for _, s := range states {
 		if ledger.Claimed(ws, s.Pack, s.Decision) {
 			s.ConsumedAt = s.AskedAt // claimed: used
 		}

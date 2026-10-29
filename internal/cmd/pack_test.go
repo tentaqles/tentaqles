@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/approval"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
@@ -51,6 +53,18 @@ func init() {
 		}})
 	packs.Register(packs.Check{ID: "data/example-cmd-tool", Pack: "data", Kind: packs.External, Tool: "tq-fake-tool-xyz",
 		Run: func(ctx context.Context, in *packs.Input) packs.Result { return packs.Result{Status: packs.OK} }})
+	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-find", Pack: "db", Events: []string{"Bash"},
+		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
+			if !strings.Contains(call.Command, "find-approval") {
+				return policy.Allow, "", false
+			}
+			a, err := approval.FindGuard(g, approval.Binding{Pack: "db", Action: "apply", Target: "prod"}, map[string]string{"plan": "sha256:aa"})
+			if err != nil {
+				return policy.Deny, err.Error(), true
+			}
+			g.Consume(a.Decision)
+			return policy.Allow, "approved", true
+		}})
 	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-apply", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
 		Supersedes: []string{"tq/iac-apply"},
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
@@ -235,7 +249,30 @@ func TestTriageAddsPackFlags(t *testing.T) {
 func cloudHook(t *testing.T, cmd string) (int, string, string) {
 	t.Helper()
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	signedApproval(t, "acme", "cloud", "d-example")
 	return runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, cmd))
+}
+
+// signedApproval writes an asked line and a human answer signed with the
+// workspace key (the mock keychain), as tq hub answer would.
+func signedApproval(t *testing.T, ws, pack, id string) {
+	t.Helper()
+	exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	a := ledger.Entry{Event: ledger.Asked, Decision: id, Pack: pack, Action: "apply", Subject: "s", Target: "prod", Evidence: map[string]string{"plan": "sha256:aa"}, ExpiresAt: exp, Grant: "apply"}
+	if err := ledger.Append(ws, a); err != nil {
+		t.Fatal(err)
+	}
+	priv, err := ledger.SigningKey(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := ledger.AnswerSigner(ws, priv)(ledger.Shown{Pack: pack, Action: "apply", Subject: "s", Target: "prod", ExpiresAt: exp, Grant: "apply", Evidence: a.Evidence}, id, "apply", "hub", time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Append(ws, e); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHookPackGuardDeniesAndSupersedes(t *testing.T) {
@@ -253,8 +290,11 @@ func TestHookPackGuardDeniesAndSupersedes(t *testing.T) {
 		t.Fatalf("allow: %d %s", code, out)
 	}
 	es, err := ledger.Read("acme", "cloud")
-	if err != nil || len(es) != 1 || es[0].Event != ledger.Consumed || es[0].Decision != "d-example" {
+	if err != nil || len(es) != 3 || es[2].Event != ledger.Consumed || es[2].Decision != "d-example" {
 		t.Fatalf("consumed line: %v %+v", err, es)
+	}
+	if m, err := ledger.LoadHighWater("acme", "cloud"); err != nil || m.Decision != "d-example" {
+		t.Fatalf("high-water mark: %v %+v", err, m)
 	}
 }
 
@@ -403,6 +443,7 @@ func TestHookNoWorkspaceNoPackGuards(t *testing.T) {
 // M2: the hook claims the approval; a second hook with the same approval is denied.
 func TestHookClaimIsSingleUse(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	signedApproval(t, "acme", "cloud", "d-example")
 	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply approved.tfplan"))
 	if code != 0 || !ledger.Claimed("acme", "cloud", "d-example") {
 		t.Fatalf("first use: %d", code)
