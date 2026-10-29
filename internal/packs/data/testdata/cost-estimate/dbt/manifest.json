@@ -1,0 +1,20 @@
+{
+  "metadata": {"dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json", "dbt_version": "1.8.7", "adapter_type": "bigquery"},
+  "nodes": {
+    "model.acme_analytics.orders": {
+      "resource_type": "model",
+      "original_file_path": "models/marts/orders.sql",
+      "compiled_code": "select status, count(*) as n\nfrom `acme-dev`.`staging`.`stg_orders`\ngroup by status"
+    },
+    "model.acme_analytics.daily": {
+      "resource_type": "model",
+      "original_file_path": "models/marts/daily.sql",
+      "compiled_code": ""
+    },
+    "test.acme_analytics.not_null_orders_status": {
+      "resource_type": "test",
+      "original_file_path": "models/marts/schema.yml",
+      "compiled_code": "select 1"
+    }
+  }
+}
