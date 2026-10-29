@@ -129,9 +129,9 @@ func Ask(ws string, r Request) (decisionID, cardID string, err error) {
 		return "", "", err
 	}
 	// Keep the ledger under the guards' 1 MiB read cap (finished decisions go).
-	if err := ledger.CompactIfLarge(ws, r.Pack, Now()); err != nil {
-		return "", "", fmt.Errorf("approval: the %s ledger cannot be compacted: %w", r.Pack, err)
-	}
+	// Best-effort: a busy ledger is compacted next time; only the read cap is
+	// a hard stop, and it fails closed.
+	_ = ledger.CompactIfLarge(ws, r.Pack, Now())
 	st, err := OpenStore(ws)
 	if err != nil {
 		return "", "", err
@@ -178,6 +178,16 @@ func Ask(ws string, r Request) (decisionID, cardID string, err error) {
 		return d.ID, cardID, fmt.Errorf("approval: decision %s was asked but the ledger write failed (%v); it cannot be granted, ask again", d.ID, err)
 	}
 	return d.ID, cardID, nil
+}
+
+// signingKey is the workspace's ledger key, or nil when the keychain has none
+// or cannot be read (fail closed: no answered line then counts).
+func signingKey(ws string) []byte {
+	k, err := ledger.LoadKey(ws)
+	if err != nil {
+		return nil
+	}
+	return k
 }
 
 // Binding is what an approval must be for. Verify compares all four
@@ -237,20 +247,21 @@ func Verify(ws, id string, want Binding, evidence map[string]string) (Approval, 
 	if err != nil {
 		return Approval{}, err
 	}
-	return verifyEntries(entries, id, want, evidence, Now(), func(d string) bool { return ledger.Claimed(ws, want.Pack, d) })
+	return verifyEntries(entries, signingKey(ws), id, want, evidence, Now(), func(d string) bool { return ledger.Claimed(ws, want.Pack, d) })
 }
 
-// VerifyEntries is Verify over entries already read; claimed reports a
-// claim for a decision id (nil: none known).
-func VerifyEntries(entries []ledger.Entry, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
+// VerifyEntries is Verify over entries already read, with the workspace's
+// ledger key (nil: no answer counts); claimed reports a claim for a decision
+// id (nil: none known).
+func VerifyEntries(entries []ledger.Entry, key []byte, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
 	if err := validBinding(want); err != nil {
 		return Approval{}, err
 	}
-	return verifyEntries(entries, id, want, evidence, now, claimed)
+	return verifyEntries(entries, key, id, want, evidence, now, claimed)
 }
 
-func verifyEntries(entries []ledger.Entry, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
-	s, ok := ledger.Resolve(entries)[id]
+func verifyEntries(entries []ledger.Entry, key []byte, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
+	s, ok := ledger.ResolveSigned(entries, key)[id]
 	if !ok {
 		return Approval{Decision: id}, fmt.Errorf("%s: %w", id, ErrUnknown)
 	}
@@ -261,12 +272,12 @@ func verifyEntries(entries []ledger.Entry, id string, want Binding, evidence map
 // evidence (Subject "" matches any subject). When none is usable it
 // returns the error of the most recent candidate (so a guard can say
 // "expired" or "evidence changed"), or ErrUnknown when there is none.
-func Find(entries []ledger.Entry, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
+func Find(entries []ledger.Entry, key []byte, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
 	if err := validBinding(want); err != nil {
 		return Approval{}, err
 	}
 	var lastErr error
-	for _, s := range ledger.Sorted(ledger.Resolve(entries)) {
+	for _, s := range ledger.Sorted(ledger.ResolveSigned(entries, key)) {
 		if s.Pack != want.Pack || s.Action != want.Action || s.Target != want.Target || (want.Subject != "" && s.Subject != want.Subject) {
 			continue
 		}
@@ -308,7 +319,7 @@ func FindGuard(g packs.GuardCtx, want Binding, evidence map[string]string) (Appr
 		_, err := g.ReadState(ledger.ClaimName(d))
 		return !errors.Is(err, os.ErrNotExist) // a claim, or an error: used (fail closed)
 	}
-	return Find(entries, want, evidence, Now(), claimed)
+	return Find(entries, signingKey(g.Workspace()), want, evidence, Now(), claimed)
 }
 
 // Claim is the human-run apply's single-use step: it verifies the approval
@@ -369,7 +380,7 @@ func List(ws, pack string) ([]Status, error) {
 	}
 	now := Now()
 	out := []Status{}
-	for _, s := range ledger.Sorted(ledger.Resolve(entries)) {
+	for _, s := range ledger.Sorted(ledger.ResolveSigned(entries, signingKey(ws))) {
 		if pack != "" && s.Pack != pack {
 			continue
 		}

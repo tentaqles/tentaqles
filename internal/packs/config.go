@@ -429,7 +429,7 @@ func Merge(trusted, repo map[string]manifest.PackConfig) Config {
 			merged = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		}
 		if rok && r.Raw.Kind == yaml.MappingNode {
-			merged = mergeMapping(merged, &r.Raw, nil, rules, func(key, msg string) { problem(name, key, msg) })
+			merged = mergeMapping(merged, &r.Raw, nil, rules, nil, func(key, msg string) { problem(name, key, msg) })
 		}
 		var keep []*yaml.Node
 		for i := 0; i+1 < len(merged.Content); i += 2 {
@@ -535,8 +535,12 @@ func hasRuleBelow(rules map[string]MergeRule, keys []string) bool {
 }
 
 // mergeMapping merges the repo mapping r into the trusted mapping t (t may
-// be an empty mapping when the manifest is silent).
-func mergeMapping(t, r *yaml.Node, prefix []string, rules map[string]MergeRule, problem func(key, msg string)) *yaml.Node {
+// be an empty mapping when the manifest is silent). A key with no rule of its
+// own is trusted-layer only, at any depth, whatever its parent's rule: a
+// parent's TrustedAdd decides only whether the parent key itself may be
+// added, and is never inherited. A key whose subtree has rules is merged
+// child by child, never cloned over its children's rules.
+func mergeMapping(t, r *yaml.Node, prefix []string, rules map[string]MergeRule, parent *MergeRule, problem func(key, msg string)) *yaml.Node {
 	out := cloneNode(t)
 	for i := 0; i+1 < len(r.Content); i += 2 {
 		k := r.Content[i].Value
@@ -557,12 +561,28 @@ func mergeMapping(t, r *yaml.Node, prefix []string, rules map[string]MergeRule, 
 			tv = out.Content[idx]
 		}
 		rule, explicit := ruleFor(rules, keys)
-		if !explicit && rv.Kind == yaml.MappingNode && (tv == nil || tv.Kind == yaml.MappingNode) && hasRuleBelow(rules, keys) {
+		if rv.Kind == yaml.MappingNode && (tv == nil || tv.Kind == yaml.MappingNode) && hasRuleBelow(rules, keys) {
+			// The parent's own rule only decides whether the key may be added.
+			if explicit {
+				switch rule.Kind {
+				case MergeTrusted, MergeRepo:
+				default:
+					if tv == nil {
+						problem(key, "trusted-layer only; the repo file cannot add it (ignored)")
+						continue
+					}
+				}
+			}
 			base := tv
 			if base == nil {
 				base = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Line: rv.Line, Column: rv.Column}
 			}
-			m := mergeMapping(base, rv, keys, rules, problem)
+			var inherit *MergeRule
+			if explicit {
+				r := rule
+				inherit = &r
+			}
+			m := mergeMapping(base, rv, keys, rules, inherit, problem)
 			if tv == nil && len(m.Content) == 0 {
 				continue
 			}
@@ -589,20 +609,88 @@ func mergeMapping(t, r *yaml.Node, prefix []string, rules map[string]MergeRule, 
 	return out
 }
 
+// valueKind is how a bound is spelled: a bare number, a duration with a
+// unit, or a byte size with a unit.
+type valueKind int
+
+const (
+	kindNone valueKind = iota
+	kindNumber
+	kindDuration
+	kindBytes
+)
+
+// boundOf reads a bound and its kind. Bare numbers are kindNumber; a value
+// with a size suffix is kindBytes; anything manifest.ParseDuration reads
+// with a unit is kindDuration.
+func boundOf(s string) (float64, valueKind, bool) {
+	s = strings.TrimSpace(s)
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		if math.IsInf(f, 0) || math.IsNaN(f) {
+			return 0, kindNone, false
+		}
+		return f, kindNumber, true
+	}
+	if m := sizeRe.FindStringSubmatch(s); m != nil && m[2] != "" {
+		f, _ := numeric(s)
+		return f, kindBytes, true
+	}
+	if d, err := manifest.ParseDuration(s); err == nil {
+		return float64(d), kindDuration, true
+	}
+	return 0, kindNone, false
+}
+
+// compareBound reads rv in the unit of ref. A duration ref reads both sides
+// with manifest.ParseDuration (a bare number is seconds there, as the packs
+// decode it); otherwise the kinds must match.
+func compareBound(ref, rv string) (a, b float64, err string) {
+	av, ak, aok := boundOf(ref)
+	if !aok {
+		return 0, 0, "the trusted value is not comparable; it is kept"
+	}
+	if ak == kindDuration {
+		ad, e1 := manifest.ParseDuration(ref)
+		bd, e2 := manifest.ParseDuration(rv)
+		if e1 != nil || e2 != nil {
+			return 0, 0, "not a duration (ignored)"
+		}
+		return float64(ad), float64(bd), ""
+	}
+	bv, bk, bok := boundOf(rv)
+	if !bok || bk != ak {
+		return 0, 0, "not the same kind of value as the trusted one (a number, a duration or a size) (ignored)"
+	}
+	return av, bv, ""
+}
+
 // mergeValue applies one rule. tv is nil when the manifest is silent, and
-// then bounds compare against the rule's pack default. It returns the value
-// to keep, whether to set it, and a problem message.
+// then bounds compare against the rule's pack default; a blank (null)
+// trusted value means the default too, and a non-scalar trusted value is
+// kept. It returns the value to keep, whether to set it, and a problem.
 func mergeValue(rule MergeRule, tv, rv *yaml.Node) (*yaml.Node, bool, string) {
 	same := tv != nil && sameNode(tv, rv)
 	if same {
 		return tv, false, ""
 	}
 	isMap := rv.Kind == yaml.MappingNode || (tv != nil && tv.Kind == yaml.MappingNode)
+	// ref is the value the repo is compared against.
+	ref, refOK := rule.Default, true
+	if tv != nil {
+		switch {
+		case isNull(tv):
+			ref = rule.Default
+		case tv.Kind == yaml.ScalarNode:
+			ref = tv.Value
+		default:
+			refOK = false
+		}
+	}
 	switch rule.Kind {
 	case MergeIgnoreRepo:
 		return nil, false, "trusted-layer only; the repo file cannot set or change it (ignored)"
 	case MergeTrusted:
-		if tv == nil {
+		if tv == nil || isNull(tv) {
 			return cloneNode(rv), true, ""
 		}
 		return nil, false, "set by the manifest; the repo file cannot change it (ignored)"
@@ -612,7 +700,7 @@ func mergeValue(rule MergeRule, tv, rv *yaml.Node) (*yaml.Node, bool, string) {
 		if isMap {
 			return nil, false, "a union applies to lists, not mappings (ignored)"
 		}
-		if tv == nil {
+		if tv == nil || isNull(tv) {
 			return unionNode(&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}, rv), true, ""
 		}
 		return unionNode(tv, rv), true, ""
@@ -625,37 +713,51 @@ func mergeValue(rule MergeRule, tv, rv *yaml.Node) (*yaml.Node, bool, string) {
 		}
 		return nil, false, "the repo file cannot switch this off (ignored)"
 	case MergeMin, MergeMax:
+		if !refOK {
+			return nil, false, "the trusted value is not a scalar; it is kept"
+		}
 		if isMap || rv.Kind != yaml.ScalarNode {
 			return nil, false, "not a comparable value (ignored)"
 		}
-		b, bok := numeric(rv.Value)
-		if !bok {
-			return nil, false, "not a comparable value (ignored)"
+		if rv0, _, ok := boundOf(rv.Value); ok {
+			if rule.ZeroUnlimited && rv0 <= 0 {
+				return nil, false, "0 or a negative value means no limit here; the repo file cannot remove a limit (ignored)"
+			}
+			if rv0 < 0 {
+				return nil, false, "a negative bound (ignored)"
+			}
 		}
-		if rule.ZeroUnlimited && b <= 0 {
-			return nil, false, "0 or a negative value means no limit here; the repo file cannot remove a limit (ignored)"
+		if ref == "" {
+			return nil, false, "the rule has no default (ignored)"
+		}
+		if a0, _, ok := boundOf(ref); ok && a0 <= 0 && rule.ZeroUnlimited && rule.Kind == MergeMin {
+			// The trusted value is "no limit": any limit of the default's kind tightens.
+			if _, _, msg := compareBound(rule.Default, rv.Value); msg != "" {
+				return nil, false, msg
+			}
+			return cloneNode(rv), true, ""
+		}
+		a, b, msg := compareBound(ref, rv.Value)
+		if msg != "" {
+			return nil, false, msg
 		}
 		if b < 0 {
 			return nil, false, "a negative bound (ignored)"
 		}
-		ref := ""
-		if tv != nil {
-			ref = tv.Value
-		} else {
-			ref = rule.Default
-		}
-		if ref == "" {
-			return cloneNode(rv), true, "" // no default: any bound tightens
-		}
-		a, aok := numeric(ref)
-		if !aok {
-			return nil, false, "the trusted value is not comparable; it is kept"
+		if rule.ZeroUnlimited && a <= 0 {
+			a = math.Inf(1) // the trusted value is "no limit": any limit tightens
+			if rule.Kind == MergeMax {
+				a = 0
+			}
 		}
 		if (rule.Kind == MergeMin && b <= a) || (rule.Kind == MergeMax && b >= a) {
 			return cloneNode(rv), true, ""
 		}
 		return nil, false, "the repo file cannot loosen this bound (ignored)"
 	case MergeOrdered:
+		if !refOK {
+			return nil, false, "the trusted value is not a scalar; it is kept"
+		}
 		if rv.Kind != yaml.ScalarNode {
 			return nil, false, "not one of " + strings.Join(rule.Order, ", ") + " (ignored)"
 		}
@@ -663,12 +765,8 @@ func mergeValue(rule MergeRule, tv, rv *yaml.Node) (*yaml.Node, bool, string) {
 		if ri < 0 {
 			return nil, false, "not one of " + strings.Join(rule.Order, ", ") + " (ignored)"
 		}
-		ref := rule.Default
-		if tv != nil {
-			ref = tv.Value
-		}
 		ti := indexOf(rule.Order, ref)
-		if ref != "" && ti < 0 {
+		if ti < 0 {
 			return nil, false, "the trusted value is not in the order; it is kept"
 		}
 		if ri >= ti {
@@ -677,6 +775,11 @@ func mergeValue(rule MergeRule, tv, rv *yaml.Node) (*yaml.Node, bool, string) {
 		return nil, false, "the repo file cannot loosen this value (ignored)"
 	}
 	return nil, false, "unknown merge rule (ignored)"
+}
+
+// isNull reports a blank or ~ scalar.
+func isNull(n *yaml.Node) bool {
+	return n.Kind == yaml.ScalarNode && (n.Tag == "!!null" || (n.Value == "" && n.Style == 0))
 }
 
 func indexOf(xs []string, s string) int {

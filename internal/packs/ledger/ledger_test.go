@@ -27,8 +27,7 @@ func TestAppendResolve(t *testing.T) {
 	}
 	must(Append("acme", Entry{Event: Asked, Decision: "d1", Pack: "ml", Action: "promote", Subject: "churn@7", Target: "production",
 		Evidence: map[string]string{"card": "sha256:a"}, ExpiresAt: exp, Grant: "approve"}))
-	must(RecordAnswer("acme", "d1", map[string]any{"pack": "ml", "action": "promote", "evidence": map[string]any{"card": "masked"}}, "approve", "hub", time.Now()))
-	must(RecordAnswer("acme", "d2", map[string]any{}, "approve", "hub", time.Now())) // not a pack decision: ignored
+	must(Append("acme", Entry{Event: Answered, Decision: "d1", Pack: "ml", Action: "promote", Choice: "approve", ActorKind: "hub"}))
 	es, err := Read("acme", "ml")
 	must(err)
 	if len(es) != 2 {

@@ -222,7 +222,7 @@ func TestBaselineGrewWarnsAndRaisesFlag(t *testing.T) {
 	if r == nil || r.Status != OK || len(r.Findings) != 1 || r.Findings[0].Rule != "baseline-grew" || r.Findings[0].Level != LevelWarn {
 		t.Fatalf("%+v", r)
 	}
-	if flags := RaiseFlags(in); !contains(flags, FlagBaselineChange+":data") {
+	if flags, detail := RaiseFlagsDetail(in); !contains(flags, FlagBaselineChange) || detail[FlagBaselineChange] != "data" {
 		t.Fatalf("flags %v", flags)
 	}
 }

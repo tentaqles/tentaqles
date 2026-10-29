@@ -11,7 +11,7 @@ import (
 
 // AlwaysAsk are confirms unattended mode never skips: they protect the guard
 // and the switch itself, so an agent cannot widen its own permissions.
-var AlwaysAsk = []string{"tq/guard-change", "tq/hub-store-write", "tq/pack-config-change"}
+var AlwaysAsk = []string{"tq/guard-change", "tq/hub-store-write", "tq/pack-config-change", "tq/human-answer"}
 
 var unattendedModes = map[string]bool{"bypassPermissions": true, "auto": true}
 

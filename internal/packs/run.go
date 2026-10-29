@@ -357,6 +357,9 @@ func baselineKeys(in *Input, p string, old bool) map[string]bool {
 	}
 	out := map[string]bool{}
 	if err != nil {
+		if !old {
+			out["\x00unreadable"] = true // an unreadable new side is growth
+		}
 		return out
 	}
 	var f struct {

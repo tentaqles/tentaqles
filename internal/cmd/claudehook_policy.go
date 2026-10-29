@@ -236,6 +236,9 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other)))
 		}
 	}
+	// The state directory, the hub answer and the pack config, checked at hook
+	// time against the real paths (never-disable).
+	d = policy.Merge(d, stateDirDecision(call, cwd))
 	return applyPackOutcomes(d, ws, outcomes)
 }
 

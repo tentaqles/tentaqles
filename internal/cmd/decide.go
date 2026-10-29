@@ -337,7 +337,7 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 			}
 			// Pack flags (spec C §2.9): deterministic flags of the enabled
 			// packs, and their Jev questions in the same call.
-			packFlags, packQs := triagePackFlags(cwd, tws, changed, staged, rng)
+			packFlags, packDetail, packQs := triagePackFlags(cwd, changed, staged, rng)
 			cl, pol, ws, err := decideClient("triage", decide.BatchTimeout)
 			res := decide.TriageResult{Risk: "high"}
 			if err != nil {
@@ -350,6 +350,9 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 			}
 			if nerr != nil {
 				res.Flags = append(res.Flags, "files_unlisted")
+			}
+			if len(packDetail) > 0 {
+				res.Detail = packDetail
 			}
 			for _, f := range packFlags {
 				if !slices.Contains(res.Flags, f) {
@@ -419,22 +422,26 @@ func classifiedFlag(files []string, data manifest.Data) bool {
 }
 
 // triagePackFlags builds the pack Input over triage's changed files and
-// returns the raised pack flags and the enabled packs' Jev questions. Any
-// failure yields none: core triage still runs.
-func triagePackFlags(cwd string, ws *resolve.Workspace, changed []string, staged bool, rng string) ([]string, map[string]decide.Question) {
-	if ws == nil || ws.Manifest == nil {
-		return nil, nil
+// returns the raised pack flags, their details and the enabled packs' Jev
+// questions. A workspace whose manifest is untrusted or invalid, a registry
+// that cannot be read, or an invalid tq-packs.yaml raises
+// packs_config_invalid (risk high) and keeps whatever trusted config there
+// is: untrusted content can never switch the packs' review off.
+func triagePackFlags(cwd string, changed []string, staged bool, rng string) ([]string, map[string]string, map[string]decide.Question) {
+	ws, werr := packWorkspace(cwd)
+	if werr != nil {
+		return []string{"packs_config_invalid"}, nil, nil
 	}
-	// An invalid tq-packs.yaml keeps the manifest-only config and its flags,
-	// and raises packs_config_invalid (risk high): untrusted repo content can
-	// never switch the trusted packs' review off.
+	if ws == nil || ws.Manifest == nil {
+		return nil, nil, nil
+	}
 	in, ok := packInputFor(cwd, ws)
 	var extra []string
 	if !ok {
 		extra = append(extra, "packs_config_invalid")
 	}
 	if len(in.Config.Enabled()) == 0 {
-		return extra, nil
+		return extra, nil, nil
 	}
 	in.Base, in.Staged = "HEAD", staged
 	if rng != "" {
@@ -444,7 +451,8 @@ func triagePackFlags(cwd string, ws *resolve.Workspace, changed []string, staged
 	for _, f := range changed {
 		in.Changed = append(in.Changed, packs.ChangedFile{Path: f, Status: 'M'})
 	}
-	return append(packs.RaiseFlags(in), extra...), packs.Questions(in.Config)
+	names, detail := packs.RaiseFlagsDetail(in)
+	return append(names, extra...), detail, packs.Questions(in.Config)
 }
 
 // triageGit runs git for triage; tests replace it.

@@ -248,13 +248,35 @@ func parseNameStatus(b []byte) []ChangedFile {
 
 func slash(p string) string { return strings.ReplaceAll(p, `\`, "/") }
 
-// selectPaths resolves --paths: each path is cleaned and must stay inside
-// the repository (an absolute path inside root is made relative); a
-// directory expands to its tracked and untracked files; the status (M when
-// present at HEAD, else A) comes from one ls-tree call, matched
-// case-insensitively on Windows with git's own spelling kept.
+// selectPaths resolves --paths. Each path is cleaned and must stay inside
+// the repository (an absolute path inside root is made relative). A
+// directory expands to its tracked and untracked files, and a directory
+// with no files is a usage error. Git is called at most twice, with no path
+// arguments (so no command-line limit): one ls-files listing for the
+// directories and git's own spelling, and one ls-tree of HEAD for the
+// status (M when present at HEAD, else A). Matching is case-insensitive on
+// Windows.
 func selectPaths(ctx context.Context, root, head string, in []string) ([]ChangedFile, string, error) {
 	absRoot, _ := filepath.Abs(root)
+	key := func(s string) string {
+		if runtime.GOOS == "windows" {
+			return strings.ToLower(s)
+		}
+		return s
+	}
+	var listing []string
+	listed := false
+	list := func() ([]string, error) {
+		if listed {
+			return listing, nil
+		}
+		out, err := Git(ctx, root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+		if err != nil {
+			return nil, err
+		}
+		listing, listed = splitZ(out), true
+		return listing, nil
+	}
 	var rels []string
 	for _, raw := range in {
 		p := strings.TrimSpace(raw)
@@ -276,53 +298,48 @@ func selectPaths(ctx context.Context, root, head string, in []string) ([]Changed
 			return nil, "", fmt.Errorf("%w: --paths %q is outside the repository", ErrSelection, raw)
 		}
 		if fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err == nil && fi.IsDir() {
-			args := []string{"ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"}
-			if p != "." {
-				args = append(args, p)
-			}
-			out, err := Git(ctx, root, args...)
+			files, err := list()
 			if err != nil {
 				return nil, "", err
 			}
-			rels = append(rels, splitZ(out)...)
+			prefix := key(strings.TrimSuffix(p, "/") + "/")
+			n := 0
+			for _, f := range files {
+				if p == "." || strings.HasPrefix(key(f), prefix) {
+					rels = append(rels, f)
+					n++
+				}
+			}
+			if n == 0 {
+				return nil, "", fmt.Errorf("%w: --paths %q: no files under that directory", ErrSelection, raw)
+			}
 			continue
 		}
 		rels = append(rels, p)
 	}
-	atHead := map[string]string{} // key -> git's spelling
-	key := func(s string) string {
-		if runtime.GOOS == "windows" {
-			return strings.ToLower(s)
-		}
-		return s
-	}
 	if runtime.GOOS == "windows" && len(rels) > 0 {
-		// Git pathspecs are case-sensitive; take git's own spelling of each
-		// tracked path first (one call, :(icase) magic).
-		args := []string{"ls-files", "-z", "--"}
-		for _, p := range rels {
-			args = append(args, ":(icase,literal)"+p)
-		}
-		if out, err := Git(ctx, root, args...); err == nil {
+		// Take git's own spelling of each listed path.
+		files, err := list()
+		if err == nil {
 			spell := map[string]string{}
-			for _, f := range splitZ(out) {
-				spell[strings.ToLower(f)] = f
+			for _, f := range files {
+				spell[key(f)] = f
 			}
 			for i, p := range rels {
-				if g, ok := spell[strings.ToLower(p)]; ok {
+				if g, ok := spell[key(p)]; ok {
 					rels[i] = g
 				}
 			}
 		}
 	}
+	atHead := map[string]string{} // key -> git's spelling
 	if head != "" && len(rels) > 0 {
-		args := append([]string{"ls-tree", "-r", "--name-only", "-z", head, "--"}, rels...)
-		if out, err := Git(ctx, root, args...); err == nil {
-			for _, f := range splitZ(out) {
-				atHead[key(f)] = f
-			}
-		} else {
+		out, err := Git(ctx, root, "ls-tree", "-r", "--name-only", "-z", head)
+		if err != nil {
 			return nil, "", err
+		}
+		for _, f := range splitZ(out) {
+			atHead[key(f)] = f
 		}
 	}
 	seen := map[string]bool{}

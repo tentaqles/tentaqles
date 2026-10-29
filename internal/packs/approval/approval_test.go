@@ -14,6 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
+	"github.com/zalando/go-keyring"
 )
 
 func isolate(t *testing.T) {
@@ -24,6 +25,7 @@ func isolate(t *testing.T) {
 	for _, k := range []string{"TQ_HUB_TASK", "TENTAQLES_HEADLESS", "CLAUDECODE", "CLAUDE_PLUGIN_ROOT"} {
 		t.Setenv(k, "")
 	}
+	keyring.MockInit()
 }
 
 var ev = map[string]string{"model_card": "sha256:aa", "git_head": "sha256:bb"}
@@ -47,7 +49,11 @@ func answer(t *testing.T, id, choice, actor string) error {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	_, err = st.AnswerHub(id, choice, "looks fine", actor)
+	key, err := ledger.SigningKey("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.AnswerPackApproval(id, choice, "looks fine", actor, store.PackSigner(ledger.AnswerSigner("acme", key)))
 	return err
 }
 
@@ -82,7 +88,8 @@ func TestAskAnswerVerifyClaim(t *testing.T) {
 		t.Fatalf("evidence: %v", err)
 	}
 	es, _ := ledger.ReadAll("acme")
-	if _, err := Find(es, Binding{Pack: "ml", Action: "promote", Target: "production"}, ev, Now(), nil); err != nil {
+	key, _ := ledger.LoadKey("acme")
+	if _, err := Find(es, key, Binding{Pack: "ml", Action: "promote", Target: "production"}, ev, Now(), nil); err != nil {
 		t.Fatalf("find without subject: %v", err)
 	}
 	if _, err := Claim("acme", id, want, ev); err != nil {
@@ -122,7 +129,8 @@ func TestVerifyBinding(t *testing.T) {
 		t.Fatal("Verify needs the subject")
 	}
 	es, _ := ledger.Read("acme", "ml")
-	if _, err := Find(es, Binding{Pack: "ml", Action: "promote", Subject: "other", Target: "production"}, ev, Now(), nil); !errors.Is(err, ErrUnknown) {
+	key, _ := ledger.LoadKey("acme")
+	if _, err := Find(es, key, Binding{Pack: "ml", Action: "promote", Subject: "other", Target: "production"}, ev, Now(), nil); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("Find compares the subject when given: %v", err)
 	}
 }
@@ -293,4 +301,40 @@ func TestConfirm(t *testing.T) {
 	if err := Confirm(in, &out, "x"); !errors.Is(err, packs.ErrHumanOnly) {
 		t.Fatalf("agent: %v", err)
 	}
+}
+
+// R2-2: a forged answered line (right JSON, no or a wrong MAC) is refused,
+// the plain store answer path refuses a pack approval, and a keychain
+// error leaves the approval ungranted.
+func TestForgedAnswerRefused(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	st, _ := store.Open("acme", nil)
+	if _, err := st.AnswerHub(id, "approve", "", "hub:tester"); !errors.Is(err, store.ErrPackAnswer) {
+		t.Fatalf("AnswerHub must refuse a pack approval: %v", err)
+	}
+	st.Close()
+	ts := time.Now().UTC().Format(time.RFC3339)
+	forged := ledger.Entry{Event: ledger.Answered, Decision: id, Pack: "ml", Action: "promote", Subject: "churn@7", Target: "production",
+		EvidenceHash: ledger.EvidenceHash(ev), Choice: "approve", ActorKind: "hub", TS: ts}
+	if err := ledger.Append("acme", forged); err != nil {
+		t.Fatal(err)
+	}
+	forged.MAC = strings.Repeat("ab", 32)
+	ledger.Append("acme", forged)
+	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrPending) {
+		t.Fatalf("a forged answer granted: %v", err)
+	}
+	if _, err := FindGuard(guardCtx("ml"), want, ev); !errors.Is(err, ErrPending) {
+		t.Fatalf("guard: %v", err)
+	}
+	answer(t, id, "approve", "hub:tester")
+	if _, err := Verify("acme", id, want, ev); err != nil {
+		t.Fatalf("the signed answer: %v", err)
+	}
+	keyring.MockInitWithError(errors.New("no secret service"))
+	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrPending) {
+		t.Fatalf("keychain error must fail closed: %v", err)
+	}
+	keyring.MockInit()
 }

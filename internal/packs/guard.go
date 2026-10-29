@@ -287,7 +287,7 @@ func (g GuardCtx) ReadState(name string) ([]byte, error) {
 
 // refusedLocal are paths ReadLocal never reads: the secret stores of
 // tq/secret-store-read plus cloud token caches.
-var refusedLocal = regexp.MustCompile(`(?i)(^|/)\.ssh/|(^|/)\.aws/(credentials|sso/cache/|cli/cache/)|(^|/)\.git-credentials$|(^|/)\.netrc$|(^|/)\.docker/config\.json$|(^|/)\.azure/(accesstokens\.json|msal_token_cache|service_principal_entries)|(^|/)\.tentaqles/(bundles/catalog\.yaml|secrets?/)|(^|/)\.config/gh/hosts\.yml$|(^|/)gh/hosts\.yml$|(^|/)\.pulumi/credentials\.json$|(^|/)\.kube/config$|(^|/)application_default_credentials\.json$|(^|/)credentials\.db$|(^|/)access_tokens\.db$|(^|/)\.?credentials(\.json)?$`)
+var refusedLocal = regexp.MustCompile(`(?i)(^|/)\.ssh/|(^|/)\.aws/(credentials|sso/cache/|cli/cache/)|(^|/)\.git-credentials$|(^|/)\.netrc$|(^|/)\.docker/config\.json$|(^|/)\.azure/(accesstokens\.json|msal_token_cache|service_principal_entries)|(^|/)\.tentaqles/(bundles/catalog\.yaml|secrets?/)|(^|/)\.config/gh/hosts\.yml$|(^|/)gh/hosts\.yml$|(^|/)\.pulumi/credentials\.json$|(^|/)\.kube/config$|(^|/)application_default_credentials\.json$|(^|/)credentials\.db$|(^|/)access_tokens\.db$|(^|/)\.?credentials(\.json)?$|(^|/)github cli/hosts\.yml$|(^|/)microsoft/(usersecrets|credentials|protect|crypto)/|(^|/)gcloud/(credentials\.db|access_tokens\.db|legacy_credentials/|application_default_credentials\.json)|(^|/)\.azure/(msal_http_cache|tokencache)|(^|/)\.config/(gh|gcloud|hub)/|(^|/)\.docker/|(^|/)\.npmrc$|(^|/)\.pypirc$|(^|/)\.terraform\.d/credentials\.tfrc\.json$|(^|/)\.supabase/access-token$`)
 
 func secretStorePath(p string) bool {
 	s := filepath.ToSlash(p)
@@ -329,9 +329,9 @@ func (g GuardCtx) localRoots() []string {
 	if plainName(e.Workspace) {
 		add(filepath.Join(paths.IdentitiesRoot(), e.Workspace))
 	}
-	if d, err := os.UserConfigDir(); err == nil {
-		add(d)
-	}
+	// %APPDATA% / ~/.config as a whole is not a root: it holds token stores
+	// (GitHub CLI hosts.yml, dotnet user-secrets, Windows credentials). Only
+	// the named config folders below are.
 	if h, err := os.UserHomeDir(); err == nil {
 		for _, d := range []string{".azure", ".aws", ".pulumi", ".config", ".supabase", ".terraform.d"} {
 			add(filepath.Join(h, d))
@@ -638,4 +638,17 @@ func runGuard(g Guard, call policy.ToolCall, env GuardEnv, deadline time.Time) G
 			return o
 		}
 	}
+}
+
+// FinalPath resolves an existing file or directory to its final long path
+// through an open handle (GetFinalPathNameByHandle on Windows, so junctions,
+// symlinks and 8.3 short names are all resolved; EvalSymlinks elsewhere).
+func FinalPath(p string) (string, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	fp, _, err := finalPath(f, p)
+	return fp, err
 }

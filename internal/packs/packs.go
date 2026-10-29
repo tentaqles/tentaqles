@@ -299,8 +299,22 @@ func RegisterPack(p Pack) {
 				panic("packs.RegisterPack " + p.Name + ": merge paths " + k + " and " + other + " overlap with different rules")
 			}
 		}
-		if m.Kind == MergeOrdered && (len(m.Order) < 2 || (m.Default != "" && indexOf(m.Order, m.Default) < 0)) {
+		if m.Kind == MergeOrdered && (len(m.Order) < 2 || indexOf(m.Order, m.Default) < 0) {
 			panic("packs.RegisterPack " + p.Name + ": ordered merge " + k + " needs an order that holds its default")
+		}
+		if (m.Kind == MergeMin || m.Kind == MergeMax || m.Kind == MergeOrdered) && strings.TrimSpace(m.Default) == "" {
+			panic("packs.RegisterPack " + p.Name + ": merge " + k + " needs the pack's Default (the bound the repo is compared against)")
+		}
+		for other, om := range e.merge {
+			for _, pair := range [][2]struct {
+				pat  string
+				rule MergeRule
+			}{{{k, m}, {other, om}}, {{other, om}, {k, m}}} {
+				parent, child := pair[0], pair[1]
+				if isPrefixPattern(parent.pat, child.pat) && parent.rule.Kind != MergeTrusted && parent.rule.Kind != MergeIgnoreRepo {
+					panic("packs.RegisterPack " + p.Name + ": merge " + parent.pat + " is looser than the rule " + child.pat + " below it; only TrustedAdd or the default may sit above other rules")
+				}
+			}
 		}
 		e.merge[k] = m
 	}
@@ -506,4 +520,19 @@ func patternsOverlap(a, b string) bool {
 
 func sameRule(a, b MergeRule) bool {
 	return a.Kind == b.Kind && a.Default == b.Default && a.ZeroUnlimited == b.ZeroUnlimited && strings.Join(a.Order, "\x00") == strings.Join(b.Order, "\x00")
+}
+
+// isPrefixPattern reports whether a is a strict prefix of b (wildcards
+// match any segment).
+func isPrefixPattern(a, b string) bool {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	if len(as) >= len(bs) {
+		return false
+	}
+	for i := range as {
+		if as[i] != "*" && bs[i] != "*" && as[i] != bs[i] {
+			return false
+		}
+	}
+	return true
 }

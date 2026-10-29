@@ -14,6 +14,10 @@ const (
 	TokNumber
 	TokPunct // one operator or punctuation run (, ; . ( ) = <> ...)
 	TokJinja // a whole {{ }}, {% %} block, kept opaque (Text includes delimiters)
+	// TokAmbiguous marks a nested block comment that MySQL or SQLite (which
+	// do not nest) would end early: code may hide there. Treat the statement
+	// as unknown and dangerous.
+	TokAmbiguous
 )
 
 // Token is one SQL token. Comments are dropped.
@@ -51,6 +55,11 @@ func SQLTokens(src []byte) []Token {
 				i++
 			}
 		case c == '/' && i+1 < n && s[i+1] == '*':
+			// MySQL runs the body of an executable comment /*! ... */: code may
+			// hide there, so the statement is ambiguous (fail closed).
+			if i+2 < n && s[i+2] == '!' {
+				out = append(out, Token{TokAmbiguous, "AMBIGUOUS_COMMENT", line})
+			}
 			// Block comments nest (Postgres and T-SQL): /* a /* b */ c */.
 			depth, j := 1, i+2
 			for j < n && depth > 0 {
@@ -63,6 +72,15 @@ func SQLTokens(src []byte) []Token {
 					j += 2
 				default:
 					j++
+				}
+			}
+			// MySQL and SQLite do not nest: when the flat reading (ending at the
+			// first */) leaves text the nested reading hides, the dialects
+			// disagree and the statement is marked ambiguous (fail closed).
+			if flat := strings.Index(s[i+2:], "*/"); flat >= 0 && i+2+flat+2 < j {
+				rest := strings.TrimSpace(strings.ReplaceAll(s[i+2+flat+2:j], "*/", ""))
+				if rest != "" {
+					out = append(out, Token{TokAmbiguous, "AMBIGUOUS_COMMENT", line})
 				}
 			}
 			line += strings.Count(s[i:j], "\n")
@@ -237,9 +255,23 @@ type Statement struct {
 	Tokens        []Token
 }
 
+// Ambiguous reports a statement holding a comment the SQL dialects read
+// differently (TokAmbiguous). A lint must treat it as unknown and dangerous.
+func (s Statement) Ambiguous() bool {
+	for _, t := range s.Tokens {
+		if t.Kind == TokAmbiguous {
+			return true
+		}
+	}
+	return false
+}
+
 // Keyword is the statement's first word, upper-cased ("" for a Jinja-only
-// statement).
+// statement, "AMBIGUOUS" when Ambiguous).
 func (s Statement) Keyword() string {
+	if s.Ambiguous() {
+		return "AMBIGUOUS"
+	}
 	for _, t := range s.Tokens {
 		if t.Kind == TokWord {
 			return t.Upper()
