@@ -177,7 +177,10 @@ hand-installed hook lines are never duplicated.
 
 The installed hook line respects a kill switch: setting `TQ_ENABLED=0` in
 your environment makes the hook skip calling `tq activate` entirely for that
-shell session, without needing to uninstall anything.
+shell session, without needing to uninstall anything. Under it every tq
+Claude Code hook exits at once, and the plugin's skill scripts (run through
+`tq_run.sh`) silently do nothing. `tq off` / `tq on` switch tq off and on in
+the current window without editing profiles.
 
 See [`docs/SETUP.md`](docs/SETUP.md) for the full plan YAML schema and field
 reference.
@@ -197,7 +200,7 @@ unsigned-app steps) and the dev loop.
 | `tq hooks install <shell...>` | Install tq's activation block into shell profile(s). `--all-detected` targets every detected shell. |
 | `tq hooks remove <shell...>` | Remove tq's activation block from shell profile(s). `--all-detected` targets every detected shell. |
 | `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. Flags: `--base`, `--git-email` (required), `--git-name`, `--display-name`, `--color`, `--identities`, `--permission-mode`. |
-| `tq allow <name>` | Trust a workspace's current manifest so it can export env. `--bypass` additionally allows `permission_mode: bypass`. |
+| `tq allow <name>` | Trust a workspace's current manifest so it can export env. `tq allow --mode <name> <relaxed\|custom>` (human only, in a terminal) also grants a guard mode looser than default; `--bypass` is the deprecated alias of `--mode <name> relaxed`. See [Guard modes](docs/CLAUDE-HOOK.md#guard-modes). |
 | `tq deny <name>` | Revoke trust for a workspace. |
 | `tq list` | List workspaces under all registered bases. `--json` for machine-readable output. |
 | `tq env` | Print the env changes for the current directory (used by the shell hook). `--shell <name>`, `--json`. |
@@ -340,8 +343,11 @@ Machine-wide state lives under `~/.tentaqles/` (override with `$TQ_HOME`):
 
 - `~/.tentaqles/config.yaml` — the list of registered base folders.
 - `~/.tentaqles/trust/<sha256>` — one empty marker file per trusted manifest,
-  named after the manifest's SHA-256. A `.bypass` suffix marks a manifest
-  additionally allowed to run Claude with `--dangerously-skip-permissions`.
+  named after the manifest's SHA-256. A `.mode` file next to it is the guard
+  mode grant (`tq allow --mode`) that lets the manifest ask for a mode
+  looser than default. A legacy `.bypass` file reads as a relaxed grant and
+  is converted to `.mode` the next time a hook reads it or tq rewrites the
+  manifest.
 - `~/.tentaqles/identities/<workspace>/<cli>/` — the private config home for
   one CLI in one workspace (`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`,
   `AZURE_CONFIG_DIR`, …), so credentials that `tq login` causes a CLI to write

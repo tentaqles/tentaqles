@@ -250,7 +250,7 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:query-memory` | Full-text, recency-weighted search over memory, plus knowledge graphs |
 | `/tentaqles:file-history` | Show everything Tentaqles has recorded about a specific file |
 | `/tentaqles:explore` | Run `tq decide explore` to find the few file:line ranges that answer a question, then read only those |
-| `/tentaqles:guard` | See which tq guard rules are on, switch them off or on, or change ask/deny, for one workspace or all (you confirm each change) |
+| `/tentaqles:guard` | See and explain the guard mode (default, relaxed, strict, custom) and which tq guard rules are on; switch single rules off or on, or change ask/deny, for one workspace or all (you confirm each change). Mode changes are human-only: the skill hands you the `tq mode` command to run |
 | `/tentaqles:dashboard` | Launch the real-time dashboard at localhost:8765 |
 | `/tentaqles:setup-demo` | Create mock client workspaces to explore the plugin safely |
 | `/tentaqles:compact-memory` | Manually trigger 4-tier memory consolidation and decay eviction |
@@ -306,6 +306,8 @@ All hooks are automatic and run silently.
 `/tentaqles:build` and `/tentaqles:loop` bring their own hooks without touching `hooks.json`: `build-gate.py setup` writes the checkpoint gate into the project's `.claude/settings.local.json` (removed by `build-gate.py finish`), and `loop-runner.py` passes its guard to the headless child through `--settings`. The gate's checks are text checks, not isolation: the signing key stays readable by the agent's OS user until tq isolates it, so the gate guards against a careless agent, not one set on defeating it.
 
 All hooks and skills use `tq_run.sh` → `tq_env.sh` to resolve a working Python interpreter, bypassing broken venv shims and machines where only `python3` exists (macOS). POSIX-compatible, tested on Windows (Git Bash), macOS, and Linux.
+
+Under `TQ_MODE=off` (`tq off`, `claude-off`) or the legacy `TQ_ENABLED=0` kill switch, `tq_hook.sh` and `tq_run.sh` exit 0 before they look for tq or Python: every hook and every skill script silently does nothing in that window, with no error.
 
 ## CLI
 
