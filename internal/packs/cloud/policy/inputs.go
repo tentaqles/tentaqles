@@ -33,9 +33,23 @@ type Plan struct {
 
 // RecordedPlans lists the plans recorded for the current IaC tree (their
 // inputs hash matches the working tree). The apply gate's register file
-// sets it; nil means no plan store, so only IaC source is read. An error
-// fails the checks that read plans (fail closed).
+// sets it with SetRecordedPlans from its init; nil means no plan store, so
+// only IaC source is read. An error fails the checks that read plans (fail
+// closed). Tests may assign it directly and restore it.
 var RecordedPlans func(in *packs.Input) ([]Plan, error)
+
+// SetRecordedPlans wires the plan store (D-CG's register_gate.go calls it
+// from init). It panics on a nil store or a second one: two stores would
+// make the policy checks read whichever registered last.
+func SetRecordedPlans(f func(in *packs.Input) ([]Plan, error)) {
+	if f == nil {
+		panic("policy: SetRecordedPlans(nil)")
+	}
+	if RecordedPlans != nil {
+		panic("policy: a plan store is already set")
+	}
+	RecordedPlans = f
+}
 
 // Doc is one input of the policy checks: an IaC source file or a recorded
 // plan, read into resources.
@@ -103,12 +117,28 @@ func PolicyFor(s packs.Settings, env, explicit string) string {
 	return "ask"
 }
 
-// Plans returns the recorded plans, or nil without a plan store.
-func Plans(in *packs.Input) ([]Plan, error) {
+// Plans returns the recorded plans, or nil without a plan store. A store
+// that panics, or a plan without an id, a reader kind or an absolute path,
+// is an error (fail closed); the error never names the path.
+func Plans(in *packs.Input) (ps []Plan, err error) {
 	if RecordedPlans == nil {
 		return nil, nil
 	}
-	return RecordedPlans(in)
+	defer func() {
+		if recover() != nil {
+			ps, err = nil, errors.New("the plan store failed")
+		}
+	}()
+	ps, err = RecordedPlans(in)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range ps {
+		if p.ID == "" || p.Kind == "" || p.Path == "" || !filepath.IsAbs(p.Path) {
+			return nil, fmt.Errorf("the plan store returned an unusable record %q", p.ID)
+		}
+	}
+	return ps, nil
 }
 
 // HasPlans reports whether a plan is recorded for the current tree. An
