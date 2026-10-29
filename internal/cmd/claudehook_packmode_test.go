@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/trust"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -39,7 +42,7 @@ func TestPackGuardCategories(t *testing.T) {
 		t.Fatalf("guards missing: %v", seen)
 	}
 	// the cloud pack's static rules
-	for id, c := range map[string]guardcfg.Category{"tq/plan-read": guardcfg.CatSecrets, "tq/plan-commit": guardcfg.CatSecrets, "tq/plan-print": guardcfg.CatPacks} {
+	for id, c := range map[string]guardcfg.Category{"tq/plan-read": guardcfg.CatSecrets, "tq/plan-commit": guardcfg.CatSecrets, "tq/plan-secret-print": guardcfg.CatSecrets, "tq/plan-print": guardcfg.CatPacks} {
 		if guardcfg.Categories[id] != c {
 			t.Errorf("%s: %q, want %q", id, guardcfg.Categories[id], c)
 		}
@@ -77,6 +80,16 @@ func TestPackGuardUnderModes(t *testing.T) {
 		if code != 2 || !strings.Contains(errOut, "tq/plan-read") {
 			t.Fatalf("relaxed: the locked tq/plan-read must still deny, got %d %q", code, errOut)
 		}
+		// r2-M1: the secret-printing forms keep their ask (locked secrets);
+		// plain terraform output (sensitive values masked) is skipped
+		for _, c := range []string{"terraform state pull", "terraform output -json", "pulumi stack output --show-secrets"} {
+			code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, modePayload(t, proj, c, ""))
+			if code != 0 || !strings.Contains(out, "CONFIRM [tq/plan-secret-print]") {
+				t.Fatalf("relaxed %q: want an ask by tq/plan-secret-print, got %d %q", c, code, out)
+			}
+		}
+		code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "terraform output", ""))
+		silentAllow(t, "relaxed terraform output", code, out)
 	})
 	t.Run("relaxed without a grant", func(t *testing.T) {
 		_, proj := modeWS(t, cloudModeBlock+"guard:\n  mode: relaxed\n", "")
@@ -85,4 +98,48 @@ func TestPackGuardUnderModes(t *testing.T) {
 			t.Fatalf("the ceiling clamps relaxed to default: %d %q", code, out)
 		}
 	})
+}
+
+// r2-m2: a pack guard that supersedes a core rule is mapped at the stricter
+// of its own category and the superseded rule's under the session's table.
+// A custom table that skips cloud-destructive (tq/iac-apply-env) but keeps
+// prod-changes (tq/iac-apply, which the gate supersedes) at ask still asks
+// for a prod apply.
+func TestSupersedingGuardKeepsTheStricterCategory(t *testing.T) {
+	const apply = "cdk deploy"
+	table := map[string]string{"cloud-destructive": "skip", "prod-changes": "ask"}
+	_, proj := modeWS(t, cloudModeBlock+"guard:\n  mode: custom\n  base: default\n  categories: {cloud-destructive: skip, prod-changes: ask}\n", "")
+	h, err := trust.HashFile(filepath.Join(filepath.Dir(proj), manifest.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := trust.SaveGrant(h, trust.Grant{Mode: "custom", Workspace: "acme", Table: table}); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, modePayload(t, proj, apply, ""))
+	if code != 0 || !strings.Contains(out, "CONFIRM [tq/iac-apply-env]") {
+		t.Fatalf("custom cloud-destructive skip, prod-changes ask: want an ask, got %d %q %q", code, out, errOut)
+	}
+	// both skipped: allowed (the same as relaxed)
+	_, proj = modeWS(t, cloudModeBlock+"guard:\n  mode: custom\n  base: default\n  categories: {cloud-destructive: skip, prod-changes: skip}\n", "")
+	h, _ = trust.HashFile(filepath.Join(filepath.Dir(proj), manifest.FileName))
+	if err := trust.SaveGrant(h, trust.Grant{Mode: "custom", Workspace: "acme", Table: map[string]string{"cloud-destructive": "skip", "prod-changes": "skip"}}); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, apply, ""))
+	silentAllow(t, "both skipped", code, out)
+}
+
+// r2-m2, presets unchanged: in strict, tq/db-migrate-env (db-destructive:
+// rule) keeps its own ask, although it supersedes tq/remote-migration
+// (prod-changes: deny in strict); the lift only restores a verdict the mode
+// lowered.
+func TestSupersedingGuardStrictPresetUnchanged(t *testing.T) {
+	t.Setenv("SUPABASE_PROJECT_ID", "")
+	block := "packs:\n  db:\n    enabled: true\n    migrations:\n      - {path: supabase/migrations, engine: postgres, migrator: supabase}\n    default_environment: prod\n    environments:\n      prod: {match: {project_refs: [aaaaaaaaaaaaaaaaaaaa]}, migrate: ask}\n"
+	_, proj := modeWS(t, block+"guard:\n  mode: strict\n", "")
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, modePayload(t, proj, "supabase db push --linked", ""))
+	if code != 0 || !strings.Contains(out, "CONFIRM [tq/db-migrate-env]") {
+		t.Fatalf("strict db migrate: want the gate's own ask, got %d %q %q", code, out, errOut)
+	}
 }

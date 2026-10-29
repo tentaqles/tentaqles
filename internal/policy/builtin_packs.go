@@ -113,6 +113,16 @@ func planRules() []Rule {
 			Reason:  "this prints state or outputs, which can hold secrets, into the transcript; use `tq pack cloud show <plan-id>` for the redacted plan summary, or confirm",
 		},
 		{
+			// The forms that print state or secret outputs in clear (state
+			// pull/show, show -json, output -json/-raw, pulumi
+			// --show-secrets). Locked secrets (guardcfg.Categories), so every
+			// guard mode keeps the ask; plain show and output, which mask
+			// sensitive values, stay tq/plan-print (packs).
+			ID: "tq/plan-secret-print", Action: Ask, Pack: "cloud",
+			Command: `\b(terraform|tofu)(\.exe)?["']?` + iacFlags + `\s+(state\s+(pull|show)\b|show\b` + seg + `\s-{1,2}json\b|output\b` + seg + `\s-{1,2}(json|raw)\b)|\bpulumi(\.exe)?["']?` + seg + `\s--show-secrets\b`,
+			Reason:  "this prints state or secret outputs in clear into the transcript; use `tq pack cloud show <plan-id>` for the redacted plan summary, or confirm",
+		},
+		{
 			ID: "tq/plan-commit", Action: Deny, Pack: "cloud",
 			Command: gitAddVerb + seg + commitTarget,
 			Reason:  "plans, state, .terraform/, the pack store and database dumps never go into git (they hold values in clear); add them to .gitignore. `git add -A` is covered by .gitignore and the cloud/no-plan-files check",

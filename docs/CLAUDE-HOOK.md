@@ -334,7 +334,7 @@ in brackets.
 | Category | Locked | Rules |
 |---|---|---|
 | `identity` | locked | the identity guard: `guard/blocked-command`, `guard/wrong-cloud`, `guard/neutral-remote`, `guard/untrusted`, `guard/env-drift`, `guard/claude-config-drift`, `guard/git-email-drift`, `guard/gh-user` (deny; it runs before any mode logic); `plugin/identity-guard` (the fallback with no tq binary, deny); `tq/cross-client-mcp` (deny); `tq/iac-identity-drift` (cloud pack, deny) |
-| `secrets` | locked | `tq/secret-store-read`, `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`, `tq/commit-secret` (deny); `jev/service-role-client`, `jev/n8n-inline-credentials` (ask); `tq/plan-read`, `tq/plan-commit` (cloud pack, deny: plan and state files hold secrets) |
+| `secrets` | locked | `tq/secret-store-read`, `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`, `tq/commit-secret` (deny); `jev/service-role-client`, `jev/n8n-inline-credentials` (ask); `tq/plan-read`, `tq/plan-commit` (cloud pack, deny: plan and state files hold secrets); `tq/plan-secret-print` (cloud pack, ask: `state pull`/`show`, `show -json`, `output -json`/`-raw`, `pulumi ... --show-secrets`) |
 | `self-protection` | locked | `tq/guard-change` (ask), `tq/guard-file-write`, `tq/settings-widen`, `tq/settings-shell-write`, `tq/trust-store-write` (deny), `tq/guard-error` (the fail-safe ask), `tq/nested-agent-loosened`, `tq/mode-change` (deny), `plugin/headless-manifest-guard` (deny); `tq/hub-store-write`, `tq/human-answer` (deny), `tq/pack-config-change` (ask): the pack framework's core rules |
 | `privacy` | locked | `tq/commit-pii`, `tq/push-pii`, `tq/text-pii`, `tq/pii-fixture-dump` (deny) |
 | `git-history` | | `tq/force-push-main` (deny), `tq/force-push` (ask), `tq/gh-admin-merge` (ask), `tq/gh-repo-delete` (deny) |
@@ -898,7 +898,8 @@ of the pack's `environments` block.
 | `tq/iac-apply-env` | cloud | policy | an apply or destroy resolves to an environment and gets its `auto` / `ask` / `approve` / `deny` policy; `approve` needs a human-approved recorded plan ([apply gate](packs/cloud-apply-gate.md)) |
 | `tq/iac-identity-drift` | cloud | deny | an apply or destroy whose subscription, profile or AWS account disagrees with its environment |
 | `tq/plan-read` | cloud | deny | reading or printing a plan file, a state file, the plan store or a CDK asset manifest |
-| `tq/plan-print` | cloud | ask | `terraform show` / `output` or `pulumi stack output --show-secrets` into the transcript |
+| `tq/plan-print` | cloud | ask | plain `terraform show` / `output` (sensitive values masked) into the transcript; skipped in `relaxed` |
+| `tq/plan-secret-print` | cloud | ask | `terraform`/`tofu state pull`, `state show`, `show -json`, `output -json` or `-raw`, and `pulumi ... --show-secrets`: they print state or secret outputs in clear. Locked `secrets`, so every guard mode asks |
 | `tq/plan-commit` | cloud | deny | `git add` of a plan, state, `.terraform/` or the plan store |
 | `tq/db-migrate-env` | db | policy | a migration command resolves to an environment and gets its `migrate` policy ([migrations](packs/db-migrations.md)) |
 | `tq/restore-target` | db | deny | a restore into a declared environment or a non-local host ([restore drill](packs/db-restore-drill.md)) |
@@ -1070,9 +1071,14 @@ them, `Set-Content`, `Add-Content`, `Out-File`, `Remove-Item`,
 that name them and call a write. Both the `~/.tentaqles` and the
 `$TQ_HOME` (`${TQ_HOME}`, `$env:TQ_HOME`, `%TQ_HOME%`) spellings match, and
 the same four spellings of `CLAUDE_CONFIG_DIR` and `CODEX_HOME`; a
-custom `TQ_HOME` written out as a literal path does not. Reads (`cat`,
-`Get-Content`, Read, `cp` from them) stay allowed. `tq allow`, `tq deny`,
-`tq init` and `tq settings render` change these files.
+custom `TQ_HOME` written out as a literal path does not. For the identity
+files, reads (`cat`, `Get-Content`, Read, `cp` from them) stay allowed. For
+`$TQ_HOME/trust/`, `config.yaml` and `guard.yaml`, only the Read tool may read
+them: an agent's shell command that names them, a read included, is denied
+by the hook-time state-dir check (`tq/hub-store-write`, see the pack
+framework rules), under every spelling of the path, a custom literal
+`TQ_HOME` included. `tq allow`, `tq deny`, `tq init` and `tq settings render`
+change these files.
 
 ### Heredocs: data and code
 

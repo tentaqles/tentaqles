@@ -111,6 +111,7 @@ var Categories = map[string]Category{
 	"tq/secret-store-shell":      CatSecrets,
 	"tq/plan-read":               CatSecrets, // cloud pack: plan and state files hold secrets
 	"tq/plan-commit":             CatSecrets, // cloud pack: committing them publishes the secrets
+	"tq/plan-secret-print":       CatSecrets, // cloud pack: state pull/show, output -json/-raw, --show-secrets
 	"tq/env-file-read":           CatSecrets,
 	"tq/env-file-shell":          CatSecrets,
 	"tq/env-dump":                CatSecrets,

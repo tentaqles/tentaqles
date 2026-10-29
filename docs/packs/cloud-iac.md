@@ -54,7 +54,8 @@ These are static rules, active while the cloud pack is on:
 | Rule | Action | What |
 |---|---|---|
 | `tq/plan-read` | deny | reading or printing a plan file, a state file, the plan store or a CDK asset manifest |
-| `tq/plan-print` | ask | `terraform show`, `terraform output` or `pulumi stack output --show-secrets` into the transcript; use `tq pack cloud show` |
+| `tq/plan-print` | ask | plain `terraform show` or `terraform output` into the transcript (sensitive values masked); use `tq pack cloud show` |
+| `tq/plan-secret-print` | ask (every guard mode) | `state pull`, `state show`, `show -json`, `output -json` / `-raw`, or `pulumi ... --show-secrets`: state or secret outputs in clear |
 | `tq/plan-commit` | deny | `git add` of a plan, state, `.terraform/` or a path under the plan store |
 
 ## Review

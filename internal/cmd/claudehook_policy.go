@@ -335,7 +335,8 @@ func policyDecisionWith(pb builtPolicy, cwd string, ws *resolve.Workspace, cfg *
 func applyPackOutcomes(d policy.Decision, ws *resolve.Workspace, outcomes []packs.GuardOutcome, gate *modeGate) policy.Decision {
 	for _, o := range outcomes {
 		if o.Action != policy.Allow {
-			d = policy.Merge(d, gate.apply(policy.Decision{Action: o.Action, Matched: []*policy.Rule{{ID: o.ID, Action: o.Action, Reason: o.Reason, Source: "pack " + o.Pack}}}))
+			pd := policy.Decision{Action: o.Action, Matched: []*policy.Rule{{ID: o.ID, Action: o.Action, Reason: o.Reason, Source: "pack " + o.Pack}}}
+			d = policy.Merge(d, gate.applySuperseding(pd, o.Supersedes))
 		}
 	}
 	if d.Action != policy.Deny {

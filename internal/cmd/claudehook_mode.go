@@ -206,6 +206,39 @@ func (g *modeGate) apply(d policy.Decision) policy.Decision {
 	return out
 }
 
+// applySuperseding is apply for a pack guard's verdict when the guard
+// superseded core rules (security re-review r2-m2): when the mode lowers the
+// verdict under the guard's own category, the superseded rules' categories,
+// applied to the same verdict, may lift it back, up to the verdict itself.
+// So a custom table that skips cloud-destructive (tq/iac-apply-env) but
+// keeps prod-changes (tq/iac-apply) at ask still asks. The presets are
+// unchanged: default never lowers, strict raises or keeps every pack
+// category, and relaxed skips both categories.
+func (g *modeGate) applySuperseding(d policy.Decision, supersedes []string) policy.Decision {
+	if g == nil || len(supersedes) == 0 {
+		return g.apply(d)
+	}
+	mode := g.mapFunc()
+	fn := func(r *policy.Rule) policy.Action {
+		a := mode(r)
+		if !r.Action.StricterThan(a) {
+			return a // not lowered
+		}
+		for _, id := range supersedes {
+			b := mode(&policy.Rule{ID: id, Action: r.Action})
+			if r.Action.StricterThan(b) || b == r.Action {
+				if b.StricterThan(a) {
+					a = b
+				}
+			}
+		}
+		return a
+	}
+	out, changed := policy.MapDecision(d, fn)
+	g.note(changed)
+	return out
+}
+
 // audit records the skipped or lowered rules that changed the outcome (their
 // own action is stricter than final, the decision the session gets) and
 // returns them, denies first, then by id. A rule the mode made stricter, or
