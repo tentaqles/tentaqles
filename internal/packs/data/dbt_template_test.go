@@ -45,7 +45,7 @@ func TestTemplateDBTContractStarter(t *testing.T) {
 		changed = append(changed, packs.ChangedFile{Path: filepath.ToSlash(rel), Status: 'A'})
 		return nil
 	})
-	cfg := packs.Merge(nil, repo)
+	cfg := packs.Merge(packsOf(t, "data: {enabled: true}"), repo)
 	in := &packs.Input{Root: root, All: true, Changed: changed, Config: cfg, Budget: time.Now().Add(time.Minute)}
 	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"data"}, BuiltinOnly: true})
 	ran := map[string]bool{}

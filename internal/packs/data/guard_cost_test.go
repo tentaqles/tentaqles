@@ -181,8 +181,8 @@ func TestCostGuardsHostileInput(t *testing.T) {
 
 func TestCostGuardsThroughFramework(t *testing.T) {
 	costIsolate(t)
-	cfg := costConfig(t, costFullConfig)
-	outs := packs.EvaluateGuards(policy.ToolCall{Tool: "Bash", Command: "bq query 'SELECT 1'"}, packs.GuardEnv{Config: cfg}, nil, nil)
+	env := costGuardEnv(t, costFullConfig)
+	outs := packs.EvaluateGuards(policy.ToolCall{Tool: "Bash", Command: "bq query 'SELECT 1'"}, env, nil, nil)
 	found := false
 	for _, o := range outs {
 		if o.ID == "tq/bq-unbounded-query" {
@@ -196,15 +196,15 @@ func TestCostGuardsThroughFramework(t *testing.T) {
 		t.Fatal("tq/bq-unbounded-query did not run")
 	}
 	// guard.disable switches it off.
-	outs = packs.EvaluateGuards(policy.ToolCall{Tool: "Bash", Command: "bq query 'SELECT 1'"}, packs.GuardEnv{Config: cfg}, func(id string) bool { return id == "tq/bq-unbounded-query" }, nil)
+	outs = packs.EvaluateGuards(policy.ToolCall{Tool: "Bash", Command: "bq query 'SELECT 1'"}, env, func(id string) bool { return id == "tq/bq-unbounded-query" }, nil)
 	for _, o := range outs {
 		if o.ID == "tq/bq-unbounded-query" {
 			t.Fatal("disabled guard ran")
 		}
 	}
 	// A disabled data pack runs none of them.
-	off := costConfig(t, "packs:\n  data:\n    enabled: false\n    engines: [bigquery]\n")
-	if outs := packs.EvaluateGuards(policy.ToolCall{Tool: "Bash", Command: "bq query 'SELECT 1'"}, packs.GuardEnv{Config: off}, nil, nil); len(outs) != 0 {
+	off := costGuardEnv(t, "packs:\n  data:\n    enabled: false\n    engines: [bigquery]\n")
+	if outs := packs.EvaluateGuards(policy.ToolCall{Tool: "Bash", Command: "bq query 'SELECT 1'"}, off, nil, nil); len(outs) != 0 {
 		for _, o := range outs {
 			if strings.HasPrefix(o.ID, "tq/bq") || strings.HasPrefix(o.ID, "tq/warehouse") {
 				t.Fatalf("guard ran with the pack disabled: %+v", o)

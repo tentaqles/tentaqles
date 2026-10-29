@@ -6,13 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
 
 func guardEnv(t *testing.T, repo, cfg string) packs.GuardEnv {
 	t.Helper()
-	return packs.GuardEnv{Config: packs.Merge(packsOf(t, cfg), nil), Workspace: "acme", WorkspaceRoot: repo, RepoRoot: repo}
+	m := packsOf(t, cfg)
+	return packs.GuardEnv{Config: packs.Merge(m, nil), Manifest: &manifest.Manifest{Packs: m}, Workspace: "acme", WorkspaceRoot: repo, RepoRoot: repo}
 }
 
 func outcome(t *testing.T, env packs.GuardEnv, tool, cmd string, id string) packs.GuardOutcome {

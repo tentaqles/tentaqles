@@ -21,6 +21,16 @@ func costIsolate(t *testing.T) string {
 
 // costConfig parses a packs: block (validated by the registered keys) and
 // merges it as the trusted layer.
+// costGuardEnv is the hook's view: the trusted manifest that enables the pack.
+func costGuardEnv(t *testing.T, raw string) packs.GuardEnv {
+	t.Helper()
+	m, err := manifest.ParseRepoPacks([]byte(raw))
+	if err != nil {
+		t.Fatalf("parse packs: %v", err)
+	}
+	return packs.GuardEnv{Config: packs.Merge(m, nil), Manifest: &manifest.Manifest{Packs: m}}
+}
+
 func costConfig(t *testing.T, raw string) packs.Config {
 	t.Helper()
 	m, err := manifest.ParseRepoPacks([]byte(raw))

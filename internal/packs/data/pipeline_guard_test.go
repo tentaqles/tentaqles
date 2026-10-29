@@ -17,7 +17,7 @@ func pipelineGuardEnv(t testing.TB, body string) packs.GuardEnv {
 	if err := yaml.Unmarshal([]byte(body), &m); err != nil {
 		t.Fatal(err)
 	}
-	return packs.GuardEnv{Config: packs.Merge(m, nil), Workspace: "acme"}
+	return packs.GuardEnv{Config: packs.Merge(m, nil), Manifest: &manifest.Manifest{Packs: m}, Workspace: "acme"}
 }
 
 func pipelineOutcome(outs []packs.GuardOutcome) *packs.GuardOutcome {
