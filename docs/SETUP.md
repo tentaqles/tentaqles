@@ -67,7 +67,7 @@ trust: true
 | `companies[].git_email` | yes | Git `user.email` for this workspace. Must look like an email. |
 | `companies[].git_user` | no | Optional platform username (e.g. GitHub handle), stored alongside git identity but not used by git itself. |
 | `companies[].identities` | no | List of provider ids (from the provider catalog, e.g. `claude`, `gh`, `aws`) to isolate per workspace. Defaults to `[claude, gh]` if omitted. Each id must be known to the catalog (`tq providers list`) or `Validate` rejects the plan. |
-| `companies[].permission_mode` | yes | Claude Code permission mode for this workspace. Must be one of the values in `manifest.PermissionModes` (e.g. `default`, `acceptEdits`, `bypass`). |
+| `companies[].permission_mode` | yes | Claude Code permission mode for this workspace. Must be one of the values in `manifest.PermissionModes` (e.g. `default`, `acceptEdits`, `bypass`). It becomes `permissions.defaultMode` for sessions started outside tq's launcher; the `claude` launcher always starts in bypass, and tq's guard mode is the policy layer (see [Guard modes](#guard-modes)). |
 | `hooks` | no | List of shells (`bash`, `zsh`, `fish`, `pwsh`, `powershell`) to install the `tq activate` line into. Shells already carrying a hand-installed activation line are detected as "present (unmanaged)" and left untouched — never duplicated. |
 | `companies[].tracker`, `companies[].chat`, `companies[].email` | no | The company's tracker, chat and email blocks, written into the new workspace's manifest with the same checks as a hand-written one (see [PROVIDERS.md](PROVIDERS.md#company-services-in-the-manifest)). A token-shaped value in any field is refused, naming the field and never the value. |
 | `trust` | no, defaults to `true` | Whether newly scaffolded workspaces are auto-trusted with `tq allow` as part of apply. If the key is absent from the YAML it defaults to `true`; set it to `false` explicitly to scaffold without trusting. |
@@ -213,18 +213,28 @@ connector, and ends with a table of what is connected.
   `.mcp.json`. A name matches the catalog `mcp:` name, or contains the provider id as a
   whole token (`slack-mcp`). Ignore the warning for claude.ai connectors.
 
-## Unattended runs
+## Guard modes
 
-To let a bypass or auto Claude session run without tq's confirms and blocks
-in a demo folder (see `CLAUDE-HOOK.md`, "Unattended mode"; identity, secret
-and self-protection rules stay enforced):
+A new workspace runs in the `default` guard mode: every tq rule at its own
+action. Start Claude with the `claude` function that `tq activate` defines
+(or `tq run . -- claude`); it always starts in bypass, so tq's mode is the
+only policy layer. See `CLAUDE-HOOK.md`, "Guard modes", for the modes and the
+categories.
 
-1. Optional: set `claude.permission_mode: bypass` in the manifest, so the
-   workspace's sessions start in bypass mode.
-2. `tq allow --bypass <ws>` - the separate trust step for bypass.
-3. `tq unattended on [--project <dir>]` - the whole workspace, or one folder.
+To let sessions in a demo folder run without tq's confirms and blocks
+(identity, secrets, self-protection and privacy stay enforced; git-history
+and system still ask):
 
-Check with `tq unattended status`; `tq unattended off` undoes step 3.
+1. `tq mode set relaxed --ws <ws>`, or `--project <dir>` for one folder. On a
+   terminal it offers the grant: `grant relaxed for <ws>? [y/N]`.
+2. If you said no: `tq allow --mode <ws> relaxed`, the one-time grant.
+
+For a client in production, `tq mode set strict --ws <ws>` makes prod
+changes, cloud deletes and git-history rewrites hard blocks. Check with
+`tq mode`; `tq mode set default` undoes it. These commands are human-only.
+
+For a session with no tq at all (main logins, no guard), use `claude-off`, or
+`tq off` for the whole window and `tq on` to come back.
 
 ## Saved plan files and permissions
 

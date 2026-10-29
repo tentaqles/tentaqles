@@ -4,6 +4,25 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+Guard modes (tq spec E). Needs a `tq` build with `tq mode`.
+
+- **`TQ_MODE=off` means no tq.** `scripts/tq_hook.sh` and `scripts/tq_run.sh` exit 0 as their
+  first statement under `TQ_MODE=off` or `TQ_ENABLED=0`, before resolving tq or Python, so the
+  fail-closed "no tq, no Python" block never fires in an off session (`claude-off`, `tq off`).
+  Skill scripts that run through `tq_run.sh` do nothing in such a session or window. Covered by
+  `tests/test_tq_off.py`.
+- **`/tentaqles:guard` knows the modes.** It shows `tq mode` (default, relaxed, strict, custom,
+  the locked groups identity, secrets, self-protection and privacy, the grant) and explains
+  `off`. Mode changes (`tq mode set|toggle|override|edit`, `tq allow --mode`) are human-only, so
+  the skill prints the command for the user and never runs it; single rules still go through
+  `tq guard`, which asks.
+- **CLAUDE.md.** The guard mode replaces the deprecated unattended mode in the conventions:
+  skills must not rely on a confirm or a block, the locked groups always hold, and skills never
+  start an off or loosened nested agent.
+- **Tests.** `tests/test_guard_modes_docs.py` checks that the docs, this changelog and the
+  guard skill describe the modes, and that the docs' categories table matches
+  `internal/guardcfg/categories.go`.
+
 ## [0.14.0] — 2026-10-28
 
 Board sync (tq spec B). Needs a `tq` build with `tq hub sync`, `tq secret` and `tq onboard`.
