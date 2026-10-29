@@ -108,7 +108,7 @@ func TestHookStateDirAndHumanAnswer(t *testing.T) {
 		{Tool: "Bash", Command: `env -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT tq hub answer c1 d123 --choice approve`},
 		{Tool: "PowerShell", Command: `$env:CLAUDECODE=$null; $env:CLAUDE_PLUGIN_ROOT=$null; tq hub answer c1 d123 --choice approve`},
 		{Tool: "Bash", Command: `tq pack ml promote apply churn@7`},
-		{Tool: "Bash", Command: `tq pack cloud approve d123`},
+		{Tool: "Bash", Command: `tq pack cloud apply d123`},
 		{Tool: "Bash", Command: `curl -X POST -H 'Origin: http://127.0.0.1:8765' http://127.0.0.1:8765/api/cards/c1/decisions/d123/answer -d choice=approve`},
 		{Tool: "PowerShell", Command: `Invoke-WebRequest -Method Post http://127.0.0.1:8765/cards/c1/decisions/d1/answer`},
 		{Tool: "Bash", Command: `cat ~/.tentaqles/hub/serve-8765.json`},
@@ -282,6 +282,10 @@ func TestHookRound3Bypasses(t *testing.T) {
 		}
 	}
 	allowed := []policy.ToolCall{
+		// Round 5 (spec D §9.8): approve and promote request only ask.
+		{Tool: "Bash", Command: `tq pack cloud approve --plan p1`},
+		{Tool: "Bash", Command: `tq pack db approve m1`},
+		{Tool: "Bash", Command: `tq pack ml promote request churn@7`},
 		{Tool: "Bash", Command: `git commit -m "docs: the state dir ~/.tentaqles keeps packs and hub data"`},
 		{Tool: "Bash", Command: `echo "the hub keeps packs under ~/.tentaqles"`},
 		{Tool: "Write", Path: filepath.Join(cfgDir, "projects", "p", "memory", "MEMORY.md")},

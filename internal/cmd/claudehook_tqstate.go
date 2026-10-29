@@ -535,7 +535,7 @@ func protectedMention(raw string) bool {
 }
 
 var (
-	humanAnswerRe = regexp.MustCompile(`\bhub[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+(\S+[\s,]+)?)*answer\b|\bpack[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+)*\S+[\s,]+(approve|promote[\s,]+apply)\b`)
+	humanAnswerRe = regexp.MustCompile(`\bhub[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+(\S+[\s,]+)?)*answer\b|\bpack[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+)*\S+[\s,]+(\S+[\s,]+)?apply\b`)
 	httpClientRe  = regexp.MustCompile(`\b(curl|wget|http|https|invoke-webrequest|iwr|invoke-restmethod|irm|python3?|py|node|deno|bun|ruby|perl|php|pwsh|powershell|urlopen|requests|fetch)\b`)
 	pctRe         = regexp.MustCompile(`%([0-9a-f]{2})`)
 )
@@ -558,13 +558,13 @@ func decodePct(s string) string {
 }
 
 // humanAnswerShell is the folded half of tq/human-answer: a tq hub answer
-// or pack approve/promote apply in any spelling (global flags before the
+// or a pack apply subcommand (promote apply, cloud apply) in any spelling (global flags before the
 // verb, t”q, a variable or call operator, a subprocess argv list), and an
 // HTTP client reaching the decision endpoints with a decoded, quote- and
 // concatenation-folded URL.
 func humanAnswerShell(n string) bool {
 	f := strings.ReplaceAll(n, "+", "")
-	if (strings.Contains(f, "answer") || strings.Contains(f, "approve") || strings.Contains(f, "promote")) && humanAnswerRe.MatchString(f) {
+	if (strings.Contains(f, "answer") || strings.Contains(f, "apply")) && humanAnswerRe.MatchString(f) {
 		return true
 	}
 	d := decodePct(f)
@@ -630,7 +630,9 @@ func underProtected(canon string) bool {
 var readOnlyVerb = regexp.MustCompile(`^\s*(cat|type|more|less|head|tail|bat|nl|grep|rg|findstr|gc|get-content|select-string|sls|git\s+(diff|log|show|status|blame))\b`)
 
 // stateDirDecision is the hook-time check of the three never-disable ids.
-func stateDirDecision(call policy.ToolCall, cwd string) policy.Decision {
+// readArgs are the StateDir files a pack guard verified for this call
+// (packs.GuardCtx.ReadArgs); see withoutReadArgs.
+func stateDirDecision(call policy.ToolCall, cwd string, readArgs ...string) policy.Decision {
 	var d policy.Decision
 	deny := func(id, reason string) { d = policy.Merge(d, ruleDecision(policy.Deny, id, reason)) }
 	ask := func(id, reason string) { d = policy.Merge(d, ruleDecision(policy.Ask, id, reason)) }
@@ -646,7 +648,13 @@ func stateDirDecision(call policy.ToolCall, cwd string) policy.Decision {
 		if strings.Contains(strings.ReplaceAll(n, "+", ""), "tentaqles-packs") {
 			deny("tq/secret-store-shell", "the pack ledger key in the OS keychain signs human answers; it is never read from the shell")
 		}
-		if !bareTqCommand(n) && protectedMention(cmd) {
+		mention := cmd
+		if len(readArgs) > 0 {
+			if m, ok := withoutReadArgs(cmd, readArgs); ok {
+				mention = m
+			}
+		}
+		if !bareTqCommand(n) && protectedMention(mention) {
 			deny("tq/hub-store-write", "this command reaches a protected part of tq's state directory ("+paths.Home()+": hub, packs, build-gate, trust, guard, guard.yaml, config.yaml or audit.jsonl), which holds the hub store, the pack ledgers, approvals, plans and keys; only tq itself touches it")
 		}
 		if (strings.Contains(n, "tq-packs.y") || strings.Contains(n, "tq-pac~")) && !(readOnlyVerb.MatchString(n) && !strings.ContainsAny(n, ">;&|")) {
