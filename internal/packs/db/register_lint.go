@@ -189,7 +189,29 @@ func runMigrationLint(ctx context.Context, in *packs.Input) packs.Result {
 		}
 		detail += fmt.Sprintf(", %d suppressed", total)
 	}
-	return packs.Result{Status: packs.OK, Detail: detail, Findings: all}
+	return packs.Result{Status: packs.OK, Detail: detail, Findings: dedupe(all)}
+}
+
+// dedupe drops repeated findings (same file, line and rule), which a path
+// listed twice in packs.db.migrations (for example by a repo tq-packs.yaml
+// entry with another migrator) would otherwise report once per entry.
+func dedupe(fs []packs.Finding) []packs.Finding {
+	type key struct {
+		file string
+		line int
+		rule string
+	}
+	seen := map[key]bool{}
+	out := make([]packs.Finding, 0, len(fs))
+	for _, f := range fs {
+		k := key{f.File, f.Line, f.Rule}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 // flywayNoTransaction reads Flyway's per-script config <file>.conf for
@@ -233,7 +255,7 @@ func runRollback(ctx context.Context, in *packs.Input) packs.Result {
 			Specs:    specs,
 		})...)
 	}
-	return packs.Result{Status: packs.OK, Detail: fmt.Sprintf("%d changed migration file(s) checked for a rollback", n), Findings: all}
+	return packs.Result{Status: packs.OK, Detail: fmt.Sprintf("%d changed migration file(s) checked for a rollback", n), Findings: dedupe(all)}
 }
 
 func runSqlfluff(ctx context.Context, in *packs.Input) packs.Result {
@@ -249,14 +271,8 @@ func runSqlfluff(ctx context.Context, in *packs.Input) packs.Result {
 			merged = &r
 			continue
 		}
-		merged.Findings = append(merged.Findings, r.Findings...)
-		merged.Detail += "; " + r.Detail
-		if r.Status == packs.Fail {
-			merged.Status = packs.Fail
-		}
-		if r.Tool != nil {
-			merged.Tool = r.Tool
-		}
+		m := tools.Merge(*merged, r)
+		merged = &m
 	}
 	if merged == nil {
 		return packs.Result{Status: packs.Skip, Detail: "no changed forward migration"}

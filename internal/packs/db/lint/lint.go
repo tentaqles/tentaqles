@@ -11,7 +11,9 @@
 // Findings name tables, columns and rule ids only; they never quote a
 // literal from the file. A finding is suppressed in the source with
 // `-- tq:allow <rule>: <reason>` on the line before the statement; a
-// suppression without a reason is itself an error (SUP001).
+// suppression without a reason is itself an error (SUP001). In the file
+// header (before the first statement) a tq:allow covers the file rules
+// only: PG009, PG010, MS006 and MS008.
 package lint
 
 import (
@@ -225,12 +227,18 @@ func (l *linter) add(st sqllex.Statement, line int, rule string, target sqllex.N
 	l.addLevel(st, line, rule, level, msg)
 }
 
+// fileRules are the rules about the file as a whole (lock timeout and
+// transaction shape). Only they honour a tq:allow in the file header; any
+// other rule is allowed on the line before the statement (spec D §5), so one
+// header line cannot silence a rule for every statement of the file.
+var fileRules = map[string]bool{"PG009": true, "PG010": true, "MS006": true, "MS008": true}
+
 func (l *linter) addLevel(st sqllex.Statement, line int, rule, level, msg string) {
 	if ok, reason, _ := sqllex.Allows(st.Directives(), rule); ok && reason {
 		l.suppressed = append(l.suppressed, rule)
 		return
 	}
-	if ok, reason, _ := sqllex.Allows(l.header, rule); ok && reason {
+	if ok, reason, _ := sqllex.Allows(l.header, rule); ok && reason && fileRules[rule] {
 		l.suppressed = append(l.suppressed, rule)
 		return
 	}

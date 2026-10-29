@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -111,35 +113,108 @@ func relPath(root, p string) string {
 	return strings.TrimPrefix(p, "./")
 }
 
+// RunFailed is the rule suffix of the error finding a failed tool run adds,
+// so the failure survives a merge with findings from another run (the
+// framework turns a Fail holding only warnings into OK).
+const RunFailed = "run-failed"
+
+// failed marks res as a failed run of tool: Fail, the detail, and an error
+// finding that keeps it failed whatever warnings it already holds.
+func failed(res packs.Result, tool, detail string) packs.Result {
+	res.Status, res.Detail = packs.Fail, detail
+	res.Findings = append(res.Findings, packs.Finding{Level: packs.LevelError, Rule: tool + ":" + RunFailed, Message: clean(detail)})
+	return res
+}
+
+// configFiles are the tool config files copied into a staged scratch tree,
+// from the repo root and from every directory above a linted file.
+var configFiles = map[string][]string{
+	"squawk":   {".squawk.toml"},
+	"sqlfluff": {".sqlfluff", ".sqlfluffignore", "setup.cfg", "tox.ini", "pyproject.toml"},
+}
+
+// maxStagedBytes caps one staged file copied into the scratch tree.
+const maxStagedBytes = 8 << 20
+
+// stage writes the index version of files (and the tool's config files)
+// under a scratch dir, so a --staged run lints what is staged, not the
+// working tree. It returns the dir and its cleanup.
+func stage(in *packs.Input, tool string, files []string) (string, func(), error) {
+	dir, cleanup, err := toolrun.Scratch(in.Workspace())
+	if err != nil {
+		return "", func() {}, err
+	}
+	put := func(p string, b []byte) error {
+		dst := filepath.Join(dir, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(dst, b, 0o600)
+	}
+	dirs := map[string]bool{".": true}
+	for _, f := range files {
+		b, err := in.ReadNew(f, maxStagedBytes)
+		if err != nil {
+			cleanup()
+			return "", func() {}, fmt.Errorf("cannot read the staged %s", f)
+		}
+		if err := put(f, b); err != nil {
+			cleanup()
+			return "", func() {}, err
+		}
+		for d := path.Dir(f); d != "." && d != "/" && !dirs[d]; d = path.Dir(d) {
+			dirs[d] = true
+		}
+	}
+	for d := range dirs {
+		for _, c := range configFiles[tool] {
+			p := path.Join(d, c)
+			if b, err := in.ReadNew(p, 1<<20); err == nil {
+				if err := put(p, b); err != nil {
+					cleanup()
+					return "", func() {}, err
+				}
+			}
+		}
+	}
+	return dir, cleanup, nil
+}
+
 // run runs the tool over files in batches and collects the findings.
-// okExit are the exit codes that mean "ran and reported".
+// okExit are the exit codes that mean "ran and reported". With --staged the
+// tool runs over the staged blobs, copied to a scratch tree.
 func run(ctx context.Context, in *packs.Input, tool string, pre []string, files []string, okExit map[int]bool,
-	parse func([]byte) ([]packs.Finding, error)) packs.Result {
+	parse func([]byte, string) ([]packs.Finding, error)) packs.Result {
 	res := packs.Result{Status: packs.OK, Findings: []packs.Finding{}}
+	dir := in.Root
+	if in.Staged {
+		d, cleanup, err := stage(in, tool, files)
+		if err != nil {
+			return failed(res, tool, tool+" did not run: "+redact.Redact(err.Error(), nil))
+		}
+		defer cleanup()
+		dir = d
+	}
 	for start := 0; start < len(files); start += Batch {
 		end := start + Batch
 		if end > len(files) {
 			end = len(files)
 		}
 		args := append(append([]string{}, pre...), files[start:end]...)
-		out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "db", Tool: tool, Args: args, Dir: in.Root})
+		out, err := in.Tools.Run(ctx, toolrun.Spec{Pack: "db", Tool: tool, Args: args, Dir: dir})
 		res.Tool = &packs.ToolRun{Name: tool, Version: out.Version, Path: out.Path, ExitCode: out.ExitCode, DurationMS: out.Duration.Milliseconds(), TimedOut: out.TimedOut}
 		if err != nil {
-			res.Status, res.Detail = packs.Fail, tool+" did not run: "+redact.Redact(err.Error(), nil)
-			return res
+			return failed(res, tool, tool+" did not run: "+redact.Redact(err.Error(), nil))
 		}
 		if out.TimedOut {
-			res.Status, res.Detail = packs.Fail, tool+" timed out"
-			return res
+			return failed(res, tool, tool+" timed out")
 		}
 		if !okExit[out.ExitCode] {
-			res.Status, res.Detail = packs.Fail, fmt.Sprintf("%s exited %d: %s", tool, out.ExitCode, out.Tail(20, nil))
-			return res
+			return failed(res, tool, fmt.Sprintf("%s exited %d: %s", tool, out.ExitCode, out.Tail(20, nil)))
 		}
-		fs, perr := parse(out.Stdout)
+		fs, perr := parse(out.Stdout, dir)
 		if perr != nil {
-			res.Status, res.Detail = packs.Fail, perr.Error()+": "+out.Tail(20, nil)
-			return res
+			return failed(res, tool, perr.Error()+": "+out.Tail(20, nil))
 		}
 		res.Findings = append(res.Findings, fs...)
 	}
@@ -151,11 +226,35 @@ func run(ctx context.Context, in *packs.Input, tool string, pre []string, files 
 	return res
 }
 
+// Merge combines the results of two runs of one check (sqlfluff per
+// dialect): findings and details are joined, a failure sticks, and a
+// timeout in either run stays recorded on the merged ToolRun.
+func Merge(a, b packs.Result) packs.Result {
+	out := a
+	out.Findings = append(append([]packs.Finding{}, a.Findings...), b.Findings...)
+	out.Detail = a.Detail + "; " + b.Detail
+	if b.Status == packs.Fail {
+		out.Status = packs.Fail
+	}
+	timedOut := (a.Tool != nil && a.Tool.TimedOut) || (b.Tool != nil && b.Tool.TimedOut)
+	if b.Tool != nil {
+		t := *b.Tool
+		out.Tool = &t
+	} else if a.Tool != nil {
+		t := *a.Tool
+		out.Tool = &t
+	}
+	if out.Tool != nil && timedOut {
+		out.Tool.TimedOut = true
+	}
+	return out
+}
+
 // Squawk runs `squawk --reporter json <files>` (Postgres migrations).
 // Exit 0 is clean and 1 means violations; anything else fails the check.
 func Squawk(ctx context.Context, in *packs.Input, files []string) packs.Result {
 	return run(ctx, in, "squawk", []string{"--reporter", "json"}, files, map[int]bool{0: true, 1: true},
-		func(b []byte) ([]packs.Finding, error) { return ParseSquawk(b, in.Root) })
+		func(b []byte, root string) ([]packs.Finding, error) { return ParseSquawk(b, root) })
 }
 
 // Sqlfluff runs `sqlfluff lint --format json --dialect <dialect> <files>`
@@ -163,5 +262,5 @@ func Squawk(ctx context.Context, in *packs.Input, files []string) packs.Result {
 // anything else (2: a usage or config error) fails the check.
 func Sqlfluff(ctx context.Context, in *packs.Input, dialect string, files []string, fail bool) packs.Result {
 	return run(ctx, in, "sqlfluff", []string{"lint", "--format", "json", "--dialect", dialect}, files, map[int]bool{0: true, 1: true},
-		func(b []byte) ([]packs.Finding, error) { return ParseSqlfluff(b, in.Root, fail) })
+		func(b []byte, root string) ([]packs.Finding, error) { return ParseSqlfluff(b, root, fail) })
 }

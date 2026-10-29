@@ -190,3 +190,60 @@ func TestUnwrapIf(t *testing.T) {
 		t.Fatal("the catalog replays guarded DDL")
 	}
 }
+
+func TestTSQLInlineBlocks(t *testing.T) {
+	src := `IF COL_LENGTH('dbo.T', 'A') IS NULL BEGIN ALTER TABLE dbo.T ADD A int NOT NULL END
+UPDATE dbo.T SET A = CASE WHEN B = 1 THEN 2 ELSE 3 END WHERE Id = 1
+BEGIN TRAN ALTER TABLE dbo.T ADD C int NULL
+COMMIT
+BEGIN TRY DELETE FROM dbo.T WHERE Id = 2 END TRY BEGIN CATCH THROW; END CATCH
+`
+	f := Lex([]byte(src), TSQL)
+	want := []string{"IF", "ALTER", "END", "UPDATE", "BEGIN", "COMMIT", "BEGIN", "DELETE", "END", "THROW", "END"}
+	if got := keywords(f); !reflect.DeepEqual(got, want) {
+		t.Fatalf("keywords = %v, want %v", got, want)
+	}
+	if got := f.Statements[1].Tokens[len(f.Statements[1].Tokens)-1].Text; got != "NULL" {
+		t.Fatalf("the guarded ALTER ends at %q, want NULL (END split off)", got)
+	}
+	if !f.Statements[3].Has("WHERE") {
+		t.Fatalf("CASE … END must not split the UPDATE: %+v", f.Statements[3].Tokens)
+	}
+}
+
+func TestTSQLCTEStatements(t *testing.T) {
+	src := `SET LOCK_TIMEOUT 5000
+WITH c AS (SELECT * FROM dbo.T)
+UPDATE c
+SET A = 0
+CREATE INDEX ix ON dbo.T (A)
+WITH (ONLINE = ON)
+`
+	f := Lex([]byte(src), TSQL)
+	if got, want := keywords(f), []string{"SET", "WITH", "CREATE"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("keywords = %v, want %v", got, want)
+	}
+}
+
+func TestAfterCTE(t *testing.T) {
+	cases := map[string]string{
+		"WITH x AS (SELECT 1) UPDATE t SET a = 1":                                            "UPDATE",
+		"WITH RECURSIVE x(id) AS (SELECT 1), y AS NOT MATERIALIZED (SELECT 2) DELETE FROM t": "DELETE",
+		`WITH "q" AS MATERIALIZED (SELECT 1) INSERT INTO t SELECT * FROM "q"`:                "INSERT",
+		"SELECT 1":                    "",
+		"WITH x AS (SELECT 1":         "",
+		"WITH x AS (SELECT 1)":        "",
+		"WITH (ONLINE = ON) UPDATE t": "",
+	}
+	for src, want := range cases {
+		st := Lex([]byte(src), Postgres).Statements[0]
+		k := AfterCTE(st)
+		got := ""
+		if k > 0 {
+			got = st.From(k).Keyword()
+		}
+		if got != want {
+			t.Errorf("AfterCTE(%q) -> %q, want %q", src, got, want)
+		}
+	}
+}

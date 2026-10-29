@@ -18,6 +18,9 @@ var noOnlineEditions = map[string]bool{"standard": true, "web": true, "express":
 var Editions = []string{"enterprise", "developer", "standard", "web", "express", "azure-sql", "managed-instance"}
 
 func (l *linter) tsql(i int, st sqllex.Statement) {
+	if k := sqllex.AfterCTE(st); k > 0 && st.At(k).Is("UPDATE", "DELETE") {
+		st = st.From(k) // WITH … AS (…) UPDATE|DELETE: lint the DML
+	}
 	switch {
 	case isLockTimeoutSet(st, ms):
 		if l.firstLock == nil {

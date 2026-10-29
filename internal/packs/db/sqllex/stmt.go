@@ -113,6 +113,59 @@ func (s Statement) Split(from, to int) [][2]int {
 	return out
 }
 
+// AfterCTE returns the index of the statement keyword after a leading
+// common table expression list, WITH [RECURSIVE] name [(cols)] AS [[NOT]
+// MATERIALIZED] (…) [, …], or 0 when the statement does not start with one.
+func AfterCTE(s Statement) int {
+	if !s.Match(0, "WITH") {
+		return 0
+	}
+	k := 1
+	if s.Match(k, "RECURSIVE") {
+		k++
+	}
+	for {
+		if t := s.At(k); t.Kind != Word && t.Kind != QuotedIdent {
+			return 0
+		}
+		k++ // the CTE name
+		if s.At(k).IsPunct("(") {
+			if k = s.Close(k); k < 0 {
+				return 0
+			}
+			k++
+		}
+		if !s.Match(k, "AS") {
+			return 0
+		}
+		k = s.Skip(k+1, []string{"NOT"}, []string{"MATERIALIZED"})
+		e := s.Close(k)
+		if e < 0 {
+			return 0
+		}
+		k = e + 1
+		if s.At(k).IsPunct(",") {
+			k++
+			continue
+		}
+		if k >= len(s.Tokens) {
+			return 0
+		}
+		return k
+	}
+}
+
+// From returns the statement with its tokens from i on (Line, Batch and the
+// leading comments kept), for linting the body after a prefix such as a CTE.
+func (s Statement) From(i int) Statement {
+	out := s
+	if i > len(s.Tokens) {
+		i = len(s.Tokens)
+	}
+	out.Tokens = s.Tokens[i:]
+	return out
+}
+
 // Close returns the index of the ) that closes the ( at i, or -1.
 func (s Statement) Close(i int) int {
 	if !s.At(i).IsPunct("(") {

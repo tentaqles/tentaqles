@@ -18,6 +18,9 @@ var volatile = map[string]bool{
 }
 
 func (l *linter) pg(i int, st sqllex.Statement) {
+	if k := sqllex.AfterCTE(st); k > 0 && st.At(k).Is("UPDATE", "DELETE") {
+		st = st.From(k) // WITH … AS (…) UPDATE|DELETE: lint the DML
+	}
 	switch {
 	case isLockTimeoutSet(st, pg):
 		if l.firstLock == nil {
@@ -189,6 +192,14 @@ func (l *linter) pgAlterTable(i int, st sqllex.Statement) {
 			if notNull && def < 0 && findIn(st, typEnd, b, "GENERATED") < 0 {
 				l.add(st, line, "PG002", n, fmt.Sprintf("column %s.%s is NOT NULL with no DEFAULT", n, col))
 			}
+			// An inline UNIQUE or PRIMARY KEY builds its unique index under
+			// the ACCESS EXCLUSIVE lock.
+			for _, kw := range [][]string{{"UNIQUE"}, {"PRIMARY", "KEY"}} {
+				if findIn(st, typEnd, b, kw...) >= 0 {
+					l.add(st, line, "PG007", n, fmt.Sprintf("column %s.%s is added %s, which builds its index under a lock", n, col, strings.Join(kw, " ")))
+					break
+				}
+			}
 			if def >= 0 {
 				for x := def + 1; x < b; x++ {
 					tk := st.At(x)
@@ -358,9 +369,11 @@ func (l *linter) migratorWraps() (bool, string) {
 		return true, "the Supabase CLI applies each migration file in a transaction"
 	case "drizzle":
 		return true, "drizzle-kit migrate applies pending migrations in one transaction"
-	case "golang-migrate":
+	case "golang-migrate", "prisma":
+		// Both send the file as one multi-statement simple query; Postgres
+		// runs such a query as one implicit transaction.
 		if len(l.file.Statements) > 1 {
-			return true, "golang-migrate sends the file as one multi-statement query, which Postgres runs as one transaction; keep the CONCURRENTLY statement alone in its file"
+			return true, l.o.Migrator + " sends the file as one multi-statement query, which Postgres runs as one transaction; keep the CONCURRENTLY statement alone in its file"
 		}
 	}
 	return false, ""

@@ -87,9 +87,15 @@ func (c *Catalog) Apply(p string, st Statement) {
 		if !st.Match(i, "TABLE") {
 			return
 		}
+		ifNotExists := st.Match(i+1, "IF", "NOT", "EXISTS")
 		i = st.Skip(i+1, []string{"IF", "NOT", "EXISTS"})
 		n, j := st.Name(i, d)
 		if n.IsZero() || strings.HasPrefix(n.Object, "#") {
+			return
+		}
+		if ifNotExists && c.tables[n.String()] != nil {
+			// CREATE TABLE IF NOT EXISTS of a table the replay knows is a
+			// no-op: it stays existing, with its columns.
 			return
 		}
 		t := &Table{Name: n, File: p, Line: st.Line, Columns: map[string]*Column{}, Checks: map[string]*CheckConstraint{}}

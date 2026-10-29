@@ -319,7 +319,8 @@ func (l *lexer) emit(k Kind, text string, pos, line int) {
 
 func (l *lexer) word(w string, pos int) {
 	up := strings.ToUpper(w)
-	if l.d == TSQL && l.newLine && l.depth == 0 && len(l.cur) > 0 && !l.toBatch && tsqlStarters[up] && l.startsStatement(up) {
+	if l.d == TSQL && l.depth == 0 && len(l.cur) > 0 && !l.toBatch &&
+		((l.newLine && (tsqlStarters[up] || up == "WITH" && cteAhead.MatchString(l.src[l.i:])) && l.startsStatement(up)) || l.blockBoundary(up)) {
 		// Comments on the lines between belong to the new statement.
 		held := l.since
 		l.endStatement()
@@ -355,6 +356,15 @@ func (l *lexer) word(w string, pos int) {
 func (l *lexer) startsStatement(up string) bool {
 	first := l.cur[0]
 	switch {
+	case (up == "UPDATE" || up == "DELETE" || up == "INSERT" || up == "MERGE") && first.Is("WITH"):
+		return false // the DML after a CTE list
+	case up == "SET" && first.Is("WITH"):
+		// UPDATE c SET … after a CTE list: SET continues the UPDATE.
+		for _, t := range l.cur {
+			if t.Is("UPDATE") {
+				return false
+			}
+		}
 	case up == "SET" && first.Is("UPDATE"):
 		return false
 	case (up == "UPDATE" || up == "DELETE" || up == "INSERT") && first.Is("MERGE"):
@@ -378,6 +388,37 @@ func (l *lexer) startsStatement(up string) bool {
 		}
 	}
 	return true
+}
+
+// cteAhead matches the source after a WITH that opens a CTE list
+// ("name [(cols)] AS ("), not a WITH (option list) or WITH NOCHECK.
+var cteAhead = regexp.MustCompile(`(?is)^\s*(\[[^\]]*\]|"[^"]*"|[a-z_#@][\w$#@]*)\s*(\([^()]*\)\s*)?AS\s*\(`)
+
+// blockBoundary reports a T-SQL statement boundary inside one line: a
+// statement keyword right after a block BEGIN (IF … BEGIN ALTER …, BEGIN
+// TRY …), and an END that closes a block the current statement did not open
+// (… NOT NULL END), so the guarded statement is linted on its own.
+func (l *lexer) blockBoundary(up string) bool {
+	n := len(l.cur)
+	last := l.cur[n-1]
+	if tsqlStarters[up] && (last.Is("BEGIN") || (n >= 2 && last.Is("TRY", "CATCH") && l.cur[n-2].Is("BEGIN"))) {
+		return true
+	}
+	if up != "END" {
+		return false
+	}
+	opens, ends := 0, 0
+	for k, t := range l.cur {
+		switch {
+		case t.Is("CASE"):
+			opens++
+		case t.Is("BEGIN") && !(k+1 < n && l.cur[k+1].Is("TRAN", "TRANSACTION", "DISTRIBUTED", "DIALOG", "CONVERSATION")):
+			opens++
+		case t.Is("END"):
+			ends++
+		}
+	}
+	return ends >= opens
 }
 
 func (l *lexer) endStatement() {

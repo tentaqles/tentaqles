@@ -148,3 +148,64 @@ func TestBatchesLongFileLists(t *testing.T) {
 		t.Fatalf("runs = %d", len(f.specs))
 	}
 }
+
+// seqRunner returns its outputs in order, one per run.
+type seqRunner struct {
+	outs  []toolrun.Output
+	specs []toolrun.Spec
+}
+
+func (f *seqRunner) Probe(pack, tool string) toolrun.Probe {
+	return toolrun.Probe{Tool: tool, Found: true, Path: "/fake/" + tool, Version: "3.2.5"}
+}
+
+func (f *seqRunner) Run(ctx context.Context, s toolrun.Spec) (toolrun.Output, error) {
+	f.specs = append(f.specs, s)
+	o := f.outs[0]
+	if len(f.outs) > 1 {
+		f.outs = f.outs[1:]
+	}
+	return o, nil
+}
+
+func hasErrorRule(fs []packs.Finding, rule string) bool {
+	for _, f := range fs {
+		if f.Rule == rule && f.Level == packs.LevelError {
+			return true
+		}
+	}
+	return false
+}
+
+// A failed later batch must stay failed although an earlier batch left only
+// warnings: the framework turns a Fail with no error finding into OK.
+func TestFailedBatchAfterWarningsSticks(t *testing.T) {
+	in := &packs.Input{Root: "/repo"}
+	f := &seqRunner{outs: []toolrun.Output{
+		{Stdout: golden(t, "sqlfluff.json"), ExitCode: 1},
+		{Stderr: []byte("config error\n"), ExitCode: 2},
+	}}
+	in.Tools = f
+	var many []string
+	for i := 0; i < Batch+1; i++ {
+		many = append(many, "m/x.sql")
+	}
+	r := Sqlfluff(context.Background(), in, "postgres", many, false)
+	if r.Status != packs.Fail || !hasErrorRule(r.Findings, "sqlfluff:"+RunFailed) {
+		t.Fatalf("a failed batch after warnings = %+v", r)
+	}
+}
+
+func TestMergeKeepsFailureAndTimeout(t *testing.T) {
+	warn := packs.Result{Status: packs.OK, Findings: []packs.Finding{{File: "a.sql", Level: packs.LevelWarn, Rule: "sqlfluff:CP01"}},
+		Tool: &packs.ToolRun{Name: "sqlfluff"}}
+	timedOut := failed(packs.Result{Tool: &packs.ToolRun{Name: "sqlfluff", TimedOut: true}}, "sqlfluff", "sqlfluff timed out")
+	m := Merge(timedOut, warn)
+	if m.Status != packs.Fail || m.Tool == nil || !m.Tool.TimedOut || !hasErrorRule(m.Findings, "sqlfluff:"+RunFailed) {
+		t.Fatalf("timeout then warnings = %+v", m)
+	}
+	m = Merge(warn, failed(packs.Result{}, "sqlfluff", "sqlfluff exited 2"))
+	if m.Status != packs.Fail || !hasErrorRule(m.Findings, "sqlfluff:"+RunFailed) {
+		t.Fatalf("warnings then failure = %+v", m)
+	}
+}

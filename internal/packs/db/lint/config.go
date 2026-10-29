@@ -45,7 +45,10 @@ func Migrations(s packs.Settings) []Migration {
 			continue
 		}
 		m.Path = cleanPath(m.Path)
-		m.Engine = strings.ToLower(m.Engine)
+		// Canonical engine name (postgres or sqlserver): every alias the
+		// validator accepts (supabase, postgresql, mssql, azure-sql, tsql …)
+		// compares equal downstream.
+		m.Engine = m.Dialect().String()
 		if m.Migrator == "" {
 			m.Migrator = "raw"
 		}

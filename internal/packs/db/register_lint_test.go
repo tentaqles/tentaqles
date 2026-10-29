@@ -15,6 +15,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/db/lint"
 	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
 	"gopkg.in/yaml.v3"
 )
@@ -38,6 +39,20 @@ func fakeTool(mode string) {
 	}
 	if f := os.Getenv("TQ_FAKE_ARGV"); f != "" {
 		_ = os.WriteFile(f, []byte(strings.Join(args, "\n")), 0o600)
+	}
+	if f := os.Getenv("TQ_FAKE_SEEN"); f != "" && len(args) > 0 {
+		// Record what the tool sees at its last file argument, from its cwd.
+		b, _ := os.ReadFile(args[len(args)-1])
+		_ = os.WriteFile(f, b, 0o600)
+	}
+	if mode == "sqlfluff-tsql-broken" {
+		for _, a := range args {
+			if a == "tsql" {
+				fmt.Fprintln(os.Stderr, "User Error: bad config")
+				os.Exit(2)
+			}
+		}
+		mode = "sqlfluff"
 	}
 	switch mode {
 	case "squawk":
@@ -370,5 +385,116 @@ func TestRegisteredChecks(t *testing.T) {
 		if !found {
 			t.Errorf("%s not registered (have %v)", want, ids)
 		}
+	}
+}
+
+// stagedGit serves the index (Show ":") from a map.
+type stagedGit struct {
+	files  []string
+	staged map[string]string
+}
+
+func (g stagedGit) Show(ref, p string) ([]byte, error) {
+	if b, ok := g.staged[p]; ok && ref == ":" {
+		return []byte(b), nil
+	}
+	return nil, os.ErrNotExist
+}
+func (g stagedGit) ListFiles() ([]string, error) { return g.files, nil }
+
+// One dialect's sqlfluff run fails after the other left warnings: the check
+// must fail, not pass with the warnings.
+func TestSqlfluffOneDialectFailsOtherWarns(t *testing.T) {
+	isolate(t)
+	bin := t.TempDir()
+	fakeBin(t, bin, "sqlfluff")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TQ_FAKE_DBTOOL", "sqlfluff-tsql-broken")
+	t.Setenv("TQ_FAKE_VERSION", "3.2.5")
+	root, changed, tracked := repo(t)
+	in := input(t, "[sqlfluff]", root, changed, tracked)
+	in.Tools.(*toolrun.Runner).LookPath = lookOnly(bin)
+	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"db"}})
+	sf := byID(rep)["db/sqlfluff"]
+	if sf.Status != packs.Fail || !sf.Required {
+		t.Fatalf("sqlfluff with a failed tsql run = %+v", sf)
+	}
+}
+
+// An engine alias the validator accepts (supabase, postgresql, mssql …)
+// selects the same external checks as the canonical name.
+func TestEngineAliasesRunExternalChecks(t *testing.T) {
+	isolate(t)
+	bin := t.TempDir()
+	fakeBin(t, bin, "squawk")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TQ_FAKE_DBTOOL", "squawk")
+	t.Setenv("TQ_FAKE_VERSION", "2.70.0")
+	root, changed, tracked := repo(t)
+	cfg := packs.Merge(packsOf(t, "db:\n  tools: [squawk]\n  migrations:\n    - {path: supabase/migrations, engine: supabase, migrator: supabase}\n    - {path: db/mssql, engine: mssql, migrator: flyway}\n"), nil)
+	in := &packs.Input{Root: root, Base: "HEAD", Changed: changed, Config: cfg, Git: fakeGit{tracked}, Budget: time.Now().Add(time.Minute)}
+	r := packs.NewToolRunner(root, cfg)
+	r.LookPath = lookOnly(bin)
+	in.Tools = r
+	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"db"}})
+	sq, ok := byID(rep)["db/squawk"]
+	if !ok || sq.Status != packs.Fail || len(sq.Findings) != 1 {
+		t.Fatalf("squawk with engine: supabase = %+v (ran: %v)", sq, ok)
+	}
+	var engines []string
+	for _, m := range lint.Migrations(in.ForPack("db").Settings()) {
+		engines = append(engines, m.Engine)
+	}
+	if !reflect.DeepEqual(engines, []string{"postgres", "sqlserver"}) {
+		t.Fatalf("engines = %v, want canonical names", engines)
+	}
+}
+
+// The same path listed twice (say a repo tq-packs.yaml entry with another
+// migrator) reports each finding once.
+func TestDuplicateEntryFindingsOnce(t *testing.T) {
+	isolate(t)
+	root, changed, tracked := repo(t)
+	cfg := packs.Merge(packsOf(t, "db:\n  migrations:\n    - {path: supabase/migrations, engine: postgres, migrator: supabase}\n    - {path: supabase/migrations, engine: postgres, migrator: raw}\n"), nil)
+	in := &packs.Input{Root: root, Base: "HEAD", Changed: changed, Config: cfg, Git: fakeGit{tracked}, Budget: time.Now().Add(time.Minute)}
+	in.Tools = packs.NewToolRunner(root, cfg)
+	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"db"}, BuiltinOnly: true})
+	res := byID(rep)
+	if got := findings(res["db/migration-lint"]); !reflect.DeepEqual(got, []string{"supabase/migrations/20240102000000_idx.sql:2 error PG001"}) {
+		t.Fatalf("lint findings = %v", got)
+	}
+	if got := findings(res["db/migration-rollback"]); len(got) != 1 {
+		t.Fatalf("rollback findings = %v", got)
+	}
+}
+
+// --staged: the external tools lint the staged blob, not the working tree.
+func TestStagedExternalToolSeesTheIndex(t *testing.T) {
+	isolate(t)
+	bin := t.TempDir()
+	fakeBin(t, bin, "squawk")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TQ_FAKE_DBTOOL", "squawk")
+	t.Setenv("TQ_FAKE_VERSION", "2.70.0")
+	seen := filepath.Join(t.TempDir(), "seen")
+	t.Setenv("TQ_FAKE_SEEN", seen)
+	root, changed, tracked := repo(t)
+	const idx = "supabase/migrations/20240102000000_idx.sql"
+	stagedSQL := "SET lock_timeout = '5s';\nCREATE INDEX staged_idx ON public.orders (status);\n"
+	cfg := packs.Merge(packsOf(t, fmt.Sprintf(dbConfig, "[squawk]")), nil)
+	in := &packs.Input{Root: root, Staged: true, Changed: changed, Config: cfg, Budget: time.Now().Add(time.Minute),
+		Git: stagedGit{files: tracked, staged: map[string]string{idx: stagedSQL}}}
+	r := packs.NewToolRunner(root, cfg)
+	r.LookPath = lookOnly(bin)
+	in.Tools = r
+	in.SetWorkspace("acme", root)
+	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"db"}})
+	sq := byID(rep)["db/squawk"]
+	b, _ := os.ReadFile(seen)
+	if string(b) != stagedSQL {
+		t.Fatalf("squawk saw %q, want the staged blob (result %+v)", b, sq)
+	}
+	if got := findings(sq); !reflect.DeepEqual(got, []string{idx + ":2 error squawk:require-concurrent-index-creation"}) {
+		t.Fatalf("staged squawk findings = %v", got)
 	}
 }
