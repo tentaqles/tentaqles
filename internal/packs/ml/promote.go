@@ -470,32 +470,21 @@ func changedEvidence(was, now map[string]string) []string {
 	return out
 }
 
-// identityEnv is the workspace's identity env as toolrun.Spec.Env pairs.
-// toolrun lays Spec.Env over os.Environ() and the last value of a key wins,
-// so this is envplan.Environ (the parent env cleaned of every other
-// workspace's shell state and provider vars, with this workspace's vars
-// applied) plus "KEY=" for each parent variable Environ dropped: another
-// client's provider variable reaches the command blank, never with its
-// value. toolrun has no env-replace mode, so a dropped key is blank rather
-// than unset (a framework follow-up).
-func identityEnv(ws *resolve.Workspace) []string {
-	if ws == nil {
-		return nil
+// promotionSpec is the run of the promotion command. Its environment is
+// toolrun's filtered one (BaseEnv: no parent token or cloud key), plus the
+// workspace's identity variables (envplan.Desired: its provider config
+// homes and TQ_WS), plus the variable names the trusted manifest lists in
+// packs.ml.promotion.env (a repo tq-packs.yaml cannot set that key). The
+// listed names pass through toolrun's PassEnv, so a command resolved
+// inside the repository never gets a secret-looking one.
+func promotionSpec(e *promoteEnv, argv []string) toolrun.Spec {
+	var env []string
+	for k, v := range envplan.Desired(e.WS) {
+		env = append(env, k+"="+v)
 	}
-	parent := os.Environ()
-	want := envplan.Environ(ws, parent)
-	keep := map[string]bool{}
-	for _, kv := range want {
-		keep[envKeyOf(kv)] = true
-	}
-	var out []string
-	for _, kv := range parent {
-		if k := envKeyOf(kv); k != "" && !keep[k] {
-			out = append(out, kv[:len(k)]+"=")
-		}
-	}
-	sort.Strings(out)
-	return append(out, want...)
+	sort.Strings(env)
+	return toolrun.Spec{Pack: "ml", Tool: argv[0], Args: argv[1:], Timeout: PromotionTimeout, Env: env,
+		PassEnv: append([]string(nil), e.St.Promotion.Env...)}
 }
 
 // envKeyOf is the key of KEY=VALUE, upper-cased on Windows where the
@@ -582,7 +571,7 @@ func promoteApply(ctx context.Context, c *cobra.Command, e *promoteEnv, id strin
 	// covered the wait at the yes prompt, which may have used it up.
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PromotionTimeout)
 	defer cancel()
-	res, err := e.In.Tools.Run(rctx, toolrun.Spec{Pack: "ml", Tool: argv[0], Args: argv[1:], Timeout: PromotionTimeout, Env: identityEnv(e.WS)})
+	res, err := e.In.Tools.Run(rctx, promotionSpec(e, argv))
 	classes := classesFor(e.In)
 	if err == nil {
 		tail := strings.TrimSpace(tailBoth(res, 40))

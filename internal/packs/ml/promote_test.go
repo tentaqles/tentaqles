@@ -256,30 +256,39 @@ func TestRequestRepoLayerCannotDropRequirements(t *testing.T) {
 	}
 }
 
-// The promotion command gets the workspace's identity env: another
-// client's provider variable left in the parent env is blanked, and the
-// workspace's own vars win (review r0 finding 5).
-func TestIdentityEnvIsolates(t *testing.T) {
+// The promotion command gets the filtered tool env (toolrun's BaseEnv),
+// plus the workspace's identity vars, plus the names the trusted
+// manifest lists in promotion.env (security M2, final review): a parent
+// secret is not passed, another client's provider variable is not
+// passed, and a repo tq-packs.yaml cannot add a name.
+func TestPromotionEnvIsFiltered(t *testing.T) {
 	isolate(t)
-	vars := envplan.AllProviderVars()
-	if len(vars) == 0 {
-		t.Skip("no provider vars in the catalog")
+	t.Setenv("ACME_PARENT_TOKEN", "parent-secret-value")
+	other := ""
+	if vars := envplan.AllProviderVars(); len(vars) > 0 {
+		other = vars[0]
+		t.Setenv(other, "other-client-config")
 	}
-	other := vars[0]
-	t.Setenv(other, "other-client-config")
-	ws := &resolve.Workspace{Name: "acme", Root: t.TempDir(), Manifest: &manifest.Manifest{}}
-	env := append(os.Environ(), identityEnv(ws)...) // toolrun's order: parent, then Spec.Env
-	last := map[string]string{}
-	for _, kv := range env {
-		if i := strings.Index(kv, "="); i > 0 {
-			last[strings.ToUpper(kv[:i])] = kv[i+1:]
-		}
+	root := t.TempDir()
+	in := mlInput(t, root, "ml: {enabled: true, promotion: {env: [MLFLOW_TRACKING_URI]}}\n", "ml: {promotion: {env: [ACME_PARENT_TOKEN]}}\n").ForPack("ml")
+	ws := &resolve.Workspace{Name: "acme", Root: root, Manifest: &manifest.Manifest{}}
+	e := &promoteEnv{WS: ws, In: in, St: loadIn(in)}
+	spec := promotionSpec(e, []string{"python", "promote.py"})
+	env := strings.Join(spec.Env, "\n")
+	if strings.Contains(env, "parent-secret-value") || strings.Contains(env, "ACME_PARENT_TOKEN") {
+		t.Fatalf("a parent secret reaches the command: %q", spec.Env)
 	}
-	if v := last[strings.ToUpper(other)]; v != "" {
-		t.Fatalf("%s keeps another client's value %q", other, v)
+	if other != "" && strings.Contains(env, "other-client-config") {
+		t.Fatalf("%s keeps another client's value", other)
 	}
-	if last["TQ_WS"] != "acme" {
-		t.Fatalf("the workspace's vars apply: %q", last["TQ_WS"])
+	if !strings.Contains(env, "TQ_WS=acme") {
+		t.Fatalf("the workspace's vars apply: %q", spec.Env)
+	}
+	if strings.Join(spec.PassEnv, ",") != "MLFLOW_TRACKING_URI" {
+		t.Fatalf("PassEnv %q: only the manifest's promotion.env", spec.PassEnv)
+	}
+	if spec.Tool != "python" || strings.Join(spec.Args, " ") != "promote.py" || spec.Timeout != PromotionTimeout {
+		t.Fatalf("%+v", spec)
 	}
 }
 

@@ -105,7 +105,7 @@ reported by `tq doctor` as `ml-config-clamped`. The request summary also names t
      prompt leaves the approval usable.
    - After the `yes` it claims the approval (single use, ruling N1: confirm,
      then claim), so from here on the approval is used whatever the command does.
-   - It runs the command with the workspace identity's environment (another workspace's provider variables reach it blank) and a 300 s timeout that starts at the typed `yes`.
+   - It runs the command with a filtered environment and a 300 s timeout that starts at the typed `yes`. The environment is tq's base set for tools (no parent token or cloud key), plus the workspace identity's variables, plus the names the manifest lists in `packs.ml.promotion.env`, for example `[MLFLOW_TRACKING_URI, MLFLOW_TRACKING_TOKEN]`. Only the manifest can set that list; a `tq-packs.yaml` cannot. A command that resolves inside the repository never gets a secret-looking name from it.
    - On exit 0 it marks the approval used and appends a row to the card's Promotion
      history (date, version, target, decision id, `human`). It also comments on the
      hub card. Commit the card change.

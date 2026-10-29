@@ -44,6 +44,10 @@ type Promotion struct {
 	Command   string   `yaml:"command"`
 	ValidFor  string   `yaml:"valid_for"`
 	Require   []string `yaml:"require"`
+	// Env are the parent variable names the promotion command may see
+	// besides toolrun's base set and the workspace identity (MLflow or
+	// registry settings). Trusted layer only: no merge rule is registered.
+	Env []string `yaml:"env"`
 }
 
 // Threshold is a per-feature drift override.
@@ -428,8 +432,14 @@ func driftPathKeys(n yaml.Node) error {
 	return validateCommand(child(n, "current_command"), "drift.current_command", "model")
 }
 
+// envNameRe is an environment variable name.
+var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 func validatePromotion(n yaml.Node) error {
-	if err := keysOf(n, "promotion", "protected", "command", "valid_for", "require"); err != nil {
+	if err := keysOf(n, "promotion", "protected", "command", "valid_for", "require", "env"); err != nil {
+		return err
+	}
+	if err := stringList(child(n, "env"), "promotion.env", envNameRe); err != nil {
 		return err
 	}
 	if err := stringList(child(n, "protected"), "promotion.protected", targetRe); err != nil {
