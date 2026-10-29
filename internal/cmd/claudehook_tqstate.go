@@ -227,6 +227,16 @@ func tqExempt(cmd, mention string) bool {
 			return !protectedMention(strings.Join(w[i+1:], " "))
 		}
 	}
+	// tq pack <x> plan runs its plan command without a -- too (cobra stops
+	// at the first positional): every word after plan is checked as the
+	// child. Its own flags (--env, --timeout, --json) name no path.
+	if strings.EqualFold(w[1], "pack") {
+		for i := 2; i < len(w); i++ {
+			if strings.EqualFold(w[i], "plan") {
+				return !protectedMention(strings.Join(w[i+1:], " "))
+			}
+		}
+	}
 	return true
 }
 

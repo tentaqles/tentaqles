@@ -63,6 +63,9 @@ func TestStateDirTqExemption(t *testing.T) {
 		"/other/bin/tq pack cloud show " + plan,
 		"tq.exe migrate " + trust,
 		"tq --workspace acme pack cloud show " + plan,
+		// r2-m1: tq pack cloud plan runs its plan command without -- too
+		"tq pack cloud plan --env dev cdk synth -o " + filepath.ToSlash(filepath.Join(custom, "trust", "out")),
+		"tq pack cloud plan --env=dev --json cp x " + trust,
 	} {
 		if !denied(cmd) {
 			t.Errorf("%q: not denied", cmd)
