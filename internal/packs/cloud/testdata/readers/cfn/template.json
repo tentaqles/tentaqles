@@ -1,0 +1,23 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Table": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "TableName": "acme-orders",
+        "BillingMode": "PAY_PER_REQUEST",
+        "SSESpecification": { "SSEEnabled": false }
+      }
+    },
+    "Policy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [ { "Effect": "Allow", "NotAction": "iam:*", "Resource": "*" } ]
+        }
+      }
+    }
+  }
+}

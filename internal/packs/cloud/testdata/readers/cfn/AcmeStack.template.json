@@ -1,0 +1,25 @@
+{
+ "Resources": {
+  "AssetsBucket1A2B3C4D": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      { "ServerSideEncryptionByDefault": { "SSEAlgorithm": "AES256" } }
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": { "aws:cdk:path": "AcmeStack/AssetsBucket/Resource" }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": { "Analytics": "v2:deflate64:H4sIAAAAAAAA" },
+   "Metadata": { "aws:cdk:path": "AcmeStack/CDKMetadata/Default" }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": { "Type": "AWS::SSM::Parameter::Value<String>", "Default": "/cdk-bootstrap/hnb659fds/version" }
+ }
+}

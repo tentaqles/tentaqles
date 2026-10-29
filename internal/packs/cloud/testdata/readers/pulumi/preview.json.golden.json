@@ -1,0 +1,146 @@
+[
+  {
+    "addr": "urn:pulumi:prod::acme::pulumi:pulumi:Stack::acme-prod",
+    "type": "pulumi:pulumi:Stack",
+    "actions": [
+      "no-op"
+    ],
+    "pos": {
+      "file": "pulumi/preview.json",
+      "line": 7,
+      "pointer": "/steps/0"
+    },
+    "source": "pulumi",
+    "meta": {
+      "raw_action": "same"
+    }
+  },
+  {
+    "addr": "urn:pulumi:prod::acme::aws:iam/policy:Policy::admin",
+    "type": "aws:iam/policy:Policy",
+    "actions": [
+      "create"
+    ],
+    "after": {
+      "name": "acme-admin",
+      "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}",
+      "tags": {
+        "tq-allow": "IAM001: break-glass role"
+      }
+    },
+    "pos": {
+      "file": "pulumi/preview.json",
+      "line": 12,
+      "pointer": "/steps/1"
+    },
+    "source": "pulumi",
+    "meta": {
+      "provider": "urn:pulumi:prod::acme::pulumi:providers:aws::default_6_0_0::00000000-0000-0000-0000-000000000000",
+      "raw_action": "create"
+    }
+  },
+  {
+    "addr": "urn:pulumi:prod::acme::acme:index:Db$aws:rds/instance:Instance::main",
+    "type": "aws:rds/instance:Instance",
+    "actions": [
+      "replace"
+    ],
+    "after": {
+      "engine": "postgres",
+      "password": "[REDACTED:sensitive]",
+      "publiclyAccessible": true
+    },
+    "before": {
+      "engine": "postgres",
+      "password": "[REDACTED:sensitive]",
+      "publiclyAccessible": false
+    },
+    "pos": {
+      "file": "pulumi/preview.json",
+      "line": 27,
+      "pointer": "/steps/2"
+    },
+    "source": "pulumi",
+    "meta": {
+      "protect": "true",
+      "raw_action": "create-replacement,replace,delete-replaced"
+    }
+  },
+  {
+    "addr": "urn:pulumi:prod::acme::aws:s3/bucketV2:BucketV2::old",
+    "type": "aws:s3/bucketV2:BucketV2",
+    "actions": [
+      "delete"
+    ],
+    "before": {
+      "bucket": "acme-old"
+    },
+    "pos": {
+      "file": "pulumi/preview.json",
+      "line": 69,
+      "pointer": "/steps/5"
+    },
+    "source": "pulumi",
+    "meta": {
+      "raw_action": "delete"
+    }
+  },
+  {
+    "addr": "urn:pulumi:prod::acme::azure-native:storage:StorageAccount::sa",
+    "type": "azure-native:storage:StorageAccount",
+    "actions": [
+      "update"
+    ],
+    "after": {
+      "allowBlobPublicAccess": true,
+      "connectionString": "[REDACTED:secret_key]"
+    },
+    "before": {
+      "allowBlobPublicAccess": false
+    },
+    "pos": {
+      "file": "pulumi/preview.json",
+      "line": 79,
+      "pointer": "/steps/6"
+    },
+    "source": "pulumi",
+    "meta": {
+      "raw_action": "update"
+    }
+  },
+  {
+    "addr": "urn:pulumi:prod::acme::aws:ec2/vpc:Vpc::shared",
+    "type": "aws:ec2/vpc:Vpc",
+    "actions": [
+      "read"
+    ],
+    "pos": {
+      "file": "pulumi/preview.json",
+      "line": 96,
+      "pointer": "/steps/7"
+    },
+    "source": "pulumi",
+    "meta": {
+      "raw_action": "read"
+    }
+  },
+  {
+    "addr": "urn:pulumi:prod::acme::aws:s3/bucketV2:BucketV2::adopted",
+    "type": "aws:s3/bucketV2:BucketV2",
+    "actions": [
+      "import"
+    ],
+    "after": {
+      "bucket": "acme-adopted"
+    },
+    "pos": {
+      "file": "pulumi/preview.json",
+      "line": 101,
+      "pointer": "/steps/8"
+    },
+    "source": "pulumi",
+    "meta": {
+      "raw_action": "import"
+    }
+  }
+]

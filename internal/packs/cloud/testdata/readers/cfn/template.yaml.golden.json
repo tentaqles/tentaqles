@@ -1,0 +1,144 @@
+[
+  {
+    "addr": "Bucket",
+    "type": "AWS::S3::Bucket",
+    "after": {
+      "BucketName": {
+        "Fn::Sub": "${AWS::StackName}-assets"
+      },
+      "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": false,
+        "BlockPublicPolicy": "false"
+      },
+      "Tags": [
+        {
+          "Key": "tq-allow",
+          "Value": "IAC003: public assets bucket"
+        },
+        {
+          "Key": "team",
+          "Value": "acme"
+        }
+      ]
+    },
+    "pos": {
+      "file": "cfn/template.yaml",
+      "line": 10
+    },
+    "source": "cfn",
+    "meta": {
+      "deletion_policy": "Delete",
+      "update_replace_policy": "Retain"
+    }
+  },
+  {
+    "addr": "Db",
+    "type": "AWS::RDS::DBInstance",
+    "after": {
+      "Engine": "postgres",
+      "MasterUserPassword": {
+        "Ref": "DbPassword"
+      },
+      "MasterUsername": "tester",
+      "Port": 5432,
+      "PubliclyAccessible": true,
+      "StorageEncrypted": false,
+      "VPCSecurityGroups": [
+        {
+          "Fn::GetAtt": [
+            "Sg",
+            "GroupId"
+          ]
+        }
+      ]
+    },
+    "pos": {
+      "file": "cfn/template.yaml",
+      "line": 24
+    },
+    "source": "cfn",
+    "meta": {
+      "condition": "IsProd"
+    }
+  },
+  {
+    "addr": "Role",
+    "type": "AWS::IAM::Role",
+    "after": {
+      "AssumeRolePolicyDocument": {
+        "Statement": {
+          "Action": "sts:AssumeRole",
+          "Effect": "Allow",
+          "Principal": "*"
+        },
+        "Version": "2012-10-17"
+      },
+      "Policies": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": "*",
+                "Effect": "Allow",
+                "Resource": {
+                  "Fn::If": [
+                    "IsProd",
+                    "*",
+                    {
+                      "Fn::GetAtt": [
+                        "Bucket",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "PolicyName": "all"
+        }
+      ],
+      "Tags": [
+        {
+          "Key": "api_token",
+          "Value": "[REDACTED:secret_key]"
+        }
+      ]
+    },
+    "pos": {
+      "file": "cfn/template.yaml",
+      "line": 45
+    },
+    "source": "cfn"
+  },
+  {
+    "addr": "Sg",
+    "type": "AWS::EC2::SecurityGroup",
+    "after": {
+      "GroupDescription": {
+        "Fn::Join": [
+          "",
+          [
+            "web ",
+            {
+              "Ref": "AWS::Region"
+            }
+          ]
+        ]
+      },
+      "SecurityGroupIngress": [
+        {
+          "CidrIp": "0.0.0.0/0",
+          "FromPort": 22,
+          "IpProtocol": "tcp",
+          "ToPort": 22
+        }
+      ]
+    },
+    "pos": {
+      "file": "cfn/template.yaml",
+      "line": 36
+    },
+    "source": "cfn"
+  }
+]
