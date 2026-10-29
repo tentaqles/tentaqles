@@ -248,6 +248,15 @@ type guardBlock struct {
 	Rules   yaml.Node         `yaml:"rules,omitempty"`
 
 	Unattended *manifest.Unattended `yaml:"unattended,omitempty"`
+
+	// Guard-mode keys (spec E §7), carried through every rewrite.
+	Mode          string                           `yaml:"mode,omitempty"`
+	Base          string                           `yaml:"base,omitempty"`
+	Categories    map[string]string                `yaml:"categories,omitempty"`
+	RulesOverride map[string]string                `yaml:"rules_override,omitempty"`
+	Projects      map[string]manifest.GuardProject `yaml:"projects,omitempty"`
+	HeadlessMode  string                           `yaml:"headless_mode,omitempty"`
+	Codex         *manifest.GuardCodex             `yaml:"codex,omitempty"`
 }
 
 // editManifestGuard applies off/on/set for ids to w's guard block through
@@ -325,7 +334,8 @@ func rewriteManifestGuard(w *resolve.Workspace, mutate func(gb *guardBlock) erro
 	if err := gnode.Encode(gb); err != nil {
 		return err
 	}
-	empty := len(gb.Disable) == 0 && len(gb.Enable) == 0 && len(gb.Actions) == 0 && gb.Rules.IsZero() && gb.Unattended == nil
+	empty := len(gb.Disable) == 0 && len(gb.Enable) == 0 && len(gb.Actions) == 0 && gb.Rules.IsZero() && gb.Unattended == nil &&
+		gb.Mode == "" && gb.Base == "" && len(gb.Categories) == 0 && len(gb.RulesOverride) == 0 && len(gb.Projects) == 0 && gb.HeadlessMode == "" && gb.Codex == nil
 	switch {
 	case gi >= 0 && empty:
 		root.Content = append(root.Content[:gi], root.Content[gi+2:]...)

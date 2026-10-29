@@ -100,7 +100,12 @@ type Rule struct {
 	// there. Built-in rules are classified in guardcfg.UnattendedGroups and
 	// ignore it.
 	Unattended string `yaml:"unattended,omitempty"`
-	Source     string `yaml:"-"` // "builtin", the manifest path, or the project rules path
+	// Category (spec E §5.1) is a custom rule's guardcfg category name (one
+	// of the thirteen). Built-in rules are classified in guardcfg.Categories
+	// and ignore it. Empty: unclassified, applied at its own action in every
+	// mode (fail closed).
+	Category string `yaml:"category,omitempty"`
+	Source   string `yaml:"-"` // "builtin", the manifest path, or the project rules path
 
 	tool, command, path, content, except *regexp.Regexp
 }

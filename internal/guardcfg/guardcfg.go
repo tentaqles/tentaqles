@@ -35,6 +35,13 @@ type File struct {
 	Disable []string                 `yaml:"disable,omitempty"`
 	Actions map[string]policy.Action `yaml:"actions,omitempty"`
 	Rules   []policy.Rule            `yaml:"rules,omitempty"`
+
+	// Guard mode, layer 2 (spec E §6.1, §7). Validation is WS1's: "off" is
+	// a load error, categories only with mode custom, never a locked one.
+	Mode          string             `yaml:"mode,omitempty"`
+	Base          string             `yaml:"base,omitempty"`
+	Categories    map[Category]Value `yaml:"categories,omitempty"`
+	RulesOverride map[string]Value   `yaml:"rules_override,omitempty"`
 }
 
 // HookRules are checks the hook runs in code rather than as regex rules;
@@ -129,14 +136,15 @@ func (e Effective) ActionFor(id string, def policy.Action) policy.Action {
 	return def
 }
 
-// Resolve merges the global file (loaded here) with m's guard block. m may
+// ResolveActions merges the global file (loaded here) with m's guard block
+// (named Resolve before spec E, which uses Resolve for the guard mode). m may
 // be nil (no trusted workspace): then only the global file applies.
-func Resolve(m *manifest.Manifest, wsName string) Effective {
+func ResolveActions(m *manifest.Manifest, wsName string) Effective {
 	g, err := Load()
 	return Merge(g, err, m, wsName)
 }
 
-// Merge is Resolve with the global file given; split out for tests.
+// Merge is ResolveActions with the global file given; split out for tests.
 func Merge(g File, gerr error, m *manifest.Manifest, wsName string) Effective {
 	e := Effective{Actions: map[string]policy.Action{}, DisableOrigin: map[string]string{}, ActionOrigin: map[string]string{}, GlobalErr: gerr}
 	if gerr == nil {

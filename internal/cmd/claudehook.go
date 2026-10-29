@@ -96,7 +96,25 @@ func dropKey(drop map[string]bool, k string) bool {
 func newClaudeHookCmd() *cobra.Command {
 	c := &cobra.Command{Use: "claude-hook", Short: "Claude Code hook adapter (reads the hook JSON on stdin)"}
 	c.AddCommand(newPreToolUseCmd(), newSessionStartCmd(), newStopCmd(), newPromptSubmitCmd())
+	for _, sc := range c.Commands() {
+		wrapHookOff(sc)
+	}
 	return c
+}
+
+// wrapHookOff makes sc exit 0 with no output, before reading stdin, when tq
+// is off for this process (hookOff, spec E §8.4).
+func wrapHookOff(sc *cobra.Command) {
+	run := sc.RunE
+	if run == nil {
+		return
+	}
+	sc.RunE = func(c *cobra.Command, args []string) error {
+		if hookOff() {
+			return nil
+		}
+		return run(c, args)
+	}
 }
 
 // newSessionStartCmd prints the identity preamble Claude Code shows at the
@@ -104,7 +122,8 @@ func newClaudeHookCmd() *cobra.Command {
 // stdout and the command still exits 0, because a SessionStart hook must
 // never block the session from starting.
 func newSessionStartCmd() *cobra.Command {
-	return &cobra.Command{
+	agent := hookAgentClaude
+	c := &cobra.Command{
 		Use:   "session-start",
 		Short: "SessionStart hook: print the workspace identity preamble",
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -139,9 +158,14 @@ func newSessionStartCmd() *cobra.Command {
 			if line := unattendedLine(rep.Result.Workspace, cwd, time.Now()); line != "" {
 				fmt.Fprintln(c.OutOrStdout(), line)
 			}
+			if line := modeLine(modeLineInput{WS: rep.Result.Workspace, Cwd: cwd, Resolved: resolveMode(rep.Result.Workspace, cwd, ""), ClaudeMode: p.PermissionMode, Agent: agent, Now: time.Now()}); line != "" {
+				fmt.Fprintln(c.OutOrStdout(), line)
+			}
 			return nil
 		},
 	}
+	c.Flags().StringVar(&agent, "agent", hookAgentClaude, "the agent calling the hook: claude or codex")
+	return c
 }
 
 // renderSessionStart is the pure formatter behind session-start: given the
@@ -221,6 +245,7 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 
 func newPreToolUseCmd() *cobra.Command {
 	var asJSON bool
+	agent := hookAgentClaude
 	c := &cobra.Command{
 		Use:   "pre-tool-use",
 		Short: "Allow (exit 0), ask (JSON on stdout) or block (exit 2) the tool call in the PreToolUse payload",
@@ -297,6 +322,13 @@ permissionDecision JSON so Claude Code asks the user.`,
 				d = policy.Merge(d, jevDecision(ws, call, gate))
 			}
 			skipped := gate.audit(ws, p.PermissionMode, call, d)
+			if agent == hookAgentCodex && !asJSON && d.Action != policy.Allow {
+				// Codex fails open on a hook ask: codexHookOutput never sends one.
+				if code := codexHookOutput(c.OutOrStdout(), call, d); code != 0 {
+					exit(code)
+				}
+				return nil
+			}
 			switch d.Action {
 			case policy.Deny:
 				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
@@ -328,6 +360,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "print the decision as JSON")
+	c.Flags().StringVar(&agent, "agent", hookAgentClaude, "the agent calling the hook: claude or codex (Codex never gets an ask)")
 	return c
 }
 

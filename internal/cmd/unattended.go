@@ -6,16 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/internal/codexcfg"
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/guardlog"
 	"github.com/tentaqles/tentaqles/internal/manifest"
-	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -94,7 +91,7 @@ agent cannot switch the mode by itself.`,
 					action = "deny"
 				}
 				fmt.Fprintf(c.OutOrStdout(), "%s  %s  %s  %s  %s  %s  %s\n",
-					r.Time.Format(time.RFC3339), r.Scope, r.Mode, action, strings.Join(r.Rules, ","), r.Tool, r.Command)
+					r.Time.Format(time.RFC3339), r.Scope, r.ClaudeMode, action, strings.Join(r.Rules, ","), r.Tool, r.Command)
 			}
 			return nil
 		},
@@ -134,26 +131,6 @@ func unattendedChange(c *cobra.Command, wsName string, on bool, project, sandbox
 	}
 	renderCodex(c, w, false)
 	return nil
-}
-
-// renderCodex renders the unattended settings into ws's Codex config when the
-// workspace isolates a codex identity. Callers pass a workspace resolved after
-// any manifest rewrite so the bypass-trust check sees the current hash.
-func renderCodex(c *cobra.Command, ws *resolve.Workspace, dryRun bool) {
-	if ws == nil || ws.Manifest == nil || !slices.Contains(ws.Manifest.IdentityNames(), "codex") {
-		return
-	}
-	res, err := codexcfg.Render(paths.IdentityDir(ws.Name, "codex"), codexcfg.Desired(ws.Manifest, trust.IsBypassAllowed(ws.Hash)), dryRun)
-	switch {
-	case err != nil:
-		fmt.Fprintf(c.ErrOrStderr(), "%s codex: %v\n", ws.Name, err)
-	case res.Conflict != "":
-		fmt.Fprintf(c.ErrOrStderr(), "%s codex: not changed: %s (%s)\n", ws.Name, res.Conflict, res.Path)
-	case res.Changed && dryRun:
-		fmt.Fprintf(c.OutOrStdout(), "%s codex: would change (%s)\n", ws.Name, res.Path)
-	case res.Changed:
-		fmt.Fprintf(c.OutOrStdout(), "%s codex: updated (%s)\n", ws.Name, res.Path)
-	}
 }
 
 // unattendedEdit turns unattended mode on or off in w's manifest: for the

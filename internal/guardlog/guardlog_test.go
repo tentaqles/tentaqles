@@ -11,7 +11,7 @@ import (
 func TestAppendMasksTruncatesAndReads(t *testing.T) {
 	t.Setenv("TQ_HOME", t.TempDir())
 	long := "psql -c \"delete from t where email='tester@example.com'\" " + strings.Repeat("x", 400)
-	Append(Record{WS: "acme", Scope: "demo-todo", Mode: "auto", Rules: []string{"tq/sql-destructive-shell"}, Tool: "Bash", Command: long}, []string{"pii"})
+	Append(Record{WS: "acme", Scope: "demo-todo", ClaudeMode: "auto", Rules: []string{"tq/sql-destructive-shell"}, Tool: "Bash", Command: long}, []string{"pii"})
 	Append(Record{WS: "other", Command: "ls"}, nil)
 	recs := Read("acme", time.Now().Add(-time.Hour), 0)
 	if len(recs) != 1 {

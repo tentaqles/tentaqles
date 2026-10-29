@@ -247,13 +247,13 @@ func TestUnattendedLine(t *testing.T) {
 	root, proj := unattendedWS(t, unattendedProject, true)
 	ws := wsFor(t, root)
 	now := time.Now()
-	guardlog.Append(guardlog.Record{WS: "acme", Scope: "demo-todo", Mode: "auto", Action: "ask", Rules: []string{"x"}, Tool: "Bash", Command: "c"}, nil)
+	guardlog.Append(guardlog.Record{WS: "acme", Scope: "demo-todo", ClaudeMode: "auto", Action: "ask", Rules: []string{"x"}, Tool: "Bash", Command: "c"}, nil)
 	if got, want := unattendedLine(ws, proj, now), "Unattended: on (demo-todo) · 1 confirm and 0 blocks skipped in 24h · applies in bypass and auto sessions"; got != want {
 		t.Fatalf("got %q", got)
 	}
 	// A record from before skipped denies existed has no action: a confirm.
-	guardlog.Append(guardlog.Record{WS: "acme", Scope: "demo-todo", Mode: "auto", Rules: []string{"x"}, Tool: "Bash", Command: "c"}, nil)
-	guardlog.Append(guardlog.Record{WS: "acme", Scope: "demo-todo", Mode: "auto", Action: "deny", Rules: []string{"y"}, Tool: "Bash", Command: "c"}, nil)
+	guardlog.Append(guardlog.Record{WS: "acme", Scope: "demo-todo", ClaudeMode: "auto", Rules: []string{"x"}, Tool: "Bash", Command: "c"}, nil)
+	guardlog.Append(guardlog.Record{WS: "acme", Scope: "demo-todo", ClaudeMode: "auto", Action: "deny", Rules: []string{"y"}, Tool: "Bash", Command: "c"}, nil)
 	if got, want := unattendedLine(ws, proj, now), "Unattended: on (demo-todo) · 2 confirms and 1 block skipped in 24h · applies in bypass and auto sessions"; got != want {
 		t.Fatalf("got %q", got)
 	}

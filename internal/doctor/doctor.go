@@ -131,6 +131,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		if trusted {
 			claudeChecks(&w, add)
 			unattendedChecks(&w, add)
+			runWorkspaceChecks(&w, d, add)
 			dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add)
 			if hubChecks(w.Name, probe, add) {
 				hubUsed = true
@@ -247,6 +248,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	if hubUsed {
 		hubPortCheck(cfg.Hub.Port, probe, add)
 	}
+	runGlobalChecks(d, add)
 	// The pre-tq shell branch is active, so nothing tq sets is in effect here.
 	if d.Env != nil {
 		if v, ok := d.Env("TQ_ENABLED"); ok && strings.TrimSpace(v) == "0" {

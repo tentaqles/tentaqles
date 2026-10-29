@@ -41,8 +41,9 @@ func touch(p string) error {
 func Allow(hash string) error       { return touch(file(hash, "")) }
 func AllowBypass(hash string) error { return touch(file(hash, ".bypass")) }
 
+// Deny removes hash's trust, its bypass trust and its mode grant.
 func Deny(hash string) error {
-	for _, s := range []string{"", ".bypass"} {
+	for _, s := range []string{"", ".bypass", GrantSuffix} {
 		if err := os.Remove(file(hash, s)); err != nil && !os.IsNotExist(err) {
 			return err
 		}

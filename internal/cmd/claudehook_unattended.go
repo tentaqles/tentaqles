@@ -115,7 +115,7 @@ func (g *unattendedGate) audit(ws *resolve.Workspace, mode string, call policy.T
 	if subject == "" {
 		subject = call.Content // MCP/Agent input: masked and truncated by Append
 	}
-	guardlog.Append(guardlog.Record{WS: ws.Name, Scope: g.scope, Mode: mode, Action: string(action), Rules: ids, Tool: call.Tool, Command: subject}, ws.Manifest.Data.Classes)
+	guardlog.Append(guardlog.Record{WS: ws.Name, Scope: g.scope, ClaudeMode: mode, Action: string(action), Rules: ids, Tool: call.Tool, Command: subject}, ws.Manifest.Data.Classes)
 	return out
 }
 

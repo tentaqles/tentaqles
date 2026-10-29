@@ -24,7 +24,15 @@ type Record struct {
 	Time  time.Time `json:"ts"`
 	WS    string    `json:"ws"`
 	Scope string    `json:"scope"`
-	Mode  string    `json:"mode"`
+	// Mode is the tq guard mode (default|relaxed|strict|custom) the call ran
+	// under. Records written before spec E have none.
+	Mode string `json:"tq_mode,omitempty"`
+	// ClaudeMode is Claude Code's permission mode. Records written before
+	// spec E stored it as "mode"; UnmarshalJSON reads that key into it.
+	ClaudeMode string `json:"claude_mode,omitempty"`
+	// To is the action applied to the skipped or lowered rules: "allow"
+	// (skipped) or a lower one ("ask" for a lowered deny). Empty: allow.
+	To string `json:"to,omitempty"`
 	// Action is the strictest verdict skipped: "deny" (a block) or "ask" (a
 	// confirm). Records written before denies could be skipped have none:
 	// they are confirms.
@@ -32,6 +40,24 @@ type Record struct {
 	Rules   []string `json:"rule_ids"`
 	Tool    string   `json:"tool"`
 	Command string   `json:"command"`
+}
+
+// UnmarshalJSON reads a record, mapping the legacy "mode" key (Claude's
+// permission mode, before spec E) to ClaudeMode.
+func (r *Record) UnmarshalJSON(b []byte) error {
+	type plain Record
+	var aux struct {
+		plain
+		Legacy string `json:"mode"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	*r = Record(aux.plain)
+	if r.ClaudeMode == "" {
+		r.ClaudeMode = aux.Legacy
+	}
+	return nil
 }
 
 // IsBlock reports whether r records a skipped deny.

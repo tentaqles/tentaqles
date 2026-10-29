@@ -50,9 +50,9 @@ const scriptWrite = `(\bwrite|\bunlink|\bremove|\brename|\brmtree|\breplace\(|\b
 // readVerbs are commands (bash, cmd and PowerShell) that print a file.
 const readVerbs = `\b(cat|type|more|less|head|tail|bat|nl|strings|xxd|od|grep|rg|findstr|gc|get-content|select-string|sls)\b`
 
-// Builtin returns tq's default rules. IDs are stable: manifests disable them
+// coreBuiltin returns the rules defined in this file. IDs are stable: manifests disable them
 // by id (guard.disable) and tests pin them.
-func Builtin() []Rule {
+func coreBuiltin() []Rule {
 	return []Rule{
 		// --- secrets: reading ------------------------------------------------
 		{

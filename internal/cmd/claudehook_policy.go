@@ -282,7 +282,7 @@ func writeAsk(w io.Writer, reason string) error {
 // manifest (nil ws: the global file alone).
 func effectiveGuard(ws *resolve.Workspace) guardcfg.Effective {
 	if ws == nil || ws.Manifest == nil {
-		return guardcfg.Resolve(nil, "")
+		return guardcfg.ResolveActions(nil, "")
 	}
-	return guardcfg.Resolve(ws.Manifest, ws.Name)
+	return guardcfg.ResolveActions(ws.Manifest, ws.Name)
 }

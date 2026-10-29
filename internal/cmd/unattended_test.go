@@ -93,9 +93,9 @@ func TestUnattendedLog(t *testing.T) {
 	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
 	t.Chdir(root)
 	now := time.Now().UTC()
-	guardlog.Append(guardlog.Record{Time: now.Add(-2 * time.Minute), WS: "acme", Scope: "workspace", Mode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "older"}, nil)
-	guardlog.Append(guardlog.Record{Time: now.Add(-1 * time.Minute), WS: "other", Scope: "workspace", Mode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "elsewhere"}, nil)
-	guardlog.Append(guardlog.Record{Time: now, WS: "acme", Scope: "demo-todo", Mode: "bypassPermissions", Action: "deny", Rules: []string{"tq/a", "tq/b"}, Tool: "Bash", Command: "newer"}, nil)
+	guardlog.Append(guardlog.Record{Time: now.Add(-2 * time.Minute), WS: "acme", Scope: "workspace", ClaudeMode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "older"}, nil)
+	guardlog.Append(guardlog.Record{Time: now.Add(-1 * time.Minute), WS: "other", Scope: "workspace", ClaudeMode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "elsewhere"}, nil)
+	guardlog.Append(guardlog.Record{Time: now, WS: "acme", Scope: "demo-todo", ClaudeMode: "bypassPermissions", Action: "deny", Rules: []string{"tq/a", "tq/b"}, Tool: "Bash", Command: "newer"}, nil)
 	out, err := runUnattendedCmd(t, "log", "--ws", "acme")
 	if err != nil {
 		t.Fatal(err)
@@ -175,11 +175,11 @@ func TestUnattendedLogReadsRotatedFile(t *testing.T) {
 	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
 	t.Chdir(root)
 	now := time.Now().UTC()
-	guardlog.Append(guardlog.Record{Time: now.Add(-time.Minute), WS: "acme", Scope: "workspace", Mode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "rotated"}, nil)
+	guardlog.Append(guardlog.Record{Time: now.Add(-time.Minute), WS: "acme", Scope: "workspace", ClaudeMode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "rotated"}, nil)
 	if err := os.Rename(guardlog.Path(), guardlog.Path()+".1"); err != nil {
 		t.Fatal(err)
 	}
-	guardlog.Append(guardlog.Record{Time: now, WS: "acme", Scope: "workspace", Mode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "current"}, nil)
+	guardlog.Append(guardlog.Record{Time: now, WS: "acme", Scope: "workspace", ClaudeMode: "auto", Rules: []string{"tq/force-push"}, Tool: "Bash", Command: "current"}, nil)
 	out, err := runUnattendedCmd(t, "log", "--ws", "acme")
 	if err != nil {
 		t.Fatal(err)

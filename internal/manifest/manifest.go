@@ -112,6 +112,16 @@ type Guard struct {
 	// Unattended lets bypass/auto sessions skip tq's confirms (see
 	// guardcfg.Unattended). Nil: off.
 	Unattended *Unattended `yaml:"unattended,omitempty"`
+
+	// Guard mode (spec E §7), see guardmode.go. Values are guardcfg names
+	// (manifest does not import guardcfg).
+	Mode          string                  `yaml:"mode,omitempty"`
+	Base          string                  `yaml:"base,omitempty"`
+	Categories    map[string]string       `yaml:"categories,omitempty"`
+	RulesOverride map[string]string       `yaml:"rules_override,omitempty"`
+	Projects      map[string]GuardProject `yaml:"projects,omitempty"`
+	HeadlessMode  string                  `yaml:"headless_mode,omitempty"`
+	Codex         *GuardCodex             `yaml:"codex,omitempty"`
 }
 
 type Manifest struct {
