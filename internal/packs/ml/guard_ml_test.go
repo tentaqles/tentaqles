@@ -53,6 +53,31 @@ func TestModelPromoteGuard(t *testing.T) {
 		{"Bash", `databricks registered-models get main.ml.churn`, false},
 		{"Bash", `az ml model update --name churn --version 7 --stage Production -g rg -w ws`, true},
 		{"Bash", `az ml model show --name churn --version 7`, false},
+		// Global options before the service (review r0 finding 3).
+		{"Bash", `aws --profile prod sagemaker update-model-package --model-package-arn x --model-approval-status Approved`, true},
+		{"Bash", `aws --region us-east-1 sagemaker update-model-package --model-package-arn x --model-approval-status Approved`, true},
+		{"Bash", `aws.exe --debug --output json sagemaker update-model-package --model-package-arn x --model-approval-status "Approved"`, true},
+		{"Bash", `aws sagemaker update-model-package --cli-input-json '{"ModelPackageArn":"x","ModelApprovalStatus":"Approved"}'`, true},
+		{"Bash", `aws --profile prod sagemaker update-model-package --cli-input-yaml 'ModelApprovalStatus: Approved'`, true},
+		{"Bash", `aws --profile prod sagemaker update-model-package --model-package-arn x --model-approval-status Rejected`, false},
+		{"Bash", `aws --profile prod sagemaker describe-model-package --model-package-name x`, false},
+		{"Bash", `aws --profile prod s3 ls; echo sagemaker update-model-package`, false},
+		{"Bash", `databricks --profile prod registered-models set-alias main.ml.churn champion 7`, true},
+		{"Bash", `databricks -p prod model-registry transition-stage churn 7 Production`, true},
+		{"Bash", `databricks -p prod registered-models get main.ml.churn`, false},
+		{"Bash", `gcloud --project p ai models upload --region=r --version-aliases=champion`, true},
+		{"Bash", `gcloud --project=p beta ai models upload --region=r --version-aliases=champion`, true},
+		{"Bash", `gcloud --project p ai models list --region=r`, false},
+		{"Bash", `az --subscription s ml model update --name churn --version 7 --stage Production`, true},
+		// Alias writes through other HTTP clients (finding 4).
+		{"Bash", `wget --post-data='{"name":"churn","alias":"champion","version":"7"}' https://mlflow.acme.test/api/2.0/mlflow/registered-models/alias`, true},
+		{"Bash", `wget --method=DELETE https://mlflow.acme.test/api/2.0/mlflow/registered-models/alias`, true},
+		{"Bash", `http POST https://mlflow.acme.test/api/2.0/mlflow/registered-models/alias name=churn alias=champion version=7`, true},
+		{"Bash", `python -c "import requests; requests.post('https://mlflow.acme.test/api/2.0/mlflow/registered-models/alias', json={})"`, true},
+		{"Bash", `python -c "import httpx; httpx.delete('https://mlflow.acme.test/api/2.0/mlflow/registered-models/alias')"`, true},
+		{"Bash", `wget -qO- "https://mlflow.acme.test/api/2.0/mlflow/registered-models/alias?name=churn&alias=champion"`, false},
+		{"Bash", `http GET https://mlflow.acme.test/api/2.0/mlflow/registered-models/alias name==churn alias==champion`, false},
+		{"Bash", `python -c "import requests; print(requests.get('https://mlflow.acme.test/api/2.0/mlflow/registered-models/alias').json())"`, false},
 		// The declared promotion command run directly, and apply.
 		{"Bash", `uv run python scripts/promote.py churn 7 production`, true},
 		{"PowerShell", `uv run python .\scripts\promote.py churn 7 production`, true},
@@ -87,6 +112,40 @@ func TestModelPromoteGuardModuleCommand(t *testing.T) {
 	}
 	if act, _, _ := checkModelPromote(policy.ToolCall{Tool: "Bash", Command: "uv run python -m acme_ml.train"}, g); act != policy.Allow {
 		t.Fatal("another module is allowed")
+	}
+}
+
+// A console-script promotion command (review r0 finding 8): its script run
+// without the runner prefix is the declared command too, but only where a
+// command starts, so tq pack ml promote request stays allowed.
+func TestModelPromoteGuardConsoleScript(t *testing.T) {
+	for _, c := range []struct {
+		decl  string
+		cases map[string]bool
+	}{
+		{"uv run promote-model {model} {version} {target}", map[string]bool{
+			"uv run promote-model churn 7 production":            true,
+			"promote-model churn 7 production":                   true,
+			"cd src && promote-model churn 7 production":         true,
+			".venv/bin/promote-model churn 7 production":         true,
+			"echo promote-model is the tool":                     false,
+			"tq pack ml promote request churn 7 --to production": false,
+		}},
+		{"poetry run promote {model} {version} {target}", map[string]bool{
+			"poetry run promote churn 7 production":              true,
+			"promote churn 7 production":                         true,
+			"git log; promote churn 7 production":                true,
+			"tq pack ml promote request churn 7 --to production": false,
+			"tq pack ml promote status":                          false,
+		}},
+	} {
+		g := guardCtx(t, strings.Replace(guardConfig, "uv run python scripts/promote.py {model} {version} {target}", c.decl, 1))
+		for cmd, deny := range c.cases {
+			act, _, _ := checkModelPromote(policy.ToolCall{Tool: "Bash", Command: cmd}, g)
+			if (act == policy.Deny) != deny {
+				t.Errorf("%s: %q: %s, want deny=%v", c.decl, cmd, act, deny)
+			}
+		}
 	}
 }
 

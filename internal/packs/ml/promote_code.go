@@ -128,8 +128,9 @@ func target(l scan.PyLine, open, pos int, kw string) (val string, literal, prese
 }
 
 // countLiterals counts the string literals in blanked code. scan.PythonLines
-// turns each literal into "" or '' by its quote, and every quote left in the
-// code belongs to such a pair, so the pairs are counted in source order.
+// turns each literal into two double or two single quotes, by its quote, and
+// every quote left in the code belongs to such a pair, so the pairs are
+// counted in source order.
 func countLiterals(code string) int {
 	n := 0
 	for i := 0; i+1 < len(code); i++ {
