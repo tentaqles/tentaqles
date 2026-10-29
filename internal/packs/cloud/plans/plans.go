@@ -47,6 +47,7 @@ const (
 	EvProject     = "pulumi_project"
 	EvStackConfig = "pulumi_stack_config"
 	EvTree        = "tree_sha256"
+	EvListing     = "listing_sha256"
 )
 
 // Check is one cloud/* result over the plan (names and counts only).
@@ -94,8 +95,12 @@ type Record struct {
 	// Tree lists the program files of Pulumi's weak binding (repo-relative,
 	// at most MaxTreeFiles), and TreeSHA their combined hash, which the
 	// guard recomputes (§9.5 "an unchanged tree").
-	Tree       []string      `json:"tree,omitempty"`
-	TreeSHA    string        `json:"tree_sha256,omitempty"`
+	Tree    []string `json:"tree,omitempty"`
+	TreeSHA string   `json:"tree_sha256,omitempty"`
+	// ListingSHA hashes the names in the program folder and in every folder
+	// that holds a Tree file (GuardCtx.ListLocal's view), so a file added
+	// after the plan changes it.
+	ListingSHA string        `json:"listing_sha256,omitempty"`
 	PlanFile   string        `json:"plan_file"` // plans/<id>.<ext> under StateDir()
 	PlanSHA256 string        `json:"plan_sha256"`
 	PlanSize   int64         `json:"plan_size"`
@@ -371,6 +376,7 @@ func (r Record) Evidence(stack string) map[string]string {
 			ev[EvProject] = nonEmpty(r.Project)
 			ev[EvStackConfig] = nonEmpty(r.StackCfg)
 			ev[EvTree] = nonEmpty(r.TreeSHA)
+			ev[EvListing] = nonEmpty(r.ListingSHA)
 		}
 	}
 	return ev

@@ -89,6 +89,59 @@ func localHost(root string) gate.Host {
 	}}
 }
 
+// ---- the plan tools' environment ---------------------------------------
+
+// planCommon are the names every plan tool gets beyond toolrun.BaseEnv:
+// config and data folders, the Windows system folders the CLIs' runtimes
+// read, and proxy and CA settings.
+var planCommon = []string{"APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles",
+	"SystemDrive", "windir", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR",
+	"REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"}
+
+// planPrefixes are the variable families a plan tool reads, per tool: its
+// own (TF_*, PULUMI_*, CDK_*), the providers' credentials and settings
+// (ARM_*, AZURE_*, AWS_*, GOOGLE_*, CLOUDSDK_*) and, for the tools that run
+// the user's program (cdk synth, pulumi preview), the language runtimes.
+// Credentials pass because the user runs the plan with them on purpose
+// (toolrun still withholds secret-looking names from a repo-local binary).
+var planPrefixes = map[string][]string{
+	"terraform": {"TF_", "ARM_", "AZURE_", "AWS_", "GOOGLE_", "CLOUDSDK_", "MSI_", "IDENTITY_"},
+	"az":        {"AZURE_", "MSI_", "IDENTITY_"},
+	"aws":       {"AWS_"},
+	"cdk":       {"CDK_", "JSII_", "AWS_", "NODE_", "NPM_CONFIG_", "PYTHON", "VIRTUAL_ENV", "GO", "JAVA_", "DOTNET_"},
+	"pulumi":    {"PULUMI_", "ARM_", "AZURE_", "AWS_", "GOOGLE_", "CLOUDSDK_", "MSI_", "IDENTITY_", "NODE_", "NPM_CONFIG_", "PYTHON", "VIRTUAL_ENV", "GO", "JAVA_", "DOTNET_"},
+}
+
+// PlanPassEnv names the parent variables a plan tool may see (round 5's
+// filtered tool environment): planCommon plus the parent's variables in
+// the tool's families. Only names are read here, never values.
+func PlanPassEnv(tool string) []string {
+	fam := tool
+	switch tool {
+	case "tofu":
+		fam = "terraform"
+	case "cdktf":
+		fam = "cdk"
+	}
+	out := append([]string(nil), planCommon...)
+	pre := planPrefixes[fam]
+	for _, kv := range os.Environ() {
+		k, _, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			continue
+		}
+		u := strings.ToUpper(k)
+		for _, p := range pre {
+			if strings.HasPrefix(u, p) {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // ---- plan --------------------------------------------------------------
 
 func newPlanCmd() *cobra.Command {
@@ -213,7 +266,7 @@ func (p *planRun) run(argv []string, toolAt int, timeout time.Duration) (toolrun
 		tool, args = gate.ToolName(argv[0]), argv[1:]
 	}
 	wd, _ := os.Getwd()
-	out, err := p.in.Tools.Run(p.ctx, toolrun.Spec{Pack: "cloud", Tool: tool, Args: args, Dir: wd, Timeout: timeout})
+	out, err := p.in.Tools.Run(p.ctx, toolrun.Spec{Pack: "cloud", Tool: tool, Args: args, Dir: wd, Timeout: timeout, PassEnv: PlanPassEnv(tool)})
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", tool, err)
 	}
@@ -243,6 +296,10 @@ func recordPlan(ctx context.Context, in *packs.Input, sd, env string, timeout ti
 		iv.Dir = d
 	}
 	host := localHost(in.Root)
+	// The weak Pulumi listing uses the guard's own lister, so plan time and
+	// apply time see the same names (the same roots and refusals).
+	host.ListLocal = packs.NewGuardCtx(packs.GuardEnv{Config: in.Config, Manifest: in.Manifest, Workspace: in.Workspace(),
+		WorkspaceRoot: in.WorkspaceRoot(), RepoRoot: in.Root}, "cloud").ListLocal
 	action := envgate.Apply
 	if res := gt.Resolve(action, gate.Signals(iv, host)); res.Resolved && res.Env != env {
 		return plans.Record{}, fmt.Errorf("the command targets environment %s (%s %s), not %s", res.Env, res.By.Key, res.By.Value, env)
@@ -295,7 +352,7 @@ func (p *planRun) account(ident gate.Identity) (string, error) {
 	if ident.Profile != "" {
 		args = append(args, "--profile", ident.Profile)
 	}
-	out, err := p.in.Tools.Run(p.ctx, toolrun.Spec{Pack: "cloud", Tool: "aws", Args: args, Dir: p.in.Root, Timeout: stsTimeout})
+	out, err := p.in.Tools.Run(p.ctx, toolrun.Spec{Pack: "cloud", Tool: "aws", Args: args, Dir: p.in.Root, Timeout: stsTimeout, PassEnv: PlanPassEnv("aws")})
 	if err != nil {
 		return "", err
 	}
@@ -740,7 +797,11 @@ func (p *planRun) pulumi() error {
 		if err != nil {
 			return err
 		}
-		p.rec.Tree, p.rec.TreeSHA = tree, ts
+		ls, err := gate.ListingHash(p.host, dir, tree)
+		if err != nil {
+			return err
+		}
+		p.rec.Tree, p.rec.TreeSHA, p.rec.ListingSHA = tree, ts, ls
 		p.rec.Apply = []string{"pulumi up" + cwd + " --stack " + stack + " --yes"}
 	}
 	p.raw, p.kind = res.Stdout, model.KindPulumi
@@ -826,7 +887,7 @@ func printRecord(w io.Writer, r plans.Record, asJSON bool, sd string) error {
 		fmt.Fprintln(w, "  this plan destroys: approve it with --destroy")
 	}
 	if r.Weak {
-		fmt.Fprintf(w, "  binding: the weaker Pulumi binding (preview hash, Pulumi.yaml, the stack config and the %d recorded program files; a file added later and the dependencies are not re-checked at apply)\n", len(r.Tree))
+		fmt.Fprintf(w, "  binding: the weaker Pulumi binding (preview hash, Pulumi.yaml, the stack config and the %d recorded program files and the names in their folders; dependencies, and files in sub-folders that hold no recorded file, are not re-checked at apply)\n", len(r.Tree))
 	}
 	fmt.Fprintf(w, "  identity %s", r.Identity)
 	if r.Account != "" {
@@ -884,6 +945,8 @@ func newApproveCmd() *cobra.Command {
 		Use:   "approve <plan-id> [--destroy] [--stack S]",
 		Short: "Ask a human to approve a recorded plan (agents may ask; only a human answers)",
 		Args:  cobra.ExactArgs(1),
+		// It only asks (approval.Ask); the human answers in their own terminal.
+		Annotations: map[string]string{packs.AnnotationHumanOnly: packs.ApprovalAsk},
 		RunE: func(c *cobra.Command, args []string) error {
 			in, sd, err := cmdContext(c)
 			if err != nil {
@@ -975,7 +1038,7 @@ func askApproval(ctx context.Context, w io.Writer, in *packs.Input, sd, id strin
 		fmt.Fprintf(&sum, ", account %s", r.Account)
 	}
 	if r.Weak {
-		sum.WriteString("\nbinding: the weaker Pulumi binding (the recorded program files are re-checked at apply; a file added later and the dependencies are not)")
+		sum.WriteString("\nbinding: the weaker Pulumi binding (the recorded program files and the names in their folders are re-checked at apply; dependencies outside those folders are not)")
 	}
 	dec, card, err := approval.Ask(in.Workspace(), approval.Request{Pack: "cloud", Action: action, Subject: r.SubjectFor(stack), Target: r.Env,
 		Evidence: r.Evidence(stack), Summary: sum.String(), Options: []string{"apply", "reject"}, ValidFor: gt.TTL(r.Env), ProjectDir: projectDir(in)})
@@ -983,7 +1046,7 @@ func askApproval(ctx context.Context, w io.Writer, in *packs.Input, sd, id strin
 		return err
 	}
 	fmt.Fprintf(w, "asked: decision %s on card %s (%s %s -> %s)\n", dec, card, action, r.SubjectFor(stack), r.Env)
-	fmt.Fprintf(w, "a human answers on the board, or: tq hub answer %s %s --choice apply\n", card, dec)
+	fmt.Fprintf(w, "a human answers in their own terminal (never an agent, never on the board): tq hub answer %s %s --choice apply\n", card, dec)
 	for _, a := range r.Apply {
 		if (r.Tool != "cdk" && r.Tool != "cdktf") || strings.HasSuffix(a, " "+stackName(r, stack)) {
 			fmt.Fprintf(w, "then apply with: %s\n", a)

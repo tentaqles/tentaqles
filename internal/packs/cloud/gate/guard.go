@@ -123,27 +123,37 @@ func destroyWord(raw string) (string, bool) {
 
 func hostFor(g packs.GuardCtx) Host {
 	home, _ := os.UserHomeDir()
-	return Host{Getenv: Getenv, ReadLocal: g.ReadLocal, Home: home}
+	return Host{Getenv: Getenv, ReadLocal: g.ReadLocal, ListLocal: g.ListLocal, Home: home}
 }
 
-// Getwd is the hook's working directory (tests replace it).
-var Getwd = os.Getwd
-
 // baseDir is the folder the command starts in, relative to the repo root:
-// the hook process's working directory when it is inside the repository, so
-// a relative cd or -chdir resolves from where the shell is (review r0 m2).
-// Otherwise "" (the repo root): GuardCtx does not carry the hook payload's
-// cwd, so a hook started elsewhere cannot know the session's folder (raised
-// with F; a miss falls to the default environment).
+// the hook payload's cwd (GuardCtx.Cwd) when it is inside the repository, so
+// a relative cd or -chdir resolves from where the session's shell is
+// (review r0 m2). Otherwise "" (the repo root; a miss falls to the default
+// environment).
 func baseDir(g packs.GuardCtx) string {
 	root := g.RepoRoot()
-	wd, err := Getwd()
-	if root == "" || err != nil {
+	wd := g.Cwd()
+	if root == "" || wd == "" {
 		return ""
 	}
-	r, err := filepath.Rel(root, wd)
-	if err != nil || filepath.IsAbs(r) || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return ""
+	inside := func(root string) (string, bool) {
+		r, err := filepath.Rel(root, wd)
+		if err != nil || filepath.IsAbs(r) || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			return "", false
+		}
+		return r, true
+	}
+	r, ok := inside(root)
+	if !ok {
+		// Cwd is a final path (junctions, 8.3 names resolved); so is the root's
+		fr, err := packs.FinalPath(root)
+		if err != nil {
+			return ""
+		}
+		if r, ok = inside(fr); !ok {
+			return ""
+		}
 	}
 	r = filepath.ToSlash(r)
 	if r == "." {
@@ -158,6 +168,42 @@ type verdict struct {
 	reason  string
 	consume string
 	counter string
+	// readName is the stored plan (plans/<id>.<ext>) this leaf's program
+	// reads, hashed with HashState in this call; on a handled allow it is
+	// declared with GuardCtx.ReadArgs so the core state-dir rule lets the
+	// one path through.
+	readName string
+	readSpec packs.ReadSpec
+}
+
+// ReadSpecs are how the gate tools read a stored plan (F's ReadArgs): the
+// program (the segment's first word), the flag whose value the plan may be,
+// and the boolean flags that may stand before a positional plan.
+var ReadSpecs = map[string]packs.ReadSpec{
+	"terraform": {Program: "terraform", BoolFlags: tfBoolFlags},
+	"tofu":      {Program: "tofu", BoolFlags: tfBoolFlags},
+	"pulumi":    {Program: "pulumi", Flag: "--plan", BoolFlags: []string{"--yes", "-y", "--skip-preview", "--diff", "--refresh", "--non-interactive"}},
+}
+
+var tfBoolFlags = []string{"-auto-approve", "--auto-approve", "-no-color", "--no-color", "-compact-warnings", "--compact-warnings"}
+
+// readArgFor hashes the stored plan a terraform, tofu or pulumi leaf names
+// (when it is the record's own plan file) and returns its name for
+// ReadArgs; "" when the leaf names none or the hash fails (then the core
+// state-dir rule decides on the path as usual).
+func readArgFor(iv Invocation, rec *plans.Record, g packs.GuardCtx) (string, packs.ReadSpec) {
+	spec, ok := ReadSpecs[iv.Tool]
+	if !ok || rec == nil {
+		return "", packs.ReadSpec{}
+	}
+	_, name, _ := savedPlan(iv, g.StateDir())
+	if name == "" || name != rec.PlanFile {
+		return "", packs.ReadSpec{}
+	}
+	if _, err := g.HashState(name); err != nil {
+		return "", packs.ReadSpec{}
+	}
+	return name, spec
 }
 
 // ApplyEnv is the tq/iac-apply-env guard (§9.3, §9.4, §9.5): every apply or
@@ -225,6 +271,17 @@ func ApplyEnv(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bo
 		act = policy.Deny
 		reasons = append(reasons, "run the approved apply in a command of its own")
 		handled = true
+	}
+	if act == policy.Allow && handled {
+		for _, v := range vs {
+			if v.readName == "" {
+				continue
+			}
+			if err := g.ReadArgs(v.readSpec, v.readName); err != nil {
+				act = policy.Deny
+				reasons = append(reasons, IDApplyEnv+": the stored plan "+v.readName+" cannot be declared as a read argument ("+err.Error()+")")
+			}
+		}
 	}
 	for _, v := range vs {
 		if v.counter != "" {
@@ -312,7 +369,13 @@ func evaluate(iv Invocation, op Op, unreadable bool, gt envgate.Gate, h Host, g 
 	}
 	switch pol {
 	case envgate.Auto:
-		return verdict{action: policy.Allow, counter: "apply_allowed:auto"}
+		v := verdict{action: policy.Allow, counter: "apply_allowed:auto"}
+		if !unreadable {
+			// An auto apply of a stored plan: the plan path is read, not
+			// written, so it is declared to the core state-dir rule.
+			v.readName, v.readSpec = readArgFor(iv, rec, g)
+		}
+		return v
 	case envgate.Ask:
 		return verdict{action: policy.Ask, reason: fmt.Sprintf("%s: %s to %s (policy %s: ask); confirm the target", IDApplyEnv, what, where, action)}
 	case envgate.Approve:
@@ -335,12 +398,12 @@ func firstWords(raw string) string {
 
 // lazyLedger reads the cloud ledger once per guard call.
 type lazyLedger struct {
-	g       packs.GuardCtx
-	done    bool
-	entries []ledger.Entry
-	err     error
-	keyDone bool
-	k       []byte
+	g         packs.GuardCtx
+	done      bool
+	entries   []ledger.Entry
+	err       error
+	trustDone bool
+	t         ledger.Trust
 }
 
 // boundFlags are the flags an approved apply may carry in an approve
@@ -394,20 +457,22 @@ func (l *lazyLedger) read() ([]ledger.Entry, error) {
 	return l.entries, l.err
 }
 
-// key is the workspace's ledger key from the OS keychain, read once; nil
-// when it cannot be read, and then no answer counts (fail closed).
-func (l *lazyLedger) key() []byte {
-	if !l.keyDone {
-		l.keyDone = true
-		if k, err := LoadKey(l.g.Workspace()); err == nil {
-			l.k = k
+// trust is the workspace's public answer key and the cloud pack's
+// high-water mark from the OS keychain, read once; empty when it cannot be
+// read, and then no answer counts (fail closed). Answers at or before the
+// mark count as used.
+func (l *lazyLedger) trust() ledger.Trust {
+	if !l.trustDone {
+		l.trustDone = true
+		if t, err := LoadTrust(l.g.Workspace(), "cloud"); err == nil {
+			l.t = t
 		}
 	}
-	return l.k
+	return l.t
 }
 
-// LoadKey reads the ledger key (tests replace it).
-var LoadKey = ledger.LoadKey
+// LoadTrust reads the ledger trust (tests replace it).
+var LoadTrust = ledger.LoadTrust
 
 func (l *lazyLedger) claimed(d string) bool {
 	_, err := l.g.ReadState(ledger.ClaimName(d))
@@ -654,6 +719,17 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 					return
 				}
 				ev[plans.EvTree] = ts
+				// ... and no file added next to them since (GuardCtx.ListLocal)
+				if r.ListingSHA == "" {
+					lastErr = fmt.Errorf("plan %s has no recorded program listing; re-plan with this tq", r.ID)
+					return
+				}
+				ls, err := ListingHash(h, r.Dir, r.Tree)
+				if err != nil {
+					lastErr = err
+					return
+				}
+				ev[plans.EvListing] = ls
 			}
 		}
 		hp, err := g.HashState(planFileFor(r, stack))
@@ -760,15 +836,22 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 	}
 	// Only answers signed with the workspace's keychain key count; without
 	// the key nothing does (fail closed).
-	key := l.key()
+	trust := l.trust()
 	for _, c := range cands {
 		if r := Drift(gt, env, ident, c.rec.Account, g.Manifest()); r != "" {
 			lastErr = errors.New("identity drift: " + r)
 			continue
 		}
-		a, err := approval.Find(forPlan(entries, c.rec.ID), key, approval.Binding{Pack: "cloud", Action: c.action, Subject: c.rec.SubjectFor(c.stack), Target: env}, c.ev, approval.Now(), l.claimed)
+		a, err := approval.Find(forPlan(entries, c.rec.ID), trust, approval.Binding{Pack: "cloud", Action: c.action, Subject: c.rec.SubjectFor(c.stack), Target: env}, c.ev, approval.Now(), l.claimed)
 		if err == nil {
-			return verdict{action: policy.Allow, consume: a.Decision, counter: "apply_allowed:approve"}
+			v := verdict{action: policy.Allow, consume: a.Decision, counter: "apply_allowed:approve"}
+			if spec, ok := ReadSpecs[iv.Tool]; ok {
+				if _, name, _ := savedPlan(iv, g.StateDir()); name != "" && name == c.rec.PlanFile {
+					// build hashed it with HashState in this call
+					v.readName, v.readSpec = name, spec
+				}
+			}
+			return v
 		}
 		lastErr = err
 	}

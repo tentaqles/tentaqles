@@ -16,9 +16,12 @@ import (
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/approval"
 	"github.com/tentaqles/tentaqles/internal/packs/cloud/gate"
+	"github.com/tentaqles/tentaqles/internal/packs/cloud/model"
 	"github.com/tentaqles/tentaqles/internal/packs/cloud/plans"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
+	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
@@ -28,15 +31,37 @@ import (
 // pulumi; each prints a fixture and records its argv (spec D §21).
 
 func TestMain(m *testing.M) {
-	if os.Getenv("TQ_FAKE_CLI") == "1" {
+	// The copies are named after the tools: they never run the tests, even
+	// when a filtered environment drops TQ_FAKE_CLI (which would recurse).
+	if os.Getenv("TQ_FAKE_CLI") == "1" || fakeName(os.Args[0]) {
 		os.Exit(fakeMain())
 	}
 	os.Exit(m.Run())
 }
 
+func fakeName(arg0 string) bool {
+	switch gate.ToolName(arg0) {
+	case "terraform", "tofu", "az", "aws", "cdk", "pulumi":
+		return true
+	}
+	return false
+}
+
 func fakeMain() int {
 	tool := gate.ToolName(os.Args[0])
 	args := os.Args[1:]
+	if lf := os.Getenv("TQ_FAKE_ENVLOG"); lf != "" {
+		// names only, never values
+		var names []string
+		for _, kv := range os.Environ() {
+			if k, _, ok := strings.Cut(kv, "="); ok {
+				names = append(names, k)
+			}
+		}
+		f, _ := os.OpenFile(lf, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		json.NewEncoder(f).Encode(append([]string{tool}, names...))
+		f.Close()
+	}
 	if lf := os.Getenv("TQ_FAKE_LOG"); lf != "" {
 		f, _ := os.OpenFile(lf, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		json.NewEncoder(f).Encode(append([]string{tool}, args...))
@@ -187,6 +212,7 @@ func setup(t *testing.T, block string) *env {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TQ_FAKE_CLI", "1")
+	t.Cleanup(toolrun.PassForTests("TQ_FAKE_CLI", "TQ_FAKE_FIX", "TQ_FAKE_TFPLAN", "TQ_FAKE_LOG", "TQ_FAKE_ENVLOG"))
 	wd, _ := os.Getwd()
 	fix, _ := filepath.Abs(filepath.Join(wd, "testdata", "readers"))
 	t.Setenv("TQ_FAKE_FIX", fix)
@@ -501,8 +527,8 @@ func TestPulumiWeakAndPlanForms(t *testing.T) {
 	}
 	id := planID(t, out)
 	rec, _ := plans.Load(e.in.StateDir(), id)
-	if !rec.Weak {
-		t.Fatal("no --save-plan: the weak binding")
+	if !rec.Weak || rec.ListingSHA == "" {
+		t.Fatalf("no --save-plan: the weak binding with a listing: %+v", rec)
 	}
 	cmd := applyLine(t, out)
 	out, err = e.tq("approve", id, "--destroy")
@@ -513,6 +539,13 @@ func TestPulumiWeakAndPlanForms(t *testing.T) {
 	if a, why, _ := e.apply(cmd); a != policy.Allow {
 		t.Fatalf("pulumi weak: %v %q (%s)", a, why, cmd)
 	}
+	// a program file added after the plan denies (GuardCtx.ListLocal)
+	extra := filepath.Join(e.repo, "infra/pulumi/extra.go")
+	os.WriteFile(extra, []byte("package main"), 0o644)
+	if a, _, _ := e.apply(cmd); a != policy.Deny {
+		t.Fatal("a file added after the plan")
+	}
+	os.Remove(extra)
 	// a changed stack config denies
 	os.WriteFile(filepath.Join(e.repo, "infra/pulumi/Pulumi.prod.yaml"), []byte("config: {x: 1}\n"), 0o644)
 	if a, _, _ := e.apply(cmd); a != policy.Deny {
@@ -554,10 +587,140 @@ func TestPrune(t *testing.T) {
 	}
 }
 
+// The plan tools get the cloud variables (round 5's filtered environment
+// otherwise drops them), and nothing else secret-looking.
+func TestPlanToolEnv(t *testing.T) {
+	e := setup(t, testBlock)
+	envlog := filepath.Join(e.home, "env.jsonl")
+	t.Setenv("TQ_FAKE_ENVLOG", envlog)
+	t.Setenv("ARM_CLIENT_ID", "tester")
+	t.Setenv("TF_VAR_region", "eu")
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("ACME_SECRET_TOKEN", "tester")
+	t.Setenv("PULUMI_ACCESS_TOKEN", "tester")
+	if _, err := e.tq("plan", "--env", "dev", "--", "terraform", "-chdir=infra/envs/dev", "plan"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(envlog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var names []string
+		json.Unmarshal([]byte(line), &names)
+		for _, n := range names {
+			got[strings.ToUpper(n)] = true
+		}
+	}
+	for _, n := range []string{"ARM_CLIENT_ID", "TF_VAR_REGION", "PATH"} {
+		if !got[n] {
+			t.Errorf("%s did not reach terraform", n)
+		}
+	}
+	for _, n := range []string{"ACME_SECRET_TOKEN", "PULUMI_ACCESS_TOKEN"} {
+		if got[n] {
+			t.Errorf("%s reached terraform", n)
+		}
+	}
+	pl := PlanPassEnv("pulumi")
+	found := false
+	for _, n := range pl {
+		found = found || n == "PULUMI_ACCESS_TOKEN"
+	}
+	if !found {
+		t.Error("pulumi does not get PULUMI_ACCESS_TOKEN")
+	}
+}
+
+// approve only asks (spec D §9.8; framework R5-4): run from an agent
+// session, it appends asked lines only and every approval stays pending; the
+// human answers in their own terminal.
+func TestApproveOnlyAsks(t *testing.T) {
+	e := setup(t, testBlock)
+	out, err := e.tq("plan", "--env", "prod", "--", "terraform", "-chdir=infra/envs/prod", "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := planID(t, out)
+	t.Setenv("CLAUDECODE", "1")
+	before, _ := ledger.Read("acme", "cloud")
+	out, err = e.tq("approve", id)
+	if err != nil {
+		t.Fatalf("an agent may ask: %v %s", err, out)
+	}
+	if !strings.Contains(out, "in their own terminal") || strings.Contains(out, "on the board,") {
+		t.Fatalf("the answer is terminal-only: %s", out)
+	}
+	after, err := ledger.Read("acme", "cloud")
+	if err != nil || len(after) <= len(before) {
+		t.Fatalf("nothing asked: %v", err)
+	}
+	for _, l := range after[len(before):] {
+		if l.Event != ledger.Asked {
+			t.Fatalf("approve wrote a %s line; it may only ask", l.Event)
+		}
+	}
+	rows, err := approval.List("acme", "cloud")
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("list: %v %d", err, len(rows))
+	}
+	for _, r := range rows {
+		if r.State != "pending" {
+			t.Fatalf("approve left %s %s", r.Decision, r.State)
+		}
+	}
+	// --allow-failing is the human's alone
+	if _, err := e.tq("approve", id, "--allow-failing"); err == nil {
+		t.Fatal("--allow-failing from an agent session")
+	}
+}
+
+// FreshPlans is the plan store D-CP's policy checks read
+// (policy.SetRecordedPlans at integration): the records whose inputs hash
+// matches the current tree, each redacted copy once, with the environment's
+// apply policy; never the stored plan itself.
+func TestFreshPlans(t *testing.T) {
+	e := setup(t, testBlock)
+	if ps, err := FreshPlans(e.in); err != nil || len(ps) != 0 {
+		t.Fatalf("no plan yet: %v %+v", err, ps)
+	}
+	out, err := e.tq("plan", "--env", "dev", "--", "terraform", "-chdir=infra/envs/dev", "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := planID(t, out)
+	ps, err := FreshPlans(e.in)
+	if err != nil || len(ps) != 1 {
+		t.Fatalf("one fresh plan: %v %+v", err, ps)
+	}
+	p := ps[0]
+	if p.ID != id || p.Env != "dev" || p.Policy != "auto" || p.Kind != model.KindTFPlan || p.Name != "plan:"+id ||
+		!filepath.IsAbs(p.Path) || !strings.HasSuffix(filepath.ToSlash(p.Path), plans.RedactedName(id)) {
+		t.Fatalf("plan: %+v", p)
+	}
+	if _, err := os.Stat(p.Path); err != nil {
+		t.Fatal(err)
+	}
+	// an edited input makes it stale
+	os.WriteFile(filepath.Join(e.repo, "infra/envs/dev/main.tf"), []byte("resource \"terraform_data\" \"other\" {}\n"), 0o644)
+	if ps, err := FreshPlans(e.in); err != nil || len(ps) != 0 {
+		t.Fatalf("stale: %v %+v", err, ps)
+	}
+}
+
 func TestRegistration(t *testing.T) {
 	names := map[string]bool{}
 	for _, c := range packs.Commands("cloud") {
 		names[c.Name()] = true
+		// approve only asks; the pack has no executor (no apply command)
+		want := ""
+		if c.Name() == "approve" {
+			want = packs.ApprovalAsk
+		}
+		if got := c.Annotations[packs.AnnotationHumanOnly]; got != want {
+			t.Errorf("%s: annotation %q, want %q", c.Name(), got, want)
+		}
 	}
 	for _, n := range []string{"plan", "show", "approve", "prune"} {
 		if !names[n] {

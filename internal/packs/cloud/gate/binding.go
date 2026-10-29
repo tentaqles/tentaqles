@@ -195,3 +195,60 @@ func TreeHash(h Host, files []string) (string, error) {
 	}
 	return HashParts(parts), nil
 }
+
+// MaxListingDirs bounds the folders ListingHash lists (each is one
+// GuardCtx.ListLocal call inside the guard's budget).
+const MaxListingDirs = 16
+
+// ListingDirs are the folders whose names Pulumi's weak binding fixes: the
+// program folder dir and every folder that holds a tree file (repo-relative).
+func ListingDirs(dir string, tree []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(d string) {
+		d = path.Clean(strings.ReplaceAll(d, `\`, "/"))
+		if !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	add(dir)
+	for _, f := range tree {
+		add(path.Dir(f))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ListingHash hashes the names (and kinds: a trailing / for a folder) in
+// each folder of ListingDirs, as GuardCtx.ListLocal returns them. A file
+// added to the program folder, or next to a program file, after the plan
+// changes it (§9.5 "an unchanged tree", closing the r0 residual). Sizes are
+// left out: the tree files' contents are hashed by TreeHash already.
+func ListingHash(h Host, dir string, tree []string) (string, error) {
+	if h.ListLocal == nil {
+		return "", errors.New("the program folder cannot be listed")
+	}
+	dirs := ListingDirs(dir, tree)
+	if len(dirs) > MaxListingDirs {
+		return "", fmt.Errorf("the Pulumi program spans %d folders, over the %d the weak binding lists; record an update plan with --save-plan", len(dirs), MaxListingDirs)
+	}
+	var parts []string
+	for _, d := range dirs {
+		if strings.Contains("/"+d+"/", "/../") || path.IsAbs(d) {
+			return "", fmt.Errorf("the program folder %s is outside the repository", d)
+		}
+		entries, err := h.ListLocal(d, packs.MaxListEntries)
+		if err != nil {
+			return "", fmt.Errorf("the program folder %s cannot be listed (%v)", d, err)
+		}
+		for _, e := range entries {
+			n := e.Name
+			if e.Dir {
+				n += "/"
+			}
+			parts = append(parts, d+"\x00"+n)
+		}
+	}
+	return HashParts(parts), nil
+}

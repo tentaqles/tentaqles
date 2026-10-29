@@ -24,6 +24,9 @@ type Host struct {
 	Getenv func(string) string
 	// ReadLocal reads a file; a relative path is relative to the repo root.
 	ReadLocal func(path string, max int64) ([]byte, error)
+	// ListLocal lists a folder (GuardCtx.ListLocal: the same roots and
+	// refusals at plan time and in the guard, so both list the same names).
+	ListLocal func(dir string, max int) ([]packs.LocalEntry, error)
 	Home      string
 }
 

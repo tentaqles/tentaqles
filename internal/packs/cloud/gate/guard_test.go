@@ -67,13 +67,11 @@ func newFixture(t *testing.T, block string) *fixture {
 	m := &manifest.Manifest{Packs: map[string]manifest.PackConfig{"cloud": {Enabled: &en, Raw: *doc.Content[0]}},
 		Identities: map[string]manifest.Identity{}}
 	f := &fixture{t: t, repo: repo, home: home, vars: map[string]string{}}
-	f.env = packs.GuardEnv{Config: packs.Merge(m.Packs, nil), Manifest: m, Workspace: "acme", WorkspaceRoot: repo, RepoRoot: repo}
+	f.env = packs.GuardEnv{Config: packs.Merge(m.Packs, nil), Manifest: m, Workspace: "acme", WorkspaceRoot: repo, RepoRoot: repo, Cwd: repo}
 	f.state = packs.StateDir("acme", "cloud")
 	prev := Getenv
 	Getenv = func(k string) string { return f.vars[k] }
-	prevWd := Getwd
-	Getwd = func() (string, error) { return repo, nil }
-	t.Cleanup(func() { Getenv, Getwd = prev, prevWd })
+	t.Cleanup(func() { Getenv = prev })
 	return f
 }
 

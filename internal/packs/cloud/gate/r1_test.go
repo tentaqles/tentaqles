@@ -202,6 +202,10 @@ func TestPulumiWeakTreeBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ls, err := ListingHash(h, dir, tree)
+	if err != nil {
+		t.Fatal(err)
+	}
 	id := plans.NewID(time.Now())
 	name := plans.PlanName(id, "preview.json")
 	body := []byte(`{"steps":[]}`)
@@ -209,7 +213,7 @@ func TestPulumiWeakTreeBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := plans.Record{ID: id, Env: "prod", Tool: "pulumi", Dir: dir, Subject: "acme-prod", Stack: "acme-prod", Weak: true,
-		Project: proj, StackCfg: cfg, Tree: tree, TreeSHA: ts, PlanFile: name, PlanSHA256: packs.HashBytes(body),
+		Project: proj, StackCfg: cfg, Tree: tree, TreeSHA: ts, ListingSHA: ls, PlanFile: name, PlanSHA256: packs.HashBytes(body),
 		InputsHash: "sha256:inputs", Identity: "none"}
 	if err := plans.Save(f.state, r); err != nil {
 		t.Fatal(err)
@@ -230,6 +234,30 @@ func TestPulumiWeakTreeBinding(t *testing.T) {
 	if a, why, h, _ := f.run(ApplyEnv, cmd); a != policy.Allow || !h {
 		t.Fatalf("unchanged tree: %v %q", a, why)
 	}
+	// a file added next to the program after the plan (the r0 residual,
+	// closed with GuardCtx.ListLocal), and a new sub-folder
+	os.WriteFile(filepath.Join(abs, "helper.go"), []byte("package main\n"), 0o644)
+	if a, why, _, _ := f.run(ApplyEnv, cmd); a != policy.Deny || !strings.Contains(why, "evidence changed") {
+		t.Fatalf("added file: %v %q", a, why)
+	}
+	os.Remove(filepath.Join(abs, "helper.go"))
+	os.MkdirAll(filepath.Join(abs, "pkg"), 0o755)
+	if a, why, _, _ := f.run(ApplyEnv, cmd); a != policy.Deny {
+		t.Fatalf("added folder: %v %q", a, why)
+	}
+	os.Remove(filepath.Join(abs, "pkg"))
+	// a .env file is never listed, so it does not change the binding
+	os.WriteFile(filepath.Join(abs, ".env.prod"), []byte("X=1\n"), 0o600)
+	if a, why, _, _ := f.run(ApplyEnv, cmd); a != policy.Allow {
+		t.Fatalf("dotenv: %v %q", a, why)
+	}
+	// a record without a listing is refused
+	r.ListingSHA = ""
+	plans.Save(f.state, r)
+	if a, why, _, _ := f.run(ApplyEnv, cmd); a != policy.Deny || !strings.Contains(why, "program listing") {
+		t.Fatalf("no listing: %v %q", a, why)
+	}
+	r.ListingSHA = ls
 	// a record without a tree is refused
 	r.Tree, r.TreeSHA = nil, ""
 	plans.Save(f.state, r)
@@ -278,22 +306,22 @@ func TestUnsignedAnswerDoesNotCount(t *testing.T) {
 	}
 	// no keychain key at all: nothing counts
 	f.answer(id, "apply")
-	prev := LoadKey
-	LoadKey = func(string) ([]byte, error) { return nil, ledger.ErrNoKey }
-	defer func() { LoadKey = prev }()
+	prev := LoadTrust
+	LoadTrust = func(string, ...string) (ledger.Trust, error) { return ledger.Trust{}, ledger.ErrNoKey }
+	defer func() { LoadTrust = prev }()
 	if a, why, _, _ := f.run(ApplyEnv, "terraform -chdir=infra/envs/prod apply "+f.planPath(r)); a != policy.Deny {
 		t.Fatalf("no key: %v %q", a, why)
 	}
-	LoadKey = prev
+	LoadTrust = prev
 	if a, why, _, _ := f.run(ApplyEnv, "terraform -chdir=infra/envs/prod apply "+f.planPath(r)); a != policy.Allow {
 		t.Fatalf("signed: %v %q", a, why)
 	}
 }
 
-// m2: relative paths resolve from the hook's working directory.
+// m2: relative paths resolve from the hook payload's cwd (GuardCtx.Cwd).
 func TestRelativePathsFromTheHookCwd(t *testing.T) {
 	f := newFixture(t, cloudBlock)
-	Getwd = func() (string, error) { return filepath.Join(f.repo, "infra", "envs"), nil }
+	f.env.Cwd = filepath.Join(f.repo, "infra", "envs")
 	if a, why, _, _ := f.run(ApplyEnv, "cd dev && terraform apply"); a != policy.Allow {
 		t.Errorf("sub-folder cd: %v %q", a, why)
 	}
@@ -303,8 +331,8 @@ func TestRelativePathsFromTheHookCwd(t *testing.T) {
 	if a, _, _, _ := f.run(ApplyEnv, "cd prod && terraform apply"); a != policy.Deny {
 		t.Error("sub-folder prod")
 	}
-	// a hook started outside the repository resolves from the repo root
-	Getwd = func() (string, error) { return filepath.Dir(f.repo), nil }
+	// a session cwd outside the repository resolves from the repo root
+	f.env.Cwd = filepath.Dir(f.repo)
 	if a, _, _, _ := f.run(ApplyEnv, "cd infra/envs/dev && terraform apply"); a != policy.Allow {
 		t.Error("outside the repo")
 	}

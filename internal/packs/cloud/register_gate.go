@@ -9,13 +9,17 @@ package cloud
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/cloud/model"
 	"github.com/tentaqles/tentaqles/internal/packs/cloud/plans"
 	"github.com/tentaqles/tentaqles/internal/packs/envgate"
 	"gopkg.in/yaml.v3"
@@ -166,4 +170,82 @@ func runPlanFresh(ctx context.Context, in *packs.Input) packs.Result {
 	}
 	res.Detail = fmt.Sprintf("%d changed IaC roots, each with a fresh plan", fresh)
 	return res
+}
+
+// FreshPlan is one recorded plan as D-CP's policy checks read it (the shape
+// of policy.Plan on feat/packs-d-cp): one entry per redacted copy (a CDK plan
+// has one per stack). Path is the absolute redacted JSON under StateDir();
+// the stored plan itself is never handed out.
+type FreshPlan struct {
+	ID, Env, Policy string
+	Kind            model.Kind
+	Name            string // "plan:<id>", or "plan:<id>/<stack>" for CDK
+	Path            string
+}
+
+// MaxFreshTried bounds the records FreshPlans re-hashes (newest first).
+const MaxFreshTried = 20
+
+// FreshPlans lists the plans recorded for the current IaC tree: the newest
+// record per IaC root whose inputs hash, recomputed now, matches. Policy is
+// the environment's apply policy (the stricter of apply and destroy for a
+// plan that destroys), read through envgate so a repo file cannot loosen it.
+// A pruned copy is skipped. It is the function this file hands to
+// policy.SetRecordedPlans once D-CP's seam is on the same branch.
+func FreshPlans(in *packs.Input) ([]FreshPlan, error) {
+	sd := in.StateDir()
+	if sd == "" {
+		return nil, errors.New("no workspace: plan records cannot be read")
+	}
+	recs, err := plans.All(sd)
+	if err != nil {
+		return nil, fmt.Errorf("plan records unreadable: %w", err)
+	}
+	gt := envgate.FromManifest(envgate.Cloud, in.Manifest, in.Config)
+	ctx := context.Background()
+	seen := map[string]bool{}
+	var out []FreshPlan
+	tried := 0
+	for _, r := range recs { // newest first
+		if r.InputsHash == "" || seen[r.Dir] || len(r.Redacted) == 0 {
+			continue
+		}
+		if tried++; tried > MaxFreshTried {
+			break
+		}
+		inputs := r.Inputs
+		if len(inputs) == 0 {
+			inputs = append([]string{r.Dir}, r.VarFiles...)
+		}
+		if h, err := plans.InputsHash(ctx, in.Root, inputs); err != nil || h != r.InputsHash {
+			continue
+		}
+		seen[r.Dir] = true
+		pol := gt.Policy(r.Env, envgate.Apply)
+		if r.Destroys() {
+			pol = envgate.Stricter(pol, gt.Policy(r.Env, envgate.Destroy))
+		}
+		cdk := r.Tool == "cdk" || r.Tool == "cdktf"
+		for i, rn := range r.Redacted {
+			if !strings.HasPrefix(rn, plans.Dir+"/") || strings.Contains(rn, "..") {
+				continue
+			}
+			abs := filepath.Join(sd, filepath.FromSlash(rn))
+			if _, err := os.Stat(abs); err != nil {
+				continue // pruned
+			}
+			fp := FreshPlan{ID: r.ID, Env: r.Env, Policy: pol, Kind: model.Kind(r.Kind), Name: "plan:" + r.ID, Path: abs}
+			if cdk {
+				fp.Kind = model.KindCFN
+				if i < len(r.Stacks) {
+					fp.Name += "/" + r.Stacks[i].Name
+				}
+			}
+			if fp.Kind == "" {
+				continue
+			}
+			out = append(out, fp)
+		}
+	}
+	return out, nil
 }
