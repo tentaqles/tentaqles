@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "acmesa",
+      "location": "westeurope",
+      "properties": {"allowBlobPublicAccess": true, "encryption": {"services": {"blob": {"enabled": false}}}}
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-04-01",
+      "name": "acme-nsg",
+      "properties": {"securityRules": [
+        {"name": "ssh", "properties": {"direction": "Inbound", "access": "Allow", "protocol": "Tcp", "sourceAddressPrefix": "*", "destinationPortRange": "20-23"}},
+        {"name": "https", "properties": {"direction": "Inbound", "access": "Allow", "protocol": "Tcp", "sourceAddressPrefix": "Internet", "destinationPortRange": "443"}},
+        {"name": "rdp-deny", "properties": {"direction": "Inbound", "access": "Deny", "protocol": "Tcp", "sourceAddressPrefix": "*", "destinationPortRange": "3389"}}
+      ]}
+    },
+    {
+      "type": "Microsoft.Sql/servers/firewallRules",
+      "apiVersion": "2022-05-01-preview",
+      "name": "acme-sql/all",
+      "properties": {"startIpAddress": "0.0.0.0", "endIpAddress": "255.255.255.255"}
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "nested",
+      "properties": {"mode": "Complete", "template": {"resources": []}}
+    }
+  ]
+}

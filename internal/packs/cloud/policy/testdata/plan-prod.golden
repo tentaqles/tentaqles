@@ -1,0 +1,11 @@
+plan.json:5 error IAC001 aws_db_instance.main: stateful aws_db_instance is replaced (deleted and created again); its data is lost unless it is backed up
+plan.json:5 error IAC004 aws_db_instance.main: storage encryption is off (storage_encrypted / StorageEncrypted = false)
+plan.json:5 error IAC005 aws_db_instance.main: the database instance is publicly accessible
+plan.json:5 error IAC006 aws_db_instance.main: deletion protection is off on a database
+plan.json:9 error IAC001 aws_s3_bucket.logs: stateful aws_s3_bucket is deleted; its data is lost unless it is backed up
+plan.json:13 error IAC002 aws_security_group.web: ingress from anywhere (0.0.0.0/0, ::/0 or *) reaches admin or database port 22; restrict the source to known ranges or use a bastion/private endpoint
+plan.json:21 error IAC003 aws_s3_bucket_public_access_block.logs: the S3 public access block is disabled (block_public_acls)
+plan.json:23 error IAC006 azurerm_key_vault.main: purge protection is off on a key vault
+plan.json:25 error IAC005 azurerm_mssql_firewall_rule.all: the database firewall allows every address (0.0.0.0–255.255.255.255)
+plan.json:31 error IAC002 aws_security_group.noreason: ingress from anywhere (0.0.0.0/0, ::/0 or *) reaches admin or database port 22, 1433, 3306, 3389, 5432, 6379, 27017; restrict the source to known ranges or use a bastion/private endpoint
+plan.json:31 error SUP001 aws_security_group.noreason: the tq-allow suppression of IAC002 has no reason (write "IAC002: <reason>")

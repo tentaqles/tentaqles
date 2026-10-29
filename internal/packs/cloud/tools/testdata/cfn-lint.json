@@ -1,0 +1,30 @@
+[
+  {
+    "Filename": "infra/cfn/template.yaml",
+    "Level": "Error",
+    "Location": {
+      "End": {"ColumnNumber": 13, "LineNumber": 8},
+      "Path": ["Resources", "AcmeBucket", "Properties", "BucketNam"],
+      "Start": {"ColumnNumber": 7, "LineNumber": 8}
+    },
+    "Message": "Additional properties are not allowed ('BucketNam' was unexpected)",
+    "ParentId": null,
+    "Rule": {
+      "Description": "Making sure that resources properties are properly configured",
+      "Id": "E3002",
+      "ShortDescription": "Resource properties are invalid",
+      "Source": "https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/cfn-schemas.md"
+    }
+  },
+  {
+    "Filename": "infra/cfn/template.yaml",
+    "Level": "Warning",
+    "Location": {
+      "End": {"ColumnNumber": 20, "LineNumber": 3},
+      "Path": ["Parameters", "AcmeUnused"],
+      "Start": {"ColumnNumber": 3, "LineNumber": 3}
+    },
+    "Message": "Parameter AcmeUnused not used.",
+    "Rule": {"Description": "Making sure the parameters defined are used", "Id": "W2001", "ShortDescription": "Check if Parameters are Used", "Source": ""}
+  }
+]

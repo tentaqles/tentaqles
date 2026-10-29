@@ -1,0 +1,64 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "infra/terraform",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "main.tf",
+      "Class": "config",
+      "Type": "terraform",
+      "MisconfSummary": {"Successes": 10, "Failures": 3},
+      "Misconfigurations": [
+        {
+          "Type": "Terraform Security Check",
+          "ID": "AVD-AWS-0107",
+          "AVDID": "AVD-AWS-0107",
+          "Title": "An ingress security group rule allows traffic from /0.",
+          "Message": "Security group rule allows ingress from public internet.",
+          "Severity": "CRITICAL",
+          "Status": "FAIL",
+          "CauseMetadata": {"Resource": "aws_security_group.web", "Provider": "AWS", "Service": "ec2", "StartLine": 14, "EndLine": 14}
+        },
+        {
+          "Type": "Terraform Security Check",
+          "ID": "AVD-AWS-0124",
+          "Title": "Missing description for security group rule.",
+          "Message": "Security group rule does not have a description.",
+          "Severity": "LOW",
+          "Status": "FAIL",
+          "CauseMetadata": {"Resource": "aws_security_group.web", "StartLine": 13, "EndLine": 17}
+        },
+        {
+          "Type": "Terraform Security Check",
+          "ID": "AVD-AWS-0099",
+          "Title": "Passed check",
+          "Severity": "HIGH",
+          "Status": "PASS",
+          "CauseMetadata": {"StartLine": 1}
+        }
+      ]
+    },
+    {
+      "Target": "modules/db/main.tf",
+      "Class": "config",
+      "Type": "terraform",
+      "Misconfigurations": [
+        {
+          "ID": "AVD-AWS-0080",
+          "Title": "RDS encryption has not been enabled at a DB Instance level.",
+          "Message": "Instance does not have storage encryption enabled.",
+          "Severity": "HIGH",
+          "Status": "FAIL",
+          "CauseMetadata": {"Resource": "module.db.aws_db_instance.main", "StartLine": 4, "EndLine": 4}
+        },
+        {
+          "ID": "AVD-AWS-0176",
+          "Title": "RDS IAM Database Authentication Disabled",
+          "Severity": "MEDIUM",
+          "Status": "FAIL",
+          "CauseMetadata": {"StartLine": 1}
+        }
+      ]
+    }
+  ]
+}

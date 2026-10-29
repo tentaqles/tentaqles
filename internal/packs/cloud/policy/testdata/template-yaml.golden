@@ -1,0 +1,5 @@
+template.yaml:4 error IAC002 AdminSg: ingress from anywhere (0.0.0.0/0, ::/0 or *) reaches admin or database port 3389; restrict the source to known ranges or use a bastion/private endpoint
+template.yaml:22 error IAC003 PublicBucket: the bucket ACL makes it public (public-read or public-read-write)
+template.yaml:27 error IAC004 Db: storage encryption is off (storage_encrypted / StorageEncrypted = false)
+template.yaml:27 warn IAC005 Db: the database instance is publicly accessible
+template.yaml:34 warn IAC006 Table: the stateful resource has DeletionPolicy Delete (the default); use Retain or Snapshot
