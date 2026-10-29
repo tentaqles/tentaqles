@@ -108,6 +108,18 @@ func DeleteGrant(key string) error {
 	return nil
 }
 
+// AdoptBypass files a legacy <hash>.bypass grant as a .mode grant named for
+// workspace ws (a relaxed grant with no table, which reads exactly as the
+// .bypass file does), so GrantsFor finds it after a re-trust. It does
+// nothing when hash has a .mode grant already, has no .bypass file, or is
+// the global key.
+func AdoptBypass(hash, ws string) error {
+	if hash == "" || ws == "" || hash == GlobalGrantKey || exists(GrantPath(hash)) || !exists(file(hash, ".bypass")) {
+		return nil
+	}
+	return SaveGrant(hash, Grant{Mode: "relaxed", Workspace: ws})
+}
+
 // KeyedGrant is a stored grant with the key (manifest hash) it is filed under.
 type KeyedGrant struct {
 	Key   string

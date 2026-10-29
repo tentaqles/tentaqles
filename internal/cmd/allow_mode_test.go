@@ -120,6 +120,39 @@ func TestPlainAllowAfterEditDropsTheGrant(t *testing.T) {
 	}
 }
 
+// A legacy .bypass grant is adopted under the workspace's name the first
+// time the hook sees it, so a re-trust after an edit reports it dropped and
+// removes the stale file too (spec E §6.3, §11.1).
+func TestPlainAllowAfterEditDropsLegacyBypass(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", relaxedWorkspace)
+	asHuman(t)
+	h := manifestHash(t, root)
+	if err := trust.AllowBypass(h); err != nil {
+		t.Fatal(err)
+	}
+	if res := resolveMode(wsFor(t, root), root, ""); res.Mode != guardcfg.ModeRelaxed {
+		t.Fatalf("a legacy .bypass reads as relaxed: %+v", res)
+	}
+	if gs := trust.GrantsFor("acme"); len(gs) != 1 || gs[0].Key != h || gs[0].Grant.Mode != "relaxed" {
+		t.Fatalf("the hook adopts the .bypass under the workspace's name: %+v", gs)
+	}
+	if res := resolveMode(wsFor(t, root), root, ""); res.Mode != guardcfg.ModeRelaxed {
+		t.Fatalf("the adopted grant still reads as relaxed: %+v", res)
+	}
+	mp := filepath.Join(root, manifest.FileName)
+	b, _ := os.ReadFile(mp)
+	if err := os.WriteFile(mp, append(b, "language: en\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runGuardCmd(t, "allow", "acme")
+	if err != nil || !strings.Contains(out, "mode grant dropped (was relaxed): run tq allow --mode acme relaxed") {
+		t.Fatalf("allow after edit: %v %q", err, out)
+	}
+	if trust.IsBypassAllowed(h) {
+		t.Fatal("the stale .bypass and .mode files are removed")
+	}
+}
+
 func TestAllowModeGlobal(t *testing.T) {
 	isolateHome(t)
 	asHuman(t)

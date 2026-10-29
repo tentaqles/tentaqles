@@ -50,6 +50,11 @@ func resolveModeFor(ws *resolve.Workspace, cwd, target, launch string) guardcfg.
 	case ws != nil && ws.Manifest != nil && trust.IsTrusted(ws.Hash):
 		m, name, root = ws.Manifest, ws.Name, ws.Root
 		grant = guardcfg.WorkspaceGrant(ws.Hash)
+		if grant != nil && grant.FromBypass {
+			// Name the legacy grant once so a re-trust after an edit can
+			// report it dropped (tq allow). Best effort: it reads the same.
+			_ = trust.AdoptBypass(ws.Hash, ws.Name)
+		}
 	case ws != nil && ws.Manifest != nil:
 		// An untrusted workspace (an edited manifest, a new client folder)
 		// has the default ceiling: the global grant is only for neutral
