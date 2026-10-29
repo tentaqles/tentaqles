@@ -55,6 +55,7 @@ var UnattendedGroups = map[string]UnattendedGroup{
 	"tq/guard-file-write":     GroupSelfProtection,
 	"tq/settings-widen":       GroupSelfProtection,
 	"tq/settings-shell-write": GroupSelfProtection,
+	"tq/trust-store-write":    GroupSelfProtection,
 	GuardErrorID:              GroupSelfProtection,
 	// everything else
 	"tq/force-push-main":       GroupSkippable,

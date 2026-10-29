@@ -376,3 +376,22 @@ func TestUnattendedLineWorkspaceNotThisFolder(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// tq's trust store and registry stay protected in unattended sessions: a
+// write (which could add a bypass marker) blocks, a read is allowed.
+func TestUnattendedTrustStoreWriteBlocks(t *testing.T) {
+	_, proj := unattendedWS(t, unattendedAll, true)
+	for _, cmd := range []string{"echo ok > ~/.tentaqles/trust/abc.bypass", "rm $TQ_HOME/config.yaml"} {
+		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, cmd, "bypassPermissions"))
+		if code != 2 || !strings.Contains(errOut, "tq/trust-store-write") {
+			t.Fatalf("%q: want block, got code %d stderr %q", cmd, code, errOut)
+		}
+	}
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "cat ~/.tentaqles/config.yaml", "bypassPermissions"))
+	if code != 0 || strings.TrimSpace(out) != "" {
+		t.Fatalf("read: want silent allow, got code %d out %q", code, out)
+	}
+	if recs := guardlog.Read("acme", time.Now().Add(-time.Minute), 0); len(recs) != 0 {
+		t.Fatalf("nothing was skipped: %+v", recs)
+	}
+}

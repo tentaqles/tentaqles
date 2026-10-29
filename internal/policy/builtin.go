@@ -37,6 +37,16 @@ const trackerAzureHost = `\b(dev\.azure\.com|visualstudio\.com)\b`
 // envExcept exempts the conventional committed templates of a .env file.
 const envExcept = `\.env\.(example|sample|template|dist|defaults|schema)\b`
 
+// tqHomeVar is the TQ_HOME variable as bash, PowerShell or cmd spell it.
+const tqHomeVar = `(\$\{?(env:)?tq_home\}?|%tq_home%)`
+
+// tqStore is tq's trust store or registry under ~/.tentaqles or $TQ_HOME.
+const tqStore = `(\.tentaqles|` + tqHomeVar + `)[/\\]+(trust\b|config\.yaml\b)`
+
+// scriptWrite is a call in a python/node one-liner that writes or removes a
+// file, or an open() in a write mode.
+const scriptWrite = `(\bwrite|\bunlink|\bremove|\brename|\brmtree|\breplace\(|\bmove\(|\bcopy(file)?\(|\brmSync|\bappendFile|\bmkdir|\bchmod|\btouch\(|,\s*["'][wax]b?\+?["'])`
+
 // readVerbs are commands (bash, cmd and PowerShell) that print a file.
 const readVerbs = `\b(cat|type|more|less|head|tail|bat|nl|strings|xxd|od|grep|rg|findstr|gc|get-content|select-string|sls)\b`
 
@@ -119,6 +129,29 @@ func Builtin() []Rule {
 			Command:         `\.tentaqles[/\\]+guard\.yaml`,
 			SkipHeredocData: true,
 			Reason:          "the global guard file is changed with `tq guard off|on|set --all`, not from the shell",
+		},
+		// --- tq's trust store and registry ----------------------------------------
+		// $TQ_HOME/trust holds the trust and bypass markers, $TQ_HOME/config.yaml
+		// the registry: only tq (tq allow, tq init, ...) writes them. Reads stay
+		// allowed. A custom TQ_HOME is matched by its variable spelling only.
+		{
+			ID: "tq/trust-store-write", Action: Deny,
+			Tool:   "Edit|Write|MultiEdit|NotebookEdit",
+			Path:   `(^|/)(\.tentaqles|` + tqHomeVar + `)/(trust(/|$)|config\.yaml$)`,
+			Reason: "tq's trust store and registry are changed with tq (tq allow, tq deny, tq init), not edited directly",
+		},
+		{
+			ID: "tq/trust-store-write", Action: Deny,
+			// Redirects and in-place writers deny on any mention of the target;
+			// mv, rm and their PowerShell forms on any mention (moving the store
+			// away is a write too); cp only when the target is the destination,
+			// so `cp ~/.tentaqles/config.yaml backup` is a read. A python/node
+			// one-liner denies when it names the target and a write call.
+			Command: `(>{1,2}\s*|\b(tee|sed\s+-i|set-content|add-content|out-file|sc|ac|new-item|ni|rm|rmdir|del|erase|rd|remove-item|ri|mv|move|move-item|mi|rename-item|ren)\b` + seg + `)\S*` + tqStore +
+				`|\b(cp|copy|copy-item|cpi)\b` + seg + `\S*` + tqStore + `\S*` + destTail +
+				`|\b(python[0-9.]*|py|node|deno|bun)(\.exe)?\b[^\n]*\s-(c|e|p|-eval)\b[^\n]*(` + tqStore + `[^\n]*` + scriptWrite + `|` + scriptWrite + `[^\n]*` + tqStore + `)`,
+			SkipHeredocData: true,
+			Reason:          "tq's trust store and registry are changed with tq (tq allow, tq deny, tq init), not from the shell",
 		},
 		// --- git ---------------------------------------------------------------
 		{

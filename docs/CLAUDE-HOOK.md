@@ -223,15 +223,15 @@ classified there):
 - **Self-protection**: `tq/guard-change` (covers `tq guard`, `tq allow`,
   `tq deny` and `tq unattended on|off`), `tq/guard-file-write`,
   `tq/settings-widen`, `tq/settings-shell-write` (also covers
-  `.claude/tq-rules.yaml`) and the `tq/guard-error` fail-safe ask, so an
+  `.claude/tq-rules.yaml`), `tq/trust-store-write` (tq's trust store and
+  registry) and the `tq/guard-error` fail-safe ask, so an
   agent cannot widen unattended mode or switch the guard off. The human-only
   commands (`tq secret`, `tq hub answer`, `tq hub push`,
   `tq hub sync retry`, the build gate's approve/judge/answer/finish/token
   and `dod --override`) refuse agent sessions in their own code, outside the
   hook, so unattended mode does not change them either. Trust is pinned to
   the manifest's hash: an edit of `.tentaqles.yaml` makes it untrusted,
-  which turns unattended mode off until a human runs `tq allow`. tq has no
-  rule of its own for writes to the trust store (`$TQ_HOME/trust`).
+  which turns unattended mode off until a human runs `tq allow`.
 
 Also enforced:
 
@@ -635,10 +635,22 @@ The guard protects its own settings: `tq guard off|on|set`, `tq allow` and
 The shell rule denies any command line that names the file, but not a
 heredoc body that is only data and mentions it (see below).
 
+The same goes for tq's trust store (`$TQ_HOME/trust/`, which holds the
+trust and bypass markers) and registry (`$TQ_HOME/config.yaml`):
+`tq/trust-store-write` denies Edit, Write, MultiEdit and NotebookEdit on
+them, and shell writes: redirects, `tee`, `sed -i`, `rm`, `mv`, `cp` onto
+them, `Set-Content`, `Add-Content`, `Out-File`, `Remove-Item`,
+`Move-Item`, `Copy-Item` onto them, and `python -c` / `node -e` one-liners
+that name them and call a write. Both the `~/.tentaqles` and the
+`$TQ_HOME` (`${TQ_HOME}`, `$env:TQ_HOME`, `%TQ_HOME%`) spellings match; a
+custom `TQ_HOME` written out as a literal path does not. Reads (`cat`,
+`Get-Content`, Read, `cp` from them) stay allowed. `tq allow`, `tq deny`
+and `tq init` change these files.
+
 ### Heredocs: data and code
 
-For the **Bash** tool only, `tq/guard-file-write` (shell rule) and
-`tq/env-dump` skip heredoc bodies when the *whole command* is a single
+For the **Bash** tool only, `tq/guard-file-write` and
+`tq/trust-store-write` (shell rules) and `tq/env-dump` skip heredoc bodies when the *whole command* is a single
 command (no `;`, `&&`, `||`, `|`, `&` or second line outside the bodies)
 of one of these shapes, and only then:
 
