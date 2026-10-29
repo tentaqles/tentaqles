@@ -104,3 +104,23 @@ func TestResolveFloor(t *testing.T) {
 		t.Fatalf("prod stays resolved: %+v", r)
 	}
 }
+
+// review fin M1: the stricter of two environments, and an undeclared
+// environment (policy deny) wins.
+func TestStricterEnv(t *testing.T) {
+	g := gateFor(t, "")
+	for _, c := range [][4]string{
+		{"dev", "prod", envgate.Apply, "prod"},
+		{"prod", "dev", envgate.Apply, "prod"},
+		{"dev", "dev", envgate.Apply, "dev"},
+		{"dev", "gone", envgate.Apply, "gone"},
+		{"", "dev", envgate.Destroy, "dev"},
+	} {
+		if got := g.StricterEnv(c[0], c[1], c[2]); got != c[3] {
+			t.Errorf("StricterEnv(%q, %q, %s) = %q, want %q", c[0], c[1], c[2], got, c[3])
+		}
+	}
+	if p := g.Policy("gone", envgate.Apply); p != envgate.Deny {
+		t.Errorf("undeclared policy: %s", p)
+	}
+}

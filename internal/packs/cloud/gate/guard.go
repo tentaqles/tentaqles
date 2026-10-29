@@ -343,6 +343,16 @@ func evaluate(iv Invocation, op Op, unreadable bool, gt envgate.Gate, h Host, g 
 			}
 		}
 	}
+	// A stored plan applies to the backend and workspace it was planned
+	// against, so the environment it was recorded for floors the command's
+	// signals (review fin M1).
+	planFloor := ""
+	if rec != nil {
+		if fl := recordFloor(gt, env, rec, destroys); fl != env {
+			env, planFloor = fl, rec.ID
+			res = envgate.Resolution{Env: fl, Resolved: true, By: envgate.Signal{Key: "plan", Value: rec.ID}}
+		}
+	}
 	pol := envgate.Auto
 	if op == OpApply {
 		pol = gt.Policy(env, envgate.Apply)
@@ -360,6 +370,9 @@ func evaluate(iv Invocation, op Op, unreadable bool, gt envgate.Gate, h Host, g 
 		where += " (an earlier statement on the line changes the environment in a way tq cannot read, such as a sourced file, declare -x, unset or a write to the Env: drive; it counts as at least the default environment, and the identity is unknown)"
 	case !res.Resolved && env != envgate.NoEnv:
 		where += " (no signal named the target; it counts as the default environment)"
+	}
+	if planFloor != "" {
+		where += " (the stored plan " + planFloor + " was recorded for " + env + ", and it applies there whatever the command's other signals say)"
 	}
 	denied := func(reason, why string) verdict {
 		if !res.Resolved && env != envgate.NoEnv {
@@ -386,6 +399,20 @@ func evaluate(iv Invocation, op Op, unreadable bool, gt envgate.Gate, h Host, g 
 	default:
 		return denied(fmt.Sprintf("%s: %s to %s is %s: deny. A human runs it in their own terminal, outside Claude", IDApplyEnv, what, where, action), "policy")
 	}
+}
+
+// recordFloor is the stricter of env and the environment a plan record was
+// made for (review fin M1). A record whose environment the gate no longer
+// declares has policy deny, so it wins.
+func recordFloor(gt envgate.Gate, env string, rec *plans.Record, destroys bool) string {
+	if rec == nil || rec.Env == "" || rec.Env == env {
+		return env
+	}
+	action := envgate.Apply
+	if destroys {
+		action = envgate.Destroy
+	}
+	return gt.StricterEnv(env, rec.Env, action)
 }
 
 func firstWords(raw string) string {
@@ -640,6 +667,12 @@ func approve(iv Invocation, action, env, where string, rec *plans.Record, gt env
 	build := func(r plans.Record) {
 		if family(r.Tool) != family(iv.Tool) {
 			lastErr = fmt.Errorf("plan %s is a %s plan, not %s", r.ID, r.Tool, iv.Tool)
+			return
+		}
+		if r.Env != env {
+			// review fin M1: a plan binds to the environment it was
+			// recorded for, never to another one the command resolves to
+			lastErr = fmt.Errorf("plan %s was recorded for environment %s, but the command targets %s", r.ID, r.Env, env)
 			return
 		}
 		stack := ""
@@ -918,13 +951,15 @@ func IdentityDrift(call policy.ToolCall, g packs.GuardCtx) (policy.Action, strin
 		} else {
 			env = gt.Resolve(action, Signals(iv, h)).Env
 		}
-		id := ResolveIdentity(iv, h, len(gt.Match(env)["subscriptions"]) > 0)
-		// An unknown identity is not drift by itself: tq/iac-apply-env floors
-		// the environment and denies it in an approve environment.
 		account := ""
 		if r, ok := savedPlanRecord(iv, g); ok {
 			account = r.Account
+			// the plan's environment floors the command's (review fin M1)
+			env = recordFloor(gt, env, &r, iv.Op == OpDestroy || r.Destroys())
 		}
+		id := ResolveIdentity(iv, h, len(gt.Match(env)["subscriptions"]) > 0)
+		// An unknown identity is not drift by itself: tq/iac-apply-env floors
+		// the environment and denies it in an approve environment.
 		if r := Drift(gt, env, id, account, g.Manifest()); r != "" {
 			g.Count("apply_denied:identity-drift", 1)
 			return policy.Deny, fmt.Sprintf("%s: %s to environment %s: %s. Switch the identity (tq doctor --verify shows what is logged in) or target the right environment", IDDrift, describe(iv, iv.Op), env, r), false

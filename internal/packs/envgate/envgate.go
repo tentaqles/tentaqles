@@ -472,6 +472,11 @@ func (g Gate) stricterEnv(a, b, action string) string {
 	return a
 }
 
+// StricterEnv is the stricter of two environments for action ("" for the
+// strictest policy overall). An environment the gate does not declare has
+// policy deny, so it wins.
+func (g Gate) StricterEnv(a, b, action string) string { return g.stricterEnv(a, b, action) }
+
 func (g Gate) maxRank(env string) int {
 	m := 0
 	for _, act := range g.spec.Actions {

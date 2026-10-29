@@ -90,6 +90,15 @@ func Signals(iv Invocation, h Host) []envgate.Tier {
 	}
 	switch iv.Tool {
 	case "terraform", "tofu":
+		if iv.LineWorkspace != "" {
+			// terraform workspace select earlier on the line (review fin
+			// C1). TF_WORKSPACE wins over the selection in terraform, so it
+			// counts in the same tier and the stricter of the two wins.
+			add(&t1, "workspaces", iv.LineWorkspace, iv.Env["TF_WORKSPACE"])
+			if !iv.Unknown {
+				add(&t1, "workspaces", h.env(iv, "TF_WORKSPACE"))
+			}
+		}
 		for _, vf := range iv.FlagAll("var-file") {
 			add(&t1, "var_files", vf)
 			if dir != "?" && dir != "." && !strings.HasPrefix(vf, "/") {
@@ -98,9 +107,17 @@ func Signals(iv Invocation, h Host) []envgate.Tier {
 		}
 	case "pulumi":
 		add(&t1, "stacks", iv.FlagAll("stack", "s")...)
+		if !iv.Has("stack", "s") {
+			// pulumi stack select earlier on the line (review fin C1)
+			add(&t1, "stacks", iv.LineStack)
+		}
 	case "az":
 		add(&t1, "resource_groups", iv.FlagAll("resource-group", "g")...)
 		add(&t1, "subscriptions", iv.FlagAll("subscription")...)
+		if !iv.Has("subscription") {
+			// az account set earlier on the line: the same as --subscription
+			add(&t1, "subscriptions", iv.LineSubscription)
+		}
 		if len(iv.Verb) >= 2 && iv.Verb[0] == "group" {
 			add(&t1, "resource_groups", iv.FlagAll("name", "n")...)
 		}
@@ -183,6 +200,9 @@ func ResolveIdentity(iv Invocation, h Host, wantSub bool) Identity {
 		// (AZURE_CONFIG_DIR) are unknown.
 		if iv.Tool == "az" {
 			id.Subscription, _ = iv.Flag("subscription")
+			if id.Subscription == "" {
+				id.Subscription = iv.LineSubscription
+			}
 		}
 		if aws {
 			id.Profile, _ = iv.Flag("profile")
@@ -195,12 +215,21 @@ func ResolveIdentity(iv Invocation, h Host, wantSub bool) Identity {
 	if !aws {
 		if iv.Tool == "az" {
 			id.Subscription, _ = iv.Flag("subscription")
+			if id.Subscription == "" {
+				// az account set earlier on the line (review fin C1)
+				id.Subscription = iv.LineSubscription
+			}
 		}
 		if id.Subscription == "" {
 			id.Subscription = h.env(iv, "ARM_SUBSCRIPTION_ID")
 		}
 		if id.Subscription == "" && (iv.Tool == "az" || wantSub) {
-			id.Subscription = defaultSubscription(iv, h)
+			// the CLI's default subscription: the line's az account set,
+			// else azureProfile.json as it was when the hook ran
+			id.Subscription = iv.LineSubscription
+			if id.Subscription == "" {
+				id.Subscription = defaultSubscription(iv, h)
+			}
 		}
 	}
 	if iv.Tool == "az" {

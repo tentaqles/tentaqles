@@ -53,6 +53,13 @@ type Invocation struct {
 	// its variables are unknown, the hook's own environment is not used, and
 	// the target is floored at the default environment.
 	Unknown bool
+	// Selections an earlier leaf of the line made with the tools' own verbs
+	// (review fin C1): terraform/tofu workspace select|new and pulumi stack
+	// select|init (for that folder), az account set (for every later leaf).
+	// "" when none.
+	LineWorkspace    string
+	LineStack        string
+	LineSubscription string
 }
 
 // Flag returns the first value of any of the names.
@@ -91,6 +98,22 @@ type state struct {
 	dir     string
 	env     map[string]string
 	unknown bool // an unmodelled statement may have changed the environment
+	// line is what the tools' own selection verbs changed. It lives outside
+	// the shell (.terraform/environment, ~/.pulumi, azureProfile.json), so
+	// a subshell's selection carries on to the rest of the line too.
+	line *lineState
+}
+
+// lineState is what the line's tool verbs selected (review fin C1).
+type lineState struct {
+	unknown      bool              // a tool verb changed a selection tq does not model
+	workspace    map[string]string // folder -> terraform/tofu workspace
+	stack        map[string]string // folder -> pulumi stack
+	subscription string            // az account set
+}
+
+func newState(dir string) *state {
+	return &state{dir: dir, env: map[string]string{}, line: &lineState{workspace: map[string]string{}, stack: map[string]string{}}}
 }
 
 // ToolName normalises a command word: its base name, lower case, without
@@ -183,7 +206,7 @@ func AnalyzeShell(cmd string, powershell bool) []Invocation {
 // repo-relative folder the shell is in ("" the repo root, "?" unknown).
 func AnalyzeShellAt(cmd string, powershell bool, base string) []Invocation {
 	cmd = guard.BlankDataHeredocs(cmd)
-	st := &state{dir: base, env: map[string]string{}}
+	st := newState(base)
 	var out []Invocation
 	for _, seg := range splitShell(cmd, 0, powershell) {
 		out = append(out, analyzeSeg(seg, st, 0)...)
@@ -193,7 +216,7 @@ func AnalyzeShellAt(cmd string, powershell bool, base string) []Invocation {
 
 // AnalyzeArgv reads one argv (no shell).
 func AnalyzeArgv(argv []string) []Invocation {
-	return analyzeSeg(FromArgv(argv), &state{env: map[string]string{}}, 0)
+	return analyzeSeg(FromArgv(argv), newState(""), 0)
 }
 
 func analyzeSeg(seg Segment, st *state, depth int) []Invocation {
@@ -325,7 +348,7 @@ func nested(iv Invocation, script string, st *state, depth int, ps bool) []Invoc
 		iv.Opaque = true
 		return []Invocation{iv}
 	}
-	sub := &state{dir: iv.Dir, env: map[string]string{}, unknown: iv.Unknown}
+	sub := &state{dir: iv.Dir, env: map[string]string{}, unknown: iv.Unknown, line: st.line}
 	for k, v := range iv.Env {
 		sub.env[k] = v
 	}
@@ -398,6 +421,8 @@ func unwrap(iv Invocation, i int, st *state, depth int) []Invocation {
 		case Tools[name]:
 			iv.Tool, iv.ToolAt = name, i
 			parseTool(&iv)
+			st.line.apply(&iv)
+			st.line.record(iv)
 			return []Invocation{iv}
 		case name == "env":
 			i++
@@ -592,4 +617,126 @@ func skipRunnerFlags(iv *Invocation, i int, st *state, depth int) int {
 		}
 	}
 	return i
+}
+
+// selected looks up a folder's selection: the value, and whether the
+// folder cannot be compared with the selections made (either side "?").
+func selected(m map[string]string, dir string) (string, bool) {
+	if v, ok := m[dir]; ok && dir != "?" {
+		return v, false
+	}
+	if len(m) == 0 {
+		return "", false
+	}
+	if dir == "?" {
+		return "", true
+	}
+	_, unk := m["?"]
+	return "", unk
+}
+
+// apply gives a gate leaf what earlier leaves of the line selected.
+func (ls *lineState) apply(iv *Invocation) {
+	if ls.unknown {
+		iv.Unknown = true
+	}
+	var unk bool
+	switch iv.Tool {
+	case "terraform", "tofu":
+		iv.LineWorkspace, unk = selected(ls.workspace, WorkDir(*iv))
+	case "pulumi":
+		iv.LineStack, unk = selected(ls.stack, WorkDir(*iv))
+	}
+	if unk {
+		iv.Unknown = true
+	}
+	switch iv.Tool {
+	case "az", "terraform", "tofu", "pulumi":
+		iv.LineSubscription = ls.subscription
+	}
+}
+
+// record notes the selection a leaf makes for the rest of the line. A
+// selection tq cannot read (a computed name, an interactive pick, a login,
+// a config write) makes the rest of the line unknown.
+func (ls *lineState) record(iv Invocation) {
+	words := append(append([]string(nil), iv.Verb...), iv.Pos...)
+	word := func(i int) string {
+		if i < len(words) {
+			return words[i]
+		}
+		return ""
+	}
+	// pick is the one readable name a selection names, or "".
+	pick := func(vals []string) string {
+		var got []string
+		for _, v := range vals {
+			if v != "" {
+				got = append(got, v)
+			}
+		}
+		if len(got) != 1 || computed(got[0]) {
+			return ""
+		}
+		return got[0]
+	}
+	selectIn := func(m map[string]string, vals []string) {
+		n, dir := pick(vals), WorkDir(iv)
+		if n == "" || dir == "?" {
+			ls.unknown = true
+			return
+		}
+		m[dir] = n
+	}
+	switch iv.Tool {
+	case "terraform", "tofu":
+		if word(0) != "workspace" {
+			return
+		}
+		switch word(1) {
+		case "select", "new":
+			selectIn(ls.workspace, words[min(2, len(words)):])
+		case "delete":
+			ls.unknown = true
+		}
+	case "pulumi":
+		switch word(0) {
+		case "login", "logout":
+			ls.unknown = true
+		case "stack":
+			switch word(1) {
+			case "select", "init":
+				selectIn(ls.stack, append(append([]string(nil), words[min(2, len(words)):]...), iv.FlagAll("stack", "s")...))
+			case "rm", "remove", "rename":
+				ls.unknown = true
+			}
+		}
+	case "az":
+		switch {
+		case word(0) == "login" || word(0) == "logout" || word(0) == "configure":
+			ls.unknown = true
+		case word(0) == "config" && (word(1) == "set" || word(1) == "unset"):
+			ls.unknown = true
+		case word(0) == "account" && word(1) == "clear":
+			ls.unknown = true
+		case word(0) == "account" && word(1) == "set":
+			n := pick(iv.FlagAll("subscription", "s", "name", "n"))
+			if n == "" {
+				ls.unknown = true
+				return
+			}
+			ls.subscription = n
+		}
+	case "aws":
+		switch {
+		case word(0) == "configure":
+			switch word(1) {
+			case "get", "list", "list-profiles", "export-credentials":
+			default:
+				ls.unknown = true
+			}
+		case word(0) == "sso" || word(0) == "login" || word(0) == "logout":
+			ls.unknown = true
+		}
+	}
 }
