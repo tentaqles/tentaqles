@@ -61,7 +61,7 @@ func Rules() map[string]string {
 		RLS008: "a SECURITY DEFINER function in an exposed schema without SET search_path, or one anon can execute",
 		RLS009: "auth.uid() called per row instead of (select auth.uid())",
 		RLS010: "a service_role reference in a policy (service_role bypasses RLS)",
-		RLS011: "a DO block or routine body with dynamic RLS-relevant DDL (policies, row level security, grants, security definer, set schema) the gate cannot judge",
+		RLS011: "a DO block or routine body with dynamic RLS-relevant DDL (policies, row level security, grants, security definer, set schema, CREATE TABLE or VIEW) the gate cannot judge",
 	}
 }
 
@@ -155,6 +155,7 @@ type state struct {
 	exposed    map[string]bool
 	tables     map[string]*Table
 	views      map[string]*view
+	matviews   map[string]bool // every materialized view the replay knows, by name
 	funcs      map[string]*function
 	out        []packs.Finding
 	supp       []string
@@ -179,7 +180,7 @@ type pending struct {
 
 // Run replays the units in order and judges those marked Judge.
 func Run(units []Unit, o Options) Result {
-	s := &state{o: o, exposed: map[string]bool{}, tables: map[string]*Table{}, views: map[string]*view{}, funcs: map[string]*function{}, judgedFile: map[string]bool{}}
+	s := &state{o: o, exposed: map[string]bool{}, tables: map[string]*Table{}, views: map[string]*view{}, matviews: map[string]bool{}, funcs: map[string]*function{}, judgedFile: map[string]bool{}}
 	for _, e := range o.Exposed {
 		s.exposed[e] = true
 	}
@@ -328,6 +329,8 @@ func (s *state) statement(st sqllex.Statement) {
 			s.alterTable(st, 2)
 		case st.Match(1, "VIEW"):
 			s.alterView(st, 2)
+		case st.Match(1, "MATERIALIZED", "VIEW"):
+			s.alterMatView(st, 3)
 		case st.Match(1, "POLICY"):
 			s.alterPolicy(st, 2)
 		case st.Match(1, "FUNCTION|PROCEDURE|ROUTINE"):
@@ -344,6 +347,10 @@ func (s *state) statement(st sqllex.Statement) {
 		case st.Match(1, "VIEW"):
 			for _, n := range s.names(st, st.Skip(2, []string{"IF", "EXISTS"})) {
 				delete(s.views, n.String())
+			}
+		case st.Match(1, "MATERIALIZED", "VIEW"):
+			for _, n := range s.names(st, st.Skip(3, []string{"IF", "EXISTS"})) {
+				delete(s.matviews, n.String())
 			}
 		case st.Match(1, "FUNCTION|PROCEDURE|ROUTINE"):
 			for _, n := range s.names(st, st.Skip(2, []string{"IF", "EXISTS"})) {
@@ -404,6 +411,18 @@ func (s *state) alterTable(st sqllex.Statement, i int) {
 	n, j := st.Name(i, sqllex.Postgres)
 	if n.IsZero() {
 		return
+	}
+	// ALTER TABLE also works on views and materialized views; a known one
+	// (and no table of that name) is handled as what it is.
+	if s.tables[n.String()] == nil {
+		switch {
+		case s.matviews[n.String()]:
+			s.alterMatView(st, i)
+			return
+		case s.views[n.String()] != nil:
+			s.alterView(st, i)
+			return
+		}
 	}
 	t := s.table(n)
 	s.touch(t, st)
@@ -834,16 +853,54 @@ func (s *state) alterView(st sqllex.Statement, i int) {
 func (s *state) createMatView(st sqllex.Statement, i int) {
 	i = st.Skip(i, []string{"IF", "NOT", "EXISTS"})
 	n, _ := st.Name(i, sqllex.Postgres)
-	if n.IsZero() || !s.judge || !s.exposed[n.Schema] {
+	if n.IsZero() {
+		return
+	}
+	s.matviews[n.String()] = true
+	s.exposedMatView(st, n)
+}
+
+// exposedMatView reports materialized view n, now in an exposed schema, in a
+// judged migration.
+func (s *state) exposedMatView(st sqllex.Statement, n sqllex.Name) {
+	if !s.judge || !s.exposed[n.Schema] {
 		return
 	}
 	s.report(s.at(st), RLS007, packs.LevelError, fmt.Sprintf("materialized view %s is in an exposed schema and has no row-level security: the API serves every row; move it to a private schema and expose it through a security_invoker view or a function", n))
 }
 
+// alterMatView follows a materialized view's renames and moves; moving one
+// into an exposed schema exposes it, so the move is reported like a CREATE.
+// The move is judged even when the replay never saw the view created.
+func (s *state) alterMatView(st sqllex.Statement, i int) {
+	i = st.Skip(i, []string{"IF", "EXISTS"})
+	n, j := st.Name(i, sqllex.Postgres)
+	if n.IsZero() {
+		return
+	}
+	switch {
+	case st.Match(j, "RENAME", "TO"):
+		if to := st.At(j + 2).Ident(sqllex.Postgres); to != "" {
+			delete(s.matviews, n.String())
+			s.matviews[sqllex.Name{Schema: n.Schema, Object: to}.String()] = true
+		}
+	case st.Match(j, "SET", "SCHEMA"):
+		if to := st.At(j + 2).Ident(sqllex.Postgres); to != "" {
+			delete(s.matviews, n.String())
+			m := sqllex.Name{Schema: to, Object: n.Object}
+			s.matviews[m.String()] = true
+			s.exposedMatView(st, m)
+		}
+	}
+}
+
 // dynamicRe matches the DDL the gate would judge if it were not inside a
-// string: policies, row level security, grants, security definer and set
-// schema.
-var dynamicRe = regexp.MustCompile(`(?is)\brow\s+level\s+security\b|\b(?:create|alter|drop)\s+policy\b|\bgrant\b|\bsecurity\s+definer\b|\bset\s+schema\b`)
+// string: policies, row level security, grants, security definer, set
+// schema, security_invoker, and a non-temporary CREATE TABLE or CREATE
+// [MATERIALIZED|RECURSIVE] VIEW (RLS001 / RLS007). A temporary table or view
+// is never exposed and stays unflagged.
+var dynamicRe = regexp.MustCompile(`(?is)\brow\s+level\s+security\b|\b(?:create|alter|drop)\s+policy\b|\bgrant\b|\bsecurity\s+definer\b|\bset\s+schema\b|\bsecurity_invoker\b` +
+	`|\bcreate\s+(?:(?:unlogged|global|local)\s+)?table\b|\bcreate\s+(?:or\s+replace\s+)?(?:materialized\s+|recursive\s+)?view\b`)
 
 // dynamicSQL reports a judged DO block or routine whose body mentions DDL
 // the replay cannot see (RLS011). It fails closed: the reviewer judges the
@@ -864,7 +921,7 @@ func (s *state) dynamicSQL(st sqllex.Statement) {
 	}
 	for _, t := range st.Tokens {
 		if t.Kind == sqllex.String && dynamicRe.MatchString(t.Text) {
-			s.report(s.at(st), RLS011, packs.LevelError, "this DO block or routine body runs DDL the RLS gate cannot judge (policies, row level security, grants, security definer or set schema inside a string); review it and mark it -- tq:allow RLS011: <what it does>, or write the DDL as plain statements")
+			s.report(s.at(st), RLS011, packs.LevelError, "this DO block or routine body runs DDL the RLS gate cannot judge (policies, row level security, grants, security definer, set schema, or a CREATE TABLE or VIEW inside a string); review it and mark it -- tq:allow RLS011: <what it does>, or write the DDL as plain statements")
 			return
 		}
 	}
