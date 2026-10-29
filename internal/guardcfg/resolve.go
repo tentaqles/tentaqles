@@ -1,6 +1,7 @@
 package guardcfg
 
 import (
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -391,15 +392,5 @@ func normDir(p string) string {
 func within(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/") }
 
 // evalExisting resolves symlinks in p's longest existing prefix and keeps
-// the missing tail, so a folder that does not exist yet (a guard.projects
-// entry) compares equal to its resolved root (/var vs /private/var on macOS).
-func evalExisting(p string) string {
-	if e, err := filepath.EvalSymlinks(p); err == nil {
-		return e
-	}
-	parent := filepath.Dir(p)
-	if parent == p {
-		return p
-	}
-	return filepath.Join(evalExisting(parent), filepath.Base(p))
-}
+// the missing tail (paths.Resolve, shared with the packs).
+func evalExisting(p string) string { return paths.Resolve(p) }

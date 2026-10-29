@@ -196,6 +196,7 @@ func WriteText(w io.Writer, r *Report) {
 	if h.ReadError != "" {
 		fmt.Fprintf(w, "note: %s\n", h.ReadError)
 	}
+	writePacks(w, r.Packs)
 	fmt.Fprintln(w, "\n== Background review sessions")
 	fmt.Fprintf(w, "security-review sessions: %d (%d on Opus), cost $%.2f\n", r.Total.Reviews.Sessions, r.Total.Reviews.Opus, r.Total.Reviews.CostUSD)
 

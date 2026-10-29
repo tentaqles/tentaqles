@@ -88,6 +88,10 @@ templates and images by digest (C10) and use the platform's secret scanning.
   `docker buildx imagetools inspect <image>:<tag>` (the `Digest:` line, the
   index digest for multi-arch) or `crane digest <image>:<tag>`; the same applies
   to compose and Kubernetes `image:` lines.
+- **IaC plans and state** (with any Terraform, OpenTofu or CDK code): add
+  `.gitignore` rows `*.tfplan`, `*.tfstate*` (as `*.tfstate` and
+  `*.tfstate.*`), `.terraform/` and `cdk.out/`. Plans and state hold secrets in
+  clear; the cloud pack's `cloud/no-plan-files` check fails when one is tracked.
 
 Run `tq decide triage --staged` on the workflow changes (they come back
 `high`); the `security-reviewer` runs in the build engine for workflow diffs.

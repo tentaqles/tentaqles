@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dsql_query number_nodes="1" number_distributions="60" number_distributions_per_node="60">
+  <sql>SELECT status, COUNT(*) FROM dbo.orders GROUP BY status</sql>
+  <dsql_operations total_cost="0.926237696" total_number_operations="9">
+    <dsql_operation operation_type="RND_ID">
+      <identifier>TEMP_ID_1</identifier>
+    </dsql_operation>
+  </dsql_operations>
+</dsql_query>
+
+(1 rows affected)

@@ -289,6 +289,17 @@ Stack-aware guidance that triggers on the work itself (no workspace state needed
 | `/tentaqles:llm-security-review` | Run the `llm-security-reviewer` on a diff that adds LLM calls, prompts, agent tools, MCP servers, RAG or hooks, against OWASP LLM 2025 and Agentic 2026 |
 | `/tentaqles:loop` | Overnight Karpathy-style loop on one feature: approve locked checks by day; at night a runner keeps or undoes one headless round at a time in a worktree, under dollar/token/time/round budgets with MCP and network off; morning summary + signal |
 | `/tentaqles:hub` | See what `tq hub` runs are waiting on, in plain language, add or show cards; prints the `tq hub answer` line for you (answering is yours); explains the hub's own question when a run stopped before its build existed |
+| `/tentaqles:pack` | Run and explain the tq pack checks (data, ml, cloud, db): the enabled packs, `tq pack check`, each finding, the pack reviewers from `tq pack crew`, and how to fix a declared tool that is missing |
+| `/tentaqles:data-contract` | Write and evolve ODCS v3 data contracts (data pack): draft from a dbt model or a table, classify columns, check breaking changes with `data/contract-breaking` |
+| `/tentaqles:pipeline-review` | Run the `pipeline-reviewer` on a pipeline change (dbt, Airflow, Dagster, Prefect, pandas/polars/PySpark, Fabric or Synapse): idempotency, backfills, PII |
+| `/tentaqles:warehouse-cost` | Estimate a query's or dbt model's cost before it runs with `tq pack data cost estimate` (BigQuery, Snowflake, Databricks, Synapse, Postgres) |
+| `/tentaqles:ml-review` | Run the `ml-reviewer` on a training, feature, evaluation, model card or promotion change, quoting the ml pack results |
+| `/tentaqles:model-card` | Write or update `MODEL_CARD.md` from the metrics, the data manifest and git, interviewing you for intended use and limits |
+| `/tentaqles:ml-promote` | Request a model promotion through the ml pack's approval gate (`tq pack ml promote request`); you approve in your terminal and run `promote apply` yourself |
+| `/tentaqles:drift-check` | Check a model for data drift: refresh the profiles (aggregates only), run `tq pack ml drift`, explain the result |
+| `/tentaqles:iac-policy` | Check IaC with the cloud pack (`IAC`, `IAM`, `AZR`, `GCP` rules and the external linters) and take a change through plan, approve and apply; never answers an approval |
+| `/tentaqles:rls-tests` | Write and run pgTAP tests that prove Postgres/Supabase row-level security against a local test database (`db/pgtap` or `db/pgtap-supabase`) |
+| `/tentaqles:restore-drill` | Prove a backup restores: `tq pack db drill` into a local scratch database, record the evidence line, check its freshness |
 
 ## Hooks
 

@@ -1,0 +1,12 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: acme-dup
+version: 1.0.0
+schema:
+  - name: orders
+    properties:
+      - name: order_id
+        logicalType: integer
+      - name: order_id
+        logicalType: string
+  - name: orders

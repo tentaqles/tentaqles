@@ -34,10 +34,13 @@ func TriageQuestions() map[string]Question {
 
 // TriageResult is the outcome for one diff.
 type TriageResult struct {
-	Risk  string             `json:"risk"` // low | high
-	Flags []string           `json:"flags,omitempty"`
-	P     map[string]float64 `json:"p,omitempty"`
-	Error string             `json:"error,omitempty"`
+	Risk  string   `json:"risk"` // low | high
+	Flags []string `json:"flags,omitempty"`
+	// Detail carries a flag's detail (baseline_change: the packs whose
+	// baseline grew), for tq pack crew --detail.
+	Detail map[string]string  `json:"detail,omitempty"`
+	P      map[string]float64 `json:"p,omitempty"`
+	Error  string             `json:"error,omitempty"`
 	// Truncated is set when the diff was cut to fit the request cap.
 	Truncated bool `json:"truncated,omitempty"`
 }
@@ -54,6 +57,13 @@ func Triage(ctx context.Context, c *Client, p Policy, diff string) TriageResult 
 // TriageWith is Triage plus the changed-file list (git --name-only). When
 // names is non-nil, the docs-only rule needs every name parsed as a doc.
 func TriageWith(ctx context.Context, c *Client, p Policy, diff string, names []string) TriageResult {
+	return TriageWithQuestions(ctx, c, p, diff, names, nil)
+}
+
+// TriageWithQuestions is TriageWith plus extra questions keyed by flag name
+// (the enabled packs' flag questions, spec C §2.9). They go in the same Jev
+// call; a core question is never replaced by an extra one of the same name.
+func TriageWithQuestions(ctx context.Context, c *Client, p Policy, diff string, names []string, extra map[string]Question) TriageResult {
 	res := TriageResult{Risk: "high"}
 	if len(diff) > maxTriageDiff {
 		// Keep the head: file headers and the first hunks carry the most
@@ -62,6 +72,11 @@ func TriageWith(ctx context.Context, c *Client, p Policy, diff string, names []s
 		res.Truncated = true
 	}
 	qs := TriageQuestions()
+	for id, q := range extra {
+		if _, core := qs[id]; !core {
+			qs[id] = q
+		}
+	}
 	resp, err := c.Ask(ctx, map[string]string{"diff": diff}, qs)
 	if err != nil {
 		res.Error = err.Error()

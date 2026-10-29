@@ -364,7 +364,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 				if len(files) > maxPatchFiles {
 					return deny(fmt.Sprintf("the patch writes %d files, more than the %d tq judges in one call: split the patch", len(files), maxPatchFiles))
 				}
-				pb := buildPolicy(cwd, ws)
+				pb := buildPolicy(cwd, ws, scanDeadline)
 				gates := map[string]*modeGate{}
 				for _, fc := range patchCalls(files, cwd) {
 					if time.Now().After(scanDeadline) {

@@ -490,7 +490,14 @@ func TestRelaxedTrustStoreWriteBlocks(t *testing.T) {
 			t.Fatalf("%q: want block, got code %d stderr %q", cmd, code, errOut)
 		}
 	}
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "cat ~/.tentaqles/config.yaml", "bypassPermissions"))
+	// Since the packs merge, the hook-time state-dir check (tq/hub-store-write,
+	// locked) also denies a shell read of the protected parts of $TQ_HOME,
+	// config.yaml among them; a read outside them stays allowed.
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "cat ~/.tentaqles/config.yaml", "bypassPermissions"))
+	if code != 2 || !strings.Contains(errOut, "tq/hub-store-write") {
+		t.Fatalf("read of config.yaml: want block by tq/hub-store-write, got code %d stderr %q", code, errOut)
+	}
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, modePayload(t, proj, "cat ~/.tentaqles/identities/acme/notes.md", "bypassPermissions"))
 	silentAllow(t, "read", code, out)
 }
 

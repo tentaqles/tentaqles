@@ -43,6 +43,7 @@ type Options struct {
 	DecideDir    string   // "" means $TQ_HOME/decide
 	BuildGateDir string   // "" means $TQ_HOME/build-gate
 	HubDir       string   // "" means $TQ_HOME/hub
+	PacksDir     string   // "" means $TQ_HOME/packs
 }
 
 // SessionRow is one main session in the top lists.
@@ -137,6 +138,7 @@ type Report struct {
 	Jev          JevReport        `json:"jev"`
 	Process      ProcessReport    `json:"process"`
 	Hub          activity.Report  `json:"hub"`
+	Packs        PacksReport      `json:"packs"`
 	Worktrees    *WorktreeCount   `json:"worktrees"`
 	Targets      []Target         `json:"targets"`
 	Pricing      []PriceRow       `json:"-"`
@@ -329,6 +331,10 @@ func Run(o Options) (*Report, error) {
 	if herr != nil {
 		rep.Hub.ReadError = "activity.jsonl could not be read; hub counts are incomplete"
 	}
+	if o.PacksDir == "" {
+		o.PacksDir = filepath.Join(paths.Home(), "packs")
+	}
+	rep.Packs, _ = ReadPacks(o.PacksDir, o.Since, o.Until, keepWS)
 	rep.Targets = Targets(rep)
 	return rep, nil
 }

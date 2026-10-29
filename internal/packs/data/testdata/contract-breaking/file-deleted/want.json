@@ -1,0 +1,12 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 with breaking changes and no major version bump",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "level": "error",
+      "rule": "contract-deleted",
+      "message": "contract file deleted; set status: retired and remove the consumers first"
+    }
+  ]
+}

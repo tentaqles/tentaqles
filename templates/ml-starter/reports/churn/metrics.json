@@ -1,0 +1,28 @@
+{
+  "accuracy": 0.6925,
+  "auc": 0.7416,
+  "auc_ci_high": 0.7872,
+  "auc_ci_low": 0.6969,
+  "baseline_auc": 0.5,
+  "baseline_brier": 0.2297,
+  "brier": 0.1929,
+  "model": "churn",
+  "rows_test": 400,
+  "seed": 7,
+  "slices": {
+    "plan=basic": {
+      "auc": 0.757,
+      "rows": 124
+    },
+    "plan=plus": {
+      "auc": 0.7166,
+      "rows": 130
+    },
+    "plan=pro": {
+      "auc": 0.7062,
+      "rows": 146
+    }
+  },
+  "snapshot": "churn-train",
+  "snapshot_sha256": "43e09d65c62b62e7aaa589c8256312b4dd52bc6fa521cf9562befdaf1a032be8"
+}

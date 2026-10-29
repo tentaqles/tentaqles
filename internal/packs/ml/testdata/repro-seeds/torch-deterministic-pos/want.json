@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "detail": "seeds checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 1,
+      "level": "warn",
+      "rule": "torch-deterministic",
+      "message": "torch.use_deterministic_algorithms(True) is not set"
+    },
+    {
+      "file": "train.py",
+      "line": 5,
+      "level": "warn",
+      "rule": "dataloader-seed",
+      "message": "DataLoader is built without worker_init_fn or generator; worker shuffling is not seeded"
+    }
+  ]
+}

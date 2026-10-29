@@ -108,6 +108,10 @@ func (s *Server) formAnswer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if d, err := svc.Store().Decision(r.PathValue("did")); err == nil && d.PackApproval() != "" {
+		http.Error(w, errPackAnswerPath.Error(), http.StatusForbidden)
+		return
+	}
 	out, err := svc.Answer(s.reqCtx(r), id, r.PathValue("did"), r.FormValue("choice"), r.FormValue("note"))
 	if err != nil {
 		if out.Message != "" {

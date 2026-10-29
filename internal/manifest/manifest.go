@@ -148,7 +148,9 @@ type Manifest struct {
 	Email        *Service `yaml:"email,omitempty"`
 	DataPlatform *Service `yaml:"data_platform,omitempty"`
 	Agents       []string `yaml:"agents,omitempty"`
-	Path         string   `yaml:"-"`
+	// Packs enables and configures the packs (spec C §2.2). See packs.go.
+	Packs map[string]PackConfig `yaml:"packs,omitempty"`
+	Path  string                `yaml:"-"`
 }
 
 var secretRe = regexp.MustCompile(`(?i)\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9\-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,})`)
@@ -216,6 +218,9 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.ValidateServices(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := ValidatePacks(m.Packs); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Path = path

@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "data reads checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 3,
+      "level": "warn",
+      "rule": "snapshot-unresolved",
+      "message": "read_csv reads a source tq cannot resolve; use a literal path pinned in data_manifest or DVC"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contracted model",
+  "findings": [
+    {
+      "file": "models/marts/fct_orders.sql",
+      "line": 1,
+      "level": "error",
+      "rule": "enforced-no-columns",
+      "message": "model fct_orders enforces a contract but lists no columns with data_type"
+    }
+  ]
+}

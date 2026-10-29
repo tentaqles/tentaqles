@@ -1,0 +1,2 @@
+whatif.json:1 error AZR001 /subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/77777777-7777-7777-7777-777777777777: assigns Contributor at subscription scope; assign a narrower role at a resource group or resource
+whatif.json:1 warn AZR001 /subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-acme/providers/Microsoft.Authorization/roleAssignments/66666666-6666-6666-6666-666666666666: assigns User Access Administrator at resource group scope; prefer a narrower role

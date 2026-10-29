@@ -1,0 +1,21 @@
+[
+  {
+    "filename": "in0000.json",
+    "namespace": "tq.terraform",
+    "successes": 3,
+    "failures": [
+      {"msg": "aws_kms_key.acme: automatic key rotation is off on a symmetric KMS key", "metadata": {"addr": "aws_kms_key.acme", "rule": "TQR006"}}
+    ],
+    "warnings": [
+      {"msg": "aws_lb.acme: the load balancer has no access logs", "metadata": {"addr": "aws_lb.acme", "rule": "TQR002"}}
+    ]
+  },
+  {
+    "filename": "in0001.json",
+    "namespace": "main",
+    "successes": 1,
+    "failures": [
+      {"msg": "acme project rule"}
+    ]
+  }
+]

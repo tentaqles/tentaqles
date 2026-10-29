@@ -136,6 +136,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 				hubUsed = true
 			}
 			mcpServiceChecks(&w, add)
+			packChecks(&w, add)
 			if j, ok := trackerJobFor(d, &w); ok {
 				trackerJobs = append(trackerJobs, j)
 			}

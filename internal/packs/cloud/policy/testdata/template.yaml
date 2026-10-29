@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: acme fixture
+Resources:
+  AdminSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: admin
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 0.0.0.0/0
+  WebSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: web
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+  PublicBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      AccessControl: PublicRead
+  Db:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      StorageEncrypted: "false"
+      PubliclyAccessible: true
+      DBInstanceClass: !Ref DbClass
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: acme
+  QuietDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.micro
+  SafeDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      StorageEncrypted: true
+      DeletionProtection: true
+  ParamDb:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      StorageEncrypted: !Ref Encrypt
+      DeletionProtection: !Ref Protect
+  ClusterMember:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref ParamDb
+  Disk:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    Properties:
+      Size: 10
+  SafeDisk:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    Properties:
+      Encrypted: true
+  SafeTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      DeletionProtectionEnabled: true

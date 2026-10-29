@@ -109,6 +109,9 @@ var Categories = map[string]Category{
 	// secrets
 	"tq/secret-store-read":       CatSecrets,
 	"tq/secret-store-shell":      CatSecrets,
+	"tq/plan-read":               CatSecrets, // cloud pack: plan and state files hold secrets
+	"tq/plan-commit":             CatSecrets, // cloud pack: committing them publishes the secrets
+	"tq/plan-secret-print":       CatSecrets, // cloud pack: state pull/show, output -json/-raw, --show-secrets
 	"tq/env-file-read":           CatSecrets,
 	"tq/env-file-shell":          CatSecrets,
 	"tq/env-dump":                CatSecrets,
@@ -141,15 +144,11 @@ var Categories = map[string]Category{
 	// prod-changes
 	"tq/iac-apply":        CatProdChanges,
 	"tq/remote-migration": CatProdChanges,
-	"tq/dbt-prod-target":  CatProdChanges,
-	"tq/model-promote":    CatProdChanges,
-	"tq/pipeline-run":     CatProdChanges,
-	"tq/iac-apply-env":    CatProdChanges,
-	"tq/db-migrate-env":   CatProdChanges,
-	"tq/restore-target":   CatProdChanges,
 	// cloud-destructive
 	"tq/cloud-delete": CatCloudDestructive,
 	"tq/iac-destroy":  CatCloudDestructive,
+	// the cloud pack's apply gate (packs merge: cloud apply/destroy)
+	"tq/iac-apply-env": CatCloudDestructive,
 	// db-destructive
 	"tq/sql-destructive-shell": CatDBDestructive,
 	"jev/destructive-sql":      CatDBDestructive,
@@ -157,7 +156,9 @@ var Categories = map[string]Category{
 	"tq/mcp-sql-write":         CatDBDestructive,
 	"tq/mcp-apply-migration":   CatDBDestructive,
 	"jev/rls-weakened":         CatDBDestructive,
-	"tq/dbt-full-refresh":      CatDBDestructive,
+	// the db pack's migrate and restore guards (packs merge)
+	"tq/db-migrate-env": CatDBDestructive,
+	"tq/restore-target": CatDBDestructive,
 	// system
 	"tq/registry-write": CatSystem,
 	OutsidePathWriteID:  CatSystem,
@@ -174,10 +175,15 @@ var Categories = map[string]Category{
 	"tq/gha-pr-target":  CatCISupplyChain,
 	// hygiene
 	"tq/commit-message": CatHygiene,
-	// packs (fallback: cost guards)
+	// packs: every other pack guard and pack static rule (packs merge)
 	"tq/warehouse-resize":          CatPacks,
 	"tq/bq-unbounded-query":        CatPacks,
 	"tq/warehouse-query-unbounded": CatPacks,
+	"tq/dbt-prod-target":           CatPacks,
+	"tq/dbt-full-refresh":          CatPacks,
+	"tq/pipeline-run":              CatPacks,
+	"tq/model-promote":             CatPacks,
+	"tq/plan-print":                CatPacks,
 }
 
 // GuardErrorID names the fail-safe ask of a guard panic.

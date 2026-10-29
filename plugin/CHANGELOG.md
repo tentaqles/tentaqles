@@ -4,6 +4,8 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-29
+
 Guard modes (tq spec E). Needs a `tq` build with `tq mode`.
 
 - **`TQ_MODE=off` means no tq.** `scripts/tq_hook.sh` and `scripts/tq_run.sh` exit 0 as their
@@ -22,6 +24,35 @@ Guard modes (tq spec E). Needs a `tq` build with `tq mode`.
 - **Tests.** `tests/test_guard_modes_docs.py` checks that the docs, this changelog and the
   guard skill describe the modes, and that the docs' categories table matches
   `internal/guardcfg/categories.go`.
+
+Packs (tq specs C and D, releases 3 and 4): data, ml, cloud and db guard packs. Needs a
+`tq` build with `tq pack` (`tq pack check`, `list`, `doctor`, `crew`, `approvals`,
+`baseline` and the `data`, `ml`, `cloud` and `db` subcommands). See `docs/PACKS.md`.
+
+- **11 new skills.** `pack` (run and explain the pack checks), `data-contract` (ODCS v3
+  contracts), `pipeline-review`, `warehouse-cost` (`tq pack data cost estimate`),
+  `ml-review`, `model-card` (`MODEL_CARD.md`), `ml-promote` (request a promotion through
+  the approval gate), `drift-check`, `iac-policy` (cloud checks and the plan and approve
+  flow), `rls-tests` (pgTAP RLS tests) and `restore-drill` (`tq pack db drill`).
+- **4 new read-only reviewer agents:** `pipeline-reviewer`, `ml-reviewer`,
+  `iac-reviewer` and `db-reviewer`. The build gate accepts any `<name>-reviewer` that has
+  an agent file, and `tq pack crew --flags ...` prints which ones the triage flags call for.
+- **On-ramps.** `build`, `feature`, `fix`, `kickoff`, `dod` and `ship` read the on-ramp
+  notes of the enabled packs (`skills/pack/references/onramps/<pack>-*.md`).
+- **Definition of done.** At approval the gate freezes the enabled packs and the
+  `config_hash` (`tq pack list --enabled --json`); approval is refused when the pack config
+  can't be read or `tq pack list` reports problems. The DoD records `pack:config`,
+  `pack:run` and one `pack:<pack>/<check>` item per result (`tq pack check --json`).
+- **Templates.** `templates/packs/cloud/` (manifest snippet, `.gitignore` rows, an
+  example Rego policy and its test) and `templates/packs/db/` (manifest snippet, pgTAP RLS
+  test, `tests_tq` helpers, an empty restore-drill log); repo templates
+  `dbt-contract-starter` and `ml-starter`.
+- **Docs.** The `auth-security`, `db-migration` and other existing skills name the pack
+  checks where they apply.
+
+The tq side of the packs (always-on core rules, terminal-only approvals, the strict floor for
+unknown global flags, telemetry opt-outs, the build-gate change) is in the repository
+[`CHANGELOG.md`](../CHANGELOG.md).
 
 ## [0.14.0] — 2026-10-28
 

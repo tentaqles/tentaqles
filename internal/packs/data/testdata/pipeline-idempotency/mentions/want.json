@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "detail": "2 pipeline files scanned",
+  "findings": [
+    {
+      "file": "pipelines/join_append.py",
+      "line": 9,
+      "level": "warn",
+      "rule": "append-no-dedupe",
+      "message": "append write with no MERGE, delete-insert, partition overwrite or dedupe in this file; a rerun of the same interval duplicates rows"
+    },
+    {
+      "file": "pipelines/refunds.sql",
+      "line": 2,
+      "level": "warn",
+      "rule": "append-no-dedupe",
+      "message": "append write with no MERGE, delete-insert, partition overwrite or dedupe in this file; a rerun of the same interval duplicates rows"
+    }
+  ]
+}

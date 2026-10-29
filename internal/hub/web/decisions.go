@@ -17,11 +17,39 @@ type decisionItem struct {
 	Run        *store.Run // the decision's run, when the row still exists
 	OverBudget bool       // a hub budget stop: the page shows the run's numbers
 	Sync       bool       // a send/skip question about a write to the company board (outbox)
+	Pack       *packApproval
+}
+
+// packApproval is what the page shows for a pack approval (spec C §2.11):
+// the gated action and the evidence names with their hashes.
+type packApproval struct {
+	Pack, Action, Subject, Target, ExpiresAt string
+	Evidence                                 []evidenceRow
+}
+
+type evidenceRow struct{ Name, Hash string }
+
+func newPackApproval(d store.Decision) *packApproval {
+	p := d.PackApproval()
+	if p == "" {
+		return nil
+	}
+	str := func(k string) string { s, _ := d.Data[k].(string); return s }
+	pa := &packApproval{Pack: p, Action: str("action"), Subject: str("subject"), Target: str("target"), ExpiresAt: str("expires_at")}
+	if ev, ok := d.Data["evidence"].(map[string]any); ok {
+		for k, v := range ev {
+			h, _ := v.(string)
+			pa.Evidence = append(pa.Evidence, evidenceRow{k, h})
+		}
+	}
+	sort.Slice(pa.Evidence, func(i, j int) bool { return pa.Evidence[i].Name < pa.Evidence[j].Name })
+	return pa
 }
 
 func newDecisionItem(svc *runner.Service, ws string, card store.Card, d store.Decision) decisionItem {
 	it := decisionItem{Workspace: ws, Card: card, Decision: d,
-		OverBudget: d.Kind == store.KindPermission && slices.Contains(d.Options, "raise-and-resume"), Sync: isSyncDecision(d)}
+		OverBudget: d.Kind == store.KindPermission && slices.Contains(d.Options, "raise-and-resume"), Sync: isSyncDecision(d),
+		Pack: newPackApproval(d)}
 	if d.RunID != "" {
 		if run, err := svc.Store().Run(d.RunID); err == nil {
 			it.Run = &run

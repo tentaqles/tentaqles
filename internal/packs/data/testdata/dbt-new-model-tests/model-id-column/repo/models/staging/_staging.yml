@@ -1,0 +1,11 @@
+version: 2
+models:
+  - name: stg_customers
+    description: Customers.
+    columns:
+      - name: stg_customers_id
+        data_tests:
+          - unique
+          - not_null:
+              config:
+                severity: error

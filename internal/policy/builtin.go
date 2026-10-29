@@ -66,8 +66,10 @@ const readVerbs = `\b(cat|type|more|less|head|tail|bat|nl|strings|xxd|od|grep|rg
 
 // coreBuiltin returns the rules defined in this file. IDs are stable: manifests disable them
 // by id (guard.disable) and tests pin them.
+// The pack framework's core rules and the packs' static rules
+// (builtin_framework.go, builtin_packs.go) are part of this list.
 func coreBuiltin() []Rule {
-	return []Rule{
+	return append([]Rule{
 		// --- secrets: reading ------------------------------------------------
 		{
 			ID: "tq/secret-store-read", Action: Deny,
@@ -350,5 +352,5 @@ func coreBuiltin() []Rule {
 			Content: `\bpull_request_target\b`,
 			Reason:  "pull_request_target runs untrusted PR code with repository secrets",
 		},
-	}
+	}, append(frameworkRules(), packRules()...)...)
 }

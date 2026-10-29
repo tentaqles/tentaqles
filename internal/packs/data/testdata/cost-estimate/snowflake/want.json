@@ -1,0 +1,17 @@
+{
+  "schema": "tq.packs.cost/v1",
+  "engine": "snowflake",
+  "tool": "snow",
+  "metric": "bytes_assigned",
+  "value": 73400320,
+  "unit": "bytes",
+  "cap": "100MB",
+  "cap_key": "packs.data.cost.snowflake.max_bytes",
+  "cap_value": 100000000,
+  "verdict": "within",
+  "reported": {
+    "bytes_assigned": 73400320,
+    "partitions_assigned": 12,
+    "partitions_total": 120
+  }
+}

@@ -1,0 +1,95 @@
+# ODCS v3 data contract template (tentaqles data pack, data-contract skill).
+# Copy to contracts/<dataset>.odcs.yaml (packs.data.contracts.paths) and replace
+# every acme/orders value. Field names follow the ODCS v3 JSON Schema; tq checks
+# it with data/contract-valid, data/contract-breaking, data/contract-pii and
+# data/contract-dbt-sync (docs/packs/data-contracts.md).
+#
+# Version rule: any breaking change (a removed or renamed property, a narrower
+# type, required true -> false, a removed enum value, a looser quality rule or
+# SLA, a moved server) needs the MAJOR part of `version` bumped.
+apiVersion: v3.1.0
+kind: DataContract
+id: acme-orders                 # stable; never reuse across files
+name: orders
+version: 1.1.0                  # semver: MAJOR.MINOR.PATCH
+status: active                  # proposed | draft | active | deprecated | retired
+description:
+  purpose: Orders placed in the acme web shop, one row per order line.
+  usage: Finance reporting and the order history page.
+servers:
+  - server: prod
+    type: postgres
+    host: db.acme.test
+    database: analytics
+    schema: marts
+schema:
+  - id: orders_obj              # ids make renames detectable
+    name: orders
+    physicalName: fct_orders     # must be in the manifest data.paths when a property is classified
+    physicalType: table
+    description: One row per order line.
+    customProperties:
+      - property: dbtModel       # data/contract-dbt-sync compares with this dbt model's YAML
+        value: fct_orders
+    properties:
+      - id: order_id_prop
+        name: order_id
+        logicalType: integer
+        physicalType: bigint
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        description: Order identifier.
+      - id: customer_ref_prop
+        name: customer_ref
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: pii      # pii | sensitive | financial | children (see docs/packs/data-contracts.md)
+        description: Pseudonymous customer reference.
+      - id: status_prop
+        name: status
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        logicalTypeOptions:
+          maxLength: 20
+        quality:
+          - id: status_valid      # adding a valid value is breaking for consumers
+            metric: invalidValues
+            arguments:
+              validValues: [placed, shipped, delivered, returned]
+            mustBe: 0
+      - id: amount_prop
+        name: amount
+        logicalType: number
+        physicalType: decimal(12,2)
+        required: true
+        logicalTypeOptions:
+          minimum: 0
+        quality:
+          - id: amount_not_null
+            metric: nullValues
+            mustBeLessThan: 1
+      - id: ordered_at_prop
+        name: ordered_at
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        partitioned: true
+        partitionKeyPosition: 1
+    quality:
+      - id: orders_rowcount
+        metric: rowCount
+        mustBeGreaterThan: 0
+slaProperties:
+  - id: latency
+    property: latency
+    value: 1
+    unit: d
+    element: orders.ordered_at
+  - id: retention
+    property: retention
+    value: 5
+    unit: y

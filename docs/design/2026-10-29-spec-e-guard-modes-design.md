@@ -203,6 +203,8 @@ Rules from unmerged branches, classified now so the merge does not break the tes
 | tq/iac-identity-drift | packs cloud | identity |
 | tq/warehouse-resize, tq/bq-unbounded-query, tq/warehouse-query-unbounded | packs data (cost guards) | packs |
 
+*Amended 2026-10-29 (packs merge, coordinator ruling):* the pack guards are classified as cloud apply/destroy → `cloud-destructive` (`tq/iac-apply-env`), db migrate/restore → `db-destructive` (`tq/db-migrate-env`, `tq/restore-target`), and the other pack guards → `packs` (`tq/dbt-prod-target`, `tq/dbt-full-refresh`, `tq/pipeline-run`, `tq/model-promote` and the cost guards). Two keep a locked group: `tq/iac-identity-drift` stays `identity`, and the cloud pack's static rules `tq/plan-read` and `tq/plan-commit` are `secrets` (plan and state files hold secrets); `tq/plan-print` is `packs`. `guardcfg/categories.go` is the reference, and `packs.RegisterGuard` panics when a guard's `Category` differs from it.
+
 The table follows the human's list, with `privacy` locked (decided at spec review). `packs` is only a fallback (decided at spec review): it is the category for a pack guard that fits none of the others (today: the cost guards). A pack guard that is a prod change, a destructive DB operation and so on declares that category instead, so `strict` and `relaxed` treat it like the matching built-in rule.
 
 ### 5.3 New `system` rules

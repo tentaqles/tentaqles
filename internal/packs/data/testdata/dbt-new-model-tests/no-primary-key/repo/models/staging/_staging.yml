@@ -1,0 +1,6 @@
+version: 2
+models:
+  - name: stg_events
+    description: Events.
+    columns:
+      - name: event_name

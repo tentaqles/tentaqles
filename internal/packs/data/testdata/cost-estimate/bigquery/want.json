@@ -1,0 +1,12 @@
+{
+  "schema": "tq.packs.cost/v1",
+  "engine": "bigquery",
+  "tool": "bq",
+  "metric": "total_bytes_processed",
+  "value": 1234567890,
+  "unit": "bytes",
+  "cap": "1GB",
+  "cap_key": "packs.data.cost.bigquery.max_bytes",
+  "cap_value": 1000000000,
+  "verdict": "over"
+}

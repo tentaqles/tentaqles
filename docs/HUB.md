@@ -195,6 +195,13 @@ which requeues the same run).
 | `permission` | the hub | a refused tool, a budget stop, a held run | `allow-once` / `raise-and-resume` / `resume`, and `stop` |
 | `question` | the hub | a round exited 0 with a final message and no build slug yet | `answer`, `stop` |
 | `permission` (company board) | the sync engine | an outbox write under an `ask` policy | `send`, `skip` |
+| `permission` with `data.pack` (pack approval) | the packs (`tq pack cloud approve`, `tq pack db approve`, `tq pack ml promote request`) | an agent or a human asks to apply, migrate or promote | `apply` / `approve` and `reject`; answered **only in your terminal** |
+
+A pack approval (a `permission` decision whose `data.pack` is set) never resumes or
+requeues a run. The board and `/waiting` show its evidence, its redacted summary and the
+exact command to run, but refuse the answer: run `tq hub answer <card> <decision>` in your
+own terminal and type back the pack, the action and the 12-hex subject code it shows. The
+answer is signed with the workspace key in the OS keychain ([PACKS.md](PACKS.md)).
 
 A company-board decision shows the redacted text that would leave the machine. Answer it
 on the board or with `tq hub answer <card> <decision> --choice send|skip`; the sync sends

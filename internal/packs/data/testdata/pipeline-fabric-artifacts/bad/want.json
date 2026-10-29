@@ -1,0 +1,41 @@
+{
+  "status": "fail",
+  "detail": "2 Fabric items scanned",
+  "findings": [
+    {
+      "file": "fabric/LoadOrders.DataPipeline/pipeline-content.json",
+      "line": 7,
+      "level": "warn",
+      "rule": "fabric-copy-no-retry",
+      "message": "copy activity CopyOrders has retry 0; set policy.retry and retryIntervalInSeconds"
+    },
+    {
+      "file": "fabric/LoadOrders.DataPipeline/pipeline-content.json",
+      "line": 15,
+      "level": "warn",
+      "rule": "fabric-copy-no-retry",
+      "message": "copy activity CopyDay has no retry policy (the default is 0); set policy.retry and retryIntervalInSeconds"
+    },
+    {
+      "file": "fabric/Orders.Notebook/notebook-content.py",
+      "line": 1,
+      "level": "warn",
+      "rule": "fabric-no-parameters-cell",
+      "message": "a pipeline runs this notebook but it has no parameters cell; add one so the pipeline passes the run date and environment"
+    },
+    {
+      "file": "fabric/Orders.Notebook/notebook-content.py",
+      "line": 11,
+      "level": "warn",
+      "rule": "fabric-pinned-lakehouse",
+      "message": "the notebook pins its default lakehouse to a workspace GUID; bind the lakehouse per environment (deployment rules or notebookutils) instead"
+    },
+    {
+      "file": "fabric/Orders.Notebook/notebook-content.py",
+      "line": 18,
+      "level": "error",
+      "rule": "fabric-literal-onelake-path",
+      "message": "literal OneLake path with a workspace GUID; take the workspace and lakehouse from a parameter, the default lakehouse or a relative Tables/ or Files/ path"
+    }
+  ]
+}

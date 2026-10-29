@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0-rtm.6.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "bicep"
+        }
+      },
+      "results": [
+        {
+          "ruleId": "no-unused-params",
+          "message": {
+            "text": "Parameter \"unusedParam\" is declared but never used. [https://aka.ms/bicep/linter-diagnostics#no-unused-params]"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///ROOT/infra/bicep/main.bicep"
+                },
+                "region": {
+                  "startLine": 1,
+                  "charOffset": 7
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "BCP029",
+          "level": "error",
+          "message": {
+            "text": "The resource type is not valid. Specify a valid resource type of format \"<type-name>@<apiVersion>\". [https://aka.ms/bicep/core-diagnostics#BCP029]"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///ROOT/infra/bicep/main.bicep"
+                },
+                "region": {
+                  "startLine": 3,
+                  "charOffset": 12
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "columnKind": "utf16CodeUnits"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# tentaqles cloud pack: plans, state and build output never enter git.
+# Append these rows to the repository's .gitignore.
+*.tfplan
+*.tfstate
+*.tfstate.*
+.terraform/
+cdk.out/
+# restore-drill dumps stay in tq's state directory; ignore any local copies too
+*.dump
+*.bacpac

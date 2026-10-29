@@ -37,7 +37,7 @@ func (s *Service) Enqueue(ctx context.Context, cardID, reason string) (store.Run
 		if act.Status != store.StatusWaiting {
 			return act, false, nil
 		}
-		n, err := s.st.PendingCount(cardID)
+		n, err := s.pendingRunDecisions(cardID)
 		if err != nil || n > 0 {
 			return act, false, err
 		}
@@ -383,6 +383,11 @@ func (s *Service) mirror(card store.Card, r store.Run, st *gate.State) {
 	}
 	for _, d := range st.Decisions {
 		if d.Status != store.DecisionAnswered {
+			continue
+		}
+		// A hub-owned row (a permission ask, a pack approval) is answered only
+		// through AnswerHub; a gate record with the same id never answers it.
+		if cur, err := s.st.Decision(d.ID); err == nil && cur.HubOwned() {
 			continue
 		}
 		_, _ = s.st.UpsertDecision(store.Decision{ID: d.ID, CardID: card.ID, RunID: r.ID, Slug: st.Slug, Kind: d.Kind,

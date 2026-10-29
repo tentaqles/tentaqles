@@ -1,0 +1,33 @@
+# Repo layer for the tq ml pack (spec C §2.3, §4.1). It can only add or tighten what the
+# workspace manifest's packs: block says; tool_paths is ignored here. An agent edit of
+# this file asks the human first (guard tq/pack-config-change).
+packs:
+  ml:
+    enabled: true
+    tools: [ruff, uv]
+    paths:
+      train: ["src/ml_starter/train.py"]
+      features: ["src/ml_starter/features.py"]
+      eval: ["src/ml_starter/evaluate.py"]
+    seed_helper: src/ml_starter/seed.py:set_seed
+    data_manifest: data/snapshots.yaml
+    models:
+      - name: churn
+        card: models/churn/MODEL_CARD.md
+        metrics: reports/churn/metrics.json
+    promotion:
+      protected: [production, champion]
+      command: "uv run python scripts/promote.py {model} {version} {target}"
+      valid_for: 7d
+      require: [model_card, drift, repro]
+    drift:
+      reference: data/profiles/churn-train.json
+      current: .tq/drift/churn-current.json
+      current_command: "uv run python -m drift_profile --data data/raw/churn-current.csv --exclude customer_id,churned --reference data/profiles/churn-train.json --out .tq/drift/churn-current.json"
+      metric: psi
+      warn: 0.1
+      fail: 0.25
+      max_warn_share: 0.3
+      features: { tenure_days: { fail: 0.2 } }
+      metrics: { auc: { min: 0.70 } }
+      in_dod: false

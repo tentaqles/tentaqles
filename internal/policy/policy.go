@@ -92,8 +92,11 @@ type Rule struct {
 	// shapes guard.BlankDataHeredocs knows to be data. The command lines,
 	// redirect targets included, are still matched; PowerShell commands
 	// are matched as they are.
-	SkipHeredocData bool   `yaml:"-"`
-	Reason          string `yaml:"reason"`
+	SkipHeredocData bool `yaml:"-"`
+	// Pack (built-ins only, internal/policy/builtin_packs.go): the rule is
+	// active only while that pack is enabled (spec C §2.10).
+	Pack   string `yaml:"-"`
+	Reason string `yaml:"reason"`
 	// Unattended is deprecated (spec E): on a custom rule, any value means
 	// "no category", so every mode applies the rule at its own action. Use
 	// Category instead.

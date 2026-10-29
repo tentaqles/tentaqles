@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -130,6 +132,51 @@ type guardRow struct {
 	Now     string `json:"now"`             // ask | deny | off
 	Where   string `json:"where,omitempty"` // global | <workspace>
 	Summary string `json:"summary,omitempty"`
+	Pack    string `json:"pack,omitempty"` // the pack(s) a pack rule or guard belongs to
+}
+
+// knownGuardRules is guardcfg.Known plus the packs' decision guards (spec C
+// §2.10): guard.disable and guard.actions apply to their ids too.
+func knownGuardRules(m *manifest.Manifest, g guardcfg.File) []guardcfg.RuleInfo {
+	out := guardcfg.Known(m, g)
+	seen := map[string]bool{}
+	for _, r := range out {
+		seen[r.ID] = true
+	}
+	for _, pg := range packs.Guards() {
+		if !seen[pg.ID] {
+			seen[pg.ID] = true
+			def := pg.Default
+			if def == "" {
+				def = "policy" // the pack's environment policy decides
+			}
+			out = append(out, guardcfg.RuleInfo{ID: pg.ID, Action: policy.Action(def), Kind: "pack", Summary: "decision guard of the " + pg.Pack + " pack"})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// packRuleOwners maps a pack rule or guard id to its packs ("cloud,db").
+func packRuleOwners() map[string]string {
+	sets := map[string][]string{}
+	add := func(id, p string) {
+		if !slices.Contains(sets[id], p) {
+			sets[id] = append(sets[id], p)
+		}
+	}
+	for _, r := range policy.PackRules() {
+		add(r.ID, r.Pack)
+	}
+	for _, g := range packs.Guards() {
+		add(g.ID, g.Pack)
+	}
+	out := map[string]string{}
+	for id, ps := range sets {
+		sort.Strings(ps)
+		out[id] = strings.Join(ps, ",")
+	}
+	return out
 }
 
 func guardRows(w *resolve.Workspace) ([]guardRow, guardcfg.Effective, error) {
@@ -141,8 +188,12 @@ func guardRows(w *resolve.Workspace) ([]guardRow, guardcfg.Effective, error) {
 	}
 	eff := guardcfg.Merge(g, gerr, m, name)
 	var rows []guardRow
-	for _, r := range guardcfg.Known(m, g) {
-		row := guardRow{ID: r.ID, Kind: r.Kind, Default: string(r.Action), Summary: r.Summary}
+	packOf := packRuleOwners()
+	for _, r := range knownGuardRules(m, g) {
+		row := guardRow{ID: r.ID, Kind: r.Kind, Default: string(r.Action), Summary: r.Summary, Pack: packOf[r.ID]}
+		if row.Pack != "" && row.Kind == "builtin" {
+			row.Kind = "pack"
+		}
 		switch {
 		case eff.Off(r.ID):
 			row.Now, row.Where = "off", eff.DisableOrigin[r.ID]
@@ -168,7 +219,11 @@ func guardList(c *cobra.Command, w *resolve.Workspace, asJSON bool) error {
 	fmt.Fprintf(out, "guard rules for %s\n\n", scope)
 	fmt.Fprintf(out, "%-34s %-9s %-8s %-6s %s\n", "RULE", "KIND", "DEFAULT", "NOW", "CHANGED BY")
 	for _, r := range rows {
-		fmt.Fprintf(out, "%-34s %-9s %-8s %-6s %s\n", r.ID, r.Kind, r.Default, r.Now, r.Where)
+		where := r.Where
+		if r.Pack != "" {
+			where = strings.TrimSpace(where + " [pack " + r.Pack + "]")
+		}
+		fmt.Fprintf(out, "%-34s %-9s %-8s %-6s %s\n", r.ID, r.Kind, r.Default, r.Now, where)
 	}
 	if gerr != nil {
 		fmt.Fprintf(out, "\nwarning: %v\nThe global file is ignored until it parses, so every rule it changed is back to its default.\n", gerr)
@@ -190,7 +245,7 @@ func guardChange(c *cobra.Command, wsName string, all bool, ids []string, op, ac
 	if w != nil {
 		m = w.Manifest
 	}
-	known := guardcfg.Known(m, g)
+	known := knownGuardRules(m, g)
 	for _, id := range ids {
 		if _, ok := guardcfg.Lookup(id, known); !ok {
 			return fmt.Errorf("unknown rule %q: tq guard list shows the rule ids", id)

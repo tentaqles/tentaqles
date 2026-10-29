@@ -1,0 +1,11 @@
+# The repo layer of the tq data pack (add-only: it can tighten the workspace
+# manifest's packs.data block, never loosen it). Contracts are found at the
+# default contracts.paths (contracts/**/*.odcs.yaml).
+data:
+  enabled: true
+  tools: [dbt, sqlfluff]
+  dbt:
+    contract_paths: ["models/marts/**"]
+    new_model_tests: [unique, not_null]
+    dev_target: dev
+    prod_targets: [prod, production]

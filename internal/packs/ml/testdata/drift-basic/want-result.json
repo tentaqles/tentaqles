@@ -1,0 +1,65 @@
+{
+  "schema": "tq.drift-result/v1",
+  "model": "churn",
+  "metric": "psi",
+  "status": "fail",
+  "reference": "data/profiles/churn-train.json",
+  "current": ".tq/drift/churn-current.json",
+  "reference_sha256": "sha256:d370a471f1bd260cfcb87363268efed735547bac1ccb26ecc86c9293907d15dd",
+  "current_sha256": "sha256:0e014dcaabe9e04851fe0c9a36f7c289cf9be5d98a454c66f3ceea56af2ef3cf",
+  "features": [
+    {
+      "name": "__prediction__",
+      "type": "numeric",
+      "value": 0.000581,
+      "warn": 0.1,
+      "fail": 0.25,
+      "status": "ok"
+    },
+    {
+      "name": "monthly_fee",
+      "type": "numeric",
+      "value": 0.0008,
+      "warn": 0.0005,
+      "fail": 0.25,
+      "status": "warn"
+    },
+    {
+      "name": "plan",
+      "type": "categorical",
+      "value": 0.315377,
+      "warn": 0.1,
+      "fail": 0.25,
+      "status": "fail"
+    },
+    {
+      "name": "region",
+      "type": "categorical",
+      "value": 0.000415,
+      "warn": 0.1,
+      "fail": 0.25,
+      "status": "ok"
+    },
+    {
+      "name": "tenure_days",
+      "type": "numeric",
+      "value": 0.135403,
+      "warn": 0.1,
+      "fail": 0.25,
+      "status": "warn"
+    }
+  ],
+  "warned_share": 0.4,
+  "max_warn_share": 0.5,
+  "metrics": [
+    {
+      "name": "auc",
+      "value": 0.81,
+      "min": 0.78,
+      "status": "ok"
+    }
+  ],
+  "reasons": [
+    "feature plan: 0.315377 is at or above fail 0.25"
+  ]
+}

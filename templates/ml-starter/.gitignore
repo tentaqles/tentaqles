@@ -1,0 +1,10 @@
+# Generated at run or test time; the snapshot is pinned by sha256 in data/snapshots.yaml.
+data/raw/
+models/*/model.skops
+reports/*/run.json
+.tq/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

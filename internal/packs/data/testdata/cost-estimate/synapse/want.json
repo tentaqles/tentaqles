@@ -1,0 +1,13 @@
+{
+  "schema": "tq.packs.cost/v1",
+  "engine": "synapse",
+  "tool": "sqlcmd",
+  "metric": "total_cost",
+  "value": 0.926237696,
+  "unit": "estimated ms",
+  "verdict": "ask",
+  "reported": {
+    "total_number_operations": 9
+  },
+  "note": "this engine's estimate is reported only; there is no cap to compare it with"
+}

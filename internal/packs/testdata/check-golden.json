@@ -1,0 +1,91 @@
+{
+  "schema": "tq.packs/v1",
+  "workspace": "acme",
+  "base": "HEAD",
+  "config_hash": "sha256:55f9441ee93c4271173ccf02bd23842b13ba1a14c9a70634ec6e6db7aff5458b",
+  "results": [
+    {
+      "id": "data/example-select-star",
+      "pack": "data",
+      "status": "fail",
+      "required": true,
+      "detail": "1 SQL file",
+      "findings": [
+        {
+          "file": "models/orders.sql",
+          "line": 1,
+          "level": "error",
+          "rule": "SQL001",
+          "message": "SELECT * in a model"
+        }
+      ]
+    },
+    {
+      "id": "data/example-sqlfluff",
+      "pack": "data",
+      "status": "fail",
+      "required": true,
+      "detail": "1 file linted",
+      "findings": [
+        {
+          "file": "models/orders.sql",
+          "line": 2,
+          "level": "error",
+          "rule": "LT01",
+          "message": "trailing whitespace"
+        }
+      ],
+      "tool": {
+        "name": "sqlfluff",
+        "version": "3.2.0",
+        "exit_code": 1,
+        "duration_ms": 0
+      }
+    },
+    {
+      "id": "data/example-warn",
+      "pack": "data",
+      "status": "fail",
+      "required": true,
+      "detail": "style notes",
+      "findings": [
+        {
+          "file": "models/orders.sql",
+          "line": 1,
+          "level": "warn",
+          "rule": "STY01",
+          "message": "lower-case keywords"
+        }
+      ]
+    },
+    {
+      "id": "ml/example-dvc",
+      "pack": "ml",
+      "status": "skip",
+      "required": false,
+      "detail": "dvc not installed (not declared in tools)",
+      "findings": []
+    },
+    {
+      "id": "ml/example-ruff",
+      "pack": "ml",
+      "status": "fail",
+      "required": false,
+      "detail": "ruff 0.4.1 is below the minimum 0.5.0",
+      "findings": [],
+      "tool": {
+        "name": "ruff",
+        "version": "0.4.1",
+        "path": "/tools/ruff",
+        "exit_code": 0,
+        "duration_ms": 0
+      }
+    }
+  ],
+  "summary": {
+    "ok": 0,
+    "fail": 4,
+    "skip": 1,
+    "required_fail": 3
+  }
+}

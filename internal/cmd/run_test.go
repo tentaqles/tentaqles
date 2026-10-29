@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"github.com/zalando/go-keyring"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,6 +36,7 @@ func isolateHome(t *testing.T) string {
 	// __TQ_STATE. `tq env` would then "restore" that shell's variables and
 	// emit unsets for a neutral cwd, so start every test from a clean slate.
 	unsetenv(t, envplan.StateVar)
+	keyring.MockInit() // never the real OS keychain in tests
 	// Nor from an off window or a per-launch mode (spec E §8).
 	for _, k := range []string{"TQ_MODE", "TQ_ENABLED", envplan.HeadlessModeVar} {
 		unsetenv(t, k)

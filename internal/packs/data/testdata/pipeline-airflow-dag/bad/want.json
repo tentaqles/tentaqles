@@ -1,0 +1,48 @@
+{
+  "status": "fail",
+  "detail": "2 DAG files scanned",
+  "findings": [
+    {
+      "file": "dags/customers.py",
+      "line": 4,
+      "level": "error",
+      "rule": "airflow-dynamic-start-date",
+      "message": "start_date is computed from the wall clock; use a fixed date (pendulum.datetime(2026, 1, 1, tz=\"UTC\")) so runs and backfills are stable"
+    },
+    {
+      "file": "dags/orders_daily.py",
+      "line": 8,
+      "level": "warn",
+      "rule": "airflow-top-level-io",
+      "message": "I/O at module level (pd.read_csv) runs every time the scheduler parses the DAG file; move it into a task"
+    },
+    {
+      "file": "dags/orders_daily.py",
+      "line": 9,
+      "level": "warn",
+      "rule": "airflow-top-level-io",
+      "message": "I/O at module level (requests.get) runs every time the scheduler parses the DAG file; move it into a task"
+    },
+    {
+      "file": "dags/orders_daily.py",
+      "line": 11,
+      "level": "warn",
+      "rule": "airflow-catchup-unset",
+      "message": "catchup is not set explicitly; set catchup=False (or True with a reviewed backfill plan)"
+    },
+    {
+      "file": "dags/orders_daily.py",
+      "line": 11,
+      "level": "error",
+      "rule": "airflow-dynamic-start-date",
+      "message": "start_date is computed from the wall clock; use a fixed date (pendulum.datetime(2026, 1, 1, tz=\"UTC\")) so runs and backfills are stable"
+    },
+    {
+      "file": "dags/orders_daily.py",
+      "line": 11,
+      "level": "warn",
+      "rule": "airflow-no-retries",
+      "message": "no retries in default_args or on any task; set retries and retry_delay"
+    }
+  ]
+}

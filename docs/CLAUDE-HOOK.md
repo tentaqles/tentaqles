@@ -333,21 +333,21 @@ in brackets.
 
 | Category | Locked | Rules |
 |---|---|---|
-| `identity` | locked | the identity guard: `guard/blocked-command`, `guard/wrong-cloud`, `guard/neutral-remote`, `guard/untrusted`, `guard/env-drift`, `guard/claude-config-drift`, `guard/git-email-drift`, `guard/gh-user` (deny; it runs before any mode logic); `plugin/identity-guard` (the fallback with no tq binary, deny); `tq/cross-client-mcp` (deny); `tq/iac-identity-drift`¹ |
-| `secrets` | locked | `tq/secret-store-read`, `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`, `tq/commit-secret` (deny); `jev/service-role-client`, `jev/n8n-inline-credentials` (ask) |
-| `self-protection` | locked | `tq/guard-change` (ask), `tq/guard-file-write`, `tq/settings-widen`, `tq/settings-shell-write`, `tq/trust-store-write` (deny), `tq/guard-error` (the fail-safe ask), `tq/nested-agent-loosened`, `tq/mode-change` (deny), `plugin/headless-manifest-guard` (deny); `tq/hub-store-write`, `tq/pack-config-change`, `tq/human-answer`¹ |
+| `identity` | locked | the identity guard: `guard/blocked-command`, `guard/wrong-cloud`, `guard/neutral-remote`, `guard/untrusted`, `guard/env-drift`, `guard/claude-config-drift`, `guard/git-email-drift`, `guard/gh-user` (deny; it runs before any mode logic); `plugin/identity-guard` (the fallback with no tq binary, deny); `tq/cross-client-mcp` (deny); `tq/iac-identity-drift` (cloud pack, deny) |
+| `secrets` | locked | `tq/secret-store-read`, `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`, `tq/commit-secret` (deny); `jev/service-role-client`, `jev/n8n-inline-credentials` (ask); `tq/plan-read`, `tq/plan-commit` (cloud pack, deny: plan and state files hold secrets); `tq/plan-secret-print` (cloud pack, ask: `state pull`/`show`, `show -json`, `output -json`/`-raw`, `output <name>`, `-show-sensitive`, `pulumi ... --show-secrets`, `pulumi config get`) |
+| `self-protection` | locked | `tq/guard-change` (ask), `tq/guard-file-write`, `tq/settings-widen`, `tq/settings-shell-write`, `tq/trust-store-write` (deny), `tq/guard-error` (the fail-safe ask), `tq/nested-agent-loosened`, `tq/mode-change` (deny), `plugin/headless-manifest-guard` (deny); `tq/hub-store-write`, `tq/human-answer` (deny), `tq/pack-config-change` (ask): the pack framework's core rules |
 | `privacy` | locked | `tq/commit-pii`, `tq/push-pii`, `tq/text-pii`, `tq/pii-fixture-dump` (deny) |
 | `git-history` | | `tq/force-push-main` (deny), `tq/force-push` (ask), `tq/gh-admin-merge` (ask), `tq/gh-repo-delete` (deny) |
-| `prod-changes` | | `tq/iac-apply`, `tq/remote-migration` (ask); `tq/dbt-prod-target`, `tq/model-promote`, `tq/pipeline-run`, `tq/iac-apply-env`, `tq/db-migrate-env`, `tq/restore-target`¹ |
-| `cloud-destructive` | | `tq/cloud-delete`, `tq/iac-destroy` (ask) |
-| `db-destructive` | | `tq/sql-destructive-shell`, `tq/migration-edit`, `tq/mcp-sql-write`, `tq/mcp-apply-migration` (ask); `jev/destructive-sql`, `jev/rls-weakened` (Jev ask); `tq/dbt-full-refresh`¹ |
+| `prod-changes` | | `tq/iac-apply`, `tq/remote-migration` (ask) |
+| `cloud-destructive` | | `tq/cloud-delete`, `tq/iac-destroy` (ask); `tq/iac-apply-env` (cloud pack, the environment's policy) |
+| `db-destructive` | | `tq/sql-destructive-shell`, `tq/migration-edit`, `tq/mcp-sql-write`, `tq/mcp-apply-migration` (ask); `jev/destructive-sql`, `jev/rls-weakened` (Jev ask); `tq/db-migrate-env` (db pack, the environment's policy), `tq/restore-target` (db pack, deny) |
 | `system` | | `tq/registry-write`, `tq/outside-path-write`, `tq/elevation` (ask); `tq/system-dir-write` (deny) |
 | `external-writes` | | `tq/mcp-github-write`, `tq/mcp-n8n-write`, `tq/mcp-hosting-exec`, `tq/tracker-cli-write` (ask) |
 | `ci-supply-chain` | | `tq/gha-unpinned`, `tq/gha-pr-target` (ask); `tq/gha-branch-ref` (deny) |
 | `hygiene` | | `tq/commit-message` (ask) |
-| `packs` | | the fallback for a pack guard that fits no other category: `tq/warehouse-resize`, `tq/bq-unbounded-query`, `tq/warehouse-query-unbounded`¹ |
+| `packs` | | the other pack guards and rules: `tq/warehouse-resize` (deny or ask), `tq/bq-unbounded-query`, `tq/dbt-prod-target`, `tq/model-promote` (deny), `tq/warehouse-query-unbounded`, `tq/dbt-full-refresh`, `tq/pipeline-run`, `tq/plan-print` (ask) |
 
-¹ Rules of the packs work, classified ahead of its merge.
+A pack guard declares its category (`packs.Guard.Category`), which must equal its entry here; a pack rule runs only while its pack is on. Cloud apply and destroy are `cloud-destructive` and db migrate and restore `db-destructive`, so `strict` denies a cloud apply the environment would only ask about, and `relaxed` (with its grant) skips them like the matching built-in rules.
 
 **Custom rules** (`guard.rules` in the manifest or `guard.yaml`, and
 `.claude/tq-rules.yaml`) may declare `category:` with one of the thirteen
@@ -871,6 +871,51 @@ Every rule, built-in or not, also has a category; the
 [guard mode](#guard-modes) maps each category to skip, ask, deny or the
 rule's own action.
 
+### Pack framework rules (always on, never-disable)
+
+These core rules come with the pack framework ([PACKS.md](PACKS.md)). They are
+active in every workspace, with or without a pack, and are in the locked groups
+(`self-protection`, `secrets` for `tq/secret-store-shell`): every guard mode
+applies them, `guard.disable` of them is ignored, `guard.actions` may only make
+them stricter, and no pack guard may supersede them.
+
+| Rule | Action | What |
+|---|---|---|
+| `tq/hub-store-write` | deny | a write into `$TQ_HOME/hub/` or `$TQ_HOME/packs/` (the hub store, pack ledgers, claims and plans) by a file tool or a shell command. A hook-time check also denies any agent shell command that reaches a protected part of `$TQ_HOME` (`hub/`, `packs/`, `build-gate/`, `trust/`, `guard/`, `guard.yaml`, `config.yaml`, `audit.jsonl`), under any spelling: the real, final and 8.3 paths, `~/.tentaqles`, the `TQ_HOME` variable forms, tq's exported variables. Only a call of this tq with a subcommand that never runs a child is exempt, and a child after `--` is checked on its own ([framework-security.md](packs/framework-security.md)) |
+| `tq/human-answer` | deny | `tq hub answer`, `tq pack <pack> ... apply` (apply as a subcommand word, flags allowed between), an HTTP call to the hub's decision or answer endpoints, and reading `hub/serve-*.json` |
+| `tq/pack-config-change` | ask | an edit of `tq-packs.yaml`, a pack baseline file or the manifest's `packs:` block, from a file tool or the shell |
+| `tq/secret-store-shell` | deny | a shell command naming the pack ledger key's keychain entry (`tentaqles-packs`) |
+
+### Pack rules and guards (while the pack is on)
+
+A pack's rules and decision guards run only while the trusted manifest enables
+that pack. A decision guard reads the command (and small local files) and
+returns its own verdict; the ones marked "policy" apply the environment policy
+of the pack's `environments` block.
+
+| Rule | Pack | Default | What |
+|---|---|---|---|
+| `tq/iac-apply-env` | cloud | policy | an apply or destroy resolves to an environment and gets its `auto` / `ask` / `approve` / `deny` policy; `approve` needs a human-approved recorded plan ([apply gate](packs/cloud-apply-gate.md)) |
+| `tq/iac-identity-drift` | cloud | deny | an apply or destroy whose subscription, profile or AWS account disagrees with its environment |
+| `tq/plan-read` | cloud | deny | reading or printing a plan file, a state file, the plan store or a CDK asset manifest |
+| `tq/plan-print` | cloud | ask | plain `terraform show` / `output` with no output name (sensitive values masked) into the transcript; skipped in `relaxed` |
+| `tq/plan-secret-print` | cloud | ask | `terraform`/`tofu state pull`, `state show`, `show -json`, `output -json` or `-raw`, `output <name>` (not redacted, per the Terraform CLI docs), OpenTofu's `-show-sensitive`, `pulumi ... --show-secrets` and `pulumi config get <key>`: they print state or secret values in clear. Locked `secrets`, so every guard mode asks |
+| `tq/plan-commit` | cloud | deny | `git add` of a plan, state, `.terraform/` or the plan store |
+| `tq/db-migrate-env` | db | policy | a migration command resolves to an environment and gets its `migrate` policy ([migrations](packs/db-migrations.md)) |
+| `tq/restore-target` | db | deny | a restore into a declared environment or a non-local host ([restore drill](packs/db-restore-drill.md)) |
+| `tq/dbt-prod-target` | data | deny | a writing dbt command with `--target` in `dbt.prod_targets` |
+| `tq/dbt-full-refresh` | data | ask | `--full-refresh` on a command that can rebuild a relation |
+| `tq/pipeline-run` | data | ask | an orchestrator run or backfill (airflow, dagster, prefect, `az ... pipeline create-run`) |
+| `tq/bq-unbounded-query` | data | deny | `bq query` without `--maximum_bytes_billed`, or above `cost.bigquery.max_bytes` |
+| `tq/warehouse-resize` | data | deny or ask | a Snowflake warehouse resize: deny above `max_warehouse_size`, ask at or below |
+| `tq/warehouse-query-unbounded` | data | ask | a warehouse query with no statement timeout and no `LIMIT` |
+| `tq/model-promote` | ml | deny | a registry promotion outside `tq pack ml promote apply` (MLflow, SageMaker, Vertex AI, Databricks, Azure ML) |
+
+The pack guards read through `bash -c`, `pwsh -Command` and a decoded
+`-EncodedCommand`; a PowerShell script file, stdin or an undecodable payload
+asks. In the cloud and db gates, a global flag tq does not know before the
+subcommand counts at the strictest environment ([PACKS.md](PACKS.md#known-behaviours)).
+
 ### Limits
 
 - The policy reads tool input as text. Like the identity guard it catches
@@ -1026,9 +1071,14 @@ them, `Set-Content`, `Add-Content`, `Out-File`, `Remove-Item`,
 that name them and call a write. Both the `~/.tentaqles` and the
 `$TQ_HOME` (`${TQ_HOME}`, `$env:TQ_HOME`, `%TQ_HOME%`) spellings match, and
 the same four spellings of `CLAUDE_CONFIG_DIR` and `CODEX_HOME`; a
-custom `TQ_HOME` written out as a literal path does not. Reads (`cat`,
-`Get-Content`, Read, `cp` from them) stay allowed. `tq allow`, `tq deny`,
-`tq init` and `tq settings render` change these files.
+custom `TQ_HOME` written out as a literal path does not. For the identity
+files, reads (`cat`, `Get-Content`, Read, `cp` from them) stay allowed. For
+`$TQ_HOME/trust/`, `config.yaml` and `guard.yaml`, only the Read tool may read
+them: an agent's shell command that names them, a read included, is denied
+by the hook-time state-dir check (`tq/hub-store-write`, see the pack
+framework rules), under every spelling of the path, a custom literal
+`TQ_HOME` included. `tq allow`, `tq deny`, `tq init` and `tq settings render`
+change these files.
 
 ### Heredocs: data and code
 

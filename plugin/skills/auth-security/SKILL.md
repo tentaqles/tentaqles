@@ -73,6 +73,12 @@ Details and tradeoffs: [references/sessions-tokens.md](references/sessions-token
   server (edge functions, backend jobs), never in client code, never in a
   `NEXT_PUBLIC_*` / `VITE_*` / `EXPO_PUBLIC_*` variable, never in a mobile
   bundle. Schema changes to policies go through `db-migration`.
+- **Supabase with the tq db pack:** the RLS rows above are checked by
+  `db/rls` (rules `RLS001`…`RLS010`: missing RLS, open write policies,
+  user-editable metadata, `anon` grants, views without `security_invoker`,
+  `SECURITY DEFINER` without `search_path`), and the "test as `anon` and as a
+  second user" row by the `rls-tests` skill's pgTAP files (`db/rls-tests`,
+  `db/pgtap`, or `db/pgtap-supabase` in Supabase mode).
 
 ## 5. Secrets
 

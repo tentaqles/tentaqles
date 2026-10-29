@@ -1,0 +1,41 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 with breaking changes and no major version bump",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 41,
+      "level": "error",
+      "rule": "type-options-loosened",
+      "message": "property orders.status logicalTypeOptions.maxLength loosened"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 40,
+      "level": "error",
+      "rule": "type-options-loosened",
+      "message": "property orders.status logicalTypeOptions.pattern removed"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 48,
+      "level": "error",
+      "rule": "type-options-loosened",
+      "message": "property orders.amount logicalTypeOptions.maximum loosened"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 47,
+      "level": "error",
+      "rule": "type-options-loosened",
+      "message": "property orders.amount logicalTypeOptions.minimum loosened"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "error",
+      "rule": "version-not-bumped",
+      "message": "breaking change without a major version bump (1.2.0 -> 1.3.0); bump to 2.0.0"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+apiVersion: v2.2.2
+kind: DataContract
+id: acme-legacy
+version: 1.0.0

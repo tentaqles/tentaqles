@@ -1,0 +1,27 @@
+{
+  "status": "ok",
+  "detail": "1 pipeline file scanned",
+  "findings": [
+    {
+      "file": "pipelines/orders.py",
+      "line": 5,
+      "level": "warn",
+      "rule": "wall-clock-filter",
+      "message": "wall-clock time in a filter or partition value; use the run's logical date (ds, data_interval_start, a partition key or a parameter) so reruns and backfills select the same rows"
+    },
+    {
+      "file": "pipelines/orders.py",
+      "line": 7,
+      "level": "warn",
+      "rule": "wall-clock-filter",
+      "message": "wall-clock time in a filter or partition value; use the run's logical date (ds, data_interval_start, a partition key or a parameter) so reruns and backfills select the same rows"
+    },
+    {
+      "file": "pipelines/orders.py",
+      "line": 8,
+      "level": "warn",
+      "rule": "wall-clock-filter",
+      "message": "wall-clock time in a filter or partition value; use the run's logical date (ds, data_interval_start, a partition key or a parameter) so reruns and backfills select the same rows"
+    }
+  ]
+}

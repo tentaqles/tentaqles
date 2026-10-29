@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "src/features/build.py",
+      "line": 5,
+      "level": "warn",
+      "rule": "L5-lookahead",
+      "message": "shift(-HORIZON) reads future rows into a feature"
+    },
+    {
+      "file": "src/features/build.py",
+      "line": 6,
+      "level": "warn",
+      "rule": "L5-lookahead",
+      "message": "shift(-n) reads future rows into a feature"
+    }
+  ]
+}

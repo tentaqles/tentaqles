@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 contract, no breaking change",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "warn",
+      "rule": "major-without-breaking",
+      "message": "major version bumped (1.2.0 -> 2.0.0) with no breaking change"
+    }
+  ]
+}

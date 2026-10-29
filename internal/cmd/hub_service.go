@@ -19,6 +19,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 	"github.com/tentaqles/tentaqles/internal/hub/web"
+	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -26,10 +27,7 @@ import (
 
 // hubAgent: an agent session may add cards and comment, nothing else (spec §15). A session the
 // hub launched (TQ_HUB_TASK) is one too, whatever else its environment says.
-func hubAgent() bool {
-	return os.Getenv("TENTAQLES_HEADLESS") == "1" || os.Getenv("CLAUDE_PLUGIN_ROOT") != "" ||
-		os.Getenv("CLAUDECODE") == "1" || strings.TrimSpace(os.Getenv("TQ_HUB_TASK")) != ""
-}
+func hubAgent() bool { return packs.AgentSession() }
 
 // hubCardFromTask reads the card id of the run this session belongs to (TQ_HUB_TASK).
 func hubCardFromTask() (string, string, bool) {

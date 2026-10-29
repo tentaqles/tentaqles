@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: One row per customer of the synthetic acme shop.
+    columns:
+      - name: customer_id
+        description: The customer key.
+        data_tests: [unique, not_null]
+      - name: signup_date
+        description: The day the customer signed up.
+
+  - name: stg_orders
+    description: One row per order, amounts in currency units.
+    columns:
+      - name: order_id
+        description: The order key.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: The customer who placed the order.
+        data_tests: [not_null]
+      - name: order_date
+        description: The day the order was placed.
+      - name: status
+        description: placed, shipped, completed or returned.
+      - name: amount
+        description: The order amount.
+      - name: updated_at
+        description: When the order last changed.

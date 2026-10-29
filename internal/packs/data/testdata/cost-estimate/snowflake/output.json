@@ -1,0 +1,5 @@
+[
+  {
+    "content": "{\"GlobalStats\":{\"partitionsTotal\":120,\"partitionsAssigned\":12,\"bytesAssigned\":73400320},\"Operations\":[[{\"id\":0,\"operation\":\"Result\",\"expressions\":[\"ORDERS.ID\"]},{\"id\":1,\"parent\":0,\"operation\":\"TableScan\",\"objects\":[\"ACME.PUBLIC.ORDERS\"],\"expressions\":[\"ID\"],\"partitionsAssigned\":12,\"partitionsTotal\":120,\"bytesAssigned\":73400320}]]}"
+  }
+]

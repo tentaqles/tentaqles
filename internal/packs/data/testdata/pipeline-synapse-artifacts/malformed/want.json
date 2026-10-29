@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "0 Synapse resources scanned",
+  "findings": [
+    {
+      "file": "linkedService/AcmeSql.json",
+      "line": 1,
+      "level": "warn",
+      "rule": "synapse-unparsed",
+      "message": "the file does not parse as JSON; its credentials and pools were not checked"
+    }
+  ]
+}

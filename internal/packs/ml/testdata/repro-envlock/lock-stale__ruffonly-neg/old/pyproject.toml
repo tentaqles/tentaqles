@@ -1,0 +1,9 @@
+[project]
+name = "acme-churn"
+version = "0.1.0"
+dependencies = [
+    "pandas==2.2.3",
+]
+
+[tool.ruff]
+line-length = 100

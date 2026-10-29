@@ -1,0 +1,133 @@
+{
+ "Resources": {
+  "AdminRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {"Action": "sts:AssumeRole", "Effect": "Allow",
+       "Principal": {"AWS": {"Fn::Join": ["", ["arn:", {"Ref": "AWS::Partition"}, ":iam::222222222222:root"]]}}}
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {"Fn::Join": ["", ["arn:", {"Ref": "AWS::Partition"}, ":iam::aws:policy/AdministratorAccess"]]}
+    ]
+   }
+  },
+  "OwnRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {"Action": "sts:AssumeRole", "Effect": "Allow",
+       "Principal": {"AWS": {"Fn::Join": ["", ["arn:", {"Ref": "AWS::Partition"}, ":iam::", {"Ref": "AWS::AccountId"}, ":root"]]}}}
+     ]
+    },
+    "ManagedPolicyArns": [
+     {"Fn::Join": ["", ["arn:", {"Ref": "AWS::Partition"}, ":iam::aws:policy/ReadOnlyAccess"]]}
+    ]
+   }
+  },
+  "GhRefRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {"Action": "sts:AssumeRoleWithWebIdentity", "Effect": "Allow",
+       "Principal": {"Federated": {"Ref": "GithubProvider"}},
+       "Condition": {"StringLike": {"token.actions.githubusercontent.com:sub": "repo:acme/*"}}}
+     ]
+    }
+   }
+  },
+  "GhSubRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {"Action": "sts:AssumeRoleWithWebIdentity", "Effect": "Allow",
+       "Principal": {"Federated": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"}}}
+     ]
+    }
+   }
+  },
+  "GhJoinRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {"Action": "sts:AssumeRoleWithWebIdentity", "Effect": "Allow",
+       "Principal": {"Federated": {"Fn::Join": ["", ["arn:", {"Ref": "AWS::Partition"}, ":iam::", {"Ref": "AWS::AccountId"}, ":oidc-provider/token.actions.githubusercontent.com"]]}},
+       "Condition": {"StringEquals": {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com"}}}
+     ]
+    }
+   }
+  },
+  "ForeignBucketPolicy": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": "acme-data",
+    "PolicyDocument": {
+     "Statement": [
+      {"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::222222222222:root"}, "Action": "s3:*", "Resource": "arn:aws:s3:::acme-data/*"}
+     ]
+    }
+   }
+  },
+  "NotActionQueuePolicy": {
+   "Type": "AWS::SQS::QueuePolicy",
+   "Properties": {
+    "Queues": ["acme-q"],
+    "PolicyDocument": {
+     "Statement": [
+      {"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::111111111111:root"}, "NotAction": "sqs:DeleteQueue", "Resource": "*"}
+     ]
+    }
+   }
+  },
+  "Key": {
+   "Type": "AWS::KMS::Key",
+   "Properties": {
+    "KeyPolicy": {
+     "Statement": [
+      {"Effect": "Allow", "Principal": {"AWS": {"Fn::Join": ["", ["arn:", {"Ref": "AWS::Partition"}, ":iam::", {"Ref": "AWS::AccountId"}, ":root"]]}}, "Action": "kms:*", "Resource": "*"},
+      {"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::111111111111:root"}, "Action": "kms:*", "Resource": "*"}
+     ]
+    }
+   }
+  },
+  "ForeignKey": {
+   "Type": "AWS::KMS::Key",
+   "Properties": {
+    "KeyPolicy": {
+     "Statement": [
+      {"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::222222222222:root"}, "Action": "kms:*", "Resource": "*"}
+     ]
+    }
+   }
+  },
+  "CondBucketPolicy": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": "acme-site",
+    "PolicyDocument": {
+     "Statement": [
+      {"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::acme-site/*",
+       "Condition": {"Fn::If": ["Restrict", {"IpAddress": {"aws:SourceIp": "10.0.0.0/8"}}, {"Ref": "AWS::NoValue"}]}}
+     ]
+    }
+   }
+  },
+  "PassServiceRoles": {
+   "Type": "AWS::IAM::ManagedPolicy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {"Effect": "Allow", "Action": "iam:PassRole", "Resource": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/service-role/*"}}
+     ]
+    }
+   }
+  }
+ }
+}

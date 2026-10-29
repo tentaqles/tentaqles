@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contracted model",
+  "findings": [
+    {
+      "file": "models/marts/_marts.yml",
+      "line": 9,
+      "level": "error",
+      "rule": "column-no-data-type",
+      "message": "model fct_orders enforces a contract but column amount has no data_type"
+    }
+  ]
+}

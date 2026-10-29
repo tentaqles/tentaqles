@@ -166,6 +166,10 @@ func (s *Server) apiAnswer(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if d, err := svc.Store().Decision(r.PathValue("did")); err == nil && d.PackApproval() != "" {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": errPackAnswerPath.Error(), "code": "human_only"})
+		return
+	}
 	out, err := svc.Answer(s.reqCtx(r), id, r.PathValue("did"), req.Choice, req.Note)
 	if err != nil && (out.Message != "" || out.Decision.ID != "") {
 		// the gate recorded the answer but exited non-zero: the caller sees both

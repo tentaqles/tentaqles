@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/decide"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -329,15 +331,19 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 				}
 			}
 			classified := false
-			if tws, _ := resolveTrusted(cwd); tws != nil && tws.Manifest != nil {
+			tws, _ := resolveTrusted(cwd)
+			if tws != nil && tws.Manifest != nil {
 				classified = classifiedFlag(changed, tws.Manifest.Data)
 			}
+			// Pack flags (spec C §2.9): deterministic flags of the enabled
+			// packs, and their Jev questions in the same call.
+			packFlags, packDetail, packQs := triagePackFlags(cwd, changed, staged, rng)
 			cl, pol, ws, err := decideClient("triage", decide.BatchTimeout)
 			res := decide.TriageResult{Risk: "high"}
 			if err != nil {
 				res.Error = err.Error()
 			} else {
-				res = decide.TriageWith(context.Background(), cl, pol, diff, namesOrNil(changed, nerr))
+				res = decide.TriageWithQuestions(context.Background(), cl, pol, diff, namesOrNil(changed, nerr), packQs)
 			}
 			if classified {
 				res.Flags = append(res.Flags, "classified_data")
@@ -345,7 +351,15 @@ code is 0 for low and 3 for high, so scripts can branch on it.`,
 			if nerr != nil {
 				res.Flags = append(res.Flags, "files_unlisted")
 			}
-			if classified || nerr != nil {
+			if len(packDetail) > 0 {
+				res.Detail = packDetail
+			}
+			for _, f := range packFlags {
+				if !slices.Contains(res.Flags, f) {
+					res.Flags = append(res.Flags, f)
+				}
+			}
+			if classified || nerr != nil || len(packFlags) > 0 {
 				sort.Strings(res.Flags)
 				res.Risk = "high"
 			}
@@ -405,6 +419,40 @@ func classifiedFlag(files []string, data manifest.Data) bool {
 		}
 	}
 	return false
+}
+
+// triagePackFlags builds the pack Input over triage's changed files and
+// returns the raised pack flags, their details and the enabled packs' Jev
+// questions. A workspace whose manifest is untrusted or invalid, a registry
+// that cannot be read, or an invalid tq-packs.yaml raises
+// packs_config_invalid (risk high) and keeps whatever trusted config there
+// is: untrusted content can never switch the packs' review off.
+func triagePackFlags(cwd string, changed []string, staged bool, rng string) ([]string, map[string]string, map[string]decide.Question) {
+	ws, werr := packWorkspace(cwd)
+	if werr != nil {
+		return []string{"packs_config_invalid"}, nil, nil
+	}
+	if ws == nil || ws.Manifest == nil {
+		return nil, nil, nil
+	}
+	in, ok := packInputFor(cwd, ws)
+	var extra []string
+	if !ok {
+		extra = append(extra, "packs_config_invalid")
+	}
+	if len(in.Config.Enabled()) == 0 {
+		return extra, nil, nil
+	}
+	in.Base, in.Staged = "HEAD", staged
+	if rng != "" {
+		in.Base, _, _ = strings.Cut(rng, "..")
+		in.Base = strings.TrimSpace(in.Base)
+	}
+	for _, f := range changed {
+		in.Changed = append(in.Changed, packs.ChangedFile{Path: f, Status: 'M'})
+	}
+	names, detail := packs.RaiseFlagsDetail(in)
+	return append(names, extra...), detail, packs.Questions(in.Config)
 }
 
 // triageGit runs git for triage; tests replace it.

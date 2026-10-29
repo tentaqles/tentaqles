@@ -1,0 +1,18 @@
+version: 2
+models:
+  - name: fct_orders
+    config:
+      contract:
+        enforced: true
+    constraints:
+      - type: primary_key
+        columns: [order_id]
+      - type: not_null
+        columns: [status, amount]
+    columns:
+      - name: order_id
+        data_type: bigint
+      - name: status
+        data_type: varchar(20)
+      - name: amount
+        data_type: numeric(12, 2)

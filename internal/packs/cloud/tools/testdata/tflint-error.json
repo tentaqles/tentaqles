@@ -1,0 +1,10 @@
+{
+  "issues": [],
+  "errors": [
+    {
+      "summary": "Plugin \"aws\" not found",
+      "message": "Plugin \"aws\" not found. Did you run \"tflint --init\"?",
+      "severity": "error"
+    }
+  ]
+}

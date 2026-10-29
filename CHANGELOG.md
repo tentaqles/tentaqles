@@ -6,6 +6,41 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+### Packs (specs C and D, releases 3 and 4)
+
+`tq pack`: checks, guards, reviewers and approvals for data, ml, cloud and db work. See
+[`docs/PACKS.md`](docs/PACKS.md) and [`docs/packs/`](docs/packs/).
+
+- **`tq pack`** `check`, `list`, `doctor`, `crew`, `approvals`, `baseline`, and the
+  `data` (`cost estimate`), `ml` (`promote request|apply|status`, `drift`), `cloud`
+  (`plan`, `show`, `approve`, `prune`) and `db` (`approve`, `drill`) subcommands. Only the
+  trusted manifest's `packs:` block enables a pack; a repo `tq-packs.yaml` adds to it under
+  per-key merge rules and never loosens it.
+- **Guard modes.** Every pack guard and pack rule has a category: cloud apply/destroy
+  `cloud-destructive`, db migrate/restore `db-destructive`, `tq/iac-identity-drift`
+  `identity`, `tq/plan-read` and `tq/plan-commit` `secrets`, the rest `packs`.
+- **New core rules, always on with no pack enabled, in the locked groups:** `tq/hub-store-write`
+  (now a core rule; `tq guard list` no longer shows it as owned by cloud or db),
+  `tq/human-answer`, `tq/pack-config-change` and `tq/secret-store-shell`. A hook-time
+  check denies agent shell and file access to `$TQ_HOME` `hub/`, `packs/`, `build-gate/`,
+  `trust/`, `guard/`, `guard.yaml`, `config.yaml` and `audit.jsonl`, in any spelling; only
+  a call of the running tq with a subcommand that never runs a child is exempt.
+- **Pack approvals are answered from the terminal only:** `tq hub answer` needs a TTY
+  and the typed binding, the answer is signed with a key in the OS keychain, and the board
+  refuses it. `packs-keychain-missing` in `tq pack doctor` means no approval can be
+  granted on that machine.
+- **Unknown global flags floor to the strictest environment** in the cloud and db gates
+  (the supabase CLI; terraform/tofu, pulumi, cdk/cdktf, az, aws and sam). Put the flag
+  after the subcommand, or report the missing flag (see `docs/PACKS.md`, Known behaviours).
+- **Telemetry opt-outs:** every pack tool gets `DO_NOT_TRACK=1`; dbt, tflint, trivy, dvc
+  and dagster also get their own switches. sqlfluff, squawk, conftest, cfn-lint, bicep,
+  datacontract, ruff, uv and poetry have no opt-out tq could confirm and get only
+  `DO_NOT_TRACK=1`.
+- **Build-gate approve now runs `tq pack list`,** even with no pack configured: it is
+  refused when the manifest is untrusted or invalid, or `tq-packs.yaml` has problems.
+- **Tools get a filtered environment;** a credential reaches a tool only through a name its
+  check declares, and never a repo-local binary.
+
 ### Guard modes (spec E)
 
 One knob for how strict tq's guard is: a **guard mode** per workspace, project folder
