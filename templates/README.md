@@ -7,6 +7,7 @@ These are starting points for the kinds of systems built for clients: n8n automa
 | [`n8n-jev-decision/`](n8n-jev-decision/) | An importable n8n sub-workflow that asks TypeSafe Jev questions about `state` and routes low-confidence answers and errors to human review. Auth comes from a Header Auth credential. | `python -m pytest templates/n8n-jev-decision/tests`, stdlib only. The Code-node tests need `node`. |
 | [`rag-starter/`](rag-starter/) | A Supabase/pgvector RAG package. It includes `halfvec` + HNSW and tsvector + GIN migrations, hybrid search fused with RRF, a record manager, rerankers (Jev, Cohere, no-op), a model router, loop guards, and an eval CLI for CI. | `pytest` (no network), plus an optional SQL smoke test in a throwaway pgvector container. |
 | [`pandas-jev-labeller/`](pandas-jev-labeller/) | Labels DataFrame rows with Jev: batched, cached by row hash, retried, with a cost estimate, dry run, probability columns, a review CSV and Postgres staging helpers. | `pytest` with a fake TypeSafe HTTP server. |
+| [`ml-starter/`](ml-starter/) | A scikit-learn churn `Pipeline` built for tq's ml pack: a seed helper, `uv.lock`, a sha256-pinned data snapshot (`data/snapshots.yaml`), a `MODEL_CARD.md` that matches the metrics file, `drift_profile.py` (`tq.drift-profile/v1`) and `scripts/promote.py` for MLflow aliases (tracking URI from the environment). | `pytest` with a fake MLflow server (`http.server`) and synthetic data generated at test time. |
 
 ## Shared rules
 

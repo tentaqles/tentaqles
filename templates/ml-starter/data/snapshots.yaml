@@ -1,0 +1,9 @@
+# packs.ml.data_manifest: snapshot name -> uri + sha256.
+# Training reads data only through ml_starter.data.snapshot_path, which refuses a name
+# not listed here and a file whose sha256 differs. The model card quotes the same hash.
+# The template's data is synthetic and generated at test time with the recipe below.
+churn-train:
+  uri: data/raw/churn.csv
+  sha256: 43e09d65c62b62e7aaa589c8256312b4dd52bc6fa521cf9562befdaf1a032be8
+  rows: 2000
+  recipe: "uv run python -m ml_starter.synth --out data/raw/churn.csv --rows 2000 --seed 7"
