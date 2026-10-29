@@ -423,7 +423,21 @@ func Compact(ws, pack string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	st := Resolve(es)
+	// The signed state only (R4-6): a decision is dropped when its signed
+	// expiry passed or the keychain high-water mark retired it. Unsigned
+	// consumed and expired lines are ignored here, so a forged line cannot
+	// make compaction drop a live approval.
+	tr, err := LoadTrust(ws, pack)
+	if err != nil && !errors.Is(err, ErrNoKey) {
+		return err
+	}
+	var signedOnly []Entry
+	for _, e := range es {
+		if e.Event != Consumed && e.Event != Expired {
+			signedOnly = append(signedOnly, e)
+		}
+	}
+	st := ResolveSigned(signedOnly, tr)
 	var buf bytes.Buffer
 	kept := 0
 	for _, e := range es {

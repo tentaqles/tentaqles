@@ -348,3 +348,16 @@ func TestHookKeychainErrorDenies(t *testing.T) {
 		t.Fatalf("%d %s", code, out)
 	}
 }
+
+// R4-3: the hook denies a call that would consume an approval when the
+// keychain reads but cannot record the use.
+func TestHookDeniesWhenTheMarkCannotBeWritten(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	signedApproval(t, "acme", "cloud", "d-example")
+	restore := ledger.FailKeychainWritesForTest(errors.New("read-only keychain"))
+	defer restore()
+	code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: "terraform apply approved.tfplan"})
+	if code != 2 || !strings.Contains(out, "read-only keychain") {
+		t.Fatalf("%d %s", code, out)
+	}
+}

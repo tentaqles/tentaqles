@@ -42,6 +42,23 @@ const SigTag = "tq.packs.ledger/v2"
 // ErrNoKey is returned when the workspace has no ledger key yet.
 var ErrNoKey = errors.New("ledger: no signing key in the OS keychain for this workspace")
 
+// keychainSet is every ledger keychain write (a seam for the write-failure tests).
+var keychainSet = keyring.Set
+
+// FailKeychainWritesForTest makes every ledger keychain write fail with err
+// (reads still work) until restore is called. For tests only.
+func FailKeychainWritesForTest(err error) (restore func()) {
+	prev := keychainSet
+	keychainSet = func(string, string, string) error { return err }
+	return func() { keychainSet = prev }
+}
+
+// tsTime parses a signed time (RFC 3339, nanoseconds allowed).
+func tsTime(s string) (time.Time, bool) {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	return t, err == nil
+}
+
 func pubAccount(ws string) string       { return ws + "/pub" }
 func hwmAccount(ws, pack string) string { return ws + "/" + pack + "/hwm" }
 
@@ -80,10 +97,17 @@ func SigningKey(ws string) (ed25519.PrivateKey, error) {
 			return nil, errors.New("ledger: the keychain entry is not a ledger private key")
 		}
 		priv := ed25519.NewKeyFromSeed(seed)
-		if _, perr := LoadPublicKey(ws); errors.Is(perr, ErrNoKey) {
-			if err := keyring.Set(KeyService, pubAccount(ws), hex.EncodeToString(priv.Public().(ed25519.PublicKey))); err != nil {
+		pub, perr := LoadPublicKey(ws)
+		switch {
+		case errors.Is(perr, ErrNoKey):
+			if err := keychainSet(KeyService, pubAccount(ws), hex.EncodeToString(priv.Public().(ed25519.PublicKey))); err != nil {
 				return nil, fmt.Errorf("ledger: the OS keychain cannot store the public key: %w", err)
 			}
+		case perr != nil:
+			return nil, perr
+		case !pub.Equal(priv.Public()):
+			// readers would reject every answer signed now: refuse up front
+			return nil, errors.New("ledger: the public key in the OS keychain does not match the private key; nothing can be signed (repair the tentaqles-packs entries)")
 		}
 		return priv, nil
 	case !errors.Is(err, keyring.ErrNotFound):
@@ -93,10 +117,10 @@ func SigningKey(ws string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := keyring.Set(KeyService, ws, hex.EncodeToString(priv.Seed())); err != nil {
+	if err := keychainSet(KeyService, ws, hex.EncodeToString(priv.Seed())); err != nil {
 		return nil, fmt.Errorf("ledger: the OS keychain cannot store the key: %w", err)
 	}
-	if err := keyring.Set(KeyService, pubAccount(ws), hex.EncodeToString(pub)); err != nil {
+	if err := keychainSet(KeyService, pubAccount(ws), hex.EncodeToString(pub)); err != nil {
 		return nil, fmt.Errorf("ledger: the OS keychain cannot store the public key: %w", err)
 	}
 	return priv, nil
@@ -159,6 +183,13 @@ type Shown struct {
 	Evidence                                        map[string]string
 }
 
+// SameShown compares two views of a decision field for field (the evidence
+// by its hash).
+func SameShown(a, b Shown) bool {
+	return a.Pack == b.Pack && a.Action == b.Action && a.Subject == b.Subject && a.Target == b.Target &&
+		a.ExpiresAt == b.ExpiresAt && a.Grant == b.Grant && EvidenceHash(a.Evidence) == EvidenceHash(b.Evidence)
+}
+
 // ErrShownMismatch: the ledger's asked line differs from what the human saw.
 var ErrShownMismatch = errors.New("ledger: the approval in the ledger differs from the decision you were shown; nothing was signed")
 
@@ -181,8 +212,8 @@ func AnswerSigner(ws string, priv ed25519.PrivateKey) func(shown Shown, decision
 		if asked == nil {
 			return Entry{}, fmt.Errorf("ledger: decision %s has no asked line in the %s ledger", decisionID, shown.Pack)
 		}
-		if asked.Pack != shown.Pack || asked.Action != shown.Action || asked.Subject != shown.Subject || asked.Target != shown.Target ||
-			asked.ExpiresAt != shown.ExpiresAt || asked.Grant != shown.Grant || EvidenceHash(asked.Evidence) != EvidenceHash(shown.Evidence) {
+		if !SameShown(Shown{Pack: asked.Pack, Action: asked.Action, Subject: asked.Subject, Target: asked.Target,
+			ExpiresAt: asked.ExpiresAt, Grant: asked.Grant, Evidence: asked.Evidence}, shown) {
 			return Entry{}, ErrShownMismatch
 		}
 		e := Entry{Event: Answered, Decision: decisionID, Pack: shown.Pack, Action: shown.Action, Subject: shown.Subject, Target: shown.Target,
@@ -217,7 +248,8 @@ func LoadHighWater(ws, pack string) (Mark, error) {
 // SetHighWater raises the pack's high-water mark to the signed answer of
 // decisionID (read from the ledger with the public key). Every consume
 // calls it (the hook, approval.Claim, approval.MarkUsed); a failure must
-// deny. Readers then refuse that decision and every answer signed earlier,
+// deny. Readers then refuse that decision and every answer signed at or
+// before its time (answers carry nanosecond times, so ties are retired too),
 // so deleting a claim file or re-appending compacted lines cannot reopen a
 // used approval. The cost: consuming one approval also invalidates the
 // older, still unused approvals of the same pack.
@@ -244,10 +276,14 @@ func SetHighWater(ws, pack, decisionID string) error {
 	if err != nil {
 		return err
 	}
-	if cur.TS != "" && cur.TS > ts {
+	at, ok := tsTime(ts)
+	if !ok {
+		return fmt.Errorf("ledger: decision %s has a signed answer with a bad time", decisionID)
+	}
+	if ct, ok := tsTime(cur.TS); ok && ct.After(at) {
 		return nil // already higher; this decision is older, hence already refused
 	}
-	return keyring.Set(KeyService, hwmAccount(ws, pack), ts+"|"+decisionID)
+	return keychainSet(KeyService, hwmAccount(ws, pack), ts+"|"+decisionID)
 }
 
 // Trust is what a reader verifies the ledger against: the public key and
@@ -280,7 +316,7 @@ func LoadTrust(ws string, packs ...string) (Trust, error) {
 // evidence hash, granting option, expiry and asked time come from the
 // signature, never from the unsigned asked line. An unsigned or badly
 // signed answered line is ignored; with no key no answer counts. A decision
-// at or below its pack's high-water mark is used.
+// answered at or before its pack's high-water mark is used.
 func ResolveSigned(entries []Entry, t Trust) map[string]State {
 	asked := map[string]bool{}
 	for _, e := range entries {
@@ -311,10 +347,10 @@ func ResolveSigned(entries []Entry, t Trust) map[string]State {
 		if at, err := time.Parse(time.RFC3339, e.AskedTS); err == nil {
 			s.AskedAt = at
 		}
-		if m := t.HWM[e.Pack]; m.TS != "" && (e.TS < m.TS || id == m.Decision) {
+		if m := t.HWM[e.Pack]; m.TS != "" && (id == m.Decision || !answeredAfter(e.TS, m.TS)) {
 			s.Status = Consumed
 			if s.ConsumedAt.IsZero() {
-				s.ConsumedAt, _ = time.Parse(time.RFC3339, m.TS)
+				s.ConsumedAt, _ = tsTime(m.TS)
 				if s.ConsumedAt.IsZero() {
 					s.ConsumedAt = time.Unix(1, 0)
 				}
@@ -323,4 +359,12 @@ func ResolveSigned(entries []Entry, t Trust) map[string]State {
 		out[id] = s
 	}
 	return out
+}
+
+// answeredAfter reports whether a signed answer time is strictly after the
+// mark. An unparsable time counts as not after (used: fail closed).
+func answeredAfter(ts, mark string) bool {
+	a, ok1 := tsTime(ts)
+	m, ok2 := tsTime(mark)
+	return ok1 && ok2 && a.After(m)
 }

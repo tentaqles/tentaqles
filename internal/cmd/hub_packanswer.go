@@ -65,6 +65,7 @@ func answerPackApproval(c *cobra.Command, h *hubConn, cardID string, d store.Dec
 			fmt.Fprintf(out, "  evidence %s: %v\n", k, ev[k])
 		}
 	}
+	shown := d.Shown() // what is printed above; the store row must still equal it
 	want := pack + " " + action + " " + subjectCode(subject)
 	fmt.Fprintf(out, "\nTo answer %q, type: %s\n> ", choice, want)
 	line, _ := bufio.NewReader(c.InOrStdin()).ReadString('\n')
@@ -93,7 +94,7 @@ func answerPackApproval(c *cobra.Command, h *hubConn, cardID string, d store.Dec
 		defer s.Store().Close()
 		svc = s
 	}
-	ctx := runner.WithHumanPresence(context.Background(), runner.HumanPresence{Sign: store.PackSigner(ledger.AnswerSigner(h.ws.Name, key))})
+	ctx := runner.WithHumanPresence(context.Background(), runner.HumanPresence{Sign: store.PackSigner(ledger.AnswerSigner(h.ws.Name, key)), Shown: &shown})
 	got, err := svc.Answer(ctx, cardID, d.ID, choice, note)
 	if err != nil {
 		return err

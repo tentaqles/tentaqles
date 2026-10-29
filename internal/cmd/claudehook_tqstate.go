@@ -111,7 +111,7 @@ var (
 type stateCache struct {
 	key   string
 	forms []string
-	re    *regexp.Regexp
+	re    *rootMatcher
 	prot  map[string]bool
 	vars  map[string]string
 	bare  map[string]*regexp.Regexp
@@ -219,40 +219,168 @@ func expandInside(n string) string {
 	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
 	for _, k := range names {
 		v := vars[k]
+		if !strings.Contains(n, k) {
+			continue // every spelling contains the name
+		}
 		for _, sp := range []string{"${" + k + "}", "$env:" + k, "%" + k + "%", "$" + k} {
 			n = strings.ReplaceAll(n, sp, v)
 		}
 		// The bare name (os.environ[X], process.env.X): quotes and brackets are
 		// already folded away, so no left boundary is required.
-		n = si.bare[k].ReplaceAllString(n, v+"${1}")
+		if strings.Contains(n, k) {
+			n = si.bare[k].ReplaceAllString(n, v+"${1}")
+		}
 	}
 	return n
 }
 
 // rootRegex matches any spelling of the state directory root.
-func rootRegex() *regexp.Regexp { return stateInfo().re }
+func rootRegex() *rootMatcher { return stateInfo().re }
 
-func computeRootRegex(forms []string) *regexp.Regexp {
-	forms = append([]string(nil), forms...)
-	sort.Slice(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
-	alts := []string{`tentaq~[0-9]+`}
-	for _, f := range forms {
-		if f != "" && f != "tentaq~" {
-			alts = append(alts, regexp.QuoteMeta(f))
-		}
-	}
-	return regexp.MustCompile("(" + strings.Join(alts, "|") + ")")
+// rootMatcher finds the state-directory root spellings: `tentaq~<digits>`
+// and the literal forms, leftmost first and, at one position, the 8.3 form
+// then the longest literal (the order of the alternation it replaces, which
+// was a large regexp and too slow on a 64 KB command). Literal search uses
+// strings.Index.
+type rootMatcher struct {
+	forms []string // longest first
 }
 
+func computeRootRegex(forms []string) *rootMatcher {
+	var fs []string
+	for _, f := range forms {
+		if f != "" && f != "tentaq~" {
+			fs = append(fs, f)
+		}
+	}
+	sort.SliceStable(fs, func(i, j int) bool { return len(fs[i]) > len(fs[j]) })
+	return &rootMatcher{forms: fs}
+}
+
+// shortAt returns the end of `tentaq~<digits>` at i, or -1.
+func shortAt(s string, i int) int {
+	const p = "tentaq~"
+	if !strings.HasPrefix(s[i:], p) {
+		return -1
+	}
+	j := i + len(p)
+	k := j
+	for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+		k++
+	}
+	if k == j {
+		return -1
+	}
+	return k
+}
+
+// all returns every match, leftmost first and non-overlapping, in one pass
+// per form: the candidate starts of each form are collected, and at each
+// start the 8.3 form wins, then the longest literal.
+func (m *rootMatcher) all(s string, firstOnly bool) [][]int {
+	end := map[int]int{}
+	var starts []int
+	add := func(i, e int, short bool) {
+		if old, ok := end[i]; ok {
+			if !short && old >= e {
+				return
+			}
+			if !short && old != e && shortAt(s, i) == old {
+				return // the 8.3 form wins at its start
+			}
+		} else {
+			starts = append(starts, i)
+		}
+		end[i] = e
+	}
+	for i := 0; ; {
+		k := strings.Index(s[i:], "tentaq~")
+		if k < 0 {
+			break
+		}
+		if e := shortAt(s, i+k); e >= 0 {
+			add(i+k, e, true)
+		}
+		i += k + 1
+	}
+	for _, f := range m.forms {
+		for i := 0; ; {
+			k := strings.Index(s[i:], f)
+			if k < 0 {
+				break
+			}
+			add(i+k, i+k+len(f), false)
+			i += k + 1
+		}
+	}
+	sort.Ints(starts)
+	var out [][]int
+	from := 0
+	for _, st := range starts {
+		if st < from {
+			continue
+		}
+		out = append(out, []int{st, end[st]})
+		if firstOnly {
+			break
+		}
+		from = end[st]
+	}
+	return out
+}
+
+func (m *rootMatcher) FindStringIndex(s string) []int {
+	if l := m.all(s, true); len(l) > 0 {
+		return l[0]
+	}
+	return nil
+}
+
+func (m *rootMatcher) MatchString(s string) bool { return m.FindStringIndex(s) != nil }
+
+func (m *rootMatcher) FindAllStringIndex(s string, _ int) [][]int { return m.all(s, false) }
+
 var (
-	tokenRe   = regexp.MustCompile(`[^\s;&|()<>,=]+`)
-	segSplit  = regexp.MustCompile(`&&|\|\||[;&|\n]`)
-	cdRe      = regexp.MustCompile(`^\s*(cd|pushd|chdir|set-location|sl)\s+(\S+)\s*$`)
-	linkVerb  = regexp.MustCompile(`\b(ln|mklink|new-item\b.*-itemtype\s+(junction|symboliclink|hardlink)|cmd\s+/c\s+mklink)\b`)
-	wordSplit = regexp.MustCompile(`[\s()<>=,]+`)
-	msgArg    = regexp.MustCompile(`(?i)\s(-m|-am|--message)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
-	echoSeg   = regexp.MustCompile(`(?i)^\s*(echo|write-host|write-output|printf)\b`)
+	cdRe     = regexp.MustCompile(`^\s*(cd|pushd|chdir|set-location|sl)\s+(\S+)\s*$`)
+	linkVerb = regexp.MustCompile(`\b(ln|mklink|new-item\b.*-itemtype\s+(junction|symboliclink|hardlink)|cmd\s+/c\s+mklink)\b`)
+	msgArg   = regexp.MustCompile(`(?i)\s(-m|-am|--message)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
+	echoSeg  = regexp.MustCompile(`(?i)^\s*(echo|write-host|write-output|printf)\b`)
 )
+
+// Hand-written splitters for the hot loops (the regexps they replace were
+// the cost on a 64 KB command). isTokenSep separates tokens (whitespace and
+// ;&|()<>,=); isSegSep separates segments (; & | and newline; a run yields
+// no empty segment, which the loops skipped anyway); isWordSep separates
+// words (whitespace and ()<>=,).
+func isSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' || r == '\v'
+}
+func isTokenSep(r rune) bool { return isSpace(r) || strings.ContainsRune(";&|()<>,=", r) }
+func isSegSep(r rune) bool   { return r == ';' || r == '&' || r == '|' || r == '\n' }
+func isWordSep(r rune) bool  { return isSpace(r) || strings.ContainsRune("()<>=,", r) }
+
+// mapTokens replaces every maximal run of non-separator characters (a
+// token) with f(run).
+func mapTokens(s string, f func(string) string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	start := -1
+	for i, r := range s {
+		if isTokenSep(r) {
+			if start >= 0 {
+				b.WriteString(f(s[start:i]))
+				start = -1
+			}
+			b.WriteRune(r)
+		} else if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		b.WriteString(f(s[start:]))
+	}
+	return b.String()
+}
 
 func firstSeg(s string) string {
 	if i := strings.IndexAny(s, "/ \t;&|)<>,"); i >= 0 {
@@ -264,7 +392,9 @@ func firstSeg(s string) string {
 // proseFree blanks text that is never a path: a commit message (-m,
 // --message) and an echo segment that redirects nowhere.
 func proseFree(raw string) string {
-	raw = msgArg.ReplaceAllString(raw, " ")
+	if l := strings.ToLower(raw); strings.Contains(l, "-m") || strings.Contains(l, "-am") {
+		raw = msgArg.ReplaceAllString(raw, " ")
+	}
 	var out []string
 	for _, seg := range proseSplit.Split(raw, -1) {
 		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") {
@@ -278,11 +408,11 @@ func proseFree(raw string) string {
 // foldPaths folds a command for path matching: inside variables expanded,
 // string concatenation (+) dropped, and `..` resolved lexically in every
 // path-like token. It also reports a root mention followed by `..`.
-func foldPaths(n string, re *regexp.Regexp) (string, bool) {
+func foldPaths(n string, re *rootMatcher) (string, bool) {
 	n = strings.ReplaceAll(expandInside(n), "+", "")
 	dotdot := false
-	n = tokenRe.ReplaceAllStringFunc(n, func(tok string) string {
-		if !strings.Contains(tok, "/") {
+	n = mapTokens(n, func(tok string) string {
+		if !strings.Contains(tok, "/") || !strings.Contains(tok, "..") {
 			return tok
 		}
 		if loc := re.FindStringIndex(tok); loc != nil && strings.Contains(tok[loc[1]:], "/..") {
@@ -321,7 +451,7 @@ func protectedMention(raw string) bool {
 	n, dotdot := foldPaths(normShell(proseFree(raw)), re)
 	// Fail closed: a root spelling and a `..` path in one command (a
 	// variable set to a path under the root, then `/../packs`).
-	if dotdot || (re.MatchString(n) && dotdotRe.MatchString(rawDots(raw))) {
+	if dotdot || (strings.Contains(raw, "..") && dotdotRe.MatchString(rawDots(raw)) && re.MatchString(n)) {
 		return true
 	}
 	bare := false
@@ -346,11 +476,11 @@ func protectedMention(raw string) bool {
 		}
 		bare = true
 	}
-	if mentioned && linkVerb.MatchString(n) {
+	if mentioned && (strings.Contains(n, "ln") || strings.Contains(n, "mklink") || strings.Contains(n, "new-item")) && linkVerb.MatchString(n) {
 		return true
 	}
 	if bare {
-		for _, tok := range tokenRe.FindAllString(n, -1) {
+		for _, tok := range strings.FieldsFunc(n, isTokenSep) {
 			if !strings.Contains(tok, "/") {
 				continue
 			}
@@ -364,7 +494,7 @@ func protectedMention(raw string) bool {
 	// Cumulative cd: rel is the virtual cwd under the root, known while the
 	// cds stay under it.
 	known, rel := false, ""
-	for _, seg := range segSplit.Split(n, -1) {
+	for _, seg := range strings.FieldsFunc(n, isSegSep) {
 		if m := cdRe.FindStringSubmatch(seg); m != nil {
 			t := strings.TrimSuffix(m[2], "/")
 			if loc := re.FindStringIndex(t); loc != nil && loc[0] == 0 {
@@ -390,7 +520,7 @@ func protectedMention(raw string) bool {
 		if !known {
 			continue
 		}
-		for _, w := range wordSplit.Split(seg, -1) {
+		for _, w := range strings.FieldsFunc(seg, isWordSep) {
 			w = strings.TrimPrefix(w, "./")
 			if w == "" || strings.HasPrefix(w, "-") || strings.Contains(w, "://") || path.IsAbs(w) || strings.HasPrefix(w, "~") || strings.HasPrefix(w, "$") {
 				continue
@@ -434,11 +564,11 @@ func decodePct(s string) string {
 // concatenation-folded URL.
 func humanAnswerShell(n string) bool {
 	f := strings.ReplaceAll(n, "+", "")
-	if humanAnswerRe.MatchString(f) {
+	if (strings.Contains(f, "answer") || strings.Contains(f, "approve") || strings.Contains(f, "promote")) && humanAnswerRe.MatchString(f) {
 		return true
 	}
 	d := decodePct(f)
-	return httpClientRe.MatchString(d) && (strings.Contains(d, "/decisions/") || strings.Contains(d, "/answer"))
+	return (strings.Contains(d, "/decisions/") || strings.Contains(d, "/answer")) && httpClientRe.MatchString(d)
 }
 
 // canonicalPath resolves a written path: the nearest existing parent through

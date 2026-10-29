@@ -192,7 +192,7 @@ func (s *Store) upsertDecision(d Decision, viaHub bool, sign PackSigner) (Mirror
 			tx.Rollback()
 			return MirrorResult{}, ErrPackAnswer
 		}
-		e, err := sign(cur.Shown(), d.ID, d.Choice, answerActorKind(d.Actor), time.Now().UTC().Format(time.RFC3339))
+		e, err := sign(cur.Shown(), d.ID, d.Choice, answerActorKind(d.Actor), time.Now().UTC().Format(time.RFC3339Nano))
 		if err == nil {
 			err = ledger.Append(s.Workspace, e)
 		}

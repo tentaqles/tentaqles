@@ -11,6 +11,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/hub/activity"
 	"github.com/tentaqles/tentaqles/internal/hub/gate"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 )
 
 func endsRun(kind, choice string) bool {
@@ -211,10 +212,19 @@ func (s *Service) answerHub(ctx context.Context, card store.Card, d store.Decisi
 		// TTY-checked path, which puts a HumanPresence (its ledger signer) in
 		// the context; it never resumes or requeues a run.
 		p := humanPresence(ctx)
-		if p == nil || p.Sign == nil {
+		if p == nil || p.Sign == nil || p.Shown == nil {
 			return AnswerOutcome{}, store.ErrPackAnswer
 		}
-		d, err := s.st.AnswerPackApproval(d.ID, choice, note, s.cfg.Actor, p.Sign)
+		// R4-5: sign only if the store row at answer time still equals what
+		// the human was shown.
+		shown, inner := *p.Shown, p.Sign
+		sign := func(cur ledger.Shown, id, choice, kind, ts string) (ledger.Entry, error) {
+			if !ledger.SameShown(cur, shown) {
+				return ledger.Entry{}, ledger.ErrShownMismatch
+			}
+			return inner(cur, id, choice, kind, ts)
+		}
+		d, err := s.st.AnswerPackApproval(d.ID, choice, note, s.cfg.Actor, sign)
 		if err != nil {
 			return AnswerOutcome{}, err
 		}
@@ -494,9 +504,12 @@ type presenceKey struct{}
 
 // HumanPresence marks an answer made by a human present at a terminal (the
 // TTY and binding check of tq hub answer). Sign builds the signed ledger
-// line. Only that path sets it; no web route or API does.
+// line; Shown is the decision as the human was shown it, which the store row
+// must still equal when the answer is signed. Only that path sets it; no web
+// route or API does.
 type HumanPresence struct {
-	Sign store.PackSigner
+	Sign  store.PackSigner
+	Shown *ledger.Shown
 }
 
 // WithHumanPresence returns ctx carrying p.

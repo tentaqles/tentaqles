@@ -1,7 +1,10 @@
 package ledger
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,7 +122,53 @@ func TestHighWaterMark(t *testing.T) {
 	if !st["d1"].Used() || !st["d0"].Used() {
 		t.Fatalf("watermark: d1 used %v, d0 used %v", st["d1"].Used(), st["d0"].Used())
 	}
+	// R4-1: a sibling answered at the same instant as the mark is retired,
+	// whichever is marked last; a later answer is not.
+	same := askedLine(exp, ev)
+	same.Decision = "d2"
+	Append("acme", same)
+	s2, _ := sign(shownOf(same), "d2", "apply", "hub", "2026-10-29T11:00:00Z")
+	later := askedLine(exp, ev)
+	later.Decision = "d3"
+	Append("acme", later)
+	s3, _ := sign(shownOf(later), "d3", "apply", "hub", "2026-10-29T11:00:00.000000001Z")
+	Append("acme", s2)
+	Append("acme", s3)
+	if err := SetHighWater("acme", "cloud", "d2"); err != nil {
+		t.Fatal(err)
+	}
+	tr, _ = LoadTrust("acme", "cloud")
+	es, _ = Read("acme", "cloud")
+	st = ResolveSigned(es, tr)
+	if !st["d1"].Used() || !st["d2"].Used() || st["d3"].Used() {
+		t.Fatalf("same-time tie: d1 %v d2 %v d3 %v", st["d1"].Used(), st["d2"].Used(), st["d3"].Used())
+	}
 	if err := SetHighWater("acme", "cloud", "nope"); err == nil {
 		t.Fatal("a decision with no signed answer cannot be marked")
+	}
+}
+
+// R4-4: SigningKey refuses when the public entry does not match.
+func TestSigningKeyChecksThePublicEntry(t *testing.T) {
+	isolate(t)
+	keyring.MockInit()
+	if _, err := SigningKey("acme"); err != nil {
+		t.Fatal(err)
+	}
+	other, _, _ := ed25519.GenerateKey(nil)
+	keyring.Set(KeyService, pubAccount("acme"), hex.EncodeToString(other))
+	if _, err := SigningKey("acme"); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("mismatched public key: %v", err)
+	}
+}
+
+// R4-3: a keychain that reads but cannot write: no mark, no key.
+func TestKeychainWriteFailure(t *testing.T) {
+	isolate(t)
+	keyring.MockInit()
+	restore := FailKeychainWritesForTest(errors.New("read-only keychain"))
+	defer restore()
+	if _, err := SigningKey("acme"); err == nil {
+		t.Fatal("a key that cannot be stored")
 	}
 }
