@@ -41,11 +41,12 @@ func init() {
 }
 
 // raiseIAM: a changed path under an IaC path whose name says IAM
-// (*iam*, *role*, *policy*). Paths and config only (spec C §2.9).
+// (*iam*, *role*, *policy*), or a JSON file in an IAM directory (iam/,
+// policies/, roles/). Paths and config only (spec C §2.9).
 func raiseIAM(in *packs.Input) bool {
 	paths := iam.IaCPaths(in.Settings())
 	for _, p := range in.ChangedPaths() {
-		if iam.Under(p, paths) && iam.IAMNamed(p) {
+		if iam.Under(p, paths) && (iam.IAMNamed(p) || iam.IAMPolicyPath(p)) {
 			return true
 		}
 	}

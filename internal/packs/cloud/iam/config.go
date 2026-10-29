@@ -106,3 +106,24 @@ func IAMNamed(p string) bool {
 	b := strings.ToLower(path.Base(p))
 	return strings.Contains(b, "iam") || strings.Contains(b, "role") || strings.Contains(b, "polic")
 }
+
+// iamDirs are directory names that hold IAM policy JSON.
+var iamDirs = map[string]bool{"iam": true, "policies": true, "policy": true, "roles": true, "role": true, "iam-policies": true, "iam_policies": true}
+
+// IAMPolicyPath reports a JSON file in a directory named for IAM
+// (iam/, policies/, roles/ ...): the "IAM policy JSON" of the iam flag
+// (spec D §15), told by its path since flags read paths and config only
+// (spec C §2.9). The content-based finding comes from cloud/iam.
+func IAMPolicyPath(p string) bool {
+	if strings.ToLower(path.Ext(p)) != ".json" {
+		return false
+	}
+	dir := path.Dir(p)
+	for dir != "." && dir != "/" && dir != "" {
+		if iamDirs[strings.ToLower(path.Base(dir))] {
+			return true
+		}
+		dir = path.Dir(dir)
+	}
+	return false
+}

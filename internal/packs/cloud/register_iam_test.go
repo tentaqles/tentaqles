@@ -229,6 +229,10 @@ func TestIAMFlag(t *testing.T) {
 		"infra/aws/roles/deploy.yaml":           false, // the directory, not the name
 		"infra/aws/deploy-role.yaml":            true,
 		"infra/aws/policies/bucket-policy.json": true,
+		"infra/aws/policies/ci.json":            true, // an IAM policy JSON under an IaC path
+		"infra/aws/iam/deploy.json":             true,
+		"infra/aws/stacks/deploy.json":          false,
+		"app/policies/ci.json":                  false,
 		"infra/terraform/network.tf":            false,
 		"app/iam.go":                            false,
 	} {

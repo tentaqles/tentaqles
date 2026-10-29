@@ -12,6 +12,12 @@ import (
 // gcpIAMRe matches the google provider's IAM grant resources:
 // google_<resource>_iam_member, _iam_binding and _iam_policy. GCP001 reads
 // Terraform plans only (decided at spec review).
+//
+// Known limitation: google_*_iam_* resources take no labels or description,
+// so a GCP001 finding cannot be suppressed in the source with tq-allow. A
+// deliberate primitive-role grant stays a finding until a suppression
+// channel for them is agreed (for example a tq-allow comment in the .tf,
+// read by the plan pack).
 var gcpIAMRe = regexp.MustCompile(`^google_[a-z0-9_]+_iam_(member|binding|policy)$`)
 
 type grant struct {

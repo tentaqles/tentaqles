@@ -18,7 +18,9 @@ import (
 // (IAM007). Auto decides per statement: a Principal plus an sts:AssumeRole*
 // action is trust, any other Principal is a resource statement. Statements
 // without a Principal are identity statements (IAM001, IAM002, IAM003,
-// IAM005) in every kind.
+// IAM005) in every kind. IAM001 and IAM003 apply to statements with a
+// Principal too; a key policy (docKeyPolicy) is a resource policy whose
+// default statement, kms:* for the own account root, is exempt from IAM001.
 type docKind int
 
 const (
@@ -26,6 +28,7 @@ const (
 	docIdentity
 	docTrust
 	docResource
+	docKeyPolicy
 )
 
 // issue is one rule hit inside a policy document; stmt is the statement's
@@ -35,9 +38,11 @@ type issue struct {
 	Stmt             int
 }
 
-// statement is one decoded IAM statement. Only string elements are kept in
-// the lists; an element that is an intrinsic (CloudFormation Fn::Sub, a
-// Ref) is unknown and never matches "*".
+// statement is one decoded IAM statement. List elements are strings, or
+// CloudFormation intrinsics rendered by intrinsicString (a Ref becomes a
+// ${Name} placeholder, which never matches "*"). CondUnknown marks a
+// Condition that is present but not readable here (redacted, or an
+// intrinsic such as Fn::If): it is neither "has a condition" nor "has none".
 type statement struct {
 	Index                   int
 	Effect                  string
@@ -47,6 +52,7 @@ type statement struct {
 	Principal               any
 	Condition               map[string]any
 	HasCondition            bool
+	CondUnknown             bool
 }
 
 func (s statement) allow() bool {
@@ -89,13 +95,13 @@ func decodeDoc(doc any) (stmts []statement, ok bool) {
 			st.Effect, _ = model.Str(e)
 		}
 		if a, ok := lookup(sm, "Action"); ok {
-			st.Actions = model.Strings(a)
+			st.Actions = intrinsicStrings(a)
 		}
 		if _, ok := lookup(sm, "NotAction"); ok {
 			st.HasNotAction = true
 		}
 		if r, ok := lookup(sm, "Resource"); ok {
-			st.Resources = model.Strings(r)
+			st.Resources = intrinsicStrings(r)
 		}
 		if _, ok := lookup(sm, "NotResource"); ok {
 			st.HasNotRes = true
@@ -108,9 +114,15 @@ func decodeDoc(doc any) (stmts []statement, ok bool) {
 			// principals: judge it like a "*" principal.
 			st.HasPrincipal, st.Principal = true, "*"
 		}
-		if c, ok := lookup(sm, "Condition"); ok {
-			st.Condition = model.Map(c)
-			st.HasCondition = len(st.Condition) > 0 || (c != nil && st.Condition == nil)
+		if c, ok := lookup(sm, "Condition"); ok && c != nil {
+			cm := model.Map(c)
+			switch {
+			case cm == nil, intrinsicMap(cm):
+				st.CondUnknown = true
+			default:
+				st.Condition = cm
+				st.HasCondition = len(cm) > 0
+			}
 		}
 		stmts = append(stmts, st)
 	}
@@ -147,6 +159,8 @@ func lintDoc(doc any, kind docKind, o Options) ([]issue, bool) {
 			out = append(out, identityRules(s)...)
 			continue
 		}
+		out = append(out, notRules(s)...)
+		out = append(out, principalWildRules(s, kind, o)...)
 		trust := kind == docTrust
 		if kind == docAuto {
 			trust = assumes(s)
@@ -171,20 +185,77 @@ func assumes(s statement) bool {
 	return false
 }
 
-func identityRules(s statement) []issue {
-	var out []issue
-	add := func(rule, level, format string, args ...any) {
-		out = append(out, issue{Rule: rule, Level: level, Msg: fmt.Sprintf("statement %d: ", s.Index) + fmt.Sprintf(format, args...), Stmt: s.Index})
+func stmtIssue(s statement, rule, level, format string, args ...any) issue {
+	return issue{Rule: rule, Level: level, Msg: fmt.Sprintf("statement %d: ", s.Index) + fmt.Sprintf(format, args...), Stmt: s.Index}
+}
+
+// notRules is IAM003, for every Allow statement.
+func notRules(s statement) []issue {
+	if !s.HasNotAction && !s.HasNotRes {
+		return nil
 	}
-	if s.HasNotAction || s.HasNotRes {
-		which := "NotAction"
-		if s.HasNotRes {
-			which = "NotResource"
-			if s.HasNotAction {
-				which = "NotAction and NotResource"
-			}
+	which := "NotAction"
+	if s.HasNotRes {
+		which = "NotResource"
+		if s.HasNotAction {
+			which = "NotAction and NotResource"
 		}
-		add("IAM003", packs.LevelError, "Allow with %s grants everything not listed; name the actions and resources instead", which)
+	}
+	return []issue{stmtIssue(s, "IAM003", packs.LevelError, "Allow with %s grants everything not listed; name the actions and resources instead", which)}
+}
+
+// principalWildRules is IAM001 for a statement with a Principal (a
+// resource, key or trust policy). The default key policy statement, kms:*
+// for the own account root, is exempt in a key policy only.
+func principalWildRules(s statement, kind docKind, o Options) []issue {
+	var wild []string
+	for _, a := range s.Actions {
+		if !fullWildcard(a) {
+			continue
+		}
+		if kind == docKeyPolicy && strings.EqualFold(strings.TrimSpace(a), "kms:*") && ownRootOnly(s.Principal, o) {
+			continue
+		}
+		wild = append(wild, a)
+	}
+	if len(wild) == 0 {
+		return nil
+	}
+	return []issue{stmtIssue(s, "IAM001", packs.LevelError, "Allow with Action %s for a principal; list the actions it needs", quoteList(wild))}
+}
+
+var rootArnRe = regexp.MustCompile(`^arn:[^:]*:iam::([^:]+):root$`)
+
+// ownRootOnly: every principal is an account root of ours: a listed
+// account, the template's own account (${AWS.AccountId}, a Ref), or any
+// account root when packs.cloud.accounts is unset.
+func ownRootOnly(v any, o Options) bool {
+	p := principals(v)
+	if p.star || len(p.federated) > 0 || len(p.svc) > 0 || p.fedUnresolved || len(p.aws) == 0 {
+		return false
+	}
+	for _, a := range p.aws {
+		a = strings.TrimSpace(a)
+		acct := a
+		if m := rootArnRe.FindStringSubmatch(a); m != nil {
+			acct = m[1]
+		} else if !bareAccountRe.MatchString(a) {
+			return false
+		}
+		if unresolved(acct) || len(o.Accounts) == 0 {
+			continue
+		}
+		if !contains(o.Accounts, acct) {
+			return false
+		}
+	}
+	return true
+}
+
+func identityRules(s statement) []issue {
+	out := notRules(s)
+	add := func(rule, level, format string, args ...any) {
+		out = append(out, stmtIssue(s, rule, level, format, args...))
 	}
 	var wild []string
 	for _, a := range s.Actions {
@@ -210,6 +281,10 @@ func identityRules(s statement) []issue {
 		}
 	}
 	if wildResource(s.Resources) && !s.HasCondition {
+		level, how := packs.LevelError, "without a condition"
+		if s.CondUnknown {
+			level, how = packs.LevelWarn, "with a condition that is not resolvable here"
+		}
 		var esc []string
 		for _, a := range s.Actions {
 			if fullWildcard(a) {
@@ -222,7 +297,7 @@ func identityRules(s statement) []issue {
 			}
 		}
 		if len(esc) > 0 {
-			add("IAM005", packs.LevelError, "privilege escalation: %s on every resource without a condition; name the roles or add a condition (iam:PassedToService, aws:ResourceTag)", quoteList(dedupe(esc)))
+			add("IAM005", level, "privilege escalation: %s on every resource %s; name the roles or add a condition (iam:PassedToService, aws:ResourceTag)", quoteList(dedupe(esc)), how)
 		}
 	}
 	return out
@@ -231,17 +306,24 @@ func identityRules(s statement) []issue {
 func trustRules(s statement, o Options) []issue {
 	var out []issue
 	add := func(format string, args ...any) {
-		out = append(out, issue{Rule: "IAM006", Level: packs.LevelError, Msg: fmt.Sprintf("statement %d: ", s.Index) + fmt.Sprintf(format, args...), Stmt: s.Index})
+		out = append(out, stmtIssue(s, "IAM006", packs.LevelError, format, args...))
 	}
 	p := principals(s.Principal)
 	if p.star {
 		add("trust policy with Principal \"*\": anyone can assume the role")
 		return out
 	}
-	if len(o.Accounts) > 0 && !hasCondKey(s.Condition, "sts:ExternalId") {
+	if !hasCondKey(s.Condition, "sts:ExternalId") {
 		for _, a := range p.aws {
 			acct, known := accountOf(a)
-			if known && !contains(o.Accounts, acct) {
+			if !known {
+				continue
+			}
+			if len(o.Accounts) == 0 {
+				out = append(out, stmtIssue(s, "IAM006", packs.LevelWarn, "an AWS account principal can assume the role without an sts:ExternalId condition; set packs.cloud.accounts so cross-account trust is judged"))
+				break
+			}
+			if !contains(o.Accounts, acct) {
 				add("a principal in an account outside packs.cloud.accounts can assume the role without an sts:ExternalId condition")
 				break
 			}
@@ -256,37 +338,103 @@ func trustRules(s statement, o Options) []issue {
 			add("OIDC principal %s without a %s:aud condition", host, host)
 		}
 		if strings.Contains(strings.ToLower(host), githubOIDCHost) {
-			vals, found, redacted := condValues(s.Condition, host+":sub")
-			switch {
-			case !found:
-				add("GitHub OIDC principal without a %s:sub condition: any repository can assume the role", host)
-			case redacted:
-				out = append(out, issue{Rule: "IAM006", Level: packs.LevelWarn, Stmt: s.Index,
-					Msg: fmt.Sprintf("statement %d: GitHub OIDC sub condition is redacted in this input; check it names one repository", s.Index)})
-			default:
-				for _, v := range vals {
-					if repoWildcard(v) {
-						add("GitHub OIDC sub condition is wildcarded at the repository level; name the repository (repo:<owner>/<repo>:...)")
-						break
-					}
-				}
-			}
+			out = append(out, githubSubRules(s, host)...)
+		}
+	}
+	if p.fedUnresolved && webIdentity(s) {
+		// The provider is a Ref or another expression: judge it by its
+		// condition keys. An OIDC trust needs some aud; a GitHub one (any
+		// key naming the GitHub issuer) needs a pinned sub.
+		if !condKeySuffix(s.Condition, ":aud") && !condKeySuffix(s.Condition, ":app_id") {
+			add("OIDC principal that is not resolvable here without an aud condition")
+		}
+		if host := githubCondHost(s.Condition); host != "" {
+			out = append(out, githubSubRules(s, host)...)
 		}
 	}
 	return out
 }
 
-func resourceRules(s statement) []issue {
-	if principals(s.Principal).star && !s.HasCondition {
-		return []issue{{Rule: "IAM007", Level: packs.LevelError, Stmt: s.Index,
-			Msg: fmt.Sprintf("statement %d: resource policy with Principal \"*\" and no condition makes the resource public", s.Index)}}
+// githubSubRules is the GitHub part of IAM006: the sub condition must exist
+// and pin one repository. A value that is redacted or unknown in this input
+// cannot be verified, so it fails closed.
+func githubSubRules(s statement, host string) []issue {
+	vals, found, unknown := condValues(s.Condition, host+":sub")
+	switch {
+	case !found:
+		return []issue{stmtIssue(s, "IAM006", packs.LevelError, "GitHub OIDC principal without a %s:sub condition: any repository can assume the role", host)}
+	case unknown:
+		return []issue{stmtIssue(s, "IAM006", packs.LevelError, "GitHub OIDC sub condition is redacted or unknown in this input, so it cannot be verified to name one repository; check it and suppress with tq-allow IAM006: <reason>")}
+	}
+	for _, v := range vals {
+		if repoWildcard(v) {
+			return []issue{stmtIssue(s, "IAM006", packs.LevelError, "GitHub OIDC sub condition is wildcarded at the repository level; name the repository (repo:<owner>/<repo>:...)")}
+		}
 	}
 	return nil
 }
 
+func webIdentity(s statement) bool {
+	for _, a := range s.Actions {
+		if overlaps(a, "sts:AssumeRoleWithWebIdentity") {
+			return true
+		}
+	}
+	return false
+}
+
+// condKeySuffix reports a condition key, under any operator, ending in suffix.
+func condKeySuffix(c map[string]any, suffix string) bool {
+	for _, ops := range c {
+		for k := range model.Map(ops) {
+			if strings.HasSuffix(strings.ToLower(k), suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// githubCondHost returns the issuer part ("token.actions.githubusercontent.com",
+// or one with an enterprise path) of the first condition key that names the
+// GitHub issuer, or "".
+func githubCondHost(c map[string]any) string {
+	var keys []string
+	for _, ops := range c {
+		for k := range model.Map(ops) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !strings.Contains(strings.ToLower(k), githubOIDCHost) {
+			continue
+		}
+		if i := strings.LastIndex(k, ":"); i > 0 {
+			return k[:i]
+		}
+	}
+	return ""
+}
+
+func resourceRules(s statement) []issue {
+	if !principals(s.Principal).star || s.HasCondition {
+		return nil
+	}
+	if s.CondUnknown {
+		return []issue{stmtIssue(s, "IAM007", packs.LevelWarn, "resource policy with Principal \"*\" and a condition that is not resolvable here; check it restricts access")}
+	}
+	return []issue{stmtIssue(s, "IAM007", packs.LevelError, "resource policy with Principal \"*\" and no condition makes the resource public")}
+}
+
+// principalSet is a Principal element. Values are resolved through
+// intrinsicString. fedUnresolved marks a Federated value that is not
+// resolvable here (a Ref, an unknown plan value) and names no OIDC
+// provider host.
 type principalSet struct {
 	star                bool
 	aws, federated, svc []string
+	fedUnresolved       bool
 }
 
 func principals(v any) principalSet {
@@ -297,7 +445,15 @@ func principals(v any) principalSet {
 	}
 	m := model.Map(v)
 	for k, val := range m {
-		vals := model.Strings(val)
+		var vals []string
+		unres := val == nil
+		for _, x := range model.List(val) {
+			if s := intrinsicString(x); s != "" {
+				vals = append(vals, s)
+			} else {
+				unres = true
+			}
+		}
 		switch strings.ToLower(k) {
 		case "aws":
 			p.aws = append(p.aws, vals...)
@@ -305,7 +461,16 @@ func principals(v any) principalSet {
 				p.star = true
 			}
 		case "federated":
-			p.federated = append(p.federated, vals...)
+			for _, f := range vals {
+				if unresolved(f) && !strings.Contains(f, ":oidc-provider/") {
+					unres = true
+					continue
+				}
+				p.federated = append(p.federated, f)
+			}
+			if unres {
+				p.fedUnresolved = true
+			}
 		case "service":
 			p.svc = append(p.svc, vals...)
 		case "canonicaluser":
@@ -351,25 +516,34 @@ func federatedHost(f string) string {
 }
 
 // condValues collects the values of a condition key under every operator.
-func condValues(c map[string]any, key string) (vals []string, found, redacted bool) {
+// unknown reports a value that is redacted, null (unknown at plan time) or
+// an unresolvable intrinsic.
+func condValues(c map[string]any, key string) (vals []string, found, unknown bool) {
 	for _, ops := range c {
 		for k, v := range model.Map(ops) {
 			if !strings.EqualFold(k, key) {
 				continue
 			}
 			found = true
+			if v == nil {
+				unknown = true
+			}
 			for _, x := range model.List(v) {
 				if model.IsRedacted(x) {
-					redacted = true
+					unknown = true
 					continue
 				}
 				if s, ok := model.Str(x); ok {
 					vals = append(vals, s)
+				} else if s := intrinsicString(x); s != "" && !unresolved(s) {
+					vals = append(vals, s)
+				} else {
+					unknown = true
 				}
 			}
 		}
 	}
-	return vals, found, redacted
+	return vals, found, unknown
 }
 
 func hasCondKey(c map[string]any, key string) bool {
@@ -402,9 +576,10 @@ func hasStar(rs []string) bool {
 	return false
 }
 
-// wildResource is "*" or an ARN whose resource part is only a wildcard
-// ("arn:aws:iam::*:role/*", "arn:aws:iam::111111111111:role/*").
-var wildArnRe = regexp.MustCompile(`^arn:[^:]*:[^:]*:[^:]*:[^:]*:(?:[A-Za-z-]+/)?\*$`)
+// wildResource is "*" or an ARN whose resource part ends in a bare
+// wildcard path segment ("arn:aws:iam::*:role/*",
+// "arn:aws:iam::111111111111:role/service-role/*").
+var wildArnRe = regexp.MustCompile(`^arn:[^:]*:[^:]*:[^:]*:[^:]*:(?:[^/:]+/)*\*$`)
 
 func wildResource(rs []string) bool {
 	for _, r := range rs {

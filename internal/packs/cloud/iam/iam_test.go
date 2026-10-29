@@ -102,8 +102,8 @@ func TestPlanRules(t *testing.T) {
 		"aws_iam_role.lambda":                  {"error IAM001", "error IAM002", "error IAM004"},
 		"aws_iam_role.gh_noaud":                {"error IAM006", "error IAM006"},
 		// D-CM redacts values under keys containing "token", so the sub
-		// value is unknown in a plan: a warn, not a pass.
-		"aws_iam_role.gh_wild":                     {"warn IAM006"},
+		// value cannot be verified in a plan: it fails closed.
+		"aws_iam_role.gh_wild":                     {"error IAM006"},
 		"aws_s3_bucket_policy.public":              {"error IAM007"},
 		"aws_iam_policy.noreason":                  {"error IAM002", "error SUP001"},
 		"azurerm_role_assignment.owner_sub":        {"error AZR001"},
@@ -217,7 +217,8 @@ func TestStandalone(t *testing.T) {
 
 func TestNoAccountsSkipsCrossAccount(t *testing.T) {
 	doc := `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole"}]}`
-	if res, _, _ := Standalone("t.json", []byte(doc), Options{}); len(res.Findings) != 0 {
+	// Without accounts the cross-account error is not judged; a warn says so.
+	if res, _, _ := Standalone("t.json", []byte(doc), Options{}); len(res.Findings) != 1 || res.Findings[0].Level != packs.LevelWarn {
 		t.Errorf("without accounts: %s", render(res.Findings))
 	}
 	if res, _, _ := Standalone("t.json", []byte(doc), testOpts); len(res.Findings) != 1 {
@@ -269,7 +270,7 @@ func TestTables(t *testing.T) {
 // TestFindingsCarryNoValues: a finding names rules, actions and addresses,
 // never a principal, account, tenant or condition value.
 func TestFindingsCarryNoValues(t *testing.T) {
-	for _, name := range []string{"plan.json", "azuredeploy.json", "policies/github-trust.json"} {
+	for _, name := range []string{"plan.json", "azuredeploy.json", "policies/github-trust.json", "cdk.out/AcmeStack.template.json", "unknown-plan.json", "nested.json"} {
 		for _, f := range lintFixture(t, name).Findings {
 			for _, v := range []string{"222222222222", "33333333-3333", "44444444-4444", "55555555-5555", "tester@", "acme-ext", "sts.amazonaws.com"} {
 				if strings.Contains(f.Message, v) {

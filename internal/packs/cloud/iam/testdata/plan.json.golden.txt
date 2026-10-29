@@ -17,7 +17,7 @@ plan.json:305 error IAM002 aws_iam_role.lambda: inline_policy[0]: statement 0: A
 plan.json:305 error IAM004 aws_iam_role.lambda: attaches the AWS managed policy PowerUserAccess; grant a scoped policy instead
 plan.json:334 error IAM006 aws_iam_role.gh_noaud: statement 0: GitHub OIDC principal without a token.actions.githubusercontent.com:sub condition: any repository can assume the role
 plan.json:334 error IAM006 aws_iam_role.gh_noaud: statement 0: OIDC principal token.actions.githubusercontent.com without a token.actions.githubusercontent.com:aud condition
-plan.json:354 warn IAM006 aws_iam_role.gh_wild: statement 0: GitHub OIDC sub condition is redacted in this input; check it names one repository
+plan.json:354 error IAM006 aws_iam_role.gh_wild: statement 0: GitHub OIDC sub condition is redacted or unknown in this input, so it cannot be verified to name one repository; check it and suppress with tq-allow IAM006: <reason>
 plan.json:374 error IAM007 aws_s3_bucket_policy.public: statement 0: resource policy with Principal "*" and no condition makes the resource public
 plan.json:477 error IAM002 aws_iam_policy.noreason: statement 0: Allow on Resource "*" for "cloudwatch:PutMetricData"; scope the resources by ARN
 plan.json:477 error SUP001 aws_iam_policy.noreason: tq-allow IAM002 has no reason; write "IAM002: <reason>"
