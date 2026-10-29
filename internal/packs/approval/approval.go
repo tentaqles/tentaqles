@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
@@ -64,6 +65,7 @@ var (
 	ErrExpired  = errors.New("the approval has expired")
 	ErrUsed     = errors.New("the approval was already used")
 	ErrEvidence = errors.New("the evidence changed since the approval was asked")
+	ErrBinding  = errors.New("the approval is for another pack, action, subject or target")
 )
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9_.:@/+-]{1,200}$`)
@@ -126,6 +128,10 @@ func Ask(ws string, r Request) (decisionID, cardID string, err error) {
 	if err := validate(&r); err != nil {
 		return "", "", err
 	}
+	// Keep the ledger under the guards' 1 MiB read cap (finished decisions go).
+	if err := ledger.CompactIfLarge(ws, r.Pack, Now()); err != nil {
+		return "", "", fmt.Errorf("approval: the %s ledger cannot be compacted: %w", r.Pack, err)
+	}
 	st, err := OpenStore(ws)
 	if err != nil {
 		return "", "", err
@@ -174,21 +180,30 @@ func Ask(ws string, r Request) (decisionID, cardID string, err error) {
 	return d.ID, cardID, nil
 }
 
-// check verifies one resolved state against the evidence recomputed now.
-func check(s ledger.State, evidence map[string]string, now time.Time) (Approval, error) {
+// Binding is what an approval must be for. Verify compares all four
+// fields; Find compares Pack, Action and Target, and Subject when set.
+type Binding struct {
+	Pack, Action, Subject, Target string
+}
+
+// check verifies one resolved state against the binding and the evidence
+// recomputed now. claimed reports an existing claim (used).
+func check(s ledger.State, want Binding, evidence map[string]string, now time.Time, claimed bool) (Approval, error) {
 	a := Approval{Decision: s.Decision, Card: s.Card, Pack: s.Pack, Action: s.Action, Subject: s.Subject, Target: s.Target,
 		Evidence: s.Evidence, ExpiresAt: s.ExpiresAt, AnsweredAt: s.AnsweredAt, Choice: s.Choice, ActorKind: s.ActorKind}
 	switch {
 	case s.AskedAt.IsZero():
 		return a, fmt.Errorf("%s: %w", s.Decision, ErrUnknown)
-	case s.Used():
+	case s.Pack != want.Pack || s.Action != want.Action || s.Target != want.Target || (want.Subject != "" && s.Subject != want.Subject):
+		return a, fmt.Errorf("%s: %w (it is for %s %s %s -> %s)", s.Decision, ErrBinding, s.Pack, s.Action, s.Subject, s.Target)
+	case s.Used() || claimed:
 		return a, fmt.Errorf("%s: %w", s.Decision, ErrUsed)
 	case s.AnsweredAt.IsZero():
 		if s.Expired(now) {
 			return a, fmt.Errorf("%s: %w", s.Decision, ErrExpired)
 		}
 		return a, fmt.Errorf("%s: %w", s.Decision, ErrPending)
-	case s.ActorKind == "" || s.ActorKind == "agent":
+	case !ledger.IsHuman(s.ActorKind):
 		return a, fmt.Errorf("%s: %w", s.Decision, ErrAgent)
 	case s.Choice != s.Grant:
 		return a, fmt.Errorf("%s: %w (%s)", s.Decision, ErrRejected, s.Choice)
@@ -200,38 +215,62 @@ func check(s ledger.State, evidence map[string]string, now time.Time) (Approval,
 	return a, nil
 }
 
-// Verify succeeds only for a decision a human answered with the granting
-// option, unexpired, unused, whose evidence equals the map recomputed now.
-// It reads only the ledger.
-func Verify(ws, id string, evidence map[string]string) (Approval, error) {
-	entries, err := ledger.ReadAll(ws)
+func validBinding(want Binding) error {
+	if _, ok := PackLimits[want.Pack]; !ok || want.Action == "" || want.Target == "" {
+		return fmt.Errorf("approval: a binding needs a known pack, an action and a target")
+	}
+	return nil
+}
+
+// Verify succeeds only for decision id of want's pack, for exactly want's
+// action, subject and target, answered by a human with the granting
+// option, unexpired, unused (no claim) and with evidence equal to the map
+// recomputed now. It reads only that pack's ledger; a corrupt ledger fails.
+func Verify(ws, id string, want Binding, evidence map[string]string) (Approval, error) {
+	if err := validBinding(want); err != nil {
+		return Approval{}, err
+	}
+	if want.Subject == "" {
+		return Approval{}, errors.New("approval: Verify needs the subject")
+	}
+	entries, err := ledger.Read(ws, want.Pack)
 	if err != nil {
 		return Approval{}, err
 	}
-	return VerifyEntries(entries, id, evidence, Now())
+	return verifyEntries(entries, id, want, evidence, Now(), func(d string) bool { return ledger.Claimed(ws, want.Pack, d) })
 }
 
-// VerifyEntries is Verify over entries already read (a guard reads them with
-// GuardCtx.ReadState(ledger.FileName)).
-func VerifyEntries(entries []ledger.Entry, id string, evidence map[string]string, now time.Time) (Approval, error) {
+// VerifyEntries is Verify over entries already read; claimed reports a
+// claim for a decision id (nil: none known).
+func VerifyEntries(entries []ledger.Entry, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
+	if err := validBinding(want); err != nil {
+		return Approval{}, err
+	}
+	return verifyEntries(entries, id, want, evidence, now, claimed)
+}
+
+func verifyEntries(entries []ledger.Entry, id string, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
 	s, ok := ledger.Resolve(entries)[id]
 	if !ok {
 		return Approval{Decision: id}, fmt.Errorf("%s: %w", id, ErrUnknown)
 	}
-	return check(s, evidence, now)
+	return check(s, want, evidence, now, claimed != nil && claimed(id))
 }
 
-// Find returns the one usable approval for (action, target) whose evidence
-// equals evidence. When none is usable it returns the error of the most
-// recent candidate (so a guard can say "expired" or "evidence changed"), or
-// ErrUnknown when there is no candidate at all.
-func Find(entries []ledger.Entry, action, target string, evidence map[string]string, now time.Time) (Approval, error) {
+// Find returns the one usable approval for want whose evidence equals
+// evidence (Subject "" matches any subject). When none is usable it
+// returns the error of the most recent candidate (so a guard can say
+// "expired" or "evidence changed"), or ErrUnknown when there is none.
+func Find(entries []ledger.Entry, want Binding, evidence map[string]string, now time.Time, claimed func(string) bool) (Approval, error) {
+	if err := validBinding(want); err != nil {
+		return Approval{}, err
+	}
 	var lastErr error
 	for _, s := range ledger.Sorted(ledger.Resolve(entries)) {
-		if s.Action != action || s.Target != target {
+		if s.Pack != want.Pack || s.Action != want.Action || s.Target != want.Target || (want.Subject != "" && s.Subject != want.Subject) {
 			continue
 		}
-		a, err := check(s, evidence, now)
+		a, err := check(s, want, evidence, now, claimed != nil && claimed(s.Decision))
 		if err == nil {
 			return a, nil
 		}
@@ -240,34 +279,68 @@ func Find(entries []ledger.Entry, action, target string, evidence map[string]str
 		}
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("%s -> %s: %w", action, target, ErrUnknown)
+		lastErr = fmt.Errorf("%s %s -> %s: %w", want.Pack, want.Action, want.Target, ErrUnknown)
 	}
 	return Approval{}, lastErr
 }
 
-// FindGuard is Find for a decision guard: it reads the pack ledger through
-// GuardCtx.ReadState (1 MiB, bounded). A read error is returned: deny.
-func FindGuard(g packs.GuardCtx, action, target string, evidence map[string]string) (Approval, error) {
+// FindGuard is Find for a decision guard of want.Pack: it reads that pack's
+// ledger and claims through GuardCtx.ReadState (1 MiB, bounded). Any read
+// error, a corrupt ledger or a guard of another pack is an error: deny. On
+// success the guard calls g.Consume(a.Decision); the hook claims it
+// atomically before the allow.
+func FindGuard(g packs.GuardCtx, want Binding, evidence map[string]string) (Approval, error) {
+	if want.Pack != g.Pack() {
+		return Approval{}, fmt.Errorf("approval: a %s guard cannot use a %s approval", g.Pack(), want.Pack)
+	}
 	raw, err := g.ReadState(ledger.FileName)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Approval{}, fmt.Errorf("%s -> %s: %w", action, target, ErrUnknown)
+			return Approval{}, fmt.Errorf("%s -> %s: %w", want.Action, want.Target, ErrUnknown)
 		}
 		return Approval{}, err
 	}
-	return Find(ledger.Parse(raw), action, target, evidence, Now())
+	entries, err := ledger.Parse(raw)
+	if err != nil {
+		return Approval{}, err
+	}
+	claimed := func(d string) bool {
+		_, err := g.ReadState(ledger.ClaimName(d))
+		return !errors.Is(err, os.ErrNotExist) // a claim, or an error: used (fail closed)
+	}
+	return Find(entries, want, evidence, Now(), claimed)
 }
 
-// MarkUsed appends the consumed line (a human-run apply calls it after the
-// command ran).
-func MarkUsed(ws, id string) error {
-	entries, err := ledger.ReadAll(ws)
+// Claim is the human-run apply's single-use step: it verifies the approval
+// and claims it atomically (exactly one caller wins) before the command
+// runs. Call MarkUsed after the command.
+func Claim(ws, id string, want Binding, evidence map[string]string) (Approval, error) {
+	a, err := Verify(ws, id, want, evidence)
+	if err != nil {
+		return a, err
+	}
+	if err := ledger.Claim(ws, want.Pack, id); err != nil {
+		if errors.Is(err, ledger.ErrClaimed) {
+			return a, fmt.Errorf("%s: %w", id, ErrUsed)
+		}
+		return a, err
+	}
+	return a, nil
+}
+
+// MarkUsed appends the consumed line of decision id of pack (claiming it
+// first when nobody did).
+func MarkUsed(ws, pack, id string) error {
+	entries, err := ledger.Read(ws, pack)
 	if err != nil {
 		return err
 	}
 	s, ok := ledger.Resolve(entries)[id]
 	if !ok {
 		return fmt.Errorf("%s: %w", id, ErrUnknown)
+	}
+	if err := ledger.Claim(ws, pack, id); err != nil && !errors.Is(err, ledger.ErrClaimed) {
+		return err
 	}
 	return ledger.Append(ws, ledger.Entry{Event: ledger.Consumed, Decision: id, Pack: s.Pack, Action: s.Action, Subject: s.Subject, Target: s.Target})
 }
@@ -300,6 +373,9 @@ func List(ws, pack string) ([]Status, error) {
 		if pack != "" && s.Pack != pack {
 			continue
 		}
+		if ledger.Claimed(ws, s.Pack, s.Decision) {
+			s.ConsumedAt = s.AskedAt // claimed: used
+		}
 		row := Status{Decision: s.Decision, Card: s.Card, Pack: s.Pack, Action: s.Action, Subject: s.Subject, Target: s.Target,
 			Choice: s.Choice, ActorKind: s.ActorKind, AskedAt: s.AskedAt, ExpiresAt: s.ExpiresAt, Evidence: []string{}}
 		for k := range s.Evidence {
@@ -313,7 +389,7 @@ func List(ws, pack string) ([]Status, error) {
 			row.State = "expired"
 		case s.AnsweredAt.IsZero():
 			row.State = "pending"
-		case s.Choice == s.Grant && s.ActorKind != "agent":
+		case s.Choice == s.Grant && ledger.IsHuman(s.ActorKind):
 			row.State = "approved"
 		default:
 			row.State = "rejected"
@@ -326,11 +402,17 @@ func List(ws, pack string) ([]Status, error) {
 // ErrNotConfirmed is returned when the human did not type yes.
 var ErrNotConfirmed = errors.New("not confirmed")
 
+// isTerminal tells a terminal from a pipe or a file (tests replace it).
+var isTerminal = func(f *os.File) bool { return f != nil && term.IsTerminal(f.Fd()) }
+
 // Confirm shows the exact command a human-run apply will run and asks for a
-// typed "yes" on a terminal. isTTY false refuses (an apply never runs from a
-// pipe).
-func Confirm(in io.Reader, out io.Writer, isTTY bool, command string) error {
-	if !isTTY {
+// typed "yes". It refuses unless in is a terminal (it checks itself: an
+// apply never runs from a pipe), and in an agent session.
+func Confirm(in *os.File, out io.Writer, command string) error {
+	if err := packs.HumanOnly(); err != nil {
+		return err
+	}
+	if !isTerminal(in) {
 		return errors.New("this command needs a terminal: type yes to confirm the command it runs")
 	}
 	fmt.Fprintf(out, "tq will run:\n\n  %s\n\nType yes to run it: ", command)

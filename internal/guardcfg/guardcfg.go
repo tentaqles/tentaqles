@@ -169,7 +169,12 @@ func Merge(g File, gerr error, m *manifest.Manifest, wsName string) Effective {
 			e.ActionOrigin[id] = wsName
 		}
 	}
-	dropNeverDisable(e.DisableOrigin)
+	dropNeverDisable(e.DisableOrigin, e.ActionOrigin)
+	for id := range e.Actions {
+		if NeverDisable(id) {
+			delete(e.Actions, id)
+		}
+	}
 	for id := range e.DisableOrigin {
 		e.Disable = append(e.Disable, id)
 	}

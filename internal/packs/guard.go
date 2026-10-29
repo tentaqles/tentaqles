@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
@@ -30,13 +31,16 @@ const (
 	HashBudget      = 40 * time.Millisecond
 	hashChunk       = 1 << 20
 	maxGuardRuntime = 2 * time.Second // hard stop even when HashState extends the budget
+	// TotalGuardBudget bounds all the pack guards of one hook call together.
+	TotalGuardBudget = 250 * time.Millisecond
 )
 
 // The budgets in force (tests shorten them).
 var (
-	guardBudget = GuardBudget
-	readBudget  = ReadBudget
-	hashBudget  = HashBudget
+	guardBudget      = GuardBudget
+	readBudget       = ReadBudget
+	hashBudget       = HashBudget
+	totalGuardBudget = TotalGuardBudget
 )
 
 // Guard is a decision guard: a pure function over the tool call and the
@@ -69,6 +73,11 @@ func RegisterGuard(g Guard) {
 	}
 	if g.Check == nil {
 		panic("packs.RegisterGuard " + g.ID + ": Check is nil")
+	}
+	for _, id := range g.Supersedes {
+		if guardcfg.Unsupersedable(id) {
+			panic("packs.RegisterGuard " + g.ID + ": " + id + " protects the guard or a secret and cannot be superseded")
+		}
 	}
 	for _, e := range g.Events {
 		src := regexp.QuoteMeta(e)
@@ -204,6 +213,45 @@ func cleanRel(name string) (string, error) {
 	return filepath.FromSlash(n), nil
 }
 
+// openState opens a state file: a regular file with one link whose final
+// path (from the handle) stays inside the state directory.
+func openState(dir, rel, name string) (*os.File, os.FileInfo, error) {
+	p := filepath.Join(dir, rel)
+	li, err := os.Lstat(p)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !li.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("%w: %s is not a regular file", ErrRefused, name)
+	}
+	f, err := openNoBlock(p)
+	if err != nil {
+		return nil, nil, err
+	}
+	fi, err := f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = fmt.Errorf("%w: %s is not a regular file", ErrRefused, name)
+	}
+	if err == nil {
+		var final string
+		var links int
+		final, links, err = finalPath(f, p)
+		switch {
+		case err != nil:
+			err = fmt.Errorf("%w: cannot resolve %s (%v)", ErrRefused, name, err)
+		case links != 1:
+			err = fmt.Errorf("%w: %s has %d hard links", ErrRefused, name, links)
+		case !within(final, resolvedRoots([]string{dir})):
+			err = fmt.Errorf("%w: %s resolves outside the state directory", ErrRefused, name)
+		}
+	}
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return f, fi, nil
+}
+
 // ReadState reads a file under StateDir(), at most 1 MiB, within 40 ms.
 func (g GuardCtx) ReadState(name string) ([]byte, error) {
 	dir := g.StateDir()
@@ -214,28 +262,13 @@ func (g GuardCtx) ReadState(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := filepath.Join(dir, rel)
-	fi, err := os.Lstat(p)
-	if err != nil {
-		return nil, err
-	}
-	if fi.Mode()&os.ModeSymlink != 0 || !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w: %s is not a regular file", ErrRefused, name)
-	}
-	return boundedRead(p, ReadLimit)
-}
-
-func boundedRead(p string, max int64) ([]byte, error) {
 	start := time.Now()
-	f, err := os.Open(p)
+	f, fi, err := openState(dir, rel, name)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
+	max := int64(ReadLimit)
 	if fi.Size() > max {
 		return nil, fmt.Errorf("%w (%d > %d bytes)", ErrTooLarge, fi.Size(), max)
 	}
@@ -331,10 +364,16 @@ func within(p string, roots []string) bool {
 // ReadLocal reads one named local file inside the workspace root, the repo,
 // the identity's config dirs or the user's config dirs, at most max bytes
 // (capped at 1 MiB), within 40 ms. A relative path is relative to the repo
-// root (the workspace root when there is no repo). It refuses .env* (any
-// path segment), the secret stores, "..", and a symlink that resolves
-// outside the roots.
+// root (the workspace root when there is no repo).
+//
+// It refuses .env* (any path segment), the secret stores and token caches,
+// "..", anything that is not a regular file, and a file with more than one
+// hard link. The checks run twice: on the path as written, and on the final
+// path resolved from the open handle (GetFinalPathNameByHandle on Windows,
+// EvalSymlinks elsewhere), which defeats 8.3 short names, junctions and
+// symlinks anywhere in the path. The bytes come from that same handle.
 func (g GuardCtx) ReadLocal(path string, max int64) ([]byte, error) {
+	start := time.Now()
 	if max <= 0 || max > ReadLimit {
 		max = ReadLimit
 	}
@@ -366,23 +405,64 @@ func (g GuardCtx) ReadLocal(path string, max int64) ([]byte, error) {
 	if secretStorePath(p) {
 		return nil, fmt.Errorf("%w: %q is a credential store", ErrRefused, path)
 	}
-	fi, err := os.Lstat(p)
-	if err != nil {
+	if fi, err := os.Lstat(p); err != nil {
 		return nil, err
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		real, err := filepath.EvalSymlinks(p)
-		if err != nil {
-			return nil, err
-		}
-		if !within(real, roots) || envSegment(real) || secretStorePath(real) {
-			return nil, fmt.Errorf("%w: %q links outside the allowed roots", ErrRefused, path)
-		}
-		p = real
 	} else if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: %q is not a regular file", ErrRefused, path)
 	}
-	return boundedRead(p, max)
+	f, err := openNoBlock(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %q is not a regular file", ErrRefused, path)
+	}
+	final, links, err := finalPath(f, p)
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot resolve %q (%v)", ErrRefused, path, err)
+	}
+	if links != 1 {
+		return nil, fmt.Errorf("%w: %q has %d hard links", ErrRefused, path, links)
+	}
+	if !within(final, resolvedRoots(roots)) || envSegment(final) || secretStorePath(final) {
+		return nil, fmt.Errorf("%w: %q resolves outside the allowed roots or to a protected file", ErrRefused, path)
+	}
+	if fi.Size() > max {
+		return nil, fmt.Errorf("%w (%d > %d bytes)", ErrTooLarge, fi.Size(), max)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, ErrTooLarge
+	}
+	if time.Since(start) > readBudget {
+		return nil, ErrOverBudget
+	}
+	return b, nil
+}
+
+// resolvedRoots resolves each root to its final long path (roots that do
+// not exist are dropped: nothing can be read inside them).
+func resolvedRoots(roots []string) []string {
+	var out []string
+	for _, r := range roots {
+		f, err := os.Open(r)
+		if err != nil {
+			continue
+		}
+		if fp, _, err := finalPath(f, r); err == nil {
+			out = append(out, fp)
+		}
+		f.Close()
+	}
+	return out
 }
 
 // HashState returns "sha256:<hex>" of a file under StateDir(), up to 64 MiB,
@@ -398,22 +478,14 @@ func (g GuardCtx) HashState(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	p := filepath.Join(dir, rel)
-	fi, err := os.Lstat(p)
-	if err != nil {
-		return "", err
-	}
-	if !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("%w: %s is not a regular file", ErrRefused, name)
-	}
-	if fi.Size() > HashLimit {
-		return "", fmt.Errorf("%w (%d > %d bytes)", ErrTooLarge, fi.Size(), HashLimit)
-	}
-	f, err := os.Open(p)
+	f, fi, err := openState(dir, rel, name)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
+	if fi.Size() > HashLimit {
+		return "", fmt.Errorf("%w (%d > %d bytes)", ErrTooLarge, fi.Size(), HashLimit)
+	}
 	h := sha256.New()
 	buf := make([]byte, hashChunk)
 	var total int64
@@ -465,23 +537,39 @@ type GuardOutcome struct {
 // deny (fail closed).
 func EvaluateGuards(call policy.ToolCall, env GuardEnv, off func(string) bool, actionFor func(string, policy.Action) policy.Action) []GuardOutcome {
 	var out []GuardOutcome
+	deadline := time.Now().Add(totalGuardBudget)
 	for _, g := range Guards() {
-		if !env.Config.IsEnabled(g.Pack) || !g.matches(call.Tool) {
+		// Only the trusted manifest enables a pack, so only its packs' guards
+		// run (and may supersede). No trusted manifest: no pack guard.
+		if env.Manifest == nil || !env.Manifest.Packs[g.Pack].IsEnabled() || !env.Config.IsEnabled(g.Pack) || !g.matches(call.Tool) {
 			continue
 		}
 		if off != nil && off(g.ID) {
 			continue
 		}
-		o := runGuard(g, call, env)
+		var o GuardOutcome
+		if time.Now().After(deadline) {
+			o = GuardOutcome{ID: g.ID, Pack: g.Pack, Action: policy.Deny, Failed: true,
+				Reason: fmt.Sprintf("the pack guards ran past their %s total budget; %s denied to stay safe", totalGuardBudget, g.ID)}
+		} else {
+			o = runGuard(g, call, env, deadline)
+		}
 		if !o.Failed && actionFor != nil && (o.Action == policy.Ask || o.Action == policy.Deny) {
 			o.Action = actionFor(g.ID, o.Action)
 		}
+		var keep []string
+		for _, id := range o.Supersedes {
+			if !guardcfg.Unsupersedable(id) {
+				keep = append(keep, id)
+			}
+		}
+		o.Supersedes = keep
 		out = append(out, o)
 	}
 	return out
 }
 
-func runGuard(g Guard, call policy.ToolCall, env GuardEnv) GuardOutcome {
+func runGuard(g Guard, call policy.ToolCall, env GuardEnv, deadline time.Time) GuardOutcome {
 	ctx := NewGuardCtx(env, g.Pack)
 	type res struct {
 		a       policy.Action
@@ -538,6 +626,9 @@ func runGuard(g Guard, call policy.ToolCall, env GuardEnv) GuardOutcome {
 			// HashState has its own 40 ms budget on top of the guard's.
 			allowed := guardBudget + time.Duration(ctx.st.hashSpent.Load())
 			el := time.Since(start)
+			if rem := time.Until(deadline); rem < allowed-el {
+				allowed = el + rem
+			}
 			if el < allowed && el < maxGuardRuntime {
 				timer.Reset(allowed - el)
 				continue

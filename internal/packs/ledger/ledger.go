@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -120,18 +121,34 @@ func RecordAnswer(ws, decisionID string, data map[string]any, choice, actorKind 
 	return Append(ws, e)
 }
 
-// Parse reads ledger bytes; malformed lines are skipped.
-func Parse(raw []byte) []Entry {
+// ErrCorrupt is a ledger that cannot be read completely: a malformed or
+// oversized line. Readers fail closed on it (a guard denies, Verify fails).
+var ErrCorrupt = errors.New("ledger: corrupt or truncated")
+
+// Parse reads ledger bytes. Blank lines are skipped; a malformed line, a
+// line without a decision id or an oversized line is ErrCorrupt (the
+// entries before it are returned with the error).
+func Parse(raw []byte) ([]Entry, error) {
 	var out []Entry
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
+	n := 0
 	for sc.Scan() {
-		var e Entry
-		if json.Unmarshal(sc.Bytes(), &e) == nil && e.Decision != "" {
-			out = append(out, e)
+		n++
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
 		}
+		var e Entry
+		if err := json.Unmarshal(line, &e); err != nil || e.Decision == "" || e.Event == "" {
+			return out, fmt.Errorf("%w: line %d", ErrCorrupt, n)
+		}
+		out = append(out, e)
 	}
-	return out
+	if err := sc.Err(); err != nil {
+		return out, fmt.Errorf("%w: %v", ErrCorrupt, err)
+	}
+	return out, nil
 }
 
 // Read reads one pack's ledger (missing: empty).
@@ -147,7 +164,7 @@ func Read(ws, pack string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Parse(raw), nil
+	return Parse(raw)
 }
 
 // ReadAll reads every pack ledger of workspace ws.
@@ -192,14 +209,29 @@ type State struct {
 	ConsumedAt time.Time
 }
 
-// Granted reports whether the human answered with the granting option.
-func (s State) Granted() bool {
-	return s.Choice != "" && s.Choice == s.Grant && s.ActorKind != "" && s.ActorKind != "agent"
+// HumanKinds are the actor kinds that count as a human answer: an answer
+// through the hub (hub:<user>) or the terminal. Anything else is an agent.
+var HumanKinds = []string{"hub", "terminal"}
+
+// IsHuman reports whether an actor kind is a human one (allow-list).
+func IsHuman(kind string) bool {
+	for _, k := range HumanKinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
 }
 
-// Expired reports whether the approval is past its expiry at now.
+// Granted reports whether a human answered with the granting option.
+func (s State) Granted() bool {
+	return s.Choice != "" && s.Choice == s.Grant && IsHuman(s.ActorKind)
+}
+
+// Expired reports whether the approval is past its expiry at now. An asked
+// line without a readable expiry counts as expired (fail closed).
 func (s State) Expired(now time.Time) bool {
-	return s.Status == Expired || (!s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt))
+	return s.Status == Expired || s.ExpiresAt.IsZero() || !now.Before(s.ExpiresAt)
 }
 
 // Used reports whether the approval was consumed.
@@ -270,4 +302,117 @@ func EqualEvidence(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// ClaimsDir is the claim folder of a pack: one empty file per used approval.
+func ClaimsDir(ws, pack string) (string, error) {
+	p, err := Path(ws, pack)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(p), "claims"), nil
+}
+
+// ErrClaimed is returned when an approval was already claimed (used).
+var ErrClaimed = errors.New("the approval was already used")
+
+var claimRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// Claim marks decision as used, atomically across processes: it creates
+// claims/<decision> with O_CREATE|O_EXCL. Exactly one claimer succeeds; the
+// others get ErrClaimed. Call it before the allow (a guard's hook) or before
+// running the command (a human-run apply), then Append the consumed line.
+func Claim(ws, pack, decision string) error {
+	if !claimRe.MatchString(decision) {
+		return fmt.Errorf("ledger: bad decision id %q", decision)
+	}
+	dir, err := ClaimsDir(ws, pack)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, decision), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("%s: %w", decision, ErrClaimed)
+	}
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// ClaimName is the claim file's path relative to the pack's state directory
+// (for GuardCtx.ReadState).
+func ClaimName(decision string) string { return "claims/" + decision }
+
+// Claimed reports whether decision was claimed. A stat error other than
+// "not there" counts as claimed (fail closed).
+func Claimed(ws, pack, decision string) bool {
+	if !claimRe.MatchString(decision) {
+		return true
+	}
+	dir, err := ClaimsDir(ws, pack)
+	if err != nil {
+		return true
+	}
+	_, err = os.Lstat(filepath.Join(dir, decision))
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+// CompactAt is the ledger size past which Compact rewrites it (ReadState
+// reads at most 1 MiB).
+const CompactAt = 512 << 10
+
+// Compact rewrites the pack ledger without the decisions that are finished
+// (consumed, or expired at now), so it never reaches the read cap. A
+// finished decision cannot be granted again: its claim file stays, and a
+// decision without an asked line is unknown. It writes a temp file and
+// renames it over the ledger; a corrupt ledger is left alone.
+func Compact(ws, pack string, now time.Time) error {
+	es, err := Read(ws, pack)
+	if err != nil {
+		return err
+	}
+	st := Resolve(es)
+	var keep []Entry
+	for _, e := range es {
+		s := st[e.Decision]
+		if s.Used() || s.Expired(now) {
+			continue
+		}
+		keep = append(keep, e)
+	}
+	if len(keep) == len(es) {
+		return nil
+	}
+	p, _ := Path(ws, pack)
+	var buf bytes.Buffer
+	for _, e := range keep {
+		b, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		buf.Write(append(b, '\n'))
+	}
+	appendMu.Lock()
+	defer appendMu.Unlock()
+	tmp := p + ".compact"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+// CompactIfLarge compacts the ledger when it is over CompactAt.
+func CompactIfLarge(ws, pack string, now time.Time) error {
+	p, err := Path(ws, pack)
+	if err != nil {
+		return err
+	}
+	if fi, err := os.Stat(p); err == nil && fi.Size() > CompactAt {
+		return Compact(ws, pack, now)
+	}
+	return nil
 }

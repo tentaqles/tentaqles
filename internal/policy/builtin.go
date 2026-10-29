@@ -278,5 +278,5 @@ func Builtin() []Rule {
 			Content: `\bpull_request_target\b`,
 			Reason:  "pull_request_target runs untrusted PR code with repository secrets",
 		},
-	}, packRules()...)
+	}, append(frameworkRules(), packRules()...)...)
 }

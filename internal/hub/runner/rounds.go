@@ -385,6 +385,11 @@ func (s *Service) mirror(card store.Card, r store.Run, st *gate.State) {
 		if d.Status != store.DecisionAnswered {
 			continue
 		}
+		// A hub-owned row (a permission ask, a pack approval) is answered only
+		// through AnswerHub; a gate record with the same id never answers it.
+		if cur, err := s.st.Decision(d.ID); err == nil && cur.HubOwned() {
+			continue
+		}
 		_, _ = s.st.UpsertDecision(store.Decision{ID: d.ID, CardID: card.ID, RunID: r.ID, Slug: st.Slug, Kind: d.Kind,
 			Checkpoint: string(d.Checkpoint), Reviewer: d.Reviewer, Options: d.Options, Status: store.DecisionAnswered,
 			Choice: d.Choice, Note: d.Note, Actor: d.Actor, AskedAt: d.AskedAt, AnsweredAt: d.AnsweredAt})

@@ -2,6 +2,7 @@ package toolrun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -237,5 +238,46 @@ func TestScratch(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("not removed")
+	}
+}
+
+// m6: a .cmd/.bat tool never takes cmd.exe metacharacters.
+func TestBatchArgsRefused(t *testing.T) {
+	if err := batchSafe(`C:\x\az.cmd`, []string{"deployment", "a&calc"}); !errors.Is(err, ErrUnsafeBatchArgs) {
+		t.Fatal(err)
+	}
+	if err := batchSafe(`C:\x\az.CMD`, []string{"100%"}); !errors.Is(err, ErrUnsafeBatchArgs) {
+		t.Fatal(err)
+	}
+	if err := batchSafe(`C:\x\az.cmd`, []string{"deployment", "group", "create"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchSafe(`/usr/bin/dbt`, []string{"a&b"}); err != nil {
+		t.Fatal("argv-only tools are not batch files")
+	}
+	dir := t.TempDir()
+	bat := filepath.Join(dir, "tool.cmd")
+	os.WriteFile(bat, []byte("@echo off\r\n"), 0o755)
+	r := &Runner{LookPath: func(string) (string, error) { return bat, nil }, NoExecRepo: true}
+	if _, err := r.Run(context.Background(), Spec{Tool: "tool", Args: []string{"x|y"}}); !errors.Is(err, ErrUnsafeBatchArgs) {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+// m7: with NoExecRepo the .venv binary is found but never executed.
+func TestNoExecRepoSkipsVenvVersion(t *testing.T) {
+	isolate(t)
+	t.Setenv("TQ_FAKE_TOOL", "echo")
+	t.Setenv("TQ_FAKE_VERSION", "9.9.9")
+	root := t.TempDir()
+	venv := filepath.Join(root, ".venv", "bin")
+	if runtime.GOOS == "windows" {
+		venv = filepath.Join(root, ".venv", "Scripts")
+	}
+	os.MkdirAll(venv, 0o755)
+	fakeBin(t, venv, "ruff")
+	p := (&Runner{Root: root, NoExecRepo: true}).Probe("ml", "ruff")
+	if !p.Found || p.Source != "venv" || p.Version != "" {
+		t.Fatalf("%+v", p)
 	}
 }

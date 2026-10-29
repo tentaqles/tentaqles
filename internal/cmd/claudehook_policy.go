@@ -166,7 +166,7 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 	eff := effectiveGuard(ws)
 	// Pack guards (spec C §2.10) run first so a guard that handles the call
 	// can supersede core matches; their verdicts merge in below.
-	penv := hookPackEnv(cwd, ws)
+	penv := hookPackEnv(cwd, ws, deadline)
 	outcomes := packs.EvaluateGuards(call, penv, eff.Off, eff.ActionFor)
 	superseded := map[string]bool{}
 	for _, o := range outcomes {
@@ -253,7 +253,12 @@ func applyPackOutcomes(d policy.Decision, ws *resolve.Workspace, outcomes []pack
 			for _, id := range o.Consume {
 				err := errors.New("no trusted workspace")
 				if ws != nil {
-					err = ledger.Append(ws.Name, ledger.Entry{Event: ledger.Consumed, Decision: id, Pack: o.Pack})
+					// Claim atomically first: exactly one concurrent hook wins the
+					// approval; the others are denied.
+					err = ledger.Claim(ws.Name, o.Pack, id)
+					if err == nil {
+						err = ledger.Append(ws.Name, ledger.Entry{Event: ledger.Consumed, Decision: id, Pack: o.Pack})
+					}
 				}
 				if err != nil {
 					d = policy.Merge(d, policy.Decision{Action: policy.Deny, Matched: []*policy.Rule{{ID: o.ID, Action: policy.Deny, Source: "pack " + o.Pack,
@@ -273,16 +278,19 @@ func applyPackOutcomes(d policy.Decision, ws *resolve.Workspace, outcomes []pack
 	return d
 }
 
-// hookPackEnv is what pack guards see in the hook: the manifest plus the
-// repo's tq-packs.yaml (an invalid repo file leaves the manifest layer), with
-// the repo root found by walking up to a .git entry (no git process).
-func hookPackEnv(cwd string, ws *resolve.Workspace) packs.GuardEnv {
-	env := packs.GuardEnv{}
-	var stop string
-	if ws != nil && ws.Manifest != nil {
-		env.Manifest, env.Workspace, env.WorkspaceRoot = ws.Manifest, ws.Name, ws.Root
-		stop = filepath.Clean(ws.Root)
+// hookPackEnv is what pack guards see in the hook. With no trusted workspace
+// there is no pack config at all (the repo layer is not read, no pack guard
+// runs). Otherwise the manifest plus the repo's tq-packs.yaml, with the repo
+// root found by walking up to a .git entry (no git process); the repo file
+// is read under the hook deadline, and an invalid or slow one leaves the
+// manifest layer alone.
+func hookPackEnv(cwd string, ws *resolve.Workspace, deadline time.Time) packs.GuardEnv {
+	env := packs.GuardEnv{Config: packs.Merge(nil, nil)}
+	if ws == nil || ws.Manifest == nil {
+		return env
 	}
+	env.Manifest, env.Workspace, env.WorkspaceRoot = ws.Manifest, ws.Name, ws.Root
+	stop := filepath.Clean(ws.Root)
 	dir := filepath.Clean(cwd)
 	for i := 0; i < 32 && dir != ""; i++ {
 		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
@@ -302,7 +310,30 @@ func hookPackEnv(cwd string, ws *resolve.Workspace) packs.GuardEnv {
 	if root == "" {
 		root = env.WorkspaceRoot
 	}
-	env.Config, _ = packs.LoadConfig(env.Manifest, root)
+	manifestOnly := packs.Merge(ws.Manifest.Packs, nil)
+	type res struct {
+		cfg packs.Config
+		err error
+	}
+	done := make(chan res, 1)
+	go func() {
+		cfg, err := packs.LoadConfig(ws.Manifest, root)
+		done <- res{cfg, err}
+	}()
+	wait := time.Until(deadline)
+	if wait < 50*time.Millisecond {
+		wait = 50 * time.Millisecond
+	}
+	select {
+	case r := <-done:
+		if r.err != nil || r.cfg.Err() != nil {
+			env.Config = manifestOnly
+		} else {
+			env.Config = r.cfg
+		}
+	case <-time.After(wait):
+		env.Config = manifestOnly
+	}
 	return env
 }
 

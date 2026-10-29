@@ -68,13 +68,16 @@ func (d Decision) PackApproval() string {
 	return p
 }
 
-// answerActorKind is the ledger's actor kind: agent for an agent actor,
-// otherwise ActorKind's bucket (a human through the hub or the terminal).
+// answerActorKind is the ledger's actor kind, an allow-list: hub:<user> is
+// hub, terminal is terminal, anything else counts as an agent (fail closed).
 func answerActorKind(actor string) string {
-	if actor == "agent" || strings.HasPrefix(actor, "agent:") {
-		return "agent"
+	switch {
+	case strings.HasPrefix(actor, "hub:") && len(actor) > len("hub:"):
+		return "hub"
+	case actor == "terminal":
+		return "terminal"
 	}
-	return ActorKind(actor)
+	return "agent"
 }
 
 type MirrorResult struct{ Inserted, NowAnswered bool }
@@ -116,7 +119,12 @@ func (s *Store) Decision(id string) (Decision, error) {
 
 // UpsertDecision mirrors one gate record keyed by the gate's id. A pending row flips to answered once;
 // an answered row never changes again.
-func (s *Store) UpsertDecision(d Decision) (MirrorResult, error) {
+func (s *Store) UpsertDecision(d Decision) (MirrorResult, error) { return s.upsertDecision(d, false) }
+
+// upsertDecision is UpsertDecision; viaHub is set only by AskHub,
+// AskHubQuestion and AnswerHub. A hub-owned row (a permission ask, a pack
+// approval) is never answered by a mirrored record.
+func (s *Store) upsertDecision(d Decision, viaHub bool) (MirrorResult, error) {
 	cur, err := s.Decision(d.ID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return MirrorResult{}, err
@@ -156,6 +164,9 @@ func (s *Store) UpsertDecision(d Decision) (MirrorResult, error) {
 		return res, nil
 	}
 	if cur.Status == DecisionAnswered || d.Status != DecisionAnswered {
+		return MirrorResult{}, nil
+	}
+	if cur.HubOwned() && !viaHub {
 		return MirrorResult{}, nil
 	}
 	if d.AnsweredAt == "" {
@@ -200,7 +211,7 @@ func (s *Store) logAnswer(d Decision) error {
 func (s *Store) AskHub(cardID, runID, slug, text string, options []string, data map[string]any) (Decision, error) {
 	d := Decision{ID: NewID("d"), CardID: cardID, RunID: runID, Slug: slug, Kind: KindPermission, Text: text,
 		Options: options, Status: DecisionPending, AskedAt: Now(), Data: data}
-	if _, err := s.UpsertDecision(d); err != nil {
+	if _, err := s.upsertDecision(d, true); err != nil {
 		return Decision{}, err
 	}
 	return s.Decision(d.ID)
@@ -211,7 +222,7 @@ func (s *Store) AskHub(cardID, runID, slug, text string, options []string, data 
 func (s *Store) AskHubQuestion(cardID, runID, text string) (Decision, error) {
 	d := Decision{ID: NewID("d"), CardID: cardID, RunID: runID, Kind: KindQuestion, Text: text,
 		Options: []string{"answer", "stop"}, Status: DecisionPending, AskedAt: Now(), Data: map[string]any{hubAsked: true}}
-	if _, err := s.UpsertDecision(d); err != nil {
+	if _, err := s.upsertDecision(d, true); err != nil {
 		return Decision{}, err
 	}
 	return s.Decision(d.ID)
@@ -231,7 +242,7 @@ func (s *Store) AnswerHub(id, choice, note, actor string) (Decision, error) {
 	if !slices.Contains(d.Options, choice) {
 		return d, fmt.Errorf("choice must be one of %s", strings.Join(d.Options, ", "))
 	}
-	if _, err := s.UpsertDecision(Decision{ID: id, Status: DecisionAnswered, Choice: choice, Note: note, Actor: actor, AnsweredAt: Now()}); err != nil {
+	if _, err := s.upsertDecision(Decision{ID: id, Status: DecisionAnswered, Choice: choice, Note: note, Actor: actor, AnsweredAt: Now()}, true); err != nil {
 		return d, err
 	}
 	return s.Decision(id)

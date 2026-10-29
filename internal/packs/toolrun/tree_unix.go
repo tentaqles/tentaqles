@@ -7,15 +7,16 @@ import (
 	"syscall"
 )
 
-// procTree is the child's process group: killing -pgid reaches every
-// descendant that did not leave the group.
+// procTree is the child's process group. It is signalled only on a timeout,
+// before tq reaps the leader (so the group id cannot have been reused); a
+// normal exit never signals a group.
 type procTree struct{ pid int }
 
 func prepareTree(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-func attachTree(cmd *exec.Cmd) *procTree { return &procTree{pid: cmd.Process.Pid} }
+func attachTree(cmd *exec.Cmd) (*procTree, error) { return &procTree{pid: cmd.Process.Pid}, nil }
 
 func (t *procTree) kill() {
 	if t.pid > 0 {
@@ -23,8 +24,4 @@ func (t *procTree) kill() {
 	}
 }
 
-func (t *procTree) close() {
-	// A grandchild may outlive a parent that exited normally; the group is
-	// killed so it cannot hold the pipes or keep running.
-	t.kill()
-}
+func (t *procTree) close() {}

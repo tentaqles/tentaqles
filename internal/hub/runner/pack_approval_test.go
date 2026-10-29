@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/hub/gate"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 )
 
@@ -38,5 +39,20 @@ func TestPackApprovalNeverDrivesTheRun(t *testing.T) {
 	}
 	if got := h.run(r.ID); got.Status != store.StatusWaiting {
 		t.Fatalf("the run moved: %+v", got)
+	}
+}
+
+// M3: a gate record carrying a pack approval's id never answers it.
+func TestMirrorSkipsHubOwnedDecisions(t *testing.T) {
+	t.Setenv("TQ_HOME", filepath.Join(t.TempDir(), ".tentaqles"))
+	h := newHarness(t)
+	c, r := waitingRun(t, h, "")
+	d, err := h.st.AskHub(c.ID, "", "", "ml approval", []string{"approve", "reject"}, map[string]any{"pack": "ml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.svc.mirror(c, r, &gate.State{Slug: "demo", Decisions: []gate.Decision{{ID: d.ID, Kind: store.KindPermission, Status: store.DecisionAnswered, Choice: "approve", Actor: "tester"}}})
+	if got, _ := h.st.Decision(d.ID); got.Status != store.DecisionPending {
+		t.Fatalf("the mirror answered a hub-owned decision: %+v", got)
 	}
 }

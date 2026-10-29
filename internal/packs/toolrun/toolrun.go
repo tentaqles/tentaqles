@@ -101,6 +101,9 @@ type Runner struct {
 	Timeouts  map[string]map[string]time.Duration
 	// LookPath defaults to exec.LookPath.
 	LookPath func(string) (string, error)
+	// NoExecRepo: never execute a repo-local binary (the .venv source) to
+	// read its version; tq doctor and tq pack doctor set it.
+	NoExecRepo bool
 
 	mu     sync.Mutex
 	probes map[string]Probe
@@ -140,7 +143,7 @@ func (r *Runner) Probe(pack, tool string) Probe {
 			p.Found, p.Path, p.Source = true, lp, "path"
 		}
 	}
-	if p.Found {
+	if p.Found && !(r.NoExecRepo && p.Source == "venv") {
 		ctx, cancel := context.WithTimeout(context.Background(), VersionTimeout)
 		p.Version = Version(ctx, p.Path)
 		cancel()
@@ -235,6 +238,9 @@ func (r *Runner) Run(ctx context.Context, s Spec) (Output, error) {
 	if !p.Found {
 		return Output{}, fmt.Errorf("%s: %w", s.Tool, ErrNotFound)
 	}
+	if err := batchSafe(p.Path, s.Args); err != nil {
+		return Output{Path: p.Path, Version: p.Version}, err
+	}
 	dir := s.Dir
 	if dir == "" {
 		dir = r.Root
@@ -269,7 +275,11 @@ func run(ctx context.Context, path string, args []string, dir string, env []stri
 	if err := cmd.Start(); err != nil {
 		return out, err
 	}
-	tree := attachTree(cmd)
+	tree, err := attachTree(cmd)
+	if err != nil {
+		_ = cmd.Wait()
+		return out, fmt.Errorf("could not contain the tool's process tree: %w", err)
+	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	var werr error
@@ -336,4 +346,22 @@ func Scratch(ws string) (string, func(), error) {
 		dir = d
 	}
 	return dir, func() { _ = os.RemoveAll(dir) }, nil
+}
+
+// ErrUnsafeBatchArgs refuses a .cmd/.bat tool whose arguments hold cmd.exe
+// metacharacters: Windows runs batch files through cmd.exe, which would
+// read them as commands ("argv only" would no longer hold).
+var ErrUnsafeBatchArgs = errors.New("a .cmd/.bat tool cannot take arguments with & | ^ % < > ! or quotes")
+
+func batchSafe(path string, args []string) error {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".cmd" && ext != ".bat" {
+		return nil
+	}
+	for _, a := range args {
+		if strings.ContainsAny(a, "&|^%<>!\"\r\n") {
+			return ErrUnsafeBatchArgs
+		}
+	}
+	return nil
 }
