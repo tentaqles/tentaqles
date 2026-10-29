@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 contract valid (ODCS v3.2.0 field names)",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "warn",
+      "rule": "version-not-semver",
+      "message": "version is not MAJOR.MINOR.PATCH; the version rule of data/contract-breaking needs semver"
+    }
+  ]
+}

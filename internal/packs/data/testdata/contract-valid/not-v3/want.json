@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 1 problem",
+  "findings": [
+    {
+      "file": "contracts/legacy.odcs.yaml",
+      "line": 1,
+      "level": "error",
+      "rule": "not-odcs-v3",
+      "message": "apiVersion v2.2.2 is not ODCS v3; tq checks v3.x.x contracts only"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: acme-customers
+version: 1.0.0
+servers:
+  - server: prod
+    type: postgres
+    host: db.acme.test
+    database: analytics
+    schema: marts
+schema:
+  - name: customers
+    physicalName: dim_customers
+    properties:
+      - name: customer_id
+        logicalType: integer
+      - name: email
+        logicalType: string
+        classification: pii
+        examples:
+          - "redacted"
+      - name: profile
+        logicalType: object
+        properties:
+          - name: birth_date
+            logicalType: date
+            classification: pii

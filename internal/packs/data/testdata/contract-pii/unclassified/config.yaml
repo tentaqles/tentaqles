@@ -1,0 +1,5 @@
+manifest_data:
+  classes: [public, internal, pii, sensitive]
+  paths:
+    - table: marts.dim_customers
+      classes: [pii, sensitive]

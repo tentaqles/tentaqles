@@ -1,0 +1,12 @@
+apiVersion: v3.0.2
+kind: Contract
+version: ""
+schema:
+  - physicalName: fct_orders
+    properties:
+      - logicalType: string
+      - name: amount
+        logicalType: money
+        required: maybe
+servers:
+  - server: prod

@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 contract, 1 with breaking changes and a major version bump: mark the PR as breaking",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 39,
+      "level": "warn",
+      "rule": "enum-value-removed",
+      "message": "property orders.status lost 1 enum value"
+    }
+  ]
+}
