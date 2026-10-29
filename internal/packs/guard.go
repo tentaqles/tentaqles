@@ -43,6 +43,18 @@ var (
 	totalGuardBudget = TotalGuardBudget
 )
 
+// GenerousBudgetsForTests raises the read, hash, per-guard and total guard
+// budgets for a test binary: a loaded CI runner can take longer than the
+// production bounds to read small fixtures, which fails closed instead of
+// testing what a guard decides. Production code never calls it; the packs
+// package's own tests keep the real bounds and test that going over one
+// denies. It returns a function that restores the real bounds.
+func GenerousBudgetsForTests() (restore func()) {
+	g, r, h, t := guardBudget, readBudget, hashBudget, totalGuardBudget
+	guardBudget, readBudget, hashBudget, totalGuardBudget = 10*time.Second, 10*time.Second, 10*time.Second, 30*time.Second
+	return func() { guardBudget, readBudget, hashBudget, totalGuardBudget = g, r, h, t }
+}
+
 // Guard is a decision guard: a pure function over the tool call and the
 // loaded config. Check returns the action, the reason and handled: handled
 // means the guard owns this call, and every built-in rule match whose id is
@@ -522,7 +534,10 @@ func (g GuardCtx) ReadLocal(path string, max int64) ([]byte, error) {
 	}
 	p = filepath.Clean(p)
 	roots := g.localRoots()
-	if !within(p, roots) {
+	// A path named from Cwd() is a final path while a root may be spelled
+	// through a symlink (macOS /var -> /private/var): compare the resolved
+	// forms too. The final-path check below still runs on the opened file.
+	if !within(p, roots) && !within(paths.Resolve(p), resolvedRoots(roots)) {
 		return nil, fmt.Errorf("%w: %q is outside the workspace and config dirs", ErrRefused, path)
 	}
 	if secretStorePath(p) {
@@ -683,7 +698,7 @@ func (g GuardCtx) ListLocal(dir string, max int) ([]LocalEntry, error) {
 	}
 	p = filepath.Clean(p)
 	roots := g.localRoots()
-	if !within(p, roots) {
+	if !within(p, roots) && !within(paths.Resolve(p), resolvedRoots(roots)) { // a symlinked root, as in ReadLocal
 		return nil, fmt.Errorf("%w: %q is outside the workspace and config dirs", ErrRefused, dir)
 	}
 	if secretStorePath(p) || secretStorePath(p+"/") {

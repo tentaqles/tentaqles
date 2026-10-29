@@ -23,6 +23,7 @@ func TestMain(m *testing.M) {
 		fakeTool(mode)
 		return
 	}
+	packs.GenerousBudgetsForTests() // CI load must not fail a guard read closed
 	os.Exit(m.Run())
 }
 

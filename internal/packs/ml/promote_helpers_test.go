@@ -19,6 +19,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("TQ_ML_FAKE") == "1" {
 		os.Exit(fakeMain(os.Args[1:]))
 	}
+	packs.GenerousBudgetsForTests() // CI load must not fail a guard read closed
 	os.Exit(m.Run())
 }
 

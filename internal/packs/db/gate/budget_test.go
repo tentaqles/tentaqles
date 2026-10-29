@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
 
@@ -16,6 +17,7 @@ import (
 // denies.
 func TestMain(m *testing.M) {
 	HashBudget = 10 * time.Second
+	packs.GenerousBudgetsForTests()
 	os.Exit(m.Run())
 }
 
