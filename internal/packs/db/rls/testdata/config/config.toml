@@ -1,0 +1,22 @@
+# A config for project acme (fixture)
+project_id = "acme"
+
+[api]
+enabled = true
+port = 54321
+# Schemas to expose in your API.
+schemas = [
+  "public",
+  "graphql_public", # the graphql endpoint
+  'api',
+]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+port = 54329
