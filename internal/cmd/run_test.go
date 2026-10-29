@@ -505,3 +505,38 @@ func TestRunFromAgentSession(t *testing.T) {
 		t.Fatal("parent default -> relaxed must be refused")
 	}
 }
+
+// The PowerShell tq function cannot pass a literal `--` (the parameter
+// binder eats it), so tq run never parses the command's own flags as its
+// own: everything after the command word belongs to the command, with or
+// without `--` (final review M1).
+func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
+	isolateHome(t)
+	clearAgentMarkers(t)
+	mkLaunchWS(t, "acme", "")
+	for _, args := range [][]string{
+		{"run", "acme", "--", "npm", "test", "-p", "x", "--watch"},
+		{"run", "acme", "npm", "test", "-p", "x", "--watch"},
+		{"run", "acme", "--tq-mode", "strict", "npm", "test", "-p", "x", "--watch"},
+		{"run", "acme", "--tq-mode=strict", "--", "npm", "test", "-p", "x", "--watch"},
+		{"run", "--tq-mode", "strict", "acme", "npm", "test", "-p", "x", "--watch"},
+	} {
+		calls := fakeExec(t)
+		if out, err := runTq(t, args...); err != nil {
+			t.Fatalf("%v: %v %s", args, err, out)
+		}
+		if c := (*calls)[0]; c.name != "npm" || strings.Join(c.args, " ") != "test -p x --watch" {
+			t.Fatalf("%v: %v", args, c)
+		}
+	}
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "--off", "claude", "--resume", "-p", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; !strings.Contains(strings.Join(c.args, " "), "--resume -p x") {
+		t.Fatalf("--off without --: %v", c)
+	}
+	if _, err := runTq(t, "run", "acme", "--off", "claude"); err == nil {
+		t.Fatal("--off after a workspace must be refused")
+	}
+}

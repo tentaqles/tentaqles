@@ -338,6 +338,17 @@ func newRunCmd() *cobra.Command {
 				}
 				return runOff(args[0], args[1:], func(s string) { fmt.Fprintln(c.ErrOrStderr(), s) })
 			}
+			// Flags are not interspersed: after <workspace> only --tq-mode
+			// and an optional -- may come before the command word, and
+			// everything after it is the command's own.
+			rest, m, err := runTail(args[1:])
+			if err != nil {
+				return err
+			}
+			if m != "" {
+				tqMode = m
+			}
+			args = append(args[:1:1], rest...)
 			if len(args) < 2 {
 				return errors.New("usage: tq run <workspace>|. -- <command> [args...]")
 			}
@@ -363,5 +374,29 @@ func newRunCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&tqMode, "tq-mode", "", "guard mode for this launch: "+strings.Join(guardcfg.StoredModes(), "|"))
 	c.Flags().BoolVar(&off, "off", false, "start claude or codex with no tq: main install and logins, no guard (human only)")
+	c.Flags().SetInterspersed(false)
 	return c
+}
+
+// runTail reads what follows <workspace> in tq run: --tq-mode MODE or
+// --tq-mode=MODE, then an optional --, then the command and its args.
+func runTail(args []string) (rest []string, mode string, err error) {
+	for len(args) > 0 {
+		switch a := args[0]; {
+		case a == "--":
+			return args[1:], mode, nil
+		case a == "--tq-mode":
+			if len(args) < 2 {
+				return nil, "", errors.New("--tq-mode needs a mode")
+			}
+			mode, args = args[1], args[2:]
+		case strings.HasPrefix(a, "--tq-mode="):
+			mode, args = strings.TrimPrefix(a, "--tq-mode="), args[1:]
+		case a == "--off" || strings.HasPrefix(a, "--off="):
+			return nil, "", errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")
+		default:
+			return args, mode, nil
+		}
+	}
+	return args, mode, nil
 }
