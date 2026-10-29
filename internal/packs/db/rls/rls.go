@@ -162,6 +162,12 @@ type state struct {
 	// unqualified names resolve against it (public when it is not set).
 	pathSet    bool
 	searchPath []string
+	// localSet and localPath are a SET LOCAL search_path (or set_config(…,
+	// true)): they win over the session path until the transaction ends.
+	localSet  bool
+	localPath []string
+	// schemas are the schemas a CREATE SCHEMA in the replay made.
+	schemas    map[string]bool
 	out        []packs.Finding
 	supp       []string
 	file       *sqllex.File
@@ -185,7 +191,7 @@ type pending struct {
 
 // Run replays the units in order and judges those marked Judge.
 func Run(units []Unit, o Options) Result {
-	s := &state{o: o, exposed: map[string]bool{}, tables: map[string]*Table{}, views: map[string]*view{}, matviews: map[string]bool{}, foreign: map[string]bool{}, funcs: map[string]*function{}, judgedFile: map[string]bool{}}
+	s := &state{o: o, exposed: map[string]bool{}, tables: map[string]*Table{}, views: map[string]*view{}, matviews: map[string]bool{}, foreign: map[string]bool{}, funcs: map[string]*function{}, schemas: map[string]bool{}, judgedFile: map[string]bool{}}
 	for _, e := range o.Exposed {
 		s.exposed[e] = true
 	}
@@ -194,7 +200,7 @@ func Run(units []Unit, o Options) Result {
 		f := upSection(sqllex.Lex(u.Src, sqllex.Postgres), u.Migrator)
 		s.file, s.path, s.judge = f, u.Path, u.Judge
 		s.dropped, s.disabled, s.unforced = map[string][]droppedPolicy{}, map[string][]pending{}, map[string][]pending{}
-		s.pathSet, s.searchPath = false, nil
+		s.pathSet, s.searchPath, s.localSet, s.localPath = false, nil, false, nil
 		if u.Judge {
 			files++
 			s.judgedFile[u.Path] = true
@@ -330,11 +336,19 @@ func (s *state) statement(st sqllex.Statement) {
 			s.createPolicy(st, i+1)
 		case st.Match(i, "FUNCTION|PROCEDURE"):
 			s.createFunction(st, i+1)
+		case st.Match(i, "SCHEMA"):
+			s.createSchema(st, i+1)
 		}
 	case "SELECT", "WITH":
 		s.selectInto(st)
 	case "SET", "RESET":
 		s.setSearchPath(st)
+	case "COMMIT", "END", "ROLLBACK", "ABORT":
+		// The transaction ends, and a SET LOCAL with it. ROLLBACK TO
+		// SAVEPOINT and the PREPARED forms leave the current one open.
+		if !st.Match(1, "TO|PREPARED") {
+			s.localSet, s.localPath = false, nil
+		}
 	case "IMPORT":
 		s.importForeign(st)
 	case "ALTER":
@@ -353,6 +367,11 @@ func (s *state) statement(st sqllex.Statement) {
 			s.alterFunction(st, 2)
 		case st.Match(1, "DEFAULT", "PRIVILEGES"):
 			s.defaultPrivileges(st)
+		case st.Match(1, "SCHEMA") && st.Match(3, "RENAME", "TO"):
+			if old := st.At(2).Ident(sqllex.Postgres); s.schemas[old] {
+				delete(s.schemas, old)
+				s.schemas[st.At(5).Ident(sqllex.Postgres)] = true
+			}
 		}
 	case "DROP":
 		switch {
@@ -378,6 +397,12 @@ func (s *state) statement(st sqllex.Statement) {
 			}
 		case st.Match(1, "POLICY"):
 			s.dropPolicy(st, st.Skip(2, []string{"IF", "EXISTS"}))
+		case st.Match(1, "SCHEMA"):
+			for k := st.Skip(2, []string{"IF", "EXISTS"}); k < len(st.Tokens); k++ {
+				if v := st.At(k).Ident(sqllex.Postgres); v != "" && !st.Match(k, "CASCADE|RESTRICT") {
+					delete(s.schemas, v)
+				}
+			}
 		}
 	case "GRANT":
 		s.grant(st, false)
@@ -388,16 +413,24 @@ func (s *state) statement(st sqllex.Statement) {
 
 // name reads the name of an existing object at i. An unqualified name
 // resolves against the file's search_path the way Postgres looks it up: the
-// first schema on the path that holds a known object of that name, else the
-// first schema on the path.
+// first schema on the path that holds a known object of that name. When none
+// does (the object was made outside the replayed migrations: a dashboard
+// table, a squashed baseline), the name fails closed to the first exposed
+// schema on the path, else to where a CREATE would put it.
 func (s *state) name(st sqllex.Statement, i int) (sqllex.Name, int) {
 	n, j := st.Name(i, sqllex.Postgres)
-	if n.IsZero() || j != i+1 || !s.pathSet {
+	set, path := s.searchPathNow()
+	if n.IsZero() || j != i+1 || !set {
 		return n, j
 	}
-	for _, sc := range s.searchPath {
+	for _, sc := range path {
 		k := sc + "." + n.Object
 		if s.tables[k] != nil || s.views[k] != nil || s.matviews[k] || s.foreign[k] || s.funcs[k] != nil {
+			return sqllex.Name{Schema: sc, Object: n.Object}, j
+		}
+	}
+	for _, sc := range path {
+		if s.exposed[sc] {
 			return sqllex.Name{Schema: sc, Object: n.Object}, j
 		}
 	}
@@ -405,18 +438,87 @@ func (s *state) name(st sqllex.Statement, i int) (sqllex.Name, int) {
 }
 
 // newName reads the name of an object being created at i: an unqualified
-// one is created in the first schema of the file's search_path (public when
-// it is not set). With an empty path Postgres refuses the CREATE; the name
-// then lands in pg_catalog, which is never exposed.
+// one is created in the first schema of the search_path that exists (public
+// when no path is set), as in Postgres. A schema the replay never saw
+// created, that is not a system schema and holds no known object, is taken
+// not to exist, so the CREATE falls through to the next one; when no path
+// schema is known the first is used. With an empty path Postgres refuses
+// the CREATE; the name then lands in pg_catalog, which is never exposed.
 func (s *state) newName(st sqllex.Statement, i int) (sqllex.Name, int) {
 	n, j := st.Name(i, sqllex.Postgres)
-	if n.IsZero() || j != i+1 || !s.pathSet {
+	set, path := s.searchPathNow()
+	if n.IsZero() || j != i+1 || !set {
 		return n, j
 	}
-	if len(s.searchPath) == 0 {
+	if len(path) == 0 {
 		return sqllex.Name{Schema: "pg_catalog", Object: n.Object}, j
 	}
-	return sqllex.Name{Schema: s.searchPath[0], Object: n.Object}, j
+	for _, sc := range path {
+		if s.exposed[sc] || s.schemaKnown(sc) {
+			return sqllex.Name{Schema: sc, Object: n.Object}, j
+		}
+	}
+	return sqllex.Name{Schema: path[0], Object: n.Object}, j
+}
+
+// searchPathNow is the search_path in force: a transaction-local one, else the
+// session one.
+func (s *state) searchPathNow() (bool, []string) {
+	if s.localSet {
+		return true, s.localPath
+	}
+	return s.pathSet, s.searchPath
+}
+
+// systemSchemas exist in a Postgres (or Supabase) database without a CREATE
+// SCHEMA in the migrations.
+var systemSchemas = map[string]bool{
+	"public": true, "pg_catalog": true, "information_schema": true, "pg_toast": true, "pg_temp": true,
+	"auth": true, "storage": true, "extensions": true, "graphql": true, "graphql_public": true,
+	"realtime": true, "vault": true, "pgsodium": true, "net": true, "supabase_functions": true, "cron": true,
+}
+
+// schemaKnown reports whether the replay knows that schema sc exists: a
+// CREATE SCHEMA made it, it is a system schema, or it holds a known object.
+func (s *state) schemaKnown(sc string) bool {
+	if s.schemas[sc] || systemSchemas[sc] {
+		return true
+	}
+	p := sc + "."
+	var keys []string
+	for k := range s.tables {
+		keys = append(keys, k)
+	}
+	for k := range s.views {
+		keys = append(keys, k)
+	}
+	for k := range s.funcs {
+		keys = append(keys, k)
+	}
+	for k := range s.matviews {
+		keys = append(keys, k)
+	}
+	for k := range s.foreign {
+		keys = append(keys, k)
+	}
+	for _, k := range keys {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// createSchema records CREATE SCHEMA [IF NOT EXISTS] name, and CREATE
+// SCHEMA AUTHORIZATION role (the schema is named after the role).
+func (s *state) createSchema(st sqllex.Statement, i int) {
+	i = st.Skip(i, []string{"IF", "NOT", "EXISTS"})
+	if st.Match(i, "AUTHORIZATION") {
+		i++
+	}
+	if v := st.At(i).Ident(sqllex.Postgres); v != "" {
+		s.schemas[v] = true
+	}
 }
 
 // setSearchPath follows a top-level SET [SESSION|LOCAL] search_path {TO|=}
@@ -424,15 +526,22 @@ func (s *state) newName(st sqllex.Statement, i int) (sqllex.Name, int) {
 func (s *state) setSearchPath(st sqllex.Statement) {
 	if st.Match(0, "RESET") {
 		if st.Match(1, "SEARCH_PATH|ALL") {
-			s.pathSet, s.searchPath = false, nil
+			s.pathSet, s.searchPath, s.localSet, s.localPath = false, nil, false, nil
 		}
 		return
 	}
+	local := st.Match(1, "LOCAL")
 	i := st.Skip(1, []string{"SESSION|LOCAL"})
 	if !st.Match(i, "SEARCH_PATH") || !(st.Match(i+1, "TO") || st.Match(i+1, "=")) {
 		return
 	}
 	if st.Match(i+2, "DEFAULT") {
+		if local {
+			// SET LOCAL … TO DEFAULT: the default path until the
+			// transaction ends.
+			s.localSet, s.localPath = true, []string{"public"}
+			return
+		}
 		s.pathSet, s.searchPath = false, nil
 		return
 	}
@@ -449,18 +558,37 @@ func (s *state) setSearchPath(st sqllex.Statement) {
 			}
 		}
 	}
-	s.setPath(path)
+	s.setPath(path, local)
 }
 
 // setPath sets the file's search_path, without "$user" (a schema named after
-// the role, which migrations do not create) and empty entries.
-func (s *state) setPath(path []string) {
-	s.pathSet, s.searchPath = true, nil
+// the role, which migrations do not create) and empty entries. A local one
+// lasts until the transaction ends.
+func (s *state) setPath(path []string, local bool) {
+	var out []string
 	for _, p := range path {
 		if p != "" && p != "$user" {
-			s.searchPath = append(s.searchPath, p)
+			out = append(out, p)
 		}
 	}
+	if local {
+		s.localSet, s.localPath = true, out
+		return
+	}
+	s.pathSet, s.searchPath = true, out
+}
+
+// localArg reports whether set_config's is_local argument is true: the
+// keyword TRUE or a boolean string such as 't' or 'on'.
+func localArg(t sqllex.Token) bool {
+	if t.Kind == sqllex.String {
+		switch strings.ToLower(strings.TrimSpace(sqllex.StringValue(t))) {
+		case "t", "true", "y", "yes", "on", "1":
+			return true
+		}
+		return false
+	}
+	return strings.EqualFold(t.Ident(sqllex.Postgres), "true")
 }
 
 // pathList splits a search_path string value ("api, public", "\"$user\"").
@@ -490,7 +618,7 @@ func (s *state) selectInto(st sqllex.Statement) {
 	for i := k; i+4 < len(st.Tokens); i++ {
 		if st.At(i).Ident(sqllex.Postgres) == "set_config" && st.At(i+1).IsPunct("(") && st.At(i+2).Kind == sqllex.String &&
 			strings.EqualFold(sqllex.StringValue(st.At(i+2)), "search_path") && st.At(i+3).IsPunct(",") && st.At(i+4).Kind == sqllex.String {
-			s.setPath(pathList(sqllex.StringValue(st.At(i + 4))))
+			s.setPath(pathList(sqllex.StringValue(st.At(i+4))), st.At(i+5).IsPunct(",") && localArg(st.At(i+6)))
 		}
 	}
 	in := st.FindTop(k, "INTO")
@@ -498,7 +626,7 @@ func (s *state) selectInto(st sqllex.Statement) {
 		return
 	}
 	i := in + 1
-	if st.Match(i, "TEMP|TEMPORARY") {
+	if st.Match(i, "TEMP|TEMPORARY") || st.Match(i, "LOCAL|GLOBAL", "TEMP|TEMPORARY") {
 		return
 	}
 	s.createTable(st, st.Skip(i, []string{"UNLOGGED"}, []string{"TABLE"}))
