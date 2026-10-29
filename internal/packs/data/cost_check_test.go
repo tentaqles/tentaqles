@@ -68,6 +68,12 @@ func TestCostEstimateCheck(t *testing.T) {
 	if strings.Contains(l, "README") {
 		t.Fatal("selected a non-model")
 	}
+	// dbt's logs and the fake's log go to temp dirs, never into the tree.
+	for _, p := range []string{"dbt.log", "logs", "target"} {
+		if _, err := os.Stat(filepath.Join(in.Root, p)); err == nil {
+			t.Fatalf("%s written into the testdata repo", p)
+		}
+	}
 	bq, _ := os.ReadFile(filepath.Join(state, "bq.log"))
 	if !strings.Contains(string(bq), "--dry_run") || strings.Count(string(bq), "argv:") != 1 {
 		t.Fatalf("bq calls:\n%s", bq)

@@ -25,6 +25,12 @@ func main() {
 		return
 	}
 	dir := os.Getenv("TQ_COST_FAKE_DIR")
+	if dir == "" || !filepath.IsAbs(dir) {
+		// Never fall back to the working directory: the fake runs inside
+		// the testdata repo, and its log would land in the tree.
+		fmt.Fprintln(os.Stderr, "costfake: TQ_COST_FAKE_DIR must be an absolute temp dir")
+		os.Exit(97)
+	}
 	var stdin []byte
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
 		stdin, _ = io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
