@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "seeds checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 5,
+      "level": "error",
+      "rule": "seed-unseeded-rng",
+      "message": "default_rng() without a seed draws from the OS entropy; pass an int"
+    }
+  ]
+}

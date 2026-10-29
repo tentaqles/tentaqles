@@ -1,0 +1,27 @@
+name: acme_orders
+version: "1.0.0"
+config-version: 2
+profile: acme_orders
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+# Singular dbt data tests live in dbt_tests/; tests/ is the template's pytest suite.
+test-paths: ["dbt_tests"]
+clean-targets: ["target", "dbt_packages", "logs"]
+
+models:
+  acme_orders:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+      # Every mart model is a public interface: its contract is enforced.
+      +contract:
+        enforced: true
+
+seeds:
+  acme_orders:
+    +column_types:
+      order_date: date
+      updated_at: timestamp
+      created_at: date

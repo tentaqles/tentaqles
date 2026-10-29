@@ -1,0 +1,35 @@
+plan.json:5 error IAM001 aws_iam_policy.star: statement 0: Allow with Action "*"; list the actions the role needs
+plan.json:5 error IAM002 aws_iam_policy.star: statement 0: Allow on Resource "*" for "*"; scope the resources by ARN
+plan.json:25 error IAM001 aws_iam_policy.s3all: statement 0: Allow with Action "s3:*"; list the actions the role needs
+plan.json:45 error IAM002 aws_iam_policy.write_any: statement 0: Allow on Resource "*" for "s3:PutObject"; scope the resources by ARN
+plan.json:65 warn IAM002 aws_iam_policy.read_any: statement 0: Allow on Resource "*" for read-only actions; scope the resources by ARN where you can
+plan.json:85 error IAM002 aws_iam_policy.secret_any: statement 0: Allow on Resource "*" for "secretsmanager:GetSecretValue"; scope the resources by ARN
+plan.json:105 error IAM003 aws_iam_policy.notaction: statement 0: Allow with NotAction grants everything not listed; name the actions and resources instead
+plan.json:125 error IAM004 aws_iam_role_policy_attachment.admin: attaches the AWS managed policy AdministratorAccess; grant a scoped policy instead
+plan.json:165 error IAM002 aws_iam_policy.passrole: statement 0: Allow on Resource "*" for "iam:PassRole"; scope the resources by ARN
+plan.json:165 error IAM005 aws_iam_policy.passrole: statement 0: privilege escalation: "iam:PassRole" on every resource without a condition; name the roles or add a condition (iam:PassedToService, aws:ResourceTag)
+plan.json:185 error IAM002 aws_iam_policy.passrole_cond: statement 0: Allow on Resource "*" for "iam:PassRole"; scope the resources by ARN
+plan.json:205 error IAM005 aws_iam_policy.attach_any: statement 0: privilege escalation: "iam:AttachGroupPolicy", "iam:AttachRolePolicy", "iam:AttachUserPolicy" on every resource without a condition; name the roles or add a condition (iam:PassedToService, aws:ResourceTag)
+plan.json:225 error IAM006 aws_iam_role.open: statement 0: trust policy with Principal "*": anyone can assume the role
+plan.json:245 error IAM006 aws_iam_role.foreign: statement 0: a principal in an account outside packs.cloud.accounts can assume the role without an sts:ExternalId condition
+plan.json:305 error IAM001 aws_iam_role.lambda: inline_policy[0]: statement 0: Allow with Action "logs:*"; list the actions the role needs
+plan.json:305 error IAM002 aws_iam_role.lambda: inline_policy[0]: statement 0: Allow on Resource "*" for "logs:*"; scope the resources by ARN
+plan.json:305 error IAM004 aws_iam_role.lambda: attaches the AWS managed policy PowerUserAccess; grant a scoped policy instead
+plan.json:334 error IAM006 aws_iam_role.gh_noaud: statement 0: GitHub OIDC principal without a token.actions.githubusercontent.com:sub condition: any repository can assume the role
+plan.json:334 error IAM006 aws_iam_role.gh_noaud: statement 0: OIDC principal token.actions.githubusercontent.com without a token.actions.githubusercontent.com:aud condition
+plan.json:354 error IAM006 aws_iam_role.gh_wild: statement 0: GitHub OIDC sub condition is redacted or unknown in this input, so it cannot be verified to name one repository; check it and suppress with tq-allow IAM006: <reason>
+plan.json:374 error IAM007 aws_s3_bucket_policy.public: statement 0: resource policy with Principal "*" and no condition makes the resource public
+plan.json:477 error IAM002 aws_iam_policy.noreason: statement 0: Allow on Resource "*" for "cloudwatch:PutMetricData"; scope the resources by ARN
+plan.json:477 error SUP001 aws_iam_policy.noreason: tq-allow IAM002 has no reason; write "IAM002: <reason>"
+plan.json:537 error AZR001 azurerm_role_assignment.owner_sub: assigns Owner at subscription scope; assign a narrower role at a resource group or resource
+plan.json:558 error AZR001 azurerm_role_assignment.uaa_mg: assigns User Access Administrator at management group scope; assign a narrower role at a resource group or resource
+plan.json:579 warn AZR001 azurerm_role_assignment.contrib_rg: assigns Contributor at resource group scope; prefer a narrower role
+plan.json:664 error AZR002 azurerm_role_definition.god: custom role with actions "*"; list the operations it needs
+plan.json:664 error AZR003 azurerm_role_definition.god: custom role grants "Microsoft.Authorization/roleAssignments/write", "Microsoft.Authorization/roleDefinitions/write": its holders can grant themselves any role
+plan.json:697 error AZR002 azurerm_role_definition.contrib_copy: custom role with actions "*"; list the operations it needs
+plan.json:730 error AZR003 azurerm_role_definition.granter: custom role grants "Microsoft.Authorization/roleAssignments/write": its holders can grant themselves any role
+plan.json:760 error AZR002 azurerm_role_definition.wide_write: custom role assignable at tenant root scope grants write actions; limit assignableScopes to resource groups
+plan.json:818 error AZR001 azurerm_lighthouse_definition.msp: delegates Contributor to another tenant at subscription scope; delegate a narrower role
+plan.json:818 warn AZR004 azurerm_lighthouse_definition.msp: grants access to a principal in a tenant outside packs.cloud.tenants (cross-tenant)
+plan.json:845 error GCP001 google_project_iam_member.owner: grants the primitive role roles/owner; grant a predefined or custom role
+plan.json:866 error GCP001 google_storage_bucket_iam_binding.public: grants roles/storage.objectViewer to allUsers (public)

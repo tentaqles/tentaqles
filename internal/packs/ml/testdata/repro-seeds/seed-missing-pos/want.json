@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "seeds checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 1,
+      "level": "error",
+      "rule": "seed-missing",
+      "message": "this training file sets no seed (random.seed, np.random.seed or default_rng(<int>), torch.manual_seed)"
+    }
+  ]
+}

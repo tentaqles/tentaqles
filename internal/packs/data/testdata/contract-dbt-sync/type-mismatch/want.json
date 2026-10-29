@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "1 contract object mapped to dbt, 1 mismatch",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 13,
+      "level": "error",
+      "rule": "dbt-type-mismatch",
+      "message": "property order_id is BIGINT in the contract but int in dbt model fct_orders"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 8 problems",
+  "findings": [
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 2,
+      "level": "error",
+      "rule": "field-missing",
+      "message": "kind must be DataContract"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 1,
+      "level": "error",
+      "rule": "field-missing",
+      "message": "id is required and must not be empty"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 3,
+      "level": "error",
+      "rule": "field-missing",
+      "message": "version is required and must not be empty"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 7,
+      "level": "error",
+      "rule": "property-name-missing",
+      "message": "a property of object fct_orders needs a name"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 9,
+      "level": "error",
+      "rule": "logical-type-unknown",
+      "message": "logicalType \"money\" is not an ODCS v3 type (string, date, timestamp, time, number, integer, object, array, boolean, map, vector)"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 10,
+      "level": "error",
+      "rule": "not-boolean",
+      "message": "required must be true or false"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 5,
+      "level": "error",
+      "rule": "object-name-missing",
+      "message": "a schema object needs a name"
+    },
+    {
+      "file": "contracts/orders.odcs.yaml",
+      "line": 12,
+      "level": "error",
+      "rule": "server-incomplete",
+      "message": "a server needs server and type"
+    }
+  ]
+}

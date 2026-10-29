@@ -1,0 +1,89 @@
+apiVersion: v3.0.2
+kind: DataContract
+id: acme-orders
+name: orders
+version: 1.2.1
+status: active
+servers:
+  - server: prod
+    type: postgres
+    host: db.acme.test
+    database: analytics
+    schema: marts
+schema:
+  - id: orders_obj
+    name: orders
+    physicalName: fct_orders
+    physicalType: table
+    properties:
+      - id: order_id_prop
+        name: order_id
+        logicalType: integer
+        physicalType: bigint
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+      - id: line_no_prop
+        name: line_no
+        logicalType: integer
+        physicalType: int
+        primaryKey: true
+        primaryKeyPosition: 2
+        required: true
+      - id: status_prop
+        name: status
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        enum: [placed, shipped, delivered]
+        logicalTypeOptions:
+          maxLength: 20
+          pattern: "^[a-z]+$"
+      - id: amount_prop
+        name: amount
+        description: Order total.
+        logicalType: number
+        physicalType: decimal(12,2)
+        logicalTypeOptions:
+          minimum: 0
+          maximum: 100000
+        quality:
+          - id: amount_not_null
+            metric: nullValues
+            mustBeLessThan: 1
+          - type: sql
+            query: SELECT COUNT(*) FROM fct_orders WHERE amount < 0
+            mustBeLessThan: 10
+          - type: text
+            description: Amounts are in the order currency.
+      - id: ordered_at_prop
+        name: ordered_at
+        logicalType: date
+        physicalType: date
+        partitioned: true
+        partitionKeyPosition: 1
+      - id: customer_prop
+        name: customer
+        logicalType: object
+        properties:
+          - id: customer_ref_prop
+            name: customer_ref
+            logicalType: string
+            physicalType: varchar(64)
+          - id: country_prop
+            name: country
+            logicalType: string
+            physicalType: char(2)
+    quality:
+      - id: orders_rowcount
+        metric: rowCount
+        mustBeGreaterThan: 100
+slaProperties:
+  - property: latency
+    value: 4
+    unit: d
+    element: orders.ordered_at
+  - property: retention
+    value: 3
+    unit: y

@@ -1,0 +1,27 @@
+{
+  "status": "ok",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "src/features/build.py",
+      "line": 2,
+      "level": "warn",
+      "rule": "L5-lookahead",
+      "message": "shift(-7) reads future rows into a feature"
+    },
+    {
+      "file": "src/features/build.py",
+      "line": 3,
+      "level": "warn",
+      "rule": "L5-lookahead",
+      "message": "rolling(…, center=True) averages over future rows"
+    },
+    {
+      "file": "src/features/build.py",
+      "line": 4,
+      "level": "warn",
+      "rule": "L5-lookahead",
+      "message": "bfill() fills a feature from later rows"
+    }
+  ]
+}

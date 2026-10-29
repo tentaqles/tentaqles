@@ -89,6 +89,8 @@ RULE_ID_PREFIX = "tentaqles-build/"
 SETTINGS_TAG = "build-gate.py hook"
 HEARTBEAT = ".hook-seen"
 REVIEWERS = ("build-critic", "spec-critic", "security-reviewer", "privacy-reviewer", "llm-security-reviewer", "breaker")
+# Pack reviewers (spec C §2.8): any *-reviewer that ships agents/<name>.md in the plugin.
+REVIEWER_NAME_RE = re.compile(r"[a-z][a-z0-9-]*-reviewer")
 RESULTS = ("PASS", "FAIL", "BLOCKED")
 WORKFLOWS = ("build", "feature", "fix", "kickoff")
 DOD_WORKFLOWS = ("feature", "fix", "kickoff")
@@ -552,9 +554,22 @@ def reviews_for(root: Path, slug: str, cid: int, tree: str | None) -> dict[str, 
     return out
 
 
+def reviewer_ok(name) -> bool:
+    """A core reviewer, or a pack reviewer: a `*-reviewer` name whose agent file the plugin ships."""
+    if name in REVIEWERS:
+        return True
+    return (isinstance(name, str) and REVIEWER_NAME_RE.fullmatch(name) is not None
+            and (plugin_root() / "agents" / f"{name}.md").is_file())
+
+
+def unknown_reviewer(name) -> str:
+    return (f"unknown reviewer '{name}'. Use one of: {', '.join(REVIEWERS)}, "
+            f"or a pack reviewer named <name>-reviewer with an agent file (agents/{name}.md not found in the plugin).")
+
+
 def _record_review(root: Path, slug: str, cid: int, reviewer: str, result: str, counts: dict, human: bool, note: str = "") -> str:
-    if reviewer not in REVIEWERS:
-        raise SystemExit(f"unknown reviewer '{reviewer}'. Use one of: {', '.join(REVIEWERS)}.")
+    if not reviewer_ok(reviewer):
+        raise SystemExit(unknown_reviewer(reviewer))
     if result not in RESULTS or (human and result == "BLOCKED"):
         allowed = ("PASS, FAIL" if human else ", ".join(RESULTS))
         raise SystemExit(f"result must be one of {allowed} (got '{result}').")
@@ -2557,6 +2572,8 @@ def approval_preview(root: Path, slug: str) -> str:
     for key in ("architecture_paths", "classified_paths"):
         lines.append(f"    {key}: {', '.join(project.get(key) or []) or '(none)'}")
     lines.append(f"    changelog: {project.get('changelog') or '(none)'}")
+    lines.append(f"    packs: the enabled packs and their config hash (`tq pack list --enabled`), checked by "
+                 f"`tq pack check` with a {_pack_budget(project)}s budget")
     if plan.get("hotfix") is True:
         lines.append("  hotfix: true (the review gate becomes n/a: no critic; the tests still run)")
     if pwarn:
@@ -2573,7 +2590,8 @@ def approval_summary(root: Path, slug: str) -> str:
     verify = "; ".join(f"#{cp.get('id')}: " + " && ".join(c for c in (cp.get("verify") or []) if isinstance(c, str))
                        for cp in plan["checkpoints"])
     extra = ", hotfix (no critic)" if plan.get("hotfix") is True else ""
-    return (f"the definition of done ({dod}; changelog: {project.get('changelog') or '(none)'}) "
+    return (f"the definition of done ({dod}; changelog: {project.get('changelog') or '(none)'}), "
+            f"packs (enabled set + config hash, budget {_pack_budget(project)}s) "
             f"and the verify commands ({verify}){extra}")
 
 
@@ -2597,6 +2615,7 @@ def cmd_approve(root: Path, slug: str) -> str:
             raise SystemExit(f"#{cp.get('id')} has no verify commands; every checkpoint needs at least one.")
         verify[str(cp.get("id"))] = cmds
         fingerprints[str(cp.get("id"))] = plan_fingerprint(cp)
+    packs = freeze_packs(root)  # refuses the approval when the pack config can't be read
     prev = load_approved(root, slug) or {}
     legacy = legacy_approval(root, slug)
     if not prev and legacy is not None:
@@ -2621,6 +2640,7 @@ def cmd_approve(root: Path, slug: str) -> str:
         "workflow": plan.get("workflow") if plan.get("workflow") in WORKFLOWS else "build",
         "hotfix": plan.get("hotfix") is True,
         "task": plan.get("task") if not task_problem(plan.get("task")) else None,
+        "packs": packs,
     }
     approved["project"] = project
     approved["project_warning"] = pwarn
@@ -2646,6 +2666,12 @@ def cmd_approve(root: Path, slug: str) -> str:
         lines += [f"  #{cid}: {c}" for c in cmds]
     dcmds = project.get("commands") or {}
     lines += [f"  dod {name}: {dcmds.get(name) or '(not configured)'}" for name in DOD_COMMANDS]
+    if packs.get("enabled"):
+        lines.append(f"  packs frozen: {', '.join(packs['enabled'])} (config {packs['config_hash'][:12]})")
+    elif packs.get("tq"):
+        lines.append(f"  packs: none frozen (tq {packs['tq']})")
+    else:
+        lines.append("  packs: none enabled")
     return "\n".join(lines)
 
 
@@ -2963,6 +2989,243 @@ def changed_files(root: Path, base: str | None) -> list[str]:
     return sorted(out_files)
 
 
+# ---------------------------------------------------------------------------
+# Packs (spec C §2.8): the merged pack config is frozen at approval, and the
+# definition of done records `tq pack check --json` (schema tq.packs/v1).
+# ---------------------------------------------------------------------------
+
+PACK_SCHEMA = "tq.packs/v1"
+PACK_LIST_TIMEOUT = 10  # seconds, `tq pack list` at approval
+PACK_BUDGET_DEFAULT = 600  # seconds, `tq pack check --budget`; the tq-project block's pack_budget overrides it
+PACK_BUDGET_MAX = 1800
+PACK_DOD_GRACE = 30  # the subprocess timeout is the budget plus this
+PACK_FINDINGS_SHOWN = 5
+PACK_STATUSES = ("ok", "fail", "skip")
+PACK_NAME_RE = re.compile(r"[a-z][a-z0-9-]*")
+PACK_CHECK_ID_RE = re.compile(r"[a-z][a-z0-9-]*/[a-z0-9][a-z0-9._-]*")
+# cobra's message for a tq that predates packs. Matched as a whole stderr line, with exit 1 and
+# an empty stdout, so a config error that quotes this text (a tq-packs.yaml value) can't fake it.
+_NO_PACK_COMMAND = re.compile(r'(?:Error|tq): unknown command "pack" for "tq"\s*')
+PACK_SKIP = "skip: no packs frozen at approval"
+
+
+def _no_pack_command(code: int, out: str, err: str) -> bool:
+    return (code == 1 and not out.strip()
+            and any(_NO_PACK_COMMAND.fullmatch(ln) for ln in err.splitlines()))
+
+
+def find_tq() -> str | None:
+    """The tq binary, in the order memory/jev_gate.py:find_tq uses: $TQ_BIN, the plugin's bin/
+    ($CLAUDE_PLUGIN_ROOT, else this checkout), PATH, then the install dirs."""
+    win = os.name == "nt"
+    exe = ".exe" if win else ""
+    cands: list[str] = []
+    if os.environ.get("TQ_BIN"):
+        cands += [os.environ["TQ_BIN"], os.environ["TQ_BIN"] + exe]
+    plug = os.environ.get("CLAUDE_PLUGIN_ROOT") or str(plugin_root())
+    cands.append(os.path.join(plug, "bin", "tq" + exe))
+    found = shutil.which("tq")
+    if found:
+        cands.append(found)
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
+    if home:
+        cands += [os.path.join(home, ".tentaqles", "bin", "tq" + exe), os.path.join(home, ".local", "bin", "tq" + exe)]
+    if win and os.environ.get("LOCALAPPDATA"):
+        cands.append(os.path.join(os.environ["LOCALAPPDATA"], "tentaqles", "bin", "tq.exe"))
+    for c in cands:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return None
+
+
+def _pack_names(doc: dict) -> list[str] | None:
+    """Enabled pack names from `tq pack list --enabled --json`, or None when the shape is wrong.
+    Takes a top-level `enabled` list, or `packs` as a list of {name, enabled} or a map name -> {enabled}."""
+    if "enabled" in doc:
+        names = doc["enabled"]
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            return None
+    else:
+        packs = doc.get("packs") if doc.get("packs") is not None else []
+        if isinstance(packs, dict):
+            pairs = list(packs.items())
+        elif isinstance(packs, list):
+            if not all(isinstance(p, dict) and isinstance(p.get("name"), str) for p in packs):
+                return None
+            pairs = [(p["name"], p) for p in packs]
+        else:
+            return None
+        names = [n for n, p in pairs if not (isinstance(p, dict) and p.get("enabled") is False)]
+    if not all(PACK_NAME_RE.fullmatch(n) for n in names):
+        return None
+    return sorted(set(names))
+
+
+def freeze_packs(root: Path) -> dict:
+    """What an approval freezes about packs: {"enabled": [...], "config_hash": "..."}.
+    tq missing: {"enabled": [], "tq": "missing"}; a tq without the pack command: "no-pack-command".
+    Any other failure refuses the approval: an unreadable pack config must not freeze as "no packs"."""
+    tq = find_tq()
+    if not tq:
+        return {"enabled": [], "tq": "missing"}
+    code, out, err, timed_out = run([tq, "pack", "list", "--enabled", "--json"], cwd=root, timeout=PACK_LIST_TIMEOUT)
+    if not timed_out and _no_pack_command(code, out, err):
+        return {"enabled": [], "tq": "no-pack-command"}
+    why, names, h = "", None, None
+    if timed_out:
+        why = f"timed out after {PACK_LIST_TIMEOUT}s"
+    elif code != 0:
+        why = f"exit {code}: {redact(tail(err or out, 5))}"
+    else:
+        try:
+            doc = json.loads(out)
+        except ValueError:
+            doc = None
+        if not isinstance(doc, dict):
+            why = "invalid JSON"
+        elif doc.get("schema") not in (None, PACK_SCHEMA):
+            why = f"schema {str(doc.get('schema'))[:40]!r}, expected {PACK_SCHEMA}"
+        else:
+            h = doc.get("config_hash")
+            names = _pack_names(doc)
+            if not isinstance(h, str) or not h.strip():
+                why = "no config_hash in the output"
+            elif names is None:
+                why = "unexpected shape of the packs list"
+            else:
+                problems = doc.get("problems") if doc.get("problems") is not None else []
+                if not isinstance(problems, list) or not all(isinstance(x, str) for x in problems):
+                    why = "problems is not a list of strings"
+                elif problems:
+                    # tq exits 0 and lists what it ignored from tq-packs.yaml: never freeze around it
+                    shown = "; ".join(redact(x.strip())[:200] for x in problems[:PACK_FINDINGS_SHOWN])
+                    more = f" (and {len(problems) - PACK_FINDINGS_SHOWN} more)" if len(problems) > PACK_FINDINGS_SHOWN else ""
+                    raise SystemExit(f"approve refused: the pack config has {len(problems)} problem(s): {shown}{more}. "
+                                     "Run `tq pack doctor`, fix tq-packs.yaml or the manifest packs: block, then approve again.")
+    if why:
+        raise SystemExit(f"approve refused: `tq pack list --enabled --json` failed ({why}). Fix the pack config "
+                         "(the manifest packs: block or tq-packs.yaml; `tq pack doctor` explains), then approve again.")
+    return {"enabled": names, "config_hash": h.strip()}
+
+
+def _pack_budget(project: dict) -> int:
+    b = project.get("pack_budget")
+    if isinstance(b, bool) or not isinstance(b, int):
+        return PACK_BUDGET_DEFAULT
+    return max(1, min(PACK_BUDGET_MAX, b))
+
+
+def _parse_pack_check(out: str) -> tuple[dict | None, str]:
+    """(doc, "") for valid tq.packs/v1 check output, else (None, why)."""
+    try:
+        doc = json.loads(out)
+    except ValueError:
+        return None, "invalid JSON"
+    if not isinstance(doc, dict):
+        return None, "invalid JSON (not an object)"
+    if doc.get("schema") != PACK_SCHEMA:
+        return None, f"schema {str(doc.get('schema'))[:40]!r}, expected {PACK_SCHEMA}"
+    if not isinstance(doc.get("config_hash"), str):
+        return None, "no config_hash"
+    results = doc.get("results")
+    if results is None:
+        results = doc["results"] = []
+    if not isinstance(results, list):
+        return None, "results is not a list"
+    seen: set[str] = set()
+    for r in results:
+        if not isinstance(r, dict):
+            return None, "a result is not an object"
+        rid = r.get("id")
+        if not isinstance(rid, str) or not PACK_CHECK_ID_RE.fullmatch(rid):
+            return None, f"a result id is not <pack>/<check>: {str(rid)[:60]!r}"
+        if rid in seen:
+            return None, f"duplicate result id {rid}"
+        seen.add(rid)
+        if r.get("pack") != rid.split("/", 1)[0]:
+            return None, f"{rid}: pack {str(r.get('pack'))[:40]!r} does not match the id prefix"
+        if r.get("status") not in PACK_STATUSES:
+            return None, f"{rid}: status {str(r.get('status'))[:20]!r} is not ok, fail or skip"
+        if not isinstance(r.get("required"), bool):
+            return None, f"{rid}: required is not a boolean"
+        if not isinstance(r.get("detail", ""), (str, type(None))):
+            return None, f"{rid}: detail is not a string"
+        fs = r.get("findings")
+        if fs is None:
+            r["findings"] = []
+        elif not isinstance(fs, list) or not all(isinstance(f, dict) for f in fs):
+            return None, f"{rid}: findings is not a list of objects"
+    return doc, ""
+
+
+def _finding_line(f: dict) -> str:
+    loc = str(f.get("file") or "")
+    line = f.get("line")
+    if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+        loc += f":{line}"
+    return " ".join(str(x) for x in (loc, f.get("level") or "", f.get("rule") or "", f.get("message") or "") if x != "")
+
+
+def _pack_result_item(r: dict) -> tuple[str, bool | None, str]:
+    status = r["status"]
+    ok = True if status == "ok" else (False if status == "fail" and r["required"] else None)
+    detail = (r.get("detail") or status).strip()
+    if status == "fail" and not r["required"]:
+        detail = "advisory: " + detail
+    fs = r["findings"]
+    lines = [_finding_line(f) for f in fs[:PACK_FINDINGS_SHOWN]]
+    if len(fs) > PACK_FINDINGS_SHOWN:
+        lines.append(f"... and {len(fs) - PACK_FINDINGS_SHOWN} more")
+    if lines:
+        detail += "\n" + "\n".join(lines)
+    return f"pack:{r['id']}", ok, redact(detail)
+
+
+def pack_items(root: Path, approved: dict) -> list[tuple[str, bool | None, str]]:
+    """The DoD's pack items (spec C §2.8). Fails closed (pack:run false) when packs were frozen
+    and tq is missing, crashes, times out or prints output that isn't tq.packs/v1."""
+    packs = approved.get("packs")
+    if not isinstance(packs, dict):
+        return [("pack", None, PACK_SKIP)]  # approved before the freeze existed
+    enabled = [n for n in (packs.get("enabled") or []) if isinstance(n, str)]
+    if not isinstance(packs.get("config_hash"), str):
+        return [("pack", None, PACK_SKIP)]  # tq missing, or without the pack command, at approval
+    tq = find_tq()
+    if not tq:
+        # A config hash was frozen: without tq nothing can show it still holds (fail closed).
+        frozen_what = f"packs {', '.join(enabled)}" if enabled else "a pack config with no pack enabled"
+        return [("pack:run", False, (f"tq not found, but {frozen_what} was frozen at approval; "
+                                     "install tq (tq doctor) and re-run the definition of done"))]
+    budget = _pack_budget(approved.get("project") or {})
+    argv = [tq, "pack", "check", "--json"]
+    if approved.get("base"):
+        argv += ["--base", str(approved["base"])]
+    argv += ["--budget", f"{budget}s"]
+    limit = budget + PACK_DOD_GRACE
+    code, out, err, timed_out = run(argv, cwd=root, timeout=limit)
+    if timed_out:
+        return [("pack:run", False, f"tq pack check timed out after {limit}s (budget {budget}s)")]
+    if code not in (0, 1):
+        return [("pack:run", False, f"tq pack check failed (exit {code})\n{redact(tail(err or out, 20))}")]
+    doc, why = _parse_pack_check(out)
+    if doc is None:
+        return [("pack:run", False, f"tq pack check (exit {code}) printed {why}\n{redact(tail(out, 5))}")]
+    results = doc["results"]
+    required_fail = sum(1 for r in results if r["status"] == "fail" and r["required"])
+    if (code == 1) != (required_fail > 0):
+        return [("pack:run", False, f"tq pack check exited {code} but reported {required_fail} required failure(s)")]
+    same = doc["config_hash"] == packs.get("config_hash")
+    count = {s: sum(1 for r in results if r["status"] == s) for s in PACK_STATUSES}
+    items = [
+        ("pack:config", same, "config_hash matches the approval" if same
+         else "pack config changed since approval; re-approve the plan"),
+        ("pack:run", True, (f"tq pack check: {count['ok']} ok, {count['fail']} fail ({required_fail} required), "
+                            f"{count['skip']} skip")),
+    ]
+    items += [_pack_result_item(r) for r in results]
+    return items
+
+
 def dod_path(root: Path, slug: str) -> Path:
     return state_dir(root, slug) / "dod.json"
 
@@ -3085,6 +3348,8 @@ def cmd_dod(root: Path, slug: str, override: str | None = None, timeout: float =
             continue
         code, out, err, timed_out = run(_shell_argv(c), cwd=root, timeout=timeout)
         add(cid, code == 0, f"exit {code}{' (timed out)' if timed_out else ''}: {c}" + ("" if code == 0 else "\n" + redact(tail(out + "\n" + err, 20))))
+    for item in pack_items(root, approved):
+        add(*item)
     tampered = tests_intact(root, approved)
     add("locked_tests", not tampered, "unchanged" if not tampered else f"{len(tampered)} locked test file(s) changed")
     scratch_bad = scratch_bad or scratch_problem(root)
@@ -3530,6 +3795,11 @@ def main(argv: list[str] | None = None) -> int:
             print(err, file=sys.stderr)
         return code
 
+    def reviewer_arg(name: str) -> str:
+        if not reviewer_ok(name):
+            raise argparse.ArgumentTypeError(unknown_reviewer(name))
+        return name
+
     p = argparse.ArgumentParser(prog="build-gate", description="Evidence-based checkpoint gate for /tentaqles:build", allow_abbrev=False)
     p.add_argument("--root", help="repo root (default: git root of cwd)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -3556,14 +3826,14 @@ def main(argv: list[str] | None = None) -> int:
     rr = sub.add_parser("record-review", help="record one reviewer's verdict for a checkpoint (tied to the tree hash)")
     rr.add_argument("slug")
     rr.add_argument("id", type=int)
-    rr.add_argument("--reviewer", required=True, choices=REVIEWERS)
+    rr.add_argument("--reviewer", required=True, type=reviewer_arg)
     rr.add_argument("--result", required=True, choices=RESULTS)
     for k in ("blockers", "majors", "minors", "unjudged"):
         rr.add_argument(f"--{k}", type=int, default=0)
     jd = sub.add_parser("judge", help="human only: settle a BLOCKED (or disputed) reviewer verdict")
     jd.add_argument("slug")
     jd.add_argument("id", type=int)
-    jd.add_argument("--reviewer", required=True, choices=REVIEWERS)
+    jd.add_argument("--reviewer", required=True, type=reviewer_arg)
     jd.add_argument("--result", required=True, choices=("PASS", "FAIL"))
     jd.add_argument("--note", required=True)
     dd = sub.add_parser("dod", allow_abbrev=False, help="definition of done: run the frozen project commands and check ADR/privacy/migration/changelog obligations")
@@ -3576,7 +3846,7 @@ def main(argv: list[str] | None = None) -> int:
     ak.add_argument("--text", required=True)
     ak.add_argument("--options", default="", help="comma-separated")
     ak.add_argument("--checkpoint", type=int, default=None)
-    ak.add_argument("--reviewer", default=None, choices=(None, *REVIEWERS))
+    ak.add_argument("--reviewer", default=None, type=reviewer_arg)
     an = sub.add_parser("answer", help="human only: answer a pending decision")
     an.add_argument("slug")
     an.add_argument("id")

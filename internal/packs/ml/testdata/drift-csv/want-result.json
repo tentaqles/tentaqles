@@ -1,0 +1,50 @@
+{
+  "schema": "tq.drift-result/v1",
+  "model": "churn",
+  "metric": "psi",
+  "status": "fail",
+  "reference": "data/ref.csv",
+  "current": "data/cur.csv",
+  "reference_sha256": "sha256:c7454f5932f5fc13dbbda670763435a6af91adb427ec0ccb6f9c0ca969cfc0ff",
+  "current_sha256": "sha256:b46a92cf27412928a731540c21a1290b5034fafc14c569c6bbfbda82df44e928",
+  "features": [
+    {
+      "name": "customer",
+      "type": "categorical",
+      "value": 0,
+      "warn": 0.1,
+      "fail": 0.25,
+      "status": "ok"
+    },
+    {
+      "name": "plan",
+      "type": "categorical",
+      "value": 0.466965,
+      "warn": 0.1,
+      "fail": 0.25,
+      "status": "fail"
+    },
+    {
+      "name": "tenure_days",
+      "type": "numeric",
+      "value": 2.486143,
+      "warn": 0.1,
+      "fail": 0.25,
+      "status": "fail"
+    }
+  ],
+  "warned_share": 0,
+  "max_warn_share": 0.5,
+  "metrics": [
+    {
+      "name": "auc",
+      "value": 0.81,
+      "min": 0.78,
+      "status": "ok"
+    }
+  ],
+  "reasons": [
+    "feature plan: 0.466965 is at or above fail 0.25",
+    "feature tenure_days: 2.486143 is at or above fail 0.25"
+  ]
+}

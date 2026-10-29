@@ -1,0 +1,11 @@
+version: 2
+models:
+  - name: int_order_lines
+    description: Order lines.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_id, line_no]
+    columns:
+      - name: order_id
+      - name: line_no

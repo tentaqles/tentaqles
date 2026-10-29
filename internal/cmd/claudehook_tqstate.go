@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -46,7 +49,9 @@ func normPathForm(p string) string {
 }
 
 // stateDirForms are the spellings of tq's state directory a command may use.
-func stateDirForms() []string {
+func stateDirForms() []string { return stateInfo().forms }
+
+func computeStateDirForms() []string {
 	home := paths.Home()
 	set := map[string]bool{".tentaqles": true, "tentaq~": true, "$tq_home": true, "${tq_home}": true, "%tq_home%": true, "$env:tq_home": true}
 	var dirs []string
@@ -91,6 +96,55 @@ func stateDirForms() []string {
 	return out
 }
 
+var (
+	dotdotRe    = regexp.MustCompile(`(^|/)\.\.(/|$|\s)`)
+	proseSplit  = regexp.MustCompile(`(;|&&|\|\||\n)`)
+	shortRootRe = regexp.MustCompile(`/tentaq~[0-9]+/`)
+)
+
+// stateCache memoizes, once per process and per (TQ_HOME, environment),
+// everything the hook-time check derives from the file system and the
+// environment: the root spellings (FinalPath and 8.3 calls), the protected
+// set (8.3 names of the protected children), the inside variables and their
+// regexes. The hook is a one-shot process; tests that change TQ_HOME or the
+// environment get a fresh entry.
+type stateCache struct {
+	key   string
+	forms []string
+	re    *rootMatcher
+	prot  map[string]bool
+	vars  map[string]string
+	bare  map[string]*regexp.Regexp
+}
+
+var stateMemo struct {
+	sync.Mutex
+	c *stateCache
+}
+
+func stateInfo() *stateCache {
+	h := fnv.New64a()
+	h.Write([]byte(paths.Home()))
+	for _, kv := range os.Environ() {
+		h.Write([]byte{0})
+		h.Write([]byte(kv))
+	}
+	key := fmt.Sprintf("%x", h.Sum64())
+	stateMemo.Lock()
+	defer stateMemo.Unlock()
+	if c := stateMemo.c; c != nil && c.key == key {
+		return c
+	}
+	c := &stateCache{key: key, prot: computeProtectedSet(), vars: computeInsideVars(), bare: map[string]*regexp.Regexp{}}
+	c.forms = computeStateDirForms()
+	c.re = computeRootRegex(c.forms)
+	for k := range c.vars {
+		c.bare[k] = regexp.MustCompile(regexp.QuoteMeta(k) + `($|[^a-z0-9_])`)
+	}
+	stateMemo.c = c
+	return c
+}
+
 var bareTq = regexp.MustCompile(`^\s*(\S*/)?tq(\.exe)?\s`)
 
 // bareTqCommand: one tq invocation and nothing else (no chain, pipe,
@@ -110,7 +164,9 @@ func bareTqCommand(n string) bool {
 var protectedSubs = []string{"hub", "packs", "build-gate", "trust", "guard.yaml", "config.yaml", "guard", "audit.jsonl"}
 
 // protectedSet is protectedSubs plus their 8.3 short names at hook time.
-func protectedSet() map[string]bool {
+func protectedSet() map[string]bool { return stateInfo().prot }
+
+func computeProtectedSet() map[string]bool {
 	set := map[string]bool{}
 	for _, p := range protectedSubs {
 		set[p] = true
@@ -123,10 +179,14 @@ func protectedSet() map[string]bool {
 
 func isProtectedSeg(seg string) bool { return protectedSet()[seg] }
 
+func (c *stateCache) isProt(seg string) bool { return c.prot[seg] }
+
 // insideVars are the environment variables whose value points inside tq's
 // state directory (tq exports CLAUDE_CONFIG_DIR, GH_CONFIG_DIR and others
 // into identities/<id>/): name (lower case) -> the folded value.
-func insideVars() map[string]string {
+func insideVars() map[string]string { return stateInfo().vars }
+
+func computeInsideVars() map[string]string {
 	out := map[string]string{}
 	home := normPathForm(paths.Home())
 	var real string
@@ -150,7 +210,8 @@ func insideVars() map[string]string {
 // %X%, $env:X, and the bare name as in os.environ[X] or process.env.X) with
 // its folded value, so `$CLAUDE_CONFIG_DIR/../../../packs` reads as a path.
 func expandInside(n string) string {
-	vars := insideVars()
+	si := stateInfo()
+	vars := si.vars
 	names := make([]string, 0, len(vars))
 	for k := range vars {
 		names = append(names, k)
@@ -158,38 +219,168 @@ func expandInside(n string) string {
 	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
 	for _, k := range names {
 		v := vars[k]
+		if !strings.Contains(n, k) {
+			continue // every spelling contains the name
+		}
 		for _, sp := range []string{"${" + k + "}", "$env:" + k, "%" + k + "%", "$" + k} {
 			n = strings.ReplaceAll(n, sp, v)
 		}
 		// The bare name (os.environ[X], process.env.X): quotes and brackets are
 		// already folded away, so no left boundary is required.
-		n = regexp.MustCompile(regexp.QuoteMeta(k)+`($|[^a-z0-9_])`).ReplaceAllString(n, v+"${1}")
+		if strings.Contains(n, k) {
+			n = si.bare[k].ReplaceAllString(n, v+"${1}")
+		}
 	}
 	return n
 }
 
 // rootRegex matches any spelling of the state directory root.
-func rootRegex() *regexp.Regexp {
-	forms := stateDirForms()
-	sort.Slice(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
-	alts := []string{`tentaq~[0-9]+`}
-	for _, f := range forms {
-		if f != "" && f != "tentaq~" {
-			alts = append(alts, regexp.QuoteMeta(f))
-		}
-	}
-	return regexp.MustCompile("(" + strings.Join(alts, "|") + ")")
+func rootRegex() *rootMatcher { return stateInfo().re }
+
+// rootMatcher finds the state-directory root spellings: `tentaq~<digits>`
+// and the literal forms, leftmost first and, at one position, the 8.3 form
+// then the longest literal (the order of the alternation it replaces, which
+// was a large regexp and too slow on a 64 KB command). Literal search uses
+// strings.Index.
+type rootMatcher struct {
+	forms []string // longest first
 }
 
+func computeRootRegex(forms []string) *rootMatcher {
+	var fs []string
+	for _, f := range forms {
+		if f != "" && f != "tentaq~" {
+			fs = append(fs, f)
+		}
+	}
+	sort.SliceStable(fs, func(i, j int) bool { return len(fs[i]) > len(fs[j]) })
+	return &rootMatcher{forms: fs}
+}
+
+// shortAt returns the end of `tentaq~<digits>` at i, or -1.
+func shortAt(s string, i int) int {
+	const p = "tentaq~"
+	if !strings.HasPrefix(s[i:], p) {
+		return -1
+	}
+	j := i + len(p)
+	k := j
+	for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+		k++
+	}
+	if k == j {
+		return -1
+	}
+	return k
+}
+
+// all returns every match, leftmost first and non-overlapping, in one pass
+// per form: the candidate starts of each form are collected, and at each
+// start the 8.3 form wins, then the longest literal.
+func (m *rootMatcher) all(s string, firstOnly bool) [][]int {
+	end := map[int]int{}
+	var starts []int
+	add := func(i, e int, short bool) {
+		if old, ok := end[i]; ok {
+			if !short && old >= e {
+				return
+			}
+			if !short && old != e && shortAt(s, i) == old {
+				return // the 8.3 form wins at its start
+			}
+		} else {
+			starts = append(starts, i)
+		}
+		end[i] = e
+	}
+	for i := 0; ; {
+		k := strings.Index(s[i:], "tentaq~")
+		if k < 0 {
+			break
+		}
+		if e := shortAt(s, i+k); e >= 0 {
+			add(i+k, e, true)
+		}
+		i += k + 1
+	}
+	for _, f := range m.forms {
+		for i := 0; ; {
+			k := strings.Index(s[i:], f)
+			if k < 0 {
+				break
+			}
+			add(i+k, i+k+len(f), false)
+			i += k + 1
+		}
+	}
+	sort.Ints(starts)
+	var out [][]int
+	from := 0
+	for _, st := range starts {
+		if st < from {
+			continue
+		}
+		out = append(out, []int{st, end[st]})
+		if firstOnly {
+			break
+		}
+		from = end[st]
+	}
+	return out
+}
+
+func (m *rootMatcher) FindStringIndex(s string) []int {
+	if l := m.all(s, true); len(l) > 0 {
+		return l[0]
+	}
+	return nil
+}
+
+func (m *rootMatcher) MatchString(s string) bool { return m.FindStringIndex(s) != nil }
+
+func (m *rootMatcher) FindAllStringIndex(s string, _ int) [][]int { return m.all(s, false) }
+
 var (
-	tokenRe   = regexp.MustCompile(`[^\s;&|()<>,=]+`)
-	segSplit  = regexp.MustCompile(`&&|\|\||[;&|\n]`)
-	cdRe      = regexp.MustCompile(`^\s*(cd|pushd|chdir|set-location|sl)\s+(\S+)\s*$`)
-	linkVerb  = regexp.MustCompile(`\b(ln|mklink|new-item\b.*-itemtype\s+(junction|symboliclink|hardlink)|cmd\s+/c\s+mklink)\b`)
-	wordSplit = regexp.MustCompile(`[\s()<>=,]+`)
-	msgArg    = regexp.MustCompile(`(?i)\s(-m|-am|--message)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
-	echoSeg   = regexp.MustCompile(`(?i)^\s*(echo|write-host|write-output|printf)\b`)
+	cdRe     = regexp.MustCompile(`^\s*(cd|pushd|chdir|set-location|sl)\s+(\S+)\s*$`)
+	linkVerb = regexp.MustCompile(`\b(ln|mklink|new-item\b.*-itemtype\s+(junction|symboliclink|hardlink)|cmd\s+/c\s+mklink)\b`)
+	msgArg   = regexp.MustCompile(`(?i)\s(-m|-am|--message)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
+	echoSeg  = regexp.MustCompile(`(?i)^\s*(echo|write-host|write-output|printf)\b`)
 )
+
+// Hand-written splitters for the hot loops (the regexps they replace were
+// the cost on a 64 KB command). isTokenSep separates tokens (whitespace and
+// ;&|()<>,=); isSegSep separates segments (; & | and newline; a run yields
+// no empty segment, which the loops skipped anyway); isWordSep separates
+// words (whitespace and ()<>=,).
+func isSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' // Go's \s
+}
+func isTokenSep(r rune) bool { return isSpace(r) || strings.ContainsRune(";&|()<>,=", r) }
+func isSegSep(r rune) bool   { return r == ';' || r == '&' || r == '|' || r == '\n' }
+func isWordSep(r rune) bool  { return isSpace(r) || strings.ContainsRune("()<>=,", r) }
+
+// mapTokens replaces every maximal run of non-separator characters (a
+// token) with f(run).
+func mapTokens(s string, f func(string) string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	start := -1
+	for i, r := range s {
+		if isTokenSep(r) {
+			if start >= 0 {
+				b.WriteString(f(s[start:i]))
+				start = -1
+			}
+			b.WriteRune(r)
+		} else if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		b.WriteString(f(s[start:]))
+	}
+	return b.String()
+}
 
 func firstSeg(s string) string {
 	if i := strings.IndexAny(s, "/ \t;&|)<>,"); i >= 0 {
@@ -201,9 +392,11 @@ func firstSeg(s string) string {
 // proseFree blanks text that is never a path: a commit message (-m,
 // --message) and an echo segment that redirects nowhere.
 func proseFree(raw string) string {
-	raw = msgArg.ReplaceAllString(raw, " ")
+	if l := strings.ToLower(raw); strings.Contains(l, "-m") || strings.Contains(l, "-am") {
+		raw = msgArg.ReplaceAllString(raw, " ")
+	}
 	var out []string
-	for _, seg := range regexp.MustCompile(`(;|&&|\|\||\n)`).Split(raw, -1) {
+	for _, seg := range proseSplit.Split(raw, -1) {
 		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") {
 			continue
 		}
@@ -215,11 +408,11 @@ func proseFree(raw string) string {
 // foldPaths folds a command for path matching: inside variables expanded,
 // string concatenation (+) dropped, and `..` resolved lexically in every
 // path-like token. It also reports a root mention followed by `..`.
-func foldPaths(n string, re *regexp.Regexp) (string, bool) {
+func foldPaths(n string, re *rootMatcher) (string, bool) {
 	n = strings.ReplaceAll(expandInside(n), "+", "")
 	dotdot := false
-	n = tokenRe.ReplaceAllStringFunc(n, func(tok string) string {
-		if !strings.Contains(tok, "/") {
+	n = mapTokens(n, func(tok string) string {
+		if !strings.Contains(tok, "/") || !strings.Contains(tok, "..") {
 			return tok
 		}
 		if loc := re.FindStringIndex(tok); loc != nil && strings.Contains(tok[loc[1]:], "/..") {
@@ -238,9 +431,9 @@ func foldPaths(n string, re *regexp.Regexp) (string, bool) {
 	return n, dotdot
 }
 
-// rawDots is the command with only quotes folded, for the .. check (the
-// folded form has already resolved them).
-func rawDots(raw string) string { return normShell(raw) }
+// rawDots is the command with only quotes, backticks and + concatenation
+// folded, for the .. check (the folded form has already resolved them).
+func rawDots(raw string) string { return strings.ReplaceAll(normShell(raw), "+", "") }
 
 // protectedMention reports whether a folded command can reach a protected
 // part of the state directory:
@@ -253,11 +446,13 @@ func rawDots(raw string) string { return normShell(raw) }
 //   - a cd under the root (tracked cumulatively, relative cds included)
 //     followed by a relative path into a protected part.
 func protectedMention(raw string) bool {
-	re := rootRegex()
+	si := stateInfo()
+	re := si.re
 	n, dotdot := foldPaths(normShell(proseFree(raw)), re)
 	// Fail closed: a root spelling and a `..` path in one command (a
 	// variable set to a path under the root, then `/../packs`).
-	if dotdot || (re.MatchString(n) && regexp.MustCompile(`(^|/)\.\.(/|$|\s)`).MatchString(rawDots(raw))) {
+	// R5-1: the prefilter reads the folded text (a quote between the dots).
+	if rd := rawDots(raw); dotdot || (strings.Contains(rd, "..") && dotdotRe.MatchString(rd) && re.MatchString(n)) {
 		return true
 	}
 	bare := false
@@ -271,27 +466,27 @@ func protectedMention(raw string) bool {
 				bare = true
 				continue
 			}
-			if isProtectedSeg(seg) || strings.ContainsAny(seg, "*?{") {
+			if si.isProt(seg) || strings.ContainsAny(seg, "*?{") {
 				return true
 			}
 			continue
 		}
 		// An argv or join list: joinpath(.tentaqles, packs, ...).
-		if strings.HasPrefix(rest, ",") && isProtectedSeg(firstSeg(strings.TrimLeft(rest, ", "))) {
+		if strings.HasPrefix(rest, ",") && si.isProt(firstSeg(strings.TrimLeft(rest, ", "))) {
 			return true
 		}
 		bare = true
 	}
-	if mentioned && linkVerb.MatchString(n) {
+	if mentioned && (strings.Contains(n, "ln") || strings.Contains(n, "mklink") || strings.Contains(n, "new-item")) && linkVerb.MatchString(n) {
 		return true
 	}
 	if bare {
-		for _, tok := range tokenRe.FindAllString(n, -1) {
+		for _, tok := range strings.FieldsFunc(n, isTokenSep) {
 			if !strings.Contains(tok, "/") {
 				continue
 			}
 			for _, s := range strings.Split(tok, "/") {
-				if isProtectedSeg(s) {
+				if si.isProt(s) {
 					return true
 				}
 			}
@@ -300,7 +495,7 @@ func protectedMention(raw string) bool {
 	// Cumulative cd: rel is the virtual cwd under the root, known while the
 	// cds stay under it.
 	known, rel := false, ""
-	for _, seg := range segSplit.Split(n, -1) {
+	for _, seg := range strings.FieldsFunc(n, isSegSep) {
 		if m := cdRe.FindStringSubmatch(seg); m != nil {
 			t := strings.TrimSuffix(m[2], "/")
 			if loc := re.FindStringIndex(t); loc != nil && loc[0] == 0 {
@@ -318,7 +513,7 @@ func protectedMention(raw string) bool {
 			} else {
 				known = false
 			}
-			if known && isProtectedSeg(firstSeg(rel)) {
+			if known && si.isProt(firstSeg(rel)) {
 				return true
 			}
 			continue
@@ -326,13 +521,13 @@ func protectedMention(raw string) bool {
 		if !known {
 			continue
 		}
-		for _, w := range wordSplit.Split(seg, -1) {
+		for _, w := range strings.FieldsFunc(seg, isWordSep) {
 			w = strings.TrimPrefix(w, "./")
 			if w == "" || strings.HasPrefix(w, "-") || strings.Contains(w, "://") || path.IsAbs(w) || strings.HasPrefix(w, "~") || strings.HasPrefix(w, "$") {
 				continue
 			}
 			full := strings.TrimPrefix(path.Clean(rel+"/"+w), "/")
-			if isProtectedSeg(firstSeg(full)) {
+			if si.isProt(firstSeg(full)) {
 				return true
 			}
 		}
@@ -341,7 +536,7 @@ func protectedMention(raw string) bool {
 }
 
 var (
-	humanAnswerRe = regexp.MustCompile(`\bhub[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+(\S+[\s,]+)?)*answer\b|\bpack[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+)*\S+[\s,]+(approve|promote[\s,]+apply)\b`)
+	humanAnswerRe = regexp.MustCompile(`\bhub[\s,]+(-{1,2}[a-z0-9-]+(=\S+)?[\s,]+(\S+[\s,]+)?)*answer\b|\bpack[\s,]+\S+[^;&|\n]*\bapply\b`)
 	httpClientRe  = regexp.MustCompile(`\b(curl|wget|http|https|invoke-webrequest|iwr|invoke-restmethod|irm|python3?|py|node|deno|bun|ruby|perl|php|pwsh|powershell|urlopen|requests|fetch)\b`)
 	pctRe         = regexp.MustCompile(`%([0-9a-f]{2})`)
 )
@@ -363,18 +558,61 @@ func decodePct(s string) string {
 	})
 }
 
+// foldContinuations joins continued lines back into one command line: bash
+// backslash-newline, PowerShell backtick-newline and cmd caret-newline
+// (R6-2), so a match that stops at a newline cannot be split by one.
+func foldContinuations(s string) string {
+	return strings.NewReplacer("\\\r\n", " ", "\\\n", " ", "`\r\n", " ", "`\n", " ", "^\r\n", " ", "^\n", " ").Replace(s)
+}
+
+// humanMsgArg is a message or note flag value; humanProseSplit and
+// echoSeg find echo segments (R6-5).
+var humanMsgArg = regexp.MustCompile(`(?i)\s(-m|-am|--message|--note|--reason|--comment)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
+
+// executes reports text a shell runs even inside a message or an echo:
+// command substitution, a backtick, process substitution.
+func executes(s string) bool {
+	return strings.Contains(s, "$(") || strings.Contains(s, "`") || strings.Contains(s, "<(") || strings.Contains(s, ">(")
+}
+
+// humanProseFree blanks prose that only mentions a command: a commit message
+// or a --note/--reason/--comment value, and an echo segment that redirects
+// nowhere, unless the text runs something ($(...), a backtick).
+func humanProseFree(raw string) string {
+	raw = humanMsgArg.ReplaceAllStringFunc(raw, func(m string) string {
+		if executes(m) {
+			return m
+		}
+		return " "
+	})
+	var out []string
+	for _, seg := range proseSplit.Split(raw, -1) {
+		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") && !executes(seg) {
+			continue
+		}
+		out = append(out, seg)
+	}
+	return strings.Join(out, " ; ")
+}
+
+// humanAnswerCommand is the hook's tq/human-answer check of a shell command:
+// continuations folded, prose blanked, then humanAnswerShell.
+func humanAnswerCommand(cmd string) bool {
+	return humanAnswerShell(normShell(humanProseFree(foldContinuations(cmd))))
+}
+
 // humanAnswerShell is the folded half of tq/human-answer: a tq hub answer
-// or pack approve/promote apply in any spelling (global flags before the
+// or a pack apply subcommand (promote apply, cloud apply) in any spelling (global flags before the
 // verb, t”q, a variable or call operator, a subprocess argv list), and an
 // HTTP client reaching the decision endpoints with a decoded, quote- and
 // concatenation-folded URL.
 func humanAnswerShell(n string) bool {
 	f := strings.ReplaceAll(n, "+", "")
-	if humanAnswerRe.MatchString(f) {
+	if (strings.Contains(f, "answer") || strings.Contains(f, "apply")) && humanAnswerRe.MatchString(f) {
 		return true
 	}
 	d := decodePct(f)
-	return httpClientRe.MatchString(d) && (strings.Contains(d, "/decisions/") || strings.Contains(d, "/answer"))
+	return (strings.Contains(d, "/decisions/") || strings.Contains(d, "/answer")) && httpClientRe.MatchString(d)
 }
 
 // canonicalPath resolves a written path: the nearest existing parent through
@@ -411,22 +649,23 @@ func underProtected(canon string) bool {
 		return false
 	}
 	var roots []string
-	for _, f := range stateDirForms() {
+	si := stateInfo()
+	for _, f := range si.forms {
 		if strings.Contains(f, "/") && !strings.HasPrefix(f, "$") && !strings.HasPrefix(f, "%") && !strings.HasPrefix(f, "~") {
 			roots = append(roots, f)
 		}
 	}
 	for _, r := range roots {
-		if strings.HasPrefix(canon, r+"/") && isProtectedSeg(firstSeg(canon[len(r)+1:])) {
+		if strings.HasPrefix(canon, r+"/") && si.isProt(firstSeg(canon[len(r)+1:])) {
 			return true
 		}
 	}
 	for _, marker := range []string{"/.tentaqles/"} {
-		if i := strings.Index(canon, marker); i >= 0 && isProtectedSeg(firstSeg(canon[i+len(marker):])) {
+		if i := strings.Index(canon, marker); i >= 0 && si.isProt(firstSeg(canon[i+len(marker):])) {
 			return true
 		}
 	}
-	if m := regexp.MustCompile(`/tentaq~[0-9]+/`).FindStringIndex(canon); m != nil && isProtectedSeg(firstSeg(canon[m[1]:])) {
+	if m := shortRootRe.FindStringIndex(canon); m != nil && si.isProt(firstSeg(canon[m[1]:])) {
 		return true
 	}
 	return false
@@ -435,7 +674,9 @@ func underProtected(canon string) bool {
 var readOnlyVerb = regexp.MustCompile(`^\s*(cat|type|more|less|head|tail|bat|nl|grep|rg|findstr|gc|get-content|select-string|sls|git\s+(diff|log|show|status|blame))\b`)
 
 // stateDirDecision is the hook-time check of the three never-disable ids.
-func stateDirDecision(call policy.ToolCall, cwd string) policy.Decision {
+// readArgs are the StateDir files a pack guard verified for this call
+// (packs.GuardCtx.ReadArgs); see withoutReadArgs.
+func stateDirDecision(call policy.ToolCall, cwd string, readArgs ...packs.ReadArg) policy.Decision {
 	var d policy.Decision
 	deny := func(id, reason string) { d = policy.Merge(d, ruleDecision(policy.Deny, id, reason)) }
 	ask := func(id, reason string) { d = policy.Merge(d, ruleDecision(policy.Ask, id, reason)) }
@@ -445,13 +686,19 @@ func stateDirDecision(call policy.ToolCall, cwd string) policy.Decision {
 			cmd = guard.BlankDataHeredocs(cmd)
 		}
 		n := normShell(cmd)
-		if humanAnswerShell(n) {
+		if humanAnswerCommand(cmd) {
 			deny("tq/human-answer", "answering an approval and applying an approved action are done by a human in their own terminal, never by an agent")
 		}
 		if strings.Contains(strings.ReplaceAll(n, "+", ""), "tentaqles-packs") {
 			deny("tq/secret-store-shell", "the pack ledger key in the OS keychain signs human answers; it is never read from the shell")
 		}
-		if !bareTqCommand(n) && protectedMention(cmd) {
+		mention := cmd
+		if len(readArgs) > 0 {
+			if m, ok := withoutReadArgs(cmd, readArgs); ok {
+				mention = m
+			}
+		}
+		if !bareTqCommand(n) && protectedMention(mention) {
 			deny("tq/hub-store-write", "this command reaches a protected part of tq's state directory ("+paths.Home()+": hub, packs, build-gate, trust, guard, guard.yaml, config.yaml or audit.jsonl), which holds the hub store, the pack ledgers, approvals, plans and keys; only tq itself touches it")
 		}
 		if (strings.Contains(n, "tq-packs.y") || strings.Contains(n, "tq-pac~")) && !(readOnlyVerb.MatchString(n) && !strings.ContainsAny(n, ">;&|")) {

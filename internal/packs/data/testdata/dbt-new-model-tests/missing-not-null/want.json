@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "1 new model",
+  "findings": [
+    {
+      "file": "models/staging/_staging.yml",
+      "line": 3,
+      "level": "warn",
+      "rule": "missing-description",
+      "message": "new model stg_orders has no description"
+    },
+    {
+      "file": "models/staging/_staging.yml",
+      "line": 5,
+      "level": "error",
+      "rule": "missing-key-tests",
+      "message": "new model stg_orders: primary key order_id has no not_null test"
+    }
+  ]
+}

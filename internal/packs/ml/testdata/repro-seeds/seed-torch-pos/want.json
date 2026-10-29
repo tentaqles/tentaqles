@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "seeds checked in 1 training file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 2,
+      "level": "error",
+      "rule": "seed-torch",
+      "message": "torch is used but torch.manual_seed is not set"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "status": "fail",
+  "detail": "leakage lint over 1 file",
+  "findings": [
+    {
+      "file": "train.py",
+      "line": 10,
+      "level": "error",
+      "rule": "L1-fit-before-split",
+      "message": "fit_transform fits a preprocessing step on \"X\" before the first train/test split (line 11); fit it on the training split or inside a Pipeline"
+    }
+  ]
+}

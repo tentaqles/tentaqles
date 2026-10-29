@@ -1,0 +1,3 @@
+{"schema": "tq.drift-profile/v1", "rows": 100, "features": {
+  "tenure_days": {"type": "numeric", "edges": [30, 90], "counts": [30, 30, 40]}
+}}

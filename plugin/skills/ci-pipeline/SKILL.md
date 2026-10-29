@@ -82,6 +82,12 @@ Metric choice, collectors per stack and tolerances:
 - Deploy jobs `needs:` the quality job, run migrations through the pipeline
   (see `db-migration`), and end with a smoke check. Deploy is not release:
   prefer feature flags for risky changes.
+- Optional, when the workspace enables tq packs (cloud, db): a job step
+  `tq pack check --base origin/<default> --json` with the tools declared in
+  `packs.<pack>.tools` installed at pinned versions, so CI fails on the same
+  `cloud/*` and `db/*` findings as the definition of done. The step is offline;
+  the plan stays the project's step (`terraform plan`, `what-if`, `cdk synth`
+  run with the project's own credentials, never inside `tq pack check`).
 
 Locally, run the same commands with secrets from `.env` without printing
 them: `tq dotenv run -- npm test`.

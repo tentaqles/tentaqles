@@ -36,10 +36,23 @@ func TestPackApprovalNeverDrivesTheRun(t *testing.T) {
 	if _, err := h.svc.Answer(context.Background(), c.ID, d.ID, "approve", ""); !errors.Is(err, store.ErrPackAnswer) {
 		t.Fatalf("answered without presence: %v", err)
 	}
-	sign := func(pack, id, choice, kind, ts string) (ledger.Entry, error) {
-		return ledger.Entry{Event: ledger.Answered, Decision: id, Pack: pack, Choice: choice, ActorKind: kind, TS: ts}, nil
+	sign := func(shown ledger.Shown, id, choice, kind, ts string) (ledger.Entry, error) {
+		return ledger.Entry{Event: ledger.Answered, Decision: id, Pack: shown.Pack, Choice: choice, ActorKind: kind, TS: ts}, nil
 	}
-	out, err := h.svc.Answer(WithHumanPresence(context.Background(), HumanPresence{Sign: sign}), c.ID, d.ID, "approve", "")
+	// R4-5: a store row that changed after it was shown is not signed.
+	stale := d.Shown()
+	stale.Target = "staging"
+	if _, err := h.svc.Answer(WithHumanPresence(context.Background(), HumanPresence{Sign: sign, Shown: &stale}), c.ID, d.ID, "approve", ""); !errors.Is(err, ledger.ErrShownMismatch) {
+		t.Fatalf("a changed row was signed: %v", err)
+	}
+	if got, _ := h.st.Decision(d.ID); got.Status != store.DecisionPending {
+		t.Fatalf("answered over a changed row: %+v", got)
+	}
+	if _, err := h.svc.Answer(WithHumanPresence(context.Background(), HumanPresence{Sign: sign}), c.ID, d.ID, "approve", ""); !errors.Is(err, store.ErrPackAnswer) {
+		t.Fatalf("answered with no shown binding: %v", err)
+	}
+	shown := d.Shown()
+	out, err := h.svc.Answer(WithHumanPresence(context.Background(), HumanPresence{Sign: sign, Shown: &shown}), c.ID, d.ID, "approve", "")
 	if err != nil {
 		t.Fatal(err)
 	}

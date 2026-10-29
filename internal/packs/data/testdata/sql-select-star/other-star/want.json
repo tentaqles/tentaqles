@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "detail": "1 SQL model",
+  "findings": [
+    {
+      "file": "models/intermediate/int_orders.sql",
+      "line": 4,
+      "level": "warn",
+      "rule": "select-star",
+      "message": "select * in model int_orders: list the columns"
+    }
+  ]
+}

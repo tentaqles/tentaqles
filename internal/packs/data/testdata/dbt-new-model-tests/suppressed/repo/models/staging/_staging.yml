@@ -1,0 +1,7 @@
+version: 2
+models:
+  # tq:allow data/dbt-new-model-tests: an append-only event log with no key
+  - name: stg_events
+    description: Events.
+    columns:
+      - name: event_name

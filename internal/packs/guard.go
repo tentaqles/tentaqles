@@ -136,6 +136,9 @@ type GuardEnv struct {
 	Workspace     string
 	WorkspaceRoot string
 	RepoRoot      string
+	// Cwd is the hook payload's cwd (the hook falls back to the process cwd
+	// only when the payload has none).
+	Cwd string
 	// ExtraRoots are more folders ReadLocal may read (tests; nil in the hook).
 	ExtraRoots []string
 }
@@ -152,6 +155,8 @@ type guardState struct {
 	consume   []string
 	counters  []Counter
 	hashSpent atomic.Int64
+	hashed    map[string]string // HashState names verified in this call -> absolute path
+	readArgs  []ReadArg
 }
 
 // Counter is a pack counter a guard asked for.
@@ -176,6 +181,101 @@ func (g GuardCtx) Pack() string                 { return g.st.pack }
 
 // StateDir is the pack's state directory path (not created: guards never write).
 func (g GuardCtx) StateDir() string { return stateDirPath(g.st.env.Workspace, g.st.pack) }
+
+// Cwd is the hook payload's cwd, made absolute and resolved to its final
+// path when it exists; the process cwd only when the payload has none.
+func (g GuardCtx) Cwd() string {
+	c := g.st.env.Cwd
+	if c == "" {
+		c, _ = os.Getwd()
+	}
+	if c == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(c); err == nil {
+		c = abs
+	}
+	if fp, err := FinalPath(c); err == nil {
+		return fp
+	}
+	return filepath.Clean(c)
+}
+
+// ReadArg is one stored file an allowed command reads: the program that
+// reads it (its first word, such as tofu, terraform or pulumi) and the
+// file's absolute path under the pack's plans/ directory.
+type ReadArg struct {
+	Program string
+	// Flag is the one flag whose value the file may be (--plan); empty: a
+	// positional argument only. A positional argument is always accepted.
+	Flag string
+	// BoolFlags are the program's flags that take no value (-auto-approve,
+	// --yes): a plan right after one is still positional. Any other flag
+	// before the plan is read as taking it as its value (fail closed).
+	BoolFlags []string
+	Path      string
+}
+
+// ReadSpec is how a program reads its stored plans: its name (the
+// segment's first word), the flag whose value the plan may be ("" for
+// positional only) and its boolean flags.
+type ReadSpec struct {
+	Program   string
+	Flag      string
+	BoolFlags []string
+}
+
+var flagNameRe = regexp.MustCompile(`^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$`)
+
+// ReadArgs names stored plans this guard verified with HashState in this
+// call and that spec.Program reads as a positional argument (terraform
+// apply <plan>, also after a declared boolean flag: -auto-approve <plan>) or
+// as the value of spec.Flag (pulumi up --plan <plan>, --plan=<plan>; Flag ""
+// allows the positional form only). For this call only, the core state-dir rule
+// (tq/hub-store-write) does not count that exact path, provided:
+//   - the command writes nothing (no redirect, no write verb, shell,
+//     interpreter, downloader or wrapper, no substitution);
+//   - the path occurs exactly once, in a segment whose first word is
+//     program;
+//
+// every other path is checked as usual. It takes effect only when the guard
+// handles the call and allows it. Only files under the pack's plans/
+// directory can be named; a name not hashed in this call, outside plans/,
+// or an empty program is an error (the guard should deny).
+func (g GuardCtx) ReadArgs(spec ReadSpec, names ...string) error {
+	program, flag := spec.Program, spec.Flag
+	var bools []string
+	for _, b := range spec.BoolFlags {
+		if !flagNameRe.MatchString(b) {
+			return fmt.Errorf("%w: %q is not a flag name", ErrRefused, b)
+		}
+		bools = append(bools, strings.ToLower(b))
+	}
+	program = strings.ToLower(strings.TrimSpace(program))
+	if program == "" || strings.ContainsAny(program, `/\ `) || len(names) == 0 {
+		return fmt.Errorf("%w: ReadArgs needs the program name that reads the file and at least one file", ErrRefused)
+	}
+	if flag != "" && !flagNameRe.MatchString(flag) {
+		return fmt.Errorf("%w: %q is not a flag name", ErrRefused, flag)
+	}
+	g.st.mu.Lock()
+	defer g.st.mu.Unlock()
+	for _, n := range names {
+		rel, err := cleanRel(n)
+		if err != nil {
+			return err
+		}
+		if s := filepath.ToSlash(rel); !strings.HasPrefix(s, "plans/") || len(s) == len("plans/") {
+			return fmt.Errorf("%w: %q is not a stored plan (only files under plans/ can be read args)", ErrRefused, n)
+		}
+		abs, ok := g.st.hashed[rel]
+		if !ok {
+			return fmt.Errorf("%w: %q was not verified with HashState in this call", ErrRefused, n)
+		}
+		g.st.readArgs = append(g.st.readArgs, ReadArg{Program: program, Flag: strings.ToLower(flag), BoolFlags: bools, Path: abs})
+	}
+	return nil
+}
 
 // Consume asks the hook to append a `consumed` ledger line for decisionID
 // when this guard's allow stands. The append happens before the hook returns
@@ -509,7 +609,110 @@ func (g GuardCtx) HashState(name string) (string, error) {
 	if time.Since(start) > hashBudget {
 		return "", ErrOverBudget
 	}
+	g.st.mu.Lock()
+	if g.st.hashed == nil {
+		g.st.hashed = map[string]string{}
+	}
+	g.st.hashed[rel] = filepath.Join(dir, rel)
+	g.st.mu.Unlock()
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// MaxListEntries caps ListLocal.
+const MaxListEntries = 256
+
+// LocalEntry is one ListLocal row: a name and a size, never content.
+type LocalEntry struct {
+	Name string
+	Size int64
+	Dir  bool
+}
+
+// ListLocal lists one local directory under the same roots and refusals as
+// ReadLocal (no .., no .env*, no secret store, no link, the final path
+// checked again), at most max entries (capped at MaxListEntries), within
+// the read budget. Names starting with .env and credential stores are left out. More entries
+// than max is ErrTooLarge. Entries are sorted by name.
+func (g GuardCtx) ListLocal(dir string, max int) ([]LocalEntry, error) {
+	start := time.Now()
+	if max <= 0 || max > MaxListEntries {
+		max = MaxListEntries
+	}
+	raw := strings.ReplaceAll(dir, `\`, "/")
+	for _, seg := range strings.Split(raw, "/") {
+		if seg == ".." {
+			return nil, fmt.Errorf("%w: %q contains ..", ErrRefused, dir)
+		}
+	}
+	if envSegment(raw) {
+		return nil, fmt.Errorf("%w: .env paths are never listed", ErrRefused)
+	}
+	p := dir
+	if !filepath.IsAbs(p) {
+		base := g.st.env.RepoRoot
+		if base == "" {
+			base = g.st.env.WorkspaceRoot
+		}
+		if base == "" {
+			return nil, fmt.Errorf("%w: no repository or workspace root for %q", ErrRefused, dir)
+		}
+		p = filepath.Join(base, filepath.FromSlash(raw))
+	}
+	p = filepath.Clean(p)
+	roots := g.localRoots()
+	if !within(p, roots) {
+		return nil, fmt.Errorf("%w: %q is outside the workspace and config dirs", ErrRefused, dir)
+	}
+	if secretStorePath(p) || secretStorePath(p+"/") {
+		return nil, fmt.Errorf("%w: %q is a credential store", ErrRefused, dir)
+	}
+	if li, err := os.Lstat(p); err != nil {
+		return nil, err
+	} else if !li.IsDir() {
+		return nil, fmt.Errorf("%w: %q is not a directory", ErrRefused, dir)
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	final, _, err := finalPath(f, p)
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot resolve %q (%v)", ErrRefused, dir, err)
+	}
+	if !within(final, resolvedRoots(roots)) || envSegment(final) || secretStorePath(final) || secretStorePath(final+"/") {
+		return nil, fmt.Errorf("%w: %q resolves outside the allowed roots or to a protected folder", ErrRefused, dir)
+	}
+	des, err := f.ReadDir(max + 1)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	if len(des) > max {
+		return nil, fmt.Errorf("%w (more than %d entries)", ErrTooLarge, max)
+	}
+	out := make([]LocalEntry, 0, len(des))
+	for _, de := range des {
+		if strings.HasPrefix(strings.ToLower(de.Name()), ".env") {
+			continue
+		}
+		if full := filepath.Join(final, de.Name()); secretStorePath(full) || secretStorePath(full+"/") ||
+			secretStorePath(filepath.Join(p, de.Name())) || secretStorePath(filepath.Join(p, de.Name())+"/") {
+			continue // a credential store is never named
+		}
+		e := LocalEntry{Name: de.Name(), Dir: de.IsDir()}
+		if fi, err := de.Info(); err == nil && !de.IsDir() {
+			e.Size = fi.Size()
+		}
+		out = append(out, e)
+		if time.Since(start) > readBudget {
+			return nil, ErrOverBudget
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if time.Since(start) > readBudget {
+		return nil, ErrOverBudget
+	}
+	return out, nil
 }
 
 // HashBytes is the sha256 form HashState returns, for evidence computed at
@@ -527,8 +730,12 @@ type GuardOutcome struct {
 	Handled    bool
 	Supersedes []string
 	Consume    []string // decision ids to mark consumed when the allow stands
-	Counters   []Counter
-	Failed     bool // a panic, a timeout: the outcome is a deny
+	// ReadArgs are StateDir files (absolute paths) the guard verified and the
+	// allowed command reads as arguments (GuardCtx.ReadArgs); set only on a
+	// handled allow.
+	ReadArgs []ReadArg
+	Counters []Counter
+	Failed   bool // a panic, a timeout: the outcome is a deny
 }
 
 // EvaluateGuards runs the guards of the enabled packs that match the call's
@@ -618,6 +825,9 @@ func runGuard(g Guard, call policy.ToolCall, env GuardEnv, deadline time.Time) G
 			o.Consume = append([]string(nil), ctx.st.consume...)
 			o.Counters = append([]Counter(nil), ctx.st.counters...)
 			ctx.st.mu.Unlock()
+			if o.Handled && o.Action == policy.Allow {
+				o.ReadArgs = append([]ReadArg(nil), ctx.st.readArgs...)
+			}
 			if o.Action != policy.Allow {
 				o.Consume = nil // an approval is only used by an allow
 			}

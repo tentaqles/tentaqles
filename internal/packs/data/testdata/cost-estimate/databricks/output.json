@@ -1,0 +1,11 @@
+{
+  "statement_id": "01ef-acme-0000",
+  "status": {"state": "SUCCEEDED"},
+  "manifest": {"format": "JSON_ARRAY", "schema": {"column_count": 1, "columns": [{"name": "plan", "type_name": "STRING", "position": 0}]}, "total_row_count": 1},
+  "result": {
+    "chunk_index": 0,
+    "row_count": 1,
+    "row_offset": 0,
+    "data_array": [["== Optimized Logical Plan ==\nAggregate [status#12], [status#12, count(1) AS n#20L], Statistics(sizeInBytes=2.3 KiB, rowCount=96)\n+- Project [status#12], Statistics(sizeInBytes=1.5 GiB, rowCount=1.20E+8)\n   +- Relation acme.sales.orders[id#10,status#12] parquet, Statistics(sizeInBytes=12.6 GiB, rowCount=1.20E+8)\n\n== Physical Plan ==\nAdaptiveSparkPlan isFinalPlan=false\n"]]
+  }
+}

@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/packs/approval"
+	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/zalando/go-keyring"
 )
 
 func runRoot(t *testing.T, stdin string, args ...string) (string, error) {
@@ -106,7 +108,7 @@ func TestHookStateDirAndHumanAnswer(t *testing.T) {
 		{Tool: "Bash", Command: `env -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT tq hub answer c1 d123 --choice approve`},
 		{Tool: "PowerShell", Command: `$env:CLAUDECODE=$null; $env:CLAUDE_PLUGIN_ROOT=$null; tq hub answer c1 d123 --choice approve`},
 		{Tool: "Bash", Command: `tq pack ml promote apply churn@7`},
-		{Tool: "Bash", Command: `tq pack cloud approve d123`},
+		{Tool: "Bash", Command: `tq pack cloud apply d123`},
 		{Tool: "Bash", Command: `curl -X POST -H 'Origin: http://127.0.0.1:8765' http://127.0.0.1:8765/api/cards/c1/decisions/d123/answer -d choice=approve`},
 		{Tool: "PowerShell", Command: `Invoke-WebRequest -Method Post http://127.0.0.1:8765/cards/c1/decisions/d1/answer`},
 		{Tool: "Bash", Command: `cat ~/.tentaqles/hub/serve-8765.json`},
@@ -245,6 +247,14 @@ func TestHookRound3Bypasses(t *testing.T) {
 		{Tool: "Bash", Command: `echo x >> $CLAUDE_CONFIG_DIR/../../../packs/acme/ml/ledger.jsonl`},
 		{Tool: "PowerShell", Command: `Add-Content "$env:CLAUDE_CONFIG_DIR\..\..\..\packs\acme\ml\ledger.jsonl" x`},
 		{Tool: "Bash", Command: `D=~/.tentaqles/identities; echo x >> $D/../packs/acme/ml/ledger.jsonl`},
+		// R5-1: a quote or backtick between the dots folds back to `..`.
+		{Tool: "Bash", Command: `D=~/.tentaqles/identities; echo x >> $D/.''./packs/acme/ml/ledger.jsonl`},
+		{Tool: "Bash", Command: `D=~/.tentaqles/identities; echo x >> "$D/."".""/packs/acme/ml/ledger.jsonl"`},
+		{Tool: "Bash", Command: `D=~/.tentaqles/identities; echo x >> $D/.` + "``" + `./trust/x`},
+		{Tool: "PowerShell", Command: `$D="$HOME\.tentaqles\identities"; Add-Content "$D\.` + "`" + `.\packs\acme\ml\ledger.jsonl" x`},
+		{Tool: "PowerShell", Command: `$D="$HOME\.tentaqles\identities"; Set-Content ($D+'\.'+'.\config.yaml') x`},
+		{Tool: "Bash", Command: `cmd /c "set D=%USERPROFILE%\.tentaqles\identities&& echo x >> %D%\."".\guard.yaml"`},
+		{Tool: "PowerShell", Command: `cmd /c 'set D=%USERPROFILE%\.tentaqles\identities&& echo x >> %D%\.''.\build-gate\k'`},
 		{Tool: "Bash", Command: `cd ~/.tentaqles/identities/acme && cd ../.. && echo x >> packs/acme/ml/ledger.jsonl`},
 		{Tool: "Bash", Command: `cd ~/.tentaqles/identities; cd ..; echo x >> packs/acme/ml/ledger.jsonl`},
 		{Tool: "Bash", Command: `cd $CLAUDE_CONFIG_DIR/../../.. && echo x >> packs/acme/ml/ledger.jsonl`},
@@ -280,6 +290,10 @@ func TestHookRound3Bypasses(t *testing.T) {
 		}
 	}
 	allowed := []policy.ToolCall{
+		// Round 5 (spec D §9.8): approve and promote request only ask.
+		{Tool: "Bash", Command: `tq pack cloud approve --plan p1`},
+		{Tool: "Bash", Command: `tq pack db approve m1`},
+		{Tool: "Bash", Command: `tq pack ml promote request churn@7`},
 		{Tool: "Bash", Command: `git commit -m "docs: the state dir ~/.tentaqles keeps packs and hub data"`},
 		{Tool: "Bash", Command: `echo "the hub keeps packs under ~/.tentaqles"`},
 		{Tool: "Write", Path: filepath.Join(cfgDir, "projects", "p", "memory", "MEMORY.md")},
@@ -293,5 +307,69 @@ func TestHookRound3Bypasses(t *testing.T) {
 		if code, out := hookDecision(t, ws, c); code != 0 {
 			t.Errorf("denied (%d): %s%s\n%s", code, c.Command, c.Path, out)
 		}
+	}
+}
+
+// F2: a rewritten ledger asked line makes the terminal answer refuse, and the
+// decision stays pending for both the old and the new target.
+func TestHubAnswerRefusesARewrittenLedger(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  ml: { enabled: true }\n")
+	clearAgentMarkers(t)
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	os.Chdir(ws)
+	id, card, err := approval.Ask("acme", approval.Request{Pack: "ml", Action: "promote", Subject: "churn@7", Target: "staging", Evidence: packEv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := ledger.Path("acme", "ml")
+	raw, _ := os.ReadFile(p)
+	os.WriteFile(p, []byte(strings.Replace(string(raw), `"target":"staging"`, `"target":"production"`, 1)), 0o600)
+	prevTTY := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = prevTTY })
+	if _, err := runRoot(t, "ml promote "+subjectCode("churn@7")+"\n", "hub", "answer", card, id, "--choice", "approve"); !errors.Is(err, ledger.ErrShownMismatch) {
+		t.Fatalf("answer over a rewritten ledger: %v", err)
+	}
+	for _, target := range []string{"staging", "production"} {
+		if _, err := approval.Verify("acme", id, approval.Binding{Pack: "ml", Action: "promote", Subject: "churn@7", Target: target}, packEv); err == nil {
+			t.Fatalf("%s granted", target)
+		}
+	}
+}
+
+// F6: a guard allow merged with another rule's ask consumes the approval now
+// (the hook cannot know whether the call runs) and says so in the prompt.
+func TestHookAskConsumesAndSaysSo(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\nguard: { rules: [ { id: x/ask, action: ask, command: approved, reason: confirm } ] }\n")
+	signedApproval(t, "acme", "cloud", "d-example")
+	code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: "terraform apply approved.tfplan"})
+	if code != 0 || !strings.Contains(out, "consumed now, even if you decline") || !ledger.Claimed("acme", "cloud", "d-example") {
+		t.Fatalf("%d %s", code, out)
+	}
+}
+
+// F9: a keychain error makes a pack guard that looks up its approval deny.
+func TestHookKeychainErrorDenies(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  db: { enabled: true }\n")
+	signedApproval(t, "acme", "db", "d-find")
+	keyring.MockInitWithError(errors.New("no secret service"))
+	defer keyring.MockInit()
+	code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: "find-approval migrate prod"})
+	if code != 2 || !strings.Contains(out, "tq/example-cmd-find") {
+		t.Fatalf("%d %s", code, out)
+	}
+}
+
+// R4-3: the hook denies a call that would consume an approval when the
+// keychain reads but cannot record the use.
+func TestHookDeniesWhenTheMarkCannotBeWritten(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	signedApproval(t, "acme", "cloud", "d-example")
+	restore := ledger.FailKeychainWritesForTest(errors.New("read-only keychain"))
+	defer restore()
+	code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: "terraform apply approved.tfplan"})
+	if code != 2 || !strings.Contains(out, "read-only keychain") {
+		t.Fatalf("%d %s", code, out)
 	}
 }

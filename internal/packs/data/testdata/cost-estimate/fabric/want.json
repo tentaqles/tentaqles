@@ -1,0 +1,10 @@
+{
+  "schema": "tq.packs.cost/v1",
+  "engine": "fabric",
+  "tool": "sqlcmd",
+  "metric": "statement_subtree_cost",
+  "value": 0.0328577,
+  "unit": "optimizer cost units",
+  "verdict": "ask",
+  "note": "this engine's estimate is reported only; there is no cap to compare it with"
+}

@@ -1,0 +1,3 @@
+preview.json:4 error IAM001 urn:pulumi:prod::acme::aws:iam/policy:Policy::admin: statement 0: Allow with Action "*"; list the actions the role needs
+preview.json:4 error IAM002 urn:pulumi:prod::acme::aws:iam/policy:Policy::admin: statement 0: Allow on Resource "*" for "*"; scope the resources by ARN
+preview.json:7 error IAM004 urn:pulumi:prod::acme::aws:iam/rolePolicyAttachment:RolePolicyAttachment::admin: attaches the AWS managed policy IAMFullAccess; grant a scoped policy instead

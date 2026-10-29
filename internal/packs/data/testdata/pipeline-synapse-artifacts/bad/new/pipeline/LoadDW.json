@@ -1,0 +1,13 @@
+{
+	"name": "LoadDW",
+	"properties": {
+		"activities": [
+			{
+				"name": "RefreshMart",
+				"type": "SqlPoolStoredProcedure",
+				"sqlPool": { "referenceName": "acmepool", "type": "SqlPoolReference" },
+				"typeProperties": { "storedProcedureName": "dbo.refresh_mart" }
+			}
+		]
+	}
+}

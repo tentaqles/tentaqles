@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "2 classified properties, 2 problems",
+  "findings": [
+    {
+      "file": "contracts/customers.odcs.yaml",
+      "line": 19,
+      "level": "error",
+      "rule": "table-not-classified",
+      "message": "property customers.email is classified pii but table dim_customers is not in the manifest data.paths with class pii; the human adds it to the manifest"
+    },
+    {
+      "file": "contracts/customers.odcs.yaml",
+      "line": 27,
+      "level": "error",
+      "rule": "table-not-classified",
+      "message": "property customers.profile.birth_date is classified pii but table dim_customers is not in the manifest data.paths with class pii; the human adds it to the manifest"
+    }
+  ]
+}

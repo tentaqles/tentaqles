@@ -52,9 +52,11 @@ type Entry struct {
 	ActorKind string `json:"actor_kind,omitempty"` // human | agent | hub | terminal | other
 	Card      string `json:"card,omitempty"`
 	TS        string `json:"ts"`
-	// EvidenceHash and MAC sign an answered line (mac.go).
+	// EvidenceHash, AskedTS and Sig sign an answered line (sign.go); an
+	// answered line also repeats Grant and ExpiresAt, under the signature.
 	EvidenceHash string `json:"evidence_hash,omitempty"`
-	MAC          string `json:"mac,omitempty"`
+	AskedTS      string `json:"asked_ts,omitempty"`
+	Sig          string `json:"sig,omitempty"`
 }
 
 // Path is the ledger of pack in workspace ws.
@@ -188,8 +190,11 @@ type State struct {
 	Evidence                                map[string]string
 	ExpiresAt                               time.Time
 	Grant                                   string
-	Card                                    string
-	AskedAt                                 time.Time
+	// EvidenceHash is the signed evidence hash (ResolveSigned); empty for an
+	// unsigned resolution, which compares Evidence instead.
+	EvidenceHash string
+	Card         string
+	AskedAt      time.Time
 	// Status is the latest event: asked (pending), answered, consumed or expired.
 	Status    string
 	Choice    string
@@ -418,7 +423,21 @@ func Compact(ws, pack string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	st := Resolve(es)
+	// The signed state only (R4-6): a decision is dropped when its signed
+	// expiry passed or the keychain high-water mark retired it. Unsigned
+	// consumed and expired lines are ignored here, so a forged line cannot
+	// make compaction drop a live approval.
+	tr, err := LoadTrust(ws, pack)
+	if err != nil && !errors.Is(err, ErrNoKey) {
+		return err
+	}
+	var signedOnly []Entry
+	for _, e := range es {
+		if e.Event != Consumed && e.Event != Expired {
+			signedOnly = append(signedOnly, e)
+		}
+	}
+	st := ResolveSigned(signedOnly, tr)
 	var buf bytes.Buffer
 	kept := 0
 	for _, e := range es {
@@ -479,4 +498,25 @@ func CompactIfLarge(ws, pack string, now time.Time) error {
 		return Compact(ws, pack, now)
 	}
 	return nil
+}
+
+// Packs lists the packs of workspace ws that have a state directory.
+func Packs(ws string) ([]string, error) {
+	if !plain(ws) {
+		return nil, fmt.Errorf("ledger: invalid workspace name")
+	}
+	dirs, err := os.ReadDir(filepath.Join(paths.Home(), "packs", ws))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, d := range dirs {
+		if d.IsDir() && plain(d.Name()) {
+			out = append(out, d.Name())
+		}
+	}
+	return out, nil
 }

@@ -1,0 +1,1 @@
+A models/events/fct_clicks.sql

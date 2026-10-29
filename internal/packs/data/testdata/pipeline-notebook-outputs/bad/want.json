@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "1 notebook scanned",
+  "findings": [
+    {
+      "file": "notebooks/explore.ipynb",
+      "line": 8,
+      "level": "warn",
+      "rule": "notebook-outputs",
+      "message": "2 cells with stored outputs; clear them before committing (jupyter nbconvert --clear-output, or nbstripout)"
+    },
+    {
+      "file": "notebooks/explore.ipynb",
+      "line": 21,
+      "level": "error",
+      "rule": "notebook-output-pii",
+      "message": "the stored output of cell 3 matches the redaction detectors (email x1); clear the outputs before committing"
+    }
+  ]
+}

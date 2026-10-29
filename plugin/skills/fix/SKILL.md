@@ -36,6 +36,15 @@ on this card".
 reject the plan and re-run the planner without it (the gate refuses such a plan too). The card's kind is
 `hotfix` exactly when the hub passed `--hotfix`; never infer it.
 
+## Packs
+
+Before step 1, run the on-ramp step of the `pack` skill (`skills/pack/SKILL.md`,
+"On-ramp step"): `tq pack list --enabled --json` (timeout 10 s); for each enabled pack
+read every `skills/pack/references/onramps/<pack>-*.md` and follow its `## fix`
+section at the step it names. No pack enabled, or a tq without the `pack` command:
+skip this. Reviewers: in step 4, the crew adds every reviewer that `tq pack crew
+--flags <the flags triage printed>` prints.
+
 ## 1. Intake
 
 ```bash

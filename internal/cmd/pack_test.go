@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/approval"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
@@ -36,7 +38,33 @@ func init() {
 				}}}
 		},
 	})
-	packs.RegisterPack(packs.Pack{Name: "db", Flags: []packs.Flag{{Name: "migration", Reviewers: []string{"db-reviewer"}}}})
+	packs.RegisterPack(packs.Pack{Name: "db", Flags: []packs.Flag{{Name: "migration", Reviewers: []string{"db-reviewer"}}},
+		// R5-4: an approve command that only asks, and an executor that declares itself.
+		Commands: func() []*cobra.Command {
+			approve := &cobra.Command{Use: "approve", Annotations: map[string]string{packs.AnnotationHumanOnly: packs.ApprovalAsk},
+				RunE: func(c *cobra.Command, _ []string) error {
+					in, err := packs.FromCommand(c)
+					if err != nil {
+						return err
+					}
+					id, _, err := approval.Ask(in.Workspace(), approval.Request{Pack: "db", Action: "migrate", Subject: "m1", Target: "prod", Evidence: map[string]string{"plan": "sha256:aa"}})
+					c.Print(id)
+					return err
+				}}
+			apply := &cobra.Command{Use: "apply", Annotations: map[string]string{packs.AnnotationHumanOnly: packs.HumanOnlyExecute},
+				RunE: func(c *cobra.Command, args []string) error {
+					if err := packs.HumanOnly(); err != nil {
+						return err
+					}
+					in, err := packs.FromCommand(c)
+					if err != nil {
+						return err
+					}
+					_, err = approval.Claim(c, in.Workspace(), args[0], approval.Binding{Pack: "db", Action: "migrate", Subject: "m1", Target: "prod"}, map[string]string{"plan": "sha256:aa"})
+					return err
+				}}
+			return []*cobra.Command{approve, apply}
+		}})
 	packs.Register(packs.Check{ID: "data/example-cmd-star", Pack: "data", Kind: packs.Builtin,
 		Applies: func(in *packs.Input) bool { return in.AnyChanged("*.sql") },
 		Run: func(ctx context.Context, in *packs.Input) packs.Result {
@@ -51,12 +79,55 @@ func init() {
 		}})
 	packs.Register(packs.Check{ID: "data/example-cmd-tool", Pack: "data", Kind: packs.External, Tool: "tq-fake-tool-xyz",
 		Run: func(ctx context.Context, in *packs.Input) packs.Result { return packs.Result{Status: packs.OK} }})
+	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-find", Pack: "db", Events: []string{"Bash"},
+		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
+			if !strings.Contains(call.Command, "find-approval") {
+				return policy.Allow, "", false
+			}
+			a, err := approval.FindGuard(g, approval.Binding{Pack: "db", Action: "apply", Target: "prod"}, map[string]string{"plan": "sha256:aa"})
+			if err != nil {
+				return policy.Deny, err.Error(), true
+			}
+			g.Consume(a.Decision)
+			return policy.Allow, "approved", true
+		}})
+	// Round 5: a guard that verifies a stored plan and names it as a read arg.
+	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-plan", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
+		Supersedes: []string{"tq/iac-apply"},
+		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
+			if !strings.Contains(call.Command, "tofu apply") && !strings.Contains(call.Command, "pulumi up") && !strings.Contains(call.Command, "terraform apply -") {
+				return policy.Allow, "", false
+			}
+			for _, f := range strings.Fields(strings.NewReplacer("=", " ", ";", " ", "&", " ").Replace(call.Command)) {
+				f = strings.ReplaceAll(strings.Trim(f, `\"'`), `\`, "/")
+				if i := strings.Index(f, "/plans/"); i >= 0 {
+					rel := f[i+1:]
+					if strings.Contains(call.Command, "liar") {
+						rel = "plans/never-hashed.tfplan"
+					} else if _, err := g.HashState(rel); err != nil {
+						return policy.Deny, err.Error(), true
+					}
+					spec := packs.ReadSpec{Program: "tofu", BoolFlags: []string{"-auto-approve", "-no-color"}}
+					switch {
+					case strings.Contains(call.Command, "pulumi up"):
+						spec = packs.ReadSpec{Program: "pulumi", Flag: "--plan", BoolFlags: []string{"--yes", "-y", "--skip-preview"}}
+					case strings.Contains(call.Command, "terraform apply"):
+						spec.Program = "terraform"
+					}
+					if err := g.ReadArgs(spec, rel); err != nil {
+						return policy.Deny, err.Error(), true
+					}
+					return policy.Allow, "plan verified", true
+				}
+			}
+			return policy.Deny, "no stored plan", true
+		}})
 	packs.RegisterGuard(packs.Guard{ID: "tq/example-cmd-apply", Pack: "cloud", Events: []string{"Bash", "PowerShell"},
 		Supersedes: []string{"tq/iac-apply"},
 		Check: func(call policy.ToolCall, g packs.GuardCtx) (policy.Action, string, bool) {
 			c := call.Command
 			switch {
-			case !strings.Contains(c, "terraform apply"):
+			case !strings.Contains(c, "terraform apply"), strings.Contains(strings.ReplaceAll(c, `\`, "/"), "/plans/"):
 				return policy.Allow, "", false
 			case strings.Contains(c, "panic.tfplan"):
 				panic("example guard exploded")
@@ -235,7 +306,30 @@ func TestTriageAddsPackFlags(t *testing.T) {
 func cloudHook(t *testing.T, cmd string) (int, string, string) {
 	t.Helper()
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	signedApproval(t, "acme", "cloud", "d-example")
 	return runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, cmd))
+}
+
+// signedApproval writes an asked line and a human answer signed with the
+// workspace key (the mock keychain), as tq hub answer would.
+func signedApproval(t *testing.T, ws, pack, id string) {
+	t.Helper()
+	exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	a := ledger.Entry{Event: ledger.Asked, Decision: id, Pack: pack, Action: "apply", Subject: "s", Target: "prod", Evidence: map[string]string{"plan": "sha256:aa"}, ExpiresAt: exp, Grant: "apply"}
+	if err := ledger.Append(ws, a); err != nil {
+		t.Fatal(err)
+	}
+	priv, err := ledger.SigningKey(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := ledger.AnswerSigner(ws, priv)(ledger.Shown{Pack: pack, Action: "apply", Subject: "s", Target: "prod", ExpiresAt: exp, Grant: "apply", Evidence: a.Evidence}, id, "apply", "hub", time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Append(ws, e); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHookPackGuardDeniesAndSupersedes(t *testing.T) {
@@ -253,8 +347,11 @@ func TestHookPackGuardDeniesAndSupersedes(t *testing.T) {
 		t.Fatalf("allow: %d %s", code, out)
 	}
 	es, err := ledger.Read("acme", "cloud")
-	if err != nil || len(es) != 1 || es[0].Event != ledger.Consumed || es[0].Decision != "d-example" {
+	if err != nil || len(es) != 3 || es[2].Event != ledger.Consumed || es[2].Decision != "d-example" {
 		t.Fatalf("consumed line: %v %+v", err, es)
+	}
+	if m, err := ledger.LoadHighWater("acme", "cloud"); err != nil || m.Decision != "d-example" {
+		t.Fatalf("high-water mark: %v %+v", err, m)
 	}
 }
 
@@ -403,6 +500,7 @@ func TestHookNoWorkspaceNoPackGuards(t *testing.T) {
 // M2: the hook claims the approval; a second hook with the same approval is denied.
 func TestHookClaimIsSingleUse(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	signedApproval(t, "acme", "cloud", "d-example")
 	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply approved.tfplan"))
 	if code != 0 || !ledger.Claimed("acme", "cloud", "d-example") {
 		t.Fatalf("first use: %d", code)
@@ -459,5 +557,86 @@ func TestPackBadBaseAndBaselineRefusal(t *testing.T) {
 	code, _, errOut := runHook(t, []string{"pack", "baseline"}, "")
 	if code != 2 || !strings.Contains(errOut, "did not run cleanly") {
 		t.Fatalf("baseline with a missing declared tool: %d %q", code, errOut)
+	}
+}
+
+// Round 5: a stored plan the cloud guard verified is a plain argument, not a
+// state-dir write; every bypass is still denied.
+func TestHookStoredPlanReadArg(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
+	dir := packs.StateDir("acme", "cloud")
+	os.MkdirAll(filepath.Join(dir, "plans"), 0o700)
+	plan := filepath.Join(dir, "plans", "p1.tfplan")
+	os.WriteFile(plan, []byte("plan"), 0o600)
+	os.WriteFile(filepath.Join(dir, "plans", "p2.tfplan"), []byte("plan"), 0o600)
+	led := filepath.Join(dir, "ledger.jsonl")
+	q := func(s string) string { return `"` + s + `"` }
+	for _, c := range []string{
+		"tofu apply " + plan,
+		"tofu apply " + q(plan),
+		"pulumi up --plan " + plan,
+		"pulumi up --plan=" + plan,
+		"pulumi up " + plan,
+		"pulumi up --yes --plan " + plan,
+		// Declared boolean flags before a positional plan (and an =value flag).
+		"terraform apply -auto-approve " + plan,
+		"tofu apply -auto-approve -input=false " + plan,
+		"tofu apply -input=false -auto-approve " + plan,
+		"pulumi up --yes " + plan,
+		"pulumi up --yes --skip-preview --plan=" + plan,
+		"cd infra && tofu apply " + plan,
+	} {
+		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
+		if code != 0 || strings.Contains(out, "tq/hub-store-write") {
+			t.Fatalf("allowed form %q: %d %s", c, code, out)
+		}
+	}
+	for name, c := range map[string]string{
+		"extra segment, same path":  "tofu apply " + plan + "; cat " + plan,
+		"extra segment, state dir":  "tofu apply " + plan + " && ls " + filepath.Dir(plan),
+		"redirect":                  "tofu apply " + plan + " > " + plan,
+		"cp to the same path":       "tofu apply " + plan + " && cp x " + plan,
+		"tee":                       "tofu apply " + plan + " | tee " + plan,
+		"another protected path":    "tofu apply " + plan + " " + led,
+		"a path not verified":       "tofu apply " + plan + " " + filepath.Join(dir, "plans", "p2.tfplan"),
+		"a .. spelling":             "tofu apply " + filepath.Join(dir, "plans", "x") + "/../p1.tfplan",
+		"substitution":              "tofu apply " + plan + " $(cat " + led + ")",
+		"never hashed (liar guard)": "tofu apply liar " + plan,
+		"newline segment":           "tofu apply " + plan + "\ncat " + plan,
+		// R5-3 (a): the path twice in one segment, once under a writing flag.
+		"twice, as a flag value": "tofu apply " + plan + " --out=" + plan,
+		"twice":                  "tofu apply " + plan + " " + plan,
+		// R5-3 (b): a writer called by its path.
+		"tee by path":     "tofu apply " + plan + "; /usr/bin/tee x",
+		"cmd.exe by path": `tofu apply ` + plan + `; C:\Windows\System32\cmd.exe /c echo x`,
+		// R5-3 (c): downloaders, wrappers and side-effect writers.
+		"curl -o":         "tofu apply " + plan + "; curl -o x http://example.test/y",
+		"wget -O":         "tofu apply " + plan + "; wget -O x http://example.test/y",
+		"iwr -OutFile":    "tofu apply " + plan + "; Invoke-WebRequest -OutFile x http://example.test/y",
+		"certutil":        "tofu apply " + plan + "; certutil -urlcache -f http://example.test/y x",
+		"env wrapper":     "env tofu apply " + plan,
+		"nohup wrapper":   "nohup tofu apply " + plan,
+		"sudo wrapper":    "sudo tofu apply " + plan,
+		"start wrapper":   "start tofu apply " + plan,
+		"git":             "tofu apply " + plan + " && git status",
+		"make":            "make plan; tofu apply " + plan,
+		"docker cp":       "docker cp a:/b c; tofu apply " + plan,
+		"Expand-Archive":  "Expand-Archive a.zip; tofu apply " + plan,
+		"another program": "terraform-wrapper tofu apply " + plan,
+		"the plan first":  plan + " tofu apply",
+		// R6-4: the plan only as a positional argument or the declared flag's value.
+		"another flag, =":       "tofu apply --out=" + plan,
+		"another flag":          "tofu apply -out " + plan,
+		"pulumi, another flag":  "pulumi up --save " + plan,
+		"pulumi, another flag=": "pulumi up --save=" + plan,
+		// An undeclared flag before the plan keeps the fail-closed reading.
+		"undeclared flag before":  "tofu apply -state-out " + plan,
+		"undeclared, terraform":   "terraform apply -backup " + plan,
+		"a bool flag is not -out": "pulumi up --yes --save " + plan,
+	} {
+		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
+		if code != 2 || !strings.Contains(out, "tq/hub-store-write") {
+			t.Fatalf("%s: %d %s", name, code, out)
+		}
 	}
 }

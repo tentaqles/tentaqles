@@ -58,6 +58,8 @@ def tq_home(tmp_path, monkeypatch):
     """The signing key lives under TQ_HOME; never touch the real one."""
     home = tmp_path / "tqhome"
     monkeypatch.setenv("TQ_HOME", str(home))
+    # No real tq: the pack freeze and the pack DoD items are tested in test_pack_framework.py.
+    monkeypatch.setattr(gate, "find_tq", lambda: None)
     return home
 
 

@@ -2,7 +2,9 @@ package approval
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/hub/store"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
@@ -88,11 +91,11 @@ func TestAskAnswerVerifyClaim(t *testing.T) {
 		t.Fatalf("evidence: %v", err)
 	}
 	es, _ := ledger.ReadAll("acme")
-	key, _ := ledger.LoadKey("acme")
-	if _, err := Find(es, key, Binding{Pack: "ml", Action: "promote", Target: "production"}, ev, Now(), nil); err != nil {
+	tr, _ := ledger.LoadTrust("acme", "ml")
+	if _, err := Find(es, tr, Binding{Pack: "ml", Action: "promote", Target: "production"}, ev, Now(), nil); err != nil {
 		t.Fatalf("find without subject: %v", err)
 	}
-	if _, err := Claim("acme", id, want, ev); err != nil {
+	if _, err := Claim(execCmd, "acme", id, want, ev); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrUsed) {
@@ -129,8 +132,8 @@ func TestVerifyBinding(t *testing.T) {
 		t.Fatal("Verify needs the subject")
 	}
 	es, _ := ledger.Read("acme", "ml")
-	key, _ := ledger.LoadKey("acme")
-	if _, err := Find(es, key, Binding{Pack: "ml", Action: "promote", Subject: "other", Target: "production"}, ev, Now(), nil); !errors.Is(err, ErrUnknown) {
+	tr, _ := ledger.LoadTrust("acme", "ml")
+	if _, err := Find(es, tr, Binding{Pack: "ml", Action: "promote", Subject: "other", Target: "production"}, ev, Now(), nil); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("Find compares the subject when given: %v", err)
 	}
 }
@@ -188,7 +191,7 @@ func TestConcurrentClaims(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := Claim("acme", id, want, ev); err == nil {
+			if _, err := Claim(execCmd, "acme", id, want, ev); err == nil {
 				mu.Lock()
 				wins++
 				mu.Unlock()
@@ -286,24 +289,24 @@ func TestConfirm(t *testing.T) {
 	in.WriteString("yes\n")
 	in.Seek(0, 0)
 	var out bytes.Buffer
-	if err := Confirm(in, &out, "python promote.py"); err == nil {
+	if err := Confirm(execCmd, in, &out, "python promote.py"); err == nil {
 		t.Fatal("a file is not a terminal")
 	}
 	prev := isTerminal
 	isTerminal = func(*os.File) bool { return true }
 	defer func() { isTerminal = prev }()
 	in.Seek(0, 0)
-	if err := Confirm(in, &out, "python promote.py"); err != nil || !strings.Contains(out.String(), "python promote.py") {
+	if err := Confirm(execCmd, in, &out, "python promote.py"); err != nil || !strings.Contains(out.String(), "python promote.py") {
 		t.Fatal(err)
 	}
 	t.Setenv("CLAUDECODE", "1")
 	in.Seek(0, 0)
-	if err := Confirm(in, &out, "x"); !errors.Is(err, packs.ErrHumanOnly) {
+	if err := Confirm(execCmd, in, &out, "x"); !errors.Is(err, packs.ErrHumanOnly) {
 		t.Fatalf("agent: %v", err)
 	}
 }
 
-// R2-2: a forged answered line (right JSON, no or a wrong MAC) is refused,
+// R2-2: a forged answered line (right JSON, no or a wrong signature) is refused,
 // the plain store answer path refuses a pack approval, and a keychain
 // error leaves the approval ungranted.
 func TestForgedAnswerRefused(t *testing.T) {
@@ -320,7 +323,7 @@ func TestForgedAnswerRefused(t *testing.T) {
 	if err := ledger.Append("acme", forged); err != nil {
 		t.Fatal(err)
 	}
-	forged.MAC = strings.Repeat("ab", 32)
+	forged.Sig = strings.Repeat("ab", 64)
 	ledger.Append("acme", forged)
 	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrPending) {
 		t.Fatalf("a forged answer granted: %v", err)
@@ -337,4 +340,151 @@ func TestForgedAnswerRefused(t *testing.T) {
 		t.Fatalf("keychain error must fail closed: %v", err)
 	}
 	keyring.MockInit()
+}
+
+func rewriteAsked(t *testing.T, id string, edit func(e *ledger.Entry)) {
+	t.Helper()
+	p, _ := ledger.Path("acme", "ml")
+	es, err := ledger.Read("acme", "ml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for _, e := range es {
+		if e.Event == ledger.Asked && e.Decision == id {
+			edit(&e)
+		}
+		line, _ := json.Marshal(e)
+		b.Write(append(line, '\n'))
+	}
+	os.WriteFile(p, []byte(b.String()), 0o600)
+}
+
+// F1: a rewritten asked line cannot turn a signed reject into a grant or
+// extend a signed expiry.
+func TestTamperedAskedLine(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "reject", "hub:tester")
+	rewriteAsked(t, id, func(e *ledger.Entry) { e.Grant = "reject" })
+	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrRejected) {
+		t.Fatalf("tampered grant: %v", err)
+	}
+	id2, _ := ask(t)
+	answer(t, id2, "approve", "hub:tester")
+	rewriteAsked(t, id2, func(e *ledger.Entry) { e.ExpiresAt = Now().Add(365 * 24 * time.Hour).Format(time.RFC3339) })
+	prev := Now
+	Now = func() time.Time { return prev().Add(8 * 24 * time.Hour) }
+	defer func() { Now = prev }()
+	if _, err := Verify("acme", id2, want, ev); !errors.Is(err, ErrExpired) {
+		t.Fatalf("tampered expiry: %v", err)
+	}
+}
+
+// F3: deleting the claim, or compacting and re-appending the signed lines,
+// cannot reopen a used approval.
+func TestUsedApprovalStaysUsed(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	saved, _ := ledger.Read("acme", "ml")
+	if _, err := Claim(execCmd, "acme", id, want, ev); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkUsed("acme", "ml", id); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := ledger.ClaimsDir("acme", "ml")
+	os.RemoveAll(dir)
+	p, _ := ledger.Path("acme", "ml")
+	var b strings.Builder
+	for _, e := range saved { // the ledger before the use: no consumed line
+		line, _ := json.Marshal(e)
+		b.Write(append(line, '\n'))
+	}
+	os.WriteFile(p, []byte(b.String()), 0o600)
+	if _, err := Verify("acme", id, want, ev); !errors.Is(err, ErrUsed) {
+		t.Fatalf("claim deleted, ledger rolled back: %v", err)
+	}
+	if _, err := FindGuard(guardCtx("ml"), want, ev); !errors.Is(err, ErrUsed) {
+		t.Fatalf("guard: %v", err)
+	}
+}
+
+// F9: FindGuard and List under a keychain error never grant.
+func TestKeychainErrorGuardAndList(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	keyring.MockInitWithError(errors.New("no secret service"))
+	defer keyring.MockInit()
+	if _, err := FindGuard(guardCtx("ml"), want, ev); !errors.Is(err, ErrPending) {
+		t.Fatalf("guard: %v", err)
+	}
+	rows, err := List("acme", "")
+	if err != nil || len(rows) != 1 || rows[0].State != "pending" {
+		t.Fatalf("list: %v %+v", err, rows)
+	}
+}
+
+// F10: List keys decisions by (pack, id).
+func TestListPerPack(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	ledger.Append("acme", ledger.Entry{Event: ledger.Asked, Decision: id, Pack: "cloud", Action: "x", Subject: "y", Target: "z", Grant: "apply",
+		ExpiresAt: Now().Add(time.Hour).Format(time.RFC3339)})
+	rows, _ := List("acme", "")
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r.Pack] = r.State
+	}
+	if got["ml"] != "approved" || got["cloud"] != "pending" {
+		t.Fatalf("%v", got)
+	}
+}
+
+// R4-3: a keychain that reads but cannot write: Claim refuses to let the
+// command run, because its use cannot be recorded.
+func TestClaimRefusesWhenTheMarkCannotBeWritten(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	restore := ledger.FailKeychainWritesForTest(errors.New("read-only keychain"))
+	defer restore()
+	if _, err := Claim(execCmd, "acme", id, want, ev); err == nil || !strings.Contains(err.Error(), "do not run the command") {
+		t.Fatalf("claim with no mark: %v", err)
+	}
+	if err := MarkUsed("acme", "ml", id); err == nil {
+		t.Fatal("MarkUsed with no mark")
+	}
+}
+
+// execCmd is a pack command that declares it executes an approved action.
+var execCmd = &cobra.Command{Use: "apply", Annotations: map[string]string{packs.AnnotationHumanOnly: packs.HumanOnlyExecute}}
+
+// R6-1: Confirm and Claim refuse a command that does not declare execute.
+func TestConfirmAndClaimNeedAnExecutor(t *testing.T) {
+	isolate(t)
+	id, _ := ask(t)
+	answer(t, id, "approve", "hub:tester")
+	for name, c := range map[string]*cobra.Command{
+		"nil":          nil,
+		"unannotated":  {Use: "promote"},
+		"an asker":     {Use: "approve", Annotations: map[string]string{packs.AnnotationHumanOnly: packs.ApprovalAsk}},
+		"another note": {Use: "apply", Annotations: map[string]string{packs.AnnotationHumanOnly: "yes"}},
+	} {
+		if _, err := Claim(c, "acme", id, want, ev); !errors.Is(err, ErrNotExecutor) {
+			t.Fatalf("Claim from %s: %v", name, err)
+		}
+		if err := Confirm(c, nil, io.Discard, "x"); !errors.Is(err, ErrNotExecutor) {
+			t.Fatalf("Confirm from %s: %v", name, err)
+		}
+	}
+	if ledger.Claimed("acme", "ml", id) {
+		t.Fatal("a refused Claim claimed the approval")
+	}
+	if _, err := Claim(execCmd, "acme", id, want, ev); err != nil {
+		t.Fatal(err)
+	}
 }

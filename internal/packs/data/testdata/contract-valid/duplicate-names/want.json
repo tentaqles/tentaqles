@@ -1,0 +1,20 @@
+{
+  "status": "fail",
+  "detail": "1 contract, 2 problems",
+  "findings": [
+    {
+      "file": "contracts/dup.odcs.yaml",
+      "line": 10,
+      "level": "error",
+      "rule": "duplicate-name",
+      "message": "property of object orders name \"order_id\" repeats line 8"
+    },
+    {
+      "file": "contracts/dup.odcs.yaml",
+      "line": 12,
+      "level": "error",
+      "rule": "duplicate-name",
+      "message": "schema object name \"orders\" repeats line 6"
+    }
+  ]
+}

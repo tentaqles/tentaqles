@@ -1,0 +1,12 @@
+{
+  "config": {"aws:region": "us-east-1"},
+  "steps": [
+    {"op": "create", "urn": "urn:pulumi:prod::acme::aws:iam/policy:Policy::admin",
+     "newState": {"urn": "urn:pulumi:prod::acme::aws:iam/policy:Policy::admin", "custom": true, "type": "aws:iam/policy:Policy",
+       "inputs": {"name": "acme-admin", "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}"}}},
+    {"op": "create", "urn": "urn:pulumi:prod::acme::aws:iam/rolePolicyAttachment:RolePolicyAttachment::admin",
+     "newState": {"urn": "urn:pulumi:prod::acme::aws:iam/rolePolicyAttachment:RolePolicyAttachment::admin", "custom": true, "type": "aws:iam/rolePolicyAttachment:RolePolicyAttachment",
+       "inputs": {"role": "acme-ci", "policyArn": "arn:aws:iam::aws:policy/IAMFullAccess"}}}
+  ],
+  "changeSummary": {"create": 2}
+}

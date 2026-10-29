@@ -1,0 +1,12 @@
+{
+  "schema": "tq.packs.cost/v1",
+  "engine": "postgres",
+  "tool": "psql",
+  "metric": "total_cost",
+  "value": 21501.25,
+  "unit": "planner cost units",
+  "cap": "10000",
+  "cap_key": "packs.data.cost.postgres.max_plan_cost",
+  "cap_value": 10000,
+  "verdict": "over"
+}

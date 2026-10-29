@@ -73,10 +73,25 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       # Each template is self-contained; tests use fakes (no network, no DB).
-      - run: pip install pytest pandas -e templates/rag-starter -e templates/pandas-jev-labeller
-      - run: python -m pytest templates/n8n-jev-decision/tests -q
-      - run: python -m pytest templates/rag-starter/tests -q
-      - run: python -m pytest templates/pandas-jev-labeller/tests -q
+      # Every templates/*/ with a pyproject.toml is installed, and every templates/*/tests
+      # runs on its own, so a new template needs no edit here.
+      - run: pip install pytest
+      - name: install templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          for d in templates/*/; do
+            if [ -f "${d}pyproject.toml" ]; then pip install -e "${d%/}"; fi
+          done
+      - name: test templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          for t in templates/*/tests; do
+            echo "::group::${t}"
+            python -m pytest "$t" -q
+            echo "::endgroup::"
+          done
 
   desktop:
     runs-on: ubuntu-latest

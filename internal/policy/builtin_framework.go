@@ -32,8 +32,14 @@ func frameworkRules() []Rule {
 		},
 		{
 			ID: "tq/human-answer", Action: Deny,
-			Command: tqCmd + `(hub\s+(answer|serve-key|key|token)\b|pack\s+\S+\s+(approve|promote\s+apply|apply)\b)`,
-			Reason:  "answering an approval and applying an approved action are done by a human in their own terminal or browser, never by an agent",
+			Command: tqCmd + `(hub\s+(answer|serve-key|key|token)\b|pack\s+\S+[^;&|\n]*\bapply\b)`,
+			// tq pack <x> approve and tq pack ml promote request only ask (they
+			// create the pending decision): agents may run them (spec D Â§9.8).
+			// apply anywhere after pack <x> in the segment, flags included,
+			// executes an approved action: human-only. Executors declare
+			// themselves with the packs.AnnotationHumanOnly annotation, and a
+			// test asserts this rule matches every one of them.
+			Reason: "answering an approval and applying an approved action are done by a human in their own terminal or browser, never by an agent",
 		},
 		{
 			ID: "tq/human-answer", Action: Deny,

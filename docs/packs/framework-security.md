@@ -5,12 +5,17 @@ This page covers how the pack framework keeps an agent from granting itself a ga
 ## What protects an approval
 
 - **A signed ledger.**
-  - Each `answered` line in a pack ledger carries an HMAC-SHA256 over its canonical JSON: the decision id, the binding (pack, action, subject, target), the evidence hash, the choice, the actor kind and the time.
-  - The key is per workspace and lives in the OS keychain, under service `tentaqles-packs` with account `<workspace>`.
-  - Only the human answer path creates the key or signs with it.
-  - `approval.Verify`, `Find` and `FindGuard` ignore an answered line whose MAC is missing or wrong, or whose binding or evidence differs from the asked line.
-  - If the keychain cannot be read, no answer counts (fail closed). A raw append to the ledger can no longer forge a grant.
-  - On a machine with no keychain, such as headless Linux with no Secret Service, pack approvals cannot be granted, and `tq doctor` reports `packs-keychain-missing`.
+  - Each `answered` line in a pack ledger carries an Ed25519 signature (domain tag `tq.packs.ledger/v2`) over the decisive fields: the decision id, the binding (pack, action, subject, target), the evidence hash, the grant, the expiry, the time of the asked line, the choice, the actor kind and the answer time.
+  - Readers take every one of these fields from the signed line, not from the `asked` line. Rewriting the asked line (its grant, its expiry or its binding) changes nothing: a signed reject stays a reject, and a signed expiry stays the expiry.
+  - The keys are per workspace and live in the OS keychain under service `tentaqles-packs`. The private key (account `<workspace>`) is read only on the human answer path, which creates the pair on first use. The public key (account `<workspace>/pub`) is a separate entry that readers load; it is never written to a file. The answer path refuses to sign when the public entry does not match the private key. `tq doctor` (`packs-keychain-missing`) probes the public entry only.
+  - **The shown binding.** The terminal answer passes the decision as the hub store shows it (binding, expiry, grant and evidence) to the signer. The signer refuses unless the ledger's asked line matches it field for field, so a rewritten ledger cannot get a different action signed. The displayed decision also travels with the human-presence marker, and the store row must still equal it when the answer is signed. On any difference the decision stays pending.
+  - `approval.Verify`, `Find`, `FindGuard` and `List` ignore an answered line whose signature is missing or wrong.
+  - If the keychain cannot be read, no answer counts and every pack guard that looks up an approval denies (fail closed).
+  - On a machine with no keychain, such as headless Linux with no Secret Service, pack approvals cannot be granted.
+- **A high-water mark makes use stick.**
+  - Each consume (the hook's allow or ask, `approval.Claim` and `approval.MarkUsed`) raises a keychain entry `<workspace>/<pack>/hwm` to the signed answer time of the approval it used, and records its id. If the write fails, the call is denied, or the human-run command is told not to run.
+  - Readers treat as used the marked approval and every answer in the pack signed at or before the mark (answer times carry nanoseconds, and a tie is retired too). Deleting a claim file, compacting the ledger or re-appending lines therefore cannot make a used approval usable again.
+  - **The cost:** using one approval also retires every older unused approval in the same pack. Answer approvals in the order you mean to use them, or ask again.
 - **Only a human answers, at a terminal.**
   - `tq hub answer` on a pack approval needs a real terminal on stdin. You must also type the binding back: the pack, the action, and a 12-hex code of the subject. `--choice` alone never answers one.
   - That path puts a human-presence marker, carrying the signer, into the hub service's context. The service refuses a pack approval without it, so every answer path goes through this check.
@@ -19,7 +24,7 @@ This page covers how the pack framework keeps an agent from granting itself a ga
   - Every web route refuses an answer for a `data.pack` decision (403), whatever the cookie, token or local key.
   - A browser session proves nothing that a same-user script cannot reproduce. **WebAuthn** with user verification (a platform passkey such as Windows Hello or Touch ID, registered from the human's terminal) is the planned way to answer from the board.
 - **Agents are stopped at the hook (defence in depth).** `tq/human-answer` is a core deny rule. It cannot be disabled or superseded, and unattended mode never skips it. It covers:
-  - `tq hub answer`, `tq pack <x> approve` and `tq pack ml promote apply`, in any spelling: global flags before the verb, `t''q`, a variable or call operator, a subprocess argv list;
+  - `tq hub answer` and every pack command with `apply` anywhere after `tq pack <x>` in the segment, flags included (`tq pack ml --workspace acme promote apply`). A pack command that executes an approved action declares itself with the cobra annotation `tq.human-only: execute` and must have apply in its name; a framework test walks the command tree and fails if the rule misses one. `approval.Confirm` and `approval.Claim` take the running `*cobra.Command` and refuse one without that annotation, so an undeclared executor cannot run at all. Continued lines (bash `\`, PowerShell backtick and cmd `^` before a newline) are joined before the match; a commit message, a `--note`/`--reason`/`--comment` value and an echo that only mention a command are not matched, unless they run something (`$(...)`, a backtick). An approve or request command declares `tq.human-only: ask`, and a reusable test helper checks it only asks, in any spelling: global flags before the verb, `t''q`, a variable or call operator, a subprocess argv list. `tq pack <x> approve` and `tq pack ml promote request` are allowed: they only ask (they create the pending decision) and never answer (spec D Â§9.8);
   - HTTP clients reaching the hub's decision and answer endpoints. The URL is matched after percent-decoding and after quote and `+` folding;
   - reads of `hub/serve-*.json`.
   - `tq/secret-store-shell` denies shell commands that name the ledger key's keychain entry (`tentaqles-packs`), for example `cmdkey`, PasswordVault and CredentialManager, `secret-tool`, `security find-generic-password` and keyring libraries.
@@ -27,7 +32,7 @@ This page covers how the pack framework keeps an agent from granting itself a ga
   - The protected parts are:
     - `hub/` (the hub store and its serve info);
     - `packs/` (ledgers, claims, plans, state dirs);
-    - `build-gate/` (gate records and the HMAC key);
+    - `build-gate/` (gate records and the build gate's HMAC key);
     - `trust/` (the manifest trust store);
     - `guard.yaml` and `guard/` (guard settings and logs);
     - `config.yaml` (the base registry: editing it can drop a session's workspace, and with it the client's guard rules);
@@ -45,15 +50,23 @@ This page covers how the pack framework keeps an agent from granting itself a ga
     - a `cd` under the root, tracked cumulatively, followed by a relative path into a protected part;
     - the 8.3 names of the protected children.
   - Edit and Write are checked on the canonical path, which is resolved through the nearest existing parent's handle.
+  - **A stored plan as an argument.** A pack guard that handles a call and allows it may name stored plans it verified with `HashState` in that call: `GuardCtx.ReadArgs(ReadSpec{Program, Flag, BoolFlags}, names...)`, for files under the pack's `plans/` directory only (never the ledger, its lock or a claim). For that call only, that path is not counted, if it occurs exactly once (as the absolute or final path, a plain argument or a flag's `=value`) as a positional argument or the value of the declared flag (`--plan P`, `--plan=P`; never the value of another flag). A positional plan may follow the boolean flags the guard declares (`-auto-approve`, `--yes`) and any `-flag=value`; after any other flag it is read as that flag's value and nothing is exempt, in a segment whose first word is the declared program (`terraform apply <TQ_HOME>/packs/<ws>/cloud/plans/<id>.tfplan`). Nothing is exempt when the command has a redirect or a substitution, or names, anywhere and also by path (`/usr/bin/tee`, `cmd.exe`), a write verb, shell, interpreter, downloader (curl, wget, Invoke-WebRequest, certutil), wrapper (env, nohup, sudo, start, time) or side-effect writer (git, make, docker, Expand-Archive). Every other path is checked as usual.
 - **Single use and binding.**
   - An approval is claimed with an `O_EXCL` file before the allow or before the human-run command, so one use wins.
-  - `Verify` compares pack, action, subject, target and evidence.
+  - `Verify` compares pack, action, subject, target and evidence with the signed line.
+  - **Claim on ask.** When a pack guard allows a call and another rule asks, the hook cannot know whether the human will accept the prompt or whether the call runs. It claims the approval anyway, and the prompt says so ("it is consumed now, even if you decline"). Declining wastes the approval; it never lets one approval run twice.
+  - The human-run order is `FromCommand`, `HumanOnly`, `Confirm`, `Claim`, run, `MarkUsed`, `Comment`.
+- **Ledger before store.** An answer appends its signed ledger line before the hub store commits the answer. If the commit then fails (rare, and only on the human path), the ledger holds a signed answer for a decision the store still shows as pending. A retry appends a second signed line; readers use the first valid one, so the outcome is the one the human signed first.
+## Tool environment
+
+- External tools get a filtered environment: PATH, HOME, USERPROFILE, TEMP, TMP, TMPDIR, SystemRoot, ComSpec, PATHEXT, LANG and LC_* (locale values only), the variable names their check declares in `Check.Env`, DO_NOT_TRACK and the telemetry switches. Nothing else from the parent environment reaches them, and a base name that looks like a secret is dropped.
+- A declared variable that looks like a secret (by its name, including `*_URL`, `*_URI`, `*_DSN` and `DATABASE_URL`, or by a value with `user:pass@` credentials) is never passed to a binary resolved inside the repository (the project `.venv`, `node_modules/.bin` or any path under the repo, judged by the handle-based final path, so a junction or an 8.3 name does not hide it; a path that cannot be resolved counts as inside): the run drops it and the check reports a `tq/tool-env` warning with the name only. Install the tool outside the repository or set `packs.<p>.tool_paths.<tool>` in the manifest.
 
 ## Known limits (the key-isolation follow-up)
 
-- **The regex layer is not complete.** String building the matcher cannot follow will pass it. Examples are `os.path.join(*['.tenta','qles'])`, `chr()` sequences, base64 and script files written in one step and run in another. The ledger MAC is what holds there: a write that gets past the hook still cannot produce a valid answered line.
-- **Claims are files.** Deleting a claim file under `packs/<ws>/<pack>/claims/` would make a used approval look unused. Only the regex layer protects them. `consumed` lines are not signed.
-- **A pseudo-terminal.** A pty (`script`, ConPTY, pywinpty) can satisfy the terminal check of `tq hub answer` and `approval.Confirm`. The typed binding makes this harder. The keychain key stays out of the agent's reach only while the keychain itself refuses same-user reads, which most OS keychains do not do for a same-user process outside the hooks.
+- **The regex layer is not complete.** String building the matcher cannot follow will pass it. Examples are `os.path.join(*['.tenta','qles'])`, `chr()` sequences, base64 and script files written in one step and run in another. The ledger signature is what holds there: a write that gets past the hook cannot produce a valid answered line without the private key.
+- **Claims are files, the mark is not.** Claim files and `consumed` lines are not signed. Deleting them no longer revives an approval, because the keychain high-water mark still says it was used; a process that can write the keychain can lower the mark, which is the same reach as reading the private key.
+- **A pseudo-terminal.** A pty (`script`, ConPTY, pywinpty) can satisfy the terminal check of `tq hub answer` and `approval.Confirm`. The typed binding makes this harder. The private key stays out of the agent's reach only while the keychain refuses same-user reads, which most OS keychains do not do for a same-user process outside the hooks. What the signature guarantees is that a grant needs the private key: a ledger write alone, from any process, cannot grant, widen, extend or replay an approval. It does not stop a same-user process that reads the keychain directly.
 - **Processes outside the hooks.** A process that does not go through Claude Code's PreToolUse hook, such as a script an agent starts that later acts, is not seen by the hook rules.
 - **A ledger-lock denial of service.** Appends and compaction take an OS lock on `<pack>/ledger.lock`, with a 2 s bound. A same-user process that holds the lock makes every gated call deny and every pack answer fail ("retry"). This fails closed; it never grants.
 - **Second factors.**

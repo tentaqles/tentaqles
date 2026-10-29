@@ -30,6 +30,15 @@ answer in the prompt, under "Notes from the human on this card".
 `TQ_HUB_TASK` is not set, the plan has no `task`: if the planner wrote one anyway,
 reject the plan and re-run the planner without it (the gate refuses such a plan too).
 
+## Packs
+
+Before step 1, run the on-ramp step of the `pack` skill (`skills/pack/SKILL.md`,
+"On-ramp step"): `tq pack list --enabled --json` (timeout 10 s); for each enabled pack
+read every `skills/pack/references/onramps/<pack>-*.md` and follow its `## feature`
+section at the step it names. No pack enabled, or a tq without the `pack` command:
+skip this. Reviewers: in step 3, add every reviewer that `tq pack crew --flags
+<the flags the on-ramp files say this feature raises>` prints to the expected crew.
+
 ## 1. Locate it in the PRD
 
 ```bash
