@@ -5,6 +5,8 @@ create`, `aws cloudformation deploy` and `sam deploy` (and each tool's destroy)
 an agent runs resolves to an environment and gets that environment's policy
 (spec D §9). The IaC checks are on [IaC](cloud-iac.md).
 
+**Relaxed mode waives this gate.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), or a custom table that skips the gate's category, the pack gates follow the mode: an agent's cloud apply or destroy runs with no ask and no approval, even where the policy says `approve` or `deny`. Keep the default mode, or use `strict` or a custom table that keeps `cloud-destructive` at `rule`, `ask` or `deny`, wherever the gate must hold. See [PACKS.md](../PACKS.md#known-behaviours).
+
 ## Environments
 
 ```yaml

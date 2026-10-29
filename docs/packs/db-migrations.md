@@ -4,6 +4,8 @@ The db pack (release 4, spec D §10, §11, §14) lints Postgres and SQL Server
 migrations and gates migrations against declared environments. RLS is on
 [RLS](db-rls.md); restore drills on [Restore drill](db-restore-drill.md).
 
+**Relaxed mode waives this gate.** In a workspace where the human granted `relaxed` (`tq allow --mode <ws> relaxed`), or a custom table that skips the gate's category, the pack gates follow the mode: an agent's migration (`tq/db-migrate-env`) runs with no ask and no approval, even where the policy says `approve` or `deny`. Keep the default mode, or use `strict` or a custom table that keeps `db-destructive` at `rule`, `ask` or `deny`, wherever the gate must hold. See [PACKS.md](../PACKS.md#known-behaviours).
+
 ## Config
 
 ```yaml
