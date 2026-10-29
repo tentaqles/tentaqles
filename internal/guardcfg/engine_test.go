@@ -247,6 +247,36 @@ func ruleFor(id string) *policy.Rule {
 	return &policy.Rule{ID: id, Action: a}
 }
 
+// Strict pins its categories against a looser rules_override lower down
+// (spec E §4.4): external-writes keeps asking, prod-changes keeps denying.
+func TestStrictPinsAgainstLooserOverrides(t *testing.T) {
+	g := File{Mode: ModeRelaxed, RulesOverride: map[string]Value{"tq/mcp-github-write": ValueSkip, "tq/iac-apply": ValueSkip}}
+	m, root := writeManifest(t, "guard:\n  mode: strict\n")
+	r := Resolve(m, "acme", root, root, "", g, RepoFile{}, "", relaxedGrant)
+	if got := r.Effective(ruleFor("tq/mcp-github-write")); got != policy.Ask {
+		t.Fatalf("strict external-writes: %s, want ask", got)
+	}
+	if got := r.Effective(ruleFor("tq/iac-apply")); got != policy.Deny {
+		t.Fatalf("strict prod-changes: %s, want deny", got)
+	}
+	// An override that tightens still applies under strict.
+	g2 := File{RulesOverride: map[string]Value{"tq/mcp-github-write": ValueDeny}}
+	if got := Resolve(m, "acme", root, root, "", g2, RepoFile{}, "", relaxedGrant).Effective(ruleFor("tq/mcp-github-write")); got != policy.Deny {
+		t.Fatalf("a stricter override under strict: %s, want deny", got)
+	}
+	// A category strict leaves at rule keeps the override (a custom grant
+	// would be needed to loosen it; relaxed covers hygiene).
+	g3 := File{RulesOverride: map[string]Value{"tq/gha-unpinned": ValueSkip}}
+	if got := Resolve(m, "acme", root, root, "", g3, RepoFile{}, "", relaxedGrant).Effective(ruleFor("tq/gha-unpinned")); got != policy.Allow {
+		t.Fatalf("strict leaves an override on an unpinned category: %s, want allow", got)
+	}
+	// Under relaxed the same override skips.
+	mr, rootr := writeManifest(t, "guard:\n  mode: relaxed\n")
+	if got := Resolve(mr, "acme", rootr, rootr, "", g, RepoFile{}, "", relaxedGrant).Effective(ruleFor("tq/mcp-github-write")); got != policy.Allow {
+		t.Fatalf("relaxed + skip override: %s, want allow", got)
+	}
+}
+
 func TestNoGrantClampsToDefault(t *testing.T) {
 	m, root := writeManifest(t, "guard:\n  mode: relaxed\n")
 	res := Resolve(m, "acme", root, root, "", File{}, RepoFile{}, "", nil)

@@ -205,6 +205,14 @@ func (r Resolved) Effective(rule *policy.Rule) policy.Action {
 	}
 	if ov, ok := r.Overrides[rule.ID]; ok {
 		v = ov.norm()
+		if r.Requested == ModeStrict && cat != "" {
+			// strict pins the categories it sets (prod-changes,
+			// cloud-destructive, git-history, external-writes) against a
+			// looser override (§4.4); the others keep the override.
+			if pin, _ := Preset(ModeStrict); pin.Get(cat) != ValueRule {
+				v = stricterValue(v, pin.Get(cat))
+			}
+		}
 	}
 	v = stricterValue(v, r.ceilingValue(rule.ID, cat))
 	return v.Apply(own)

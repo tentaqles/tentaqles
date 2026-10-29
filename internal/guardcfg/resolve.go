@@ -262,6 +262,16 @@ func Resolve(m *manifest.Manifest, ws, root, cwd, target string, g File, repo Re
 	s := requested(m, ws, root, cwd, target, g, launch)
 	req, reqBase, reqSource := s.mode, s.base, s.modeSource
 	res := Resolved{Requested: req, ModeSource: reqSource, Ceiling: grant}
+	if req == ModeStrict {
+		// Strict pins its categories against a looser rules_override
+		// (spec E §4.4); Effective does the same for custom rules.
+		pin, _ := Preset(ModeStrict)
+		for id, v := range s.overrides {
+			if c, ok := Categories[id]; ok && pin.Get(c) != ValueRule {
+				s.overrides[id] = stricterValue(v, pin.Get(c))
+			}
+		}
+	}
 
 	// Layer 5: the repo file only tightens.
 	for c, v := range repoTable(repo) {
