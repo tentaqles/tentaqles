@@ -239,6 +239,9 @@ func describeSource(v any) string {
 	main := "path"
 	for _, k := range []string{"repo", "url", "path"} {
 		if s, ok := src[k].(string); ok && s != "" {
+			if k == "url" {
+				s = redactURL(s) // never print credentials from settings.json
+			}
 			out += " " + s
 			main = k
 			break

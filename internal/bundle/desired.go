@@ -53,6 +53,10 @@ func Compute(b *manifest.Bundle, cat *Catalog) (Desired, []error) {
 			}
 			continue
 		}
+		if _, refusals := marketplaceChecks(mp); len(refusals) > 0 {
+			errs = append(errs, fmt.Errorf("marketplace %q: catalog entry %q: %s", key, catName, strings.Join(refusals, "; ")))
+			continue
+		}
 		bundleMkts[key] = catName
 		d.Marketplaces[key] = mp.ToKnownMarketplace()
 	}

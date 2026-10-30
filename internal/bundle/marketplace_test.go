@@ -60,6 +60,7 @@ func TestCatalog_Validate_MarketplaceKinds(t *testing.T) {
 		`marketplace "nourl": git source has no url`,
 		`marketplace "unknown": unknown source kind "svn"`,
 	}
+	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Validate = %q, want %q", got, want)
 	}

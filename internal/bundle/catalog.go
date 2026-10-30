@@ -135,23 +135,20 @@ func (c *Catalog) Save() error {
 }
 
 // Validate returns warnings for token-shaped values, unknown marketplace
-// source kinds, and skill paths that don't exist on disk.
+// source kinds, unsafe or credential-carrying marketplace URLs and refs
+// (see marketplaceChecks; the unsafe ones start with "refused:"), and skill
+// paths that don't exist on disk.
 func (c *Catalog) Validate() []string {
 	var warnings []string
 
 	for name, mp := range c.Marketplaces {
-		switch mp.Source {
-		case "github":
-			if mp.Repo == "" {
-				warnings = append(warnings, fmt.Sprintf("marketplace %q: github source has no repo", name))
-			}
-		case "git":
-			if mp.URL == "" {
-				warnings = append(warnings, fmt.Sprintf("marketplace %q: git source has no url", name))
-			}
-		case "url", "directory", "local":
-		default:
-			warnings = append(warnings, fmt.Sprintf("marketplace %q: unknown source kind %q", name, mp.Source))
+		warns, refusals := marketplaceChecks(mp)
+		for _, w := range warns {
+			warnings = append(warnings, fmt.Sprintf("marketplace %q: %s", name, w))
+		}
+		// Refusals also fail Compute, so sync never writes them.
+		for _, r := range refusals {
+			warnings = append(warnings, fmt.Sprintf("refused: marketplace %q: %s (sync will not write it)", name, r))
 		}
 	}
 
