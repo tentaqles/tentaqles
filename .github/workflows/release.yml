@@ -8,7 +8,7 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
       # A release tag must name a commit already merged to main, and the
       # plugin version must agree between plugin.json and the dev
@@ -30,9 +30,9 @@ jobs:
             exit 1
           fi
           echo "tag $GITHUB_REF_NAME is on main; plugin version $pv"
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with: { go-version: '1.26' }
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           args: release --clean
         env:
@@ -48,10 +48,10 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with: { go-version: '1.26' }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: '22' }
       - name: install wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
@@ -81,9 +81,13 @@ jobs:
           else
             target=linux_amd64
           fi
-          gh release download "$GITHUB_REF_NAME" -p "tq_*_${target}.*" -D /tmp/tqdl --clobber
+          gh release download "$GITHUB_REF_NAME" -p "tq_*_${target}.*" -p checksums.txt -D /tmp/tqdl --clobber
           cd /tmp/tqdl
           archive=$(ls tq_*_${target}.* | head -n1)
+          # the bundled tq must be the archive goreleaser published (docs/threat-model.md TM-1)
+          want=$(awk -v f="$archive" '$2 == f {print $1}' checksums.txt)
+          if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$archive" | cut -d' ' -f1); else got=$(shasum -a 256 "$archive" | cut -d' ' -f1); fi
+          if [ -z "$want" ] || [ "$got" != "$want" ]; then echo "::error::checksum mismatch for $archive"; exit 1; fi
           tar -xzf "$archive" 2>/dev/null || unzip -o "$archive"
           mkdir -p "$GITHUB_WORKSPACE/desktop/build/bin"
           cp tq "$GITHUB_WORKSPACE/desktop/build/bin/tq"
@@ -96,8 +100,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\tqdl" | Out-Null
-          gh release download "$env:GITHUB_REF_NAME" -p "tq_*_windows_amd64.*" -D "$env:RUNNER_TEMP\tqdl" --clobber
+          gh release download "$env:GITHUB_REF_NAME" -p "tq_*_windows_amd64.*" -p checksums.txt -D "$env:RUNNER_TEMP\tqdl" --clobber
           $archive = Get-ChildItem "$env:RUNNER_TEMP\tqdl\tq_*_windows_amd64.*" | Select-Object -First 1
+          # the bundled tq must be the archive goreleaser published (docs/threat-model.md TM-1)
+          $want = Get-Content "$env:RUNNER_TEMP\tqdl\checksums.txt" | Where-Object { ($_.Trim() -split '\s+')[1] -eq $archive.Name } | ForEach-Object { ($_.Trim() -split '\s+')[0] } | Select-Object -First 1
+          $got = (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLower()
+          if (-not $want -or $got -ne $want) { throw "checksum mismatch for $($archive.Name)" }
           Expand-Archive -Path $archive.FullName -DestinationPath "$env:RUNNER_TEMP\tqdl" -Force
           New-Item -ItemType Directory -Force -Path "desktop\build\bin" | Out-Null
           Copy-Item "$env:RUNNER_TEMP\tqdl\tq.exe" "desktop\build\bin\tq.exe"
@@ -154,7 +162,7 @@ jobs:
           test -s build/bin/tentaqles-setup.AppImage
 
       - name: upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.ref_name }}
           files: |
