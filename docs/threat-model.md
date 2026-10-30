@@ -126,7 +126,7 @@ folder, and the integrity of what users install.
 | Category | Threat | Mitigation | Status | Owner |
 |---|---|---|---|---|
 | Spoofing | A swapped release archive is installed as tq | `installers/install.ps1` and `install.sh` check the archive's SHA-256 against the release's `checksums.txt` and refuse a mismatch or a missing entry (TM-1) | done | tq |
-| Spoofing | A release is built by something other than this repo's workflow | signed build provenance for each release artifact (GitHub attestations), checked by the installers | planned (TM-2) | tq |
+| Spoofing | A release is built by something other than this repo's workflow | the release workflow attests build provenance for every archive in `checksums.txt` and each installer (`.github/workflows/release.yml`); installers checking it when `gh` is present follows the first attested release | planned (TM-2) | tq |
 | Tampering | A moved or re-pushed tag changes what the plugin installs | the root marketplace pins tag and commit sha, CI checks the tag resolves to it, tags `v*` cannot be updated or deleted (ruleset); `TestRootMarketplacePin`, CI job `marketplace-pin` | done | tq |
 | Tampering | A bundle catalog entry installs a plugin over `http://`, `git://`, `file://` or `ext::` | refused unless `insecure: true` is set on that entry (`internal/bundle/marketplace_check.go`); `TestValidate_PlainTextTransport`, `TestValidate_GitURLTransport` | done | tq |
 | Tampering | The desktop build re-downloads tq without checking it | the desktop jobs in `.github/workflows/release.yml` check the archive against `checksums.txt` before bundling it (TM-1) | done | tq |
@@ -160,8 +160,9 @@ cover the rows whose remaining gap is a same-user program or a reworded command.
   job does the same for the archive it re-downloads. Checks: a tampered archive fails
   the install with a clear message; a matching one installs.
 - **TM-2 Signed build provenance.** The release workflow attests every artifact
-  (`actions/attest-build-provenance`); the installers verify it when `gh` is present.
-  Checks: `gh attestation verify` passes for each published archive.
+  (`actions/attest-build-provenance`): done. The installers verify it when `gh` is
+  present: after the first attested release, so they never refuse an older one that
+  has no attestation. Checks: `gh attestation verify` passes for each published archive.
 - **TM-3 Build-gate key in the OS keychain: dropped** (see Decisions).
 - **TM-4 Pin GitHub Actions by commit sha: done** in every workflow, with the version in a
   comment. Checks: no `uses:` line names a tag or branch.
