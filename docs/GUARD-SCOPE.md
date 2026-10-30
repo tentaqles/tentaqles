@@ -64,11 +64,14 @@ on purpose:
    - it runs on macOS and on Linux or WSL2, not on native Windows;
    - it covers the Bash tool, not the PowerShell tool;
    - a `tq` the agent starts runs inside it too, and tq must write its state folder.
-     In the sandbox's `excludedCommands`, list only the tq subcommands that write
-     state and start nothing, such as `tq hub` and `tq pack`. Never exclude
-     `tq run`, `tq dotenv run`, `tq redact run` or `tq pack <pack> plan`: they start a
-     child command, which would then run outside the sandbox. Do not exclude `tq` as
-     a whole, and do not allow-list `TQ_HOME` for writes: either gives every command
+     In the sandbox's `excludedCommands`, list only exact tq subcommands that write
+     state and start nothing: `tq hub add`, `tq hub move`, `tq hub comment`,
+     `tq hub cancel`. Entries match as prefixes, so never list a bare `tq hub` or
+     `tq pack`: they would cover `tq hub run` (starts an agent run), `tq hub open`
+     (starts a browser) and `tq pack <pack> plan` (starts the plan tool). Never
+     exclude `tq run`, `tq dotenv run` or `tq redact run` either: they start a child
+     command, which would then run outside the sandbox. Do not exclude `tq` as a
+     whole, and do not allow-list `TQ_HOME` for writes: either gives every command
      that write access and removes the protection.
 2. **Signed, tamper-evident state.** What is signed today:
    - pack ledger answers, with a key kept in the OS keychain. A ledger line written
