@@ -6,7 +6,12 @@ updates:
     directory: /
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
+  # Major action upgrades are done by hand and checked with a release: the
+  # release workflow's steps run only on a tag, so PR checks never exercise them.
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
