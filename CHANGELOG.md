@@ -6,6 +6,8 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-10-30
+
 ### Install and release
 
 - **Changed:** `install.ps1` and `install.sh` check the downloaded archive against the
@@ -16,6 +18,9 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
   `gh attestation verify <file> --repo tentaqles/tentaqles`.
 - **CI:** every GitHub Action is pinned by commit sha, a `govulncheck` job scans for known
   vulnerabilities, and Dependabot proposes weekly updates for Go modules and actions.
+- **Dependencies:** `github.com/charmbracelet/x/term` 0.2.1 to 0.2.2. Dependabot no longer
+  proposes major upgrades of GitHub Actions; those are done by hand and checked with a
+  release.
 - **Docs:** [`docs/threat-model.md`](docs/threat-model.md): trust boundaries, threats per
   boundary with the test behind each mitigation, accepted risks and decisions.
 
