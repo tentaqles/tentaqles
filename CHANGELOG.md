@@ -6,6 +6,16 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+### Install and release
+
+- **Changed:** `install.ps1` and `install.sh` check the downloaded archive against the
+  release's `checksums.txt` and refuse to install on a mismatch; the desktop release jobs
+  do the same for the tq they bundle.
+- **CI:** every GitHub Action is pinned by commit sha, a `govulncheck` job scans for known
+  vulnerabilities, and Dependabot proposes weekly updates for Go modules and actions.
+- **Docs:** [`docs/threat-model.md`](docs/threat-model.md): trust boundaries, threats per
+  boundary with the test behind each mitigation, accepted risks and decisions.
+
 ## [0.8.1] — 2026-10-30
 
 ### Packs

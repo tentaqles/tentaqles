@@ -113,7 +113,7 @@ folder, and the integrity of what users install.
 ### B7 tq -> remote services
 | Category | Threat | Mitigation | Status | Owner |
 |---|---|---|---|---|
-| Spoofing | A manifest points the Jira or Azure DevOps base URL at an `http://` or attacker host and the token is sent there | the tracker base URL must be `https://` (an `insecure` opt-in for a local mirror, as the bundle catalog does) | planned (TM-6) | tq |
+| Spoofing | A manifest points the Jira or Azure DevOps base URL at an `http://` or attacker host and the token is sent there | no manifest field sets a tracker URL: Jira builds only `https://<site>.atlassian.net` from `tracker.scope.org` (`siteURL`, `internal/hub/sync/jira/jira.go`), the other adapters use fixed `https://` APIs, and `hubsync.Config.BaseURL` is set only by tests | done | tq |
 | Tampering | (skipped) tracker data is shown on the board, never executed | n/a | n/a | n/a |
 | Repudiation | (skipped) the tracker keeps its own history | n/a | n/a | n/a |
 | Information disclosure | Card text sent to a tracker carries a secret or personal data | outbound text redacted with the exit classes (`internal/hub/sync/engine.go`); `TestRedactionOfOutboundText` | done | tq |
@@ -125,11 +125,11 @@ folder, and the integrity of what users install.
 ### B8 GitHub -> the user's machine
 | Category | Threat | Mitigation | Status | Owner |
 |---|---|---|---|---|
-| Spoofing | A swapped release archive is installed as tq | installers check the archive against the release's `checksums.txt` and refuse a mismatch | planned (TM-1) | tq |
+| Spoofing | A swapped release archive is installed as tq | `installers/install.ps1` and `install.sh` check the archive's SHA-256 against the release's `checksums.txt` and refuse a mismatch or a missing entry (TM-1) | done | tq |
 | Spoofing | A release is built by something other than this repo's workflow | signed build provenance for each release artifact (GitHub attestations), checked by the installers | planned (TM-2) | tq |
 | Tampering | A moved or re-pushed tag changes what the plugin installs | the root marketplace pins tag and commit sha, CI checks the tag resolves to it, tags `v*` cannot be updated or deleted (ruleset); `TestRootMarketplacePin`, CI job `marketplace-pin` | done | tq |
 | Tampering | A bundle catalog entry installs a plugin over `http://`, `git://`, `file://` or `ext::` | refused unless `insecure: true` is set on that entry (`internal/bundle/marketplace_check.go`); `TestValidate_PlainTextTransport`, `TestValidate_GitURLTransport` | done | tq |
-| Tampering | The desktop build re-downloads tq without checking it | the desktop job checks the archive against `checksums.txt` | planned (TM-1) | tq |
+| Tampering | The desktop build re-downloads tq without checking it | the desktop jobs in `.github/workflows/release.yml` check the archive against `checksums.txt` before bundling it (TM-1) | done | tq |
 | Repudiation | (skipped) releases are tied to tags and workflow runs on GitHub | n/a | n/a | n/a |
 | Information disclosure | A catalog URL with credentials ends up in `settings.json` | warned on every check, never printed in drift output; `TestValidate_URLCredentials`, `TestDescribeSource_StripsUserinfo` | done | tq |
 | Denial of service | (skipped) GitHub availability | n/a | n/a | n/a |
@@ -139,13 +139,13 @@ folder, and the integrity of what users install.
 | Category | Threat | Mitigation | Status | Owner |
 |---|---|---|---|---|
 | Spoofing | (skipped) one maintainer; GitHub account security | n/a | n/a | n/a |
-| Tampering | A third-party action changes under its tag and alters a release built with a write token | pin every action by commit sha | planned (TM-4) | tq |
+| Tampering | A third-party action changes under its tag and alters a release built with a write token | every `uses:` in `.github/workflows/` names a commit sha with the version in a comment (TM-4); Dependabot proposes updates | done | tq |
 | Tampering | A change merges to `main` with failing tests | ruleset requires the 8 CI checks on `main` | done | tq |
 | Tampering | A fork PR runs with secrets | CI uses `pull_request` with `contents: read`, never `pull_request_target` (`.github/workflows/test.yml`) | done | tq |
 | Repudiation | (skipped) git history and PRs | n/a | n/a | n/a |
 | Information disclosure | (skipped) release secrets are deploy keys scoped to the tap and bucket repos | n/a | n/a | n/a |
 | Denial of service | (skipped) n/a for a local tool | n/a | n/a | n/a |
-| Elevation of privilege | A dependency with a known vulnerability ships in tq | `govulncheck` in CI and weekly Dependabot updates for Go modules and actions | planned (TM-5) | tq |
+| Elevation of privilege | A dependency with a known vulnerability ships in tq | CI job `govulncheck` (`.github/workflows/test.yml`) and weekly Dependabot updates for Go modules and actions (`.github/dependabot.yml`) (TM-5) | done | tq |
 
 ## 3. What will we do about it
 
@@ -154,7 +154,7 @@ cover the rows whose remaining gap is a same-user program or a reworded command.
 
 ### Planned work
 
-- **TM-1 Installers and the desktop job check checksums.** `install.ps1` and
+- **TM-1 Installers and the desktop job check checksums: done.** `install.ps1` and
   `install.sh` download `checksums.txt` from the same release and refuse to install
   when the archive's SHA-256 is missing or different; the release workflow's desktop
   job does the same for the archive it re-downloads. Checks: a tampered archive fails
@@ -163,12 +163,12 @@ cover the rows whose remaining gap is a same-user program or a reworded command.
   (`actions/attest-build-provenance`); the installers verify it when `gh` is present.
   Checks: `gh attestation verify` passes for each published archive.
 - **TM-3 Build-gate key in the OS keychain: dropped** (see Decisions).
-- **TM-4 Pin GitHub Actions by commit sha** in every workflow, with the version in a
+- **TM-4 Pin GitHub Actions by commit sha: done** in every workflow, with the version in a
   comment. Checks: no `uses:` line names a tag or branch.
-- **TM-5 Dependency scanning.** A `govulncheck` CI job and `.github/dependabot.yml` for
+- **TM-5 Dependency scanning: done.** A `govulncheck` CI job and `.github/dependabot.yml` for
   Go modules and GitHub Actions. Checks: the job runs on every PR.
-- **TM-6 Tracker base URLs must be `https://`.** Checks: an `http://` Jira or Azure
-  DevOps base URL is refused unless the manifest sets `insecure: true`.
+- **TM-6 Tracker base URLs must be `https://`: not needed.** On inspection no manifest
+  field sets a tracker URL (see the B7 Spoofing row).
 
 ## 4. Did we do a good job
 - Every boundary in §1 has a table in §2: yes
