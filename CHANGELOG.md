@@ -94,6 +94,26 @@ or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
 - **Audit.** Skipped and lowered decisions go to `$TQ_HOME/guard/mode.jsonl`, with the tq
   mode, Claude's mode and the action applied.
 
+### Plugin distribution from release tags
+
+- **Root marketplace.** `.claude-plugin/marketplace.json` (marketplace `tentaqles`) installs
+  the plugin from `plugin/` of this repo at the release tag (a `git-subdir` source), so
+  `/plugin marketplace add tentaqles/tentaqles` and `/plugin install tentaqles@tentaqles`
+  replace the `tentaqles/tentaqles-plugin` repo. `TestRootMarketplaceMatchesPlugin` keeps its
+  version equal to `plugin.json`, and the release workflow fails a tag whose marketplace ref
+  is not that tag. Steps in [`docs/RELEASING.md`](docs/RELEASING.md).
+- **Bundle catalog marketplace fields.** A catalog marketplace takes `ref` (branch or tag) and
+  `path` (marketplace.json inside the repo) for `github`, the new `git` kind (`url`, `ref`,
+  `path`), and `autoUpdate: true`, written beside `source` in `extraKnownMarketplaces`.
+  `tq bundle capture` reads them back (autoUpdate from `settings.json`), `tq bundle diff`
+  reports a changed ref or autoUpdate as `marketplace-source` drift
+  (`github tentaqles/tentaqles@v0.8.0 autoUpdate`), and the catalog check warns on a github
+  source without `repo` or a git source without `url`.
+- **Bundle marketplace aliases.** A `claude.bundle.marketplaces` item `key=catalogName`
+  writes catalog entry `catalogName` under settings key `key`, so one workspace can load a
+  plugin from a local folder under the same plugin id (`tentaqles=tentaqles-dev`, plugins
+  still `tentaqles@tentaqles`). An unknown `catalogName` is an error naming both.
+
 ### Deprecated
 
 - Unattended mode is replaced by `relaxed`. `guard.unattended` is still read (in memory;

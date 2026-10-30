@@ -317,6 +317,13 @@ claude:
     mcp: [github]
 ```
 
+A marketplace entry takes Claude Code's own source fields: `source` (`github`, `git`, `url`,
+`directory`), `repo`, `url`, `ref` (branch or tag), `path` (the folder for `directory`, the
+marketplace.json path in the repo for `github`/`git`) and `autoUpdate: true`. A bundle item
+`key=catalogName` writes catalog entry `catalogName` under settings key `key`, so one
+workspace can load a plugin from a local checkout under the same plugin id. See
+[docs/RELEASING.md](docs/RELEASING.md#how-identities-pick-it-up).
+
 Two things to know about `sync`:
 
 - `enabledPlugins` in the identity dir's `settings.json` is replaced wholesale

@@ -10,6 +10,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+      # The root marketplace installs the plugin from this tag (git-subdir
+      # ref); a tag whose marketplace points elsewhere would publish a
+      # release that installs some other commit's plugin. See docs/RELEASING.md.
+      - name: marketplace ref matches the tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref=$(jq -er '.plugins[] | select(.name == "tentaqles") | .source.ref' .claude-plugin/marketplace.json)
+          if [ "$ref" != "$GITHUB_REF_NAME" ]; then
+            echo "::error file=.claude-plugin/marketplace.json::plugin source ref is '$ref' but the release tag is '$GITHUB_REF_NAME'; set the ref to the tag before tagging (docs/RELEASING.md)"
+            exit 1
+          fi
+          echo "marketplace ref $ref matches the tag"
       - uses: actions/setup-go@v5
         with: { go-version: '1.26' }
       - uses: goreleaser/goreleaser-action@v6
