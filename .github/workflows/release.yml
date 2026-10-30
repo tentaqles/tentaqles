@@ -10,19 +10,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      # The root marketplace installs the plugin from this tag (git-subdir
-      # ref); a tag whose marketplace points elsewhere would publish a
-      # release that installs some other commit's plugin. See docs/RELEASING.md.
-      - name: marketplace ref matches the tag
+      # A release tag must name a commit already merged to main, and the
+      # plugin version must agree between plugin.json and the dev
+      # marketplace. The root marketplace is pinned to this tag's commit
+      # only afterwards, in the post-release PR (docs/RELEASING.md).
+      - name: tag is on main and plugin versions agree
         shell: bash
         run: |
           set -euo pipefail
-          ref=$(jq -er '.plugins[] | select(.name == "tentaqles") | .source.ref' .claude-plugin/marketplace.json)
-          if [ "$ref" != "$GITHUB_REF_NAME" ]; then
-            echo "::error file=.claude-plugin/marketplace.json::plugin source ref is '$ref' but the release tag is '$GITHUB_REF_NAME'; set the ref to the tag before tagging (docs/RELEASING.md)"
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag $GITHUB_REF_NAME ($GITHUB_SHA) is not on origin/main; tag the merged main commit (docs/RELEASING.md)"
             exit 1
           fi
-          echo "marketplace ref $ref matches the tag"
+          pv=$(jq -er '.version' plugin/.claude-plugin/plugin.json)
+          mv=$(jq -er '.plugins[] | select(.name == "tentaqles") | .version' plugin/.claude-plugin/marketplace.json)
+          if [ -z "$pv" ] || [ "$pv" != "$mv" ]; then
+            echo "::error file=plugin/.claude-plugin/marketplace.json::plugin version '$mv' differs from plugin.json '$pv'"
+            exit 1
+          fi
+          echo "tag $GITHUB_REF_NAME is on main; plugin version $pv"
       - uses: actions/setup-go@v5
         with: { go-version: '1.26' }
       - uses: goreleaser/goreleaser-action@v6

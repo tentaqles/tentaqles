@@ -291,7 +291,7 @@ answered in your own terminal and need the OS keychain. See
 ## Claude Code plugin
 
 The tentaqles plugin installs from the marketplace at the root of this repo and follows
-the release tags: `/plugin marketplace add tentaqles/tentaqles`, then
+the release tags (each pinned to its commit after the release passes): `/plugin marketplace add tentaqles/tentaqles`, then
 `/plugin install tentaqles@tentaqles`. For tq identities, put a `tentaqles` marketplace
 (`source: github`, `repo: tentaqles/tentaqles`, `autoUpdate: true`) in the bundle catalog,
 list it in each workspace's `claude.bundle`, and run `tq bundle sync <ws>`. See

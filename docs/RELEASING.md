@@ -2,47 +2,83 @@
 
 One tag, `vX.Y.Z`, releases both the `tq` CLI (with the desktop app) and the Claude Code
 plugin. The plugin ships from the marketplace at the root of this repo,
-[`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json): its one entry,
-`tentaqles`, is a `git-subdir` source that checks out `plugin/` of
-`https://github.com/tentaqles/tentaqles.git` at the release tag.
+`.claude-plugin/marketplace.json`: its one entry, `tentaqles`, is a `git-subdir` source that
+checks out `plugin/` of `https://github.com/tentaqles/tentaqles.git` at a release tag
+**and that tag's commit**:
+
+```json
+{
+  "name": "tentaqles",
+  "owner": {"name": "Tentaqles", "email": "reach@tentaqles.ai", "url": "https://github.com/tentaqles"},
+  "plugins": [
+    {
+      "name": "tentaqles",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/tentaqles/tentaqles.git",
+        "path": "plugin",
+        "ref": "vX.Y.Z",
+        "sha": "<40-hex commit of vX.Y.Z>"
+      },
+      "description": "<same as plugin/.claude-plugin/marketplace.json>"
+    }
+  ]
+}
+```
+
+With both `ref` and `sha` set Claude Code checks out the `sha`, so a moved or re-pushed tag
+cannot change what installs. The entry has no `version`: the installed version is
+`plugin.json`'s at the pinned commit, and a version on `main` would drift between the
+release PR and the post-release PR.
+
+`main` only ever names a tag that exists and whose release passed. So the root marketplace
+is updated *after* the tag, never in the release PR. The file does not exist until the first
+post-release PR (for `v0.8.0`) adds it.
 
 `plugin/.claude-plugin/marketplace.json` is a separate local marketplace (`"source": "./"`)
-for plugin development; it is not what users install.
+for plugin development; it is not what users install, and it does keep a `version`.
 
 ## Steps
 
-1. **Changelogs.** In [`CHANGELOG.md`](../CHANGELOG.md), move `[Unreleased]` to
+1. **Release PR.** In [`CHANGELOG.md`](../CHANGELOG.md), move `[Unreleased]` to
    `[X.Y.Z] — <date>` and open a new empty `[Unreleased]`. If the plugin changed, do the
-   same in [`plugin/CHANGELOG.md`](../plugin/CHANGELOG.md) with the plugin's own version.
-2. **Plugin version** (only if the plugin changed). Bump `version` in
-   `plugin/.claude-plugin/plugin.json`, `plugin/.claude-plugin/marketplace.json` and
-   `.claude-plugin/marketplace.json` to the same value. Claude Code makes a new cache copy
-   only when this version changes, so a plugin change without a bump never reaches users.
-   `TestRootMarketplaceMatchesPlugin` (`test/integration`) fails when the three disagree.
-3. **Marketplace ref.** Set `plugins[0].source.ref` in `.claude-plugin/marketplace.json` to
-   the new tag, `vX.Y.Z`. Do this on every release, even when the plugin did not change:
-   the release workflow refuses a tag whose marketplace ref is anything else.
-4. **Merge** the release PR to `main` with CI green.
-5. **Tag** the merge commit and push the tag:
+   same in [`plugin/CHANGELOG.md`](../plugin/CHANGELOG.md) with the plugin's own version and
+   bump `version` in `plugin/.claude-plugin/plugin.json` and
+   `plugin/.claude-plugin/marketplace.json` to it. Claude Code makes a new cache copy only
+   when this version changes, so a plugin change without a bump never reaches users.
+   `TestDevMarketplaceMatchesPlugin` (`test/integration`) fails when the two disagree. Do
+   not touch `.claude-plugin/marketplace.json` here.
+2. **Merge** the release PR to `main` with CI green.
+3. **Tag** the merged `main` commit and push the tag:
 
    ```
-   git tag vX.Y.Z
+   git fetch origin
+   git tag vX.Y.Z origin/main
    git push origin vX.Y.Z
    ```
+
+4. **Wait** for the `release` workflow on the tag to pass. If it fails, fix on `main` and
+   release the next patch version; do not move the tag.
+5. **Post-release PR.** Set the root `.claude-plugin/marketplace.json` entry's `source.ref`
+   to `vX.Y.Z` and `source.sha` to the tag's commit, `git rev-parse "vX.Y.Z^{commit}"`.
+   CI's `marketplace-pin` job fails unless the tag exists, resolves to that sha, and the sha
+   is on `origin/main`; `TestRootMarketplacePin` checks the shape (git-subdir, exact url,
+   path `plugin`, `vX.Y.Z` ref, 40 lowercase hex sha, no `version`). Users get the new
+   plugin once this PR is merged.
 
 ## What the tag publishes
 
 `.github/workflows/release.yml` runs on the tag:
 
-- its first step fails the release unless the root marketplace's plugin `source.ref` equals
-  the tag (`$GITHUB_REF_NAME`);
+- its first step fails the release unless the tagged commit is on `origin/main` and
+  `plugin.json`'s version equals `plugin/.claude-plugin/marketplace.json`'s;
 - goreleaser builds `tq` for every platform, the GitHub release, the Homebrew tap and the
   Scoop bucket;
 - the desktop job builds the setup app installers and adds them to the release.
 
-The plugin needs no build step: once the tag exists, a marketplace refresh reads the root
-`marketplace.json` from `main` (the marketplace source has no `ref`), finds the new version
-and installs `plugin/` at the tag.
+The plugin needs no build step. A marketplace refresh reads the root `marketplace.json`
+from `main` (the marketplace source has no `ref`); after the post-release PR it names the new
+commit and installs `plugin/` from it.
 
 ## How identities pick it up
 
@@ -85,6 +121,14 @@ URL, or the marketplace.json URL for `url`), `ref` (branch or tag, github and gi
 default `.claude-plugin/marketplace.json`) and `autoUpdate`. `tq bundle diff <ws>` reports a
 changed ref or autoUpdate as `marketplace-source` drift, e.g.
 `settings has github tentaqles/tentaqles@v0.7.0, the catalog has github tentaqles/tentaqles@v0.8.0`.
+
+The catalog check (`tq bundle catalog`, `tq doctor`, `tq bundle sync`) warns when a `git` or
+`url` source URL carries credentials (userinfo, or a token-shaped value): `settings.json`
+would hold them in clear, so use a git credential helper. It refuses, and `sync` will not
+write, a `git` url that is not `https://`, `ssh://` or `user@host:path` (for example
+`file://`, `ext::`, a local path), and a `ref` that starts with `-`, contains `..`, `:`, a
+space, one of `~^?*[\` or a control character, or ends with `.lock` or `/`. Plain `http://`
+and `git://` only warn. Drift details never print URL userinfo.
 
 ### The development workspace: one key, two sources
 

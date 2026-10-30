@@ -50,8 +50,9 @@ claude --plugin-dir /path/to/tentaqles/plugin
 ```
 
 The marketplace at the root of `tentaqles/tentaqles` installs the `plugin/` folder at the
-current release tag (`vX.Y.Z`), so you get the plugin as it was released, not whatever is on
-`main`. Claude Code installs a new copy only when the plugin's version changes. Third-party
+latest release tag (`vX.Y.Z`), pinned to that tag's commit sha so a moved tag cannot change what
+installs; you get the plugin as it was released, not whatever is on `main`. The pin is updated
+after each release, so the marketplace only appears once the first such release is out. Claude Code installs a new copy only when the plugin's version changes. Third-party
 marketplaces do not auto-update by default: turn it on in `/plugin` (Marketplaces), or set
 `"autoUpdate": true` on the `tentaqles` entry of `extraKnownMarketplaces`. With `tq`, the
 bundle catalog does this for every identity (see `docs/RELEASING.md` in the repo).
