@@ -12,8 +12,8 @@
         "source": "git-subdir",
         "url": "https://github.com/tentaqles/tentaqles.git",
         "path": "plugin",
-        "ref": "v0.8.0",
-        "sha": "0bf9138754061f46aacfdc71a4cff0ccf27fbc9f"
+        "ref": "v0.8.1",
+        "sha": "fa2c9681fc1abb1bcf58423312c26d265354c739"
       },
       "description": "Multi-workspace orchestration for developers working across multiple clients. Identity isolation, temporal memory with decay, knowledge graphs, cross-workspace pattern detection, time-travel snapshots, and inter-workspace signals."
     }
