@@ -6,6 +6,22 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-10-30
+
+### Packs
+
+- **Fixed:** on Windows, starting an external tool no longer walks every thread on the
+  machine to resume it (a loaded machine could hang a check for minutes). The tool is
+  resumed through its own process handle, and putting it into its process tree is
+  bounded (30 s): past that the still-suspended tool is killed and the check fails with
+  a clear message.
+
+### Tests
+
+- Timing tests that flaked on loaded CI runners check that cost grows linearly and stays
+  under a load-tolerant ceiling; functional pack tests run with generous budgets. No
+  production budget changed.
+
 ### State-folder guard (`tq/hub-store-write`)
 
 - **Fixed:** a lone CR (or VT, FF, NEL, LS, PS) no longer lets the stored-plan exemption
