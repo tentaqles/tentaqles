@@ -4,6 +4,11 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-10-30
+
+- **Docs:** `CLAUDE.md`, `README.md` and `HOW-TO.md` no longer point at the retired
+  `tentaqles/tentaqles-plugin` repo; install from `tentaqles/tentaqles`.
+
 ## [0.15.1] — 2026-10-29
 
 - **New install source.** The plugin now ships from the marketplace at the root of
