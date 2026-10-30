@@ -6,6 +6,12 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+### Install
+
+- **Changed:** with a logged-in `gh`, `install.ps1` and `install.sh` also check the
+  archive's build provenance (`gh attestation verify`, signer: the release workflow)
+  and refuse to install when it fails. Without `gh` they check the checksum only.
+
 ## [0.8.2] — 2026-10-30
 
 ### Install and release
