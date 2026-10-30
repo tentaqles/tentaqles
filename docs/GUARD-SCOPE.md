@@ -84,9 +84,11 @@ on purpose:
      sign its own records;
    - hub tokens, which are minted with an HMAC.
 
-   Follow-up: move the build-gate key out of the state folder into the OS keychain,
-   as the pack ledger key already is. Extending signatures to the other protected
-   parts (`trust/`, `guard.yaml`, `config.yaml`) is follow-up work too.
+   Moving the build-gate key into the OS keychain was considered and dropped: the
+   agent's own build steps must be able to sign, so the key would gain little
+   ([threat model, Decisions](threat-model.md#decisions)). Extending signatures to the
+   other protected parts (`trust/`, `guard.yaml`, `config.yaml`) is possible follow-up
+   work.
 
 The guard stays on, and is never-disable, because catching the common slip early is
 cheaper than recovering from it. Treat a block as useful feedback, and do not read

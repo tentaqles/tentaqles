@@ -15,6 +15,18 @@ One repo, one installer: terminal-identity orchestration for developers who work
 - `templates/` — standalone client-system templates (n8n Jev decision sub-workflow, RAG starter, pandas Jev labeller, dbt contract starter, ML starter), each with its own tests (CI job `templates`; a template with a `uv.lock` installs from it).
 - Docs live in the workspace: `../docs/plans/*.md` (spec + plans), `../docs/superpowers/plans/*.md` (task plans).
 
+## Must not trade off
+From `docs/threat-model.md`; each line names the test that keeps it.
+- Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.
+- Mode changes and `tq allow` stay human-only: `TestAllowModeIsHumanOnly`.
+- Identity, secrets, self-protection and privacy stay on in every mode: `TestRelaxedLockedDeniesStillBlock`.
+- An edited manifest loses its trust and mode grant: `TestPlainAllowAfterEditDropsTheGrant`.
+- Build-gate records are signed and a rollback is refused: `test_an_older_signed_approval_copied_back_counts_as_rolled_back`.
+- Pack answers count only when signed: `TestSignedAnswersOnly`.
+- The hub API refuses human-only actions from agents and cross-site requests: `TestAPIAgentHeaderRefusesHumanOnly`, `TestRebindingHostAndOriginAreRefused`.
+- External tools get a filtered environment: `TestToolEnvIsFiltered`.
+- The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
+
 ## Rules
 - Git identity for this repo: `reach@tentaqles.ai` (local config). Never commit secrets; manifests hold names only.
 - Windows dev box: run `go test`/git via PowerShell; tests must isolate `TQ_HOME`, `HOME`, `USERPROFILE`.
