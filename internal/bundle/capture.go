@@ -57,10 +57,9 @@ func Capture(dir string) (Captured, error) {
 	c.Bundle.Plugins = plugins
 
 	extraMkts := map[string]bool{}
-	if raw, ok := settings["extraKnownMarketplaces"].(map[string]any); ok {
-		for k := range raw {
-			extraMkts[k] = true
-		}
+	extraEntries, _ := settings["extraKnownMarketplaces"].(map[string]any)
+	for k := range extraEntries {
+		extraMkts[k] = true
 	}
 
 	mktNames := map[string]bool{}
@@ -90,6 +89,14 @@ func Capture(dir string) (Captured, error) {
 		if !ok {
 			c.Warnings = append(c.Warnings, fmt.Sprintf("marketplace %q: unknown source kind, skipped", name))
 			continue
+		}
+		// autoUpdate is set per entry in settings.json's
+		// extraKnownMarketplaces; known_marketplaces.json is only a
+		// fallback for a marketplace settings does not list.
+		if se, ok := extraEntries[name].(map[string]any); ok {
+			mp.AutoUpdate, _ = se["autoUpdate"].(bool)
+		} else {
+			mp.AutoUpdate, _ = entry["autoUpdate"].(bool)
 		}
 		c.Catalog.Marketplaces[name] = mp
 	}
@@ -233,7 +240,14 @@ func marketplaceFromSource(src map[string]any) (Marketplace, bool) {
 	switch kind {
 	case "github":
 		repo, _ := src["repo"].(string)
-		return Marketplace{Source: "github", Repo: repo}, true
+		ref, _ := src["ref"].(string)
+		path, _ := src["path"].(string)
+		return Marketplace{Source: "github", Repo: repo, Ref: ref, Path: path}, true
+	case "git":
+		url, _ := src["url"].(string)
+		ref, _ := src["ref"].(string)
+		path, _ := src["path"].(string)
+		return Marketplace{Source: "git", URL: url, Ref: ref, Path: path}, true
 	case "url":
 		url, _ := src["url"].(string)
 		return Marketplace{Source: "url", URL: url}, true

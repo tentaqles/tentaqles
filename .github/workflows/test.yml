@@ -51,6 +51,48 @@ jobs:
           Set-Location "$env:USERPROFILE\work\acme"; prompt | Out-Null; if ($env:TQ_WS -ne 'acme') { throw "hook failed: $env:TQ_WS" }
           Set-Location \; prompt | Out-Null; if ($env:TQ_WS) { throw "unset failed" }
 
+  # The root marketplace pins plugin/ at a release tag and that tag's
+  # commit (docs/RELEASING.md). Fail unless the tag exists, resolves to the
+  # pinned sha, and that sha is on main. Skipped while the file is absent.
+  marketplace-pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: root marketplace sha is the tag's commit and on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=.claude-plugin/marketplace.json
+          if [ ! -e "$f" ]; then
+            echo "$f absent (added by the first post-release PR); nothing to check"
+            exit 0
+          fi
+          git fetch --tags --force origin '+refs/heads/main:refs/remotes/origin/main'
+          ref=$(jq -er '.plugins[] | select(.name == "tentaqles") | .source.ref' "$f")
+          sha=$(jq -er '.plugins[] | select(.name == "tentaqles") | .source.sha' "$f")
+          if ! printf '%s' "$sha" | grep -Eqx '[0-9a-f]{40}'; then
+            echo "::error file=$f::sha '$sha' is not 40 lowercase hex"
+            exit 1
+          fi
+          if ! printf '%s' "$ref" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error file=$f::ref '$ref' is not a release tag vX.Y.Z"
+            exit 1
+          fi
+          if ! got=$(git rev-parse --verify --quiet "refs/tags/$ref^{commit}"); then
+            echo "::error file=$f::tag '$ref' does not exist"
+            exit 1
+          fi
+          if [ "$got" != "$sha" ]; then
+            echo "::error file=$f::tag '$ref' is commit $got, the marketplace pins $sha"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error file=$f::pinned commit $sha is not on origin/main"
+            exit 1
+          fi
+          echo "marketplace pins $ref at $sha, on main"
+
   plugin:
     runs-on: ubuntu-latest
     steps:

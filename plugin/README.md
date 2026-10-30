@@ -41,13 +41,24 @@ Working across multiple clients with an AI coding assistant creates failure mode
 ### Install the plugin
 
 ```bash
-# From the marketplace
-/plugin marketplace add tentaqles/tentaqles-plugin
-/plugin install tentaqles@tentaqles-tentaqles-plugin
+# From the marketplace in github.com/tentaqles/tentaqles
+/plugin marketplace add tentaqles/tentaqles
+/plugin install tentaqles@tentaqles
 
-# Or test locally
-claude --plugin-dir /path/to/tentaqles-plugin
+# Or test locally from a checkout
+claude --plugin-dir /path/to/tentaqles/plugin
 ```
+
+The marketplace at the root of `tentaqles/tentaqles` installs the `plugin/` folder at the
+latest release tag (`vX.Y.Z`), pinned to that tag's commit sha so a moved tag cannot change what
+installs; you get the plugin as it was released, not whatever is on `main`. The pin is updated
+after each release, so the marketplace only appears once the first such release is out. Claude Code installs a new copy only when the plugin's version changes. Third-party
+marketplaces do not auto-update by default: turn it on in `/plugin` (Marketplaces), or set
+`"autoUpdate": true` on the `tentaqles` entry of `extraKnownMarketplaces`. With `tq`, the
+bundle catalog does this for every identity (see `docs/RELEASING.md` in the repo).
+
+The older `tentaqles/tentaqles-plugin` marketplace (`tentaqles@tentaqles-tentaqles-plugin`) is
+no longer where releases go.
 
 ### First-run dependencies
 

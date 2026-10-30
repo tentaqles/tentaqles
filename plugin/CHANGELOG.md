@@ -4,6 +4,13 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+- **New install source.** The plugin now ships from the marketplace at the root of
+  `github.com/tentaqles/tentaqles` (`/plugin marketplace add tentaqles/tentaqles`,
+  `/plugin install tentaqles@tentaqles`), which checks out `plugin/` at a release tag's commit (`ref` and `sha` pinned after the release).
+  `plugin.json` `repository` and `homepage` point at that repo. The `tentaqles/tentaqles-plugin`
+  marketplace no longer receives releases. Turn on `autoUpdate` for the marketplace (tq's
+  bundle catalog can set it per identity) to follow new tags.
+
 ## [0.15.0] — 2026-10-29
 
 Guard modes (tq spec E). Needs a `tq` build with `tq mode`.

@@ -7,7 +7,7 @@
     "email": "reach@tentaqles.ai",
     "url": "https://github.com/tentaqles"
   },
-  "repository": "https://github.com/tentaqles/tentaqles-plugin",
-  "homepage": "https://github.com/tentaqles/tentaqles-plugin",
+  "repository": "https://github.com/tentaqles/tentaqles",
+  "homepage": "https://github.com/tentaqles/tentaqles",
   "license": "MIT"
 }

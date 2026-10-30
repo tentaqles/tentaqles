@@ -2,7 +2,7 @@
 
 ## What this is
 
-Open-source Claude Code plugin for multi-workspace orchestration. Published at `github.com/tentaqles/tentaqles-plugin`. Installed users get it at `<config dir>/plugins/cache/tentaqles/tentaqles/<version>/`, where the config dir is `~/.claude` by default and `$CLAUDE_CONFIG_DIR` (one per identity, under `~/.tentaqles/identities/<id>/claude`) when tq manages the session.
+Open-source Claude Code plugin for multi-workspace orchestration. Lives in `plugin/` of `github.com/tentaqles/tentaqles` and ships from the root marketplace (`.claude-plugin/marketplace.json`, git-subdir pinned to a release tag and its commit sha, updated after each release; `plugin/.claude-plugin/marketplace.json` is a local directory marketplace for development). See `docs/RELEASING.md`. Installed users get it at `<config dir>/plugins/cache/tentaqles/tentaqles/<version>/`, where the config dir is `~/.claude` by default and `$CLAUDE_CONFIG_DIR` (one per identity, under `~/.tentaqles/identities/<id>/claude`) when tq manages the session.
 
 ## Architecture
 
@@ -109,6 +109,6 @@ Optional: `graphifyy` (graph engine), `tree-sitter` (native graph), `docling` (P
 
 ## Git
 
-- Remote: `github.com/tentaqles/tentaqles-plugin`
+- Remote: `github.com/tentaqles/tentaqles` (monorepo, `plugin/`); the old `tentaqles/tentaqles-plugin` repo no longer receives releases
 - Identity: `reach@tentaqles.ai` / `tentaqles`
 - Commit style: conventional commits

@@ -94,6 +94,33 @@ or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
 - **Audit.** Skipped and lowered decisions go to `$TQ_HOME/guard/mode.jsonl`, with the tq
   mode, Claude's mode and the action applied.
 
+### Plugin distribution from release tags
+
+- **Root marketplace.** `.claude-plugin/marketplace.json` (marketplace `tentaqles`) installs
+  the plugin from `plugin/` of this repo at a release tag and its commit sha (a `git-subdir`
+  source; with both set Claude Code checks out the sha). It is added after the release, in a
+  post-release PR, so `main` only names a tag that exists and passed. Then
+  `/plugin marketplace add tentaqles/tentaqles` and `/plugin install tentaqles@tentaqles`
+  replace the `tentaqles/tentaqles-plugin` repo. CI (`marketplace-pin`) fails unless the
+  pinned sha is the tag's commit and on `main`; the release workflow fails a tag that is not
+  on `main` or whose plugin versions disagree. Steps in [`docs/RELEASING.md`](docs/RELEASING.md).
+- **Bundle catalog marketplace fields.** A catalog marketplace takes `ref` (branch or tag) and
+  `path` (marketplace.json inside the repo) for `github`, the new `git` kind (`url`, `ref`,
+  `path`), and `autoUpdate: true`, written beside `source` in `extraKnownMarketplaces`.
+  `tq bundle capture` reads them back (autoUpdate from `settings.json`), `tq bundle diff`
+  reports a changed ref or autoUpdate as `marketplace-source` drift
+  (`github tentaqles/tentaqles@v0.8.0 autoUpdate`), and the catalog check warns on a github
+  source without `repo` or a git source without `url`, and on a `git`/`url` URL carrying
+  userinfo or a token. It refuses (and `sync` will not write) a `git` url other than
+  `https://`, `ssh://` or `user@host:path` (or with a user or host starting with `-`), a
+  plain-text transport (`http://`/`git://` git urls, non-`https` url sources) unless the entry
+  sets the tq-only `insecure: true`, and a `ref` git could read as an option or a revision
+  expression. Drift details strip URL userinfo.
+- **Bundle marketplace aliases.** A `claude.bundle.marketplaces` item `key=catalogName`
+  writes catalog entry `catalogName` under settings key `key`, so one workspace can load a
+  plugin from a local folder under the same plugin id (`tentaqles=tentaqles-dev`, plugins
+  still `tentaqles@tentaqles`). An unknown `catalogName` is an error naming both.
+
 ### Deprecated
 
 - Unattended mode is replaced by `relaxed`. `guard.unattended` is still read (in memory;
