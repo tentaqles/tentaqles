@@ -7,6 +7,12 @@ permissions:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    # provenance: a signed statement, kept by GitHub, that this workflow built
+    # each archive from this tag (docs/threat-model.md TM-2)
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
@@ -39,6 +45,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           SCOOP_BUCKET_DEPLOY_KEY: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
+      - name: attest the tq archives
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
 
   desktop:
     needs: goreleaser
@@ -47,6 +57,12 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # provenance: a signed statement, kept by GitHub, that this workflow built
+    # each archive from this tag (docs/threat-model.md TM-2)
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -160,6 +176,14 @@ jobs:
           # --appimage-extract-and-run avoids needing FUSE (libfuse2) on the runner
           ARCH=x86_64 /tmp/appimagetool --appimage-extract-and-run build/AppDir build/bin/tentaqles-setup.AppImage
           test -s build/bin/tentaqles-setup.AppImage
+
+      - name: attest the installers
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            desktop/build/bin/*-installer.exe
+            desktop/build/bin/*.dmg
+            desktop/build/bin/*.AppImage
 
       - name: upload release assets
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2

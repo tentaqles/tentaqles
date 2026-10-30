@@ -11,6 +11,9 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 - **Changed:** `install.ps1` and `install.sh` check the downloaded archive against the
   release's `checksums.txt` and refuse to install on a mismatch; the desktop release jobs
   do the same for the tq they bundle.
+- **Added:** releases carry build provenance (GitHub attestations) for every tq archive
+  and desktop installer; check one with
+  `gh attestation verify <file> --repo tentaqles/tentaqles`.
 - **CI:** every GitHub Action is pinned by commit sha, a `govulncheck` job scans for known
   vulnerabilities, and Dependabot proposes weekly updates for Go modules and actions.
 - **Docs:** [`docs/threat-model.md`](docs/threat-model.md): trust boundaries, threats per
