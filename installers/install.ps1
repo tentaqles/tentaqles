@@ -7,10 +7,21 @@ try { $rel = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/late
 catch { $rel = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=1")[0] }
 if (-not $rel) { throw "no releases found for $repo" }
 $ver = $rel.tag_name.TrimStart('v')
-$url = "https://github.com/$repo/releases/download/$($rel.tag_name)/tq_${ver}_windows_${arch}.zip"
+$archive = "tq_${ver}_windows_${arch}.zip"
+$base = "https://github.com/$repo/releases/download/$($rel.tag_name)"
 New-Item -ItemType Directory -Force $binDir | Out-Null
 $zip = Join-Path $env:TEMP "tq.zip"
-Invoke-WebRequest $url -OutFile $zip
+Invoke-WebRequest "$base/$archive" -OutFile $zip
+# Refuse an archive whose SHA-256 is not the one the release lists.
+$sumsFile = Join-Path $env:TEMP "tq-checksums.txt"
+Invoke-WebRequest "$base/checksums.txt" -OutFile $sumsFile
+$want = (Get-Content $sumsFile | Where-Object { ($_.Trim() -split '\s+')[1] -eq $archive } | ForEach-Object { ($_.Trim() -split '\s+')[0] } | Select-Object -First 1)
+Remove-Item $sumsFile
+$got = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+if (-not $want -or $got -ne $want.ToLower()) {
+  Remove-Item $zip
+  throw "checksum mismatch for $archive (expected $want, got $got); not installing"
+}
 Expand-Archive $zip -DestinationPath $binDir -Force
 Remove-Item $zip
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')

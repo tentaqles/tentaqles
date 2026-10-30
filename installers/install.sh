@@ -9,9 +9,19 @@ TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/nul
 [ -n "$TAG" ] || TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=1" | tag_of)
 [ -n "$TAG" ] || { echo "no releases found for $REPO"; exit 1; }
 VER=${TAG#v}
-URL="https://github.com/$REPO/releases/download/$TAG/tq_${VER}_${OS}_${ARCH}.tar.gz"
+ARCHIVE="tq_${VER}_${OS}_${ARCH}.tar.gz"
+BASE="https://github.com/$REPO/releases/download/$TAG"
 mkdir -p "$BIN_DIR"; TMP=$(mktemp -d)
-curl -fsSL "$URL" | tar -xz -C "$TMP"
+curl -fsSL -o "$TMP/$ARCHIVE" "$BASE/$ARCHIVE"
+curl -fsSL -o "$TMP/checksums.txt" "$BASE/checksums.txt"
+# Refuse an archive whose SHA-256 is not the one the release lists.
+WANT=$(awk -v f="$ARCHIVE" '$2 == f {print $1}' "$TMP/checksums.txt")
+if command -v sha256sum >/dev/null 2>&1; then GOT=$(sha256sum "$TMP/$ARCHIVE" | cut -d' ' -f1)
+else GOT=$(shasum -a 256 "$TMP/$ARCHIVE" | cut -d' ' -f1); fi
+if [ -z "$WANT" ] || [ "$GOT" != "$WANT" ]; then
+  echo "checksum mismatch for $ARCHIVE (expected ${WANT:-none}, got $GOT); not installing"; exit 1
+fi
+tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
 install -m 755 "$TMP/tq" "$BIN_DIR/tq"
 echo "Installed tq $VER to $BIN_DIR/tq"
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Add $BIN_DIR to your PATH";; esac
