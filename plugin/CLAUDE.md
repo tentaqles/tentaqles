@@ -1,4 +1,4 @@
-# CLAUDE.md — tentaqles-plugin
+# CLAUDE.md — tentaqles plugin
 
 ## What this is
 
@@ -109,6 +109,6 @@ Optional: `graphifyy` (graph engine), `tree-sitter` (native graph), `docling` (P
 
 ## Git
 
-- Remote: `github.com/tentaqles/tentaqles` (monorepo, `plugin/`); the old `tentaqles/tentaqles-plugin` repo no longer receives releases
+- Remote: `github.com/tentaqles/tentaqles` (monorepo, `plugin/`)
 - Identity: `reach@tentaqles.ai` / `tentaqles`
 - Commit style: conventional commits

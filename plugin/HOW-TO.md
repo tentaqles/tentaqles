@@ -691,7 +691,7 @@ bash scripts/tq_run.sh compaction-cron.py
 **Schedule with cron (Linux/macOS)**:
 
 ```
-0 3 * * * cd /path/to/tentaqles-plugin && bash scripts/tq_run.sh compaction-cron.py >> ~/.claude/logs/compaction.log 2>&1
+0 3 * * * cd /path/to/tentaqles/plugin && bash scripts/tq_run.sh compaction-cron.py >> ~/.claude/logs/compaction.log 2>&1
 ```
 
 **Schedule with Task Scheduler (Windows)**: point the action to `sh` with arguments `C:\path\to\scripts\tq_run.sh compaction-cron.py`. The runner resolves the correct Python automatically.
