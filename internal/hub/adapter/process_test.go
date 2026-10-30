@@ -7,11 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -59,16 +57,21 @@ func isolate(t *testing.T) {
 	}
 }
 
+// pidAlive reports whether pid still runs 5 s after the caller saw its run
+// end. A killed process can take a moment to finish exiting (TerminateProcess
+// is asynchronous on Windows, and a grandchild is killed by taskkill after the
+// direct child): the check waits on that condition with a deadline instead of
+// sampling once (CI on Windows: "helper pid still alive after Start returned",
+// where the exited helper was still openable through another handle).
 func pidAlive(pid int) bool {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
+	deadline := time.Now().Add(5 * time.Second)
+	for processRunning(pid) {
+		if time.Now().After(deadline) {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	if runtime.GOOS == "windows" {
-		p.Release()
-		return true // FindProcess opens the process on Windows: success means it still exists
-	}
-	return p.Signal(syscall.Signal(0)) == nil
+	return false
 }
 
 func helperReq(t *testing.T, name, prompt string) RunRequest {
@@ -107,11 +110,19 @@ func TestProcessAdapterReportsExitCode(t *testing.T) {
 func TestProcessAdapterCancelTerminates(t *testing.T) {
 	var log syncBuf
 	grace := time.Second
+	// exec's own fallback (WaitDelay = grace + waitDelaySlack) would kill the child only after a
+	// minute, so a stop well before that is terminate's work. A fixed "within grace + 3 s" bound
+	// measured how fast taskkill starts on a loaded runner instead (7.4 s under load).
+	prevSlack := waitDelaySlack
+	waitDelaySlack = time.Minute
+	t.Cleanup(func() { waitDelaySlack = prevSlack })
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
+	req := helperReq(t, "sleep", "")
 	start := time.Now()
 	go func() {
-		_, err := Process{Command: []string{os.Args[0]}, Grace: grace}.Start(ctx, helperReq(t, "sleep", ""), &log)
+		_, err := Process{Command: []string{os.Args[0]}, Grace: grace}.Start(ctx, req, &log)
 		done <- err
 	}()
 	for !strings.Contains(log.String(), "sleeping") {
@@ -132,15 +143,15 @@ func TestProcessAdapterCancelTerminates(t *testing.T) {
 		if err == nil {
 			t.Fatal("a cancelled run returns the context error")
 		}
-		// terminate must do the work: without it WaitDelay (grace + 5s) is what would end the child
-		if d := time.Since(cancelled); d > grace+3*time.Second {
-			t.Fatalf("took %v to stop, terminate did not act within the grace period", d)
+		// terminate must do the work: without it WaitDelay (grace + a minute) is what would end the child
+		if d := time.Since(cancelled); d > grace+waitDelaySlack/2 {
+			t.Fatalf("took %v to stop: terminate did not end the child, exec's WaitDelay fallback did", d)
 		}
 		if pidAlive(pid) {
-			t.Fatalf("helper pid %d still alive after Start returned", pid)
+			t.Fatalf("helper pid %d still running 5 s after Start returned", pid)
 		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("cancel did not stop the process within the grace period")
+	case <-time.After(grace + waitDelaySlack + 30*time.Second):
+		t.Fatal("cancel did not stop the process")
 	}
 }
 

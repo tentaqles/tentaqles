@@ -81,9 +81,13 @@ func command(ctx context.Context, argv []string, req RunRequest, grace time.Dura
 	cmd.Env = req.Env
 	prepare(cmd)
 	cmd.Cancel = func() error { return terminate(cmd.Process, grace, done) }
-	cmd.WaitDelay = grace + 5*time.Second
+	cmd.WaitDelay = grace + waitDelaySlack
 	return cmd
 }
+
+// waitDelaySlack is how long after the grace period exec's own fallback kills a child that
+// terminate did not stop. A test raises it so that only terminate can end the child in time.
+var waitDelaySlack = 5 * time.Second
 
 // exitCode maps cmd.Run's error: a non-zero exit is a result, a failure to start or a cancel is an error.
 func exitCode(ctx context.Context, err error) (int, error) {

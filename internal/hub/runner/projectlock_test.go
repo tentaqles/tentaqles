@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/hub/adapter"
@@ -53,6 +54,35 @@ func byDir(project, wt string) step {
 	}
 }
 
+// held wraps s so that every round it runs blocks until release is called: the test decides when
+// a round ends, not the scheduler.
+func held(s step) (step, func()) {
+	gate := make(chan struct{})
+	var once sync.Once
+	return func(ctx context.Context, req adapter.RunRequest) (adapter.RunResult, error) {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return adapter.RunResult{}, ctx.Err()
+		}
+		return s(ctx, req)
+	}, func() { once.Do(func() { close(gate) }) }
+}
+
+// tickHeld is one tick whose rounds are held until the tick has looked at every due run: a
+// round that finished (relocated or ended) while Tick still walked the queue would rightly free
+// the project for the next run in the same tick, which is a different scenario. Rounds started
+// by the tick then run to their end.
+func (h *harness) tickHeld(release func()) {
+	h.t.Helper()
+	if err := h.svc.Tick(context.Background()); err != nil {
+		release()
+		h.t.Fatal(err)
+	}
+	release()
+	h.svc.Wait()
+}
+
 // Two cards of one project: the second run waits (queued) until the first one relocated.
 func TestProjectLockWaitsUntilRelocation(t *testing.T) {
 	h := newHarness(t)
@@ -61,11 +91,14 @@ func TestProjectLockWaitsUntilRelocation(t *testing.T) {
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h.ad.steps = []step{byDir(project, wt)}
+	// The first round relocates at once; held, it cannot do so before the tick reached the
+	// second card (macOS CI: "2 rounds started" when the goroutine won that race).
+	s, release := held(byDir(project, wt))
+	h.ad.steps = []step{s}
 	a, b := h.card("feature", store.TagAgentReady), h.card("feature", store.TagAgentReady)
 	ra, rb := h.enqueue(a), h.enqueue(b)
 
-	h.tick()
+	h.tickHeld(release)
 	if n := len(h.ad.calls()); n != 1 {
 		t.Fatalf("%d rounds started; the second card of the project must wait", n)
 	}
@@ -99,10 +132,12 @@ func TestProjectLockWaitsUntilRelocation(t *testing.T) {
 // A run that ends before it relocates releases the project to the next run.
 func TestProjectLockReleasedWhenTheRunEnds(t *testing.T) {
 	h := newHarness(t)
-	h.ad.steps = []step{result("")} // ends without a stop: failed, released
+	// ends without a stop: failed, released; held until the tick looked at the second card
+	s, release := held(result(""))
+	h.ad.steps = []step{s}
 	a, b := h.card("feature", store.TagAgentReady), h.card("feature", store.TagAgentReady)
 	ra, rb := h.enqueue(a), h.enqueue(b)
-	h.tick()
+	h.tickHeld(release)
 	if got := h.run(ra.ID); got.Active() {
 		t.Fatalf("first run should have ended: %+v", got)
 	}
