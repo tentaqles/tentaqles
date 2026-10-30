@@ -3,7 +3,6 @@ package gate
 import (
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs/db/drill"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
 )
@@ -424,19 +424,14 @@ func TestRestoreTargetWithoutEnvironments(t *testing.T) {
 func TestGuardsStayInBudget(t *testing.T) {
 	f := newFixture(t, dbBlock)
 	f.link(prodRef)
-	big := strings.Repeat("echo tester acme ", 4000) + "; supabase db push"
-	for _, guard := range []func(policy.ToolCall, packs.GuardCtx) (policy.Action, string, bool){MigrateEnv, RestoreTarget} {
-		// the median of 7 runs, so a loaded CI runner does not flake it
-		var times []time.Duration
-		for i := 0; i < 7; i++ {
-			start := time.Now()
-			guard(policy.ToolCall{Tool: "Bash", Command: big}, f.ctx())
-			times = append(times, time.Since(start))
-		}
-		sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
-		if d := times[len(times)/2]; d > 200*time.Millisecond {
-			t.Fatalf("a 64 KiB command took %s (median of 7)", d)
-		}
+	// A 64 KiB command: linear cost and a load-tolerant ceiling
+	// (testutil.CheckLatency; a loaded runner measured a 269 ms median
+	// against the old fixed 200 ms bound).
+	for name, guard := range map[string]func(policy.ToolCall, packs.GuardCtx) (policy.Action, string, bool){"migrate-env": MigrateEnv, "restore-target": RestoreTarget} {
+		testutil.CheckLatency(t, name, packs.GuardBudget, func(div int) func() {
+			call := policy.ToolCall{Tool: "Bash", Command: strings.Repeat("echo tester acme ", 4000/div) + "; supabase db push"}
+			return func() { guard(call, f.ctx()) }
+		})
 	}
 }
 

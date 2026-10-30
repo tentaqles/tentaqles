@@ -2,14 +2,13 @@ package data
 
 import (
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 func guardEnv(t *testing.T, repo, cfg string) packs.GuardEnv {
@@ -273,34 +272,30 @@ func TestDBTFullRefreshGuard(t *testing.T) {
 	}
 }
 
+// The dbt guards on a 64 KiB command: linear cost and a load-tolerant
+// ceiling (testutil.CheckLatency); BenchmarkDBTGuards64KiB measures the 50 ms.
 func TestDBTGuardsUnder50ms(t *testing.T) {
 	isolate(t)
 	repo := t.TempDir()
 	writeFile(t, repo, "profiles.yml", "acme:\n  target: dev\n")
 	env := guardEnv(t, repo, "data: {enabled: true}")
-	cmd := strings.Repeat("echo dbt run --target dev 'quoted text' ; ", 64<<10/40)[:64<<10] + " dbt run"
+	cmdOf := func(div int) string {
+		n := 64 << 10 / div
+		return strings.Repeat("echo dbt run --target dev 'quoted text' ; ", n/40+1)[:n] + " dbt run"
+	}
 	// review r1: a run of braces and open quotes stays linear
-	braces := "dbt run " + strings.Repeat("{'{", 64<<10/3) + " --target dev"
-	for _, id := range []string{guardProdTarget, guardFullRefresh, guardProdTarget + " braces"} {
-		cmd := cmd
-		if strings.HasSuffix(id, " braces") {
-			id, cmd = strings.TrimSuffix(id, " braces"), braces
+	bracesOf := func(div int) string { return "dbt run " + strings.Repeat("{'{", 64<<10/3/div) + " --target dev" }
+	for _, c := range []struct {
+		id string
+		of func(int) string
+	}{{guardProdTarget, cmdOf}, {guardFullRefresh, cmdOf}, {guardProdTarget, bracesOf}} {
+		if o := outcome(t, env, "Bash", c.of(1), c.id); o.Failed {
+			t.Fatalf("%s failed: %+v", c.id, o)
 		}
-		var durs []time.Duration
-		for i := 0; i < 9; i++ {
-			start := time.Now()
-			o := outcome(t, env, "Bash", cmd, id)
-			durs = append(durs, time.Since(start))
-			if o.Failed {
-				t.Fatalf("%s failed: %+v", id, o)
-			}
-		}
-		sort.Slice(durs, func(i, j int) bool { return durs[i] < durs[j] })
-		med := durs[len(durs)/2]
-		// the guard budget is 50 ms; a loaded CI runner (macOS) can more than double a median, and the regressions these catch (quadratic scans) took seconds, so the test bound is 200 ms
-		if med > 200*time.Millisecond {
-			t.Fatalf("%s median %v on a 64 KiB command (target 50ms)", id, med)
-		}
+		testutil.CheckLatency(t, c.id, packs.GuardBudget, func(div int) func() {
+			cmd := c.of(div)
+			return func() { outcome(t, env, "Bash", cmd, c.id) }
+		})
 	}
 }
 

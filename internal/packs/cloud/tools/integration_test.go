@@ -33,6 +33,12 @@ func TestMain(m *testing.M) {
 		fakeTool()
 		return
 	}
+	// The fake tools are fresh copies of this binary: on a loaded Windows
+	// runner the first start can exceed the 5 s --version bound, the check
+	// then records no version (CI: TestExternalChecksWithFakeCLIs, checkov
+	// with no version). GenerousBudgetsForTests raises it with the guard
+	// budgets.
+	packs.GenerousBudgetsForTests()
 	os.Exit(m.Run())
 }
 
@@ -552,14 +558,15 @@ func TestHangingToolIsKilled(t *testing.T) {
 	root, changed, tracked := repo(t)
 	in := input(t, "[tflint]", "  timeouts: {tflint: 1s}\n", root, changed, tracked)
 	f.runner(in)
-	start := time.Now()
 	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"cloud"}})
 	r := byID(rep)["cloud/tflint"]
 	if r.Status != packs.Fail || r.Tool == nil || !r.Tool.TimedOut || !strings.Contains(r.Detail, "timed out") {
-		t.Errorf("hung tflint = %+v", r)
+		t.Fatalf("hung tflint = %+v", r)
 	}
-	if time.Since(start) > 30*time.Second {
-		t.Errorf("the hung tool was not killed at its timeout (%s)", time.Since(start))
+	// The run itself (not the version probe before it, slow on a loaded
+	// runner) ended well before the fake's 60 s sleep.
+	if d := time.Duration(r.Tool.DurationMS) * time.Millisecond; d > 30*time.Second {
+		t.Errorf("the hung tool was not killed at its timeout (%s)", d)
 	}
 }
 

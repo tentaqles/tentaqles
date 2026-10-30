@@ -282,19 +282,16 @@ func TestApplyGuardCountersReachTheOutcome(t *testing.T) {
 		"terraform -chdir=infra/envs/dev apply":  "apply_allowed:auto",
 	}
 	for cmd, want := range cases {
+		// The package's TestMain gives the guards generous budgets, so a slow
+		// box no longer blows the 50 ms one: a failed outcome is a failure.
 		var o packs.GuardOutcome
-		for try := 0; try < 3; try++ { // a slow box can blow the 50 ms guard budget
-			for _, x := range packs.EvaluateGuards(policy.ToolCall{Tool: "Bash", Command: cmd}, e.guardEnv(), nil, nil) {
-				if x.ID == probeID {
-					o = x
-				}
-			}
-			if !o.Failed {
-				break
+		for _, x := range packs.EvaluateGuards(policy.ToolCall{Tool: "Bash", Command: cmd}, e.guardEnv(), nil, nil) {
+			if x.ID == probeID {
+				o = x
 			}
 		}
 		if o.Failed {
-			t.Skipf("%s: guard over budget three times", cmd)
+			t.Fatalf("%s: the guard failed: %+v", cmd, o)
 		}
 		var names []string
 		for _, c := range o.Counters {

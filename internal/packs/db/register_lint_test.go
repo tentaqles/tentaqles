@@ -15,6 +15,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
+	"github.com/tentaqles/tentaqles/internal/packs/db/gate"
 	"github.com/tentaqles/tentaqles/internal/packs/db/lint"
 	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
 	"gopkg.in/yaml.v3"
@@ -28,6 +29,14 @@ func TestMain(m *testing.M) {
 		fakeTool(mode)
 		return
 	}
+	// Generous read, hash and guard budgets, and the db gate's hash budget:
+	// on a loaded CI runner hashing the fixture migrations can exceed the
+	// 30 ms production bound, which fails closed (CI: TestApproveMigrateFlow,
+	// TestApproveNoDrillByAHuman "the migrations could not be hashed within
+	// the guard's time budget") instead of testing the approval flow.
+	// db/gate's TestHashBudgetDenies tests that going over it denies.
+	packs.GenerousBudgetsForTests()
+	gate.HashBudget = 10 * time.Second
 	os.Exit(m.Run())
 }
 
@@ -333,14 +342,18 @@ func TestHangingToolIsKilledAtItsTimeout(t *testing.T) {
 	r := packs.NewToolRunner(root, cfg)
 	r.LookPath = lookOnly(bin)
 	in.Tools = r
-	start := time.Now()
 	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"db"}})
 	sq := byID(rep)["db/squawk"]
 	if sq.Status != packs.Fail || !sq.Required || !strings.Contains(sq.Detail, "timed out") {
 		t.Fatalf("hung squawk = %+v", sq)
 	}
-	if time.Since(start) > 20*time.Second {
-		t.Fatalf("the hung tool was not killed at its timeout (%s)", time.Since(start))
+	// The run itself (not the version probe before it, slow on a loaded
+	// runner) ended well before the fake's 30 s sleep.
+	if sq.Tool == nil || !sq.Tool.TimedOut {
+		t.Fatalf("hung squawk tool run = %+v", sq.Tool)
+	}
+	if d := time.Duration(sq.Tool.DurationMS) * time.Millisecond; d > 20*time.Second {
+		t.Fatalf("the hung tool was not killed at its timeout (%s)", d)
 	}
 }
 

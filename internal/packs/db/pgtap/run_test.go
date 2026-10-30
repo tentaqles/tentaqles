@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 		fake(mode)
 		return
 	}
+	// A fresh copy of this binary can start slower than the 5 s --version
+	// bound on a loaded Windows runner; the probe would record no version.
+	toolrun.GenerousVersionTimeoutForTests()
 	os.Exit(m.Run())
 }
 
@@ -418,10 +421,14 @@ func TestHangIsKilled(t *testing.T) {
 	t.Setenv("TQ_FAKE_PGTAP", "hang")
 	t.Setenv("TEST_DATABASE_URL", "postgres://tester@localhost/acme")
 	dialer(t, e, "up")
-	start := time.Now()
 	r := Run(context.Background(), e.in, opts(e, PgProve))
-	if r.Status != packs.Fail || !strings.Contains(r.Detail, "timed out") || time.Since(start) > 20*time.Second {
-		t.Fatalf("result = %+v after %s", r, time.Since(start))
+	if r.Status != packs.Fail || !strings.Contains(r.Detail, "timed out") || r.Tool == nil || !r.Tool.TimedOut {
+		t.Fatalf("result = %+v (tool %+v)", r, r.Tool)
+	}
+	// The run itself (not the version probe before it, slow on a loaded
+	// runner) ended well before the fake's 30 s sleep.
+	if d := time.Duration(r.Tool.DurationMS) * time.Millisecond; d > 20*time.Second {
+		t.Fatalf("the hung tool ran %s", d)
 	}
 }
 

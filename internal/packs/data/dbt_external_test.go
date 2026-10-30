@@ -376,11 +376,7 @@ func TestFakeCLIsTimeout(t *testing.T) {
 	in := &packs.Input{Root: root, Base: "HEAD", Config: cfg, Tools: packs.NewToolRunner(root, cfg), Budget: time.Now().Add(time.Minute),
 		Changed: []packs.ChangedFile{{Path: "models/staging/stg_orders.sql", Status: 'A'}}}
 	in.SetWorkspace("acme", root)
-	start := time.Now()
 	rep := packs.RunChecks(context.Background(), in, packs.RunOptions{Packs: []string{"data"}})
-	if d := time.Since(start); d > 20*time.Second {
-		t.Fatalf("the hung tools were not killed: %v", d)
-	}
 	got := map[string]packs.Result{}
 	for _, r := range rep.Results {
 		got[r.ID] = r
@@ -389,6 +385,12 @@ func TestFakeCLIsTimeout(t *testing.T) {
 		r := got[id]
 		if r.Status != packs.Fail || !strings.Contains(r.Detail, "timed out") || r.Tool == nil || !r.Tool.TimedOut {
 			t.Errorf("%s: %+v (tool %+v)", id, r, r.Tool)
+			continue
+		}
+		// Each run itself (not the version probe before it, slow on a
+		// loaded runner) ended well before the fake's 30 s sleep.
+		if d := time.Duration(r.Tool.DurationMS) * time.Millisecond; d > 20*time.Second {
+			t.Errorf("%s: the hung tool was not killed: ran %v", id, d)
 		}
 	}
 }

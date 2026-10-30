@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/packs/cloud/plans"
 	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
 )
@@ -385,20 +385,16 @@ func BenchmarkApplyEnv64KiB(b *testing.B) {
 	}
 }
 
+// Two guards on a 64 KiB command: linear cost and a load-tolerant ceiling
+// (testutil.CheckLatency; CI once measured a 201 ms median against the old
+// fixed 200 ms bound). BenchmarkApplyEnv64KiB measures the 50 ms budget.
 func TestApplyEnvUnder50ms(t *testing.T) {
 	f := newFixture(t, cloudBlock)
-	cmd := strings.Repeat("echo terraform plan && ", 64<<10/24) + "terraform -chdir=infra/envs/dev apply"
-	// the median of 7 runs, so a loaded CI runner does not flake it
-	var times []time.Duration
-	for i := 0; i < 7; i++ {
-		start := time.Now()
-		f.run(ApplyEnv, cmd)
-		f.run(IdentityDrift, cmd)
-		times = append(times, time.Since(start))
-	}
-	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
-	// the guard budget is 50 ms; a loaded CI runner (macOS) can more than double a median, and the regressions these catch (quadratic scans) took seconds, so the test bound is 200 ms
-	if d := times[len(times)/2]; d > 200*time.Millisecond {
-		t.Fatalf("two guards on 64 KiB took %s (median of 7)", d)
-	}
+	testutil.CheckLatency(t, "apply-env + identity-drift", 2*packs.GuardBudget, func(div int) func() {
+		cmd := strings.Repeat("echo terraform plan && ", 64<<10/24/div) + "terraform -chdir=infra/envs/dev apply"
+		return func() {
+			f.run(ApplyEnv, cmd)
+			f.run(IdentityDrift, cmd)
+		}
+	})
 }

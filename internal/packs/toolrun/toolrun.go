@@ -36,7 +36,33 @@ const (
 	WaitDelay = 5 * time.Second
 	// MaxOutput caps stdout and stderr, each.
 	MaxOutput = 1 << 20
+	// AttachTimeout bounds putting a started tool into its process tree (a
+	// Job Object on Windows) before it runs: a start that cannot be
+	// contained in time is killed and fails with a clear error instead of
+	// blocking the check.
+	AttachTimeout = 30 * time.Second
 )
+
+// The bounds in force; tests raise versionTimeout (GenerousVersionTimeoutForTests)
+// and replace attach.
+var (
+	versionTimeout = VersionTimeout
+	attachTimeout  = AttachTimeout
+	attach         = attachTree
+)
+
+// GenerousVersionTimeoutForTests raises the `<tool> --version` bound for a
+// test binary. The fake tools of the pack tests are fresh copies of a test
+// binary: on a loaded Windows runner the first start of a new executable
+// (scanned by the antivirus before it runs) can take longer than the 5 s
+// production bound, the probe then records no version and a check that
+// needs one fails ("dbt (unknown version) is below the minimum"). Production
+// code never calls it. It returns a function that restores the real bound.
+func GenerousVersionTimeoutForTests() (restore func()) {
+	prev := versionTimeout
+	versionTimeout = 2 * time.Minute
+	return func() { versionTimeout = prev }
+}
 
 // Telemetry holds the known telemetry switches added to a tool's
 // environment (its runs and its version probe), besides DO_NOT_TRACK=1 for
@@ -167,7 +193,7 @@ func (r *Runner) Probe(pack, tool string) Probe {
 		}
 	}
 	if p.Found && !(r.NoExecRepo && r.RepoLocal(p)) { // any repo-local binary, also one found through PATH
-		ctx, cancel := context.WithTimeout(context.Background(), VersionTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
 		p.Version = Version(ctx, p.Path)
 		cancel()
 	}
@@ -183,7 +209,7 @@ func (r *Runner) Probe(pack, tool string) Probe {
 // Version runs `<path> --version` (bounded by ctx and VersionTimeout) and
 // returns the parsed version, or "" when it cannot be read.
 func Version(ctx context.Context, path string) string {
-	ctx, cancel := context.WithTimeout(ctx, VersionTimeout)
+	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
 	defer cancel()
 	// the tool's own telemetry switches apply to the probe too
 	out, _ := run(ctx, path, []string{"--version"}, "", toolEnv(probeTool(path), nil, nil), nil)
@@ -441,9 +467,14 @@ func run(ctx context.Context, path string, args []string, dir string, env []stri
 	if err := cmd.Start(); err != nil {
 		return out, err
 	}
-	tree, err := attachTree(cmd)
+	tree, err := attachBounded(ctx, cmd)
 	if err != nil {
 		_ = cmd.Wait()
+		out.Duration = time.Since(start)
+		if ctx.Err() != nil {
+			out.TimedOut = true
+			return out, nil
+		}
 		return out, fmt.Errorf("could not contain the tool's process tree: %w", err)
 	}
 	done := make(chan error, 1)
@@ -468,6 +499,45 @@ func run(ctx context.Context, path string, args []string, dir string, env []stri
 		werr = nil
 	}
 	return out, werr
+}
+
+// errAttachTimeout is a start that could not be contained in time.
+var errAttachTimeout = errors.New("the tool's process could not be placed in its process tree in time")
+
+// attachBounded runs attach with a deadline (attachTimeout, or ctx's when
+// sooner). A start that does not finish in time is killed: the child is
+// still suspended on Windows, so it never ran outside its tree. A late
+// attach is cleaned up when it returns.
+func attachBounded(ctx context.Context, cmd *exec.Cmd) (*procTree, error) {
+	type result struct {
+		tree *procTree
+		err  error
+	}
+	ch := make(chan result, 1)
+	fn := attach
+	go func() {
+		t, err := fn(cmd)
+		ch <- result{t, err}
+	}()
+	timer := time.NewTimer(attachTimeout)
+	defer timer.Stop()
+	var why error
+	select {
+	case r := <-ch:
+		return r.tree, r.err
+	case <-timer.C:
+		why = fmt.Errorf("%w (%s)", errAttachTimeout, attachTimeout)
+	case <-ctx.Done():
+		why = ctx.Err()
+	}
+	_ = cmd.Process.Kill()
+	go func() {
+		if r := <-ch; r.tree != nil {
+			r.tree.kill()
+			r.tree.close()
+		}
+	}()
+	return nil, why
 }
 
 // capped keeps the first max bytes and drops the rest, so a chatty tool

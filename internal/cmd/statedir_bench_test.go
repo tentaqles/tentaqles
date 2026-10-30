@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 // stateDirLoad isolates the homes and sets 500 extra variables, 20 of them
@@ -31,12 +32,17 @@ func stateDirLoad(tb testing.TB) (policy.ToolCall, string) {
 		}
 		tb.Setenv(fmt.Sprintf("TQ_BENCH_VAR_%03d", i), v)
 	}
+	return stateDirCall(64 * 1024), dir
+}
+
+// stateDirCall is the stateDirLoad command at about n bytes.
+func stateDirCall(n int) policy.ToolCall {
 	var b strings.Builder
 	b.WriteString("cd ~/.tentaqles && ls; ls $TQ_HOME; ")
-	for i := 0; b.Len() < 64*1024; i++ {
+	for i := 0; b.Len() < n; i++ {
 		fmt.Fprintf(&b, "cat $TQ_BENCH_VAR_%03d/notes%d.md | sort > /tmp/out%d.txt; grep -n key some/ordinary/path/file%d.txt; ", i%20, i, i, i)
 	}
-	return policy.ToolCall{Tool: "Bash", Command: b.String()}, dir
+	return policy.ToolCall{Tool: "Bash", Command: b.String()}
 }
 
 // F5: the hook-time state-dir check stays fast on a large call.
@@ -57,20 +63,14 @@ func TestStateDirDecisionUnder50ms(t *testing.T) {
 	if d := stateDirDecision(call, cwd); d.Action != policy.Allow { // also fills the cache
 		t.Fatalf("verdict %v, want allow: %+v", d.Action, d)
 	}
-	var runs []time.Duration
-	for i := 0; i < 9; i++ {
-		start := time.Now()
-		stateDirDecision(call, cwd)
-		runs = append(runs, time.Since(start))
-	}
-	sort.Slice(runs, func(i, j int) bool { return runs[i] < runs[j] })
-	// The hook budget is 50 ms (BenchmarkStateDirDecision measures it); a
-	// loaded CI runner can double or triple a median, so the test bound is
-	// 200 ms. The regressions it guards against (a quadratic matcher) took
-	// seconds.
-	if m := runs[len(runs)/2]; m > 200*time.Millisecond {
-		t.Fatalf("median %v, want under 200ms (target 50ms)", m)
-	}
+	// The hook budget is 50 ms (BenchmarkStateDirDecision measures it). The
+	// regressions this guards against (a quadratic matcher) took seconds; a
+	// loaded CI runner can triple a median, so the test checks linear cost
+	// and a load-tolerant ceiling (testutil.CheckLatency).
+	testutil.CheckLatency(t, "state-dir decision", 50*time.Millisecond, func(div int) func() {
+		c := stateDirCall(64 * 1024 / div)
+		return func() { stateDirDecision(c, cwd) }
+	})
 }
 
 // R4-2: the literal root matcher agrees with the alternation regexp it

@@ -26,6 +26,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("TQ_FAKE_DRILL") == "1" || isFake(os.Args[0]) {
 		os.Exit(fakeMain())
 	}
+	// A fresh copy of this binary can start slower than the 5 s --version
+	// bound on a loaded Windows runner; the probe would record no version.
+	toolrun.GenerousVersionTimeoutForTests()
 	os.Exit(m.Run())
 }
 

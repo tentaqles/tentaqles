@@ -4,6 +4,7 @@ package toolrun
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"syscall"
@@ -12,26 +13,22 @@ import (
 )
 
 var (
-	kernel32                            = syscall.NewLazyDLL("kernel32.dll")
-	procCreateJobObject                 = kernel32.NewProc("CreateJobObjectW")
-	procSetInformationJob               = kernel32.NewProc("SetInformationJobObject")
-	procAssignProcessToJob              = kernel32.NewProc("AssignProcessToJobObject")
-	procTerminateJobObject              = kernel32.NewProc("TerminateJobObject")
-	procCreateToolhelp32Snapshot        = kernel32.NewProc("CreateToolhelp32Snapshot")
-	procThread32First                   = kernel32.NewProc("Thread32First")
-	procThread32Next                    = kernel32.NewProc("Thread32Next")
-	procOpenThread                      = kernel32.NewProc("OpenThread")
-	procResumeThread                    = kernel32.NewProc("ResumeThread")
-	jobObjectExtendedLimitInfo   uint32 = 9
+	kernel32                          = syscall.NewLazyDLL("kernel32.dll")
+	procCreateJobObject               = kernel32.NewProc("CreateJobObjectW")
+	procSetInformationJob             = kernel32.NewProc("SetInformationJobObject")
+	procAssignProcessToJob            = kernel32.NewProc("AssignProcessToJobObject")
+	procTerminateJobObject            = kernel32.NewProc("TerminateJobObject")
+	ntdll                             = syscall.NewLazyDLL("ntdll.dll")
+	procNtResumeProcess               = ntdll.NewProc("NtResumeProcess")
+	jobObjectExtendedLimitInfo uint32 = 9
 )
 
 const (
 	jobObjectLimitKillOnJobClose = 0x00002000
 	processSetQuota              = 0x0100
 	processTerminate             = 0x0001
+	processSuspendResume         = 0x0800
 	createSuspended              = 0x00000004
-	th32csSnapThread             = 0x00000004
-	threadSuspendResume          = 0x0002
 )
 
 type ioCounters struct {
@@ -58,16 +55,6 @@ type jobExtendedLimit struct {
 	JobMemoryLimit        uintptr
 	PeakProcessMemoryUsed uintptr
 	PeakJobMemoryUsed     uintptr
-}
-
-type threadEntry32 struct {
-	Size           uint32
-	Usage          uint32
-	ThreadID       uint32
-	OwnerProcessID uint32
-	BasePri        int32
-	DeltaPri       int32
-	Flags          uint32
 }
 
 // procTree is a Job Object holding the child and every process it starts.
@@ -105,48 +92,23 @@ func attachTree(cmd *exec.Cmd) (*procTree, error) {
 	if r, _, err := procSetInformationJob.Call(uintptr(t.job), uintptr(jobObjectExtendedLimitInfo), uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info)); r == 0 {
 		return fail(errors.New("SetInformationJobObject: " + err.Error()))
 	}
-	ph, err := syscall.OpenProcess(processSetQuota|processTerminate, false, uint32(t.pid))
+	ph, err := syscall.OpenProcess(processSetQuota|processTerminate|processSuspendResume, false, uint32(t.pid))
 	if err != nil {
 		return fail(err)
 	}
-	r, _, aerr := procAssignProcessToJob.Call(uintptr(t.job), uintptr(ph))
-	syscall.CloseHandle(ph)
-	if r == 0 {
+	defer syscall.CloseHandle(ph)
+	if r, _, aerr := procAssignProcessToJob.Call(uintptr(t.job), uintptr(ph)); r == 0 {
 		return fail(errors.New("AssignProcessToJobObject: " + aerr.Error()))
 	}
-	if err := resumeProcess(uint32(t.pid)); err != nil {
-		return fail(err)
+	// NtResumeProcess resumes the threads of this one process through its
+	// handle. It replaces a walk of a Toolhelp snapshot of every thread on
+	// the machine, whose cost grows with the whole machine's thread count
+	// and in which a loaded CI runner hung a tool start for minutes
+	// (TestRuffFindings, tree_windows.go resumeProcess).
+	if st, _, _ := procNtResumeProcess.Call(uintptr(ph)); st != 0 {
+		return fail(fmt.Errorf("NtResumeProcess: NTSTATUS 0x%08x", uint32(st)))
 	}
 	return t, nil
-}
-
-// resumeProcess resumes every thread of pid (a new suspended process has one).
-func resumeProcess(pid uint32) error {
-	snap, _, err := procCreateToolhelp32Snapshot.Call(th32csSnapThread, 0)
-	if syscall.Handle(snap) == syscall.InvalidHandle {
-		return errors.New("CreateToolhelp32Snapshot: " + err.Error())
-	}
-	defer syscall.CloseHandle(syscall.Handle(snap))
-	var te threadEntry32
-	te.Size = uint32(unsafe.Sizeof(te))
-	resumed := 0
-	for ok, _, _ := procThread32First.Call(snap, uintptr(unsafe.Pointer(&te))); ok != 0; ok, _, _ = procThread32Next.Call(snap, uintptr(unsafe.Pointer(&te))) {
-		if te.OwnerProcessID != pid {
-			continue
-		}
-		th, _, _ := procOpenThread.Call(threadSuspendResume, 0, uintptr(te.ThreadID))
-		if th == 0 {
-			continue
-		}
-		if r, _, _ := procResumeThread.Call(th); r != 0xFFFFFFFF {
-			resumed++
-		}
-		syscall.CloseHandle(syscall.Handle(th))
-	}
-	if resumed == 0 {
-		return errors.New("the tool's main thread could not be resumed")
-	}
-	return nil
 }
 
 func (t *procTree) kill() {

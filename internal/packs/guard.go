@@ -18,6 +18,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/packs/toolrun"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
@@ -44,15 +45,24 @@ var (
 )
 
 // GenerousBudgetsForTests raises the read, hash, per-guard and total guard
-// budgets for a test binary: a loaded CI runner can take longer than the
-// production bounds to read small fixtures, which fails closed instead of
-// testing what a guard decides. Production code never calls it; the packs
-// package's own tests keep the real bounds and test that going over one
-// denies. It returns a function that restores the real bounds.
+// budgets for a test binary, the git call bound (GitTimeout) and the
+// external tools' --version bound (toolrun.GenerousVersionTimeoutForTests):
+// a loaded CI runner can take longer than the production bounds to read
+// small fixtures, to run git or to start a fresh fake tool, which fails
+// closed instead of testing what a guard or a check decides. Production code
+// never calls it; the tests that a bound holds set it explicitly
+// (TestGuardBudgetMeansDeny, TestReadStateBounds, TestHashStateBounds,
+// TestTotalGuardBudget). It returns a function that restores the real
+// bounds.
 func GenerousBudgetsForTests() (restore func()) {
-	g, r, h, t := guardBudget, readBudget, hashBudget, totalGuardBudget
+	g, r, h, t, gt := guardBudget, readBudget, hashBudget, totalGuardBudget, gitTimeout
 	guardBudget, readBudget, hashBudget, totalGuardBudget = 10*time.Second, 10*time.Second, 10*time.Second, 30*time.Second
-	return func() { guardBudget, readBudget, hashBudget, totalGuardBudget = g, r, h, t }
+	gitTimeout = 2 * time.Minute
+	restoreVersion := toolrun.GenerousVersionTimeoutForTests()
+	return func() {
+		guardBudget, readBudget, hashBudget, totalGuardBudget, gitTimeout = g, r, h, t, gt
+		restoreVersion()
+	}
 }
 
 // Guard is a decision guard: a pure function over the tool call and the

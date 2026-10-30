@@ -134,13 +134,14 @@ func TestDagsterValidate(t *testing.T) {
 	})
 	t.Run("timeout", func(t *testing.T) {
 		t.Setenv("FAKE_DAGSTER_SLEEP", "10")
-		start := time.Now()
 		r := dagsterResult(t, dagsterInput(t, "tools: [dagster]\ntimeouts: { dagster: 1s }\n", map[string]string{"pipelines/defs.py": dagsterDefs}))
 		if r.Status != packs.Fail || r.Tool == nil || !r.Tool.TimedOut {
 			t.Fatalf("%+v %+v", r, r.Tool)
 		}
-		if time.Since(start) > 9*time.Second {
-			t.Fatalf("the timeout did not stop the tool (%v)", time.Since(start))
+		// The run itself (not the version probe before it, slow on a loaded
+		// runner) ended before the fake's 10 s sleep.
+		if d := time.Duration(r.Tool.DurationMS) * time.Millisecond; d > 9*time.Second {
+			t.Fatalf("the timeout did not stop the tool (%v)", d)
 		}
 	})
 }

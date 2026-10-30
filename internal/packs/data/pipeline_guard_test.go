@@ -3,11 +3,11 @@ package data
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -157,42 +157,44 @@ func BenchmarkPipelineRunGuard64KiB(b *testing.B) {
 	}
 }
 
-// Nested wrappers on a 64 KiB command stay inside the guard budget; a
-// command too deeply wrapped to see through fails closed (ask).
+// Nested wrappers on a 64 KiB command stay inside the guard budget (linear
+// cost, a load-tolerant ceiling: testutil.CheckLatency); a command too
+// deeply wrapped to see through fails closed (ask).
 func TestPipelineRunGuardWrappersBounded(t *testing.T) {
 	g := packs.NewGuardCtx(pipelineGuardEnv(t, "data: { enabled: true }\n"), "data")
 	for _, c := range []struct {
-		cmd  string
+		name string
+		of   func(n int) string // a command of about n bytes
 		want policy.Action
 	}{
-		{strings.Repeat("docker exec ", 64<<10/12) + "true", policy.Ask},
-		{strings.Repeat("ssh h ", 64<<10/6) + "true", policy.Ask},
+		{"docker exec", func(n int) string { return strings.Repeat("docker exec ", n/12) + "true" }, policy.Ask},
+		{"ssh", func(n int) string { return strings.Repeat("ssh h ", n/6) + "true" }, policy.Ask},
 		// Past the scan cap the inner command is never read: fail closed (integration review).
-		{"docker compose exec acme " + strings.Repeat("x ", 64<<10/2), policy.Ask},
-		{strings.Repeat("bash -c '", 1) + strings.Repeat("echo x; ", 64<<10/8) + "'", policy.Allow},
+		{"compose past the cap", func(n int) string { return "docker compose exec acme " + strings.Repeat("x ", n/2) }, policy.Ask},
+		{"bash -c", func(n int) string { return "bash -c '" + strings.Repeat("echo x; ", n/8) + "'" }, policy.Allow},
 	} {
-		start := time.Now()
-		a, reason, _ := pipelineRunGuard(policy.ToolCall{Tool: "Bash", Command: c.cmd}, g)
-		if d := time.Since(start); d > packs.GuardBudget {
-			t.Fatalf("%.40q: guard took %v", c.cmd, d)
-		}
+		cmd := c.of(64 << 10)
+		a, reason, _ := pipelineRunGuard(policy.ToolCall{Tool: "Bash", Command: cmd}, g)
 		if a != c.want {
-			t.Errorf("%.40q: action %q (%s), want %q", c.cmd, a, reason, c.want)
+			t.Errorf("%s: action %q (%s), want %q", c.name, a, reason, c.want)
 		}
+		testutil.CheckLatency(t, c.name, packs.GuardBudget, func(div int) func() {
+			call := policy.ToolCall{Tool: "Bash", Command: c.of(64 << 10 / div)}
+			return func() { pipelineRunGuard(call, g) }
+		})
 	}
 }
 
 func TestPipelineRunGuardUnder50ms(t *testing.T) {
 	g := packs.NewGuardCtx(pipelineGuardEnv(t, "data: { enabled: true }\n"), "data")
-	cmd := strings.Repeat("echo airflow dags list; dagster job list; ", 64<<10/42) + "dagster asset materialize --select x"
-	call := policy.ToolCall{Tool: "Bash", Command: cmd}
-	start := time.Now()
-	for i := 0; i < 10; i++ {
-		if a, _, _ := pipelineRunGuard(call, g); a != policy.Ask {
-			t.Fatalf("action %q", a)
-		}
+	cmdOf := func(div int) string {
+		return strings.Repeat("echo airflow dags list; dagster job list; ", 64<<10/42/div) + "dagster asset materialize --select x"
 	}
-	if d := time.Since(start) / 10; d > packs.GuardBudget {
-		t.Fatalf("guard took %v on a 64 KiB command", d)
+	if a, _, _ := pipelineRunGuard(policy.ToolCall{Tool: "Bash", Command: cmdOf(1)}, g); a != policy.Ask {
+		t.Fatalf("action %q", a)
 	}
+	testutil.CheckLatency(t, "pipeline-run", packs.GuardBudget, func(div int) func() {
+		call := policy.ToolCall{Tool: "Bash", Command: cmdOf(div)}
+		return func() { pipelineRunGuard(call, g) }
+	})
 }

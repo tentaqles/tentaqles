@@ -283,8 +283,11 @@ func decodeJournal(dir, p string, raw []byte) (*Journal, error) {
 // fsynced, then renamed over journal.json.
 //
 // os.Rename replaces an existing destination on every OS tq supports -- on
-// Windows it is MoveFileEx with MOVEFILE_REPLACE_EXISTING -- so journal.json is
-// never absent, not even for an instant. Removing it first "because Windows
+// Windows it is MoveFileEx with MOVEFILE_REPLACE_EXISTING -- so tq never
+// removes journal.json and a crash leaves the old or the new journal. (On a
+// loaded Windows machine a concurrent reader can still see the name missing
+// while the rename call itself runs: measured, with a POSIX-semantics rename
+// too. That is the filesystem's, not a window tq opens.) Removing it first "because Windows
 // cannot replace" would open a window on every Record in which a crash, or a
 // transient sharing violation from a virus scanner holding the file, destroys
 // the journal outright.
@@ -333,13 +336,17 @@ func writeFileSync(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
+// renameFile is os.Rename; TestRecordNeverLeavesJournalAbsent wraps it to
+// tell the rename call itself from the code around it.
+var renameFile = os.Rename
+
 // renameRetry renames tmp over dst, retrying briefly. On Windows a scanner or
 // an indexer holding the destination open makes the rename fail with a sharing
 // violation that clears on its own within milliseconds.
 func renameRetry(tmp, dst string) error {
 	var err error
 	for attempt := 0; attempt < 10; attempt++ {
-		if err = os.Rename(tmp, dst); err == nil {
+		if err = renameFile(tmp, dst); err == nil {
 			return nil
 		}
 		time.Sleep(time.Duration(2*(attempt+1)) * time.Millisecond)
