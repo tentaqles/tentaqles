@@ -69,11 +69,29 @@ func computeRootRegexOracle(forms []string) *regexp.Regexp {
 	return regexp.MustCompile("(" + strings.Join(alts, "|") + ")")
 }
 
+// The prose rules, written apart from proseFree, msgArg, proseSplit,
+// echoSeg, executes and proseEcho. oracleRunsRe: text a shell runs inside a
+// message or an echo (command or process substitution, a backtick);
+// oracleNotProseRe: what keeps an echo segment (a redirect, a pipe, a
+// single &, a paren, a break the split does not see).
+var (
+	oracleRunsRe     = regexp.MustCompile("\\$\\(|`|[<>]\\(")
+	oracleNotProseRe = regexp.MustCompile("[>|&(\r\v\f\u0085  ]")
+	oracleMsgRe      = regexp.MustCompile(`(?i)\s(-m|-am|--message)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
+	oracleProseSplit = regexp.MustCompile("&&|\\|\\||[;\n]")
+	oracleEchoRe     = regexp.MustCompile(`(?i:^\s*(echo|write-host|write-output|printf))($|[^0-9A-Za-z_])`)
+)
+
 func proseFreeOracle(raw string) string {
-	raw = msgArg.ReplaceAllString(raw, " ")
+	raw = oracleMsgRe.ReplaceAllStringFunc(raw, func(m string) string {
+		if oracleRunsRe.MatchString(m) {
+			return m
+		}
+		return " "
+	})
 	var out []string
-	for _, seg := range proseSplit.Split(raw, -1) {
-		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") {
+	for _, seg := range oracleProseSplit.Split(raw, -1) {
+		if oracleEchoRe.MatchString(seg) && !oracleNotProseRe.MatchString(seg) && !oracleRunsRe.MatchString(seg) {
 			continue
 		}
 		out = append(out, seg)
@@ -176,7 +194,7 @@ func protectedMentionOracle(raw string) bool {
 		}
 		bare = true
 	}
-	if mentioned && linkVerb.MatchString(n) {
+	if mentioned && linkCommand(n) {
 		return true
 	}
 	if bare {

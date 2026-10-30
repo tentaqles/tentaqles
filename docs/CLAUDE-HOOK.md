@@ -181,6 +181,9 @@ with its own private `GH_CONFIG_DIR` / `AZURE_CONFIG_DIR` / git config, so a
 command that dodges the guard still does not get another client's
 credentials. The guard's job is to catch the honest mistake - the wrong cwd,
 the stale shell, the forgotten `tq allow` - not to contain an adversary.
+The same holds for `tq/hub-store-write`, the state-folder check:
+[GUARD-SCOPE.md](GUARD-SCOPE.md) states what it is for, its known gaps and the
+real protections (Claude Code's sandbox, signed state).
 
 ## Guard modes
 

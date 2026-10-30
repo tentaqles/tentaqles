@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 
@@ -66,6 +67,23 @@ func TestStateDirTqExemption(t *testing.T) {
 		// r2-m1: tq pack cloud plan runs its plan command without -- too
 		"tq pack cloud plan --env dev cdk synth -o " + filepath.ToSlash(filepath.Join(custom, "trust", "out")),
 		"tq pack cloud plan --env=dev --json cp x " + trust,
+		// a glob class reads as the real path once brackets are dropped, but
+		// the shell runs another program (<dir>/0/tq.exe for [001])
+		path.Dir(path.Dir(self)) + "/[" + path.Base(path.Dir(self)) + "]/tq.exe pack cloud show " + plan,
+		path.Dir(self) + "/tq*.exe pack cloud show " + plan,
+		// a sub-command inside a safe tq call runs first
+		"tq hub list `rm " + trust + "`",
+		"tq hub list (Remove-Item " + trust + ")",
+		"tq hub list @(Remove-Item " + trust + ")",
+		`tq hub add "x $(rm ` + trust + `)"`,
+		"tq hub add \"x `rm " + trust + "`\"",
+		// Accepted false positives (review F4 reverted): no quote reading, so
+		// a parenthesis or backtick anywhere refuses the exemption.
+		`tq hub add "check ` + filepath.ToSlash(filepath.Join(custom, "hub")) + ` lock (prod)"`,
+		`tq hub add 'check ` + filepath.ToSlash(filepath.Join(custom, "hub")) + ` lock (prod)'`,
+		// review F10: bash \' is no quote; PowerShell's curly quotes are quotes
+		`tq hub add \' ` + "`icacls " + trust + " /grant x:F`" + ` \'`,
+		"tq hub add ‘say \"’ (icacls " + trust + " /grant x:F) ‘\"’",
 	} {
 		if !denied(cmd) {
 			t.Errorf("%q: not denied", cmd)
@@ -89,5 +107,32 @@ func TestStateDirTqExemption(t *testing.T) {
 	tqLookPath = func(string) (string, error) { return "", errors.New("not found") }
 	if !denied("tq pack cloud show " + plan) {
 		t.Error("a bare tq not on PATH was exempt")
+	}
+}
+
+// Review F5: a bare tq is looked up as written; tq.exe and case folding
+// count only on Windows.
+func TestIsSelfTqCaseByOS(t *testing.T) {
+	selfTq(t, true)
+	prev := hostOS
+	t.Cleanup(func() { hostOS = prev })
+	hostOS = "linux"
+	for _, w := range []string{"TQ", "Tq", "tq.exe"} {
+		if isSelfTq(w) {
+			t.Errorf("linux: %q is self", w)
+		}
+	}
+	if !isSelfTq("tq") {
+		t.Error("linux: tq is not self")
+	}
+	hostOS = "darwin"
+	if isSelfTq("TQ") || samePath("/no/such/tq", "/no/such/TQ") {
+		t.Error("darwin: case folded")
+	}
+	hostOS = "windows"
+	for _, w := range []string{"tq", "TQ", "tq.exe", "TQ.EXE"} {
+		if !isSelfTq(w) {
+			t.Errorf("windows: %q is not self", w)
+		}
 	}
 }

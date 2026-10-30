@@ -57,9 +57,18 @@ func withoutReadArgs(cmd string, readArgs []packs.ReadArg) (string, bool) {
 			program[normPathForm(fp)] = a
 		}
 	}
-	s := strings.NewReplacer("\r", " ", "\n", " ; ").Replace(cmd) // a newline separates segments
+	// A newline separates segments, and CRLF is one newline. A lone CR ends a
+	// PowerShell statement, and VT, FF, NEL, LS and PS may end one in some
+	// shell: read as a blank, they would put the plan in the declared
+	// program's segment while it is an argument of the next statement
+	// (tofu apply<CR>icacls P /grant ...). Nothing is exempt then.
+	s := strings.ReplaceAll(cmd, "\r\n", "\n")
+	if strings.ContainsAny(s, "\r\v\f\u0085  ") {
+		return cmd, false
+	}
+	s = strings.ReplaceAll(s, "\n", " ; ")
 	isSep := func(c byte) bool { return c == ';' || c == '&' || c == '|' }
-	isBlank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\f' || c == '\v' }
+	isBlank := func(c byte) bool { return c == ' ' || c == '\t' }
 	var b strings.Builder
 	matches, okSeg := 0, false
 	segFirst, atStart, prev := "", true, ""

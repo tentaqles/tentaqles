@@ -214,6 +214,26 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "Bash", Command: `ls ~/.tentaqles-old/packs`},
 		{Tool: "Bash", Command: `ls ~/.tentaqles.y*ml internal/packs/*.go`},
 		{Tool: "Bash", Command: `git add .tentaqles.yaml internal/packs/doctor.go && git status`},
+		// Likely false positives of the clear-cut fixes (prose that runs
+		// nothing, a plain copy, carets, a test run with its own TQ_HOME).
+		{Tool: "Bash", Command: `git commit -m "docs: mention ~/.tentaqles"`},
+		{Tool: "Bash", Command: "git commit -m \"$(cat <<'EOF'\ndocs: the guard keeps ~/.tentaqles/packs safe\nEOF\n)\""},
+		{Tool: "Bash", Command: `echo hello`},
+		{Tool: "Bash", Command: `cp -r src dst`},
+		{Tool: "Bash", Command: `cp -r ~/.tentaqles/bundles /tmp/bundles`},
+		{Tool: "PowerShell", Command: `$env:TQ_HOME = "$env:TEMP\x"; go test ./...`},
+		{Tool: "PowerShell", Command: `New-Item -ItemType Directory -Path $HOME\.tentaqles\bundles\x`},
+		{Tool: "PowerShell", Command: `cmd /c dir %USERPROFILE%\.tentaqles\bundles ^| findstr x`},
+		// Review F1: PowerShell's cp is Copy-Item (no link flag); bash cp -L
+		// copies the target.
+		{Tool: "PowerShell", Command: `cp -Recurse ~/.tentaqles/identities/x/claude/skills ./x`},
+		{Tool: "PowerShell", Command: `cp -Destination ./x -Filter *.md -Include a* -Exclude b* ~/.tentaqles/identities/x/claude/skills`},
+		{Tool: "Bash", Command: `cp -L ~/.tentaqles/identities/x/claude/settings.json /tmp/x`},
+		// Review F12: prose that only mentions cp -s.
+		{Tool: "Bash", Command: `git commit -m "guard: block cp -s into ~/.tentaqles"`},
+		// Review F6: a file or directory is no link.
+		{Tool: "PowerShell", Command: `New-Item -ItemType File -Path $HOME\.tentaqles\bundles\x`},
+		{Tool: "PowerShell", Command: `ni -it d* -Path $HOME\.tentaqles\bundles\y`},
 	}
 	for _, c := range allowed {
 		if code, out := hookDecision(t, ws, c); code != 0 || strings.Contains(out, "tq/hub-store-write") {
@@ -255,6 +275,48 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "PowerShell", Command: "cat README.md ruby -rfileutils -e \"FileUtils.rm_rf Dir.home+'/.tentaqlesX'.chop+'/packs'\""},
 		// not only readers: judged as before (fail closed), though no root
 		{Tool: "Bash", Command: `rm -rf ~/.tentaqles.x/packs; cat ~/.tentaqles.x`},
+		// cmd caret escapes hide a name from the matcher.
+		{Tool: "PowerShell", Command: `cmd /c del %USERPROFILE%\.tentaqle^s\packs\acme\ml\ledger.jsonl`},
+		{Tool: "PowerShell", Command: `cmd /c del %USERPROFILE%\.tentaqles\pa^cks\acme\ml\ledger.jsonl`},
+		// prose that runs something is not prose
+		{Tool: "Bash", Command: `echo $(icacls ~/.tentaqles/trust /grant x:F)`},
+		{Tool: "Bash", Command: `git commit -m "$(icacls ~/.tentaqles/trust /grant x:F)"`},
+		{Tool: "Bash", Command: "echo `icacls ~/.tentaqles/trust /grant x:F`"},
+		// link creation spelled other ways
+		{Tool: "PowerShell", Command: `New-Item -Type Junction -Path C:\t -Target $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `New-Item -ItemType:SymbolicLink -Path C:\t -Target $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `New-Item -It HardLink -Path C:\t -Value $HOME\.tentaqles\x`},
+		{Tool: "PowerShell", Command: `ni -ItemType Junction -Path C:\t -Value $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `fsutil hardlink create C:\t\x %USERPROFILE%\.tentaqles\x`},
+		{Tool: "Bash", Command: `cp -rs ~/.tentaqles /tmp/t`},
+		{Tool: "Bash", Command: `cp -al ~/.tentaqles /tmp/t`},
+		{Tool: "Bash", Command: `cp --symbolic-link ~/.tentaqles/x /tmp/t`},
+		{Tool: "Bash", Command: `cp -r --link ~/.tentaqles /tmp/t`},
+		// Review F11: other GNU cp clusters and long-option prefixes.
+		{Tool: "Bash", Command: `cp -bs ~/.tentaqles /tmp/t`},
+		{Tool: "Bash", Command: `cp -Hl ~/.tentaqles /tmp/t`},
+		{Tool: "Bash", Command: `cp --sym ~/.tentaqles /tmp/t`},
+		// Accepted false positive (review F2 reverted): a chained commit whose
+		// $( ) message mentions a protected part is scanned. Workaround:
+		// git commit -F <file>.
+		{Tool: "Bash", Command: "git add -A && git commit -m \"$(cat <<'EOF'\ndocs: the guard keeps ~/.tentaqles/packs safe\nEOF\n)\""},
+		// Review F9: an escaped \$( is no substitution; the inner $( ) runs.
+		{Tool: "Bash", Command: "git add -A && git commit -m \"\\$(cat <<'EOF'\n$(icacls ~/.tentaqles/trust /grant x:F)\nEOF\n)\""},
+		// Review F3: an echo that is not only prose (& , ( , @( , a lone CR).
+		{Tool: "PowerShell", Command: `echo cleaning & rm -rf ~/.tentaqles/packs`},
+		{Tool: "PowerShell", Command: `Write-Output (Remove-Item -Recurse ~/.tentaqles/packs)`},
+		{Tool: "PowerShell", Command: "echo x\rRemove-Item ~/.tentaqles/packs"},
+		{Tool: "PowerShell", Command: `echo cleaning & icacls ~/.tentaqles/trust /grant x:F`},
+		{Tool: "PowerShell", Command: `Write-Output (icacls ~/.tentaqles/trust /grant x:F)`},
+		{Tool: "PowerShell", Command: `Write-Output @(icacls ~/.tentaqles/trust /grant x:F)`},
+		{Tool: "PowerShell", Command: "echo x\ricacls ~/.tentaqles/trust /grant x:F"},
+		{Tool: "PowerShell", Command: "echo x\vicacls ~/.tentaqles/trust /grant x:F"},
+		{Tool: "PowerShell", Command: "echo x\u2028icacls ~/.tentaqles/trust /grant x:F"},
+		// Review F6: New-Item resolves a prefix of the link type too.
+		{Tool: "PowerShell", Command: `New-Item -ItemType J -Path C:\t -Target $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `ni -it sym -Path C:\t -Target $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `New-Item -Type h* -Path C:\t\x -Value $HOME\.tentaqles\x`},
+		{Tool: "PowerShell", Command: `New-Item -ItemType $t -Path C:\t -Target $HOME\.tentaqles`},
 		{Tool: "Write", Path: filepath.Join(home, "trust", "abc")},
 		{Tool: "Write", Path: filepath.Join(home, "build-gate", "hmac.key")},
 		{Tool: "Write", Path: filepath.Join(home, "guard.yaml")},
@@ -314,6 +376,10 @@ func TestHookRound3Bypasses(t *testing.T) {
 		{Tool: "Bash", Command: `secret-tool lookup service tentaqles-packs username acme`},
 		{Tool: "Bash", Command: `security find-generic-password -s tentaqles-packs -a acme -w`},
 		{Tool: "PowerShell", Command: `[Windows.Security.Credentials.PasswordVault]::new().Retrieve('tentaqles-packs','acme')`},
+		// cmd caret escapes
+		{Tool: "PowerShell", Command: `cmd /c t^q hub an^swer c1 d1 --choice approve`},
+		// review F3: a single & runs the next command
+		{Tool: "PowerShell", Command: `echo ok & tq hub answer 3 approve`},
 	}
 	if s := shortPath(filepath.Join(home, "build-gate")); s != "" && !strings.EqualFold(filepath.Base(s), "build-gate") {
 		deny = append(deny, policy.ToolCall{Tool: "Bash", Command: `echo k > ~/.tentaqles/` + filepath.Base(s) + `/hmac.key`})
@@ -405,5 +471,23 @@ func TestHookDeniesWhenTheMarkCannotBeWritten(t *testing.T) {
 	code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: "terraform apply approved.tfplan"})
 	if code != 2 || !strings.Contains(out, "read-only keychain") {
 		t.Fatalf("%d %s", code, out)
+	}
+}
+
+// Review F3: humanProseFree keeps an echo that runs a next command. A
+// message with $( ) is scanned (an accepted false positive for a quoted
+// heredoc; review F9).
+func TestHumanAnswerProseSegments(t *testing.T) {
+	ans := "tq hub " + "answer 3 approve"
+	for _, c := range []string{"echo ok & " + ans, "echo ok\r" + ans, "Write-Output (" + ans + ")",
+		"git add -A && git commit -m \"$(cat <<'EOF'\ndocs: how " + ans + " works\nEOF\n)\""} {
+		if !humanAnswerCommand(c) {
+			t.Errorf("not caught: %q", c)
+		}
+	}
+	for _, c := range []string{"echo 'run " + ans + " yourself'"} {
+		if humanAnswerCommand(c) {
+			t.Errorf("prose caught: %q", c)
+		}
 	}
 }
