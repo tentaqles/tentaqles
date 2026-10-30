@@ -28,6 +28,9 @@ import (
 //     .claude-plugin/marketplace.json). Unused for url.
 //   - AutoUpdate: rendered as the entry's top-level "autoUpdate": true, next
 //     to "source" (Claude Code leaves it off for third-party marketplaces).
+//   - Insecure: tq-only opt-in that lets a git source use http:// or git://
+//     and a url source use http:// (a local mirror). Never rendered into
+//     settings.json; every catalog check warns about it.
 type Marketplace struct {
 	Source     string `yaml:"source"`
 	Repo       string `yaml:"repo,omitempty"`
@@ -35,6 +38,7 @@ type Marketplace struct {
 	Ref        string `yaml:"ref,omitempty"`
 	Path       string `yaml:"path,omitempty"`
 	AutoUpdate bool   `yaml:"autoUpdate,omitempty"`
+	Insecure   bool   `yaml:"insecure,omitempty"`
 }
 
 // ToKnownMarketplace renders m in the {"source": {...}} shape used by

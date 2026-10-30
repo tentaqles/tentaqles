@@ -112,8 +112,10 @@ or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
   (`github tentaqles/tentaqles@v0.8.0 autoUpdate`), and the catalog check warns on a github
   source without `repo` or a git source without `url`, and on a `git`/`url` URL carrying
   userinfo or a token. It refuses (and `sync` will not write) a `git` url other than
-  `https://`, `ssh://` or `user@host:path`, and a `ref` git could read as an option or a
-  revision expression. Drift details strip URL userinfo.
+  `https://`, `ssh://` or `user@host:path` (or with a user or host starting with `-`), a
+  plain-text transport (`http://`/`git://` git urls, non-`https` url sources) unless the entry
+  sets the tq-only `insecure: true`, and a `ref` git could read as an option or a revision
+  expression. Drift details strip URL userinfo.
 - **Bundle marketplace aliases.** A `claude.bundle.marketplaces` item `key=catalogName`
   writes catalog entry `catalogName` under settings key `key`, so one workspace can load a
   plugin from a local folder under the same plugin id (`tentaqles=tentaqles-dev`, plugins

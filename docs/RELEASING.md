@@ -118,7 +118,7 @@ Catalog marketplace fields, as Claude Code names them: `source` (`github`, `git`
 `directory`; `local` is an older spelling of `directory`), `repo` (github), `url` (git clone
 URL, or the marketplace.json URL for `url`), `ref` (branch or tag, github and git), `path`
 (the folder for `directory`; for github and git the path of marketplace.json in the repo,
-default `.claude-plugin/marketplace.json`) and `autoUpdate`. `tq bundle diff <ws>` reports a
+default `.claude-plugin/marketplace.json`), `autoUpdate`, and the tq-only `insecure` (below). `tq bundle diff <ws>` reports a
 changed ref or autoUpdate as `marketplace-source` drift, e.g.
 `settings has github tentaqles/tentaqles@v0.7.0, the catalog has github tentaqles/tentaqles@v0.8.0`.
 
@@ -127,8 +127,13 @@ The catalog check (`tq bundle catalog`, `tq doctor`, `tq bundle sync`) warns whe
 would hold them in clear, so use a git credential helper. It refuses, and `sync` will not
 write, a `git` url that is not `https://`, `ssh://` or `user@host:path` (for example
 `file://`, `ext::`, a local path), and a `ref` that starts with `-`, contains `..`, `:`, a
-space, one of `~^?*[\` or a control character, or ends with `.lock` or `/`. Plain `http://`
-and `git://` only warn. Drift details never print URL userinfo.
+space, one of `~^?*[\` or a control character, or ends with `.lock` or `/`. A git url whose
+user or host starts with `-`, or that holds a control character, is refused too.
+
+Plugins install hooks, so a plain-text transport lets anyone on the network path run code:
+`http://` and `git://` git urls and any `url` source that is not `https://` are refused. For
+a local mirror, set `insecure: true` on that catalog entry: tq then writes it, warns on every
+check, and never puts `insecure` into `settings.json`. Drift details never print URL userinfo.
 
 ### The development workspace: one key, two sources
 

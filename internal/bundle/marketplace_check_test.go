@@ -88,11 +88,84 @@ func TestValidate_GitURLTransport(t *testing.T) {
 			t.Errorf("%q: Compute should refuse it, got %+v %v", u, d.Marketplaces, errs)
 		}
 	}
-	for _, u := range []string{"http://example.com/r.git", "git://example.com/r.git"} {
-		ws := validateOne(Marketplace{Source: "git", URL: u})
-		if !hasPrefixed(ws, `marketplace "m"`, "unencrypted") || hasPrefixed(ws, "refused: ", "") {
-			t.Errorf("%q: want an unencrypted-transport warning only, got %q", u, ws)
+}
+
+func refusedByBoth(t *testing.T, mp Marketplace, sub string) {
+	t.Helper()
+	ws := validateOne(mp)
+	if !hasPrefixed(ws, "refused: ", sub) {
+		t.Errorf("%+v: want a refused: warning containing %q, got %q", mp, sub, ws)
+	}
+	cat := &Catalog{Marketplaces: map[string]Marketplace{"m": mp}}
+	if d, errs := Compute(&manifest.Bundle{Marketplaces: []string{"m"}}, cat); len(errs) == 0 || len(d.Marketplaces) != 0 {
+		t.Errorf("%+v: Compute should refuse it, got %+v %v", mp, d.Marketplaces, errs)
+	}
+}
+
+// F6: ssh reads a user or host starting with "-" as an option, and a
+// control character or newline has no place in a clone URL.
+func TestValidate_GitURLOptionInjection(t *testing.T) {
+	for _, u := range []string{
+		"-oX@host:p",
+		"u@-v:p",
+		"ssh://-oProxyCommand=x/y",
+		"ssh://-oFoo@host/",
+		"https://-x.example.com/r.git",
+		"git@github.com:o/r.git\n-oProxyCommand=x",
+		"git@github.com:o/r\x00.git",
+		"https://example.com/r\n.git",
+	} {
+		refusedByBoth(t, Marketplace{Source: "git", URL: u}, "git url")
+	}
+	for _, u := range []string{"git@github.com:o/r.git", "git@gitlab.example.com:group/sub/r.git", "ssh://git@github.com/o/r.git", "ssh://git@host:2222/o/r.git"} {
+		if ws := validateOne(Marketplace{Source: "git", URL: u}); len(ws) != 0 {
+			t.Errorf("%q: want no warnings, got %q", u, ws)
 		}
+	}
+}
+
+// F7: plugins install hooks, so a plain-text transport is refused unless
+// the entry opts in with insecure: true, which still warns and is never
+// written to settings.json.
+func TestValidate_PlainTextTransport(t *testing.T) {
+	plain := []Marketplace{
+		{Source: "git", URL: "http://mirror.local/r.git"},
+		{Source: "git", URL: "git://mirror.local/r.git"},
+		{Source: "url", URL: "http://mirror.local/marketplace.json"},
+	}
+	for _, mp := range plain {
+		refusedByBoth(t, mp, "plain-text transport")
+
+		mp.Insecure = true
+		ws := validateOne(mp)
+		if hasPrefixed(ws, "refused: ", "") || !hasPrefixed(ws, `marketplace "m"`, "allowed by insecure: true") || !hasPrefixed(ws, `marketplace "m"`, "insecure: true allows") {
+			t.Errorf("%+v: want warnings only, got %q", mp, ws)
+		}
+		cat := &Catalog{Marketplaces: map[string]Marketplace{"m": mp}}
+		d, errs := Compute(&manifest.Bundle{Marketplaces: []string{"m"}}, cat)
+		if len(errs) != 0 {
+			t.Fatalf("%+v: Compute: %v", mp, errs)
+		}
+		if _, ok := d.Marketplaces["m"]["insecure"]; ok {
+			t.Errorf("insecure rendered into settings: %+v", d.Marketplaces["m"])
+		}
+		if src := d.Marketplaces["m"]["source"].(map[string]any); src["insecure"] != nil {
+			t.Errorf("insecure rendered into the source: %+v", src)
+		}
+	}
+
+	// url sources: https only, other schemes refused even with insecure.
+	refusedByBoth(t, Marketplace{Source: "url", URL: "file:///tmp/marketplace.json"}, "url")
+	refusedByBoth(t, Marketplace{Source: "url", URL: "file:///tmp/marketplace.json", Insecure: true}, "url")
+	refusedByBoth(t, Marketplace{Source: "url", URL: "/tmp/marketplace.json"}, "url")
+	refusedByBoth(t, Marketplace{Source: "git", URL: "file:///srv/r.git", Insecure: true}, "git url")
+	if ws := validateOne(Marketplace{Source: "url", URL: "https://example.com/marketplace.json"}); len(ws) != 0 {
+		t.Errorf("https url source: want no warnings, got %q", ws)
+	}
+
+	// insecure on an entry that needs no opt-in still warns.
+	if ws := validateOne(Marketplace{Source: "github", Repo: "a/b", Insecure: true}); !hasPrefixed(ws, `marketplace "m"`, "insecure: true allows") {
+		t.Errorf("insecure on github: want a warning, got %q", ws)
 	}
 }
 
