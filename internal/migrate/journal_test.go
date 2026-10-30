@@ -264,7 +264,26 @@ func TestRecordNeverLeavesJournalAbsent(t *testing.T) {
 	}
 	p := filepath.Join(j.Dir, "journal.json")
 
-	var missing atomic.Int64
+	// gen is odd while the rename call itself runs. On a loaded Windows
+	// machine a reader can see the name missing inside that call (measured
+	// with MoveFileEx and with a POSIX-semantics rename alike; CI on
+	// windows-latest failed on it): that is the filesystem, and tq cannot
+	// make one rename more atomic. What tq must never do is leave the
+	// journal absent outside the rename, as the old remove-then-rename did.
+	var gen atomic.Int64
+	var before atomic.Int64 // renames that found journal.json absent when called
+	prevRename := renameFile
+	renameFile = func(from, to string) error {
+		if _, err := os.Stat(to); errors.Is(err, os.ErrNotExist) {
+			before.Add(1)
+		}
+		gen.Add(1)
+		defer gen.Add(1)
+		return prevRename(from, to)
+	}
+	t.Cleanup(func() { renameFile = prevRename })
+
+	var missing, inRename atomic.Int64
 	var samples atomic.Int64
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -276,8 +295,14 @@ func TestRecordNeverLeavesJournalAbsent(t *testing.T) {
 				return
 			default:
 			}
-			if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
-				missing.Add(1)
+			g1 := gen.Load()
+			_, err := os.Stat(p)
+			if g2 := gen.Load(); errors.Is(err, os.ErrNotExist) {
+				if g1 == g2 && g1%2 == 0 {
+					missing.Add(1) // absent while no rename ran: tq's own window
+				} else {
+					inRename.Add(1)
+				}
 			}
 			samples.Add(1)
 			// Yield: a hard stat loop keeps a handle on the file often enough
@@ -300,8 +325,14 @@ func TestRecordNeverLeavesJournalAbsent(t *testing.T) {
 	if samples.Load() == 0 {
 		t.Fatal("watcher never sampled the journal")
 	}
+	if n := before.Load(); n != 0 {
+		t.Fatalf("journal.json was absent when %d renames were called; Record must never unlink it", n)
+	}
 	if n := missing.Load(); n != 0 {
-		t.Fatalf("journal.json was absent in %d of %d samples; Record must never unlink it", n, samples.Load())
+		t.Fatalf("journal.json was absent in %d of %d samples outside the rename call; Record must never unlink it", n, samples.Load())
+	}
+	if n := inRename.Load(); n != 0 {
+		t.Logf("journal.json was briefly absent inside the rename call itself in %d of %d samples (the filesystem's replace, not tq's)", n, samples.Load())
 	}
 }
 
