@@ -225,7 +225,9 @@ func Diff(ws *resolve.Workspace, cat *Catalog) ([]Drift, error) {
 }
 
 // describeSource renders an extraKnownMarketplaces entry ({"source": {...}})
-// as "<kind> <repo|url|path>" for a drift detail.
+// as "<kind> <repo|url|path>[@ref][ path <file>][ autoUpdate]" for a drift
+// detail, e.g. "github tentaqles/tentaqles@v0.8.0 autoUpdate", so a change of
+// ref, marketplace.json path or autoUpdate shows on both sides.
 func describeSource(v any) string {
 	entry, _ := v.(map[string]any)
 	src, _ := entry["source"].(map[string]any)
@@ -233,10 +235,27 @@ func describeSource(v any) string {
 	if kind == "" {
 		return "an unrecognized source"
 	}
+	out := kind
+	main := "path"
 	for _, k := range []string{"repo", "url", "path"} {
 		if s, ok := src[k].(string); ok && s != "" {
-			return kind + " " + s
+			out += " " + s
+			main = k
+			break
 		}
 	}
-	return kind
+	if ref, ok := src["ref"].(string); ok && ref != "" {
+		out += "@" + ref
+	}
+	if p, ok := src["path"].(string); ok && p != "" && main != "path" {
+		out += " path " + p
+	}
+	if au, ok := entry["autoUpdate"].(bool); ok {
+		if au {
+			out += " autoUpdate"
+		} else {
+			out += " autoUpdate off" // explicit false differs from absent
+		}
+	}
+	return out
 }

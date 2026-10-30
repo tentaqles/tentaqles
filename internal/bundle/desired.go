@@ -31,33 +31,43 @@ func Compute(b *manifest.Bundle, cat *Catalog) (Desired, []error) {
 		return d, errs
 	}
 
-	for _, mkt := range b.Marketplaces {
-		mp, ok := cat.Marketplaces[mkt]
-		if !ok {
-			errs = append(errs, fmt.Errorf("unknown marketplace %q", mkt))
+	// bundleMkts maps each settings key to the catalog entry written under
+	// it ("key=catalogName", or a plain name used as both).
+	bundleMkts := make(map[string]string, len(b.Marketplaces))
+	for _, item := range b.Marketplaces {
+		key, catName, err := ParseMarketplaceItem(item)
+		if err != nil {
+			errs = append(errs, err)
 			continue
 		}
-		d.Marketplaces[mkt] = mp.ToKnownMarketplace()
-	}
-
-	bundleMkts := make(map[string]bool, len(b.Marketplaces))
-	for _, m := range b.Marketplaces {
-		bundleMkts[m] = true
+		if prev, dup := bundleMkts[key]; dup && prev != catName {
+			errs = append(errs, fmt.Errorf("marketplace key %q listed twice, for catalog entries %q and %q", key, prev, catName))
+			continue
+		}
+		mp, ok := cat.Marketplaces[catName]
+		if !ok {
+			if key != catName {
+				errs = append(errs, fmt.Errorf("marketplace %q: unknown catalog entry %q", key, catName))
+			} else {
+				errs = append(errs, fmt.Errorf("unknown marketplace %q", catName))
+			}
+			continue
+		}
+		bundleMkts[key] = catName
+		d.Marketplaces[key] = mp.ToKnownMarketplace()
 	}
 
 	for _, p := range b.Plugins {
 		if idx := strings.Index(p, "@"); idx >= 0 {
 			mkt := p[idx+1:]
-			if !bundleMkts[mkt] {
+			if !listedKey(b.Marketplaces, mkt) {
 				errs = append(errs, fmt.Errorf("plugin %q: marketplace %q not listed in bundle.marketplaces", p, mkt))
 				continue
 			}
-			mp, ok := cat.Marketplaces[mkt]
-			if !ok {
+			if _, ok := bundleMkts[mkt]; !ok {
 				errs = append(errs, fmt.Errorf("plugin %q: unknown marketplace %q", p, mkt))
 				continue
 			}
-			d.Marketplaces[mkt] = mp.ToKnownMarketplace()
 			d.EnabledPlugins[p] = true
 		} else {
 			d.EnabledPlugins[p] = true
@@ -91,4 +101,33 @@ func Compute(b *manifest.Bundle, cat *Catalog) (Desired, []error) {
 	}
 
 	return d, errs
+}
+
+// ParseMarketplaceItem splits a claude.bundle.marketplaces item into the
+// settings key it is written under and the catalog entry it names.
+// "key=catalogName" writes catalog entry catalogName under settings key key
+// (plugins still name the key: "plugin@key"); a plain "name" is both. Both
+// halves of an alias must be valid names (validName) without "=" or "@".
+func ParseMarketplaceItem(item string) (key, catalogName string, err error) {
+	k, c, aliased := strings.Cut(item, "=")
+	if !aliased {
+		return item, item, nil
+	}
+	for _, part := range []string{k, c} {
+		if !validName(part) || strings.ContainsAny(part, "=@") || strings.TrimSpace(part) != part {
+			return "", "", fmt.Errorf("invalid marketplace alias %q: want key=catalogName, both plain names", item)
+		}
+	}
+	return k, c, nil
+}
+
+// listedKey reports whether key is the settings key of one of items,
+// including items that failed to resolve.
+func listedKey(items []string, key string) bool {
+	for _, item := range items {
+		if k, _, err := ParseMarketplaceItem(item); err == nil && k == key {
+			return true
+		}
+	}
+	return false
 }
