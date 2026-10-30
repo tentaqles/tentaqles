@@ -57,9 +57,6 @@ marketplaces do not auto-update by default: turn it on in `/plugin` (Marketplace
 `"autoUpdate": true` on the `tentaqles` entry of `extraKnownMarketplaces`. With `tq`, the
 bundle catalog does this for every identity (see `docs/RELEASING.md` in the repo).
 
-The older `tentaqles/tentaqles-plugin` marketplace (`tentaqles@tentaqles-tentaqles-plugin`) is
-no longer where releases go.
-
 ### First-run dependencies
 
 On the first session after installing, the plugin's bootstrap hook automatically installs Python dependencies (`pyyaml`, `pathspec`, `fastembed`, `numpy`) into the plugin's data directory (`${CLAUDE_PLUGIN_DATA}/lib`). This is isolated from your system Python and only happens once.
