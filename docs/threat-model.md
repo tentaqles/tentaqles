@@ -53,7 +53,7 @@ folder, and the integrity of what users install.
 | Repudiation | An agent's skipped or blocked actions leave no trace | guard-mode decisions logged to `guard/mode.jsonl` (`internal/guardlog`), identity switches to `audit.jsonl` (`internal/audit`); both protected parts of the state folder; `TestModeAuditsMCPContent`. No hash chain: a same-user process can rewrite them (AR1) | done | tq |
 | Information disclosure | An agent reads a `.env` file or prints the environment into the transcript | `.env` read and `tq/env-dump` rules (`internal/policy/builtin.go`), `tq dotenv run` masks values in output (`internal/dotenv`); `TestPolicy_ReadEnvDenied_WindowsPath`, `TestDotenvRunLoadsAndMasks` | done | tq |
 | Information disclosure | An agent commits or pushes personal data (CPF, emails) from a client repo | `commitPIIDecision`, `textPIIDecision` (`internal/cmd/claudehook_pii.go`), push scan; `TestCommitPII_DeniedWithCPFEvenWithoutDataBlock`, `TestPushPII_DeadlineAsks` | done | tq |
-| Information disclosure | An agent reads the build-gate HMAC key with an ordinary file command and signs its own approval | today only the text filter protects `build-gate/hmac.key`; move the key into the OS keychain and keep it inside tq | planned (TM-3) | tq |
+| Information disclosure | An agent reads the build-gate HMAC key with an ordinary file command and signs its own approval | an ordinary read of `build-gate/` is blocked by `tq/hub-store-write`; getting past it is AR2. TM-3 (keychain) was dropped, see [Decisions](#decisions) | accepted (AR2) | tq |
 | Denial of service | A hook hangs and stalls every tool call | hook timeouts in `plugin/hooks/hooks.json`, bounded gh lookup, PII scan deadline asks; `TestPushPII_DeadlineAsks`. A hook timeout or tq parse error lets the call through (AR2) | done | tq |
 | Elevation of privilege | A guard bug panics and the command runs unchecked | `guardPanicAsk` turns a panic into an ask (deny in Codex), rule `tq/guard-error` is locked; `TestPreToolUseGuardPanicAsks` | done | tq |
 
@@ -75,7 +75,7 @@ folder, and the integrity of what users install.
 | Tampering | An agent writes an approval or test-evidence record by hand | every record is signed (`sign`, `_sig_ok` in `gate.py`); an unsigned or badly signed record does not count | done | plugin |
 | Tampering | An agent copies back an older signed approval (rollback) | signed generation records under `build-gate/gen/`; a mismatch refuses every gate until a human re-approves; `test_an_older_signed_approval_copied_back_counts_as_rolled_back` | done | plugin |
 | Repudiation | A checkpoint passes with no record of which tests ran on which code | `evidence.jsonl` is signed and bound to project, slug and generation | done | plugin |
-| Information disclosure | The key file is read and used to sign forged records | key is a file with mode 0600, which Windows ignores; move it into the OS keychain, with tq doing all signing and checking so the plugin never holds it | planned (TM-3) | tq |
+| Information disclosure | The key file is read and used to sign forged records | key is a file with mode 0600, which Windows ignores; a same-user program can read it (AR1), an agent only by getting past the text filter (AR2). TM-3 was dropped, see [Decisions](#decisions) | accepted (AR1, AR2) | tq |
 | Denial of service | The key or a record is deleted and the build stalls | a missing or broken signature refuses the gate (fail closed); a human re-approves | done | plugin |
 | Elevation of privilege | A headless run inherits a human's build token | the runner drops `TQ_BUILD_TOKEN` and `TQ_BUILD_ACTOR` (`internal/hub/adapter/adapter.go`); `TestClaudeArgvAndPermissionWrapper` | done | tq |
 
@@ -162,13 +162,7 @@ cover the rows whose remaining gap is a same-user program or a reworded command.
 - **TM-2 Signed build provenance.** The release workflow attests every artifact
   (`actions/attest-build-provenance`); the installers verify it when `gh` is present.
   Checks: `gh attestation verify` passes for each published archive.
-- **TM-3 Build-gate key in the OS keychain, used only by tq.** tq gets the key from the
-  keychain (Windows Credential Manager, macOS Keychain, Secret Service) and does all
-  signing and checking; the plugin calls tq instead of reading the key. An existing
-  `hmac.key` is moved into the keychain once and the file removed, so records signed
-  before still verify. Checks: no file under `$TQ_HOME/build-gate` holds the key;
-  `TestTokenMatchesPythonVectors` and the build-gate tests still pass; old records
-  verify after the move.
+- **TM-3 Build-gate key in the OS keychain: dropped** (see Decisions).
 - **TM-4 Pin GitHub Actions by commit sha** in every workflow, with the version in a
   comment. Checks: no `uses:` line names a tag or branch.
 - **TM-5 Dependency scanning.** A `govulncheck` CI job and `.github/dependabot.yml` for
@@ -189,6 +183,19 @@ Each accepted risk expires; an expired risk is reopened as a decision for the re
 |---|---|---|---|---|
 | AR1: a program running as the developer's OS user can read tq's files and keychain entries, write its logs, drive a pty past the human check, and redirect the hook through `TQ_BIN` or PATH | tq cannot defend against code already running as the user; that is the job of the OS, antivirus and not running untrusted programs | the repo owner | 2026-10-30 | 2027-01-28 |
 | AR2: the shell-command guards (state folder, secrets, identity) are text filters; a reworded command (globs, escapes, variables, interpreters, links) can get past them, and a hook timeout or tq parse error lets a call through | they catch honest mistakes and prompt-injected slips, not a determined adversary; chasing every bypass added false positives and complexity. Real protection is Claude Code's sandbox and signed state (`docs/GUARD-SCOPE.md`) | the repo owner | 2026-10-30 | 2027-01-28 |
+
+## Decisions
+
+- **2026-10-30, TM-3 dropped (repo owner).** Moving the build-gate key into the OS
+  keychain with tq doing all signing was planned and then dropped. Build steps the
+  agent runs legitimately (`record-review`, `lock-tests`, `dod`) must sign records, so
+  tq would need a sign command the agent can reach, guarded again only by a text rule;
+  on Windows a same-user program reads Credential Manager entries anyway. The cost was
+  a tq process beside every hook call in build repos (about 0.2 s per tool call on
+  Windows), a tq-only test setup in CI, and a macOS keychain prompt that could block
+  builds. The remaining gain, the key no longer being a plain file, is already covered
+  by AR1 and AR2. Real protection would need tq to own every build-gate state change
+  and sign only records it produced; that is a possible future project, not planned.
 
 ## Assumptions
 - No PRD exists for tq; planned mitigations are tracked here as `TM-n` items instead of `FR-nn`.
