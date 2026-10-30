@@ -82,6 +82,7 @@ func TestGuardPanicMeansDeny(t *testing.T) {
 
 func TestGuardBudgetMeansDeny(t *testing.T) {
 	isolate(t)
+	realGuardBudget(t) // the example guard sleeps 300 ms, six times the budget
 	o := outcome(EvaluateGuards(bash("guard-slow"), dataEnv(t), nil, nil), "tq/example-bq")
 	if o == nil || o.Action != policy.Deny || !o.Failed || !strings.Contains(o.Reason, "budget") {
 		t.Fatalf("slow guard must deny: %+v", o)

@@ -17,13 +17,16 @@ import (
 // GitTimeout bounds every git call.
 const GitTimeout = 10 * time.Second
 
+// gitTimeout is the bound in force (GenerousBudgetsForTests raises it).
+var gitTimeout = GitTimeout
+
 // maxShow caps one `git show` (64 MiB).
 const maxShow = 64 << 20
 
 // Git runs git -C root with a 10 s timeout and the process environment
 // (which carries the workspace identity in a tq shell). It returns stdout.
 func Git(ctx context.Context, root string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, GitTimeout)
+	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
@@ -35,7 +38,7 @@ func Git(ctx context.Context, root string, args ...string) ([]byte, error) {
 	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("git %s: timed out after %s", args[0], GitTimeout)
+			return nil, fmt.Errorf("git %s: timed out after %s", args[0], gitTimeout)
 		}
 		msg := strings.TrimSpace(errb.String())
 		if i := strings.IndexByte(msg, '\n'); i > 0 {

@@ -36,6 +36,13 @@ func TestMain(m *testing.M) {
 	if os.Getenv("TQ_FAKE_CLI") == "1" || fakeName(os.Args[0]) {
 		os.Exit(fakeMain())
 	}
+	// Generous read, hash and guard budgets: on a loaded CI runner a fixture
+	// read can exceed the 40 ms production bound, which fails closed (CI:
+	// TestPulumiWeakAndPlanForms "cannot be listed (read over its time
+	// budget)", TestCDKFlowOnePerStack "the approval ledger cannot be read")
+	// instead of testing the flow. internal/packs and cloud/gate test that
+	// going over a budget denies.
+	packs.GenerousBudgetsForTests()
 	os.Exit(m.Run())
 }
 
