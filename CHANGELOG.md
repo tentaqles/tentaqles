@@ -6,6 +6,21 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+### State-folder guard (`tq/hub-store-write`)
+
+- **Fixed:** a lone CR (or VT, FF, NEL, LS, PS) no longer lets the stored-plan exemption
+  cover a path that belongs to the next statement; CRLF still reads as one newline.
+- **Fixed:** the tq self-exemption compares paths without dropping glob brackets, refuses a
+  command word with `*?[]{}$` or a backtick, and is refused for a command with a backtick,
+  `$(`, `(` or `@(` sub-command.
+- **Fixed:** cmd caret escapes (`.tentaqle^s`, `pa^cks`, `t^q hub an^swer`) are folded.
+- **Fixed:** a commit message or an echo that runs something (`$(...)`, a backtick) is checked.
+- **Fixed:** link creation also covers `New-Item`/`ni` with `-Type` or a prefix of
+  `-ItemType`, `fsutil hardlink create`, and `cp -l`, `-s`, `--link`, `--symbolic-link`.
+- **Docs:** [`docs/GUARD-SCOPE.md`](docs/GUARD-SCOPE.md) states what the guard is for (catching
+  honest slips, not stopping a determined adversary), its known gaps by class, and the real
+  protections: Claude Code's sandbox for writes and signed state.
+
 ## [0.8.0] — 2026-10-29
 
 ### Packs (specs C and D, releases 3 and 4)

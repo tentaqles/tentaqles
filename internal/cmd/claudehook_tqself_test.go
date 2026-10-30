@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 
@@ -66,6 +67,14 @@ func TestStateDirTqExemption(t *testing.T) {
 		// r2-m1: tq pack cloud plan runs its plan command without -- too
 		"tq pack cloud plan --env dev cdk synth -o " + filepath.ToSlash(filepath.Join(custom, "trust", "out")),
 		"tq pack cloud plan --env=dev --json cp x " + trust,
+		// a glob class reads as the real path once brackets are dropped, but
+		// the shell runs another program (<dir>/0/tq.exe for [001])
+		path.Dir(path.Dir(self)) + "/[" + path.Base(path.Dir(self)) + "]/tq.exe pack cloud show " + plan,
+		path.Dir(self) + "/tq*.exe pack cloud show " + plan,
+		// a sub-command inside a safe tq call runs first
+		"tq hub list `rm " + trust + "`",
+		"tq hub list (Remove-Item " + trust + ")",
+		"tq hub list @(Remove-Item " + trust + ")",
 	} {
 		if !denied(cmd) {
 			t.Errorf("%q: not denied", cmd)

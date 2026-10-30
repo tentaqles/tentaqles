@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -167,7 +168,10 @@ var (
 	tqLookPath = exec.LookPath
 )
 
-// samePath compares two executables by their final paths.
+// samePath compares two executables by their final paths, cleaned and
+// without folding (normShell drops glob brackets: <dir>/[tq]/tq.exe would
+// equal <dir>/tq/tq.exe while the shell runs <dir>/t/tq.exe). Case is
+// ignored only where the file system ignores it.
 func samePath(a, b string) bool {
 	if a == "" || b == "" {
 		return false
@@ -179,14 +183,22 @@ func samePath(a, b string) bool {
 	if f, err := packs.FinalPath(b); err == nil {
 		fb = f
 	}
-	return normPathForm(fa) == normPathForm(fb)
+	fa, fb = filepath.Clean(fa), filepath.Clean(fb)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(fa, fb)
+	}
+	return fa == fb
 }
 
 // isSelfTq reports whether a command word runs this tq: the running
 // binary's own path, or a bare tq (tq.exe) that resolves on PATH to it.
-// Any other path (./tq, a link elsewhere) is just a program.
+// Any other path (./tq, a link elsewhere) is just a program, and so is a
+// word the shell expands (a glob, a brace, a variable, a backtick).
 func isSelfTq(word string) bool {
 	w := strings.Trim(word, `"'`)
+	if strings.ContainsAny(w, "*?[]{}$`") {
+		return false
+	}
 	self := tqSelfPath()
 	switch strings.ToLower(w) {
 	case "tq", "tq.exe":
@@ -213,9 +225,11 @@ var tqSafeSubcommands = map[string]bool{"pack": true, "hub": true, "doctor": tru
 // tqExempt reports a command the state-dir check leaves to tq itself: one
 // call (bareTqCommand) of this tq (isSelfTq) with a safe subcommand as its
 // first argument. A child command after -- (tq pack cloud plan -- terraform
-// plan) is checked as its own command, so its mention is not exempt.
+// plan) is checked as its own command, so its mention is not exempt. A
+// sub-command (a backtick, $( ), or PowerShell's ( ) and @( )) runs before
+// tq does; normShell drops backticks, so the raw command is checked.
 func tqExempt(cmd, mention string) bool {
-	if !bareTqCommand(normShell(cmd)) {
+	if strings.ContainsAny(cmd, "`(") || !bareTqCommand(normShell(cmd)) {
 		return false
 	}
 	w := strings.Fields(mention)
@@ -429,7 +443,11 @@ func (m *rootMatcher) FindAllStringIndex(s string, _ int) [][]int { return m.all
 
 var (
 	cdRe     = regexp.MustCompile(`^\s*(cd|pushd|chdir|set-location|sl)\s+(\S+)\s*$`)
-	linkVerb = regexp.MustCompile(`\b(ln|mklink|new-item\b.*-itemtype\s+(junction|symboliclink|hardlink)|cmd\s+/c\s+mklink)\b`)
+	// linkVerb: a command that creates a link. New-Item (or ni) with
+	// -ItemType, its -Type alias or a prefix of them, cmd's mklink, fsutil
+	// hardlink create, and cp -l/-s (also combined, -al) or --link and
+	// --symbolic-link. A link type held in a variable is not resolved.
+	linkVerb = regexp.MustCompile(`\b(ln|mklink|(new-item|ni)\b.*\s-(t|ty|typ|type|it|ite|item|itemt|itemty|itemtyp|itemtype)(\s+|:)(junction|symboliclink|hardlink)|fsutil\s+hardlink\s+create|cp\b[^;&|\n]*\s(-[a-z]*[ls][a-z]*|--link|--symbolic-link))\b`)
 	msgArg   = regexp.MustCompile(`(?i)\s(-m|-am|--message)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
 	echoSeg  = regexp.MustCompile(`(?i)^\s*(echo|write-host|write-output|printf)\b`)
 )
@@ -538,14 +556,20 @@ func firstSeg(s string) string {
 }
 
 // proseFree blanks text that is never a path: a commit message (-m,
-// --message) and an echo segment that redirects nowhere.
+// --message) and an echo segment that redirects nowhere, unless the text
+// runs something ($(...), a backtick; see executes).
 func proseFree(raw string) string {
 	if l := strings.ToLower(raw); strings.Contains(l, "-m") || strings.Contains(l, "-am") {
-		raw = msgArg.ReplaceAllString(raw, " ")
+		raw = msgArg.ReplaceAllStringFunc(raw, func(m string) string {
+			if executes(m) {
+				return m
+			}
+			return " "
+		})
 	}
 	var out []string
 	for _, seg := range proseSplit.Split(raw, -1) {
-		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") {
+		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") && !executes(seg) {
 			continue
 		}
 		out = append(out, seg)
@@ -629,7 +653,7 @@ func protectedMention(raw string) bool {
 		}
 		bare = true
 	}
-	if mentioned && (strings.Contains(n, "ln") || strings.Contains(n, "mklink") || strings.Contains(n, "new-item")) && linkVerb.MatchString(n) {
+	if mentioned && linkVerb.MatchString(n) {
 		return true
 	}
 	if bare {
@@ -748,9 +772,27 @@ func humanProseFree(raw string) string {
 }
 
 // humanAnswerCommand is the hook's tq/human-answer check of a shell command:
-// continuations folded, prose blanked, then humanAnswerShell.
+// continuations folded, prose blanked, carets folded, then humanAnswerShell.
 func humanAnswerCommand(cmd string) bool {
-	return humanAnswerShell(normShell(humanProseFree(foldContinuations(cmd))))
+	return humanAnswerShell(normShell(foldCarets(humanProseFree(foldContinuations(cmd)))))
+}
+
+// foldCarets drops cmd's caret escapes: ^x reads as x and ^^ as ^, so
+// .tentaqle^s and pa^cks read as the names cmd sees. It is applied where a
+// command is matched (the hook's two call sites), not inside normShell.
+func foldCarets(s string) string {
+	if !strings.Contains(s, "^") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '^' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // humanAnswerShell is the folded half of tq/human-answer: a tq hub answer
@@ -850,7 +892,7 @@ func stateDirDecision(call policy.ToolCall, cwd string, readArgs ...packs.ReadAr
 				mention = m
 			}
 		}
-		if protectedMention(mention) && !tqExempt(cmd, mention) {
+		if mention = foldCarets(mention); protectedMention(mention) && !tqExempt(cmd, mention) {
 			deny("tq/hub-store-write", "this command reaches a protected part of tq's state directory ("+paths.Home()+": hub, packs, build-gate, trust, guard, guard.yaml, config.yaml or audit.jsonl), which holds the hub store, the pack ledgers, approvals, plans and keys; only tq itself touches it")
 		}
 		if (strings.Contains(n, "tq-packs.y") || strings.Contains(n, "tq-pac~")) && !(readOnlyVerb.MatchString(n) && !strings.ContainsAny(n, ">;&|")) {

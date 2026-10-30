@@ -41,7 +41,8 @@ This page covers how the pack framework keeps an agent from granting itself a ga
   - `tq/hub-store-write` (never-disable) denies a shell command that reaches a protected part. The only exemption is one call of this tq (the running binary's own path, or a bare `tq` that resolves on PATH to it; `./tq` or any other path is just a program) with a subcommand that never runs a child or writes a path argument (`pack`, `hub`, `doctor`, `guard`, `list`, `insights`, `version`, `decide`, `providers`, `secrets`, `help`). A child command after `--` (`tq pack cloud plan -- terraform plan`) is checked as its own command, and `tq run`, `tq dotenv run`, `tq redact run` and every other subcommand are checked like any program. The match runs after these folds:
     - every root spelling (real, final and 8.3 paths; `~/.tentaqles`; the `TQ_HOME` spellings);
     - every variable tq exports that points inside the state directory (`CLAUDE_CONFIG_DIR` and the others), in each of its spellings including the bare name;
-    - quotes, glob brackets and `+` folded;
+    - quotes, glob brackets, cmd carets (`pa^cks`) and `+` folded;
+    - a commit message or an echo kept when it runs something (`$(...)`, a backtick);
     - `..` resolved lexically.
   - Also denied:
     - a root spelling and a `..` path in one command (fail closed);
@@ -64,6 +65,7 @@ This page covers how the pack framework keeps an agent from granting itself a ga
 
 ## Known limits (the key-isolation follow-up)
 
+- **The state-folder check is a seatbelt, not a boundary.** [GUARD-SCOPE.md](../GUARD-SCOPE.md) lists its known gaps by class and the real protections.
 - **The regex layer is not complete.** String building the matcher cannot follow will pass it. Examples are `os.path.join(*['.tenta','qles'])`, `chr()` sequences, base64 and script files written in one step and run in another. The ledger signature is what holds there: a write that gets past the hook cannot produce a valid answered line without the private key.
 - **Claims are files, the mark is not.** Claim files and `consumed` lines are not signed. Deleting them no longer revives an approval, because the keychain high-water mark still says it was used; a process that can write the keychain can lower the mark, which is the same reach as reading the private key.
 - **A pseudo-terminal.** A pty (`script`, ConPTY, pywinpty) can satisfy the terminal check of `tq hub answer` and `approval.Confirm`. The typed binding makes this harder. The private key stays out of the agent's reach only while the keychain refuses same-user reads, which most OS keychains do not do for a same-user process outside the hooks. What the signature guarantees is that a grant needs the private key: a ledger write alone, from any process, cannot grant, widen, extend or replay an approval. It does not stop a same-user process that reads the keychain directly.

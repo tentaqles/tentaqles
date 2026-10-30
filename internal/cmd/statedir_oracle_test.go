@@ -69,11 +69,20 @@ func computeRootRegexOracle(forms []string) *regexp.Regexp {
 	return regexp.MustCompile("(" + strings.Join(alts, "|") + ")")
 }
 
+// oracleRunsRe: text a shell runs inside a message or an echo (command or
+// process substitution, a backtick), written apart from executes.
+var oracleRunsRe = regexp.MustCompile("\\$\\(|`|[<>]\\(")
+
 func proseFreeOracle(raw string) string {
-	raw = msgArg.ReplaceAllString(raw, " ")
+	raw = msgArg.ReplaceAllStringFunc(raw, func(m string) string {
+		if oracleRunsRe.MatchString(m) {
+			return m
+		}
+		return " "
+	})
 	var out []string
 	for _, seg := range proseSplit.Split(raw, -1) {
-		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") {
+		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") && !oracleRunsRe.MatchString(seg) {
 			continue
 		}
 		out = append(out, seg)

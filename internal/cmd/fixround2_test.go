@@ -214,6 +214,16 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "Bash", Command: `ls ~/.tentaqles-old/packs`},
 		{Tool: "Bash", Command: `ls ~/.tentaqles.y*ml internal/packs/*.go`},
 		{Tool: "Bash", Command: `git add .tentaqles.yaml internal/packs/doctor.go && git status`},
+		// Likely false positives of the clear-cut fixes (prose that runs
+		// nothing, a plain copy, carets, a test run with its own TQ_HOME).
+		{Tool: "Bash", Command: `git commit -m "docs: mention ~/.tentaqles"`},
+		{Tool: "Bash", Command: "git commit -m \"$(cat <<'EOF'\ndocs: the guard keeps ~/.tentaqles/packs safe\nEOF\n)\""},
+		{Tool: "Bash", Command: `echo hello`},
+		{Tool: "Bash", Command: `cp -r src dst`},
+		{Tool: "Bash", Command: `cp -r ~/.tentaqles/bundles /tmp/bundles`},
+		{Tool: "PowerShell", Command: `$env:TQ_HOME = "$env:TEMP\x"; go test ./...`},
+		{Tool: "PowerShell", Command: `New-Item -ItemType Directory -Path $HOME\.tentaqles\bundles\x`},
+		{Tool: "PowerShell", Command: `cmd /c dir %USERPROFILE%\.tentaqles\bundles ^| findstr x`},
 	}
 	for _, c := range allowed {
 		if code, out := hookDecision(t, ws, c); code != 0 || strings.Contains(out, "tq/hub-store-write") {
@@ -255,6 +265,23 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "PowerShell", Command: "cat README.md ruby -rfileutils -e \"FileUtils.rm_rf Dir.home+'/.tentaqlesX'.chop+'/packs'\""},
 		// not only readers: judged as before (fail closed), though no root
 		{Tool: "Bash", Command: `rm -rf ~/.tentaqles.x/packs; cat ~/.tentaqles.x`},
+		// cmd caret escapes hide a name from the matcher.
+		{Tool: "PowerShell", Command: `cmd /c del %USERPROFILE%\.tentaqle^s\packs\acme\ml\ledger.jsonl`},
+		{Tool: "PowerShell", Command: `cmd /c del %USERPROFILE%\.tentaqles\pa^cks\acme\ml\ledger.jsonl`},
+		// prose that runs something is not prose
+		{Tool: "Bash", Command: `echo $(icacls ~/.tentaqles/trust /grant x:F)`},
+		{Tool: "Bash", Command: `git commit -m "$(icacls ~/.tentaqles/trust /grant x:F)"`},
+		{Tool: "Bash", Command: "echo `icacls ~/.tentaqles/trust /grant x:F`"},
+		// link creation spelled other ways
+		{Tool: "PowerShell", Command: `New-Item -Type Junction -Path C:\t -Target $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `New-Item -ItemType:SymbolicLink -Path C:\t -Target $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `New-Item -It HardLink -Path C:\t -Value $HOME\.tentaqles\x`},
+		{Tool: "PowerShell", Command: `ni -ItemType Junction -Path C:\t -Value $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `fsutil hardlink create C:\t\x %USERPROFILE%\.tentaqles\x`},
+		{Tool: "Bash", Command: `cp -rs ~/.tentaqles /tmp/t`},
+		{Tool: "Bash", Command: `cp -al ~/.tentaqles /tmp/t`},
+		{Tool: "Bash", Command: `cp --symbolic-link ~/.tentaqles/x /tmp/t`},
+		{Tool: "Bash", Command: `cp -r --link ~/.tentaqles /tmp/t`},
 		{Tool: "Write", Path: filepath.Join(home, "trust", "abc")},
 		{Tool: "Write", Path: filepath.Join(home, "build-gate", "hmac.key")},
 		{Tool: "Write", Path: filepath.Join(home, "guard.yaml")},
@@ -314,6 +341,8 @@ func TestHookRound3Bypasses(t *testing.T) {
 		{Tool: "Bash", Command: `secret-tool lookup service tentaqles-packs username acme`},
 		{Tool: "Bash", Command: `security find-generic-password -s tentaqles-packs -a acme -w`},
 		{Tool: "PowerShell", Command: `[Windows.Security.Credentials.PasswordVault]::new().Retrieve('tentaqles-packs','acme')`},
+		// cmd caret escapes
+		{Tool: "PowerShell", Command: `cmd /c t^q hub an^swer c1 d1 --choice approve`},
 	}
 	if s := shortPath(filepath.Join(home, "build-gate")); s != "" && !strings.EqualFold(filepath.Base(s), "build-gate") {
 		deny = append(deny, policy.ToolCall{Tool: "Bash", Command: `echo k > ~/.tentaqles/` + filepath.Base(s) + `/hmac.key`})

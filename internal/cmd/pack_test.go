@@ -586,6 +586,7 @@ func TestHookStoredPlanReadArg(t *testing.T) {
 		"pulumi up --yes " + plan,
 		"pulumi up --yes --skip-preview --plan=" + plan,
 		"cd infra && tofu apply " + plan,
+		"cd infra\r\ntofu apply " + plan, // CRLF is one newline
 	} {
 		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
 		if code != 0 || strings.Contains(out, "tq/hub-store-write") {
@@ -634,10 +635,19 @@ func TestHookStoredPlanReadArg(t *testing.T) {
 		"undeclared flag before":  "tofu apply -state-out " + plan,
 		"undeclared, terraform":   "terraform apply -backup " + plan,
 		"a bool flag is not -out": "pulumi up --yes --save " + plan,
+		// A lone CR ends a PowerShell statement (the other breaks may end one
+		// too): the plan is then an argument of another program.
+		"lone CR":   "tofu apply\ricacls " + plan + " /grant x:F",
+		"VT":        "tofu apply\vicacls " + plan + " /grant x:F",
+		"FF":        "tofu apply\ficacls " + plan + " /grant x:F",
+		"NEL":       "tofu apply\u0085icacls " + plan + " /grant x:F",
+		"LS":        "tofu apply icacls " + plan + " /grant x:F",
+		"PS":        "tofu apply icacls " + plan + " /grant x:F",
+		"CR before": "icacls\rtofu apply " + plan,
 	} {
 		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
 		if code != 2 || !strings.Contains(out, "tq/hub-store-write") {
-			t.Fatalf("%s: %d %s", name, code, out)
+			t.Errorf("%s: %d %s", name, code, out)
 		}
 	}
 }
