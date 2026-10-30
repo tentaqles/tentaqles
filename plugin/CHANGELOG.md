@@ -4,6 +4,8 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-10-29
+
 - **New install source.** The plugin now ships from the marketplace at the root of
   `github.com/tentaqles/tentaqles` (`/plugin marketplace add tentaqles/tentaqles`,
   `/plugin install tentaqles@tentaqles`), which checks out `plugin/` at a release tag's commit (`ref` and `sha` pinned after the release).

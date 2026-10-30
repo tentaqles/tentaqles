@@ -6,6 +6,8 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-29
+
 ### Packs (specs C and D, releases 3 and 4)
 
 `tq pack`: checks, guards, reviewers and approvals for data, ml, cloud and db work. See
