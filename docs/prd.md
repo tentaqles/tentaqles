@@ -1,6 +1,6 @@
 # Tentaqles: product requirements
 
-Status: draft (section 10 has open decisions)
+Status: planning-ready (the 23 decisions of 2026-10-30 are settled; outcomes in §17)
 Owner: the repo owner (reach@tentaqles.ai)    Updated: 2026-10-30
 Baseline audited: `main` f66b3e9, tq v0.8.2, plugin 0.15.2
 
@@ -18,8 +18,9 @@ How to read it:
   key move, FR-27). Each FR cites its evidence (a file, command, skill or test) and lists
   what is missing. Acceptance checks are binary; for shipped work the check is the test
   that pins it.
-- Where the original PRD and the code disagree, the FR says **CONFLICT** and the question
-  is listed in section 10 as a `NEEDS-DECISION`. Nothing was resolved silently.
+- Where the original PRD and the code disagree, the FR says **CONFLICT** and names the
+  decision (`D-nn`) the repo owner took on 2026-10-30; the outcomes are in §17. Nothing
+  was resolved silently, and section 10 is empty because every question was answered.
 - `[placeholder]` marks a detail neither the documents nor the code confirm.
 - Names follow the code, not the original PRD. The mapping is in section 15 (the
   original PRD's own discovery rule asks for exactly this).
@@ -102,10 +103,11 @@ Evidence, from the repo's own history:
   slips and prompt-injected mistakes.
 - Automatic secret rotation (development-process spec §2; standing rule).
 - Replacing CI (DP §2).
-- Cross-identity dashboards that query clients' data together. **Flag:** the code already
-  offers `tq hub serve --all` (a switcher plus a combined waiting list, one database per
-  workspace, never joined) and `/tentaqles:dashboard`; the original PRD lists
-  cross-identity views as out of scope. See §10 D-03.
+- Mixing clients' data: no query, table, export or model call ever joins two
+  workspaces. Seeing clients side by side is allowed (D-03, 2026-10-30): `tq hub serve
+  --all` (a switcher plus a combined waiting list over one database per workspace) and
+  `/tentaqles:dashboard` stay; the original PRD's "no cross-identity views" is narrowed
+  to this.
 
 ## 4. Functional requirements
 
@@ -159,8 +161,10 @@ Claude Code status bar, including `tq: off`. The identity preamble prints at ses
 (`tq claude-hook session-start`).
 Missing: the shell templates do not change the prompt or the window title; the original
 PRD §3.1 and §4.2 ask for a prompt prefix or title, and §13.2 for a visible "raw" marker.
-The format is open (§10 D-01). TEST_RESULTS_RUN01 reported no preamble visible in one
-session; cause unconfirmed.
+Decided (D-01): a short `[client]` prompt prefix and the client name in the window
+title in every supported shell, `[off]` after `tq off`; the banner (FR-11) shows once, at
+onboarding. TEST_RESULTS_RUN01 reported no preamble visible in one session; cause
+unconfirmed.
 **Acceptance checks**
 - A new terminal opened in a trusted workspace shows the workspace name in the prompt or
   the window title before the first command.
@@ -176,15 +180,16 @@ Evidence: catalog entries redirect the config home per identity: Claude
 `~/.tentaqles/identities/<ws>/<id>`; `tq login <ws> <id>` logs in there. Extra agents in
 the catalog: gemini, cursor, copilot, goose, cline, continue. The global install is never
 written; only the variable is redirected.
-Missing: Kimi Code is not in the catalog (original PRD §3.2 lists it). OpenCode has a
-catalog entry but no hook or guard (see FR-28). No test proves the global `~/.claude`
+Missing: Kimi Code is not in the catalog (original PRD §3.2 lists it); decided (D-11):
+it comes after OpenCode, once its hook support is checked. OpenCode has a catalog entry
+but no hook or guard (see FR-28). No test proves the global `~/.claude`
 stays untouched [placeholder].
 **Acceptance checks**
 - Starting `claude` in workspace A and in workspace B writes credentials under two
   different `CLAUDE_CONFIG_DIR` folders and leaves `~/.claude` unchanged (byte-compare
   before and after).
-- A `kimi` catalog entry exists with its config-dir variable, or §10 D-11 records the
-  decision not to support it.
+- A `kimi` catalog entry exists with its config-dir variable [placeholder: after the
+  OpenCode work of FR-28].
 
 ### FR-05 Per-workspace provider CLI configuration
 Why: G1. git, cloud, data and tracker CLIs must each act under the client's account.
@@ -212,9 +217,9 @@ Why: G1. An AWS-only client's terminal must not resolve `az` (IDEATION.md, origi
 Status: not started
 Evidence: `envplan` edits no PATH and installs no shims. The guard blocks identity drift
 (`tq/wrong-cloud`, `guard/env-drift`), which is a different property.
-Missing: a per-workspace PATH scope or shim directory, and a decision on how to treat
-tools that only install globally (original PRD §4.4 step 3 asks for a recorded shim
-strategy). Design: §10 D-05.
+Missing: everything. Decided (D-05): a shim folder per workspace holding launchers for
+the selected tools only, placed first on PATH by the shell hook and removed by `tq off`;
+tools that only install globally are recorded in the manifest with their shim strategy.
 **Acceptance checks**
 - In a workspace whose manifest declares only `aws`, `Get-Command az` (PowerShell) and
   `command -v az` (bash) fail, while they succeed in a neutral folder.
@@ -243,7 +248,9 @@ Status: not started
 Evidence: the only browser code is `openBrowser` in `internal/cmd/hub_service.go`, which
 uses the OS default opener for loopback URLs. No manifest field, no profile handling, no
 wiring for Playwright, Puppeteer or Claude in Chrome.
-Missing: everything. Design: §10 D-06 (which browsers and which automation tools first).
+Missing: everything. Decided (D-06): Chrome and Edge first, for tq's own pages
+(`tq hub open`, `tq hub review --open`) and for browser automation started from the
+workspace (Claude in Chrome, Playwright); Safari and Opera later.
 **Acceptance checks**
 - The manifest holds a `browser:` block with the browser and profile name (shape
   [placeholder]).
@@ -254,7 +261,7 @@ Missing: everything. Design: §10 D-06 (which browsers and which automation tool
 
 ### FR-09 Credentials live per workspace, never in shared dotfiles
 Why: G1. A command issued from workspace A must not be able to use B's credential.
-Status: done, with a CONFLICT on wording
+Status: done (wording conflict settled by D-04)
 Evidence: CLI logins live in per-identity config dirs (FR-05); tracker tokens live in the
 OS keychain under service `tentaqles`, account `<ws>/<provider>` (`tq secret set|rm|status`,
 human-only, `internal/secret`; `TestSecretSetStatusRm`); `.env` values are used only
@@ -263,8 +270,8 @@ keychain (service `tentaqles-packs`); the hub holds no credentials (A §15).
 **CONFLICT:** the original PRD §3.3 says credentials must never be "in the global OS
 keychain under a shared key". The code uses the OS keychain with per-workspace account
 names, which is what the OS offers; a same-user process can read any of it (threat model
-AR1). The original PRD's "trust store" (a credential store) does not exist as one thing;
-see §15. Decision: §10 D-04.
+AR1). Decided (D-04): this is the design; "trust store" in tq means manifest trust
+(`tq allow`), and the original PRD's credential-store meaning is retired; see §15.
 **Acceptance checks**
 - `TestSecretSetStatusRm`, `TestChainNeverPrintsAValue` and `TestToolEnvIsFiltered` pass.
 - `tq secret status <ws>` reports the token's presence without printing it.
@@ -290,10 +297,11 @@ preferred shell; "Other" with free text; options Trello, GitHub Projects, Discor
 Google Meet, Colab, Kimi; data platform is single-select (PRD: multi); a `blocked_commands`
 list and the human-only list are not written (the latter is built in); no resume after a
 failed step; `--from` takes an answers file, not a manifest.
-**CONFLICT:** the original PRD §4.4 step 7 requires closing the terminal `tq init` ran in;
-the code refuses on purpose ("tq never closes a terminal for you"). §10 D-07. The
-original PRD's `tq init` is the code's `tq init` (base folder) plus `tq onboard`/`tq add`
-(workspace); see §15.
+**CONFLICT, decided (D-07):** the original PRD §4.4 step 7 requires closing the terminal
+the wizard ran in; the code refuses on purpose today. The owner chose to close it, only
+after the new terminal opened successfully; if the new terminal fails, the old one stays
+and prints the failing step. The original PRD's `tq init` is the code's `tq init` (base
+folder) plus `tq onboard`/`tq add` (workspace); see §15.
 **Acceptance checks**
 - `tq onboard --from <answers>` in a new folder writes a valid manifest and exits 0
   (`TestOnboard_FromWritesValidManifestWithSkippedBlocks`).
@@ -301,6 +309,8 @@ original PRD's `tq init` is the code's `tq init` (base folder) plus `tq onboard`
   answers to the manifest [placeholder: field names].
 - Re-running `tq onboard` in a provisioned folder exits non-zero and names the existing
   manifest.
+- After the new identity terminal opens, the terminal that ran `tq onboard` ends; when
+  the new terminal cannot be opened, the old one stays open and prints the failing step.
 
 ### FR-11 A startup banner in `tq onboard`, identity terminals and off sessions
 Why: Original PRD §4.2: a large ASCII "Tentaqles" banner with version, folder and a mode
@@ -308,8 +318,9 @@ label, as an identity indicator; `--no-banner` and `TQ_NO_BANNER` for scripts.
 Status: not started
 Evidence: no banner code; `tq run --off` prints one line ("tq: off — main logins, no
 guard").
-Missing: the banner asset, the UTF-8 fallback, the flags, and its reuse as the indicator
-(FR-03). Glyph set and colors are open (§10 D-01).
+Missing: the banner asset, the UTF-8 fallback and the flags. Decided (D-01): the banner
+shows once, at onboarding, not on every terminal; the indicator is FR-03. Glyph set and
+colors [placeholder: a single text asset the owner can replace].
 **Acceptance checks**
 - `tq onboard` prints the banner, then one line with the tq version and the working
   directory, before the first prompt; `tq onboard --no-banner` and `TQ_NO_BANNER=1` print
@@ -324,8 +335,9 @@ Status: not started
 Evidence: `setup.ToolCheck` (`internal/setup/toolcheck.go`) and `tq providers check` only
 probe whether a CLI is installed; `tq pack doctor` prints install hints. The catalog
 carries install hints per provider.
-Missing: installation or linking, the identity-scoped location, and the shim strategy for
-global-only tools (ties to FR-06). Decision: §10 D-05.
+Missing: installation or linking. Decided (D-05): install or link into the workspace's
+shim folder (FR-06); tools that only install globally are recorded in the manifest with
+their shim strategy.
 **Acceptance checks**
 - After onboarding with `aws` selected on a machine without it, `tq providers check`
   shows `aws` installed, and the binary resolves only inside that workspace's terminal.
@@ -366,7 +378,9 @@ auth-failed, chat-ok/mcp-missing, email-ok/mcp-missing.
 human-only by design (B §8). The original PRD has the skill drive the auth. The tracker's
 credential order is cli, keychain, env, MCP (B §7), not OAuth, PAT, MCP. It does not open
 the identity's browser profile (FR-08) or register MCP servers (the human adds
-`claude.bundle.mcp` and runs `tq bundle sync`). §10 D-08.
+`claude.bundle.mcp` and runs `tq bundle sync`). Decided (D-08): logins and `tq secret`
+stay human-only and the skill keeps printing them; once FR-08 exists it opens each login
+page in the workspace's browser profile, still never touching a token.
 **Acceptance checks**
 - `/tentaqles:onboard` on a workspace with an unreachable tracker reports `tracker-*`
   as failed and names the fix; with every service reachable it reports each as ok.
@@ -436,7 +450,7 @@ blocked.
 ### FR-18 Guard modes: default, relaxed, strict, custom, and off per launch
 Why: G2. IDEATION.md items 2 and 3: an "unattended" mode that skips everything but the
 locked groups, and the earlier ask/deny behaviour, plus customizable modes.
-Status: done, with CONFLICTS on names and two cells
+Status: done for behaviour; rename and two cell changes planned (D-09a)
 Evidence: `internal/guardcfg/presets.go` (`TestPresetsMatchSpecTable`): `default` (each
 rule's own action), `relaxed` (skips every unlocked category except git-history and
 system, which ask), `strict` (default plus deny prod-changes, cloud-destructive,
@@ -446,18 +460,26 @@ default needs a hash-keyed `tq allow --mode <ws> relaxed|custom` grant; without 
 mode is clamped to default. Precedence global, workspace, project, launch; the repo-level
 file can only tighten. `tq mode` shows the table; `tq mode --json` is a stable interface
 (E §16). Spec E replaced "unattended mode"; `tq unattended` remains a deprecated alias.
-**CONFLICT (names):** original PRD `bypass|guarded|supervised|custom` = code
-`off|relaxed|default|custom`; `strict` has no PRD counterpart. **CONFLICT (cells):** in
-relaxed, git-history and system ask instead of skip (owner ruling, E Q2); three
-self-protection rules (`tq/guard-change`, `tq/pack-config-change`, `tq/guard-error`) and
-two Jev secrets rules ask instead of deny. `custom` has no name and no `tq mode create`;
-`tq mode edit` is the editor and locked categories cannot be set to ask. §10 D-09.
+**CONFLICT, decided (D-09a):** the modes are renamed to the original PRD's names and
+`guarded` is loosened: `off` → `bypass`, `default` → `supervised`, `relaxed` →
+`guarded`, `strict` and `custom` stay; `guarded` skips git-history and system as well
+(today they ask). The old names are accepted as aliases for one release with a
+deprecation note; `tq mode --json` keeps both spellings for that release. This document
+uses the current code names in evidence and the new names in checks. Unchanged by the
+decision: three self-protection rules (`tq/guard-change`, `tq/pack-config-change`,
+`tq/guard-error`) and two Jev secrets rules ask instead of deny; `custom` has no name and
+no `tq mode create` (`tq mode edit` is the editor); locked categories cannot be set to
+ask (D-09c).
 **Acceptance checks**
 - `TestPresetsMatchSpecTable`, `TestRelaxedLockedDeniesStillBlock`, `TestRunTqMode` pass.
 - `tq mode set relaxed` on a workspace without a grant leaves `tq mode` reporting
   `default` with a "needs a grant" note (clamp).
 - A repo `tq-packs.yaml` or project layer can only make a category stricter: a looser
   value is ignored and reported.
+- `tq mode` lists `bypass`, `supervised`, `guarded`, `strict` and `custom`; `tq mode set
+  relaxed` still works for one release and prints the new name.
+- In `guarded` with a grant, `git push --force origin main` and a write under a system
+  directory are skipped and appear in `tq mode log`, while every locked rule still blocks.
 
 ### FR-19 The locked groups are never loosened by any mode, override or file
 Why: G2. "Otherwise an agent could widen unattended mode on its own" (IDEATION.md).
@@ -466,9 +488,8 @@ Evidence: `guardcfg.Locked` = identity, secrets, self-protection, privacy
 (`categories.go`; privacy was added at spec review, E §19 Q1); `never_disable.go` ignores
 `guard.disable` for locked ids; `TestLockedNeverChange`, `TestRelaxedKeepsPrivacy`,
 `TestRelaxedLockedDeniesStillBlock`.
-Missing: nothing for the property itself. Note the original PRD §12.3 allows a custom
-profile to set locked categories to `ask`; the code keeps each rule's own action (some of
-which ask). §10 D-09.
+Missing: nothing. Decided (D-09c): locked stays locked; a custom table cannot set a
+locked category to `ask` (the original PRD §12.3 would have allowed it).
 **Acceptance checks**
 - In every preset and in a custom table that tries `identity: skip`, `tq mode` shows the
   four locked rows as `rule locked`.
@@ -490,12 +511,15 @@ Missing: plain `tq allow <ws>` and `tq deny` are protected only by the `tq/guard
 ask, not by `requireHuman` (COMMANDS.md says human-only: doc mismatch); `tq guard
 off|on|set` is not human-only (locked ids are still never disabled); `tq mode toggle` and
 `override` have no typed confirmation (original PRD §12.3 asks for one); switching to
-`off` checks agent markers only, no terminal (FR-23).
+`off` checks agent markers only, no terminal (FR-23). Decided (D-10): close all of
+these, P0.
 **Acceptance checks**
 - `TestAllowModeIsHumanOnly` passes; in a Claude session, `tq secret status` exits 1 with
   "human-only" (COMMANDS.md §4 step 9).
-- `tq allow <ws>` run from an agent session is refused by the binary, not only asked by
-  the hook, or §10 D-10 records that the ask is enough.
+- `tq allow <ws>`, `tq deny <ws>` and `tq guard off|on|set` run from an agent session are
+  refused by the binary, not only asked by the hook.
+- `tq off`, `claude-off`, `codex-off`, `tq run --off` and `tq mode toggle|override`
+  require a terminal on stdin and stdout and a typed `yes`.
 
 ### FR-21 Permission categories the original PRD names that the code lacks
 Why: Original PRD §12.1 lists 11 categories; the code has 13, of which 4 PRD categories
@@ -507,9 +531,10 @@ ci-supply-chain, hygiene, packs. Not in the code: filesystem-destructive (closes
 `tq/outside-path-write` under system), package-install, network-egress,
 browser-actions. `prod-changes` matches by command type; the manifest has no production
 tags (original PRD §12.1 row 5).
-Missing: the four categories, their rules, and a manifest way to tag environments as
-production (the cloud and db packs already resolve environments through `envgate`;
-reuse it). Decision on scope: §10 D-09.
+Missing: the four categories and their rules. Decided (D-09b): add all four, each
+asking in `supervised` and skipped only under a `guarded` or custom grant; browser-actions
+lands after FR-08; production environment tags reuse `envgate` (the cloud and db packs
+already resolve environments through it).
 **Acceptance checks**
 - `tq guard list` shows at least one rule in each of filesystem-destructive,
   package-install, network-egress and browser-actions, each with a test in
@@ -530,7 +555,8 @@ definition-of-done stop writes a `build-gate ask` question mirrored to the card.
 Missing: the loop is not guard-aware: the decision names the tool, not the tq rule id; no
 test sends a real hook ask through it; whether a settings allow rule overrides a
 PreToolUse hook ask is unverified (spec E assumption A1). Codex never asks (asks are
-denies). §10 D-12.
+denies). Decided (D-12): make the loop rule-aware and prove the retry with a real hook
+ask, P1.
 **Acceptance checks**
 - A headless round whose tool call the guard would ask ends the round, puts a
   `permission` decision naming the rule id on the card, and the run shows `waiting`.
@@ -550,8 +576,9 @@ every hook exiting 0 as its first statement (`plugin/scripts/tq_hook.sh`, `tq_ru
 is the identity terminal again. `TestRunOff`.
 Missing vs original PRD §13: no plain-shell escape (`tq run --off` starts only claude or
 codex; `tq off` changes the current window instead); the off launchers check agent
-markers only, not a terminal (§13.2 asks human-only); no prompt or title marker besides
-the statusline `tq: off` and one printed line (FR-03). The name `tq raw` was not adopted;
+markers only, not a terminal (§13.2 asks human-only; decided D-10: require a terminal
+and a typed confirm); no prompt or title marker besides the statusline `tq: off` and one
+printed line (decided D-01: `[off]` in the prompt and title, FR-03). The name `tq raw` was not adopted;
 `tq off` is the shell function (original §13.1 allows `tq off`). The optional persisted
 toggle (§13.4) is deliberately absent.
 **Acceptance checks**
@@ -617,8 +644,8 @@ auto-allowed under Claude's bypass permission mode, unconfirmed and still open.
 - `printf 'contact tester@acme.com, card <a 16-digit test card number>\n' | tq redact`
   outside a workspace prints both values redacted (COMMANDS.md §4 step 8).
 - `TestCommitPII_DeniedWithCPFEvenWithoutDataBlock` passes.
-- A hook run with Claude's `bypassPermissions` still blocks `tq/commit-pii` (closes the
-  RUN01 item, or §10 D-13 records why it cannot).
+- A hook run with Claude's `bypassPermissions` still blocks `tq/commit-pii`, shown in a
+  real session (decided D-13: verify and fix, P0).
 
 ### FR-27 tq protects its own state, signs what must not be forged, and documents its scope
 Why: G2, G4. Self-protection is a locked group; a written threat model decides what the
@@ -657,14 +684,15 @@ user trusts once in `/hooks`, flags `-a on-request -s workspace-write` or `-a ne
 <sandbox>`; every ask is a deny (E §12, best effort). OpenCode: catalog entry with config
 dirs only, no hook or guard. Kimi Code: absent (E §15 lists it as future work).
 Missing: OpenCode and Kimi hooks and launchers; a Codex hub adapter (A §2 deferred);
-Claude Code auto mode (`--enable-auto-mode`, original PRD "guarded-auto") is not used
-anywhere. The launchers are shell functions in bash, zsh, fish and PowerShell, not in
-cmd.exe.
+the launchers are shell functions in bash, zsh, fish and PowerShell, not in cmd.exe.
+Decided (D-11): OpenCode next (hook, launcher, guard), Kimi Code later once its hook
+support is checked; Codex stays best effort; Claude Code auto mode (`--enable-auto-mode`,
+the original PRD's "guarded-auto") is not used: tq's modes stay the single policy layer.
 **Acceptance checks**
 - `TestPreToolUseAgentCodexAsksDeny` passes; `tq mode --agent codex` lists the rules that
   deny in Codex.
-- [placeholder] an OpenCode session started from a workspace runs the tq PreToolUse hook
-  (blocked `.env` read), once FR-28 is extended; otherwise §10 D-11 records the decision.
+- An OpenCode session started from a workspace runs the tq PreToolUse hook: a `.env`
+  read is blocked with `tq/env-file-read`.
 
 ### FR-29 What the guard skipped or softened is logged and reportable
 Why: G2. Relaxed mode is only acceptable if the developer can see what it let through.
@@ -698,11 +726,18 @@ human sets a budget, moves to done, answers or pushes (A §9.2). The web page is
 card plus an index, YAML or Markdown) so the developer can version them and agents read
 them without an API call. The code keeps the board out of every repo by design ("never
 inside a repository", A §1) and the guard blocks agents from the store folder; agents read
-through `tq hub show|list --json`. §10 D-02.
+through `tq hub show|list --json`. Decided (D-02): the database stays the source of
+truth and the hub writes a read-only Markdown mirror into the client folder, one file per
+card plus an index, refreshed on every change; editing a mirror file changes nothing on
+the board.
 **Acceptance checks**
 - `tq hub add "x"` then `tq hub list` shows the card; the page at `127.0.0.1:7470` shows it
   (COMMANDS.md §4 step 12).
 - `TestMoveIntoActiveEnqueuesAgentReadyOnly` and `TestHubEndToEndWithFakeClaude` pass.
+- After a card changes, its mirror file under the client folder [placeholder: path, for
+  example `<client_root>/.tentaqles/board/<card-id>.md`] is refreshed within one poll,
+  and a hand edit to that file is overwritten on the next refresh without touching the
+  board.
 
 ### FR-31 Mirror the company tracker: assigned items, every provider, polling and on demand
 Why: G3, IDEATION.md: "syncs all tasks assigned to him from the task provider".
@@ -738,10 +773,11 @@ statuses; `tracker.lanes` in the manifest overrides the map (`lane_map` table); 
 tracker's status name is kept as `external_lane`.
 Missing: the local board has five fixed lanes seeded in `schema.go` (kinds backlog, todo,
 active, review, done); no code creates a lane, so a provider's Test or QA column collapses
-onto one local lane and never becomes its own column. §10 D-14.
+onto one local lane. Decided (D-14): the five typed lanes stay, because runs and
+approvals key off them; the card tile shows the tracker's own status name.
 **Acceptance checks**
-- A tracker with statuses Backlog, Todo, Doing, Test, QA, Done shows six columns on the
-  board, or §10 D-14 records that five typed lanes are the product's choice.
+- A linked card whose tracker status is `QA` sits in the review lane and its tile shows
+  `QA`.
 - `TestPullImportsMapsLanesAndWatermark` passes.
 
 ### FR-33 Conflict rules between the company board and the local board
@@ -755,12 +791,15 @@ writes only `external_*`, title and body); acceptance criteria are appended to t
 under `## Acceptance`.
 **CONFLICT:** title and description: the company wins only until someone edits locally;
 after that the local text is kept on every pull and pushed back as `edit_text` under the
-outbox policy (`TestLocalTextEditSurvivesTwoPulls`). Assignee, attachments and tracker
-comments are not stored at all. §10 D-15.
+outbox policy (`TestLocalTextEditSurvivesTwoPulls`). Decided (D-15): this stays the
+rule (a refined card is not overwritten by the next pull, and tq asks before pushing the
+edit); assignee, attachments and tracker comments, read but not stored today, are stored
+and shown read-only on the card.
 **Acceptance checks**
 - `TestConflictTrackerWinsAndStaleOutboundSkipped` passes.
-- After a local title edit and a tracker title edit, the board shows the text §10 D-15
-  decides on, and the other side is updated or left as decided.
+- After a local title edit and a tracker title edit, the board shows the local text and
+  `tq hub sync outbox` holds an `edit_text` row waiting for an answer.
+- A linked card shows the tracker's assignee, attachment names and comments, read-only.
 
 ### FR-34 Writes back to the company board go through a policy: off, ask or auto
 Why: G3. Nothing reaches the client's board without a rule the developer set.
@@ -851,7 +890,8 @@ untrusted one (`TestServeAllUntrustedNeverOpened`), with a workspace switcher an
 combined `/waiting` (`TestWaitingCombinesWorkspaces`); databases are never joined.
 `/tentaqles:dashboard` (plugin) shows every workspace's sessions, memory and pending items.
 **CONFLICT:** original PRD §11 and §14 call cross-identity views out of scope. The owner
-chose both topologies behind a switch in spec A (A §1). §10 D-03 asks which stands.
+chose both topologies behind a switch in spec A (A §1). Decided (D-03): both stay; the
+non-goal is mixing clients' data (§3.2).
 **Acceptance checks**
 - `TestServeAllUntrustedNeverOpened` and `TestWaitingCombinesWorkspaces` pass.
 - No SQL in `internal/hub` joins two workspaces' databases (grep for `ATTACH`).
@@ -894,12 +934,16 @@ interviews on every business-rule edge; `feature` writes a spec slice at
 `docs/checkpoints/<slug>.json`.
 **CONFLICT:** no MUST/SHOULD/OPEN vocabulary (original PRD §0) and no developer accept
 command: "accepted" is the mechanical `planning-ready` grade. The skill's input is an
-idea, brief or ticket URL; it does not read a hub card. §10 D-16.
+idea, brief or ticket URL; it does not read a hub card. Decided (D-16): keep the FR
+format and the mechanical grade, and add a human-only `accept` command that stamps the
+PRD, so planning starts only after the developer said so.
 **Acceptance checks**
 - `prd-status.py --cwd <project>` exits 0 on a PRD with no open decision and a check on
   every FR, and 3 otherwise (`test_ready_prd`, `test_open_decision_blocks`).
 - `/tentaqles:prd` started from a project linked to a card pre-fills §1 from the card's
   body and acceptance criteria [placeholder: once FR-40 exists].
+- `tq prd accept` [placeholder: name] run by a human stamps `Status: accepted` with the
+  date; `kickoff` and `feature` refuse a PRD that is planning-ready but not accepted.
 
 ### FR-42 Break the PRD into cards, refine them, and mark them agent-ready
 Why: Original PRD §7.3: one local card per feature with title, scope, acceptance
@@ -933,8 +977,9 @@ approval), `docs/adr`, `docs/specs`, `docs/checkpoints`, `docs/reviews`, `LEARNI
 the build gate installs its hooks per project into `.claude/settings.local.json`.
 Missing: nothing writes `AGENTS.md` (Codex) or pre-fills identity, card or mode; no
 `src/`, `tests/` or `tasks/` folders; no `project.yaml` (the card link is one-way, FR-40).
-**CONFLICT:** `project.yaml` vs the code's `tq-project` block plus `.tentaqles.yaml`; the
-PRD's `tasks/` folder of card files vs cards in `hub.db` (§10 D-02).
+**CONFLICT, decided:** `project.yaml` vs the code's `tq-project` block plus
+`.tentaqles.yaml` (D-20 keeps the block); the PRD's `tasks/` folder of card files is
+served by the read-only Markdown mirror of D-02.
 **Acceptance checks**
 - A project created by FR-40 contains `CLAUDE.md` with the workspace name, the card id
   and the guard mode in its Client Context, and an `AGENTS.md` when the manifest declares
@@ -963,7 +1008,10 @@ formats (A §13). `TestHubEndToEndWithFakeClaude`.
 **CONFLICT:** the control plane is `tq hub serve` (started by the human or the desktop
 app), not the developer's main Claude session; each round is a separate process, not a
 subagent of that session (original PRD §8 "the main harness session is the control
-plane"). The worktree is named from the feature slug, not the card id. §10 D-17.
+plane"). The worktree is named from the feature slug, not the card id. Decided (D-17):
+the hub stays the runner (runs outlive the session, budgets and concurrency live in one
+place, a run never inherits a session's approvals); worktrees keep the slug, with the
+card id recorded in the plan's `task`.
 **Acceptance checks**
 - `TestMoveIntoActiveEnqueuesAgentReadyOnly`, `TestConcurrencyLimitAndFIFO`,
   `TestProjectLockWaitsUntilRelocation`, `TestEachBudgetLimitStopsTheRun` pass.
@@ -1021,7 +1069,8 @@ Missing: no separate recommendation and blocked fields (they live in the text); 
 the card does not answer; a comment reaches the next prompt but does not resume.
 **CONFLICT:** the original PRD's `pending` answers inline from the main harness session;
 `tq hub answer` refuses every Claude session on purpose (the human is the only authority,
-A §1), so `/tentaqles:hub` prints the command for the human. §10 D-18.
+A §1), so `/tentaqles:hub` prints the command for the human. Decided (D-18): answers
+stay out of agent sessions; the original PRD's inline `pending` answer path is dropped.
 **Acceptance checks**
 - `TestAnswerResumesTheRun`, `TestUpsertDecisionMirrorsGateRecords`,
   `TestTerminalAnswerIsNoticedByThePoll` pass.
@@ -1117,7 +1166,11 @@ backlog).
 Status: not started
 Evidence: nothing declares evals on a card or records results; `/tentaqles:loop` keeps a
 change only when a test score improves (a related mechanism, not a gate).
-Missing: the card field, the gate, the record, the review-page section. Design: §10 D-19.
+Missing: the card field, the gate, the record, the review-page section. Decided (D-19):
+one mechanism for code and non-code cards: an `evals` block holding either commands with
+thresholds or a checklist; the gate runs it, retries a configured number of times, and
+records results on the card and the review page; cards without the block skip the gate.
+A visual review gate (D-23) builds on this later, after evals ship.
 **Acceptance checks**
 - A card with an `evals:` block [placeholder: shape] produces an `evals` gate record with
   metrics, shown on the review page.
@@ -1131,12 +1184,16 @@ Evidence: the `tq-project` block (`plugin/tentaqles/workflow/project.py`) carrie
 commands, paths, changelog and `pack_budget`, frozen at plan approval; pack checks come
 from the manifest `packs:` block and a tighten-only `tq-packs.yaml` (C §2.3);
 `--hotfix` skips the critic, never the regression test (DP §5.3).
-**CONFLICT:** the original PRD has hotfixes skip Evals; the code's hotfix skips the
-critic. No `project.yaml`. Gate order is fixed in code. §10 D-20.
+**CONFLICT, decided (D-20):** optional gates (evals, format, coverage threshold) may be
+added or dropped through the `tq-project` block; tests, review and the definition of done
+cannot be removed; a hotfix skips the review and evals, never the regression test. No
+`project.yaml`.
 **Acceptance checks**
 - The `tq-project` block accepts a `gates:` list that adds or removes an optional gate
-  (evals, format) and the DoD honours it [placeholder: shape]; required gates (tests,
-  review, DoD) cannot be removed and the gate says so.
+  (evals, format, coverage) and the DoD honours it [placeholder: shape]; required gates
+  (tests, review, DoD) cannot be removed and the gate says so.
+- `/tentaqles:fix --hotfix` records the review and evals gates as skipped and the
+  regression test as run.
 
 ### FR-54 Gate results reach the card and the review page; the developer is notified
 Why: Original PRD §9: results on the card and in the review page; a notification when a
@@ -1147,11 +1204,13 @@ Evidence: the review page is built from gate records (`BuildReview`;
 sends an OS notification (`internal/hub/notify`; `TestWaitingOnAResultMovesTheCardToReview`,
 `TestSendIsBoundedToTwoSeconds`).
 Missing: the card itself only links to the review page (no gate status on the card tile);
-no terminal bell; phone notifications deferred (A §2).
+no terminal bell. Decided (D-22): OS notification plus a terminal bell in the hub's
+terminal; chat and phone messages not planned.
 **Acceptance checks**
 - `TestWaitingOnAResultMovesTheCardToReview` and `TestReviewPageIsBuiltFromGateRecords`
   pass.
 - The card tile on the board shows the last gate's PASS/FAIL state.
+- The terminal running `tq hub serve` rings the bell when a card reaches review.
 
 ### FR-55 Packs: checks, guards, reviewers and approvals for data, ML, cloud and database work
 Why: One engine, optional overlays per kind of work (DP §1; specs C and D).
@@ -1318,11 +1377,13 @@ Status: not started
 Evidence: the markdown connector, FTS5 search and the vault export (FR-61) are the
 starting points the backlog names.
 Missing: the pipeline. Depends on FR-61 and on credentials through `tq dotenv` and the
-redaction exits. Design: §10 D-21 (which sources first).
+redaction exits. Decided (D-21): docs folders and the tracker first (both already have a
+connector or arrive through the board); Slack, Teams and email after, once the exits are
+proven on them.
 **Acceptance checks**
-- A second connector (Slack, Jira or a docs folder; [placeholder]) ingests into the
-  workspace's `memory.db` with per-item source and date, and `query-memory` answers a
-  question with a citation to it.
+- Tracker items and a docs folder are ingested into the workspace's `memory.db` with
+  per-item source and date, and `query-memory` answers a question with a citation to one
+  of them.
 - The with/without-KB eval reports precision on a labelled set before retrieval is made
   the default.
 
@@ -1548,82 +1609,10 @@ signals only.
 
 ## 10. Open questions
 
-Each item is a flag raised by this document: the original PRD and the code disagree, or
-the code leaves a product choice open. The repo owner decides unless noted.
-
-- NEEDS-DECISION: D-01 Identity indicator and banner: prompt prefix, window title, or
-  both, and the banner glyph set and colors (FR-03, FR-11). (settle by: ask the repo
-  owner; prototype in PowerShell and bash)
-- NEEDS-DECISION: D-02 Board storage: keep SQLite outside every repo (current), or mirror
-  cards as files in the client folder for versioning and direct agent reads, or both with
-  a one-way export (FR-30, FR-43). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-03 Cross-workspace views: keep `tq hub serve --all` and
-  `/tentaqles:dashboard` (one database per workspace, never joined) or treat them as the
-  original PRD's non-goal and remove them (§3.2, FR-39). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-04 Credential store wording: accept per-identity config dirs plus the
-  OS keychain with per-workspace account names as "the" credential store, and retire the
-  original PRD's "trust store" meaning (FR-09, §15). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-05 PATH scoping and CLI provisioning: shim directory per workspace,
-  PATH rewrite in the shell hook, or containers; and the recorded strategy for
-  global-only tools (FR-06, FR-12). (settle by: research, then prototype on Windows)
-- NEEDS-DECISION: D-06 Browser profiles: which browsers first (Chrome and Edge are
-  named first in IDEATION.md), how the profile is declared, and which automation tools
-  (Playwright, Claude in Chrome) get the profile directory (FR-08). (settle by: research,
-  then ask the repo owner)
-- NEEDS-DECISION: D-07 Closing the originating terminal after onboarding: keep "tq never
-  closes a terminal for you" or implement the original PRD §4.4 step 7 (FR-10). (settle
-  by: ask the repo owner)
-- NEEDS-DECISION: D-08 Onboarding skill: keep logins and `tq secret` human-only with the
-  skill printing commands (current), or let the skill drive OAuth device flows in the
-  identity's browser profile once FR-08 exists (FR-14). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-09 Modes and categories: accept the code's names
-  (off/default/relaxed/strict/custom) and the relaxed rulings (git-history and system
-  ask); whether a custom table may set a locked category to `ask`; whether to add
-  filesystem-destructive, package-install, network-egress, browser-actions and production
-  environment tags (FR-18, FR-19, FR-21). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-10 Human-only enforcement gaps: make plain `tq allow`, `tq deny` and
-  `tq guard` refuse agent sessions in the binary; require a terminal and a typed confirm
-  for `off` and for `tq mode toggle|override` (FR-20, FR-23). (settle by: ask the repo
-  owner; security-sensitive, do not guess)
-- NEEDS-DECISION: D-11 Harness scope: support OpenCode and Kimi Code (hooks, launchers,
-  identities) now, later, or not at all; and whether Claude Code auto mode is ever used
-  (FR-04, FR-28). (settle by: ask the repo owner; research the harnesses' hook support)
-- NEEDS-DECISION: D-12 Headless asks: make the allow-once loop guard-aware (rule id on the
-  decision, retry proven against a real hook ask) and confirm whether a settings allow
-  rule overrides a PreToolUse ask (FR-22). (settle by: prototype)
-- NEEDS-DECISION: D-13 Locked PII rules under Claude's `bypassPermissions`: verify the
-  RUN01 report and fix or document (FR-26). (settle by: prototype in a real session)
-- NEEDS-DECISION: D-14 Lanes: dynamic columns mirroring every tracker status, or the
-  current five typed lanes with `external_lane` kept (FR-32). (settle by: ask the repo
-  owner)
-- NEEDS-DECISION: D-15 Text conflicts: company board always wins title and description
-  (original PRD) or local edits win and are pushed back (current); whether to store
-  assignee, attachments and tracker comments (FR-33). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-16 PRD vocabulary and acceptance: keep FR-nn plus NEEDS-DECISION and
-  the mechanical planning-ready grade (current), or add MUST/SHOULD/OPEN and an explicit
-  developer accept command (FR-41). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-17 Control plane: keep `tq hub serve` as the orchestrator host
-  (current) or add a main-session mode that spawns runs as subagents; worktree naming by
-  slug or card id (FR-44). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-18 Answering decisions from inside a Claude session: keep answers
-  human-only in a terminal or on the board (current, A §1), or allow an inline `pending`
-  answer path with a human proof (FR-47). (settle by: ask the repo owner;
-  security-sensitive)
-- NEEDS-DECISION: D-19 Evals: card field shape, where results are recorded, and whether
-  checklist evals for non-code cards share the mechanism (FR-52, FR-63). (settle by:
-  research, then ask the repo owner)
-- NEEDS-DECISION: D-20 Per-project gates: which gates may be added, removed or reordered
-  through the `tq-project` block, and what `--hotfix` skips (critic today; evals in the
-  original PRD) (FR-53). (settle by: ask the repo owner)
-- NEEDS-DECISION: D-21 Knowledge base: which sources connect first (Slack, Jira, docs
-  folders, email), and the eval set that gates making retrieval the default (FR-62).
-  (settle by: ask the repo owner)
-- NEEDS-DECISION: D-22 Notifications: OS notification is in place; add a terminal bell,
-  phone or chat notification when a card reaches review (FR-54). (settle by: ask the repo
-  owner)
-- NEEDS-DECISION: D-23 Where the UI prototype and visual review gate belong: the
-  development-process spec places it in release 3 "if wanted" and spec C says not in
-  that release (§13 backlog). (settle by: ask the repo owner)
+None. The 23 questions this document raised (D-01 to D-23) were put to the repo owner on
+2026-10-30 and answered; each FR they touch names its decision, and §17 lists the
+outcomes. A new question goes here as `- NEEDS-DECISION: ...` and makes the PRD not
+planning-ready until it is settled.
 
 ## 11. Releases
 
@@ -1638,15 +1627,15 @@ is what its spec required; for a planned release it is the acceptance checks of 
 | Release 2 | FR-10, FR-14, FR-30, FR-31, FR-32, FR-33, FR-34, FR-35, FR-36, FR-37, FR-38, FR-39, FR-42, FR-44, FR-46, FR-47, FR-48, FR-49, FR-54, FR-57, FR-58, FR-59 | Hub core (spec A, PRs #31, #33, #34) and board sync (spec B, PR #46), plugin 0.13.0–0.14.0 (shipped 2026-10-21 to 2026-10-28) |
 | Release 3 | FR-55, FR-67 | Data and ML packs (spec C) and cloud and db packs (spec D, counted as release 4 by the specs), one PR #50, tq v0.8.0, plugin 0.15.0 (shipped 2026-10-29) |
 | Release 4 | FR-18, FR-19, FR-20, FR-22, FR-23, FR-27, FR-28 | Guard modes (spec E, PR #49, tq v0.8.0) and the hardening of v0.8.1–v0.8.2: guard clear-cut fixes, threat model, checksums and provenance (shipped 2026-10-29 to 2026-10-30) |
-| Release 5 | FR-40, FR-36, FR-58, FR-47, FR-42, FR-48, FR-54, FR-57, FR-22, FR-20, FR-68 | Close the loop: a card becomes a project and comes back approved on the company board; decisions carry recommendation and blocked; headless asks are guard-aware; the human-only gaps are closed; the docs match the code |
-| Release 6 | FR-06, FR-12, FR-08, FR-03, FR-11, FR-10, FR-21, FR-28, FR-32, FR-33, FR-35, FR-51, FR-53 | Isolation completeness: scoped PATH and CLI provisioning, browser profiles, indicator and banner, full onboarding prompts, the missing categories, OpenCode or Kimi per D-11, lane and conflict decisions applied, publish with lane and tags, gates configurable per project |
-| Release 7 | FR-52, FR-63, FR-62, FR-56, FR-07, FR-60 | Evals and knowledge: evals gate and checklist evals, capture, the KB pipeline, Jev families promoted to enforce where the eval allows, stack preferences resolved, GUI manifest editing and switching |
+| Release 5 | FR-40, FR-36, FR-58, FR-47, FR-42, FR-48, FR-54, FR-57, FR-22, FR-20, FR-18, FR-26, FR-68 | Close the loop: a card becomes a project and comes back approved on the company board; decisions carry recommendation and blocked; headless asks are rule-aware; the human-only gaps are closed; the modes are renamed and `guarded` skips force-push and system changes; the PII-under-bypass report is verified and fixed; the docs match the code |
+| Release 6 | FR-06, FR-12, FR-08, FR-03, FR-11, FR-10, FR-21, FR-28, FR-30, FR-32, FR-33, FR-35, FR-41, FR-51, FR-53 | Isolation completeness: shim folders and CLI provisioning, Chrome and Edge profiles, prompt and title indicator, banner at onboarding, full onboarding prompts and the terminal close, the four new categories with production tags, OpenCode, the Markdown card mirror, tracker status on tiles, read-only assignee/attachments/comments, publish with lane and tags, the PRD accept command, optional gates configurable |
+| Release 7 | FR-52, FR-63, FR-62, FR-56, FR-07, FR-60, FR-04 | Evals and knowledge: evals gate and checklist evals (then the visual review gate on top), capture, the KB pipeline starting with docs folders and the tracker, Jev families promoted to enforce where the eval allows, stack preferences resolved, GUI manifest editing and switching, Kimi Code |
 
 ## 12. Status map against the original PRD
 
 | Original PRD section | Requirement in short | FRs | Status |
 |---|---|---|---|
-| §0 Discovery-first gate | Read the repo, map requirements, adopt codebase names, stop on permission conflicts | this document; §15 | done (this document is the discovery output; permission conflicts are in §10 D-09, D-10, D-12, D-18) |
+| §0 Discovery-first gate | Read the repo, map requirements, adopt codebase names, stop on permission conflicts | this document; §15 | done (this document is the discovery output; the permission conflicts were settled as D-09a to D-09c, D-10, D-12 and D-18, see §17) |
 | §1 Product summary | Identity manager; one folder per client; board; orchestrators; review; modes | all | partial overall |
 | §2 Glossary | Terms | §15 | done, mapped to code names |
 | §3.1 Terminal | Identity-scoped session; unselected CLIs unreachable; indicator | FR-02, FR-06, FR-03 | partial / not started / partial |
@@ -1681,7 +1670,7 @@ is what its spec required; for a planned release it is the acceptance checks of 
 | §12.4 Ask without a human | Deny, record, retry | FR-22 | partial |
 | §12.5 Harness flags | Shims inject flags | FR-28 | partial (Claude and Codex shims; no auto mode) |
 | §13 Raw escape | Session-scoped no-tq, human-only, marker | FR-23 | done with gaps |
-| §14 Non-goals and questions | | §3.2, §10 | carried over; nine original questions appear as D-01, D-02, D-22, D-18, D-03, D-09, D-09, D-11 (`tq raw` name settled as `tq off`) |
+| §14 Non-goals and questions | | §3.2, §17 | carried over; the nine original questions were settled on 2026-10-30 as D-01, D-02, D-22, D-18, D-03, D-09a, D-09c, D-11 (`tq raw` name settled as `tq off`) |
 | §15 Execution plan | Phases 0–8 | §11, §13 | phase 1 (modes) and most of 4, 6, 7, 8 shipped; phases 2, 3, 5 partial |
 
 ## 13. Prioritized backlog
@@ -1692,38 +1681,43 @@ rest. Each row names its FR, why it sits where it does, and what it depends on.
 
 | # | Priority | Item | FR | Why this priority | Depends on |
 |---|---|---|---|---|---|
-| B-01 | P0 | Start a project from a card (scaffold, two-way link, `move_on_start`) | FR-40, FR-43 | The one missing step between "assigned card" and "run"; everything downstream exists | D-02 for the `tasks/` question (can ship without) |
+| B-01 | P0 | Start a project from a card (scaffold, two-way link, `move_on_start`) | FR-40, FR-43 | The one missing step between "assigned card" and "run"; everything downstream exists | none (D-02 decided: the card mirror serves as `tasks/`) |
 | B-02 | P0 | Queue the parent's review move on the company board when all children are done | FR-36, FR-58 | Last step of the approve path; small change in the outbox | none |
-| B-03 | P0 | Close the human-only gaps: plain `tq allow`/`tq deny`/`tq guard` refuse agents in the binary; terminal plus typed confirm for `off` and `mode toggle|override` | FR-20, FR-23 | Security-sensitive; the original PRD §12.3 requires it; cheap | D-10 |
-| B-04 | P0 | Verify locked PII rules under Claude `bypassPermissions`; fix or document | FR-26 | An open report from the first test run on a locked group | D-13 |
+| B-03 | P0 | Close the human-only gaps: plain `tq allow`/`tq deny`/`tq guard` refuse agents in the binary; terminal plus typed confirm for `off` and `mode toggle|override` | FR-20, FR-23 | Security-sensitive; the original PRD §12.3 requires it; cheap | decided (D-10) |
+| B-04 | P0 | Verify locked PII rules under Claude `bypassPermissions` in a real session; fix | FR-26 | An open report from the first test run on a locked group | decided (D-13) |
 | B-05 | P0 | Fix the doc-vs-code mismatches and stale statements; track COMMANDS.md and IDEATION.md | FR-68 | Operators act on the docs; three mismatches found today | none |
-| B-06 | P1 | Guard-aware headless asks: rule id on the decision, proven retry | FR-22 | Without it headless runs either hang on a confirm or deny silently | D-12, prototype of settings-allow vs hook ask |
+| B-06 | P1 | Rule-aware headless asks: rule id on the decision, proven retry | FR-22 | Without it headless runs either hang on a confirm or deny silently | prototype of settings-allow vs hook ask (D-12 decided) |
 | B-07 | P1 | Decision fields `recommendation` and `blocked`; imported cards can get kind and tags | FR-47, FR-48 | The original PRD contract for decisions; imported cards today can only run `feature` | none |
 | B-08 | P1 | Card dependencies and a hub check that refuses to start a blocked card | FR-42 | Needed before many cards run in parallel from one PRD | none |
-| B-09 | P1 | Gate status on the card tile; gate failure comment on the card; review page links (branch, diff, card) and open items | FR-54, FR-57 | Makes the board and the page the single place to look | none |
+| B-09 | P1 | Gate status on the card tile; gate failure comment on the card; terminal bell; review page links (branch, diff, card) and open items | FR-54, FR-57 | Makes the board and the page the single place to look | none (D-22 decided) |
 | B-10 | P1 | Record one real end-to-end run against one real tracker | FR-58 | Proves G3; today proven only with a fake Claude | B-01, B-02, a real tracker token |
-| B-11 | P1 | Browser profile per workspace, first for `tq hub open|review` and Claude in Chrome / Playwright | FR-08 | Named in the vision's first paragraph; blocks GUI-in-profile and OAuth-in-profile | D-06 |
-| B-12 | P1 | Scoped PATH or shims so unselected CLIs are unreachable; CLI install or link per identity | FR-06, FR-12 | The vision's first bullet; also what makes "AWS-only terminal" true | D-05, a Windows prototype |
-| B-13 | P1 | Identity indicator in prompt and title; the banner with `--no-banner` | FR-03, FR-11 | Low effort, high clarity; reuses the same asset | D-01 |
-| B-14 | P1 | Onboarding prompts for browser, mode and shell; Other with free text; multi-select data platforms; resume after a failed step | FR-10 | Completes §4.3 of the original PRD | B-11 for the browser prompt to mean something |
-| B-15 | P1 | Missing categories: filesystem-destructive, package-install, network-egress, browser-actions; production environment tags via envgate | FR-21 | Four of the original PRD's eleven categories; browser-actions needs B-11 | D-09 |
-| B-16 | P2 | Lanes and conflict rules per D-14 and D-15; store assignee, attachments and tracker comments | FR-32, FR-33 | Fidelity of the mirror; today's behaviour is a defensible choice, so a decision first | D-14, D-15 |
+| B-11 | P1 | Browser profile per workspace: Chrome and Edge first, for `tq hub open|review` and Claude in Chrome / Playwright | FR-08 | Named in the vision's first paragraph; blocks GUI-in-profile and login pages in the client's browser | decided (D-06) |
+| B-12 | P1 | Shim folder per workspace so unselected CLIs are unreachable; CLI install or link into it | FR-06, FR-12 | The vision's first bullet; also what makes "AWS-only terminal" true | a Windows prototype (D-05 decided) |
+| B-13 | P1 | Prompt prefix and window title; the onboarding banner with `--no-banner` | FR-03, FR-11 | Low effort, high clarity | decided (D-01) |
+| B-14 | P1 | Onboarding prompts for browser, mode and shell; Other with free text; multi-select data platforms; resume after a failed step; close the originating terminal after the new one opens | FR-10 | Completes §4.3 and §4.4 of the original PRD | B-11 for the browser prompt to mean something (D-07 decided) |
+| B-15 | P1 | Missing categories: filesystem-destructive, package-install, network-egress, browser-actions; production environment tags via envgate | FR-21 | Four of the original PRD's eleven categories; browser-actions needs B-11 | decided (D-09b) |
+| B-16 | P2 | Tracker status name on card tiles; store assignee, attachments and tracker comments read-only | FR-32, FR-33 | Fidelity of the mirror without changing the lane and edit rules the owner kept | none (D-14, D-15 decided) |
 | B-17 | P2 | `tq hub push --lane --tag` | FR-35 | Adapters already support it; small | none |
-| B-18 | P2 | DoD items for coverage, secrets scan and format; `gates:` list in `tq-project` | FR-51, FR-53 | Moves CI-only checks into the gate the card trusts | D-20 |
-| B-19 | P2 | OpenCode and Kimi Code hooks and launchers; Codex hub adapter | FR-28, FR-04 | Vision lists four harnesses; spec E defers these | D-11 |
+| B-18 | P2 | DoD items for coverage, secrets scan and format; `gates:` list in `tq-project` for optional gates; hotfix skips review and evals | FR-51, FR-53 | Moves CI-only checks into the gate the card trusts | decided (D-20) |
+| B-19 | P2 | OpenCode hook, launcher and guard; then Kimi Code once its hook support is checked; Codex hub adapter | FR-28, FR-04 | Vision lists four harnesses; spec E defers these | decided (D-11) |
 | B-20 | P2 | Periodic progress comment on the card every N minutes | FR-46 | Original PRD §8.1; small | none |
-| B-21 | P2 | Evals gate on cards | FR-52 | Original PRD §9; needed before checklist evals and the loop skill can feed the board | D-19 |
+| B-21 | P2 | Evals gate on cards: commands with thresholds or a checklist, with retries | FR-52 | Original PRD §9; needed before checklist evals and the visual review gate | decided (D-19) |
 | B-22 | P2 | Jev families to enforce where the eval allows; grow seed sets to ~100 per family | FR-56 | Shadow since 2026-10-09; the gate to enforce is written | two weeks of shadow logs per family |
 | B-23 | P2 | Stack preferences resolved per workspace; GUI manifest editing and terminal switcher | FR-07, FR-60 | Completeness of §3.4 and §11 | none |
 | B-24 | P3 | Capture from outside a terminal; checklist evals for non-code cards | FR-63 | Owner backlog; extends the board to all work | B-21 |
-| B-25 | P3 | Knowledge-base ingestion pipeline with distillation and hybrid retrieval | FR-62 | Owner backlog; largest new build; needs its own spec | D-21, FR-61 |
+| B-25 | P3 | Knowledge-base ingestion pipeline with distillation and hybrid retrieval, docs folders and the tracker first | FR-62 | Owner backlog; largest new build; needs its own spec | FR-61 (D-21 decided) |
 | B-26 | P3 | Signing `trust/`, `guard.yaml`, `config.yaml`; hash-chained audit logs; installers served from a tag | FR-27, FR-64 | Threat-model follow-ups; AR1 and AR2 accepted until 2027-01-28 | none |
 | B-27 | P3 | Deferred pack scope: Kubernetes/Helm, Infracost, state drift, lineage, Spark estimates, WebAuthn answers on the board | FR-55 | Breadth; each is its own small spec | none |
+| B-28 | P0 | Rename the modes (`off`→`bypass`, `default`→`supervised`, `relaxed`→`guarded`, keep `strict`, `custom`) with one release of aliases; `guarded` also skips git-history and system | FR-18 | Owner decision; a behaviour change in a security layer, so it ships with tests for every cell | decided (D-09a) |
+| B-29 | P1 | Read-only Markdown mirror of cards in the client folder | FR-30, FR-43 | Versioning and direct reads without a second source of truth | none (D-02 decided) |
+| B-30 | P2 | Human-only `accept` command that stamps a project PRD; planning refuses an unaccepted PRD | FR-41 | Keeps the FR format and adds the explicit developer sign-off the original PRD wanted | none (D-16 decided) |
+| B-31 | P3 | Visual review gate on top of the evals mechanism | FR-52 | A loose end between two specs; parked after evals | B-21 (D-23 decided) |
 
 ## 14. Conflicts and flags
 
-Every place the original PRD and the code disagree, or a doc contradicts the code.
-Nothing here was resolved in this document; each points at the decision that settles it.
+Every place the original PRD and the code disagree, or a doc contradicts the code. Each
+row names the decision (taken 2026-10-30, outcomes in §17) or the backlog item that
+settles it.
 
 | # | Flag | Where | Settled by |
 |---|---|---|---|
@@ -1747,7 +1741,7 @@ Nothing here was resolved in this document; each points at the decision that set
 | C-18 | Kimi Code absent; OpenCode unguarded; no Claude auto mode | FR-04, FR-28 | D-11 |
 | C-19 | `tq login <cli>` and `tq hub cancel <card>` in COMMANDS.md differ from the code's arguments | FR-68 | B-05 |
 | C-20 | Root CLAUDE.md marks `providers/` and `desktop/` planned and lists two adapters | FR-68 | B-05 |
-| C-21 | Spec placement of the UI gate differs between DP §13 and spec C | §10 | D-23 |
+| C-21 | Spec placement of the UI gate differs between DP §13 and spec C | §17 | D-23 |
 | C-22 | TEST_RESULTS_RUN01: preamble not visible in one session; PII rules under bypass | FR-03, FR-26 | D-13; [placeholder: preamble cause] |
 | C-23 | `tq hub sync pending` is the sync fallback queue, not decision requests | FR-37, FR-47 | naming kept; documented here |
 
@@ -1761,7 +1755,7 @@ Code names are used throughout this document. Original PRD names are listed for 
 | Identity root | workspace root (`TQ_WS_ROOT`), a child of a base folder (`tq init <base>`) | |
 | Manifest | `.tentaqles.yaml` (`tentaqles-client-v1|v2`) | top-level blocks: client, git, identities, claude (permission_mode, bundle, permissions, env), blocked_commands, cloud, database, stack, guard, decision, data, tracker, chat, email, data_platform, agents, packs |
 | Trust store | (credentials) per-identity config dirs plus the OS keychain (`tq secret`); (code's trust store) `$TQ_HOME/trust/<hash>` written by `tq allow` | D-04 |
-| Mode: bypass / guarded / supervised / custom | off / relaxed / default / custom; plus strict | `tq mode`, `guard.mode`; grant by `tq allow --mode` |
+| Mode: bypass / guarded / supervised / custom | today off / relaxed / default / custom, plus strict; renamed to the PRD's names by D-09a (B-28), `strict` kept | `tq mode`, `guard.mode`; grant by `tq allow --mode` |
 | Guard | tq PreToolUse hook: `guard.Decide` plus policy rules, 13 categories, 75 rule ids | `tq/...`, `guard/...`, `jev/...`, `plugin/...` ids |
 | Harness | agent CLI: claude, codex, opencode (catalog), plus gemini, cursor, copilot, goose, cline, continue | Kimi absent |
 | Tentaqles plugin | `plugin/`, installed as `tentaqles@tentaqles` from the root marketplace | 59 skills, 13 agents |
@@ -1850,3 +1844,34 @@ sync, data/ml packs, cloud/db packs and guard modes specs; TM = threat model.
 | Actions pinned by sha; `govulncheck` required; Dependabot skips major action bumps | release steps run only on a tag, so PR checks cannot exercise them | session 2026-10-30 |
 | Jev stays (Laya discarded); TypeSafe direct, not through a gateway | owner decision 2026-10-09 | memory note |
 | Dev workspace loads the plugin from the local folder; every other identity from the pinned release | development loop vs stability | session 2026-10-29 |
+
+Decisions of 2026-10-30 on this document (the repo owner answered each question in §10 as
+it stood; the FRs they touch carry the same `D-nn`):
+
+| # | Decision | Outcome |
+|---|---|---|
+| D-01 | Identity indicator and banner | Prompt prefix `[client]` plus the window title in every shell, `[off]` after `tq off`; the banner shows once, at onboarding |
+| D-02 | Board storage | SQLite stays the source of truth; a read-only Markdown mirror (one file per card plus an index) in the client folder |
+| D-03 | Cross-client views | Keep `tq hub serve --all` and the dashboard; the non-goal is mixing clients' data |
+| D-04 | Credential store | Per-identity config dirs plus the OS keychain with per-workspace names is the design; "trust store" means manifest trust |
+| D-05 | Unselected CLIs and provisioning | A shim folder per workspace first on PATH, removed by `tq off`; global-only tools recorded in the manifest |
+| D-06 | Browser profiles | Chrome and Edge first, for tq's pages and for Claude in Chrome / Playwright; Safari and Opera later |
+| D-07 | Terminal after onboarding | Close the originating terminal, only after the new one opened; on failure keep it and print the failing step |
+| D-08 | Onboarding skill | Logins and `tq secret` stay human-only; the skill prints and verifies, and later opens login pages in the client's browser profile |
+| D-09a | Mode names and cells | Rename to bypass / supervised / guarded / custom, keep strict; `guarded` also skips git-history and system; aliases for one release |
+| D-09b | Missing categories | Add filesystem-destructive, package-install, network-egress, browser-actions, and production environment tags via envgate |
+| D-09c | Locked groups in custom | Locked stays locked; no `ask` for locked groups |
+| D-10 | Human-only gaps | The binary refuses `allow`, `deny` and `guard` changes from agents; `off` and `mode toggle|override` need a terminal and a typed yes |
+| D-11 | Harness scope | OpenCode next, Kimi Code later; Codex best effort; no Claude auto mode |
+| D-12 | Headless asks | Rule-aware decisions and a proven retry |
+| D-13 | PII rules under bypass | Verify in a real session and fix, P0 |
+| D-14 | Lanes | Five typed lanes stay; the tile shows the tracker's own status |
+| D-15 | Card text conflicts | Local edits win and tq asks before pushing; assignee, attachments and comments stored read-only |
+| D-16 | PRD format | Keep FR-nn and NEEDS-DECISION; add a human-only `accept` command |
+| D-17 | Control plane | The hub stays the runner; worktrees keep the slug with the card id in the plan |
+| D-18 | Answering decisions | Never from inside an agent session |
+| D-19 | Evals | One `evals` mechanism for commands with thresholds and for checklists, with retries |
+| D-20 | Per-project gates | Optional gates configurable, core gates fixed; hotfix skips review and evals, never the regression test |
+| D-21 | Knowledge base | Docs folders and the tracker first |
+| D-22 | Notifications | OS notification plus a terminal bell |
+| D-23 | Visual review gate | Later, after evals |
