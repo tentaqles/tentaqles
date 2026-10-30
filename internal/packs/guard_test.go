@@ -10,10 +10,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 var bqUnbounded = regexp.MustCompile(`\bbq\s+query\b`)
@@ -195,36 +195,23 @@ func TestHashStateBounds(t *testing.T) {
 }
 
 // command64K is a 64 KiB shell command, the bound's worst case.
-func command64K() string {
-	return "bq query " + strings.Repeat("x", 64<<10-len("bq query "))
+func command64K() string { return commandOf(64 << 10) }
+
+func commandOf(n int) string {
+	return "bq query " + strings.Repeat("x", n-len("bq query "))
 }
 
-// TestGuardUnder50ms checks the bound the benchmark measures: the median
-// of several runs of every enabled guard over a 64 KiB command.
+// TestGuardUnder50ms checks the bound the benchmark measures, every enabled
+// guard over a 64 KiB command, in a form a loaded runner cannot flake: the
+// cost scales linearly and the median stays under the budget times the
+// test-only load factor (testutil.CheckLatency).
 func TestGuardUnder50ms(t *testing.T) {
 	isolate(t)
 	env := dataEnv(t)
-	call := bash(command64K())
-	var ds []time.Duration
-	for i := 0; i < 9; i++ {
-		start := time.Now()
-		EvaluateGuards(call, env, nil, nil)
-		ds = append(ds, time.Since(start))
-	}
-	sortDurations(ds)
-	if ds[len(ds)/2] > GuardBudget {
-		t.Fatalf("median %v over %v", ds[len(ds)/2], GuardBudget)
-	}
-}
-
-func sortDurations(ds []time.Duration) {
-	for i := range ds {
-		for j := i + 1; j < len(ds); j++ {
-			if ds[j] < ds[i] {
-				ds[i], ds[j] = ds[j], ds[i]
-			}
-		}
-	}
+	testutil.CheckLatency(t, "all guards", GuardBudget, func(div int) func() {
+		call := bash(commandOf(64 << 10 / div))
+		return func() { EvaluateGuards(call, env, nil, nil) }
+	})
 }
 
 func BenchmarkGuards64KiB(b *testing.B) {

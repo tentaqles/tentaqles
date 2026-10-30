@@ -3,10 +3,10 @@ package data
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 type costGuardCase struct {
@@ -229,30 +229,20 @@ func BenchmarkCostGuards64KiB(b *testing.B) {
 	}
 }
 
+// The three cost guards on a 64 KiB command: linear cost and a
+// load-tolerant ceiling (testutil.CheckLatency); the benchmark measures the
+// 50 ms target of each.
 func TestCostGuardsUnder50ms(t *testing.T) {
 	costIsolate(t)
 	cfg := costConfig(t, costFullConfig)
-	cmd := strings.Repeat(`snow sql -q "SELECT * FROM acme.orders"; databricks clusters create --json '{"num_workers":2}'; bq query --maximum_bytes_billed=10 'SELECT 1'; `, 64*1024/140)
-	call := policy.ToolCall{Tool: "Bash", Command: cmd}
 	ctx := packs.NewGuardCtx(packs.GuardEnv{Config: cfg}, "data")
-	var times []time.Duration
-	for i := 0; i < 7; i++ {
-		start := time.Now()
-		checkBQUnbounded(call, ctx)
-		checkWarehouseResize(call, ctx)
-		checkWarehouseQuery(call, ctx)
-		times = append(times, time.Since(start))
-	}
-	// median
-	for i := range times {
-		for j := i + 1; j < len(times); j++ {
-			if times[j] < times[i] {
-				times[i], times[j] = times[j], times[i]
-			}
+	testutil.CheckLatency(t, "three cost guards", 3*packs.GuardBudget, func(div int) func() {
+		cmd := strings.Repeat(`snow sql -q "SELECT * FROM acme.orders"; databricks clusters create --json '{"num_workers":2}'; bq query --maximum_bytes_billed=10 'SELECT 1'; `, 64*1024/140/div)
+		call := policy.ToolCall{Tool: "Bash", Command: cmd}
+		return func() {
+			checkBQUnbounded(call, ctx)
+			checkWarehouseResize(call, ctx)
+			checkWarehouseQuery(call, ctx)
 		}
-	}
-	// the guard budget is 50 ms; a loaded CI runner (macOS) can more than double a median, and the regressions these catch (quadratic scans) took seconds, so the test bound is 200 ms
-	if m := times[len(times)/2]; m > 200*time.Millisecond {
-		t.Fatalf("three cost guards take %s on a 64 KiB command (median), target 50ms each", m)
-	}
+	})
 }
