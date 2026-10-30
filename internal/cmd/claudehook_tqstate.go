@@ -166,12 +166,14 @@ var (
 		return p
 	}
 	tqLookPath = exec.LookPath
+	// hostOS is runtime.GOOS; tests replace it.
+	hostOS = runtime.GOOS
 )
 
 // samePath compares two executables by their final paths, cleaned and
 // without folding (normShell drops glob brackets: <dir>/[tq]/tq.exe would
 // equal <dir>/tq/tq.exe while the shell runs <dir>/t/tq.exe). Case is
-// ignored only where the file system ignores it.
+// ignored only on Windows (macOS may be case-sensitive: compared exactly).
 func samePath(a, b string) bool {
 	if a == "" || b == "" {
 		return false
@@ -184,14 +186,15 @@ func samePath(a, b string) bool {
 		fb = f
 	}
 	fa, fb = filepath.Clean(fa), filepath.Clean(fb)
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if hostOS == "windows" {
 		return strings.EqualFold(fa, fb)
 	}
 	return fa == fb
 }
 
 // isSelfTq reports whether a command word runs this tq: the running
-// binary's own path, or a bare tq (tq.exe) that resolves on PATH to it.
+// binary's own path, or a bare tq that resolves on PATH to it (looked up
+// as written; tq.exe and any case only on Windows).
 // Any other path (./tq, a link elsewhere) is just a program, and so is a
 // word the shell expands (a glob, a brace, a variable, a backtick).
 func isSelfTq(word string) bool {
@@ -200,9 +203,12 @@ func isSelfTq(word string) bool {
 		return false
 	}
 	self := tqSelfPath()
-	switch strings.ToLower(w) {
-	case "tq", "tq.exe":
-		p, err := tqLookPath("tq")
+	bare := w == "tq"
+	if hostOS == "windows" {
+		bare = strings.EqualFold(w, "tq") || strings.EqualFold(w, "tq.exe")
+	}
+	if bare {
+		p, err := tqLookPath(w)
 		return err == nil && samePath(p, self)
 	}
 	if !filepath.IsAbs(filepath.FromSlash(w)) && !isAbsSlash(w) {
@@ -226,10 +232,10 @@ var tqSafeSubcommands = map[string]bool{"pack": true, "hub": true, "doctor": tru
 // call (bareTqCommand) of this tq (isSelfTq) with a safe subcommand as its
 // first argument. A child command after -- (tq pack cloud plan -- terraform
 // plan) is checked as its own command, so its mention is not exempt. A
-// sub-command (a backtick, $( ), or PowerShell's ( ) and @( )) runs before
-// tq does; normShell drops backticks, so the raw command is checked.
+// sub-command runs before tq does (runsSubcommand); normShell drops
+// backticks, so the raw command is checked.
 func tqExempt(cmd, mention string) bool {
-	if strings.ContainsAny(cmd, "`(") || !bareTqCommand(normShell(cmd)) {
+	if runsSubcommand(cmd) || !bareTqCommand(normShell(cmd)) {
 		return false
 	}
 	w := strings.Fields(mention)
@@ -252,6 +258,33 @@ func tqExempt(cmd, mention string) bool {
 		}
 	}
 	return true
+}
+
+// runsSubcommand reports a raw command with a sub-command: outside quotes a
+// backtick, ( or @( (PowerShell) or $(; inside double quotes $( or a
+// backtick. Single quotes are literal.
+func runsSubcommand(cmd string) bool {
+	var q byte
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		switch {
+		case q == '\'':
+			if c == '\'' {
+				q = 0
+			}
+		case q == '"':
+			if c == '"' {
+				q = 0
+			} else if c == '`' || c == '$' && i+1 < len(cmd) && cmd[i+1] == '(' {
+				return true
+			}
+		case c == '\'' || c == '"':
+			q = c
+		case c == '`' || c == '(':
+			return true
+		}
+	}
+	return false
 }
 
 // protectedSubs are the parts of tq's state directory whose integrity a
@@ -443,14 +476,39 @@ func (m *rootMatcher) FindAllStringIndex(s string, _ int) [][]int { return m.all
 
 var (
 	cdRe     = regexp.MustCompile(`^\s*(cd|pushd|chdir|set-location|sl)\s+(\S+)\s*$`)
-	// linkVerb: a command that creates a link. New-Item (or ni) with
-	// -ItemType, its -Type alias or a prefix of them, cmd's mklink, fsutil
-	// hardlink create, and cp -l/-s (also combined, -al) or --link and
-	// --symbolic-link. A link type held in a variable is not resolved.
-	linkVerb = regexp.MustCompile(`\b(ln|mklink|(new-item|ni)\b.*\s-(t|ty|typ|type|it|ite|item|itemt|itemty|itemtyp|itemtype)(\s+|:)(junction|symboliclink|hardlink)|fsutil\s+hardlink\s+create|cp\b[^;&|\n]*\s(-[a-z]*[ls][a-z]*|--link|--symbolic-link))\b`)
+	// linkVerb: ln, cmd's mklink and fsutil hardlink create (New-Item is
+	// newItemLink, bash cp is bashCpLink).
+	linkVerb   = regexp.MustCompile(`\b(ln|mklink|fsutil\s+hardlink\s+create)\b`)
+	newItemRe  = regexp.MustCompile(`\b(new-item|ni)\b`)
+	itemTypeRe = regexp.MustCompile(`\s-(t|ty|typ|type|it|ite|item|itemt|itemty|itemtyp|itemtype)(\s+|:)([^\s;&|)]+)`)
+	// bashCpLink: GNU cp with a link option, read case-sensitively on the raw
+	// command (-L and -S are no link options). A short-option cluster
+	// counts only whole (-rs, -al), so -Recurse or -Filter never match.
+	bashCpLink = regexp.MustCompile(`(^|[\s;&|(/])cp\s([^;&|\n]*\s)?(-[adfinpPrRvx]*[ls][adfinpPrRvx]*|--link|--symbolic-link)(\s|$)`)
 	msgArg   = regexp.MustCompile(`(?i)\s(-m|-am|--message)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
 	echoSeg  = regexp.MustCompile(`(?i)^\s*(echo|write-host|write-output|printf)\b`)
 )
+
+// linkCommand reports a folded command that creates a link: linkVerb, or
+// New-Item (ni) whose -ItemType (-Type, or a prefix) value may name a link
+// type. PowerShell reads the value as value*, so any value counts except a
+// prefix of File, Directory or Container (a trailing * allowed), which
+// names no link type; a variable counts too.
+func linkCommand(n string) bool {
+	if linkVerb.MatchString(n) {
+		return true
+	}
+	if !newItemRe.MatchString(n) {
+		return false
+	}
+	for _, m := range itemTypeRe.FindAllStringSubmatch(n, -1) {
+		v := strings.TrimRight(m[3], "*")
+		if v == "" || !(strings.HasPrefix("file", v) || strings.HasPrefix("directory", v) || strings.HasPrefix("container", v)) {
+			return true
+		}
+	}
+	return false
+}
 
 // Hand-written splitters for the hot loops (the regexps they replace were
 // the cost on a 64 KB command). isTokenSep separates tokens (whitespace and
@@ -569,7 +627,7 @@ func proseFree(raw string) string {
 	}
 	var out []string
 	for _, seg := range proseSplit.Split(raw, -1) {
-		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") && !executes(seg) {
+		if proseEcho(seg) {
 			continue
 		}
 		out = append(out, seg)
@@ -653,7 +711,7 @@ func protectedMention(raw string) bool {
 		}
 		bare = true
 	}
-	if mentioned && linkVerb.MatchString(n) {
+	if mentioned && linkCommand(n) {
 		return true
 	}
 	if bare {
@@ -746,9 +804,54 @@ func foldContinuations(s string) string {
 var humanMsgArg = regexp.MustCompile(`(?i)\s(-m|-am|--message|--note|--reason|--comment)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
 
 // executes reports text a shell runs even inside a message or an echo:
-// command substitution, a backtick, process substitution.
+// command substitution, a backtick, process substitution. A quoted-heredoc
+// substitution ($(cat <<'EOF' ... EOF\n), Claude Code's commit form) is
+// literal data and does not count.
 func executes(s string) bool {
+	s = dropQuotedHeredocs(s)
 	return strings.Contains(s, "$(") || strings.Contains(s, "`") || strings.Contains(s, "<(") || strings.Contains(s, ">(")
+}
+
+// dropQuotedHeredocs replaces each $(cat <<'W' (or <<"W") substitution,
+// whose body ends at a line that is exactly W and is
+// followed by ), with a blank. It stops at the first one it cannot read.
+func dropQuotedHeredocs(s string) string {
+	const open = "$(cat <<"
+	for {
+		i := strings.Index(s, open)
+		if i < 0 {
+			return s
+		}
+		j := i + len(open)
+		if j >= len(s) || s[j] != '\'' && s[j] != '"' {
+			return s
+		}
+		k := strings.IndexByte(s[j+1:], s[j])
+		if k <= 0 || strings.Contains(s[j+1:j+1+k], "\n") {
+			return s
+		}
+		word, rest := s[j+1:j+1+k], s[j+2+k:]
+		nl := strings.IndexByte(rest, '\n')
+		if nl < 0 || strings.TrimSpace(rest[:nl]) != "" {
+			return s
+		}
+		e := strings.Index(rest[nl:], "\n"+word+"\n")
+		if e < 0 {
+			return s
+		}
+		after := strings.TrimLeft(rest[nl+e+len(word)+2:], " \t\r\n")
+		if !strings.HasPrefix(after, ")") {
+			return s
+		}
+		s = s[:i] + " " + after[1:]
+	}
+}
+
+// proseEcho reports an echo segment that is only prose: no redirect or
+// pipe, nothing it runs, and no break proseSplit does not split at (a
+// single &, a ( or @( of PowerShell, a lone CR, VT, FF, NEL, LS or PS).
+func proseEcho(seg string) bool {
+	return echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|&(\r\v\f\u0085  ") && !executes(seg)
 }
 
 // humanProseFree blanks prose that only mentions a command: a commit message
@@ -763,7 +866,7 @@ func humanProseFree(raw string) string {
 	})
 	var out []string
 	for _, seg := range proseSplit.Split(raw, -1) {
-		if echoSeg.MatchString(seg) && !strings.ContainsAny(seg, ">|") && !executes(seg) {
+		if proseEcho(seg) {
 			continue
 		}
 		out = append(out, seg)
@@ -892,7 +995,9 @@ func stateDirDecision(call policy.ToolCall, cwd string, readArgs ...packs.ReadAr
 				mention = m
 			}
 		}
-		if mention = foldCarets(mention); protectedMention(mention) && !tqExempt(cmd, mention) {
+		mention = foldCarets(mention)
+		cpLink := call.Tool == "Bash" && bashCpLink.MatchString(mention) && rootRegex().MatchString(expandInside(normShell(mention)))
+		if (cpLink || protectedMention(mention)) && !tqExempt(cmd, mention) {
 			deny("tq/hub-store-write", "this command reaches a protected part of tq's state directory ("+paths.Home()+": hub, packs, build-gate, trust, guard, guard.yaml, config.yaml or audit.jsonl), which holds the hub store, the pack ledgers, approvals, plans and keys; only tq itself touches it")
 		}
 		if (strings.Contains(n, "tq-packs.y") || strings.Contains(n, "tq-pac~")) && !(readOnlyVerb.MatchString(n) && !strings.ContainsAny(n, ">;&|")) {

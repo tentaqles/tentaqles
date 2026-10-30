@@ -35,8 +35,8 @@ hole without new false positives, and documents the rest.
 - **Variables.** A value built at run time (`D=pa; D+=cks`, a value read from a
   file, `Join-Path` with variables) is not resolved. Only the variables tq itself
   exports into the state folder are expanded.
-- **Links.** A link made by a command the guard does not know, or whose link type
-  sits in a variable (`New-Item -ItemType $t`), is not seen. Writes through an
+- **Links.** A link made by a command the guard does not know (a script, an
+  interpreter call, a link target held in a variable) is not seen. Writes through an
   existing link elsewhere are caught for file tools, not for shell commands.
 - **Interpreters.** Python, Node, Ruby, Perl and others can build any path from
   pieces (`os.path.join(*parts)`, `chr()`, base64), and a script file written in one
@@ -44,15 +44,29 @@ hole without new false positives, and documents the rest.
 
 ## The real protections
 
-1. **Claude Code's sandbox for writes.** Turn on Claude Code's sandbox (`/sandbox`,
-   where the platform supports it) so shell commands can write only inside the
-   working folder. The operating system then refuses a write to `~/.tentaqles`
-   however the command spells it.
-2. **Signed, tamper-evident state.** tq already signs approval answers with a key
-   kept in the OS keychain. A ledger line written by anything other than tq does not
-   verify, so a forged write cannot grant, widen, extend or replay an approval
-   ([framework-security.md](packs/framework-security.md)). Extending signatures to
-   other protected parts is follow-up work.
+1. **Claude Code's sandbox for writes.** Turn on Claude Code's sandbox (`/sandbox`)
+   so shell commands can write only inside the working folder. The operating system
+   then refuses a write to `~/.tentaqles` however the command spells it. Its limits:
+   - it runs on macOS and on Linux or WSL2, not on native Windows;
+   - it covers the Bash tool, not the PowerShell tool;
+   - a `tq` the agent starts runs inside it too, and tq must write its state folder.
+     List `tq` in the sandbox's `excludedCommands` so it runs outside. Do not
+     allow-list `TQ_HOME` for writes instead: that gives every sandboxed command
+     the write access and removes the protection.
+2. **Signed, tamper-evident state.** What is signed today:
+   - pack ledger answers, with a key kept in the OS keychain. A ledger line written
+     by anything other than tq does not verify, so a forged write cannot grant,
+     widen, extend or replay an approval
+     ([framework-security.md](packs/framework-security.md));
+   - build-gate approvals, sessions, reviews and decisions, with an HMAC whose key
+     is a file in the state folder (`build-gate/hmac.key`). Only this text filter
+     protects that file, so an agent that gets past the filter can read the key and
+     sign its own records;
+   - hub tokens, which are minted with an HMAC.
+
+   Follow-up: move the build-gate key out of the state folder into the OS keychain,
+   as the pack ledger key already is. Extending signatures to the other protected
+   parts (`trust/`, `guard.yaml`, `config.yaml`) is follow-up work too.
 
 The guard stays on, and is never-disable, because catching the common slip early is
 cheaper than recovering from it. Treat a block as useful feedback, and do not read

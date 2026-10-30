@@ -224,6 +224,16 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "PowerShell", Command: `$env:TQ_HOME = "$env:TEMP\x"; go test ./...`},
 		{Tool: "PowerShell", Command: `New-Item -ItemType Directory -Path $HOME\.tentaqles\bundles\x`},
 		{Tool: "PowerShell", Command: `cmd /c dir %USERPROFILE%\.tentaqles\bundles ^| findstr x`},
+		// Review F1: PowerShell's cp is Copy-Item (no link flag); bash cp -L
+		// copies the target.
+		{Tool: "PowerShell", Command: `cp -Recurse ~/.tentaqles/identities/x/claude/skills ./x`},
+		{Tool: "PowerShell", Command: `cp -Destination ./x -Filter *.md -Include a* -Exclude b* ~/.tentaqles/identities/x/claude/skills`},
+		{Tool: "Bash", Command: `cp -L ~/.tentaqles/identities/x/claude/settings.json /tmp/x`},
+		// Review F2: Claude Code's chained commit with a quoted heredoc.
+		{Tool: "Bash", Command: "git add -A && git commit -m \"$(cat <<'EOF'\ndocs: the guard keeps ~/.tentaqles/packs safe\nEOF\n)\""},
+		// Review F6: a file or directory is no link.
+		{Tool: "PowerShell", Command: `New-Item -ItemType File -Path $HOME\.tentaqles\bundles\x`},
+		{Tool: "PowerShell", Command: `ni -it d* -Path $HOME\.tentaqles\bundles\y`},
 	}
 	for _, c := range allowed {
 		if code, out := hookDecision(t, ws, c); code != 0 || strings.Contains(out, "tq/hub-store-write") {
@@ -282,6 +292,21 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "Bash", Command: `cp -al ~/.tentaqles /tmp/t`},
 		{Tool: "Bash", Command: `cp --symbolic-link ~/.tentaqles/x /tmp/t`},
 		{Tool: "Bash", Command: `cp -r --link ~/.tentaqles /tmp/t`},
+		// Review F3: an echo that is not only prose (& , ( , @( , a lone CR).
+		{Tool: "PowerShell", Command: `echo cleaning & rm -rf ~/.tentaqles/packs`},
+		{Tool: "PowerShell", Command: `Write-Output (Remove-Item -Recurse ~/.tentaqles/packs)`},
+		{Tool: "PowerShell", Command: "echo x\rRemove-Item ~/.tentaqles/packs"},
+		{Tool: "PowerShell", Command: `echo cleaning & icacls ~/.tentaqles/trust /grant x:F`},
+		{Tool: "PowerShell", Command: `Write-Output (icacls ~/.tentaqles/trust /grant x:F)`},
+		{Tool: "PowerShell", Command: `Write-Output @(icacls ~/.tentaqles/trust /grant x:F)`},
+		{Tool: "PowerShell", Command: "echo x\ricacls ~/.tentaqles/trust /grant x:F"},
+		{Tool: "PowerShell", Command: "echo x\vicacls ~/.tentaqles/trust /grant x:F"},
+		{Tool: "PowerShell", Command: "echo x\u2028icacls ~/.tentaqles/trust /grant x:F"},
+		// Review F6: New-Item resolves a prefix of the link type too.
+		{Tool: "PowerShell", Command: `New-Item -ItemType J -Path C:\t -Target $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `ni -it sym -Path C:\t -Target $HOME\.tentaqles`},
+		{Tool: "PowerShell", Command: `New-Item -Type h* -Path C:\t\x -Value $HOME\.tentaqles\x`},
+		{Tool: "PowerShell", Command: `New-Item -ItemType $t -Path C:\t -Target $HOME\.tentaqles`},
 		{Tool: "Write", Path: filepath.Join(home, "trust", "abc")},
 		{Tool: "Write", Path: filepath.Join(home, "build-gate", "hmac.key")},
 		{Tool: "Write", Path: filepath.Join(home, "guard.yaml")},
@@ -343,6 +368,8 @@ func TestHookRound3Bypasses(t *testing.T) {
 		{Tool: "PowerShell", Command: `[Windows.Security.Credentials.PasswordVault]::new().Retrieve('tentaqles-packs','acme')`},
 		// cmd caret escapes
 		{Tool: "PowerShell", Command: `cmd /c t^q hub an^swer c1 d1 --choice approve`},
+		// review F3: a single & runs the next command
+		{Tool: "PowerShell", Command: `echo ok & tq hub answer 3 approve`},
 	}
 	if s := shortPath(filepath.Join(home, "build-gate")); s != "" && !strings.EqualFold(filepath.Base(s), "build-gate") {
 		deny = append(deny, policy.ToolCall{Tool: "Bash", Command: `echo k > ~/.tentaqles/` + filepath.Base(s) + `/hmac.key`})
@@ -434,5 +461,21 @@ func TestHookDeniesWhenTheMarkCannotBeWritten(t *testing.T) {
 	code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: "terraform apply approved.tfplan"})
 	if code != 2 || !strings.Contains(out, "read-only keychain") {
 		t.Fatalf("%d %s", code, out)
+	}
+}
+
+// Review F2/F3: humanProseFree keeps an echo that runs a next command, and
+// blanks a quoted-heredoc commit message.
+func TestHumanAnswerProseSegments(t *testing.T) {
+	ans := "tq hub " + "answer 3 approve"
+	for _, c := range []string{"echo ok & " + ans, "echo ok\r" + ans, "Write-Output (" + ans + ")"} {
+		if !humanAnswerCommand(c) {
+			t.Errorf("not caught: %q", c)
+		}
+	}
+	for _, c := range []string{"git add -A && git commit -m \"$(cat <<'EOF'\ndocs: how " + ans + " works\nEOF\n)\"", "echo 'run " + ans + " yourself'"} {
+		if humanAnswerCommand(c) {
+			t.Errorf("prose caught: %q", c)
+		}
 	}
 }

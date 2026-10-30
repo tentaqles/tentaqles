@@ -75,6 +75,8 @@ func TestStateDirTqExemption(t *testing.T) {
 		"tq hub list `rm " + trust + "`",
 		"tq hub list (Remove-Item " + trust + ")",
 		"tq hub list @(Remove-Item " + trust + ")",
+		`tq hub add "x $(rm ` + trust + `)"`,
+		"tq hub add \"x `rm " + trust + "`\"",
 	} {
 		if !denied(cmd) {
 			t.Errorf("%q: not denied", cmd)
@@ -85,6 +87,9 @@ func TestStateDirTqExemption(t *testing.T) {
 		self + " pack cloud show " + plan,
 		"tq hub list --workspace acme",
 		"tq pack cloud plan --env dev -- terraform plan",
+		// review F4: a parenthesis inside quotes runs nothing
+		`tq hub add "check ` + filepath.ToSlash(filepath.Join(custom, "hub")) + ` lock (prod)"`,
+		`tq hub add 'check ` + filepath.ToSlash(filepath.Join(custom, "hub")) + ` lock (prod)'`,
 	} {
 		if denied(cmd) {
 			t.Errorf("%q: denied", cmd)
@@ -98,5 +103,32 @@ func TestStateDirTqExemption(t *testing.T) {
 	tqLookPath = func(string) (string, error) { return "", errors.New("not found") }
 	if !denied("tq pack cloud show " + plan) {
 		t.Error("a bare tq not on PATH was exempt")
+	}
+}
+
+// Review F5: a bare tq is looked up as written; tq.exe and case folding
+// count only on Windows.
+func TestIsSelfTqCaseByOS(t *testing.T) {
+	selfTq(t, true)
+	prev := hostOS
+	t.Cleanup(func() { hostOS = prev })
+	hostOS = "linux"
+	for _, w := range []string{"TQ", "Tq", "tq.exe"} {
+		if isSelfTq(w) {
+			t.Errorf("linux: %q is self", w)
+		}
+	}
+	if !isSelfTq("tq") {
+		t.Error("linux: tq is not self")
+	}
+	hostOS = "darwin"
+	if isSelfTq("TQ") || samePath("/no/such/tq", "/no/such/TQ") {
+		t.Error("darwin: case folded")
+	}
+	hostOS = "windows"
+	for _, w := range []string{"tq", "TQ", "tq.exe", "TQ.EXE"} {
+		if !isSelfTq(w) {
+			t.Errorf("windows: %q is not self", w)
+		}
 	}
 }
