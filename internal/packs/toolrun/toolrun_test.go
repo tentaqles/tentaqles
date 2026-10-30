@@ -22,7 +22,46 @@ func TestMain(m *testing.M) {
 		fakeTool(mode)
 		return
 	}
+	GenerousVersionTimeoutForTests() // a fresh fake binary can start slowly on a loaded runner
 	os.Exit(m.Run())
+}
+
+// A start that cannot be placed in its process tree fails fast with a
+// clear error and leaves no process behind, instead of blocking the check
+// (CI: a tool start hung for minutes in the Windows attach step).
+func TestAttachThatHangsFailsFast(t *testing.T) {
+	isolate(t)
+	bin := fakeBin(t, t.TempDir(), "stuck")
+	t.Setenv("TQ_FAKE_TOOL", "sleep")
+	release := make(chan struct{})
+	prevAttach, prevTimeout := attach, attachTimeout
+	attach = func(cmd *exec.Cmd) (*procTree, error) {
+		<-release
+		return attachTree(cmd)
+	}
+	attachTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { close(release); attach, attachTimeout = prevAttach, prevTimeout })
+
+	start := time.Now()
+	out, err := run(context.Background(), bin, nil, "", toolEnv("stuck", nil, nil), nil)
+	if !errors.Is(err, errAttachTimeout) || !strings.Contains(err.Error(), "could not contain the tool's process tree") {
+		t.Fatalf("err = %v, want the attach timeout", err)
+	}
+	if out.TimedOut {
+		t.Fatalf("an attach timeout is an error, not the tool's own timeout: %+v", out)
+	}
+	if el := time.Since(start); el > 20*time.Second {
+		t.Fatalf("took %v: the stuck attach was not cut off", el)
+	}
+
+	// The tool's own timeout during the attach: timed out, no error.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	attachTimeout = time.Minute
+	out, err = run(ctx, bin, nil, "", toolEnv("stuck", nil, nil), nil)
+	if err != nil || !out.TimedOut {
+		t.Fatalf("ctx deadline during attach: %+v %v", out, err)
+	}
 }
 
 func fakeTool(mode string) {
@@ -190,7 +229,6 @@ func TestTimeoutKillsTree(t *testing.T) {
 	t.Setenv("TQ_FAKE_TOOL", "grandchild")
 	t.Setenv("TQ_FAKE_PIDFILE", pidFile)
 	r := &Runner{LookPath: func(string) (string, error) { return bin, nil }}
-	start := time.Now()
 	out, err := r.Run(context.Background(), Spec{Tool: "hang", Timeout: 1500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -199,8 +237,9 @@ func TestTimeoutKillsTree(t *testing.T) {
 		t.Fatalf("not timed out: %+v", out)
 	}
 	// The grandchild holds stdout; without the tree kill Wait would block
-	// until WaitDelay or the 60 s sleep.
-	if el := time.Since(start); el > 1500*time.Millisecond+WaitDelay-500*time.Millisecond {
+	// until WaitDelay or the 60 s sleep. out.Duration is the run itself,
+	// not the version probe before it (slow on a loaded runner).
+	if el := out.Duration; el > 1500*time.Millisecond+WaitDelay-500*time.Millisecond {
 		t.Fatalf("took %v: the grandchild held the pipes", el)
 	}
 	raw, _ := os.ReadFile(pidFile)
