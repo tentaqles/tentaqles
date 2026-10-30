@@ -77,6 +77,13 @@ func TestStateDirTqExemption(t *testing.T) {
 		"tq hub list @(Remove-Item " + trust + ")",
 		`tq hub add "x $(rm ` + trust + `)"`,
 		"tq hub add \"x `rm " + trust + "`\"",
+		// Accepted false positives (review F4 reverted): no quote reading, so
+		// a parenthesis or backtick anywhere refuses the exemption.
+		`tq hub add "check ` + filepath.ToSlash(filepath.Join(custom, "hub")) + ` lock (prod)"`,
+		`tq hub add 'check ` + filepath.ToSlash(filepath.Join(custom, "hub")) + ` lock (prod)'`,
+		// review F10: bash \' is no quote; PowerShell's curly quotes are quotes
+		`tq hub add \' ` + "`icacls " + trust + " /grant x:F`" + ` \'`,
+		"tq hub add ‘say \"’ (icacls " + trust + " /grant x:F) ‘\"’",
 	} {
 		if !denied(cmd) {
 			t.Errorf("%q: not denied", cmd)
@@ -87,9 +94,6 @@ func TestStateDirTqExemption(t *testing.T) {
 		self + " pack cloud show " + plan,
 		"tq hub list --workspace acme",
 		"tq pack cloud plan --env dev -- terraform plan",
-		// review F4: a parenthesis inside quotes runs nothing
-		`tq hub add "check ` + filepath.ToSlash(filepath.Join(custom, "hub")) + ` lock (prod)"`,
-		`tq hub add 'check ` + filepath.ToSlash(filepath.Join(custom, "hub")) + ` lock (prod)'`,
 	} {
 		if denied(cmd) {
 			t.Errorf("%q: denied", cmd)

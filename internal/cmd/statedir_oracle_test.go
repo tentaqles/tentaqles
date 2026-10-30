@@ -80,56 +80,18 @@ var (
 	oracleMsgRe      = regexp.MustCompile(`(?i)\s(-m|-am|--message)(=|\s+)("([^"\\]|\\.)*"|'[^']*'|\S+)`)
 	oracleProseSplit = regexp.MustCompile("&&|\\|\\||[;\n]")
 	oracleEchoRe     = regexp.MustCompile(`(?i:^\s*(echo|write-host|write-output|printf))($|[^0-9A-Za-z_])`)
-	oracleHereOpenRe = regexp.MustCompile(`^\$\(cat <<(?:'([^'\n]+)'|"([^"\n]+)")`)
 )
-
-// oracleDropHeredocs is dropQuotedHeredocs written line by line.
-func oracleDropHeredocs(s string) string {
-	for {
-		i := strings.Index(s, "$(cat <<")
-		if i < 0 {
-			return s
-		}
-		m := oracleHereOpenRe.FindStringSubmatch(s[i:])
-		if m == nil {
-			return s
-		}
-		word := m[1] + m[2]
-		lines := strings.SplitAfter(s[i+len(m[0]):], "\n")
-		if len(lines) < 2 || strings.TrimSpace(lines[0]) != "" {
-			return s
-		}
-		end := -1
-		for li := 1; li < len(lines); li++ {
-			if lines[li] == word+"\n" {
-				end = li
-				break
-			}
-		}
-		if end < 0 {
-			return s
-		}
-		after := strings.Join(lines[end+1:], "")
-		t := regexp.MustCompile(`^[ \t\r\n]*\)`).FindString(after)
-		if t == "" {
-			return s
-		}
-		s = s[:i] + " " + after[len(t):]
-	}
-}
-
-func oracleRuns(s string) bool { return oracleRunsRe.MatchString(oracleDropHeredocs(s)) }
 
 func proseFreeOracle(raw string) string {
 	raw = oracleMsgRe.ReplaceAllStringFunc(raw, func(m string) string {
-		if oracleRuns(m) {
+		if oracleRunsRe.MatchString(m) {
 			return m
 		}
 		return " "
 	})
 	var out []string
 	for _, seg := range oracleProseSplit.Split(raw, -1) {
-		if oracleEchoRe.MatchString(seg) && !oracleNotProseRe.MatchString(seg) && !oracleRuns(seg) {
+		if oracleEchoRe.MatchString(seg) && !oracleNotProseRe.MatchString(seg) && !oracleRunsRe.MatchString(seg) {
 			continue
 		}
 		out = append(out, seg)

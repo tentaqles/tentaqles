@@ -229,8 +229,8 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "PowerShell", Command: `cp -Recurse ~/.tentaqles/identities/x/claude/skills ./x`},
 		{Tool: "PowerShell", Command: `cp -Destination ./x -Filter *.md -Include a* -Exclude b* ~/.tentaqles/identities/x/claude/skills`},
 		{Tool: "Bash", Command: `cp -L ~/.tentaqles/identities/x/claude/settings.json /tmp/x`},
-		// Review F2: Claude Code's chained commit with a quoted heredoc.
-		{Tool: "Bash", Command: "git add -A && git commit -m \"$(cat <<'EOF'\ndocs: the guard keeps ~/.tentaqles/packs safe\nEOF\n)\""},
+		// Review F12: prose that only mentions cp -s.
+		{Tool: "Bash", Command: `git commit -m "guard: block cp -s into ~/.tentaqles"`},
 		// Review F6: a file or directory is no link.
 		{Tool: "PowerShell", Command: `New-Item -ItemType File -Path $HOME\.tentaqles\bundles\x`},
 		{Tool: "PowerShell", Command: `ni -it d* -Path $HOME\.tentaqles\bundles\y`},
@@ -292,6 +292,16 @@ func TestHookStateDirOnlyProtectedParts(t *testing.T) {
 		{Tool: "Bash", Command: `cp -al ~/.tentaqles /tmp/t`},
 		{Tool: "Bash", Command: `cp --symbolic-link ~/.tentaqles/x /tmp/t`},
 		{Tool: "Bash", Command: `cp -r --link ~/.tentaqles /tmp/t`},
+		// Review F11: other GNU cp clusters and long-option prefixes.
+		{Tool: "Bash", Command: `cp -bs ~/.tentaqles /tmp/t`},
+		{Tool: "Bash", Command: `cp -Hl ~/.tentaqles /tmp/t`},
+		{Tool: "Bash", Command: `cp --sym ~/.tentaqles /tmp/t`},
+		// Accepted false positive (review F2 reverted): a chained commit whose
+		// $( ) message mentions a protected part is scanned. Workaround:
+		// git commit -F <file>.
+		{Tool: "Bash", Command: "git add -A && git commit -m \"$(cat <<'EOF'\ndocs: the guard keeps ~/.tentaqles/packs safe\nEOF\n)\""},
+		// Review F9: an escaped \$( is no substitution; the inner $( ) runs.
+		{Tool: "Bash", Command: "git add -A && git commit -m \"\\$(cat <<'EOF'\n$(icacls ~/.tentaqles/trust /grant x:F)\nEOF\n)\""},
 		// Review F3: an echo that is not only prose (& , ( , @( , a lone CR).
 		{Tool: "PowerShell", Command: `echo cleaning & rm -rf ~/.tentaqles/packs`},
 		{Tool: "PowerShell", Command: `Write-Output (Remove-Item -Recurse ~/.tentaqles/packs)`},
@@ -464,16 +474,18 @@ func TestHookDeniesWhenTheMarkCannotBeWritten(t *testing.T) {
 	}
 }
 
-// Review F2/F3: humanProseFree keeps an echo that runs a next command, and
-// blanks a quoted-heredoc commit message.
+// Review F3: humanProseFree keeps an echo that runs a next command. A
+// message with $( ) is scanned (an accepted false positive for a quoted
+// heredoc; review F9).
 func TestHumanAnswerProseSegments(t *testing.T) {
 	ans := "tq hub " + "answer 3 approve"
-	for _, c := range []string{"echo ok & " + ans, "echo ok\r" + ans, "Write-Output (" + ans + ")"} {
+	for _, c := range []string{"echo ok & " + ans, "echo ok\r" + ans, "Write-Output (" + ans + ")",
+		"git add -A && git commit -m \"$(cat <<'EOF'\ndocs: how " + ans + " works\nEOF\n)\""} {
 		if !humanAnswerCommand(c) {
 			t.Errorf("not caught: %q", c)
 		}
 	}
-	for _, c := range []string{"git add -A && git commit -m \"$(cat <<'EOF'\ndocs: how " + ans + " works\nEOF\n)\"", "echo 'run " + ans + " yourself'"} {
+	for _, c := range []string{"echo 'run " + ans + " yourself'"} {
 		if humanAnswerCommand(c) {
 			t.Errorf("prose caught: %q", c)
 		}

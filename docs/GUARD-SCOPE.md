@@ -42,6 +42,20 @@ hole without new false positives, and documents the rest.
   pieces (`os.path.join(*parts)`, `chr()`, base64), and a script file written in one
   step and run in another is never read by the guard.
 
+## Known false positives
+
+The guard prefers a false alarm to a carve-out a shell can abuse. These are blocked
+on purpose:
+
+- a commit message with `$(...)` or a backtick that mentions a protected part, such
+  as the `git commit -m "$(cat <<'EOF' ... EOF)"` form. Write the message to a file and
+  use `git commit -F <file>`;
+- a tq command that names the state folder and has a parenthesis, a backtick or a
+  curly quote anywhere, even inside quotes (`tq hub add "check the hub lock (prod)"`
+  with the hub path in it);
+- `cp -s` (or another link option) of a file whose name starts with `.tentaqles`,
+  such as `.tentaqles.yaml`.
+
 ## The real protections
 
 1. **Claude Code's sandbox for writes.** Turn on Claude Code's sandbox (`/sandbox`)
@@ -50,9 +64,12 @@ hole without new false positives, and documents the rest.
    - it runs on macOS and on Linux or WSL2, not on native Windows;
    - it covers the Bash tool, not the PowerShell tool;
    - a `tq` the agent starts runs inside it too, and tq must write its state folder.
-     List `tq` in the sandbox's `excludedCommands` so it runs outside. Do not
-     allow-list `TQ_HOME` for writes instead: that gives every sandboxed command
-     the write access and removes the protection.
+     In the sandbox's `excludedCommands`, list only the tq subcommands that write
+     state and start nothing, such as `tq hub` and `tq pack`. Never exclude
+     `tq run`, `tq dotenv run`, `tq redact run` or `tq pack <pack> plan`: they start a
+     child command, which would then run outside the sandbox. Do not exclude `tq` as
+     a whole, and do not allow-list `TQ_HOME` for writes: either gives every command
+     that write access and removes the protection.
 2. **Signed, tamper-evident state.** What is signed today:
    - pack ledger answers, with a key kept in the OS keychain. A ledger line written
      by anything other than tq does not verify, so a forged write cannot grant,
