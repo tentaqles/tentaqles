@@ -21,6 +21,14 @@ else GOT=$(shasum -a 256 "$TMP/$ARCHIVE" | cut -d' ' -f1); fi
 if [ -z "$WANT" ] || [ "$GOT" != "$WANT" ]; then
   echo "checksum mismatch for $ARCHIVE (expected ${WANT:-none}, got $GOT); not installing"; exit 1
 fi
+# With a logged-in gh, also check GitHub's build provenance: the archive was built by this
+# repo's release workflow. Without gh the checksum above is the only check.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  if ! gh attestation verify "$TMP/$ARCHIVE" --repo "$REPO" --signer-workflow "$REPO/.github/workflows/release.yml" >/dev/null 2>&1; then
+    echo "build provenance check failed for $ARCHIVE (gh attestation verify); not installing"; exit 1
+  fi
+  echo "Verified build provenance for $ARCHIVE"
+fi
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
 install -m 755 "$TMP/tq" "$BIN_DIR/tq"
 echo "Installed tq $VER to $BIN_DIR/tq"

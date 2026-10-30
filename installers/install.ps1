@@ -22,6 +22,22 @@ if (-not $want -or $got -ne $want.ToLower()) {
   Remove-Item $zip
   throw "checksum mismatch for $archive (expected $want, got $got); not installing"
 }
+# With a logged-in gh, also check GitHub's build provenance: the archive was built by this
+# repo's release workflow. Without gh the checksum above is the only check.
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+  # gh writes to stderr, which 'Stop' turns into a terminating error in Windows PowerShell
+  $ErrorActionPreference = 'Continue'
+  & gh auth status *> $null; $loggedIn = ($LASTEXITCODE -eq 0)
+  if ($loggedIn) { & gh attestation verify $zip --repo $repo --signer-workflow "$repo/.github/workflows/release.yml" *> $null; $verified = ($LASTEXITCODE -eq 0) }
+  $ErrorActionPreference = 'Stop'
+  if ($loggedIn) {
+    if (-not $verified) {
+      Remove-Item $zip
+      throw "build provenance check failed for $archive (gh attestation verify); not installing"
+    }
+    Write-Host "Verified build provenance for $archive"
+  }
+}
 Expand-Archive $zip -DestinationPath $binDir -Force
 Remove-Item $zip
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
