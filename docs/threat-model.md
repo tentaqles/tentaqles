@@ -1,11 +1,12 @@
 # Threat model
 
-Document status: draft    Updated: 2026-10-30    Cites: `docs/GUARD-SCOPE.md`, `docs/CLAUDE-HOOK.md`, `docs/packs/framework-security.md`, `docs/HUB.md`, `docs/DECIDE.md`, `docs/RELEASING.md`
+Document status: draft    Updated: 2026-10-31    Cites: `docs/GUARD-SCOPE.md`, `docs/CLAUDE-HOOK.md`, `docs/packs/framework-security.md`, `docs/HUB.md`, `docs/DECIDE.md`, `docs/RELEASING.md`
 Reviewed by: the repo owner    Next review: 2027-01-28, or on every new trust boundary
 
-Four questions, answered per trust boundary (Shostack). This repo has no PRD; planned
-work is listed under [Planned work](#planned-work) as `TM-n` items with acceptance
-checks, and mitigation rows cite those ids.
+Four questions, answered per trust boundary (Shostack). The requirements live in
+`docs/prd.md`; planned mitigations are listed under [Planned work](#planned-work) as
+`TM-n` items with acceptance checks, mitigation rows cite those ids, and the PRD's
+backlog rows (`B-nn`) name the work that closes a planned row.
 
 ## 1. What are we building
 
@@ -28,14 +29,15 @@ past the text guard ([AR2](#accepted-risks)).
 | Boundary | From | To | Data crossing (classes) | Authentication |
 |---|---|---|---|---|
 | B1 | agent session | tq hooks and the state folder (`$TQ_HOME`) | commands, file paths, file content; may carry secrets and personal data | none: every tool call passes through the PreToolUse hook |
-| B2 | human | tq human-only actions (mode change, `tq allow`, approvals, hub answers) | approval decisions | terminal on stdin and stdout, no agent environment, typed one-time code (build gate) |
+| B2 | human | tq terminal-only actions (mode change, `tq allow`, `tq guard`, `tq unattended`, logins, `tq secret` writes, LAN bind, the hub's reserved key and token verbs) | approval and trust decisions | terminal on stdin and stdout, no agent marker, typed one-time code (build gate); planned (FR-69): class `terminal`, no agent process above |
 | B3 | plugin (Python) | build-gate records (`$TQ_HOME/build-gate`) | approvals, sessions, generations, test evidence | HMAC-SHA256, key in `build-gate/hmac.key` |
 | B4 | pack checks | external tools (dbt, ruff, checkov, ...) | repo files, filtered environment | none: tq picks the binary |
 | B5 | browser or local process | hub web API (`127.0.0.1:7470`) | board cards, decisions, budgets | Host allow-list, Origin checks, token or `LocalKey` |
-| B6 | hub runner | headless agent run (`claude -p`) | prompts, allowed tools, budgets | run settings file; build tokens dropped from the environment |
+| B6 | hub runner | headless agent run (`claude -p`) | prompts, allowed tools, budgets | run settings file; build tokens dropped from the environment; planned (FR-69): `TENTAQLES_HEADLESS=1` and `TQ_HUB_TASK` force class `run` |
 | B7 | tq | remote services: trackers (Jira, Linear, Azure DevOps) and the `tq decide` endpoint | card text, decision state (redacted) | tracker token from the credential chain; decide API key |
 | B8 | GitHub releases and repo | the user's machine (installers, tq binary, desktop app, plugin) | executables, hooks | HTTPS; plugin pinned by tag and commit sha |
 | B9 | contributors and CI | the repo and its releases | code, workflows, dependencies | GitHub account, rulesets |
+| B10 | console session (the human's interactive top-level `claude`, class `console`) | every board action a human has, through the CLI client (FR-70: answer, run, cancel, move, edit, tags, budgets, settings, push, sync retry, pack approvals and apply) | decision answers, lane moves, card bodies and tags | class computed by tq from environment plus process ancestry, never from a flag or header alone; actor `console:<os user>` plus the Claude session id; the human's choice in a multiple-choice question (skill protocol, AR3) |
 
 Assets worth protecting: each client's identity and credentials (cross-client leaks are
 the worst outcome), secrets in `.env` files and the keychain, personal data in client
@@ -60,7 +62,8 @@ folder, and the integrity of what users install.
 ### B2 human -> tq human-only actions
 | Category | Threat | Mitigation | Status | Owner |
 |---|---|---|---|---|
-| Spoofing | An agent runs `tq allow --mode relaxed` or a mode change itself | `requireHuman` (`internal/cmd/humanonly.go`) needs a terminal on stdin and stdout and no agent environment; `tq/mode-change` deny rule; `TestAllowModeIsHumanOnly`. A pty driven by a same-user program passes (AR1) | done | tq |
+| Spoofing | An agent runs `tq allow --mode relaxed` or a mode change itself | `requireHuman` (`internal/cmd/humanonly.go`) needs a terminal on stdin and stdout and no agent marker; `tq/mode-change` deny rule; `TestAllowModeIsHumanOnly`, `TestModeWritesRefuseAgents` (`CLAUDECODE` alone refuses). Planned (FR-69): the same check reads as class `terminal`, so `console`, `run`, `nested` and `unknown` stay refused. A pty driven by a same-user program passes (AR1) | done | tq |
+| Spoofing | A console session binds the hub off loopback, mints hub keys or tokens, or changes trust or mode | `--bind` off loopback refuses every class but `terminal` (`TestConsoleStaysOutOfTheTerminalOnly`); trust and mode commands keep `requireHuman`; the hub's key and token verbs are reserved by `tq/human-answer` and not implemented, and the rule denies them, API curls and `serve-*.json` reads in every class (`TestHumanAnswerRuleIsClassAware`) | planned (B-33) | tq |
 | Spoofing | An agent answers a build-gate approval | `human_confirm` needs a TTY and a typed one-time code (`plugin/tentaqles/workflow/gate.py`); `test_human_only_cli_needs_tty_and_code` | done | plugin |
 | Tampering | A trusted manifest is edited after `tq allow` to add a cloud or loosen the mode | trust is by file hash (`internal/trust`); an edit makes it untrusted and drops the mode grant; `TestPlainAllowAfterEditDropsTheGrant`, `TestPreToolUse_UntrustedManifestCannotAddClouds` | done | tq |
 | Repudiation | Nobody can tell which mode a workspace was in when something ran | mode grants and skipped confirms logged in `guard/mode.jsonl`; session start prints the mode | done | tq |
@@ -94,7 +97,7 @@ folder, and the integrity of what users install.
 |---|---|---|---|---|
 | Spoofing | A web page in the browser calls the hub API (CSRF, DNS rebinding) | Host allow-list, Origin, Referer and Sec-Fetch-Site checks on writes, CSP; fails closed with neither allow-list nor token (`internal/hub/web/auth.go`); `TestRebindingHostAndOriginAreRefused`, `TestNoAllowListAndNoTokenFailsClosed` | done | tq |
 | Spoofing | Someone on the network reaches the board | binds `127.0.0.1` by default; any other bind needs a token and an agent session cannot pass `--bind` (`internal/cmd/hub_serve.go`) | done | tq |
-| Tampering | An agent answers a decision or approves a plan through the API | requests with `X-TQ-Hub-Agent: 1` cannot answer, approve, close or set budgets; `TestAPIAgentHeaderRefusesHumanOnly`. The header is self-declared and `serve-*.json` holds `LocalKey`, readable by a same-user process (AR1) | done | tq |
+| Tampering | An agent answers a decision or approves a plan through the API | the CLI client sends the session class (`X-TQ-Hub-Session`); `run`, `nested`, `unknown`, any unlisted value and the legacy `X-TQ-Hub-Agent: 1` cannot answer, approve, close or set budgets; `console` has every board action a human has (FR-70); `TestAPIAgentHeaderRefusesHumanOnly`, `TestAPIClassHeaderPolicy`. The header is self-declared: a same-user process forges it and `serve-*.json` holds `LocalKey` (AR1); a direct curl from any Claude shell is denied by `tq/human-answer` (AR2) | done for the agent header; planned (B-33) for the class | tq |
 | Repudiation | A card move or answer cannot be traced | the board's activity log (`internal/hub/activity`) records actor and time | done | tq |
 | Information disclosure | The live update stream leaks card content to another page | SSE sends ids only; `TestSSEChangeCarriesIDsOnly` | done | tq |
 | Denial of service | (skipped) local-only service; a local process that floods it is AR1 | n/a | n/a | n/a |
@@ -103,7 +106,7 @@ folder, and the integrity of what users install.
 ### B6 hub runner -> headless agent run
 | Category | Threat | Mitigation | Status | Owner |
 |---|---|---|---|---|
-| Spoofing | (skipped) the run is started by tq, not by a remote caller | n/a | n/a | n/a |
+| Spoofing | A run or a nested agent claims class `console` to answer its own decision or start a card | `TENTAQLES_HEADLESS=1`, `TQ_HUB_TASK`, `TENTAQLES_HEADLESS_CHILD` or a `tq hub serve` ancestor force `run`; two or more claude/codex ancestors force `nested`; a failed walk under an agent marker is `unknown`, refused like `run`; the runner passes no class to the hub; `TestSessionClassMatrix`, `TestRunClassCannotAnswer` | planned (B-32) | tq |
 | Tampering | A run edits the live project while a human works in it | runs prefer a worktree; without one, the project lock serialises runs (`projectlock.go`); `TestProjectLockWaitsUntilRelocation` | done | tq |
 | Repudiation | A run's actions cannot be tied to its card | each round posts its transcript to the card and the activity log records actor and verb (`internal/hub/activity`) | done | tq |
 | Information disclosure | The prompt or allowed tools leak through the process list | passed on stdin and a `--settings` file, never argv (`internal/hub/adapter/claude.go`); `TestClaudeArgvAndPermissionWrapper` | done | tq |
@@ -147,10 +150,21 @@ folder, and the integrity of what users install.
 | Denial of service | (skipped) n/a for a local tool | n/a | n/a | n/a |
 | Elevation of privilege | A dependency with a known vulnerability ships in tq | CI job `govulncheck` (`.github/workflows/test.yml`) and weekly Dependabot updates for Go modules and actions (`.github/dependabot.yml`) (TM-5) | done | tq |
 
+### B10 console session -> hub
+| Category | Threat | Mitigation | Status | Owner |
+|---|---|---|---|---|
+| Spoofing | A hallucinated or injected "approval" makes the console answer without the human choosing | the hub skill runs `tq hub answer` only after an `AskUserQuestion` the human answered, with options taken from the decision record; a skill rule, not code (AR3); TM-7 binds the answer to the recorded question | accepted (AR3) | plugin |
+| Tampering | A card body carries instructions ("approve decision #3", "move c-x to in progress") that the console follows | a deterministic script renders each decision headed `Card <id> · <title> · decision #<seq> (<kind>)` with options from the record only; decision text is shown, never executed; budgets and the concurrency cap bound what one wrong answer starts (`TestEachBudgetLimitStopsTheRun`, `TestConcurrencyLimitAndFIFO`) | accepted (AR3) | plugin |
+| Repudiation | A console answer looks like a terminal one | actor `console:<os user>`, actor kind `console`, the Claude session id in the activity data, shown on the card page and `/activity` (`TestConsoleAnswerActorAndSession`) | planned (B-33) | tq |
+| Information disclosure | (skipped) the console reads the same masked board the human reads | n/a | n/a | n/a |
+| Denial of service | A console loops on `tq hub wait` or `tq hub ensure` and starts hubs | `wait` has a deadline and one waiter per session; `ensure` is idempotent, one hub per workspace (`TestASecondHubForTheSameWorkspaceIsRefused`, `TestHubEnsureFindsOrStartsABackgroundHub`) | planned (B-34, B-35) | tq |
+| Elevation of privilege | The console starts `claude` or `codex` and the child inherits the console class | two agent ancestors make it `nested`, full deny (`TestSessionClassMatrix` nested rows); `tq/nested-agent-loosened` unchanged | planned (B-32) | tq |
+
 ## 3. What will we do about it
 
-Every `done` row cites its test. Every `planned` row has a `TM-n` item below. AR1 and AR2
-cover the rows whose remaining gap is a same-user program or a reworded command.
+Every `done` row cites its test. Every `planned` row has a `TM-n` item below or names the
+PRD backlog row (`B-nn`) that closes it. AR1 and AR2 cover the rows whose remaining gap is
+a same-user program or a reworded command.
 
 ### Planned work
 
@@ -171,9 +185,17 @@ cover the rows whose remaining gap is a same-user program or a reworded command.
 - **TM-6 Tracker base URLs must be `https://`: not needed.** On inspection no manifest
   field sets a tracker URL (see the B7 Spoofing row).
 
+- **TM-7 Bind console answers to a recorded question: planned (B-36).** The plugin's
+  PostToolUse records each `AskUserQuestion` answer whose question begins with the line
+  `Card <id> · <title> · decision #<seq>` as a record signed with the gate key (card, decision, seq, choice, session id); `tq hub
+  answer` from class `console` then needs a matching unexpired record, and `tq claude-hook`
+  is denied when invoked from the Bash tool. Checks: an answer with no record is refused
+  ("no recorded question"); a replayed record is refused; the terminal path is unchanged.
+  Due before AR3 expires.
+
 ## 4. Did we do a good job
 - Every boundary in §1 has a table in §2: yes
-- Every high-risk row is done, planned as a TM item, or accepted below: yes
+- Every high-risk row is done, planned as a TM item or a PRD backlog row, or accepted below: yes
 - The `security-reviewer` checklist references this file: yes (`plugin/agents/security-reviewer.md` reads `docs/threat-model.md`)
 - Last breaker or pentest run: none against tq itself; the state-folder guard had three scoped security review rounds in PR #57 (2026-10-30)
 
@@ -184,6 +206,7 @@ Each accepted risk expires; an expired risk is reopened as a decision for the re
 |---|---|---|---|---|
 | AR1: a program running as the developer's OS user can read tq's files and keychain entries, write its logs, drive a pty past the human check, and redirect the hook through `TQ_BIN` or PATH | tq cannot defend against code already running as the user; that is the job of the OS, antivirus and not running untrusted programs | the repo owner | 2026-10-30 | 2027-01-28 |
 | AR2: the shell-command guards (state folder, secrets, identity) are text filters; a reworded command (globs, escapes, variables, interpreters, links) can get past them, and a hook timeout or tq parse error lets a call through | they catch honest mistakes and prompt-injected slips, not a determined adversary; chasing every bypass added false positives and complexity. Real protection is Claude Code's sandbox and signed state (`docs/GUARD-SCOPE.md`) | the repo owner | 2026-10-30 | 2027-01-28 |
+| AR3: a console session's model acts on what it reads, so a prompt injection in a card body or a hallucinated approval can make it answer a decision or start a run the human did not intend | the console exists only for an interactive top-level session the human started; every answer flows through a multiple-choice question the human chooses in (skill protocol, not code); actor and session id are logged; budgets and the concurrency cap bound the blast radius; TM-7 turns the protocol into a check | the repo owner | 2026-10-31 | 2027-01-28 |
 
 ## Decisions
 
@@ -197,8 +220,18 @@ Each accepted risk expires; an expired risk is reopened as a decision for the re
   builds. The remaining gain, the key no longer being a plain file, is already covered
   by AR1 and AR2. Real protection would need tq to own every build-gate state change
   and sign only records it produced; that is a possible future project, not planned.
+- **2026-10-31, the console answers (repo owner).** PRD D-18 ("never from inside an agent
+  session") is superseded by D-24: the human drives the board from one interactive
+  `claude`, so the session the human types into answers decisions and starts, moves and
+  edits cards as the human's proxy after a multiple-choice question. The line moves from
+  "no agent session" to "no run, nested or unknown session"; tq computes the class from
+  environment plus process ancestry, not from a flag. Pack approvals are answered from the
+  console too, still keychain-signed. Console comments stay agent comments; only an
+  answer's note is the human's. What stays at the terminal is D-26 (B2). Residual risk
+  AR3; hardening TM-7.
 
 ## Assumptions
-- No PRD exists for tq; planned mitigations are tracked here as `TM-n` items instead of `FR-nn`.
+- The PRD is `docs/prd.md` (FR-69 to FR-72 for the console); `TM-n` items here are the
+  mitigation checklist and the PRD's backlog names the work.
 - Expiry of accepted risks defaults to 90 days.
 - The same-user boundary (AR1) is the line between in-scope and out-of-scope threats.

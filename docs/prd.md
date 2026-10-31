@@ -1,7 +1,7 @@
 # Tentaqles: product requirements
 
-Status: planning-ready (the 23 decisions of 2026-10-30 are settled; outcomes in §17)
-Owner: the repo owner (reach@tentaqles.ai)    Updated: 2026-10-30
+Status: planning-ready (the 23 decisions of 2026-10-30 and the 3 of 2026-10-31 are settled; outcomes in §17)
+Owner: the repo owner (reach@tentaqles.ai)    Updated: 2026-10-31
 Baseline audited: `main` f66b3e9, tq v0.8.2, plugin 0.15.2
 
 This document replaces the draft at `Tentaqles — Product Requirements Document.md`
@@ -63,9 +63,10 @@ Evidence, from the repo's own history:
 
 | Role | Who they are | What they need from this | Can | Cannot |
 |---|---|---|---|---|
-| Developer (the human) | One freelance or multi-employer developer, one machine; Windows first, then macOS and Linux | One folder per client that is logged in, tooled and guarded for that client only; a board of assigned work; agents that run tasks and ask when they must | Trust manifests, grant modes, approve, answer decisions, store tokens, push cards to the company board, release | Be impersonated by an agent: every one of those actions refuses an agent session |
-| Agent session (Claude Code; Codex best effort) | An interactive harness started from a workspace folder | Identity preamble, memory, skills, a guard that blocks slips with a reason it can act on | Read and edit the project, add and comment on cards, ask for approvals, run gated builds | Change its own mode or trust, read `.env`, use another client's credential, answer decisions, push to the tracker |
+| Developer (the human) | One freelance or multi-employer developer, one machine; Windows first, then macOS and Linux | One folder per client that is logged in, tooled and guarded for that client only; a board of assigned work; agents that run tasks and ask when they must | Trust manifests, grant modes, approve, answer decisions, store tokens, push cards to the company board, release | Be impersonated: those actions refuse a run, nested or unknown session; a console session performs the board ones only as the human's proxy after a question the human answered (D-24) |
+| Agent session (Claude Code; Codex best effort) | A harness session that is not the human's console: a hub run, a nested session, or one whose class is unknown (D-24; before FR-69 ships, every Claude session) | Identity preamble, memory, skills, a guard that blocks slips with a reason it can act on | Read and edit the project, add and comment on cards, ask for approvals, run gated builds | Change its own mode or trust, read `.env`, use another client's credential, answer decisions, push to the tracker |
 | Headless run (orchestrator) | `claude -p` rounds started by `tq hub` for one card | Task text, budgets, a worktree, decision records the human answers | Everything an agent session can, under `guard.headless_mode` | Change the mode, loosen a nested agent, answer its own decisions |
+| Console session | The human's interactive top-level `claude` in a workspace terminal (class `console`, D-24) | `/tentaqles:start`, `sync`, `refine`, `run` and `hub` instead of typed tq commands; decisions as multiple-choice questions | Answer decisions, start, cancel, move, edit and refine cards, set budgets and hub settings, push and retry sync, approve and apply packs, as the human's proxy after a question the human answered | Change mode or trust, bind the hub off loopback, mint or read hub keys, pass its class to a nested agent |
 | Company (client) | The client's tracker, git host, cloud and chat | Only the developer's assigned items mirrored; only approved writes back | Receive lane moves, result comments, pushed cards (per outbox policy) | See other clients' data or any local-only card |
 | Maintainer / releaser | The repo owner shipping tq and the plugin | One tag releases everything, pinned and verifiable | Merge with green checks, tag, pin the marketplace | Move a release tag; merge red |
 
@@ -512,7 +513,9 @@ ask, not by `requireHuman` (COMMANDS.md says human-only: doc mismatch); `tq guar
 off|on|set` is not human-only (locked ids are still never disabled); `tq mode toggle` and
 `override` have no typed confirmation (original PRD §12.3 asks for one); switching to
 `off` checks agent markers only, no terminal (FR-23). Decided (D-10): close all of
-these, P0.
+these, P0. Decided (D-24, 2026-10-31): `tq hub answer`, `tq hub push`, `tq hub sync retry`
+and the pack `apply` verbs also accept class `console` (FR-70); everything else here
+stays terminal-only (D-26).
 **Acceptance checks**
 - `TestAllowModeIsHumanOnly` passes; in a Claude session, `tq secret status` exits 1 with
   "human-only" (COMMANDS.md §4 step 9).
@@ -586,7 +589,7 @@ toggle (§13.4) is deliberately absent.
 - After `tq off` in window A, `claude` in A uses `~/.claude` (process environment has no
   `CLAUDE_CONFIG_DIR`) while a new window B in the same folder has the workspace's
   `CLAUDE_CONFIG_DIR`.
-- `claude-off` invoked from inside an agent session is refused.
+- `claude-off` invoked from inside an agent session, the console included, is refused.
 
 ### FR-24 A nested agent cannot start with looser settings than its parent
 Why: G2. A session must not escape its mode by starting another agent.
@@ -955,12 +958,13 @@ titled `<FR-id> <title>`, body = FR text plus checks plus a `Source:` line, and 
 the card ids back into PRD §11 inside `<!-- tq:cards -->` so re-runs skip them
 (`test_plan_cards_release_1_then_2_makes_six_cards_and_is_idempotent`);
 `/tentaqles:refine` runs grill-me on one card, the human saves the body
-(`tq hub edit --body-file`, human-only by amendment B §9), then the skill adds the
+(`tq hub edit --body-file`, human-only by amendment B §9; the console saves it itself
+once FR-72 ships, D-24), then the skill adds the
 `agent-ready` tag (`store.TagAgentReady`); a move into an active lane starts a run only
 for tagged cards (`TestMoveIntoActiveEnqueuesAgentReadyOnly`).
 Missing: no dependencies between cards (only `parent_id`); no `ready` field (the tag is
-the flag); a human's `tq hub run <card>` or "Run now" bypasses the tag check (agents
-cannot run any card). No test of its own for `refine` [placeholder].
+the flag); a human's `tq hub run <card>` or "Run now" bypasses the tag check (run and
+nested sessions cannot run any card; a console can, FR-70). No test of its own for `refine` [placeholder].
 **Acceptance checks**
 - `test_plan_cards_release_1_then_2_makes_six_cards_and_is_idempotent` passes.
 - A card body or tag can declare `depends_on` another card id, and the hub refuses to
@@ -1011,7 +1015,8 @@ subagent of that session (original PRD §8 "the main harness session is the cont
 plane"). The worktree is named from the feature slug, not the card id. Decided (D-17):
 the hub stays the runner (runs outlive the session, budgets and concurrency live in one
 place, a run never inherits a session's approvals); worktrees keep the slug, with the
-card id recorded in the plan's `task`.
+card id recorded in the plan's `task`. D-24 (2026-10-31) keeps D-17: the console asks the
+hub to start the run and never runs a round itself.
 **Acceptance checks**
 - `TestMoveIntoActiveEnqueuesAgentReadyOnly`, `TestConcurrencyLimitAndFIFO`,
   `TestProjectLockWaitsUntilRelocation`, `TestEachBudgetLimitStopsTheRun` pass.
@@ -1069,8 +1074,9 @@ Missing: no separate recommendation and blocked fields (they live in the text); 
 the card does not answer; a comment reaches the next prompt but does not resume.
 **CONFLICT:** the original PRD's `pending` answers inline from the main harness session;
 `tq hub answer` refuses every Claude session on purpose (the human is the only authority,
-A §1), so `/tentaqles:hub` prints the command for the human. Decided (D-18): answers
-stay out of agent sessions; the original PRD's inline `pending` answer path is dropped.
+A §1), so `/tentaqles:hub` prints the command for the human. Decided (D-18), superseded on
+2026-10-31 by D-24: the inline `pending` path returns as FR-71, a multiple-choice question
+in the console; `tq hub answer` from a run, nested or unknown session is still refused.
 **Acceptance checks**
 - `TestAnswerResumesTheRun`, `TestUpsertDecisionMirrorsGateRecords`,
   `TestTerminalAnswerIsNoticedByThePoll` pass.
@@ -1496,6 +1502,173 @@ is not a repo.
 - Root `CLAUDE.md` names the five tracker adapters and no longer marks `providers/` or
   `desktop/` as planned.
 
+### Area L: the console (the human's session as the control surface)
+
+Decided on 2026-10-31 (D-24 to D-26): the human drives the board from one interactive
+`claude` started in the workspace terminal. These requirements replace the parts of D-10,
+D-18 and the hub's "agent session" rule that treated every Claude session alike. The threat
+model records the new boundary B10 and the accepted risk AR3.
+
+### FR-69 Session classes: terminal, console, run, nested, unknown
+Why: G2, D-24. One boolean, `packs.AgentSession()` (`internal/packs/human.go`), cannot
+tell the human's own `claude` from a headless run; `CLAUDECODE=1` marks both, so a command
+typed with the `!` prefix is refused like an agent's.
+Status: not started
+Evidence: `TestHubAgentSignals` pins the one-class rule (`CLAUDECODE=1`, `CLAUDE_PLUGIN_ROOT`,
+`TENTAQLES_HEADLESS=1` and `TQ_HUB_TASK` are all "agent").
+Missing: a package (`internal/session`) that classifies the calling process from the
+environment plus the chain of parent processes: `terminal` (no claude/codex above),
+`console` (exactly one claude or codex above, started by the human, no headless or Codex
+sandbox marker), `run`
+(`TENTAQLES_HEADLESS=1`, `TQ_HUB_TASK`, `TENTAQLES_HEADLESS_CHILD`, or `tq hub serve`
+above), `nested` (two or more claude/codex above, or Codex sandbox markers), `unknown`
+(the walk failed while an agent marker is set: refused with the cause named). A failed walk
+with no agent marker at all stays `terminal`: that is today's rule (environment markers
+plus the terminal check), and the owner's "refuse and name the cause" concerns actions
+from inside Claude, where a marker is always set. One process
+snapshot per OS (Windows Toolhelp32 process snapshot through `golang.org/x/sys/windows`,
+never the PowerShell `Get-CimInstance` path; Linux `/proc`; macOS `sysctl`), at most 16
+hops and 200 ms, memoised, with a fake-table seam for tests. The class travels to a
+served hub as `X-TQ-Hub-Session`; the server maps any unlisted value to `run` and the
+legacy `X-TQ-Hub-Agent: 1` still means `run`. `tq doctor` reports class `unknown`.
+**Acceptance checks**
+- `TestSessionClassMatrix` passes: each row of the environment × ancestry table yields the
+  class above, including `CLAUDECODE=1` plus one interactive claude ancestor → `console`,
+  one codex ancestor without sandbox markers → `console`,
+  `TENTAQLES_HEADLESS=1` plus the same ancestor → `run`, two claude ancestors → `nested`,
+  `CLAUDECODE=1` with no claude ancestor or a failed walk → `unknown`, a failed walk with no
+  marker → `terminal`.
+- `TestWalkSelfHasParent` passes on Windows, macOS and Linux CI: the real walk finds the
+  test binary's parent within 200 ms.
+- `TestModeWritesRefuseAgents` and `TestAllowModeIsHumanOnly` pass unchanged: `CLAUDECODE=1`
+  alone still refuses every mode write, `tq allow --mode` and `tq unattended`.
+- `TestAPIClassHeaderPolicy`: the hub API refuses human-only actions for `run`, `nested`,
+  `unknown`, an unlisted header value and the legacy agent header;
+  `TestAPIAgentHeaderRefusesHumanOnly` passes unchanged.
+- `tq doctor` prints a warning row when the class is `unknown`, naming the cause.
+
+### FR-70 The console drives the hub as the human's proxy
+Why: D-24, D-25: the human never types tq commands for board work; a `!`-prefixed command
+and a skill acting after a multiple-choice question are both the human's.
+Status: not started
+Evidence: the hub refuses every write beyond add, comment, planning-lane moves and tags
+from any Claude session (`TestHubAgentMayAddAndCommentOnly`, `TestHubEditByAnAgent`); the
+locked rule `tq/human-answer` (`internal/policy/builtin_framework.go`) denies `tq hub
+answer` from every Claude shell; pack approvals need a terminal and a typed code.
+Missing: a hub policy per class: `console` gets every human action (add in any lane, move
+between any lanes, `run`, `cancel`, `answer` for gate decisions, hub questions, send/skip
+and pack approvals, review approve / request changes / done, edit title, body, project
+and tags, budgets, settings, `push`, `sync retry`, sync import and ack as a human, the
+pack `apply` executors); `run`, `nested` and `unknown` keep today's limits; still
+terminal-only: `serve --bind` off loopback and the hub's key and token verbs, which the
+rule reserves and no release implements yet (D-26). The rule
+`tq/human-answer` splits in two with the same id: the unconditional half keeps denying
+key/token/serve-key, HTTP calls to the decision endpoints and `serve-*.json` reads; the
+`ConsoleExempt` half covers `tq hub answer` and the pack `apply` verbs and is skipped for
+class `console`; the rule stays locked. Attribution: actor `console:<os user>`, actor kind
+`console`, the Claude session id in the activity data, shown on the card page and
+`/activity`; gate answers keep `hub:<os user>` inside the HMAC token. Pack answers from the
+console are keychain-signed by tq without the typed code; the board page still refuses
+them. Console comments stay agent comments.
+**Acceptance checks**
+- `TestConsoleDrivesTheBoard`: under the console seam, `tq hub answer`, `move <card> "in
+  progress"` (enqueues a run for an agent-ready card), `edit --body-file|--title`, `run`,
+  `cancel`, `push`, `sync retry` and a pack approval answer succeed; `TestSignedAnswersOnly`
+  passes unchanged.
+- `TestRunClassCannotAnswer`: classes `run`, `nested` and `unknown` are refused `tq hub
+  answer|run|cancel|push|sync retry`, moves into active lanes and budgets, with the class
+  named in the error.
+- `TestConsoleStaysOutOfTheTerminalOnly`: the console seam is refused `tq hub serve --bind
+  0.0.0.0`, `tq mode set`, `tq allow --mode`, `tq guard off`, `tq unattended on` and
+  `tq secret set`.
+- `TestHumanAnswerRuleIsClassAware` (hook): from a console shell `tq hub answer c d --choice
+  approve` is allowed while `tq hub key`, `curl …/answer` and a read of
+  `~/.tentaqles/hub/serve-1.json` are denied; from a run shell all four are denied;
+  `TestLockedNeverChange` passes.
+- `TestConsoleAnswerActorAndSession`: a console answer's actor is `console:<user>`, its
+  activity row carries the session id, and the card page shows it.
+- `TestHubCommentFromAnAgentSessionIsNeverHuman` passes with a console case: a console
+  comment is stored as an agent comment.
+
+### FR-71 Decisions reach the console and are answered there
+Why: original PRD §8.2 (`pending` inline), dropped by D-18 and restored by D-24 as a
+multiple-choice question the human answers in the session they are already in.
+Status: not started
+Evidence: decisions have ids (`d` plus 8 hex from the gate, `d-` plus 12 base32 from the
+hub) and no number; `tq hub list --waiting` is one-shot; `/tentaqles:hub` prints the
+`tq hub answer` command for the human; an OS notification fires
+(`TestSendIsBoundedToTwoSeconds`).
+Missing: a per-workspace decision number `seq` (unique, assigned in the insert transaction,
+backfilled by rowid) in JSON, `tq hub list --waiting`, `show`, the page and the
+notification text `Card <id> · <title> · decision #<seq> (<kind>)`; `tq hub wait --json
+[--card <id>] [--timeout <dur>] [--session <id>]`, which blocks until a new pending
+decision appears or a watched run ends (SSE `/events` plus `/api/waiting` against a served
+hub, `ChangeStamp` polling in direct mode; exit 0 on an event, 3 on timeout, 4 when another
+waiter holds the session lock, 5 without a hub or board; read-only, every class); a plugin
+watcher hook (`plugin/scripts/hub-watch.py`, `async` and `asyncRewake` on `SessionStart`
+and `UserPromptSubmit`) that exits 0 at once in run, nested and headless sessions and
+otherwise wakes the console with one paragraph when `wait` returns; a prompt-submit line
+`hub: N decisions waiting (#seq card title · kind, …)` in console sessions; a deterministic
+renderer (`plugin/scripts/hub-decisions.py`) that turns the waiting list into the exact
+AskUserQuestion blocks (header `hub #<seq>`, the Card line first, options exactly the
+decision's own, the recommended one first, which options need a note, the exact `tq hub
+answer` argv); `/tentaqles:hub` asks one decision at a time in `seq` order and answers only
+after the human picked; the board stays equivalent (first answer wins).
+**Acceptance checks**
+- `TestDecisionSeqMonotonic`: numbers are unique and increasing per workspace, survive a
+  mirror and a re-read, and `tq hub list --waiting --json` and `show` carry `seq`.
+- `TestHubWaitReturnsOnANewDecisionAndOnTheDeadline`: `tq hub wait --timeout 2s` exits 3 at
+  the deadline and 0 within one poll of a new decision, printing its id and `seq`; a second
+  waiter for the same `--session` exits 4.
+- `test_hub_decisions.py`: the same decision JSON renders byte-identical blocks; labels equal
+  the decision's options; the Card line is first; `note` is `required` for `answer`, `edit`
+  and `request-changes`; the argv is exact; a fifth option goes to an overflow page.
+- `test_hub_watch.py`: the watcher exits 0 silently under `TENTAQLES_HEADLESS=1`,
+  `TQ_HUB_TASK` or `TENTAQLES_HEADLESS_CHILD=1` and with no hub; on a decision event it
+  prints one paragraph naming card, title, `#seq` and kind to stderr and exits 2.
+- `test_hooks_json.py`: the watcher appears once in `SessionStart` and once in
+  `UserPromptSubmit` with `async`, `asyncRewake` and a `timeout`.
+- `TestPromptSubmitHubLine`: in a console session with two pending decisions the
+  prompt-submit hook adds one line naming both within 300 ms.
+- `TestAnswerRaceWithTerminal` gains a console case: a board answer followed by a console
+  answer reports "already answered" and the run resumes once.
+
+### FR-72 The one-command day: `/tentaqles:start`, `/tentaqles:run`, refine writes the card
+Why: D-24: start, refine, run and answer from the console; the hub stays the runner (D-17);
+the hub must outlive the session that started it.
+Status: not started
+Evidence: `tq hub serve` runs in the human's own terminal because a Claude session can reap
+its background tasks (HUB.md "Quick start"); the desktop app starts it as a child
+(`TestOpenBoard_StartsTQHubServeAsAChild`); `/tentaqles:refine` hands the body edit to the
+human (FR-42, B §9); there is no `tq hub stop`.
+Missing: `tq hub serve --background` (re-exec detached with a scrubbed environment, log at
+`$TQ_HOME/hub/serve-<port>.log`, waits for its serve record, prints the address; survives
+the caller's exit), `tq hub stop` (a shutdown route authenticated by the local key, then
+poll until the ping fails), `tq hub ensure --json` (find or start; prints `{addr, port,
+pid, started, waiting}`); all three refuse `run`, `nested` and `unknown`. Skills: `start`
+(ensure, address, running cards, the waiting list through the renderer, pending decisions
+answered at once), `run <card>` (ensure; an untagged card goes through the refine steps
+first; `tq hub move <card> "in progress"`; the card URL; never waits), `refine` step 4
+writes the body with `tq hub edit --body-file` and tags the card itself, falling back to
+printing the command on a `human-only` refusal; `feature` and `build` headless texts say
+the answer is given in the console or on the card.
+**Acceptance checks**
+- `TestHubEnsureFindsOrStartsABackgroundHub`: with no hub, `ensure` starts one and prints
+  its address; a second `ensure` prints the same address and starts nothing.
+- `TestBackgroundHubSurvivesTheParentExit`: a `--background` hub keeps serving after its
+  starting process exits; `tq hub stop` ends it and removes its serve record;
+  `TestShutdownNeedsLocalKey` refuses a shutdown without the local key.
+- `TestConsoleRefineWritesBodyAndTag`: under the console seam `tq hub edit <card>
+  --body-file f --add-tag agent-ready` succeeds in a planning lane and is refused for a card
+  in an active lane.
+- `test_console_skills.py`: `start`, `run`, `refine` and `hub` pass the frontmatter test,
+  call `tq hub` with `--timeout`, `run` moves an untagged card only after the human chose
+  to, and `feature` and `build` never tell the human to run a command.
+- COMMANDS.md walkthrough step: one card goes `/tentaqles:start` → `/tentaqles:refine` →
+  `/tentaqles:run` → a decision answered in the console → resumed, with no tq command typed
+  by the human (verified by hand on this repo).
+
+
 ## 5. Data
 
 | Data | Class | Source | Store | Retention |
@@ -1524,15 +1697,18 @@ the checklist the `security-reviewer` reads on every diff.
   `$TQ_HOME`; B2 human → human-only actions; B3 plugin → build-gate records; B4 pack
   checks → external tools; B5 browser or local process → hub web API; B6 hub runner →
   headless run; B7 tq → trackers and the decide endpoint; B8 GitHub releases → the user's
-  machine; B9 contributors and CI → the repo.
-- Authentication: human-only actions require a terminal and no agent marker (plus a typed
-  binding for pack approvals and `ml promote apply`); the hub page uses a Host allow-list,
+  machine; B9 contributors and CI → the repo; B10 console session → hub (D-24).
+- Authentication: terminal-only actions require a terminal and no agent marker (plus a typed
+  binding for pack approvals and `ml promote apply`); from D-24 the console class answers,
+  moves and approves packs as the human's proxy (FR-69, FR-70), keychain-signed where today; the hub page uses a Host allow-list,
   Origin checks and a random token stored hashed, loopback by default; hub actor tokens
   are HMAC with the gate key; pack approvals are Ed25519-signed and single-use; the
   tracker credential chain is cli → keychain → env → MCP; release artifacts carry
   checksums and GitHub build provenance; the plugin installs from a tag pinned to a sha.
 - Roles: see §2. Agents may add and comment on cards, ask for approvals and run gated
-  builds; only humans trust, grant, approve, answer, push, store tokens and release.
+  builds; only humans trust, grant, store tokens and release; a console session answers,
+  moves, pushes and approves packs as the human's proxy (D-24, AR3); runs and nested
+  sessions never do.
 - Abuse cases the guards are built for: an agent steered by text it read edits a ledger,
   reads `.env`, pushes under the wrong account, commits personal data, loosens its own
   mode, starts a nested agent with looser flags, forges an approval, copies back an older
@@ -1542,7 +1718,8 @@ the checklist the `security-reviewer` reads on every diff.
 - Known gaps the model records as open or accepted: the guards are text filters (AR2); a
   hook timeout or parse error fails open; `off` needs no terminal; `tq guard` is not
   human-only; the audit logs have no hash chain; the build-gate key is a file (TM-3
-  dropped by decision); the installers are served from mutable `main`.
+  dropped by decision); the installers are served from mutable `main`; a console answer is
+  bound to the human's choice only by the skill protocol until TM-7 (AR3).
 
 ## 7. Non-functional requirements
 
@@ -1627,9 +1804,30 @@ is what its spec required; for a planned release it is the acceptance checks of 
 | Release 2 | FR-10, FR-14, FR-30, FR-31, FR-32, FR-33, FR-34, FR-35, FR-36, FR-37, FR-38, FR-39, FR-42, FR-44, FR-46, FR-47, FR-48, FR-49, FR-54, FR-57, FR-58, FR-59 | Hub core (spec A, PRs #31, #33, #34) and board sync (spec B, PR #46), plugin 0.13.0–0.14.0 (shipped 2026-10-21 to 2026-10-28) |
 | Release 3 | FR-55, FR-67 | Data and ML packs (spec C) and cloud and db packs (spec D, counted as release 4 by the specs), one PR #50, tq v0.8.0, plugin 0.15.0 (shipped 2026-10-29) |
 | Release 4 | FR-18, FR-19, FR-20, FR-22, FR-23, FR-27, FR-28 | Guard modes (spec E, PR #49, tq v0.8.0) and the hardening of v0.8.1–v0.8.2: guard clear-cut fixes, threat model, checksums and provenance (shipped 2026-10-29 to 2026-10-30) |
-| Release 5 | FR-40, FR-36, FR-58, FR-47, FR-42, FR-48, FR-54, FR-57, FR-22, FR-20, FR-18, FR-26, FR-68 | Close the loop: a card becomes a project and comes back approved on the company board; decisions carry recommendation and blocked; headless asks are rule-aware; the human-only gaps are closed; the modes are renamed and `guarded` skips force-push and system changes; the PII-under-bypass report is verified and fixed; the docs match the code |
+| Release 5 | FR-69, FR-70, FR-71, FR-72, FR-40, FR-36, FR-58, FR-47, FR-42, FR-48, FR-54, FR-57, FR-22, FR-20, FR-18, FR-26, FR-68 | The console drives the board (session classes, console answers, decisions reach the console, the one-command day); close the loop: a card becomes a project and comes back approved on the company board; decisions carry recommendation and blocked; headless asks are rule-aware; the human-only gaps are closed; the modes are renamed and `guarded` skips force-push and system changes; the PII-under-bypass report is verified and fixed; the docs match the code |
 | Release 6 | FR-06, FR-12, FR-08, FR-03, FR-11, FR-10, FR-21, FR-28, FR-30, FR-32, FR-33, FR-35, FR-41, FR-51, FR-53 | Isolation completeness: shim folders and CLI provisioning, Chrome and Edge profiles, prompt and title indicator, banner at onboarding, full onboarding prompts and the terminal close, the four new categories with production tags, OpenCode, the Markdown card mirror, tracker status on tiles, read-only assignee/attachments/comments, publish with lane and tags, the PRD accept command, optional gates configurable |
 | Release 7 | FR-52, FR-63, FR-62, FR-56, FR-07, FR-60, FR-04 | Evals and knowledge: evals gate and checklist evals (then the visual review gate on top), capture, the KB pipeline starting with docs folders and the tracker, Jev families promoted to enforce where the eval allows, stack preferences resolved, GUI manifest editing and switching, Kimi Code |
+
+<!-- tq:cards -->
+Hub cards (written by `/tentaqles:plan-cards`; an FR listed here is skipped on the next run):
+- FR-18: c-nop2mml3nhdu
+- FR-20: c-clr4vkfddtsg
+- FR-22: c-a2dsqrwhn4wq
+- FR-26: c-j5aqoulkibyi
+- FR-36: c-p5cjrqilbehh
+- FR-40: c-4lvhsswlgctq
+- FR-42: c-swcywomxplcu
+- FR-47: c-2jufc2spe6q3
+- FR-48: c-iugy7opx5w3c
+- FR-54: c-yqgsw53nel6c
+- FR-57: c-76l5uiqwnqdo
+- FR-58: c-jecnqrbvo25t
+- FR-68: c-tzjxz26qz5xa
+- FR-69: c-kb6ebmsrwln5
+- FR-70: c-ejtxditl6ez7
+- FR-71: c-cweaf6wtgo5f
+- FR-72: c-xh4kjsxwmw4a
+<!-- /tq:cards -->
 
 ## 12. Status map against the original PRD
 
@@ -1683,15 +1881,15 @@ rest. Each row names its FR, why it sits where it does, and what it depends on.
 |---|---|---|---|---|---|
 | B-01 | P0 | Start a project from a card (scaffold, two-way link, `move_on_start`) | FR-40, FR-43 | The one missing step between "assigned card" and "run"; everything downstream exists | none (D-02 decided: the card mirror serves as `tasks/`) |
 | B-02 | P0 | Queue the parent's review move on the company board when all children are done | FR-36, FR-58 | Last step of the approve path; small change in the outbox | none |
-| B-03 | P0 | Close the human-only gaps: plain `tq allow`/`tq deny`/`tq guard` refuse agents in the binary; terminal plus typed confirm for `off` and `mode toggle|override` | FR-20, FR-23 | Security-sensitive; the original PRD §12.3 requires it; cheap | decided (D-10) |
+| B-03 | P0 | Close the human-only gaps: plain `tq allow`/`tq deny`/`tq guard` refuse agents in the binary; terminal plus typed confirm for `off` and `mode toggle\|override` | FR-20, FR-23 | Security-sensitive; the original PRD §12.3 requires it; cheap | decided (D-10) |
 | B-04 | P0 | Verify locked PII rules under Claude `bypassPermissions` in a real session; fix | FR-26 | An open report from the first test run on a locked group | decided (D-13) |
 | B-05 | P0 | Fix the doc-vs-code mismatches and stale statements; track COMMANDS.md and IDEATION.md | FR-68 | Operators act on the docs; three mismatches found today | none |
-| B-06 | P1 | Rule-aware headless asks: rule id on the decision, proven retry | FR-22 | Without it headless runs either hang on a confirm or deny silently | prototype of settings-allow vs hook ask (D-12 decided) |
+| B-06 | P0 | Rule-aware headless asks: rule id on the decision, proven retry | FR-22 | Without it headless runs either hang on a confirm or deny silently; many cards run at once from the console (D-24) | prototype of settings-allow vs hook ask (D-12 decided) |
 | B-07 | P1 | Decision fields `recommendation` and `blocked`; imported cards can get kind and tags | FR-47, FR-48 | The original PRD contract for decisions; imported cards today can only run `feature` | none |
-| B-08 | P1 | Card dependencies and a hub check that refuses to start a blocked card | FR-42 | Needed before many cards run in parallel from one PRD | none |
+| B-08 | P0 | Card dependencies and a hub check that refuses to start a blocked card | FR-42 | Needed before many cards run in parallel from one PRD, which the console makes routine (D-24) | none |
 | B-09 | P1 | Gate status on the card tile; gate failure comment on the card; terminal bell; review page links (branch, diff, card) and open items | FR-54, FR-57 | Makes the board and the page the single place to look | none (D-22 decided) |
 | B-10 | P1 | Record one real end-to-end run against one real tracker | FR-58 | Proves G3; today proven only with a fake Claude | B-01, B-02, a real tracker token |
-| B-11 | P1 | Browser profile per workspace: Chrome and Edge first, for `tq hub open|review` and Claude in Chrome / Playwright | FR-08 | Named in the vision's first paragraph; blocks GUI-in-profile and login pages in the client's browser | decided (D-06) |
+| B-11 | P1 | Browser profile per workspace: Chrome and Edge first, for `tq hub open\|review` and Claude in Chrome / Playwright | FR-08 | Named in the vision's first paragraph; blocks GUI-in-profile and login pages in the client's browser | decided (D-06) |
 | B-12 | P1 | Shim folder per workspace so unselected CLIs are unreachable; CLI install or link into it | FR-06, FR-12 | The vision's first bullet; also what makes "AWS-only terminal" true | a Windows prototype (D-05 decided) |
 | B-13 | P1 | Prompt prefix and window title; the onboarding banner with `--no-banner` | FR-03, FR-11 | Low effort, high clarity | decided (D-01) |
 | B-14 | P1 | Onboarding prompts for browser, mode and shell; Other with free text; multi-select data platforms; resume after a failed step; close the originating terminal after the new one opens | FR-10 | Completes §4.3 and §4.4 of the original PRD | B-11 for the browser prompt to mean something (D-07 decided) |
@@ -1712,6 +1910,11 @@ rest. Each row names its FR, why it sits where it does, and what it depends on.
 | B-29 | P1 | Read-only Markdown mirror of cards in the client folder | FR-30, FR-43 | Versioning and direct reads without a second source of truth | none (D-02 decided) |
 | B-30 | P2 | Human-only `accept` command that stamps a project PRD; planning refuses an unaccepted PRD | FR-41 | Keeps the FR format and adds the explicit developer sign-off the original PRD wanted | none (D-16 decided) |
 | B-31 | P3 | Visual review gate on top of the evals mechanism | FR-52 | A loose end between two specs; parked after evals | B-21 (D-23 decided) |
+| B-32 | P0 | Session classes in tq: environment plus process ancestry, the test seam, the class header; `unknown` refused like `run` | FR-69 | Everything in D-24 keys off it; a wrong class is a security bug, so it ships with the matrix test | none (D-24 decided) |
+| B-33 | P0 | Console policy in the hub and the API; class-aware `tq/human-answer`; pack approvals answered from the console; actor `console:<user>` and the session id on the page | FR-70, FR-20 | The human stops typing tq commands while the terminal-only list (D-26) stays closed | B-32, B-03 |
+| B-34 | P0 | Decision `seq`; `tq hub wait`; the asyncRewake watcher; the renderer script; `/tentaqles:hub` answers after AskUserQuestion; the prompt-submit line | FR-71 | Decisions reach the console in minutes, not when the human remembers to look | B-32, B-33 |
+| B-35 | P0 | `tq hub serve --background`, `ensure`, `stop`; skills `start` and `run`; `refine` writes body and tag | FR-72 | The one-command day end to end | B-33, B-34 |
+| B-36 | P1 | TM-7: bind each console answer to a signed AskUserQuestion record; deny `tq claude-hook` from the Bash tool | FR-70 | Turns the skill protocol into a check before AR3 expires (2027-01-28) | B-34 |
 
 ## 14. Conflicts and flags
 
@@ -1731,7 +1934,7 @@ settles it.
 | C-08 | Five fixed lanes; tracker statuses collapse by kind | FR-32 | D-14 |
 | C-09 | The parent's all-children-done move reaches the company board only on approval, and not at all today for the parent | FR-36, FR-58 | B-02 |
 | C-10 | Control plane is `tq hub serve`, rounds are processes, worktree named by slug | FR-44 | D-17 |
-| C-11 | `tq hub answer` refuses Claude sessions; no inline `pending` answers | FR-47 | D-18 |
+| C-11 | `tq hub answer` refuses Claude sessions; no inline `pending` answers | FR-47 | D-18, superseded by D-24 (FR-71) |
 | C-12 | Headless asks are tool-level allow-once, not guard-aware | FR-22 | D-12 |
 | C-13 | PRD vocabulary is FR-nn and NEEDS-DECISION; "accepted" is a grade | FR-41 | D-16 |
 | C-14 | No `project.yaml`; `tq-project` block plus `.tentaqles.yaml`; gate order fixed; hotfix skips the critic, not evals | FR-43, FR-53 | D-20 |
@@ -1753,7 +1956,7 @@ Code names are used throughout this document. Original PRD names are listed for 
 |---|---|---|
 | Identity | workspace (`TQ_WS`, the client folder with `.tentaqles.yaml`) | the code's **identity** is one CLI login inside a workspace (`identities.<id>`, `tq login <ws> <id>`) |
 | Identity root | workspace root (`TQ_WS_ROOT`), a child of a base folder (`tq init <base>`) | |
-| Manifest | `.tentaqles.yaml` (`tentaqles-client-v1|v2`) | top-level blocks: client, git, identities, claude (permission_mode, bundle, permissions, env), blocked_commands, cloud, database, stack, guard, decision, data, tracker, chat, email, data_platform, agents, packs |
+| Manifest | `.tentaqles.yaml` (`tentaqles-client-v1\|v2`) | top-level blocks: client, git, identities, claude (permission_mode, bundle, permissions, env), blocked_commands, cloud, database, stack, guard, decision, data, tracker, chat, email, data_platform, agents, packs |
 | Trust store | (credentials) per-identity config dirs plus the OS keychain (`tq secret`); (code's trust store) `$TQ_HOME/trust/<hash>` written by `tq allow` | D-04 |
 | Mode: bypass / guarded / supervised / custom | today off / relaxed / default / custom, plus strict; renamed to the PRD's names by D-09a (B-28), `strict` kept | `tq mode`, `guard.mode`; grant by `tq allow --mode` |
 | Guard | tq PreToolUse hook: `guard.Decide` plus policy rules, 13 categories, 75 rule ids | `tq/...`, `guard/...`, `jev/...`, `plugin/...` ids |
@@ -1768,7 +1971,7 @@ Code names are used throughout this document. Original PRD names are listed for 
 | Decision request | decision (kinds plan-approval, result, judge, question, permission) | |
 | `pending` | `tq hub list --waiting`, `/waiting`, `/tentaqles:hub` | `tq hub sync pending` is unrelated |
 | Review page | `tq hub review`, `GET /cards/{id}/review` | |
-| Human-only command | `requireHuman` in the binary plus `tq/mode-change`, `tq/human-answer` deny rules | |
+| Human-only command | terminal-only (`requireHuman`, class `terminal`) versus console-allowed (FR-70); `tq/human-answer` becomes class-aware | D-24, D-26 |
 | `tq init` | `tq init <base>` (register a base folder) plus `tq onboard` / `tq add` (create a workspace) | |
 | `tq raw` / `tq off` | `tq off` / `tq on` shell functions; `claude-off`, `codex-off`; `tq run --off`; `TQ_MODE=off` | `TQ_ENABLED=0` stops only shell activation |
 | Agent-ready | the `agent-ready` tag (`store.TagAgentReady`) | the original PRD's `ready` flag |
@@ -1824,7 +2027,7 @@ sync, data/ml packs, cloud/db packs and guard modes specs; TM = threat model.
 | The human is the only authority: hub only calls `build-gate answer`; agents may add and comment | engine rules stay in one place | A §1, §9.2 |
 | Two topologies, `serve` per workspace and `--all`, behind a switch | owner decision | A §1 |
 | Trackers ADO, Jira Cloud, Linear, Asana, GitHub; credential order cli → keychain → env → MCP | owner decision | B §2, §7 |
-| Outbox per write `off|ask|auto`; moves and result comments auto, creates/edits/closes ask | owner decision | B §5 |
+| Outbox per write `off\|ask\|auto`; moves and result comments auto, creates/edits/closes ask | owner decision | B §5 |
 | Polling with a watermark; no webhooks; sync moves never start a run; tracker wins lanes | no public URL; safety | B §3–4, §11 |
 | `tq secret` and card title/body edits human-only; `refine` hands the body edit to the human | integrity of the board | B §8–9 |
 | Only the manifest enables a pack; the repo file tightens only; config frozen at approval | the repo layer is untrusted | C §2.3 |
@@ -1845,8 +2048,8 @@ sync, data/ml packs, cloud/db packs and guard modes specs; TM = threat model.
 | Jev stays (Laya discarded); TypeSafe direct, not through a gateway | owner decision 2026-10-09 | memory note |
 | Dev workspace loads the plugin from the local folder; every other identity from the pinned release | development loop vs stability | session 2026-10-29 |
 
-Decisions of 2026-10-30 on this document (the repo owner answered each question in §10 as
-it stood; the FRs they touch carry the same `D-nn`):
+Decisions of 2026-10-30 and 2026-10-31 on this document (the repo owner answered each
+question in §10 as it stood; the FRs they touch carry the same `D-nn`):
 
 | # | Decision | Outcome |
 |---|---|---|
@@ -1861,7 +2064,7 @@ it stood; the FRs they touch carry the same `D-nn`):
 | D-09a | Mode names and cells | Rename to bypass / supervised / guarded / custom, keep strict; `guarded` also skips git-history and system; aliases for one release |
 | D-09b | Missing categories | Add filesystem-destructive, package-install, network-egress, browser-actions, and production environment tags via envgate |
 | D-09c | Locked groups in custom | Locked stays locked; no `ask` for locked groups |
-| D-10 | Human-only gaps | The binary refuses `allow`, `deny` and `guard` changes from agents; `off` and `mode toggle|override` need a terminal and a typed yes |
+| D-10 | Human-only gaps | The binary refuses `allow`, `deny` and `guard` changes from agents; `off` and `mode toggle\|override` need a terminal and a typed yes; since D-24 "agent" here means every class but `terminal`, the console included |
 | D-11 | Harness scope | OpenCode next, Kimi Code later; Codex best effort; no Claude auto mode |
 | D-12 | Headless asks | Rule-aware decisions and a proven retry |
 | D-13 | PII rules under bypass | Verify in a real session and fix, P0 |
@@ -1869,9 +2072,17 @@ it stood; the FRs they touch carry the same `D-nn`):
 | D-15 | Card text conflicts | Local edits win and tq asks before pushing; assignee, attachments and comments stored read-only |
 | D-16 | PRD format | Keep FR-nn and NEEDS-DECISION; add a human-only `accept` command |
 | D-17 | Control plane | The hub stays the runner; worktrees keep the slug with the card id in the plan |
-| D-18 | Answering decisions | Never from inside an agent session |
+| D-18 | Answering decisions | Never from inside an agent session; superseded by D-24 (2026-10-31): never from a run, nested or unknown session, while the console answers |
 | D-19 | Evals | One `evals` mechanism for commands with thresholds and for checklists, with retries |
 | D-20 | Per-project gates | Optional gates configurable, core gates fixed; hotfix skips review and evals, never the regression test |
 | D-21 | Knowledge base | Docs folders and the tracker first |
 | D-22 | Notifications | OS notification plus a terminal bell |
 | D-23 | Visual review gate | Later, after evals |
+| D-24 | Console sessions | The human's interactive top-level `claude` (class `console`) answers decisions and starts, moves, edits and refines cards as the human's proxy after a multiple-choice question; supersedes D-18 and the parts of D-10 and B §9 that treated every Claude session alike; console comments stay agent comments; the hub stays the runner (D-17); residual risk AR3, hardening TM-7 |
+| D-25 | `!` commands | A command typed with Claude Code's `!` prefix runs in the console and counts as the human for board work; it is not a terminal for D-26 |
+| D-26 | What stays at the terminal | `tq allow`, `tq mode`, `tq guard`, `tq unattended`, logins (D-08), `tq secret` writes, `tq hub serve --bind` off loopback, and the hub's key and token verbs (`tq hub key\|token\|serve-key`, reserved by the `tq/human-answer` rule and not implemented today): refused from every class but `terminal`. Pack approvals are answered from the console too, keychain-signed by tq; the board page still refuses them |
+
+Decisions of 2026-10-31 (D-24 to D-26) were taken while planning the console; they
+supersede D-18 and the agent-session wording of D-10, whose refusals stand for `console`,
+`run`, `nested` and `unknown` as D-26 lists them. The threat model's B10 and AR3 record the
+boundary and the accepted risk.
