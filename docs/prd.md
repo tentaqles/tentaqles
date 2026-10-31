@@ -1802,6 +1802,27 @@ is what its spec required; for a planned release it is the acceptance checks of 
 | Release 6 | FR-06, FR-12, FR-08, FR-03, FR-11, FR-10, FR-21, FR-28, FR-30, FR-32, FR-33, FR-35, FR-41, FR-51, FR-53 | Isolation completeness: shim folders and CLI provisioning, Chrome and Edge profiles, prompt and title indicator, banner at onboarding, full onboarding prompts and the terminal close, the four new categories with production tags, OpenCode, the Markdown card mirror, tracker status on tiles, read-only assignee/attachments/comments, publish with lane and tags, the PRD accept command, optional gates configurable |
 | Release 7 | FR-52, FR-63, FR-62, FR-56, FR-07, FR-60, FR-04 | Evals and knowledge: evals gate and checklist evals (then the visual review gate on top), capture, the KB pipeline starting with docs folders and the tracker, Jev families promoted to enforce where the eval allows, stack preferences resolved, GUI manifest editing and switching, Kimi Code |
 
+<!-- tq:cards -->
+Hub cards (written by `/tentaqles:plan-cards`; an FR listed here is skipped on the next run):
+- FR-18: c-nop2mml3nhdu
+- FR-20: c-clr4vkfddtsg
+- FR-22: c-a2dsqrwhn4wq
+- FR-26: c-j5aqoulkibyi
+- FR-36: c-p5cjrqilbehh
+- FR-40: c-4lvhsswlgctq
+- FR-42: c-swcywomxplcu
+- FR-47: c-2jufc2spe6q3
+- FR-48: c-iugy7opx5w3c
+- FR-54: c-yqgsw53nel6c
+- FR-57: c-76l5uiqwnqdo
+- FR-58: c-jecnqrbvo25t
+- FR-68: c-tzjxz26qz5xa
+- FR-69: c-kb6ebmsrwln5
+- FR-70: c-ejtxditl6ez7
+- FR-71: c-cweaf6wtgo5f
+- FR-72: c-xh4kjsxwmw4a
+<!-- /tq:cards -->
+
 ## 12. Status map against the original PRD
 
 | Original PRD section | Requirement in short | FRs | Status |
