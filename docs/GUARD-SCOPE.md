@@ -15,6 +15,14 @@ path through `..` or a variable tq exported, or links a folder into the state fo
 without meaning harm. Those are the slips that happen in practice, and the guard
 stops them with a plain reason the agent can act on.
 
+Planned (`docs/prd.md` FR-70, decision D-24): `tq/human-answer` becomes the one locked
+rule whose verdict depends on the session class as well as the text. From a `console`
+session it allows `tq hub answer`, the pack `apply` verbs and the other board commands;
+from `run`, `nested` or `unknown` it denies them; `hub key|token|serve-key`, HTTP calls to
+the hub's decision routes and reads of `serve-*.json` stay denied in every class. The
+class comes from environment and process ancestry, so no rewording changes it; AR2 still
+applies to the text half.
+
 ## What it is not
 
 It is not a security boundary against a determined adversary. It is a text filter

@@ -29,7 +29,9 @@ From `docs/threat-model.md`; each line names the test that keeps it.
 - An edited manifest loses its trust and mode grant: `TestPlainAllowAfterEditDropsTheGrant`.
 - Build-gate records are signed and a rollback is refused: `test_an_older_signed_approval_copied_back_counts_as_rolled_back`.
 - Pack answers count only when signed: `TestSignedAnswersOnly`.
-- The hub API refuses human-only actions from agents and cross-site requests: `TestAPIAgentHeaderRefusesHumanOnly`, `TestRebindingHostAndOriginAreRefused`.
+- The hub API refuses human-only actions from run, nested and unknown sessions, from the legacy agent header, and from cross-site requests: `TestAPIAgentHeaderRefusesHumanOnly`, `TestRebindingHostAndOriginAreRefused` (planned, B-33: `TestAPIClassHeaderPolicy`).
+- A run, nested or unknown session cannot answer, start, cancel or move a card into an active lane (planned, B-32: `TestSessionClassMatrix`, `TestRunClassCannotAnswer`).
+- Mode and trust changes, `tq guard|unattended`, LAN binds and hub keys refuse the console too: `TestModeWritesRefuseAgents` (planned, B-33: `TestConsoleStaysOutOfTheTerminalOnly`).
 - External tools get a filtered environment: `TestToolEnvIsFiltered`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
 
@@ -67,6 +69,7 @@ it through `plugin/tentaqles/workflow/project.py`). Keep both in step.
     "internal/policy/**",
     "internal/trust/**",
     "internal/hooks/**",
+    "internal/session/**",
     "internal/hub/gate/**",
     "internal/hub/runner/**",
     "internal/hub/store/**",
@@ -80,6 +83,7 @@ it through `plugin/tentaqles/workflow/project.py`). Keep both in step.
     "plugin/hooks/**",
     "plugin/scripts/tq_hook.sh",
     "plugin/scripts/*-guard.py",
+    "plugin/scripts/hub-*.py",
     "plugin/scripts/build-gate.py",
     "plugin/scripts/loop-runner.py",
     "plugin/tentaqles/workflow/gate.py",

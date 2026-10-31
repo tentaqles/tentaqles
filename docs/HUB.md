@@ -22,6 +22,10 @@ tq hub review c-xxxxxxxxxxxx --open   # evidence from the gate's records; Approv
 Run `tq hub serve` in your own terminal, not as an agent's background task: a Claude Code
 session can reap its background tasks when memory runs low, and the hub goes with it.
 
+Planned (`docs/prd.md` FR-72, decision D-24): `tq hub ensure` finds the hub for the
+workspace or starts one detached with `tq hub serve --background`, `tq hub stop` ends it,
+and `/tentaqles:start` runs that for you.
+
 ## One workspace or all of them
 
 | | `tq hub serve` | `tq hub serve --all` (or `hub: {mode: all}` in `$TQ_HOME/config.yaml`) |
@@ -236,6 +240,12 @@ hub's token must never reach an agent). The refusal tells you to run the command
 own terminal or use the page. A comment from an agent session is always stored as an
 agent comment, never a human one, so it never reaches a run's prompt as the human's
 notes; only a human answers the hub's `question`.
+
+Planned (`docs/prd.md` FR-69 and FR-70, decision D-24 of 2026-10-31): the one agent class
+above splits into `terminal`, `console` (the human's own interactive `claude`, which then
+answers, runs, moves, edits and pushes as the human's proxy after a multiple-choice
+question), `run`, `nested` and `unknown`; the limits above then apply to `run`, `nested`
+and `unknown`. Until that ships, every Claude session is treated as above.
 
 For board sync, an agent session may run `tq hub sync now`, `status`, `outbox`, and the
 MCP fallback commands `import`, `pending` and `ack` within their limits (see
