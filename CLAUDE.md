@@ -30,8 +30,8 @@ From `docs/threat-model.md`; each line names the test that keeps it.
 - Build-gate records are signed and a rollback is refused: `test_an_older_signed_approval_copied_back_counts_as_rolled_back`.
 - Pack answers count only when signed: `TestSignedAnswersOnly`.
 - The hub API refuses human-only actions from run, nested and unknown sessions, from the legacy agent header, and from cross-site requests: `TestAPIAgentHeaderRefusesHumanOnly`, `TestRebindingHostAndOriginAreRefused` (planned, B-33: `TestAPIClassHeaderPolicy`).
-- A run, nested or unknown session cannot answer, start, cancel or move a card into an active lane (planned, B-32: `TestSessionClassMatrix`, `TestRunClassCannotAnswer`).
-- Mode and trust changes, `tq guard|unattended`, LAN binds and hub keys refuse the console too: `TestModeWritesRefuseAgents` (planned, B-33: `TestConsoleStaysOutOfTheTerminalOnly`).
+- A Claude session that is not the human's console cannot answer, start, cancel or move a card into an active lane: `TestHubAgentMayAddAndCommentOnly`, `TestHubTaskMarksAnAgent` (B-32 narrows this to run, nested and unknown sessions: `TestSessionClassMatrix`, `TestRunClassCannotAnswer`).
+- Mode changes, `tq allow --mode` and `tq unattended` refuse every Claude session, the console included: `TestAllowModeIsHumanOnly`, `TestModeWritesRefuseAgents` (B-03 adds `tq guard` and plain `tq allow`; B-33 adds the LAN bind: `TestConsoleStaysOutOfTheTerminalOnly`).
 - External tools get a filtered environment: `TestToolEnvIsFiltered`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
 

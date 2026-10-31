@@ -243,8 +243,9 @@ notes; only a human answers the hub's `question`.
 
 Planned (`docs/prd.md` FR-69 and FR-70, decision D-24 of 2026-10-31): the one agent class
 above splits into `terminal`, `console` (the human's own interactive `claude`, which then
-answers, runs, moves, edits and pushes as the human's proxy after a multiple-choice
-question), `run`, `nested` and `unknown`; the limits above then apply to `run`, `nested`
+has every board action a human has: answer, run, cancel, move, edit, tags, budgets,
+settings, push, sync retry and pack approvals, as the human's proxy after a
+multiple-choice question), `run`, `nested` and `unknown`; the limits above then apply to `run`, `nested`
 and `unknown`. Until that ships, every Claude session is treated as above.
 
 For board sync, an agent session may run `tq hub sync now`, `status`, `outbox`, and the

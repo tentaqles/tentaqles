@@ -17,9 +17,10 @@ stops them with a plain reason the agent can act on.
 
 Planned (`docs/prd.md` FR-70, decision D-24): `tq/human-answer` becomes the one locked
 rule whose verdict depends on the session class as well as the text. From a `console`
-session it allows `tq hub answer`, the pack `apply` verbs and the other board commands;
-from `run`, `nested` or `unknown` it denies them; `hub key|token|serve-key`, HTTP calls to
-the hub's decision routes and reads of `serve-*.json` stay denied in every class. The
+session it allows `tq hub answer` and the pack `apply` verbs (the other board commands were
+never matched by this rule; the hub's own policy decides them); from `run`, `nested` or
+`unknown` it denies them; the reserved `hub key|token|serve-key` verbs, HTTP calls to the
+hub's decision routes and reads of `serve-*.json` stay denied in every class. The
 class comes from environment and process ancestry, so no rewording changes it; AR2 still
 applies to the text half.
 
