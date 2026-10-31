@@ -2,6 +2,12 @@
 
 One repo, one installer: terminal-identity orchestration for developers who work across several clients/companies.
 
+## Reading path
+To work on this repo read `docs/prd.md` (requirements with status, backlog and decisions) and
+`docs/threat-model.md` first, then the spec slice you were given (`docs/specs/<slug>.md`) and
+the ADRs under `docs/adr/`. `docs/LEARNINGS.md` lists the rules this repo learned the hard way.
+The last three appear with the first gated builds (`/tentaqles:feature`).
+
 ## Layout
 - `cmd/tq/`, `internal/` — the `tq` Go CLI (identity switching, trust, git identity, bundles, doctor). `go test ./...` must stay green.
 - `internal/hub/` — `tq hub` (release 2, spec A): per-workspace SQLite board under `$TQ_HOME/hub/<workspace>/` (`store`, `activity`), headless runner (`runner`, `adapter`, `gate`, `notify`), web page and API (`web`, `serveinfo`). Board sync (spec B): `sync` (engine, outbox, MCP fallback), `sync/cred` (credential chain cli → keychain → env → mcp), tracker adapters `sync/jira` and `sync/linear` (linked into the binary by `cmd/tq/adapters.go`). `docs/HUB.md`.
@@ -26,6 +32,68 @@ From `docs/threat-model.md`; each line names the test that keeps it.
 - The hub API refuses human-only actions from agents and cross-site requests: `TestAPIAgentHeaderRefusesHumanOnly`, `TestRebindingHostAndOriginAreRefused`.
 - External tools get a filtered environment: `TestToolEnvIsFiltered`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
+
+## Project config
+Humans read the prose; tools read the fenced block (the build gate's definition of done reads
+it through `plugin/tentaqles/workflow/project.py`). Keep both in step.
+
+- `test` and `lint` are the `go` CI job's commands; there is no typecheck. The plugin's pytest
+  suite is not in `test`: on Windows it takes about 13 minutes, which does not fit the gate's
+  900 s budget per command next to the Go suite. A checkpoint's verify commands name the
+  plugin test files its change touches, and CI's `plugin` job runs the whole suite
+  (`PYTHONPATH=plugin python -m pytest plugin/tests -q`). The `templates`, `opa` and `desktop`
+  CI jobs are outside the gate too: run them yourself when a change touches `templates/`,
+  the OPA policies or `desktop/`.
+- `architecture_paths` are the trust boundaries of `docs/threat-model.md` (B1 to B9): the guard
+  and policy rules, trust, the hooks, the build gate, the hub gate, runner, store and API, board
+  sync and its credentials, pack approvals, ledgers, environments and tool runs, and the release
+  pipeline. A change there needs an ADR under `docs/adr/` (template:
+  `plugin/templates/process/adr-0000-template.md`).
+- `classified_paths` is empty: tq keeps no personal data of its own, and the hub masks card
+  text before it is stored.
+- `changelog` is this repository's `CHANGELOG.md`, under `[Unreleased]`. A change under
+  `plugin/` also gets its line in `plugin/CHANGELOG.md`; the root entry is then one pointer line.
+
+```json tq-project
+{
+  "commands": {
+    "test": "go test ./... -count=1",
+    "lint": "go vet ./...",
+    "build": "go build ./..."
+  },
+  "architecture_paths": [
+    "internal/guard/**",
+    "internal/guardcfg/**",
+    "internal/policy/**",
+    "internal/trust/**",
+    "internal/hooks/**",
+    "internal/hub/gate/**",
+    "internal/hub/runner/**",
+    "internal/hub/store/**",
+    "internal/hub/web/*.go",
+    "internal/hub/sync/*.go",
+    "internal/hub/sync/cred/**",
+    "internal/packs/approval/**",
+    "internal/packs/ledger/**",
+    "internal/packs/envgate/**",
+    "internal/packs/toolrun/**",
+    "plugin/hooks/**",
+    "plugin/scripts/tq_hook.sh",
+    "plugin/scripts/*-guard.py",
+    "plugin/scripts/build-gate.py",
+    "plugin/scripts/loop-runner.py",
+    "plugin/tentaqles/workflow/gate.py",
+    "plugin/tentaqles/workflow/loopguard.py",
+    ".github/workflows/**",
+    ".github/dependabot.yml",
+    ".goreleaser.yaml",
+    ".claude-plugin/marketplace.json",
+    "installers/**"
+  ],
+  "classified_paths": [],
+  "changelog": "CHANGELOG.md"
+}
+```
 
 ## Rules
 - Git identity for this repo: `reach@tentaqles.ai` (local config). Never commit secrets; manifests hold names only.
