@@ -1860,6 +1860,7 @@ Hub cards (written by `/tentaqles:plan-cards`; an FR listed here is skipped on t
 - FR-70: c-ejtxditl6ez7
 - FR-71: c-cweaf6wtgo5f
 - FR-72: c-xh4kjsxwmw4a
+- FR-73: c-tuwqub2gpvmb
 <!-- /tq:cards -->
 
 ## 12. Status map against the original PRD
