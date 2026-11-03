@@ -47,11 +47,11 @@ from tentaqles import privacy
 
 
 def mask_summary(summary: str, db_path: str | Path) -> str:
-    """Mask a rebuilt summary by the classes of the workspace owning *db_path*.
+    """Mask a rebuilt summary the way the store owning *db_path* would.
 
     The UPDATE below writes memory.db directly (not through MemoryStore), so
     it masks the same way the store would: ``<ws>/.claude/memory.db`` gives
-    ``workspace_classes(<ws>)``. Fails closed.
+    ``workspace_classes(<ws>)``, the exit baseline. Fails closed.
     """
     return privacy.redact_str(summary, privacy.workspace_classes(Path(db_path).parent.parent))
 

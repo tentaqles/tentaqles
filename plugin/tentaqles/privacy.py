@@ -1,15 +1,13 @@
-"""Tentaqles privacy filter — redacts secrets and personal data before text leaves.
+"""Tentaqles privacy filter — redacts secrets and checksummed identifiers before text leaves.
 
-Shared primitive with zero heavy dependencies (stdlib only; ``workspace_classes``
-imports the manifest loader lazily). Every feature that writes text to disk
-(memory.db, the vault, the audit log) or sends it to a model routes it through
-``redact_str`` / ``redact_text`` first. Reading personal data locally is allowed;
-only the exits are guarded.
+Shared primitive with zero heavy dependencies (stdlib only). Every feature that
+writes text to disk (memory.db, the vault, the audit log) or sends it to a model
+routes it through ``redact_str`` / ``redact_text`` first. Reading personal data
+locally is allowed; only the exits are guarded.
 
 Secrets are always redacted. ``redact_text(text)`` with no ``classes`` is
-secrets only: that is what read paths (reviewer bundle, test tails, context
-injection, dashboard) use, so personal data stays readable locally. Exits pass
-the workspace's classes, mirroring tq's ``internal/redact``: with any class
+secrets only: that is what read paths (context injection, dashboard) use, so
+personal data stays readable locally. Exits pass a class list: with any class
 list the checksummed detectors (CPF, CNPJ, card, IBAN, each validated by its
 check digits) run; ``pii`` / ``sensitive`` / ``children`` add e-mail and phone;
 ``financial`` adds the financial detectors; ``all`` is everything; ``public``,
@@ -17,6 +15,14 @@ check digits) run; ``pii`` / ``sensitive`` / ``children`` add e-mail and phone;
 list is a ``ValueError``; ``redact_str`` then falls back to the strictest
 masking, never to the raw text. A line carrying ``tq:allow-pii`` keeps its
 personal data (secrets are still redacted).
+
+Since plugin 0.16.0 the manifest ``data:`` block is no longer read (tq v0.9.0
+dropped the data classes with the rest of the guard beyond identity and
+secrets). ``exit_classes`` and ``workspace_classes`` keep their signatures for
+the callers (the store, meta.db, signals, the vault export, skill corrections,
+the memory bridge) but always return the exit baseline, ``["checksummed"]``:
+every exit masks secrets plus checksummed identifiers, e-mail and phone only
+when a caller asks for ``pii`` explicitly.
 
 Pattern library is ordered from most-specific to most-generic so that e.g. an AWS access
 key is caught by its dedicated pattern before the generic "API key" fallback fires.
@@ -288,62 +294,21 @@ def _detectors(classes: Iterable[str] | None) -> list[str]:
 
 
 def exit_classes(manifest: dict | None) -> list[str]:
-    """Classes to mask at the exits for a workspace manifest.
+    """Classes to mask at the exits: the baseline, ``["checksummed"]``.
 
-    ``["checksummed"]`` without a ``data:`` block (or with no ``classes`` key), plus
-    ``pii`` for pii/sensitive/children and ``financial`` for financial. A data
-    block that cannot be read, or that names an unknown class, gives the
-    strictest set.
+    *manifest* is accepted for the callers' sake and ignored: the ``data:``
+    block is no longer read (see the module docstring).
     """
-    if manifest is None:
-        return ["checksummed"]
-    if not isinstance(manifest, dict):
-        return list(STRICTEST_CLASSES)
-    data = manifest.get("data")
-    if data is None:
-        return ["checksummed"]
-    if not isinstance(data, dict):
-        return list(STRICTEST_CLASSES)
-    classes = data.get("classes")
-    if classes is None:
-        return ["checksummed"]
-    if classes == []:
-        return list(STRICTEST_CLASSES)  # an empty list is an error, as in tq: fail closed
-    if not isinstance(classes, list):
-        return list(STRICTEST_CLASSES)
-    try:
-        _detectors(classes)
-    except ValueError:
-        return list(STRICTEST_CLASSES)
-    if "all" in classes:
-        return list(STRICTEST_CLASSES)
-    out = ["checksummed"]
-    if any(c in ("pii", "sensitive", "children") for c in classes):
-        out.append("pii")
-    if "financial" in classes:
-        out.append("financial")
-    return out
+    return list(EXIT_BASELINE_CLASSES)
 
 
 def workspace_classes(workspace_path: str | Path) -> list[str]:
-    """``exit_classes`` of the manifest governing *workspace_path*.
+    """Classes to mask at the exits of *workspace_path*: the baseline, ``["checksummed"]``.
 
-    A manifest that exists but cannot be loaded gives the strictest set, so a
-    typo in .tentaqles.yaml never lets personal data through.
+    The manifest is not read any more, so the result is the same whether the
+    workspace has one, none, or a broken one.
     """
-    try:
-        import yaml
-
-        from tentaqles.manifest.loader import find_manifest, load_manifest
-    except ImportError:
-        return list(STRICTEST_CLASSES)
-    try:
-        manifest = load_manifest(workspace_path)
-        if manifest is None and find_manifest(workspace_path) is not None:
-            return list(STRICTEST_CLASSES)
-        return exit_classes(manifest)
-    except (OSError, ValueError, yaml.YAMLError):
-        return list(STRICTEST_CLASSES)
+    return list(EXIT_BASELINE_CLASSES)
 
 
 def _allowed_lines(text: str) -> list[tuple[int, int]]:

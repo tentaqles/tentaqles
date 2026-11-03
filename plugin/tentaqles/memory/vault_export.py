@@ -129,7 +129,7 @@ def export_workspace(store, manifest: dict, cfg: KnowledgeConfig) -> list[Path]:
 
 
 def _classes(store, manifest: dict) -> list[str]:
-    """The union of the store's classes and the manifest's ``data:`` block."""
+    """The union of the store's classes and the exit baseline (``exit_classes``)."""
     wanted = set(privacy.exit_classes(manifest))
     store_classes = getattr(store, "classes", None)
     if isinstance(store_classes, list):

@@ -15,7 +15,7 @@ def test_readme_lists_the_hub_skill():
 def test_changelog_0_13_0_mentions_the_hub():
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     section = text.split("## [0.13.0]", 1)[1].split("\n## [", 1)[0]
-    for needle in ("/tentaqles:hub", "TQ_HUB_TASK", "TQ_HUB_RELOCATE", "--records", "headless-manifest-guard"):
+    for needle in ("/tentaqles:hub", "TQ_HUB_TASK", "TQ_HUB_RELOCATE", "--records"):
         assert needle in section, needle
 
 

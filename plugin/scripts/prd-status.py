@@ -17,7 +17,7 @@ import argparse
 import json
 from pathlib import Path
 
-from tentaqles.workflow.prd import prd_status
+from tentaqles.prd import prd_status
 
 
 def main() -> int:
