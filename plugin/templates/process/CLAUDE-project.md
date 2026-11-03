@@ -11,31 +11,14 @@ change that weakens one as a BLOCKER.
 - <rule> · enforced by `<test file>::<test name>`
 
 ## Project config
-Humans read the prose; tools read the fenced block. Keep both in step.
+The definition of done (`/tentaqles:dod`) and the ship skill read this section.
 
+- Checks: test `<the command that runs the whole suite, e.g. python -m pytest -q>`; lint `<optional, e.g. ruff check .>`; typecheck `<optional, e.g. mypy src>`
+- Architecture paths (a change there needs an ADR under `docs/adr/`): `src/core/**`, `db/schema/**`, `infra/**`
+- Changelog: `CHANGELOG.md` (the file that must change on every feature or fix; "none" when this project keeps none)
 - Domain and roles: <who uses this and as what>
 - Acting as a role in tests: <a seeded test user and a factory; never real credentials>
 - URLs: local <http://127.0.0.1:PORT>, staging <...>
-
-```json tq-project
-{
-  "commands": {
-    "test": "<the command that runs the whole suite, e.g. python -m pytest -q>",
-    "lint": "<optional, e.g. ruff check .>",
-    "typecheck": "<optional, e.g. mypy src>",
-    "build": "<optional>",
-    "run": "<optional: starts the app on 127.0.0.1 for the breaker>"
-  },
-  "architecture_paths": ["src/core/**", "db/schema/**", "infra/**"],
-  "classified_paths": [],
-  "changelog": "CHANGELOG.md"
-}
-```
-
-`architecture_paths` are globs whose changes require an ADR in the definition
-of done. `classified_paths` mirrors the manifest `data:` block paths so the gate
-can require `docs/privacy.md` to change with them. `changelog` is the file that
-must change on every feature or fix (empty string: this project keeps none).
 
 ## Architecture rules
 <layering, dependency direction, where things live>

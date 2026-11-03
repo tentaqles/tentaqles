@@ -4,6 +4,19 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+- **Skills, agents and templates for the slim plugin.** 40 skills remain. Deleted: `build`,
+  `loop`, `hub`, `sync`, `refine`, `plan-cards`, `guard`, `pack`, `iac-policy`, `ml-promote`,
+  `drift-check`, `restore-drill`, `warehouse-cost`, `data-contract`, `model-card`, `rls-tests`,
+  `ml-review`, `pipeline-review`, `explore`. Rewritten as plain checklists with no gate, hub, pack
+  or headless mode: `ship` (a self-assessed risk line and the reviewer agents on a high-risk diff
+  instead of triage), `fix`, `feature`, `kickoff`, `direction`, `dod` (no gate records, no
+  override), `llm-security-review`, `privacy-review`, `classify-data` (writes `docs/privacy.md`,
+  never the manifest). Agents: `critic` (renamed from `build-critic`), `spec-critic`,
+  `security-reviewer`, `privacy-reviewer` and `llm-security-reviewer`, all read-only and all
+  reading the diff the caller names plus the spec slice; the other eight are gone.
+  `templates/process/CLAUDE-project.md` replaces the `tq-project` block with a prose Checks line;
+  `templates/packs/`, the ODCS contract and the model card templates are gone.
+
 ## [0.15.2] — 2026-10-30
 
 - **Docs:** `CLAUDE.md`, `README.md` and `HOW-TO.md` no longer point at the retired

@@ -73,12 +73,11 @@ Details and tradeoffs: [references/sessions-tokens.md](references/sessions-token
   server (edge functions, backend jobs), never in client code, never in a
   `NEXT_PUBLIC_*` / `VITE_*` / `EXPO_PUBLIC_*` variable, never in a mobile
   bundle. Schema changes to policies go through `db-migration`.
-- **Supabase with the tq db pack:** the RLS rows above are checked by
-  `db/rls` (rules `RLS001`…`RLS010`: missing RLS, open write policies,
+- **Supabase RLS review:** the RLS rows above are rows D9 and D10 of the
+  `db-migration` review checklist (missing RLS, open write policies,
   user-editable metadata, `anon` grants, views without `security_invoker`,
-  `SECURITY DEFINER` without `search_path`), and the "test as `anon` and as a
-  second user" row by the `rls-tests` skill's pgTAP files (`db/rls-tests`,
-  `db/pgtap`, or `db/pgtap-supabase` in Supabase mode).
+  `SECURITY DEFINER` without `search_path`); prove the "test as `anon` and as a
+  second user" row with pgTAP files run against a local database.
 
 ## 5. Secrets
 
@@ -93,9 +92,9 @@ Details and tradeoffs: [references/sessions-tokens.md](references/sessions-token
 
 ## 6. Review
 
-Run `tq decide triage --staged` (auth and secrets changes come back `high`),
-then go through [references/asvs-checklist.md](references/asvs-checklist.md)
-and report each failed item with severity (critical / high / medium / low),
+Go through [references/asvs-checklist.md](references/asvs-checklist.md)
+(auth and secrets changes are always a full review; the `security-reviewer`
+agent reads the diff with the same checklist) and report each failed item with severity (critical / high / medium / low),
 file and line, and the fix.
 
 Audit mode for an existing app: grep for weak hashes (`md5`, `sha1`,

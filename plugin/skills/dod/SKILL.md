@@ -1,86 +1,77 @@
 ---
 name: dod
-description: Run the definition of done for a feature, fix or kickoff build and turn its MISSING items into work. The gate runs the project's frozen test, lint and typecheck commands, checks the locked tests, every checkpoint and reviewer record, and the obligations the diff created (ADR for architecture paths, docs/privacy.md for classified paths, a migration plan for migration files, the changelog). Use when the user says "/tentaqles:dod <slug>", "are we done", "definition of done", "what is missing before we ship", or when the Stop hook reports "definition of done not proven". Only a human may waive an item, by running the override in their own terminal, and the waiver is logged.
-argument-hint: "<slug> [--headless]"
+description: "Run the definition of done for a feature, fix or kickoff branch as a checklist and turn its MISSING items into work. It runs the project's test, lint and typecheck commands, and checks the obligations the diff created: an ADR when an architecture path changed, docs/privacy.md when the data a change handles changed, a migration plan when migration files changed, the spec slice kept in step, the changelog entry, no PRD decision left open. Use when the user says \"/tentaqles:dod\", \"are we done\", \"definition of done\", or \"what is missing before we ship\"."
+argument-hint: "[<base branch>]"
 ---
 
 # Definition of done
 
-"Done" is a record the gate wrote, never a sentence in the transcript. This skill
-runs the record and works through what it lists.
+"Done" is a record you ran and quote, never a sentence in the transcript.
+Every row is a command you ran or a file you read; a row you did not check is
+`MISSING`, not `ok`.
 
-Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
-`$ARGUMENTS`, `AskUserQuestion` is never called. At every human stop you write
-the question with `build-gate ask` and end your turn (see step 3).
-
-## Packs
-
-Before step 1, run the on-ramp step of the `pack` skill (`skills/pack/SKILL.md`,
-"On-ramp step"): `tq pack list --enabled --json` (timeout 10 s); for each enabled pack
-read every `skills/pack/references/onramps/<pack>-*.md` and follow its `## dod`
-section at the step it names. No pack enabled, or a tq without the `pack` command:
-skip this. The `pack:` items are explained in the `pack` skill (step 5). Reviewers: a fix
-round that re-runs the review gate adds every reviewer that `tq pack crew --flags
-<the flags triage printed>` prints.
-
-## 1. Run it
+## 1. The diff and the project config
 
 ```bash
 _tqe="${CLAUDE_PLUGIN_ROOT:-}"; [ -z "$_tqe" ] && _tqe="$(for _d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"/*/tentaqles/*/ "$HOME/.claude/plugins/cache"/*/tentaqles/*/; do [ -f "${_d}.claude-plugin/plugin.json" ] && printf '%s\n' "${_d%/}"; done | awk -F/ '{print $NF" "$0}' | sort -s -t. -k1,1nr -k2,2nr -k3,3nr | head -n1 | cut -d" " -f2-)"; . "$_tqe/scripts/tq_env.sh" 2>/dev/null || true
-"$TENTAQLES_PY" "$_tqe/scripts/build-gate.py" dod <slug>
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+base=<base branch, default main>
+git -C "$root" branch --show-current
+git -C "$root" diff --name-only "$base"...HEAD
+echo "adr_template=$_tqe/templates/process/adr-0000-template.md"
 ```
 
-Below, `build-gate <cmd>` means that second line with `<cmd>`. Use the Bash tool
-(Git Bash on Windows). The output is one head line
-(`DoD <slug>: PASS|FAIL (tree ...)`) and one line per check: `ok`, `skip` or
-`MISSING`. Nothing else is read from logs: the gate already recorded exit codes.
+Read `## Project config` of the project's `CLAUDE.md`: the **Checks** line
+(the test, lint and typecheck commands), the architecture paths and the
+changelog file. With no `CLAUDE.md` section, read `package.json`,
+`pyproject.toml`, `go.mod` or the CI workflow for the real commands; never
+guess one.
 
-## 2. Work the MISSING items
+## 2. The checklist
 
-| Item | What it means | Who fixes it |
+Run or read each row and write its result down:
+
+| Item | Check | `ok` when |
 |---|---|---|
-| `project_config` | no valid ```` ```json tq-project ```` block in `CLAUDE.md` at approval time | you: add the block from `templates/process/CLAUDE-project.md`, then the human re-approves the plan in their terminal (`build-gate approve <slug>`; headless: `build-gate ask <slug> --kind plan-approval ...`) so the commands are frozen |
-| `tests`, `lint`, `typecheck` | the frozen command exited non-zero (last 20 lines are in the detail) | a fresh `build-fixer` subagent with the detail; never edit the locked tests |
-| `locked_tests` | a locked test changed | restore it (`git checkout -- <file>` is fine for the human; you report it) |
-| `checkpoints` | a checkpoint is not `passed` | finish it through `/tentaqles:build resume <slug>` |
-| `reviews` | a reviewer's last record is FAIL or BLOCKED | FAIL: fixer round; BLOCKED: show the `U` rows to the human, they run `build-gate judge` (headless: `build-gate ask <slug> --kind judge ...`) |
-| `adr` | an `architecture_paths` file changed without a new ADR | write `docs/adr/NNNN-<slug>.md` from `templates/process/adr-0000-template.md` |
-| `privacy` | a `classified_paths` file changed and `docs/privacy.md` did not | run `/tentaqles:privacy-review` (if that skill is not installed, review the change against `docs/privacy.md` by hand), update the record |
-| `migration` | migration files changed and the spec has no `## Migration plan` | add the section (expand/contract, backfill, rollback) to the spec slice |
-| `changelog` | the project keeps a changelog and it did not change | add the entry |
-| `prd-decisions` | a `NEEDS-DECISION` line in `docs/prd.md` section 10 is open and was not open at the build's base (the detail names it; pre-existing ones are listed as "still open (pre-existing)" and do not fail). With no recorded base every open one counts as new | the human settles it in the PRD (or accepts it at the final review); list it in the stop-2 summary |
-| any item that cannot be fixed | only a human may waive it | step 3 (the human runs the override) |
+| `tests` | run the test command (in the background or with the `Monitor` tool when it is slow; `tq dotenv run -- <cmd>` when it needs a `.env`) | exit 0; quote the last line |
+| `lint` | run the lint command | exit 0 (`skip` when the project has none) |
+| `typecheck` | run the typecheck command | exit 0 (`skip` when the project has none) |
+| `adr` | a changed file matches an architecture path | a new `docs/adr/NNNN-<slug>.md` is in the diff |
+| `privacy` | the diff reads, writes, logs or exports personal data, or changes a retention | `docs/privacy.md` changed in the diff |
+| `migration` | migration files changed | the spec slice has a `## Migration plan` (expand/contract, backfill, rollback) |
+| `spec` | the branch implements a spec slice or a fix spec | every acceptance check has a test in the diff, open questions are decided, `Status` is `implemented` (or `fixed`) |
+| `learnings` | the branch is a fix | the `L<n>` line is in `docs/LEARNINGS.md` |
+| `changelog` | the project keeps a changelog | it changed |
+| `prd-decisions` | `docs/prd.md` §10 | no `NEEDS-DECISION` line this branch opened is still open (pre-existing ones are listed, not failed) |
 
-Re-run step 1 after each fix until the head line says PASS. The Stop hook blocks once while the definition of done is unproven; the next stop goes through, so
-the hook is no substitute for a PASS line. Once it says PASS, `/tentaqles:ship` quotes the record in the PR body.
+Print the record, one head line and one line per row:
 
-## 3. Override (human only)
-
-Only a human waives an item, and only by running the override themselves. You never run `build-gate dod <slug> --override`; the hook refuses it to the agent
-with exit 2. If an item cannot be fixed:
-
-1. Stop. Tell the human the exact command to run in their own terminal, with
-   absolute paths (run `echo "$TENTAQLES_PY" "$_tqe/scripts/build-gate.py"` after
-   the prefix to get them), and which items it waives:
-   `build-gate dod <slug> --override "<your reason>"`. Never write the reason
-   for them and never paraphrase it.
-2. Wait. Do not claim done in the transcript while the record says FAIL.
-3. After they say it is run, confirm with `build-gate state <slug> --json`:
-   `dod.ok` is true and the `dod.override` field is set. Re-running a plain
-   `build-gate dod <slug>` is safe: the gate keeps a human override while the
-   code is unchanged. Any code change drops it, and you ask again.
-
-Headless: do not wait on a person. Write a decision record and end your turn:
-
-```bash
-build-gate ask <slug> --kind question --text "override: <what is missing and why>" --options override,stop
+```
+DoD <branch>: PASS | FAIL
+- tests: ok — python -m pytest -q → 42 passed in 3.1s
+- lint: skip — no lint command
+- adr: MISSING — src/core/auth.py matches src/core/**, no ADR in the diff
 ```
 
-The human answers with `build-gate answer <slug> <id> --choice override --note "<their reason>"`
-(or a hub actor token does). Your final output names the record and never tells
-the human to run that command: when `TQ_HUB_TASK` is set, say the answer goes on
-the hub card (`/waiting`) and the hub resumes the run (the build skill,
-"What headless output tells the human"). On resume, read `build-gate state <slug> --json`.
+`PASS` only when no row says `MISSING`.
 
-The gate records the override, appends a `D<n>` line to `docs/LEARNINGS.md` and
-logs an event `tq insights` counts.
+## 3. Work the MISSING items
+
+| Item | Who fixes it |
+|---|---|
+| `tests`, `lint`, `typecheck` | you: fix the code, never the test that fails to make it pass |
+| `adr` | write `docs/adr/NNNN-<slug>.md` from `templates/process/adr-0000-template.md` |
+| `privacy` | run `/tentaqles:privacy-review` (if that skill is not installed, review the change against `docs/privacy.md` by hand) and update the record |
+| `migration` | add the section to the spec slice |
+| `spec`, `learnings`, `changelog` | write the missing lines |
+| `prd-decisions` | the human settles it in the PRD, or accepts it in writing; list it in your reply |
+| an item the user decides to leave undone | their call, in their words: it goes under Notes in the PR body and the head line stays `FAIL` |
+
+Re-run step 2 after each fix until the head line says `PASS`. Then
+`/tentaqles:ship` quotes the record in the PR body.
+
+## Never
+
+- write `PASS` while a row says `MISSING`, or `ok` for a command you did not run
+- skip a row because the command is slow: run it in the background and wait
+- edit a test to turn the `tests` row green

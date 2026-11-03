@@ -50,10 +50,13 @@ def test_checklist_rows_present_once(rel: str, ids: list) -> None:
 def test_threat_model_skill_writes_stride_per_boundary() -> None:
     body = _body("threat-model")
     for token in ("templates/process/threat-model.md", "references/stride.md", "PRD", "§6", "NEEDS-DECISION",
-                  "Accepted risks", "Must not trade off", "docs/threat-model.md",
-                  "TENTAQLES_HEADLESS", "AskUserQuestion", "superseded", "B1 <from> -> <to>"):
+                  "Accepted risks", "Must not trade off", "docs/threat-model.md", "docs/privacy.md",
+                  "superseded", "B1 <from> -> <to>"):
         assert token in body, token
     assert "add docs/threat-model.md docs/prd.md CLAUDE.md" not in body
+    for forbidden in ("TENTAQLES_HEADLESS", "--headless", "build-gate", "manifest `data:`"):
+        assert forbidden not in body, forbidden
+    assert "headless" not in body.lower()
 
 
 def test_threat_model_acceptance_and_commit_rules() -> None:

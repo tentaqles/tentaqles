@@ -2,7 +2,7 @@
 
 Status: draft | approved | implemented
 derived_from: PRD §4 FR-nn (or "no PRD: legacy repository, see kickoff later")
-data_classes_touched: [] # from the manifest data: block, e.g. [pii]
+data_classes_touched: [] # the personal-data classes this slice reads, writes, logs or exports, as docs/privacy.md names them, e.g. [pii]
 trust_boundaries_crossed: [] # from docs/threat-model.md, e.g. [browser->api]
 
 ## Problem

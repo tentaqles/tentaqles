@@ -46,7 +46,7 @@ risk below. A mitigation with none of these is not a mitigation.
 - Every boundary in §1 has a table in §2: yes / no
 - Every high-risk row is done, planned as an FR, or accepted below: yes / no
 - The `security-reviewer` checklist references this file: yes / no
-- Last breaker or pentest run: <date, findings count>
+- Last pentest or adversarial test run: <date, findings count>
 
 ## Accepted risks
 Each accepted risk expires; an expired risk is a `NEEDS-DECISION` for the PRD.

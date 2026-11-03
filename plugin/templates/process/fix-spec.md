@@ -21,8 +21,8 @@ What should happen, citing the PRD FR or rule when one exists.
 Version or commit, OS, browser or client, data set, flags.
 
 ## Reproduction
-The locked regression test: `<path>::<test name>` and the command that runs it.
-Written by the tester before any source edit and locked by `build-gate lock-tests`.
+The regression test: `<path>::<test name>` and the command that runs it.
+Written before any source edit; the fix never changes it.
 
 ## Root cause
 One paragraph after the fix: the actual cause, not the symptom.

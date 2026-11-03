@@ -11,8 +11,6 @@ triggers:
 
 Restore the workspace `.tentaqles.yaml` to a previously captured snapshot.
 
-Headless (`TENTAQLES_HEADLESS=1`): do not restore; the PreToolUse guard blocks manifest edits. Record a human decision instead.
-
 **Important:** Snapshots restore your identity and config state only. They do NOT undo memory.db changes (session history, decisions, touches).
 
 ## Process

@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: Connect every company tool of this client workspace and verify it - the agent and cloud CLIs, the git host, the tracker the hub mirrors, and the chat and email MCP connectors. Reads the workspace manifest, prints each login for the user to run in their own terminal (tq login <ws> <id>, tq secret set <ws> <provider>, acli jira auth login), guides /mcp for connectors, then verifies with tq doctor --json and read-only tool calls. It never handles tokens and never runs a login itself. Ends with a table of what is connected. Use when the user says "onboard", "connect my tools", "set up this client", "log me in", "is everything connected", or "/tentaqles:onboard".
+description: Connect every company tool of this client workspace and verify it - the agent and cloud CLIs, the git host, the tracker, and the chat and email MCP connectors. Reads the workspace manifest, prints each login for the user to run in their own terminal (tq login <ws> <id>, tq secret set <ws> <provider>, acli jira auth login), guides /mcp for connectors, then verifies with tq doctor --json and read-only tool calls. It never handles tokens and never runs a login itself. Ends with a table of what is connected. Use when the user says "onboard", "connect my tools", "set up this client", "log me in", "is everything connected", or "/tentaqles:onboard".
 argument-hint: '[check]'
 ---
 
@@ -47,7 +47,8 @@ they are done. Do not run any of them.
 
 - **CLIs** (every identity, the cloud CLIs, the data platform CLI, the agent CLIs):
   `tq login <ws> <id>` for each one, for example `tq login acme claude`.
-- **Tracker** (`tracker.provider`), by the fallback order cli, then keychain, then env:
+- **Tracker** (`tracker.provider`): a login to verify, nothing more (tq keeps no
+  tracker sync). One of cli, keychain or env:
   - cli: GitHub uses `tq login <ws> gh`. Azure DevOps runs `az login`: use
     `tq login <ws> azure-devops` when `identities` lists `azure-devops`, else
     `tq login <ws> az` (the same CLI; doctor's fix line names the right one). Jira uses
@@ -57,7 +58,8 @@ they are done. Do not run any of them.
     prompt. `tq secret status` shows what is stored, never the value.
   - env (`tracker.env` names the variable): the user puts the token where `tq dotenv`
     resolves that variable. Never read or print a `.env` file.
-  - mcp: no background sync; `/tentaqles:sync` does the work from a Claude session.
+  - mcp: the tracker is reached through its MCP connector (next item); there is
+    no tq login for it.
 - **MCP connectors** (chat: Slack, Teams; email: Gmail, Outlook; and the tracker
   connectors Linear, Asana, Atlassian, Notion when the tracker is MCP-only):
   1. Whether the server is configured comes from doctor's names-only findings in
@@ -85,18 +87,14 @@ Read the findings for this workspace (`workspace` equal to `<ws>`, plus the glob
 - `identity-logged-out`, `claude-not-logged-in`: that login did not take; repeat its line.
 - `identity-wrong-account`: signed in as someone else; the fix line says who to sign in as.
 - `cli-missing`: install it with the fix line, then log in.
-- `tracker-ok`: the tracker is connected; it names the account and the scope.
-- `tracker-needs-session`: no background credential; offer the keychain line, or
-  `/tentaqles:sync` for MCP-only.
-- `tracker-no-adapter`: this tq build cannot sync that tracker yet; `/tentaqles:sync`.
-- `tracker-auth-failed`: the message names the source that failed; repeat that login.
+- The tracker: doctor reports its CLI login like any identity (`identity-logged-out`
+  for `gh` or `az`); for a keychain token, `tq secret status` says whether one is
+  stored (never the value); for Jira, `acli jira auth status`. A failed check means
+  the login did not take: repeat its line.
 - `chat-ok`, `email-ok`: the MCP server is configured.
 - `chat-mcp-missing`, `email-mcp-missing`: the entry is in neither the identity's
   `.claude.json` (global or this folder's project entry) nor the folder's `.mcp.json`;
   fine if the user connected it on claude.ai, otherwise step 2.
-- No `tracker-*` finding at all while the manifest has a tracker: doctor checks the
-  tracker only for the workspace it runs in (or with `--verify all`); rerun it from the
-  workspace folder.
 
 Then, for each MCP connector whose tools are available in this session, make one
 read-only call to prove it works: list one Slack channel, list one Teams team, list

@@ -1,7 +1,7 @@
 ---
 name: supply-chain
 description: "Harden a repository's software supply chain, extending ci-pipeline: pin every GitHub Action to a commit SHA, set least-privilege workflow permissions, enforce lockfile-only installs and dependency audits, generate a CycloneDX or SPDX SBOM on release with the CISA 2026 minimum elements, require secret scanning, and report an OpenSSF Scorecard-style checklist. Use during /tentaqles:kickoff, when the user says \"harden CI\", \"supply chain\", \"SBOM\", \"pin actions\", \"Scorecard\", or when tq's guard flags an unpinned or branch-pinned action."
-argument-hint: '[review | apply] [--headless]'
+argument-hint: '[review | apply]'
 ---
 
 # Supply chain
@@ -9,17 +9,10 @@ argument-hint: '[review | apply] [--headless]'
 `ci-pipeline` sets up the pipeline; this skill hardens what runs inside it and
 what ships out of it. Checklist: `references/checklist.md` (rows `C1`…`C10`).
 
-Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
-`$ARGUMENTS`, `AskUserQuestion` is never called. At a human stop (a choice you
-cannot make from the repo), use
-`build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
-only when the caller passed the slug of an active build run (the `build-gate`
-prefix is in `skills/build/SKILL.md`); otherwise report what it needs as your
-final output and end the turn. Human-stop cases: which SBOM tool to use when
-several fit, generating or changing a lockfile (NEEDS-DECISION when headless),
-and branch protection (needs repo admin; report the settings to apply instead).
-With no slug (standalone use) the skill reports
-and changes files, and records no review verdict.
+Human-stop cases (ask the user, one question at a time): which SBOM tool to
+use when several fit, generating or changing a lockfile, and branch protection
+(needs repo admin; report the settings to apply instead). The skill reports
+and changes files; it records no review verdict.
 
 ## 1. Detect
 
@@ -66,8 +59,8 @@ templates and images by digest (C10) and use the platform's secret scanning.
   | cargo | `cargo build --locked` | `cargo generate-lockfile` |
 
   Generation commands change files and dependency versions: run them only when
-  the user agrees and report the change; headless: record a NEEDS-DECISION and
-  do not run them.
+  the user agrees and report the change; without an answer, record a
+  NEEDS-DECISION and do not run them.
 - **C5 audit and updates**: an audit step (`npm audit --audit-level=high`,
   `pip-audit`, `govulncheck ./...`) and a Dependabot or Renovate config with
   grouped weekly updates that also bumps action SHAs.
@@ -93,15 +86,15 @@ templates and images by digest (C10) and use the platform's secret scanning.
   `*.tfstate.*`), `.terraform/` and `cdk.out/`. Plans and state hold secrets in
   clear; the cloud pack's `cloud/no-plan-files` check fails when one is tracked.
 
-Run `tq decide triage --staged` on the workflow changes (they come back
-`high`); the `security-reviewer` runs in the build engine for workflow diffs.
+A workflow change is always a full review: run the `security-reviewer` agent
+on the diff (the ship skill does this for a high-risk diff).
 
 ## 3. Report
 
 A table of the ten rows with `done | skipped (reason) | todo`, then commit
 only the files this run changed, each named explicitly (omit any path you did
 not change; a path git does not know aborts the add). Commit on the feature
-branch, never on main or master; headless on main or master, leave the changes
+branch, never on main or master; on main or master, leave the changes
 uncommitted and say so:
 
 ```bash

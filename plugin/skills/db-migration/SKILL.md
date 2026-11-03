@@ -46,10 +46,10 @@ A rename is: add new, dual-write, backfill, switch reads, drop old. A type
 change is the same with a new column. Keep big backfills out of schema
 migrations.
 
-With the tq db pack, a contract step (`DROP COLUMN`, `DROP TABLE`, a rename,
-`sp_rename`) carries a marker on the line before it that names its expand step:
-`-- tq:contract <expand migration or PR>`. Without it the lint reports `PG008`
-(Postgres) or `MS005` (SQL Server).
+A contract step (`DROP COLUMN`, `DROP TABLE`, a rename, `sp_rename`) carries
+a comment on the line before it that names its expand step:
+`-- tq:contract <expand migration or PR>`, so a reviewer finds the pair
+(`PG008` / `MS005` in the table below).
 
 ## 4. Lock-safe DDL
 
@@ -67,8 +67,8 @@ With the tq db pack, a contract step (`DROP COLUMN`, `DROP TABLE`, a rename,
 - **Supabase:** every new table in `public` gets `ENABLE ROW LEVEL SECURITY`
   plus policies **in the same migration**. Review `supabase db diff` output.
 
-**Lint rule ids** (`db/migration-lint`, `tq pack check --pack db`, when the db
-pack is enabled; tables created in the same diff are skipped):
+**Lint rule ids** (review rows for the diff; tables created in the same diff
+are skipped):
 
 | Postgres | SQL Server / Azure SQL | Rule |
 |---|---|---|
@@ -82,8 +82,8 @@ pack is enabled; tables created in the same diff are skipped):
 | `PG012` | `MS008` | `VACUUM FULL`, `CLUSTER`, `LOCK TABLE`, plain `REINDEX`; DDL in `BEGIN TRAN` across `GO` |
 
 A deliberate exception is suppressed on the line before the statement, with a
-reason: `-- tq:allow PG001: <reason>`. RLS rules (`RLS001`…) are `db/rls`; see
-the `rls-tests` skill.
+reason: `-- tq:allow PG001: <reason>`. RLS rules (`RLS001`…) are rows D9 and
+D10 of [references/review-checklist.md](references/review-checklist.md).
 
 ## 5. Up, down, and never edit history
 
@@ -91,9 +91,9 @@ the `rls-tests` skill.
   (forward-only tools such as Prisma: write the reverse migration you would
   ship, and say so in the PR). A down that would lose data says so and is
   only run with a restore point.
-- With the db pack, `db/migration-rollback` checks the partner (`*.down.sql`,
-  `-- migrate:down`, Flyway `U<ver>__*.sql`, sqitch `revert/`, alembic
-  `downgrade()`, EF Core `Down()`). Forward-only migrators (Supabase, Prisma,
+- Check that the partner exists (`*.down.sql`, `-- migrate:down`, Flyway
+  `U<ver>__*.sql`, sqitch `revert/`, alembic `downgrade()`, EF Core
+  `Down()`). Forward-only migrators (Supabase, Prisma,
   Drizzle, DACPAC) need a `### Rollback` subsection under the spec's
   `## Migration plan` instead.
 - **Never edit a migration that was applied anywhere shared.** Write a new
@@ -118,11 +118,10 @@ change targets (see the `index-advisor` skill for new indexes and FKs).
 Fill in the checklist and the rollback plan from
 [references/preflight-rollback.md](references/preflight-rollback.md) and put
 both in the PR description, including the deploy order (migrate before or
-after the code). Run `tq decide triage --staged` on the change: schema,
-migration and RLS diffs come back `high`, which means a full review.
-With the db pack enabled, `tq pack crew` adds the `db-reviewer`, which judges
-the rows of [references/review-checklist.md](references/review-checklist.md)
-(`D1`…`D12`); use the same rows to review by hand.
+after the code). Schema, migration and RLS diffs are always a full review:
+judge the rows of [references/review-checklist.md](references/review-checklist.md)
+(`D1`…`D12`) by hand, or hand the diff and the checklist to the `critic`
+agent.
 
 ## Red flags
 

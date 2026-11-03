@@ -82,12 +82,6 @@ Metric choice, collectors per stack and tolerances:
 - Deploy jobs `needs:` the quality job, run migrations through the pipeline
   (see `db-migration`), and end with a smoke check. Deploy is not release:
   prefer feature flags for risky changes.
-- Optional, when the workspace enables tq packs (cloud, db): a job step
-  `tq pack check --base origin/<default> --json` with the tools declared in
-  `packs.<pack>.tools` installed at pinned versions, so CI fails on the same
-  `cloud/*` and `db/*` findings as the definition of done. The step is offline;
-  the plan stays the project's step (`terraform plan`, `what-if`, `cdk synth`
-  run with the project's own credentials, never inside `tq pack check`).
 
 Locally, run the same commands with secrets from `.env` without printing
 them: `tq dotenv run -- npm test`.
@@ -97,8 +91,8 @@ them: `tq dotenv run -- npm test`.
 When reviewing an existing workflow, report findings against section 4 plus:
 deploy gated on green checks, lockfile installs (`npm ci`, `uv sync
 --frozen`), branch protection requiring the check, artifacts uploaded on
-failure. Run `tq decide triage --staged` on workflow changes; CI and secrets
-changes come back `high`.
+failure. A workflow change is always a full review: the `security-reviewer`
+agent on the diff.
 
 ## 6. Scaffolding with /tentaqles:add-project
 

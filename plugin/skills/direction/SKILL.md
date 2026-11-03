@@ -1,7 +1,7 @@
 ---
 name: direction
 description: Read-only drift audit of a repository against its PRD. Grades every functional requirement Aligned, Partial, Missing or Contradicted by reading the code and tests (never by trusting a summary), classifies work the PRD never asked for, and returns ON COURSE, DRIFTING or OFF COURSE with recommendations limited to Fix code, Update PRD or Decide. Use when the user asks "are we on track", "did we drift", "does the code match the PRD", at the end of /tentaqles:kickoff, before a release, or "/tentaqles:direction".
-argument-hint: "[<build-slug>] [FR-nn ...] [--headless]"
+argument-hint: "[FR-nn ...]"
 ---
 
 # Direction
@@ -11,18 +11,6 @@ modifies files, commits or runs the app. Allowed tools: Read, Grep, Glob and
 read-only git commands (`git log`, `git diff --stat`, `git ls-files`). If you
 did not read the code that implements an FR, you do not grade it: it goes under
 "Not verified".
-
-Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
-`$ARGUMENTS`, `AskUserQuestion` is never called. Direction has no build run of
-its own, so there is no slug to write a decision record under: report the verdict as your final output and end the turn (which `prd_exit` you got, what
-is missing, the next step such as a PRD; when `TQ_HUB_TASK` is set, say the
-human answers on the hub card (`/waiting`) and never name a command for them
-to run, as the build skill's "What headless output tells the human" says). Use
-`build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
-only when the caller passed the slug of an active build run (the first
-argument, when it is not an `FR-nn` id, is that build slug: kickoff calls
-`/tentaqles:direction <slug>`); the `build-gate`
-prefix is in `skills/build/SKILL.md`.
 
 ## 1. Inputs
 
@@ -35,8 +23,7 @@ git -C "$root" log --oneline -30
 
 `prd_exit` is 0 when the PRD is planning-ready, 3 when it is not ready (audit
 anyway and say so in the verdict), 4 when there is no PRD. For 4, stop and
-point the user to `/tentaqles:prd` ("from existing code" variant); headless,
-report that as the verdict and end the turn. Otherwise
+point the user to `/tentaqles:prd` ("from existing code" variant). Otherwise
 read `docs/prd.md` (section 3 goals, 3.2 non-goals, section 4 FRs with their
 acceptance checks, section 11 releases), `docs/adr/*.md` (accepted decisions)
 and `docs/specs/*.md`.
