@@ -1,1 +1,0 @@
-M models/marts/fct_orders.sql

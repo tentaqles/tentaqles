@@ -29,13 +29,13 @@ func TestNeverDisableIgnoresEveryLayer(t *testing.T) {
 // M4, since spec E: the never-disable ids are locked. guard.actions may only
 // make them stricter, and they cannot be superseded.
 func TestNeverDisableIgnoresActions(t *testing.T) {
-	m := &manifest.Manifest{Guard: manifest.Guard{Actions: map[string]policy.Action{"tq/hub-store-write": policy.Ask, "tq/iac-apply": policy.Deny}}}
-	e := Merge(File{Actions: map[string]policy.Action{"tq/human-answer": policy.Ask}}, nil, m, "acme")
-	if _, ok := e.Actions["tq/hub-store-write"]; ok {
-		t.Fatal("guard.actions softened tq/hub-store-write")
+	m := &manifest.Manifest{Guard: manifest.Guard{Actions: map[string]policy.Action{"tq/guard-file-write": policy.Ask, "tq/iac-apply": policy.Deny}}}
+	e := Merge(File{Actions: map[string]policy.Action{"tq/secret-store-read": policy.Ask}}, nil, m, "acme")
+	if _, ok := e.Actions["tq/guard-file-write"]; ok {
+		t.Fatal("guard.actions softened tq/guard-file-write")
 	}
-	if _, ok := e.Actions["tq/human-answer"]; ok {
-		t.Fatal("the global file softened tq/human-answer")
+	if _, ok := e.Actions["tq/secret-store-read"]; ok {
+		t.Fatal("the global file softened tq/secret-store-read")
 	}
 	if e.Actions["tq/iac-apply"] != policy.Deny {
 		t.Fatal("other ids keep their actions")

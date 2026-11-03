@@ -13,9 +13,8 @@ func NewRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd(), newEnvCmd(), newActivateCmd(), newInitCmd(), newAddCmd(), newAllowCmd(), newDenyCmd(), newListCmd(), newRunCmd(), newLoginCmd(), newDoctorCmd(), newBundleCmd(), newProvidersCmd(), newHooksCmd(), newSetupCmd(), newClaudeHookCmd(), newSecretsCmd(), newSecretCmd(), newSettingsCmd(), newStatuslineCmd(), newWorktreesCmd(), newInsightsCmd(), newDecideCmd(), newDotenvCmd(), newRedactCmd(), newGuardCmd(), newMigrateCmd(), newUninstallCmd(), newHubCmd(), newUnattendedCmd())
+	root.AddCommand(newVersionCmd(), newEnvCmd(), newActivateCmd(), newInitCmd(), newAddCmd(), newAllowCmd(), newDenyCmd(), newListCmd(), newRunCmd(), newLoginCmd(), newDoctorCmd(), newBundleCmd(), newProvidersCmd(), newHooksCmd(), newSetupCmd(), newClaudeHookCmd(), newSecretsCmd(), newSecretCmd(), newSettingsCmd(), newStatuslineCmd(), newWorktreesCmd(), newInsightsCmd(), newDecideCmd(), newDotenvCmd(), newRedactCmd(), newGuardCmd(), newMigrateCmd(), newUninstallCmd(), newUnattendedCmd())
 	root.AddCommand(newOnboardCmd()) // spec B §8; own line so other workstreams' additions merge cleanly
-	root.AddCommand(newPackCmd())
-	root.AddCommand(newModeCmd()) // spec E §10.1 (WS3)
+	root.AddCommand(newModeCmd())    // spec E §10.1 (WS3)
 	return root
 }

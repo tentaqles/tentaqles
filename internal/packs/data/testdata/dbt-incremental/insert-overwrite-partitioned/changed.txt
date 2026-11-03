@@ -1,1 +1,0 @@
-A models/marts/fct_events.sql

@@ -1,4 +1,0 @@
-name: acme_analytics
-version: "1.0.0"
-profile: acme
-model-paths: ["models"]

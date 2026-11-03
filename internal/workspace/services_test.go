@@ -20,22 +20,20 @@ func TestAdd_WritesServiceBlocks(t *testing.T) {
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
 	cfg.Save()
-	tr := &manifest.Tracker{Provider: "linear", Scope: map[string]string{"org": "acme"}, Auth: "env", Env: "ACME_LINEAR_TOKEN",
-		Lanes: map[string]string{"In Review": "review"}}
 	ws, err := Add(AddOptions{Base: base, Name: "acme", GitEmail: "tester@acme.test", RunGit: fakeGit, Trust: true,
-		Tracker: tr, Chat: &manifest.Service{Provider: "slack"}, Email: &manifest.Service{Provider: "none"},
+		Chat: &manifest.Service{Provider: "slack"}, Email: &manifest.Service{Provider: "none"},
 		DataPlatform: &manifest.Service{Provider: "snowflake"}, Agents: []string{"claude"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := ws.Manifest
-	if !reflect.DeepEqual(m.Tracker, tr) || m.Chat.Provider != "slack" || m.Email.Provider != "none" ||
+	if m.Chat.Provider != "slack" || m.Email.Provider != "none" ||
 		m.DataPlatform.Provider != "snowflake" || !reflect.DeepEqual(m.Agents, []string{"claude"}) {
 		t.Fatalf("%+v", m)
 	}
 	if _, err := Add(AddOptions{Base: base, Name: "bad", GitEmail: "tester@acme.test", RunGit: fakeGit,
-		Tracker: &manifest.Tracker{Provider: "trello"}}); err == nil {
-		t.Fatal("an invalid tracker was written")
+		Chat: &manifest.Service{Provider: "irc"}}); err == nil {
+		t.Fatal("an invalid chat block was written")
 	}
 	if _, err := os.Stat(filepath.Join(base, "bad", manifest.FileName)); err == nil {
 		t.Fatal("a manifest that does not load was left behind")

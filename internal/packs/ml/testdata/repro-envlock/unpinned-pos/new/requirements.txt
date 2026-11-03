@@ -1,4 +1,0 @@
-# training requirements for acme
-pandas>=2
-numpy==1.26.4
--r base.txt

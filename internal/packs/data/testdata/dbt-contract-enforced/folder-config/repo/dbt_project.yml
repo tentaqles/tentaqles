@@ -1,8 +1,0 @@
-name: acme
-profile: acme
-model-paths: [models]
-models:
-  acme:
-    marts:
-      +materialized: table
-      +contract: {enforced: true}

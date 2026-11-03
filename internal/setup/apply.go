@@ -118,7 +118,6 @@ func Apply(p *SetupPlan, cat *providers.Catalog, o ApplyOptions) (Report, error)
 			PermissionMode: c.PermissionMode,
 			Trust:          p.Trust,
 			RunGit:         o.RunGit,
-			Tracker:        c.Tracker,
 			Chat:           c.Chat,
 			Email:          c.Email,
 		})

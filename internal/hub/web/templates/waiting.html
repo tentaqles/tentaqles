@@ -1,7 +1,0 @@
-{{define "waiting"}}{{template "head" .}}{{template "waiting-main" .}}{{template "foot" .}}{{end}}
-{{define "waiting-main"}}
-<section class="inbox" aria-label="Decisions waiting on you">
-  {{range .Data}}{{template "decision" .}}
-  {{else}}<div class="panel empty-state"><h2>Nothing is waiting on you</h2><p class="note">When a run stops for a plan approval, a review, a question or a budget, it shows up here and on its card.</p></div>{{end}}
-</section>
-{{end}}

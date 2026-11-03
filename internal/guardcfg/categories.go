@@ -109,9 +109,6 @@ var Categories = map[string]Category{
 	// secrets
 	"tq/secret-store-read":       CatSecrets,
 	"tq/secret-store-shell":      CatSecrets,
-	"tq/plan-read":               CatSecrets, // cloud pack: plan and state files hold secrets
-	"tq/plan-commit":             CatSecrets, // cloud pack: committing them publishes the secrets
-	"tq/plan-secret-print":       CatSecrets, // cloud pack: state pull/show, output -json/-raw, --show-secrets
 	"tq/env-file-read":           CatSecrets,
 	"tq/env-file-shell":          CatSecrets,
 	"tq/env-dump":                CatSecrets,
@@ -183,7 +180,6 @@ var Categories = map[string]Category{
 	"tq/dbt-full-refresh":          CatPacks,
 	"tq/pipeline-run":              CatPacks,
 	"tq/model-promote":             CatPacks,
-	"tq/plan-print":                CatPacks,
 }
 
 // GuardErrorID names the fail-safe ask of a guard panic.

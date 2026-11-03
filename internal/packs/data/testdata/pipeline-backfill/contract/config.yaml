@@ -1,4 +1,0 @@
-packs:
-  data:
-    enabled: true
-    dbt: { contract_paths: ["pipelines/marts/**"] }

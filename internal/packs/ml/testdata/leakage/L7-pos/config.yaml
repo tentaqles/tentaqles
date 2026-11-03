@@ -1,4 +1,0 @@
-ml:
-  paths:
-    train: ["src/train/**"]
-    features: ["src/features/**"]

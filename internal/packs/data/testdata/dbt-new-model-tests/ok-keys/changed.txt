@@ -1,2 +1,0 @@
-A models/staging/stg_orders.sql
-A models/staging/_staging.yml

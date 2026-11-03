@@ -12,7 +12,6 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/guardlog"
-	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -108,7 +107,7 @@ func TestModeWritesRefuseAgents(t *testing.T) {
 				{"unattended", "off", "--ws", "acme"},
 			} {
 				_, err := runModeCmd(t, "y\n", args...)
-				if !errors.Is(err, runner.ErrHumanOnly) || !strings.Contains(err.Error(), k) {
+				if !errors.Is(err, errHumanOnly) || !strings.Contains(err.Error(), k) {
 					t.Errorf("%v under %s: %v", args, k, err)
 				}
 			}
@@ -128,7 +127,7 @@ func TestModeWritesNeedATerminal(t *testing.T) {
 	stdinIsTerminal = func(io.Reader) bool { return false }
 	t.Cleanup(func() { stdinIsTerminal = prev })
 	_, err := runModeCmd(t, "y\n", "mode", "set", "strict", "--ws", "acme")
-	if !errors.Is(err, runner.ErrHumanOnly) || !strings.Contains(err.Error(), "interactive terminal") {
+	if !errors.Is(err, errHumanOnly) || !strings.Contains(err.Error(), "interactive terminal") {
 		t.Fatalf("err = %v", err)
 	}
 }

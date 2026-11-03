@@ -1,21 +1,15 @@
 package doctor
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	hubsync "github.com/tentaqles/tentaqles/internal/hub/sync"
-	"github.com/tentaqles/tentaqles/internal/hub/sync/cred"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
-	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -63,198 +57,6 @@ func finding(fs []Finding, code string) (Finding, bool) {
 		}
 	}
 	return Finding{}, false
-}
-
-const trackerBlock = "tracker:\n  provider: jira\n  scope: { org: acme, project: PLAT }\n"
-
-func TestTracker_SkippedWithoutBlockOrChecker(t *testing.T) {
-	cfg, root := servicesWorkspace(t, "")
-	called := false
-	d := deps(nil, root, nil)
-	d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) { called = true; return "", nil }
-	fs := Run(cfg, d)
-	if called || has(fs, "tracker-ok") {
-		t.Fatalf("no tracker block: no check (%+v)", fs)
-	}
-	cfg, root = servicesWorkspace(t, trackerBlock)
-	d = deps(nil, root, nil)
-	d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) { called = true; return "", nil }
-	d.VerifyMode = VerifyOff
-	if Run(cfg, d); called {
-		t.Fatal("--verify off runs no tracker check")
-	}
-	fs = Run(cfg, deps(nil, root, nil))
-	for _, f := range fs {
-		if strings.HasPrefix(f.Code, "tracker-") {
-			t.Fatalf("no checker wired (the hook path): no tracker finding, got %+v", f)
-		}
-	}
-}
-
-// Under the default --verify auto the tracker call (network or CLI) is spent only on the
-// workspace the user is in; --verify all checks every tracker.
-func TestTracker_AutoChecksOnlyTheCwdWorkspace(t *testing.T) {
-	cfg, root := servicesWorkspace(t, trackerBlock)
-	calls := 0
-	check := func(context.Context, *resolve.Workspace, []string) (string, error) { calls++; return "tester", nil }
-	outside := testutil.TempDir(t)
-	d := deps(nil, outside, nil)
-	d.TrackerCheck = check
-	if fs := Run(cfg, d); calls != 0 || has(fs, "tracker-ok") {
-		t.Fatalf("auto, cwd outside the workspace: no tracker call (calls %d)", calls)
-	}
-	d.VerifyMode = VerifyAll
-	if fs := Run(cfg, d); calls != 1 || !has(fs, "tracker-ok") {
-		t.Fatalf("--verify all checks it from anywhere (calls %d)", calls)
-	}
-	sub := filepath.Join(root, "svc")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	d = deps(nil, sub, nil)
-	d.TrackerCheck = check
-	if fs := Run(cfg, d); calls != 2 || !has(fs, "tracker-ok") {
-		t.Fatalf("auto, cwd inside the workspace: checked (calls %d)", calls)
-	}
-}
-
-func TestTracker_OKNamesAccountAndScope(t *testing.T) {
-	cfg, root := servicesWorkspace(t, trackerBlock)
-	d := deps(nil, root, nil)
-	d.TrackerCheck = func(_ context.Context, w *resolve.Workspace, env []string) (string, error) {
-		if w.Name != "acme" || w.Manifest.Tracker.Provider != "jira" {
-			t.Errorf("checked %s", w.Name)
-		}
-		return "tester@acme.test", nil
-	}
-	fs := Run(cfg, d)
-	f, ok := finding(fs, "tracker-ok")
-	if !ok || f.Level != "ok" || f.Workspace != "acme" {
-		t.Fatalf("%+v", fs)
-	}
-	for _, want := range []string{"jira", "tester@acme.test", "org=acme;project=PLAT"} {
-		if !strings.Contains(f.Msg, want) {
-			t.Errorf("msg %q misses %q", f.Msg, want)
-		}
-	}
-	if Exit([]Finding{f}) != 0 {
-		t.Fatal("an ok finding never fails doctor")
-	}
-}
-
-func TestTracker_Failures(t *testing.T) {
-	cases := []struct {
-		name  string
-		err   error
-		code  string
-		level string
-	}{
-		{"needs session", &cred.SourceError{Source: cred.SourceMCP, Provider: "jira", Err: cred.ErrNeedsSession}, "tracker-needs-session", "info"},
-		{"no adapter", fmt.Errorf("%w for %q", hubsync.ErrNoAdapter, "jira"), "tracker-no-adapter", "info"},
-		{"auth failed", errors.New("jira credential from cli: no credential"), "tracker-auth-failed", "warn"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			cfg, root := servicesWorkspace(t, trackerBlock)
-			d := deps(nil, root, nil)
-			d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) { return "", c.err }
-			fs := Run(cfg, d)
-			f, ok := finding(fs, c.code)
-			if !ok || f.Level != c.level || f.Fix == "" {
-				t.Fatalf("%+v", fs)
-			}
-		})
-	}
-}
-
-// The tracker error comes from other workstreams' cred chain and adapters (CLI output, HTTP
-// bodies) and lands in the terminal, --json and the onboard skill's prompt: it is cut to one
-// line, bounded and redacted.
-func TestTracker_AuthFailedErrorIsRedactedOneLine(t *testing.T) {
-	cfg, root := servicesWorkspace(t, trackerBlock)
-	tok := "ghp_" + strings.Repeat("A1b2C3d4", 5)
-	bearer := "Authorization: Bearer " + strings.Repeat("z9Y8x7W6", 5)
-	d := deps(nil, root, nil)
-	d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) {
-		return "", fmt.Errorf("gh api user: exit 1: token %s rejected; %s\nstderr line two %s\nline three", tok, bearer, tok)
-	}
-	f, ok := finding(Run(cfg, d), "tracker-auth-failed")
-	if !ok {
-		t.Fatal("no tracker-auth-failed finding")
-	}
-	if strings.ContainsAny(f.Msg, "\r\n") {
-		t.Fatalf("multi-line message: %q", f.Msg)
-	}
-	if strings.Contains(f.Msg, tok) || strings.Contains(f.Msg, "A1b2C3d4") || strings.Contains(f.Msg, "z9Y8x7W6") {
-		t.Fatalf("token leaked: %q", f.Msg)
-	}
-	if !strings.Contains(f.Msg, "gh api user") {
-		t.Fatalf("the useful part of the error is kept: %q", f.Msg)
-	}
-	long := strings.Repeat("x", 5000)
-	d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) { return "", errors.New(long) }
-	f, _ = finding(Run(cfg, d), "tracker-auth-failed")
-	if len(f.Msg) > 400 {
-		t.Fatalf("unbounded message: %d bytes", len(f.Msg))
-	}
-}
-
-// Hooks and doctor must never stall: a tracker that hangs is cut off by the budget.
-func TestTracker_Bounded(t *testing.T) {
-	cfg, root := servicesWorkspace(t, trackerBlock)
-	prev := trackerBudget
-	trackerBudget = 50 * time.Millisecond
-	t.Cleanup(func() { trackerBudget = prev })
-	d := deps(nil, root, nil)
-	d.TrackerCheck = func(ctx context.Context, _ *resolve.Workspace, _ []string) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	}
-	start := time.Now()
-	fs := Run(cfg, d)
-	if time.Since(start) > 5*time.Second {
-		t.Fatal("tracker check not bounded")
-	}
-	if f, ok := finding(fs, "tracker-auth-failed"); !ok || !strings.Contains(f.Msg, "timed out") {
-		t.Fatalf("%+v", fs)
-	}
-}
-
-// A checker that ignores ctx (a keychain prompt, a CLI run without CommandContext) must not stall
-// doctor either: the budget is enforced around the call, not only through ctx.
-func TestTracker_BoundedWhenCheckIgnoresCtx(t *testing.T) {
-	cfg, root := servicesWorkspace(t, trackerBlock)
-	prev := trackerBudget
-	trackerBudget = 50 * time.Millisecond
-	t.Cleanup(func() { trackerBudget = prev })
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
-	d := deps(nil, root, nil)
-	d.TrackerCheck = func(context.Context, *resolve.Workspace, []string) (string, error) {
-		<-release
-		return "late@acme.test", nil
-	}
-	start := time.Now()
-	fs := Run(cfg, d)
-	if time.Since(start) > 5*time.Second {
-		t.Fatal("tracker check not bounded")
-	}
-	if f, ok := finding(fs, "tracker-auth-failed"); !ok || !strings.Contains(f.Msg, "timed out") {
-		t.Fatalf("%+v", fs)
-	}
-}
-
-// An azure-devops tracker logs in through whichever az identity the manifest has.
-func TestTrackerFix_AzureDevOpsUsesManifestIdentity(t *testing.T) {
-	tr := &manifest.Tracker{Provider: "azure-devops", Auth: "cli"}
-	only := &manifest.Manifest{Identities: map[string]manifest.Identity{"az": {}}, Tracker: tr}
-	if got := trackerFix("acme", only, "s"); got != "tq login acme az" {
-		t.Fatalf("az only: %q", got)
-	}
-	both := &manifest.Manifest{Identities: map[string]manifest.Identity{"az": {}, "azure-devops": {}}, Tracker: tr}
-	if got := trackerFix("acme", both, "s"); got != "tq login acme azure-devops" {
-		t.Fatalf("both: %q", got)
-	}
 }
 
 func TestChatEmail_MCPEntryPresent(t *testing.T) {

@@ -12,15 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// HubConfig is the `hub:` block of config.yaml (tq hub serve's defaults).
-type HubConfig struct {
-	Mode string `yaml:"mode,omitempty"` // "all" serves every trusted workspace by default
-	Port int    `yaml:"port,omitempty"`
-}
-
 type Config struct {
-	Bases []string  `yaml:"bases"`
-	Hub   HubConfig `yaml:"hub,omitempty"`
+	Bases []string `yaml:"bases"`
 }
 
 func Load() (*Config, error) {

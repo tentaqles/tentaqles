@@ -636,3 +636,11 @@ func modeLog(c *cobra.Command, ws, since string) error {
 	}
 	return tw.Flush()
 }
+
+// dash is s, or "-" when empty (a table cell).
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}

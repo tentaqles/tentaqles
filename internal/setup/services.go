@@ -7,8 +7,8 @@ import (
 	"github.com/tentaqles/tentaqles/internal/manifest"
 )
 
-// hasServices is whether the company names any of the tracker, chat or email blocks.
-func (c Company) hasServices() bool { return c.Tracker != nil || c.Chat != nil || c.Email != nil }
+// hasServices is whether the company names any of the chat or email blocks.
+func (c Company) hasServices() bool { return c.Chat != nil || c.Email != nil }
 
 // validateServices runs the manifest's own checks on the blocks, so the wizard refuses exactly
 // what a hand-written manifest would.
@@ -21,34 +21,13 @@ func (c Company) validateServices() error {
 	if err := c.secretShapedService(); err != nil {
 		return err
 	}
-	m := manifest.Manifest{Tracker: c.Tracker, Chat: c.Chat, Email: c.Email}
+	m := manifest.Manifest{Chat: c.Chat, Email: c.Email}
 	return m.ValidateServices()
 }
 
 func (c Company) secretShapedService() error {
 	bad := func(field string) error {
 		return fmt.Errorf("%s looks like a secret: name it (the manifest holds names only; store the token with tq secret set or tq dotenv)", field)
-	}
-	if t := c.Tracker; t != nil {
-		for field, v := range map[string]string{"tracker.provider": t.Provider, "tracker.assigned_to": t.AssignedTo,
-			"tracker.auth": t.Auth, "tracker.env": t.Env} {
-			if manifest.LooksLikeSecret(v) {
-				return bad(field)
-			}
-		}
-		for _, kv := range []struct {
-			name string
-			m    map[string]string
-		}{{"tracker.scope", t.Scope}, {"tracker.lanes", t.Lanes}} {
-			for k, v := range kv.m {
-				if manifest.LooksLikeSecret(k) {
-					return bad(kv.name + " key")
-				}
-				if manifest.LooksLikeSecret(v) {
-					return bad(kv.name + "." + k)
-				}
-			}
-		}
 	}
 	for field, s := range map[string]*manifest.Service{"chat.provider": c.Chat, "email.provider": c.Email} {
 		if s != nil && manifest.LooksLikeSecret(s.Provider) {
@@ -62,13 +41,6 @@ func (c Company) secretShapedService() error {
 // only, like the manifest itself.
 func (c Company) servicesDetail() string {
 	var parts []string
-	if t := c.Tracker; t != nil {
-		s := "tracker " + t.Provider
-		if k := t.ScopeKey(); k != "" {
-			s += " (" + k + ")"
-		}
-		parts = append(parts, s+", auth "+t.AuthOrDefault())
-	}
 	if c.Chat != nil {
 		parts = append(parts, "chat "+c.Chat.Provider)
 	}

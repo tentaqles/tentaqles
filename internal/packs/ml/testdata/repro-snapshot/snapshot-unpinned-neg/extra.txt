@@ -1,2 +1,0 @@
-data/snapshots.yaml
-data/features.csv.dvc

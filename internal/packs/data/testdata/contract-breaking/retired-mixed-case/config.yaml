@@ -1,4 +1,0 @@
-data:
-  contracts:
-    consumers:
-      acme-orders: [acme-finance-dashboard]

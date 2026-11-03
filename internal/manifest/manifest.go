@@ -143,14 +143,11 @@ type Manifest struct {
 	Decision decide.Policy `yaml:"decision"`
 	Data     Data          `yaml:"data"`
 	// Company services (spec B §6); each block is optional. See services.go.
-	Tracker      *Tracker `yaml:"tracker,omitempty"`
 	Chat         *Service `yaml:"chat,omitempty"`
 	Email        *Service `yaml:"email,omitempty"`
 	DataPlatform *Service `yaml:"data_platform,omitempty"`
 	Agents       []string `yaml:"agents,omitempty"`
-	// Packs enables and configures the packs (spec C §2.2). See packs.go.
-	Packs map[string]PackConfig `yaml:"packs,omitempty"`
-	Path  string                `yaml:"-"`
+	Path         string   `yaml:"-"`
 	// Ignored lists the top-level blocks of DroppedBlocks that the file still
 	// carries. Load records them so `tq doctor` can warn that tq no longer reads
 	// them (the cut of 2026-11-03, docs/prd.md D-29); loading never fails on them.
@@ -245,9 +242,6 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.ValidateServices(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if err := ValidatePacks(m.Packs); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Path = path
