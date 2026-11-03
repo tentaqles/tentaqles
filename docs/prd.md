@@ -1600,8 +1600,10 @@ answer` from every Claude shell; pack approvals need a terminal and a typed code
 Missing: a hub policy per class: `console` gets every human action (add in any lane, move
 between any lanes, `run`, `cancel`, `answer` for gate decisions, hub questions, send/skip
 and pack approvals, review approve / request changes / done, edit title, body, project
-and tags, budgets, settings, `push`, `sync retry`, sync import and ack as a human, the
-pack `apply` executors); `run`, `nested` and `unknown` keep today's limits; still
+and tags, budgets, the hub settings concurrency, default budget and notifications, `push`,
+`sync retry`, sync import and ack as a human, and the pack `apply` executors right after
+the console's own approval); the board-sync policy and the tracker connections stay on the
+settings page and in the terminal (refine decision of 2026-11-03); `run`, `nested` and `unknown` keep today's limits; still
 terminal-only: `serve --bind` off loopback and the hub's key and token verbs, which the
 rule reserves and no release implements yet (D-26). The rule
 `tq/human-answer` splits in two with the same id: the unconditional half keeps denying
@@ -1629,6 +1631,10 @@ them. Console comments stay agent comments.
   `TestLockedNeverChange` passes.
 - `TestConsoleAnswerActorAndSession`: a console answer's actor is `console:<user>`, its
   activity row carries the session id, and the card page shows it.
+- `TestConsoleCannotChangeSyncSettings`: under the console seam a change to the sync
+  policy or a tracker connection is refused; from a terminal it succeeds.
+- `TestConsoleRunsPackApplyAfterApproval`: under the console seam the cloud executor
+  succeeds against a console-signed approval and is refused under the run seam.
 - `TestHubCommentFromAnAgentSessionIsNeverHuman` passes with a console case: a console
   comment is stored as an agent comment.
 
