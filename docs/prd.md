@@ -1913,6 +1913,7 @@ Hub cards (written by `/tentaqles:plan-cards`; an FR listed here is skipped on t
 - FR-71: c-cweaf6wtgo5f
 - FR-72: c-xh4kjsxwmw4a
 - FR-73: c-tuwqub2gpvmb
+- FR-74: c-vbq7lxbdojdb
 <!-- /tq:cards -->
 
 ## 12. Status map against the original PRD
@@ -2002,7 +2003,7 @@ rest. Each row names its FR, why it sits where it does, and what it depends on.
 | B-35 | P0 | `tq hub serve --background`, `ensure`, `stop`; skills `start` and `run`; `refine` writes body and tag | FR-72 | The one-command day end to end | B-33, B-34 |
 | B-36 | P1 | TM-7: bind each console answer to a signed AskUserQuestion record; deny `tq claude-hook` from the Bash tool | FR-70 | Turns the skill protocol into a check before AR3 expires (2027-01-28) | B-34 |
 | B-37 | P0 | Card numbers (`c-NNNN`) and references by number or title in every hub verb, the routes and the skills | FR-73 | The console types card references all day; random ids are unreadable | none (D-27 decided); the `run` skill part waits for B-35 |
-| B-38 | P0 | Budgets switch (`budgets: on|off` in the hub settings and `hub.budgets` in the manifest); rounds stay as a loop guard | FR-74 | A subscription user pays nothing per token; a dollar limit only interrupts work | none (D-28 decided) |
+| B-38 | P0 | Budgets switch (`budgets: on\|off` in the hub settings and `hub.budgets` in the manifest); rounds stay as a loop guard | FR-74 | A subscription user pays nothing per token; a dollar limit only interrupts work | none (D-28 decided) |
 
 ## 14. Conflicts and flags
 
