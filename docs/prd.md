@@ -1,6 +1,6 @@
 # Tentaqles: product requirements
 
-Status: planning-ready (the 23 decisions of 2026-10-30, the 3 of 2026-10-31 and D-27 of 2026-11-03 are settled; outcomes in §17)
+Status: planning-ready (the 23 decisions of 2026-10-30, the 3 of 2026-10-31 and D-27 and D-28 of 2026-11-03 are settled; outcomes in §17)
 Owner: the repo owner (reach@tentaqles.ai)    Updated: 2026-11-03
 Baseline audited: `main` f66b3e9, tq v0.8.2, plugin 0.15.2
 
@@ -934,6 +934,37 @@ and the hub skill accept both id shapes.
 - COMMANDS.md walkthrough: `tq hub show 12`, `tq hub move "Export invoices" "in progress"`
   and `/tentaqles:refine 12` work as written, verified by hand.
 
+### FR-74 Budgets can be switched off for subscription users
+Why: Owner request of 2026-11-03 (D-28): the hub's budgets are priced as if every token
+went through the API, but a developer on a Claude subscription pays no per-token cost,
+so a dollar or token limit only interrupts work. Budgets must be a choice, not a given.
+Status: not started
+Evidence: every run gets the stored default budget or the card's `budget:` front matter
+(tokens, USD, minutes, rounds; `internal/hub/store/settings.go`, `frontmatter.go`); hitting
+any limit ends the run as `over-budget` and asks raise-and-resume
+(`TestEachBudgetLimitStopsTheRun`); there is no way to turn the limits off.
+Missing: a hub setting `budgets` (`on`, the default, or `off`) on the settings page and in
+`tq hub settings`, and a manifest key `hub.budgets: off` that sets the workspace default;
+with budgets off no run ends for tokens, dollars or minutes, a card's `budget:` front
+matter is ignored for those three, cost and usage are still recorded on the run, the card
+and the page, and the board shows "budgets off" instead of a budget bar. The rounds limit
+stays as a loop guard in both states (default 40 rounds, settable per hub and per card);
+reaching it still asks raise-and-resume. Changing the setting is a console or terminal
+action (FR-70 scope: concurrency, default budget, notifications, budgets).
+**Acceptance checks**
+- `TestBudgetsOffNeverStopsForCost`: with `budgets: off`, a run that exceeds the default
+  tokens, USD and minutes keeps running and its recorded cost grows; the same run with
+  `budgets: on` stops as `over-budget` (`TestEachBudgetLimitStopsTheRun` unchanged).
+- `TestRoundsGuardAppliesWithBudgetsOff`: with `budgets: off` a run reaching the rounds
+  limit stops and asks raise-and-resume; a note `rounds=60` resumes it.
+- `TestManifestBudgetsOffSetsTheDefault`: a workspace whose manifest says `hub.budgets:
+  off` opens its hub with the setting off; the settings page can turn it on again.
+- The settings page and `tq hub settings --json` show `budgets` and the rounds guard; the
+  card page shows "budgets off" and the recorded cost when the setting is off
+  (`TestSettingsPageShowsBudgetsSwitch`).
+- `TestConsoleDrivesTheBoard` (FR-70) covers the `budgets` setting among the ones a console
+  may change.
+
 ### Area E: project bootstrap and planning
 
 ### FR-40 Start a project from a mirrored card
@@ -1858,7 +1889,7 @@ is what its spec required; for a planned release it is the acceptance checks of 
 | Release 2 | FR-10, FR-14, FR-30, FR-31, FR-32, FR-33, FR-34, FR-35, FR-36, FR-37, FR-38, FR-39, FR-42, FR-44, FR-46, FR-47, FR-48, FR-49, FR-54, FR-57, FR-58, FR-59 | Hub core (spec A, PRs #31, #33, #34) and board sync (spec B, PR #46), plugin 0.13.0–0.14.0 (shipped 2026-10-21 to 2026-10-28) |
 | Release 3 | FR-55, FR-67 | Data and ML packs (spec C) and cloud and db packs (spec D, counted as release 4 by the specs), one PR #50, tq v0.8.0, plugin 0.15.0 (shipped 2026-10-29) |
 | Release 4 | FR-18, FR-19, FR-20, FR-22, FR-23, FR-27, FR-28 | Guard modes (spec E, PR #49, tq v0.8.0) and the hardening of v0.8.1–v0.8.2: guard clear-cut fixes, threat model, checksums and provenance (shipped 2026-10-29 to 2026-10-30) |
-| Release 5 | FR-69, FR-70, FR-71, FR-72, FR-73, FR-40, FR-36, FR-58, FR-47, FR-42, FR-48, FR-54, FR-57, FR-22, FR-20, FR-18, FR-26, FR-68 | The console drives the board (session classes, console answers, decisions reach the console, the one-command day); close the loop: a card becomes a project and comes back approved on the company board; decisions carry recommendation and blocked; headless asks are rule-aware; the human-only gaps are closed; the modes are renamed and `guarded` skips force-push and system changes; the PII-under-bypass report is verified and fixed; the docs match the code |
+| Release 5 | FR-69, FR-70, FR-71, FR-72, FR-73, FR-74, FR-40, FR-36, FR-58, FR-47, FR-42, FR-48, FR-54, FR-57, FR-22, FR-20, FR-18, FR-26, FR-68 | The console drives the board (session classes, console answers, decisions reach the console, the one-command day); close the loop: a card becomes a project and comes back approved on the company board; decisions carry recommendation and blocked; headless asks are rule-aware; the human-only gaps are closed; the modes are renamed and `guarded` skips force-push and system changes; the PII-under-bypass report is verified and fixed; the docs match the code |
 | Release 6 | FR-06, FR-12, FR-08, FR-03, FR-11, FR-10, FR-21, FR-28, FR-30, FR-32, FR-33, FR-35, FR-41, FR-51, FR-53 | Isolation completeness: shim folders and CLI provisioning, Chrome and Edge profiles, prompt and title indicator, banner at onboarding, full onboarding prompts and the terminal close, the four new categories with production tags, OpenCode, the Markdown card mirror, tracker status on tiles, read-only assignee/attachments/comments, publish with lane and tags, the PRD accept command, optional gates configurable |
 | Release 7 | FR-52, FR-63, FR-62, FR-56, FR-07, FR-60, FR-04 | Evals and knowledge: evals gate and checklist evals (then the visual review gate on top), capture, the KB pipeline starting with docs folders and the tracker, Jev families promoted to enforce where the eval allows, stack preferences resolved, GUI manifest editing and switching, Kimi Code |
 
@@ -1882,6 +1913,7 @@ Hub cards (written by `/tentaqles:plan-cards`; an FR listed here is skipped on t
 - FR-71: c-cweaf6wtgo5f
 - FR-72: c-xh4kjsxwmw4a
 - FR-73: c-tuwqub2gpvmb
+- FR-74: c-vbq7lxbdojdb
 <!-- /tq:cards -->
 
 ## 12. Status map against the original PRD
@@ -1971,6 +2003,7 @@ rest. Each row names its FR, why it sits where it does, and what it depends on.
 | B-35 | P0 | `tq hub serve --background`, `ensure`, `stop`; skills `start` and `run`; `refine` writes body and tag | FR-72 | The one-command day end to end | B-33, B-34 |
 | B-36 | P1 | TM-7: bind each console answer to a signed AskUserQuestion record; deny `tq claude-hook` from the Bash tool | FR-70 | Turns the skill protocol into a check before AR3 expires (2027-01-28) | B-34 |
 | B-37 | P0 | Card numbers (`c-NNNN`) and references by number or title in every hub verb, the routes and the skills | FR-73 | The console types card references all day; random ids are unreadable | none (D-27 decided); the `run` skill part waits for B-35 |
+| B-38 | P0 | Budgets switch (`budgets: on\|off` in the hub settings and `hub.budgets` in the manifest); rounds stay as a loop guard | FR-74 | A subscription user pays nothing per token; a dollar limit only interrupts work | none (D-28 decided) |
 
 ## 14. Conflicts and flags
 
@@ -2138,6 +2171,7 @@ each question as it stood; the FRs they touch carry the same `D-nn`):
 | D-25 | `!` commands | A command typed with Claude Code's `!` prefix runs in the console and counts as the human for board work; it is not a terminal for D-26 |
 | D-26 | What stays at the terminal | `tq allow`, `tq mode`, `tq guard`, `tq unattended`, logins (D-08), `tq secret` writes, `tq hub serve --bind` off loopback, and the hub's key and token verbs (`tq hub key\|token\|serve-key`, reserved by the `tq/human-answer` rule and not implemented today): refused from every class but `terminal`. Pack approvals are answered from the console too, keychain-signed by tq; the board page still refuses them |
 | D-27 | Card ids and references | New cards are `c-NNNN`, a per-workspace increasing number; old ids stay valid and get a number; every verb, route and skill takes the number or the title (2026-11-03) |
+| D-28 | Budgets | Budgets are a switch: `off` stops no run for tokens, dollars or minutes and still records cost; the rounds limit stays as a loop guard, default 40 (2026-11-03) |
 
 Decisions of 2026-10-31 (D-24 to D-26) were taken while planning the console; they
 supersede D-18 and the agent-session wording of D-10, whose refusals stand for `console`,
