@@ -1563,7 +1563,10 @@ plus the terminal check), and the owner's "refuse and name the cause" concerns a
 from inside Claude, where a marker is always set. One process
 snapshot per OS (Windows Toolhelp32 process snapshot through `golang.org/x/sys/windows`,
 never the PowerShell `Get-CimInstance` path; Linux `/proc`; macOS `sysctl`), at most 16
-hops and 200 ms, memoised, with a fake-table seam for tests. The class travels to a
+hops and 200 ms, memoised, with a fake-table seam for tests; over budget means `unknown`
+at once, no retry. A Codex interactive session started by the human is a console too, and
+so is a `claude -p` the human types. `tq session class [--json]` prints the class, the
+reason and the chain as pids and executable names only. The class travels to a
 served hub as `X-TQ-Hub-Session`; the server maps any unlisted value to `run` and the
 legacy `X-TQ-Hub-Agent: 1` still means `run`. `tq doctor` reports class `unknown`.
 **Acceptance checks**
@@ -1581,6 +1584,10 @@ legacy `X-TQ-Hub-Agent: 1` still means `run`. `tq doctor` reports class `unknown
   `unknown`, an unlisted header value and the legacy agent header;
   `TestAPIAgentHeaderRefusesHumanOnly` passes unchanged.
 - `tq doctor` prints a warning row when the class is `unknown`, naming the cause.
+- `TestWalkOverBudgetIsUnknown`: a fake walk that needs 17 hops or exceeds 200 ms yields
+  `unknown` with a reason naming the budget and no second attempt.
+- `TestSessionClassCommand`: `tq session class --json` prints `class`, `reason` and `chain`
+  entries with `pid` and `exe` and no `cmdline` key, exit 0 in every class.
 
 ### FR-70 The console drives the hub as the human's proxy
 Why: D-24, D-25: the human never types tq commands for board work; a `!`-prefixed command
