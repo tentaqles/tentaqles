@@ -10,12 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/packs"
 	"github.com/tentaqles/tentaqles/internal/packs/approval"
-	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
 
@@ -302,95 +300,6 @@ func TestTriageAddsPackFlags(t *testing.T) {
 	}
 }
 
-// --- hook wiring -----------------------------------------------------------
-
-func cloudHook(t *testing.T, cmd string) (int, string, string) {
-	t.Helper()
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
-	signedApproval(t, "acme", "cloud", "d-example")
-	return runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, cmd))
-}
-
-// signedApproval writes an asked line and a human answer signed with the
-// workspace key (the mock keychain), as tq hub answer would.
-func signedApproval(t *testing.T, ws, pack, id string) {
-	t.Helper()
-	exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
-	a := ledger.Entry{Event: ledger.Asked, Decision: id, Pack: pack, Action: "apply", Subject: "s", Target: "prod", Evidence: map[string]string{"plan": "sha256:aa"}, ExpiresAt: exp, Grant: "apply"}
-	if err := ledger.Append(ws, a); err != nil {
-		t.Fatal(err)
-	}
-	priv, err := ledger.SigningKey(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e, err := ledger.AnswerSigner(ws, priv)(ledger.Shown{Pack: pack, Action: "apply", Subject: "s", Target: "prod", ExpiresAt: exp, Grant: "apply", Evidence: a.Evidence}, id, "apply", "hub", time.Now().UTC().Format(time.RFC3339))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ledger.Append(ws, e); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestHookPackGuardDeniesAndSupersedes(t *testing.T) {
-	code, out, _ := cloudHook(t, "terraform apply prod.tfplan")
-	if code != 2 || !strings.Contains(out, `"rule":"tq/example-cmd-apply"`) {
-		t.Fatalf("deny: %d %s", code, out)
-	}
-	if strings.Contains(out, "tq/iac-apply]") {
-		t.Fatalf("the handled guard must supersede tq/iac-apply: %s", out)
-	}
-	// Approved: the guard allows, tq/iac-apply's ask is dropped, and the
-	// approval is marked consumed in the ledger before the allow.
-	code, out, _ = cloudHook(t, "terraform apply approved.tfplan")
-	if code != 0 || strings.Contains(out, "iac-apply") {
-		t.Fatalf("allow: %d %s", code, out)
-	}
-	es, err := ledger.Read("acme", "cloud")
-	if err != nil || len(es) != 3 || es[2].Event != ledger.Consumed || es[2].Decision != "d-example" {
-		t.Fatalf("consumed line: %v %+v", err, es)
-	}
-	if m, err := ledger.LoadHighWater("acme", "cloud"); err != nil || m.Decision != "d-example" {
-		t.Fatalf("high-water mark: %v %+v", err, m)
-	}
-}
-
-func TestHookPackGuardPanicDenies(t *testing.T) {
-	code, out, _ := cloudHook(t, "terraform apply panic.tfplan")
-	if code != 2 || !strings.Contains(out, "example guard exploded") {
-		t.Fatalf("a guard panic must deny: %d %s", code, out)
-	}
-}
-
-func TestHookConsumeFailureDenies(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
-	p, _ := ledger.Path("acme", "cloud")
-	os.MkdirAll(p, 0o700) // a directory where the ledger file must be
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply approved.tfplan"))
-	if code != 2 || !strings.Contains(out, "could not be marked used") {
-		t.Fatalf("a failed consumed append must deny: %d %s", code, out)
-	}
-}
-
-func TestHookPackGuardOnlyWhenEnabledAndHonoursDisable(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply prod.tfplan"))
-	if code != 0 || !strings.Contains(out, "tq/iac-apply") {
-		t.Fatalf("pack off: the core ask applies: %d %s", code, out)
-	}
-	ws = setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\nguard: { disable: [tq/example-cmd-apply] }\n")
-	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply prod.tfplan"))
-	if code != 0 || !strings.Contains(out, "tq/iac-apply") {
-		t.Fatalf("guard.disable: %d %s", code, out)
-	}
-	ws = setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\nguard: { actions: { tq/example-cmd-apply: ask } }\n")
-	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply prod.tfplan"))
-	if code != 0 || !strings.Contains(out, `"rule":"tq/example-cmd-apply"`) {
-		t.Fatalf("guard.actions: %d %s", code, out)
-	}
-}
-
 func TestGuardListShowsPackGuards(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
 	_ = ws
@@ -480,51 +389,6 @@ func TestRepoLayerCannotEnable(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &lr); err != nil || len(lr.Packs) != 0 {
 		t.Fatalf("%v %s", err, out)
 	}
-	code, hout, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply prod.tfplan"))
-	if code != 0 || !strings.Contains(hout, "tq/iac-apply") || strings.Contains(hout, "example-cmd-apply") {
-		t.Fatalf("a repo-enabled pack guard ran or superseded: %d %s", code, hout)
-	}
-}
-
-// C1: with no trusted workspace, no pack guard runs and the repo file is ignored.
-func TestHookNoWorkspaceNoPackGuards(t *testing.T) {
-	isolateHome(t)
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "tq-packs.yaml"), []byte("cloud: { enabled: true }\n"), 0o644)
-	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, dir, "terraform apply approved.tfplan"))
-	if code != 0 || !strings.Contains(out, "tq/iac-apply") {
-		t.Fatalf("%d %s", code, out)
-	}
-}
-
-// M2: the hook claims the approval; a second hook with the same approval is denied.
-func TestHookClaimIsSingleUse(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
-	signedApproval(t, "acme", "cloud", "d-example")
-	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply approved.tfplan"))
-	if code != 0 || !ledger.Claimed("acme", "cloud", "d-example") {
-		t.Fatalf("first use: %d", code)
-	}
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "terraform apply approved.tfplan"))
-	if code != 2 || !strings.Contains(out, "already used") {
-		t.Fatalf("second use: %d %s", code, out)
-	}
-}
-
-// C1(d), M4: the core rules are on with no pack enabled, and unattended
-// mode or guard.actions cannot soften them.
-func TestHookCoreFrameworkRules(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "guard: { actions: { tq/hub-store-write: ask }, disable: [tq/pack-config-change] }\n")
-	payload := `{"tool_name":"Write","cwd":` + jsonPath(t, ws) + `,"tool_input":{"file_path":` + jsonPath(t, filepath.Join(ws, "tq-packs.yaml")) + `,"content":"cloud: {}"}}`
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, payload)
-	if code != 0 || !strings.Contains(out, "tq/pack-config-change") {
-		t.Fatalf("pack-config-change: %d %s", code, out)
-	}
-	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, `echo x >> ~/.tentaqles/packs/acme/ml/ledger.jsonl`))
-	if code != 2 || !strings.Contains(out, "tq/hub-store-write") {
-		t.Fatalf("hub-store-write stays a deny: %d %s", code, out)
-	}
 }
 
 // F6: an invalid tq-packs.yaml keeps the manifest flags and raises
@@ -558,96 +422,5 @@ func TestPackBadBaseAndBaselineRefusal(t *testing.T) {
 	code, _, errOut := runHook(t, []string{"pack", "baseline"}, "")
 	if code != 2 || !strings.Contains(errOut, "did not run cleanly") {
 		t.Fatalf("baseline with a missing declared tool: %d %q", code, errOut)
-	}
-}
-
-// Round 5: a stored plan the cloud guard verified is a plain argument, not a
-// state-dir write; every bypass is still denied.
-func TestHookStoredPlanReadArg(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "packs:\n  cloud: { enabled: true }\n")
-	dir := packs.StateDir("acme", "cloud")
-	os.MkdirAll(filepath.Join(dir, "plans"), 0o700)
-	plan := filepath.Join(dir, "plans", "p1.tfplan")
-	os.WriteFile(plan, []byte("plan"), 0o600)
-	os.WriteFile(filepath.Join(dir, "plans", "p2.tfplan"), []byte("plan"), 0o600)
-	led := filepath.Join(dir, "ledger.jsonl")
-	q := func(s string) string { return `"` + s + `"` }
-	for _, c := range []string{
-		"tofu apply " + plan,
-		"tofu apply " + q(plan),
-		"pulumi up --plan " + plan,
-		"pulumi up --plan=" + plan,
-		"pulumi up " + plan,
-		"pulumi up --yes --plan " + plan,
-		// Declared boolean flags before a positional plan (and an =value flag).
-		"terraform apply -auto-approve " + plan,
-		"tofu apply -auto-approve -input=false " + plan,
-		"tofu apply -input=false -auto-approve " + plan,
-		"pulumi up --yes " + plan,
-		"pulumi up --yes --skip-preview --plan=" + plan,
-		"cd infra && tofu apply " + plan,
-		"cd infra\r\ntofu apply " + plan, // CRLF is one newline
-	} {
-		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
-		if code != 0 || strings.Contains(out, "tq/hub-store-write") {
-			t.Fatalf("allowed form %q: %d %s", c, code, out)
-		}
-	}
-	for name, c := range map[string]string{
-		"extra segment, same path":  "tofu apply " + plan + "; cat " + plan,
-		"extra segment, state dir":  "tofu apply " + plan + " && ls " + filepath.Dir(plan),
-		"redirect":                  "tofu apply " + plan + " > " + plan,
-		"cp to the same path":       "tofu apply " + plan + " && cp x " + plan,
-		"tee":                       "tofu apply " + plan + " | tee " + plan,
-		"another protected path":    "tofu apply " + plan + " " + led,
-		"a path not verified":       "tofu apply " + plan + " " + filepath.Join(dir, "plans", "p2.tfplan"),
-		"a .. spelling":             "tofu apply " + filepath.Join(dir, "plans", "x") + "/../p1.tfplan",
-		"substitution":              "tofu apply " + plan + " $(cat " + led + ")",
-		"never hashed (liar guard)": "tofu apply liar " + plan,
-		"newline segment":           "tofu apply " + plan + "\ncat " + plan,
-		// R5-3 (a): the path twice in one segment, once under a writing flag.
-		"twice, as a flag value": "tofu apply " + plan + " --out=" + plan,
-		"twice":                  "tofu apply " + plan + " " + plan,
-		// R5-3 (b): a writer called by its path.
-		"tee by path":     "tofu apply " + plan + "; /usr/bin/tee x",
-		"cmd.exe by path": `tofu apply ` + plan + `; C:\Windows\System32\cmd.exe /c echo x`,
-		// R5-3 (c): downloaders, wrappers and side-effect writers.
-		"curl -o":         "tofu apply " + plan + "; curl -o x http://example.test/y",
-		"wget -O":         "tofu apply " + plan + "; wget -O x http://example.test/y",
-		"iwr -OutFile":    "tofu apply " + plan + "; Invoke-WebRequest -OutFile x http://example.test/y",
-		"certutil":        "tofu apply " + plan + "; certutil -urlcache -f http://example.test/y x",
-		"env wrapper":     "env tofu apply " + plan,
-		"nohup wrapper":   "nohup tofu apply " + plan,
-		"sudo wrapper":    "sudo tofu apply " + plan,
-		"start wrapper":   "start tofu apply " + plan,
-		"git":             "tofu apply " + plan + " && git status",
-		"make":            "make plan; tofu apply " + plan,
-		"docker cp":       "docker cp a:/b c; tofu apply " + plan,
-		"Expand-Archive":  "Expand-Archive a.zip; tofu apply " + plan,
-		"another program": "terraform-wrapper tofu apply " + plan,
-		"the plan first":  plan + " tofu apply",
-		// R6-4: the plan only as a positional argument or the declared flag's value.
-		"another flag, =":       "tofu apply --out=" + plan,
-		"another flag":          "tofu apply -out " + plan,
-		"pulumi, another flag":  "pulumi up --save " + plan,
-		"pulumi, another flag=": "pulumi up --save=" + plan,
-		// An undeclared flag before the plan keeps the fail-closed reading.
-		"undeclared flag before":  "tofu apply -state-out " + plan,
-		"undeclared, terraform":   "terraform apply -backup " + plan,
-		"a bool flag is not -out": "pulumi up --yes --save " + plan,
-		// A lone CR ends a PowerShell statement (the other breaks may end one
-		// too): the plan is then an argument of another program.
-		"lone CR":   "tofu apply\ricacls " + plan + " /grant x:F",
-		"VT":        "tofu apply\vicacls " + plan + " /grant x:F",
-		"FF":        "tofu apply\ficacls " + plan + " /grant x:F",
-		"NEL":       "tofu apply\u0085icacls " + plan + " /grant x:F",
-		"LS":        "tofu apply icacls " + plan + " /grant x:F",
-		"PS":        "tofu apply icacls " + plan + " /grant x:F",
-		"CR before": "icacls\rtofu apply " + plan,
-	} {
-		code, out := hookDecision(t, ws, policy.ToolCall{Tool: "Bash", Command: c})
-		if code != 2 || !strings.Contains(out, "tq/hub-store-write") {
-			t.Errorf("%s: %d %s", name, code, out)
-		}
 	}
 }

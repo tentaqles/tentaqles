@@ -4,10 +4,25 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/policy"
 )
+
+// isFileWriteTool reports whether tool is one of Claude's edit tools (a
+// Codex apply_patch is recognised by isApplyPatch).
+func isFileWriteTool(tool string) bool {
+	switch tool {
+	case "Edit", "Write", "MultiEdit", "NotebookEdit":
+		return true
+	}
+	return false
+}
+
+// winAbsRe is a drive-absolute Windows path (C:\ or C:/), which
+// filepath.IsAbs does not recognise on other systems.
+var winAbsRe = regexp.MustCompile(`^[a-zA-Z]:[\\/]`)
 
 // patchFile is one file an apply_patch payload writes, as the file rules
 // see it: Tool is "Write" for an added, deleted or moved-to file and "Edit"

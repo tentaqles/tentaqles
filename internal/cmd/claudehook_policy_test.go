@@ -74,24 +74,6 @@ func TestPolicy_PowerShellEnvDumpDenied(t *testing.T) {
 	}
 }
 
-func TestPolicy_MCPWriteAsks(t *testing.T) {
-	isolateHome(t)
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"},
-		toolPayload(t, testutil.TempDir(t), "mcp__n8n__publish_workflow", `{"workflowId":"1"}`))
-	if code != 0 || !strings.Contains(askReason(t, out), "tq/mcp-n8n-write") {
-		t.Fatalf("code=%d out=%q", code, out)
-	}
-}
-
-func TestPolicy_JSONFlagReportsAsk(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"},
-		toolPayload(t, ws, "Bash", `{"command":"gh pr merge 3 --admin"}`))
-	if code != 0 || !strings.Contains(out, `"block":false`) || !strings.Contains(out, `"rule":"tq/gh-admin-merge"`) {
-		t.Fatalf("code=%d out=%q", code, out)
-	}
-}
-
 func TestPolicy_PortugueseEditAllowed(t *testing.T) {
 	isolateHome(t)
 	dir := testutil.TempDir(t)
@@ -99,52 +81,6 @@ func TestPolicy_PortugueseEditAllowed(t *testing.T) {
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, dir, "Edit", in))
 	if code != 0 || out != "" || errOut != "" {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
-	}
-}
-
-func TestPolicy_ManifestDisablesAndAddsRules(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", `guard:
-  disable: [tq/mcp-n8n-write]
-  rules:
-    - id: acme/no-prod-host
-      action: deny
-      command: 'prod-db\.acme\.internal'
-      reason: never touch the prod database host
-`)
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, ws, "mcp__n8n__publish_workflow", `{}`))
-	if code != 0 || out != "" {
-		t.Fatalf("disabled rule still fired: code=%d out=%q", code, out)
-	}
-	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, ws, "Bash", `{"command":"psql -h prod-db.acme.internal"}`))
-	if code != 2 || !strings.Contains(errOut, "acme/no-prod-host") || !strings.Contains(errOut, manifest.FileName) {
-		t.Fatalf("manifest rule: code=%d err=%q", code, errOut)
-	}
-}
-
-func TestPolicy_ProjectRulesOnlyAdd(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
-	sub := filepath.Join(ws, "app")
-	os.MkdirAll(filepath.Join(sub, ".claude"), 0o755)
-	// A project file cannot disable built-ins: the "disable" key is ignored.
-	rules := `disable: [tq/env-dump]
-rules:
-  - id: app/no-console
-    action: ask
-    tool: Edit|Write
-    content: 'console\.log'
-    reason: use the logger
-`
-	if err := os.WriteFile(filepath.Join(sub, ".claude", "tq-rules.yaml"), []byte(rules), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	in := `{"file_path":"x.js","content":"console.log(1)"}`
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, sub, "Write", in))
-	if code != 0 || !strings.Contains(askReason(t, out), "app/no-console") {
-		t.Fatalf("project rule: code=%d out=%q", code, out)
-	}
-	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, sub, "Bash", `{"command":"printenv"}`))
-	if code != 2 || !strings.Contains(errOut, "tq/env-dump") {
-		t.Fatalf("project file disabled a builtin: code=%d err=%q", code, errOut)
 	}
 }
 
@@ -211,17 +147,5 @@ func TestPolicy_CommitWithSecretDenied(t *testing.T) {
 	}
 	if strings.Contains(errOut, "z9z9") {
 		t.Fatal("reason leaks the secret value")
-	}
-}
-
-func TestPolicy_CommitMessageAsks(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "did things"`))
-	if code != 0 || !strings.Contains(askReason(t, out), "tq/commit-message") {
-		t.Fatalf("code=%d out=%q", code, out)
-	}
-	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, `git commit -m "feat(x): did things"`))
-	if code != 0 || strings.Contains(out, "commit-message") {
-		t.Fatalf("conventional message must pass: %q", out)
 	}
 }

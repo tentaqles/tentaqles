@@ -32,17 +32,6 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" prompt-submit",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "^(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Agent)$|^mcp__",
@@ -95,11 +84,6 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_run.sh\" stop-capture.py",
             "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" stop",
-            "timeout": 10
           }
         ]
       }

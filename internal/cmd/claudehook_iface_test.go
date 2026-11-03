@@ -2,48 +2,46 @@ package cmd
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/hub/runner"
-	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// Interface-commit contract tests (spec E §17). They pin the stubs' seams;
-// the owning workstreams replace the stub behaviour.
-
+// Under --agent codex every non-allow decision is a deny: the one ask left
+// (the commit scan's, stubbed here) becomes a deny that says Codex cannot
+// ask, while the default agent still gets the ask.
 func TestPreToolUseAgentCodexNeverAsks(t *testing.T) {
 	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, hookPayloadFor(t, root, `psql -c "drop table t"`))
+	prev := hookPolicyDecision
+	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time) policy.Decision {
+		return ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+scanTimedOut)
+	}
+	t.Cleanup(func() { hookPolicyDecision = prev })
+	cmd := hookPayloadFor(t, root, `git commit -m "feat: x"`)
+	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, cmd)
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	var got struct {
-		H struct {
-			Decision string `json:"permissionDecision"`
-			Reason   string `json:"permissionDecisionReason"`
-		} `json:"hookSpecificOutput"`
-	}
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("not JSON: %q", out)
-	}
-	if got.H.Decision != "deny" || !strings.Contains(got.H.Reason, "tq/sql-destructive-shell") {
-		t.Fatalf("codex must get a deny, never an ask: %+v", got.H)
+	dec, reason := codexAnswerJSON(t, out)
+	if dec != "deny" || !strings.Contains(reason, "tq/commit-secret") || !strings.Contains(reason, "Codex hooks cannot ask") {
+		t.Fatalf("codex must get a deny that says why, never an ask: %q %q", dec, reason)
 	}
 	// The default agent still asks.
-	_, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, root, `psql -c "drop table t"`))
-	if !strings.Contains(askReason(t, out), "tq/sql-destructive-shell") {
+	_, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use"}, cmd)
+	if !strings.Contains(askReason(t, out), "tq/commit-secret") {
 		t.Fatalf("claude must still get the ask: %q", out)
 	}
 }
 
-func TestCodexHookOutputAllowWritesNothing(t *testing.T) {
+func TestCodexAnswerAllowWritesNothing(t *testing.T) {
 	var b bytes.Buffer
-	if code := codexHookOutput(&b, policy.ToolCall{Tool: "Bash"}, policy.Decision{}); code != 0 || b.Len() != 0 {
+	if code := codexAnswer(&b, policy.ToolCall{Tool: "Bash"}, policy.Decision{}); code != 0 || b.Len() != 0 {
 		t.Fatalf("allow: %d %q", code, b.String())
 	}
 }
@@ -76,23 +74,5 @@ func TestRefuseAgentAndRequireHuman(t *testing.T) {
 	}
 	if err := requireHuman(strings.NewReader(""), &bytes.Buffer{}, "tq mode set"); !errors.Is(err, runner.ErrHumanOnly) {
 		t.Fatalf("non-TTY must be refused: %v", err)
-	}
-}
-
-func TestManifestRewriteKeepsModeKeys(t *testing.T) {
-	body := "guard:\n  mode: strict\n  rules_override:\n    tq/iac-apply: ask\n  projects:\n    demo-todo: { mode: relaxed }\n  headless_mode: default\n  codex:\n    sandbox: read-only\n"
-	root := setupTrustedWorkspaceWithManifest(t, "acme", body)
-	w := wsFor(t, root)
-	if err := editManifestGuard(w, []string{"tq/force-push"}, "off", ""); err != nil {
-		t.Fatal(err)
-	}
-	m, err := manifest.Load(filepath.Join(root, manifest.FileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	g := m.Guard
-	if g.Mode != "strict" || g.RulesOverride["tq/iac-apply"] != "ask" || g.Projects["demo-todo"].Mode != "relaxed" ||
-		g.HeadlessMode != "default" || g.CodexSandbox() != "read-only" || len(g.Disable) != 1 {
-		t.Fatalf("mode keys lost on rewrite: %+v", g)
 	}
 }
