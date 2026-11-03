@@ -1,7 +1,7 @@
 # Tentaqles: product requirements
 
-Status: planning-ready (the 23 decisions of 2026-10-30 and the 3 of 2026-10-31 are settled; outcomes in §17)
-Owner: the repo owner (reach@tentaqles.ai)    Updated: 2026-10-31
+Status: planning-ready (the 23 decisions of 2026-10-30, the 3 of 2026-10-31 and D-27 of 2026-11-03 are settled; outcomes in §17)
+Owner: the repo owner (reach@tentaqles.ai)    Updated: 2026-11-03
 Baseline audited: `main` f66b3e9, tq v0.8.2, plugin 0.15.2
 
 This document replaces the draft at `Tentaqles — Product Requirements Document.md`
@@ -899,6 +899,41 @@ non-goal is mixing clients' data (§3.2).
 - `TestServeAllUntrustedNeverOpened` and `TestWaitingCombinesWorkspaces` pass.
 - No SQL in `internal/hub` joins two workspaces' databases (grep for `ATTACH`).
 
+### FR-73 Card numbers and references: a short increasing id, and any verb takes a number or a title
+Why: Owner request of 2026-11-03 (D-27): ids like `c-kb6ebmsrwln5` are hard to type and
+read; the console and the board should let the human name a card by its number or by its
+title.
+Status: not started
+Evidence: `store.NewID("c")` makes `c-` plus 12 random base32 characters
+(`internal/hub/store/ids.go`); every verb and route takes that exact id (`store.Card(id)`);
+`prd.py` matches `c-[a-z0-9]{12}` in §11 and `plan-cards.py` requires that shape for
+`--parent`.
+Missing: new cards get `c-NNNN`, a per-workspace increasing number assigned in the insert
+transaction (four digits, zero-padded, growing past 9999 when needed); existing cards keep
+their ids and receive a number by creation order at migration, shown beside them. A shared
+resolver turns a card reference into the id: the full id, the number (`12`, `0012`, `#12`,
+`c-0012`) or the title (exact, case-insensitive, then a unique case-insensitive substring;
+several matches list the candidates and refuse). Every `tq hub` verb that takes a card
+(`show`, `move`, `edit`, `run`, `answer`, `comment`, `review`, `open`, `push`; `cancel` keeps
+taking a run id), the web routes and the skills (`refine`, `hub`, the `plan-cards`
+write-back and `--parent`, and `run` once B-35 adds it) accept a reference; `tq hub list` and the board print the number first. `prd.py`, `plan-cards.py`
+and the hub skill accept both id shapes.
+**Acceptance checks**
+- `TestCardNumbersAreSequentialPerWorkspace`: three cards added to an empty store get
+  `c-0001`, `c-0002`, `c-0003`; after migrating a store with 12 old-style cards the next
+  card is `c-0013` and the 12 old cards carry numbers 1 to 12 by creation order with their
+  ids unchanged.
+- `TestResolveCardReference`: `12`, `0012`, `#12`, `c-0012` and the exact title resolve to
+  the same card; a unique substring resolves; with cards `Export invoices` and `Export
+  invoices v2`, the reference `export invoices` resolves to the first and `export` lists
+  both and refuses.
+- `TestCardRouteAcceptsNumber`: `/cards/12` serves the card page of `c-0012`.
+- `test_prd_card_ids_accept_both_shapes` (plugin): `prd.py` accepts `c-0012` and
+  `c-kb6ebmsrwln5` in §11 and skips both on a re-run; `plan-cards.py --parent` accepts
+  `c-0012`, `12` and the parent's title.
+- COMMANDS.md walkthrough: `tq hub show 12`, `tq hub move "Export invoices" "in progress"`
+  and `/tentaqles:refine 12` work as written, verified by hand.
+
 ### Area E: project bootstrap and planning
 
 ### FR-40 Start a project from a mirrored card
@@ -1528,7 +1563,10 @@ plus the terminal check), and the owner's "refuse and name the cause" concerns a
 from inside Claude, where a marker is always set. One process
 snapshot per OS (Windows Toolhelp32 process snapshot through `golang.org/x/sys/windows`,
 never the PowerShell `Get-CimInstance` path; Linux `/proc`; macOS `sysctl`), at most 16
-hops and 200 ms, memoised, with a fake-table seam for tests. The class travels to a
+hops and 200 ms, memoised, with a fake-table seam for tests; over budget means `unknown`
+at once, no retry. A Codex interactive session started by the human is a console too, and
+so is a `claude -p` the human types. `tq session class [--json]` prints the class, the
+reason and the chain as pids and executable names only. The class travels to a
 served hub as `X-TQ-Hub-Session`; the server maps any unlisted value to `run` and the
 legacy `X-TQ-Hub-Agent: 1` still means `run`. `tq doctor` reports class `unknown`.
 **Acceptance checks**
@@ -1546,6 +1584,10 @@ legacy `X-TQ-Hub-Agent: 1` still means `run`. `tq doctor` reports class `unknown
   `unknown`, an unlisted header value and the legacy agent header;
   `TestAPIAgentHeaderRefusesHumanOnly` passes unchanged.
 - `tq doctor` prints a warning row when the class is `unknown`, naming the cause.
+- `TestWalkOverBudgetIsUnknown`: a fake walk that needs 17 hops or exceeds 200 ms yields
+  `unknown` with a reason naming the budget and no second attempt.
+- `TestSessionClassCommand`: `tq session class --json` prints `class`, `reason` and `chain`
+  entries with `pid` and `exe` and no `cmdline` key, exit 0 in every class.
 
 ### FR-70 The console drives the hub as the human's proxy
 Why: D-24, D-25: the human never types tq commands for board work; a `!`-prefixed command
@@ -1804,7 +1846,7 @@ is what its spec required; for a planned release it is the acceptance checks of 
 | Release 2 | FR-10, FR-14, FR-30, FR-31, FR-32, FR-33, FR-34, FR-35, FR-36, FR-37, FR-38, FR-39, FR-42, FR-44, FR-46, FR-47, FR-48, FR-49, FR-54, FR-57, FR-58, FR-59 | Hub core (spec A, PRs #31, #33, #34) and board sync (spec B, PR #46), plugin 0.13.0–0.14.0 (shipped 2026-10-21 to 2026-10-28) |
 | Release 3 | FR-55, FR-67 | Data and ML packs (spec C) and cloud and db packs (spec D, counted as release 4 by the specs), one PR #50, tq v0.8.0, plugin 0.15.0 (shipped 2026-10-29) |
 | Release 4 | FR-18, FR-19, FR-20, FR-22, FR-23, FR-27, FR-28 | Guard modes (spec E, PR #49, tq v0.8.0) and the hardening of v0.8.1–v0.8.2: guard clear-cut fixes, threat model, checksums and provenance (shipped 2026-10-29 to 2026-10-30) |
-| Release 5 | FR-69, FR-70, FR-71, FR-72, FR-40, FR-36, FR-58, FR-47, FR-42, FR-48, FR-54, FR-57, FR-22, FR-20, FR-18, FR-26, FR-68 | The console drives the board (session classes, console answers, decisions reach the console, the one-command day); close the loop: a card becomes a project and comes back approved on the company board; decisions carry recommendation and blocked; headless asks are rule-aware; the human-only gaps are closed; the modes are renamed and `guarded` skips force-push and system changes; the PII-under-bypass report is verified and fixed; the docs match the code |
+| Release 5 | FR-69, FR-70, FR-71, FR-72, FR-73, FR-40, FR-36, FR-58, FR-47, FR-42, FR-48, FR-54, FR-57, FR-22, FR-20, FR-18, FR-26, FR-68 | The console drives the board (session classes, console answers, decisions reach the console, the one-command day); close the loop: a card becomes a project and comes back approved on the company board; decisions carry recommendation and blocked; headless asks are rule-aware; the human-only gaps are closed; the modes are renamed and `guarded` skips force-push and system changes; the PII-under-bypass report is verified and fixed; the docs match the code |
 | Release 6 | FR-06, FR-12, FR-08, FR-03, FR-11, FR-10, FR-21, FR-28, FR-30, FR-32, FR-33, FR-35, FR-41, FR-51, FR-53 | Isolation completeness: shim folders and CLI provisioning, Chrome and Edge profiles, prompt and title indicator, banner at onboarding, full onboarding prompts and the terminal close, the four new categories with production tags, OpenCode, the Markdown card mirror, tracker status on tiles, read-only assignee/attachments/comments, publish with lane and tags, the PRD accept command, optional gates configurable |
 | Release 7 | FR-52, FR-63, FR-62, FR-56, FR-07, FR-60, FR-04 | Evals and knowledge: evals gate and checklist evals (then the visual review gate on top), capture, the KB pipeline starting with docs folders and the tracker, Jev families promoted to enforce where the eval allows, stack preferences resolved, GUI manifest editing and switching, Kimi Code |
 
@@ -1827,6 +1869,7 @@ Hub cards (written by `/tentaqles:plan-cards`; an FR listed here is skipped on t
 - FR-70: c-ejtxditl6ez7
 - FR-71: c-cweaf6wtgo5f
 - FR-72: c-xh4kjsxwmw4a
+- FR-73: c-tuwqub2gpvmb
 <!-- /tq:cards -->
 
 ## 12. Status map against the original PRD
@@ -1915,6 +1958,7 @@ rest. Each row names its FR, why it sits where it does, and what it depends on.
 | B-34 | P0 | Decision `seq`; `tq hub wait`; the asyncRewake watcher; the renderer script; `/tentaqles:hub` answers after AskUserQuestion; the prompt-submit line | FR-71 | Decisions reach the console in minutes, not when the human remembers to look | B-32, B-33 |
 | B-35 | P0 | `tq hub serve --background`, `ensure`, `stop`; skills `start` and `run`; `refine` writes body and tag | FR-72 | The one-command day end to end | B-33, B-34 |
 | B-36 | P1 | TM-7: bind each console answer to a signed AskUserQuestion record; deny `tq claude-hook` from the Bash tool | FR-70 | Turns the skill protocol into a check before AR3 expires (2027-01-28) | B-34 |
+| B-37 | P0 | Card numbers (`c-NNNN`) and references by number or title in every hub verb, the routes and the skills | FR-73 | The console types card references all day; random ids are unreadable | none (D-27 decided); the `run` skill part waits for B-35 |
 
 ## 14. Conflicts and flags
 
@@ -2048,8 +2092,8 @@ sync, data/ml packs, cloud/db packs and guard modes specs; TM = threat model.
 | Jev stays (Laya discarded); TypeSafe direct, not through a gateway | owner decision 2026-10-09 | memory note |
 | Dev workspace loads the plugin from the local folder; every other identity from the pinned release | development loop vs stability | session 2026-10-29 |
 
-Decisions of 2026-10-30 and 2026-10-31 on this document (the repo owner answered each
-question in §10 as it stood; the FRs they touch carry the same `D-nn`):
+Decisions of 2026-10-30, 2026-10-31 and 2026-11-03 on this document (the repo owner answered
+each question as it stood; the FRs they touch carry the same `D-nn`):
 
 | # | Decision | Outcome |
 |---|---|---|
@@ -2081,6 +2125,7 @@ question in §10 as it stood; the FRs they touch carry the same `D-nn`):
 | D-24 | Console sessions | The human's interactive top-level `claude` (class `console`) answers decisions and starts, moves, edits and refines cards as the human's proxy after a multiple-choice question; supersedes D-18 and the parts of D-10 and B §9 that treated every Claude session alike; console comments stay agent comments; the hub stays the runner (D-17); residual risk AR3, hardening TM-7 |
 | D-25 | `!` commands | A command typed with Claude Code's `!` prefix runs in the console and counts as the human for board work; it is not a terminal for D-26 |
 | D-26 | What stays at the terminal | `tq allow`, `tq mode`, `tq guard`, `tq unattended`, logins (D-08), `tq secret` writes, `tq hub serve --bind` off loopback, and the hub's key and token verbs (`tq hub key\|token\|serve-key`, reserved by the `tq/human-answer` rule and not implemented today): refused from every class but `terminal`. Pack approvals are answered from the console too, keychain-signed by tq; the board page still refuses them |
+| D-27 | Card ids and references | New cards are `c-NNNN`, a per-workspace increasing number; old ids stay valid and get a number; every verb, route and skill takes the number or the title (2026-11-03) |
 
 Decisions of 2026-10-31 (D-24 to D-26) were taken while planning the console; they
 supersede D-18 and the agent-session wording of D-10, whose refusals stand for `console`,
