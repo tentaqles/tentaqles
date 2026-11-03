@@ -1654,8 +1654,10 @@ decision appears or a watched run ends (SSE `/events` plus `/api/waiting` agains
 hub, `ChangeStamp` polling in direct mode; exit 0 on an event, 3 on timeout, 4 when another
 waiter holds the session lock, 5 without a hub or board; read-only, every class); a plugin
 watcher hook (`plugin/scripts/hub-watch.py`, `async` and `asyncRewake` on `SessionStart`
-and `UserPromptSubmit`) that exits 0 at once in run, nested and headless sessions and
-otherwise wakes the console with one paragraph when `wait` returns; a prompt-submit line
+and `UserPromptSubmit`, on by default, off with `hub.watch: false` in the manifest or
+`TENTAQLES_HUB_WATCH=0`) that exits 0 at once in run, nested and headless sessions and
+otherwise wakes the console with one paragraph when `wait` returns for a new decision or
+a run that failed, was cancelled or stopped over budget; a prompt-submit line
 `hub: N decisions waiting (#seq card title · kind, …)` in console sessions; a deterministic
 renderer (`plugin/scripts/hub-decisions.py`) that turns the waiting list into the exact
 AskUserQuestion blocks (header `hub #<seq>`, the Card line first, options exactly the
@@ -1676,6 +1678,10 @@ after the human picked; the board stays equivalent (first answer wins).
   prints one paragraph naming card, title, `#seq` and kind to stderr and exits 2.
 - `test_hooks_json.py`: the watcher appears once in `SessionStart` and once in
   `UserPromptSubmit` with `async`, `asyncRewake` and a `timeout`.
+- `TestHubWaitWakesOnFailedRun`: a run that fails, is cancelled or stops over budget ends
+  `wait` with exit 0 and a run event; a run that finishes does not.
+- The watcher exits 0 silently under `TENTAQLES_HUB_WATCH=0` or a manifest `hub.watch:
+  false` (`test_hub_watch.py`).
 - `TestPromptSubmitHubLine`: in a console session with two pending decisions the
   prompt-submit hook adds one line naming both within 300 ms.
 - `TestAnswerRaceWithTerminal` gains a console case: a board answer followed by a console
