@@ -1,4 +1,8 @@
-"""Personal data is masked at the memory exits, by the workspace's declared classes.
+"""Secrets and checksummed identifiers are masked at the memory exits.
+
+The manifest ``data:`` block is no longer read (plugin 0.16.0): e-mail and phone stay
+unless a caller asks for the ``pii`` class explicitly; CPF, CNPJ, card and IBAN are
+always masked at an exit.
 
 Every identifier below is a published test value with a valid checksum, not a
 real person's data:
@@ -19,7 +23,6 @@ from pathlib import Path
 import pytest
 
 from tentaqles import privacy
-from tentaqles.memory import jev_gate
 from tentaqles.memory.consolidator import MemoryConsolidator
 from tentaqles.memory.ingest import ingest_markdown_dirs
 from tentaqles.memory.store import MemoryStore
@@ -32,7 +35,6 @@ CARD = "4111 1111 1111 1111"
 IBAN = "GB82 WEST 1234 5698 7654 32"
 EMAIL = "ana.silva@example.com"
 GH_TOKEN = "ghp_" + "A1b2C3d4E5" * 3 + "F6g7H8"  # 36 alphanumerics after ghp_
-STRICTEST = ["checksummed", "pii", "financial"]
 
 
 @pytest.fixture(autouse=True)
@@ -40,12 +42,9 @@ def _no_embeddings(monkeypatch):
     monkeypatch.setattr(MemoryStore, "_embed", lambda self, text: None)
 
 
-def _workspace(root: Path, data_block: str | None) -> Path:
+def _workspace(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    body = "schema: tentaqles-client-v2\nclient: acme\n"
-    if data_block is not None:
-        body += data_block
-    (root / ".tentaqles.yaml").write_text(body, encoding="utf-8")
+    (root / ".tentaqles.yaml").write_text("schema: tentaqles-client-v2\nclient: acme\n", encoding="utf-8")
     return root
 
 
@@ -61,11 +60,9 @@ def test_no_classes_is_secrets_only():
     assert events == ["github_pat"]
 
 
-def test_read_path_helpers_keep_personal_data():
-    from tentaqles.workflow._common import redact
-
+def test_read_path_keeps_personal_data():
     diff = f'+    assert is_valid_cpf("{CPF}")\n+    assert luhn("4111111111111111")'
-    assert redact(diff) == diff
+    assert privacy.redact_text(diff) == (diff, [])
 
 
 def test_checksummed_baseline_leaves_email():
@@ -134,18 +131,14 @@ def test_audit_log_context_never_holds_pii(tmp_path: Path):
 # --- classes ----------------------------------------------------------------
 
 
-def test_exit_classes_from_manifest():
-    assert privacy.exit_classes(None) == ["checksummed"]
-    assert privacy.exit_classes({}) == ["checksummed"]
-    assert privacy.exit_classes({"data": {"classes": ["pii", "financial"]}}) == STRICTEST
-    assert privacy.exit_classes({"data": {"classes": ["children"]}}) == ["checksummed", "pii"]
-    assert privacy.exit_classes({"data": {"classes": ["sensitive", "secrets"]}}) == ["checksummed", "pii"]
-    assert privacy.exit_classes({"data": {"classes": ["all"]}}) == STRICTEST
-
-
-@pytest.mark.parametrize("data", ["pii", {"classes": "pii"}, {"classes": ["pii", "biometric"]}, {"classes": [3]}])
-def test_exit_classes_unreadable_data_block_is_strictest(data):
-    assert privacy.exit_classes({"data": data}) == STRICTEST
+@pytest.mark.parametrize("manifest", [
+    None, {}, {"client": "acme"},
+    {"data": {"classes": ["pii", "financial"]}}, {"data": {"classes": ["all"]}},  # blocks that used to widen
+    {"data": "pii"}, {"data": {"classes": []}}, {"data": {"classes": ["biometric"]}},  # blocks that used to fail closed
+])
+def test_exit_classes_is_the_baseline_whatever_the_manifest_says(manifest):
+    # The manifest `data:` block is no longer read: every exit masks secrets plus checksummed ids.
+    assert privacy.exit_classes(manifest) == ["checksummed"]
 
 
 @pytest.mark.parametrize("bad", [[], ["biometric"], ["pii", "nope"]])
@@ -172,13 +165,17 @@ def test_redact_str_fails_closed():
     assert privacy.redact_str(object()) == "[REDACTED:error]"
 
 
-def test_workspace_classes(tmp_path: Path):
-    assert privacy.workspace_classes(_workspace(tmp_path / "a", None)) == ["checksummed"]
-    assert privacy.workspace_classes(_workspace(tmp_path / "b", "data:\n  classes: [pii]\n")) == ["checksummed", "pii"]
+def test_workspace_classes_is_the_baseline_without_reading_the_manifest(tmp_path: Path):
+    assert privacy.workspace_classes(_workspace(tmp_path / "a")) == ["checksummed"]
+    with_block = _workspace(tmp_path / "b")
+    (with_block / ".tentaqles.yaml").write_text(
+        "schema: tentaqles-client-v2\nclient: acme\ndata:\n  classes: [pii]\n", encoding="utf-8")
+    assert privacy.workspace_classes(with_block) == ["checksummed"]
     broken = tmp_path / "c"
     broken.mkdir()
     (broken / ".tentaqles.yaml").write_text("schema: [unclosed\n", encoding="utf-8")
-    assert privacy.workspace_classes(broken) == STRICTEST
+    assert privacy.workspace_classes(broken) == ["checksummed"]
+    assert privacy.workspace_classes(tmp_path / "missing") == ["checksummed"]
 
 
 def test_redaction_of_a_megabyte_summary_is_fast():
@@ -194,37 +191,36 @@ def test_redaction_of_a_megabyte_summary_is_fast():
 # --- memory.db ---------------------------------------------------------------
 
 
-def test_store_masks_by_workspace_classes(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
+def test_store_masks_checksummed_ids_in_summary_tags_and_metadata(tmp_path: Path):
+    s = MemoryStore(_workspace(tmp_path))
     try:
-        s.start_session(tags=[f"client {EMAIL}"], metadata={"who": EMAIL, "n": 1})
+        s.start_session(tags=[f"client {CPF}"], metadata={"who": CPF, "n": 1})
         s.end_session(summary=f"talked to {EMAIL} about CPF {CPF}")
         summary = s.get_last_session()["summary"]
-        assert "[REDACTED:email]" in summary and "[REDACTED:cpf]" in summary
-        assert EMAIL not in summary and CPF not in summary
+        assert "[REDACTED:cpf]" in summary and EMAIL in summary and CPF not in summary
         tags, meta = s._conn.execute("SELECT tags, metadata FROM sessions").fetchone()
-        assert EMAIL not in tags and EMAIL not in meta and "[REDACTED:email]" in meta
+        assert CPF not in tags and CPF not in meta and "[REDACTED:cpf]" in meta
         assert json.loads(meta)["n"] == 1
-        text = " ".join(str(r) for r in s.search_memory("ana")) + s.get_context_summary()
-        assert "ana.silva" not in text and "529.982" not in text
+        text = " ".join(str(r) for r in s.search_memory("talked")) + s.get_context_summary()
+        assert "529.982" not in text
     finally:
         s.close()
 
 
 def test_store_masks_semantic_facts(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path))
     try:
-        s.record_semantic_fact(fact=f"billing contact is {EMAIL}", source_sessions=["s1"],
-                               tags=[EMAIL], query_hint=f"who is {EMAIL}")
+        s.record_semantic_fact(fact=f"billing contact is {CPF}", source_sessions=["s1"],
+                               tags=[CPF], query_hint=f"who is {CPF}")
         fact, tags, hint = s._conn.execute("SELECT fact, tags, query_hint FROM semantic_memories").fetchone()
-        assert fact == "billing contact is [REDACTED:email]"
-        assert EMAIL not in tags and EMAIL not in hint
+        assert fact == "billing contact is [REDACTED:cpf]"
+        assert CPF not in tags and CPF not in hint
     finally:
         s.close()
 
 
-def test_store_without_data_block_keeps_email_but_masks_cpf(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path, None))
+def test_store_keeps_email_but_masks_cpf(tmp_path: Path):
+    s = MemoryStore(_workspace(tmp_path))
     try:
         s.end_session(summary=f"{EMAIL} {CPF}")
         assert s.get_last_session()["summary"] == f"{EMAIL} [REDACTED:cpf]"
@@ -232,30 +228,20 @@ def test_store_without_data_block_keeps_email_but_masks_cpf(tmp_path: Path):
         s.close()
 
 
-def test_store_with_broken_manifest_uses_strictest(tmp_path: Path):
+def test_store_with_broken_manifest_still_masks_checksummed_ids(tmp_path: Path):
     tmp_path.mkdir(exist_ok=True)
     (tmp_path / ".tentaqles.yaml").write_text("schema: [unclosed\n", encoding="utf-8")
     s = MemoryStore(tmp_path)
     try:
-        assert s.classes == STRICTEST
-        s.end_session(summary=f"mail {EMAIL}")
-        assert s.get_last_session()["summary"] == "mail [REDACTED:email]"
+        assert s.classes == ["checksummed"]
+        s.end_session(summary=f"mail {EMAIL} cpf {CPF}")
+        assert s.get_last_session()["summary"] == f"mail {EMAIL} cpf [REDACTED:cpf]"
     finally:
         s.close()
 
 
-def test_stores_do_not_share_classes(tmp_path: Path):
-    strict = MemoryStore(_workspace(tmp_path / "pii", "data:\n  classes: [pii]\n"))
-    loose = MemoryStore(_workspace(tmp_path / "plain", None))
-    try:
-        strict.end_session(summary=f"mail {EMAIL}")
-        loose.end_session(summary=f"mail {EMAIL}")
-        assert strict.get_last_session()["summary"] == "mail [REDACTED:email]"
-        assert loose.get_last_session()["summary"] == f"mail {EMAIL}"
-        assert privacy.redact_str(f"mail {EMAIL}") == f"mail {EMAIL}"  # module default untouched
-    finally:
-        strict.close()
-        loose.close()
+def test_redact_str_default_is_the_baseline():
+    assert privacy.redact_str(f"mail {EMAIL} cpf {CPF}") == f"mail {EMAIL} cpf [REDACTED:cpf]"
 
 
 # --- consolidator --------------------------------------------------------------
@@ -271,32 +257,32 @@ def _legacy_session(store: MemoryStore, sid: str, summary: str) -> None:
 
 
 def test_consolidator_prompt_and_facts_are_masked(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path))
     prompts: list[str] = []
 
     def llm(prompt: str) -> str:
         prompts.append(prompt)
-        return f"Billing questions go to {EMAIL} || who handles billing"
+        return f"Billing goes to the holder of CPF {CPF} || who handles billing"
 
     try:
         _legacy_session(s, "s1", f"called {EMAIL}, CPF {CPF}")
         ids = MemoryConsolidator(s, llm_fn=llm).run_compaction(["s1"])
         assert ids and prompts
-        assert EMAIL not in prompts[0] and CPF not in prompts[0] and "[REDACTED:email]" in prompts[0]
+        assert CPF not in prompts[0] and "[REDACTED:cpf]" in prompts[0]
         fact = s._conn.execute("SELECT fact FROM semantic_memories").fetchone()[0]
-        assert EMAIL not in fact and "[REDACTED:email]" in fact
+        assert CPF not in fact and "[REDACTED:cpf]" in fact
     finally:
         s.close()
 
 
 def test_procedural_memories_are_masked(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path))
     try:
         for i in range(3):
             s._conn.execute(
                 "INSERT INTO decisions (id, session_id, created_at, node_ids, chosen, rejected, rationale, "
                 "confidence, tags) VALUES (?, 'untracked', ?, '[]', ?, '[]', 'r', 'medium', ?)",
-                (f"d{i}", f"2026-10-0{i + 1}T00:00:00+00:00", f"{EMAIL} owns invoicing {i}", json.dumps([EMAIL])),
+                (f"d{i}", f"2026-10-0{i + 1}T00:00:00+00:00", f"{CPF} owns invoicing {i}", json.dumps([CPF])),
             )
         s._conn.commit()
         found = MemoryConsolidator(s).detect_procedural_patterns()
@@ -304,79 +290,51 @@ def test_procedural_memories_are_masked(tmp_path: Path):
         name, steps, trigger, tags = s._conn.execute(
             "SELECT workflow_name, steps, trigger_pattern, tags FROM procedural_memories").fetchone()
         for value in (name, steps, trigger, tags):
-            assert EMAIL not in value and "ana.silva" not in value
-        assert "[REDACTED:email]" in name
+            assert CPF not in value and "52998224725" not in value
+        assert "[REDACTED:cpf]" in name
     finally:
         s.close()
 
 
-# --- ingest, vault, Jev --------------------------------------------------------------
+# --- ingest, vault, meta -------------------------------------------------------------
 
 
 def test_ingest_masks_reference_documents(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path / "ws", "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path / "ws"))
     notes = tmp_path / "notes"
     notes.mkdir()
-    (notes / "a.md").write_text(f"---\ntitle: Notes on {EMAIL}\n---\nCPF {CPF} and {EMAIL}\n", encoding="utf-8")
+    (notes / "a.md").write_text(f"---\ntitle: Notes on {CPF}\n---\nCPF {CPF} and card {CARD}\n", encoding="utf-8")
     try:
         assert ingest_markdown_dirs(s, [notes])["added"] == 1
         title, text = s._conn.execute("SELECT title, text FROM reference_docs").fetchone()
-        assert title == "Notes on [REDACTED:email]"
-        assert text == "CPF [REDACTED:cpf] and [REDACTED:email]"
+        assert title == "Notes on [REDACTED:cpf]"
+        assert text == "CPF [REDACTED:cpf] and card [REDACTED:card]"
     finally:
         s.close()
 
 
 def test_vault_export_masks_legacy_rows(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path / "ws", "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path / "ws"))
     try:
         _legacy_session(s, "s1", f"called {EMAIL} about card {CARD}")
-        manifest = {"client": "acme", "data": {"classes": ["pii"]}}
-        written = export_workspace(s, manifest, KnowledgeConfig(vault_dir=tmp_path / "vault"))
+        written = export_workspace(s, {"client": "acme"}, KnowledgeConfig(vault_dir=tmp_path / "vault"))
         assert written
         blob = "\n".join(p.read_text(encoding="utf-8") for p in written)
-        assert EMAIL not in blob and "4111" not in blob
-        assert "[REDACTED:email]" in blob and "[REDACTED:card]" in blob
+        assert "4111" not in blob and "[REDACTED:card]" in blob
     finally:
         s.close()
 
 
-def test_jev_capture_payload_masks_by_workspace(tmp_path: Path):
-    ws = _workspace(tmp_path, "data:\n  classes: [pii]\n")
-    payload = jev_gate.capture_payload(str(ws), "Bash", f"mail {EMAIL} cpf {CPF}", 0)
-    assert payload["text"] == "mail [REDACTED:email] cpf [REDACTED:cpf]"
-    explicit = jev_gate.capture_payload(str(ws), "Bash", f"mail {EMAIL}", 0, classes=["checksummed"])
-    assert explicit["text"] == f"mail {EMAIL}"
-
-
-def test_jev_recall_payload_masks_by_store_classes(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
-    try:
-        _legacy_session(s, "s1", f"last time {EMAIL}")
-        for i in range(7):
-            s._conn.execute(
-                "INSERT INTO semantic_memories (id, created_at, fact, category, strength, recall_count, "
-                "source_sessions, tags) VALUES (?, ?, ?, 'general', 1.0, 0, '[]', '[]')",
-                (f"f{i}", "2026-10-01T00:00:00+00:00", f"fact {i} about {EMAIL}"),
-            )
-        s._conn.commit()
-        payload = jev_gate.recall_payload(str(tmp_path), s)
-        blob = json.dumps(payload)
-        assert EMAIL not in blob and "[REDACTED:email]" in blob
-    finally:
-        s.close()
-
-
-def test_meta_memory_masks_summary_by_workspace(tmp_path: Path):
+def test_meta_memory_masks_summary_and_nodes(tmp_path: Path):
     from tentaqles.memory.meta import MetaMemory
 
-    ws = _workspace(tmp_path / "ws", "data:\n  classes: [pii]\n")
+    ws = _workspace(tmp_path / "ws")
     meta = MetaMemory(db_path=tmp_path / "meta.db")
     try:
-        meta.update_workspace("acme", "Acme", str(ws), f"mailed {EMAIL} re CPF {CPF}", [f"notes/{EMAIL}.md"])
+        meta.update_workspace("acme", "Acme", str(ws), f"mailed {EMAIL} re CPF {CPF}", [f"notes/{CPF}.md"])
         summary, nodes = meta._conn.execute("SELECT last_summary, active_nodes FROM workspace_status").fetchone()
-        assert summary == "mailed [REDACTED:email] re CPF [REDACTED:cpf]"
-        assert EMAIL not in nodes
+        assert summary == f"mailed {EMAIL} re CPF [REDACTED:cpf]"
+        assert CPF not in nodes
     finally:
         meta.close()
 
@@ -437,8 +395,7 @@ def test_email_pattern_still_finds_addresses():
 def test_public_and_internal_classes_add_no_detectors():
     text = f"{EMAIL} {CPF}"
     assert privacy.redact_text(text, classes=["internal"])[0] == f"{EMAIL} [REDACTED:cpf]"
-    assert privacy.exit_classes({"data": {"classes": ["public", "internal"]}}) == ["checksummed"]
-    assert privacy.exit_classes({"data": {"classes": ["public", "pii"]}}) == ["checksummed", "pii"]
+    assert privacy.redact_text(text, classes=["public"])[0] == f"{EMAIL} [REDACTED:cpf]"
 
 
 def test_redact_value_masks_nested_strings():
@@ -452,10 +409,10 @@ def test_signal_bus_masks_by_sender_workspace(tmp_path: Path):
     from tentaqles.memory.signals import SignalBus
 
     db = tmp_path / "meta.db"
-    plain = _workspace(tmp_path / "plain", None)
+    plain = _workspace(tmp_path / "plain")
     meta = MetaMemory(db_path=db)
     meta.update_workspace("plain", "Plain", str(plain), "s", [])
-    meta.update_workspace("other", "Other", str(_workspace(tmp_path / "other", None)), "s", [])
+    meta.update_workspace("other", "Other", str(_workspace(tmp_path / "other")), "s", [])
     meta.close()
     bus = SignalBus(meta_db_path=db)
     bus.emit("plain", "other", "custom", f"mail {EMAIL} key {GH_TOKEN} cpf {CPF}", payload={"to": EMAIL})
@@ -475,29 +432,29 @@ def test_signal_bus_masks_by_sender_workspace(tmp_path: Path):
 def test_vault_frontmatter_stays_valid_yaml(tmp_path: Path):
     import yaml
 
-    s = MemoryStore(_workspace(tmp_path / "ws", "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path / "ws"))
     try:
         s._conn.execute(
             "INSERT INTO sessions (id, started_at, ended_at, summary, tags) VALUES (?, ?, ?, ?, ?)",
             ("s1", "2026-10-01T00:00:00+00:00", "2026-10-01T01:00:00+00:00", "x",
-             json.dumps([EMAIL, f"{EMAIL} and more"])),
+             json.dumps([CPF, f"{CPF} and more"])),
         )
         s._conn.commit()
         written = export_workspace(s, {"client": "acme"}, KnowledgeConfig(vault_dir=tmp_path / "vault"))
         note = next(p for p in written if p.parent.name == "sessions").read_text(encoding="utf-8")
         front = yaml.safe_load(note.split("---\n")[1])
-        assert front["tags"] == ["[REDACTED:email]", "[REDACTED:email] and more"]
+        assert front["tags"] == ["[REDACTED:cpf]", "[REDACTED:cpf] and more"]
     finally:
         s.close()
 
 
 def test_store_masks_decisions_pending_touches_and_failures(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path))
     try:
-        s.record_decision(chosen=f"bill {EMAIL}", rationale=f"cpf {CPF}", rejected=[EMAIL], tags=[EMAIL])
-        s.add_pending(f"call {EMAIL}", node_ids=[f"notes/{EMAIL}.md"])
-        s.touch(f"notes/{EMAIL}.md")
-        s.record_tool_failure("pytest -q", f"AssertionError: {EMAIL} != {CPF}")
+        s.record_decision(chosen=f"bill {CPF}", rationale=f"card {CARD}", rejected=[CPF], tags=[CPF])
+        s.add_pending(f"call {CPF}", node_ids=[f"notes/{CPF}.md"])
+        s.touch(f"notes/{CPF}.md")
+        s.record_tool_failure("pytest -q", f"AssertionError: {CPF} != {CARD}")
         rows = [
             s._conn.execute("SELECT chosen, rationale, rejected, tags FROM decisions").fetchone(),
             s._conn.execute("SELECT description, node_ids FROM pending").fetchone(),
@@ -505,18 +462,18 @@ def test_store_masks_decisions_pending_touches_and_failures(tmp_path: Path):
             s._conn.execute("SELECT error FROM tool_failures").fetchone(),
         ]
         blob = json.dumps(rows)
-        assert EMAIL not in blob and CPF not in blob
-        assert rows[0][0] == "bill [REDACTED:email]" and rows[0][1] == "cpf [REDACTED:cpf]"
+        assert CPF not in blob and "4111" not in blob
+        assert rows[0][0] == "bill [REDACTED:cpf]" and rows[0][1] == "card [REDACTED:card]"
     finally:
         s.close()
 
 
 def test_store_upsert_reference_masks(tmp_path: Path):
-    s = MemoryStore(_workspace(tmp_path, "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path))
     try:
-        s.upsert_reference("a.md", 1.0, f"About {EMAIL}", f"mailto:{EMAIL}", "2026-10-01", f"CPF {CPF}")
+        s.upsert_reference("a.md", 1.0, f"About {CPF}", f"https://crm.example/{CPF}", "2026-10-01", f"card {CARD}")
         title, url, text = s._conn.execute("SELECT title, url, text FROM reference_docs").fetchone()
-        assert (title, url, text) == ("About [REDACTED:email]", "mailto:[REDACTED:email]", "CPF [REDACTED:cpf]")
+        assert (title, url, text) == ("About [REDACTED:cpf]", "https://crm.example/[REDACTED:cpf]", "card [REDACTED:card]")
     finally:
         s.close()
 
@@ -549,11 +506,6 @@ def test_ingest_masks_before_handing_to_the_store(tmp_path: Path):
 # --- fix round 2 ---------------------------------------------------------------
 
 
-def test_empty_class_list_in_manifest_is_strictest():
-    assert privacy.exit_classes({"data": {"classes": []}}) == STRICTEST
-    assert privacy.exit_classes({"data": {}}) == ["checksummed"]
-
-
 def _plugin_skill(root: Path) -> Path:
     skill = root / "skills" / "x" / "SKILL.md"
     skill.parent.mkdir(parents=True)
@@ -561,15 +513,15 @@ def _plugin_skill(root: Path) -> Path:
     return root
 
 
-def test_skill_correction_masks_by_client_classes(tmp_path: Path):
+def test_skill_correction_masks_checksummed_ids(tmp_path: Path):
     from tentaqles.skills import record_skill_correction
 
     plugin = _plugin_skill(tmp_path / "plugin")
-    client = _workspace(tmp_path / "client", "data:\n  classes: [pii]\n")
+    client = _workspace(tmp_path / "client")
     result = record_skill_correction("x", f"use {CPF} and card {CARD} for {EMAIL}", plugin, client)
     text = Path(result["path"]).read_text(encoding="utf-8")
-    assert CPF not in text and CARD not in text and EMAIL not in text
-    assert "[REDACTED:cpf]" in text and "[REDACTED:card]" in text and "[REDACTED:email]" in text
+    assert CPF not in text and CARD not in text
+    assert "[REDACTED:cpf]" in text and "[REDACTED:card]" in text
 
 
 def test_skill_correction_into_shared_skill_is_strictest(tmp_path: Path):
@@ -586,7 +538,7 @@ def test_memory_bridge_skill_correction_masks(tmp_path: Path):
     import sys
 
     plugin = _plugin_skill(tmp_path / "plugin")
-    client = _workspace(tmp_path / "client", "data:\n  classes: [pii]\n")
+    client = _workspace(tmp_path / "client")
     script = Path(__file__).resolve().parent.parent / "scripts" / "memory-bridge.py"
     package_root = str(script.parent.parent)  # the skill lives in a temp plugin; the code does not
     env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(plugin), "PYTHONIOENCODING": "utf-8",
@@ -600,16 +552,16 @@ def test_memory_bridge_skill_correction_masks(tmp_path: Path):
     result = json.loads(lines[-1])
     assert "path" in result, result
     text = Path(result["path"]).read_text(encoding="utf-8")
-    assert EMAIL not in text and CPF not in text and "[REDACTED:email]" in text
+    assert CPF not in text and "[REDACTED:cpf]" in text
 
 
-def test_repair_sessions_masks_by_workspace(tmp_path: Path):
+def test_repair_sessions_masks_checksummed_ids(tmp_path: Path):
     # Run in a child: the script's path setup rewraps sys.stdout.
     import subprocess
     import sys
 
     script = Path(__file__).resolve().parent.parent / "scripts" / "repair-sessions.py"
-    ws = _workspace(tmp_path / "ws", "data:\n  classes: [pii]\n")
+    ws = _workspace(tmp_path / "ws")
     db = ws / ".claude" / "memory.db"
     code = (
         "import importlib.util, json, sys\n"
@@ -617,17 +569,10 @@ def test_repair_sessions_masks_by_workspace(tmp_path: Path):
         "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
         "print(json.dumps(mod.mask_summary(sys.argv[3], sys.argv[2])))\n"
     )
-    proc = subprocess.run([sys.executable, "-c", code, str(script), str(db), f"mail {EMAIL} key {GH_TOKEN}"],
+    proc = subprocess.run([sys.executable, "-c", code, str(script), str(db), f"cpf {CPF} key {GH_TOKEN}"],
                           capture_output=True, text=True, timeout=60)
     out = proc.stdout.strip().splitlines()
-    assert out and json.loads(out[-1]) == "mail [REDACTED:email] key [REDACTED:github_pat]", proc.stderr
-
-
-def test_loop_idea_masks_when_classes_given():
-    from tentaqles.workflow import loop
-
-    assert loop.idea_from(f"IDEA: mail {EMAIL}\n") == f"mail {EMAIL}"  # read/display default
-    assert loop.idea_from(f"IDEA: mail {EMAIL}\n", classes=["pii"]) == "mail [REDACTED:email]"
+    assert out and json.loads(out[-1]) == "cpf [REDACTED:cpf] key [REDACTED:github_pat]", proc.stderr
 
 
 @pytest.mark.parametrize("blob", [
@@ -652,7 +597,7 @@ def test_iban_with_unknown_country_is_not_masked():
 def test_ingest_masks_before_truncating(tmp_path: Path):
     # A CPF cut at the MAX_TEXT_CHARS boundary leaves a digit run no detector matches.
     from tentaqles.memory.ingest import MAX_TEXT_CHARS
-    s = MemoryStore(_workspace(tmp_path / "ws", "data:\n  classes: [pii]\n"))
+    s = MemoryStore(_workspace(tmp_path / "ws"))
     notes = tmp_path / "notes"
     notes.mkdir()
     (notes / "a.md").write_text("x" * (MAX_TEXT_CHARS - 6) + " " + CPF + " tail", encoding="utf-8")

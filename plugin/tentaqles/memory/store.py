@@ -259,10 +259,8 @@ class MemoryStore:
         self._db_path = db_dir / "memory.db"
         self._half_life = half_life_days
         self._active_session_id: str | None = None
-        # Personal-data classes this workspace masks at every write. Held per
-        # store (never a module global) so a process that opens several
-        # clients' stores masks each by its own manifest; an unreadable
-        # manifest gives the strictest set.
+        # Classes this store masks at every write: the exit baseline (secrets
+        # plus checksummed identifiers). Held per store, never a module global.
         self._classes = privacy.workspace_classes(workspace_path)
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.execute("PRAGMA journal_mode=WAL")

@@ -255,7 +255,7 @@ def append_to_skill(
 def _redact(text: str, client_root: str | Path | None) -> str:
     """Mask *text* before it is written into a SKILL.md (a file that is committed).
 
-    Masks by the client workspace's data classes; a correction written into
+    Masks secrets and checksummed identifiers; a correction written into
     the plugin's shared skill (no client) gets the strictest set. Fails closed.
     """
     from tentaqles import privacy

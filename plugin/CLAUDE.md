@@ -13,7 +13,8 @@ tentaqles/              Python package (identity, memory, embeddings, privacy, g
   memory/ingest.py      Markdown folders -> reference_docs (path+mtime watermark; note's own date)
   knowledge.py          KnowledgeConfig: manifest knowledge: > <plugin data>/knowledge.yaml > ~/.tentaqles/knowledge.yaml > TENTAQLES_VAULT_DIR
   manifest/loader.py    Walks up from cwd to find .tentaqles.yaml
-  privacy.py            Secret redaction before any disk write
+  privacy.py            Secret and checksummed-id redaction before any disk write
+  prd.py                PRD planning-ready check (prd_status, text_status, open_decision_lines) + find_git_root; used by scripts/prd-status.py and the SessionStart preamble
   embeddings/           fastembed wrapper + graphify integration
 scripts/                Hook and utility scripts (all use _path.py for bootstrap)
   tq_env.sh             Runtime bootstrap — resolves interpreter + PYTHONPATH
@@ -24,13 +25,10 @@ scripts/                Hook and utility scripts (all use _path.py for bootstrap
   bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib); installs in a detached --worker
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
-  jev-memory-gate.py    Detached worker for the shadow Jev memory gates (tentaqles/memory/jev_gate.py)
 skills/                 59 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
 agents/                 13 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer, spec-critic [read-only], arbiter, security-reviewer [read-only], privacy-reviewer [read-only], llm-security-reviewer [read-only], breaker, and the pack reviewers pipeline-reviewer, ml-reviewer, iac-reviewer, db-reviewer [read-only])
 templates/process/      process templates (PRD, ADR, spec slice, fix spec, LEARNINGS, project CLAUDE.md, review contract, threat model, privacy record, incident playbook)
 skills/<name>/references/  checklists with stable row ids (STRIDE, data dictionary, privacy LGPD/GDPR, supply chain SLSA/SBOM, LLM security OWASP LLM 2025 / Agentic 2026)
-tentaqles/workflow/     stdlib-only: build gate (gate.py), overnight loop (loop.py, loopguard.py),
-                        project.py (tq-project config block), prd.py (PRD planning-ready check; FR and §11 release parser, card-id write-back for plan-cards.py)
 hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)
 .claude-plugin/         Plugin manifest (plugin.json)
 tests/                  pytest suite
@@ -55,11 +53,9 @@ tests/                  pytest suite
 
 - **Python scripts** under `scripts/`: start with `from _path import setup_paths; setup_paths()`. Never inline `sys.path.insert` hacks.
 
-- **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`. `redact_text(classes=None)` (read paths) masks secrets only, while `redact_str` applies the checksummed baseline; exits (memory writes, vault, ingest, signals, Jev, model prompts) pass the workspace's data classes (`exit_classes(manifest)`, from the manifest `data:` block; an unknown or empty class list fails closed to the strictest set). Use `redact_str` rather than a local wrapper.
+- **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`. `redact_text(classes=None)` (read paths) masks secrets only, while `redact_str` applies the exit baseline: secrets plus checksummed identifiers (CPF, CNPJ, card, IBAN). Exits (memory writes, vault, ingest, signals, model prompts) all use that baseline: `exit_classes`/`workspace_classes` return `["checksummed"]` and the manifest `data:` block is no longer read (plugin 0.16.0). Use `redact_str` rather than a local wrapper.
 - **Reviewer agents are read-only** (`security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`, and the pack reviewers `pipeline-reviewer`, `ml-reviewer`, `iac-reviewer`, `db-reviewer`: tools Read, Glob, Grep). `breaker` is the only agent with Bash and it binds to 127.0.0.1; its scratch dir is `<root>/.tq-breaker/<slug>/` (data files only, deleted by `build-gate finish`).
-- **Human-only commands**: `tq allow`, `build-gate approve/judge/answer/finish/token`, `dod --override`, `tq pack baseline`, `tq pack ml promote apply` and `tq hub answer` for a pack approval (terminal only) are run by the human; skills remind the user and never run them.
-- **Key isolation caveat**: the build gate's text checks guard against a careless agent, not one set on defeating it, until tq isolates the signing key at the OS level.
-- **Hub-launched sessions**: `tq hub` runs `claude -p` with `TENTAQLES_HEADLESS=1` and `TQ_HUB_TASK` (never `TENTAQLES_HEADLESS_CHILD`, so the session hooks run; never `TQ_BUILD_ACTOR`/`TQ_BUILD_TOKEN`). On-ramps copy `TQ_HUB_TASK` verbatim into the plan's `task`; a headless Phase 0 ends with `TQ_HUB_RELOCATE <worktree> <slug>`. Skills call `tq hub` with `--timeout 2s` and never answer, approve or move a card to done (`/tentaqles:hub` prints `tq hub answer` for the user). Headless sessions never write `.tentaqles.yaml`: they write `docs/privacy-manifest-proposal.yaml` and ask, and `scripts/headless-manifest-guard.py` (PreToolUse) blocks the write.
+- **Human-only commands**: `tq allow` is run by the human in their own terminal; skills remind the user and never run it.
 
 - **Lazy session**: `MemoryStore.end_session()` auto-starts a session if none is active. Don't assume `start_session()` was called.
 
@@ -71,8 +67,6 @@ tests/                  pytest suite
 
 - **Hooks never wait on the network or a model.** Anything slow (pip installs, session saving, `claude -p` fact extraction) goes to a detached worker via `_detach.spawn_detached`. Model calls go through `tentaqles.memory.llm` only, from detached/background code, and honour `TENTAQLES_SEMANTIC_FACTS=0`.
 
-- **Jev calls** (`tq decide ask`) follow the same rule: hooks only spawn `scripts/jev-memory-gate.py` detached; the gates are shadow-only (log via `tq decide log`, never change behaviour) and honour `TENTAQLES_JEV_MEMORY=0`.
-
 - **Hook payloads name the tool result `tool_response`** (a dict for Bash: stdout/stderr/interrupted). `tool_output` was never what Claude Code sends; accept it only as a fallback.
 
 - **Text a hook hands to the model must not use `$CLAUDE_PLUGIN_ROOT`**: it is expanded in hooks.json commands but not set in the Bash tool. Embed the absolute path resolved from `__file__` (forward slashes).
@@ -80,8 +74,6 @@ tests/                  pytest suite
 - **PreCompact stdout never reaches the model.** Context that must survive compaction is printed by the SessionStart hook when `source == "compact"` (`tentaqles.memory.compact_context`).
 
 - **Headless child guard**: `TENTAQLES_HEADLESS_CHILD=1` marks the plugin's own `claude -p` subprocess; hooks that save or prompt (SessionEnd, Stop) must exit early when it is set.
-
-- **Skill-owned hooks stay out of `hooks.json`**: `/tentaqles:build` installs its gate per project (`build-gate.py setup` → `.claude/settings.local.json`, 20 s timeout), and the loop passes its guard to its child via `--settings`. Both hook scripts are stdlib-only and never touch the network.
 
 - **No cross-client data**: each workspace has its own `memory.db`. The global `meta.db` stores only display names, stats, and signals — never code or decisions.
 

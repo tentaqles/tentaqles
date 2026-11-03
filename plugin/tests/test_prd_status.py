@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tentaqles.workflow.prd import prd_status
+from tentaqles.prd import prd_status
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "prd-status.py"

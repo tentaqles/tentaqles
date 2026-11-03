@@ -123,42 +123,16 @@ def _get_temporal_context(cwd: str, context: dict) -> str:
         except Exception:
             pass
 
-        _shadow_recall_gate(cwd, store)
-
         store.close()
         return summary
     except Exception:
         return ""
 
 
-def _shadow_recall_gate(cwd: str, store) -> bool:
-    """Let a detached worker ask Jev how it would rank the surfaced memory.
-
-    Shadow only: the summary printed above is unchanged. Only local reads
-    happen here (a few SQLite queries); the Jev call is in the worker, so
-    this hook never waits on the network. Returns True when a worker started.
-    """
-    try:
-        from tentaqles.memory import jev_gate
-        from tentaqles.manifest.loader import load_manifest
-
-        if not jev_gate.should_gate(load_manifest(cwd)):
-            return False
-        payload = jev_gate.recall_payload(cwd, store)
-        if payload is None:
-            return False
-        from _detach import spawn_detached
-
-        return jev_gate.spawn(payload, spawn_detached)
-    except Exception:
-        return False
-
-
 def _prd_context(cwd: str) -> str:
     """One line pointing at the PRD when the repo keeps one (spec §8.3)."""
     try:
-        from tentaqles.workflow._common import find_git_root
-        from tentaqles.workflow.prd import prd_status
+        from tentaqles.prd import find_git_root, prd_status
 
         st = prd_status(Path(find_git_root(cwd) or cwd))
         if not st["exists"]:
@@ -166,55 +140,6 @@ def _prd_context(cwd: str) -> str:
         ready = "yes" if st["planning_ready"] else "no"
         return ("Reading path: docs/prd.md, docs/adr/, then your spec slice · "
                 f"PRD: {st['frs']} FRs, {st['open_decisions']} open NEEDS-DECISION, planning-ready: {ready}")
-    except Exception:
-        return ""
-
-
-HUB_READ_BUDGET = 0.3  # seconds: the preamble never waits longer on the hub database (spec A §13.3)
-
-
-def _hub_db_path(context: dict) -> Path | None:
-    """$TQ_HOME/hub/<workspace>/hub.db when it exists; the workspace is TQ_WS, else the client root's name."""
-    ws = (os.environ.get("TQ_WS") or "").strip()
-    if not ws:
-        root = (context or {}).get("client_root") or ""
-        ws = Path(root).name if root else ""
-    if not ws or ws in (".", "..") or any(c in ws for c in "/\\:"):
-        return None
-    home = os.environ.get("TQ_HOME") or str(Path.home() / ".tentaqles")
-    p = Path(home) / "hub" / ws / "hub.db"
-    return p if p.is_file() else None
-
-
-def _count_pending(db: Path, out: list) -> None:
-    import sqlite3
-
-    try:
-        conn = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=HUB_READ_BUDGET)
-        try:
-            out.append(int(conn.execute("SELECT COUNT(*) FROM decisions WHERE status = 'pending'").fetchone()[0]))
-        finally:
-            conn.close()
-    except Exception:
-        pass
-
-
-def _hub_context(context: dict) -> str:
-    """One line when decisions wait on the human; a read-only SQLite read, never the network."""
-    try:
-        db = _hub_db_path(context)
-        if db is None:
-            return ""
-        import threading
-
-        out: list = []
-        t = threading.Thread(target=_count_pending, args=(db, out), daemon=True)
-        t.start()
-        t.join(HUB_READ_BUDGET)
-        if t.is_alive() or not out or out[0] <= 0:
-            return ""
-        n = out[0]
-        return f"{n} decision{'s' if n != 1 else ''} waiting on you (tq hub open)"
     except Exception:
         return ""
 
@@ -268,9 +193,6 @@ def main() -> None:
             prd_line = _prd_context(cwd)
             if prd_line:
                 print(prd_line)
-            hub_line = _hub_context(context)
-            if hub_line:
-                print(hub_line)
             temporal = _get_temporal_context(cwd, context)
             if temporal:
                 print(temporal)
@@ -293,9 +215,6 @@ def main() -> None:
         prd_line = _prd_context(cwd)
         if prd_line:
             summary += "\n\n" + prd_line
-        hub_line = _hub_context(context)
-        if hub_line:
-            summary += "\n\n" + hub_line
 
         temporal = _get_temporal_context(cwd, context)
         if temporal:

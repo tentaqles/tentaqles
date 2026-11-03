@@ -76,8 +76,8 @@ class MetaMemory:
     ) -> None:
         """Update workspace status after a session ends.
 
-        The summary and node ids are masked by the workspace's own data classes
-        (read from the manifest at *root_path*) before they reach meta.db.
+        The summary and node ids are masked (secrets plus checksummed identifiers)
+        before they reach meta.db.
         """
         from tentaqles import privacy
 

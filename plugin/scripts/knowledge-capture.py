@@ -244,28 +244,7 @@ def main() -> None:
             except Exception:
                 pass
 
-    if decision_hit:
-        _shadow_capture_gate(manifest, cwd, tool_name, combined_text, len(mentioned_paths))
-
     sys.exit(0)
-
-
-def _shadow_capture_gate(manifest, cwd: str, tool_name: str, text: str, n_paths: int) -> bool:
-    """Ask Jev, in a detached worker, whether the regex hit was worth keeping.
-
-    Shadow only: the touches above already happened and are never undone.
-    Returns True when a worker was started.
-    """
-    try:
-        from tentaqles.memory import jev_gate
-
-        if not jev_gate.should_gate(manifest):
-            return False
-        from _detach import spawn_detached
-
-        return jev_gate.spawn(jev_gate.capture_payload(cwd, tool_name, text, n_paths), spawn_detached)
-    except Exception:
-        return False
 
 
 if __name__ == "__main__":

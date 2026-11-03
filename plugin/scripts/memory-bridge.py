@@ -100,8 +100,8 @@ def _dispatch(
     client_name: str,
 ) -> None:
     """Route event to the appropriate MemoryStore method."""
-    # Every text this bridge writes (memory.db, SKILL.md) is masked by the
-    # workspace's own data classes, as the store does.
+    # Every text this bridge writes (memory.db, SKILL.md) is masked the way
+    # the store masks: secrets plus checksummed identifiers.
     try:
         from tentaqles.privacy import workspace_classes
 
