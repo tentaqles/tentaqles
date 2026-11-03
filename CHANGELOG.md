@@ -6,6 +6,23 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+### Removed (the cut, decided 2026-11-03)
+
+- tentaqles narrows to identity isolation plus secrets protection; the plugin keeps its
+  memory, preamble and skills. Removed from `main` after v0.8.2, which stays as the tag of
+  the last full product: the hub board, headless runs and tracker sync (`tq hub`), the packs
+  (`tq pack`), the build gate, guard modes and every guard rule beyond identity drift and
+  secrets (`tq mode`, `tq guard`, `tq unattended`, `tq allow --mode|--global|--bypass`,
+  `tq run --tq-mode`, `tq env --off|--on`, the `tq off`/`tq on` shell functions), the
+  personal-data exit rules and `tq redact`, `tq decide` (Jev), `tq insights`, the manifest
+  blocks `decision:`, `guard:`, `tracker:`, `packs:` and `data:`, the desktop app and the
+  root templates. The requirements for the slim product are in `docs/prd.md`.
+- Migration: existing manifests need nothing; dropped blocks are ignored and `tq doctor`
+  warns about them; removing a block changes the manifest hash, so run `tq allow <ws>`
+  afterwards. `~/.tentaqles/hub`, `packs`, `guard`, `guard.yaml`, `decide` and `build-gate`
+  are left in place and never deleted by tq. Codex identities: run `tq settings render --all`
+  once.
+
 ### Install
 
 - **Changed:** with a logged-in `gh`, `install.ps1` and `install.sh` also check the

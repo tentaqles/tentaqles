@@ -1,47 +1,58 @@
-The product is a identity manager for developers that works for multiple companies or multiple clients. It helps to isolate clients/company data from one identity to another, by creating an isolated development environment for each. So, for each company/client, the identity holds:
-- An isolated terminal(powershell, pws, git bash and others) with specific tools (for example, a client that works with aws only, do not get azure cli installed/accecible trough that terminal)
-- Isolated logins and sessions for agentic AIs (Claude Code, OpenAI Codex, Open Code, Kimi Code and etc) so for exemple: Two of the companies the developer works for provides their own claude code subscription, so each indentity terminal is logged to their respective claude code account.
-- Isolated platforms connection, such as git providers (github, gitlab, Azure DevOps, bitbucket and etc.), cloud providers (aws, azure, gcp and etc), data platforms (databricks, snowflake and etc), email providers (google, microsoft, and others)
-- isolated tech stack and preferences 
-- isolated chrome/edge profiles so whenever a terminal/agent sends command to interact with browser it opens the correc google chrme or edge or safari profile
+The product is an identity manager for developers who work for multiple companies or
+clients. It isolates each client's data and tools from the others by giving each client an
+isolated development environment. For each company or client, the identity holds:
+- An isolated terminal (PowerShell, pwsh, Git Bash and others) with specific tools; a client
+  that works with AWS only does not get the Azure CLI installed or reachable through that
+  terminal.
+- Isolated logins and sessions for agentic AIs (Claude Code, OpenAI Codex, OpenCode, Kimi
+  Code and others). Two companies the developer works for may each provide their own Claude
+  Code subscription, so each identity terminal is logged in to its own Claude Code account.
+- Isolated platform connections: git providers (GitHub, GitLab, Azure DevOps, Bitbucket),
+  cloud providers (AWS, Azure, GCP), data platforms (Databricks, Snowflake), email providers
+  (Google, Microsoft) and the rest.
+- Isolated tech stack and preferences.
+- Isolated Chrome or Edge profiles, so whenever a terminal or an agent interacts with a
+  browser it opens the correct profile.
 
 How it should work
 
-A developer will start working with a new client. It creates a folder with a client name under the main repo/client folders. It then opens a terminal and type a tentaqles command that will make tat folder run with it's own terminal, claude code account, codex account, github cli, azure cli, aws cli and all other clis and tools that are identity related. The command (likely tentaqles init) on terminal will ask for all need to know, providing checkboxes or textinput or boolean/multistate selection like:
-- What is the identity email: text input
-- The git provider: checkbox for single option (github, gitlab, bitbucket, Azure DevOps and etc), Other, Skip
-- Cloud providers: checkbox with multiple selection allowed (Azure, Aws, Google Cloud Platform, others, skip)
-- Team/Meeting platform: checkbox with multiple selection allowed (Microsoft Teams, Slack, Discord, Zoom, Google Meets, Others, Skip)
-- Data platforms: checkbox with multiple selection allowed (Databricks, Snowflake, Google Colab, others)m skip,
-- AI harness providers: checkbox with multiple selection allowed (Claude Code, OpenAI Codex, Kimi Code, Open Code, Others, skip)
-- Task Management provider: checkbox for single selection (Asana, Linear, Github Projects, Azure DevOps, Trello, Jira, Others, Skip)
-- Browser and Profile (Google chrome, Microsoft Edge, Safari, Opera and others)
-- Any other possibility not described yet here, but meaningful to day to day developer workflow
+A developer starts working with a new client. They create a folder with the client's name
+under the main clients folder, open a terminal and type a tentaqles command that makes that
+folder run with its own terminal, Claude Code account, Codex account, GitHub CLI, Azure CLI,
+AWS CLI and every other identity-bound CLI and tool. The command (`tq init` and `tq add`)
+asks for what it needs with checkboxes, text inputs or single and multiple selections:
+- The identity email: text input.
+- The git provider: single choice (GitHub, GitLab, Bitbucket, Azure DevOps), Other, Skip.
+- Cloud providers: multiple choice (Azure, AWS, Google Cloud Platform, others, skip).
+- Team and meeting platforms: multiple choice (Microsoft Teams, Slack, Discord, Zoom, Google
+  Meet, others, skip).
+- Data platforms: multiple choice (Databricks, Snowflake, Google Colab, others, skip).
+- AI harness providers: multiple choice (Claude Code, OpenAI Codex, Kimi Code, OpenCode,
+  others, skip).
+- Task management provider: single choice (Asana, Linear, GitHub Projects, Azure DevOps,
+  Trello, Jira, others, skip); only its login is managed, nothing is mirrored.
+- Browser and profile (Google Chrome, Microsoft Edge, Safari, Opera and others).
+- Anything else meaningful to the day-to-day developer workflow.
 
-The system will prepare the yaml file and other necessary settings to adhere with selections. It will install CLIs for the selected providers and the necessary dependencies. After setting it all up, the process will start a new terminal session with the correct terminal identity and will kill the terminal session where "tentaqles init" was started.
+The system prepares the manifest and the other settings for the selections, installs the
+CLIs for the selected providers and their dependencies, then starts a new terminal session
+with the correct identity and closes the terminal where the setup was started.
 
-Now, the developer start his AI harness of choice (Claude Code, for exemple). He will then be prompted to login to the account, where he will log in with the company/client/desired account. After that, he is inside Claude Code (or other agent harness) under the client/company root folder. Here, if possible, tentaqles plugin will already for that harness, if not, he must install the tentaqles plugin.
+The developer then starts the AI harness of choice, Claude Code for example, and is
+prompted to log in to the client's account. Inside Claude Code under the client's root
+folder, the tentaqles plugin is already installed for that harness, or the developer
+installs it. An onboarding skill then drives the login to each configured provider: Slack
+MCP, Linear, Asana, Azure DevOps, Azure CLI, GitHub CLI and so on, by OAuth, token or MCP.
+The developer is then fully connected to the client's stack through the agent: messages,
+email, task management, git, cloud, under that client's identity and no other.
 
-Than it call an obnboarding skill to drive the login and authentication to each set provider during the first setup an any other needed. So it will allow for instance, slack mcp, linear, Asana, Azure devops, Azure cli, github cli, and so on so forth. Oauth, token or mcp to all set up trough the onboarding skill. The developer know is fully connected to the companies tech and management stack trough his AI agent. He can read slack or teams messages, collect email from gmail or outlook or other email provder, can read and write to Task management, can push, clone, pull comment to git provider such as github, azuredevops or gitlab and so on so forth.
+Decision of 2026-11-03
 
-It them syncs all tasks assigend to him from the task provider. it will  pull backlog, todo, in progress, test, qa, done and any other lane the provider has. The developer has it's own mirror of the board that is synced frequentlly with the remote board. The Developer than reads a task assigned to him in backlog, to build the MVP of an application, for example. The card has a description, probably some information, some attachments maybe acceptance criterias and etc. Than the developer starts this as a new project. The companie's boared card will be moved to in progress/doing lane.and a new subfolder will be born in the clients root folder for that project will be born containing already the necessary hooks, commands, claude.md, agent.md, and the scafolding of the project layout such as docs folder, src folder and so on so fdorth. Than, the first thing is that a PRD will be created for that program, like technical  and dffunctional specifications. Once happy with the PRD, the deveoper will have the agent creating a subset of tasks to address each feature and aspect of the goal software/app. Those will become card only under the developers board for that company, not on the company board. The delevoper may sync that card and make it also part of the company boar with whichever tags and at wathever lane it specifies. but standard is only locally. Than, developer can refine the cards with the ai agent a litlle bit longer (skill based) and than finally can tag that card as agent-ready. Once the agent-ready card is moved to "in progress" (or similar) lane, an ai subagent will be deployed to start workinbg on that. that subagent is the orchestrator for that specific task. it can spawn subagents such as researchers, general purposes, code writers, ui, ux and so on so forth. Any decision needed to be taken by the developer will be annoteted into the developers board card. Whenever the developer answer that card, the session will continue. Also, the devewloper can run a command to bring forth any decision pending on him and answer trough the main client/company agent. his answer will be registered in the card and the orchestratior session and subsessions will continue.
-
-The development of the task will follow the development workflow with development, review, Q&a, evals, security and quality gates. whenever a task is finally completed Will be sent to the Delevoper review lane. A developer can run a command to call the review. It will build a HTML stating the goal, the approach, what was done, where it stands, evals metrics if any, and so on so forth. It should have a field for developer to imput feedback for further refinement with a submit button so the agent gets that to context and rewstart process to address developer's input. There is also a approve button that once hit will move the task to done in the DCB (Developer's Company/Client Board). If that task was made a card in the Actual company card, it will be moved for review there. If not, the results of this task will be commented on the Main task that created that task in the first place.
-
-When all tasks for a card are done, that card will than be moved to review. 
-
-This is a simulated and brainstorm of a day's workflow for a fresh start. simmilar behaviour is expected for the other cases when developer is tagged with a new feature or bugfix, analysis or hotfix.
-
-The idea is that trough a Claude code session under the client/company root folde,r the developer can spawn orchestrators for each project, and each project wilkl orchestrate each task/feature/bugfix/analysis trough a collection of working in parallel subagents. 
-
-a version of all of that must be made trough a UI/GUI. It can open a browser making the DCB interactible or having the tentaqles GUI handling this. or maybe both.
-
-I think we went a litlle bit to far with this change. I want ways to:
-1. This is an idea, I'm not sure if possible. Run Claude code/codex/kimi code/ open code as if no tentaqles were installed. Standard "claude" command to terminal should be alias to "claude --dangerously-skip-permissions". this should run claude code from no identity, but from the main user's claude installation and main terminal. So no identity, no guard, nothing. Pure claude code. Pure terminal with no tq acting. I'm not sure how would that work, because opening a terminal inside a folder, for example, dirtybird, should open dirtybird dedicated cmd.exe or any other temrinal like powershell or bash. So running tq off would than start opening from main cmd and I'm not sure if possible to turn on for that identity, even if reopening terminal afterwards. THIS IS AN IDEA, NOT SURE IF FEASABLE. IT'S OKAY IF NOT, JUST LET ME KNOW. 
-2. Run claude code/codex/kimi code/ open code with tentaqles skiping every ask and every deny except three groups:
-    - Identity: commands under another client's git, cloud or MCP identity, and the manifest's blocked_commands.
-    - Secrets: reading .env files or the environment, secret stores, and committing secrets.
-    - Self-protection: the human-only commands and anything that tampers with guard, trust or settings. This was my call; otherwise an agent could widen unattended mode on its own.
-3. Run claude code/codex/kimi code/ open code with tentaqles enforcing to ask/deny dangerous commands ans we had before we created tentaqles unatainded. I do not remember exaclly but i think it asked for changes to root/system and to prd environments, force pushes and force merges and also asked for delete permissions on cloude environments.
-
-I'm not sure what combination of claude --dangerously-skip-permissions and auto-mode would achieve it. also, think of other modes we could run to make skips, asks and denies customizable. so pre-made modes, but custon with toglles for each permission category. ultrathink. /plan
+The board, the headless orchestrators, the review page, the packs, the build gate and the
+guard modes that this note once described were built (v0.8.2) and then removed: their
+confirmations and blocks made daily work slower than the protection was worth. From
+v0.9.0 tentaqles is the identity isolation described above, plus secrets protection (no
+`.env` reads, no environment dumps, no secrets in commits) and the plugin's memory,
+preamble and skills. An agent session runs with no other confirmation from tentaqles; a
+command under the wrong identity is blocked with the reason, and that is all. The
+requirements live in `docs/prd.md`; v0.8.2 stays as a tag for the removed features.
