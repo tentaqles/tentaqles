@@ -151,6 +151,33 @@ type Manifest struct {
 	// Packs enables and configures the packs (spec C §2.2). See packs.go.
 	Packs map[string]PackConfig `yaml:"packs,omitempty"`
 	Path  string                `yaml:"-"`
+	// Ignored lists the top-level blocks of DroppedBlocks that the file still
+	// carries. Load records them so `tq doctor` can warn that tq no longer reads
+	// them (the cut of 2026-11-03, docs/prd.md D-29); loading never fails on them.
+	Ignored []string `yaml:"-"`
+}
+
+// DroppedBlocks are the manifest blocks that tq 0.9.0 stops reading: the Jev
+// decision layer, the guard modes and rules, the tracker sync, the packs and
+// the data classification. A manifest that still carries one loads normally;
+// the block is listed in Manifest.Ignored and reported by `tq doctor`.
+var DroppedBlocks = []string{"decision", "guard", "tracker", "packs", "data"}
+
+// droppedBlocksIn returns, in DroppedBlocks order, the dropped top-level keys
+// present in raw. A file that does not parse as a mapping yields none; the
+// typed decode reports the real error.
+func droppedBlocksIn(raw []byte) []string {
+	var top map[string]any
+	if err := yaml.Unmarshal(raw, &top); err != nil {
+		return nil
+	}
+	var out []string
+	for _, k := range DroppedBlocks {
+		if _, ok := top[k]; ok {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 var secretRe = regexp.MustCompile(`(?i)\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9\-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,})`)
@@ -224,6 +251,7 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Path = path
+	m.Ignored = droppedBlocksIn(raw)
 	return &m, nil
 }
 
