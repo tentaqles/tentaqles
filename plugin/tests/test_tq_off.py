@@ -69,7 +69,7 @@ PAYLOAD = json.dumps({"cwd": ".", "tool_name": "Bash", "tool_input": {"command":
 
 
 @pytest.mark.parametrize("var,val", [("TQ_MODE", "off")])
-@pytest.mark.parametrize("event", ["pre-tool-use", "session-start", "stop", "prompt-submit"])
+@pytest.mark.parametrize("event", ["pre-tool-use", "session-start"])
 def test_tq_hook_exits_zero_when_off(tmp_path, var, val, event):
     p = subprocess.run([BASH, str(HOOK), event], input=PAYLOAD, capture_output=True, text=True,
                        env=_bare_env(tmp_path, **{var: val}), timeout=30)

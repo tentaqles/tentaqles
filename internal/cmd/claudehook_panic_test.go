@@ -31,12 +31,11 @@ func TestPreToolUseHeredocsDoNotCrash(t *testing.T) {
 	}
 }
 
-// Any panic in the guard's analysis asks: never allow, never crash, never
-// the unattended skip.
+// Any panic in the guard's analysis asks: never allow, never crash.
 func TestPreToolUseGuardPanicAsks(t *testing.T) {
 	isolateHome(t)
 	prev := hookPolicyDecision
-	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time, *modeGate) policy.Decision {
+	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time) policy.Decision {
 		var s []int
 		_ = s[3] // index out of range
 		return policy.Decision{}
@@ -58,26 +57,24 @@ func TestPreToolUseGuardPanicAsks(t *testing.T) {
 	}
 }
 
-// End to end: a data heredoc that mentions the guard file or `set` passes the
-// policy rules; a heredoc that writes the guard file is still denied.
+// End to end: a data heredoc that mentions `set` passes the env-dump rule; a
+// heredoc that feeds `set` to a shell is still denied.
 func TestPreToolUseHeredocDataRules(t *testing.T) {
 	isolateHome(t)
 	dir := testutil.TempDir(t)
-	gf := "~/.tentaqles/" + "guard.yaml"
 	for _, cmd := range []string{
-		"cat > notes.md <<'EOF'\nThe guard file is " + gf + ".\n\nset\nEOF",
+		"cat > notes.md <<'EOF'\nRun the tests.\n\nset\nEOF",
 		"git commit -m \"$(cat <<'EOF'\nfix: tester notes\n\nset\nEOF\n)\"",
 	} {
 		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, cmd))
-		if code == 2 && (strings.Contains(errOut, "tq/guard-file-write") || strings.Contains(errOut, "tq/env-dump")) {
+		if code == 2 && strings.Contains(errOut, "tq/env-dump") {
 			t.Errorf("%q: denied: %q", cmd, errOut)
 		}
 	}
 	for cmd, rule := range map[string]string{
-		"cat > " + gf + " <<'EOF'\ndisable: [x]\nEOF": "tq/guard-file-write",
-		"bash <<'EOF'\nset\nEOF":                      "tq/env-dump",
-		"echo \"$(cat <<'EOF'\nset\nEOF\n)\" > n.md":  "tq/env-dump",
-		"cat <<EOF | sudo -u root bash\nset\nEOF":     "tq/env-dump",
+		"bash <<'EOF'\nset\nEOF":                     "tq/env-dump",
+		"echo \"$(cat <<'EOF'\nset\nEOF\n)\" > n.md": "tq/env-dump",
+		"cat <<EOF | sudo -u root bash\nset\nEOF":    "tq/env-dump",
 	} {
 		code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, cmd))
 		if code != 2 || !strings.Contains(errOut, rule) {

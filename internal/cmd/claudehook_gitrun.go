@@ -20,15 +20,15 @@ import (
 // grandchild process may still hold open.
 
 // scanBudget bounds all scanning work in one hook invocation: every git call
-// and every byte scanned by the commit and push rules share it (hooks must
+// and every byte scanned by the commit secret scan share it (hooks must
 // never stall). The plugin's PreToolUse timeout is 15 s; when Claude Code
 // kills a hook the call proceeds, so the budget keeps a wide margin for
-// process start, the other rules and the Jev call. Tests lower it;
+// process start and the other rules. Tests lower it;
 // TQ_HOOK_SCAN_BUDGET (a Go duration, at most 12s) overrides the default.
 var scanBudget = 8 * time.Second
 
 // maxScanBudget keeps a 5 s margin under the plugin's 15 s PreToolUse
-// timeout for process start, the identity lookups and the Jev call.
+// timeout for process start and the identity lookups.
 const maxScanBudget = 10 * time.Second
 
 const scanTimedOut = "scan did not finish in time"
@@ -152,7 +152,10 @@ func runGitBounded(ctx context.Context, cwd string, limit int, args ...string) (
 	return runBounded(ctx, gitBinary(), cwd, limit, args...)
 }
 
-// maxCommitGitOutput caps one git call of the commit rules; above it the
+// pushGit is the bounded git the commit scan runs; tests replace it.
+var pushGit = runGitBounded
+
+// maxCommitGitOutput caps one git call of the commit scan; above it the
 // rule asks instead of scanning (see commitscan.MaxTotalBytes).
 const maxCommitGitOutput = commitscan.MaxTotalBytes
 

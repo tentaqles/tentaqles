@@ -9,22 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/tentaqles/tentaqles/internal/commitmsg"
 	"github.com/tentaqles/tentaqles/internal/commitscan"
-	"github.com/tentaqles/tentaqles/internal/guardcfg"
-	"github.com/tentaqles/tentaqles/internal/packs"
-	"github.com/tentaqles/tentaqles/internal/packs/ledger"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"gopkg.in/yaml.v3"
 )
-
-// ProjectRulesFile is the per-repo rule file. It is repo content, so it can
-// only add rules (see policy.Layers).
-const ProjectRulesFile = ".claude/tq-rules.yaml"
 
 // shellTools are the tools whose tool_input.command is a shell command line.
 func isShellTool(name string) bool { return name == "Bash" || name == "PowerShell" }
@@ -110,17 +102,6 @@ func nonEmpty(xs []string) []string {
 	return out
 }
 
-// resolveForHook maps cwd to its trusted workspace, or to the untrusted
-// one it is in (nil, nil when neutral or on error).
-func resolveForHook(cwd string) (trusted, untrusted *resolve.Workspace, cfg *registry.Config) {
-	cfg, err := registry.Load()
-	if err != nil {
-		return nil, nil, nil
-	}
-	res := resolve.Resolve(cwd, cfg)
-	return res.Workspace, res.Untrusted, cfg
-}
-
 // resolveTrusted maps cwd to its trusted workspace, or nil. Errors mean nil:
 // the built-in rules still apply without a workspace.
 func resolveTrusted(cwd string) (*resolve.Workspace, *registry.Config) {
@@ -131,312 +112,77 @@ func resolveTrusted(cwd string) (*resolve.Workspace, *registry.Config) {
 	return resolve.Resolve(cwd, cfg).Workspace, cfg
 }
 
-// loadProjectRules collects every .claude/tq-rules.yaml from cwd up to the
-// workspace root (or at most 8 levels when there is no workspace).
-func loadProjectRules(cwd string, ws *resolve.Workspace) ([]policy.Rule, []error) {
-	var rules []policy.Rule
-	var errs []error
-	stop := ""
-	if ws != nil {
-		stop = strings.ToLower(filepath.Clean(ws.Root))
-	}
-	dir := filepath.Clean(cwd)
-	for i := 0; i < 8 && dir != ""; i++ {
-		p := filepath.Join(dir, filepath.FromSlash(ProjectRulesFile))
-		if raw, err := os.ReadFile(p); err == nil {
-			var f struct {
-				Rules []policy.Rule `yaml:"rules"`
-			}
-			if err := yaml.Unmarshal(raw, &f); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", p, err))
-			} else {
-				for j := range f.Rules {
-					f.Rules[j].Source = p
-				}
-				rules = append(rules, f.Rules...)
-			}
-		}
-		if strings.ToLower(dir) == stop {
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return rules, errs
+// hookRuleIDs are the rules the hook applies, and the only ids it reports
+// besides the identity guard's: the built-in secret rules, the commit secret
+// scan and the cross-client MCP check. No other built-in, no manifest, repo
+// or global rule file, no mode and no pack guard is read here.
+var hookRuleIDs = map[string]bool{
+	"tq/secret-store-read":  true,
+	"tq/secret-store-shell": true,
+	"tq/env-file-read":      true,
+	"tq/env-file-shell":     true,
+	"tq/env-dump":           true,
+	"tq/commit-secret":      true,
+	"tq/cross-client-mcp":   true,
 }
 
-// policyDecision evaluates every layer of rules plus the two checks that need
+var (
+	hookSetOnce sync.Once
+	hookSet     *policy.Set
+)
+
+// buildPolicy compiles the hook's rule set once: the built-in rules in
+// hookRuleIDs, one rule per id. policy.Builtin lists builtin.go's rules
+// first, so the first rule of an id is the core one; a later part that
+// registers the same id (the pack framework's keychain variant of
+// tq/secret-store-shell) is not applied by the hook.
+func buildPolicy() *policy.Set {
+	hookSetOnce.Do(func() {
+		seen := map[string]bool{}
+		var rules []policy.Rule
+		for _, r := range policy.Builtin() {
+			if !hookRuleIDs[r.ID] || seen[r.ID] {
+				continue
+			}
+			seen[r.ID] = true
+			rules = append(rules, r)
+		}
+		hookSet, _ = policy.Build(policy.Layers{Builtin: rules})
+	})
+	return hookSet
+}
+
+// policyDecision evaluates the hook's rule set plus the two checks that need
 // I/O: the commit secret scan and the cross-client MCP check.
 //
-// deadline ends every scan; the hook computes it at entry (start plus the
+// deadline ends the scan; the hook computes it at entry (start plus the
 // scan budget), so the identity lookups that ran before count against it.
-//
-// gate maps every matching rule to the guard mode's effective action and
-// keeps the ones it skipped or lowered for the audit; nil applies every rule
-// at its own action.
-func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time, gate *modeGate) policy.Decision {
-	return policyDecisionWith(buildPolicy(cwd, ws, deadline), cwd, ws, cfg, call, deadline, gate)
-}
-
-// builtPolicy is the rule set and effective guard of one hook call, built
-// once and shared by every file of an apply_patch, plus the pack guards'
-// environment (the merged pack config).
-type builtPolicy struct {
-	eff  guardcfg.Effective
-	set  *policy.Set
-	penv packs.GuardEnv
-}
-
-// buildPolicy reads guard.yaml, the manifest's rules and the repo rule files
-// and compiles them, with the static rules of the packs the trusted manifest
-// enables (spec C §2.10).
-func buildPolicy(cwd string, ws *resolve.Workspace, deadline time.Time) builtPolicy {
-	eff := effectiveGuard(ws)
-	penv := hookPackEnv(cwd, ws, deadline)
-	layers := policy.Layers{Builtin: policy.ForPacks(policy.Builtin(), penv.Config.IsEnabled), Global: eff.Global, Disable: eff.Disable, Actions: eff.Actions}
-	if ws != nil {
-		layers.Manifest = ws.Manifest.Guard.Rules
-		for i := range layers.Manifest {
-			layers.Manifest[i].Source = ws.ManifestPath
-		}
-	}
-	layers.Project, _ = loadProjectRules(cwd, ws)
-	set, _ := policy.Build(layers)
-	return builtPolicy{eff: eff, set: set, penv: penv}
+func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
+	return policyDecisionWith(buildPolicy(), cwd, ws, cfg, call, deadline)
 }
 
 // policyDecisionWith is policyDecision with the rule set already built.
-func policyDecisionWith(pb builtPolicy, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time, gate *modeGate) policy.Decision {
-	eff, set := pb.eff, pb.set
-	// Pack guards (spec C §2.10) run first so a guard that handles the call
-	// can supersede core matches: a superseded rule is skipped for this call
-	// (not by the mode, so the audit does not list it). Their verdicts merge
-	// in below, mapped by the guard mode like every one-source decision.
-	penv := pb.penv
-	penv.Cwd = cwd
-	outcomes := packs.EvaluateGuards(call, penv, eff.Off, eff.ActionFor)
-	superseded := map[string]bool{}
-	for _, o := range outcomes {
-		for _, id := range o.Supersedes {
-			superseded[id] = true
-		}
-	}
-	mode := gate.mapFunc()
-	mapper := func(r *policy.Rule) policy.Action {
-		if superseded[r.ID] {
-			return policy.Allow
-		}
-		if mode == nil {
-			return r.Action
-		}
-		return mode(r)
-	}
-	d, changed := set.EvaluateMapped(call, mapper)
-	kept := changed[:0]
-	for _, m := range changed {
-		if !superseded[m.Rule.ID] {
-			kept = append(kept, m)
-		}
-	}
-	gate.note(kept)
-
-	// A nested agent starts at its parent's mode or a stricter one: the
-	// nested-agent rule lets TQ_MODE=default through, so a strict session
-	// denies it here (locked self-protection, never mapped by the mode).
-	if call.IsShell() {
-		// Compared table by table, not by name: a custom session stricter
-		// than default in one category must not start a default child.
-		parent := gate.resolved()
-		for _, m := range policy.AssignedTQModes(call.Command) {
-			if !guardcfg.PresetResolved(m).NoLooserThan(parent) {
-				d = policy.Merge(d, ruleDecision(policy.Deny, policy.NestedAgentRuleID,
-					"a nested agent may start only at this session's mode ("+orDefault(parent.Mode)+") or stricter, in every category; "+m+" is looser somewhere"))
-			}
-		}
-	}
-
-	// One budget for every scan in this invocation (commit and push rules).
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	defer cancel()
-	var commitRun commitscan.Runner
+func policyDecisionWith(set *policy.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
+	d := set.Evaluate(call)
 	if call.IsShell() && commitscan.PlanFor(call.Command).Commits {
-		commitRun = commitRunner(ctx)
-	}
-	if commitRun != nil && !eff.Off("tq/commit-secret") {
-		hits, err := commitscan.ScanCtx(ctx, cwd, call.Command, commitRun)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		hits, err := commitscan.ScanCtx(ctx, cwd, call.Command, commitRunner(ctx))
 		switch {
 		case len(hits) > 0:
-			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/commit-secret", policy.Deny), "tq/commit-secret", commitReason(hits))))
+			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/commit-secret", commitReason(hits)))
 		case err != nil:
-			d = policy.Merge(d, gate.apply(ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err))))
+			// The one ask left: a scan that could not vouch for the commit.
+			d = policy.Merge(d, ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err)))
 		}
 	}
-	for _, r := range []struct {
-		id string
-		fn func(policy.Action) (policy.Decision, bool)
-	}{
-		{"tq/commit-pii", func(a policy.Action) (policy.Decision, bool) {
-			return commitPIIDecision(ctx, ws, call, cwd, commitRun, a)
-		}},
-		{"tq/push-pii", func(a policy.Action) (policy.Decision, bool) { return pushPIIDecision(ctx, ws, call, cwd, a) }},
-		{"tq/text-pii", func(a policy.Action) (policy.Decision, bool) { return textPIIDecision(ws, call, cwd, a) }},
-		{"tq/pii-fixture-dump", func(a policy.Action) (policy.Decision, bool) { return piiFixtureDumpDecision(ws, call, cwd, a) }},
-	} {
-		if eff.Off(r.id) || superseded[r.id] {
-			continue
-		}
-		if pd, ok := r.fn(eff.ActionFor(r.id, policy.Deny)); ok {
-			d = policy.Merge(d, gate.apply(pd))
-		}
-	}
-	if call.IsShell() && !eff.Off("tq/commit-message") {
-		if r := commitmsg.Check(call.Command, cwd); r.Checked && !r.OK {
-			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/commit-message", policy.Ask), "tq/commit-message", "commit message: "+r.Why)))
-		}
-	}
-	if !eff.Off(outsidePathWriteID) {
-		if ts := outsideWriteTargets(call, writeRoots(ws, cfg, cwd)); len(ts) > 0 {
-			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor(outsidePathWriteID, policy.Ask), outsidePathWriteID,
-				"this writes or deletes outside the workspace, the session folder, your repos and the temp folders: "+strings.Join(ts, ", "))))
-		}
-	}
-	if call.IsMCP() && !eff.Off("tq/cross-client-mcp") {
+	if call.IsMCP() {
 		if other := mcpOwner(ws, cfg, call.MCPServer()); other != "" {
-			d = policy.Merge(d, gate.apply(ruleDecision(eff.ActionFor("tq/cross-client-mcp", policy.Deny), "tq/cross-client-mcp",
-				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other))))
-		}
-	}
-	// The state directory, the hub answer and the pack config, checked at hook
-	// time against the real paths (never-disable).
-	// A guard that handled and allowed the call may name the StateDir files it
-	// verified and the command reads (a stored plan): only those exact paths,
-	// for this call only, are not counted by tq/hub-store-write.
-	var readArgs []packs.ReadArg
-	for _, o := range outcomes {
-		if o.Handled && o.Action == policy.Allow && !o.Failed {
-			readArgs = append(readArgs, o.ReadArgs...)
-		}
-	}
-	d = policy.Merge(d, stateDirDecision(call, cwd, readArgs...))
-	return applyPackOutcomes(d, ws, outcomes, gate)
-}
-
-// applyPackOutcomes merges the pack guards' verdicts (strongest wins), then,
-// unless the call is denied, appends the `consumed` ledger line of every
-// single-use approval a guard allowed the call with. A failed append denies.
-//
-// Each verdict goes through the guard mode (spec E §14): the guard's id is
-// classified in guardcfg.Categories like a built-in rule, so relaxed and
-// strict treat it like the matching built-in rule, and the locked groups and
-// the ceiling hold.
-func applyPackOutcomes(d policy.Decision, ws *resolve.Workspace, outcomes []packs.GuardOutcome, gate *modeGate) policy.Decision {
-	for _, o := range outcomes {
-		if o.Action != policy.Allow {
-			pd := policy.Decision{Action: o.Action, Matched: []*policy.Rule{{ID: o.ID, Action: o.Action, Reason: o.Reason, Source: "pack " + o.Pack}}}
-			d = policy.Merge(d, gate.applySuperseding(pd, o.Supersedes))
-		}
-	}
-	if d.Action != policy.Deny {
-		for _, o := range outcomes {
-			for _, id := range o.Consume {
-				err := errors.New("no trusted workspace")
-				if ws != nil {
-					// Claim atomically first: exactly one concurrent hook wins the
-					// approval; the others are denied.
-					err = ledger.Claim(ws.Name, o.Pack, id)
-					if err == nil {
-						err = ledger.Append(ws.Name, ledger.Entry{Event: ledger.Consumed, Decision: id, Pack: o.Pack})
-					}
-					if err == nil {
-						// The keychain high-water mark: deleting the claim file or
-						// re-appending compacted lines cannot reopen this approval.
-						err = ledger.SetHighWater(ws.Name, o.Pack, id)
-					}
-					if err == nil && d.Action == policy.Ask {
-						// The hook cannot know whether an asked call runs, so the
-						// approval is consumed now (conservative); the prompt says so.
-						d = policy.Merge(d, policy.Decision{Action: policy.Ask, Matched: []*policy.Rule{{ID: o.ID, Action: policy.Ask, Source: "pack " + o.Pack,
-							Reason: "this call uses the single-use approval " + id + "; it is consumed now, even if you decline"}}})
-					}
-				}
-				if err != nil {
-					d = policy.Merge(d, policy.Decision{Action: policy.Deny, Matched: []*policy.Rule{{ID: o.ID, Action: policy.Deny, Source: "pack " + o.Pack,
-						Reason: "the approval " + id + " could not be marked used (" + err.Error() + "); denied so it cannot be used twice"}}})
-				}
-			}
-		}
-	}
-	if ws != nil {
-		packs.SetEventWorkspace(ws.Name)
-	}
-	for _, o := range outcomes {
-		for _, c := range o.Counters {
-			packs.Count(c.Pack, c.Name, c.N)
+			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/cross-client-mcp",
+				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other)))
 		}
 	}
 	return d
-}
-
-// hookPackEnv is what pack guards see in the hook. With no trusted workspace
-// there is no pack config at all (the repo layer is not read, no pack guard
-// runs). Otherwise the manifest plus the repo's tq-packs.yaml, with the repo
-// root found by walking up to a .git entry (no git process); the repo file
-// is read under the hook deadline, and an invalid or slow one leaves the
-// manifest layer alone.
-func hookPackEnv(cwd string, ws *resolve.Workspace, deadline time.Time) packs.GuardEnv {
-	env := packs.GuardEnv{Config: packs.Merge(nil, nil), Cwd: cwd}
-	if ws == nil || ws.Manifest == nil {
-		return env
-	}
-	env.Manifest, env.Workspace, env.WorkspaceRoot = ws.Manifest, ws.Name, ws.Root
-	stop := filepath.Clean(ws.Root)
-	dir := filepath.Clean(cwd)
-	for i := 0; i < 32 && dir != ""; i++ {
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
-			env.RepoRoot = dir
-			break
-		}
-		if strings.EqualFold(dir, stop) {
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	root := env.RepoRoot
-	if root == "" {
-		root = env.WorkspaceRoot
-	}
-	manifestOnly := packs.Merge(ws.Manifest.Packs, nil)
-	type res struct {
-		cfg packs.Config
-		err error
-	}
-	done := make(chan res, 1)
-	go func() {
-		cfg, err := packs.LoadConfig(ws.Manifest, root)
-		done <- res{cfg, err}
-	}()
-	wait := time.Until(deadline)
-	if wait < 50*time.Millisecond {
-		wait = 50 * time.Millisecond
-	}
-	select {
-	case r := <-done:
-		if r.err != nil || r.cfg.Err() != nil {
-			env.Config = manifestOnly
-		} else {
-			env.Config = r.cfg
-		}
-	case <-time.After(wait):
-		env.Config = manifestOnly
-	}
-	return env
 }
 
 func ruleDecision(a policy.Action, id, reason string) policy.Decision {
@@ -454,6 +200,25 @@ func commitReason(hits []commitscan.Hit) string {
 	}
 	return "this commit would record secrets: " + strings.Join(names, ", ") +
 		". Remove them (use env vars / a secret store), or mark a known-fake fixture line with `tq:allow-secret`"
+}
+
+// maxScanBytes bounds the text the commit scan reads.
+const maxScanBytes = commitscan.MaxTotalBytes
+
+var errScanTooLarge = errors.New("too large to scan")
+
+// commitScanAsk words the ask for a commit scan that could not finish; it
+// completes "the secret ...".
+func commitScanAsk(ctx context.Context, err error) string {
+	switch {
+	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
+		return scanTimedOut + "; retry, or commit fewer files"
+	case commitscan.IsAsk(err):
+		return "scan cannot vouch for this commit: " + err.Error()
+	case errors.Is(err, errScanTooLarge):
+		return fmt.Sprintf("scan stopped: what this commit records is larger than the %d MiB scan limit; commit fewer files", maxScanBytes>>20)
+	}
+	return "scan could not read what this commit records; check the repository state or confirm"
 }
 
 // mcpOwner returns the client whose bundle declares server when the current
@@ -491,13 +256,4 @@ func writeAsk(w io.Writer, reason string) error {
 			"permissionDecisionReason": reason,
 		},
 	})
-}
-
-// effectiveGuard merges the user's global guard file with the workspace
-// manifest (nil ws: the global file alone).
-func effectiveGuard(ws *resolve.Workspace) guardcfg.Effective {
-	if ws == nil || ws.Manifest == nil {
-		return guardcfg.ResolveActions(nil, "")
-	}
-	return guardcfg.ResolveActions(ws.Manifest, ws.Name)
 }
