@@ -906,16 +906,17 @@ title.
 Status: not started
 Evidence: `store.NewID("c")` makes `c-` plus 12 random base32 characters
 (`internal/hub/store/ids.go`); every verb and route takes that exact id (`store.Card(id)`);
-`prd.py` and `plan-cards.py` match `c-[a-z0-9]{12}` in §11.
+`prd.py` matches `c-[a-z0-9]{12}` in §11 and `plan-cards.py` requires that shape for
+`--parent`.
 Missing: new cards get `c-NNNN`, a per-workspace increasing number assigned in the insert
 transaction (four digits, zero-padded, growing past 9999 when needed); existing cards keep
 their ids and receive a number by creation order at migration, shown beside them. A shared
 resolver turns a card reference into the id: the full id, the number (`12`, `0012`, `#12`,
 `c-0012`) or the title (exact, case-insensitive, then a unique case-insensitive substring;
 several matches list the candidates and refuse). Every `tq hub` verb that takes a card
-(`show`, `move`, `edit`, `run`, `cancel`, `answer`, `comment`, `review`, `open`, `push`), the
-web routes and the skills (`refine`, `run`, `hub`, the `plan-cards` write-back) accept a
-reference; `tq hub list` and the board print the number first. `prd.py`, `plan-cards.py`
+(`show`, `move`, `edit`, `run`, `answer`, `comment`, `review`, `open`, `push`; `cancel` keeps
+taking a run id), the web routes and the skills (`refine`, `hub`, the `plan-cards`
+write-back and `--parent`, and `run` once B-35 adds it) accept a reference; `tq hub list` and the board print the number first. `prd.py`, `plan-cards.py`
 and the hub skill accept both id shapes.
 **Acceptance checks**
 - `TestCardNumbersAreSequentialPerWorkspace`: three cards added to an empty store get
@@ -927,8 +928,9 @@ and the hub skill accept both id shapes.
   invoices v2`, the reference `export invoices` resolves to the first and `export` lists
   both and refuses.
 - `TestCardRouteAcceptsNumber`: `/cards/12` serves the card page of `c-0012`.
-- `test_prd_card_ids_accept_both_shapes` (plugin): `prd.py` and `plan-cards.py` accept
-  `c-0012` and `c-kb6ebmsrwln5` in §11 and skip both on a re-run.
+- `test_prd_card_ids_accept_both_shapes` (plugin): `prd.py` accepts `c-0012` and
+  `c-kb6ebmsrwln5` in §11 and skips both on a re-run; `plan-cards.py --parent` accepts
+  `c-0012`, `12` and the parent's title.
 - COMMANDS.md walkthrough: `tq hub show 12`, `tq hub move "Export invoices" "in progress"`
   and `/tentaqles:refine 12` work as written, verified by hand.
 
@@ -1949,7 +1951,7 @@ rest. Each row names its FR, why it sits where it does, and what it depends on.
 | B-34 | P0 | Decision `seq`; `tq hub wait`; the asyncRewake watcher; the renderer script; `/tentaqles:hub` answers after AskUserQuestion; the prompt-submit line | FR-71 | Decisions reach the console in minutes, not when the human remembers to look | B-32, B-33 |
 | B-35 | P0 | `tq hub serve --background`, `ensure`, `stop`; skills `start` and `run`; `refine` writes body and tag | FR-72 | The one-command day end to end | B-33, B-34 |
 | B-36 | P1 | TM-7: bind each console answer to a signed AskUserQuestion record; deny `tq claude-hook` from the Bash tool | FR-70 | Turns the skill protocol into a check before AR3 expires (2027-01-28) | B-34 |
-| B-37 | P0 | Card numbers (`c-NNNN`) and references by number or title in every hub verb, the routes and the skills | FR-73 | The console types card references all day; random ids are unreadable | none (D-27 decided) |
+| B-37 | P0 | Card numbers (`c-NNNN`) and references by number or title in every hub verb, the routes and the skills | FR-73 | The console types card references all day; random ids are unreadable | none (D-27 decided); the `run` skill part waits for B-35 |
 
 ## 14. Conflicts and flags
 
