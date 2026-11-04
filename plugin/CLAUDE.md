@@ -4,7 +4,7 @@
 
 Open-source Claude Code plugin for multi-workspace orchestration. Lives in `plugin/` of `github.com/tentaqles/tentaqles` and ships from the root marketplace (`.claude-plugin/marketplace.json`, git-subdir pinned to a release tag and its commit sha, updated after each release; `plugin/.claude-plugin/marketplace.json` is a local directory marketplace for development). See `docs/RELEASING.md`. Installed users get it at `<config dir>/plugins/cache/tentaqles/tentaqles/<version>/`, where the config dir is `~/.claude` by default and `$CLAUDE_CONFIG_DIR` (one per identity, under `~/.tentaqles/identities/<id>/claude`) when tq manages the session.
 
-tq is an identity isolator with secrets protection; the plugin adds session memory, the identity preamble, the knowledge graph and the skills. There is no build gate, hub, pack, Jev, guard mode or data classification any more (plugin 0.16.0); the dev-process skills are plain checklists and the reviewers are five read-only agents.
+tq is an identity isolator with secrets protection; the plugin adds session memory, the identity preamble, the knowledge graph and the skills. The dev-process skills are plain checklists and the reviewers are five read-only agents.
 
 ## Architecture
 
@@ -57,9 +57,9 @@ tests/                  pytest suite
 
 - **Python scripts** under `scripts/`: start with `from _path import setup_paths; setup_paths()`. Never inline `sys.path.insert` hacks.
 
-- **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`. `redact_text(classes=None)` (read paths) masks secrets only, while `redact_str` applies the exit baseline: secrets plus checksummed identifiers (CPF, CNPJ, card, IBAN). Exits (memory writes, vault, ingest, signals, model prompts) all use that baseline: `exit_classes`/`workspace_classes` return `["checksummed"]` and the manifest `data:` block is no longer read (plugin 0.16.0). Use `redact_str` rather than a local wrapper.
+- **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`. `redact_text(classes=None)` (read paths) masks secrets only, while `redact_str` applies the exit baseline: secrets plus checksummed identifiers (CPF, CNPJ, card, IBAN). Exits (memory writes, vault, ingest, signals, model prompts) all use that baseline: `exit_classes`/`workspace_classes` return `["checksummed"]`. Use `redact_str` rather than a local wrapper.
 - **Reviewer agents are read-only** (`critic`, `spec-critic`, `security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`: tools Read, Glob, Grep; no agent has Bash). A skill hands a reviewer the diff (`git diff <base>...HEAD` written to a file), the spec slice, `CLAUDE.md`, `docs/LEARNINGS.md` and `docs/threat-model.md`, and gets the review contract back (`templates/process/review-contract.md`: `RESULT: PASS|FAIL|BLOCKED`, `F` rows with file:line, `U` rows for the human).
-- **The dev-process skills are plain checklists**: `ship`, `feature`, `fix`, `kickoff`, `dod`, `direction` and the review skills record nothing, keep no state under `.claude/`, and have no unattended mode: a question goes to the user. "Done" is the checklist `dod` ran and quotes, never a sentence in the transcript; risk is self-assessed in `ship` and a high-risk diff gets the reviewer agents.
+- **The dev-process skills are plain checklists**: `ship`, `feature`, `fix`, `kickoff`, `dod`, `direction` and the review skills record nothing, keep no state under `.claude/`, and never answer for the user: a question goes to the user. "Done" is the checklist `dod` ran and quotes, never a sentence in the transcript; risk is self-assessed in `ship` and a high-risk diff gets the reviewer agents.
 - **Human-only commands**: `tq allow`, `tq deny` and `tq secret set` are run by the human in their own terminal; skills print the line, remind the user and never run it.
 
 - **Lazy session**: `MemoryStore.end_session()` auto-starts a session if none is active. Don't assume `start_session()` was called.

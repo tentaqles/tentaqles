@@ -8,10 +8,7 @@ identity is blocked with the reason.
 
 ## Reading path
 To work on this repo read `docs/prd.md` (requirements with status, backlog and the owner's
-decisions; D-29 to D-31 are the cut of 2026-11-03) and `docs/threat-model.md` first, then
-the ADRs under `docs/adr/`. `v0.8.2` is the tag of the last full product: the docs of the
-removed features (board, packs, build gate, guard modes, Jev, desktop app, templates) exist
-only there.
+decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
 
 ## Layout
 - `cmd/tq/`, `internal/` — the `tq` Go CLI. `go test ./...` must stay green.
@@ -30,7 +27,7 @@ only there.
     `session-start` prints the preamble. `humanonly.go` keeps `tq allow`, `tq deny`,
     `tq secret` and `tq run --off` out of agent sessions (environment marker, no prompt).
   - `internal/trust/` (manifest trust by file hash), `internal/manifest/` (the manifest;
-    the blocks of removed features are recorded as dropped, never read),
+    a top-level block tq does not know is recorded as dropped, never read),
     `internal/registry/`, `internal/resolve/`, `internal/workspace/`, `internal/paths/`,
     `internal/envplan/`, `internal/shell/` (activation hooks and the `claude`/`codex`
     launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
@@ -61,7 +58,7 @@ only there.
   `CLAUDE-SETTINGS.md` (`tq settings render`, `tq statusline`, `tq worktrees`, Codex),
   `COMMANDS.md` (every command and skill, plus a test walkthrough), `PROVIDERS.md` (the
   catalog schema, `tq secret`), `MIGRATE.md` (`tq migrate`, the journal,
-  `tq uninstall --restore`, the `TQ_ENABLED=0` kill switch, "Upgrading to 0.9.0"),
+  `tq uninstall --restore`, the `TQ_ENABLED=0` kill switch, "Upgrading an existing install"),
   `RELEASING.md` (release PR, tag, release workflow, post-release PR pinning ref + sha),
   `IDEATION.md` (the isolation vision), `prd.md`, `threat-model.md`, `adr/`.
 

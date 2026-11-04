@@ -29,12 +29,10 @@ Claude permission mode: the **identity** a command runs under (a `git push`,
 from a stale shell is blocked with the reason) and **secrets** (`.env` reads,
 environment dumps, credential-store reads and a commit that would record a
 secret are blocked; `tq dotenv run` is the way to use a `.env`). Every
-decision is allow or block, never a confirmation; anything else is Claude
+decision is allow or block, never a confirmation (the one exception is the
+fail-safe when the guard itself fails, which asks); anything else is Claude
 Code's own permission settings' business. See
-[docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md). Earlier versions also shipped a
-board, packs, a build gate and guard modes; they left `main` after
-[`v0.8.2`](https://github.com/tentaqles/tentaqles/releases/tag/v0.8.2), the
-tag of the last full product.
+[docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md).
 
 ## Install
 
@@ -226,7 +224,7 @@ reference.
 | `tq providers show <id>` | Print a provider's full definition as YAML. |
 | `tq providers check [<id>...]` | Probe whether provider CLIs are installed. `--all` (default with no ids), `--workspace <ws>` to check only that workspace's identities, `--json`. Exits 1 if any provider with a CLI is missing. |
 | `tq providers add <id>` | Add or override a provider as a user file under `providers/`. Flags: `--name`, `--category` (required), `--command`, `--version-args`, `--env KEY=VALUE` (repeatable), `--login "args..."`, `--verify "args..."`, `--docs`, `--force` to overwrite an embedded or existing user provider. |
-| `tq secret set\|rm\|status <workspace> <provider>` | Keep a tracker token (`github`, `azure-devops`, `jira`, `linear`, `asana`) in the OS keychain; `set` reads it from a hidden prompt or stdin, `status` shows present or absent and never a value. Human-only. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md#tq-secret). |
+| `tq secret set\|rm\|status <workspace> <provider>` | Keep a git-host or issue-tracker token (`github`, `azure-devops`, `jira`, `linear`, `asana`) in the OS keychain; `set` reads it from a hidden prompt or stdin, `status` shows present or absent and never a value. Human-only. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md#tq-secret). |
 | `tq secrets audit` | List agent-config files holding secret-shaped values, and `.env` files git would commit; path and line only, never the value. `--root <dir>` adds a directory, `--json`. |
 | `tq dotenv run [--file F]... -- <command>` | Run a command with a `.env` loaded into its environment and every loaded value replaced by `[REDACTED:NAME]` in its output. See [docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md#using-a-env-without-printing-it). |
 | `tq settings render [workspace...]` | Write the tq-owned part of each Claude identity's `settings.json` (baseline permissions, env, status line) and the Codex identity's `config.toml` and `hooks.json`. `--all`, `--dry-run`, `--no-statusline`. See [`docs/CLAUDE-SETTINGS.md`](docs/CLAUDE-SETTINGS.md). |

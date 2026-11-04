@@ -34,9 +34,6 @@ the text guard, and every action the owner left to the harness's permission sett
 | B8 | GitHub releases and repo | the user's machine (installers, tq binary, plugin) | executables, hooks | HTTPS; checksums and build provenance; plugin pinned by tag and commit sha |
 | B9 | contributors and CI | the repo and its releases | code, workflows, dependencies | GitHub account, rulesets |
 
-The ids B3 to B7 belonged to the build gate, the pack tools, the hub web API, the hub runner
-and the trackers, all removed from `main` after `v0.8.2`; the ids are not reused.
-
 Assets worth protecting: each client's identity and credentials (cross-client leaks are
 the worst outcome), secrets in `.env` files, credential stores and the keychain, the trust
 markers under `$TQ_HOME/trust/`, and the integrity of what users install.
@@ -71,7 +68,7 @@ markers under `$TQ_HOME/trust/`, and the integrity of what users install.
 | Category | Threat | Mitigation | Status | Owner |
 |---|---|---|---|---|
 | Spoofing | A swapped release archive is installed as tq | `installers/install.ps1` and `install.sh` check the archive's SHA-256 against the release's `checksums.txt` and refuse a mismatch or a missing entry (TM-1) | done | tq |
-| Spoofing | A release is built by something other than this repo's workflow | the release workflow attests build provenance for every archive in `checksums.txt` (`.github/workflows/release.yml`, first in v0.8.2); `install.ps1` and `install.sh` run `gh attestation verify` with the release workflow as signer when `gh` is logged in, and refuse on failure (TM-2) | done | tq |
+| Spoofing | A release is built by something other than this repo's workflow | the release workflow attests build provenance for every archive in `checksums.txt` (`.github/workflows/release.yml`); `install.ps1` and `install.sh` run `gh attestation verify` with the release workflow as signer when `gh` is logged in, and refuse on failure (TM-2) | done | tq |
 | Tampering | A moved or re-pushed tag changes what the plugin installs | the root marketplace pins tag and commit sha, CI checks the tag resolves to it, tags `v*` cannot be updated or deleted (ruleset); `TestRootMarketplacePin`, CI job `marketplace-pin` | done | tq |
 | Tampering | A bundle catalog entry installs a plugin over `http://`, `git://`, `file://` or `ext::` | refused unless `insecure: true` is set on that entry (`internal/bundle/marketplace_check.go`); `TestValidate_PlainTextTransport`, `TestValidate_GitURLTransport` | done | tq |
 | Repudiation | (skipped) releases are tied to tags and workflow runs on GitHub | n/a | n/a | n/a |
@@ -104,15 +101,12 @@ the harness.
   is missing or different. Checks: a tampered archive fails the install with a clear
   message; a matching one installs.
 - **TM-2 Signed build provenance: done.** The release workflow attests every archive
-  (`actions/attest-build-provenance`, first in v0.8.2); the installers verify it when
+  (`actions/attest-build-provenance`); the installers verify it when
   `gh` is logged in. Without `gh` the checksum is the only check.
 - **TM-4 Pin GitHub Actions by commit sha: done** in every workflow, with the version in a
   comment. Checks: no `uses:` line names a tag or branch.
 - **TM-5 Dependency scanning: done.** A `govulncheck` CI job and `.github/dependabot.yml` for
   Go modules and GitHub Actions. Checks: the job runs on every PR.
-
-TM-3 (the build-gate key), TM-6 (tracker URLs) and TM-7 (console answers) concerned
-features removed by the cut and are closed with them; the ids are not reused.
 
 ## 4. Did we do a good job
 - Every boundary in §1 has a table in §2: yes
@@ -130,14 +124,11 @@ Each accepted risk expires; an expired risk is reopened as a decision for the re
 
 ## Decisions
 
-- **2026-11-03, the cut (repo owner).** tentaqles narrows to identity isolation plus
-  secrets protection (`docs/prd.md` D-29 to D-31; ADR-0001). The hub, the packs, the build
-  gate, the guard modes and every rule beyond identity drift and secrets, the personal-data
-  exit rules, Jev, the desktop app and the templates left `main`; `v0.8.2` is the tag of
-  the last full product. Boundaries B3 to B7 and B10, the risk AR3 and the items TM-3,
-  TM-6 and TM-7 of the earlier model went with them. The hook allows or blocks and never
-  asks; `tq allow` and `tq deny` refuse an agent session by its environment marker, not by
-  a hook rule.
+- **2026-11-03, scope (repo owner).** tentaqles is identity isolation plus secrets
+  protection and nothing else (`docs/prd.md` D-29 to D-31; ADR-0001). The hook allows or
+  blocks and never asks; `tq allow` and `tq deny` refuse an agent session by its
+  environment marker, not by a hook rule. Boundary ids are B1, B2, B8 and B9; the other
+  numbers are not used.
 
 ## Assumptions
 - The PRD is `docs/prd.md` (FR-10 to FR-13 for the hook and trust, FR-14 to FR-16 for

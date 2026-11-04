@@ -2,7 +2,7 @@ The product is an identity manager for developers who work for multiple companie
 clients. It isolates each client's data and tools from the others by giving each client an
 isolated development environment. For each company or client, the identity holds:
 - An isolated terminal (PowerShell, pwsh, Git Bash and others) with specific tools; a client
-  that works with AWS only does not get the Azure CLI installed or reachable through that
+  that works with AWS only, does not get the Azure CLI installed or reachable through that
   terminal.
 - Isolated logins and sessions for agentic AIs (Claude Code, OpenAI Codex, OpenCode, Kimi
   Code and others). Two companies the developer works for may each provide their own Claude
@@ -12,7 +12,7 @@ isolated development environment. For each company or client, the identity holds
   (Google, Microsoft) and the rest.
 - Isolated tech stack and preferences.
 - Isolated Chrome or Edge profiles, so whenever a terminal or an agent interacts with a
-  browser it opens the correct profile.
+  browser it opens the correct browser and profile.
 
 How it should work
 
@@ -46,13 +46,12 @@ MCP, Linear, Asana, Azure DevOps, Azure CLI, GitHub CLI and so on, by OAuth, tok
 The developer is then fully connected to the client's stack through the agent: messages,
 email, task management, git, cloud, under that client's identity and no other.
 
-Decision of 2026-11-03
+Then, say the developer gets confused and asks an agent running for company X, which
+has an Azure subscription, to create a virtual machine in AWS. Claude Code should know
+that this identity runs on Azure, not AWS, and not call the AWS CLI, MCPs or tools. If
+during reasoning and research Claude finds those tools through another company's
+identity, a hook blocks it from using them, based on the settings. Mistakes are guarded
+by deterministic scripts, routes and hooks, not by stochastic LLM reasoning alone.
 
-The board, the headless orchestrators, the review page, the packs, the build gate and the
-guard modes that this note once described were built (v0.8.2) and then removed: their
-confirmations and blocks made daily work slower than the protection was worth. From
-v0.9.0 tentaqles is the identity isolation described above, plus secrets protection (no
-`.env` reads, no environment dumps, no secrets in commits) and the plugin's memory,
-preamble and skills. An agent session runs with no other confirmation from tentaqles; a
-command under the wrong identity is blocked with the reason, and that is all. The
-requirements live in `docs/prd.md`; v0.8.2 stays as a tag for the removed features.
+AI agents must not be able to overwrite the hooks, the guards or the identities unless
+a human allows it.

@@ -31,8 +31,7 @@ cannot change what installs. The entry has no `version`: the installed version i
 release PR and the post-release PR.
 
 `main` only ever names a tag that exists and whose release passed. So the root marketplace
-is updated *after* the tag, never in the release PR. The file does not exist until the first
-post-release PR (for `v0.8.0`) adds it.
+is updated *after* the tag, never in the release PR.
 
 `plugin/.claude-plugin/marketplace.json` is a separate local marketplace (`"source": "./"`)
 for plugin development; it is not what users install, and it does keep a `version`.
@@ -75,8 +74,7 @@ for plugin development; it is not what users install, and it does keep a `versio
   Scoop bucket;
 - it attests build provenance for every archive in `checksums.txt`: a signed statement,
   kept by GitHub, that this workflow built the file from the tag. Check a download with
-  `gh attestation verify <file> --repo tentaqles/tentaqles`. Releases before the first
-  one built with this step (`v0.8.1` and earlier) have none.
+  `gh attestation verify <file> --repo tentaqles/tentaqles`.
 
 The plugin needs no build step. A marketplace refresh reads the root `marketplace.json`
 from `main` (the marketplace source has no `ref`); after the post-release PR it names the new
@@ -122,7 +120,7 @@ URL, or the marketplace.json URL for `url`), `ref` (branch or tag, github and gi
 (the folder for `directory`; for github and git the path of marketplace.json in the repo,
 default `.claude-plugin/marketplace.json`), `autoUpdate`, and the tq-only `insecure` (below). `tq bundle diff <ws>` reports a
 changed ref or autoUpdate as `marketplace-source` drift, e.g.
-`settings has github tentaqles/tentaqles@v0.7.0, the catalog has github tentaqles/tentaqles@v0.8.0`.
+`settings has github tentaqles/tentaqles@v0.9.0, the catalog has github tentaqles/tentaqles@v0.10.0`.
 
 The catalog check (`tq bundle catalog`, `tq doctor`, `tq bundle sync`) warns when a `git` or
 `url` source URL carries credentials (userinfo, or a token-shaped value): `settings.json`

@@ -9,7 +9,7 @@ A gate on absolute thresholds fails every legacy repo on day one, so nobody
 turns it on. A **ratchet** freezes today's numbers in `baseline.json` and
 fails a PR only if any metric gets worse, by even one lint error or 0.1
 coverage point. Improvements lock in, so quality only moves one way. An
-agent can then iterate unattended until CI is green, because the exit
+agent can then iterate on its own until CI is green, because the exit
 condition is objective.
 
 ## 1. Detect the stack

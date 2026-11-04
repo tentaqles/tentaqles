@@ -348,45 +348,30 @@ kept your bytes, it did not test them. Nothing removes the branch
 automatically either — it is your fallback, and it stays until you delete it
 by hand.
 
-## Upgrading to 0.9.0
+## Upgrading an existing install
 
-tq 0.9.0 is the cut to an identity isolator with secrets protection (the
-decision of 2026-11-03, `docs/prd.md` D-29 to D-31). The guard modes, the
-guard rules beyond identity drift and secrets, the hub, the packs, Jev and
-the desktop app are gone from `main`; v0.8.2 stays as the tag of the last
-full product. What that means for an installed setup:
+Install the new `tq` (the installer replaces the binary), then:
 
-- **Manifests need nothing.** A `guard:`, `decision:`, `tracker:`, `packs:`
-  or `data:` block is ignored; `tq doctor` warns `manifest-dropped-block`
-  and never fails. Removing a block changes the manifest hash, so run
-  `tq allow <ws>` afterwards. `guard.*` keys have no replacement: the
-  identity rules and the secret rules are always on, in every Claude
-  permission mode, and nothing asks for a confirmation.
-- **Grants are gone.** `tq allow --mode|--global|--bypass` and the
-  `$TQ_HOME/trust/<hash>.mode` and `.bypass` files are not read any more;
-  `tq allow <ws>` is the one trust. A `claude.permission_mode: bypass`
-  renders as `bypassPermissions` without a grant (the trusted manifest is
-  the human's choice).
-- **Removed commands:** `tq hub`, `tq pack`, `tq decide`, `tq insights`,
-  `tq redact`, `tq mode`, `tq guard`, `tq unattended`,
-  `tq allow --mode|--global|--bypass`, `tq run --tq-mode`,
-  `tq env --off|--on`, and the `tq off` / `tq on` shell functions. The
-  per-launch mode variable is not read. `claude-off` and `codex-off`
-  (`tq run --off`) stay: they start the agent with the plugin switched off
-  and the identity env cleaned, and set no variable.
-- **Codex identities:** run `tq settings render --all` once. The
-  `config.toml` block is rewritten with the new markers (always
+- **Manifests need nothing.** A top-level block tq does not read is
+  ignored; `tq doctor` warns `manifest-dropped-block` and never fails.
+  Removing such a block changes the manifest hash, so run `tq allow <ws>`
+  afterwards. The identity rules and the secret rules are always on, in
+  every Claude permission mode, and no rule asks for a confirmation.
+- **Trust is one thing.** `tq allow <ws>` trusts the manifest as it is;
+  nothing else is read from `$TQ_HOME/trust/`. A `claude.permission_mode:
+  bypass` renders as `bypassPermissions` on the trusted manifest alone.
+- **Run `tq settings render --all` once.** It rewrites each identity's
+  Claude settings and the Codex `config.toml` block (always
   `approval_policy = "on-request"`, `sandbox_mode = "workspace-write"`),
-  and the `rules/tq.rules` file an older tq wrote is removed. Trust tq's
+  and removes files an earlier tq wrote into the Codex identity. Trust tq's
   hook again in Codex's `/hooks` if it asks.
-- **The state folder** (`~/.tentaqles`): `hub/`, `packs/`, `guard/`,
-  `guard.yaml`, `decide/` and `build-gate/` are left in place and never
-  deleted by tq; `tq doctor` lists the ones that exist as `state-dir-unused`
-  (a warning); remove them yourself when you no longer want them.
-  Tracker tokens in the keychain stay usable through `tq secret`.
-- **The status line** no longer shows a mode segment.
-- **The plugin** (0.16.0) keeps the memory, the preamble and the skills;
-  `tq_hook.sh` and `tq_run.sh` have no off switch any more.
+- **The state folder** (`~/.tentaqles`): folders tq does not use are left
+  in place and never deleted; `tq doctor` lists them as `state-dir-unused`
+  (a warning); remove them yourself. Tokens in the keychain stay usable
+  through `tq secret`.
+- **The launchers** `claude-off` and `codex-off` (`tq run --off`) start the
+  agent with the plugin switched off and the identity env cleaned; they set
+  no variable, and they refuse an agent session.
 
 ## This machine, before and after
 
