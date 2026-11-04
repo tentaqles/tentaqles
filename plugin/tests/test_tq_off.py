@@ -1,15 +1,17 @@
-"""tq_hook.sh and tq_run.sh exit 0 at once under TQ_MODE=off (spec E §8.4); TQ_ENABLED=0 is shell activation only.
+"""tq_hook.sh and tq_run.sh have no off switch: they fail closed on a bare box whatever the environment says.
 
-They must do so before resolving tq or Python, so the fail-closed "no tq, no
-Python" exit 2 never fires in off. The box below has neither: TQ_BIN points
-nowhere and every python name on PATH is a shim that fails.
+The off launchers (claude-off, codex-off, `tq run --off`) switch the plugin
+off through Claude's --settings and clean the identity environment; no
+variable marks the launch, so nothing here exits early. TQ_ENABLED=0 keeps
+its one meaning, shell activation only: the hook still fails closed under
+it. The box below has neither tq nor Python: TQ_BIN points nowhere and every
+python name on PATH is a shim that fails.
 """
 
 import json
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -46,13 +48,13 @@ def _bare_env(tmp_path, **extra):
         shim = shims / name
         shim.write_text("#!/bin/sh" + chr(10) + "echo shim-ran >&2" + chr(10) + "exit 1" + chr(10))
         shim.chmod(0o755)
-    env = {k: v for k, v in os.environ.items() if k not in ("TENTAQLES_PY", "TQ_MODE", "TQ_ENABLED")}
+    env = {k: v for k, v in os.environ.items() if k not in ("TENTAQLES_PY", "TQ_ENABLED")}
     env.update(
         # PATH is replaced, not prepended, on purpose (a deliberate exception
-        # to "prepend fakes"): the test proves the scripts exit before they
-        # look for tq or Python, so no real tq or Python may be reachable. A
-        # prepended PATH would still reach the developer's tq and python3.
-        # Only the shims and bash's own directory stay.
+        # to "prepend fakes"): the test proves the scripts never find a tq or
+        # a Python, so no real one may be reachable. A prepended PATH would
+        # still reach the developer's tq and python3. Only the shims and
+        # bash's own directory stay.
         PATH=os.pathsep.join([str(shims), os.path.dirname(BASH)]),
         TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
@@ -68,54 +70,29 @@ def _bare_env(tmp_path, **extra):
 PAYLOAD = json.dumps({"cwd": ".", "tool_name": "Bash", "tool_input": {"command": "cat .env"}})
 
 
-@pytest.mark.parametrize("var,val", [("TQ_MODE", "off")])
-@pytest.mark.parametrize("event", ["pre-tool-use", "session-start"])
-def test_tq_hook_exits_zero_when_off(tmp_path, var, val, event):
-    p = subprocess.run([BASH, str(HOOK), event], input=PAYLOAD, capture_output=True, text=True,
-                       env=_bare_env(tmp_path, **{var: val}), timeout=30)
-    assert p.returncode == 0, p.stderr
-    assert p.stdout == "" and p.stderr == ""
+@pytest.mark.parametrize("extra", [{}, {"TQ_ENABLED": "0"}])
+def test_tq_hook_fails_closed_on_a_bare_box(tmp_path, extra):
+    """No tq, no Python: the pre-tool-use hook blocks, with or without the kill switch."""
+    p = subprocess.run([BASH, str(HOOK), "pre-tool-use"], input=PAYLOAD, capture_output=True, text=True,
+                       env=_bare_env(tmp_path, **extra), timeout=30)
+    assert p.returncode == 2
 
 
-@pytest.mark.parametrize("var,val", [("TQ_MODE", "off")])
-def test_tq_hook_off_even_for_an_unknown_event(tmp_path, var, val):
+def test_tq_hook_unknown_event_exits_two(tmp_path):
     p = subprocess.run([BASH, str(HOOK), "bogus"], input="", capture_output=True, text=True,
-                       env=_bare_env(tmp_path, **{var: val}), timeout=30)
-    assert p.returncode == 0 and p.stderr == ""
-
-
-def test_tq_hook_still_fails_closed_when_on(tmp_path):
-    """Control: the same bare box without off blocks the pre-tool-use call."""
-    p = subprocess.run([BASH, str(HOOK), "pre-tool-use"], input=PAYLOAD, capture_output=True, text=True,
                        env=_bare_env(tmp_path), timeout=30)
-    assert p.returncode == 2
+    assert p.returncode == 2 and "unknown event" in p.stderr
 
 
-@pytest.mark.parametrize("var,val", [("TQ_MODE", "off")])
-def test_tq_run_exits_zero_when_off(tmp_path, var, val):
+@pytest.mark.parametrize("extra", [{}, {"TQ_ENABLED": "0"}])
+def test_tq_run_cannot_run_on_a_bare_box(tmp_path, extra):
     p = subprocess.run([BASH, str(RUN), "memory-bridge.py", "session-start"], input="", capture_output=True,
-                       text=True, env=_bare_env(tmp_path, **{var: val}), timeout=30)
-    assert p.returncode == 0, p.stderr
-    assert p.stdout == "" and p.stderr == ""
-
-
-def test_tq_run_control_without_off(tmp_path):
-    """Control: without off, the bare box cannot run the script."""
-    p = subprocess.run([BASH, str(RUN), "memory-bridge.py", "session-start"], input="", capture_output=True,
-                       text=True, env=_bare_env(tmp_path), timeout=60)
+                       text=True, env=_bare_env(tmp_path, **extra), timeout=60)
     assert p.returncode != 0 or p.stderr != ""
 
 
-@pytest.mark.parametrize("var,val", [("TQ_ENABLED", "0"), ("TQ_MODE", "OFF"), ("TQ_MODE", " off")])
-def test_tq_hook_runs_when_not_exactly_off(tmp_path, var, val):
-    """TQ_ENABLED=0 only skips shell activation, and off is exactly `off`: the hook still fails closed."""
-    p = subprocess.run([BASH, str(HOOK), "pre-tool-use"], input=PAYLOAD, capture_output=True, text=True,
-                       env=_bare_env(tmp_path, **{var: val}), timeout=30)
-    assert p.returncode == 2
-
-
-@pytest.mark.parametrize("var,val", [("TQ_ENABLED", "0"), ("TQ_MODE", "OFF")])
-def test_tq_run_runs_when_not_exactly_off(tmp_path, var, val):
-    p = subprocess.run([BASH, str(RUN), "memory-bridge.py", "session-start"], input="", capture_output=True,
-                       text=True, env=_bare_env(tmp_path, **{var: val}), timeout=60)
-    assert p.returncode != 0 or p.stderr != ""
+def test_scripts_have_no_off_switch():
+    """Neither script exits early on an environment variable (the off launcher switches the plugin off instead)."""
+    for script in (HOOK, RUN):
+        text = script.read_text(encoding="utf-8")
+        assert "exit 0 ;; esac" not in text, script

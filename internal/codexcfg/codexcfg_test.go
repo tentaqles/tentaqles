@@ -33,17 +33,15 @@ func readFile(t *testing.T, p string) (string, bool) {
 	return string(b), err == nil
 }
 
-func plan(approval, sandbox string, rules ...PrefixRule) *Plan {
-	return &Plan{Mode: "default", Approval: approval, Sandbox: sandbox, Rules: rules}
+// pinned is Want for the one plan tq renders.
+func pinned() Want {
+	p := Pinned
+	return Want{Plan: &p, Hook: true}
 }
-
-func want(p *Plan) Want { return Want{Plan: p, Hook: p != nil} }
-
-var iacPrompt = PrefixRule{ID: "tq/iac-apply", Decision: DecisionPrompt, Pattern: Pattern{{"terraform"}, {"apply"}}}
 
 func TestRenderTopLevelOnAndOff(t *testing.T) {
 	dir := write(t, user)
-	res, err := Render(dir, want(plan("on-request", "workspace-write")), false)
+	res, err := Render(dir, pinned(), false)
 	if err != nil || len(res.Changed) == 0 || len(res.Conflicts) != 0 {
 		t.Fatalf("on: %+v %v", res, err)
 	}
@@ -54,7 +52,7 @@ func TestRenderTopLevelOnAndOff(t *testing.T) {
 	if !strings.HasSuffix(got, user) {
 		t.Fatalf("user content changed:\n%s", got)
 	}
-	if res, _ := Render(dir, want(plan("on-request", "workspace-write")), false); len(res.Changed) != 0 {
+	if res, _ := Render(dir, pinned(), false); len(res.Changed) != 0 {
 		t.Fatalf("second render must be a no-op: %v", res.Changed)
 	}
 	if _, err := Render(dir, Want{}, false); err != nil {
@@ -63,23 +61,29 @@ func TestRenderTopLevelOnAndOff(t *testing.T) {
 	if read(t, dir) != user {
 		t.Fatalf("removal must restore the user file exactly:\n%q", read(t, dir))
 	}
-	for _, f := range []string{RulesFile, HooksFile} {
-		if _, ok := readFile(t, filepath.Join(dir, filepath.FromSlash(f))); ok {
-			t.Errorf("%s must be removed", f)
-		}
+	if _, ok := readFile(t, filepath.Join(dir, HooksFile)); ok {
+		t.Errorf("%s must be removed", HooksFile)
 	}
 }
 
-// The unattended block (old markers) is replaced, not duplicated.
-func TestRenderReplacesLegacyBlock(t *testing.T) {
-	legacy := legacyBegin + "\napproval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n" + legacyEnd + "\n" + user
-	dir := write(t, legacy)
-	if _, err := Render(dir, want(plan("on-request", "workspace-write")), false); err != nil {
-		t.Fatal(err)
-	}
-	got := read(t, dir)
-	if strings.Contains(got, legacyBegin) || strings.Count(got, "approval_policy") != 1 || !strings.HasSuffix(got, user) {
-		t.Fatalf("legacy block must go:\n%s", got)
+// The blocks of older tq versions (the unattended and the guard-mode
+// markers) are replaced, not duplicated.
+func TestRenderReplacesLegacyBlocks(t *testing.T) {
+	for _, legacy := range []string{
+		legacyBegin + "\napproval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n" + legacyEnd + "\n" + user,
+		modeBegin + "\napproval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n" + modeEnd + "\n" + user,
+	} {
+		dir := write(t, legacy)
+		if _, err := Render(dir, pinned(), false); err != nil {
+			t.Fatal(err)
+		}
+		got := read(t, dir)
+		if strings.Contains(got, legacyBegin) || strings.Contains(got, modeBegin) || strings.Count(got, "approval_policy") != 1 || !strings.HasSuffix(got, user) {
+			t.Fatalf("legacy block must go:\n%s", got)
+		}
+		if !strings.Contains(got, `approval_policy = "on-request"`) || !strings.Contains(got, `sandbox_mode = "workspace-write"`) {
+			t.Fatalf("the pinned pair replaces it:\n%s", got)
+		}
 	}
 }
 
@@ -93,22 +97,77 @@ func TestRenderRemovesOwnedProfileOnly(t *testing.T) {
 	if !OwnsProfile(dir) {
 		t.Fatal("tq-written profile must be owned")
 	}
-	res, err := Render(dir, want(plan("on-request", "workspace-write")), false)
+	res, err := Render(dir, pinned(), false)
 	if err != nil || !hasPath(res.Changed, pp) {
 		t.Fatalf("profile removal: %+v %v", res, err)
 	}
 	if _, ok := readFile(t, pp); ok {
-		t.Fatal("a tq-owned profile file is removed (spec E §12)")
+		t.Fatal("a tq-owned profile file is removed")
 	}
 	mine := "model = \"x\"\n"
 	if err := os.WriteFile(pp, []byte(mine), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Render(dir, want(plan("on-request", "workspace-write")), false); err != nil {
+	if _, err := Render(dir, pinned(), false); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := readFile(t, pp); b != mine {
 		t.Fatal("a user profile file is never touched")
+	}
+}
+
+// The guard-mode rules file of older tq versions is removed when tq wrote
+// it, on a render and on a removal alike; a user's own rules files, and a
+// tq.rules tq did not write, are never touched.
+func TestRenderRemovesOwnedRulesFileOnly(t *testing.T) {
+	dir := write(t, "")
+	rp := filepath.Join(dir, "rules", "tq.rules")
+	if err := os.MkdirAll(filepath.Dir(rp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "rules", "default.rules")
+	if err := os.WriteFile(other, []byte("prefix_rule(pattern = [\"ls\"])\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ours := legacyRulesHead + "prefix_rule(pattern = [\"terraform\", \"apply\"], decision = \"prompt\", justification = \"x\")\n" + modeEnd + "\n"
+	for _, w := range []Want{pinned(), {}} {
+		if err := os.WriteFile(rp, []byte(ours), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Render(dir, w, false)
+		if err != nil || !hasPath(res.Changed, rp) || len(res.Conflicts) != 0 {
+			t.Fatalf("%+v: %+v %v", w, res, err)
+		}
+		if _, ok := readFile(t, rp); ok {
+			t.Fatal("tq's old rules file is removed")
+		}
+		if _, ok := readFile(t, other); !ok {
+			t.Fatal("the user's rules file must stay")
+		}
+	}
+	// Lines a user appended after tq's block survive; only the block goes.
+	theirs := "prefix_rule(pattern = [\"kubectl\", \"delete\"], decision = \"prompt\", justification = \"mine\")\n"
+	if err := os.WriteFile(rp, []byte(ours+"\n"+theirs), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := Render(dir, pinned(), false); err != nil || !hasPath(res.Changed, rp) {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if b, ok := readFile(t, rp); !ok || b != theirs {
+		t.Fatalf("the user's lines after tq's block must stay, got %q", b)
+	}
+	mine := "prefix_rule(pattern = [\"ls\"])\n"
+	if err := os.WriteFile(rp, []byte(mine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []Want{pinned(), {}} {
+		res, err := Render(dir, w, false)
+		if err != nil || hasPath(res.Changed, rp) || len(res.Conflicts) != 0 {
+			t.Fatalf("%+v: %+v %v", w, res, err)
+		}
+		if b, _ := readFile(t, rp); b != mine {
+			t.Fatal("a user-written tq.rules is never touched")
+		}
 	}
 }
 
@@ -120,8 +179,8 @@ func TestRenderDryRun(t *testing.T) {
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("removal on an empty dir must not create files: %v", entries)
 	}
-	res, err := Render(dir, want(plan("on-request", "workspace-write", iacPrompt)), true)
-	if err != nil || len(res.Changed) != 3 {
+	res, err := Render(dir, pinned(), true)
+	if err != nil || len(res.Changed) != 2 {
 		t.Fatalf("dry run: %+v %v", res, err)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
@@ -129,17 +188,14 @@ func TestRenderDryRun(t *testing.T) {
 	}
 }
 
-func TestRenderConfigConflictStillWritesRulesAndHook(t *testing.T) {
-	dir := write(t, "approval_policy = \"on-request\"\n"+user)
-	res, err := Render(dir, want(plan("never", "workspace-write", iacPrompt)), false)
+func TestRenderConfigConflictStillWritesHook(t *testing.T) {
+	dir := write(t, "approval_policy = \"never\"\n"+user)
+	res, err := Render(dir, pinned(), false)
 	if err != nil || len(res.Conflicts) != 1 || !strings.Contains(res.Conflicts[0], "approval_policy") {
 		t.Fatalf("want one conflict: %+v %v", res, err)
 	}
-	if read(t, dir) != "approval_policy = \"on-request\"\n"+user {
+	if read(t, dir) != "approval_policy = \"never\"\n"+user {
 		t.Fatal("config.toml must be unchanged on a conflict")
-	}
-	if _, ok := readFile(t, filepath.Join(dir, "rules", "tq.rules")); !ok {
-		t.Fatal("the rules file is independent of the config conflict")
 	}
 	if _, ok := readFile(t, filepath.Join(dir, HooksFile)); !ok {
 		t.Fatal("the hook is independent of the config conflict")
@@ -148,7 +204,7 @@ func TestRenderConfigConflictStillWritesRulesAndHook(t *testing.T) {
 
 func TestRenderUnterminatedBlockIsConflict(t *testing.T) {
 	broken := beginMarker + "\napproval_policy = \"never\"\n" + user
-	for _, w := range []Want{want(plan("on-request", "workspace-write")), {}} {
+	for _, w := range []Want{pinned(), {}} {
 		dir := write(t, broken)
 		res, err := Render(dir, w, false)
 		if err != nil || len(res.Conflicts) == 0 || !strings.Contains(res.Conflicts[0], "no end marker") {
@@ -156,70 +212,6 @@ func TestRenderUnterminatedBlockIsConflict(t *testing.T) {
 		}
 		if read(t, dir) != broken {
 			t.Fatalf("file must be byte-identical:\n%q", read(t, dir))
-		}
-	}
-}
-
-func TestRenderRulesFile(t *testing.T) {
-	dir := write(t, "")
-	rp := filepath.Join(dir, "rules", "tq.rules")
-	if _, err := Render(dir, want(plan("on-request", "workspace-write", iacPrompt)), false); err != nil {
-		t.Fatal(err)
-	}
-	got, ok := readFile(t, rp)
-	if !ok || got != RenderRules("default", []PrefixRule{iacPrompt}) {
-		t.Fatalf("rules file:\n%s", got)
-	}
-	rules, err := ReadRules(dir)
-	if err != nil || len(rules) != 1 || rules[0].ID != "tq/iac-apply" {
-		t.Fatalf("read back: %+v %v", rules, err)
-	}
-	// A user's own rules file next to it is left alone.
-	other := filepath.Join(dir, "rules", "default.rules")
-	if err := os.WriteFile(other, []byte("prefix_rule(pattern = [\"ls\"])\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// A hand edit of tq's file is put back.
-	if err := os.WriteFile(rp, []byte(got+"prefix_rule(pattern = [\"git\"], decision = \"allow\")\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Render(dir, want(plan("on-request", "workspace-write", iacPrompt)), false); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := readFile(t, rp); b != got {
-		t.Fatalf("tq's file is tq-owned:\n%s", b)
-	}
-	if _, err := Render(dir, Want{}, false); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := readFile(t, rp); ok {
-		t.Fatal("removal deletes tq's rules file")
-	}
-	if _, ok := readFile(t, other); !ok {
-		t.Fatal("the user's rules file must stay")
-	}
-}
-
-func TestRenderForeignRulesFileIsConflict(t *testing.T) {
-	dir := write(t, "")
-	rp := filepath.Join(dir, "rules", "tq.rules")
-	if err := os.MkdirAll(filepath.Dir(rp), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	mine := "prefix_rule(pattern = [\"ls\"])\n"
-	if err := os.WriteFile(rp, []byte(mine), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, w := range []Want{want(plan("on-request", "workspace-write", iacPrompt)), {}} {
-		res, err := Render(dir, w, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if w.Plan != nil && !conflictOn(res, "tq.rules") {
-			t.Fatalf("a user-written tq.rules is a conflict: %+v", res)
-		}
-		if b, _ := readFile(t, rp); b != mine {
-			t.Fatal("a user-written tq.rules is never touched")
 		}
 	}
 }
@@ -253,7 +245,7 @@ func TestRenderHooksMergesWithUserHooks(t *testing.T) {
 	if err := os.WriteFile(hp, []byte(userHooks), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Render(dir, want(plan("on-request", "workspace-write")), false); err != nil {
+	if _, err := Render(dir, pinned(), false); err != nil {
 		t.Fatal(err)
 	}
 	doc := hookDoc(t, dir)
@@ -271,7 +263,7 @@ func TestRenderHooksMergesWithUserHooks(t *testing.T) {
 	if g, h, ok := FindHook(dir, "PreToolUse"); !ok || g != 1 || h != 0 {
 		t.Fatalf("FindHook: %d %d %v", g, h, ok)
 	}
-	if res, _ := Render(dir, want(plan("on-request", "workspace-write")), false); len(res.Changed) != 0 {
+	if res, _ := Render(dir, pinned(), false); len(res.Changed) != 0 {
 		t.Fatalf("second render must be a no-op: %v", res.Changed)
 	}
 	if _, err := Render(dir, Want{}, false); err != nil {
@@ -285,7 +277,7 @@ func TestRenderHooksMergesWithUserHooks(t *testing.T) {
 
 func TestRenderHooksOwnFileRemoved(t *testing.T) {
 	dir := write(t, "")
-	if _, err := Render(dir, want(plan("on-request", "workspace-write")), false); err != nil {
+	if _, err := Render(dir, pinned(), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := readFile(t, filepath.Join(dir, HooksFile)); !ok {
@@ -306,7 +298,7 @@ func TestRenderHooksBadJSONIsConflict(t *testing.T) {
 		if err := os.WriteFile(hp, []byte(bad), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		res, err := Render(dir, want(plan("on-request", "workspace-write")), false)
+		res, err := Render(dir, pinned(), false)
 		if err != nil || !conflictOn(res, "hooks.json") {
 			t.Fatalf("%s: want a conflict: %+v %v", bad, res, err)
 		}

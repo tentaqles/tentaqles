@@ -39,7 +39,7 @@ func runCodexCheck(w *resolve.Workspace) map[string]bool {
 
 func renderHook(t *testing.T, dir string) {
 	t.Helper()
-	p := codexcfg.Plan{Mode: "default", Approval: "on-request", Sandbox: "workspace-write"}
+	p := codexcfg.Plan{Approval: "on-request", Sandbox: "workspace-write"}
 	if _, err := codexcfg.Render(dir, codexcfg.Want{Plan: &p, Hook: true}, false); err != nil {
 		t.Fatal(err)
 	}

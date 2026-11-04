@@ -1,16 +1,15 @@
-// Package codexcfg compiles tq's guard mode into Codex's config (spec E §12),
+// Package codexcfg renders tq's pinned Codex settings into a CODEX_HOME,
 // leaving everything the user wrote as it was:
 //
 //   - a marked block of top-level keys (approval_policy, sandbox_mode) at the
-//     head of config.toml, for the workspace-wide mode;
-//   - rules/tq.rules, tq's own exec-policy file (prompt and forbidden prefix
-//     rules); the user's other rules/*.rules files are never touched;
+//     head of config.toml: Pinned, the same for every workspace;
 //   - tq's entries in hooks.json: PreToolUse runs `tq claude-hook pre-tool-use
 //     --agent codex`, SessionStart `tq claude-hook session-start --agent codex`.
 //
-// Per-project modes are carried by the launch flags (Plan.Flags), which `tq
-// run` computes from the cwd. The old projects-only profile file,
-// tq-unattended.config.toml, is removed when tq wrote it.
+// The launch flags (Plan.Flags) carry the same pair on `tq run . -- codex`.
+// What older tq versions wrote is removed when tq owns it: the guard-mode
+// exec-policy file rules/tq.rules and the unattended profile file
+// tq-unattended.config.toml; their marked config.toml blocks are replaced.
 package codexcfg
 
 import (
@@ -22,13 +21,17 @@ import (
 )
 
 const (
-	beginMarker = "# >>> managed by tq (guard mode): edit with tq mode, not by hand"
-	endMarker   = "# <<< managed by tq (guard mode)"
+	beginMarker = "# >>> managed by tq: edit with tq settings render, not by hand"
+	endMarker   = "# <<< managed by tq"
 
-	// The unattended-era markers and profile file, read for removal only.
-	legacyProfile = "tq-unattended"
-	legacyBegin   = "# >>> managed by tq (unattended): edit with tq unattended, not by hand"
-	legacyEnd     = "# <<< managed by tq (unattended)"
+	// The markers and files of older tq versions, read for removal only.
+	legacyProfile   = "tq-unattended"
+	legacyBegin     = "# >>> managed by tq (unattended): edit with tq unattended, not by hand"
+	legacyEnd       = "# <<< managed by tq (unattended)"
+	modeBegin       = "# >>> managed by tq (guard mode): edit with tq mode, not by hand"
+	modeEnd         = "# <<< managed by tq (guard mode)"
+	legacyRulesFile = "rules/tq.rules"
+	legacyRulesHead = modeBegin + "\n"
 )
 
 var (
@@ -64,9 +67,9 @@ func strip(s string) (string, bool) {
 	for _, l := range strings.SplitAfter(s, "\n") {
 		t := strings.TrimRight(l, "\r\n")
 		switch {
-		case t == beginMarker || t == legacyBegin:
+		case t == beginMarker || t == legacyBegin || t == modeBegin:
 			in = true
-		case t == endMarker || t == legacyEnd:
+		case t == endMarker || t == legacyEnd || t == modeEnd:
 			in = false
 		case !in:
 			out = append(out, l)
@@ -113,6 +116,26 @@ type change struct {
 	path    string
 	content string
 	remove  bool
+}
+
+// stripLegacyRules reports whether s is a rules file tq wrote (it starts with
+// tq's marker) and returns what is left once tq's block is removed: "" when
+// the block was the whole file, otherwise the user's lines that followed it.
+// A file without a closing marker counts as tq's block in full.
+func stripLegacyRules(s string) (string, bool) {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if !strings.HasPrefix(s, legacyRulesHead) {
+		return "", false
+	}
+	end := strings.Index(s, modeEnd+"\n")
+	if end < 0 {
+		return "", true
+	}
+	rest := strings.TrimLeft(s[end+len(modeEnd)+1:], "\n")
+	if strings.TrimSpace(rest) == "" {
+		return "", true
+	}
+	return rest, true
 }
 
 func readOpt(p string) (string, bool, error) {
@@ -172,24 +195,16 @@ func Render(dir string, w Want, dryRun bool) (Result, error) {
 		plan = append(plan, change{path: filepath.Join(dir, legacyProfile+".config.toml"), remove: true})
 	}
 
-	// rules/tq.rules.
-	rp := filepath.Join(dir, filepath.FromSlash(RulesFile))
-	rcur, rexists, err := readOpt(rp)
-	if err != nil {
+	// The exec-policy file of older tq versions: tq's block (it starts with
+	// tq's marker) is removed; lines a user added after the block stay, and a
+	// rules file tq did not write is never touched.
+	rp := filepath.Join(dir, filepath.FromSlash(legacyRulesFile))
+	if rcur, rexists, err := readOpt(rp); err != nil {
 		return res, err
-	}
-	ours := rexists && strings.HasPrefix(strings.ReplaceAll(rcur, "\r\n", "\n"), rulesBegin+"\n")
-	switch {
-	case rexists && !ours:
-		if w.Plan != nil {
-			res.Conflicts = append(res.Conflicts, "tq.rules: "+rp+" exists and is not written by tq; rename it to let tq manage it")
+	} else if rexists {
+		if rest, owned := stripLegacyRules(rcur); owned {
+			plan = append(plan, change{path: rp, content: rest, remove: rest == ""})
 		}
-	case w.Plan != nil:
-		if next := RenderRules(w.Plan.Mode, w.Plan.Rules); next != rcur {
-			plan = append(plan, change{path: rp, content: next})
-		}
-	case ours:
-		plan = append(plan, change{path: rp, remove: true})
 	}
 
 	// hooks.json.

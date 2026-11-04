@@ -25,7 +25,10 @@ func newAddCmd() *cobra.Command {
 				}
 			}
 			o.RunGit = gitcfg.RunGit
-			o.Trust = true
+			// Trust is human-only: a session may scaffold a folder but never
+			// trust it itself (the same marker check tq allow makes).
+			agentMarker, agent := agentSession()
+			o.Trust = !agent
 			if o.Base == "" {
 				cfg, err := registry.Load()
 				if err != nil {
@@ -41,7 +44,11 @@ func newAddCmd() *cobra.Command {
 				return err
 			}
 			w := c.OutOrStdout()
-			fmt.Fprintf(w, "Created %s (trusted)\n", ws.Root)
+			if agent {
+				fmt.Fprintf(w, "Created %s (untrusted: agent session, %s is set)\n  trust it yourself: tq allow %s\n", ws.Root, agentMarker, ws.Name)
+			} else {
+				fmt.Fprintf(w, "Created %s (trusted)\n", ws.Root)
+			}
 			for _, id := range ws.Manifest.IdentityNames() {
 				fmt.Fprintf(w, "  login: tq login %s %s\n", ws.Name, id)
 			}

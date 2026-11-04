@@ -23,17 +23,14 @@ func TestHashAllowDeny(t *testing.T) {
 	if !IsTrusted(h) {
 		t.Fatal("allow failed")
 	}
-	if IsBypassAllowed(h) {
-		t.Fatal("bypass must be separate")
-	}
-	if err := AllowBypass(h); err != nil || !IsBypassAllowed(h) {
-		t.Fatal("bypass allow failed")
-	}
 	if err := Deny(h); err != nil {
 		t.Fatal(err)
 	}
-	if IsTrusted(h) || IsBypassAllowed(h) {
-		t.Fatal("deny must clear both")
+	if IsTrusted(h) {
+		t.Fatal("deny must clear the trust")
+	}
+	if err := Deny(h); err != nil {
+		t.Fatalf("a second deny is not an error: %v", err)
 	}
 }
 

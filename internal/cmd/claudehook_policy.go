@@ -132,10 +132,7 @@ var (
 )
 
 // buildPolicy compiles the hook's rule set once: the built-in rules in
-// hookRuleIDs, one rule per id. policy.Builtin lists builtin.go's rules
-// first, so the first rule of an id is the core one; a later part that
-// registers the same id (the pack framework's keychain variant of
-// tq/secret-store-shell) is not applied by the hook.
+// hookRuleIDs, one rule per id (the first rule of an id wins).
 func buildPolicy() *policy.Set {
 	hookSetOnce.Do(func() {
 		seen := map[string]bool{}

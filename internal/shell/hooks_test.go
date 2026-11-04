@@ -7,8 +7,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/tentaqles/tentaqles/internal/envplan"
 )
 
 const goldenBin = "/opt/tq/bin/tq"
@@ -42,8 +40,9 @@ func TestHook_Golden(t *testing.T) {
 	}
 }
 
-// Every shell with functions gets the spec E §8.2 pieces: the paused hook,
-// tq off/on, claude/codex through tq run, and the off launchers.
+// Every shell with functions gets the same pieces: the prompt hook (paused
+// by the TQ_ENABLED=0 kill switch), claude/codex through tq run, and the
+// off launchers. The tq off/on functions and TQ_MODE are gone.
 func TestHook_DefinesLaunchers(t *testing.T) {
 	for _, sh := range []string{"bash", "zsh", "fish", "pwsh", "powershell"} {
 		h, err := HookFor(sh, goldenBin)
@@ -51,12 +50,16 @@ func TestHook_DefinesLaunchers(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"TQ_ENABLED", "env --off --shell " + sh, "run --off -- claude", "run . -- claude",
+			"TQ_ENABLED", "run --off -- claude", "run . -- claude",
 			"run --off -- codex", "run . -- codex", "claude-off", "codex-off",
-			"tq: off in this window", "tq: on - identity re-applied",
 		} {
 			if !strings.Contains(h, want) {
 				t.Errorf("%s hook: missing %q", sh, want)
+			}
+		}
+		for _, gone := range []string{"TQ_MODE", "env --off", "env --on", "tq: off in this window"} {
+			if strings.Contains(h, gone) {
+				t.Errorf("%s hook: still has %q", sh, gone)
 			}
 		}
 	}
@@ -66,28 +69,10 @@ func TestHook_DefinesLaunchers(t *testing.T) {
 	}
 }
 
-// The code of `tq off` per shell, from a fixed workspace state.
-func TestEmit_OffGolden(t *testing.T) {
-	orig := `C:\orig`
-	st := envplan.State{WS: "acme", Prev: map[string]*string{"TQ_WS": nil, "TQ_WS_ROOT": nil, "GH_CONFIG_DIR": nil, "TQ_SOMETHING": &orig}}
-	cur := map[string]string{envplan.StateVar: st.Encode(), "TQ_WS": "acme", "TQ_WS_ROOT": "/w/acme",
-		"GH_CONFIG_DIR": "/id/gh", "CLAUDE_CONFIG_DIR": "/id/claude", "TQ_SOMETHING": "x"}
-	ops := envplan.OffOps(func(k string) (string, bool) { v, ok := cur[k]; return v, ok })
-	for _, sh := range Shells {
-		t.Run(sh, func(t *testing.T) {
-			got, err := Emit(sh, ops)
-			if err != nil {
-				t.Fatal(err)
-			}
-			golden(t, "off-"+sh+".golden", got)
-		})
-	}
-}
-
 // --- the functions, run in a real shell with a fake tq on PATH -----------
 
 // fakeTq writes a fake tq that logs its argv to log and prints env code for
-// `env --shell <sh>` (TQ_WS=acme unless off) and `env --off --shell <sh>`.
+// `env --shell <sh>` (TQ_WS=acme).
 func fakeTq(t *testing.T, dir string) string {
 	t.Helper()
 	p := filepath.Join(dir, "tq")
@@ -97,18 +82,11 @@ sh=bash
 prev=
 for a in "$@"; do [ "$prev" = "--shell" ] && sh=$a; prev=$a; done
 case "$1 $2" in
-  "env --off")
-    case $sh in
-      fish) printf 'set -e TQ_WS\nset -gx TQ_MODE '"'"'off'"'"'\n' ;;
-      *) printf 'unset TQ_WS\nexport TQ_MODE='"'"'off'"'"'\n' ;;
-    esac ;;
   "env --shell")
-    if [ "${TQ_MODE:-}" != off ]; then
-      case $sh in
-        fish) printf 'set -gx TQ_WS '"'"'acme'"'"'\n' ;;
-        *) printf 'export TQ_WS='"'"'acme'"'"'\n' ;;
-      esac
-    fi ;;
+    case $sh in
+      fish) printf 'set -gx TQ_WS '"'"'acme'"'"'\n' ;;
+      *) printf 'export TQ_WS='"'"'acme'"'"'\n' ;;
+    esac ;;
 esac
 exit 0
 `
@@ -121,10 +99,8 @@ exit 0
 // wantLog is what the scripts below make the fake tq record.
 var wantLog = []string{
 	"env --shell SH",
-	"env --off --shell SH",
-	"run --off -- claude x",
-	"env --shell SH",
-	"run . -- claude y",
+	"run . -- claude x",
+	"run --off -- claude y",
 	"run --off -- codex z",
 	"version",
 }
@@ -207,7 +183,7 @@ func shellEnv(t *testing.T, extra ...string) []string {
 	env := append(os.Environ(),
 		"HOME="+slash(home), "USERPROFILE="+home, "ZDOTDIR="+slash(home),
 		"XDG_CONFIG_HOME="+slash(filepath.Join(home, ".config")), "BASH_ENV=", "ENV=",
-		"TQ_MODE=", "TQ_ENABLED=", "TQ_WS=")
+		"TQ_ENABLED=", "TQ_WS=")
 	return append(env, extra...)
 }
 
@@ -244,20 +220,16 @@ func runPosixShell(t *testing.T, shellBin, sh, script string) {
 	}
 	s := string(out)
 	checkNoLeak(t, sh, s)
-	if !strings.Contains(s, "A:off:") || !strings.Contains(s, "B::acme") || !strings.Contains(s, "tq: off in this window") {
-		t.Fatalf("%s: env after off/on: %s", sh, s)
+	if !strings.Contains(s, "A:acme") {
+		t.Fatalf("%s: env after the hook: %s", sh, s)
 	}
 	checkLog(t, log, sh)
 }
 
 const posixScript = `. 'HOOK'
-tq off
-echo "A:${TQ_MODE:-}:${TQ_WS:-}"
-__tq_hook
+echo "A:${TQ_WS:-}"
 claude x
-tq on
-echo "B:${TQ_MODE:-}:${TQ_WS:-}"
-claude y
+claude-off y
 codex-off z
 tq version
 `
@@ -284,13 +256,9 @@ func TestHook_FishFunctions(t *testing.T) {
 		t.Skip("no fish")
 	}
 	runPosixShell(t, f, "fish", `source 'HOOK'
-tq off
-echo "A:$TQ_MODE:$TQ_WS"
-__tq_hook
+echo "A:$TQ_WS"
 claude x
-tq on
-echo "B:$TQ_MODE:$TQ_WS"
-claude y
+claude-off y
 codex-off z
 tq version
 `)
@@ -315,12 +283,7 @@ func TestHook_PowerShellFunctions(t *testing.T) {
 	bin := filepath.Join(dir, "tq.cmd")
 	fake := "@echo off\r\n" +
 		">>\"%TQ_FAKE_LOG%\" echo %*\r\n" +
-		"if \"%1 %2\"==\"env --off\" goto off\r\n" +
-		"if \"%1\"==\"env\" if not \"%TQ_MODE%\"==\"off\" echo $env:TQ_WS = 'acme'\r\n" +
-		"exit /b 0\r\n" +
-		":off\r\n" +
-		"echo Remove-Item -ErrorAction SilentlyContinue Env:TQ_WS\r\n" +
-		"echo $env:TQ_MODE = 'off'\r\n" +
+		"if \"%1\"==\"env\" echo $env:TQ_WS = 'acme'\r\n" +
 		"exit /b 0\r\n"
 	if err := os.WriteFile(bin, []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
@@ -335,13 +298,9 @@ func TestHook_PowerShellFunctions(t *testing.T) {
 	}
 	log := filepath.Join(dir, "log")
 	script := "Invoke-Expression ([IO.File]::ReadAllText('" + hookPath + "'))\n" +
-		"tq off\n" +
-		"Write-Output \"A:$($env:TQ_MODE):$($env:TQ_WS)\"\n" +
-		"__tq_hook\n" +
+		"Write-Output \"A:$($env:TQ_WS)\"\n" +
 		"claude x\n" +
-		"tq on\n" +
-		"Write-Output \"B:$($env:TQ_MODE):$($env:TQ_WS)\"\n" +
-		"claude y\n" +
+		"claude-off y\n" +
 		"codex-off z\n" +
 		"tq version\n"
 	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", script)
@@ -351,8 +310,8 @@ func TestHook_PowerShellFunctions(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	checkNoLeak(t, sh, string(out))
-	if s := string(out); !strings.Contains(s, "A:off:") || !strings.Contains(s, "B::acme") {
-		t.Fatalf("env after off/on: %s", s)
+	if s := string(out); !strings.Contains(s, "A:acme") {
+		t.Fatalf("env after the hook: %s", s)
 	}
 	checkLog(t, log, sh)
 }
@@ -458,7 +417,6 @@ func TestHook_PowerShellRebuildsDash(t *testing.T) {
 		"Remove-Item -ErrorAction SilentlyContinue '" + log + "'\n" +
 		"tq run . -- cmd /c echo func -p x\n" +
 		"tq run . npm test -p x\n" +
-		"tq run acme --tq-mode strict -- claude -p q\n" +
 		"tq run --off -- claude --resume\n" +
 		"tq dotenv run --file a.env -- psql -c x\n" +
 		"tq redact run --classes pii -- cat -n\n" +
@@ -480,7 +438,6 @@ func TestHook_PowerShellRebuildsDash(t *testing.T) {
 	want := []string{
 		"run . -- cmd /c echo func -p x",
 		"run . -- npm test -p x",
-		"run acme --tq-mode strict -- claude -p q",
 		"run --off -- claude --resume",
 		"dotenv run --file a.env -- psql -c x",
 		"redact run --classes pii -- cat -n",

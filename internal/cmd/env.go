@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 
@@ -16,41 +15,17 @@ import (
 
 func newEnvCmd() *cobra.Command {
 	var sh string
-	var asJSON, off, on bool
+	var asJSON bool
 	c := &cobra.Command{
 		Use:   "env",
 		Short: "Print the env changes for the current directory (used by the shell hook)",
 		Long: "Print the env changes for the current directory (used by the shell hook).\n" +
-			"Under TQ_MODE=off or TQ_ENABLED=0 it prints nothing. --off prints the code of `tq off` (identity\n" +
-			"cleared, TQ_MODE=off; human only), --on the code of `tq on` (TQ_MODE unset).",
+			"Under TQ_ENABLED=0 (the shell-activation kill switch) it prints nothing.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			if off && on {
-				return errors.New("--off and --on are exclusive")
-			}
-			if off || on {
-				var ops envplan.Ops
-				if off {
-					if err := refuseAgent("tq env --off"); err != nil {
-						return err
-					}
-					ops = envplan.OffOps(os.LookupEnv)
-				} else {
-					ops = envplan.OnOps()
-				}
-				if asJSON {
-					return json.NewEncoder(c.OutOrStdout()).Encode(map[string]any{"set": ops.Set, "unset": ops.Unset})
-				}
-				out, err := shell.Emit(sh, ops)
-				if err != nil {
-					return err
-				}
-				_, err = fmt.Fprint(c.OutOrStdout(), out)
-				return err
-			}
-			if envOff() || os.Getenv("TQ_ENABLED") == "0" {
-				// tq off in this window, or the legacy kill switch (whose one
-				// meaning is shell activation): the prompt hook is paused, and
-				// a direct call changes nothing either.
+			if os.Getenv("TQ_ENABLED") == "0" {
+				// The kill switch, whose one meaning is shell activation:
+				// the prompt hook is paused, and a direct call changes
+				// nothing either.
 				return nil
 			}
 			cfg, err := registry.Load()
@@ -77,8 +52,6 @@ func newEnvCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&sh, "shell", "bash", "one of "+fmt.Sprint(shell.Shells))
 	c.Flags().BoolVar(&asJSON, "json", false, "print JSON instead of shell code")
-	c.Flags().BoolVar(&off, "off", false, "print the code of `tq off`: clear the identity, set TQ_MODE=off (human only)")
-	c.Flags().BoolVar(&on, "on", false, "print the code of `tq on`: unset TQ_MODE")
 	return c
 }
 

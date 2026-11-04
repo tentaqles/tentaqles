@@ -24,18 +24,14 @@ func HashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func file(hash, suffix string) string { return filepath.Join(paths.TrustDir(), hash+suffix) }
+func file(hash string) string { return filepath.Join(paths.TrustDir(), hash) }
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
-func IsTrusted(hash string) bool { return exists(file(hash, "")) }
-
-// IsBypassAllowed reports whether a legacy .bypass file or a mode grant file
-// exists for hash. It does not check which workspace the grant is for:
-// decisions use guardcfg.BypassAllowed, which is root-checked.
-func IsBypassAllowed(hash string) bool {
-	return exists(file(hash, ".bypass")) || exists(file(hash, GrantSuffix))
-}
+// IsTrusted reports whether the manifest with this hash was allowed. The
+// hash is of the file's bytes, so an edited manifest is untrusted until
+// `tq allow` runs again.
+func IsTrusted(hash string) bool { return exists(file(hash)) }
 
 func touch(p string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -44,15 +40,13 @@ func touch(p string) error {
 	return os.WriteFile(p, []byte{}, 0o600)
 }
 
-func Allow(hash string) error       { return touch(file(hash, "")) }
-func AllowBypass(hash string) error { return touch(file(hash, ".bypass")) }
+// Allow records hash as trusted.
+func Allow(hash string) error { return touch(file(hash)) }
 
-// Deny removes hash's trust, its bypass trust and its mode grant.
+// Deny removes hash's trust.
 func Deny(hash string) error {
-	for _, s := range []string{"", ".bypass", GrantSuffix} {
-		if err := os.Remove(file(hash, s)); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+	if err := os.Remove(file(hash)); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

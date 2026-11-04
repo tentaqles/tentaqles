@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -61,65 +60,18 @@ func TestEnv_NeutralCwd_UnsetsTrackedVars(t *testing.T) {
 	}
 }
 
-// --- spec E §8.1, §8.4: tq env --off / --on, and tq env under off -------
-
-func TestEnv_PrintsNothingWhenOff(t *testing.T) {
-	for _, kv := range [][2]string{{"TQ_MODE", "off"}, {"TQ_ENABLED", "0"}} {
-		t.Run(kv[0], func(t *testing.T) {
-			root := mkLaunchWS(t, "acme", "")
-			chdir(t, root)
-			t.Setenv(kv[0], kv[1])
-			if got := runEnv(t, "env", "--shell", "bash"); got != "" {
-				// The output holds env values: never print it (rules).
-				t.Fatalf("tq env under %s=%s must print nothing, got %d bytes", kv[0], kv[1], len(got))
-			}
-		})
-	}
-}
-
-func TestEnv_Off(t *testing.T) {
+// TQ_ENABLED=0 is the shell-activation kill switch: tq env prints nothing.
+func TestEnv_PrintsNothingUnderKillSwitch(t *testing.T) {
 	root := mkLaunchWS(t, "acme", "")
-	clearAgentMarkers(t)
 	chdir(t, root)
-	st := envplan.State{WS: "acme", Prev: map[string]*string{"TQ_WS": nil, "CLAUDE_CONFIG_DIR": nil}}
-	t.Setenv(envplan.StateVar, st.Encode())
-	t.Setenv("TQ_WS", "acme")
-	t.Setenv("CLAUDE_CONFIG_DIR", "/id/acme/claude")
-	got := runEnv(t, "env", "--off", "--shell", "bash")
-	for _, want := range []string{"unset CLAUDE_CONFIG_DIR", "unset TQ_WS", "unset " + envplan.StateVar, "export TQ_MODE='off'"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("tq env --off: missing %q in %q", want, got)
+	t.Setenv("TQ_ENABLED", "0")
+	if got := runEnv(t, "env", "--shell", "bash"); got != "" {
+		// The output holds env values: never print it (rules).
+		t.Fatalf("tq env under TQ_ENABLED=0 must print nothing, got %d bytes", len(got))
+	}
+	for _, flag := range []string{"--off", "--on"} {
+		if _, err := runTq(t, "env", flag); err == nil {
+			t.Fatalf("tq env %s is gone with the tq off/on functions", flag)
 		}
-	}
-	// Already off: --off still prints the code (idempotent).
-	t.Setenv("TQ_MODE", "off")
-	if got := runEnv(t, "env", "--off", "--shell", "pwsh"); !strings.Contains(got, "$env:TQ_MODE = 'off'") {
-		t.Fatalf("pwsh: %q", got)
-	}
-}
-
-func TestEnv_OffRefusesAgents(t *testing.T) {
-	mkLaunchWS(t, "acme", "")
-	for _, k := range agentMarkers {
-		clearAgentMarkers(t)
-		t.Setenv(k, "1")
-		if _, err := runTq(t, "env", "--off", "--shell", "bash"); !errors.Is(err, errHumanOnly) {
-			t.Errorf("%s: want ErrHumanOnly, got %v", k, err)
-		}
-	}
-}
-
-func TestEnv_On(t *testing.T) {
-	isolateHome(t)
-	chdir(t, t.TempDir())
-	t.Setenv("TQ_MODE", "off")
-	if got := runEnv(t, "env", "--on", "--shell", "bash"); got != "unset TQ_MODE\n" {
-		t.Fatalf("bash: %q", got)
-	}
-	if got := runEnv(t, "env", "--on", "--shell", "fish"); got != "set -e TQ_MODE\n" {
-		t.Fatalf("fish: %q", got)
-	}
-	if _, err := runTq(t, "env", "--on", "--off"); err == nil {
-		t.Fatal("--on with --off must be refused")
 	}
 }

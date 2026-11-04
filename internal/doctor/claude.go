@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/claudesettings"
-	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -28,7 +27,7 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 	if _, err := os.Stat(dir); err != nil {
 		return
 	}
-	want := claudesettings.Desired(w.Manifest, guardcfg.BypassAllowed(w.Hash, w.Name, w.Root), "")
+	want := claudesettings.Desired(w.Manifest, "")
 	if res, err := claudesettings.Render(dir, want, true); err == nil && res.Changed {
 		add("warn", "settings-drift", w.Name, "settings.json differs from the tq baseline: "+strings.Join(res.Changes, "; "), "tq settings render "+w.Name)
 	}

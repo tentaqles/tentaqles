@@ -89,19 +89,13 @@ func Clean(base []string) []string {
 }
 
 // Environ returns base cleaned of any other workspace's shell state (see
-// Clean) with the workspace's desired vars applied, plus HeadlessModeVar when
-// the manifest sets guard.headless_mode (an inherited value is dropped). A
-// stale TQ_WS / TQ_WS_ROOT is dropped too.
+// Clean) with the workspace's desired vars applied. A stale TQ_WS /
+// TQ_WS_ROOT is dropped too.
 func Environ(ws *resolve.Workspace, base []string) []string {
 	desired := Desired(ws)
-	if ws != nil && ws.Manifest != nil {
-		if m := strings.TrimSpace(ws.Manifest.Guard.HeadlessMode); m != "" {
-			desired[HeadlessModeVar] = m
-		}
-	}
 	// The workspace markers come from desired only: a neutral launch from a
 	// shell whose state was lost must not carry another workspace's name.
-	dk := map[string]bool{envKey(HeadlessModeVar): true}
+	dk := map[string]bool{}
 	for _, k := range wsVars {
 		dk[envKey(k)] = true
 	}

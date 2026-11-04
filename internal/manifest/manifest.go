@@ -12,7 +12,6 @@ import (
 	"sync"
 
 	"github.com/tentaqles/tentaqles/internal/decide"
-	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"gopkg.in/yaml.v3"
 )
@@ -97,33 +96,6 @@ type Bundle struct {
 	MCP          []string `yaml:"mcp"`
 }
 
-// Guard tunes the tool-call policy (internal/policy) for this workspace. The
-// manifest is hash-pinned by `tq allow`, so it is the one layer trusted to
-// switch built-in rules off; project files can only add rules.
-type Guard struct {
-	Disable []string `yaml:"disable"`
-	// Enable switches a rule back on for this workspace when the user's
-	// global guard file (~/.tentaqles/guard.yaml) turned it off.
-	Enable []string `yaml:"enable,omitempty"`
-	// Actions overrides a rule's action (ask|deny) for this workspace; it
-	// wins over the global file.
-	Actions map[string]policy.Action `yaml:"actions,omitempty"`
-	Rules   []policy.Rule            `yaml:"rules"`
-	// Unattended is the legacy unattended block, read as guard modes
-	// (ModeView). Deprecated: use mode and projects. Nil: absent.
-	Unattended *Unattended `yaml:"unattended,omitempty"`
-
-	// Guard mode (spec E §7), see guardmode.go. Values are guardcfg names
-	// (manifest does not import guardcfg).
-	Mode          string                  `yaml:"mode,omitempty"`
-	Base          string                  `yaml:"base,omitempty"`
-	Categories    map[string]string       `yaml:"categories,omitempty"`
-	RulesOverride map[string]string       `yaml:"rules_override,omitempty"`
-	Projects      map[string]GuardProject `yaml:"projects,omitempty"`
-	HeadlessMode  string                  `yaml:"headless_mode,omitempty"`
-	Codex         *GuardCodex             `yaml:"codex,omitempty"`
-}
-
 type Manifest struct {
 	Schema          string              `yaml:"schema"`
 	Client          string              `yaml:"client"`
@@ -137,7 +109,6 @@ type Manifest struct {
 	Cloud           map[string]any      `yaml:"cloud"`
 	Database        map[string]any      `yaml:"database"`
 	Stack           []string            `yaml:"stack"`
-	Guard           Guard               `yaml:"guard"`
 	// Decision configures the Jev decision layer (internal/decide). Off
 	// unless backend is set; shadow mode unless mode is enforce.
 	Decision decide.Policy `yaml:"decision"`
@@ -213,30 +184,11 @@ func Load(path string) (*Manifest, error) {
 	if !contains(PermissionModes, m.Claude.PermissionMode) {
 		return nil, fmt.Errorf("%s: claude.permission_mode must be one of default|acceptEdits|plan|auto|dontAsk|bypass", path)
 	}
-	for id, a := range m.Guard.Actions {
-		if a != policy.Ask && a != policy.Deny {
-			return nil, fmt.Errorf("%s: guard.actions[%s] must be ask or deny, got %q", path, id, a)
-		}
-	}
 	if err := m.Decision.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.Data.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if err := m.Guard.Unattended.Validate(); err != nil {
-		return nil, fmt.Errorf("%s: guard.unattended: %w", path, err)
-	}
-	if err := m.Guard.ValidateMode(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	for _, r := range m.Guard.Rules {
-		if r.Unattended != "" && r.Unattended != policy.UnattendedEnforce {
-			return nil, fmt.Errorf("%s: guard.rules[%s].unattended must be %q or absent, got %q", path, r.ID, policy.UnattendedEnforce, r.Unattended)
-		}
-		if r.Category != "" && !contains(GuardCategories, r.Category) {
-			return nil, fmt.Errorf("%s: guard.rules[%s].category must be one of %s, got %q", path, r.ID, strings.Join(GuardCategories, "|"), r.Category)
-		}
 	}
 	if err := m.validateCloud(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)

@@ -53,7 +53,7 @@ func TestSessionStartAcceptsAgentFlag(t *testing.T) {
 	}
 }
 
-func TestRefuseAgentAndRequireHuman(t *testing.T) {
+func TestRefuseAgent(t *testing.T) {
 	for _, k := range []string{"CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS", "TQ_HUB_TASK", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"} {
 		t.Run(k, func(t *testing.T) {
 			for _, o := range []string{"CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS", "TQ_HUB_TASK", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"} {
@@ -70,8 +70,5 @@ func TestRefuseAgentAndRequireHuman(t *testing.T) {
 	}
 	if err := refuseAgent("x"); err != nil {
 		t.Fatalf("no marker: %v", err)
-	}
-	if err := requireHuman(strings.NewReader(""), &bytes.Buffer{}, "tq mode set"); !errors.Is(err, errHumanOnly) {
-		t.Fatalf("non-TTY must be refused: %v", err)
 	}
 }
