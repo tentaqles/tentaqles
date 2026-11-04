@@ -27,10 +27,12 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
   the plugin's `tq_hook.sh` and `tq_run.sh` have no off switch), the mode grants under
   `$TQ_HOME/trust/` (`.mode` and `.bypass` files are not read; a `claude.permission_mode:
   bypass` renders as `bypassPermissions` on the trusted manifest alone), the Codex
-  `rules/tq.rules` exec-policy file (removed on the next render when tq wrote it; the
-  `config.toml` block always pins `on-request` and `workspace-write`, with new markers),
-  the status line's mode segment, the `mode-*` and `guard-locked-override` doctor checks,
-  `docs/GUARD-SCOPE.md`, and `tq allow`/`tq deny` refuse an agent session (ADR-0001).
+  `rules/tq.rules` exec-policy file (tq's block is removed on the next render; lines a
+  user added after it stay; the `config.toml` block always pins `on-request` and
+  `workspace-write`, with new markers), the status line's mode segment, the `mode-*` and
+  `guard-locked-override` doctor checks, `docs/GUARD-SCOPE.md`, and `tq allow`/`tq deny`
+  refuse an agent session (ADR-0001). `tq add` and `tq setup` scaffold workspaces from a
+  session but leave them untrusted, printing the `tq allow` line for the human.
 
 ### Install
 

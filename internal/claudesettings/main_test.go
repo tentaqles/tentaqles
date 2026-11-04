@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// Desired reads the global guard.yaml: point TQ_HOME at an empty folder so no
-// test reads the developer's real file. Tests that need one set their own.
+// Point TQ_HOME at an empty folder so no test reads the developer's real state.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "tq-claudesettings-")
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -102,6 +103,7 @@ func newSetupCmd() *cobra.Command {
 				if err := saveWizardPlan(plan, writePlan); err != nil {
 					fmt.Fprintf(c.ErrOrStderr(), "warning: failed to save plan: %v\n", err)
 				}
+				humanTrustOnly(plan, c.ErrOrStderr())
 				applyReport, err := setup.Apply(plan, cat, setup.ApplyOptions{RunGit: setupRunGit, Profiles: hooks.ProfilesFn()})
 				printReport(out, applyReport)
 				if err != nil {
@@ -156,6 +158,7 @@ func newSetupCmd() *cobra.Command {
 				}
 			}
 
+			humanTrustOnly(plan, c.ErrOrStderr())
 			report, err := setup.Apply(plan, cat, setup.ApplyOptions{RunGit: setupRunGit, Profiles: hooks.ProfilesFn()})
 			if asJSON {
 				encErr := json.NewEncoder(out).Encode(setupOutput{Preview: changes, ToolCheck: toolcheck, Report: &report})
@@ -216,6 +219,19 @@ func printToolCheck(out interface{ Write([]byte) (int, error) }, cat *providers.
 				fmt.Fprintf(out, "  [missing] %s → %s\n", r.ID, hint)
 			}
 		}
+	}
+}
+
+// humanTrustOnly clears a plan's Trust inside an agent session: a session may
+// scaffold workspaces but never trust them itself (the same marker check
+// tq allow makes). It says so once on w.
+func humanTrustOnly(plan *setup.SetupPlan, w io.Writer) {
+	if plan == nil || !plan.Trust {
+		return
+	}
+	if m, ok := agentSession(); ok {
+		plan.Trust = false
+		fmt.Fprintf(w, "Not trusting the new workspaces from an agent session (%s is set); run tq allow <name> yourself.\n", m)
 	}
 }
 

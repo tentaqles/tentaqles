@@ -145,6 +145,17 @@ func TestRenderRemovesOwnedRulesFileOnly(t *testing.T) {
 			t.Fatal("the user's rules file must stay")
 		}
 	}
+	// Lines a user appended after tq's block survive; only the block goes.
+	theirs := "prefix_rule(pattern = [\"kubectl\", \"delete\"], decision = \"prompt\", justification = \"mine\")\n"
+	if err := os.WriteFile(rp, []byte(ours+"\n"+theirs), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := Render(dir, pinned(), false); err != nil || !hasPath(res.Changed, rp) {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if b, ok := readFile(t, rp); !ok || b != theirs {
+		t.Fatalf("the user's lines after tq's block must stay, got %q", b)
+	}
 	mine := "prefix_rule(pattern = [\"ls\"])\n"
 	if err := os.WriteFile(rp, []byte(mine), 0o600); err != nil {
 		t.Fatal(err)

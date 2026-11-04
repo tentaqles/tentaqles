@@ -55,6 +55,37 @@ func TestEditedManifestLosesTrust(t *testing.T) {
 
 // tq allow and tq deny refuse an agent session by its environment marker:
 // a session cannot trust (or untrust) a folder itself (FR-11).
+// tq add scaffolds a folder for anyone, but only a human gets it trusted: under
+// an agent marker the new manifest stays untrusted and the output hands the
+// human the tq allow line.
+func TestAddDoesNotTrustFromAgent(t *testing.T) {
+	root := mkLaunchWS(t, "acme", "")
+	base := filepath.Dir(root)
+	for _, k := range agentMarkers {
+		clearAgentMarkers(t)
+		t.Setenv(k, "1")
+		name := "shadow-" + strings.ToLower(strings.ReplaceAll(k, "_", "-"))
+		out, err := runTq(t, "add", name, "--base", base, "--git-email", "anyone@example.com", "--identities", "gh")
+		if err != nil {
+			t.Fatalf("tq add under %s: %v %q", k, err, out)
+		}
+		if trust.IsTrusted(manifestHash(t, filepath.Join(base, name))) {
+			t.Fatalf("tq add under %s trusted the new folder", k)
+		}
+		if !strings.Contains(out, "untrusted") || !strings.Contains(out, "tq allow "+name) {
+			t.Fatalf("tq add under %s: want the tq allow line, got %q", k, out)
+		}
+	}
+	clearAgentMarkers(t)
+	out, err := runTq(t, "add", "human", "--base", base, "--git-email", "anyone@example.com", "--identities", "gh")
+	if err != nil || !strings.Contains(out, "(trusted)") {
+		t.Fatalf("a human tq add: %v %q", err, out)
+	}
+	if !trust.IsTrusted(manifestHash(t, filepath.Join(base, "human"))) {
+		t.Fatal("a human tq add trusts the new folder")
+	}
+}
+
 func TestAllowAndDenyRefuseAgents(t *testing.T) {
 	root := mkLaunchWS(t, "acme", "")
 	for _, verb := range []string{"allow", "deny"} {

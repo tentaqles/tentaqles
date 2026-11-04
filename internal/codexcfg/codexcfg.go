@@ -118,6 +118,26 @@ type change struct {
 	remove  bool
 }
 
+// stripLegacyRules reports whether s is a rules file tq wrote (it starts with
+// tq's marker) and returns what is left once tq's block is removed: "" when
+// the block was the whole file, otherwise the user's lines that followed it.
+// A file without a closing marker counts as tq's block in full.
+func stripLegacyRules(s string) (string, bool) {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if !strings.HasPrefix(s, legacyRulesHead) {
+		return "", false
+	}
+	end := strings.Index(s, modeEnd+"\n")
+	if end < 0 {
+		return "", true
+	}
+	rest := strings.TrimLeft(s[end+len(modeEnd)+1:], "\n")
+	if strings.TrimSpace(rest) == "" {
+		return "", true
+	}
+	return rest, true
+}
+
 func readOpt(p string) (string, bool, error) {
 	b, err := os.ReadFile(p)
 	if os.IsNotExist(err) {
@@ -175,14 +195,16 @@ func Render(dir string, w Want, dryRun bool) (Result, error) {
 		plan = append(plan, change{path: filepath.Join(dir, legacyProfile+".config.toml"), remove: true})
 	}
 
-	// The guard-mode exec-policy file of older tq versions: removed when tq
-	// wrote it (it starts with tq's marker); a user's rules file is never
-	// touched.
+	// The exec-policy file of older tq versions: tq's block (it starts with
+	// tq's marker) is removed; lines a user added after the block stay, and a
+	// rules file tq did not write is never touched.
 	rp := filepath.Join(dir, filepath.FromSlash(legacyRulesFile))
 	if rcur, rexists, err := readOpt(rp); err != nil {
 		return res, err
-	} else if rexists && strings.HasPrefix(strings.ReplaceAll(rcur, "\r\n", "\n"), legacyRulesHead) {
-		plan = append(plan, change{path: rp, remove: true})
+	} else if rexists {
+		if rest, owned := stripLegacyRules(rcur); owned {
+			plan = append(plan, change{path: rp, content: rest, remove: rest == ""})
+		}
 	}
 
 	// hooks.json.
