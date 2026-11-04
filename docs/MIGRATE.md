@@ -381,7 +381,8 @@ full product. What that means for an installed setup:
   hook again in Codex's `/hooks` if it asks.
 - **The state folder** (`~/.tentaqles`): `hub/`, `packs/`, `guard/`,
   `guard.yaml`, `decide/` and `build-gate/` are left in place and never
-  deleted by tq; remove them yourself when you no longer want them.
+  deleted by tq; `tq doctor` lists the ones that exist as `state-dir-unused`
+  (a warning); remove them yourself when you no longer want them.
   Tracker tokens in the keychain stay usable through `tq secret`.
 - **The status line** no longer shows a mode segment.
 - **The plugin** (0.16.0) keeps the memory, the preamble and the skills;

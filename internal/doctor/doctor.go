@@ -93,6 +93,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			add("warn", "untrusted", w.Name, "manifest not trusted", "tq allow "+w.Name)
 		}
 		memoryStale(w.Name, w.Root, time.Now(), add)
+		manifestDroppedBlock(w.Name, w.Manifest.Ignored, add)
 		if trusted && w.Manifest.Claude.Bundle != nil {
 			if cat == nil {
 				c, err := bundle.LoadCatalog()
@@ -127,7 +128,6 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		if trusted {
 			claudeChecks(&w, add)
 			runWorkspaceChecks(&w, d, add)
-			dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add)
 			mcpServiceChecks(&w, add)
 		}
 		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
@@ -235,6 +235,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 	}
 	runGlobalChecks(d, add)
+	stateDirUnused(paths.Home(), add)
 	// The pre-tq shell branch is active, so nothing tq sets is in effect here.
 	if d.Env != nil {
 		if v, ok := d.Env("TQ_ENABLED"); ok && strings.TrimSpace(v) == "0" {

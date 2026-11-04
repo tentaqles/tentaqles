@@ -143,7 +143,7 @@ EMAIL_PATTERN: re.Pattern = re.compile(
 
 
 # ---------------------------------------------------------------------------
-# Personal and financial data (mirror of tq's internal/redact)
+# Personal and financial data
 # ---------------------------------------------------------------------------
 
 
