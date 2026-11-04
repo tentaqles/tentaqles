@@ -78,7 +78,7 @@ var baselineDeny = []string{
 // plugin's Stop review ran a headless Opus session after every file-changing
 // turn (373 in 90 days). Commit/push reviews stay on, on Sonnet: they use the
 // plugin's agentic path, which reads SG_AGENTIC_MODEL (default Opus), not
-// SECURITY_REVIEW_MODEL (tq insights showed 90 of 92 daily reviews on Opus).
+// SECURITY_REVIEW_MODEL (90 of 92 daily reviews ran on Opus in those 90 days).
 var baselineEnv = map[string]string{
 	"ENABLE_STOP_REVIEW":    "0",
 	"SECURITY_REVIEW_MODEL": "claude-sonnet-5-5",

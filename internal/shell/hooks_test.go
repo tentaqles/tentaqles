@@ -384,8 +384,8 @@ func TestBinWordQuotesPerShell(t *testing.T) {
 }
 
 // A simple PowerShell function's $args never holds a literal --, so the tq
-// function puts it back before the command word of tq run, tq dotenv run
-// and tq redact run (final review M1), live through the function.
+// function puts it back before the command word of tq run and tq dotenv run
+// (final review M1), live through the function.
 func TestHook_PowerShellRebuildsDash(t *testing.T) {
 	poisonProfiles(t)
 	sh, exe := "pwsh", ""
@@ -419,7 +419,6 @@ func TestHook_PowerShellRebuildsDash(t *testing.T) {
 		"tq run . npm test -p x\n" +
 		"tq run --off -- claude --resume\n" +
 		"tq dotenv run --file a.env -- psql -c x\n" +
-		"tq redact run --classes pii -- cat -n\n" +
 		"tq doctor --json\n"
 	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+log)
@@ -440,7 +439,6 @@ func TestHook_PowerShellRebuildsDash(t *testing.T) {
 		"run . -- npm test -p x",
 		"run --off -- claude --resume",
 		"dotenv run --file a.env -- psql -c x",
-		"redact run --classes pii -- cat -n",
 		"doctor --json",
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {

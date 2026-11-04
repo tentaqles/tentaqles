@@ -33,6 +33,11 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
   `guard-locked-override` doctor checks, `docs/GUARD-SCOPE.md`, and `tq allow`/`tq deny`
   refuse an agent session (ADR-0001). `tq add` and `tq setup` scaffold workspaces from a
   session but leave them untrusted, printing the `tq allow` line for the human.
+- `tq doctor`: two new warnings, `manifest-dropped-block` (the blocks a loaded manifest
+  still carries that tq no longer reads) and `state-dir-unused` (which of `hub/`,
+  `packs/`, `guard/`, `guard.yaml`, `decide/`, `build-gate/` exist under `~/.tentaqles`);
+  both exit 0. The `data-block-missing` check is gone with the `data:` block, and the
+  manifest no longer validates `decision:` or `data:` contents.
 
 ### Install
 
