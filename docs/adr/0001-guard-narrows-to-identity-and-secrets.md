@@ -50,6 +50,9 @@ launch flags; a `claude.permission_mode: bypass` renders as
 ## Consequences
 - Easier: one code path per hook call, no layer resolution, no grant files,
   no per-launch state; `tq settings render` is idempotent with no mode input.
+- The guard's shell tokenizer (`splitWords` in `internal/guard/gitinv.go`) is now the
+  only one: the commit-message tokenizer that mirrored its word rules left with
+  `internal/commitmsg`.
 - Harder: nothing confirms a `git push --force`, a cloud delete or a
   `terraform apply` any more. That is Claude Code's own permission settings'
   business, by the owner's decision (threat model AR2).

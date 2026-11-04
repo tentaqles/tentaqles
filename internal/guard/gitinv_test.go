@@ -208,8 +208,7 @@ func TestInlineIdentityOverride_WrappedForms(t *testing.T) {
 	}
 }
 
-// Parser differential: shell spellings that run git commit are recognised the
-// same way here and in commitmsg (see commitmsg TestCheck_ParserParity).
+// Shell spellings that run git commit are all recognised as git invocations.
 func TestGitInvocations_ShellSpellings(t *testing.T) {
 	for _, c := range []string{
 		`git "comm"it -m x`,

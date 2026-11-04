@@ -1,7 +1,6 @@
 # Releasing
 
-One tag, `vX.Y.Z`, releases both the `tq` CLI (with the desktop app) and the Claude Code
-plugin. The plugin ships from the marketplace at the root of this repo,
+One tag, `vX.Y.Z`, releases both the `tq` CLI and the Claude Code plugin. The plugin ships from the marketplace at the root of this repo,
 `.claude-plugin/marketplace.json`: its one entry, `tentaqles`, is a `git-subdir` source that
 checks out `plugin/` of `https://github.com/tentaqles/tentaqles.git` at a release tag
 **and that tag's commit**:
@@ -74,10 +73,8 @@ for plugin development; it is not what users install, and it does keep a `versio
   `plugin.json`'s version equals `plugin/.claude-plugin/marketplace.json`'s;
 - goreleaser builds `tq` for every platform, the GitHub release, the Homebrew tap and the
   Scoop bucket;
-- the desktop job builds the setup app installers and adds them to the release;
-- both jobs attest build provenance for what they publish (every archive in
-  `checksums.txt`, and each installer): a signed statement, kept by GitHub, that this
-  workflow built the file from the tag. Check a download with
+- it attests build provenance for every archive in `checksums.txt`: a signed statement,
+  kept by GitHub, that this workflow built the file from the tag. Check a download with
   `gh attestation verify <file> --repo tentaqles/tentaqles`. Releases before the first
   one built with this step (`v0.8.1` and earlier) have none.
 

@@ -214,8 +214,8 @@ func isSepByte(ch byte) bool {
 // splitWords splits a simple command into words, removing quotes ('…' and
 // $'…' are literal; "…" and $"…" honour \" \\ \$ \`; a backslash outside
 // quotes escapes a quote, a space or a backslash and is otherwise kept, so a
-// Windows path keeps its separators). An open quote runs to the end.
-// commitmsg's tokenizer applies the same word rules.
+// Windows path keeps its separators). An open quote runs to the end. It is
+// the only tokenizer the hook has.
 func splitWords(s string) []string {
 	var out []string
 	var cur strings.Builder

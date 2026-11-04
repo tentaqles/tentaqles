@@ -169,7 +169,7 @@ unrelated aliases and functions. Inside it, one thing is carried over:
 
 **Your `claude` wrapper function is not carried over.** It would replace the
 `claude` launcher that `tq activate` defines, which already starts claude in
-bypass under tq's guard mode. The plan prints a warning for it. An older
+bypass with tq's hook. The plan prints a warning for it. An older
 `tq migrate` did carry it, after the managed block under the comment
 `# carried over by tq migrate; ...`: the shell step now removes that block
 (change `remove-carried-wrapper`, journalled like every write), but only

@@ -38,6 +38,10 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
   `packs/`, `guard/`, `guard.yaml`, `decide/`, `build-gate/` exist under `~/.tentaqles`);
   both exit 0. The `data-block-missing` check is gone with the `data:` block, and the
   manifest no longer validates `decision:` or `data:` contents.
+- Deleted with the cut: the root `templates/` folder (the standalone client-system
+  templates) and its `templates` CI job, and `docs/design/` (the design notes of the removed
+  features). `.github/workflows/test.yml` keeps `go` (three OSes), `govulncheck`,
+  `marketplace-pin` and `plugin`. Both folders exist at `v0.8.2`.
 
 ### Install
 

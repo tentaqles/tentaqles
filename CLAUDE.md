@@ -1,103 +1,91 @@
 # tentaqles (monorepo)
 
-One repo, one installer: terminal-identity orchestration for developers who work across several clients/companies.
+One repo, one installer: an identity isolator with secrets protection for developers who
+work across several clients/companies. One folder per client; the terminal, the agent
+sessions and the external tools (git and its hosts, the cloud CLIs, the Claude and Codex
+config homes) carry that client's identity and nothing else; a command under the wrong
+identity is blocked with the reason.
 
 ## Reading path
-To work on this repo read `docs/prd.md` (requirements with status, backlog and decisions) and
-`docs/threat-model.md` first, then the spec slice you were given (`docs/specs/<slug>.md`) and
-the ADRs under `docs/adr/`. `docs/LEARNINGS.md` lists the rules this repo learned the hard way.
-The last three appear with the first gated builds (`/tentaqles:feature`).
+To work on this repo read `docs/prd.md` (requirements with status, backlog and the owner's
+decisions; D-29 to D-31 are the cut of 2026-11-03) and `docs/threat-model.md` first, then
+the ADRs under `docs/adr/`. `v0.8.2` is the tag of the last full product: the docs of the
+removed features (board, packs, build gate, guard modes, Jev, desktop app, templates) exist
+only there.
 
 ## Layout
-- `cmd/tq/`, `internal/` — the `tq` Go CLI (identity switching, trust, git identity, bundles, doctor). `go test ./...` must stay green.
-- `internal/hub/` — `tq hub` (release 2, spec A): per-workspace SQLite board under `$TQ_HOME/hub/<workspace>/` (`store`, `activity`), headless runner (`runner`, `adapter`, `gate`, `notify`), web page and API (`web`, `serveinfo`). Board sync (spec B): `sync` (engine, outbox, MCP fallback), `sync/cred` (credential chain cli → keychain → env → mcp), tracker adapters `sync/jira` and `sync/linear` (linked into the binary by `cmd/tq/adapters.go`). `docs/HUB.md`.
-- `internal/packs/` — `tq pack` (releases 3 and 4, specs C and D): the pack framework (registry, merge rules, `tq-packs.yaml`, guards, `GuardCtx`), `approval` and `ledger` (pack approvals, keychain-signed answers, claims), `baseline`, `toolrun` (external tools with a filtered env), `scan` (shell and PowerShell readers), `envgate` (environments and policies), and the packs `data`, `ml`, `cloud` and `db`. Pack guards are registered from `internal/cmd/claudehook_iac.go` and `claudehook_db.go`. `docs/PACKS.md`, `docs/packs/`.
-- `internal/secret` (`tq secret`, OS keychain via go-keyring), `internal/onboard` (`tq onboard`), `internal/termopen` (open a terminal in a folder).
-- `providers/` — (planned) provider catalog YAML (cloud / vcs / data / deploy / pm / agent / custom), embedded in the binary.
-- `desktop/` — (planned) Wails v2 setup app sharing `internal/`.
-- `plugin/` — the Claude Code plugin (Python): hooks shell out to `tq claude-hook` for identity reporting/enforcement, plus memory/graph/dashboard. Installed from this repo's root marketplace (`.claude-plugin/marketplace.json`, git-subdir `plugin/` pinned to a release tag and its sha, added after the tag in a post-release PR): `/plugin marketplace add tentaqles/tentaqles`, `/plugin install tentaqles@tentaqles`. Release steps in `docs/RELEASING.md`.
-- `installers/`, `.goreleaser.yaml`, `.github/workflows/` — CLI release + CI.
-- `docs/` — user-facing docs: `SETUP.md`, `CLAUDE-HOOK.md`, `PROVIDERS.md`, `DESKTOP.md`, and `MIGRATE.md` (`tq migrate` steps, the journal, `tq uninstall --restore`, the `TQ_ENABLED=0` kill switch), and `CLAUDE-SETTINGS.md` (`tq settings render`, `tq statusline`, `tq worktrees`), `DECIDE.md` (`tq decide`, the Jev decision layer: policy, redaction, cache, eval, judgment rules, triage, routing, Stop check, skill picker, explore, memory gates), `INSIGHTS.md` (`tq insights`), `HUB.md` (`tq hub`: board, headless runs, decisions, review page, budgets, board sync), and `PACKS.md` with `docs/packs/` (`tq pack`: config, checks, guards, approvals, one page per pack area, `framework-security.md`). `docs/SETUP.md` covers setup plans and points at packs. `RELEASING.md`: release order (release PR, tag, release workflow, post-release PR pinning ref + sha), and catalog entries for identities.
-- `templates/` — standalone client-system templates (n8n Jev decision sub-workflow, RAG starter, pandas Jev labeller, dbt contract starter, ML starter), each with its own tests (CI job `templates`; a template with a `uv.lock` installs from it).
-- Docs live in the workspace: `../docs/plans/*.md` (spec + plans), `../docs/superpowers/plans/*.md` (task plans).
+- `cmd/tq/`, `internal/` — the `tq` Go CLI. `go test ./...` must stay green.
+  - `internal/guard/` — the identity-drift block, `guard.Decide` (`blocked-command`,
+    `wrong-cloud`, `neutral-remote`, `untrusted`, `env-drift`, `claude-config-drift`,
+    `git-email-drift`, `gh-user`) and the shell tokenizer the hook uses.
+  - `internal/policy/` — the five secret rules of `builtin.go` (`tq/secret-store-read`,
+    `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`) and
+    their evaluator; nothing else is a rule.
+  - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `init`, `add`,
+    `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `bundle`,
+    `providers`, `setup`, `onboard`, `secret`, `secrets`, `settings`, `statusline`,
+    `worktrees`, `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
+    `claudehook*.go`: `pre-tool-use` runs `guard.Decide`, then the secret rules plus
+    `tq/commit-secret` and `tq/cross-client-mcp`, with `tq/guard-error` as the fail-safe;
+    `session-start` prints the preamble. `humanonly.go` keeps `tq allow`, `tq deny`,
+    `tq secret` and `tq run --off` out of agent sessions (environment marker, no prompt).
+  - `internal/trust/` (manifest trust by file hash), `internal/manifest/` (the manifest;
+    the blocks of removed features are recorded as dropped, never read),
+    `internal/registry/`, `internal/resolve/`, `internal/workspace/`, `internal/paths/`,
+    `internal/envplan/`, `internal/shell/` (activation hooks and the `claude`/`codex`
+    launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
+    `internal/doctor/`, `internal/setup/` and `internal/onboard/` (`tq setup`,
+    `tq onboard`), `internal/migrate/`, `internal/bundle/`, `internal/providers/` (the
+    embedded catalog), `internal/claudesettings/`, `internal/codexcfg/`,
+    `internal/statusline/`, `internal/secret/` (`tq secret`, OS keychain via go-keyring),
+    `internal/secrets/` (`tq secrets audit`), `internal/dotenv/`, `internal/commitscan/`
+    (`tq/commit-secret`), `internal/audit/`, `internal/detect/`, `internal/verify/`,
+    `internal/termopen/`, `internal/testutil/`.
+- `pkg/setupapi/` — the setup plan API shared by `tq setup` and `tq onboard`.
+- `test/integration/` — git identity end to end and the marketplace pin tests.
+- `providers/` — a README; the provider catalog YAML lives in `internal/providers/catalog/`.
+- `plugin/` — the Claude Code plugin (Python): hooks shell out to `tq claude-hook` for
+  identity and secrets, plus the session memory, the identity preamble, the knowledge
+  graph, 40 skills (plain checklists) and 5 read-only reviewer agents. Installed from this
+  repo's root marketplace (`.claude-plugin/marketplace.json`, git-subdir `plugin/` pinned to
+  a release tag and its sha, added after the tag in a post-release PR):
+  `/plugin marketplace add tentaqles/tentaqles`, `/plugin install tentaqles@tentaqles`.
+  Release steps in `docs/RELEASING.md`.
+- `installers/`, `.goreleaser.yaml`, `.github/workflows/` — CLI release + CI. `test.yml`
+  has four jobs: `go` (three OSes), `govulncheck`, `marketplace-pin`, `plugin`;
+  `release.yml` runs on a `v*` tag.
+- `scripts/spike-isolation.sh` — the macOS keychain-isolation spike behind the "Limitations"
+  note of `README.md`.
+- `docs/` — user-facing docs: `SETUP.md` (setup plans, `tq onboard`), `CLAUDE-HOOK.md`
+  (the hook protocol, the identity rules, the secret rules, `tq dotenv run`),
+  `CLAUDE-SETTINGS.md` (`tq settings render`, `tq statusline`, `tq worktrees`, Codex),
+  `COMMANDS.md` (every command and skill, plus a test walkthrough), `PROVIDERS.md` (the
+  catalog schema, `tq secret`), `MIGRATE.md` (`tq migrate`, the journal,
+  `tq uninstall --restore`, the `TQ_ENABLED=0` kill switch, "Upgrading to 0.9.0"),
+  `RELEASING.md` (release PR, tag, release workflow, post-release PR pinning ref + sha),
+  `IDEATION.md` (the isolation vision), `prd.md`, `threat-model.md`, `adr/`.
 
 ## Must not trade off
 From `docs/threat-model.md`; each line names the test that keeps it.
 - Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.
-- Mode changes and `tq allow` stay human-only: `TestAllowModeIsHumanOnly`.
-- Identity, secrets, self-protection and privacy stay on in every mode: `TestRelaxedLockedDeniesStillBlock`.
-- An edited manifest loses its trust and mode grant: `TestPlainAllowAfterEditDropsTheGrant`.
-- Build-gate records are signed and a rollback is refused: `test_an_older_signed_approval_copied_back_counts_as_rolled_back`.
-- Pack answers count only when signed: `TestSignedAnswersOnly`.
-- The hub API refuses human-only actions from run, nested and unknown sessions, from the legacy agent header, and from cross-site requests: `TestAPIAgentHeaderRefusesHumanOnly`, `TestRebindingHostAndOriginAreRefused` (planned, B-33: `TestAPIClassHeaderPolicy`).
-- A Claude session that is not the human's console cannot answer, start, cancel or move a card into an active lane: `TestHubAgentMayAddAndCommentOnly`, `TestHubTaskMarksAnAgent` (B-32 narrows this to run, nested and unknown sessions: `TestSessionClassMatrix`, `TestRunClassCannotAnswer`).
-- Mode changes, `tq allow --mode` and `tq unattended` refuse every Claude session, the console included: `TestAllowModeIsHumanOnly`, `TestModeWritesRefuseAgents` (B-03 adds `tq guard` and plain `tq allow`; B-33 adds the LAN bind: `TestConsoleStaysOutOfTheTerminalOnly`).
-- External tools get a filtered environment: `TestToolEnvIsFiltered`.
+- The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
+  `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
+- Trust is human-only: `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`.
+- An edited manifest loses its trust: `TestEditedManifestLosesTrust`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
 
 ## Project config
-Humans read the prose; tools read the fenced block (the build gate's definition of done reads
-it through `plugin/tentaqles/workflow/project.py`). Keep both in step.
+CI's `go` job runs `go vet ./...`, `go test ./... -count=1` and a build; locally run
+`go build ./...` too. The plugin suite is `PYTHONPATH=plugin python -m pytest plugin/tests -q`
+(CI job `plugin`; about 13 minutes on Windows). The changelog is `CHANGELOG.md` under
+`[Unreleased]`; a change under `plugin/` also gets its line in `plugin/CHANGELOG.md`, and the
+root entry is then one pointer line.
 
-- `test` and `lint` are the `go` CI job's commands; there is no typecheck. The plugin's pytest
-  suite is not in `test`: on Windows it takes about 13 minutes, which does not fit the gate's
-  900 s budget per command next to the Go suite. A checkpoint's verify commands name the
-  plugin test files its change touches, and CI's `plugin` job runs the whole suite
-  (`PYTHONPATH=plugin python -m pytest plugin/tests -q`). The `templates`, `opa` and `desktop`
-  CI jobs are outside the gate too: run them yourself when a change touches `templates/`,
-  the OPA policies or `desktop/`.
-- `architecture_paths` are the trust boundaries of `docs/threat-model.md` (B1 to B9): the guard
-  and policy rules, trust, the hooks, the build gate, the hub gate, runner, store and API, board
-  sync and its credentials, pack approvals, ledgers, environments and tool runs, and the release
-  pipeline. A change there needs an ADR under `docs/adr/` (template:
-  `plugin/templates/process/adr-0000-template.md`).
-- `classified_paths` is empty: tq keeps no personal data of its own, and the hub masks card
-  text before it is stored.
-- `changelog` is this repository's `CHANGELOG.md`, under `[Unreleased]`. A change under
-  `plugin/` also gets its line in `plugin/CHANGELOG.md`; the root entry is then one pointer line.
-
-```json tq-project
-{
-  "commands": {
-    "test": "go test ./... -count=1",
-    "lint": "go vet ./...",
-    "build": "go build ./..."
-  },
-  "architecture_paths": [
-    "internal/guard/**",
-    "internal/guardcfg/**",
-    "internal/policy/**",
-    "internal/trust/**",
-    "internal/hooks/**",
-    "internal/session/**",
-    "internal/hub/gate/**",
-    "internal/hub/runner/**",
-    "internal/hub/store/**",
-    "internal/hub/web/*.go",
-    "internal/hub/sync/*.go",
-    "internal/hub/sync/cred/**",
-    "internal/packs/approval/**",
-    "internal/packs/ledger/**",
-    "internal/packs/envgate/**",
-    "internal/packs/toolrun/**",
-    "plugin/hooks/**",
-    "plugin/scripts/tq_hook.sh",
-    "plugin/scripts/*-guard.py",
-    "plugin/scripts/hub-*.py",
-    "plugin/scripts/build-gate.py",
-    "plugin/scripts/loop-runner.py",
-    "plugin/tentaqles/workflow/gate.py",
-    "plugin/tentaqles/workflow/loopguard.py",
-    ".github/workflows/**",
-    ".github/dependabot.yml",
-    ".goreleaser.yaml",
-    ".claude-plugin/marketplace.json",
-    "installers/**"
-  ],
-  "classified_paths": [],
-  "changelog": "CHANGELOG.md"
-}
-```
+A change under `internal/guard/`, `internal/policy/`, `internal/trust/`, `internal/hooks/`,
+`plugin/hooks/`, `plugin/scripts/tq_hook.sh`, `.github/workflows/`,
+`.goreleaser.yaml`, `.claude-plugin/marketplace.json` or `installers/` crosses a trust
+boundary of `docs/threat-model.md` and needs an ADR under `docs/adr/` (template:
+`plugin/templates/process/adr-0000-template.md`).
 
 ## Rules
 - Git identity for this repo: `reach@tentaqles.ai` (local config). Never commit secrets; manifests hold names only.

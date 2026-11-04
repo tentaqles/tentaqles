@@ -1,7 +1,6 @@
-// Package termopen opens a new terminal window in a folder, for `tq onboard` (spec B §8). It
-// mirrors the desktop app's OpenTerminal (desktop/terminal.go, a separate Go module) but opens a
-// folder rather than running a command: Windows Terminal (`wt -d`) when it is on PATH, else cmd's
-// start; Terminal.app on macOS; the first emulator found on Linux.
+// Package termopen opens a new terminal window in a folder, for `tq onboard`: Windows Terminal
+// (`wt -d`) when it is on PATH, else cmd's start; Terminal.app on macOS; the first emulator
+// found on Linux.
 //
 // It only ever starts a window. It never waits for one and never closes or kills a terminal:
 // closing the old one is the user's call.

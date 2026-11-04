@@ -1,6 +1,6 @@
 # tentaqles
 
-Terminal-identity orchestration for developers working across several clients: one base folder, one identity per subfolder, the right CLIs/agents/plugins per identity. This monorepo holds the `tq` CLI (`cmd/tq`, `internal/`), the Claude Code plugin (`plugin/`), and the provider catalog and desktop setup app (planned: `providers/`, `desktop/`).
+Terminal-identity orchestration for developers working across several clients: one base folder, one identity per subfolder, the right CLIs/agents/plugins per identity. This monorepo holds the `tq` CLI (`cmd/tq`, `internal/`) and the Claude Code plugin (`plugin/`).
 
 ## Claude Code plugin
 
@@ -22,6 +22,19 @@ sessions (gh, gcloud, aws, whatever), all isolated from every other folder on
 your machine. A shell hook watches your current directory and swaps the
 identity in and out as you `cd` between client or project folders, so you
 stop leaking one client's git email or API key into another client's repo.
+
+With the Claude Code plugin, `tq` guards two things and nothing else, in every
+Claude permission mode: the **identity** a command runs under (a `git push`,
+`gh` or cloud command under the wrong workspace, in an untrusted folder or
+from a stale shell is blocked with the reason) and **secrets** (`.env` reads,
+environment dumps, credential-store reads and a commit that would record a
+secret are blocked; `tq dotenv run` is the way to use a `.env`). Every
+decision is allow or block, never a confirmation; anything else is Claude
+Code's own permission settings' business. See
+[docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md). Earlier versions also shipped a
+board, packs, a build gate and guard modes; they left `main` after
+[`v0.8.2`](https://github.com/tentaqles/tentaqles/releases/tag/v0.8.2), the
+tag of the last full product.
 
 ## Install
 
@@ -58,9 +71,6 @@ quarantined. If you already installed it and hit the block:
 ```sh
 xattr -dr com.apple.quarantine "$(brew --prefix)/Caskroom/tq"
 ```
-
-The desktop setup app is unsigned for the same reason: right-click it and
-choose *Open* rather than double-clicking it.
 
 From source (requires Go 1.26+):
 
@@ -179,17 +189,12 @@ The installed hook line respects a kill switch: setting `TQ_ENABLED=0` in
 your environment makes the hook skip calling `tq activate` entirely for that
 shell session, without needing to uninstall anything. That is all it does:
 tq's Claude Code hooks and the plugin's skill scripts still run, so a
-`claude` started there is still guarded. To switch tq off in the current
-window use `tq off` / `tq on`: they set `TQ_MODE=off`, under which every tq
-hook exits at once and the skill scripts (run through `tq_run.sh`) silently
-do nothing.
+`claude` started there is still guarded. For one launch with no tq at all
+use `claude-off` / `codex-off` (`tq run --off -- claude`, human-only): the
+plugin is switched off for that process and the identity env is cleaned.
 
 See [`docs/SETUP.md`](docs/SETUP.md) for the full plan YAML schema and field
 reference.
-
-Prefer a GUI? The `tentaqles-setup` desktop app wraps the same setup flow in
-a wizard — see [`docs/DESKTOP.md`](docs/DESKTOP.md) for install (incl.
-unsigned-app steps) and the dev loop.
 
 ## Commands
 
@@ -197,18 +202,19 @@ unsigned-app steps) and the dev loop.
 |---|---|
 | `tq version` | Print the tq version. |
 | `tq init <base-folder>` | Register a base folder; each first-level subfolder becomes a terminal identity. `--install-hook` also installs the shell activation hook into detected shell profiles. |
+| `tq onboard [<name>]` | Set up one client workspace and record its company tools (identity, git provider, cloud, data platform, agent CLIs, chat, email) through a wizard; `--from <yaml>` answers from a file. Names only, never a token; the workspace is left untrusted and the `tq allow` and login lines are printed for you. See [`docs/SETUP.md`](docs/SETUP.md). |
 | `tq setup` | Interactive wizard that scaffolds one or more companies (workspaces) plus shell hooks from a single flow. `--example` prints a sample plan YAML; `--from <file>` loads a plan instead of prompting (`--dry-run` to preview only, `--yes` to apply without confirming); `--write-plan <path>` also saves the wizard's answers as a plan file; `--json` for machine-readable output. See [`docs/SETUP.md`](docs/SETUP.md). |
 | `tq hooks status` | Show install status (`installed`, `present (unmanaged)`, `missing`, `no profile`) for each known shell. |
 | `tq hooks install <shell...>` | Install tq's activation block into shell profile(s). `--all-detected` targets every detected shell. |
 | `tq hooks remove <shell...>` | Remove tq's activation block from shell profile(s). `--all-detected` targets every detected shell. |
-| `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. Flags: `--base`, `--git-email` (required), `--git-name`, `--display-name`, `--color`, `--identities`, `--permission-mode`. |
-| `tq allow <name>` | Trust a workspace's current manifest so it can export env. `tq allow --mode <name> <relaxed\|custom>` (human only, in a terminal) also grants a guard mode looser than default; `--bypass` is the deprecated alias of `--mode <name> relaxed`. See [Guard modes](docs/CLAUDE-HOOK.md#guard-modes). |
-| `tq deny <name>` | Revoke trust for a workspace. |
+| `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. Flags: `--base`, `--git-email` (required), `--git-name`, `--display-name`, `--color`, `--git-provider`, `--identities` (default `claude,gh`), `--permission-mode`. From an agent session the folder is scaffolded but left untrusted. |
+| `tq allow <name>` | Trust a workspace's current manifest, by hash, so it can export env. Human-only: it refuses an agent session. Editing the manifest drops the trust until `tq allow` runs again. |
+| `tq deny <name>` | Revoke trust for a workspace. Human-only. |
 | `tq list` | List workspaces under all registered bases. `--json` for machine-readable output. |
 | `tq env` | Print the env changes for the current directory (used by the shell hook). `--shell <name>`, `--json`. |
 | `tq activate <shell>` | Print the hook to add to your shell profile, e.g. `eval "$(tq activate bash)"`. Shells: `bash`, `zsh`, `fish`, `pwsh`, `powershell`, `cmd`. |
 | `tq login <workspace> <identity>` | Run a CLI's own login flow inside the workspace's private config home. For `aws`: one `[sso-session]` in the private config runs `aws sso login --sso-session NAME`; several need `--sso-session NAME`; `--sso` runs `aws configure sso`; otherwise `aws configure`. |
-| `tq run <workspace> -- <command> [args...]` | Run a command with a workspace's identity without cd-ing into it. |
+| `tq run <workspace>\|. -- <command> [args...]` | Run a command with a workspace's identity without cd-ing into it (`.` is the current folder). `--off` starts `claude` or `codex` with no tq at all: main install and logins, no identity, the plugin off (human-only). |
 | `tq doctor` | Verify hooks, trust, git and env against the manifests (never mutates). `--json` for machine-readable findings. `--verify auto\|all\|off` controls whether it asks each CLI which account is signed in -- see [Checking the account, not just the folder](#checking-the-account-not-just-the-folder). |
 | `tq migrate` | Move a setup built by hand before `tq` under `tq`'s management: identity dirs, global git config, shell hooks, and (opt-in) the `cmd.exe` AutoRun hook. Dry run unless `--apply`; `--steps identity,git,shell,cmd`, `--force`, `--json`. Every mutation is journalled first. See [`docs/MIGRATE.md`](docs/MIGRATE.md). |
 | `tq uninstall --restore [<ts>\|latest]` | Undo a migration by replaying its journal backwards. Lists what it would undo and does nothing until you add `--yes`. See [`docs/MIGRATE.md`](docs/MIGRATE.md). |
@@ -220,6 +226,13 @@ unsigned-app steps) and the dev loop.
 | `tq providers show <id>` | Print a provider's full definition as YAML. |
 | `tq providers check [<id>...]` | Probe whether provider CLIs are installed. `--all` (default with no ids), `--workspace <ws>` to check only that workspace's identities, `--json`. Exits 1 if any provider with a CLI is missing. |
 | `tq providers add <id>` | Add or override a provider as a user file under `providers/`. Flags: `--name`, `--category` (required), `--command`, `--version-args`, `--env KEY=VALUE` (repeatable), `--login "args..."`, `--verify "args..."`, `--docs`, `--force` to overwrite an embedded or existing user provider. |
+| `tq secret set\|rm\|status <workspace> <provider>` | Keep a tracker token (`github`, `azure-devops`, `jira`, `linear`, `asana`) in the OS keychain; `set` reads it from a hidden prompt or stdin, `status` shows present or absent and never a value. Human-only. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md#tq-secret). |
+| `tq secrets audit` | List agent-config files holding secret-shaped values, and `.env` files git would commit; path and line only, never the value. `--root <dir>` adds a directory, `--json`. |
+| `tq dotenv run [--file F]... -- <command>` | Run a command with a `.env` loaded into its environment and every loaded value replaced by `[REDACTED:NAME]` in its output. See [docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md#using-a-env-without-printing-it). |
+| `tq settings render [workspace...]` | Write the tq-owned part of each Claude identity's `settings.json` (baseline permissions, env, status line) and the Codex identity's `config.toml` and `hooks.json`. `--all`, `--dry-run`, `--no-statusline`. See [`docs/CLAUDE-SETTINGS.md`](docs/CLAUDE-SETTINGS.md). |
+| `tq statusline` | The Claude Code status line: client, git email, model, context size, cost. |
+| `tq worktrees list\|prune` | List linked git worktrees in every workspace repo; `prune` removes the clean, merged, old ones (`--older-than` days, `--yes` to apply). |
+| `tq claude-hook session-start\|pre-tool-use` | What the Claude Code plugin's hooks call: the identity preamble, and the allow-or-block decision for each tool call. See [docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md). |
 
 ## Checking the account, not just the folder
 
@@ -353,11 +366,7 @@ Machine-wide state lives under `~/.tentaqles/` (override with `$TQ_HOME`):
 
 - `~/.tentaqles/config.yaml` — the list of registered base folders.
 - `~/.tentaqles/trust/<sha256>` — one empty marker file per trusted manifest,
-  named after the manifest's SHA-256. A `.mode` file next to it is the guard
-  mode grant (`tq allow --mode`) that lets the manifest ask for a mode
-  looser than default. A legacy `.bypass` file reads as a relaxed grant and
-  is converted to `.mode` the next time a hook reads it or tq rewrites the
-  manifest.
+  named after the manifest's SHA-256.
 - `~/.tentaqles/identities/<workspace>/<cli>/` — the private config home for
   one CLI in one workspace (`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`,
   `AZURE_CONFIG_DIR`, …), so credentials that `tq login` causes a CLI to write
