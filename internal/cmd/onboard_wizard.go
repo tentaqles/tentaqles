@@ -45,23 +45,6 @@ func idsOf(ps []providers.Provider) []string {
 	return out
 }
 
-// trackerScopeTitles are the wizard's labels for tracker.scope keys, per provider (spec B §6).
-func trackerScopeTitles(provider string) (org, project, board string) {
-	switch provider {
-	case "azure-devops":
-		return "Azure DevOps organization", "Project", "Team (optional)"
-	case "jira":
-		return "Jira site (e.g. acme for acme.atlassian.net)", "Project key", "Board (optional)"
-	case "github":
-		return "GitHub owner (org or user)", "Repository (optional)", "Project number (optional, Projects v2)"
-	case "linear":
-		return "Linear team key", "Project (optional)", "Board (optional)"
-	case "asana":
-		return "Asana workspace", "Project (optional)", "Board (optional)"
-	}
-	return "Organization", "Project", "Board (optional)"
-}
-
 func notEmpty(field string) func(string) error {
 	return func(s string) error {
 		if strings.TrimSpace(s) == "" {
@@ -147,58 +130,7 @@ func runOnboardWizard(name, base string) (onboardWizardResult, error) {
 		a.DataPlatform = &manifest.Service{Provider: data}
 	}
 
-	// 3. Tracker: provider, scope, auth (and the env name for auth env).
-	tracker := skipValue
-	if err := run(huh.NewSelect[string]().Title("Company tracker (the board tq hub mirrors)").
-		Options(skipOptions(cat, manifest.TrackerProviders...)...).Value(&tracker)); err != nil {
-		return onboardWizardResult{}, err
-	}
-	if tracker != skipValue {
-		t := &manifest.Tracker{Provider: tracker, Auth: onboard.DefaultAuth(tracker)}
-		var org, project, board string
-		to, tp, tb := trackerScopeTitles(tracker)
-		authOpts := []huh.Option[string]{
-			huh.NewOption("cli: the tracker CLI's own login (gh, az, acli)", "cli"),
-			huh.NewOption("keychain: a token in the OS keychain (tq secret set)", "keychain"),
-			huh.NewOption("env: an env var resolved by tq dotenv", "env"),
-			huh.NewOption("mcp: the agent's MCP connector, from a Claude session only", "mcp"),
-		}
-		if err := run(
-			huh.NewInput().Title(to).Value(&org).Validate(notEmpty("this")),
-			huh.NewInput().Title(tp).Value(&project),
-			huh.NewInput().Title(tb).Value(&board),
-			huh.NewSelect[string]().Title("Mirror which items").Options(
-				huh.NewOption("Assigned to me (plus children of mirrored cards)", "me"),
-				huh.NewOption("Anyone's, in the whole scope", "anyone")).Value(&t.AssignedTo),
-			huh.NewSelect[string]().Title("Preferred credential source (the fallback order stays cli, keychain, env, mcp)").
-				Options(authOpts...).Value(&t.Auth),
-		); err != nil {
-			return onboardWizardResult{}, err
-		}
-		t.Scope = map[string]string{"org": strings.TrimSpace(org)}
-		if s := strings.TrimSpace(project); s != "" {
-			t.Scope["project"] = s
-		}
-		if s := strings.TrimSpace(board); s != "" {
-			t.Scope["board"] = s
-		}
-		if t.Auth == "env" {
-			t.Env = onboard.SuggestEnvName(a.Name, tracker)
-			if err := run(huh.NewInput().Title("Env var name tq dotenv resolves (the NAME only, never the token)").Value(&t.Env).
-				Validate(func(s string) error {
-					if !providers.EnvKeyRe.MatchString(strings.TrimSpace(s)) {
-						return fmt.Errorf("not an environment variable name")
-					}
-					return nil
-				})); err != nil {
-				return onboardWizardResult{}, err
-			}
-			t.Env = strings.TrimSpace(t.Env)
-		}
-		a.Tracker = t
-	}
-
-	// 4. Chat and email (MCP connectors only).
+	// 3. Chat and email (MCP connectors only).
 	chat, mail := skipValue, skipValue
 	if err := run(
 		huh.NewSelect[string]().Title("Chat (an MCP connector the agent uses)").Options(skipOptions(cat, manifest.ChatProviders...)...).Value(&chat),

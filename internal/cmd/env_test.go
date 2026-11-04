@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
-	"github.com/tentaqles/tentaqles/internal/hub/runner"
 )
 
 // chdir moves into dir for the duration of the test. env.go reads os.Getwd, so
@@ -104,7 +103,7 @@ func TestEnv_OffRefusesAgents(t *testing.T) {
 	for _, k := range agentMarkers {
 		clearAgentMarkers(t)
 		t.Setenv(k, "1")
-		if _, err := runTq(t, "env", "--off", "--shell", "bash"); !errors.Is(err, runner.ErrHumanOnly) {
+		if _, err := runTq(t, "env", "--off", "--shell", "bash"); !errors.Is(err, errHumanOnly) {
 			t.Errorf("%s: want ErrHumanOnly, got %v", k, err)
 		}
 	}

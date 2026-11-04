@@ -28,9 +28,8 @@ type Company struct {
 	Identities     []string `yaml:"identities,omitempty"`
 	PermissionMode string   `yaml:"permission_mode,omitempty"`
 	// Company services (spec B §6), written into the new workspace's manifest. nil skips a block.
-	Tracker *manifest.Tracker `yaml:"tracker,omitempty"`
-	Chat    *manifest.Service `yaml:"chat,omitempty"`
-	Email   *manifest.Service `yaml:"email,omitempty"`
+	Chat  *manifest.Service `yaml:"chat,omitempty"`
+	Email *manifest.Service `yaml:"email,omitempty"`
 }
 
 // SetupPlan is the full declarative setup: a base folder, the companies to

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,18 +10,35 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/secret"
 )
+
+// countingReader records whether a command read its stdin.
+type countingReader struct{ reads int }
+
+func (r *countingReader) Read(p []byte) (int, error) { r.reads++; return 0, io.EOF }
+
+// runTQIn runs tq with the given stdin and returns stdout, stderr and the error.
+func runTQIn(t *testing.T, in io.Reader, args ...string) (string, string, error) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	root := NewRoot()
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetIn(in)
+	root.SetArgs(args)
+	err := root.Execute()
+	return out.String(), errOut.String(), err
+}
 
 // secretCmdValue is built at run time so no token-shaped literal sits in the source.
 func secretCmdValue() string { return "tq" + strings.Repeat("Hx7", 9) }
 
-// secretWS is a trusted workspace "acme" with a jira tracker, an isolated home, no agent markers
-// and go-keyring's in-memory mock for the keychain.
+// secretWS is a trusted workspace "acme" with an isolated home, no agent markers and
+// go-keyring's in-memory mock for the keychain.
 func secretWS(t *testing.T) string {
 	t.Helper()
-	root := setupTrustedWorkspaceWithManifest(t, "acme", "tracker:\n  provider: jira\n  auth: keychain\n  scope: { org: acme }\n")
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
 	home := filepath.Dir(os.Getenv("TQ_HOME"))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -63,7 +81,7 @@ func TestSecretSetStatusRm(t *testing.T) {
 		t.Fatalf("status %q", out)
 	}
 
-	out, errOut, err = runTQIn(t, strings.NewReader(""), "secret", "status", "acme", "--json")
+	out, errOut, err = runTQIn(t, strings.NewReader(""), "secret", "status", "acme", "jira", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +91,7 @@ func TestSecretSetStatusRm(t *testing.T) {
 		t.Fatalf("%v: %s", err, out)
 	}
 	if len(rows) != 1 || rows[0]["workspace"] != "acme" || rows[0]["provider"] != "jira" ||
-		rows[0]["account"] != "acme/jira" || rows[0]["keychain"] != "present" || rows[0]["auth"] != "keychain" {
+		rows[0]["account"] != "acme/jira" || rows[0]["keychain"] != "present" || rows[0]["auth"] != "" {
 		t.Fatalf("rows %v", rows)
 	}
 
@@ -94,8 +112,9 @@ func TestSecretSetStatusRm(t *testing.T) {
 	}
 }
 
-// TestSecretStatusWithoutATracker: a workspace with no tracker block shows every tracker.
-func TestSecretStatusProvidersOfAWorkspaceWithoutTracker(t *testing.T) {
+// TestSecretStatusProvidersOfAWorkspace: a workspace shows every tracker provider, and status
+// of all workspaces lists every registered workspace.
+func TestSecretStatusProvidersOfAWorkspace(t *testing.T) {
 	setupTrustedWorkspaceWithManifest(t, "acme", "")
 	for _, k := range []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK"} {
 		unsetenv(t, k)
@@ -117,10 +136,15 @@ func TestSecretStatusProvidersOfAWorkspaceWithoutTracker(t *testing.T) {
 			t.Fatalf("row %v", r)
 		}
 	}
-	// status of all workspaces lists only workspaces with a tracker: none here.
+	// status of all workspaces lists every registered workspace, for every provider.
 	out, _, err = runTQIn(t, strings.NewReader(""), "secret", "status", "--json")
-	if err != nil || strings.TrimSpace(out) != "[]" {
-		t.Fatalf("%q %v", out, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows = nil
+	json.Unmarshal([]byte(out), &rows)
+	if len(rows) != 5 || rows[0]["workspace"] != "acme" {
+		t.Fatalf("rows %v", rows)
 	}
 }
 
@@ -201,7 +225,7 @@ func TestSecretIsHumanOnly(t *testing.T) {
 			} {
 				in := &countingReader{}
 				out, errOut, err := runTQIn(t, in, args...)
-				if !errors.Is(err, runner.ErrHumanOnly) {
+				if !errors.Is(err, errHumanOnly) {
 					t.Fatalf("%v: %v", args, err)
 				}
 				if in.reads != 0 {

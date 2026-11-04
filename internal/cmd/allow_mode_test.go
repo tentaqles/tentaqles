@@ -9,12 +9,9 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/guardcfg"
-	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
-
-var agentMarkers = []string{"CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS", "TQ_HUB_TASK", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"}
 
 // asHuman clears the agent markers (the test may run inside Claude Code)
 // and makes stdin and stdout look like a terminal.
@@ -44,13 +41,13 @@ func TestAllowModeIsHumanOnly(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	for _, args := range [][]string{{"allow", "--mode", "acme", "relaxed"}, {"allow", "--bypass", "acme"}, {"allow", "--mode", "--global", "relaxed"}} {
-		if _, err := runGuardCmd(t, args...); !errors.Is(err, runner.ErrHumanOnly) {
+		if _, err := runGuardCmd(t, args...); !errors.Is(err, errHumanOnly) {
 			t.Fatalf("%v without a terminal: %v", args, err)
 		}
 	}
 	asHuman(t)
 	t.Setenv("CLAUDECODE", "1")
-	if _, err := runGuardCmd(t, "allow", "--mode", "acme", "relaxed"); !errors.Is(err, runner.ErrHumanOnly) {
+	if _, err := runGuardCmd(t, "allow", "--mode", "acme", "relaxed"); !errors.Is(err, errHumanOnly) {
 		t.Fatalf("an agent session is refused: %v", err)
 	}
 }

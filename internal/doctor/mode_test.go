@@ -15,11 +15,28 @@ import (
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
+type testFinding struct{ level, code, ws, msg, fix string }
+
+// collectFindings returns a findings slice and the add func the checks append to.
+func collectFindings() (*[]testFinding, func(level, code, ws, msg, fix string)) {
+	var fs []testFinding
+	return &fs, func(level, code, ws, msg, fix string) { fs = append(fs, testFinding{level, code, ws, msg, fix}) }
+}
+
+// isolateHome points TQ_HOME and the home directory at a temp folder.
+func isolateHome(t *testing.T) {
+	t.Helper()
+	home := testutil.TempDir(t)
+	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 // modeWorkspace writes acme with body; grant is "" (none), "relaxed" or
 // "bypass" (a legacy .bypass file).
 func modeWorkspace(t *testing.T, body, grant string) *resolve.Workspace {
 	t.Helper()
-	isolateHub(t)
+	isolateHome(t)
 	root := testutil.TempDir(t)
 	mp := filepath.Join(root, manifest.FileName)
 	raw := "schema: tentaqles-client-v2\nclient: acme\n" + body
@@ -48,7 +65,7 @@ func modeWorkspace(t *testing.T, body, grant string) *resolve.Workspace {
 }
 
 func modeCodes(w *resolve.Workspace) (map[string]string, map[string]string, int) {
-	fs, add := collectHub()
+	fs, add := collectFindings()
 	modeChecks(w, Deps{}, add)
 	msgs, fixes := map[string]string{}, map[string]string{}
 	for _, f := range *fs {
@@ -107,12 +124,12 @@ func TestModeChecks(t *testing.T) {
 }
 
 func TestGlobalModeChecks(t *testing.T) {
-	isolateHub(t)
+	isolateHome(t)
 	f := guardcfg.File{Mode: guardcfg.ModeRelaxed, Disable: []string{"tq/text-pii"}, RulesOverride: map[string]guardcfg.Value{"me/x": guardcfg.ValueAsk}}
 	if err := guardcfg.Save(f); err != nil {
 		t.Fatal(err)
 	}
-	fs, add := collectHub()
+	fs, add := collectFindings()
 	globalModeChecks(Deps{}, add)
 	codes := map[string]string{}
 	for _, x := range *fs {
@@ -126,7 +143,7 @@ func TestGlobalModeChecks(t *testing.T) {
 	if err := trust.SaveGrant(trust.GlobalGrantKey, gr); err != nil {
 		t.Fatal(err)
 	}
-	fs, add = collectHub()
+	fs, add = collectFindings()
 	globalModeChecks(Deps{}, add)
 	for _, x := range *fs {
 		if x.code == "mode-not-granted" {
@@ -145,7 +162,7 @@ func TestGlobalModeChecks(t *testing.T) {
 // A legacy .bypass shared by two workspaces with the same manifest bytes is
 // ignored, and doctor says so for each (security re-review r2).
 func TestModeBypassShared(t *testing.T) {
-	isolateHub(t)
+	isolateHome(t)
 	base := t.TempDir()
 	cfg := &registry.Config{}
 	if _, err := cfg.AddBase(base); err != nil {

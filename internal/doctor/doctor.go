@@ -52,9 +52,6 @@ type Deps struct {
 	Environ func(*resolve.Workspace) []string
 	// VerifyMode is VerifyAuto (default), VerifyAll or VerifyOff.
 	VerifyMode string
-	// TrackerCheck verifies a workspace's tracker credential (spec B §8). Optional; nil skips the
-	// tracker check. Like RunCLI it can be slow, so it runs last and bounded.
-	TrackerCheck TrackerCheckFunc
 }
 
 func Run(cfg *registry.Config, d Deps) []Finding {
@@ -89,11 +86,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	}
 	pythonStoreAlias(d.LookPath, runtime.GOOS, add)
 	var verifyJobs []verifyJob
-	var trackerJobs []trackerJob
 	verifyCovers := map[string]bool{}
-	hubUsed := false
-	probe := newHubProbe()
-	defer probe.close()
 	for _, w := range all {
 		trusted := trust.IsTrusted(w.Hash)
 		if !trusted {
@@ -135,14 +128,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			claudeChecks(&w, add)
 			runWorkspaceChecks(&w, d, add)
 			dataBlockMissing(w.Name, w.Root, w.Manifest.Data, add)
-			if hubChecks(w.Name, probe, add) {
-				hubUsed = true
-			}
 			mcpServiceChecks(&w, add)
-			packChecks(&w, add)
-			if j, ok := trackerJobFor(d, &w); ok {
-				trackerJobs = append(trackerJobs, j)
-			}
 		}
 		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
 			add("warn", "bypass-cloud", w.Name, "permission_mode bypass with a cloud identity: Claude may run cloud CLIs unattended", "")
@@ -248,9 +234,6 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			}
 		}
 	}
-	if hubUsed {
-		hubPortCheck(cfg.Hub.Port, probe, add)
-	}
 	runGlobalChecks(d, add)
 	// The pre-tq shell branch is active, so nothing tq sets is in effect here.
 	if d.Env != nil {
@@ -262,7 +245,6 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	// process per identity and several of those CLIs make a network call, so
 	// it is the one part of doctor that can be slow or offline-sensitive.
 	fs = append(fs, runVerify(d, verifyJobs)...)
-	fs = append(fs, runTrackerChecks(d, trackerJobs)...)
 
 	// env vs cwd — shared with tq claude-hook so both agree. RunForCwd is the
 	// hook path; it deliberately does not verify.

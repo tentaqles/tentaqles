@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -61,7 +60,7 @@ func TestRefuseAgentAndRequireHuman(t *testing.T) {
 				t.Setenv(o, "")
 			}
 			t.Setenv(k, "1")
-			if err := refuseAgent("tq run --off"); !errors.Is(err, runner.ErrHumanOnly) {
+			if err := refuseAgent("tq run --off"); !errors.Is(err, errHumanOnly) {
 				t.Fatalf("%s: want ErrHumanOnly, got %v", k, err)
 			}
 		})
@@ -72,7 +71,7 @@ func TestRefuseAgentAndRequireHuman(t *testing.T) {
 	if err := refuseAgent("x"); err != nil {
 		t.Fatalf("no marker: %v", err)
 	}
-	if err := requireHuman(strings.NewReader(""), &bytes.Buffer{}, "tq mode set"); !errors.Is(err, runner.ErrHumanOnly) {
+	if err := requireHuman(strings.NewReader(""), &bytes.Buffer{}, "tq mode set"); !errors.Is(err, errHumanOnly) {
 		t.Fatalf("non-TTY must be refused: %v", err)
 	}
 }

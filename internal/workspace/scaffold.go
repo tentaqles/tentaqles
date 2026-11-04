@@ -35,7 +35,6 @@ type AddOptions struct {
 	// everything on disk but leaves the workspace untrusted.
 	Trust bool
 	// Company services (spec B §6); nil / empty leaves the block out.
-	Tracker      *manifest.Tracker
 	Chat         *manifest.Service
 	Email        *manifest.Service
 	DataPlatform *manifest.Service
@@ -64,7 +63,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	services := manifest.Manifest{Tracker: o.Tracker, Chat: o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents}
+	services := manifest.Manifest{Chat: o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents}
 	if err := services.ValidateServices(); err != nil {
 		return nil, err
 	}
@@ -81,7 +80,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail, User: o.GitUser, Provider: o.GitProvider},
 		Identities: map[string]manifest.Identity{},
 		Claude:     manifest.Claude{PermissionMode: o.PermissionMode},
-		Tracker:    o.Tracker, Chat: o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents,
+		Chat:       o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents,
 		Cloud: o.Cloud,
 	}
 	for _, id := range o.Identities {

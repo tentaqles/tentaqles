@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
-	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -470,7 +469,7 @@ func TestRunOffRefusesAgents(t *testing.T) {
 			t.Setenv(k, "1")
 			calls := fakeExec(t)
 			_, err := runTq(t, "run", "--off", "--", "claude")
-			if !errors.Is(err, runner.ErrHumanOnly) || len(*calls) != 0 {
+			if !errors.Is(err, errHumanOnly) || len(*calls) != 0 {
 				t.Fatalf("%s: want ErrHumanOnly and no launch, got %v %+v", k, err, *calls)
 			}
 		})

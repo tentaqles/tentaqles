@@ -64,7 +64,7 @@ func answersFile(t *testing.T, body string) string {
 // Spec B §14: tq onboard writes a valid manifest with skipped blocks.
 func TestOnboard_FromWritesValidManifestWithSkippedBlocks(t *testing.T) {
 	base, opened := isolateOnboard(t)
-	from := answersFile(t, "name: acme\ngit: { email: tester@acme.test }\ntracker:\n  provider: jira\n  scope: { org: acme, project: PLAT }\n  auth: env\n  env: ACME_JIRA_TOKEN\nchat: { provider: slack }\n")
+	from := answersFile(t, "name: acme\ngit: { email: tester@acme.test }\nchat: { provider: slack }\n")
 	out, err := runOnboard(t, "--from", from, "--base", base)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -73,9 +73,6 @@ func TestOnboard_FromWritesValidManifestWithSkippedBlocks(t *testing.T) {
 	m, err := manifest.Load(mp)
 	if err != nil {
 		t.Fatalf("the written manifest must load: %v", err)
-	}
-	if m.Tracker == nil || m.Tracker.Provider != "jira" || m.Tracker.Env != "ACME_JIRA_TOKEN" || m.Tracker.Project() != "PLAT" {
-		t.Fatalf("tracker = %+v", m.Tracker)
 	}
 	if m.Chat == nil || m.Chat.Provider != "slack" {
 		t.Fatalf("chat = %+v", m.Chat)
@@ -93,7 +90,7 @@ func TestOnboard_FromWritesValidManifestWithSkippedBlocks(t *testing.T) {
 	if trust.IsTrusted(h) {
 		t.Fatal("onboard must leave the workspace untrusted: tq allow is the human's")
 	}
-	for _, want := range []string{"(untrusted)", "tq allow acme", "tq login acme claude", "ACME_JIRA_TOKEN", "slack", "/tentaqles:onboard"} {
+	for _, want := range []string{"(untrusted)", "tq allow acme", "tq login acme claude", "slack", "/tentaqles:onboard"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output misses %q:\n%s", want, out)
 		}
@@ -112,7 +109,6 @@ git: { name: Tester, email: tester@acme.test, provider: azure-devops }
 cloud: { provider: azure, also: [aws] }
 data_platform: { provider: snowflake }
 agents: [claude, codex]
-tracker: { provider: azure-devops, scope: { org: acme, project: Platform } }
 email: { provider: none }
 `)
 	out, err := runOnboard(t, "--from", from, "--base", base, "--open-terminal")
@@ -143,9 +139,9 @@ email: { provider: none }
 
 func TestOnboard_NameArgOverridesAndValidationWritesNothing(t *testing.T) {
 	base, _ := isolateOnboard(t)
-	from := answersFile(t, "name: ignored\ngit: { email: tester@acme.test }\ntracker: { provider: trello }\n")
+	from := answersFile(t, "name: ignored\ngit: { email: tester@acme.test }\nchat: { provider: irc }\n")
 	if _, err := runOnboard(t, "acme", "--from", from, "--base", base); err == nil {
-		t.Fatal("an unknown tracker must fail")
+		t.Fatal("an unknown chat provider must fail")
 	}
 	if _, err := os.Stat(filepath.Join(base, "acme")); !os.IsNotExist(err) {
 		t.Fatal("a refused answer set must write nothing")
@@ -213,7 +209,7 @@ func TestOnboard_WizardResultIsWritten(t *testing.T) {
 
 func TestReparse_RefusesASecretTypedIntoTheWizard(t *testing.T) {
 	a := &onboard.Answers{Name: "acme", Git: onboard.Git{Email: "tester@acme.test"},
-		Tracker: &manifest.Tracker{Provider: "jira", Env: "ghp_abcdefghijklmnopqrstuvwxyz0123"}} // tq:allow-secret (fake fixture)
+		Chat: &manifest.Service{Provider: "ghp_abcdefghijklmnopqrstuvwxyz0123"}} // tq:allow-secret (fake fixture)
 	if _, err := reparse(a); err == nil {
 		t.Fatal("a token typed into a name field must be refused")
 	}

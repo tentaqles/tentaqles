@@ -11,7 +11,6 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/internal/hub/runner"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -30,10 +29,10 @@ var readHidden = func(r io.Reader) ([]byte, error) {
 	return term.ReadPassword(f.Fd())
 }
 
-// secretHumanOnly refuses agent sessions (the hub's marker check) before anything else runs.
+// secretHumanOnly refuses agent sessions (the environment-marker check) before anything else runs.
 func secretHumanOnly() error {
-	if hubAgent() {
-		return runner.ErrHumanOnly
+	if _, ok := agentSession(); ok {
+		return errHumanOnly
 	}
 	return nil
 }
@@ -57,10 +56,9 @@ func newSecretCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "secret",
 		Short: "Keep tracker tokens in the OS keychain (human-only; values are never printed)",
-		Long: `Board sync reads a tracker token from, in order: the tracker CLI's own
-login, the OS keychain, the manifest's tracker.env (resolved as tq dotenv
-does), then the agent's MCP connector. These commands manage the keychain
-entry: service "tentaqles", account "<workspace>/<provider>".
+		Long: `The manifest holds names only, so a tracker token lives in the OS keychain.
+These commands manage the keychain entry: service "tentaqles", account
+"<workspace>/<provider>".
 
   tq secret set <ws> <provider>     store a token (hidden prompt, or stdin)
   tq secret rm <ws> <provider>      remove it
@@ -156,31 +154,18 @@ type secretRow struct {
 	Workspace string `json:"workspace"`
 	Provider  string `json:"provider"`
 	Account   string `json:"account"`
-	Keychain  string `json:"keychain"`       // present | absent | error
-	Auth      string `json:"auth,omitempty"` // the manifest's tracker.auth, for the workspace's tracker
+	Keychain  string `json:"keychain"` // present | absent | error
 	Error     string `json:"error,omitempty"`
 }
 
 func secretStatusRows(w resolve.Workspace, only string) []secretRow {
-	var provs []string
-	var tr *manifest.Tracker
-	if w.Manifest != nil {
-		tr = w.Manifest.Tracker
-	}
-	switch {
-	case only != "":
+	provs := manifest.TrackerProviders
+	if only != "" {
 		provs = []string{only}
-	case tr != nil && tr.Provider != "":
-		provs = []string{tr.Provider}
-	default:
-		provs = manifest.TrackerProviders
 	}
 	rows := make([]secretRow, 0, len(provs))
 	for _, p := range provs {
 		r := secretRow{Workspace: w.Name, Provider: p, Account: secret.Account(w.Name, p), Keychain: "absent"}
-		if tr != nil && tr.Provider == p {
-			r.Auth = tr.AuthOrDefault()
-		}
 		switch ok, err := secret.Has(w.Name, p); {
 		case err != nil:
 			r.Keychain, r.Error = "error", err.Error()
@@ -197,9 +182,8 @@ func newSecretStatusCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "status [<workspace> [<provider>]]",
 		Short: "Show which tracker tokens the OS keychain holds (present or absent, never the value)",
-		Long: `With no workspace: every registered workspace that has a tracker block, for
-its tracker. With a workspace: its tracker, or every tracker when the
-manifest names none. With a provider: just that one.`,
+		Long: `With no workspace: every registered workspace, for every tracker provider.
+With a workspace: every tracker provider. With a provider: just that one.`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := secretHumanOnly(); err != nil {
@@ -223,9 +207,7 @@ manifest names none. With a provider: just that one.`,
 				}
 				all, _ := resolve.ListWorkspaces(cfg)
 				for _, w := range all {
-					if w.Manifest.HasTracker() {
-						rows = append(rows, secretStatusRows(w, "")...)
-					}
+					rows = append(rows, secretStatusRows(w, "")...)
 				}
 			}
 			out := c.OutOrStdout()
@@ -238,21 +220,17 @@ manifest names none. With a provider: just that one.`,
 				return enc.Encode(rows)
 			}
 			if len(rows) == 0 {
-				fmt.Fprintln(out, "No workspace has a tracker block. Pass a workspace to check every tracker.")
+				fmt.Fprintln(out, "No registered workspace (tq list shows them).")
 				return nil
 			}
 			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "WORKSPACE\tPROVIDER\tKEYCHAIN\tAUTH")
+			fmt.Fprintln(tw, "WORKSPACE\tPROVIDER\tKEYCHAIN")
 			for _, r := range rows {
 				state := r.Keychain
 				if r.Error != "" {
 					state += " (" + r.Error + ")"
 				}
-				auth := r.Auth
-				if auth == "" {
-					auth = "-"
-				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Workspace, r.Provider, state, auth)
+				fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Workspace, r.Provider, state)
 			}
 			if err := tw.Flush(); err != nil {
 				return err

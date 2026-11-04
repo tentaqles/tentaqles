@@ -25,8 +25,8 @@ func newOnboardCmd() *cobra.Command {
 	var openTerm bool
 	c := &cobra.Command{
 		Use:   "onboard [<name>]",
-		Short: "Set up a client workspace and its company tools: identity, git, cloud, data, agents, tracker, chat, email",
-		Long: "tq onboard extends tq add with a wizard (or --from <yaml>) that also records the company's tracker,\n" +
+		Short: "Set up a client workspace and its company tools: identity, git, cloud, data, agents, chat, email",
+		Long: "tq onboard extends tq add with a wizard (or --from <yaml>) that also records the company's\n" +
 			"chat, email, data platform and agent CLIs in the manifest. Every question can be skipped. The manifest\n" +
 			"holds names only: tq onboard never asks for a token. It leaves the workspace untrusted and prints the\n" +
 			"tq allow and login lines for you to run, then offers to open a new terminal in the folder.",
@@ -45,7 +45,7 @@ func newOnboardCmd() *cobra.Command {
 			interactive := from == ""
 			if interactive {
 				// A wizard waits on a keyboard; inside an agent session nobody is there to answer.
-				if hubAgent() {
+				if _, ok := agentSession(); ok {
 					return fmt.Errorf("tq onboard is interactive and this is an agent session; run it in your own terminal, or pass --from <answers.yaml>")
 				}
 				name := ""
@@ -106,7 +106,7 @@ func newOnboardCmd() *cobra.Command {
 // openOnboardTerminal opens a new terminal in root. It never closes the current one: that is the
 // user's call, so it says so.
 func openOnboardTerminal(w io.Writer, root string) {
-	if hubAgent() {
+	if _, ok := agentSession(); ok {
 		fmt.Fprintf(w, "\nNot opening a terminal from an agent session; open one in %s yourself.\n", root)
 		return
 	}

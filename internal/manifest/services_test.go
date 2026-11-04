@@ -40,19 +40,6 @@ func TestTrackerProvidersAreCatalogIDs(t *testing.T) {
 const servicesYAML = `
 schema: tentaqles-client-v2
 client: acme
-tracker:
-  provider: azure-devops
-  scope:
-    org: acme
-    project: Platform
-    board: Platform Team
-    area: Web
-  assigned_to: me
-  auth: env
-  env: ACME_ADO_TOKEN
-  lanes:
-    "In Review": review
-    "QA": review
 chat:  { provider: slack }
 email: { provider: gmail }
 data_platform: { provider: snowflake }
@@ -65,20 +52,9 @@ func TestLoadServiceBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr := m.Tracker
-	if tr == nil || tr.Provider != "azure-devops" || tr.Org() != "acme" || tr.Project() != "Platform" || tr.Board() != "Platform Team" ||
-		tr.Scope["area"] != "Web" || tr.AssignedTo != "me" || tr.Auth != "env" || tr.Env != "ACME_ADO_TOKEN" || tr.Lanes["QA"] != "review" {
-		t.Fatalf("tracker %+v", tr)
-	}
-	if tr.ScopeKey() != "area=Web;board=Platform Team;org=acme;project=Platform" {
-		t.Fatalf("scope key %q", tr.ScopeKey())
-	}
 	if m.Chat.Provider != "slack" || m.Email.Provider != "gmail" || m.DataPlatform.Provider != "snowflake" ||
 		!reflect.DeepEqual(m.Agents, []string{"claude", "codex"}) {
 		t.Fatalf("%+v %+v %+v %v", m.Chat, m.Email, m.DataPlatform, m.Agents)
-	}
-	if !m.HasTracker() {
-		t.Fatal("HasTracker")
 	}
 }
 
@@ -88,15 +64,15 @@ func TestServiceBlocksAreOptional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Tracker != nil || m.Chat != nil || m.Email != nil || m.DataPlatform != nil || m.Agents != nil || m.HasTracker() {
+	if m.Chat != nil || m.Email != nil || m.DataPlatform != nil || m.Agents != nil {
 		t.Fatalf("%+v", m)
 	}
-	m, err = Load(write(t, "schema: tentaqles-client-v2\nclient: acme\nchat: { provider: none }\nemail: { provider: none }\ndata_platform: { provider: none }\ntracker: { provider: github, scope: { org: acme, board: 3 } }\n"))
+	m, err = Load(write(t, "schema: tentaqles-client-v2\nclient: acme\nchat: { provider: none }\nemail: { provider: none }\ndata_platform: { provider: none }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Tracker.Board() != "3" || m.Tracker.AuthOrDefault() != "cli" || m.Tracker.AssignedToOrDefault() != "me" {
-		t.Fatalf("tracker defaults %+v", m.Tracker)
+	if m.Chat.Enabled() || m.Email.Enabled() || m.DataPlatform.Enabled() {
+		t.Fatalf("none is not enabled: %+v %+v %+v", m.Chat, m.Email, m.DataPlatform)
 	}
 }
 
@@ -104,22 +80,14 @@ func TestServiceBlocksValidate(t *testing.T) {
 	isolateHome(t)
 	base := "schema: tentaqles-client-v2\nclient: acme\n"
 	for name, body := range map[string]string{
-		"unknown tracker":      "tracker: { provider: trello }",
-		"tracker no provider":  "tracker: { scope: { org: acme } }",
-		"bad auth":             "tracker: { provider: jira, auth: password }",
-		"env auth without var": "tracker: { provider: jira, auth: env }",
-		"bad env name":         "tracker: { provider: jira, auth: env, env: 'A B' }",
-		"bad assigned_to":      "tracker: { provider: jira, assigned_to: tester }",
-		"empty lane":           "tracker: { provider: jira, lanes: { QA: '' } }",
-		"empty scope key":      "tracker: { provider: jira, scope: { '': x } }",
-		"unknown chat":         "chat: { provider: discord }",
-		"chat no provider":     "chat: {}",
-		"unknown email":        "email: { provider: yahoo }",
-		"unknown data":         "data_platform: { provider: excel }",
-		"non-data data":        "data_platform: { provider: claude }",
-		"unknown agent":        "agents: [claude, hal]",
-		"non-agent agent":      "agents: [snowflake]",
-		"duplicate agent":      "agents: [claude, claude]",
+		"unknown chat":     "chat: { provider: discord }",
+		"chat no provider": "chat: {}",
+		"unknown email":    "email: { provider: yahoo }",
+		"unknown data":     "data_platform: { provider: excel }",
+		"non-data data":    "data_platform: { provider: claude }",
+		"unknown agent":    "agents: [claude, hal]",
+		"non-agent agent":  "agents: [snowflake]",
+		"duplicate agent":  "agents: [claude, claude]",
 	} {
 		_, err := Load(write(t, base+body+"\n"))
 		if err == nil {
@@ -127,8 +95,8 @@ func TestServiceBlocksValidate(t *testing.T) {
 		}
 	}
 	// The error names the field and the known values.
-	_, err := Load(write(t, base+"tracker: { provider: trello }\n"))
-	if err == nil || !strings.Contains(err.Error(), "tracker.provider") || !strings.Contains(err.Error(), "azure-devops") {
+	_, err := Load(write(t, base+"chat: { provider: discord }\n"))
+	if err == nil || !strings.Contains(err.Error(), "chat.provider") || !strings.Contains(err.Error(), "slack") {
 		t.Fatalf("error text: %v", err)
 	}
 }
@@ -149,7 +117,7 @@ func TestServiceBlocksMarshalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, raw)
 	}
-	if !reflect.DeepEqual(m.Tracker, m2.Tracker) || !reflect.DeepEqual(m.Chat, m2.Chat) || !reflect.DeepEqual(m.Email, m2.Email) ||
+	if !reflect.DeepEqual(m.Chat, m2.Chat) || !reflect.DeepEqual(m.Email, m2.Email) ||
 		!reflect.DeepEqual(m.DataPlatform, m2.DataPlatform) || !reflect.DeepEqual(m.Agents, m2.Agents) {
 		t.Fatalf("round trip lost data:\n%s", raw)
 	}
