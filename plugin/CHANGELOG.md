@@ -4,6 +4,11 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+- **No off switch in the hook bridge.** `scripts/tq_hook.sh` and `scripts/tq_run.sh` no longer
+  exit early on the per-launch mode variable, which tq 0.9.0 drops with the guard modes. The
+  off launchers (`claude-off`, `codex-off`, `tq run --off`) switch the plugin off through
+  Claude's `--settings` instead. `TQ_ENABLED=0` keeps its one meaning (shell activation only):
+  the hook still fails closed under it (`tests/test_tq_off.py`).
 - **Skills, agents and templates for the slim plugin.** 40 skills remain. Deleted: `build`,
   `loop`, `hub`, `sync`, `refine`, `plan-cards`, `guard`, `pack`, `iac-policy`, `ml-promote`,
   `drift-check`, `restore-drill`, `warehouse-cost`, `data-contract`, `model-card`, `rls-tests`,

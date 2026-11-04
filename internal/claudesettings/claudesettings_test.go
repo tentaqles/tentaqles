@@ -18,19 +18,17 @@ func man(mode string) *manifest.Manifest {
 
 func TestDesiredModes(t *testing.T) {
 	cases := []struct {
-		mode   string
-		bypass bool
-		want   string
+		mode string
+		want string
 	}{
-		{"", false, "auto"},
-		{"auto", false, "auto"},
-		{"plan", false, "plan"},
-		{"bypass", false, "acceptEdits"},
-		{"bypass", true, "bypassPermissions"},
+		{"", "auto"},
+		{"auto", "auto"},
+		{"plan", "plan"},
+		{"bypass", "bypassPermissions"},
 	}
 	for _, c := range cases {
-		if got := Desired(man(c.mode), c.bypass, "").DefaultMode; got != c.want {
-			t.Errorf("mode %q bypass=%v: got %q want %q", c.mode, c.bypass, got, c.want)
+		if got := Desired(man(c.mode), "").DefaultMode; got != c.want {
+			t.Errorf("mode %q: got %q want %q", c.mode, got, c.want)
 		}
 	}
 }
@@ -39,7 +37,7 @@ func TestDesiredManifestAdditionsAndDenyWins(t *testing.T) {
 	m := man("")
 	m.Claude.Permissions = &manifest.Permissions{Allow: []string{"Bash(make:*)", "Bash(cat:*)"}, Deny: []string{"Bash(cat:*)"}, Ask: []string{"Bash(az webapp deploy:*)"}}
 	m.Claude.Env = map[string]string{"FOO": "1"}
-	d := Desired(m, false, filepath.Join("opt", "tq", "tq.exe"))
+	d := Desired(m, filepath.Join("opt", "tq", "tq.exe"))
 	if contains(d.Allow, "Bash(cat:*)") {
 		t.Error("deny did not win over allow")
 	}
@@ -122,7 +120,7 @@ func TestApplyUserAlreadyHadEntryIsNotOwned(t *testing.T) {
 func TestRenderRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"permissions":{"allow":["Bash(mine:*)"]}}`), 0o600)
-	want := Desired(man(""), false, "")
+	want := Desired(man(""), "")
 
 	res, err := Render(dir, want, true)
 	if err != nil || !res.Changed {

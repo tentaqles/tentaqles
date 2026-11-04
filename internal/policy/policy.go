@@ -1,17 +1,16 @@
 // Package policy decides whether one Claude Code tool call is allowed, needs
 // the user's confirmation ("ask"), or is refused ("deny"), from declarative
 // rules. It is pure: the caller parses the hook payload into a ToolCall and
-// gathers every fact (rule sets, whether a file exists) first.
+// gathers every fact (the rule set, whether a file exists) first.
 //
-// Rules come in layers. Built-ins ship with tq; a trusted manifest
-// (.tentaqles.yaml, hash-pinned by `tq allow`) may add rules and disable
-// built-ins; a project file (.claude/tq-rules.yaml, repo content, therefore
-// untrusted) may only ADD rules. Nothing a project ships can loosen the guard.
+// The only rules are the built-in secret rules (Builtin): nothing a
+// manifest, a global file or a repository file adds or removes.
 package policy
 
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/guard"
@@ -25,10 +24,6 @@ const (
 	Ask   Action = "ask"
 	Deny  Action = "deny"
 )
-
-// UnattendedEnforce is the deprecated Rule.Unattended value ("always
-// applied"); manifests still accept it.
-const UnattendedEnforce = "enforce"
 
 // StricterThan reports whether a is a stricter verdict than b.
 func (a Action) StricterThan(b Action) bool { return a.rank() > b.rank() }
@@ -87,23 +82,14 @@ type Rule struct {
 	Content      string `yaml:"content,omitempty"` // regex on written content / MCP input
 	Except       string `yaml:"except,omitempty"`
 	ExistingOnly bool   `yaml:"existing_only,omitempty"` // only when Path already exists
-	// SkipHeredocData (built-ins only): for the Bash tool, the command regex
-	// does not see heredoc bodies when the whole command is one of the
-	// shapes guard.BlankDataHeredocs knows to be data. The command lines,
-	// redirect targets included, are still matched; PowerShell commands
-	// are matched as they are.
+	// SkipHeredocData: for the Bash tool, the command regex does not see
+	// heredoc bodies when the whole command is one of the shapes
+	// guard.BlankDataHeredocs knows to be data. The command lines, redirect
+	// targets included, are still matched; PowerShell commands are matched
+	// as they are.
 	SkipHeredocData bool   `yaml:"-"`
 	Reason          string `yaml:"reason"`
-	// Unattended is deprecated (spec E): on a custom rule, any value means
-	// "no category", so every mode applies the rule at its own action. Use
-	// Category instead.
-	Unattended string `yaml:"unattended,omitempty"`
-	// Category (spec E §5.1) is a custom rule's guardcfg category name (one
-	// of the thirteen). Built-in rules are classified in guardcfg.Categories
-	// and ignore it. Empty: unclassified, applied at its own action in every
-	// mode (fail closed).
-	Category string `yaml:"category,omitempty"`
-	Source   string `yaml:"-"` // "builtin", the manifest path, or the project rules path
+	Source          string `yaml:"-"` // "builtin"
 
 	tool, command, path, content, except *regexp.Regexp
 }
@@ -182,58 +168,33 @@ func (r *Rule) Match(call ToolCall) bool {
 	return true
 }
 
-// Set is the effective, compiled rule list for one workspace.
+// Set is the compiled rule list.
 type Set struct {
 	Rules []*Rule
 }
 
-// Layers are the raw inputs to Build.
+// Layers are the raw inputs to Build: the built-in rules only.
 type Layers struct {
 	Builtin []Rule
-	// Global rules come from the user's ~/.tentaqles/guard.yaml (trusted:
-	// it lives in the user's home, not in a repo). They may be disabled.
-	Global   []Rule
-	Manifest []Rule   // trusted: may add rules
-	Disable  []string // trusted: built-in / global ids to switch off
-	// Actions overrides the action of built-in, global and manifest rules by
-	// id (ask <-> deny). Project rules are never overridden.
-	Actions map[string]Action
-	Project []Rule // untrusted: may only add rules
 }
 
 // Build compiles the layers into a Set. A rule that fails to compile is
-// skipped and reported; the remaining rules still apply, so one typo in a
-// project file never switches the whole guard off.
+// skipped and reported; the remaining rules still apply, so one bad regex
+// never switches the whole guard off.
 func Build(l Layers) (*Set, []error) {
 	var errs []error
-	off := map[string]bool{}
-	for _, id := range l.Disable {
-		off[strings.TrimSpace(id)] = true
-	}
 	s := &Set{}
-	add := func(rs []Rule, src string, canDisable bool) {
-		for i := range rs {
-			r := rs[i]
-			if r.Source == "" {
-				r.Source = src
-			}
-			if canDisable && off[r.ID] {
-				continue
-			}
-			if a, ok := l.Actions[r.ID]; ok && src != "project" && (a == Ask || a == Deny) {
-				r.Action = a
-			}
-			if err := r.Compile(); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", r.Source, err))
-				continue
-			}
-			s.Rules = append(s.Rules, &r)
+	for i := range l.Builtin {
+		r := l.Builtin[i]
+		if r.Source == "" {
+			r.Source = "builtin"
 		}
+		if err := r.Compile(); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", r.Source, err))
+			continue
+		}
+		s.Rules = append(s.Rules, &r)
 	}
-	add(l.Builtin, "builtin", true)
-	add(l.Global, "global", true)
-	add(l.Manifest, "manifest", false)
-	add(l.Project, "project", false)
 	return s, errs
 }
 
@@ -263,10 +224,23 @@ func (d Decision) Reason() string {
 	return b.String()
 }
 
-// Evaluate applies every rule in s to call at its own action. It is
-// EvaluateMapped with no mapper.
+// Evaluate applies every rule in s to call. The strictest action wins;
+// Matched lists the rules at that level, sorted by id.
 func (s *Set) Evaluate(call ToolCall) Decision {
-	d, _ := s.EvaluateMapped(call, nil)
+	var d Decision
+	for _, r := range s.Rules {
+		if !r.Match(call) {
+			continue
+		}
+		switch {
+		case r.Action.rank() > d.Action.rank():
+			d.Action = r.Action
+			d.Matched = []*Rule{r}
+		case r.Action.rank() == d.Action.rank():
+			d.Matched = append(d.Matched, r)
+		}
+	}
+	sort.SliceStable(d.Matched, func(i, j int) bool { return d.Matched[i].ID < d.Matched[j].ID })
 	return d
 }
 

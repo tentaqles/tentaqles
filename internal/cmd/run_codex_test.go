@@ -8,10 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/codexcfg"
-	"github.com/tentaqles/tentaqles/internal/guardcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
-	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -33,125 +31,33 @@ func codexWS(t *testing.T) *resolve.Workspace {
 	return w
 }
 
-// withCodexMode makes the mode resolver return preset name (the WS1 engine
-// is a stub on this branch), for every workspace and cwd, or only below sub.
-func withCodexMode(t *testing.T, name string, under string) {
-	t.Helper()
-	tab, ok := guardcfg.Preset(name)
-	if !ok {
-		t.Fatalf("no preset %s", name)
-	}
-	prev := codexModeAt
-	codexModeAt = func(ws *resolve.Workspace, cwd string) (string, func(*policy.Rule) policy.Action) {
-		if under != "" && !strings.HasPrefix(filepath.Clean(cwd), filepath.Clean(under)) {
-			return prev(ws, cwd)
-		}
-		return name, func(r *policy.Rule) policy.Action {
-			c := guardcfg.CategoryOf(r)
-			if c == "" || guardcfg.Locked(c) {
-				return r.Action
-			}
-			return tab.Get(c).Apply(r.Action)
-		}
-	}
-	t.Cleanup(func() { codexModeAt = prev })
-}
-
-func TestCodexArgsFromMode(t *testing.T) {
-	cases := []struct {
-		name, mode, sandbox string
-		args                []string
-		want                string
-	}{
-		{"default", "", "", []string{"hi"}, "-a on-request -s workspace-write hi"},
-		{"default keeps exec", "", "", []string{"exec", "hi"}, "-a on-request -s workspace-write exec hi"},
-		{"strict", "strict", "", []string{"hi"}, "-a on-request -s workspace-write hi"},
-		{"relaxed", "relaxed", "", []string{"hi"}, "-a never -s workspace-write hi"},
-		{"relaxed read-only", "relaxed", "read-only", []string{"hi"}, "-a never -s read-only hi"},
-		{"relaxed full access", "relaxed", "danger-full-access", []string{"hi"}, "--dangerously-bypass-approvals-and-sandbox hi"},
-		{"user approval wins", "relaxed", "", []string{"-a", "on-request", "hi"}, "-s workspace-write -a on-request hi"},
-		{"user yolo wins", "", "", []string{"--yolo"}, "--yolo"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := codexWS(t)
-			if tc.sandbox != "" {
-				w.Manifest.Guard.Codex = &manifest.GuardCodex{Sandbox: tc.sandbox}
-			}
-			if tc.mode != "" {
-				withCodexMode(t, tc.mode, "")
-			}
-			got := codexArgs(w, w.Root, tc.args)
-			if strings.Join(got, " ") != tc.want {
-				t.Fatalf("got %q want %q", strings.Join(got, " "), tc.want)
-			}
-		})
-	}
-}
-
-// Per-project modes travel in the launch flags, which follow the cwd.
-func TestCodexArgsFollowCwd(t *testing.T) {
+// The launch flags are the pinned pair; flags the user typed win.
+func TestCodexArgsPinned(t *testing.T) {
 	w := codexWS(t)
-	withCodexMode(t, "relaxed", filepath.Join(w.Root, "demo-todo"))
-	if got := strings.Join(codexArgs(w, filepath.Join(w.Root, "demo-todo", "src"), []string{"hi"}), " "); got != "-a never -s workspace-write hi" {
-		t.Fatalf("project: %q", got)
-	}
-	if got := strings.Join(codexArgs(w, w.Root, []string{"hi"}), " "); got != "-a on-request -s workspace-write hi" {
-		t.Fatalf("root: %q", got)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"hi"}, "-a on-request -s workspace-write hi"},
+		{[]string{"exec", "hi"}, "-a on-request -s workspace-write exec hi"},
+		{[]string{"-a", "never", "hi"}, "-s workspace-write -a never hi"},
+		{[]string{"-s", "read-only"}, "-a on-request -s read-only"},
+		{[]string{"--yolo"}, "--yolo"},
+	} {
+		if got := strings.Join(codexArgs(w, tc.args), " "); got != tc.want {
+			t.Errorf("%v: got %q want %q", tc.args, got, tc.want)
+		}
 	}
 }
 
 func TestCodexArgsNoCodexIdentity(t *testing.T) {
 	w := codexWS(t)
 	delete(w.Manifest.Identities, "codex")
-	if got := codexArgs(w, w.Root, []string{"hi"}); strings.Join(got, " ") != "hi" {
+	if got := codexArgs(w, []string{"hi"}); strings.Join(got, " ") != "hi" {
 		t.Fatalf("got %v", got)
 	}
-}
-
-// The unattended profile is gone: a tq-written profile file is never
-// passed any more, even for an old projects-only setup.
-func TestCodexArgsNoLegacyProfile(t *testing.T) {
-	w := codexWS(t)
-	w.Manifest.Guard.Unattended = &manifest.Unattended{Projects: []string{"demo-todo"}}
-	if got := strings.Join(codexArgs(w, filepath.Join(w.Root, "demo-todo"), []string{"hi"}), " "); strings.Contains(got, "--profile") {
-		t.Fatalf("got %q", got)
-	}
-}
-
-// An untrusted workspace compiles to default, whatever its manifest says.
-func TestCodexPlanUntrustedIsDefault(t *testing.T) {
-	w := codexWS(t)
-	withCodexMode(t, "relaxed", "")
-	if err := trust.Deny(w.Hash); err != nil {
-		t.Fatal(err)
-	}
-	if p := codexPlan(w, w.Root); p.Mode != guardcfg.ModeDefault || p.Approval != "on-request" {
-		t.Fatalf("untrusted: %+v", p)
-	}
-}
-
-// guard.disable and guard.actions feed the compiled rules; a locked rule
-// keeps its deny whatever they say.
-func TestCodexRuleSetHonoursActions(t *testing.T) {
-	w := codexWS(t)
-	w.Manifest.Guard.Disable = []string{"tq/iac-destroy", "tq/env-file-shell"}
-	w.Manifest.Guard.Actions = map[string]policy.Action{"tq/iac-apply": policy.Deny, "tq/trust-store-write": policy.Ask}
-	got := map[string]policy.Action{}
-	for _, r := range codexRuleSet(w) {
-		got[r.ID] = r.Action
-	}
-	if _, ok := got["tq/iac-destroy"]; ok {
-		t.Error("a disabled rule is left out")
-	}
-	if got["tq/env-file-shell"] != policy.Deny {
-		t.Error("a locked rule cannot be disabled")
-	}
-	if got["tq/iac-apply"] != policy.Deny {
-		t.Error("guard.actions changes the rule's own action")
-	}
-	if got["tq/trust-store-write"] != policy.Deny {
-		t.Error("guard.actions cannot loosen a locked rule")
+	if got := codexArgs(nil, []string{"hi"}); strings.Join(got, " ") != "hi" {
+		t.Fatalf("neutral: got %v", got)
 	}
 }
 
@@ -165,7 +71,7 @@ func renderOut(t *testing.T, w *resolve.Workspace, dry bool) string {
 	return out.String()
 }
 
-func TestRenderCodexWritesModeFiles(t *testing.T) {
+func TestRenderCodexWritesPinnedFiles(t *testing.T) {
 	w := codexWS(t)
 	dir := paths.IdentityDir("acme", "codex")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -188,31 +94,45 @@ func TestRenderCodexWritesModeFiles(t *testing.T) {
 		t.Fatalf("render: %q", out)
 	}
 	b, _ := os.ReadFile(cfg)
-	if !strings.Contains(string(b), `approval_policy = "on-request"`) || !strings.HasSuffix(string(b), userCfg) {
+	if !strings.Contains(string(b), `approval_policy = "on-request"`) || !strings.Contains(string(b), `sandbox_mode = "workspace-write"`) || !strings.HasSuffix(string(b), userCfg) {
 		t.Fatalf("config.toml:\n%s", b)
-	}
-	rules, err := codexcfg.ReadRules(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dec := map[string]string{}
-	for _, r := range rules {
-		dec[r.ID] = r.Decision
-	}
-	if dec["tq/gh-repo-delete"] != codexcfg.DecisionForbidden || dec["tq/iac-apply"] != codexcfg.DecisionPrompt {
-		t.Fatalf("default rules: %v", dec)
 	}
 	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); !ok {
 		t.Fatal("hooks.json must carry tq's PreToolUse entry")
 	}
+	if _, err := os.Stat(filepath.Join(dir, "rules", "tq.rules")); !os.IsNotExist(err) {
+		t.Fatal("no rules file is written any more")
+	}
 	if out := renderOut(t, w, false); out != "" {
 		t.Fatalf("an up-to-date render is silent: %q", out)
 	}
+}
 
-	withCodexMode(t, "relaxed", "")
-	renderOut(t, w, false)
-	if b, _ := os.ReadFile(cfg); !strings.Contains(string(b), `approval_policy = "never"`) {
-		t.Fatalf("relaxed:\n%s", b)
+// The guard-mode rules file an older tq wrote is removed on the next
+// render; the user's own rules files stay.
+func TestRenderCodexRemovesOldRulesFile(t *testing.T) {
+	w := codexWS(t)
+	dir := paths.IdentityDir("acme", "codex")
+	rp := filepath.Join(dir, "rules", "tq.rules")
+	if err := os.MkdirAll(filepath.Dir(rp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := "# >>> managed by tq (guard mode): edit with tq mode, not by hand\nprefix_rule(pattern = [\"terraform\", \"apply\"], decision = \"prompt\", justification = \"x\")\n# <<< managed by tq (guard mode)\n"
+	if err := os.WriteFile(rp, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mine := filepath.Join(dir, "rules", "default.rules")
+	if err := os.WriteFile(mine, []byte("prefix_rule(pattern = [\"ls\"])\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := renderOut(t, w, false); !strings.Contains(out, "tq.rules") {
+		t.Fatalf("render: %q", out)
+	}
+	if _, err := os.Stat(rp); !os.IsNotExist(err) {
+		t.Fatal("tq's old rules file must be gone")
+	}
+	if _, err := os.Stat(mine); err != nil {
+		t.Fatal("the user's rules file must stay")
 	}
 }
 
@@ -245,40 +165,8 @@ func TestRenderCodexNoopWithoutCodexIdentity(t *testing.T) {
 	}
 }
 
-// The files tq writes into CODEX_HOME hold the persistent mode: a render run
-// from a launched shell never sees the one-launch override (review r0,
-// Minor 3). The launch flags still do.
-func TestRenderCodexIgnoresLaunchOverride(t *testing.T) {
-	w := codexWS(t)
-	if err := os.MkdirAll(paths.IdentityDir("acme", "codex"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(guardcfg.EnvMode, guardcfg.ModeRelaxed)
-	t.Setenv("TENTAQLES_HEADLESS", "1")
-	var seen []string
-	prev := codexModeAt
-	codexModeAt = func(ws *resolve.Workspace, cwd string) (string, func(*policy.Rule) policy.Action) {
-		seen = append(seen, os.Getenv(guardcfg.EnvMode)+"|"+os.Getenv("TENTAQLES_HEADLESS"))
-		return prev(ws, cwd)
-	}
-	t.Cleanup(func() { codexModeAt = prev })
-
-	renderOut(t, w, false)
-	if len(seen) == 0 || seen[len(seen)-1] != "|" {
-		t.Fatalf("render resolved with the launch env: %q", seen)
-	}
-	if os.Getenv(guardcfg.EnvMode) != guardcfg.ModeRelaxed || os.Getenv("TENTAQLES_HEADLESS") != "1" {
-		t.Fatal("the launch env must be restored after a render")
-	}
-	seen = nil
-	codexArgs(w, w.Root, []string{"hi"})
-	if len(seen) != 1 || seen[0] != guardcfg.ModeRelaxed+"|1" {
-		t.Fatalf("launch flags resolve with the launch env: %q", seen)
-	}
-}
-
 // A workspace that stops isolating codex gets tq's files removed from the
-// old identity dir; the user's own config stays (review r0, Minor 5).
+// old identity dir; the user's own config stays.
 func TestRenderCodexRemovesWhenNoLongerIsolated(t *testing.T) {
 	w := codexWS(t)
 	dir := paths.IdentityDir("acme", "codex")
@@ -291,22 +179,19 @@ func TestRenderCodexRemovesWhenNoLongerIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 	renderOut(t, w, false)
-	if _, err := codexcfg.ReadRules(dir); err != nil {
-		t.Fatal(err)
+	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); !ok {
+		t.Fatal("rendered")
 	}
 
 	delete(w.Manifest.Identities, "codex")
 	if out := renderOut(t, w, true); !strings.Contains(out, "would change") {
 		t.Fatalf("dry run of the removal: %q", out)
 	}
-	if _, err := codexcfg.ReadRules(dir); err != nil {
+	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); !ok {
 		t.Fatal("a dry run removes nothing")
 	}
 	if out := renderOut(t, w, false); !strings.Contains(out, "updated") {
 		t.Fatalf("removal: %q", out)
-	}
-	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(codexcfg.RulesFile))); !os.IsNotExist(err) {
-		t.Fatalf("tq.rules must be gone: %v", err)
 	}
 	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); ok {
 		t.Fatal("tq's hook entry must be gone")
@@ -330,34 +215,22 @@ func TestRenderCodexRemovesWhenNoLongerIsolated(t *testing.T) {
 	}
 }
 
-// The Codex launch flags follow this launch's mode, the one the child gets
-// in TQ_MODE: --tq-mode when given, and for a human launch without it the
-// layers alone (an inherited TQ_MODE is dropped for the child, so it must
-// not pick the flags either).
-func TestLaunchCodexFlagsFollowTheLaunchMode(t *testing.T) {
-	isolateHome(t)
+// tq run passes the pinned flags to codex; a flag the user typed wins.
+func TestLaunchCodexFlagsArePinned(t *testing.T) {
+	mkLaunchWS(t, "acme", "")
 	clearAgentMarkers(t)
-	root := mkLaunchWS(t, "acme", "")
-	t.Chdir(root)
-	if err := trust.SaveGrant(manifestHash(t, root), trust.Grant{Mode: "relaxed", Workspace: "acme"}); err != nil {
-		t.Fatal(err)
-	}
 	calls := fakeExec(t)
-	if _, err := runTq(t, "run", "acme", "--tq-mode", "relaxed", "--", "codex", "exec", "x"); err != nil {
-		t.Fatal(err)
-	}
-	if c := (*calls)[0]; c.env["TQ_MODE"] != "relaxed" || !strings.HasPrefix(strings.Join(c.args, " "), "-a never ") {
-		t.Fatalf("--tq-mode relaxed: %v", c)
-	}
-	t.Setenv(guardcfg.EnvMode, guardcfg.ModeRelaxed)
-	calls = fakeExec(t)
 	if _, err := runTq(t, "run", "acme", "--", "codex", "exec", "x"); err != nil {
 		t.Fatal(err)
 	}
-	if c := (*calls)[0]; c.env["TQ_MODE"] != "" || !strings.HasPrefix(strings.Join(c.args, " "), "-a on-request ") {
-		t.Fatalf("an inherited TQ_MODE must not pick the flags of a human launch: %v", c)
+	if c := (*calls)[0]; c.name != "codex" || strings.Join(c.args, " ") != "-a on-request -s workspace-write exec x" || c.env["TQ_WS"] != "acme" {
+		t.Fatalf("codex launch: %+v", c)
 	}
-	if os.Getenv(guardcfg.EnvMode) != guardcfg.ModeRelaxed {
-		t.Fatal("tq's own env must be restored")
+	calls = fakeExec(t)
+	if _, err := runTq(t, "run", "acme", "--", "codex", "-a", "never", "exec", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := (*calls)[0]; strings.Join(c.args, " ") != "-s workspace-write -a never exec x" {
+		t.Fatalf("user approval wins: %+v", c)
 	}
 }

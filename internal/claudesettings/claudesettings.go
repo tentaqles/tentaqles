@@ -98,25 +98,17 @@ func ModeFor(m string) string {
 
 // Desired computes the managed settings for a workspace manifest. tqExe is
 // the tq binary the status line should call ("" to leave it alone).
-// bypassAllowed mirrors `tq allow --bypass`: without it a manifest asking for
-// bypass gets acceptEdits. defaultMode applies to sessions started outside
-// the launcher (IDE, desktop, the hub runner); `tq run` and the claude shell
-// function always start in bypass (spec E §8.1).
-func Desired(m *manifest.Manifest, bypassAllowed bool, tqExe string) Managed {
-	mode := ModeFor(m.Claude.PermissionMode)
-	if mode == "bypassPermissions" && !bypassAllowed {
-		mode = "acceptEdits"
-	}
+// defaultMode is the manifest's claude.permission_mode as it is: the
+// manifest is hash-trusted by `tq allow`, so a `bypass` there is the human's
+// own choice. It applies to sessions started outside the launcher (an IDE);
+// `tq run` and the claude shell function always start in bypass.
+func Desired(m *manifest.Manifest, tqExe string) Managed {
 	want := Managed{
-		DefaultMode:         mode,
+		DefaultMode:         ModeFor(m.Claude.PermissionMode),
 		Allow:               append([]string{}, baselineAllow...),
 		Deny:                append([]string{}, baselineDeny...),
 		Env:                 map[string]string{},
 		SkipDangerousPrompt: true,
-	}
-	if gitHistoryLoosened(m.Guard) {
-		want.Deny = minus(want.Deny, []string{ghRepoDeleteEntry})
-		want.Ask = append(want.Ask, ghRepoDeleteEntry)
 	}
 	for k, v := range baselineEnv {
 		want.Env[k] = v
