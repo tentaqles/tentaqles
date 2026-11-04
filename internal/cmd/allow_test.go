@@ -61,6 +61,9 @@ func TestEditedManifestLosesTrust(t *testing.T) {
 func TestAddDoesNotTrustFromAgent(t *testing.T) {
 	root := mkLaunchWS(t, "acme", "")
 	base := filepath.Dir(root)
+	prevRunGit := addRunGit
+	addRunGit = func(...string) (string, error) { return "", nil }
+	t.Cleanup(func() { addRunGit = prevRunGit })
 	for _, k := range agentMarkers {
 		clearAgentMarkers(t)
 		t.Setenv(k, "1")
