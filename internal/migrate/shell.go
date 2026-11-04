@@ -91,7 +91,7 @@ func (shellStep) Plan(d Deps) (Plan, error) {
 		}
 		if cs.Wrapper != "" {
 			p.Warnings = append(p.Warnings, fmt.Sprintf(
-				"%s: the old claude wrapper is not carried over: tq activate defines claude, which starts it in bypass under tq's guard mode", sh))
+				"%s: the old claude wrapper is not carried over: tq activate defines claude, which starts it in bypass with tq's identity and secret checks", sh))
 		}
 	}
 	return p, nil

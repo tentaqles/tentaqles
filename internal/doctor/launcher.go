@@ -206,5 +206,5 @@ func permissionModeOverridden(w *resolve.Workspace, _ Deps, add AddFunc) {
 	}
 	add("info", "permission-mode-overridden", w.Name,
 		fmt.Sprintf("claude.permission_mode is %s; the claude launcher starts in bypass anyway", pm),
-		"it still sets permissions.defaultMode for IDE, desktop and hub sessions; tq's guard mode is the policy layer for launched sessions")
+		"it still sets permissions.defaultMode for IDE sessions; launched sessions keep tq's identity and secret checks either way")
 }
