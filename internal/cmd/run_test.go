@@ -23,10 +23,11 @@ func isolateHome(t *testing.T) string {
 	t.Helper()
 	home := testutil.TempDir(t)
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
+	// Git for Windows reads HOME before USERPROFILE, and a Git Bash or Claude
+	// Code session sets HOME: isolate both so no test reaches ~/.gitconfig.
+	t.Setenv("HOME", home)
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
-	} else {
-		t.Setenv("HOME", home)
 	}
 	// The test binary may itself run inside a tq-managed shell (a Claude Code
 	// session, `tq run`), which carries the state of the last switch in

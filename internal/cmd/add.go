@@ -10,6 +10,10 @@ import (
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
+// addRunGit is the seam tests use to fake git for `tq add`: the real runner
+// writes the global git config, which a test must never touch.
+var addRunGit = gitcfg.RunGit
+
 func newAddCmd() *cobra.Command {
 	var o workspace.AddOptions
 	var ids string
@@ -24,7 +28,7 @@ func newAddCmd() *cobra.Command {
 					o.Identities = append(o.Identities, id)
 				}
 			}
-			o.RunGit = gitcfg.RunGit
+			o.RunGit = addRunGit
 			// Trust is human-only: a session may scaffold a folder but never
 			// trust it itself (the same marker check tq allow makes).
 			agentMarker, agent := agentSession()
