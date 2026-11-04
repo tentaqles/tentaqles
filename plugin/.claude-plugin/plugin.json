@@ -1,7 +1,7 @@
 {
   "name": "tentaqles",
-  "version": "0.15.2",
-  "description": "Multi-workspace orchestration for developers working across multiple clients. Identity isolation, temporal memory with decay, knowledge graphs, cross-workspace pattern detection, time-travel snapshots, and inter-workspace signals.",
+  "version": "0.16.0",
+  "description": "Identity isolation for developers who work across several clients: git, cloud and AI-agent identity follow the folder, secrets stay out of transcripts and commits, plus per-client session memory, knowledge graphs and skills.",
   "author": {
     "name": "Tentaqles",
     "email": "reach@tentaqles.ai",

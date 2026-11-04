@@ -4,6 +4,12 @@ All notable changes to the Tentaqles plugin. Versions follow [semver](https://se
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-11-04
+
+Ships with tq v0.9.0, the slim tentaqles: identity isolation plus secrets protection, and
+the plugin's memory, preamble, knowledge graph and skills. v0.8.2 / plugin 0.15.2 is the
+last full product.
+
 - **No off switch in the hook bridge.** `scripts/tq_hook.sh` and `scripts/tq_run.sh` no longer
   exit early on the per-launch mode variable, which tq 0.9.0 drops with the guard modes. The
   off launchers (`claude-off`, `codex-off`, `tq run --off`) switch the plugin off through

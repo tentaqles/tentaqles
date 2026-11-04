@@ -6,6 +6,8 @@ Releases before this file are described in the GitHub releases (up to `v0.7.0`).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-04
+
 ### Removed (the cut, decided 2026-11-03)
 
 - tentaqles narrows to identity isolation plus secrets protection; the plugin keeps its

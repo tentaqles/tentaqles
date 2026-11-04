@@ -1,6 +1,6 @@
 # Tentaqles
 
-> Multi-workspace orchestration for developers who work across multiple clients with AI coding assistants.
+> Identity isolation for developers who work across several clients with AI coding assistants.
 
 Tentaqles is a Claude Code plugin that keeps identity, memory, and knowledge isolated per client while surfacing useful patterns across them. Built for freelancers, consultants, and anyone juggling more than one codebase at a time.
 
