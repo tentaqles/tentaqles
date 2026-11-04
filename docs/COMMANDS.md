@@ -53,7 +53,7 @@ For more detail on a command, run `tq <command> --help`.
 
 | Command | What it does |
 |---|---|
-| `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. A manifest that still carries a removed block (`guard:`, `decision:`, `tracker:`, `packs:`, `data:`) gets a warning, never a failure. |
+| `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. A manifest that carries a top-level block tq does not read gets a warning, never a failure. |
 | `tq providers list\|show\|check\|add` | The catalog of supported tools (cloud, git host, data, agents, chat). `check` shows which CLIs are installed. |
 | `tq secrets audit` | Finds secret-shaped values in agent config files, and `.env` files that git would commit. It shows only the path and line, never the value. |
 | `tq worktrees list` / `prune --yes` | Lists leftover git worktrees from agent runs. `prune` removes the ones that are clean, merged and old, and never forces. |
@@ -73,7 +73,7 @@ For more detail on a command, run `tq <command> --help`.
 | Command | What it does |
 |---|---|
 | `tq dotenv run [--file F] -- <cmd>` | Runs a command with a `.env` file loaded and replaces each value with `[REDACTED:NAME]` in the output. This is the only allowed way for an agent to use a `.env`. |
-| `tq secret set\|rm\|status` | **Human-only.** Stores tracker tokens (GitHub, Azure DevOps, Jira, Linear, Asana) in the OS keychain. It never prints them. |
+| `tq secret set\|rm\|status` | **Human-only.** Stores git-host and issue-tracker tokens (GitHub, Azure DevOps, Jira, Linear, Asana) in the OS keychain. It never prints them. |
 
 ### Hooks the agent calls (you don't run these)
 
@@ -238,9 +238,9 @@ tentaqles  true     reach@tentaqles.ai             claude,gh         C:\repos\te
 
 `tq doctor` prints `[ok]`, `[info]` and `[warn]` lines. Each warning ends with
 `→` and the fix. There should be **no** warning about a `claude` function or
-alias shadowing the launcher. A manifest that still carries a `guard:`,
-`decision:`, `tracker:`, `packs:` or `data:` block gets a `[warn]` line that
-says the block is ignored; remove it and run `tq allow <name>` **(you)**.
+alias shadowing the launcher. A manifest that carries a top-level block tq
+does not read gets a `[warn]` line that says the block is ignored; remove it
+and run `tq allow <name>` **(you)**.
 
 ### Step 5: the guard decides (simulated tool calls)
 
@@ -320,7 +320,7 @@ These need real accounts, so only you can run them:
 
 - **Codex:** repeat step 9 with `codex`. A block in Claude is a block in
   Codex too.
-- **Tracker:** run `tq secret set <ws> github`, then `tq secret status`.
+- **Git host token:** run `tq secret set <ws> github`, then `tq secret status`.
   **Expected:** the token is listed as stored, and its value is never printed.
 - **Wrong identity:** in a Claude session inside a workspace, edit
   `.tentaqles.yaml`, then ask it to `git push`. **Expected:** blocked as

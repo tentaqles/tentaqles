@@ -280,9 +280,7 @@ After the identity guard (shell tools only), every call is checked against
 the built-in secret rules (`internal/policy/builtin.go`). A matching rule
 denies the call (exit 2); every matching rule is listed in the reason. There
 are no other rules: nothing a manifest, a global file or a repository file
-adds or removes (the manifest's `guard:` block, `~/.tentaqles/guard.yaml`
-and `.claude/tq-rules.yaml` are no longer read; `tq doctor` warns about a
-`guard:` block it ignores).
+adds or removes.
 
 | id | catches |
 |---|---|

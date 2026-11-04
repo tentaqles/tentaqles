@@ -159,9 +159,9 @@ Flags:
 - `--open-terminal`: with `--from`, open a new terminal in the folder afterwards. The
   wizard asks instead.
 
-The wizard refuses to start in an agent session (the environment markers of
-`internal/cmd/humanonly.go`: `TENTAQLES_HEADLESS`, `CLAUDE_PLUGIN_ROOT`, `CLAUDECODE`,
-`TQ_HUB_TASK`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`); use `--from` there. A new
+The wizard refuses to start in an agent session (the environment markers
+`internal/cmd/humanonly.go` lists, such as `CLAUDECODE`, `CLAUDE_PLUGIN_ROOT` and
+`CODEX_SANDBOX`); use `--from` there. A new
 terminal opens with Windows Terminal (`wt -d <folder>`) when present, otherwise with cmd's
 `start`; Terminal.app on macOS; the first emulator found on Linux.
 tq never closes or kills a terminal, and opens none from an agent session.

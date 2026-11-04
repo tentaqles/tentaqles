@@ -116,9 +116,8 @@ pair as flags, `-a on-request -s workspace-write`; a flag you type yourself
 (`tq run --off -- codex`) starts Codex with its bypass flag, the main
 `~/.codex` and no tq.
 
-What older tq versions wrote is removed on the next render when tq owns it:
-the old config block (its markers are replaced by the ones above), the
-`rules/tq.rules` exec-policy file and the old profile file. Your own
+A render replaces only what tq owns: its own `config.toml` block (by its
+markers) and a `rules/tq.rules` or profile file that tq wrote. Your own
 `rules/*.rules` files, and a `tq.rules` tq did not write, are never touched.
 
 **Codex and the hook.** Codex parses a hook `ask` but does not support it:

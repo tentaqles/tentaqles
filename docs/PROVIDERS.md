@@ -111,13 +111,13 @@ agents: [claude, codex]     # catalog agent ids, each once
 ```
 
 The loader checks provider names against these lists and the catalog. `tq onboard` and the
-`tq setup` plan write these blocks. A `tracker:` block from an earlier version is not read:
+`tq setup` plan write these blocks. A top-level block the loader does not know is not read:
 `tq doctor` reports it as `manifest-dropped-block` (a warning), and removing it changes the
 manifest hash, so run `tq allow <ws>` afterwards.
 
 ### `tq secret`
 
-`tq secret` keeps one tracker token per workspace and provider in the OS keychain (Windows
+`tq secret` keeps one git-host or issue-tracker token per workspace and provider in the OS keychain (Windows
 Credential Manager, macOS Keychain, Linux Secret Service), service `tentaqles`, account
 `<ws>/<provider>`. tq reads a stored token only to tell whether it is there (`tq secret
 status`); it never prints one or sends it anywhere. The keychain entry is yours to use.

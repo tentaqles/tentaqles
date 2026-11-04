@@ -242,7 +242,7 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:client-settings` | View or modify any field in the current client's manifest |
 | `/tentaqles:switch-client` | Show all clients, verify identity, switch context safely |
 | `/tentaqles:workspace-status` | Show current client context + preflight check results |
-| `/tentaqles:onboard` | Connect and verify every company tool of this client (agent and cloud CLIs, git host, tracker login, chat and email MCP connectors): prints each login for you to run (`tq login`, `tq secret set`, `acli jira auth login`), guides `/mcp`, verifies with `tq doctor --json` and read-only connector calls, ends with a connected table; never handles tokens |
+| `/tentaqles:onboard` | Connect and verify every company tool of this client (agent and cloud CLIs, git host, issue-tracker login, chat and email MCP connectors): prints each login for you to run (`tq login`, `tq secret set`, `acli jira auth login`), guides `/mcp`, verifies with `tq doctor --json` and read-only connector calls, ends with a connected table; never handles tokens |
 | `/tentaqles:session-wrap` | End-of-session save: summary, decisions, pending items, corrections |
 | `/tentaqles:wrap` | End-of-day wrap: what landed (git/gh), open PRs + CI state, memory via session-wrap, a daily note |
 | `/tentaqles:ship` | Working tree → PR: identity, branch, explicit staging, a self-assessed risk line (the reviewer agents on a high-risk diff), tests, commit, `gh pr create`, hand-off to babysit-pr |

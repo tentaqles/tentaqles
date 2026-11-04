@@ -1,285 +1,58 @@
 # Changelog
 
-Notable changes to the `tq` CLI, the desktop app and the docs of this repository.
-The Claude Code plugin keeps its own log in [`plugin/CHANGELOG.md`](plugin/CHANGELOG.md).
-Releases before this file are described in the GitHub releases (up to `v0.7.0`).
+Notable changes to the `tq` CLI and the docs of this repository. The Claude Code plugin
+keeps its own log in [`plugin/CHANGELOG.md`](plugin/CHANGELOG.md). Releases before 0.9.0
+are described on the [GitHub releases page](https://github.com/tentaqles/tentaqles/releases).
 
 ## [Unreleased]
 
 ## [0.9.0] — 2026-11-04
 
-### Removed (the cut, decided 2026-11-03)
+tq is an identity isolator with secrets protection for developers who work across several
+clients. One folder per client; the terminal, the agent sessions and the external tools
+carry that client's identity and nothing else. The requirements are in `docs/prd.md`, the
+trust boundaries in `docs/threat-model.md`, the hook's rule set in ADR-0001.
 
-- tentaqles narrows to identity isolation plus secrets protection; the plugin keeps its
-  memory, preamble and skills. Removed from `main` after v0.8.2, which stays as the tag of
-  the last full product: the hub board, headless runs and tracker sync (`tq hub`), the packs
-  (`tq pack`), the build gate, guard modes and every guard rule beyond identity drift and
-  secrets (`tq mode`, `tq guard`, `tq unattended`, `tq allow --mode|--global|--bypass`,
-  `tq run --tq-mode`, `tq env --off|--on`, the `tq off`/`tq on` shell functions), the
-  personal-data exit rules and `tq redact`, `tq decide` (Jev), `tq insights`, the manifest
-  blocks `decision:`, `guard:`, `tracker:`, `packs:` and `data:`, the desktop app and the
-  root templates. The requirements for the slim product are in `docs/prd.md`.
-- Migration: existing manifests need nothing; dropped blocks are ignored and `tq doctor`
-  warns about them; removing a block changes the manifest hash, so run `tq allow <ws>`
-  afterwards. `~/.tentaqles/hub`, `packs`, `guard`, `guard.yaml`, `decide` and `build-gate`
-  are left in place and never deleted by tq. Codex identities: run `tq settings render --all`
-  once. See `docs/MIGRATE.md`, "Upgrading to 0.9.0".
-- Also gone with the modes: the per-launch mode variable (`claude-off`, `codex-off` and
-  `tq run --off` set no variable: they switch the plugin off and clean the identity env;
-  the plugin's `tq_hook.sh` and `tq_run.sh` have no off switch), the mode grants under
-  `$TQ_HOME/trust/` (`.mode` and `.bypass` files are not read; a `claude.permission_mode:
-  bypass` renders as `bypassPermissions` on the trusted manifest alone), the Codex
-  `rules/tq.rules` exec-policy file (tq's block is removed on the next render; lines a
-  user added after it stay; the `config.toml` block always pins `on-request` and
-  `workspace-write`, with new markers), the status line's mode segment, the `mode-*` and
-  `guard-locked-override` doctor checks, `docs/GUARD-SCOPE.md`, and `tq allow`/`tq deny`
-  refuse an agent session (ADR-0001). `tq add` and `tq setup` scaffold workspaces from a
-  session but leave them untrusted, printing the `tq allow` line for the human.
-- `tq doctor`: two new warnings, `manifest-dropped-block` (the blocks a loaded manifest
-  still carries that tq no longer reads) and `state-dir-unused` (which of `hub/`,
-  `packs/`, `guard/`, `guard.yaml`, `decide/`, `build-gate/` exist under `~/.tentaqles`);
-  both exit 0. The `data-block-missing` check is gone with the `data:` block, and the
-  manifest no longer validates `decision:` or `data:` contents.
-- Deleted with the cut: the root `templates/` folder (the standalone client-system
-  templates) and its `templates` CI job, and `docs/design/` (the design notes of the removed
-  features). `.github/workflows/test.yml` keeps `go` (three OSes), `govulncheck`,
-  `marketplace-pin` and `plugin`. Both folders exist at `v0.8.2`.
+### The hook
 
-### Install
+- **One rule set, in every Claude permission mode:** the identity-drift block (a `git push`,
+  `gh` or cloud command under the wrong workspace, in an untrusted folder or from a stale
+  shell), the five secret rules (`.env` reads, environment dumps, credential-store reads, in
+  file tools and in the shell), `tq/commit-secret` and `tq/cross-client-mcp`, with
+  `tq/guard-error` as the fail-safe. Every rule decision is allow or block; the only
+  confirmation is the fail-safe when the guard itself fails. Nothing a manifest, a global
+  file or a repository file adds or removes.
+- **Trust is human-only.** `tq allow <ws>` and `tq deny <ws>` refuse an agent session by its
+  environment marker and never prompt. `tq add` and `tq setup` scaffold a workspace from a
+  session but leave it untrusted and print the `tq allow` line. An edited manifest loses its
+  trust until `tq allow` runs again.
+- **Launchers.** `tq activate` defines `claude` and `codex` (always `tq run . -- ...`) and
+  `claude-off` / `codex-off` (`tq run --off`: the plugin switched off through `--settings`,
+  the identity env cleaned, no variable set; refused from an agent session). `TQ_ENABLED=0`
+  switches shell activation off and nothing else.
+- **Codex.** The identity's `config.toml` block pins `approval_policy = "on-request"` and
+  `sandbox_mode = "workspace-write"`; a render replaces only what tq owns.
 
-- **Changed:** with a logged-in `gh`, `install.ps1` and `install.sh` also check the
-  archive's build provenance (`gh attestation verify`, signer: the release workflow)
-  and refuse to install when it fails. Without `gh` they check the checksum only.
+### Commands and doctor
 
-## [0.8.2] — 2026-10-30
+- `tq doctor` warns `manifest-dropped-block` for a top-level manifest block tq does not read
+  (remove it, then `tq allow <ws>`) and `state-dir-unused` for folders under `~/.tentaqles`
+  tq does not use; both are warnings, never failures, and tq deletes nothing.
+- The status line shows the client and the git email.
+- `tq secret` keeps git-host and issue-tracker tokens in the OS keychain and never prints
+  them; `tq secrets audit` lists secret-shaped values in agent config files; `tq dotenv run`
+  runs a command with a `.env` loaded and every value masked in the output.
 
 ### Install and release
 
-- **Changed:** `install.ps1` and `install.sh` check the downloaded archive against the
-  release's `checksums.txt` and refuse to install on a mismatch; the desktop release jobs
-  do the same for the tq they bundle.
-- **Added:** releases carry build provenance (GitHub attestations) for every tq archive
-  and desktop installer; check one with
-  `gh attestation verify <file> --repo tentaqles/tentaqles`.
-- **CI:** every GitHub Action is pinned by commit sha, a `govulncheck` job scans for known
-  vulnerabilities, and Dependabot proposes weekly updates for Go modules and actions.
-- **Dependencies:** `github.com/charmbracelet/x/term` 0.2.1 to 0.2.2. Dependabot no longer
-  proposes major upgrades of GitHub Actions; those are done by hand and checked with a
-  release.
-- **Docs:** [`docs/threat-model.md`](docs/threat-model.md): trust boundaries, threats per
-  boundary with the test behind each mitigation, accepted risks and decisions.
+- With a logged-in `gh`, `install.ps1` and `install.sh` check the archive's checksum and its
+  build provenance (`gh attestation verify`, signer: the release workflow) and refuse to
+  install when either fails. Without `gh` they check the checksum only.
+- The plugin installs from this repo's root marketplace, pinned to a release tag and its
+  commit (`docs/RELEASING.md`). CI runs `go` on three OSes, `govulncheck`,
+  `marketplace-pin` and `plugin`; every GitHub Action is pinned by commit sha.
 
-## [0.8.1] — 2026-10-30
+### Upgrading an existing install
 
-### Packs
-
-- **Fixed:** on Windows, starting an external tool no longer walks every thread on the
-  machine to resume it (a loaded machine could hang a check for minutes). The tool is
-  resumed through its own process handle, and putting it into its process tree is
-  bounded (30 s): past that the still-suspended tool is killed and the check fails with
-  a clear message.
-
-### Tests
-
-- Timing tests that flaked on loaded CI runners check that cost grows linearly and stays
-  under a load-tolerant ceiling; functional pack tests run with generous budgets. No
-  production budget changed.
-
-### State-folder guard (`tq/hub-store-write`)
-
-- **Fixed:** a lone CR (or VT, FF, NEL, LS, PS) no longer lets the stored-plan exemption
-  cover a path that belongs to the next statement; CRLF still reads as one newline.
-- **Fixed:** the tq self-exemption compares paths without dropping glob brackets, refuses a
-  command word with `*?[]{}$` or a backtick, and is refused for a command with a backtick,
-  a `(` (so also `$(` and `@(`) or a curly quote (U+2018 to U+201E) anywhere, quoted or
-  not. A bare tq is looked up as written; `tq.exe` and case folding count only on Windows.
-- **Fixed:** cmd caret escapes (`.tentaqle^s`, `pa^cks`, `t^q hub an^swer`) are folded.
-- **Fixed:** a commit message or an echo that runs something (`$(...)`, a backtick) is checked.
-- **Fixed:** link creation also covers `New-Item`/`ni` with `-Type` or a prefix of
-  `-ItemType` and any value that may name a link type (`J`, `sym`, `h*`, a variable),
-  `fsutil hardlink create`, and in the Bash tool `cp` with a whole short-option cluster
-  holding `l` or `s` (`-s`, `-rs`, `-al`, `-bs`, `-Hl`) or a prefix of `--link` or
-  `--symbolic-link` (`--sym`), outside commit messages and echo prose. PowerShell's
-  `cp -Recurse` and bash `cp -L` are not links.
-- **Fixed:** an echo segment with a single `&`, a `(` or `@(`, or a lone CR (VT, FF,
-  NEL, LS, PS) is checked, not blanked as prose.
-- **Changed:** a commit message with `$(...)` is always checked, including Claude Code's
-  `-m "$(cat <<'EOF' ... EOF)"` form; use `git commit -F <file>` when the message names a
-  protected part.
-- **Docs:** [`docs/GUARD-SCOPE.md`](docs/GUARD-SCOPE.md) states what the guard is for (catching
-  honest slips, not stopping a determined adversary), its known gaps by class, its known
-  false positives, and the real protections: Claude Code's sandbox for writes (with which
-  tq subcommands to exclude) and signed state.
-
-## [0.8.0] — 2026-10-29
-
-### Packs (specs C and D, releases 3 and 4)
-
-`tq pack`: checks, guards, reviewers and approvals for data, ml, cloud and db work. See
-[`docs/PACKS.md`](docs/PACKS.md) and [`docs/packs/`](docs/packs/).
-
-- **`tq pack`** `check`, `list`, `doctor`, `crew`, `approvals`, `baseline`, and the
-  `data` (`cost estimate`), `ml` (`promote request|apply|status`, `drift`), `cloud`
-  (`plan`, `show`, `approve`, `prune`) and `db` (`approve`, `drill`) subcommands. Only the
-  trusted manifest's `packs:` block enables a pack; a repo `tq-packs.yaml` adds to it under
-  per-key merge rules and never loosens it.
-- **Guard modes.** Every pack guard and pack rule has a category: cloud apply/destroy
-  `cloud-destructive`, db migrate/restore `db-destructive`, `tq/iac-identity-drift`
-  `identity`, `tq/plan-read` and `tq/plan-commit` `secrets`, the rest `packs`.
-- **New core rules, always on with no pack enabled, in the locked groups:** `tq/hub-store-write`
-  (now a core rule; `tq guard list` no longer shows it as owned by cloud or db),
-  `tq/human-answer`, `tq/pack-config-change` and `tq/secret-store-shell`. A hook-time
-  check denies agent shell and file access to `$TQ_HOME` `hub/`, `packs/`, `build-gate/`,
-  `trust/`, `guard/`, `guard.yaml`, `config.yaml` and `audit.jsonl`, in any spelling; only
-  a call of the running tq with a subcommand that never runs a child is exempt.
-- **Pack approvals are answered from the terminal only:** `tq hub answer` needs a TTY
-  and the typed binding, the answer is signed with a key in the OS keychain, and the board
-  refuses it. `packs-keychain-missing` in `tq pack doctor` means no approval can be
-  granted on that machine.
-- **Unknown global flags floor to the strictest environment** in the cloud and db gates
-  (the supabase CLI; terraform/tofu, pulumi, cdk/cdktf, az, aws and sam). Put the flag
-  after the subcommand, or report the missing flag (see `docs/PACKS.md`, Known behaviours).
-- **Telemetry opt-outs:** every pack tool gets `DO_NOT_TRACK=1`; dbt, tflint, trivy, dvc
-  and dagster also get their own switches. sqlfluff, squawk, conftest, cfn-lint, bicep,
-  datacontract, ruff, uv and poetry have no opt-out tq could confirm and get only
-  `DO_NOT_TRACK=1`.
-- **Build-gate approve now runs `tq pack list`,** even with no pack configured: it is
-  refused when the manifest is untrusted or invalid, or `tq-packs.yaml` has problems.
-- **Tools get a filtered environment;** a credential reaches a tool only through a name its
-  check declares, and never a repo-local binary.
-
-### Guard modes (spec E)
-
-One knob for how strict tq's guard is: a **guard mode** per workspace, project folder
-or machine. See [`docs/CLAUDE-HOOK.md`](docs/CLAUDE-HOOK.md#guard-modes).
-
-- **Five modes.** `default` (every rule at its own action, what applies when nothing is
-  set), `relaxed` (every toggleable category skipped; `git-history` and `system` ask),
-  `strict` (`prod-changes`, `cloud-destructive` and `git-history` deny; `external-writes`
-  asks), `custom` (a base preset plus per-category values) and `off` (no tq at all, for
-  one launch or one window; never stored in a file).
-- **Thirteen categories.** Every rule, built-in, Jev, hook, custom or pack, has one. Four
-  are locked and hold in every mode: `identity`, `secrets`, `self-protection` and
-  `privacy`. Custom rules may declare `category:`; without one they always apply.
-- **Precedence and grants.** Global `guard.yaml`, then the workspace manifest, then
-  `guard.projects.<dir>`, then the per-launch `TQ_MODE` / `--tq-mode`; a repo's
-  `.claude/tq-rules.yaml` only tightens. A mode looser than default needs a one-time,
-  hash-keyed grant: `tq allow --mode <ws> relaxed|custom` (`--global` for `guard.yaml`).
-  Without it the session runs at default.
-- **`tq mode`.** Show the resolved mode (`--json`, `--agent codex`), and the human-only
-  `tq mode set|toggle|override|edit` (they refuse agent sessions and need a terminal), plus
-  `tq mode log`.
-- **Launchers.** `tq activate` now defines `claude`, `codex`, `claude-off`, `codex-off` and
-  a `tq` function with `tq off` / `tq on` (bash, zsh, fish, PowerShell 7 and 5.1).
-  `tq run .` uses the current folder's workspace; `tq run --tq-mode <m>` and
-  `claude --tq-mode <m>` set the launch mode; `tq run --off -- claude|codex` starts with
-  no tq (main install, tentaqles plugin switched off, bypass). `tq env --off` / `--on`
-  print the shell code. Every tq hook exits at once under `TQ_MODE=off`.
-- **Always bypass.** The `claude` launcher starts Claude with
-  `--dangerously-skip-permissions`, so tq's mode is the single policy layer.
-  `claude.permission_mode` still drives `permissions.defaultMode` for sessions started
-  elsewhere. `tq settings render` writes `skipDangerousModePermissionPrompt: true`, and moves
-  `gh repo delete` from the settings deny list to ask when git-history is loosened.
-- **New rules.** `tq/nested-agent-loosened` (deny, self-protection) stops an agent from
-  starting another agent in off mode or with loosened flags; `tq/mode-change` (deny,
-  self-protection) blocks the mode writers in tool calls; `tq/outside-path-write` (ask),
-  `tq/elevation` (ask) and `tq/system-dir-write` (deny) form the `system` category.
-- **Controls.** A SessionStart line (`Guard: relaxed (workspace, granted) · … · locked:
-  identity, secrets, self-protection, privacy`), a statusline segment
-  (`tq: relaxed · 4 skipped`, `tq: off`), a desktop **Guard** tab, and a read-only `/guard`
-  page on the hub, linked from the nav.
-- **Hub runs** use `guard.headless_mode` (default when absent), clamped by the grant.
-- **Codex.** The mode is compiled into the Codex identity: launch flags, a `config.toml`
-  block, `rules/tq.rules` (exec-policy `prompt` / `forbidden`) and tq's `hooks.json`
-  entries (`tq claude-hook … --agent codex`). Codex hooks cannot ask, so a confirm Codex
-  cannot prompt for becomes a block. Trust tq's hook once in Codex's `/hooks`. The hook
-  runs the file and path rules on every file an `apply_patch` writes, and blocks a patch
-  it cannot read; a guard error is a block in Codex.
-- **Doctor.** `mode-not-granted`, `mode-unknown-rule`, `mode-cloud`,
-  `guard-locked-override`, `claude-alias-shadow`, `permission-mode-overridden`,
-  `codex-hooks-missing`, `codex-hooks-disabled`, `codex-hooks-untrusted`.
-- **Audit.** Skipped and lowered decisions go to `$TQ_HOME/guard/mode.jsonl`, with the tq
-  mode, Claude's mode and the action applied.
-
-### Plugin distribution from release tags
-
-- **Root marketplace.** `.claude-plugin/marketplace.json` (marketplace `tentaqles`) installs
-  the plugin from `plugin/` of this repo at a release tag and its commit sha (a `git-subdir`
-  source; with both set Claude Code checks out the sha). It is added after the release, in a
-  post-release PR, so `main` only names a tag that exists and passed. Then
-  `/plugin marketplace add tentaqles/tentaqles` and `/plugin install tentaqles@tentaqles`
-  replace the `tentaqles/tentaqles-plugin` repo. CI (`marketplace-pin`) fails unless the
-  pinned sha is the tag's commit and on `main`; the release workflow fails a tag that is not
-  on `main` or whose plugin versions disagree. Steps in [`docs/RELEASING.md`](docs/RELEASING.md).
-- **Bundle catalog marketplace fields.** A catalog marketplace takes `ref` (branch or tag) and
-  `path` (marketplace.json inside the repo) for `github`, the new `git` kind (`url`, `ref`,
-  `path`), and `autoUpdate: true`, written beside `source` in `extraKnownMarketplaces`.
-  `tq bundle capture` reads them back (autoUpdate from `settings.json`), `tq bundle diff`
-  reports a changed ref or autoUpdate as `marketplace-source` drift
-  (`github tentaqles/tentaqles@v0.8.0 autoUpdate`), and the catalog check warns on a github
-  source without `repo` or a git source without `url`, and on a `git`/`url` URL carrying
-  userinfo or a token. It refuses (and `sync` will not write) a `git` url other than
-  `https://`, `ssh://` or `user@host:path` (or with a user or host starting with `-`), a
-  plain-text transport (`http://`/`git://` git urls, non-`https` url sources) unless the entry
-  sets the tq-only `insecure: true`, and a `ref` git could read as an option or a revision
-  expression. Drift details strip URL userinfo.
-- **Bundle marketplace aliases.** A `claude.bundle.marketplaces` item `key=catalogName`
-  writes catalog entry `catalogName` under settings key `key`, so one workspace can load a
-  plugin from a local folder under the same plugin id (`tentaqles=tentaqles-dev`, plugins
-  still `tentaqles@tentaqles`). An unknown `catalogName` is an error naming both.
-
-### Deprecated
-
-- Unattended mode is replaced by `relaxed`. `guard.unattended` is still read (in memory;
-  rewritten by the next `tq mode` write), `tq unattended on|off|status|log` and
-  `tq allow --bypass` are deprecated aliases of `tq mode set relaxed|default`, `tq mode`,
-  `tq mode log` and `tq allow --mode <ws> relaxed`, and legacy `.bypass` grants are read as
-  relaxed grants. A custom rule's `unattended: enforce` is read as "no category". Steps in
-  [`docs/MIGRATE.md`](docs/MIGRATE.md#migrating-from-unattended-mode).
-
-### Behaviour changes
-
-- A tq mode applies in every Claude permission mode; the deprecated unattended mode applied
-  only in bypass and auto sessions.
-- Relaxed skips denies as well as confirms (the deprecated unattended mode skipped only
-  confirms), except `git-history` and `system`, which ask.
-- `privacy` is locked: the PII exit rules hold in every mode. A `guard.disable` or looser
-  `guard.actions` entry for any locked rule is ignored, with a doctor warning.
-- The `claude` launcher starts in bypass whatever `claude.permission_mode` says.
-- `tq allow --mode`, and the deprecated `tq unattended on|off` and `tq allow --bypass`, are
-  denied in a tool call by `tq/mode-change` (they used to ask), and they refuse agent sessions.
-- `tq/outside-path-write`, `tq/elevation`, `tq/system-dir-write` and
-  `tq/nested-agent-loosened` apply in every mode, default included.
-- Every workspace with a Codex identity is rendered (`config.toml` block, `rules/tq.rules`,
-  `hooks.json`), also with no mode set; the old `tq-unattended.config.toml` profile is
-  removed when tq owns it. In Codex, confirms that cannot be prompted for become blocks.
-- `tq/trust-store-write` also denies agent writes to the files tq renders into an
-  identity: the codex identity's `rules/`, `hooks.json` and `config.toml`, and the Claude
-  identity's `settings.json` and `settings.local.json` (also through `$CLAUDE_CONFIG_DIR`
-  and `$CODEX_HOME`), and the Codex config layers (`.codex/` in a repo and `~/.codex`).
-- Only `TQ_MODE=off` (exactly `off`) switches the hooks and plugin scripts off. `TQ_ENABLED=0`
-  keeps its one meaning, the shell-activation kill switch: a `claude` started there is guarded.
-- `tq run` reads its own flags only before the command word: after `<workspace>` only
-  `--tq-mode MODE` and an optional `--` may come first, so the command's flags are its own
-  (the PowerShell `tq` function puts back the `--` PowerShell removes).
-- `tq activate bash|zsh` defines `function claude { ...; }`, so an earlier `alias claude=...`
-  no longer aborts the block.
-- `tq migrate` no longer carries the `claude` wrapper over, and removes one an older migrate
-  carried when it is unchanged. `claude-alias-shadow` also reports functions that replace the
-  launcher.
-- `tq allow --mode` refuses a manifest that is not trusted yet (run `tq allow <ws>` first).
-  Grants record the workspace root and do not apply to a copied manifest elsewhere.
-- The global grant applies only outside every workspace; a folder under a base with a missing,
-  invalid or untrusted manifest gets the default ceiling.
-- In a `strict` session `TQ_MODE=default` before a nested agent is denied, and so is `env -i`
-  before `claude` or `codex`. Settings that disable the plugin, set `TQ_MODE`/`TQ_ENABLED` in
-  `env` or a looser `defaultMode` are denied in files and in inline `--settings`.
-- An `apply_patch` with more than 256 files is denied ("split the patch"); patch paths are
-  judged where they land, relative to the session folder.
-- Writes to Claude's memory, plans and todos under `CLAUDE_CONFIG_DIR` (and Codex's sessions)
-  no longer ask under `tq/outside-path-write`.
-- After the upgrade `tq doctor` reports `settings-drift` until `tq settings render --all`
-  runs once.
-- The SessionStart guard line appears in every workspace session.
-- The docs' built-in rule table now lists `tq/env-file-read` and `tq/env-file-shell` as
-  deny, which is what tq does.
+See `docs/MIGRATE.md`, "Upgrading an existing install": manifests need nothing, run
+`tq settings render --all` once, and `tq doctor` tells you what else to tidy.
