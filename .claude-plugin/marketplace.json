@@ -12,10 +12,10 @@
         "source": "git-subdir",
         "url": "https://github.com/tentaqles/tentaqles.git",
         "path": "plugin",
-        "ref": "v0.8.2",
-        "sha": "29f552d2c0e8792197211c8b217d476013fc742a"
+        "ref": "v0.9.0",
+        "sha": "642dfb458723ee4373447cc80bda9c77af70daa2"
       },
-      "description": "Multi-workspace orchestration for developers working across multiple clients. Identity isolation, temporal memory with decay, knowledge graphs, cross-workspace pattern detection, time-travel snapshots, and inter-workspace signals."
+      "description": "Identity isolation for developers who work across several clients: git, cloud and AI-agent identity follow the folder, secrets stay out of transcripts and commits, plus per-client session memory, knowledge graphs and skills."
     }
   ]
 }
