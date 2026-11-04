@@ -28,7 +28,7 @@ For more detail on a command, run `tq <command> --help`.
 |---|---|
 | `tq init <base>` | Registers a base folder (for example `C:\repos`). Each first-level subfolder becomes one client identity. |
 | `tq add <name>` | Creates a workspace folder with its manifest (`.tentaqles.yaml`), identity folders and git identity. |
-| `tq onboard` | A wizard that runs `tq add`, then records the company's tracker, chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |
+| `tq onboard` | A wizard that runs `tq add`, then records the company's chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |
 | `tq setup` | Creates several client workspaces at once from a plan file. |
 | `tq list` | Lists every workspace, whether it is trusted, its git email and its identities. |
 | `tq allow <name>` | **Human-only.** Trusts the workspace's manifest as it is now (by hash). Until then, tq exports nothing for that folder and blocks remote commands in it. Editing the manifest drops the trust. |
@@ -312,8 +312,7 @@ Start `claude` in `C:\repos\tentaqles\tentaqles` and check:
 4. Type `/tentaqles:workspace-status`. **Expected:** the workspace, client
    context and preflight results.
 5. Type `/tentaqles:feature` on a repo with a PRD. **Expected:** it runs as a
-   checklist (PRD check, interview, spec slice, a yes from you) with no gate
-   or hub step.
+   checklist (PRD check, interview, spec slice, a yes from you).
 
 ### Step 10: real systems **(you)**
 

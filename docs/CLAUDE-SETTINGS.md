@@ -117,10 +117,9 @@ pair as flags, `-a on-request -s workspace-write`; a flag you type yourself
 `~/.codex` and no tq.
 
 What older tq versions wrote is removed on the next render when tq owns it:
-the guard-mode block (its markers are replaced by the ones above), the
-`rules/tq.rules` exec-policy file and the `tq-unattended.config.toml`
-profile. Your own `rules/*.rules` files, and a `tq.rules` tq did not write,
-are never touched.
+the old config block (its markers are replaced by the ones above), the
+`rules/tq.rules` exec-policy file and the old profile file. Your own
+`rules/*.rules` files, and a `tq.rules` tq did not write, are never touched.
 
 **Codex and the hook.** Codex parses a hook `ask` but does not support it:
 it reports an error and continues the call. So tq never sends one: the one
@@ -153,7 +152,6 @@ so the hook keeps running and the identity guard keeps blocking.
 | `plugins-dir-linked` | an identity's `claude/plugins` is a symlink or junction to a shared directory (e.g. `~/.claude/plugins`, often shared with another identity): every plugin install from any identity using it rewrites the same `installed_plugins.json` and cache. Give the identity its own directory, then `tq bundle sync` |
 | `plugin-foreign-path` | an identity's `installed_plugins.json` points at another identity's plugin cache or at `~/.claude` (a config dir copied from a sibling); hooks then run another identity's files. Reinstall the plugin inside the identity |
 | `memory-stale` | a workspace's `.claude/memory.db` was last written more than 48 h before its newest Claude transcript: the plugin hooks are not capturing |
-| `data-block-missing` | schema or fixture files name personal-data columns (email, cpf, phone, ...) and the manifest has no `data:` block; run /tentaqles:classify-data |
 | `python-store-alias` | `python3` is the Microsoft Store alias (slower hook start); set `TENTAQLES_PY` |
 | `permission-mode-overridden` | (info) `claude.permission_mode` is not bypass, and the `claude` launcher starts in bypass anyway; the value still drives `defaultMode` |
 | `claude-alias-shadow` | a shell profile defines something that stands in for tq's `claude`/`codex` launcher: a PowerShell alias, an alias that runs another command, or a function of that name after tq's activation (warn: delete it), or an alias that calls the launcher with extra flags (info) |

@@ -67,9 +67,9 @@ trust: true
 | `companies[].git_email` | yes | Git `user.email` for this workspace. Must look like an email. |
 | `companies[].git_user` | no | Optional platform username (e.g. GitHub handle), stored alongside git identity but not used by git itself. |
 | `companies[].identities` | no | List of provider ids (from the provider catalog, e.g. `claude`, `gh`, `aws`) to isolate per workspace. Defaults to `[claude, gh]` if omitted. Each id must be known to the catalog (`tq providers list`) or `Validate` rejects the plan. |
-| `companies[].permission_mode` | yes | Claude Code permission mode for this workspace. Must be one of the values in `manifest.PermissionModes` (e.g. `default`, `acceptEdits`, `bypass`). It becomes `permissions.defaultMode` for sessions started outside tq's launcher; the `claude` launcher always starts in bypass, and tq's guard mode is the policy layer (see [Guard modes](#guard-modes)). |
+| `companies[].permission_mode` | yes | Claude Code permission mode for this workspace. Must be one of the values in `manifest.PermissionModes` (e.g. `default`, `acceptEdits`, `bypass`). It becomes `permissions.defaultMode` for sessions started outside tq's launcher; the `claude` launcher always starts in bypass, and tq sets no permission mode of its own beyond that (see [CLAUDE-SETTINGS.md](CLAUDE-SETTINGS.md)). |
 | `hooks` | no | List of shells (`bash`, `zsh`, `fish`, `pwsh`, `powershell`) to install the `tq activate` line into. Shells already carrying a hand-installed activation line are detected as "present (unmanaged)" and left untouched — never duplicated. |
-| `companies[].tracker`, `companies[].chat`, `companies[].email` | no | The company's tracker, chat and email blocks, written into the new workspace's manifest with the same checks as a hand-written one (see [PROVIDERS.md](PROVIDERS.md#company-services-in-the-manifest)). A token-shaped value in any field is refused, naming the field and never the value. |
+| `companies[].chat`, `companies[].email` | no | The company's chat and email blocks, written into the new workspace's manifest with the same checks as a hand-written one (see [PROVIDERS.md](PROVIDERS.md#company-services-in-the-manifest)). A token-shaped value in any field is refused, naming the field and never the value. |
 | `trust` | no, defaults to `true` | Whether newly scaffolded workspaces are auto-trusted with `tq allow` as part of apply. If the key is absent from the YAML it defaults to `true`; set it to `false` explicitly to scaffold without trusting. |
 
 ## Preview, tool-check, and apply
@@ -92,7 +92,7 @@ apply rather than silently doing nothing or silently applying.
 `--json` switches preview, tool-check, and (once applied) the report to a
 single JSON object (`{"preview": [...], "toolcheck": {...}, "report": {...}}`)
 instead of the human-readable tables — useful for driving `tq setup` from
-scripts or the desktop app.
+scripts.
 
 `--write-plan <path>` additionally saves the wizard's answers to that path
 as a plan file (on top of the always-written
@@ -143,11 +143,8 @@ the same SSO start URL share that login; tq prints a note about it.
 3. the cloud, plus `cloud.also`;
 4. the data platform;
 5. the agent CLIs;
-6. the tracker: provider, scope, auth source (`cli`, `keychain`, `env` or `mcp`; the
-   default is `cli` for github, azure-devops and jira, else `keychain`), and the variable
-   name when auth is `env` (suggested as `<WS>_<PROVIDER>_TOKEN`);
-7. chat (`slack`, `teams` or none);
-8. email (`gmail`, `outlook` or none).
+6. chat (`slack`, `teams` or none);
+7. email (`gmail`, `outlook` or none).
 
 Every question can be skipped. The manifest is written with names only: an answer that
 looks like a token is refused. The workspace is left untrusted.
@@ -156,15 +153,17 @@ Flags:
 
 - `--from <yaml>`: answers from a file instead of the wizard. Keys follow the manifest
   (`name`, `base`, `display_name`, `git: {email, name, provider, user}`, `identities`,
-  `cloud: {provider, also}`, `data_platform`, `agents`, `tracker`, `chat`, `email`, plus
+  `cloud: {provider, also}`, `data_platform`, `agents`, `chat`, `email`, plus
   `color` and `permission_mode`). Unknown keys and token-shaped values are refused.
 - `--base <dir>`: the base folder; the default is the only registered base.
 - `--open-terminal`: with `--from`, open a new terminal in the folder afterwards. The
   wizard asks instead.
 
-The wizard refuses to start in an agent session (`TENTAQLES_HEADLESS`, `CLAUDECODE`,
-`CLAUDE_PLUGIN_ROOT`, `TQ_HUB_TASK`); use `--from` there. A new terminal opens with Windows
-Terminal (`wt -d <folder>`) when present, otherwise with the desktop app's terminal logic.
+The wizard refuses to start in an agent session (the environment markers of
+`internal/cmd/humanonly.go`: `TENTAQLES_HEADLESS`, `CLAUDE_PLUGIN_ROOT`, `CLAUDECODE`,
+`TQ_HUB_TASK`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`); use `--from` there. A new
+terminal opens with Windows Terminal (`wt -d <folder>`) when present, otherwise with cmd's
+`start`; Terminal.app on macOS; the first emulator found on Linux.
 tq never closes or kills a terminal, and opens none from an agent session.
 
 Then it prints the next steps, for you to run:
@@ -174,7 +173,6 @@ Trust the manifest (a human step): tq allow acme
 Log in: tq login acme claude
 Log in: tq login acme az
   (azure-devops shares the az login: one sign-in covers both)
-Tracker Jira: store a token in the OS keychain with tq secret set acme jira (it reads the token from a hidden prompt)
 Connect Slack (chat, MCP only): add the "slack" MCP entry to the tq bundle catalog and to claude.bundle.mcp, run tq bundle sync acme, then authenticate it with /mcp in a Claude session
 Then open Claude Code in the folder and run /tentaqles:onboard to verify every connection
 ```
@@ -182,9 +180,6 @@ Then open Claude Code in the folder and run /tentaqles:onboard to verify every c
 - `tq allow <ws>` first.
 - One `tq login <ws> <id>` per CLI identity; identities that share a config home print one
   login.
-- The tracker credential: the CLI login printed above, `tq secret set <ws> <provider>`
-  (hidden prompt), the variable where `tq dotenv` resolves it, or, for `mcp`, no background
-  sync and `/tentaqles:sync` instead.
 - For each chat or email provider: add its `mcp:` entry to the tq bundle catalog and to
   `claude.bundle.mcp`, run `tq bundle sync <ws>`, then authenticate with `/mcp`.
 - Finally `/tentaqles:onboard` in a Claude session in the folder.
@@ -199,42 +194,11 @@ connector, and ends with a table of what is connected.
 
 `tq doctor` checks the services:
 
-- `tracker-ok`, `tracker-needs-session`, `tracker-no-adapter`, `tracker-auth-failed`: it
-  resolves the credential and asks the adapter who is signed in. It shows the provider,
-  the manifest's scope, the auth source and the account. It runs for the workspace of the
-  current folder (`--verify all` for every workspace; skipped under `--verify off`, on the
-  hook path, and for untrusted workspaces), with a 10 s budget per check ("timed out after
-  10s"). An auth failure is redacted and cut to one line; the fix names the right login.
-  If no `tracker-*` finding shows, run doctor from the workspace folder or use
-  `--verify all`.
 - `chat-ok` / `chat-mcp-missing`, `email-ok` / `email-mcp-missing` (warn): whether the
   provider's MCP server is listed, by name only, in the identity's `.claude.json` (top level
   and this folder's project entries), the identity's `.mcp.json`, or the workspace folder's
   `.mcp.json`. A name matches the catalog `mcp:` name, or contains the provider id as a
   whole token (`slack-mcp`). Ignore the warning for claude.ai connectors.
-
-## Guard modes
-
-A new workspace runs in the `default` guard mode: every tq rule at its own
-action. Start Claude with the `claude` function that `tq activate` defines
-(or `tq run . -- claude`); it always starts in bypass, so tq's mode is the
-only policy layer. See `CLAUDE-HOOK.md`, "Guard modes", for the modes and the
-categories.
-
-To let sessions in a demo folder run without tq's confirms and blocks
-(identity, secrets, self-protection and privacy stay enforced; git-history
-and system still ask):
-
-1. `tq mode set relaxed --ws <ws>`, or `--project <dir>` for one folder. On a
-   terminal it offers the grant: `grant relaxed for <ws>? [y/N]`.
-2. If you said no: `tq allow --mode <ws> relaxed`, the one-time grant.
-
-For a client in production, `tq mode set strict --ws <ws>` makes prod
-changes, cloud deletes and git-history rewrites hard blocks. Check with
-`tq mode`; `tq mode set default` undoes it. These commands are human-only.
-
-For a session with no tq at all (main logins, no guard), use `claude-off`, or
-`tq off` for the whole window and `tq on` to come back.
 
 ## Saved plan files and permissions
 
@@ -268,25 +232,6 @@ manifest has an `identities:` block that does not list that cloud's identity
 (`az`, `aws`, `gcloud`, `doctl`), tq adds it implicitly, so the extra cloud is
 never left on the shared default config. See
 [CLAUDE-HOOK.md](CLAUDE-HOOK.md) for the guard rules.
-
-## Data classification
-
-A client manifest can carry a `data:` block that names the classes of personal
-or financial data the client handles (`pii`, `financial`, `secrets`, ...). It
-is not part of the setup plan: add it to the workspace's `.tentaqles.yaml`
-afterwards and run `tq allow <ws>`, since editing the manifest changes its
-trust hash. The block widens what the commit, push and PR-text guards detect.
-See the `data:` section of [CLAUDE-HOOK.md](CLAUDE-HOOK.md#data-classification-data-block).
-
-## Packs
-
-Packs (data, ml, cloud, db) are not part of the setup plan either. Add a
-`packs:` block to the workspace's `.tentaqles.yaml` and run `tq allow <ws>`:
-only the manifest enables a pack, and a repo's `tq-packs.yaml` can add to it
-but never enable or loosen one. `/tentaqles:kickoff` proposes the block from the
-stack ADR. Pack approvals (a prod apply, a migration, a model promotion) are
-answered in your own terminal and need the OS keychain. See
-[PACKS.md](PACKS.md).
 
 ## Claude Code plugin
 
