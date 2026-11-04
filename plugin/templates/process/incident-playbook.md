@@ -1,13 +1,13 @@
 # Incident playbook (personal-data or security incident)
 
-Owner: <contact from the manifest>    Authorities: <authorities for data.regions; when both apply, the shorter clock governs the first notice>
+Owner: <name or role, and the address an incident notice goes to>    Authorities: <authorities for the regions of the data subjects; when both apply, the shorter clock governs the first notice>
 
 Start the clock the moment anyone suspects personal data was exposed, lost,
 altered or made unavailable. A bug that showed one user another user's data is
 an incident. Write times in UTC.
 
 ## 1. Detect (T+0)
-- Record: who noticed, when, how, what was seen. Save evidence (logs, screenshots) in a private location; redact before sharing (`tq redact`).
+- Record: who noticed, when, how, what was seen. Save evidence (logs, screenshots) in a private location; redact before sharing.
 - In the incident file record counts, data classes and the evidence location only; never personal data or secrets in this file, in commits or in PR text.
 - Open `docs/incidents/<YYYY-MM-DD>-<slug>.md` from this file's sections.
 

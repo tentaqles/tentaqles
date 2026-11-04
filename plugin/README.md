@@ -14,6 +14,10 @@ Working across multiple clients with an AI coding assistant creates failure mode
 
 **Identity isolation.** Prevents pushing code with the wrong git email, running CLI commands against the wrong cloud subscription, or querying the wrong database. Identity switching is owned by `tq` — the `tq` shell hook swaps git identity, env vars, and per-workspace CLI config dirs on `cd`. The plugin does not switch anything itself: `PreToolUse` calls `tq claude-hook pre-tool-use` to verify the Bash command matches the active workspace's identity and blocks it (exit 2) on drift or an untrusted workspace. If `tq` isn't installed, the hook falls back to a dependency-free Python guard that still blocks remote git/gh/cloud commands (fail-closed); if no Python interpreter can be found either, every Bash command is blocked until `tq` or Python is installed.
 
+**Secrets protection.** The same hook denies reading or printing `.env*` files and secret stores (`~/.aws/credentials`, `.netrc`, token files), environment dumps (`printenv`, `env`, `set`), a commit that would record a secret, and an MCP server that belongs to another client. `tq dotenv run -- <cmd>` loads a `.env` into one command with its values masked in the output. That is the whole guard: identity and secrets, in every Claude permission mode, with no modes and no other confirmations.
+
+**Development-process skills.** `prd`, `kickoff`, `feature`, `fix`, `dod`, `ship`, `direction` and the review skills are plain checklists: PRD first, a spec slice the user approves, tests before code, five read-only reviewer agents on the diff when it is risky, a definition of done the skill runs and quotes, then a pull request. Nothing is recorded outside the repository.
+
 **Persistent temporal memory.** Tracks sessions, touches, decisions, and pending work per client in a local SQLite database. Survives terminal close, Ctrl+C, `/exit`, and context compaction: right after a compaction the `SessionStart` hook (`source: compact`) re-injects critical state.
 
 **Four-tier memory with decay.** Brain-inspired tiers — Working → Episodic → Semantic → Procedural — with Ebbinghaus decay and auto-eviction. Sessions auto-promote to Episodic on close; important facts climb over time via the `/tentaqles:compact-memory` skill or the `compaction-cron.py` script.
@@ -137,20 +141,11 @@ stack: [python, flask, postgresql]
 signals:
   enabled: true
   subscribe_to: [dirtybird, acme-corp]
-
-# Optional — what data this client's projects handle (written by /tentaqles:classify-data)
-data:
-  classes: [pii, financial]
-  regions: [BR]
-  paths:
-    - path: db/schema/customers.sql
-      classes: [pii]
-  incident: {authority: ANPD, contact: dpo@example.test}
 ```
 
 Tentaqles will detect this file from any subfolder and enforce the correct identity.
 
-The `data:` block declares which data classes the client's projects handle (`public`, `internal`, `pii`, `sensitive`, `financial`, `children`, `secrets`; `checksummed` and `all` are detector groups). Run `/tentaqles:classify-data` to build it from the PRD and the schema: it also writes `docs/privacy.md` and `docs/incident-playbook.md`. The plugin masks those classes (CPF, CNPJ, card, IBAN, e-mail, phone) in everything it stores or sends: memory, the Obsidian vault, ingest, signals and model prompts. Without a `data:` block only the checksummed identifiers and secrets are masked. Reading personal data locally is never blocked; only the exits are guarded.
+Reading personal data locally is never blocked. The plugin masks secrets and the checksummed identifiers (CPF, CNPJ, card, IBAN) in everything it stores or sends: memory, the Obsidian vault, ingest, signals and model prompts. A project's record of the personal data it handles lives in the repository: `/tentaqles:classify-data` writes `docs/privacy.md` and `docs/incident-playbook.md` from the PRD and the schema, and the `privacy-reviewer` agent reads them.
 
 ## How it works
 
@@ -247,18 +242,15 @@ Secrets are replaced with `[REDACTED:{pattern_name}]` in memory, dashboard outpu
 | `/tentaqles:client-settings` | View or modify any field in the current client's manifest |
 | `/tentaqles:switch-client` | Show all clients, verify identity, switch context safely |
 | `/tentaqles:workspace-status` | Show current client context + preflight check results |
-| `/tentaqles:onboard` | Connect and verify every company tool of this client (agent and cloud CLIs, git host, tracker, chat and email MCP connectors): prints each login for you to run (`tq login`, `tq secret set`, `acli jira auth login`), guides `/mcp`, verifies with `tq doctor --json` and read-only connector calls, ends with a connected table; never handles tokens |
-| `/tentaqles:sync` | Board sync's MCP fallback when tq has no background credential (`needs-session`): reads assigned items with the connector into `tq hub sync import`, sends the outbox rows `tq hub sync pending` lists, acks each with `tq hub sync ack`; never answers a send/skip decision |
+| `/tentaqles:onboard` | Connect and verify every company tool of this client (agent and cloud CLIs, git host, tracker login, chat and email MCP connectors): prints each login for you to run (`tq login`, `tq secret set`, `acli jira auth login`), guides `/mcp`, verifies with `tq doctor --json` and read-only connector calls, ends with a connected table; never handles tokens |
 | `/tentaqles:session-wrap` | End-of-session save: summary, decisions, pending items, corrections |
 | `/tentaqles:wrap` | End-of-day wrap: what landed (git/gh), open PRs + CI state, memory via session-wrap, a daily note |
-| `/tentaqles:ship` | Working tree → PR: identity, branch, `tq decide triage` review depth, tests, commit, `gh pr create` |
+| `/tentaqles:ship` | Working tree → PR: identity, branch, explicit staging, a self-assessed risk line (the reviewer agents on a high-risk diff), tests, commit, `gh pr create`, hand-off to babysit-pr |
 | `/tentaqles:babysit-pr` | Loop a PR to green: watch checks, fix failures from logs, answer review threads, record a new project's first ratchet baseline from CI's own measurement; never `--admin` |
 | `/tentaqles:n8n-triage` | Diagnose a failing n8n workflow read-only, fix a draft copy, promote only with confirmation |
 | `/tentaqles:build-graph` | Build the knowledge graph for the current workspace + embed nodes |
 | `/tentaqles:query-memory` | Full-text, recency-weighted search over memory, plus knowledge graphs |
 | `/tentaqles:file-history` | Show everything Tentaqles has recorded about a specific file |
-| `/tentaqles:explore` | Run `tq decide explore` to find the few file:line ranges that answer a question, then read only those |
-| `/tentaqles:guard` | See and explain the guard mode (default, relaxed, strict, custom) and which tq guard rules are on; switch single rules off or on, or change ask/deny, for one workspace or all (you confirm each change). Mode changes are human-only: the skill hands you the `tq mode` command to run |
 | `/tentaqles:dashboard` | Launch the real-time dashboard at localhost:8765 |
 | `/tentaqles:setup-demo` | Create mock client workspaces to explore the plugin safely |
 | `/tentaqles:compact-memory` | Manually trigger 4-tier memory consolidation and decay eviction |
@@ -281,33 +273,36 @@ Stack-aware guidance that triggers on the work itself (no workspace state needed
 | `/tentaqles:profile-refresh` | Regenerate the learned workspace profile from `memory.db` |
 | `/tentaqles:cross-patterns` | Display cross-workspace patterns detected by the pattern cron job |
 | `/tentaqles:emit-signal` | Emit an inter-workspace signal to one or more registered workspaces |
-| `/tentaqles:build` | Build a feature through gated checkpoints in its own worktree: spec, approved plan, locked tests, an evidence-based test gate tied to the code on disk, risk-triaged reviewer crew with recorded verdicts, fixer loop, definition of done (agents `build-planner`, `build-critic`, `build-fixer`, plus the crew `spec-critic`, `security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`, `breaker` and the `arbiter`) |
+
+### Development-process skills
+
+Plain checklists; nothing is recorded outside the repository.
+
+| Skill | What it does |
+|-------|-------------|
 | `/tentaqles:prd` | Write or revise `docs/prd.md` through a short interview: numbered requirements with binary checks, data classes, security boundaries, open decisions |
-| `/tentaqles:plan-cards` | Turn a PRD release into `feature` cards on the `tq hub` board, one per FR (title, FR text, acceptance checks), under a project card and folder; writes the card ids into PRD §11 between `<!-- tq:cards -->` markers so a re-run skips them; never tags `agent-ready` |
-| `/tentaqles:refine` | Take one planning-lane card to `agent-ready`: grill-me on its FR, a refined body (rules decided, acceptance checks, open questions) you save with the printed `tq hub edit --body-file` line, then the `agent-ready` tag; moving the card stays yours |
-| `/tentaqles:kickoff` | Start a new project from a planning-ready PRD: stack ADR, project CLAUDE.md, threat model, privacy record, CI ratchet, then the first checkpoints through the build engine |
-| `/tentaqles:feature` | Add a feature from a PRD requirement (adds its own FR when missing): grill-me interview, spec slice, gated build, definition of done |
-| `/tentaqles:fix` | Fix a bug reproduce-first: locked failing regression test, root cause, smallest change, risk-sized review (`--hotfix` skips the critic, never the test) |
+| `/tentaqles:kickoff` | Start a new project from a planning-ready PRD: stack ADR, project CLAUDE.md, threat model, privacy record, CI ratchet and supply-chain guardrails, then the first slice through `feature` and a direction audit |
+| `/tentaqles:feature` | Add a feature from a PRD requirement (adds its own FR when missing): grill-me interview, a spec slice you approve, tests first, the code, the reviewer agents on the diff, definition of done, ship |
+| `/tentaqles:fix` | Fix a bug reproduce-first: a failing regression test the fix never edits, root cause, smallest change, the reviewer agents when the diff touches auth, personal data or model calls, a LEARNINGS line |
+| `/tentaqles:dod` | Run the definition of done as a checklist (tests, lint, typecheck, ADR for architecture paths, `docs/privacy.md` for personal data, migration plan, changelog, open PRD decisions) and turn MISSING items into work; no override |
 | `/tentaqles:direction` | Read-only drift audit against the PRD: grades each requirement Aligned/Partial/Missing/Contradicted and returns ON COURSE, DRIFTING or OFF COURSE |
-| `/tentaqles:dod` | Run the definition of done for a build (`build-gate dod`) and turn MISSING items into work; a waiver is human-only (`--override`, run by you in a terminal, or the override answer on the hub card in a hub run); fails on PRD §10 decisions the build opened and left open |
 | `/tentaqles:threat-model` | Write or update `docs/threat-model.md`: STRIDE per trust boundary from the PRD and the code; unmitigated high-risk rows become requirements or open decisions; only you accept a risk |
-| `/tentaqles:classify-data` | Classify the data a project handles: manifest `data:` block, `docs/privacy.md` (purpose, legal basis, retention) and `docs/incident-playbook.md` |
-| `/tentaqles:privacy-review` | Run the `privacy-reviewer` (LGPD/GDPR) on a diff that touches classified data and turn its findings into fixes and privacy-record updates |
+| `/tentaqles:classify-data` | Classify the data a project handles: the data dictionary, `docs/privacy.md` (where each class lives, purpose, legal basis, retention, DSAR path, incident authority) and `docs/incident-playbook.md` |
+| `/tentaqles:privacy-review` | Run the `privacy-reviewer` (LGPD/GDPR) on a diff that touches personal data and turn its findings into fixes and privacy-record updates |
 | `/tentaqles:supply-chain` | Pin actions to SHAs, least-privilege workflow permissions, lockfile-only installs, dependency audit, SBOM on release, secret scanning; extends `ci-pipeline` |
 | `/tentaqles:llm-security-review` | Run the `llm-security-reviewer` on a diff that adds LLM calls, prompts, agent tools, MCP servers, RAG or hooks, against OWASP LLM 2025 and Agentic 2026 |
-| `/tentaqles:loop` | Overnight Karpathy-style loop on one feature: approve locked checks by day; at night a runner keeps or undoes one headless round at a time in a worktree, under dollar/token/time/round budgets with MCP and network off; morning summary + signal |
-| `/tentaqles:hub` | See what `tq hub` runs are waiting on, in plain language, add or show cards; prints the `tq hub answer` line for you (answering is yours); explains the hub's own question when a run stopped before its build existed |
-| `/tentaqles:pack` | Run and explain the tq pack checks (data, ml, cloud, db): the enabled packs, `tq pack check`, each finding, the pack reviewers from `tq pack crew`, and how to fix a declared tool that is missing |
-| `/tentaqles:data-contract` | Write and evolve ODCS v3 data contracts (data pack): draft from a dbt model or a table, classify columns, check breaking changes with `data/contract-breaking` |
-| `/tentaqles:pipeline-review` | Run the `pipeline-reviewer` on a pipeline change (dbt, Airflow, Dagster, Prefect, pandas/polars/PySpark, Fabric or Synapse): idempotency, backfills, PII |
-| `/tentaqles:warehouse-cost` | Estimate a query's or dbt model's cost before it runs with `tq pack data cost estimate` (BigQuery, Snowflake, Databricks, Synapse, Postgres) |
-| `/tentaqles:ml-review` | Run the `ml-reviewer` on a training, feature, evaluation, model card or promotion change, quoting the ml pack results |
-| `/tentaqles:model-card` | Write or update `MODEL_CARD.md` from the metrics, the data manifest and git, interviewing you for intended use and limits |
-| `/tentaqles:ml-promote` | Request a model promotion through the ml pack's approval gate (`tq pack ml promote request`); you approve in your terminal and run `promote apply` yourself |
-| `/tentaqles:drift-check` | Check a model for data drift: refresh the profiles (aggregates only), run `tq pack ml drift`, explain the result |
-| `/tentaqles:iac-policy` | Check IaC with the cloud pack (`IAC`, `IAM`, `AZR`, `GCP` rules and the external linters) and take a change through plan, approve and apply; never answers an approval |
-| `/tentaqles:rls-tests` | Write and run pgTAP tests that prove Postgres/Supabase row-level security against a local test database (`db/pgtap` or `db/pgtap-supabase`) |
-| `/tentaqles:restore-drill` | Prove a backup restores: `tq pack db drill` into a local scratch database, record the evidence line, check its freshness |
+
+### Reviewer agents
+
+Five read-only subagents (tools Read, Glob, Grep). A skill hands each one the diff (`git diff <base>...HEAD`), the spec slice, `CLAUDE.md`, `docs/LEARNINGS.md` and `docs/threat-model.md`, and gets back `RESULT: PASS | FAIL | BLOCKED` with file:line findings (`templates/process/review-contract.md`).
+
+| Agent | Role |
+|---|---|
+| `critic` | Quality: correctness, security basics, tests that prove the acceptance checks, house style, docs |
+| `spec-critic` | Compliance: the diff does what the spec slice says, nothing more, every check has a test |
+| `security-reviewer` | Application security (ASVS 5.0, OWASP Top 10:2025) against the threat model |
+| `privacy-reviewer` | Data protection (LGPD, GDPR) against `docs/privacy.md` |
+| `llm-security-reviewer` | LLM and agent security (OWASP LLM 2025, Agentic 2026), tentaqles itself included |
 
 ## Hooks
 
@@ -316,17 +311,14 @@ All hooks are automatic and run silently.
 | Hook | Fires on | What it does |
 |------|----------|-------------|
 | `SessionStart` | Session begins (and after compaction) | `bootstrap.py` (one-time deps install, started in the background — never blocks), `tq_hook.sh session-start` → `tq claude-hook session-start` (report resolved identity + `tq doctor`; no switching), then `session-preamble.py --memory-only` (inject memory context; after a compaction, re-inject decisions, hot nodes and open pending instead) |
-| `PreToolUse` | Before Bash commands | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest, block on drift (exit 2). Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. MCP tool calls are not gated in 0.4.0. With a `data:` block, tq's data-protection exit rules also guard commits, pushes, PR text and fixtures that carry personal data (reading it stays allowed). |
-| `PostToolUse` | After Bash/Edit/Write | `knowledge-capture.py` — scan output for decisions, record file touches |
-| `Stop` | Claude finishes a turn | `stop-capture.py` — once per session, if the conversation weighed alternatives, ask Claude to record the decisions; once per session, if the context passes ~350k tokens, suggest `/compact` or session-wrap (non-blocking); `tq_hook.sh stop` → `tq claude-hook stop` — Jev completion-evidence check (only with a `decision:` block; shadow mode logs, enforce mode sends Claude back once per session when it claims verification the transcript does not show) |
-| `UserPromptSubmit` | You send a prompt | `tq_hook.sh prompt-submit` → `tq claude-hook prompt-submit` — Jev skill picker (only with a `decision:` block; logs the pick, and in enforce mode adds a one-line "Skill that may fit" hint; never blocks) |
+| `PreToolUse` | Before Bash, PowerShell, file and MCP tool calls | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest and block on drift or an untrusted folder (exit 2); deny `.env` and secret-store reads, environment dumps, a commit that would record a secret, and a cross-client MCP server. Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. On a Write to `.tentaqles.yaml`, `snapshot-guard.py` records a snapshot first |
+| `PostToolUse` | After Bash/Edit/Write | `knowledge-capture.py` — scan output for decisions, record file touches and fix atoms |
+| `Stop` | Claude finishes a turn | `stop-capture.py` — once per session, if the conversation weighed alternatives, ask Claude to record the decisions; once per session, if the context passes ~350k tokens, suggest `/compact` or session-wrap (non-blocking) |
 | `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory; the detached worker also extracts semantic facts with `claude -p --model haiku` (opt out: `TENTAQLES_SEMANTIC_FACTS=0`) |
-
-`/tentaqles:build` and `/tentaqles:loop` bring their own hooks without touching `hooks.json`: `build-gate.py setup` writes the checkpoint gate into the project's `.claude/settings.local.json` (removed by `build-gate.py finish`), and `loop-runner.py` passes its guard to the headless child through `--settings`. The gate's checks are text checks, not isolation: the signing key stays readable by the agent's OS user until tq isolates it, so the gate guards against a careless agent, not one set on defeating it.
 
 All hooks and skills use `tq_run.sh` → `tq_env.sh` to resolve a working Python interpreter, bypassing broken venv shims and machines where only `python3` exists (macOS). POSIX-compatible, tested on Windows (Git Bash), macOS, and Linux.
 
-Under `TQ_MODE=off` (`tq off`, `claude-off`, exactly `off`), `tq_hook.sh` and `tq_run.sh` exit 0 before they look for tq or Python: every hook and every skill script silently does nothing in that window, with no error. The legacy `TQ_ENABLED=0` kill switch only skips shell activation; hooks and skill scripts still run under it.
+The off launchers (`claude-off`, `codex-off`, `tq run --off -- claude`) start the agent outside tq with the plugin switched off, so none of these hooks runs there. The legacy `TQ_ENABLED=0` kill switch only skips shell activation; hooks and skill scripts still run under it.
 
 ## CLI
 

@@ -1,12 +1,13 @@
 # Privacy record (record of processing)
 
-Status: draft | current    Updated: <YYYY-MM-DD>    Owner (DPO or contact): <name, address from the manifest data.incident.contact>
-Regions of data subjects: <from manifest data.regions>    Authorities: <authorities for data.regions; when both apply, the shorter clock governs the first notice>
-Cites: PRD §5, manifest `data:` block, docs/threat-model.md
+Status: draft | current    Updated: <YYYY-MM-DD>    Owner (DPO or contact): <name or role, and the address an incident notice goes to>
+Regions of data subjects: <two-letter country codes>    Authority: <ANPD | GDPR | none; when both apply, the shorter clock governs the first notice>
+Cites: PRD §5, docs/threat-model.md
 
 This is the controller's record (LGPD Art. 37; GDPR Art. 30). Keep it in step
-with the manifest `data:` block; the definition of done requires this file to
-change whenever a classified path changes.
+with the code: the definition of done (`/tentaqles:dod`) requires this file to
+change whenever a path or table listed below changes, or the data a change
+reads, writes, logs or exports does.
 
 ## Data dictionary
 | Data | Class | Source | Store (path or table) | Retention | Deletion job |
@@ -25,7 +26,7 @@ One block per purpose.
 - Access controls (roles, RLS policies, service accounts):
 - Encryption at rest and in transit:
 - Processors and transfers (who, where, safeguard):
-- Logging: fields that may contain personal data and how they are masked (`tq redact` classes):
+- Logging: fields that may contain personal data and how they are masked:
 
 ## Data subject rights (DSAR path)
 How a subject gets confirmation, access, correction, deletion, portability and

@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Take a working tree all the way to a review-ready pull request — identity check, feature branch, risk triage (tq decide triage), review depth picked by risk, local tests/lint, conventional commit of explicit paths, push, gh pr create with risk flags and verification evidence, then hand off to babysit-pr. Use when the user says "ship it", "ship this", "open a PR", "commit and push", "make a PR for this", "send this for review", "/ship", or wants finished work turned into a pull request. Does not merge.
+description: Take a working tree all the way to a review-ready pull request — identity check, feature branch, explicit staging, a self-assessed risk line with the reviewer agents on a high-risk diff, local tests and lint, conventional commit of explicit paths, push, gh pr create with Summary, Risk, Verification and Notes, then hand off to babysit-pr. Use when the user says "ship it", "ship this", "open a PR", "commit and push", "make a PR for this", "send this for review", "/ship", or wants finished work turned into a pull request. Does not merge.
 ---
 
 # Ship
@@ -17,19 +17,10 @@ status is "CI pending".
 Run the steps in order. Stop and tell the user when a step fails; do not skip
 ahead.
 
-## Packs
-
-Before step 1, run the on-ramp step of the `pack` skill (`skills/pack/SKILL.md`,
-"On-ramp step"): `tq pack list --enabled --json` (timeout 10 s); for each enabled pack
-read every `skills/pack/references/onramps/<pack>-*.md` and follow its `## ship`
-section at the step it names. No pack enabled, or a tq without the `pack` command:
-skip this. Reviewers: a full review in step 4 adds every reviewer that `tq pack crew
---flags <the flags triage printed>` prints.
-
 ## 1. Identity (light)
 
-The tq guard already blocks a commit or push under the wrong identity, so this
-is a quick sanity check, not a ceremony:
+tq already blocks a commit or push under the wrong identity, so this is a
+quick sanity check, not a ceremony:
 
 ```bash
 git config user.email
@@ -70,32 +61,36 @@ path: `git add path/one path/two`. Never `git add -A`, `git add .` or
 
 Then confirm what is staged: `git diff --staged --stat`.
 
-## 4. Risk triage
+## 4. Risk (self-assessed)
 
-```bash
-tq decide triage --staged; echo "triage_exit=$?"
-```
+Read `git diff --staged` end to end. Rate the change `low` or `high` yourself
+and write the reason down in one line; it becomes the Risk line of the PR
+body. It is **high** when the diff touches auth or permissions, money, a
+schema or migration, RLS, secrets handling, a public API, shared state,
+destructive commands, CI workflows or dependency manifests, prompts or model
+calls, or a glob the project's `CLAUDE.md` lists as an architecture path.
+Otherwise it is low.
 
-| Result | Meaning | Review |
-|---|---|---|
-| exit 0, `low` | no risk flag raised | light self-review |
-| exit 3, `high (flags…)` | a flag fired, the diff was truncated, or Jev was unavailable | full review |
-| any other exit, or `tq` missing | triage not available | treat as **high** |
+**Low:** a light self-review. Look for leftover debug output, commented-out
+code, hardcoded values, missing error handling and accidental files. Fix and
+re-stage.
 
-**Light self-review (low):** read `git diff --staged` end to end yourself.
-Look for leftover debug output, commented-out code, hardcoded values, missing
-error handling and accidental files. Fix and re-stage.
+**High:** write the staged diff to a file under your scratchpad directory
+(`git diff --staged > <file>`) and run the reviewer agents on it, each with
+the diff path, the spec slice when one exists, `CLAUDE.md`,
+`docs/LEARNINGS.md` and `docs/threat-model.md`:
 
-**Full review (high):** spawn a reviewer subagent (the `Agent` tool, or the
-`code-review` skill when available) with:
+- `critic` always;
+- `security-reviewer` for auth, secrets, a public API, shared state,
+  destructive commands, workflows or dependencies;
+- `privacy-reviewer` when personal data is read, written, logged or exported;
+- `llm-security-reviewer` for prompts, model calls, tools, MCP servers, hooks
+  or skills.
 
-- the staged diff (`git diff --staged`), or the paths to read
-- the triage flags (auth, money, schema, migrations, RLS, secrets, public API,
-  destructive commands, …) as the areas to focus on
-- the instruction to report concrete problems with file:line, not style nits
-
-Fix every real finding, re-stage, and re-run triage. Record the flags and what
-the review found; they go into the PR body.
+Fix every `F` row (a file, a line and a concrete fix), re-stage, and re-run
+the reviewer until it returns `RESULT: PASS`. A `U` row is a question for the
+user, never something to guess. Record the verdicts; they go into the PR
+body.
 
 ## 5. Verify locally
 
@@ -103,12 +98,13 @@ Detect the project's own commands. Read them; don't guess:
 
 | File | Commands to look for |
 |---|---|
+| `CLAUDE.md` | the **Checks** line of `## Project config` (test, lint, typecheck) overrides the rows below |
 | `package.json` | `scripts.test`, `scripts.lint`, `scripts.typecheck` / `check`; runner from the lockfile (`pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `bun.lockb` → bun, else npm) |
 | `pyproject.toml` / `setup.cfg` / `tox.ini` | `pytest` (with `[tool.pytest]`), `ruff check` (with `[tool.ruff]`), `mypy` if configured; use `uv run` when `uv.lock` exists |
 | `go.mod` | `go test ./...`, `go vet ./...` |
 | `Cargo.toml` | `cargo test`, `cargo clippy` |
 | `Makefile` / `justfile` / `Taskfile.yml` | `test`, `lint`, `check` targets — prefer these when present |
-| `CLAUDE.md` / `CONTRIBUTING.md` | any documented pre-PR command overrides the table |
+| `CONTRIBUTING.md` | any documented pre-PR command overrides the table |
 
 Run the narrowest set that covers the change, then the full suite if it is
 fast. If a command needs secrets from a `.env`, run it through tq — reading
@@ -126,23 +122,9 @@ the last lines of their output (pass/fail counts) for the PR body. If there is
 no test suite, say so plainly in the PR body; do not invent one.
 
 **Definition of done.** When this branch came from `/tentaqles:feature`,
-`/tentaqles:fix` or `/tentaqles:kickoff`, the gate wrote
-`.claude/build/<slug>/dod.json`. Run `build-gate state <slug> --json`
-(resolve `build-gate` as in `skills/dod/SKILL.md`). If `dod.ok` is true (or
-`dod.override` is set) and `dod_fresh` is true, read `dod.json` (`ok`, `tree`,
-`override`, and `checks` with `id`, `ok` true, false or null for skip, and
-`detail`) and quote it in the PR body without re-running. Otherwise re-run the
-plain check, `build-gate dod <slug>`: it runs the project's frozen commands
-(up to 900 s) and rewrites `dod.json`, so run it in the background or with the
-`Monitor` tool, then read the state again. Only a `PASS` head line, or
-"human override still in force", counts. If the record is missing, not ok or
-not fresh after that, stop and point to `/tentaqles:dod <slug>`. Only the human
-waives a missing item, in their own terminal; you never run
-`build-gate dod <slug> --override`, and you do not tell anyone to run it for
-you. Headless (`TENTAQLES_HEADLESS=1`): never call `AskUserQuestion`; report
-the stop as your final output, or write it with
-`build-gate ask <slug> --kind question --text "<what is missing>" --options stop`
-when a build slug is known.
+`/tentaqles:fix` or `/tentaqles:kickoff`, run `/tentaqles:dod` first and carry
+its record into the PR body. An item that is not done is a line under Notes,
+in the user's words; it is never dropped silently and never written as done.
 
 **Size advisory** (not a block):
 
@@ -177,8 +159,8 @@ cause and create the commit again. Never use `--no-verify`.
 git push -u origin HEAD
 ```
 
-Never `--force` to the default branch (the guard denies it). On a feature
-branch prefer a new commit over rewriting history.
+Never `--force` to the default branch. On a feature branch prefer a new
+commit over rewriting history.
 
 First check whether the branch already has a PR:
 
@@ -203,40 +185,28 @@ The body follows this shape:
 <what changed and why, 2-5 bullets>
 
 ## Risk
-Triage: <low | high (flags…) | unavailable → treated as high>
-Review: <light self-review | full review by subagent: N findings, all addressed>
+<low | high>: <why, in one line: the areas the diff touches>
+Review: <light self-review | critic[, security-reviewer, privacy-reviewer, llm-security-reviewer]: N findings, all addressed>
 
 ## Verification
 Local (evidence, not proof):
 - `<command>` → <last line: e.g. "42 passed in 3.1s">
+Definition of done: <PASS | not applicable | the MISSING items, each as a Notes line>
 CI: pending — this PR is not verified until checks are green.
-
-## Definition of done
-<from dod.json: PASS at tree <12 chars> | OVERRIDDEN: <reason> | not applicable (plain build)>
-- <check id>: <ok|skip|MISSING> — <first line of its detail>
-Size: <N files, +A −D>; reason if over ~400 lines: <reason>
 
 ## Notes
 <follow-ups, things deliberately left out, rollout notes>
+Size: <N files, +A −D>; reason if over ~400 lines: <reason>
 ```
 
-The PR body never contains personal data or secrets: the tq hook
-`tq/text-pii` checks `gh pr create` text and denies it when it does. For each
-check quote only its id, its status and the first line of its `detail` (the
-command and exit code, or the count); never the tail, which can name files or
-rows that hold such data.
-
-**Hub card.** If `TQ_HUB_TASK` is set (the hub launched this run), post the PR link on
-the card. The call is bounded to two seconds and its failure is ignored; type the URL
-`gh pr create` printed:
-
-```bash
-if [ -n "${TQ_HUB_TASK:-}" ]; then tq hub comment --timeout 2s - "PR: <pr-url>" || true; fi
-```
+The PR body never contains personal data or secrets: write the shape of a
+value (`<email>`, `<card>`, `<row id>`), never the value, and quote command
+output only by its last line, never a tail that can name files or rows that
+hold such data.
 
 ## 8. Hand off
 
-Report the PR URL and the triage result, then continue with the
+Report the PR URL and the risk line, then continue with the
 **`babysit-pr`** skill on that PR: it watches CI, fixes failures and answers
 review comments. Only report "CI green" once `babysit-pr` has seen it.
 

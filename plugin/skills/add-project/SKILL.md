@@ -85,10 +85,10 @@ context under a `## Client Context` heading:
 - Language: {language}
 ```
 
-Fill the `tq-project` block's `commands.test` with the real test command when
-the stack is known (read `package.json`, `pyproject.toml`, `go.mod`); leave the
-template placeholder otherwise and say so in the report. Then create the docs
-skeleton:
+Fill the **Checks** line of `## Project config` with the real test, lint and
+typecheck commands when the stack is known (read `package.json`,
+`pyproject.toml`, `go.mod`); leave the template placeholder otherwise and say
+so in the report. Then create the docs skeleton:
 
 ```bash
 mkdir -p "{client_root}/{project-slug}/docs/adr" "{client_root}/{project-slug}/docs/specs"
@@ -96,7 +96,8 @@ cp "$_tqe/templates/process/LEARNINGS.md" "{client_root}/{project-slug}/docs/LEA
 ```
 
 The PRD is not written here: `/tentaqles:kickoff` interviews for it and
-requires it before planning.
+requires it before the first feature; `/tentaqles:feature` and `/tentaqles:fix`
+do the work after that.
 
 ### 3. Create brief.md (if there's enough context)
 

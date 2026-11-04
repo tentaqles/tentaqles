@@ -1,7 +1,7 @@
 ---
 name: threat-model
 description: "Write or update docs/threat-model.md with the four threat-modelling questions answered per trust boundary using STRIDE, from the PRD's security section and the codebase. Unmitigated high-risk rows become PRD requirements or NEEDS-DECISION items; accepted risks get an owner and an expiry. Use when the user says \"threat model\", \"what can go wrong\", \"security design\", during /tentaqles:kickoff, or when a feature crosses a new trust boundary (new integration, new role, new data store)."
-argument-hint: '[boundary name | "update"] [--headless]'
+argument-hint: '[boundary name | "update"]'
 ---
 
 # Threat model
@@ -12,17 +12,10 @@ result is the checklist source the `security-reviewer` reads on every diff.
 
 Run this inside the branch `/tentaqles:kickoff` or the feature flow already
 opened. Never commit on main or master: if `git branch --show-current` says
-`main` or `master`, stop and ask for a branch first (headless: write the file,
-do not commit, and say so in the report).
-
-Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
-`$ARGUMENTS`, `AskUserQuestion` is never called. Where a default exists, take
-it and log the assumption at the end of `docs/threat-model.md`. Where none
-exists, write a `NEEDS-DECISION` line (PRD §10) and list it in the final
-report. Use
-`build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
-only when the caller passed the slug of an active build run; the `build-gate`
-prefix is in `skills/build/SKILL.md`.
+`main` or `master`, stop and ask for a branch first. Where a default exists,
+take it and log the assumption at the end of `docs/threat-model.md`. Where
+none exists, write a `NEEDS-DECISION` line (PRD §10) and list it in the final
+report.
 
 ## 1. Inputs
 
@@ -43,7 +36,7 @@ may run in fresh shells, so put its first two lines (the `_tqe=` line and the
 `root=` line) at the top of each block.
 
 Read `docs/prd.md` §2 (roles), §5 (data), §6 (boundaries, authentication,
-abuse cases), §9 (stack); the manifest `data:` block; the code's entry points
+abuse cases), §9 (stack); `docs/privacy.md` when it exists; the code's entry points
 (routes, handlers, jobs, webhooks, CLI) and outbound calls (HTTP clients,
 queues, third-party SDKs). Never assume a stack or a provider.
 
@@ -72,19 +65,19 @@ an entry under Accepted risks; `superseded` = the row that replaces it. The
 header's Document status (`draft | accepted | superseded`) is a different
 field: set it to `draft` until the user accepts the document.
 
-Only the user can set a row to `accepted`. Interactive: ask with
-`AskUserQuestion`, with options and a recommendation, and write the user's
-name as they state it in "Accepted by"; the expiry comes from the user, or
-defaults to 90 days and is logged as an assumption in the document. Headless:
-never accepts. Write the row as `planned` plus a `- NEEDS-DECISION:` line in
-`docs/prd.md` §10, and list it in the final report.
+Only the user can set a row to `accepted`: ask with `AskUserQuestion`, with
+options and a recommendation, and write the user's name as they state it in
+"Accepted by"; the expiry comes from the user, or defaults to 90 days and is
+logged as an assumption in the document. Without an answer the skill
+never accepts: write the row as `planned` plus a `- NEEDS-DECISION:` line
+in `docs/prd.md` §10, and list it in the final report.
 
 Ask other questions one at a time, only where the code and PRD leave a real
 choice, in plain words about the consequence, with options and a recommendation
 (for example "If someone replays a captured webhook within 5 minutes, should we
 accept it (simple, small risk of a duplicate order) or reject it (needs a
 nonce store)? I recommend reject."). Otherwise decide and log the assumption at
-the end of the file. Headless: see the paragraph at the top.
+the end of the file.
 
 ## 4. Consequences
 

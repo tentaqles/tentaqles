@@ -1,23 +1,13 @@
 ---
 name: prd
 description: Write or revise a product requirements document (docs/prd.md) through a short interview, from an idea, a brief, a ticket or an existing codebase. Captures problem, users, goals and non-goals, numbered functional requirements with binary acceptance checks, data classes, security boundaries, NFRs with numbers, stack constraints and open questions tagged NEEDS-DECISION, then grades planning-readiness mechanically. Use when the user says "write a PRD", "start a PRD", "requirements doc", "spec the product", "reverse-engineer the requirements", or when /tentaqles:kickoff finds no planning-ready PRD.
-argument-hint: '<idea | brief path | ticket URL | "from existing code"> [--headless]'
+argument-hint: '<idea | brief path | ticket URL | "from existing code">'
 ---
 
 # PRD
 
 What and why, in a shape machines can check. Every later artifact cites a
 section number from this document, so section numbers never move.
-
-Headless mode: when `TENTAQLES_HEADLESS=1` is set, or `--headless` is in
-`$ARGUMENTS`, `AskUserQuestion` is never called. The prd skill has no build run
-of its own, so there is no slug to write a decision record under: at a human
-stop (an interview question you cannot answer from the brief or the code, an
-open `NEEDS-DECISION`) report what it needs as its final output and end the turn. Fill what the inputs support, write the draft, run the grader, and list
-the unanswered questions in the report. Use
-`build-gate ask <slug> --kind question --text "<the question>" --options <a>,<b>`
-only when the caller passed the slug of an active build run; the `build-gate`
-prefix is in `skills/build/SKILL.md`.
 
 ## 0. Where it lives
 
@@ -111,8 +101,7 @@ own judgement. Quote its JSON output in your reply.
   `### FR-nn` heading in section 4. `has_section_10: false` blocks: the
   section 10 heading stays even when it is empty. Never write "planning-ready"
   while the exit code is 3. Offer to settle each open item (ask, research,
-  prototype), edit the PRD, and grade again. Headless: report the blockers as
-  your final output and end the turn.
+  prototype), edit the PRD, and grade again.
 - `4` (no PRD): the write step did not produce `docs/prd.md`; fix that.
 - Any other exit code: report it and the output verbatim and stop.
 

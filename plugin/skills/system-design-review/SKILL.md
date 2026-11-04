@@ -77,7 +77,7 @@ scale it does not need.
 
 - Schema and migration plans: check them with the `db-migration` skill.
 - Auth and tenant isolation: the `auth-security` checklist.
-- Once implemented, `tq decide triage --range main..HEAD` tells you whether
-  the diff needs a full review.
+- Once implemented, a diff that touches auth, money, schema or a trust
+  boundary gets the reviewer agents (the ship skill); the rest a careful read.
 - Record the accepted design and its tradeoffs as an ADR in the repo and log
   the decision with `/tentaqles:session-wrap`.

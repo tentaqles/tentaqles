@@ -81,8 +81,8 @@ money, dates and invariants.
 
 ## Pointers
 
-- Rules that touch auth, money, schema or data deletion are high risk:
-  `tq decide triage` flags them, and they deserve the full review.
+- Rules that touch auth, money, schema or data deletion are high risk and
+  deserve the full review: the reviewer agents on the diff (the ship skill).
 - Schema implied by the rules: `db-migration`. Architecture-level questions
   (load, failure modes, cost): `system-design-review`.
 - Record the decisions with `/tentaqles:session-wrap` so the next session

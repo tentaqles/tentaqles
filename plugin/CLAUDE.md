@@ -4,6 +4,8 @@
 
 Open-source Claude Code plugin for multi-workspace orchestration. Lives in `plugin/` of `github.com/tentaqles/tentaqles` and ships from the root marketplace (`.claude-plugin/marketplace.json`, git-subdir pinned to a release tag and its commit sha, updated after each release; `plugin/.claude-plugin/marketplace.json` is a local directory marketplace for development). See `docs/RELEASING.md`. Installed users get it at `<config dir>/plugins/cache/tentaqles/tentaqles/<version>/`, where the config dir is `~/.claude` by default and `$CLAUDE_CONFIG_DIR` (one per identity, under `~/.tentaqles/identities/<id>/claude`) when tq manages the session.
 
+tq is an identity isolator with secrets protection; the plugin adds session memory, the identity preamble, the knowledge graph and the skills. There is no build gate, hub, pack, Jev, guard mode or data classification any more (plugin 0.16.0); the dev-process skills are plain checklists and the reviewers are five read-only agents.
+
 ## Architecture
 
 ```
@@ -19,17 +21,19 @@ tentaqles/              Python package (identity, memory, embeddings, privacy, g
 scripts/                Hook and utility scripts (all use _path.py for bootstrap)
   tq_env.sh             Runtime bootstrap — resolves interpreter + PYTHONPATH
   tq_run.sh             Wrapper: sources tq_env.sh then exec's target script
+  tq_hook.sh            Bridge to `tq claude-hook <event>`; falls back to identity-guard.py (fail-closed) without tq
   memory-bridge.py      Stdin JSON → MemoryStore dispatch (touch, decision, session_end, etc.)
   vault-export.py       On-demand export + ingest (the export-vault skill); SessionEnd's worker does the same automatically
   knowledge-capture.py  PostToolUse: file touches, decision-pattern scan, and fix atoms (failed Bash command + the matching success that followed; classify_bash_result)
+  prd-status.py         The planning-ready grader the prd, kickoff, feature and direction skills run
   bootstrap.py          First-run dep installer (pyyaml, pathspec, fastembed, numpy → $CLAUDE_PLUGIN_DATA/lib); installs in a detached --worker
   _path.py              sys.path setup via __file__ (used by all Python scripts)
   _detach.py            spawn_detached(): hand slow work to a process that outlives the hook
-skills/                 59 skill directories, each with SKILL.md (some with references/, scripts/, templates/; frontmatter checked by tests/test_skill_frontmatter.py)
-agents/                 13 subagents for /tentaqles:build (build-planner, build-critic [read-only], build-fixer, spec-critic [read-only], arbiter, security-reviewer [read-only], privacy-reviewer [read-only], llm-security-reviewer [read-only], breaker, and the pack reviewers pipeline-reviewer, ml-reviewer, iac-reviewer, db-reviewer [read-only])
+skills/                 40 skill directories, each with SKILL.md (some with references/, scripts/, templates/; the set and the frontmatter are pinned by tests/test_skill_frontmatter.py)
+agents/                 5 read-only reviewer subagents: critic, spec-critic, security-reviewer, privacy-reviewer, llm-security-reviewer (tools Read, Glob, Grep; each reads the diff the caller names plus the spec slice)
 templates/process/      process templates (PRD, ADR, spec slice, fix spec, LEARNINGS, project CLAUDE.md, review contract, threat model, privacy record, incident playbook)
-skills/<name>/references/  checklists with stable row ids (STRIDE, data dictionary, privacy LGPD/GDPR, supply chain SLSA/SBOM, LLM security OWASP LLM 2025 / Agentic 2026)
-hooks/hooks.json        Hook definitions (SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop)
+skills/<name>/references/  checklists with stable row ids (STRIDE, data dictionary, privacy LGPD/GDPR, supply chain SLSA/SBOM, LLM security OWASP LLM 2025 / Agentic 2026, migration review)
+hooks/hooks.json        Hook definitions (SessionStart, PreToolUse, PostToolUse, Stop, SessionEnd)
 .claude-plugin/         Plugin manifest (plugin.json)
 tests/                  pytest suite
 ```
@@ -54,14 +58,13 @@ tests/                  pytest suite
 - **Python scripts** under `scripts/`: start with `from _path import setup_paths; setup_paths()`. Never inline `sys.path.insert` hacks.
 
 - **Privacy**: all text hitting `memory.db` passes through `tentaqles.privacy.redact_text()`. Secrets → `[REDACTED:pattern]`. `redact_text(classes=None)` (read paths) masks secrets only, while `redact_str` applies the exit baseline: secrets plus checksummed identifiers (CPF, CNPJ, card, IBAN). Exits (memory writes, vault, ingest, signals, model prompts) all use that baseline: `exit_classes`/`workspace_classes` return `["checksummed"]` and the manifest `data:` block is no longer read (plugin 0.16.0). Use `redact_str` rather than a local wrapper.
-- **Reviewer agents are read-only** (`security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`, and the pack reviewers `pipeline-reviewer`, `ml-reviewer`, `iac-reviewer`, `db-reviewer`: tools Read, Glob, Grep). `breaker` is the only agent with Bash and it binds to 127.0.0.1; its scratch dir is `<root>/.tq-breaker/<slug>/` (data files only, deleted by `build-gate finish`).
-- **Human-only commands**: `tq allow` is run by the human in their own terminal; skills remind the user and never run it.
+- **Reviewer agents are read-only** (`critic`, `spec-critic`, `security-reviewer`, `privacy-reviewer`, `llm-security-reviewer`: tools Read, Glob, Grep; no agent has Bash). A skill hands a reviewer the diff (`git diff <base>...HEAD` written to a file), the spec slice, `CLAUDE.md`, `docs/LEARNINGS.md` and `docs/threat-model.md`, and gets the review contract back (`templates/process/review-contract.md`: `RESULT: PASS|FAIL|BLOCKED`, `F` rows with file:line, `U` rows for the human).
+- **The dev-process skills are plain checklists**: `ship`, `feature`, `fix`, `kickoff`, `dod`, `direction` and the review skills record nothing, keep no state under `.claude/`, and have no unattended mode: a question goes to the user. "Done" is the checklist `dod` ran and quotes, never a sentence in the transcript; risk is self-assessed in `ship` and a high-risk diff gets the reviewer agents.
+- **Human-only commands**: `tq allow`, `tq deny` and `tq secret set` are run by the human in their own terminal; skills print the line, remind the user and never run it.
 
 - **Lazy session**: `MemoryStore.end_session()` auto-starts a session if none is active. Don't assume `start_session()` was called.
 
-- **tq's PreToolUse may skip confirms and blocks**: the workspace's guard mode (`default`, `relaxed`, `strict`, `custom`; see `docs/CLAUDE-HOOK.md`, "Guard modes") maps each rule category to skip, ask, deny or the rule's own action, in every Claude permission mode. Skills must not rely on a confirm or a block. The locked groups, identity, secrets, self-protection and privacy (the identity guard, `tq/cross-client-mcp`, the `.env`/env-dump/secret-store/commit-secret rules, the PII exit rules, `tq/guard-change`, `tq/mode-change`, `tq/nested-agent-loosened`, guard-file, trust-store and settings rules), are never skipped.
-- **Mode changes are human-only**: `tq mode set|toggle|override|edit` and `tq allow --mode` refuse agent sessions and are denied in tool calls; skills print them for the user and never run them. Skills never start `claude-off`/`codex-off`, `tq off`, or a nested agent with loosened flags.
-- **`TQ_MODE=off` (exactly `off`) means no tq** (`TQ_ENABLED=0` only skips shell activation; hooks still run): `scripts/tq_hook.sh` and `scripts/tq_run.sh` exit 0 as their first statement, before resolving tq or Python, so hooks and skill scripts do nothing in an off session or window.
+- **tq's PreToolUse blocks identity drift and secrets, nothing else**: `tq claude-hook pre-tool-use` denies a git, gh or cloud command under the wrong identity or in an untrusted folder, `.env` and secret-store reads, environment dumps, a commit that would record a secret, and a cross-client MCP server, in every Claude permission mode (see `docs/CLAUDE-HOOK.md`). It has no modes and asks nothing (the one confirm is the fail-safe `tq/guard-error` on a guard panic). Skills must not rely on a confirm or a block for anything else (a force push, a cloud delete, a migration): say what you are about to do and ask the user yourself. Skills never start `claude-off`/`codex-off` or a nested agent with the plugin switched off.
 
 - **Every hook in hooks.json declares a short `timeout`**; capture-only hooks are `async`. A hook without one waits up to 10 minutes when something hangs.
 
@@ -73,7 +76,7 @@ tests/                  pytest suite
 
 - **PreCompact stdout never reaches the model.** Context that must survive compaction is printed by the SessionStart hook when `source == "compact"` (`tentaqles.memory.compact_context`).
 
-- **Headless child guard**: `TENTAQLES_HEADLESS_CHILD=1` marks the plugin's own `claude -p` subprocess; hooks that save or prompt (SessionEnd, Stop) must exit early when it is set.
+- **Child-process guard**: `TENTAQLES_HEADLESS_CHILD=1` marks the plugin's own `claude -p` subprocess (semantic-fact extraction); hooks that save or prompt (SessionEnd, Stop) must exit early when it is set.
 
 - **No cross-client data**: each workspace has its own `memory.db`. The global `meta.db` stores only display names, stats, and signals — never code or decisions.
 

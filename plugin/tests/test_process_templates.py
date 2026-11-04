@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -31,28 +30,38 @@ def test_prd_has_eleven_numbered_sections_and_fr_shape() -> None:
     assert "### 3.2 Non-goals" in text
 
 
-def test_claude_scaffold_has_fixed_sections_and_valid_block() -> None:
+def test_claude_scaffold_has_fixed_sections_and_a_checks_line() -> None:
     text = (TEMPLATES / "CLAUDE-project.md").read_text(encoding="utf-8")
     for h in ("## Reading path", "## Must not trade off", "## Project config"):
         assert h in text, h
-    m = re.search(r"^```json tq-project\n(.*?)\n```", text, flags=re.MULTILINE | re.DOTALL)
-    assert m, "scaffold must carry a ```json tq-project fenced block"
-    cfg = json.loads(m.group(1))
-    assert set(cfg) >= {"commands", "architecture_paths", "changelog"}
-    assert "test" in cfg["commands"]
+    assert "```json tq-project" not in text, "the tq-project block is gone (plugin 0.16.0)"
+    assert re.search(r"^- Checks: test `[^`]+`; lint `[^`]+`; typecheck `[^`]+`$", text, flags=re.MULTILINE)
+    assert "- Architecture paths" in text and "docs/adr/" in text
+    assert "- Changelog:" in text
+    assert "breaker" not in text and "classified_paths" not in text and "manifest" not in text
 
 
 def test_learnings_has_rules_and_log_with_row_format() -> None:
     text = (TEMPLATES / "LEARNINGS.md").read_text(encoding="utf-8")
     assert "## Rules" in text and "## Log" in text
-    assert "L<n> · <date> · <slug>#<cp> · <gate> ·" in text
-    assert "D<n> · <date> · <slug> · dod-override ·" in text
+    assert "L<n> · <date> · <slug> · failure:" in text
+    assert "H<n> · <date> · <slug> · sent back ·" in text
+    assert "dod-override" not in text and "<gate>" not in text and "stop 2" not in text
 
 
 def test_review_contract_defines_the_verdict_grammar() -> None:
     text = (TEMPLATES / "review-contract.md").read_text(encoding="utf-8")
     for token in ("RESULT: PASS", "RESULT: FAIL", "RESULT: BLOCKED", "CANNOT JUDGE", "BUILT-BY-ME:"):
         assert token in text, token
+    assert "build-gate" not in text and "orchestrator" not in text
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_templates_carry_no_gate_or_manifest_data_wording(name: str) -> None:
+    text = (TEMPLATES / name).read_text(encoding="utf-8")
+    for forbidden in ("build-gate", "lock-tests", "manifest `data:`", "data.incident", "data.regions", "tq redact",
+                      "checkpoint", "breaker"):
+        assert forbidden not in text, (name, forbidden)
 
 
 def test_threat_model_has_four_questions_and_stride_table() -> None:
@@ -91,3 +100,4 @@ def test_fix_spec_summarises_the_report_without_personal_data() -> None:
     assert ("Summarise the report, stack trace or failing command, keeping its meaning, with personal data "
             "replaced by placeholders (`<customer>`, `<email>`, `<row id>`); never paste it verbatim.") in flat
     assert "Leave the original where it came from" in flat
+    assert "the fix never changes it" in flat and "locked" not in text.lower()

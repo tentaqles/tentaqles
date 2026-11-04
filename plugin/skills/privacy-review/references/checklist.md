@@ -8,7 +8,7 @@ Judge each row from the diff and the files it touches. Cite file:line.
 | P2 | Minimisation: the change collects or exposes only fields the purpose needs; no "while we're here" columns | LGPD Art. 6 III; GDPR Art. 5(1)(c), Art. 25 |
 | P3 | Retention: a stated period and a deletion job (or TTL) that enforces it, with a test | LGPD Art. 15, 16; GDPR Art. 5(1)(e) |
 | P4 | Access: the data is behind authorization (RLS, roles); service accounts are least privilege | LGPD Art. 46; GDPR Art. 32 |
-| P5 | Logging and events: no new log line, metric label, analytics event or error message carries personal data unmasked (`tq redact` classes) | LGPD Art. 46; GDPR Art. 32 |
+| P5 | Logging and events: no new log line, metric label, analytics event or error message carries personal data unmasked | LGPD Art. 46; GDPR Art. 32 |
 | P6 | Exports and fixtures: no production rows into tests, seeds or fixtures; synthetic data only | LGPD Art. 46; project rule tq/pii-fixture-dump |
 | P7 | Subject rights: the DSAR path still works (access, correction, deletion, portability reach the new store or field) | LGPD Art. 18, 19; GDPR Art. 15 to 20 |
 | P8 | Transfers: a new processor or region is recorded with its safeguard | LGPD Art. 33; GDPR Art. 44 to 46 |

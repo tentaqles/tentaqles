@@ -13,11 +13,24 @@ from pathlib import Path
 import pytest
 import yaml
 
-SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+SKILLS_DIR = PLUGIN_ROOT / "skills"
 SKILL_FILES = sorted(SKILLS_DIR.glob("*/SKILL.md"))
 
-# Skills added by the operational-workflow work; they must keep existing.
-WORKFLOW_SKILLS = ["ship", "babysit-pr", "wrap", "n8n-triage"]
+# The 40 skills of the slim plugin (0.16.0): memory, identity, knowledge, the dev-process
+# checklists and the engineering-practice skills. The build gate, loop, hub, sync, refine,
+# plan-cards, guard, pack, the nine pack skills, ml-review, pipeline-review and explore are gone.
+SKILLS = [
+    "add-client", "add-project", "auth-security", "babysit-pr", "build-graph", "ci-pipeline",
+    "classify-data", "client-settings", "compact-memory", "cross-patterns", "dashboard", "db-migration",
+    "decision-history", "direction", "dod", "emit-signal", "export-vault", "feature", "file-history", "fix",
+    "grill-me", "index-advisor", "kickoff", "llm-security-review", "n8n-triage", "onboard", "prd",
+    "privacy-review", "profile-refresh", "query-memory", "rollback", "session-wrap", "setup-demo", "ship",
+    "supply-chain", "switch-client", "system-design-review", "threat-model", "workspace-status", "wrap",
+]
+
+# The dev-process checklists: plain skills, no gate, no hub, no headless mode.
+WORKFLOW_SKILLS = ["ship", "babysit-pr", "wrap", "n8n-triage", "feature", "fix", "kickoff", "dod", "direction"]
 
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
@@ -36,9 +49,31 @@ def test_skills_found() -> None:
     assert len(SKILL_FILES) >= 20
 
 
+def test_skill_set_is_exactly_the_forty() -> None:
+    found = sorted(p.name for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").is_file())
+    assert found == sorted(SKILLS), set(found) ^ set(SKILLS)
+    assert len(SKILLS) == 40
+
+
+def test_claude_md_skill_count_matches_the_tree() -> None:
+    n = len([p for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").is_file()])
+    m = re.search(r"(\d+) skill directories", (PLUGIN_ROOT / "CLAUDE.md").read_text(encoding="utf-8"))
+    assert m and int(m.group(1)) == n, (m and m.group(1), n)
+
+
 @pytest.mark.parametrize("name", WORKFLOW_SKILLS)
 def test_workflow_skill_exists(name: str) -> None:
     assert (SKILLS_DIR / name / "SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("path", SKILL_FILES, ids=lambda p: p.parent.name)
+def test_no_skill_names_a_removed_command(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    for forbidden in ("build-gate", "tq hub", "tq pack", "tq decide", "TQ_HUB_TASK", "TENTAQLES_HEADLESS",
+                      "tq mode", "tq guard", "tq redact", "tq insights", "/tentaqles:build", "/tentaqles:hub",
+                      "/tentaqles:sync", "/tentaqles:pack", "/tentaqles:guard", "/tentaqles:explore",
+                      "/tentaqles:loop", "/tentaqles:refine", "/tentaqles:plan-cards"):
+        assert forbidden not in text, (path.parent.name, forbidden)
 
 
 @pytest.mark.parametrize("path", SKILL_FILES, ids=lambda p: p.parent.name)

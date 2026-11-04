@@ -35,19 +35,27 @@ def test_onboard_skill_covers_every_provider_kind():
     for phrase in (
         "tq login <ws> <id>",
         "tq secret set <ws> <provider>",
+        "tq secret status",
         "tq doctor --json",
-        "tracker-ok",
-        "tracker-needs-session",
+        "identity-logged-out",
         "chat-mcp-missing",
         "email-mcp-missing",
         "tq bundle catalog",
         "/mcp",
         "read-only",
         "acli jira auth login",
+        "a login to verify, nothing more",
     ):
         assert phrase in text, phrase
     for connector in ("Slack", "Teams", "Gmail", "Outlook", "Linear", "Asana", "Atlassian", "Notion"):
         assert connector in text, connector
+
+
+def test_onboard_skill_knows_no_hub_or_board_sync():
+    text = SKILL.read_text(encoding="utf-8")
+    for forbidden in ("/tentaqles:sync", "the hub", "tq hub", "tracker-ok", "tracker-needs-session",
+                      "tracker-no-adapter", "tracker-auth-failed", "background sync", "tracker-*"):
+        assert forbidden not in text, forbidden
 
 
 def test_onboard_skill_ends_with_the_connected_table():

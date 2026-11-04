@@ -12,13 +12,9 @@ promote with confirmation → codify.**
 Assume the instance is **production** unless the user or the workspace config
 says it is a sandbox. Live workflows move real data and call real services.
 
-Two guardrails may be in place when tq is installed: its guard asks before
-n8n MCP writes (create, update, publish, execute, delete), and the optional
-Jev rule `jev/n8n-inline-credentials` may flag a node that inlines a
-credential. Both match on MCP tool names, so whether they fire depends on how
-the server names its tools, and neither sees REST calls made from the shell.
-Treat them as a second line, never as the plan: this skill's own
-confirmation steps apply either way.
+tq does not guard n8n writes: nothing asks before an MCP create, update,
+publish, execute or delete, and nothing sees REST calls made from the shell.
+This skill's own confirmation steps are the only line; they apply every time.
 
 ## 0. Find the tools
 
@@ -124,8 +120,7 @@ the fix:
 If the instance has no safe place for a copy, prepare the fixed workflow JSON
 locally and review it with the user instead.
 
-The tq guard may ask before this create. Either way, say what you are
-creating and why.
+Say what you are creating and why before the create.
 
 ## 5. Validate on the copy
 
@@ -155,8 +150,8 @@ Changing a live production workflow needs the user's explicit yes, given for
 this workflow, after they have seen the diff and the validation results. A
 general "go ahead" from earlier in the session does not count. Then:
 
-1. Apply the same node changes to the live workflow (the tq guard may ask
-   again; your confirmation from the user is what counts).
+1. Apply the same node changes to the live workflow (the user's confirmation
+   above is what allows it).
 2. Keep its original trigger and active state.
 3. Watch the next execution, or trigger one safely if the user agrees, and
    confirm it succeeds.
