@@ -35,7 +35,7 @@ verify:
 # Note: azure-devops owns only the `az devops|repos|pipelines|boards|artifacts|login|extension` subcommands; the rest of `az` and ~/.azure belong to the az provider.
 match:
   subcommands:
-    az: [devops, repos, pipelines, boards, artifacts, login, extension]
+    az: [devops, repos, pipelines, boards, artifacts, login, extension, account, config, version]
   env: [AZURE_DEVOPS_EXT_PAT, AZURE_DEVOPS_ORG]
   hosts: [dev.azure.com]
   mcp: [devops, ado, azuredevops]

@@ -380,8 +380,14 @@ func (run *hookRun) decide(in io.Reader, out, errw io.Writer) int {
 		}
 		ws, cfg = res.Workspace, gcfg
 	}
-	if why := scopeCatalogError(ws); why != "" {
+	why, warnings := scopeCatalogError(ws)
+	if why != "" {
 		return run.failClosed(out, errw, why)
+	}
+	// A broken override of a built-in provider: the built-in lists are in force; say so on
+	// stderr with every answer until a human fixes the file (ADR-0007 round 3).
+	for _, w := range warnings {
+		fmt.Fprintln(errw, w)
 	}
 
 	// subject is the one path/token the denial names for the log.

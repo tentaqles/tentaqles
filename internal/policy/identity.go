@@ -97,6 +97,8 @@ type Scope struct {
 	exeClaims map[string][]exeClaim // exe name -> claims (in and out)
 	modClaims map[string][]exeClaim // module -> claims (subs unused)
 	imgClaims map[string][]exeClaim // image basename and full -> claims
+	psClaims  map[string][]exeClaim // PowerShell module (lower-case) -> claims
+	cmdlets   []cmdletClaim
 
 	outEnv  []envName
 	inEnv   []envName
@@ -116,6 +118,12 @@ type Scope struct {
 	envRes   map[string]*regexp.Regexp
 }
 
+// cmdletClaim is one provider's cmdlets entry (exact or *-NounPrefix*).
+type cmdletClaim struct {
+	entry string
+	p     *scopedProvider
+}
+
 type hostSet struct {
 	p     *scopedProvider
 	hosts []string
@@ -125,7 +133,7 @@ type hostSet struct {
 func NewScope(in ScopeInputs) *Scope {
 	s := &Scope{identity: in.Identity, scope: append([]string{}, in.Scope...), set: in.Set, env: in.Env,
 		exeClaims: map[string][]exeClaim{}, modClaims: map[string][]exeClaim{},
-		imgClaims: map[string][]exeClaim{}, bundleMCP: map[string]bool{}, inMCP: map[string]bool{},
+		imgClaims: map[string][]exeClaim{}, psClaims: map[string][]exeClaim{}, bundleMCP: map[string]bool{}, inMCP: map[string]bool{},
 		outMCP: map[string]*scopedProvider{}, envRes: map[string]*regexp.Regexp{}}
 	if s.env == nil {
 		s.env = func(string) string { return "" }
@@ -211,6 +219,13 @@ func NewScope(in ScopeInputs) *Scope {
 			l := strings.ToLower(img)
 			s.imgClaims[l] = append(s.imgClaims[l], exeClaim{p: sp, wildcard: true})
 			s.imgClaims[imageBase(l)] = append(s.imgClaims[imageBase(l)], exeClaim{p: sp, wildcard: true})
+		}
+		for _, m := range claim.PSModules {
+			l := strings.ToLower(m)
+			s.psClaims[l] = append(s.psClaims[l], exeClaim{p: sp, wildcard: true})
+		}
+		for _, c := range claim.Cmdlets {
+			s.cmdlets = append(s.cmdlets, cmdletClaim{entry: c, p: sp})
 		}
 		for _, e := range claim.Env {
 			en := newEnvName(e, sp)
@@ -348,21 +363,22 @@ func (s *Scope) judge(cwd string, call ToolCall) (scopeHit, bool) {
 		if call.Tool == "Bash" {
 			text = guard.BlankDataHeredocs(text)
 		}
-		return s.shell(cwd, call.Command, text, 0)
+		return s.shell(cwd, call.Command, text, 0, call.Tool == "PowerShell")
 	case call.IsMCP():
 		if h, ok := s.mcpServer(call.MCPServer()); ok {
 			return h, true
 		}
 		return s.mcpInput(cwd, call.Content)
 	case call.Tool == "WebFetch":
-		if host := urlHost(call.URL); host != "" {
-			return s.hostHit(host)
+		if host, path := urlParts(call.URL); host != "" {
+			return s.hostHit(host, path)
 		}
 		return scopeHit{}, false
 	case call.Tool == "Glob" || call.Tool == "Grep":
 		return s.searchHit(cwd, call)
 	}
-	if _, ok := fileToolAccess(call.Tool); !ok {
+	// LS lists a folder: judged as a read of its path.
+	if _, ok := fileToolAccess(call.Tool); !ok && call.Tool != "LS" {
 		return scopeHit{}, false
 	}
 	if strings.TrimSpace(call.Path) == "" {
@@ -515,6 +531,18 @@ func (s *Scope) mentionHit(text string) (scopeHit, bool) {
 	if s.ci {
 		t = strings.ToLower(t)
 	}
+	if h, ok := s.mentionIn(t); ok {
+		return h, true
+	}
+	// A quoted path segment ($env:APPDATA\'GitHub CLI', ~/".aws"/credentials) is the same
+	// path once the shell removes the quotes.
+	if u := strings.NewReplacer(`'`, "", `"`, "").Replace(t); u != t {
+		return s.mentionIn(u)
+	}
+	return scopeHit{}, false
+}
+
+func (s *Scope) mentionIn(t string) (scopeHit, bool) {
 	for _, m := range s.mentions {
 		for i := 0; ; {
 			j := strings.Index(t[i:], m.needle)
@@ -581,6 +609,14 @@ func (s *Scope) mcpInput(cwd, raw string) (scopeHit, bool) {
 	var found scopeHit
 	ok := false
 	walkStrings(v, func(str string) bool {
+		// a URL anywhere in a string value is a network call of the MCP tool (a fetch or
+		// browser server): its host is judged like a WebFetch's
+		for _, m := range urlRe.FindAllStringSubmatch(str, -1) {
+			if h, hit := s.hostHit(cleanHost(m[1]), strings.ToLower(m[2])); hit {
+				found, ok = h, true
+				return false
+			}
+		}
 		if len(str) > 1024 || strings.ContainsAny(str, "\n\r") || !strings.ContainsAny(str, `/\~$%`) {
 			return true
 		}
@@ -595,53 +631,68 @@ func (s *Scope) mcpInput(cwd, raw string) (scopeHit, bool) {
 
 // --- hosts ---
 
-var urlRe = regexp.MustCompile(`(?i)\b(?:https?|wss?|ftps?)://(?:[^\s/@'"` + "`" + `]*@)?([a-z0-9.-]+)`)
+// urlRe finds a URL: group 1 is its host, group 2 its path (up to a query or fragment).
+var urlRe = regexp.MustCompile(`(?i)\b(?:https?|wss?|ftps?)://(?:[^\s/@'"` + "`" + `]*@)?([a-z0-9.-]+)(?::\d+)?(/[^\s?#'"` + "`" + `]*)?`)
 
-func urlHost(u string) string {
+func cleanHost(h string) string { return strings.Trim(strings.ToLower(h), ".") }
+
+// urlParts is the host and lower-cased path of the first URL in u, or "".
+func urlParts(u string) (host, path string) {
 	if m := urlRe.FindStringSubmatch(u); m != nil {
-		return strings.Trim(strings.ToLower(m[1]), ".")
+		return cleanHost(m[1]), strings.ToLower(m[2])
 	}
-	return ""
+	return "", ""
 }
 
 var netVerbs = wordSet("curl", "wget", "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "http", "https", "xh", "httpie",
 	"aria2c", "start-bitstransfer", "ssh", "scp", "sftp", "nc", "ncat", "telnet")
 
-func bareHost(a string) string {
+// bareHost reads a network verb's argument written without a scheme (api.vercel.com/v9/x,
+// user@host): its host and lower-cased path, or "" when it is not a host.
+func bareHost(a string) (host, path string) {
 	a = strings.Trim(a, `"'`)
 	if strings.HasPrefix(a, "-") || strings.Contains(a, "://") {
-		return ""
+		return "", ""
 	}
 	if i := strings.LastIndex(a, "@"); i >= 0 {
 		a = a[i+1:]
 	}
-	if i := strings.IndexAny(a, "/:?"); i >= 0 {
+	if i := strings.IndexAny(a, "?#"); i >= 0 {
 		a = a[:i]
 	}
-	a = strings.Trim(strings.ToLower(a), ".")
-	if !strings.Contains(a, ".") {
-		return ""
+	if i := strings.IndexByte(a, '/'); i >= 0 {
+		a, path = a[:i], strings.ToLower(a[i:])
 	}
-	return a
+	if i := strings.IndexByte(a, ':'); i >= 0 {
+		a = a[:i]
+	}
+	a = cleanHost(a)
+	if !strings.Contains(a, ".") {
+		return "", ""
+	}
+	return a, path
 }
 
-func hostIn(h string, list []string) bool {
-	for _, pat := range list {
-		if h == pat || strings.HasSuffix(h, "."+pat) {
+func hostIn(h, path string, list []string) bool {
+	for _, entry := range list {
+		if providers.HostMatches(entry, h, path) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Scope) hostHit(h string) (scopeHit, bool) {
+// hostHit judges a request to host h at path (lower-cased; "" for none). A hosts entry
+// matches the host and its subdomains, under its path prefix when it has one (ADR-0007 round
+// 3: API hosts, not whole registrable domains).
+func (s *Scope) hostHit(h, path string) (scopeHit, bool) {
 	for _, list := range s.inHosts {
-		if hostIn(h, list) {
+		if hostIn(h, path, list) {
 			return scopeHit{}, false
 		}
 	}
 	for _, hs := range s.outHosts {
-		if hostIn(h, hs.hosts) {
+		if hostIn(h, path, hs.hosts) {
 			return scopeHit{id: OutOfScopeHostID, subject: h, what: h + " is an API host of " + s.desc(hs.p)}, true
 		}
 	}
@@ -699,6 +750,14 @@ func (s *Scope) explicitRe(e envName) *regexp.Regexp {
 		`process\.env\.` + q + `\b`,
 		`process\.env\[\s*["']` + q,
 		`\$\{#` + q + `\}`,
+		// Deno.env.get('X'), Bun.env.X / Bun.env['X'], Ruby ENV['X'] / ENV.fetch('X'),
+		// Perl $ENV{X} / $ENV{'X'}
+		`deno\.env\.(?:get|set|delete|has)\s*\(\s*["']` + q,
+		`bun\.env\.` + q + `\b`,
+		`bun\.env\[\s*["']` + q,
+		`\bENV\s*\[\s*["']` + q,
+		`\bENV\.(?:fetch|key\?|delete|store)\s*\(?\s*["']` + q,
+		`\$ENV\s*\{\s*["']?` + q,
 		`\{[^{}]*\b` + q + `\b[^{}]*\}\s*=\s*[^;\n]*process\.env`,
 	}
 	re := regexp.MustCompile(`(?i)(` + strings.Join(alts, "|") + `)`)
@@ -816,11 +875,35 @@ func (s *Scope) envWord(name string) (scopeHit, bool) {
 
 // --- executables ---
 
+// bareInvocation is the subcommand of a CLI run with options only (az --version, az -h): a
+// provider that claims any subcommand of the CLI claims it too (ADR-0007 round 3).
+const bareInvocation = "<bare>"
+
+// cliSubcommand is the first subcommand of a CLI's arguments: the first word that is not an
+// option, past the values of the options every CLI with subcommand claims takes before it
+// (az's -o/--output, --query, --subscription). With options only it is bareInvocation.
+func cliSubcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := strings.Trim(args[i], `"'`)
+		if a == "" {
+			continue
+		}
+		if !strings.HasPrefix(a, "-") {
+			return a
+		}
+		switch strings.ToLower(a) {
+		case "-o", "--output", "--query", "--subscription":
+			i++
+		}
+	}
+	return bareInvocation
+}
+
 func (s *Scope) resolveClaims(claims []exeClaim, sub string) (scopeHit, bool, *scopedProvider) {
 	inHit := false
 	var out *scopedProvider
 	for _, c := range claims {
-		covers := c.wildcard || c.subs[strings.ToLower(sub)]
+		covers := c.wildcard || c.subs[strings.ToLower(sub)] || (sub == bareInvocation && len(c.subs) > 0)
 		if !covers {
 			continue
 		}
@@ -899,6 +982,71 @@ func (s *Scope) imageHit(img string) (scopeHit, bool) {
 	return scopeHit{}, false
 }
 
+// psModuleVerbs take PowerShell module names as their arguments.
+var psModuleVerbs = wordSet("import-module", "ipmo", "install-module", "update-module", "save-module", "find-module",
+	"get-module", "gmo", "remove-module", "rmo", "uninstall-module", "install-psresource", "save-psresource",
+	"find-psresource", "update-psresource", "get-installedmodule", "get-installedpsresource")
+
+// psModuleArgs checks every non-option argument of a module verb (a comma list too) against
+// the claimed PowerShell modules; option values (-Scope CurrentUser) are checked too, which
+// only matters if one is spelled like a provider's module.
+func (s *Scope) psModuleArgs(args []string) (scopeHit, bool) {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		for _, m := range strings.Split(a, ",") {
+			if h, ok := s.psModuleHit(m); ok {
+				return h, true
+			}
+		}
+	}
+	return scopeHit{}, false
+}
+
+func (s *Scope) psModuleHit(mod string) (scopeHit, bool) {
+	l := strings.ToLower(strings.TrimSpace(strings.Trim(mod, `"' `)))
+	if l == "" {
+		return scopeHit{}, false
+	}
+	var claims []exeClaim
+	for m, cs := range s.psClaims {
+		if providers.DottedCovers(m, l) {
+			claims = append(claims, cs...)
+		}
+	}
+	if _, in, out := s.resolveClaims(claims, ""); in {
+		return scopeHit{}, false
+	} else if out != nil {
+		return scopeHit{id: OutOfScopeCLIID, subject: l, what: "the PowerShell module " + l + " is " + s.desc(out)}, true
+	}
+	return scopeHit{}, false
+}
+
+// cmdletHit judges a command word as a PowerShell cmdlet of a provider's module.
+func (s *Scope) cmdletHit(word string) (scopeHit, bool) {
+	name := exeName(word)
+	if !strings.Contains(name, "-") || len(s.cmdlets) == 0 {
+		return scopeHit{}, false
+	}
+	var out *scopedProvider
+	for _, c := range s.cmdlets {
+		if !providers.CmdletMatches(c.entry, name) {
+			continue
+		}
+		if c.p.inScope {
+			return scopeHit{}, false
+		}
+		if out == nil {
+			out = c.p
+		}
+	}
+	if out == nil {
+		return scopeHit{}, false
+	}
+	return scopeHit{id: OutOfScopeCLIID, subject: name, what: name + " is a cmdlet of " + s.desc(out)}, true
+}
+
 func packageName(a string) string {
 	a = strings.Trim(a, `"'`)
 	if strings.HasPrefix(a, "@") {
@@ -956,8 +1104,9 @@ func isRunner(name string) bool {
 	return ok
 }
 
-// shell judges a shell command line.
-func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
+// shell judges a shell command line; ps reads its text with PowerShell's quoting rules (the
+// PowerShell tool, a decoded -EncodedCommand), otherwise bash's.
+func (s *Scope) shell(cwd, raw, text string, depth int, ps bool) (scopeHit, bool) {
 	for _, c := range guard.Commands(raw) {
 		base := commandBase(s.set, cwd, c)
 		if c.Base != "" && base != "" {
@@ -987,12 +1136,11 @@ func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
 				}
 			}
 		}
-		// executable by verb
-		sub := ""
-		if len(args) > 0 {
-			sub = strings.Trim(args[0], `"'`)
+		// executable by verb, and a PowerShell cmdlet of a provider's module
+		if h, ok := s.exeHit(verb, cliSubcommand(args)); ok {
+			return h, true
 		}
-		if h, ok := s.exeHit(verb, sub); ok {
+		if h, ok := s.cmdletHit(verb); ok {
 			return h, true
 		}
 		// env builtins
@@ -1060,14 +1208,21 @@ func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
 					if h, ok := s.exeHit(a, ""); ok {
 						return h, true
 					}
+					if h, ok := s.cmdletHit(a); ok {
+						return h, true
+					}
 					break
 				}
+			}
+		case psModuleVerbs[name] || (name == "using" && len(args) > 1 && strings.EqualFold(args[0], "module")):
+			if h, ok := s.psModuleArgs(args); ok {
+				return h, true
 			}
 		case name == "start-process" || name == "saps":
 			if h, ok := s.startProcess(args); ok {
 				return h, true
 			}
-		case name == "start": // cmd `start [/switches] ["title"] exe`
+		case name == "start": // cmd `start [/switches] ["title"] exe [args]`
 			for _, t := range cmdStartTargets(args) {
 				if h, ok := s.exeHit(t, ""); ok {
 					return h, true
@@ -1075,20 +1230,20 @@ func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
 			}
 		case (name == "powershell" || name == "pwsh") && depth < 3:
 			if dec, present, decoded := encodedPowerShell(args); present && decoded {
-				if h, ok := s.shell(base, dec, dec, depth+1); ok {
+				if h, ok := s.shell(base, dec, dec, depth+1, true); ok {
 					return h, true
 				}
 			}
 		case name == "eval" && depth < 3:
 			for _, a := range args {
-				if h, ok := s.shell(base, a, a, depth+1); ok {
+				if h, ok := s.shell(base, a, a, depth+1, ps); ok {
 					return h, true
 				}
 			}
 		case netVerbs[name]:
 			for _, a := range args {
-				if host := bareHost(a); host != "" {
-					if h, ok := s.hostHit(host); ok {
+				if host, path := bareHost(a); host != "" {
+					if h, ok := s.hostHit(host, path); ok {
 						return h, true
 					}
 				}
@@ -1097,13 +1252,13 @@ func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
 	}
 	// text scans: code (quotes kept, grep/commit/here-strings blanked) and expand (single
 	// quotes also blanked, for bash expansion/assignment).
-	code := maskTextArgs(text)
-	expand := blankSingleQuoted(code)
+	code := maskTextArgs(text, ps)
+	expand := blankSingleQuoted(code, ps)
 	if h, ok := s.exeSuffixHit(code); ok {
 		return h, true
 	}
 	for _, m := range urlRe.FindAllStringSubmatch(code, -1) {
-		if h, ok := s.hostHit(strings.Trim(strings.ToLower(m[1]), ".")); ok {
+		if h, ok := s.hostHit(cleanHost(m[1]), strings.ToLower(m[2])); ok {
 			return h, true
 		}
 	}
@@ -1254,18 +1409,27 @@ func (s *Scope) startProcess(args []string) (scopeHit, bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if strings.HasPrefix(a, "-") {
-			kind := startProcessOpt(a)
-			if kind == "" || i+1 >= len(args) {
+			// PowerShell binds -Name:value as the option and its value: split at the first
+			// ':' (a drive letter in the value, -FilePath:C:\x\aws.exe, stays in the value).
+			opt, val, colon := strings.Cut(a, ":")
+			kind := startProcessOpt(opt)
+			if kind == "" {
 				continue // a switch (-Wait, -NoNewWindow, -PassThru)
 			}
-			i++
+			if !colon {
+				if i+1 >= len(args) {
+					continue
+				}
+				i++
+				val = args[i]
+			}
 			switch kind {
 			case "exe":
-				if h, ok := s.exeHit(args[i], ""); ok {
+				if h, ok := s.exeHit(val, ""); ok {
 					return h, true
 				}
 			case "args":
-				for _, w := range strings.FieldsFunc(args[i], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\'' || r == '"' }) {
+				for _, w := range strings.FieldsFunc(val, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\'' || r == '"' }) {
 					if h, ok := s.exeHit(w, ""); ok {
 						return h, true
 					}
@@ -1283,19 +1447,27 @@ func (s *Scope) startProcess(args []string) (scopeHit, bool) {
 	return scopeHit{}, false
 }
 
-// cmdStartTargets reads the candidate exe words of a cmd `start [/switches] ["title"] exe`
-// line. The tokenizer drops the quotes, so a title cannot be told from the exe: the first two
-// non-switch words are both checked.
+// cmdStartValueSwitches are the cmd `start` switches that take the next word as a value.
+var cmdStartValueSwitches = wordSet("/d", "/affinity", "/node")
+
+// cmdStartTargets reads the candidate exe words of a cmd `start [/switches] ["title"] exe
+// [args]` line. The tokenizer drops the quotes, so a title cannot be told from the exe, and
+// the exe may itself be a wrapper (`start "" cmd /k aws`): every non-switch word is checked,
+// except the values of /d, /affinity and /node (ADR-0007 round 3).
 func cmdStartTargets(args []string) []string {
 	var out []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "/") || strings.Trim(a, `"'`) == "" {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "/") {
+			if cmdStartValueSwitches[strings.ToLower(a)] {
+				i++
+			}
+			continue
+		}
+		if strings.Trim(a, `"'`) == "" {
 			continue
 		}
 		out = append(out, a)
-		if len(out) == 2 {
-			break
-		}
 	}
 	return out
 }

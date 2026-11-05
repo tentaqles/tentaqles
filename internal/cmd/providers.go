@@ -60,12 +60,18 @@ func newProvidersListCmd() *cobra.Command {
 			if err := tw.Flush(); err != nil {
 				return err
 			}
-			for _, e := range loadErrs {
-				fmt.Fprintf(c.ErrOrStderr(), "warning: skipped a provider file: %v\n", e)
-			}
-			// Overlaps between providers are reported, never silent (ADR-0007 round 2).
+			// Overlaps between providers (the same entry, a host under another's) are
+			// reported, never silent (ADR-0007 rounds 2 and 3).
 			for _, o := range cat.Overlaps() {
 				fmt.Fprintf(c.ErrOrStderr(), "overlap: %s\n", o)
+			}
+			// A provider file tq did not load is an error: the list printed is not what the
+			// file says, so the command fails (ADR-0007 round 3).
+			for _, e := range loadErrs {
+				fmt.Fprintf(c.ErrOrStderr(), "error: %v\n", e)
+			}
+			if len(loadErrs) > 0 {
+				return fmt.Errorf("%d provider file(s) did not load; see the errors above", len(loadErrs))
 			}
 			return nil
 		},

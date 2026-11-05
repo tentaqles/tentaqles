@@ -91,12 +91,22 @@ func (m *Manifest) Scope() []string {
 	return out
 }
 
+// unknownProviderHint is what an unknown-provider error adds when a user provider file named
+// for the id exists but does not load (ADR-0007 round 3): the file, its first error and the
+// fix, so the developer is not told the id is unknown when it is the file that is broken.
+func unknownProviderHint(id string) string {
+	if fe := providers.UserFileError(id); fe != nil {
+		return ": the user provider file " + fe.Error()
+	}
+	return ""
+}
+
 // validateScope checks the scope: list: catalog ids, each once.
 func (m *Manifest) validateScope() error {
 	seen := map[string]bool{}
 	for _, id := range m.ExtraScope {
 		if _, ok := providers.MustLoad().Get(id); !ok {
-			return fmt.Errorf("scope: unknown provider %q (a catalog id: tq providers list)", id)
+			return fmt.Errorf("scope: unknown provider %q (a catalog id: tq providers list)%s", id, unknownProviderHint(id))
 		}
 		if seen[id] {
 			return fmt.Errorf("scope: %q is listed twice", id)

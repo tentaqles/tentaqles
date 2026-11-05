@@ -26,5 +26,5 @@ match:
   executables: [glab]
   env: [GITLAB_TOKEN, GLAB_CONFIG_DIR, GITLAB_HOST]
   paths: ["~/.config/glab-cli", "%APPDATA%/glab-cli"]
-  hosts: [gitlab.com]
+  hosts: [gitlab.com/api/, gitlab.com/oauth/]
   mcp: [gitlab]

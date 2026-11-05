@@ -105,6 +105,41 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   `python -m` past `-X`/`-W`, env APIs (`[Environment]::`, `Env:AWS_*`, `${#NAME}`,
   `declare -p`, `process.env` destructuring), `tar -C`, `%APPDATA%` expansion, Glob/Grep
   `pattern`+`glob`+`path`, registrable-domain hosts, and MCP exact-allow via `bundle.mcp`.
+- **Round 3: API hosts, per-shell quoting, bad provider files.**
+  - *API hosts, not registrable domains.* A `hosts` entry may carry a path prefix
+    (`gitlab.com/api/`). gh lists `api.github.com`, `uploads.github.com`,
+    `github.com/login/oauth/` and `github.com/login/device/` (no longer
+    `githubusercontent.com`); glab `gitlab.com/api/` and `gitlab.com/oauth/` (no longer
+    `gitlab.com`); gcloud 26 named `*.googleapis.com` API hosts plus
+    `storage.googleapis.com/storage/` and `/upload/storage/` (no longer `googleapis.com`).
+    So an Azure-only identity runs the helm and nvm install scripts from
+    raw.githubusercontent.com, Google Fonts, a public GCS download and `git clone` from
+    gitlab.com or github.com; the variable and credential-file rules still catch a credential
+    sent with them. `tq providers list` also reports a host under another provider's host.
+  - *Shared az.* `azure-devops` also claims `az account`, `az config`, `az version` and the
+    bare `az --version`/`az -h`: an azure-devops identity runs `az account show` and
+    `az account get-access-token` (for any resource, ARM included) without `az` in scope.
+    The subcommand is the first non-option word, so `az --debug vm list` is still `az vm`.
+  - *Catalog.* Stripe (`STRIPE_API_KEY`, `import stripe`, the `stripe/stripe-cli` image),
+    the Google Cloud client library (`google.cloud`), cloudflared (Cloudflare),
+    `git.heroku.com`, `*.supabase.co`, the `digitalocean/doctl` image, `mcp__gh__*`. New
+    `match` fields `psmodules` (`Import-Module AWS.Tools.S3`, `AWSPowerShell`, `Az`,
+    `GoogleCloud`) and `cmdlets` (`Set-AWSCredential`, `*-S3*`, `*-EC2*`, `*-Az*`, ...).
+  - *More routes.* Env reads `Deno.env.get('X')`, `Bun.env.X`, Ruby `ENV["X"]`/`ENV.fetch`,
+    Perl `$ENV{X}`; a URL in any string of an MCP tool input (`mcp__fetch__fetch`); the LS
+    tool; a quoted path segment (`$env:APPDATA\'GitHub CLI'`); every non-switch word of
+    `cmd start` past `/d`, `/affinity` and `/node` values; `Start-Process -FilePath:aws`.
+  - *Per-shell masking, fail closed.* The text masker reads PowerShell with PowerShell's
+    quoting (backtick escape, doubled quotes, a backslash is ordinary) and the string of a
+    nested `pwsh -Command`/`bash -c` with the inner shell's; it blanks nothing on an
+    unterminated quote, here-string or `$(`, and never a span that crosses a separator the
+    guard tokenizer saw (`guard.SeparatorSpans`).
+  - *Bad user provider files.* One that overrides a built-in id leaves the built-in lists in
+    force and the hook warns on stderr; one with a new id refuses calls only in a workspace
+    whose scope names it (it used to deny every call in every `guard: v2` workspace). A new
+    id that claims anything a built-in lists is refused at load. Every message gives the full
+    path, the first error and `fix or delete <path>, then run tq providers list`;
+    `tq providers list` exits non-zero and `tq doctor` reports `provider-file-invalid`.
 
 ### The signed integrity record (ADR-0004)
 

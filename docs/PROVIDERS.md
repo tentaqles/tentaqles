@@ -14,7 +14,8 @@ how to install it, how to log in" is data: the **provider catalog**.
   provider replaces it, except its `match:` lists, which are added to the
   built-in ones (an override never shortens what the guard recognises); a
   new id adds a new provider. Written by `tq providers add` or by hand (a
-  human: the folder is under the protected tq home).
+  human: the folder is under the protected tq home). See "A user file that does
+  not load" below.
 
 Load order: embedded catalog first, then user files layered on top by id.
 
@@ -64,8 +65,8 @@ match:                       # what the guard denies when an identity's scope le
   executables: [gh]
   env: [GH_TOKEN, GITHUB_TOKEN, GH_CONFIG_DIR]
   paths: ["~/.config/gh", "%APPDATA%/GitHub CLI"]
-  hosts: [api.github.com, uploads.github.com]
-  mcp: [github]
+  hosts: [api.github.com, uploads.github.com, github.com/login/oauth/]
+  mcp: [github, gh]
 ```
 
 ### Rules
@@ -95,7 +96,7 @@ match:                       # what the guard denies when an identity's scope le
 Every catalog file carries a `match:` block: the literal spellings the guard's
 identity category recognises as this provider when an identity's scope
 (`manifest.Scope()`, see [CLAUDE-HOOK.md](CLAUDE-HOOK.md#identity-scope-guard-v2-pre-tool-use))
-leaves it out and the manifest sets `guard: v2` (ADR-0007). All six lists are
+leaves it out and the manifest sets `guard: v2` (ADR-0007). Every list is
 optional; validated at load.
 
 | List | Entries | Matched as |
@@ -103,18 +104,22 @@ optional; validated at load.
 | `executables` | `^[A-Za-z0-9][A-Za-z0-9._+-]*$`, no suffix | the command word's last path element, lower-cased, suffix stripped; behind `sudo`/`env`/`xargs`/`wsl`/`find -exec`/`cmd start`; a runner's package (`npx`, `uvx`, `pipx run`, `uv tool run`, ...); `Start-Process`/`Get-Command`; a backslash-joined word (`a\ws`) |
 | `subcommands` | `exe -> [first-subcommand, ...]` | a part of a CLI another provider owns wholesale (`az: [devops, repos, ...]`). The most precise in-scope claim wins |
 | `images` | docker image names (`amazon/aws-cli`) | the image of `docker run`/`podman run` (basename or full) |
-| `modules` | dotted Python names (`awscli`, `azure.cli`) | `python -m <module>` (past `-X`/`-W` option values), or a module named in `-c` code (`run_module('awscli')`, `import boto3`) |
-| `env` | variable names; a trailing `*` is a prefix (`TF_TOKEN_*`) | a reference: `$NAME`, `${NAME}`, `${#NAME}`, `$env:NAME`, `%NAME%`, `Env:NAME`, `Env:NAME*`, `NAME=`, `export`/`unset`/`set`/`setx`/`printenv`/`declare -p NAME`, `[Environment]::SetEnvironmentVariable('NAME')`, `environ['NAME']`, `getenv("NAME")`, `process.env.NAME`, `const {NAME}=process.env`; case-insensitive. Not matched inside a single-quoted bash string, a grep pattern, a commit message or a here-string (those are text) |
-| `paths` | `~/...`, `%APPDATA%/...`, `%LOCALAPPDATA%/...`, forward slashes, no `..` or glob | the path and everything under it; `%APPDATA%`/`%LOCALAPPDATA%` expanded in file-tool paths and shell words; `tar -C <dir>` and a preceding `cd` set the base; a Glob/Grep `pattern`/`glob`/`path` and a recursive search above the tree. A root whose variable is unset is skipped |
-| `hosts` | lower-case DNS names with a dot | the host and every subdomain; use the registrable domain where the vendor owns it all (`googleapis.com`, `githubusercontent.com`) |
+| `modules` | dotted Python names (`awscli`, `azure.cli`, `google.cloud`) | `python -m <module>` (past `-X`/`-W` option values), or a module named in `-c` code (`run_module('awscli')`, `import boto3`, `from google.cloud import storage`); a dotted child is covered |
+| `psmodules` | PowerShell module names (`AWS.Tools`, `Az`) | an argument of `Import-Module`/`ipmo`, `Install-Module`, `Get-Module` and the other `*-Module`/`*-PSResource` verbs, or `using module`; a dotted child (`AWS.Tools.S3`) is covered |
+| `cmdlets` | `Verb-Noun`, or `*-<NounPrefix>*` | a command verb: the exact name (`Set-AWSCredential`), or any verb whose noun starts with the prefix (`*-S3*` matches `Get-S3Bucket`); also `Get-Command <name>`; case-insensitive. Pick prefixes no core PowerShell noun starts with |
+| `env` | variable names; a trailing `*` is a prefix (`TF_TOKEN_*`) | a reference: `$NAME`, `${NAME}`, `${#NAME}`, `$env:NAME`, `%NAME%`, `Env:NAME`, `Env:NAME*`, `NAME=`, `export`/`unset`/`set`/`setx`/`printenv`/`declare -p NAME`, `[Environment]::SetEnvironmentVariable('NAME')`, `environ['NAME']`, `getenv("NAME")`, `process.env.NAME`, `const {NAME}=process.env`, `Deno.env.get('NAME')`, `Bun.env.NAME`, Ruby `ENV["NAME"]`/`ENV.fetch("NAME")`, Perl `$ENV{NAME}`; case-insensitive. Not matched inside a single-quoted bash string, a grep pattern, a commit message or a here-string (those are text) |
+| `paths` | `~/...`, `%APPDATA%/...`, `%LOCALAPPDATA%/...`, forward slashes, no `..` or glob | the path and everything under it, in a file tool (Read, Write, Edit, Glob, Grep, LS, ...); `%APPDATA%`/`%LOCALAPPDATA%` expanded in file-tool paths and shell words; a quoted segment (`$env:APPDATA\'GitHub CLI'`) read without its quotes; `tar -C <dir>` and a preceding `cd` set the base; a Glob/Grep `pattern`/`glob`/`path` and a recursive search above the tree. A root whose variable is unset is skipped |
+| `hosts` | lower-case DNS names with a dot, optionally followed by a path prefix (`gitlab.com/api/`) | the host and every subdomain, in a URL anywhere in a shell line, a network verb's bare host, a WebFetch URL and any string of an MCP tool input; with a path prefix, only URLs under it. List **API hosts**, never a whole registrable domain that also serves public content: `api.github.com`, not `githubusercontent.com`; named `*.googleapis.com` API hosts, not `googleapis.com`; `gitlab.com/api/`, not `gitlab.com` |
 | `mcp` | `^[a-z0-9]+$` tokens | a token of the MCP server name (split on `_ - .`, adjacent pairs joined: `google-cloud` → `googlecloud`). An MCP server is allowed only when its exact name is the identity's own `claude.bundle.mcp`; any out-of-scope token otherwise denies |
 
 Rules of thumb for a new entry:
 
-- List the vendor's **own** CLI, variables, credential files, API hosts and MCP
-  server names. Leave out what an application uses at run time (an
-  `OPENAI_API_KEY`, a `STRIPE_SECRET_KEY`, an app's `*.supabase.co` URL) and
-  documentation sites.
+- List the vendor's CLI, its SDK modules (`boto3`, `google.cloud`, `stripe`), its
+  PowerShell modules and cmdlets, its variables, credential files, API hosts
+  (including per-project API hosts such as `*.supabase.co`, listed as
+  `supabase.co`) and MCP server names. Leave out documentation sites and hosts
+  that serve public downloads: a public download carries no credential, and the
+  `env` and `paths` lists are what catch one sent with it.
 - A generic cross-cloud tool (docker, helm, kubectl, terraform, pulumi, npm,
   psql, dbt) lists no executable, and no credential `paths` either: a
   kubeconfig, an npmrc or a docker config is the developer's own cross-cloud
@@ -130,10 +135,41 @@ Rules of thumb for a new entry:
   either way). To stop the guard matching a provider, add it to the
   identity's `scope:`.
 
+### A user file that does not load
+
+A file under `~/.tentaqles/providers/` that cannot be read, does not parse or
+validate, sets another provider's identity variable, or (for a new id) claims
+anything a built-in provider lists, is not loaded. Every message names the
+full path, the first error and the fix: `fix or delete <path>, then run tq
+providers list`.
+
+- **It overrides a built-in id** (`gh.yaml`): the built-in entry and its match
+  lists stay in force, and the hook prints a warning on stderr with every
+  answer in a `guard: v2` workspace until the file is fixed.
+- **It defines a new id**: calls are refused (`tq/guard-error`) only in a
+  workspace whose scope names that id (its `scope:` list, an identity, the git
+  provider); a manifest that names it reports the file in its load error.
+  Other workspaces are unaffected.
+- **A new id may not claim a built-in's entries**: an executable, subcommand,
+  image, module, PowerShell module or cmdlet, variable, path (or one under it),
+  host (or one under it) or MCP token a built-in provider lists. An in-scope
+  provider's claims come from the built-in catalog, so such an entry would let
+  an identity that scopes the new id use the built-in's CLI. To extend a
+  built-in, name the file for its id instead.
+- `tq providers list` prints the catalog, every overlap between providers (the
+  same entry, or a host under another's host) and every file it did not load,
+  and exits non-zero when one did not load. `tq doctor` reports each one as
+  `provider-file-invalid` (a warning for an override, an error for a new id).
+
 ## Company tools in the catalog
 
 - `azure-devops`: the `az` CLI, with `AZURE_CONFIG_DIR` as its identity variable (shared
-  with `az`). Login is `az login` (`az devops login` only stores a PAT), verify is
+  with `az`). Its match claims only part of `az`: `az devops|repos|pipelines|boards|
+  artifacts|login|extension|account|config|version` and the bare `az --version`/`az -h`. So
+  an identity with `azure-devops` but not `az` runs `az account show`, `az account
+  get-access-token` (for any resource: Azure DevOps's, and also ARM's, so a logged-in
+  account can mint an ARM token), `az config set` and `az login`, while `az vm`, `az group`
+  and `~/.azure` stay denied. Login is `az login` (`az devops login` only stores a PAT), verify is
   `az account show` (account `user.name`, subscription `name`). Install hints add
   `az extension add --name azure-devops`.
 - `jira`: the `acli` CLI (Atlassian CLI), login `acli jira auth login`, verify

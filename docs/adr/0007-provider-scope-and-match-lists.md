@@ -222,5 +222,108 @@ Tests: `TestScope_EveryProvider` (a table over all 62 catalog entries),
 `TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFileDeniesAll`,
 `TestPreToolUse_GuardMappingIsV1`, and the expanded fixtures of the round-1 rule tables.
 
+## Round 3 (2026-11-05): API hosts, per-shell quoting, bad provider files
+
+A second review found routes round 2 still let through, everyday commands it stopped, and
+that one bad user provider file switched every `guard: v2` workspace off. The decisions:
+
+**Hosts are API hosts, never whole registrable domains** (reverses round 2's
+`googleapis.com` and `githubusercontent.com`). A domain that also serves public content
+made the guard deny the helm and nvm install scripts (raw.githubusercontent.com), Google
+Fonts (fonts.googleapis.com), a public GCS download (storage.googleapis.com) and
+`git clone https://gitlab.com/...` for an Azure-only identity. A `hosts` entry may now carry
+a path prefix, for a vendor whose API shares a host with public content: gh lists
+`api.github.com`, `uploads.github.com`, `github.com/login/oauth/` and
+`github.com/login/device/` (the OAuth and device-flow endpoints its CLI logs in through);
+glab `gitlab.com/api/` and `gitlab.com/oauth/`; gcloud 26 named `*.googleapis.com` API hosts
+(OAuth, STS, IAM, Resource Manager, Compute, GKE, Run, Functions, Build, Artifact Registry,
+Secret Manager, KMS, SQL Admin, BigQuery, Pub/Sub, Logging, Monitoring, DNS, App Engine,
+Firestore, Spanner, Dataproc, Dataflow, Vertex AI, Service Usage, IAM credentials) plus
+`storage.googleapis.com/storage/` and `/upload/storage/` (the GCS JSON API) and `gcr.io`. **A
+public content download with no credential is allowed**: it reaches nothing of the
+identity, and the variable and credential-file rules still deny a credential sent with it
+(`curl -H "Authorization: token $GH_TOKEN" https://raw.githubusercontent.com/...` is
+`out-of-scope-env`). Accepted cost: a GCS bucket read by its virtual-host name
+(`<bucket>.storage.googleapis.com`) or a regional API host (`us-central1-aiplatform...`) is
+not matched; the identity's private config home is what makes those fail without a token.
+Overlaps report a host under another provider's host too. Other providers' host lists
+(slack.com, sentry.io, oraclecloud.com) were not changed in this round.
+
+**Shared az: the bare invocation and `account`, `config`, `version`.** azure-devops also
+claims `az account|config|version` and `az` run with options only (`az --version`, `az -h`),
+so an azure-devops identity without `az` runs `az account show` and
+`az account get-access-token --resource 499b84ac-...`. The claim is per first subcommand, so
+`az account get-access-token` for ARM is allowed too: an account logged in for Azure DevOps
+can mint an ARM token. Recorded, not prevented: the subcommand schema has no second level,
+and the private `AZURE_CONFIG_DIR` limits what that account is. The first subcommand is now
+the first word that is not an option (past the values of `-o/--output`, `--query`,
+`--subscription`), so `az --debug vm list` is `az vm`.
+
+**Catalog and route gaps.** Stripe (`STRIPE_API_KEY`, `import stripe`, the
+`stripe/stripe-cli` image), the Google Cloud client library (`google.cloud`), cloudflared
+(Cloudflare), `git.heroku.com`, `supabase.co` (every project's `*.supabase.co` API), the
+`digitalocean/doctl` image, `mcp__gh__*`. The rule of thumb changes: a vendor's SDK modules
+and per-project API hosts are listed (an application talking to an out-of-scope vendor is
+that vendor's work, and `scope:` is how an identity takes it in). Two new `match` lists:
+`psmodules` (Import-Module and the other module verbs: `AWS.Tools`, `AWSPowerShell`, `Az`,
+`AzureRM`, `AzureAD`, `GoogleCloud`, a dotted child covered) and `cmdlets` (a command verb:
+an exact `Verb-Noun` or `*-<NounPrefix>*`; aws lists `*-AWS*`, `*-S3*`, `*-EC2*` and 15 more
+service prefixes no core PowerShell noun starts with, az `*-Az*`, gcloud `*-Gcs*`, `*-Gce*`).
+Env reads in other languages: `Deno.env.get('X')`, `Bun.env.X`/`Bun.env['X']`, Ruby
+`ENV["X"]`/`ENV.fetch("X")`, Perl `$ENV{X}`. A URL in any string of an MCP tool input
+(`mcp__fetch__fetch {"url": ...}`) is judged like a WebFetch. The LS tool is judged like a
+Read of its path (identity category only). A path with a quoted segment
+(`$env:APPDATA\'GitHub CLI'`) is matched once its quotes are removed. `cmd /c start` checks
+every non-switch word (skipping the values of `/d`, `/affinity`, `/node`), so a title, a
+wrapper (`start "" cmd /k aws`) or a value switch cannot hide the target. `Start-Process
+-FilePath:aws` binds the option at the first ':' (a drive letter in the value stays in the
+value). `docker [global options] [container] run` and grep/commit text blanked at its own
+span were already right in round 2 (the offset masker of 8ff7b51) and are pinned as tests.
+
+**Per-shell masking, fail closed.** The masker read every line with bash quoting, so in a
+PowerShell line `git commit -m "x\" ; curl https://api.github.com/user ; echo \"y"` it
+blanked the curl as part of the message (PowerShell ends the string at the second quote; a
+backslash is ordinary). It now reads the Bash tool's line with bash rules, the PowerShell
+tool's and a decoded `-EncodedCommand` with PowerShell's (a backtick escapes and marks the
+word as code, `''` and `""` inside a string are a quote, a here-string runs to `'@`/`"@` at
+a line start), and the string of a nested `pwsh -Command "..."` or `bash -c '...'` with the
+inner shell's rules. It blanks nothing when a quote, a here-string or a `$(` is left open,
+and never a span that crosses a separator the guard tokenizer saw: `guard.SeparatorSpans`
+exports the tokenizer's separator offsets, so where the two readers disagree about what is
+quoted the span is scanned, not blanked. The single-quote blanking of the expansion scan
+follows the same rules.
+
+**A bad user provider file is judged per workspace** (replaces round 2's "deny every call in
+every `guard: v2` workspace"). A file that cannot be read, parse, validate or set its
+identity variable without colliding is a `providers.FileError` naming the full path, the
+first error and the fix (`fix or delete <path>, then run tq providers list`):
+- an override of a built-in id contributes nothing: the built-in entry and its lists stay in
+  force, and the hook prints the error as a warning on stderr with every answer in a
+  `guard: v2` workspace;
+- a new id is refused only where the scope names it: the hook denies every call with
+  `tq/guard-error` when the identity's `scope:`, identities or git provider names the id, and
+  a manifest that names an id whose file does not load says so in its load error (so the
+  workspace is denied through the unreadable-manifest path with the file named);
+- a new id that claims any entry a built-in provider lists (an executable, a subcommand, an
+  image, a Python or PowerShell module, a cmdlet, a variable or prefix, a path or one under
+  it, a host or one under it, an MCP token) is refused at load. Round 2 took an in-scope
+  provider's claims from the embedded catalog and fell back to the merged entry for an id the
+  embedded catalog lacks, so a user file `acme.yaml` claiming `aws` and an identity with
+  `scope: [acme]` would have allowed `aws`. To extend a built-in, the file is named for its id.
+`tq providers list` prints every bad file and exits non-zero; `tq doctor` reports
+`provider-file-invalid` (a warning for an override, an error for a new id). A provider folder
+tq cannot list stays a guard error for a `guard: v2` workspace.
+
+This round changes `internal/guard` (the exported `SeparatorSpans`), `internal/policy`,
+`internal/providers` and the catalog, `internal/manifest` (the unknown-id hint),
+`internal/doctor` and `internal/cmd`.
+
+Tests: `TestScope_Round3Missed`, `TestScope_Round3FalsePositives`,
+`TestScope_PerShellQuoting`, `TestMaskTextArgs_FailClosed`, `TestScope_EveryProvider` (now
+every entry of every list, hosts through WebFetch and a shell command, `%LOCALAPPDATA%`
+paths, exact counts: 57 providers, 584 checks, plus LS and a quoted `%APPDATA%` segment),
+`TestScope_UserOverrideCannotAllow` (a new id claiming a built-in's entry, one row per list),
+`TestPreToolUse_BadProviderFiles`, `TestProviders_BadFilesReported`.
+
 Records are never edited after acceptance. A changed mind is a new record that
 supersedes this one.

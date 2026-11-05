@@ -202,7 +202,7 @@ func Load(path string) (*Manifest, error) {
 	for name := range m.Identities {
 		known := KnownIdentities()
 		if !contains(known, name) {
-			return nil, fmt.Errorf("%s: unknown identity %q (known: %v)", path, name, known)
+			return nil, fmt.Errorf("%s: unknown identity %q (known: %v)%s", path, name, known, unknownProviderHint(name))
 		}
 	}
 	if err := m.validateCloud(); err != nil {

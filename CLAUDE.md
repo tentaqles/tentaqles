@@ -109,12 +109,15 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestScope_OtherIdentity`, `TestScope_InScopeWins`, `TestCatalogMatchLists`,
   `TestUserOverrideExtendsMatch`.
 - Under `guard: v2` the scope is provider-specific (a shared CLI is owned per subcommand, a
-  user file can only widen denial), a folder whose manifest or a provider file cannot be read
-  denies every tool with `tq/guard-error`, and grep patterns / commit messages / here-strings
-  stay text while real expansions are denied: `TestScope_EveryProvider` (all 62 providers),
-  `TestScope_SharedCLIPrecision`, `TestScope_UserOverrideCannotAllow`,
-  `TestScope_MCPExactAllowAndPrecedence`, `TestScope_Mutants`,
-  `TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFileDeniesAll`,
+  user file can only widen denial, a new user id may not claim a built-in's entry), a folder
+  whose manifest cannot be read denies every tool with `tq/guard-error`, a bad user provider
+  file keeps the built-in lists (an override) or denies only where the scope names it (a new
+  id), and grep patterns / commit messages / here-strings stay text, by each shell's own
+  quoting, while real expansions are denied: `TestScope_EveryProvider` (every entry of every
+  list), `TestScope_SharedCLIPrecision`, `TestScope_UserOverrideCannotAllow`,
+  `TestScope_MCPExactAllowAndPrecedence`, `TestScope_Mutants`, `TestScope_Round3Missed`,
+  `TestScope_Round3FalsePositives`, `TestScope_PerShellQuoting`, `TestMaskTextArgs_FailClosed`,
+  `TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFiles`,
   `TestPreToolUse_GuardMappingIsV1`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,7 +61,8 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set) *
 	home, _ := os.UserHomeDir()
 	// The merged catalog (embedded + user files) is what an out-of-scope provider DENIES; the
 	// embedded match is what an in-scope provider CLAIMS, so a user file can never widen a
-	// claim (ADR-0007). A bad user file never reaches here: scopeCatalogError denied first.
+	// claim (ADR-0007). A user file that does not load is left out: its built-in entry (an
+	// override) stays in force, and a new id the scope names was denied by scopeCatalogError.
 	cat, _ := providers.LoadAll()
 	embedded := map[string]providers.Match{}
 	if ec, err := providers.Embedded(); err == nil {
@@ -81,23 +83,50 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set) *
 	return s
 }
 
-// scopeCatalogError is why a guard: v2 identity's provider catalog cannot be used (a user
-// provider file that does not load), or "". pre-tool-use denies every call on it through the
-// same fail-closed path as an unreadable manifest (resolve.Result.Unreadable): one
-// mechanism, never a silent skip of the bad file (ADR-0007).
-func scopeCatalogError(ws *resolve.Workspace) string {
+// scopeCatalogError judges the user provider files for a guard: v2 identity (ADR-0007 round
+// 3). deny is why every call must be refused, or "": a file tq did not load whose id the
+// identity's scope names (its scope: list, an identity, the git provider), or a provider
+// folder tq cannot read. warnings name the files that override a built-in id and did not
+// load: the built-in lists stay in force and work goes on. A bad file with a new id the scope
+// does not name changes nothing here; tq doctor and tq providers list report every bad file.
+// The deny goes through the same fail-closed path as an unreadable manifest
+// (resolve.Result.Unreadable): one mechanism, never a silent skip of the bad file.
+func scopeCatalogError(ws *resolve.Workspace) (deny string, warnings []string) {
 	if ws == nil || ws.Manifest == nil || !ws.Manifest.GuardV2() {
-		return ""
+		return "", nil
 	}
-	if _, errs := providers.LoadAll(); len(errs) > 0 {
-		msgs := make([]string, 0, len(errs))
-		for _, e := range errs {
-			msgs = append(msgs, e.Error())
+	_, errs := providers.LoadAll()
+	if len(errs) == 0 {
+		return "", nil
+	}
+	named := map[string]bool{}
+	for _, id := range ws.Manifest.Scope() {
+		named[id] = true
+	}
+	for _, id := range ws.Manifest.ExtraScope {
+		named[id] = true
+	}
+	for id := range ws.Manifest.Identities {
+		named[id] = true
+	}
+	if gp := strings.ToLower(strings.TrimSpace(ws.Manifest.Git.Provider)); gp != "" {
+		named[gp] = true
+	}
+	for _, e := range errs {
+		var fe *providers.FileError
+		if !errors.As(e, &fe) {
+			return "the provider catalog of identity " + ws.Name + " cannot be read (" + e.Error() +
+				"): tq cannot tell what this identity may touch, so it denies every call here until a human fixes ~/.tentaqles/providers", nil
 		}
-		return "the provider catalog of identity " + ws.Name + " cannot be read (" + strings.Join(msgs, "; ") +
-			"): tq cannot tell what this identity may touch, so it denies every call here until a human fixes or removes the file under ~/.tentaqles/providers"
+		switch {
+		case fe.Builtin:
+			warnings = append(warnings, "tq: warning: provider file "+fe.Error())
+		case named[fe.ID]:
+			return "the scope of identity " + ws.Name + " names provider " + fe.ID + ", whose file does not load (" + fe.Error() +
+				"): tq cannot tell what this identity may touch, so it denies every call here", nil
+		}
 	}
-	return ""
+	return "", warnings
 }
 
 // otherIdentities names every identity but ws: the folders under ~/.tentaqles/identities and

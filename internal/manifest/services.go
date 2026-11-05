@@ -37,7 +37,7 @@ func (s *Service) validate(field string, known []string) error {
 		return fmt.Errorf("%s.provider is required (%s)", field, strings.Join(known, ", "))
 	}
 	if !contains(known, s.Provider) {
-		return fmt.Errorf("%s.provider: unknown provider %q (known: %s)", field, s.Provider, strings.Join(known, ", "))
+		return fmt.Errorf("%s.provider: unknown provider %q (known: %s)%s", field, s.Provider, strings.Join(known, ", "), unknownProviderHint(s.Provider))
 	}
 	return nil
 }
@@ -77,7 +77,7 @@ func (m *Manifest) ValidateServices() error {
 		seen := map[string]bool{}
 		for _, a := range m.Agents {
 			if !contains(known, a) {
-				return fmt.Errorf("agents: unknown agent CLI %q (known: %s)", a, strings.Join(known, ", "))
+				return fmt.Errorf("agents: unknown agent CLI %q (known: %s)%s", a, strings.Join(known, ", "), unknownProviderHint(a))
 			}
 			if seen[a] {
 				return fmt.Errorf("agents: %q is listed twice", a)

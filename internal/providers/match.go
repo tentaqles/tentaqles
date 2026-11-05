@@ -42,8 +42,20 @@ type Match struct {
 	// folder covers everything under it.
 	Paths []string `yaml:"paths,omitempty"`
 	// Hosts are API hostnames. A host matches itself and every subdomain: amazonaws.com
-	// matches ec2.amazonaws.com.
+	// matches ec2.amazonaws.com. An entry may carry a path prefix, for a vendor whose API
+	// shares a host with public content: gitlab.com/api/ matches https://gitlab.com/api/v4/x
+	// but not https://gitlab.com/group/repo.git (ADR-0007 round 3). List API hosts, never a
+	// whole registrable domain that also serves public downloads (githubusercontent.com,
+	// googleapis.com).
 	Hosts []string `yaml:"hosts,omitempty"`
+	// PSModules are PowerShell module names (AWS.Tools, AWSPowerShell): matched as the
+	// argument of Import-Module, Install-Module and the other *-Module / *-PSResource verbs and
+	// `using module`; a dotted child (AWS.Tools.S3) is covered by its parent.
+	PSModules []string `yaml:"psmodules,omitempty"`
+	// Cmdlets are PowerShell command names of the provider's modules, matched as a command
+	// verb: an exact name (Set-AWSCredential), or `*-<NounPrefix>*` for any verb whose noun
+	// starts with the prefix (`*-S3*` matches Get-S3Bucket). Case-insensitive.
+	Cmdlets []string `yaml:"cmdlets,omitempty"`
 	// MCP are tokens of an MCP server name. The server segment of mcp__<server>__<tool> is
 	// split on _ - . and lower-cased; the server matches when one of its tokens is listed
 	// (aws matches aws, awslabs-aws-api and plugin_x_aws).
@@ -52,18 +64,83 @@ type Match struct {
 
 // Empty reports whether m matches nothing.
 func (m Match) Empty() bool {
-	return len(m.Executables)+len(m.Subcommands)+len(m.Images)+len(m.Modules)+len(m.Env)+len(m.Paths)+len(m.Hosts)+len(m.MCP) == 0
+	return len(m.Executables)+len(m.Subcommands)+len(m.Images)+len(m.Modules)+len(m.PSModules)+len(m.Cmdlets)+
+		len(m.Env)+len(m.Paths)+len(m.Hosts)+len(m.MCP) == 0
 }
 
 var (
-	matchExeRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
-	matchSubRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	matchImageRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
-	matchModuleRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
-	matchEnvRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\*?$`)
-	matchHostRe   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
-	matchMCPRe    = regexp.MustCompile(`^[a-z0-9]+$`)
+	matchExeRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+	matchSubRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	matchImageRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	matchModuleRe   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+	matchPSModuleRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)*$`)
+	matchCmdletRe   = regexp.MustCompile(`^(\*|[A-Za-z]+)-[A-Za-z0-9]+\*?$`)
+	matchEnvRe      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\*?$`)
+	matchHostRe     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[a-z0-9._~-]+)*/?$`)
+	matchMCPRe      = regexp.MustCompile(`^[a-z0-9]+$`)
 )
+
+// SplitHost splits a hosts entry into its host and its path prefix ("" when it has none):
+// gitlab.com/api/ -> gitlab.com, /api/.
+func SplitHost(entry string) (host, path string) {
+	if i := strings.IndexByte(entry, '/'); i >= 0 {
+		return entry[:i], entry[i:]
+	}
+	return entry, ""
+}
+
+// HostMatches reports whether a request to host with URL path path (lower-cased; "" or "/"
+// for none) is covered by a hosts entry: the host or a subdomain of it, and, when the entry
+// has a path prefix, a path under it.
+func HostMatches(entry, host, path string) bool {
+	eh, ep := SplitHost(entry)
+	if host != eh && !strings.HasSuffix(host, "."+eh) {
+		return false
+	}
+	if ep == "" {
+		return true
+	}
+	if path == "" {
+		path = "/"
+	}
+	return strings.HasPrefix(path, ep) || path+"/" == ep
+}
+
+// HostsOverlap reports whether two hosts entries can match one request: the same host, or
+// one a subdomain of the other (path prefixes are ignored, so the answer errs towards yes).
+func HostsOverlap(a, b string) bool {
+	ah, _ := SplitHost(a)
+	bh, _ := SplitHost(b)
+	return ah == bh || strings.HasSuffix(ah, "."+bh) || strings.HasSuffix(bh, "."+ah)
+}
+
+// CmdletMatches reports whether a PowerShell command name matches a cmdlets entry: the exact
+// name, or for `*-<Prefix>*` any Verb-Noun whose noun starts with the prefix. Case-insensitive.
+func CmdletMatches(entry, name string) bool {
+	e, n := strings.ToLower(entry), strings.ToLower(name)
+	if !strings.HasPrefix(e, "*-") && !strings.HasSuffix(e, "*") {
+		return e == n
+	}
+	ev, en, _ := strings.Cut(e, "-")
+	nv, nn, ok := strings.Cut(n, "-")
+	if !ok || nv == "" || nn == "" {
+		return false
+	}
+	if ev != "*" && ev != nv {
+		return false
+	}
+	if p, ok := strings.CutSuffix(en, "*"); ok {
+		return strings.HasPrefix(nn, p)
+	}
+	return en == nn
+}
+
+// DottedCovers reports whether a dotted module entry covers name: the same module or a child
+// of it (azure.cli covers azure.cli.core; AWS.Tools covers AWS.Tools.S3). Case-insensitive.
+func DottedCovers(entry, name string) bool {
+	e, n := strings.ToLower(entry), strings.ToLower(name)
+	return n == e || strings.HasPrefix(n, e+".")
+}
 
 // PathRoots are the prefixes a match path may start with.
 var PathRoots = []string{"~/", "%APPDATA%/", "%LOCALAPPDATA%/"}
@@ -94,6 +171,12 @@ func (m Match) Validate() error {
 		return err
 	}
 	if err := check("modules", m.Modules, matchModuleRe); err != nil {
+		return err
+	}
+	if err := check("psmodules", m.PSModules, matchPSModuleRe); err != nil {
+		return err
+	}
+	if err := check("cmdlets", m.Cmdlets, matchCmdletRe); err != nil {
 		return err
 	}
 	if err := check("env", m.Env, matchEnvRe); err != nil {
@@ -152,6 +235,8 @@ func (m Match) Union(o Match) Match {
 		Subcommands: subs,
 		Images:      u(m.Images, o.Images),
 		Modules:     u(m.Modules, o.Modules),
+		PSModules:   u(m.PSModules, o.PSModules),
+		Cmdlets:     u(m.Cmdlets, o.Cmdlets),
 		Env:         u(m.Env, o.Env),
 		Paths:       u(m.Paths, o.Paths),
 		Hosts:       u(m.Hosts, o.Hosts),

@@ -58,6 +58,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	var fs []Finding
 	add := func(level, code, ws, msg, fix string) { fs = append(fs, Finding{level, code, ws, msg, fix}) }
 
+	providerFileFindings(add)
 	if len(cfg.Bases) == 0 {
 		add("error", "no-bases", "", "no base folders registered", "tq init <folder>")
 		return fs

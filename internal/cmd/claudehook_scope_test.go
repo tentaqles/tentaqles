@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -212,20 +213,125 @@ func TestPreToolUse_UnreadableManifestDeniesAll(t *testing.T) {
 	}
 }
 
-// TestPreToolUse_BadProviderFileDeniesAll: an invalid user provider file is a guard error in
-// the hook (deny, name the file), never a silent skip (ADR-0007 round 2).
-func TestPreToolUse_BadProviderFileDeniesAll(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
-	dir := filepath.Join(paths.Home(), "providers")
+// TestPreToolUse_BadProviderFiles: a user provider file that fails to parse or validate
+// (ADR-0007 round 3). One that overrides a built-in id leaves the built-in lists in force and
+// the hook warns; one with a new id refuses calls only in a workspace whose scope names that
+// id; a new id that claims a built-in's entry is refused at load. Every message names the
+// full path, the first error and the fix.
+func TestPreToolUse_BadProviderFiles(t *testing.T) {
+	const broken = "name: [broken\n"
+	cases := []struct {
+		name, file, body string
+		scopeExtra       string // appended to company-x's manifest
+		tool, input      string
+		code             int
+		rule             string // the denying rule, or "" when allowed
+		warn             bool   // the hook prints the bad-file warning
+	}{
+		{"a broken override keeps the built-in lists: gh still denied", "gh.yaml", "id: gh\n" + broken, "",
+			"Bash", cmdIn("gh pr list"), 2, policy.OutOfScopeCLIID, true},
+		{"a broken override: ordinary work goes on, with a warning", "gh.yaml", "id: gh\n" + broken, "",
+			"Bash", cmdIn("git status"), 0, "", true},
+		{"an invalid override (bad match entry) keeps the built-in lists", "aws.yaml",
+			"id: aws\nname: AWS\ncategory: cloud\nmatch:\n  executables: [\"a b\"]\n", "",
+			"Bash", cmdIn("aws s3 ls"), 2, policy.OutOfScopeCLIID, true},
+		{"a broken new id outside the scope changes nothing", "zz.yaml", "id: zz\n" + broken, "",
+			"Bash", cmdIn("git status"), 0, "", false},
+		{"a broken new id the scope names refuses every call", "zz.yaml", "id: zz\n" + broken, "scope: [zz]\n",
+			"Bash", cmdIn("git status"), 2, policy.GuardErrorID, false},
+		{"a new id claiming a built-in's executable is refused at load", "acme.yaml",
+			"id: acme\nname: Acme\ncategory: cloud\nmatch:\n  executables: [aws]\n", "",
+			"Bash", cmdIn("aws s3 ls"), 2, policy.OutOfScopeCLIID, false},
+		{"a refused new id the scope names refuses every call", "acme.yaml",
+			"id: acme\nname: Acme\ncategory: cloud\nmatch:\n  executables: [aws]\n", "scope: [acme]\n",
+			"Read", pathIn("file_path", "README.md"), 2, policy.GuardErrorID, false},
+	}
+	for _, c := range cases {
+		root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody+c.scopeExtra)
+		dir := filepath.Join(paths.Home(), "providers")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(dir, c.file)
+		if err := os.WriteFile(file, []byte(c.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		code, _, rule, errOut := hookDecision(t, root, c.tool, c.input)
+		if code != c.code || rule != c.rule {
+			t.Errorf("%s: code=%d rule=%q, want %d %q (%s)", c.name, code, rule, c.code, c.rule, errOut)
+			continue
+		}
+		fix := "fix or delete " + file + ", then run tq providers list"
+		if c.rule == policy.GuardErrorID && !strings.Contains(errOut, fix) {
+			t.Errorf("%s: the refusal does not name the file and the fix: %q", c.name, errOut)
+		}
+		if hasWarn := strings.Contains(errOut, "warning") && strings.Contains(errOut, fix); hasWarn != c.warn {
+			t.Errorf("%s: warning printed=%v, want %v: %q", c.name, hasWarn, c.warn, errOut)
+		}
+	}
+}
+
+// TestProviders_BadFilesReported: tq providers list exits non-zero on a bad user file and
+// names it with the first error and the fix; tq doctor lists it as a finding; an overlap
+// between host suffixes is reported (ADR-0007 round 3).
+func TestProviders_BadFilesReported(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("TQ_HOME", home)
+	dir := filepath.Join(home, "providers")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "zz.yaml"), []byte("id: zz\nname: [broken\n"), 0o600); err != nil {
+	bad := filepath.Join(dir, "zz.yaml")
+	if err := os.WriteFile(bad, []byte("id: zz\nname: [broken\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	code, _, rule, errOut := hookDecision(t, root, "Bash", cmdIn("git status"))
-	if code != 2 || rule != policy.GuardErrorID {
-		t.Fatalf("bad provider file: code=%d rule=%q (%s)", code, rule, errOut)
+	// two valid new ids, one host under the other's: a suffix overlap
+	for name, body := range map[string]string{
+		"acme.yaml":   "id: acme\nname: Acme\ncategory: cloud\nmatch:\n  hosts: [acme.example]\n",
+		"acme-2.yaml": "id: acme-2\nname: Acme 2\ncategory: cloud\nmatch:\n  hosts: [api.acme.example]\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := NewRoot()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"providers", "list"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("tq providers list exited zero with a bad provider file")
+	}
+	all := errOut.String() + err.Error()
+	for _, want := range []string{bad, "fix or delete " + bad + ", then run tq providers list", "api.acme.example"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("providers list does not report %q: %s", want, all)
+		}
+	}
+
+	prevExit := exitFunc
+	exitFunc = func(int) {}
+	t.Cleanup(func() { exitFunc = prevExit })
+	root = NewRoot()
+	out.Reset()
+	root.SetOut(&out)
+	root.SetArgs([]string{"doctor", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var findings []struct{ Code, Msg, Fix string }
+	if err := json.Unmarshal(out.Bytes(), &findings); err != nil {
+		t.Fatalf("doctor --json: %v (%s)", err, out.String())
+	}
+	found := false
+	for _, f := range findings {
+		if f.Code == "provider-file-invalid" && strings.Contains(f.Msg, bad) && strings.Contains(f.Fix, "tq providers list") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("doctor does not list the bad provider file: %+v", findings)
 	}
 }
 

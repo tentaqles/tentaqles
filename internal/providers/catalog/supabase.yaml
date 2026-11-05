@@ -21,5 +21,5 @@ match:
   executables: [supabase]
   env: [SUPABASE_ACCESS_TOKEN]
   paths: ["~/.supabase"]
-  hosts: [api.supabase.com]
+  hosts: [api.supabase.com, supabase.co]
   mcp: [supabase]

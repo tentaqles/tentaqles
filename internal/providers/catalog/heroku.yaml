@@ -15,5 +15,5 @@ cli:
 match:
   executables: [heroku]
   env: [HEROKU_API_KEY]
-  hosts: [api.heroku.com]
+  hosts: [api.heroku.com, git.heroku.com]
   mcp: [heroku]

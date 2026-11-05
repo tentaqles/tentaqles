@@ -1,10 +1,12 @@
 package policy
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/protect"
 	"github.com/tentaqles/tentaqles/internal/providers"
 )
@@ -27,74 +29,117 @@ func scopeOver(t *testing.T, home string, set *protect.Set, env func(string) str
 	})
 }
 
-// TestScope_EveryProvider: for all 62 catalog providers, every signal it declares (an
-// executable or subcommand, a module, an env var, a credential path, an API host, an MCP
-// server) is denied under an identity without it and allowed under one with it.
+// TestScope_EveryProvider: for every catalog provider, every entry of every match list (each
+// executable, subcommand, image, module, PowerShell module and cmdlet, env name, credential
+// path including %LOCALAPPDATA% ones, API host through WebFetch and through a shell command,
+// and MCP token) is denied under an identity without the provider and allowed under one with
+// it. The counts are exact, so a catalog change updates this test.
 func TestScope_EveryProvider(t *testing.T) {
 	f := newScopeFixture(t, "claude")
-	env := func(k string) string { return map[string]string{"TQ_HOME": f.state, "APPDATA": f.appData}[k] }
+	env := func(k string) string {
+		return map[string]string{"TQ_HOME": f.state, "APPDATA": f.appData, "LOCALAPPDATA": f.localAppData}[k]
+	}
 	cat, err := providers.Embedded()
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := 0
+	out := scopeOver(t, f.home, f.set, env, []string{})
+	providersWithSignals, checks := 0, 0
 	for _, p := range cat.All() {
 		if p.Match.Empty() {
 			continue
 		}
-		n++
-		out := scopeOver(t, f.home, f.set, env, []string{})
+		providersWithSignals++
 		in := scopeOver(t, f.home, f.set, env, []string{p.ID})
 		check := func(label string, call ToolCall) {
+			checks++
 			if d := out.Evaluate(f.cwd, call); d.Action != Deny {
-				t.Errorf("%s %s: not denied when %s is out of scope", p.ID, label, p.ID)
+				t.Errorf("%s %s %+v: not denied when %s is out of scope", p.ID, label, call, p.ID)
 			}
 			if d := in.Evaluate(f.cwd, call); d.Action != Allow {
-				t.Errorf("%s %s: denied when %s is in scope: %s", p.ID, label, p.ID, d.Reason())
+				t.Errorf("%s %s %+v: denied when %s is in scope: %s", p.ID, label, call, p.ID, d.Reason())
 			}
 		}
-		if len(p.Match.Executables) > 0 {
-			check("exe", bash(p.Match.Executables[0]+" something"))
+		m := p.Match
+		for _, e := range m.Executables {
+			check("exe "+e, bash(e+" something"))
 		}
-		for exe, subs := range p.Match.Subcommands {
-			if len(subs) > 0 {
-				check("subcommand", bash(exe+" "+subs[0]+" x"))
-				break
+		for exe, subs := range m.Subcommands {
+			for _, sub := range subs {
+				check("subcommand "+exe+" "+sub, bash(exe+" "+sub+" x"))
 			}
 		}
-		if len(p.Match.Modules) > 0 {
-			check("module", bash("python -m "+p.Match.Modules[0]))
+		for _, img := range m.Images {
+			check("image "+img, bash("docker run --rm "+img+" x"))
 		}
-		for _, e := range p.Match.Env {
-			if !strings.HasSuffix(e, "*") {
-				check("env", bash("echo $"+e))
-				break
+		for _, mod := range m.Modules {
+			check("module "+mod, bash("python -m "+mod))
+		}
+		for _, mod := range m.PSModules {
+			check("psmodule "+mod, pwsh("Import-Module "+mod))
+		}
+		for _, c := range m.Cmdlets {
+			name := strings.TrimSuffix(c, "*")
+			if strings.HasSuffix(c, "*") {
+				name += "Thing"
 			}
+			name = strings.Replace(name, "*-", "Get-", 1)
+			check("cmdlet "+c, pwsh(name+" -Name x"))
 		}
-		if len(p.Match.Paths) > 0 {
-			rest := p.Match.Paths[0]
+		for _, e := range m.Env {
+			name := strings.TrimSuffix(e, "*")
+			if strings.HasSuffix(e, "*") {
+				name += "X"
+			}
+			check("env "+e, bash("echo $"+name))
+		}
+		for _, spec := range m.Paths {
 			var abs string
 			switch {
-			case strings.HasPrefix(rest, "~/"):
-				abs = filepath.Join(f.home, filepath.FromSlash(rest[2:]))
-			case strings.HasPrefix(rest, "%APPDATA%/"):
-				abs = filepath.Join(f.appData, filepath.FromSlash(rest[len("%APPDATA%/"):]))
+			case strings.HasPrefix(spec, "~/"):
+				abs = filepath.Join(f.home, filepath.FromSlash(spec[2:]))
+			case strings.HasPrefix(spec, "%APPDATA%/"):
+				abs = filepath.Join(f.appData, filepath.FromSlash(spec[len("%APPDATA%/"):]))
+			case strings.HasPrefix(spec, "%LOCALAPPDATA%/"):
+				abs = filepath.Join(f.localAppData, filepath.FromSlash(spec[len("%LOCALAPPDATA%/"):]))
+			default:
+				t.Fatalf("%s: path %q has no known root", p.ID, spec)
 			}
-			if abs != "" {
-				check("path", ToolCall{Tool: "Read", Path: filepath.Join(abs, "x")})
-			}
+			check("path "+spec, ToolCall{Tool: "Read", Path: abs})
 		}
-		if len(p.Match.Hosts) > 0 {
-			check("host", ToolCall{Tool: "WebFetch", URL: "https://sub." + p.Match.Hosts[0] + "/x"})
+		for _, h := range m.Hosts {
+			host, path, _ := strings.Cut(h, "/")
+			url := "https://sub." + host + "/" + path + "x"
+			check("host "+h+" (WebFetch)", ToolCall{Tool: "WebFetch", URL: url})
+			check("host "+h+" (shell)", bash("curl -s "+url))
 		}
-		if len(p.Match.MCP) > 0 {
-			check("mcp", ToolCall{Tool: "mcp__" + p.Match.MCP[0] + "__x", Content: "{}"})
+		for _, tok := range m.MCP {
+			check("mcp "+tok, ToolCall{Tool: "mcp__" + tok + "__x", Content: "{}"})
 		}
 	}
-	if n < 50 {
-		t.Fatalf("only %d providers had signals; expected most of the 62", n)
+	if providersWithSignals != wantProvidersWithSignals || checks != wantEveryProviderChecks {
+		t.Fatalf("%d providers with signals and %d checks; want %d and %d (update the counts with the catalog)",
+			providersWithSignals, checks, wantProvidersWithSignals, wantEveryProviderChecks)
 	}
+
+	// Two routes the per-list loop does not spell: the LS tool on another identity's folder,
+	// and a PowerShell path with a quoted segment under %APPDATA%.
+	runScopeCases(t, scopeFixture{s: out, home: f.home, cwd: f.cwd}, []scopeCase{
+		{"Get-ChildItem of a quoted %APPDATA% segment", pwsh(`Get-ChildItem $env:APPDATA\'GitHub CLI'`), OutOfScopePathID},
+		{"Get-ChildItem of a double-quoted %APPDATA% path", pwsh(`Get-ChildItem "$env:APPDATA\GitHub CLI\hosts.yml"`), OutOfScopePathID},
+	})
+	runScopeCases(t, f, []scopeCase{
+		{"LS on another identity's folder", ToolCall{Tool: "LS", Path: f.betaRoot}, OtherIdentityID},
+		{"LS on an out-of-scope credential folder", ToolCall{Tool: "LS", Path: filepath.Join(f.home, ".aws")}, OutOfScopePathID},
+		{"LS on its own folder", ToolCall{Tool: "LS", Path: f.cwd}, ""},
+	})
 }
+
+// The exact sizes of the catalog's match lists that TestScope_EveryProvider walks.
+const (
+	wantProvidersWithSignals = 57
+	wantEveryProviderChecks  = 584
+)
 
 // TestScope_SharedCLIPrecision: azure-devops owns only the `az devops|repos|...` subcommands;
 // an identity with azure-devops (not az) runs those but not `az vm create`, and reads
@@ -153,6 +198,68 @@ func TestScope_UserOverrideCannotAllow(t *testing.T) {
 	})
 	if d := s.Evaluate(f.cwd, bash("aws s3 ls")); d.Action != Deny {
 		t.Fatal("a user override of in-scope az claiming aws made aws allowed")
+	}
+
+	// A user file with a new id may not claim what a built-in provider lists: it is refused
+	// at load (with the file, the entry, the built-in that owns it and the fix), so an
+	// identity that scopes the new id gains nothing. One table row per list.
+	prev := paths.AllowHomeOverride
+	paths.AllowHomeOverride = true
+	t.Cleanup(func() { paths.AllowHomeOverride = prev })
+	for _, c := range []struct{ list, entry, owner, call string }{
+		{"executables", "aws", "aws", "aws s3 ls"},
+		{"subcommands", "{az: [vm]}", "az", "az vm list"},
+		{"images", "amazon/aws-cli", "aws", "docker run amazon/aws-cli s3 ls"},
+		{"modules", "boto3", "aws", `python -c "import boto3"`},
+		{"env", "AWS_PROFILE", "aws", "echo $AWS_PROFILE"},
+		{"paths", "~/.aws/sso", "aws", "cat ~/.aws/sso/cache/x.json"},
+		{"hosts", "ec2.amazonaws.com", "aws", "curl https://ec2.amazonaws.com/"},
+		{"mcp", "aws", "aws", ""},
+		{"psmodules", "AWS.Tools.S3", "aws", "Import-Module AWS.Tools.S3"},
+		{"cmdlets", "Get-S3Bucket", "aws", "Get-S3Bucket"},
+	} {
+		home := t.TempDir()
+		t.Setenv("TQ_HOME", home)
+		dir := filepath.Join(home, "providers")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(dir, "acme.yaml")
+		entry := "[" + c.entry + "]"
+		if c.list == "subcommands" {
+			entry = c.entry
+		}
+		body := "id: acme\nname: Acme\ncategory: cloud\nmatch:\n  " + c.list + ": " + entry + "\n"
+		if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		uc, errs := providers.LoadAll()
+		if len(errs) != 1 {
+			t.Fatalf("%s: a new id claiming the built-in %s's %q loaded (errors %v)", c.list, c.owner, c.entry, errs)
+		}
+		msg := errs[0].Error()
+		for _, want := range []string{file, c.owner, "fix or delete " + file + ", then run tq providers list"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: the refusal %q does not name %q", c.list, msg, want)
+			}
+		}
+		if _, ok := uc.Get("acme"); ok {
+			t.Errorf("%s: the refused provider is in the catalog", c.list)
+		}
+		if c.call == "" {
+			continue
+		}
+		us := NewScope(ScopeInputs{
+			Identity: "company-x", Scope: []string{"claude", "acme"}, Providers: uc.All(), Embedded: embedded,
+			Set: f.set, UserHome: f.home, Env: env,
+		})
+		call := bash(c.call)
+		if c.list == "psmodules" || c.list == "cmdlets" {
+			call = pwsh(c.call)
+		}
+		if d := us.Evaluate(f.cwd, call); d.Action != Deny {
+			t.Errorf("%s: %q allowed through a refused user provider", c.list, c.call)
+		}
 	}
 }
 

@@ -40,16 +40,26 @@ type Catalog struct {
 }
 
 func loadYAMLProvider(name string, data []byte, source string) (Provider, error) {
-	var p Provider
-	if err := yaml.Unmarshal(data, &p); err != nil {
+	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	p, err := parseProvider(data, base, source)
+	if err != nil {
 		return Provider{}, fmt.Errorf("%s: %w", name, err)
 	}
-	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
-	if p.ID == "" {
-		p.ID = base
+	return p, nil
+}
+
+// parseProvider decodes and validates one provider file named for id; its errors do not
+// repeat the file name (the caller adds it).
+func parseProvider(data []byte, id, source string) (Provider, error) {
+	var p Provider
+	if err := yaml.Unmarshal(data, &p); err != nil {
+		return Provider{}, err
 	}
-	if p.ID != base {
-		return Provider{}, fmt.Errorf("%s: filename must equal id (got id %q)", name, p.ID)
+	if p.ID == "" {
+		p.ID = id
+	}
+	if p.ID != id {
+		return Provider{}, fmt.Errorf("filename must equal id (got id %q)", p.ID)
 	}
 	p.Source = source
 	if err := p.Validate(); err != nil {
@@ -85,23 +95,56 @@ func loadEmbedded() (*Catalog, error) {
 	return c, nil
 }
 
-// Load builds the provider catalog from the embedded catalog, then merges in
-// user overrides from UserDir() (same id replaces the embedded entry; new
-// ids are appended). User file errors are returned, not panicked.
-func Load() (*Catalog, error) {
-	c, err := loadEmbedded()
-	if err != nil {
-		return nil, err
-	}
+// FileError is a user provider file (~/.tentaqles/providers/<id>.yaml) that tq did not load:
+// it cannot be read, does not parse or validate, collides with another provider's identity
+// variable, or (a new id) claims an entry a built-in provider lists. The file contributes
+// nothing; for a built-in id the built-in entry stays in force (ADR-0007 round 3).
+type FileError struct {
+	Path    string // the full path of the file
+	ID      string // the id the file is named for (its basename without .yaml)
+	Builtin bool   // the id is a built-in provider's: its built-in lists stay in force
+	Err     error  // what is wrong
+}
 
+// First is the first line of the first error, without the file name the parser put in front.
+func (e *FileError) First() string {
+	msg := e.Err.Error()
+	if i := strings.IndexByte(msg, '\n'); i >= 0 {
+		msg = msg[:i]
+	}
+	return strings.TrimSpace(msg)
+}
+
+// Fix is what the developer does about it.
+func (e *FileError) Fix() string {
+	return "fix or delete " + e.Path + ", then run tq providers list"
+}
+
+func (e *FileError) Error() string {
+	what := "tq ignores it"
+	if e.Builtin {
+		what = "tq ignores it and uses the built-in " + e.ID + " lists"
+	} else {
+		what = "tq ignores it, and refuses every call in a workspace whose scope names " + e.ID
+	}
+	return e.Path + ": " + e.First() + " (" + what + "); " + e.Fix()
+}
+
+func (e *FileError) Unwrap() error { return e.Err }
+
+// loadUserFiles reads every user provider file into c (embedded already loaded) and returns
+// one FileError per file it did not load. A ReadDir failure other than "no folder" is
+// returned as dirErr: tq cannot tell which files there are.
+func loadUserFiles(c *Catalog) (bad []*FileError, dirErr error) {
+	builtin := make(map[string]Provider, len(c.byID))
+	for id, p := range c.byID {
+		builtin[id] = p
+	}
 	dir := UserDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if cerr := c.checkEnvCollisions(); cerr != nil {
-				return nil, cerr
-			}
-			return c, nil
+			return nil, nil
 		}
 		return nil, err
 	}
@@ -109,56 +152,94 @@ func Load() (*Catalog, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		p, err := loadYAMLProvider(e.Name(), data, path)
-		if err != nil {
-			return nil, err
+		p, fe := loadUserFile(filepath.Join(dir, e.Name()), builtin, c)
+		if fe != nil {
+			bad = append(bad, fe)
+			continue
 		}
 		c.override(p)
 	}
-	if err := c.checkEnvCollisions(); err != nil {
-		return nil, err
+	return bad, nil
+}
+
+// loadUserFile loads one user file against the built-in entries and the catalog so far.
+func loadUserFile(path string, builtin map[string]Provider, c *Catalog) (Provider, *FileError) {
+	id := strings.TrimSuffix(filepath.Base(path), ".yaml")
+	_, isBuiltin := builtin[id]
+	fail := func(err error) (Provider, *FileError) {
+		return Provider{}, &FileError{Path: path, ID: id, Builtin: isBuiltin, Err: err}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fail(err)
+	}
+	p, err := parseProvider(data, id, path)
+	if err != nil {
+		return fail(err)
+	}
+	if !isBuiltin {
+		if err := claimConflict(p, builtin); err != nil {
+			return fail(err)
+		}
+	}
+	if err := c.envCollision(p); err != nil {
+		return fail(err)
+	}
+	return p, nil
+}
+
+// UserFileError is the FileError of the user file named for id, or nil when there is no such
+// file or it loads. It reads the file and the embedded catalog afresh: callers use it on an
+// error path (an unknown provider id in a manifest), to say which file to fix.
+func UserFileError(id string) *FileError {
+	if !idRe.MatchString(id) {
+		return nil
+	}
+	path := filepath.Join(UserDir(), id+".yaml")
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	c, err := loadEmbedded()
+	if err != nil {
+		return nil
+	}
+	builtin := make(map[string]Provider, len(c.byID))
+	for k, p := range c.byID {
+		builtin[k] = p
+	}
+	_, fe := loadUserFile(path, builtin, c)
+	return fe
+}
+
+// Load builds the provider catalog from the embedded catalog, then merges in user overrides
+// from UserDir() (same id replaces the embedded entry, its match lists merged; new ids are
+// appended). It returns the first user file error, for callers that must not run on a partial
+// catalog; LoadAll reports them all.
+func Load() (*Catalog, error) {
+	c, errs := LoadAll()
+	if len(errs) > 0 {
+		return nil, errs[0]
 	}
 	return c, nil
 }
 
-// LoadAll is Load but never stops at the first bad user file: it loads every readable,
-// valid user file over the embedded catalog and returns one error per file it skipped, so
-// `tq providers list` and `tq doctor` can report them all and the hook can fail closed
-// naming them (ADR-0007 round 2). The embedded catalog alone still errors.
+// LoadAll is Load but never stops at the first bad user file: it loads every readable, valid
+// user file over the embedded catalog and returns one error per file it did not load (a
+// *FileError) plus any error reading the folder, so `tq providers list` and `tq doctor` can
+// report them all and the hook can decide per workspace (ADR-0007 round 3). The embedded
+// catalog alone still errors with a nil catalog.
 func LoadAll() (*Catalog, []error) {
 	c, err := loadEmbedded()
 	if err != nil {
 		return nil, []error{err}
 	}
 	var errs []error
-	dir := UserDir()
-	entries, rerr := os.ReadDir(dir)
-	if rerr != nil {
-		if !os.IsNotExist(rerr) {
-			errs = append(errs, rerr)
-		}
+	bad, dirErr := loadUserFiles(c)
+	if dirErr != nil {
+		errs = append(errs, dirErr)
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		p, err := loadYAMLProvider(e.Name(), data, path)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		c.override(p)
+	for _, fe := range bad {
+		errs = append(errs, fe)
 	}
 	if cerr := c.checkEnvCollisions(); cerr != nil {
 		errs = append(errs, cerr)
@@ -166,9 +247,154 @@ func LoadAll() (*Catalog, []error) {
 	return c, errs
 }
 
+// claimConflict refuses a user provider with a new id that claims anything a built-in
+// provider lists: an in-scope provider's claims come from the embedded catalog, so a new id
+// in scope would otherwise allow a built-in's CLI, variable, path or host (ADR-0007 round 3).
+// To extend a built-in, a file named for its id is used instead.
+func claimConflict(p Provider, builtin map[string]Provider) error {
+	ids := make([]string, 0, len(builtin))
+	for id := range builtin {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	m := p.Match
+	refuse := func(list, entry, owner string) error {
+		return fmt.Errorf("match.%s: %q is listed by the built-in provider %q; a provider of your own may not claim a built-in's entries (to extend %s, name the file %s.yaml)",
+			list, entry, owner, owner, owner)
+	}
+	for _, id := range ids {
+		b := builtin[id].Match
+		for _, e := range m.Executables {
+			_, sub := b.Subcommands[e]
+			if containsFold(b.Executables, e) || sub {
+				return refuse("executables", e, id)
+			}
+		}
+		for exe, subs := range m.Subcommands {
+			for _, s := range subs {
+				if containsFold(b.Executables, exe) || containsFold(b.Subcommands[exe], s) {
+					return refuse("subcommands", exe+" "+s, id)
+				}
+			}
+		}
+		for _, img := range m.Images {
+			for _, bi := range b.Images {
+				if strings.EqualFold(img, bi) || strings.EqualFold(imageBasename(img), imageBasename(bi)) {
+					return refuse("images", img, id)
+				}
+			}
+		}
+		for _, mod := range m.Modules {
+			for _, bm := range b.Modules {
+				if DottedCovers(bm, mod) || DottedCovers(mod, bm) {
+					return refuse("modules", mod, id)
+				}
+			}
+		}
+		for _, mod := range m.PSModules {
+			for _, bm := range b.PSModules {
+				if DottedCovers(bm, mod) || DottedCovers(mod, bm) {
+					return refuse("psmodules", mod, id)
+				}
+			}
+		}
+		for _, c := range m.Cmdlets {
+			for _, bc := range b.Cmdlets {
+				if cmdletsOverlap(c, bc) {
+					return refuse("cmdlets", c, id)
+				}
+			}
+		}
+		for _, e := range m.Env {
+			for _, be := range b.Env {
+				if envOverlap(e, be) {
+					return refuse("env", e, id)
+				}
+			}
+		}
+		for _, pth := range m.Paths {
+			for _, bp := range b.Paths {
+				if pathsOverlap(pth, bp) {
+					return refuse("paths", pth, id)
+				}
+			}
+		}
+		for _, h := range m.Hosts {
+			for _, bh := range b.Hosts {
+				if HostsOverlap(h, bh) {
+					return refuse("hosts", h, id)
+				}
+			}
+		}
+		for _, t := range m.MCP {
+			if contains(b.MCP, t) {
+				return refuse("mcp", t, id)
+			}
+		}
+	}
+	return nil
+}
+
+func containsFold(xs []string, x string) bool {
+	for _, v := range xs {
+		if strings.EqualFold(v, x) {
+			return true
+		}
+	}
+	return false
+}
+
+func imageBasename(img string) string {
+	img = strings.SplitN(strings.SplitN(img, "@", 2)[0], ":", 2)[0]
+	return img[strings.LastIndex(img, "/")+1:]
+}
+
+// cmdletsOverlap reports whether two cmdlets entries can match one name.
+func cmdletsOverlap(a, b string) bool {
+	if CmdletMatches(a, b) || CmdletMatches(b, a) {
+		return true
+	}
+	_, an, _ := strings.Cut(strings.ToLower(a), "-")
+	_, bn, _ := strings.Cut(strings.ToLower(b), "-")
+	ap, aw := strings.CutSuffix(an, "*")
+	bp, bw := strings.CutSuffix(bn, "*")
+	switch {
+	case aw && bw:
+		return strings.HasPrefix(ap, bp) || strings.HasPrefix(bp, ap)
+	case aw:
+		return strings.HasPrefix(bn, ap)
+	case bw:
+		return strings.HasPrefix(an, bp)
+	}
+	return false
+}
+
+// envOverlap reports whether two env entries (a trailing * is a prefix) can name one variable.
+func envOverlap(a, b string) bool {
+	a, b = strings.ToUpper(a), strings.ToUpper(b)
+	ap, aw := strings.CutSuffix(a, "*")
+	bp, bw := strings.CutSuffix(b, "*")
+	switch {
+	case aw && bw:
+		return strings.HasPrefix(ap, bp) || strings.HasPrefix(bp, ap)
+	case aw:
+		return strings.HasPrefix(b, ap)
+	case bw:
+		return strings.HasPrefix(a, bp)
+	}
+	return a == b
+}
+
+// pathsOverlap reports whether one path entry is the other or under it.
+func pathsOverlap(a, b string) bool {
+	a, b = strings.ToLower(strings.TrimSuffix(a, "/")), strings.ToLower(strings.TrimSuffix(b, "/"))
+	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
+}
+
 // Overlaps reports every pair of providers that claim the same executable (same first
-// subcommand or both wholesale), credential path tree, API host or MCP token, so nothing is
-// silent (ADR-0007 round 2). Each string is one human-readable overlap.
+// subcommand or both wholesale), credential path tree, API host (the same host or one a
+// subdomain of the other), image or MCP token, so nothing is silent (ADR-0007 rounds 2 and 3).
+// Each string is one human-readable overlap.
 func (c *Catalog) Overlaps() []string {
 	var out []string
 	ps := c.All()
@@ -204,9 +430,26 @@ func (c *Catalog) Overlaps() []string {
 					}
 				}
 			}
+			for exe, subs := range b.Match.Subcommands {
+				if contains(a.Match.Executables, exe) {
+					for _, sub := range subs {
+						add("subcommand", a.ID, b.ID, exe+" "+sub)
+					}
+				}
+			}
 			for _, h := range a.Match.Hosts {
-				if contains(b.Match.Hosts, h) {
-					add("host", a.ID, b.ID, h)
+				for _, bh := range b.Match.Hosts {
+					switch {
+					case h == bh:
+						add("host", a.ID, b.ID, h)
+					case HostsOverlap(h, bh):
+						add("host", a.ID, b.ID, h+" / "+bh)
+					}
+				}
+			}
+			for _, img := range a.Match.Images {
+				if containsFold(b.Match.Images, img) {
+					add("image", a.ID, b.ID, img)
 				}
 			}
 			for _, t := range a.Match.MCP {
@@ -215,8 +458,14 @@ func (c *Catalog) Overlaps() []string {
 				}
 			}
 			for _, p := range a.Match.Paths {
-				if contains(b.Match.Paths, p) {
-					add("path", a.ID, b.ID, p)
+				for _, bp := range b.Match.Paths {
+					if pathsOverlap(p, bp) {
+						what := p
+						if p != bp {
+							what = p + " / " + bp
+						}
+						add("path", a.ID, b.ID, what)
+					}
 				}
 			}
 		}
@@ -263,28 +512,9 @@ func mustLoadUncached() (*Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Best-effort merge of user overrides; ignore errors here since MustLoad
-	// must not panic on user data. Callers wanting user-error visibility
-	// should use Load().
-	dir := UserDir()
-	entries, err := os.ReadDir(dir)
-	if err == nil {
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-				continue
-			}
-			path := filepath.Join(dir, e.Name())
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			p, err := loadYAMLProvider(e.Name(), data, path)
-			if err != nil {
-				continue
-			}
-			c.override(p)
-		}
-	}
+	// Best-effort merge of user overrides: a bad file is left out here, since MustLoad must
+	// not panic on user data. Callers wanting the errors use LoadAll().
+	_, _ = loadUserFiles(c)
 	return c, nil
 }
 
@@ -299,6 +529,28 @@ func (c *Catalog) override(p Provider) {
 		p.Match = prev.Match.Union(p.Match)
 	}
 	c.byID[p.ID] = p
+}
+
+// envCollision is checkEnvCollisions for one incoming user provider against the catalog so
+// far (its own id excluded: an override replaces it).
+func (c *Catalog) envCollision(p Provider) error {
+	ids := make([]string, 0, len(c.byID))
+	for id := range c.byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for k, v := range p.Identity.Env {
+		for _, id := range ids {
+			q := c.byID[id]
+			if id == p.ID {
+				continue
+			}
+			if _, taken := q.Identity.Env[k]; taken && !sameCLIVariable(q, p, k, v) {
+				return fmt.Errorf("identity.env[%s] is also set by provider %q: one would silently overwrite the other for any workspace enabling both", k, id)
+			}
+		}
+	}
+	return nil
 }
 
 // Embedded returns the embedded catalog alone, without the user files: what tests and a

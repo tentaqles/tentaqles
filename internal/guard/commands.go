@@ -33,6 +33,19 @@ func Commands(c string) []Command {
 	return commandsDepth(BlankDataHeredocs(c), "", false, 0)
 }
 
+// SeparatorSpans returns the [start, end) byte spans of c where the tokenizer splits one
+// simple command from the next (sepPattern, outside quotes, bash quoting), for a caller that
+// reads c with another scanner and must not treat a span crossing a command boundary as one
+// word (the identity category's text masker, ADR-0007 round 3). It reads c as given: a caller
+// that wants data heredocs ignored blanks them first.
+func SeparatorSpans(c string) [][2]int {
+	var out [][2]int
+	for _, loc := range sepRegexp.FindAllStringIndex(maskQuoted(c), -1) {
+		out = append(out, [2]int{loc[0], loc[1]})
+	}
+	return out
+}
+
 func commandsDepth(c, base string, baseUnknown bool, depth int) []Command {
 	var out []Command
 	masked := maskQuoted(c)

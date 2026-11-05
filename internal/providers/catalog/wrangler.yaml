@@ -13,8 +13,8 @@ cli:
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
-  executables: [wrangler]
+  executables: [wrangler, cloudflared]
   env: [CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, CF_API_TOKEN]
-  paths: ["~/.wrangler", "%APPDATA%/xdg.config/.wrangler"]
+  paths: ["~/.wrangler", "%APPDATA%/xdg.config/.wrangler", "~/.cloudflared"]
   hosts: [api.cloudflare.com]
   mcp: [cloudflare, wrangler]
