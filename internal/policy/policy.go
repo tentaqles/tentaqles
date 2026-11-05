@@ -42,6 +42,8 @@ type ToolCall struct {
 	Content string // text being written (Write content, Edit new_string, …) or the raw MCP input
 	Exists  bool   // Path exists on disk before the call
 	URL     string // the URL a WebFetch reads
+	Pattern string // the Glob/Grep pattern
+	Glob    string // the Grep glob filter
 }
 
 // IsShell reports whether the call runs a shell command.

@@ -15,90 +15,121 @@ import (
 
 // The identity category's v2 rules (PRD v2 §6.3, §7.1; ADR-0006), on behind the manifest
 // flag guard: v2: everything an identity's provider scope leaves out is denied in every
-// tool. The match lists are the catalog's data (providers.Match); this file only reads
-// them. Like the rest of the hook it is a text filter: it matches literal spellings in the
-// tool call, never what a command builds at run time.
+// tool. The claims are the catalog's data (providers.Match); this file reads them.
+//
+// Precision (ADR-0006 round 2): a provider's CLAIMS (what being in scope allows) come from
+// the EMBEDDED catalog only; a provider's DENIES (what being out of scope blocks) come from
+// the merged catalog (embedded + user files). So a user override can only widen denial, never
+// make something allowed. A shared CLI (az) is owned wholesale by one provider and claimed
+// per-subcommand by others (azure-devops owns `az devops|repos|...`); the most precise
+// in-scope claim wins. Like the rest of the hook it is a text filter: literal spellings only.
 
 // The v2 identity rule ids. A deny reads BLOCKED [identity/<id>].
 const (
-	// OutOfScopeCLIID: an out-of-scope provider's CLI run by name or path, behind a
-	// wrapper, inside a nested shell, as `python -m <module>`, through a package runner.
-	OutOfScopeCLIID = "out-of-scope-cli"
-	// OutOfScopeEnvID: a reference to an out-of-scope provider's environment variable.
-	OutOfScopeEnvID = "out-of-scope-env"
-	// OutOfScopePathID: an out-of-scope provider's credential or config path.
+	OutOfScopeCLIID  = "out-of-scope-cli"
+	OutOfScopeEnvID  = "out-of-scope-env"
 	OutOfScopePathID = "out-of-scope-path"
-	// OutOfScopeHostID: an out-of-scope provider's API host in a network call.
 	OutOfScopeHostID = "out-of-scope-host"
-	// OutOfScopeMCPID: an MCP tool whose server is an out-of-scope provider's.
-	OutOfScopeMCPID = "out-of-scope-mcp"
-	// OtherIdentityID: a path under another identity's workspace root or its identity
-	// folder under the tq home.
-	OtherIdentityID = "other-identity"
+	OutOfScopeMCPID  = "out-of-scope-mcp"
+	OtherIdentityID  = "other-identity"
+	// GuardErrorID is the fail-closed deny: an unreadable manifest or provider file.
+	GuardErrorID = "tq/guard-error"
 )
 
 // ScopeInputs are the facts a Scope is compiled from; the hook gathers them.
 type ScopeInputs struct {
 	Identity  string               // the workspace name
 	Scope     []string             // manifest.Scope(): the catalog ids the identity may touch
-	Providers []providers.Provider // the whole catalog (embedded plus the user files)
-	Set       *protect.Set         // the hook run's protected path set: Normalize, Expand, Canon
-	UserHome  string               // what ~ is
-	Env       func(string) string  // APPDATA, LOCALAPPDATA
+	Providers []providers.Provider // the whole catalog, merged (embedded + user files)
+	// Embedded is the embedded-only match per id, used for an in-scope provider's claims so a
+	// user file can never widen a claim. Missing id falls back to the merged match.
+	Embedded  map[string]providers.Match
+	BundleMCP []string            // the identity's own declared MCP servers (claude.bundle.mcp)
+	Set       *protect.Set        // the hook run's protected path set: Normalize, Expand, Canon
+	UserHome  string              // what ~ is
+	Env       func(string) string // APPDATA, LOCALAPPDATA
 	// OtherRoots and OtherDirs map another identity's workspace root, and its folder under
 	// the tq home (~/.tentaqles/identities/<name>), to its name.
 	OtherRoots map[string]string
 	OtherDirs  map[string]string
+	// LoadErr, when set, makes every call deny with tq/guard-error (a bad provider file).
+	LoadErr string
 }
 
 type scopedProvider struct {
 	id, name string
-	match    providers.Match
-	paths    []string // canonical
+	inScope  bool
 }
 
-type otherPath struct{ path, name string }
+// exeClaim is one provider's claim on an executable: wholesale, or a set of first subcommands.
+type exeClaim struct {
+	p        *scopedProvider
+	wildcard bool
+	subs     map[string]bool
+}
 
 type envName struct {
-	name   string // without the trailing *
+	name   string
 	prefix bool
 	p      *scopedProvider
 }
 
-type mention struct {
-	needle string // slash form, folded as the set folds
-	path   string // canonical
-	p      *scopedProvider
-	other  string // the other identity's name, for an other-identity root
+type pathEntry struct {
+	path string // canonical
+	p    *scopedProvider
 }
 
-// Scope is an identity's compiled scope: the in-scope and out-of-scope providers' match
-// lists, ready to judge tool calls. A nil Scope allows everything (the v1 rules).
+type mention struct {
+	needle string
+	path   string
+	p      *scopedProvider
+	other  string
+}
+
+// Scope is an identity's compiled scope. A nil Scope allows everything (the v1 rules).
 type Scope struct {
 	identity string
 	scope    []string
-	in, out  []*scopedProvider
 	set      *protect.Set
 	ci       bool
 	env      func(string) string
+	loadErr  string
 
-	outExe, outModule map[string]*scopedProvider
-	inMCP             map[string]bool
-	outMCP            map[string]*scopedProvider
-	outEnv            []envName
-	inEnv             []envName
-	others            []otherPath
-	mentions          []mention
-	needles           []string
-	envRes            map[string]*regexp.Regexp
+	provs []*scopedProvider
+
+	exeClaims map[string][]exeClaim // exe name -> claims (in and out)
+	modClaims map[string][]exeClaim // module -> claims (subs unused)
+	imgClaims map[string][]exeClaim // image basename and full -> claims
+
+	outEnv  []envName
+	inEnv   []envName
+	outPath []pathEntry
+	inPath  []pathEntry
+	others  []pathEntry
+
+	inHosts  [][]string
+	outHosts []*hostSet
+
+	bundleMCP map[string]bool
+	inMCP     map[string]bool
+	outMCP    map[string]*scopedProvider
+
+	mentions []mention
+	needles  []string
+	envRes   map[string]*regexp.Regexp
 }
 
-// NewScope compiles in. It never fails: a path whose root is unknown (no %APPDATA% on this
-// system) is skipped.
+type hostSet struct {
+	p     *scopedProvider
+	hosts []string
+}
+
+// NewScope compiles in. It never fails.
 func NewScope(in ScopeInputs) *Scope {
 	s := &Scope{identity: in.Identity, scope: append([]string{}, in.Scope...), set: in.Set, env: in.Env,
-		outExe: map[string]*scopedProvider{}, outModule: map[string]*scopedProvider{},
-		inMCP: map[string]bool{}, outMCP: map[string]*scopedProvider{}, envRes: map[string]*regexp.Regexp{}}
+		loadErr: in.LoadErr, exeClaims: map[string][]exeClaim{}, modClaims: map[string][]exeClaim{},
+		imgClaims: map[string][]exeClaim{}, bundleMCP: map[string]bool{}, inMCP: map[string]bool{},
+		outMCP: map[string]*scopedProvider{}, envRes: map[string]*regexp.Regexp{}}
 	if s.env == nil {
 		s.env = func(string) string { return "" }
 	}
@@ -108,7 +139,11 @@ func NewScope(in ScopeInputs) *Scope {
 	for _, id := range in.Scope {
 		inScope[id] = true
 	}
-	roots := map[string]string{} // ~, %APPDATA%, %LOCALAPPDATA% -> canonical
+	for _, srv := range in.BundleMCP {
+		s.bundleMCP[strings.ToLower(srv)] = true
+	}
+
+	roots := map[string]string{}
 	rootOf := func(spec string) (string, string) {
 		for _, r := range providers.PathRoots {
 			if !strings.HasPrefix(spec, r) {
@@ -134,74 +169,89 @@ func NewScope(in ScopeInputs) *Scope {
 		}
 		return "", ""
 	}
+	canonPath := func(spec string) string {
+		root, rest := rootOf(spec)
+		if root == "" {
+			return ""
+		}
+		p := filepath.Join(root, filepath.FromSlash(rest))
+		if s.ci {
+			p = strings.ToLower(p)
+		}
+		return p
+	}
+
 	for i := range in.Providers {
 		pv := in.Providers[i]
-		if pv.Match.Empty() {
+		sp := &scopedProvider{id: pv.ID, name: pv.Name, inScope: inScope[pv.ID]}
+		// claims from embedded (in-scope) or merged (out-of-scope)
+		claim := pv.Match
+		if sp.inScope {
+			if em, ok := in.Embedded[pv.ID]; ok {
+				claim = em
+			}
+		}
+		if claim.Empty() {
 			continue
 		}
-		sp := &scopedProvider{id: pv.ID, name: pv.Name, match: pv.Match}
-		for _, spec := range pv.Match.Paths {
-			root, rest := rootOf(spec)
-			if root == "" {
+		s.provs = append(s.provs, sp)
+		for _, e := range claim.Executables {
+			n := exeName(e)
+			s.exeClaims[n] = append(s.exeClaims[n], exeClaim{p: sp, wildcard: true})
+		}
+		for exe, subs := range claim.Subcommands {
+			set := map[string]bool{}
+			for _, sub := range subs {
+				set[strings.ToLower(sub)] = true
+			}
+			s.exeClaims[exeName(exe)] = append(s.exeClaims[exeName(exe)], exeClaim{p: sp, subs: set})
+		}
+		for _, m := range claim.Modules {
+			l := strings.ToLower(m)
+			s.modClaims[l] = append(s.modClaims[l], exeClaim{p: sp, wildcard: true})
+		}
+		for _, img := range claim.Images {
+			l := strings.ToLower(img)
+			s.imgClaims[l] = append(s.imgClaims[l], exeClaim{p: sp, wildcard: true})
+			s.imgClaims[imageBase(l)] = append(s.imgClaims[imageBase(l)], exeClaim{p: sp, wildcard: true})
+		}
+		for _, e := range claim.Env {
+			en := newEnvName(e, sp)
+			if sp.inScope {
+				s.inEnv = append(s.inEnv, en)
+			} else {
+				s.outEnv = append(s.outEnv, en)
+			}
+		}
+		for _, spec := range claim.Paths {
+			c := canonPath(spec)
+			if c == "" {
 				continue
 			}
-			p := filepath.Join(root, filepath.FromSlash(rest))
-			if s.ci {
-				p = strings.ToLower(p)
-			}
-			sp.paths = append(sp.paths, p)
-		}
-		if inScope[pv.ID] {
-			s.in = append(s.in, sp)
-		} else {
-			s.out = append(s.out, sp)
-		}
-	}
-	inExe, inModule := map[string]bool{}, map[string]bool{}
-	for _, sp := range s.in {
-		for _, e := range sp.match.Executables {
-			inExe[exeName(e)] = true
-		}
-		for _, m := range sp.match.Modules {
-			inModule[strings.ToLower(m)] = true
-		}
-		for _, t := range sp.match.MCP {
-			s.inMCP[t] = true
-		}
-		for _, e := range sp.match.Env {
-			s.inEnv = append(s.inEnv, newEnvName(e, sp))
-		}
-	}
-	for _, sp := range s.out {
-		for _, e := range sp.match.Executables {
-			if n := exeName(e); !inExe[n] && s.outExe[n] == nil {
-				s.outExe[n] = sp
+			if sp.inScope {
+				s.inPath = append(s.inPath, pathEntry{c, sp})
+			} else {
+				s.outPath = append(s.outPath, pathEntry{c, sp})
+				s.addMention(c, sp, "")
+				s.needles = append(s.needles, strings.ToLower(filepath.Base(c)))
 			}
 		}
-		for _, m := range sp.match.Modules {
-			if l := strings.ToLower(m); !inModule[l] && s.outModule[l] == nil {
-				s.outModule[l] = sp
+		if len(claim.Hosts) > 0 {
+			if sp.inScope {
+				s.inHosts = append(s.inHosts, claim.Hosts)
+			} else {
+				s.outHosts = append(s.outHosts, &hostSet{sp, claim.Hosts})
 			}
 		}
-		for _, t := range sp.match.MCP {
-			if s.outMCP[t] == nil {
+		for _, t := range claim.MCP {
+			if sp.inScope {
+				s.inMCP[t] = true
+			} else if s.outMCP[t] == nil {
 				s.outMCP[t] = sp
 			}
 		}
-		for _, e := range sp.match.Env {
-			en := newEnvName(e, sp)
-			if !en.prefix && s.inClaimsEnv(en.name) {
-				continue
-			}
-			s.outEnv = append(s.outEnv, en)
-		}
-		for _, p := range sp.paths {
-			s.addMention(p, sp, "")
-			s.needles = append(s.needles, strings.ToLower(filepath.Base(p)))
-		}
 	}
-	// Only the parent folders (the bases, the identities folder) are canonicalised, once
-	// each: the hook stays cheap with many identities.
+
 	parents := map[string]string{}
 	addOthers := func(m map[string]string) {
 		for raw, name := range m {
@@ -219,7 +269,7 @@ func NewScope(in ScopeInputs) *Scope {
 				leaf = strings.ToLower(leaf)
 			}
 			c := filepath.Join(pc, leaf)
-			s.others = append(s.others, otherPath{c, name})
+			s.others = append(s.others, pathEntry{c, &scopedProvider{id: name, name: name}})
 			s.addMention(c, nil, name)
 			s.needles = append(s.needles, strings.ToLower(name))
 		}
@@ -245,31 +295,41 @@ func (s *Scope) addMention(p string, sp *scopedProvider, other string) {
 	slash := filepath.ToSlash(p)
 	add(slash)
 	if runtime.GOOS == "windows" && len(slash) > 2 && slash[1] == ':' {
-		add("/" + strings.ToLower(slash[:1]) + slash[2:]) // the MSYS spelling, /c/...
+		add("/" + strings.ToLower(slash[:1]) + slash[2:])
 	}
 }
 
 // exeName is the executable a command word names: its last path element, quotes removed,
-// lower-cased, without a Windows suffix (.exe .cmd .bat .ps1 .com).
+// lower-cased, without a Windows suffix. Shell backslash joins (a\ws) are collapsed.
 func exeName(w string) string {
-	n := guard.BaseName(w)
-	for _, suf := range []string{".cmd", ".bat", ".ps1", ".com"} {
+	n := guard.BaseName(strings.ReplaceAll(strings.Trim(w, `"'`), `\`, "/"))
+	n = n[strings.LastIndex(n, "/")+1:]
+	for _, suf := range []string{".exe", ".cmd", ".bat", ".ps1", ".com"} {
 		n = strings.TrimSuffix(n, suf)
 	}
 	return n
 }
 
-// scopeHit is what an identity rule found.
-type scopeHit struct {
-	id, subject, what string
-	other             string // other-identity: the identity's name
+// imageBase is a docker image's basename without tag/registry: amazon/aws-cli -> aws-cli.
+func imageBase(img string) string {
+	img = strings.SplitN(img, ":", 2)[0]
+	img = strings.SplitN(img, "@", 2)[0]
+	return img[strings.LastIndex(img, "/")+1:]
 }
 
-// Evaluate judges call against the scope; cwd is the directory it runs in. It returns the
-// deny, or the zero Decision.
+type scopeHit struct {
+	id, subject, what string
+	other             string
+}
+
+// Evaluate judges call against the scope; cwd is the directory it runs in.
 func (s *Scope) Evaluate(cwd string, call ToolCall) Decision {
 	if s == nil {
 		return Decision{}
+	}
+	if s.loadErr != "" {
+		return Decision{Action: Deny, Matched: []*Rule{{ID: GuardErrorID, Action: Deny, Source: "builtin",
+			Reason: "tq cannot read the provider catalog (" + s.loadErr + "); the guard fails closed and denies every tool until a human fixes it", Subject: "the provider catalog"}}}
 	}
 	h, ok := s.judge(cwd, call)
 	if !ok {
@@ -308,61 +368,141 @@ func (s *Scope) judge(cwd string, call ToolCall) (scopeHit, bool) {
 			return s.hostHit(host)
 		}
 		return scopeHit{}, false
+	case call.Tool == "Glob" || call.Tool == "Grep":
+		return s.searchHit(cwd, call)
 	}
 	if _, ok := fileToolAccess(call.Tool); !ok {
 		return scopeHit{}, false
 	}
-	p := call.Path
-	if strings.TrimSpace(p) == "" {
-		if call.Tool != "Grep" && call.Tool != "Glob" {
-			return scopeHit{}, false
-		}
-		p = cwd
+	if strings.TrimSpace(call.Path) == "" {
+		return scopeHit{}, false
 	}
-	return s.pathHit(s.set.Normalize(p, cwd))
+	return s.pathHit(s.norm(call.Path, cwd))
 }
 
 func (s *Scope) desc(sp *scopedProvider) string { return sp.name + " (" + sp.id + ")" }
 
-// --- paths ---
-
-func within(root, p string) bool {
-	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
+// norm expands %APPDATA%/%LOCALAPPDATA% (which protect.Set does not) then normalizes.
+func (s *Scope) norm(p, base string) string {
+	return s.set.Normalize(s.expandAppData(p), base)
 }
 
-// pathHit judges a canonical path.
+var appDataRe = regexp.MustCompile(`(?i)%(LOCALAPPDATA|APPDATA)%|\$env:(LOCALAPPDATA|APPDATA)\b|\$\{(LOCALAPPDATA|APPDATA)\}|\$(LOCALAPPDATA|APPDATA)\b`)
+
+func (s *Scope) expandAppData(text string) string {
+	return appDataRe.ReplaceAllStringFunc(text, func(m string) string {
+		g := appDataRe.FindStringSubmatch(m)
+		for _, n := range g[1:] {
+			if n != "" {
+				if v := s.env(strings.ToUpper(n)); v != "" {
+					return v
+				}
+			}
+		}
+		return m
+	})
+}
+
+func within(root, p string) bool {
+	return p != "" && root != "" && (p == root || strings.HasPrefix(p, root+string(filepath.Separator)))
+}
+
 func (s *Scope) pathHit(p string) (scopeHit, bool) {
 	if p == "" {
 		return scopeHit{}, false
 	}
 	for _, o := range s.others {
 		if within(o.path, p) {
-			return scopeHit{id: OtherIdentityID, subject: p, other: o.name}, true
+			return scopeHit{id: OtherIdentityID, subject: p, other: o.p.id}, true
 		}
 	}
-	for _, sp := range s.out {
-		for _, c := range sp.paths {
-			if within(c, p) && !s.inClaimsPath(p) {
-				return scopeHit{id: OutOfScopePathID, subject: p, what: p + " is a credential path of " + s.desc(sp)}, true
-			}
+	if s.inClaimsPath(p) {
+		return scopeHit{}, false
+	}
+	for _, e := range s.outPath {
+		if within(e.path, p) {
+			return scopeHit{id: OutOfScopePathID, subject: p, what: p + " is a credential path of " + s.desc(e.p)}, true
 		}
 	}
 	return scopeHit{}, false
 }
 
 func (s *Scope) inClaimsPath(p string) bool {
-	for _, sp := range s.in {
-		for _, c := range sp.paths {
-			if within(c, p) {
-				return true
-			}
+	for _, e := range s.inPath {
+		if within(e.path, p) {
+			return true
 		}
 	}
 	return false
 }
 
-// mayName is the cheap filter before a word is normalized: only a word that spells a
-// credential folder's name or another identity's name can resolve under one.
+// searchHit judges a Glob/Grep: the search root (path), the literal prefixes of the pattern
+// and glob joined onto it, and — for a recursive search — a root that is an ancestor of an
+// out-of-scope tree. For a Glob with no path, toolCallFrom put the pattern in Path, so Path
+// then equals Pattern and is treated as the pattern, resolved against cwd.
+func (s *Scope) searchHit(cwd string, call ToolCall) (scopeHit, bool) {
+	pathRoot := ""
+	if strings.TrimSpace(call.Path) != "" && call.Path != call.Pattern {
+		pathRoot = s.norm(call.Path, cwd)
+	}
+	root := pathRoot
+	if root == "" {
+		root = cwd
+	}
+	// the literal prefix of each pattern, resolved against the path root (or cwd)
+	for _, sub := range []string{call.Pattern, call.Glob} {
+		if lp := literalPrefix(sub); lp != "" {
+			if h, ok := s.pathHit(s.norm(joinRel(pathRoot, lp), cwd)); ok {
+				return h, true
+			}
+		}
+	}
+	if pathRoot != "" {
+		if h, ok := s.pathHit(pathRoot); ok {
+			return h, true
+		}
+	}
+	// a recursive search rooted at an ancestor of an out-of-scope tree reads it
+	rec := call.Tool == "Grep" || strings.Contains(call.Pattern, "**") || strings.Contains(call.Glob, "**")
+	if rec && root != "" {
+		for _, e := range s.outPath {
+			if within(root, e.path) && !s.inClaimsPath(e.path) {
+				return scopeHit{id: OutOfScopePathID, subject: e.path, what: e.path + " is a credential path of " + s.desc(e.p)}, true
+			}
+		}
+		for _, o := range s.others {
+			if within(root, o.path) {
+				return scopeHit{id: OtherIdentityID, subject: o.path, other: o.p.id}, true
+			}
+		}
+	}
+	return scopeHit{}, false
+}
+
+func joinRel(base, rel string) string {
+	if base == "" {
+		return rel
+	}
+	return base + "/" + rel
+}
+
+// literalPrefix is the path up to the first glob metacharacter.
+func literalPrefix(p string) string {
+	p = strings.TrimSpace(strings.Trim(strings.TrimSpace(p), `"'`))
+	if p == "" {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(p), "/")
+	var keep []string
+	for _, c := range parts {
+		if strings.ContainsAny(c, "*?[") {
+			break
+		}
+		keep = append(keep, c)
+	}
+	return strings.Join(keep, "/")
+}
+
 func (s *Scope) mayName(w string) bool {
 	if w == "" {
 		return false
@@ -376,27 +516,11 @@ func (s *Scope) mayName(w string) bool {
 	return false
 }
 
-var appDataRe = regexp.MustCompile(`(?i)%(LOCALAPPDATA|APPDATA)%|\$env:(LOCALAPPDATA|APPDATA)\b|\$\{(LOCALAPPDATA|APPDATA)\}|\$(LOCALAPPDATA|APPDATA)\b`)
-
-// mentionHit scans text (a shell line, inline code) for a credential folder or another
-// identity's root spelled in it, after expanding ~, $HOME, %USERPROFILE%, $env:USERPROFILE,
-// %APPDATA% and the like.
 func (s *Scope) mentionHit(text string) (scopeHit, bool) {
 	if s.set == nil || len(s.mentions) == 0 {
 		return scopeHit{}, false
 	}
-	t := appDataRe.ReplaceAllStringFunc(text, func(m string) string {
-		g := appDataRe.FindStringSubmatch(m)
-		for _, n := range g[1:] {
-			if n != "" {
-				if v := s.env(strings.ToUpper(n)); v != "" {
-					return v
-				}
-			}
-		}
-		return m
-	})
-	t = filepath.ToSlash(s.set.Expand(t))
+	t := filepath.ToSlash(s.set.Expand(s.expandAppData(text)))
 	if s.ci {
 		t = strings.ToLower(t)
 	}
@@ -409,7 +533,7 @@ func (s *Scope) mentionHit(text string) (scopeHit, bool) {
 			at, end := i+j, i+j+len(m.needle)
 			i = end
 			if (at > 0 && isPathByte(t[at-1])) || (end < len(t) && isPathByte(t[end])) {
-				continue // part of a longer name
+				continue
 			}
 			if m.other != "" {
 				return scopeHit{id: OtherIdentityID, subject: m.path, other: m.other}, true
@@ -423,7 +547,6 @@ func (s *Scope) mentionHit(text string) (scopeHit, bool) {
 	return scopeHit{}, false
 }
 
-// isPathByte reports a byte that continues a path element's name.
 func isPathByte(b byte) bool {
 	return b == '.' || b == '_' || b == '-' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
@@ -431,27 +554,34 @@ func isPathByte(b byte) bool {
 // --- MCP ---
 
 func mcpTokens(server string) []string {
-	return strings.FieldsFunc(strings.ToLower(server), func(r rune) bool { return r == '_' || r == '-' || r == '.' })
+	parts := strings.FieldsFunc(strings.ToLower(server), func(r rune) bool { return r == '_' || r == '-' || r == '.' })
+	out := append([]string{}, parts...)
+	for i := 0; i+1 < len(parts); i++ {
+		out = append(out, parts[i]+parts[i+1]) // adjacent pair: google+cloud -> googlecloud
+	}
+	return out
 }
 
-// mcpServer judges an MCP server name: in scope when an in-scope provider claims one of its
-// tokens, denied when an out-of-scope provider claims one.
+// mcpServer: allowed if the exact server name is in the identity's own MCP list; otherwise an
+// out-of-scope token denies (ADR-0006 round 2, covers mcp__aws_on_azure__*).
 func (s *Scope) mcpServer(server string) (scopeHit, bool) {
+	if s.bundleMCP[strings.ToLower(server)] {
+		return scopeHit{}, false
+	}
 	toks := mcpTokens(server)
+	var out *scopedProvider
 	for _, t := range toks {
-		if s.inMCP[t] {
-			return scopeHit{}, false
+		if p := s.outMCP[t]; p != nil {
+			out = p
+			break
 		}
 	}
-	for _, t := range toks {
-		if sp := s.outMCP[t]; sp != nil {
-			return scopeHit{id: OutOfScopeMCPID, subject: "mcp__" + server, what: "MCP server " + server + " is " + s.desc(sp)}, true
-		}
+	if out == nil {
+		return scopeHit{}, false
 	}
-	return scopeHit{}, false
+	return scopeHit{id: OutOfScopeMCPID, subject: "mcp__" + server, what: "MCP server " + server + " is " + s.desc(out)}, true
 }
 
-// mcpInput reads every string of an MCP tool input that looks like a path.
 func (s *Scope) mcpInput(cwd, raw string) (scopeHit, bool) {
 	var v any
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
@@ -463,7 +593,7 @@ func (s *Scope) mcpInput(cwd, raw string) (scopeHit, bool) {
 		if len(str) > 1024 || strings.ContainsAny(str, "\n\r") || !strings.ContainsAny(str, `/\~$%`) {
 			return true
 		}
-		if h, hit := s.pathHit(s.set.Normalize(str, cwd)); hit {
+		if h, hit := s.pathHit(s.norm(str, cwd)); hit {
 			found, ok = h, true
 			return false
 		}
@@ -483,11 +613,9 @@ func urlHost(u string) string {
 	return ""
 }
 
-// netVerbs take a bare host (no scheme) as an argument.
 var netVerbs = wordSet("curl", "wget", "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "http", "https", "xh", "httpie",
 	"aria2c", "start-bitstransfer", "ssh", "scp", "sftp", "nc", "ncat", "telnet")
 
-// bareHost reads a host out of an argument without a scheme: [user@]host[:port][/path].
 func bareHost(a string) string {
 	a = strings.Trim(a, `"'`)
 	if strings.HasPrefix(a, "-") || strings.Contains(a, "://") {
@@ -516,14 +644,14 @@ func hostIn(h string, list []string) bool {
 }
 
 func (s *Scope) hostHit(h string) (scopeHit, bool) {
-	for _, sp := range s.in {
-		if hostIn(h, sp.match.Hosts) {
+	for _, list := range s.inHosts {
+		if hostIn(h, list) {
 			return scopeHit{}, false
 		}
 	}
-	for _, sp := range s.out {
-		if hostIn(h, sp.match.Hosts) {
-			return scopeHit{id: OutOfScopeHostID, subject: h, what: h + " is an API host of " + s.desc(sp)}, true
+	for _, hs := range s.outHosts {
+		if hostIn(h, hs.hosts) {
+			return scopeHit{id: OutOfScopeHostID, subject: h, what: h + " is an API host of " + s.desc(hs.p)}, true
 		}
 	}
 	return scopeHit{}, false
@@ -540,79 +668,246 @@ func (s *Scope) inClaimsEnv(name string) bool {
 	return false
 }
 
-// envRefPre is what makes a variable name a reference: an expansion ($NAME, ${NAME,
-// $env:NAME, %NAME%, env:NAME, process.env.NAME), a lookup in code (os.environ['NAME'],
-// getenv("NAME"), [Environment]::GetEnvironmentVariable('NAME')), or a shell builtin that
-// sets, clears or prints it.
-const envRefPre = `(?:\$\{?|\$env:|%|\benv:\\?|process\.env\.|(?:environ\s*\[|environ\.get\s*\(|getenv\s*\(|getenvironmentvariable\s*\(|env::var\s*\(|process\.env\[)\s*['"]?|(?:^|[\s;&|(` + "`" + `"'])(?:export|unset|set|setx|printenv|readonly)\s+)`
+// envDeny reports the out-of-scope provider that owns env name, honouring in-scope claims.
+func (s *Scope) envDeny(name string) *scopedProvider {
+	name = strings.ToUpper(name)
+	if s.inClaimsEnv(name) {
+		return nil
+	}
+	for _, e := range s.outEnv {
+		if e.name == name || (e.prefix && strings.HasPrefix(name, e.name)) {
+			return e.p
+		}
+	}
+	return nil
+}
 
-// envAssignPre is a NAME= assignment at the start of a word.
-const envAssignPre = `(?:^|[\s;&|(` + "`" + `"'])`
+func quoteMeta(s string) string { return regexp.QuoteMeta(s) }
 
-func (s *Scope) envRe(e envName) *regexp.Regexp {
-	key := e.name
+// explicitRe matches an explicit reference to env name N in code (any quotes).
+func (s *Scope) explicitRe(e envName) *regexp.Regexp {
+	key := "X:" + e.name
 	if e.prefix {
 		key += "*"
 	}
 	if re, ok := s.envRes[key]; ok {
 		return re
 	}
-	pat := regexp.QuoteMeta(e.name)
+	q := quoteMeta(e.name)
 	if e.prefix {
-		pat += `\w+`
+		q += `[A-Za-z0-9_]*`
 	}
-	re := regexp.MustCompile(`(?i)` + envRefPre + `(` + pat + `)\b|` + envAssignPre + `(` + pat + `)=`)
+	alts := []string{
+		`\$env:` + q,
+		`%` + q + `%`,
+		`\benv:\\?` + q,
+		`\[(?:system\.)?environment\]::(?:get|set|expand)environmentvariable\s*\(\s*["']?` + q,
+		`environ(?:\.copy\(\))?\s*\[\s*["']` + q,
+		`environ\.get\s*\(\s*["']` + q,
+		`getenv\s*\(\s*["']?` + q,
+		`process\.env\.` + q + `\b`,
+		`process\.env\[\s*["']` + q,
+		`\$\{#` + q + `\}`,
+		`\{[^{}]*\b` + q + `\b[^{}]*\}\s*=\s*[^;\n]*process\.env`,
+	}
+	re := regexp.MustCompile(`(?i)(` + strings.Join(alts, "|") + `)`)
 	s.envRes[key] = re
 	return re
 }
 
-func (s *Scope) envHit(text string) (scopeHit, bool) {
-	upper := strings.ToUpper(text)
+// expandRe matches a bash expansion or assignment of env name N (quote-aware caller).
+func (s *Scope) expandRe(e envName) *regexp.Regexp {
+	key := "E:" + e.name
+	if e.prefix {
+		key += "*"
+	}
+	if re, ok := s.envRes[key]; ok {
+		return re
+	}
+	q := quoteMeta(e.name)
+	if e.prefix {
+		q += `[A-Za-z0-9_]*`
+	}
+	re := regexp.MustCompile(`(?i)(\$\{?#?` + q + `\b|(?:^|[\s;&|(` + "`" + `])` + q + `=)`)
+	s.envRes[key] = re
+	return re
+}
+
+func (s *Scope) envHit(code, expand string) (scopeHit, bool) {
+	upperCode, upperExpand := strings.ToUpper(code), strings.ToUpper(expand)
 	for _, e := range s.outEnv {
-		if !strings.Contains(upper, e.name) {
-			continue
-		}
-		for _, m := range s.envRe(e).FindAllStringSubmatch(text, -1) {
-			name := strings.ToUpper(m[1] + m[2])
-			if e.prefix && s.inClaimsEnv(name) {
+		stem := e.name
+		if e.prefix {
+			if !strings.Contains(upperCode, stem) && !strings.Contains(upperExpand, stem) {
 				continue
 			}
-			return scopeHit{id: OutOfScopeEnvID, subject: name, what: name + " is a variable of " + s.desc(e.p)}, true
+		} else if !strings.Contains(upperCode, e.name) && !strings.Contains(upperExpand, e.name) {
+			continue
+		}
+		if m := s.explicitRe(e).FindString(code); m != "" {
+			if name := pickName(m, e); s.envDeny(name) != nil {
+				return scopeHit{id: OutOfScopeEnvID, subject: name, what: name + " is a variable of " + s.desc(e.p)}, true
+			}
+		}
+		if m := s.expandRe(e).FindString(expand); m != "" {
+			if name := pickName(m, e); s.envDeny(name) != nil {
+				return scopeHit{id: OutOfScopeEnvID, subject: name, what: name + " is a variable of " + s.desc(e.p)}, true
+			}
+		}
+	}
+	// Env: drive / $env: / %..% wildcard enumeration: Env:AWS_*, $env:AWS_*
+	if m := envWildcardRe.FindAllStringSubmatch(code, -1); m != nil {
+		for _, g := range m {
+			stem := strings.ToUpper(firstNonEmpty(g[1:]))
+			if p := s.envPrefixOwner(stem); p != nil {
+				return scopeHit{id: OutOfScopeEnvID, subject: stem + "*", what: stem + "* enumerates variables of " + s.desc(p)}, true
+			}
 		}
 	}
 	return scopeHit{}, false
 }
 
-// --- the shell ---
+var envWildcardRe = regexp.MustCompile(`(?i)(?:\$env:|%|\benv:\\?|\$\{?)([A-Za-z_][A-Za-z0-9_]*)\*`)
 
-var pythonRe = regexp.MustCompile(`^(python(\d+(\.\d+)?)?w?|py|pyw)$`)
-
-// runners run a package by name: the word after them (after a sub-command for some).
-var runners = map[string][]string{
-	"npx": nil, "bunx": nil, "pnpx": nil, "uvx": nil,
-	"pnpm": {"dlx", "exec"}, "yarn": {"dlx", "exec"}, "npm": {"exec", "x"}, "bun": {"x"},
-	"pipx": {"run"}, "uv": {"run", "tool"},
+func (s *Scope) envPrefixOwner(stem string) *scopedProvider {
+	if stem == "" || s.inClaimsEnv(stem) {
+		return nil
+	}
+	for _, e := range s.outEnv {
+		if strings.HasPrefix(e.name, stem) || (e.prefix && strings.HasPrefix(stem, e.name)) {
+			if !s.inClaimsEnv(e.name) {
+				return e.p
+			}
+		}
+	}
+	return nil
 }
 
-func (s *Scope) exeHit(word string) (scopeHit, bool) {
-	n := exeName(word)
-	if sp := s.outExe[n]; sp != nil {
-		return scopeHit{id: OutOfScopeCLIID, subject: n, what: n + " is the CLI of " + s.desc(sp)}, true
+func firstNonEmpty(xs []string) string {
+	for _, x := range xs {
+		if x != "" {
+			return x
+		}
+	}
+	return ""
+}
+
+// pickName extracts the var name a match named (for the log and in-claim check).
+func pickName(m string, e envName) string {
+	if !e.prefix {
+		return e.name
+	}
+	up := strings.ToUpper(m)
+	i := strings.Index(up, e.name)
+	if i < 0 {
+		return e.name
+	}
+	j := i + len(e.name)
+	for j < len(up) && (up[j] == '_' || (up[j] >= 'A' && up[j] <= 'Z') || (up[j] >= '0' && up[j] <= '9')) {
+		j++
+	}
+	return up[i:j]
+}
+
+// envBuiltins read or set a named variable from their arguments.
+var envBuiltins = wordSet("export", "unset", "set", "setx", "printenv", "readonly", "declare", "typeset", "local")
+
+func (s *Scope) envWord(name string) (scopeHit, bool) {
+	up := strings.ToUpper(strings.Trim(name, `"'`))
+	if i := strings.IndexAny(up, "="); i > 0 {
+		up = up[:i]
+	}
+	if p := s.envDeny(up); p != nil {
+		return scopeHit{id: OutOfScopeEnvID, subject: up, what: up + " is a variable of " + s.desc(p)}, true
+	}
+	return scopeHit{}, false
+}
+
+// --- executables ---
+
+func (s *Scope) resolveClaims(claims []exeClaim, sub string) (scopeHit, bool, *scopedProvider) {
+	inHit := false
+	var out *scopedProvider
+	for _, c := range claims {
+		covers := c.wildcard || c.subs[strings.ToLower(sub)]
+		if !covers {
+			continue
+		}
+		if c.p.inScope {
+			inHit = true
+		} else if out == nil {
+			out = c.p
+		}
+	}
+	return scopeHit{}, inHit, out
+}
+
+func (s *Scope) exeHit(word, sub string) (scopeHit, bool) {
+	for _, n := range exeCandidates(word) {
+		if claims, ok := s.exeClaims[n]; ok {
+			if _, in, out := s.resolveClaims(claims, sub); in {
+				return scopeHit{}, false
+			} else if out != nil {
+				return scopeHit{id: OutOfScopeCLIID, subject: n, what: n + " is the CLI of " + s.desc(out)}, true
+			}
+		}
+	}
+	return scopeHit{}, false
+}
+
+// exeCandidates are the names a command word may resolve to: the basename, and the
+// backslash-collapsed form (a\ws -> aws).
+func exeCandidates(word string) []string {
+	out := []string{exeName(word)}
+	if strings.Contains(word, `\`) {
+		if c := exeName(strings.ReplaceAll(word, `\`, "")); c != out[0] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// inlineModuleRe finds a module named in inline python code: import X, from X, and
+// run_module('X') / import_module('X'). Literal spellings only (the guard is a text filter).
+var inlineModuleRe = regexp.MustCompile(`(?:\bimport\s+|\bfrom\s+|(?:run_module|import_module)\s*\(\s*['"])([a-zA-Z0-9_.]+)`)
+
+func (s *Scope) inlineModuleHit(code string) (scopeHit, bool) {
+	for _, m := range inlineModuleRe.FindAllStringSubmatch(code, -1) {
+		if h, ok := s.moduleHit(m[1]); ok {
+			return h, true
+		}
 	}
 	return scopeHit{}, false
 }
 
 func (s *Scope) moduleHit(mod string) (scopeHit, bool) {
 	l := strings.ToLower(strings.Trim(mod, `"'`))
-	for m, sp := range s.outModule {
+	for m, claims := range s.modClaims {
 		if l == m || strings.HasPrefix(l, m+".") {
-			return scopeHit{id: OutOfScopeCLIID, subject: "python -m " + l, what: "python -m " + l + " runs the CLI of " + s.desc(sp)}, true
+			if _, in, out := s.resolveClaims(claims, ""); in {
+				return scopeHit{}, false
+			} else if out != nil {
+				return scopeHit{id: OutOfScopeCLIID, subject: "python -m " + l, what: "python -m " + l + " runs the CLI of " + s.desc(out)}, true
+			}
 		}
 	}
 	return scopeHit{}, false
 }
 
-// packageName reads a runner's package argument: @scope/name@version -> name.
+func (s *Scope) imageHit(img string) (scopeHit, bool) {
+	l := strings.ToLower(strings.Trim(img, `"'`))
+	for _, cand := range []string{l, imageBase(l)} {
+		if claims, ok := s.imgClaims[cand]; ok {
+			if _, in, out := s.resolveClaims(claims, ""); in {
+				return scopeHit{}, false
+			} else if out != nil {
+				return scopeHit{id: OutOfScopeCLIID, subject: cand, what: "the container image " + cand + " is the CLI of " + s.desc(out)}, true
+			}
+		}
+	}
+	return scopeHit{}, false
+}
+
 func packageName(a string) string {
 	a = strings.Trim(a, `"'`)
 	if strings.HasPrefix(a, "@") {
@@ -620,18 +915,14 @@ func packageName(a string) string {
 			a = a[i+1:]
 		}
 	}
-	if i := strings.IndexAny(a, "@=="); i > 0 {
+	if i := strings.IndexAny(a, "@="); i > 0 {
 		a = a[:i]
 	}
 	return a
 }
 
-// exeSuffixHit finds an out-of-scope executable spelled with a Windows suffix anywhere in the
-// line (`C:\Program Files\Amazon\AWSCLIV2\aws.exe` unquoted, which the tokenizer splits at
-// the space).
 func (s *Scope) exeSuffixHit(text string) (scopeHit, bool) {
 	l := strings.ToLower(filepath.ToSlash(text))
-	// Not .com: in a line it is far more often a domain (render.com, vercel.com).
 	for _, suf := range []string{".exe", ".cmd", ".bat", ".ps1"} {
 		for i := 0; ; {
 			j := strings.Index(l[i:], suf)
@@ -647,7 +938,7 @@ func (s *Scope) exeSuffixHit(text string) (scopeHit, bool) {
 			for start > 0 && !strings.ContainsRune(" \t\r\n\"'`/&|;(=,", rune(l[start-1])) {
 				start--
 			}
-			if h, ok := s.exeHit(l[start:end]); ok {
+			if h, ok := s.exeHit(l[start:end], ""); ok {
 				return h, true
 			}
 		}
@@ -655,39 +946,83 @@ func (s *Scope) exeSuffixHit(text string) (scopeHit, bool) {
 	return scopeHit{}, false
 }
 
-// shell judges a shell command line: raw is what the tokenizer reads, text is the line the
-// text scans read (a Bash line with its data here-doc bodies blanked).
+var pythonRe = regexp.MustCompile(`^(python(\d+(\.\d+)?)?w?|py|pyw)$`)
+
+// pyValueOpt: python options that take a value, so -m is not mistaken for the script.
+var pyValueOpt = wordSet("-X", "-W", "--check-hash-based-pycs")
+
+var runnerSub = map[string][]string{
+	"pnpm": {"dlx", "exec"}, "yarn": {"dlx", "exec"}, "npm": {"exec", "x"}, "bun": {"x"},
+	"pipx": {"run"}, "uv": {"run", "tool"},
+}
+
+func isRunner(name string) bool {
+	switch name {
+	case "npx", "bunx", "pnpx", "uvx":
+		return true
+	}
+	_, ok := runnerSub[name]
+	return ok
+}
+
+// shell judges a shell command line.
 func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
 	for _, c := range guard.Commands(raw) {
 		base := commandBase(s.set, cwd, c)
 		if c.Base != "" && base != "" {
-			if h, ok := s.pathHit(base); ok {
+			if h, ok := s.pathHit(s.norm(c.Base, cwd)); ok {
 				return h, true
-			}
-		}
-		writes, reads := redirects(c.Words)
-		words := append(append(append([]string{}, c.Words...), writes...), reads...)
-		for _, w := range words {
-			for _, p := range argPaths(w) {
-				if s.mayName(p) {
-					if h, ok := s.pathHit(s.set.Normalize(p, base)); ok {
-						return h, true
-					}
-				}
 			}
 		}
 		verb, args, ok := guard.Verb(c.Words)
 		if !ok {
 			continue
 		}
-		if h, ok := s.exeHit(verb); ok {
+		name := exeName(verb)
+		// path arguments (resolve relative words against a -C/--directory for tar)
+		pbase := base
+		if name == "tar" {
+			if d := dirArg(args); d != "" {
+				pbase = s.norm(d, base) // -C/--directory: later relative words resolve against it
+			}
+		}
+		writes, reads := redirects(c.Words)
+		for _, w := range append(append(append([]string{}, args...), writes...), reads...) {
+			if s.mayName(w) {
+				for _, p := range argPaths(w) {
+					if h, ok := s.pathHit(s.norm(p, pbase)); ok {
+						return h, true
+					}
+				}
+			}
+		}
+		// executable by verb
+		sub := ""
+		if len(args) > 0 {
+			sub = strings.Trim(args[0], `"'`)
+		}
+		if h, ok := s.exeHit(verb, sub); ok {
 			return h, true
 		}
-		name := exeName(verb)
+		// env builtins
+		if envBuiltins[name] {
+			for _, a := range args {
+				if a == "-p" || strings.HasPrefix(a, "-") {
+					continue
+				}
+				if h, ok := s.envWord(a); ok {
+					return h, true
+				}
+			}
+		}
 		switch {
 		case pythonRe.MatchString(name):
 			for i := 0; i < len(args); i++ {
 				a := args[i]
+				if pyValueOpt[a] {
+					i++
+					continue
+				}
 				mod := ""
 				if a == "-m" && i+1 < len(args) {
 					mod = args[i+1]
@@ -700,58 +1035,55 @@ func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
 					}
 					break
 				}
-				if a == "-c" || !strings.HasPrefix(a, "-") {
-					break // inline code or a script: the text scans read it
-				}
-			}
-		case runners[name] != nil || name == "npx" || name == "bunx" || name == "pnpx" || name == "uvx":
-			subs := runners[name]
-			i := 0
-			if subs != nil {
-				for i < len(args) && strings.HasPrefix(args[i], "-") {
-					i++
-				}
-				if i >= len(args) || !hasString(subs, strings.ToLower(args[i])) {
+				if a == "-c" && i+1 < len(args) {
+					if h, ok := s.inlineModuleHit(args[i+1]); ok {
+						return h, true
+					}
 					break
 				}
-				i++
-				if name == "uv" && i < len(args) && strings.EqualFold(args[i-1], "tool") {
-					if !strings.EqualFold(args[i], "run") {
-						break
-					}
-					i++
+				if !strings.HasPrefix(a, "-") {
+					break
 				}
 			}
-			for i < len(args) && strings.HasPrefix(args[i], "-") {
-				i++
+		case isRunner(name):
+			if h, ok := s.runnerHit(name, args); ok {
+				return h, true
 			}
-			if i < len(args) {
-				pkg := packageName(args[i])
-				if h, ok := s.exeHit(pkg); ok {
+		case name == "docker" || name == "podman" || name == "nerdctl":
+			if h, ok := s.dockerRun(args); ok {
+				return h, true
+			}
+		case name == "wsl" || name == "wsl.exe":
+			if inner := afterWSL(args); inner != "" {
+				if h, ok := s.exeHit(inner, ""); ok {
 					return h, true
 				}
-				if h, ok := s.moduleHit(pkg); ok {
-					return h, true
-				}
 			}
-		case name == "start-process" || name == "saps" || name == "start":
-			for i := 0; i < len(args); i++ {
-				a := args[i]
-				target := ""
-				if strings.EqualFold(a, "-FilePath") && i+1 < len(args) {
-					target = args[i+1]
-				} else if !strings.HasPrefix(a, "-") && strings.Trim(a, `"'`) != "" {
-					target = a
-				}
-				if target != "" {
-					if h, ok := s.exeHit(target); ok {
+		case name == "find":
+			if h, ok := s.findExec(args); ok {
+				return h, true
+			}
+		case name == "get-command" || name == "gcm":
+			for _, a := range args {
+				if !strings.HasPrefix(a, "-") {
+					if h, ok := s.exeHit(a, ""); ok {
 						return h, true
 					}
 					break
 				}
 			}
-		case name == "powershell" || name == "pwsh":
-			if dec, present, decoded := encodedPowerShell(args); present && decoded && depth < 3 {
+		case name == "start-process" || name == "saps":
+			if h, ok := s.startProcess(args); ok {
+				return h, true
+			}
+		case name == "start": // cmd `start [/switches] ["title"] exe`
+			if t := cmdStartTarget(args); t != "" {
+				if h, ok := s.exeHit(t, ""); ok {
+					return h, true
+				}
+			}
+		case (name == "powershell" || name == "pwsh") && depth < 3:
+			if dec, present, decoded := encodedPowerShell(args); present && decoded {
 				if h, ok := s.shell(base, dec, dec, depth+1); ok {
 					return h, true
 				}
@@ -772,18 +1104,165 @@ func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
 			}
 		}
 	}
-	if h, ok := s.exeSuffixHit(text); ok {
+	// text scans: code (quotes kept, grep/commit/here-strings blanked) and expand (single
+	// quotes also blanked, for bash expansion/assignment).
+	code := maskTextArgs(text)
+	expand := blankSingleQuoted(code)
+	if h, ok := s.exeSuffixHit(code); ok {
 		return h, true
 	}
-	for _, m := range urlRe.FindAllStringSubmatch(text, -1) {
+	for _, m := range urlRe.FindAllStringSubmatch(code, -1) {
 		if h, ok := s.hostHit(strings.Trim(strings.ToLower(m[1]), ".")); ok {
 			return h, true
 		}
 	}
-	if h, ok := s.envHit(text); ok {
+	if h, ok := s.envHit(code, expand); ok {
 		return h, true
 	}
-	return s.mentionHit(text)
+	return s.mentionHit(code)
+}
+
+func (s *Scope) runnerHit(name string, args []string) (scopeHit, bool) {
+	subs := runnerSub[name]
+	i := 0
+	if subs != nil {
+		for i < len(args) && strings.HasPrefix(args[i], "-") {
+			i++
+		}
+		if i >= len(args) || !hasString(subs, strings.ToLower(args[i])) {
+			return scopeHit{}, false
+		}
+		was := strings.ToLower(args[i])
+		i++
+		if name == "uv" && was == "tool" {
+			if i >= len(args) || !strings.EqualFold(args[i], "run") {
+				return scopeHit{}, false
+			}
+			i++
+		}
+	}
+	// skip runner flags and their values (--from X, --spec X, --with X, -p X)
+	for i < len(args) {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			break
+		}
+		if runnerValueOpt[strings.ToLower(a)] {
+			i++
+		}
+		i++
+	}
+	if i >= len(args) {
+		return scopeHit{}, false
+	}
+	pkg := packageName(args[i])
+	if h, ok := s.exeHit(pkg, ""); ok {
+		return h, true
+	}
+	return s.moduleHit(pkg)
+}
+
+var runnerValueOpt = wordSet("--from", "--spec", "--with", "-p", "--package", "--index-url")
+
+func (s *Scope) dockerRun(args []string) (scopeHit, bool) {
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		i++ // skip pre-run flags (rare; usually none)
+	}
+	if i >= len(args) || strings.ToLower(args[i]) != "run" {
+		return scopeHit{}, false
+	}
+	i++
+	for i < len(args) {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			return s.imageHit(a)
+		}
+		if dockerRunValueOpt[strings.ToLower(a)] && !strings.Contains(a, "=") {
+			i++
+		}
+		i++
+	}
+	return scopeHit{}, false
+}
+
+var dockerRunValueOpt = wordSet("-e", "--env", "-v", "--volume", "-p", "--publish", "--name", "-w", "--workdir",
+	"--network", "--mount", "-u", "--user", "--entrypoint", "--env-file", "--label", "-l")
+
+func afterWSL(args []string) string {
+	skip := wordSet("-d", "--distribution", "-u", "--user", "--cd")
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-e" || a == "--exec" || a == "--" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+			return ""
+		}
+		if skip[a] {
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		return a
+	}
+	return ""
+}
+
+func (s *Scope) findExec(args []string) (scopeHit, bool) {
+	for i, a := range args {
+		if (a == "-exec" || a == "-execdir" || a == "-ok" || a == "-okdir") && i+1 < len(args) {
+			return s.exeHit(args[i+1], "")
+		}
+	}
+	return scopeHit{}, false
+}
+
+func (s *Scope) startProcess(args []string) (scopeHit, bool) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.EqualFold(a, "-FilePath") && i+1 < len(args) {
+			return s.exeHit(args[i+1], "")
+		}
+		if !strings.HasPrefix(a, "-") && strings.Trim(a, `"'`) != "" {
+			return s.exeHit(a, "")
+		}
+	}
+	return scopeHit{}, false
+}
+
+// cmdStartTarget reads the exe of a cmd `start [/switches] ["title"] exe` line.
+func cmdStartTarget(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "/") {
+			continue
+		}
+		// a quoted title is the first quoted arg when another non-switch follows it
+		return a
+	}
+	return ""
+}
+
+// dirArg reads a -C/--directory value from tar-style args.
+func dirArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-C" || a == "--directory" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		if v, ok := strings.CutPrefix(a, "--directory="); ok {
+			return v
+		}
+		if v, ok := strings.CutPrefix(a, "-C"); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func hasString(xs []string, x string) bool {

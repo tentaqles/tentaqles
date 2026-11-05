@@ -54,8 +54,12 @@ func newScopeFixture(t testing.TB, scope ...string) scopeFixture {
 	if len(scope) == 0 {
 		scope = []string{"az", "azure-devops", "claude"}
 	}
+	embedded := map[string]providers.Match{}
+	for _, p := range cat.All() {
+		embedded[p.ID] = p.Match
+	}
 	s := NewScope(ScopeInputs{
-		Identity: "company-x", Scope: scope, Providers: cat.All(), Set: set,
+		Identity: "company-x", Scope: scope, Providers: cat.All(), Embedded: embedded, Set: set,
 		UserHome: home, Env: func(k string) string { return env[k] },
 		OtherRoots: map[string]string{betaRoot: "beta"}, OtherDirs: map[string]string{betaDir: "beta"},
 	})
@@ -190,7 +194,10 @@ func TestScope_OutOfScopeEnv(t *testing.T) {
 		{"node process.env", bash(`node -e "console.log(process.env.VERCEL_TOKEN)"`), r},
 		{"docker -e", bash("docker run -e AWS_ACCESS_KEY_ID=x app"), r},
 		{"prefix pattern", bash("TF_TOKEN_app_terraform_io=x terraform login"), r},
-		{"in a double-quoted string", bash(`git commit -m "use $AWS_PROFILE"`), r},
+		{"a real double-quoted expansion", bash(`echo "profile is $AWS_PROFILE"`), r},
+		{"a commit message is text", bash(`git commit -m "use $AWS_PROFILE"`), ""},
+		{"a single-quoted grep pattern is text", bash(`grep -rn '$AWS_PROFILE' src/`), ""},
+		{"an rg pattern is text", bash(`rg 'process.env.AWS_REGION' .`), ""},
 		{"lower-case on Windows", pwsh("$env:aws_profile"), r},
 		// must allow
 		{"an in-scope variable", bash("echo $AZURE_CONFIG_DIR"), ""},
@@ -267,7 +274,8 @@ func TestScope_OutOfScopeHost(t *testing.T) {
 		{"in-scope Azure", bash("curl https://management.azure.com/subscriptions?api-version=2020-01-01"), ""},
 		{"Graph through az", bash("az rest --url https://graph.microsoft.com/v1.0/me"), ""},
 		{"a public site", bash("curl https://example.com"), ""},
-		{"an install script", bash("curl -fsSL https://raw.githubusercontent.com/x/y/main/install.sh"), ""},
+		{"raw.githubusercontent is a gh host", bash("curl -fsSL https://raw.githubusercontent.com/x/y/main/install.sh"), r},
+		{"a non-vendor install script", bash("curl -fsSL https://get.example.com/install.sh | sh"), ""},
 		{"git clone from github.com", bash("git clone https://github.com/x/y"), ""},
 		{"localhost", bash("curl localhost:8080/health"), ""},
 		{"a look-alike host", bash("curl https://notamazonaws.com/x"), ""},
