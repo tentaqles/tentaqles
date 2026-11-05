@@ -89,6 +89,43 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - A denial log that cannot be written never lets a command through: the refusal stands and
   the error adds `refusal could not be logged: <err>`.
 
+### Self-protection, the hook's third category (PRD v2 §8.2, ADR-0005)
+
+- **Three categories, one order.** `tq claude-hook pre-tool-use` evaluates the manifest's
+  `blocked_commands` and the identity guard, then the secret rules, then self-protection;
+  the first category that denies is the one reported. Every deny now reads
+  `BLOCKED [<category>/<rule>]: ...` (`identity/wrong-cloud`, `secrets/tq/env-file-read`,
+  `self-protection/tq/protected-path`); `--json` adds `category`. `tq/cross-client-mcp` is
+  in the identity category and `tq/commit-secret` in secrets; `tq/guard-error` and the
+  commit scan's ask are unchanged.
+- **`tq/protected-path`.** A session can no longer read or write tq's state
+  (`~/.tentaqles`: `config.yaml`, `trust/`, the manifests, the logs, `anchors.yaml`,
+  `integrity.key`, `bundles/`, `providers/`, `shims/`; in an identity's Claude or Codex
+  home `settings.json`, `settings.local.json`, `hooks.json` and `config.toml`), nor write
+  the root marker `.tentaqles.yaml`, the installed tentaqles plugin
+  (`plugins/cache/tentaqles/**` and the plugin registration), the tq binary or tq's OS
+  keychain entry (`cmdkey`, `security`, `secret-tool` on service `tentaqles`). It covers
+  the file tools, Codex's `apply_patch`, `mcp__*` inputs that carry a path, and the shell:
+  redirects, copies, moves, deletes, `mkdir`, ACL and mode changes, links, `truncate`,
+  `tee`, `Set-Content`, `sed -i`, interpreters' inline code, `[IO.File]::...`, `git -C` and
+  a `cd` into the folder. Paths are canonical (symlinks, case on Windows and macOS, `~`,
+  `$HOME`, `$env:USERPROFILE`, `%USERPROFILE%`, `$TQ_HOME`, `$CLAUDE_CONFIG_DIR`,
+  `$CODEX_HOME`). The marker, the plugin's files and the binary stay readable; Claude's
+  memory files and projects in the identity's config home stay writable.
+- **`tq/human-only-command`.** The hook denies a shell line that runs a human-only tq verb
+  (`tq allow`, `C:\tools\tq.exe hooks install`, `./tq init`, `go run ./cmd/tq deny`, behind
+  `sudo`, `env` or a nested shell) before it runs; `tq doctor`, `tq list`, `tq env` and
+  the other reads stay allowed.
+- **Dry runs are free.** `tq migrate` without `--apply` and `tq settings render --dry-run`
+  no longer refuse a session; `--apply` and a real render still do.
+- **Every hook deny is logged** to `~/.tentaqles/denials.jsonl` (kind = category, layer
+  `hook`, tool, command or path, rule, reason, workspace, pid, cwd); never an environment
+  value or file content.
+- **One marker list.** `internal/markers` holds the harness environment markers;
+  `TQ_HOME` is now ignored under any of the twelve (it used to be six).
+- Plugin: see `plugin/CHANGELOG.md` (the fallback guard protects `~/.tentaqles` and the
+  plugin cache; `client-settings` and `rollback` no longer write the manifest).
+
 ## [0.9.0] — 2026-11-04
 
 tq is an identity isolator with secrets protection for developers who work across several

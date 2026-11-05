@@ -60,7 +60,7 @@ func TestPolicy_PowerShellGoesThroughIdentityGuard(t *testing.T) {
 	// Neutral cwd: a remote git command must be refused for PowerShell too.
 	in := `{"command":"git push origin main"}`
 	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, toolPayload(t, testutil.TempDir(t), "PowerShell", in))
-	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED:") {
+	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED [identity/") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }

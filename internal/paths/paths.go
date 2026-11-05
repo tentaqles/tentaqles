@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/markers"
 )
 
-// agentMarkers are the environment variables that mark a process as running
-// under an agent (the list of internal/cmd/humanonly.go; P1.3 unifies them).
-// Under a marker TQ_HOME is ignored: the hook inherits the harness
+// Under an agent marker (internal/markers, the one list the human-only
+// detector reads too) TQ_HOME is ignored: the hook inherits the harness
 // environment, and a workspace's agent-writable Claude settings can set
 // TQ_HOME to a forged state folder with its own trust records.
-var agentMarkers = []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "TQ_HUB_TASK", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"}
 
 // AllowHomeOverride lets TQ_HOME apply under an agent marker. The tests set
 // it (they run under Claude Code with TQ_HOME pointing at a temp dir);
@@ -21,16 +21,12 @@ var agentMarkers = []string{"TENTAQLES_HEADLESS", "CLAUDE_PLUGIN_ROOT", "CLAUDEC
 var AllowHomeOverride = false
 
 func agentSession() bool {
-	for _, k := range agentMarkers {
-		if strings.TrimSpace(os.Getenv(k)) != "" {
-			return true
-		}
-	}
-	return false
+	_, ok := markers.Set()
+	return ok
 }
 
 // Home is $TQ_HOME, or ~/.tentaqles when TQ_HOME is unset or the process
-// runs under an agent marker (see agentMarkers).
+// runs under an agent marker (markers.Markers).
 func Home() string {
 	if h := os.Getenv("TQ_HOME"); h != "" && (AllowHomeOverride || !agentSession()) {
 		return h

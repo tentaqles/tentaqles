@@ -16,17 +16,24 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `wrong-cloud`, `neutral-remote`, `untrusted`, `env-drift`, `claude-config-drift`,
     `git-email-drift`, `gh-user`) and the shell tokenizer the hook uses.
   - `internal/policy/` — the five secret rules of `builtin.go` (`tq/secret-store-read`,
-    `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`) and
-    their evaluator; nothing else is a rule.
+    `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`), the
+    two self-protection rules of `selfprotect.go` (`tq/protected-path`,
+    `tq/human-only-command`, ADR-0005) and their evaluator; nothing else is a rule. Every
+    rule carries its category (`identity`, `secrets`, `self-protection`); a deny reads
+    `BLOCKED [<category>/<rule>]`.
   - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `init`, `add`,
     `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `bundle`,
     `providers`, `setup`, `onboard`, `secret`, `secrets`, `settings`, `statusline`,
     `worktrees`, `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
-    `claudehook*.go`: `pre-tool-use` runs `guard.Decide`, then the secret rules plus
-    `tq/commit-secret` and `tq/cross-client-mcp`, with `tq/guard-error` as the fail-safe;
-    `session-start` prints the preamble. `humanonly.go` is the thin wrapper over
+    `claudehook*.go`: `pre-tool-use` runs `guard.Decide` (identity), then the secret rules
+    plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
+    the protected path set of the run (`claudehook_protect.go`), first category that
+    denies wins, with `tq/guard-error` as the fail-safe; every deny is one line in
+    `$TQ_HOME/denials.jsonl`; `session-start` prints the preamble. `humanonly.go` is the thin wrapper over
     `internal/humanonly` (`refuseAgent`, `humanGate`) that every command writing under
     `paths.Home()` or an identity dir calls.
+  - `internal/markers/` — the one list of harness environment markers; `internal/paths`
+    (TQ_HOME ignored under a marker) and `internal/humanonly` both read it.
   - `internal/humanonly/` — the human-only check of PRD v2 §8.1 (ADR-0003): three
     detectors (`IsTerminal` on stdin and stdout, the process-tree walker `Walk` with a
     per-OS `parentOf` in `proctree_*.go`, the `Markers` list), a refusal logged to
@@ -40,7 +47,8 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     yet migrated with `tq migrate manifests`, ADR-0002; a top-level block tq does not
     know is recorded as dropped, never read), `internal/protect/` (the state folder
     private to the user: modes, and on Windows the one icacls run `tq doctor` reports as
-    `protected-acl`), `internal/registry/`, `internal/resolve/` (which file is the
+    `protected-acl`; `pathset.go`, the protected path set of PRD v2 §8.2 the hook's
+    `tq/protected-path` matches against), `internal/registry/`, `internal/resolve/` (which file is the
     manifest, both layouts), `internal/workspace/`, `internal/paths/`,
     `internal/envplan/`, `internal/shell/` (activation hooks and the `claude`/`codex`
     launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
@@ -86,6 +94,11 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   detector tests of `internal/humanonly` (`TestTTYDetector`, `TestProcessTreeDetector`,
   `TestEnvMarkerDetector`, `TestGateConfirms`).
 - An edited manifest loses its trust: `TestEditedManifestLosesTrust`.
+- A session cannot read or write tq's state, nor write the root marker, the installed
+  plugin, the tq binary or tq's keychain entry, by any tool, nor run a human-only tq verb
+  in the shell; the categories run blocked_commands → identity → secrets →
+  self-protection and every deny is logged: `TestProtectedPaths_Table`,
+  `TestProtectedPaths_RuleOrder`, `TestProtectedPaths_Codex`, `TestKeychainWrite`.
 - The guard reads the manifest from the protected location only; a marker that names
   another workspace, or has no protected copy, resolves neutral:
   `TestResolve_MarkerClientMismatch_Neutral`, `TestResolve_MarkerWithoutProtectedManifest_Neutral`.
@@ -102,7 +115,8 @@ CI's `go` job runs `go vet ./...`, `go test ./... -count=1` and a build; locally
 `[Unreleased]`; a change under `plugin/` also gets its line in `plugin/CHANGELOG.md`, and the
 root entry is then one pointer line.
 
-A change under `internal/guard/`, `internal/policy/`, `internal/trust/`, `internal/humanonly/`, `internal/hooks/`,
+A change under `internal/guard/`, `internal/policy/`, `internal/trust/`, `internal/humanonly/`,
+`internal/markers/`, `internal/protect/`, `internal/hooks/`,
 `plugin/hooks/`, `plugin/scripts/tq_hook.sh`, `.github/workflows/`,
 `.goreleaser.yaml`, `.claude-plugin/marketplace.json` or `installers/` crosses a trust
 boundary of `docs/threat-model.md` and needs an ADR under `docs/adr/` (template:

@@ -214,15 +214,21 @@ func newPreToolUseCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "pre-tool-use",
 		Short: "Allow (exit 0), ask (JSON on stdout) or block (exit 2) the tool call in the PreToolUse payload",
-		Long: `Reads a Claude Code PreToolUse payload on stdin and decides:
+		Long: `Reads a Claude Code PreToolUse payload on stdin and decides, in order
+(the first category that matches denies):
 
-  1. identity: Bash/PowerShell commands go through the workspace identity
-     guard (git email, gh user, cloud CLI, blocked commands, trust);
+  1. identity: the manifest's blocked commands, then Bash/PowerShell
+     commands through the workspace identity guard (git email, gh user,
+     cloud CLI, trust) and the cross-client MCP check;
   2. secrets: every tool call (shell, file read, MCP) goes through tq's
-     built-in secret rules, a secret scan of what a git commit would
-     record and a cross-client MCP check.
+     built-in secret rules and a secret scan of what a git commit would
+     record;
+  3. self-protection: a read, write, copy, move or delete of a protected
+     path (tq's state folder, the workspace marker, the installed plugin,
+     the tq binary) in any tool, and a human-only tq command in the shell.
 
-Deny exits 2 with the reason on stderr. The hook asks only when the commit
+Deny exits 2 with BLOCKED [<category>/<rule>]: <reason> on stderr and one
+line in ~/.tentaqles/denials.jsonl. The hook asks only when the commit
 secret scan fails or the guard itself errors: the ask prints the PreToolUse
 permissionDecision JSON so Claude Code asks the user.`,
 		RunE: func(c *cobra.Command, _ []string) (rerr error) {
@@ -252,7 +258,9 @@ permissionDecision JSON so Claude Code asks the user.`,
 			if p.ToolName == "" {
 				if agent == hookAgentCodex && !asJSON {
 					// A Codex payload tq cannot read is not allowed.
-					writeCodexDeny(c.OutOrStdout(), "BLOCKED ["+guardErrorID+"]: the hook payload names no tool; tq denies a call it cannot judge")
+					reason := "BLOCKED [" + guardErrorID + "]: the hook payload names no tool; tq denies a call it cannot judge"
+					logHookDenial(guardErrorID, "", "", guardErrorID, reason, "", strings.TrimSpace(p.Cwd))
+					writeCodexDeny(c.OutOrStdout(), reason)
 				}
 				return nil
 			}
@@ -273,12 +281,13 @@ permissionDecision JSON so Claude Code asks the user.`,
 				}
 				ws, cfg = gws, gcfg
 				if d := guard.Decide(in); d.Block {
+					logHookDenial(guard.Category, p.ToolName, cmdline, d.Rule, d.Reason, hookWSName(ws), cwd)
 					if agent == hookAgentCodex && !asJSON {
 						// Exit 2 blocks in Codex too; the deny answer says so
 						// on stdout as well.
 						writeCodexDeny(c.OutOrStdout(), d.Reason)
 					}
-					emitDecision(c, asJSON, true, d.Rule, d.Reason)
+					emitDecision(c, asJSON, true, guard.Category, d.Rule, d.Reason)
 					exit(2)
 					return nil
 				}
@@ -286,18 +295,22 @@ permissionDecision JSON so Claude Code asks the user.`,
 				ws, cfg = resolveTrusted(cwd)
 			}
 
+			// subject is what the denial log records for the call: the
+			// command line, the path, or the tool name (never content).
+			subject := denialSubject(call)
 			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline)
 			// A Codex apply_patch names its files only in the patch text: the
 			// file rules run on every file it writes, and a patch tq cannot
 			// read, or one too big to judge in the budget, is denied. The
-			// rule set is built once.
+			// rule set and the protected path set are built once.
 			if isApplyPatch(call) || (agent == hookAgentCodex && isFileWriteTool(call.Tool) && call.Path == "") {
 				deny := func(why string) error {
 					reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies an edit it cannot judge"
+					logHookDenial(guardErrorID, p.ToolName, subject, guardErrorID, reason, hookWSName(ws), cwd)
 					if agent == hookAgentCodex && !asJSON {
 						writeCodexDeny(c.OutOrStdout(), reason)
 					}
-					emitDecision(c, asJSON, true, guardErrorID, reason)
+					emitDecision(c, asJSON, true, "", guardErrorID, reason)
 					exit(2)
 					return nil
 				}
@@ -309,12 +322,20 @@ permissionDecision JSON so Claude Code asks the user.`,
 					return deny(fmt.Sprintf("the patch writes %d files, more than the %d tq judges in one call: split the patch", len(files), maxPatchFiles))
 				}
 				set := buildPolicy()
+				prot := protectedSet(ws, cfg)
 				for _, fc := range patchCalls(files, cwd) {
 					if time.Now().After(scanDeadline) {
 						return deny("the patch took longer than the hook budget to judge: split the patch")
 					}
-					d = policy.Merge(d, policyDecisionWith(set, cwd, ws, cfg, fc, scanDeadline))
+					fd := policyDecisionWith(set, prot, cwd, ws, cfg, fc, scanDeadline)
+					if fd.Action == policy.Deny && d.Action != policy.Deny {
+						subject = fc.Path // the first file the patch is denied on
+					}
+					d = policy.Merge(d, fd)
 				}
+			}
+			if d.Action == policy.Deny {
+				logHookDenial(denyKind(d), p.ToolName, subject, d.Matched[0].ID, d.Reason(), hookWSName(ws), cwd)
 			}
 			if agent == hookAgentCodex && !asJSON && d.Action != policy.Allow {
 				// Codex fails open on a hook ask: codexAnswer never sends one.
@@ -325,17 +346,17 @@ permissionDecision JSON so Claude Code asks the user.`,
 			}
 			switch d.Action {
 			case policy.Deny:
-				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
+				emitDecision(c, asJSON, true, d.Matched[0].Category, d.Matched[0].ID, d.Reason())
 				exit(2)
 			case policy.Ask:
 				if asJSON {
-					emitDecision(c, asJSON, false, d.Matched[0].ID, d.Reason())
+					emitDecision(c, asJSON, false, d.Matched[0].Category, d.Matched[0].ID, d.Reason())
 					return nil
 				}
 				return writeAsk(c.OutOrStdout(), d.Reason())
 			default:
 				if asJSON {
-					emitDecision(c, asJSON, false, "", "")
+					emitDecision(c, asJSON, false, "", "", "")
 				}
 			}
 			return nil
@@ -366,7 +387,7 @@ func guardPanicAsk(c *cobra.Command, asJSON bool, agent string, r any) error {
 	reason := "CONFIRM [" + guardErrorID + "]: tq guard error; please review the command yourself (" + detail + ")"
 	fmt.Fprintln(c.ErrOrStderr(), "tq: guard panic: "+detail)
 	if asJSON {
-		emitDecision(c, asJSON, false, guardErrorID, reason)
+		emitDecision(c, asJSON, false, "", guardErrorID, reason)
 		return nil
 	}
 	if agent == hookAgentCodex {
@@ -377,15 +398,17 @@ func guardPanicAsk(c *cobra.Command, asJSON bool, agent string, r any) error {
 }
 
 // emitDecision reports a decision: the --json object on stdout when asked
-// for, and for blocks the reason on stderr (Claude Code shows stderr of an
-// exit-2 hook to the model).
-func emitDecision(c *cobra.Command, asJSON, block bool, rule, reason string) {
+// for (block, the category, the rule id and the reason), and for blocks the
+// reason on stderr (Claude Code shows stderr of an exit-2 hook to the
+// model).
+func emitDecision(c *cobra.Command, asJSON, block bool, category, rule, reason string) {
 	if asJSON {
 		_ = json.NewEncoder(c.OutOrStdout()).Encode(struct {
-			Block  bool   `json:"block"`
-			Rule   string `json:"rule"`
-			Reason string `json:"reason"`
-		}{block, rule, reason})
+			Block    bool   `json:"block"`
+			Category string `json:"category,omitempty"`
+			Rule     string `json:"rule"`
+			Reason   string `json:"reason"`
+		}{block, category, rule, reason})
 	}
 	if block {
 		fmt.Fprintln(c.ErrOrStderr(), reason)

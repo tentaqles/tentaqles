@@ -45,11 +45,11 @@ Restore the workspace `.tentaqles.yaml` to a previously captured snapshot.
 
    Use the `captured_at` value (or the filename stem) as the `<timestamp_prefix>`.
 
-5. The command outputs the manifest as JSON. Parse it and write it back, in YAML format, to the file tq reads: `~/.tentaqles/identities/<name>/manifest.yaml` when `<workspace_path>/.tentaqles.yaml` is a marker (`schema: tentaqles-marker-v1`), otherwise `<workspace_path>/.tentaqles.yaml` itself. `tentaqles.manifest.loader.load_manifest(<workspace_path>)["_manifest_path"]` names it.
+5. The command outputs the manifest as JSON. Convert it to YAML and show it to the user with the file tq reads: `~/.tentaqles/identities/<name>/manifest.yaml` when `<workspace_path>/.tentaqles.yaml` is a marker (`schema: tentaqles-marker-v1`), otherwise `<workspace_path>/.tentaqles.yaml` itself. `tentaqles.manifest.loader.load_manifest(<workspace_path>)["_manifest_path"]` names it.
 
-   Write the file using the standard Write tool. This will also trigger a new snapshot via the snapshot-guard hook (preserving the rollback action in history).
+   Do not write the file: the manifest is a protected path and tq's hook denies a session's write to it (`tq/protected-path`, ADR-0005). Ask the user to replace the file's content with the YAML in their editor, then run `tq allow <name>` in their terminal (the restored manifest has a new hash).
 
-6. Confirm to the user: "Restored manifest from snapshot `<captured_at>` (reason: `<reason>`). The workspace is now using the previous identity configuration."
+6. Once the user says it is done, confirm: "Restored manifest from snapshot `<captured_at>` (reason: `<reason>`). The workspace uses the previous identity configuration once `tq allow <name>` has run."
 
 7. Recommend restarting the Claude Code session so the restored manifest takes effect in the preamble.
 

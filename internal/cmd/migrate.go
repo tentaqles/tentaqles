@@ -70,11 +70,17 @@ func newMigrateCmd() *cobra.Command {
 			"~/.tentaqles/identities/<name>/manifest.yaml.\n\n" +
 			"Every mutation is journalled before it happens; `tq uninstall --restore`\n" +
 			"replays that journal backwards.\n\n" +
-			"Human-only: a session is refused, and you confirm before --apply writes.",
+			"Human-only to apply: a session is refused, and you confirm before --apply\n" +
+			"writes. The dry run reads and is free to run from a session.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			if err := refuseAgent("tq migrate"); err != nil {
-				return err
+			// A dry run is a read (ADR-0005: dry runs are free); --apply
+			// refuses a session here, before anything is resolved, and
+			// confirms inside runMigrate.
+			if apply {
+				if err := refuseAgent("tq migrate --apply"); err != nil {
+					return err
+				}
 			}
 			names, err := parseSteps(stepsCSV)
 			if err != nil {

@@ -5,9 +5,12 @@
 the source of truth for identity reporting and enforcement; the plugin's
 Python code never switches gh/az/git identity itself.
 
-tq guards two things and nothing else: the identity a command runs under,
-and secrets. It has no modes and no other rules; every decision is allow or
-block, in every Claude permission mode.
+tq guards three categories and nothing else (PRD v2 §7.1): **identity** (the
+identity a command runs under, the manifest's blocked commands),
+**secrets**, and **self-protection** (tq's own state, hooks, plugin and
+binary, and the human-only tq commands; ADR-0005). It has no modes and no
+other rules; every decision is allow or block, in every Claude permission
+mode.
 
 ## Subcommands
 
@@ -34,10 +37,10 @@ Both subcommands accept the hook JSON Claude Code provides. The fields
 }
 ```
 
-- `tool_name` — `Bash` and `PowerShell` go through the identity guard *and*
-  the secret rules; every other tool (Read, Edit, Write, MultiEdit,
-  NotebookEdit, Grep, `mcp__*`) goes through the secret rules only. A
-  payload without `tool_name` is allowed.
+- `tool_name` — `Bash` and `PowerShell` go through the identity guard, the
+  secret rules and the self-protection rules; every other tool (Read, Edit,
+  Write, MultiEdit, NotebookEdit, Grep, `mcp__*`) goes through the secret
+  and self-protection rules. A payload without `tool_name` is allowed.
 - `cwd` — the directory to resolve a workspace from. Falls back to the
   process's actual working directory if omitted or empty.
 - `tool_input` — `command` for shell tools; `file_path` / `notebook_path` /
@@ -57,7 +60,7 @@ while `session-start` prints its "could not resolve" line and exits 0.
 | Code | Meaning |
 |------|---------|
 | `0` | Allow. `session-start` always exits 0 (it never blocks a session). |
-| `2` | Block (`pre-tool-use` only). A `BLOCKED: ...` message is written to **stderr**; stdout is not used for the block message. |
+| `2` | Block (`pre-tool-use` only). A `BLOCKED [<category>/<rule>]: ...` message is written to **stderr** (`BLOCKED [identity/wrong-cloud]: ...`, `BLOCKED [secrets/tq/env-file-read]: ...`, `BLOCKED [self-protection/tq/protected-path]: ...`); stdout is not used for the block message. Every block is also one line in the denial log (see [Self-protection](#self-protection-pre-tool-use)). |
 
 If the guard itself fails while it analyses a call (a panic in tq's own
 code), `pre-tool-use` fails safe: it asks, printing the PreToolUse decision
@@ -90,13 +93,16 @@ decision is written to **stdout** as one JSON object, in addition to the
 usual stderr message and exit code.
 
 ```json
-{"block": true, "rule": "git-email-drift", "reason": "BLOCKED: ..."}
+{"block": true, "category": "identity", "rule": "git-email-drift", "reason": "BLOCKED [identity/git-email-drift]: ..."}
 ```
 
 - `block` — `true` when the command is refused (the process also exits 2).
-- `rule` — the rule that matched: an identity rule (`git-email-drift`, …)
-  or a secret rule id (`tq/env-dump`, …); `""` when the call is simply
-  allowed. For the fail-safe ask, `block` is `false` and `rule` is
+- `category` — `identity`, `secrets` or `self-protection`; omitted when the
+  call is allowed and for `tq/guard-error`.
+- `rule` — the rule that matched: an identity rule (`git-email-drift`, …),
+  a secret rule id (`tq/env-dump`, …) or a self-protection rule id
+  (`tq/protected-path`, `tq/human-only-command`); `""` when the call is
+  simply allowed. For the fail-safe ask, `block` is `false` and `rule` is
   `tq/guard-error`.
 - `reason` — the full multi-line message (`""` when allowed).
 
@@ -108,8 +114,22 @@ format described below.
 
 ## Rule precedence (`pre-tool-use`)
 
-`internal/guard/guard.go`'s `Decide` function applies rules in this exact
-order — the **first** matching rule wins and produces the block:
+The categories are evaluated in the order of PRD v2 §6.3 and the first one
+that denies is the one reported:
+
+1. **identity** — the manifest's `blocked_commands`, then the identity guard
+   below (shell tools only), and `tq/cross-client-mcp` (MCP tools);
+2. **secrets** — the secret rules, `tq/commit-secret`;
+3. **self-protection** — `tq/protected-path`, `tq/human-only-command`; run
+   only when nothing above denied.
+
+A command that matches both a blocked command and a protected path reports
+`blocked-command`; one that runs a wrong cloud CLI on the manifest reports
+`wrong-cloud`.
+
+Inside the identity category, `internal/guard/guard.go`'s `Decide` function
+applies rules in this exact order — the **first** matching rule wins and
+produces the block:
 
 1. **`blocked-command`** — the command starts with (as a whole word, after
    any of `&& || ; | & \n \r $( \` ( { }`) an entry in the manifest's
@@ -184,8 +204,9 @@ credentials. The guard's job is to catch the honest mistake - the wrong cwd,
 the stale shell, the forgotten `tq allow` - not to contain an adversary.
 
 Everything else an agent can do (a force push, a cloud delete, a migration
-against production, an edit to its own settings) is Claude Code's own
-permission settings' business, not tq's.
+against production, an edit to the project's `.claude/settings.local.json`)
+is Claude Code's own permission settings' business, not tq's. tq's own
+files, hooks, plugin and binary are the self-protection category's (below).
 
 ## `session-start` output
 
@@ -236,7 +257,14 @@ If no `tq` binary can be found or run:
   command slips through. Payloads that clearly name another tool (Read,
   Edit, an MCP tool, …) are let through, since the widened `PreToolUse`
   matcher would otherwise block every file read too.
-- The fallback has **no secret rules**: those live in the `tq` binary.
+- The fallback has **no secret rules**: those live in the `tq` binary. It
+  keeps a coarse **self-protection**: a Write, Edit, MultiEdit or
+  NotebookEdit under `~/.tentaqles` or the installed plugin
+  (`<config dir>/plugins/cache/tentaqles`), a Read or Grep under
+  `~/.tentaqles`, and a shell command that names either one (a text match on
+  the expanded home, `~`, `$HOME`, `$env:USERPROFILE`, `%USERPROFILE%`) are
+  blocked with `BLOCKED [self-protection/tq/protected-path]`. It does not
+  know the root marker or the human-only tq commands (tq is not installed).
 
 The off launchers (`claude-off`, `codex-off`, `tq run --off -- claude`)
 start the agent outside tq with the plugin switched off, so neither the
@@ -265,8 +293,10 @@ rule on a file tool:
 echo '{"tool_name":"Read","cwd":"'$PWD'","tool_input":{"file_path":"'$PWD'/.env"}}' | tq claude-hook pre-tool-use --json
 ```
 
-A block prints `BLOCKED: ...` to stderr and the exit code is `2`; an
-allowed command prints nothing and exits `0`.
+A block prints `BLOCKED [<category>/<rule>]: ...` to stderr and the exit
+code is `2`; an allowed command prints nothing and exits `0`. Every block
+also appends a line to `~/.tentaqles/denials.jsonl` (`$TQ_HOME` outside an
+agent session).
 
 To test `session-start`:
 
@@ -279,8 +309,8 @@ echo '{"tool_name":"Bash","cwd":"'$PWD'"}' | tq claude-hook session-start
 After the identity guard (shell tools only), every call is checked against
 the built-in secret rules (`internal/policy/builtin.go`). A matching rule
 denies the call (exit 2); every matching rule is listed in the reason. There
-are no other rules: nothing a manifest, a global file or a repository file
-adds or removes.
+are no other secret rules: nothing a manifest, a global file or a repository
+file adds or removes.
 
 | id | catches |
 |---|---|
@@ -299,6 +329,70 @@ adds or removes.
 - A command that runs `git -C other-repo commit` is scanned in the hook's
   cwd, not in `other-repo`.
 - A malformed payload is allowed; only an oversized one fails closed.
+
+## Self-protection (`pre-tool-use`)
+
+The third category (PRD v2 §8, ADR-0005) keeps a session away from what
+makes the other two hold: tq's state, the hook, the plugin, the binary and
+the commands that change them. It runs after identity and secrets, only when
+neither denied.
+
+### The protected paths
+
+The set is computed per call (`internal/protect/pathset.go`) from tq's state
+folder, the registered bases, the resolved identity, `$CLAUDE_CONFIG_DIR`,
+`$CODEX_HOME` and the running binary:
+
+| What | Paths | Denied |
+|---|---|---|
+| tq's state | everything under `~/.tentaqles`: `config.yaml`, `trust/`, `identities/<ws>/manifest.yaml` and the identity's CLI homes, `denials.jsonl`, `audit.jsonl`, `protected-acl.json`, `anchors.yaml`, `integrity.key`, `bundles/`, `providers/`, `shims/`, `backups/`. In an identity's `claude` or `codex` home only the hook registration: `settings.json`, `settings.local.json`, `hooks.json`, `config.toml` (Claude's memory files, projects and todos there stay writable). The same Codex files under `$CODEX_HOME` | read and write |
+| the root marker | `<base>/<ws>/.tentaqles.yaml` of every registered base (it holds the name only) | write |
+| the plugin | `<config dir>/plugins/cache/tentaqles/**`, `plugins/installed_plugins.json`, `plugins/known_marketplaces.json`, for the identity's Claude home, `$CLAUDE_CONFIG_DIR` and `~/.claude` | write |
+| the binary | the running `tq`, its directory, and tq-named files beside it; the whole directory when it is tentaqles' own (`%LOCALAPPDATA%\tentaqles\bin`) | write |
+| the keychain | tq's entry in the OS keychain (service `tentaqles`: the integrity key and the `tq secret` tokens) | write |
+
+A path is made absolute against the cwd (or a preceding `cd`), cleaned,
+symlink-resolved and compared without case on Windows and macOS; `~`,
+`$HOME`, `${HOME}`, `$USERPROFILE`, `$env:USERPROFILE`, `%USERPROFILE%`,
+`$TQ_HOME`, `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are expanded in command
+text, and a glob matches what it could expand to (`rm -rf ~/.tentaqles/*`).
+
+### The rules
+
+| id | denies |
+|---|---|
+| `tq/protected-path` | a Read, Grep (a Grep with no path searches the cwd) or NotebookRead of tq's state; a Write, Edit, MultiEdit or NotebookEdit of any protected path, also file by file in a Codex `apply_patch`; an `mcp__*` call whose input carries a string that resolves to a protected path; in the shell, a redirect (`>`, `>>`, `1>`, `2>`, `&>`) to a protected path, a copy, move, delete, `mkdir`/`New-Item`, permission or ACL change (`chmod`, `chown`, `icacls`, `attrib`, `chattr`, `chflags`), link (`ln`, `mklink`), `truncate`, `tee`, `Out-File`, `Set-Content`, `Add-Content`, `sed -i` or `perl -i` with a protected argument, a read (`cat`, `type`, `Get-Content`, `less`, `head`, `tail`, `grep`, `findstr`, `source`, a `<` redirect) of tq's state, `python -c`, `node -e`, `perl -e` and the like whose code names a protected path, a PowerShell `[IO.File]::...` call on a line that names one, `git -C`/`--git-dir`/`--work-tree` at a protected path or a protected path argument of a git sub-command that writes, a `cd` into a protected folder followed by a write (`cd ~/.tentaqles && git init`), and `cmdkey /generic:`/`/add:`/`/delete:`, `security add-generic-password`/`delete-generic-password -s` or `secret-tool store`/`clear service` naming `tentaqles` |
+| `tq/human-only-command` | a shell line that runs tq (`tq`, `tq.exe`, any path to it, `go run ./cmd/tq`, also behind `sudo`, `env` or a nested `bash -c`/`cmd /c`) with a human-only verb: `init`, `add`, `edit`, `off`, `allow`, `deny`, `trust`, `hooks install`/`remove`, `hooks verify --accept`, `settings render` (not `--dry-run`), `settings anchors add`/`remove`, `bundle sync`/`capture`, `migrate --apply`, `uninstall`, `setup`, `onboard`, `secret set`/`rm`, `providers add`, `login`, `run --off`, `worktrees prune`. The commands refuse a session on their own too (ADR-0003); the hook denies them before they run |
+
+Allowed: reading the marker, the plugin's files and the binary; `ls` of the
+state folder; `tq doctor`, `tq list`, `tq env`, `tq hooks status`/`verify`,
+`tq secret status` and every other tq read; dry runs (`tq migrate`,
+`tq migrate manifests`, `tq settings render --dry-run`).
+
+The shell rules read the command through the guard's tokenizer
+(`guard.Commands`: quote-aware segments, wrappers, nested shells, `cd`
+tracking, data heredocs skipped). Like the other categories they are a text
+filter: a path built at run time (`python script.py` that writes there, an
+alias, a variable tq does not expand) gets past them; the human-only commands'
+own detectors, the private state folder and the signed integrity record are
+the controls behind them.
+
+### The denial log
+
+Every deny of every category appends one JSON line to
+`~/.tentaqles/denials.jsonl`, the same file the human-only commands log
+their refusals to:
+
+```json
+{"time":"2026-11-05T10:00:00Z","kind":"self-protection","layer":"hook","tool":"Bash","command":"rm -rf ~/.tentaqles/trust","rule":"tq/protected-path","reason":"BLOCKED [self-protection/tq/protected-path]: ...","workspace":"acme","pid":4242,"cwd":"C:\\repos\\acme"}
+```
+
+`kind` is the category (`tq/guard-error` for a call tq could not judge),
+`command` is the shell line or the file path; for an MCP call it is the tool
+name and for a patch the file it is denied on, never the input or the
+content. No environment value is ever written. A log that cannot be written
+changes nothing: the deny stands. The file is under the protected paths, so
+a session cannot read or rewrite it.
 
 ## Using a .env without printing it
 

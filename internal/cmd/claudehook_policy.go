@@ -14,6 +14,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/commitscan"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/protect"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -149,17 +150,32 @@ func buildPolicy() *policy.Set {
 	return hookSet
 }
 
-// policyDecision evaluates the hook's rule set plus the two checks that need
-// I/O: the commit secret scan and the cross-client MCP check.
+// policyDecision evaluates, in the order of PRD v2 §6.3 after the identity
+// guard: the secret rules plus the two checks that need I/O (the commit
+// secret scan and the cross-client MCP check), then, when nothing denied,
+// the self-protection rules (policy.SelfProtection) on the protected path
+// set of this run.
 //
 // deadline ends the scan; the hook computes it at entry (start plus the
 // scan budget), so the identity lookups that ran before count against it.
 func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
-	return policyDecisionWith(buildPolicy(), cwd, ws, cfg, call, deadline)
+	return policyDecisionWith(buildPolicy(), protectedSet(ws, cfg), cwd, ws, cfg, call, deadline)
 }
 
-// policyDecisionWith is policyDecision with the rule set already built.
-func policyDecisionWith(set *policy.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
+// policyDecisionWith is policyDecision with the rule set and the protected
+// path set already built (a patch judges many files with one of each).
+func policyDecisionWith(set *policy.Set, prot *protect.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
+	d := policyRules(set, cwd, ws, cfg, call, deadline)
+	if d.Action != policy.Deny {
+		// Self-protection comes last (§6.3); the first category that
+		// denies is the one reported.
+		d = policy.Merge(d, policy.SelfProtection(prot, cwd, call))
+	}
+	return d
+}
+
+// policyRules is the secrets category plus the cross-client MCP check.
+func policyRules(set *policy.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
 	d := set.Evaluate(call)
 	if call.IsShell() && commitscan.PlanFor(call.Command).Commits {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
@@ -182,8 +198,16 @@ func policyDecisionWith(set *policy.Set, cwd string, ws *resolve.Workspace, cfg 
 	return d
 }
 
+// ruleCategories are the categories of the hook's own rules (PRD v2 §7.1):
+// the commit scan is secrets, the cross-client MCP check is identity (a
+// server outside the identity's scope); tq/guard-error has none.
+var ruleCategories = map[string]string{
+	"tq/commit-secret":    policy.CategorySecrets,
+	"tq/cross-client-mcp": policy.CategoryIdentity,
+}
+
 func ruleDecision(a policy.Action, id, reason string) policy.Decision {
-	return policy.Decision{Action: a, Matched: []*policy.Rule{{ID: id, Action: a, Reason: reason, Source: "builtin"}}}
+	return policy.Decision{Action: a, Matched: []*policy.Rule{{ID: id, Category: ruleCategories[id], Action: a, Reason: reason, Source: "builtin"}}}
 }
 
 func commitReason(hits []commitscan.Hit) string {

@@ -36,10 +36,8 @@ var humanOnlyCommands = [][]string{
 	{"hooks", "install", "bash"},
 	{"hooks", "remove", "bash"},
 	{"settings", "render", "acme"},
-	{"settings", "render", "--all", "--dry-run"},
 	{"bundle", "sync", "acme"},
 	{"bundle", "capture", "acme"},
-	{"migrate"},
 	{"migrate", "--apply"},
 	{"uninstall", "--restore", "latest"},
 	{"uninstall", "--restore", "latest", "--yes"},
@@ -252,6 +250,9 @@ func TestFreeCommandsRunUnderAMarker(t *testing.T) {
 		{"worktrees", "list"},
 		{"run", "acme", "--", "go", "version"},
 		{"dotenv", "run", "--file", envFile, "--", "go", "version"},
+		// Dry runs are reads (ADR-0005).
+		{"migrate", "--steps", "manifests"},
+		{"settings", "render", "--all", "--dry-run"},
 	}
 	for _, args := range free {
 		if _, err := runTq(t, args...); errors.Is(err, errHumanOnly) {

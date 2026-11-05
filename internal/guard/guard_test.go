@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,8 +57,8 @@ func TestCanonicalSuite(t *testing.T) {
 			if c.Expect.TQ.Block && d.Rule != c.Expect.TQ.Rule {
 				t.Fatalf("rule=%q want %q", d.Rule, c.Expect.TQ.Rule)
 			}
-			if d.Block && len(d.Reason) < 8 || d.Block && d.Reason[:8] != "BLOCKED:" {
-				t.Fatalf("reason must start with BLOCKED: got %q", d.Reason)
+			if d.Block && !strings.HasPrefix(d.Reason, "BLOCKED [identity/"+d.Rule+"]: ") {
+				t.Fatalf("reason must start with BLOCKED [identity/<rule>]: got %q", d.Reason)
 			}
 		})
 	}

@@ -53,8 +53,8 @@ For more detail on a command, run `tq <command> --help`.
 | `tq deny <name>` | **Human-only.** Removes trust from a workspace. |
 | `tq login <cli>` | **Human-only.** Runs a CLI's own login (gh, az, aws, ...) with its config stored in the workspace's private config folder. |
 | `tq run <ws> -- <cmd>` | Runs one command with another workspace's identity, without `cd`-ing into it. `tq run --off -- claude` (**human-only**) starts Claude with no tq at all. |
-| `tq migrate` | **Human-only.** Moves a hand-made tentaqles setup under tq's management. It only shows the plan; add `--apply` to do it, after the confirmation. Every step is written to a journal. |
-| `tq migrate manifests` | **Human-only.** Moves each identity's manifest out of its folder into `~/.tentaqles/identities/<name>/manifest.yaml`, leaving a name-only marker. It only shows the plan; `--apply` asks for the confirmation first. An identity keeps working as before until you run it; `tq doctor` says `manifest-in-root` meanwhile. |
+| `tq migrate` | **Human-only with `--apply`.** Moves a hand-made tentaqles setup under tq's management. Without `--apply` it only shows the plan, and that dry run is free to run from a session; `--apply` refuses a session and asks for the confirmation. Every step is written to a journal. |
+| `tq migrate manifests` | **Human-only with `--apply`** (the dry run is free). Moves each identity's manifest out of its folder into `~/.tentaqles/identities/<name>/manifest.yaml`, leaving a name-only marker. It only shows the plan; `--apply` asks for the confirmation first. An identity keeps working as before until you run it; `tq doctor` says `manifest-in-root` meanwhile. |
 | `tq uninstall --restore` | **Human-only.** Undoes a migration by replaying its journal backwards. It lists the steps and changes nothing until you add `--yes`; with `--yes` you still type `yes` at the confirmation before the replay starts. |
 | `tq version` | Prints the tq version. |
 
@@ -81,7 +81,7 @@ For more detail on a command, run `tq <command> --help`.
 
 | Command | What it does |
 |---|---|
-| `tq settings render [--all]` | **Human-only.** Writes tq's part of each identity's Claude `settings.json`: baseline permissions, env, status line and hooks. It prints what changed. `--dry-run` writes nothing and asks nothing. |
+| `tq settings render [--all]` | **Human-only** (except `--dry-run`, free from a session). Writes tq's part of each identity's Claude `settings.json`: baseline permissions, env, status line and hooks. It prints what changed. `--dry-run` writes nothing and asks nothing. |
 | `tq settings anchors` / `add <exe>` / `remove <exe>` | Lists the terminal processes the human-only check accepts as a session root (built-in and yours, `~/.tentaqles/anchors.yaml`). `add` and `remove` are **human-only**; a refusal that says "cannot establish a human ancestry" prints the `add` line for your terminal. A shell, a runtime or a harness is never accepted. |
 | `tq bundle catalog` | Shows the shared catalog of plugins, skills and MCP servers. |
 | `tq bundle diff <ws>` | Shows how a workspace's installed plugins differ from its `claude.bundle`. |
@@ -280,12 +280,14 @@ Change `tool_name` and `tool_input` for each row:
 | Tool call | Expected |
 |---|---|
 | `Bash`: `git status` | nothing printed, `exit 0` (allowed) |
-| `Read`: `file_path` = `...\.env` | `BLOCKED [tq/env-file-read]`, `exit 2` |
-| `Bash`: `cat .env` | `BLOCKED [tq/env-file-shell]`, `exit 2` |
-| `Bash`: `printenv` | `BLOCKED [tq/env-dump]`, `exit 2` |
-| `Bash`: `cat ~/.aws/credentials` | `BLOCKED [tq/secret-store-shell]`, `exit 2` |
+| `Read`: `file_path` = `...\.env` | `BLOCKED [secrets/tq/env-file-read]`, `exit 2` |
+| `Bash`: `cat .env` | `BLOCKED [secrets/tq/env-file-shell]`, `exit 2` |
+| `Bash`: `printenv` | `BLOCKED [secrets/tq/env-dump]`, `exit 2` |
+| `Bash`: `cat ~/.aws/credentials` | `BLOCKED [secrets/tq/secret-store-shell]`, `exit 2` |
 | `Bash`: `git push --force origin main` | nothing printed, `exit 0`: tq does not guard it; Claude's own permission settings do |
-| `Bash`: `git push` with `cwd` in an untrusted folder | `BLOCKED` with the `untrusted` reason, `exit 2` |
+| `Bash`: `git push` with `cwd` in an untrusted folder | `BLOCKED [identity/untrusted]`, `exit 2` |
+| `Bash`: `echo x > ~/.tentaqles/config.yaml` | `BLOCKED [self-protection/tq/protected-path]`, `exit 2` |
+| `Bash`: `tq allow acme` | `BLOCKED [self-protection/tq/human-only-command]`, `exit 2` |
 
 **Exit codes:** 0 with no output means allow; 2 means block. There is no ask.
 

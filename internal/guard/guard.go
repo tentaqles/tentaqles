@@ -36,8 +36,13 @@ type Input struct {
 type Decision struct {
 	Block  bool
 	Rule   string // "blocked-command"|"wrong-cloud"|"neutral-remote"|"git-email-drift"|"gh-user"|"env-drift"|"untrusted"|"claude-config-drift"|""
-	Reason string // multi-line message for stderr (starts with "BLOCKED: ")
+	Reason string // multi-line message for stderr (starts with "BLOCKED [identity/<rule>]: ")
 }
+
+// Category is the guard category every rule of Decide belongs to (PRD v2
+// §7.1): the manifest's blocked commands and identity drift are both the
+// identity category.
+const Category = "identity"
 
 // sepPattern is the single shared definition of what separates one shell
 // "segment" from another for our purposes: the classic command separators
@@ -237,7 +242,9 @@ func has(fs []string, code string) bool {
 // non-read-only git with both emails known) ->
 // gh-user (gh only, both users known).
 func Decide(in Input) Decision {
-	block := func(rule, msg string) Decision { return Decision{Block: true, Rule: rule, Reason: "BLOCKED: " + msg} }
+	block := func(rule, msg string) Decision {
+		return Decision{Block: true, Rule: rule, Reason: "BLOCKED [" + Category + "/" + rule + "]: " + msg}
+	}
 	client := in.Client
 	if client == "" {
 		client = "unknown"

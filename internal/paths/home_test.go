@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/markers"
 )
 
 // Under an agent marker TQ_HOME is ignored unless AllowHomeOverride is set:
@@ -17,7 +19,7 @@ func TestHome_IgnoresTQHomeUnderAnAgentMarker(t *testing.T) {
 	}
 	forged := filepath.Join(t.TempDir(), "forged")
 	t.Setenv("TQ_HOME", forged)
-	for _, k := range agentMarkers {
+	for _, k := range markers.Markers {
 		t.Setenv(k, "")
 	}
 	prev := AllowHomeOverride

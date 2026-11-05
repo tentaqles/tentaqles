@@ -333,3 +333,82 @@ def test_tq_hook_refuses_the_retired_events(tmp_path, event):
     assert p.returncode == 2
     assert "unknown event '" + event + "'" in p.stderr
     assert "ran" not in p.stdout
+
+
+# --- self-protection in the fallback (ADR-0005) ------------------------------
+
+
+def _run_tool(tmp_path, tool, tool_input, cwd=None):
+    """Run the fallback guard with HOME/USERPROFILE pointed at tmp_path."""
+    payload = {"cwd": cwd or str(tmp_path / "work"), "tool_name": tool, "tool_input": tool_input}
+    env = dict(os.environ, TQ_FALLBACK="1", HOME=str(tmp_path), USERPROFILE=str(tmp_path))
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    return subprocess.run(
+        [sys.executable, str(GUARD)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _fallback_protected_cases(tmp_path):
+    state = tmp_path / ".tentaqles"
+    plugin = tmp_path / ".claude" / "plugins" / "cache" / "tentaqles" / "tentaqles" / "0.16.0"
+    work = tmp_path / "work"
+    return [
+        # (tool, tool_input, blocked)
+        ("Write", {"file_path": str(state / "config.yaml"), "content": "x"}, True),
+        ("Edit", {"file_path": str(state / "identities" / "acme" / "manifest.yaml")}, True),
+        ("MultiEdit", {"file_path": str(state / "trust" / "acme" / "abc"), "edits": []}, True),
+        ("NotebookEdit", {"notebook_path": str(state / "x.ipynb")}, True),
+        ("Read", {"file_path": str(state / "identities" / "acme" / "manifest.yaml")}, True),
+        ("Grep", {"pattern": "x", "path": str(state)}, True),
+        ("Write", {"file_path": str(plugin / "hooks" / "hooks.json")}, True),
+        ("Edit", {"file_path": str(plugin / "scripts" / "tq_hook.sh")}, True),
+        ("Read", {"file_path": str(plugin / "skills" / "ship" / "SKILL.md")}, False),
+        ("Bash", {"command": "echo x > ~/.tentaqles/config.yaml"}, True),
+        ("Bash", {"command": "rm -rf $HOME/.tentaqles/trust"}, True),
+        ("Bash", {"command": "cat ~/.tentaqles"}, True),
+        ("PowerShell", {"command": "Remove-Item -Recurse $env:USERPROFILE\\.tentaqles\\trust"}, True),
+        ("Bash", {"command": "cp mine.json " + str(plugin / "hooks" / "hooks.json")}, True),
+        ("Write", {"file_path": str(work / "notes.md")}, False),
+        ("Read", {"file_path": str(work / ".tentaqles.yaml")}, False),
+        ("Bash", {"command": "cat .tentaqles.yaml"}, False),
+        ("Bash", {"command": "ls -la ~/.tentaqles-other"}, False),
+        ("Bash", {"command": "ls -la"}, False),
+    ]
+
+
+def test_fallback_denies_protected_paths(tmp_path):
+    for tool, tool_input, blocked in _fallback_protected_cases(tmp_path):
+        p = _run_tool(tmp_path, tool, tool_input)
+        assert (p.returncode == 2) == blocked, (tool, tool_input, p.stderr)
+        if blocked:
+            assert p.stderr.startswith("BLOCKED [self-protection/tq/protected-path]: "), p.stderr
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_tq_hook_fallback_protects_the_state_folder(tmp_path):
+    """Through tq_hook.sh with tq missing: a Write under ~/.tentaqles is denied."""
+    env = hook_env(
+        tmp_path,
+        TQ_BIN=str(tmp_path / "nope"),
+        HOME=str(tmp_path),
+        LOCALAPPDATA=str(tmp_path),
+        USERPROFILE=str(tmp_path),
+        CLAUDE_PLUGIN_ROOT=str(ROOT),
+    )
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    payload = json.dumps(
+        {
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(tmp_path / ".tentaqles" / "config.yaml"), "content": "x"},
+        }
+    )
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input=payload, capture_output=True, text=True, env=env
+    )
+    assert p.returncode == 2, p.stderr
+    assert "self-protection/tq/protected-path" in p.stderr

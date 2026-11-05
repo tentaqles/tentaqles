@@ -104,7 +104,7 @@ func TestBuildSkipsBadRuleButKeepsOthers(t *testing.T) {
 func TestReasonAndMerge(t *testing.T) {
 	s := builtinSet(t)
 	d := s.Evaluate(ToolCall{Tool: "Bash", Command: "printenv"})
-	if !strings.HasPrefix(d.Reason(), "BLOCKED [tq/env-dump]") {
+	if !strings.HasPrefix(d.Reason(), "BLOCKED [secrets/tq/env-dump]") {
 		t.Errorf("reason = %q", d.Reason())
 	}
 	ask := Decision{Action: Ask, Matched: []*Rule{{ID: "tq/commit-secret", Action: Ask, Reason: "scan", Source: "builtin"}}}

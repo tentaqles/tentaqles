@@ -1,5 +1,6 @@
 // Package audit appends identity-switch events to ~/.tentaqles/audit.jsonl
-// and refused human-only commands to ~/.tentaqles/denials.jsonl.
+// and every denial (a refused human-only command, a hook deny of any
+// category) to ~/.tentaqles/denials.jsonl.
 package audit
 
 import (
@@ -27,16 +28,30 @@ func Append(e Event) error {
 	return appendLine(paths.Audit(), e)
 }
 
-// Denial is one refused command: what was asked, which detector refused it
-// and where. It carries no environment value.
+// Denial is one refused action: what was asked, which rule or detector
+// refused it and where. Kind is the guard category (identity, secrets,
+// self-protection) for a hook deny, human-only for a refused command;
+// Layer says which layer caught it (hook, command). It carries no
+// environment value and no file content: Command is the command line or
+// the path, never what was read or written.
 type Denial struct {
-	Time    time.Time `json:"time"`
-	Kind    string    `json:"kind"`
-	Command string    `json:"command"`
-	Reason  string    `json:"reason"`
-	PID     int       `json:"pid"`
-	Cwd     string    `json:"cwd,omitempty"`
+	Time      time.Time `json:"time"`
+	Kind      string    `json:"kind"`
+	Layer     string    `json:"layer,omitempty"`
+	Tool      string    `json:"tool,omitempty"`
+	Command   string    `json:"command"`
+	Rule      string    `json:"rule,omitempty"`
+	Reason    string    `json:"reason"`
+	Workspace string    `json:"workspace,omitempty"`
+	PID       int       `json:"pid"`
+	Cwd       string    `json:"cwd,omitempty"`
 }
+
+// Layers a Denial names.
+const (
+	LayerHook    = "hook"
+	LayerCommand = "command"
+)
 
 // DenialsPath is the denial log, <tq home>/denials.jsonl.
 func DenialsPath() string { return filepath.Join(paths.Home(), "denials.jsonl") }

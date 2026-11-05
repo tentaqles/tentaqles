@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/audit"
+	"github.com/tentaqles/tentaqles/internal/markers"
 )
 
 // ErrHumanOnly is wrapped by every refusal: the command is human-only and this
@@ -35,17 +36,9 @@ const (
 )
 
 // Markers are the environment variables that mark a harness or an agent
-// session: a headless tq run and its children, the Claude Code plugin and
-// Claude Code itself, a hub task of an older tq, Codex's sandbox and thread,
-// OpenCode and Kimi Code. CLAUDE_CONFIG_DIR and CODEX_HOME are not markers:
-// tq sets them in human terminals.
-var Markers = []string{
-	"TENTAQLES_HEADLESS", "TENTAQLES_HEADLESS_CHILD",
-	"CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
-	"TQ_HUB_TASK",
-	"CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID",
-	"OPENCODE", "KIMI_CODE",
-}
+// session (internal/markers, the one list; internal/paths reads the same
+// one to ignore TQ_HOME under a marker).
+var Markers = markers.Markers
 
 // Seams. Tests replace them; production keeps the real terminal, the real
 // process tree and a confirmation read from the terminal.
@@ -69,14 +62,7 @@ type Refusal struct {
 func (r Refusal) String() string { return r.Detector + ": " + r.Reason }
 
 // EnvMarker returns the first harness marker set in the environment.
-func EnvMarker() (string, bool) {
-	for _, k := range Markers {
-		if strings.TrimSpace(os.Getenv(k)) != "" {
-			return k, true
-		}
-	}
-	return "", false
-}
+func EnvMarker() (string, bool) { return markers.Set() }
 
 // Detect runs the three detectors and returns the first refusal, or nil for a
 // human at a terminal. It never prompts.

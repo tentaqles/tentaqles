@@ -107,7 +107,7 @@ func TestPreToolUse_NoWorkspace_AllowsLs(t *testing.T) {
 func TestPreToolUse_NoWorkspace_BlocksPush(t *testing.T) {
 	isolateHome(t)
 	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, testutil.TempDir(t), "git push"))
-	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED:") {
+	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED [identity/") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }
@@ -398,7 +398,7 @@ func TestPreToolUse_PayloadAtLimitStillParsed(t *testing.T) {
 		t.Fatalf("payload len=%d", len(payload))
 	}
 	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, payload)
-	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED:") || strings.Contains(errOut, "exceeds") {
+	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED [identity/") || strings.Contains(errOut, "exceeds") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }

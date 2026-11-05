@@ -43,8 +43,12 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.
 Human-only: a session is refused, and you confirm before the files are written
 (--dry-run writes nothing and asks nothing).`,
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := refuseAgent("tq settings render"); err != nil {
-				return err
+			// A dry run is a read (ADR-0005: dry runs are free); a render
+			// refuses a session before anything is resolved.
+			if !dryRun {
+				if err := refuseAgent("tq settings render"); err != nil {
+					return err
+				}
 			}
 			cfg, err := registry.Load()
 			if err != nil {

@@ -74,7 +74,11 @@ func NormalizePath(p string) string {
 // subject (command, path, content) before matching, so `.env.example` can be
 // exempted without also exempting a `.env` in the same command.
 type Rule struct {
-	ID           string `yaml:"id"`
+	ID string `yaml:"id"`
+	// Category is the guard category the rule belongs to (identity,
+	// secrets, self-protection; PRD v2 §7.1): the deny message reads
+	// BLOCKED [<category>/<id>]. Empty for the fail-safe tq/guard-error.
+	Category     string `yaml:"-"`
 	Action       Action `yaml:"action"`
 	Tool         string `yaml:"tool,omitempty"`    // regex on the tool name, anchored
 	Command      string `yaml:"command,omitempty"` // regex on the shell command
@@ -205,7 +209,17 @@ type Decision struct {
 	Matched []*Rule
 }
 
-// Reason renders the decision for the hook's stderr / permissionDecisionReason.
+// Ref names the rule in a decision: <category>/<id>, or the id alone for a
+// rule outside the three categories.
+func (r *Rule) Ref() string {
+	if r.Category != "" {
+		return r.Category + "/" + r.ID
+	}
+	return r.ID
+}
+
+// Reason renders the decision for the hook's stderr / permissionDecisionReason:
+// BLOCKED [<category>/<rule>]: ... (CONFIRM for an ask), one line per rule.
 func (d Decision) Reason() string {
 	if d.Action == Allow {
 		return ""
@@ -219,7 +233,7 @@ func (d Decision) Reason() string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "%s [%s]: %s (source: %s)", verb, r.ID, r.Reason, r.Source)
+		fmt.Fprintf(&b, "%s [%s]: %s (source: %s)", verb, r.Ref(), r.Reason, r.Source)
 	}
 	return b.String()
 }

@@ -13,8 +13,10 @@ sections of `.tentaqles.yaml` — they are written by `tq add` and verified by
 `tq add` to reconfigure identities, or edit the file for other fields then
 ask the user to run `tq allow <name>` in their terminal to re-trust it — editing any section changes the
 manifest hash and revokes trust). Everything else (cloud, database, stack,
-language, PM tool, blocked commands) is fine to edit by hand with this
-skill; after any hand-edit, ask the user to run `tq allow <name>` in their terminal to re-trust the manifest (you never run it).
+language, PM tool, blocked commands) is fine to change with this skill: you
+draft the change, the user writes it (tq's hook denies a session's write to
+the manifest), then the user runs `tq allow <name>` in their terminal to
+re-trust the manifest (you never run it).
 
 ## Detect Current Client
 
@@ -94,7 +96,10 @@ manifest counts; a repo-level manifest cannot add clouds.
 
 ## Apply the Change
 
-Read the current `.tentaqles.yaml`, modify the relevant field(s), write it back. Use Python with PyYAML to preserve structure:
+The manifest is a protected path: tq's hook denies a write to it (and to the
+root marker) from this session (`tq/protected-path`, ADR-0005), so you draft
+the change and the user applies it. Print the manifest with the change made,
+without writing it, using Python with PyYAML to preserve structure:
 
 ```bash
 # Load tentaqles runtime
@@ -119,12 +124,14 @@ with open(manifest_path, 'r') as f:
 # `tq add` / `tq doctor`, then ask the user to re-trust with `tq allow <name>` in their terminal — a hand-edit
 # changes the manifest hash and leaves the workspace untrusted.
 
-with open(manifest_path, 'w') as f:
-    yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
-print('Updated: {field} = {value}')
+print('# ' + manifest_path)
+print(yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True))
 "
 ```
+
+Show the user the printed YAML and the path on its first line, and ask them
+to replace the file's content with it in their editor, then run
+`tq allow <name>` in their terminal. Never write the file yourself.
 
 ### Auto-update dependent fields
 

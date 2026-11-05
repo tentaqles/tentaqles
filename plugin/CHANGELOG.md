@@ -27,6 +27,15 @@ Releases before 0.16.0 are described on the
   manifest tq reads (the protected copy for a marked workspace) before a Write to the
   marker, the protected copy or an old-layout manifest. `scripts/snapshot.py capture`
   reads the same manifest (`tests/test_snapshot_guard.py`).
+- **The fallback guard protects tq's state (ADR-0005).** With tq missing,
+  `scripts/identity-guard.py` blocks a Write, Edit, MultiEdit or NotebookEdit under
+  `~/.tentaqles` or the installed plugin (`<config dir>/plugins/cache/tentaqles`), a Read or
+  Grep under `~/.tentaqles`, and a shell command that names either one (a text match on the
+  expanded home), with `BLOCKED [self-protection/tq/protected-path]`
+  (`tests/test_identity_guard.py`).
+- **`client-settings` and `rollback` no longer write the manifest.** tq's hook denies a
+  session's write to the manifest and the root marker; both skills now print the changed
+  manifest and ask the user to write it and run `tq allow <name>`.
 
 ## [0.16.0] — 2026-11-04
 
