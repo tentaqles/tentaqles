@@ -26,17 +26,34 @@ We keep the manifest of workspace `<name>` at `$TQ_HOME/identities/<name>/manife
 `client: <name>` plus the "names only" comment (`manifest.MarkerBytes`).
 
 Resolution (`resolve.locate`) is fail-closed: the folder must be a first-level child of a
-base in `$TQ_HOME/config.yaml`, the marker's `client` must equal the folder name
-(case-insensitively on Windows), and the protected copy must exist; anything else
-resolves neutral with a reason. A root file that is a full manifest (schema
-`tentaqles-client-v1|v2`) is the old layout and is read from the root exactly as before;
-when a protected copy exists as well, the protected copy is read and `tq doctor` warns
-`manifest-root-stale`. Every command and the hook go through `resolve`, so nothing reads
-a manifest from an identity root once it is marked.
+base in `$TQ_HOME/config.yaml`, the root file must be a regular file (a symlink or a
+directory there is "marker is not a regular file"), the marker's `client` must equal the
+folder name (case-insensitively on Windows), the protected copy must exist and be a
+regular file, and in both layouts the loaded manifest's own `client` must equal the folder
+name; anything else resolves neutral with a reason. The last rule is what stops a replay:
+a trusted manifest copied into `base/evil/` names `acme`, so `evil` is neutral, is not
+listed by `tq list` or `tq doctor`, and nothing offers to migrate or trust it. A root file
+that is a full manifest (schema `tentaqles-client-v1|v2`) is the old layout and is read
+from the root exactly as before; when a protected copy exists as well, the protected copy
+is read and `tq doctor` warns `manifest-root-stale`. Every command and the hook go through
+`resolve`, so nothing reads a manifest from an identity root once it is marked.
 
-Trust does not change: `trust.IsTrusted`, `Allow` and `Deny` over the sha256 of the file
-tq reads, with the same API, so `tq allow` and `tq deny` keep working. Editing the marker
-never changes that hash; a marker that names another workspace resolves neutral.
+Trust is keyed by workspace name and content, as direnv keys on path and content:
+`trust.IsTrusted(name, hash)`, `Allow(name, hash)` and `Deny(name, hash)` over
+`$TQ_HOME/trust/<name>/<hash>`, the hash being the sha256 of the file tq reads, so the same
+bytes trusted for `acme` are not trusted under another folder name. A record an older tq
+wrote (`trust/<hash>`, hash only) still counts for the name resolve has checked against the
+manifest's client, until `tq migrate manifests` rekeys it (`rekey-trust`, journaled);
+`Deny` removes both forms. Editing the marker never changes the hash; a marker that names
+another workspace resolves neutral.
+
+`TQ_HOME` is honoured only outside an agent session: under an agent marker (the list of
+`internal/cmd/humanonly.go`, kept locally in `internal/paths` and `tentaqles/tqhome.py`
+until P1.3 unifies them) `paths.Home()` and the plugin read `~/.tentaqles`, because the
+hook inherits the harness environment and a workspace's agent-writable Claude settings can
+set `TQ_HOME` to a forged state folder. `tq doctor` warns `tq-home-override` when
+`TQ_HOME` points elsewhere. The tests set the seam (`paths.AllowHomeOverride`,
+`tqhome.ALLOW_HOME_OVERRIDE`); nothing else does.
 
 `tq add`, `tq onboard` and `tq setup` create the new layout. An existing identity keeps
 the old layout until the human runs `tq migrate manifests --apply` (also
@@ -46,17 +63,22 @@ therefore its trust carry over unchanged, the root file is rewritten as the mark
 writes are journaled and `tq uninstall --restore` reverses them. `tq doctor` warns
 `manifest-in-root` with that command as the fix.
 
-The protected area is created private to the user: 0700 directories and 0600 files on
+The protected area is created private to the user: 0700 directories (an existing
+`identities/<ws>/` is tightened to 0700 when the manifest moves in) and 0600 files on
 Unix; on Windows `internal/protect` runs
-`icacls <home> /inheritance:r /grant:r "<user>:(OI)(CI)F"` once, from `tq init`,
-`tq add` and `tq migrate manifests --apply`, records the outcome at
-`$TQ_HOME/protected-acl.json`, and `tq doctor` reports it as `protected-acl`. This is
+`icacls <home> /inheritance:r /grant:r "<user>:(OI)(CI)F" "SYSTEM:(OI)(CI)F"` once, from
+`tq init`, `tq add` and `tq migrate manifests --apply`, records the outcome at
+`$TQ_HOME/protected-acl.json`, and `tq doctor` reports it as `protected-acl`. SYSTEM stays
+so that backup, indexing and services keep working; Administrators do not. This is
 defense in depth: an icacls failure is reported, never a command failure.
 
-The plugin's loader (`plugin/tentaqles/manifest/loader.py`) walks up to the root file as
-before and resolves a marker to the protected copy under `$TQ_HOME`; `_manifest_path`
-names the file loaded and `_client_root` stays the folder. `snapshot-guard.py` snapshots
-the copy tq reads before a Write to the marker, the protected copy or an old-layout file.
+The plugin's loader (`plugin/tentaqles/manifest/loader.py`) resolves a directory the way
+`resolve` does: it must lie under a base of `$TQ_HOME/config.yaml`, the identity is that
+base's first-level folder, and a `.tentaqles.yaml` planted deeper never shadows it; only
+on a machine with no `config.yaml` (the plugin without tq) does it walk up to the nearest
+root file. A marker resolves to the protected copy; `_manifest_path` names the file loaded
+and `_client_root` stays the folder. `snapshot-guard.py` snapshots the copy tq reads
+before a Write to the marker, the protected copy or an old-layout file.
 
 ## Consequences
 - The guard reads nothing from an identity root but the workspace name. The file the
@@ -73,14 +95,19 @@ the copy tq reads before a Write to the marker, the protected copy or an old-lay
 - We must keep: `TestResolve_MarkerResolvesToProtectedManifest`,
   `TestResolve_MarkerClientMismatch_Neutral`,
   `TestResolve_MarkerWithoutProtectedManifest_Neutral`,
-  `TestResolve_OldLayoutStillResolves`, `TestResolve_BothFiles_ProtectedWinsAndRootIsStale`,
+  `TestResolve_ReplayOfATrustedManifest_Neutral`, `TestResolve_TrustIsKeyedByName`,
+  `TestResolve_RootFileSymlink_Neutral`, `TestResolve_OldLayoutStillResolves`,
+  `TestResolve_BothFiles_ProtectedWinsAndRootIsStale`,
   `TestResolve_EditedProtectedManifestLosesTrust_MarkerEditDoesNot`,
-  `TestEditedManifestLosesTrust` (both layouts), `TestAdd_CreatesMarkerAndProtectedManifest`,
-  `TestManifests_MovesJournalsAndKeepsTrust`, `TestManifests_RestorePutsTheManifestBack`,
-  `TestMigrateManifests_ApplyRefusesAgents`,
+  `TestTrustIsKeyedByWorkspaceName`, `TestLegacyRecordCountsUntilRekeyedAndDenyRemovesIt`,
+  `TestHome_IgnoresTQHomeUnderAnAgentMarker`, `TestEditedManifestLosesTrust` (both
+  layouts), `TestAdd_CreatesMarkerAndProtectedManifest`,
+  `TestManifests_MovesJournalsAndKeepsTrust`, `TestManifests_RekeysLegacyTrustRecords`,
+  `TestManifests_RefusesASymlinkedRootFile`, `TestManifests_RestorePutsTheManifestBack`,
+  `TestMigrateManifests_ApplyRefusesAgents`, `TestRun_ManifestRootStale`,
   `TestEnsureHome_ICACLSFailureIsRecordedNeverReturned`, and in the plugin
-  `tests/test_manifest_loader_marker.py` and the marker cases of
-  `tests/test_snapshot_guard.py`.
+  `tests/test_manifest_loader_marker.py` (the nested-marker shadow and the `TQ_HOME` rule
+  included) and the marker cases of `tests/test_snapshot_guard.py`.
 
 ## Alternatives considered
 | Option | Why not |
@@ -89,3 +116,5 @@ the copy tq reads before a Write to the marker, the protected copy or an old-lay
 | No marker: resolve folders from `config.yaml` and the protected area alone | A plain directory under a base could not be told from a workspace whose protected copy is missing, and the plugin's walk-up from any subfolder would need the registry on every hook call |
 | Convert every manifest on upgrade | Breaks the §13 constraint; the human runs `tq migrate manifests` per machine, and `tq uninstall --restore` undoes it |
 | Hash the marker together with the manifest | The marker holds nothing the guard reads; a changed marker is already a mismatch that resolves neutral |
+| Key trust by hash alone, as v1 did | A trusted manifest's bytes copied under another folder name would carry its trust along (the replay); the client check stops the resolution and the name in the key stops the record from applying, two independent rules |
+| Honour `TQ_HOME` in every process | The hook inherits the harness environment, which a workspace's settings `env` block (agent-writable) can set; a forged `TQ_HOME` would supply its own manifests and trust records |

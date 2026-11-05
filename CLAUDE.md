@@ -77,6 +77,10 @@ From `docs/threat-model.md`; each line names the test that keeps it.
 - The guard reads the manifest from the protected location only; a marker that names
   another workspace, or has no protected copy, resolves neutral:
   `TestResolve_MarkerClientMismatch_Neutral`, `TestResolve_MarkerWithoutProtectedManifest_Neutral`.
+- A trusted manifest copied into another folder lends it nothing (the manifest's `client`
+  must be the folder name; trust is keyed by name and hash), and `TQ_HOME` is ignored in
+  an agent session: `TestResolve_ReplayOfATrustedManifest_Neutral`,
+  `TestTrustIsKeyedByWorkspaceName`, `TestHome_IgnoresTQHomeUnderAnAgentMarker`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
 
 ## Project config

@@ -252,8 +252,16 @@ Trust is the hash of the manifest's bytes, and the bytes do not change: a
 trusted identity stays trusted, an untrusted one stays untrusted (run
 `tq allow <name>` afterwards, as before). From then on `tq` and the plugin
 read only the protected copy. The marker's `client` must equal the folder
-name, or the folder is neutral; editing the marker changes nothing about the
-trust hash.
+name, and so must the manifest's own `client`, or the folder is neutral;
+editing the marker changes nothing about the trust hash.
+
+The step also rekeys trust records. An older `tq` wrote
+`~/.tentaqles/trust/<hash>`, keyed by the manifest's bytes alone; `tq` now
+keys a record by workspace name as well, `~/.tentaqles/trust/<name>/<hash>`,
+so the same bytes copied under another folder name are not trusted there.
+For every identity (either layout) that still has a hash-only record the
+plan shows a third, journalled change, `rekey-trust`; the old record keeps
+counting for that identity until it runs.
 
 An identity that already holds both files (a protected copy and an old full
 manifest left in the root; `tq doctor` says `manifest-root-stale`) only gets
@@ -263,11 +271,19 @@ the marker rewrite. An identity already in the new layout is skipped with a
 every command keeps reading that identity's manifest from its root.
 
 `--apply` refuses an agent session (human-only). It also makes `~/.tentaqles`
-private to your user if that has not happened yet: 0700 on macOS and Linux,
-and on Windows one `icacls` run that removes the inherited permissions and
-grants your account full control (`tq init` and `tq add` do the same). The
-outcome is recorded in `~/.tentaqles/protected-acl.json` and `tq doctor`
-reports it as `protected-acl`; an `icacls` failure never fails the command.
+private to your user if that has not happened yet: 0700 on macOS and Linux
+(an identity folder an older `tq` created wider is tightened when its
+manifest moves in), and on Windows one `icacls` run that removes the
+inherited permissions and grants your account and SYSTEM full control
+(`tq init` and `tq add` do the same). The outcome is recorded in
+`~/.tentaqles/protected-acl.json` and `tq doctor` reports it as
+`protected-acl`; an `icacls` failure never fails the command.
+
+Two refusals: a `.tentaqles.yaml` that is not a regular file (a symlink,
+say) is never read or written through, so that identity is left out with a
+warning; and `TQ_HOME` is ignored in an agent session, so the step, like
+every command, reads `~/.tentaqles` there (`tq doctor` says
+`tq-home-override` when `TQ_HOME` points elsewhere).
 
 `tq uninstall --restore` puts each manifest back in its root and removes the
 protected copy: the identity is the old layout again, trusted as it was.

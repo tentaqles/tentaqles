@@ -13,8 +13,19 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   name-only marker at `<root>/.tentaqles.yaml` (`schema: tentaqles-marker-v1`,
   `client: <ws>`). The guard and every command read only the protected copy; a marker
   whose `client` is not the folder name, or whose protected copy is missing, resolves
-  neutral with the reason. Trust is unchanged: the hash of the file read, `tq allow` and
-  `tq deny` as before; editing the marker never changes it.
+  neutral with the reason, and so does a root file that is not a regular file (a symlink)
+  or a manifest whose `client` is not the folder name: a trusted manifest copied into
+  another folder lends it nothing. `tq allow` and `tq deny` work as before; editing the
+  marker never changes the hash.
+- **Trust is keyed by workspace name and content.** A record is
+  `~/.tentaqles/trust/<ws>/<hash>`; the same bytes trusted for one workspace are not
+  trusted under another name. A record of an older tq (`trust/<hash>`) still counts for
+  its workspace until `tq migrate manifests` rekeys it (`rekey-trust`, journaled);
+  `tq deny` removes both forms.
+- **`TQ_HOME` is ignored in an agent session.** Under an agent marker tq reads
+  `~/.tentaqles` whatever `TQ_HOME` says, so a settings `env` block cannot point the hook at
+  a forged state folder; `tq doctor` warns `tq-home-override` when `TQ_HOME` points away
+  from the default.
 - **Existing identities keep working.** A full manifest still at `<root>/.tentaqles.yaml`
   resolves exactly as before; `tq doctor` warns `manifest-in-root` naming the migration,
   and `manifest-root-stale` when both files exist (the protected copy is the one read).
@@ -22,10 +33,12 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   a dry run by default; `--apply` is human-only, copies each manifest byte for byte (same
   hash, so trust carries over), rewrites the root file as the marker and journals both
   writes; `tq uninstall --restore` puts the manifest back in the root.
-- **The state folder is private to the user.** 0700 directories and 0600 files on macOS
-  and Linux; on Windows `tq init`, `tq add` and `tq migrate manifests --apply` run
-  `icacls` on `~/.tentaqles` once, record the outcome in `protected-acl.json`, and
-  `tq doctor` reports `protected-acl`; an icacls failure never fails a command.
+- **The state folder is private to the user.** 0700 directories (an existing
+  `identities/<ws>/` is tightened when its manifest moves in) and 0600 files on macOS and
+  Linux; on Windows `tq init`, `tq add` and `tq migrate manifests --apply` run `icacls`
+  on `~/.tentaqles` once, granting the user and SYSTEM, record the outcome in
+  `protected-acl.json`, and `tq doctor` reports `protected-acl`; an icacls failure never
+  fails a command.
 - Plugin: see `plugin/CHANGELOG.md` (the loader resolves the marker; the snapshot guard
   reads `tool_input.file_path`).
 
