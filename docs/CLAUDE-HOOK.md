@@ -246,17 +246,31 @@ Every catalog provider outside the scope is matched by its `match:` lists
 
 | Rule | What it denies |
 |---|---|
-| `identity/out-of-scope-cli` | the provider's CLI run by name or path (`aws`, `/usr/local/bin/aws`, `"C:\Program Files\Amazon\AWSCLIV2\aws.exe"`, `aws.cmd`), behind `sudo`/`env`/`xargs`/`&`, inside `bash -c`, `cmd /c`, `pwsh -c`, `iex`, `eval` or a decoded `-EncodedCommand`; `python -m awscli` (`py`, `python3.12`, `-mawscli`); a runner's package (`npx vercel`, `pnpm dlx`, `yarn dlx`, `npm exec`, `bunx`, `uvx awscli`, `pipx run`, `uv tool run`); `Start-Process aws`; a Windows-suffixed name anywhere in the line |
-| `identity/out-of-scope-env` | a reference to the provider's variable: `$AWS_PROFILE`, `${AWS_PROFILE}`, `$env:AWS_PROFILE`, `%AWS_PROFILE%`, `env:AWS_PROFILE`, `AWS_PROFILE=x cmd`, `docker run -e AWS_PROFILE=x`, `export`/`unset`/`set`/`setx`/`printenv AWS_PROFILE`, `os.environ['AWS_PROFILE']`, `getenv("AWS_PROFILE")`, `process.env.AWS_PROFILE`. A bare name (`git commit -m "document AWS_PROFILE"`) is not a reference |
-| `identity/out-of-scope-path` | the provider's credential paths (`~/.aws`, `~/.config/gcloud`, `~/.config/gh`, ...): Read, Write, Edit, MultiEdit, Glob, Grep, NotebookRead, NotebookEdit; any shell word or redirect, relative to a preceding `cd`; a `cd` into one; a mention in the line or inline code after `~`, `$HOME`, `%USERPROFILE%`, `$env:USERPROFILE`, `%APPDATA%` expansion and the MSYS `/c/` spelling; a path string in an MCP input |
-| `identity/out-of-scope-host` | the provider's API hosts (`amazonaws.com` and its subdomains, `api.github.com`, ...): a URL anywhere in a shell line (`curl`, `wget`, `Invoke-WebRequest`, `iwr`, `irm`, inline code), a bare host argument of a network verb (`curl ec2.amazonaws.com/...`, `http GET api.vercel.com/...`, `ssh`, `scp`), a WebFetch URL |
-| `identity/out-of-scope-mcp` | an `mcp__<server>__*` tool whose server name, split on `_ - .`, carries the provider's MCP token (`mcp__aws__*`, `mcp__plugin_vercel_vercel__*`, `mcp__claude_ai_Vercel__*`) and no in-scope provider's |
+| `identity/out-of-scope-cli` | the provider's CLI run by name or path (`aws`, `/usr/local/bin/aws`, `"C:\Program Files\Amazon\AWSCLIV2\aws.exe"`, `aws.cmd`, `a\ws`), behind `sudo`/`env`/`xargs`/`wsl`/`&`, `find -exec`, `cmd /c start`, inside `bash -c`, `cmd /c`, `pwsh -c`, `iex`, `eval` or a decoded `-EncodedCommand`; `python -m awscli` (past `-X`/`-W`) or a module named in `-c` code; a runner's package (`npx`, `pnpm dlx`, `uvx`, `pipx run`, `uv tool run`); a `docker run` vendor image (`amazon/aws-cli`); `Start-Process`/`Get-Command`; a Windows-suffixed name anywhere in the line |
+| `identity/out-of-scope-env` | a reference to the provider's variable: `$AWS_PROFILE`, `${AWS_PROFILE}`, `${#AWS_PROFILE}`, `$env:AWS_PROFILE`, `%AWS_PROFILE%`, `Env:AWS_PROFILE`, `Env:AWS_*`, `AWS_PROFILE=x cmd`, `export`/`unset`/`set`/`setx`/`printenv`/`declare -p`, `[Environment]::SetEnvironmentVariable('AWS_PROFILE')`, `os.environ['AWS_PROFILE']`, `getenv("AWS_PROFILE")`, `process.env.AWS_PROFILE`, `const {AWS_PROFILE}=process.env`. Text is not a reference: a bare name, a single-quoted bash string, a grep/rg pattern, a `git commit` message, a here-string |
+| `identity/out-of-scope-path` | the provider's credential paths (`~/.aws`, `~/.config/gcloud`, `~/.config/gh`, ...): Read, Write, Edit, MultiEdit, Glob, Grep, NotebookRead, NotebookEdit; any shell word or redirect, relative to a preceding `cd` or a `tar -C <dir>`; a `cd` into one; a mention after `~`, `$HOME`, `%USERPROFILE%`, `%APPDATA%`/`%LOCALAPPDATA%` expansion and the MSYS `/c/` spelling; a path string in an MCP input; a Glob/Grep whose `pattern`, `glob` or `path` reaches it (including a recursive search rooted above it) |
+| `identity/out-of-scope-host` | the provider's API hosts (`amazonaws.com`, `googleapis.com`, `githubusercontent.com` and their subdomains, ...): a URL anywhere in a shell line (`curl`, `wget`, `Invoke-WebRequest`, `iwr`, `irm`, inline code), a bare host argument of a network verb (`curl ec2.amazonaws.com/...`, `ssh`, `scp`), a WebFetch URL. A commit-message URL is text |
+| `identity/out-of-scope-mcp` | an `mcp__<server>__*` tool whose server name, split on `_ - .` (adjacent pairs joined, so `google-cloud` → `googlecloud`), carries an out-of-scope provider's MCP token (`mcp__aws__*`, `mcp__amazon-q__*`, `mcp__aws_on_azure__*`) and whose exact name is not in the identity's own `claude.bundle.mcp` |
 | `identity/other-identity` | a path under another identity's workspace root (`<base>/<other>` for every registered base) or its folder `~/.tentaqles/identities/<other>` (its Claude and Codex homes included), by every route above |
 
-What an in-scope provider claims is never denied because another provider
-lists it too: `az` is both az's and azure-devops's, `graph.microsoft.com` is
-az's, teams' and outlook's. Generic tools (docker, helm, kubectl, terraform,
-pulumi, npm, psql, dbt) are never denied by command name.
+An in-scope provider's claim is never denied because another provider lists
+the same thing; claims are provider-specific. A shared CLI is owned per
+subcommand: `az` belongs to the az provider, and `azure-devops` claims only
+`az devops|repos|pipelines|boards|artifacts|login|extension`, so an identity
+with azure-devops but not az runs `az devops ...` yet is denied `az vm create`
+and `~/.azure`. A provider's claims come from the embedded catalog only, so a
+user override file can only widen denial, never allow. Generic cross-cloud
+tools (docker, helm, kubectl, terraform, pulumi, npm, psql, dbt) are never
+denied by command name, and their local config (`~/.kube/config`, `~/.npmrc`)
+stays readable under any identity.
+
+**Fail closed.** A folder whose protected manifest cannot be read (`guard:
+v3`, `guard: true`, an unknown `scope:` id, bad YAML) or an invalid user
+provider file (`~/.tentaqles/providers/<id>.yaml`) denies every tool with
+`BLOCKED [tq/guard-error]`, naming the fix. A `guard:` mapping (the old
+guard-modes block) is a dropped block: the v1 rules apply and `tq doctor`
+reports it. `tq providers list` reports every provider overlap and every bad
+file without aborting.
 
 The deny names the category, the provider and the scope so the model reports
 instead of retrying:

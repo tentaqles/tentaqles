@@ -163,6 +163,67 @@ func TestPreToolUse_ScopeV1Unchanged(t *testing.T) {
 	}
 }
 
+// TestPreToolUse_UnreadableManifestDeniesAll: a workspace folder whose protected manifest
+// cannot be read (guard: v3, an unknown scope id, bad YAML) denies every tool with
+// tq/guard-error, instead of falling back to neutral (ADR-0006 round 2).
+func TestPreToolUse_UnreadableManifestDeniesAll(t *testing.T) {
+	for _, bad := range []string{"guard: v3\n", "guard: true\n", "guard: v2\nscope: [awss]\n", "client: company-x\n:\n"} {
+		root := mkUntrusted(t, "company-x")
+		if err := os.WriteFile(filepath.Join(root, manifest.FileName), manifest.MarkerBytes("company-x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mp := paths.ManifestPath("company-x")
+		if err := os.MkdirAll(filepath.Dir(mp), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: company-x\n"+bad), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct{ tool, input string }{
+			{"Read", pathIn("file_path", filepath.Join(root, "README.md"))},
+			{"Bash", cmdIn("cat ~/.aws/config")},
+		} {
+			code, _, rule, errOut := hookDecision(t, root, c.tool, c.input)
+			if code != 2 || rule != policy.GuardErrorID {
+				t.Fatalf("%q %s: code=%d rule=%q, want guard-error (%s)", bad, c.tool, code, rule, errOut)
+			}
+		}
+	}
+}
+
+// TestPreToolUse_BadProviderFileDeniesAll: an invalid user provider file is a guard error in
+// the hook (deny, name the file), never a silent skip (ADR-0006 round 2).
+func TestPreToolUse_BadProviderFileDeniesAll(t *testing.T) {
+	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	dir := filepath.Join(paths.Home(), "providers")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "zz.yaml"), []byte("id: zz\nname: [broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, rule, errOut := hookDecision(t, root, "Bash", cmdIn("git status"))
+	if code != 2 || rule != policy.GuardErrorID {
+		t.Fatalf("bad provider file: code=%d rule=%q (%s)", code, rule, errOut)
+	}
+}
+
+// TestPreToolUse_GuardMappingIsV1: the dropped guard-modes mapping is not the v2 flag; the
+// workspace keeps the v1 rules and tq doctor reports the dropped block (manifest.Ignored).
+func TestPreToolUse_GuardMappingIsV1(t *testing.T) {
+	root, _ := setupScoped(t, "company-x", "guard:\n  mode: strict\n"+companyXBody)
+	if code, _, _, _ := hookDecision(t, root, "Bash", cmdIn("python -m awscli s3 ls")); code != 0 {
+		t.Fatal("a guard mapping must leave the v1 rules (no v2 scope deny)")
+	}
+	m, err := manifest.Load(paths.ManifestPath("company-x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.GuardV2() || len(m.Ignored) == 0 {
+		t.Fatalf("guard mapping: GuardV2=%v Ignored=%v", m.GuardV2(), m.Ignored)
+	}
+}
+
 // TestPreToolUse_ScopeNeutralIsV1: a cwd in no workspace has no scope: the v2 rules do not
 // run there, and the v1 neutral-remote rule still refuses a cloud CLI.
 func TestPreToolUse_ScopeNeutralIsV1(t *testing.T) {

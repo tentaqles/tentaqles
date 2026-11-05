@@ -100,12 +100,14 @@ optional; validated at load.
 
 | List | Entries | Matched as |
 |---|---|---|
-| `executables` | `^[A-Za-z0-9][A-Za-z0-9._+-]*$`, no suffix | the command word's last path element, lower-cased, `.exe` `.cmd` `.bat` `.ps1` `.com` stripped; a runner's package (`npx`, `uvx`, `pipx run`, ...); `Start-Process` |
-| `modules` | dotted Python names (`awscli`, `azure.cli`) | `python -m <module>` (or a submodule of it) |
-| `env` | variable names; a trailing `*` is a prefix (`TF_TOKEN_*`) | a reference: `$NAME`, `${NAME}`, `$env:NAME`, `%NAME%`, `env:NAME`, `NAME=`, `export`/`unset`/`set`/`setx`/`printenv NAME`, `environ['NAME']`, `getenv("NAME")`, `process.env.NAME`; case-insensitive |
-| `paths` | `~/...`, `%APPDATA%/...`, `%LOCALAPPDATA%/...`, forward slashes, no `..` or glob | the path and everything under it (a root whose variable is unset is skipped) |
-| `hosts` | lower-case DNS names with a dot | the host and every subdomain |
-| `mcp` | `^[a-z0-9]+$` tokens | one token of the MCP server name split on `_ - .` |
+| `executables` | `^[A-Za-z0-9][A-Za-z0-9._+-]*$`, no suffix | the command word's last path element, lower-cased, suffix stripped; behind `sudo`/`env`/`xargs`/`wsl`/`find -exec`/`cmd start`; a runner's package (`npx`, `uvx`, `pipx run`, `uv tool run`, ...); `Start-Process`/`Get-Command`; a backslash-joined word (`a\ws`) |
+| `subcommands` | `exe -> [first-subcommand, ...]` | a part of a CLI another provider owns wholesale (`az: [devops, repos, ...]`). The most precise in-scope claim wins |
+| `images` | docker image names (`amazon/aws-cli`) | the image of `docker run`/`podman run` (basename or full) |
+| `modules` | dotted Python names (`awscli`, `azure.cli`) | `python -m <module>` (past `-X`/`-W` option values), or a module named in `-c` code (`run_module('awscli')`, `import boto3`) |
+| `env` | variable names; a trailing `*` is a prefix (`TF_TOKEN_*`) | a reference: `$NAME`, `${NAME}`, `${#NAME}`, `$env:NAME`, `%NAME%`, `Env:NAME`, `Env:NAME*`, `NAME=`, `export`/`unset`/`set`/`setx`/`printenv`/`declare -p NAME`, `[Environment]::SetEnvironmentVariable('NAME')`, `environ['NAME']`, `getenv("NAME")`, `process.env.NAME`, `const {NAME}=process.env`; case-insensitive. Not matched inside a single-quoted bash string, a grep pattern, a commit message or a here-string (those are text) |
+| `paths` | `~/...`, `%APPDATA%/...`, `%LOCALAPPDATA%/...`, forward slashes, no `..` or glob | the path and everything under it; `%APPDATA%`/`%LOCALAPPDATA%` expanded in file-tool paths and shell words; `tar -C <dir>` and a preceding `cd` set the base; a Glob/Grep `pattern`/`glob`/`path` and a recursive search above the tree. A root whose variable is unset is skipped |
+| `hosts` | lower-case DNS names with a dot | the host and every subdomain; use the registrable domain where the vendor owns it all (`googleapis.com`, `githubusercontent.com`) |
+| `mcp` | `^[a-z0-9]+$` tokens | a token of the MCP server name (split on `_ - .`, adjacent pairs joined: `google-cloud` → `googlecloud`). An MCP server is allowed only when its exact name is the identity's own `claude.bundle.mcp`; any out-of-scope token otherwise denies |
 
 Rules of thumb for a new entry:
 
@@ -113,9 +115,12 @@ Rules of thumb for a new entry:
   server names. Leave out what an application uses at run time (an
   `OPENAI_API_KEY`, a `STRIPE_SECRET_KEY`, an app's `*.supabase.co` URL) and
   documentation sites.
-- A generic tool that talks to whatever the project configures (docker, helm,
-  kubectl, terraform, pulumi, npm, psql, dbt) lists no executable: only its
-  global credential files and vendor endpoints. A command name too generic to
+- A generic cross-cloud tool (docker, helm, kubectl, terraform, pulumi, npm,
+  psql, dbt) lists no executable, and no credential `paths` either: a
+  kubeconfig, an npmrc or a docker config is the developer's own cross-cloud
+  file and stays readable under every identity (so an AKS developer needs no
+  `scope: [kube]`). Only its SaaS endpoints and vendor-specific tokens are
+  claimed. A command name too generic to
   deny (cursor's `agent`) is left out too.
 - An entry another provider also lists is fine: whatever an in-scope provider
   claims is never denied (`az` is az's and azure-devops's).

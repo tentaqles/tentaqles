@@ -86,6 +86,20 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   The deny names the identity's scope and asks the model to report instead of retrying.
   `wrong-cloud` is folded in: it does not run under the flag. Without the flag, and in a
   neutral cwd, the v1 rules are unchanged. See `docs/CLAUDE-HOOK.md`, "Identity scope".
+- **Precision and fail-closed (round 2).** Claims are provider-specific: a shared CLI is
+  owned per subcommand (`match.subcommands`; `azure-devops` owns `az devops|repos|...`, not
+  `az vm`), a provider's claims come from the embedded catalog only (a user file can only
+  widen denial), and `tq providers list` reports every provider overlap and every bad file
+  without aborting. New `match` fields `subcommands` and `images` (docker vendor images);
+  generic cross-cloud tools (kube, npm, docker, helm, terraform, pulumi, dbt, postgres) claim
+  no credential path, so a kubeconfig/npmrc stays readable. A folder whose protected manifest
+  cannot be read (`guard: v3`, an unknown `scope:` id, bad YAML) or an invalid user provider
+  file denies every tool with `tq/guard-error`. grep patterns, commit messages, here-strings
+  and single-quoted bash strings are treated as text, not expansions. More routes are
+  matched: `wsl`/`find -exec`/`cmd start`/`docker run`/`Get-Command`/`Start-Process`, `a\ws`,
+  `python -m` past `-X`/`-W`, env APIs (`[Environment]::`, `Env:AWS_*`, `${#NAME}`,
+  `declare -p`, `process.env` destructuring), `tar -C`, `%APPDATA%` expansion, Glob/Grep
+  `pattern`+`glob`+`path`, registrable-domain hosts, and MCP exact-allow via `bundle.mcp`.
 
 ### The signed integrity record (ADR-0004)
 

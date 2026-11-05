@@ -149,5 +149,70 @@ Read judged by both categories costs 6.5 ms under v1 and 9.8 ms under v2, a shel
 | v2 rules in a neutral session | No scope to compare against: either everything is out of scope (every vendor CLI denied in a plain folder) or nothing is; `neutral-remote` already refuses remote commands there |
 | A new rule beside `wrong-cloud` | Two rules for the same AWS command; `wrong-cloud` is the six-CLI subset and is skipped under the flag |
 
+## Round 2 (2026-11-05): precision, fail-closed, and the false-positive cut
+
+A blind critic ran a 108-route attack corpus and a 65-command benign corpus (everyday
+Azure work) against round 1 and found 32 missed attacks, 9 false positives and that "in-scope
+wins" made scope not provider-specific. This round answers all of it; both corpora are now
+clean (0 missed, 0 false positive). The changes:
+
+**Claims are provider-specific, and only embedded data makes a claim.** A provider's CLAIMS
+(what being in scope allows) come from the embedded catalog; its DENIES (what being out of
+scope blocks) come from the merged catalog (embedded + user files). A user file can only
+widen denial, never allow — overriding in-scope `az` to list `aws` does not unlock `aws`.
+
+**Shared CLIs are claimed per subcommand** (the biggest round-1 gap). `match.subcommands`
+(a new field: `exe -> [first-subcommands]`) lets one provider own part of a CLI another owns
+wholesale: `az` belongs to the az provider; `azure-devops` claims only
+`az devops|repos|pipelines|boards|artifacts|login|extension`. The most precise in-scope claim
+wins, so an AWS + Azure-DevOps identity runs `az devops ...` but `az vm create` is denied, and
+`~/.azure` (dropped from azure-devops; owned by az) is denied too. `tq providers list`
+reports every executable / subcommand / path / host / MCP-token overlap between providers, so
+nothing is silent.
+
+**New `match` fields:** `subcommands` (above) and `images` (docker/podman image names whose
+container is the CLI: `amazon/aws-cli`, `cloudsdktool/google-cloud-cli`). Generic cross-cloud
+tools (docker, helm, kubectl, terraform, pulumi, npm, psql, dbt) carry no credential `paths`:
+a kubeconfig, an npmrc, a docker config is the developer's own cross-cloud file and stays
+readable under any identity (an AKS developer needs no `scope: [kube]`). Their SaaS endpoints
+and vendor-specific tokens (Terraform Cloud, Pulumi, dbt Cloud) are still claimed.
+
+**Fail closed and loud.** A workspace whose protected manifest cannot be read (`guard: v3`,
+`guard: true`, an unknown `scope:` id, bad YAML) denies every tool in the folder with
+`tq/guard-error`, naming the fix, instead of falling back to neutral; a missing protected
+manifest (unmigrated/old layout) is not an error. An invalid user provider file is likewise a
+guard error in the hook (deny every tool), and `tq providers list` reports every bad file
+rather than aborting on the first. A `guard:` mapping stays a dropped block (v1 rules) and
+`tq doctor` reports it (`manifest-dropped-block`).
+
+**Text is not code.** The env, host and credential-path text scans run on a masked copy of
+the command: grep/rg/findstr/Select-String patterns, `git commit` messages and PowerShell
+here-strings (`@'...'@`, `@"..."@`) are blanked, and the bash expansion/assignment scan also
+blanks single-quoted spans (no expansion). So `rg 'process.env.AWS_REGION'`, a commit message
+mentioning `AWS_PROFILE=prod` or a URL, and a here-string of Go source are text; a real
+`$AWS_PROFILE` expansion, assignment or `[Environment]::SetEnvironmentVariable('AWS_PROFILE')`
+is still denied.
+
+**More routes matched:** executables behind `wsl`, `find -exec/-execdir`, `cmd /c start`,
+`docker run <vendor image>`, `Get-Command <cli>`, `Start-Process`, and a backslash-joined word
+(`a\ws`); `python -m` past option values (`-X utf8`, `-W ignore`) and a module named in `-c`
+code (`run_module('awscli')`, `import boto3`); env forms `$env:`, `%NAME%`, `Env:NAME` and
+`Env:AWS_*`, `[Environment]::SetEnvironmentVariable`, `${#NAME}`, `declare -p`,
+`os.environ[...]`, `process.env` destructuring; `tar -C <dir>` resolving a relative word;
+`%APPDATA%`/`%LOCALAPPDATA%` expansion in file-tool paths and shell mentions; Glob/Grep
+checking `pattern` and `glob` together with `path` (and a recursive search rooted above a
+credential tree); and registrable-domain hosts (`googleapis.com`, `githubusercontent.com`).
+
+**MCP exact-allow.** An MCP server is allowed only when its exact name is in the identity's
+own `claude.bundle.mcp`; otherwise any out-of-scope token in its name (split on `_ - .`, with
+adjacent pairs joined so `google-cloud` → `googlecloud`) denies — `mcp__aws_on_azure__call_aws`
+is denied even though `azure` is in scope.
+
+Tests: `TestScope_EveryProvider` (a table over all 62 catalog entries),
+`TestScope_SharedCLIPrecision`, `TestScope_UserOverrideCannotAllow`,
+`TestScope_MCPExactAllowAndPrecedence`, `TestScope_Mutants` (the seven round-1 mutants),
+`TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFileDeniesAll`,
+`TestPreToolUse_GuardMappingIsV1`, and the expanded fixtures of the round-1 rule tables.
+
 Records are never edited after acceptance. A changed mind is a new record that
 supersedes this one.

@@ -108,6 +108,14 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestScope_OutOfScopePath`, `TestScope_OutOfScopeHost`, `TestScope_OutOfScopeMCP`,
   `TestScope_OtherIdentity`, `TestScope_InScopeWins`, `TestCatalogMatchLists`,
   `TestUserOverrideExtendsMatch`.
+- Under `guard: v2` the scope is provider-specific (a shared CLI is owned per subcommand, a
+  user file can only widen denial), a folder whose manifest or a provider file cannot be read
+  denies every tool with `tq/guard-error`, and grep patterns / commit messages / here-strings
+  stay text while real expansions are denied: `TestScope_EveryProvider` (all 62 providers),
+  `TestScope_SharedCLIPrecision`, `TestScope_UserOverrideCannotAllow`,
+  `TestScope_MCPExactAllowAndPrecedence`, `TestScope_Mutants`,
+  `TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFileDeniesAll`,
+  `TestPreToolUse_GuardMappingIsV1`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
 - Trust is human-only, and so is every tq write under `$TQ_HOME` or an identity dir:
