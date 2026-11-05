@@ -13,11 +13,11 @@ import (
 	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
-// The identity category's v2 rules (PRD v2 §6.3, §7.1; ADR-0006), on behind the manifest
+// The identity category's v2 rules (PRD v2 §6.3, §7.1; ADR-0007), on behind the manifest
 // flag guard: v2: everything an identity's provider scope leaves out is denied in every
 // tool. The claims are the catalog's data (providers.Match); this file reads them.
 //
-// Precision (ADR-0006 round 2): a provider's CLAIMS (what being in scope allows) come from
+// Precision (ADR-0007 round 2): a provider's CLAIMS (what being in scope allows) come from
 // the EMBEDDED catalog only; a provider's DENIES (what being out of scope blocks) come from
 // the merged catalog (embedded + user files). So a user override can only widen denial, never
 // make something allowed. A shared CLI (az) is owned wholesale by one provider and claimed
@@ -52,8 +52,6 @@ type ScopeInputs struct {
 	// the tq home (~/.tentaqles/identities/<name>), to its name.
 	OtherRoots map[string]string
 	OtherDirs  map[string]string
-	// LoadErr, when set, makes every call deny with tq/guard-error (a bad provider file).
-	LoadErr string
 }
 
 type scopedProvider struct {
@@ -93,7 +91,6 @@ type Scope struct {
 	set      *protect.Set
 	ci       bool
 	env      func(string) string
-	loadErr  string
 
 	provs []*scopedProvider
 
@@ -127,7 +124,7 @@ type hostSet struct {
 // NewScope compiles in. It never fails.
 func NewScope(in ScopeInputs) *Scope {
 	s := &Scope{identity: in.Identity, scope: append([]string{}, in.Scope...), set: in.Set, env: in.Env,
-		loadErr: in.LoadErr, exeClaims: map[string][]exeClaim{}, modClaims: map[string][]exeClaim{},
+		exeClaims: map[string][]exeClaim{}, modClaims: map[string][]exeClaim{},
 		imgClaims: map[string][]exeClaim{}, bundleMCP: map[string]bool{}, inMCP: map[string]bool{},
 		outMCP: map[string]*scopedProvider{}, envRes: map[string]*regexp.Regexp{}}
 	if s.env == nil {
@@ -327,24 +324,18 @@ func (s *Scope) Evaluate(cwd string, call ToolCall) Decision {
 	if s == nil {
 		return Decision{}
 	}
-	if s.loadErr != "" {
-		return Decision{Action: Deny, Matched: []*Rule{{ID: GuardErrorID, Action: Deny, Source: "builtin",
-			Reason: "tq cannot read the provider catalog (" + s.loadErr + "); the guard fails closed and denies every tool until a human fixes it", Subject: "the provider catalog"}}}
-	}
 	h, ok := s.judge(cwd, call)
 	if !ok {
 		return Decision{}
 	}
+	// The scope line itself is added by the hook (cmd.scopeNote, from Manifest.Scope()), the
+	// one place a deny message prints it.
 	var reason string
 	if h.id == OtherIdentityID {
 		reason = h.subject + " belongs to identity " + h.other + ", not to " + s.identity +
 			": a session reads and writes only its own identity's files. tq denies it in every tool; do not retry another way: tell the developer, who works on it from that identity"
 	} else {
-		sc := strings.Join(s.scope, ", ")
-		if sc == "" {
-			sc = "none"
-		}
-		reason = h.what + ", outside the scope of identity " + s.identity + " (scope: " + sc + "). " +
+		reason = h.what + ", outside the scope of identity " + s.identity + ". " +
 			"tq denies it in every tool; do not retry another way: tell the developer, who does it from the identity that owns it or adds the provider to this identity's scope"
 	}
 	return Decision{Action: Deny, Matched: []*Rule{{ID: h.id, Category: CategoryIdentity, Action: Deny, Reason: reason, Source: "builtin", Subject: h.subject}}}
@@ -563,7 +554,7 @@ func mcpTokens(server string) []string {
 }
 
 // mcpServer: allowed if the exact server name is in the identity's own MCP list; otherwise an
-// out-of-scope token denies (ADR-0006 round 2, covers mcp__aws_on_azure__*).
+// out-of-scope token denies (ADR-0007 round 2, covers mcp__aws_on_azure__*).
 func (s *Scope) mcpServer(server string) (scopeHit, bool) {
 	if s.bundleMCP[strings.ToLower(server)] {
 		return scopeHit{}, false

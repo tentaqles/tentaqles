@@ -1,4 +1,4 @@
-# ADR-0006: The provider scope and per-provider match lists: the identity category for every tool, behind `guard: v2`
+# ADR-0007: The provider scope and per-provider match lists: the identity category for every tool, behind `guard: v2`
 
 Status: proposed
 Date: 2026-11-05
@@ -179,11 +179,19 @@ and vendor-specific tokens (Terraform Cloud, Pulumi, dbt Cloud) are still claime
 
 **Fail closed and loud.** A workspace whose protected manifest cannot be read (`guard: v3`,
 `guard: true`, an unknown `scope:` id, bad YAML) denies every tool in the folder with
-`tq/guard-error`, naming the fix, instead of falling back to neutral; a missing protected
-manifest (unmigrated/old layout) is not an error. An invalid user provider file is likewise a
-guard error in the hook (deny every tool), and `tq providers list` reports every bad file
-rather than aborting on the first. A `guard:` mapping stays a dropped block (v1 rules) and
-`tq doctor` reports it (`manifest-dropped-block`).
+`tq/guard-error`, naming the fix, instead of falling back to neutral. An invalid user
+provider file under a `guard: v2` identity is likewise a guard error (deny every tool), and
+`tq providers list` reports every bad file rather than aborting on the first. Both go through
+the hook's one fail-closed path of ADR-0006 (`resolve.Result.Unreadable` for the manifest,
+`scopeCatalogError` for the catalog, both answered by `failClosed`), not a second mechanism.
+A `guard:` mapping stays a dropped block (v1 rules) and `tq doctor` reports it
+(`manifest-dropped-block`).
+
+**Merged onto ADR-0006 (deny only, fail closed, the denial log).** Identity denies go through
+that ADR's deny path: category `identity`, layer `hook` (`filesystem` for `other-identity`),
+the redacted command and the matched subject. The scope line of every identity deny comes
+from one helper, `scopeNote`, which prints `Manifest.Scope()`; `policy.Scope`'s reason no
+longer prints the scope itself.
 
 **Text is not code.** The env, host and credential-path text scans run on a masked copy of
 the command: grep/rg/findstr/Select-String patterns, `git commit` messages and PowerShell

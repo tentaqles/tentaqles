@@ -29,7 +29,7 @@ func newProvidersListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List providers in the catalog",
 		RunE: func(c *cobra.Command, _ []string) error {
-			// LoadAll reports every bad user file instead of aborting on the first (ADR-0006
+			// LoadAll reports every bad user file instead of aborting on the first (ADR-0007
 			// round 2), so a single broken file never hides the rest of the catalog.
 			cat, loadErrs := providers.LoadAll()
 			if cat == nil {
@@ -63,7 +63,7 @@ func newProvidersListCmd() *cobra.Command {
 			for _, e := range loadErrs {
 				fmt.Fprintf(c.ErrOrStderr(), "warning: skipped a provider file: %v\n", e)
 			}
-			// Overlaps between providers are reported, never silent (ADR-0006 round 2).
+			// Overlaps between providers are reported, never silent (ADR-0007 round 2).
 			for _, o := range cat.Overlaps() {
 				fmt.Fprintf(c.ErrOrStderr(), "overlap: %s\n", o)
 			}

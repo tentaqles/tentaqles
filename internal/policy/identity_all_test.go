@@ -98,7 +98,7 @@ func TestScope_EveryProvider(t *testing.T) {
 
 // TestScope_SharedCLIPrecision: azure-devops owns only the `az devops|repos|...` subcommands;
 // an identity with azure-devops (not az) runs those but not `az vm create`, and reads
-// ~/.azure only with az in scope (ADR-0006 round 2, the biggest round-1 gap).
+// ~/.azure only with az in scope (ADR-0007 round 2, the biggest round-1 gap).
 func TestScope_SharedCLIPrecision(t *testing.T) {
 	f := newScopeFixture(t, "claude")
 	env := func(k string) string { return map[string]string{"TQ_HOME": f.state, "APPDATA": f.appData}[k] }
@@ -158,7 +158,7 @@ func TestScope_UserOverrideCannotAllow(t *testing.T) {
 
 // TestScope_MCPExactAllowAndPrecedence: an out-of-scope token denies even when another token
 // is an in-scope provider's (aws_on_azure), unless the exact server is in the identity's own
-// bundle.mcp (ADR-0006 round 2).
+// bundle.mcp (ADR-0007 round 2).
 func TestScope_MCPExactAllowAndPrecedence(t *testing.T) {
 	f := newScopeFixture(t) // az, azure-devops, claude
 	mcp := func(server string) ToolCall { return ToolCall{Tool: "mcp__" + server + "__call", Content: "{}"} }

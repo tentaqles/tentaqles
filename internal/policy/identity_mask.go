@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Text masking for the identity category's text scans (ADR-0006 round 2): the parts of a
+// Text masking for the identity category's text scans (ADR-0007 round 2): the parts of a
 // shell line that are text, not expansion or code, must not match a provider. These are
 // blanked to spaces before the env/host/mention scans run:
 //   - grep/rg/findstr/Select-String search patterns,

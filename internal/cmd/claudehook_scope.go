@@ -58,14 +58,10 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set) *
 	}
 	roots, dirs := otherIdentities(ws, cfg)
 	home, _ := os.UserHomeDir()
-	// Merged catalog for out-of-scope denials; a bad user file fails closed (LoadErr). The
-	// embedded-only match per id is what an in-scope provider CLAIMS, so a user file can
-	// never widen a claim (ADR-0006 round 2).
-	cat, cerrs := providers.LoadAll()
-	loadErr := ""
-	if len(cerrs) > 0 {
-		loadErr = cerrs[0].Error()
-	}
+	// The merged catalog (embedded + user files) is what an out-of-scope provider DENIES; the
+	// embedded match is what an in-scope provider CLAIMS, so a user file can never widen a
+	// claim (ADR-0007). A bad user file never reaches here: scopeCatalogError denied first.
+	cat, _ := providers.LoadAll()
 	embedded := map[string]providers.Match{}
 	if ec, err := providers.Embedded(); err == nil {
 		for _, p := range ec.All() {
@@ -79,47 +75,29 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set) *
 	s := policy.NewScope(policy.ScopeInputs{
 		Identity: ws.Name, Scope: ws.Manifest.Scope(), Providers: cat.All(), Embedded: embedded,
 		BundleMCP: bundleMCP, Set: prot, UserHome: home, Env: os.Getenv,
-		OtherRoots: roots, OtherDirs: dirs, LoadErr: loadErr,
+		OtherRoots: roots, OtherDirs: dirs,
 	})
 	scopeMemo.ws, scopeMemo.prot, scopeMemo.s = ws, prot, s
 	return s
 }
 
-// unreadableManifest reports the workspace whose marker encloses cwd but whose protected
-// manifest fails to load (guard: v3, guard: true, an unknown scope id, bad YAML). The hook
-// then fails closed and denies every tool in that folder (ADR-0006 round 2; the sibling
-// P2.2 branch owns the general unreadable-manifest rule). "" error means readable or no
-// enclosing workspace.
-func unreadableManifest(cwd string, cfg *registry.Config) (string, error) {
-	if cfg == nil || strings.TrimSpace(cwd) == "" {
-		return "", nil
+// scopeCatalogError is why a guard: v2 identity's provider catalog cannot be used (a user
+// provider file that does not load), or "". pre-tool-use denies every call on it through the
+// same fail-closed path as an unreadable manifest (resolve.Result.Unreadable): one
+// mechanism, never a silent skip of the bad file (ADR-0007).
+func scopeCatalogError(ws *resolve.Workspace) string {
+	if ws == nil || ws.Manifest == nil || !ws.Manifest.GuardV2() {
+		return ""
 	}
-	cwdc := filepath.Clean(cwd)
-	for _, base := range cfg.Bases {
-		b := filepath.Clean(base)
-		rel, err := filepath.Rel(b, cwdc)
-		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
-			continue
+	if _, errs := providers.LoadAll(); len(errs) > 0 {
+		msgs := make([]string, 0, len(errs))
+		for _, e := range errs {
+			msgs = append(msgs, e.Error())
 		}
-		name := rel
-		if i := strings.IndexAny(rel, `/\`); i >= 0 {
-			name = rel[:i]
-		}
-		if name == "" {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(b, name, manifest.FileName)); err != nil {
-			continue // no marker: not a workspace folder
-		}
-		mp := paths.ManifestPath(name)
-		if _, err := os.Stat(mp); err != nil {
-			continue // no protected manifest to read (unmigrated/old layout): other rules judge it
-		}
-		if _, err := manifest.Load(mp); err != nil {
-			return name, err
-		}
+		return "the provider catalog of identity " + ws.Name + " cannot be read (" + strings.Join(msgs, "; ") +
+			"): tq cannot tell what this identity may touch, so it denies every call here until a human fixes or removes the file under ~/.tentaqles/providers"
 	}
-	return "", nil
+	return ""
 }
 
 // otherIdentities names every identity but ws: the folders under ~/.tentaqles/identities and

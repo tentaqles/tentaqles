@@ -21,7 +21,7 @@ identity:
     PGPASSFILE: "{dir}/pgpass"
     PGSERVICEFILE: "{dir}/pg_service.conf"
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 # A generic tool: its command talks to whatever the project configures, so it is
 # never matched by name.
 # Cross-cloud local config (kubeconfig, npmrc, docker config, ...): the developer's

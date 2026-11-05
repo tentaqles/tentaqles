@@ -25,7 +25,7 @@ identity:
     `terraform login` is not: it goes to the shared terraform.d directory
     regardless of TF_CLI_CONFIG_FILE
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 # A generic tool: its command talks to whatever the project configures, so it is
 # never matched by name.
 match:

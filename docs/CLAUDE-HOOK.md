@@ -156,7 +156,7 @@ produces the block:
    `cloud.also` (e.g. `also: [aws]`; names `azure`, `aws`, `gcp`, `digitalocean` (aliases: `az`, `gcloud`, `do`, `doctl`)) are allowed too; the block message
    then names the set ("azure + aws"). A repo manifest cannot add clouds.
    Under `guard: v2` this rule does not run: `identity/out-of-scope-cli`
-   judges these CLIs and every other provider's (ADR-0006).
+   judges these CLIs and every other provider's (ADR-0007).
 3. **`neutral-remote`** — cwd resolves to **no** trusted tq workspace
    (`Neutral`), and the command is a remote mutation (`gh` anything, any
    cloud CLI, or `git push|fetch|pull|clone`). Everything else in a
@@ -227,7 +227,7 @@ files, hooks, plugin and binary are the self-protection category's (below).
 ## Identity scope (`guard: v2`, `pre-tool-use`)
 
 A trusted workspace whose manifest sets the top-level `guard: v2` has its
-**provider scope** enforced in every tool (PRD v2 §6, ADR-0006). The scope is
+**provider scope** enforced in every tool (PRD v2 §6, ADR-0007). The scope is
 `manifest.Scope()`: the identities block (claude and gh for a v1 manifest),
 every cloud of the `cloud` block, the catalog id of `git.provider`, the chat,
 email and data_platform providers, `agents`, the providers whose MCP server
@@ -267,21 +267,26 @@ stays readable under any identity.
 **Fail closed.** A folder whose protected manifest cannot be read (`guard:
 v3`, `guard: true`, an unknown `scope:` id, bad YAML) or an invalid user
 provider file (`~/.tentaqles/providers/<id>.yaml`) denies every tool with
-`BLOCKED [tq/guard-error]`, naming the fix. A `guard:` mapping (the old
-guard-modes block) is a dropped block: the v1 rules apply and `tq doctor`
-reports it. `tq providers list` reports every provider overlap and every bad
-file without aborting.
+`BLOCKED [tq/guard-error]`, naming the fix, through the hook's one fail-closed
+path ([Fail closed](#fail-closed); the unreadable manifest is
+`resolve.Result.Unreadable`). A `guard:` mapping (the old guard-modes block)
+is a dropped block: the v1 rules apply and `tq doctor` reports it. `tq
+providers list` reports every provider overlap and every bad file without
+aborting.
 
-The deny names the category, the provider and the scope so the model reports
-instead of retrying:
+The deny names the category, the provider and, on its last line, the
+identity's scope (`Manifest.Scope()`), so the model reports instead of
+retrying:
 
 ```
-BLOCKED [identity/out-of-scope-cli]: aws is the CLI of AWS (aws), outside the scope of identity company-x (scope: az, azure-devops, claude). tq denies it in every tool; do not retry another way: tell the developer, who does it from the identity that owns it or adds the provider to this identity's scope (source: builtin)
+BLOCKED [identity/out-of-scope-cli]: aws is the CLI of AWS (aws), outside the scope of identity company-x. tq denies it in every tool; do not retry another way: tell the developer, who does it from the identity that owns it or adds the provider to this identity's scope (source: builtin)
+Scope of identity company-x: az, azure-devops, claude. Anything outside it is denied; report this to the developer instead of retrying.
 ```
 
-and is one line in the denial log whose `command` is the verb and the token
-matched (`aws`, `python -m awscli`, `AWS_PROFILE`, `ec2.amazonaws.com`, the
-path, `mcp__aws`), never the rest of the line.
+It is one line in the denial log with `category` `identity`, `layer` `hook`
+(`filesystem` for `other-identity`), the redacted command and the `subject`
+it matched (`aws`, `python -m awscli`, `AWS_PROFILE`, `ec2.amazonaws.com`,
+the path, `mcp__aws`).
 
 Without `guard: v2` the v1 rules apply unchanged (`wrong-cloud` for six cloud
 CLIs, nothing else of the scope). A **neutral** cwd (no workspace) never gets

@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The provider scope (PRD v2 §6, ADR-0006): the catalog ids an identity may touch. It is the
+// The provider scope (PRD v2 §6, ADR-0007): the catalog ids an identity may touch. It is the
 // single source of truth the guard's identity category, the PATH, the environment and the
 // harness's MCP list are built from.
 

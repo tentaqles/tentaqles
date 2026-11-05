@@ -256,16 +256,10 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 // policyDecisionWith is policyDecision with the rule set and the protected
 // path set already built (a patch judges many files with one of each).
 func policyDecisionWith(set *policy.Set, prot *protect.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
-	// Fail closed: a folder whose protected manifest cannot be read (guard: v3, an unknown
-	// scope id, bad YAML) denies every tool, naming the fix (ADR-0006 round 2).
-	if ws == nil {
-		if name, err := unreadableManifest(cwd, cfg); err != nil {
-			return ruleDecision(policy.Deny, policy.GuardErrorID,
-				"the manifest of workspace "+name+" cannot be read ("+err.Error()+"); tq fails closed and denies every tool here until a human fixes it with tq edit")
-		}
-	}
-	// The identity category's v2 rules (guard: v2, ADR-0006) come before secrets (§6.3);
-	// the manifest's blocked commands and the v1 identity rules ran in guard.Decide.
+	// The identity category's v2 rules (guard: v2, ADR-0007) come before secrets (§6.3);
+	// the manifest's blocked commands and the v1 identity rules ran in guard.Decide. An
+	// unreadable manifest (guard: v3, an unknown scope: id) and an unreadable provider
+	// catalog were already denied by pre-tool-use's one fail-closed path.
 	if d := hookScope(ws, cfg, prot).Evaluate(cwd, call); d.Action == policy.Deny {
 		return d
 	}

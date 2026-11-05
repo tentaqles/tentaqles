@@ -25,7 +25,7 @@ verify:
   logged_out_when: 'no access token available|not logged in'
   account: { json: email }
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [flyctl, fly]
   env: [FLY_API_TOKEN, FLY_ACCESS_TOKEN, FLY_CONFIG_DIR]

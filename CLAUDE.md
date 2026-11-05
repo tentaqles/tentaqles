@@ -21,7 +21,7 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `tq/human-only-command`, ADR-0005), the six identity rules of `identity.go` under
     `guard: v2` (`policy.Scope`: `out-of-scope-cli`, `-env`, `-path`, `-host`, `-mcp`,
     `other-identity`, read from the catalog's `match:` lists and `manifest.Scope()`,
-    ADR-0006) and their evaluator; nothing else is a rule. Every
+    ADR-0007) and their evaluator; nothing else is a rule. Every
     rule carries its category (`identity`, `secrets`, `self-protection`); a deny reads
     `BLOCKED [<category>/<rule>]`.
   - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `init`, `add`,

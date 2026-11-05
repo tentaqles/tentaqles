@@ -20,7 +20,7 @@ login:
 verify:
   args: ["config", "list"]
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [influx]
   env: [INFLUX_TOKEN, INFLUX_HOST, INFLUX_CONFIGS_PATH]

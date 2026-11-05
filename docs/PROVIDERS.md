@@ -95,7 +95,7 @@ match:                       # what the guard denies when an identity's scope le
 Every catalog file carries a `match:` block: the literal spellings the guard's
 identity category recognises as this provider when an identity's scope
 (`manifest.Scope()`, see [CLAUDE-HOOK.md](CLAUDE-HOOK.md#identity-scope-guard-v2-pre-tool-use))
-leaves it out and the manifest sets `guard: v2` (ADR-0006). All six lists are
+leaves it out and the manifest sets `guard: v2` (ADR-0007). All six lists are
 optional; validated at load.
 
 | List | Entries | Matched as |

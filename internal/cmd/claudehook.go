@@ -380,6 +380,9 @@ func (run *hookRun) decide(in io.Reader, out, errw io.Writer) int {
 		}
 		ws, cfg = res.Workspace, gcfg
 	}
+	if why := scopeCatalogError(ws); why != "" {
+		return run.failClosed(out, errw, why)
+	}
 
 	// subject is the one path/token the denial names for the log.
 	subject := ""
@@ -415,7 +418,7 @@ func (run *hookRun) decide(in io.Reader, out, errw io.Writer) int {
 			subject = r.Subject
 		}
 		layer := audit.LayerHook
-		if r.ID == policy.ProtectedPathID {
+		if r.ID == policy.ProtectedPathID || r.ID == policy.OtherIdentityID {
 			layer = audit.LayerFilesystem
 		}
 		reason := d.Reason()
@@ -621,7 +624,7 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 		}
 	}
 	in.Blocked = effectiveBlocked(ws)
-	// guard: v2 on a trusted manifest: the provider scope judges cloud CLIs (ADR-0006).
+	// guard: v2 on a trusted manifest: the provider scope judges cloud CLIs (ADR-0007).
 	in.Scoped = rep.Result.Workspace != nil && m.GuardV2()
 
 	expectedGH := strings.TrimSpace(m.Git.User)

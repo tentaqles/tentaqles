@@ -8,7 +8,7 @@ import (
 
 // Match is the data the guard's identity category matches a provider by when the provider is
 // outside an identity's scope (PRD v2 §6.3 "ship the match lists as data files per provider";
-// ADR-0006). Every list is optional; an empty Match means the guard never recognises the
+// ADR-0007). Every list is optional; an empty Match means the guard never recognises the
 // provider, which is what a generic tool (docker, kubectl, terraform, npm, psql) wants for its
 // executable: it talks to whatever the project configures, not to one vendor.
 //
@@ -25,7 +25,7 @@ type Match struct {
 	// subcommands this provider owns (azure-devops owns `az devops|repos|pipelines|boards|
 	// artifacts|login|extension`, not `az vm`). A command matches a provider when its exe is
 	// in Executables (any subcommand) or its exe+first-subcommand is in Subcommands. The most
-	// precise in-scope claim wins (ADR-0006, round 2).
+	// precise in-scope claim wins (ADR-0007, round 2).
 	Subcommands map[string][]string `yaml:"subcommands,omitempty"`
 	// Images are docker/podman image names (basename, no tag) whose container is the
 	// provider's CLI: amazon/aws-cli, cloudsdktool/google-cloud-cli.
@@ -120,7 +120,7 @@ func (m Match) Validate() error {
 }
 
 // Union returns m with every entry of o that m lacks appended: a user override file extends
-// the embedded lists and never shortens them (ADR-0006). To stop the guard matching a
+// the embedded lists and never shortens them (ADR-0007). To stop the guard matching a
 // provider, put it in the identity's scope.
 func (m Match) Union(o Match) Match {
 	u := func(a, b []string) []string {

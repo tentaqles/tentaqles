@@ -33,7 +33,7 @@ verify:
   account:
     regex: 'account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)[^\n]*\n\s*- Active account: true|account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)'
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [gh, hub]
   env: [GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN, GH_CONFIG_DIR, GH_HOST]

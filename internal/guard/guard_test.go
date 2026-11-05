@@ -266,7 +266,7 @@ func TestExtraClouds(t *testing.T) {
 }
 
 // TestScopedSkipsWrongCloud: under guard: v2 (Input.Scoped) the provider scope judges cloud
-// CLIs (policy's identity/out-of-scope-cli, ADR-0006), so wrong-cloud does not run; the
+// CLIs (policy's identity/out-of-scope-cli, ADR-0007), so wrong-cloud does not run; the
 // manifest's blocked commands and the drift rules still do. Without the flag wrong-cloud
 // behaves as before.
 func TestScopedSkipsWrongCloud(t *testing.T) {

@@ -11,7 +11,7 @@ cli:
 # record that a client uses it -- but with no identity block, because
 # claiming one tq cannot honour is worse than claiming none.
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [aliyun]
   env: [ALIBABA_CLOUD_ACCESS_KEY_ID, ALIBABA_CLOUD_ACCESS_KEY_SECRET, ALIBABA_CLOUD_SECURITY_TOKEN, ALIBABA_CLOUD_PROFILE, ALICLOUD_ACCESS_KEY, ALICLOUD_SECRET_KEY]

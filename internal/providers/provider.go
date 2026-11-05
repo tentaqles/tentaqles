@@ -111,7 +111,7 @@ type Provider struct {
 	Notes string `yaml:"notes,omitempty"`
 
 	// Match is what the guard's identity category recognises as this provider when it is
-	// outside an identity's scope (PRD v2 §6.3, ADR-0006). See match.go.
+	// outside an identity's scope (PRD v2 §6.3, ADR-0007). See match.go.
 	Match Match `yaml:"match,omitempty"`
 
 	// Source is "embedded" for catalog entries or the file path for user

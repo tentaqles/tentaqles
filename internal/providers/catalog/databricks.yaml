@@ -18,7 +18,7 @@ identity:
 login:
   args: ["configure"]
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [databricks]
   modules: [databricks_cli]

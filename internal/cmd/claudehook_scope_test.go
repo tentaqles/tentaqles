@@ -14,7 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
-// The PRD v2 §6.1 reference scenario at layer 4 (the hook), ADR-0006: identity company-x
+// The PRD v2 §6.1 reference scenario at layer 4 (the hook), ADR-0007: identity company-x
 // declares Azure as its only cloud; an agent reaching AWS by any route the hook sees is
 // denied in the identity category with a message naming the scope, and the denial is
 // logged. Without guard: v2 the same identity keeps the v1 rules.
@@ -96,7 +96,7 @@ func TestPreToolUse_ScopeReferenceScenario(t *testing.T) {
 			continue
 		}
 		if c.rule != policy.OtherIdentityID && (!strings.Contains(errOut, "BLOCKED [identity/"+c.rule+"]") ||
-			!strings.Contains(errOut, "scope: az, azure-devops, claude") || !strings.Contains(errOut, "do not retry")) {
+			!strings.Contains(errOut, "Scope of identity company-x: az, azure-devops, claude") || !strings.Contains(errOut, "do not retry")) {
 			t.Errorf("%s: the deny message does not name the category and the scope: %q", c.name, errOut)
 		}
 	}
@@ -111,12 +111,33 @@ func TestPreToolUse_ScopeReferenceScenario(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.SplitN(string(raw), "\n", 2)[0]), &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.Kind != policy.CategoryIdentity || first.Rule != policy.OutOfScopeCLIID || first.Layer != audit.LayerHook ||
-		first.Workspace != "company-x" || first.Command != "aws" {
+	if first.Category != policy.CategoryIdentity || first.Rule != policy.OutOfScopeCLIID || first.Layer != audit.LayerHook ||
+		first.Identity != "company-x" || first.Subject != "aws" {
 		t.Fatalf("denial log line = %+v", first)
 	}
 	if strings.Contains(string(raw), "AKIDEXAMPLE") || strings.Contains(string(raw), "ami-12345678") {
 		t.Fatalf("the denial log holds command arguments: %s", raw)
+	}
+	// identity denies log layer hook, other-identity paths layer filesystem (P2.2 log fields).
+	sawOther := false
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var d audit.Denial
+		if err := json.Unmarshal([]byte(line), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Category != policy.CategoryIdentity {
+			t.Errorf("an identity deny logged category %q: %+v", d.Category, d)
+		}
+		want := audit.LayerHook
+		if d.Rule == policy.OtherIdentityID {
+			want, sawOther = audit.LayerFilesystem, true
+		}
+		if d.Layer != want {
+			t.Errorf("rule %s logged layer %q, want %q", d.Rule, d.Layer, want)
+		}
+	}
+	if !sawOther {
+		t.Error("no other-identity deny was logged")
 	}
 }
 
@@ -165,7 +186,7 @@ func TestPreToolUse_ScopeV1Unchanged(t *testing.T) {
 
 // TestPreToolUse_UnreadableManifestDeniesAll: a workspace folder whose protected manifest
 // cannot be read (guard: v3, an unknown scope id, bad YAML) denies every tool with
-// tq/guard-error, instead of falling back to neutral (ADR-0006 round 2).
+// tq/guard-error, instead of falling back to neutral (ADR-0007 round 2).
 func TestPreToolUse_UnreadableManifestDeniesAll(t *testing.T) {
 	for _, bad := range []string{"guard: v3\n", "guard: true\n", "guard: v2\nscope: [awss]\n", "client: company-x\n:\n"} {
 		root := mkUntrusted(t, "company-x")
@@ -192,7 +213,7 @@ func TestPreToolUse_UnreadableManifestDeniesAll(t *testing.T) {
 }
 
 // TestPreToolUse_BadProviderFileDeniesAll: an invalid user provider file is a guard error in
-// the hook (deny, name the file), never a silent skip (ADR-0006 round 2).
+// the hook (deny, name the file), never a silent skip (ADR-0007 round 2).
 func TestPreToolUse_BadProviderFileDeniesAll(t *testing.T) {
 	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
 	dir := filepath.Join(paths.Home(), "providers")

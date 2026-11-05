@@ -7,7 +7,7 @@ cli: null
 mcp: teams
 notes: "Reached through an MCP connector only. Add the teams entry to the tq bundle catalog and to claude.bundle.mcp, run tq bundle sync <ws>, then authenticate with /mcp in a Claude session."
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   hosts: [graph.microsoft.com, teams.microsoft.com]
   mcp: [teams]

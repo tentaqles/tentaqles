@@ -63,7 +63,12 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - `commitscan.AskError`/`IsAsk` are `IncompleteError`/`IsIncomplete`; `resolve.Result` gains
   `Name` and `Unreadable`; `humanonly.CheckRead` is the human-only check of a read.
 
-### The provider scope and the identity category for every tool (ADR-0006)
+### The provider scope and the identity category for every tool (ADR-0007)
+
+- **Merged onto ADR-0006.** The deny's scope line (`Scope of identity <name>: ...`) now lists the
+  catalog ids of `Manifest.Scope()`, from the one helper `scopeNote`. Identity denies log
+  category `identity` and layer `hook` (`filesystem` for `other-identity`). A bad user provider
+  file and an unreadable manifest deny through the same fail-closed path.
 
 - **`manifest.Scope()`**: the sorted catalog ids an identity may touch, derived from what a
   manifest already declares (the identities block, or claude and gh for a v1 manifest, the

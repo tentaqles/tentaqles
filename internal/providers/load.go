@@ -129,7 +129,7 @@ func Load() (*Catalog, error) {
 // LoadAll is Load but never stops at the first bad user file: it loads every readable,
 // valid user file over the embedded catalog and returns one error per file it skipped, so
 // `tq providers list` and `tq doctor` can report them all and the hook can fail closed
-// naming them (ADR-0006 round 2). The embedded catalog alone still errors.
+// naming them (ADR-0007 round 2). The embedded catalog alone still errors.
 func LoadAll() (*Catalog, []error) {
 	c, err := loadEmbedded()
 	if err != nil {
@@ -168,7 +168,7 @@ func LoadAll() (*Catalog, []error) {
 
 // Overlaps reports every pair of providers that claim the same executable (same first
 // subcommand or both wholesale), credential path tree, API host or MCP token, so nothing is
-// silent (ADR-0006 round 2). Each string is one human-readable overlap.
+// silent (ADR-0007 round 2). Each string is one human-readable overlap.
 func (c *Catalog) Overlaps() []string {
 	var out []string
 	ps := c.All()
@@ -290,7 +290,7 @@ func mustLoadUncached() (*Catalog, error) {
 
 // override puts a user provider file into the catalog: a new id is appended, a known id is
 // replaced, except its match lists, which are the union of both (Match.Union): a user file
-// extends what the guard recognises and never shortens it (ADR-0006).
+// extends what the guard recognises and never shortens it (ADR-0007).
 func (c *Catalog) override(p Provider) {
 	prev, exists := c.byID[p.ID]
 	if !exists {

@@ -13,7 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
-// The identity category's v2 rules (PRD v2 §6.3, §7.1; ADR-0006): every rule has a table of
+// The identity category's v2 rules (PRD v2 §6.3, §7.1; ADR-0007): every rule has a table of
 // tool calls it must deny and must allow. The identity is the §6.1 reference identity,
 // company-x, an Azure-only identity (az, azure-devops, claude), next to a second identity,
 // beta, in the same base.
@@ -89,7 +89,7 @@ func runScopeCases(t *testing.T, f scopeFixture, cases []scopeCase) {
 			if !strings.HasPrefix(r, "BLOCKED [identity/"+got+"]: ") || !strings.Contains(r, "company-x") {
 				t.Errorf("%s: reason %q", c.name, r)
 			}
-			if got != OtherIdentityID && !strings.Contains(r, "scope: az, azure-devops, claude") {
+			if got != OtherIdentityID && !strings.Contains(r, "outside the scope of identity company-x") {
 				t.Errorf("%s: the reason does not name the scope: %q", c.name, r)
 			}
 			if d.Matched[0].Subject == "" {

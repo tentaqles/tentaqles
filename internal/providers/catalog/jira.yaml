@@ -21,7 +21,7 @@ verify:
 mcp: atlassian
 notes: "acli keeps one global login, not one per workspace: run acli jira auth login yourself. Without acli, store an API token with tq secret set <ws> jira, or name a tracker.env variable for tq dotenv."
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [acli, jira]
   env: [JIRA_API_TOKEN, ATLASSIAN_API_TOKEN]

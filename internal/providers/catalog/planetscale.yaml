@@ -11,7 +11,7 @@ cli:
 # record that a client uses it -- but with no identity block, because
 # claiming one tq cannot honour is worse than claiming none.
 # match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [pscale]
   env: [PLANETSCALE_SERVICE_TOKEN, PLANETSCALE_SERVICE_TOKEN_ID]
