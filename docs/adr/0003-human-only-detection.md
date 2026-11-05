@@ -94,21 +94,21 @@ process tree and a scripted answer; `go test` itself may run inside a harness.
   `TestRunOffRefusesAgents` and `TestOnboard_FromRefusedInAgentSession` keep their
   commands refused; `TestDeclinedConfirmationWritesNothing` hashes the home and the
   workspace before and after a declined confirmation for every write.
-- What the three detectors stop, and what they do not. They stop a harness and its
-  children: a session with the marker, a child of `claude`, `codex`, `opencode` or
-  `kimi` however many shells deep, an npm-installed harness running as `node`, `bun`
-  or `deno`, a subagent through `bash -c "codex ..."`, and an orphaned or re-parented
-  child of a dead harness (its chain no longer reaches a terminal or login shell). A
-  same-user program that drives a pseudo-terminal with a scrubbed environment from
-  outside the harness tree is not stopped, nor is a harness tq does not know by
-  name: to the detectors both look like a human at a terminal. Plainly: `tmux`,
-  `screen` and `conhost` are anchors, so a same-user program that starts a tmux or
-  screen session, or a conhost, and runs tq inside it obtains an anchored,
-  pty-backed chain and passes all three detectors; so does one that runs
-  `wsl -e bash -c "tq ..."` from Windows, since the distro's `init` is the session
-  root and the Windows-side parent is invisible from inside WSL. That is the accepted
-  limit of §8.1's three detectors: they tell a harness and its children from a
-  human, not a hostile same-user program from a human. The protected-path rules
+- What the three detectors stop, and what they do not. The detectors separate a
+  harness and its children from a human; they do not separate a hostile same-user
+  program from a human: any program that can start a listed terminal or session
+  process, own a pty or a console, and type, satisfies them. They stop a session
+  with the marker, a child of `claude`, `codex`, `opencode` or `kimi` however many
+  shells deep, an npm-installed harness running as `node`, `bun` or `deno`, a
+  subagent through `bash -c "codex ..."`, an orphaned or re-parented child of a dead
+  harness (its chain no longer reaches a terminal or login shell), and a harness tq
+  does not know by name only if its chain holds no anchor. Examples of what passes:
+  a tq run inside a `tmux` or `screen` session the program started, or under a
+  `conhost` it allocated; `wsl -e bash -c "tq ..."` from Windows (the distro's `init`
+  is the session root and the Windows-side parent is invisible from inside WSL);
+  `explorer.exe <script>` on Windows (the desktop shell becomes the parent);
+  `systemd-run --user -t` on Linux (the user's systemd instance becomes the parent).
+  That is the accepted limit of §8.1's three detectors. The protected-path rules
   (Phase 1 P1.3) and the signed integrity record (P1.4) are the controls on what such
   a program can change; this piece is the first of the three.
 - The anchor list is a whitelist, so it refuses a terminal it does not know. The

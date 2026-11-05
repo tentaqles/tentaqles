@@ -24,8 +24,9 @@ says "cannot establish a human ancestry" and names your terminal, add it:
   tq settings anchors add <exe-name>
 
 Anchors are stored in ~/.tentaqles/anchors.yaml and matched by executable
-name (case and .exe do not matter). A shell, a runtime or a harness is never
-accepted as an anchor.`,
+name (case and .exe do not matter). A shell, a runtime (python, java, ...),
+a root or service process (init, systemd, launchd, svchost, cron, ...) or a
+harness is never accepted as an anchor: none of them is a terminal.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			out := c.OutOrStdout()

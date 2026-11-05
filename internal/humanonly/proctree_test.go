@@ -480,3 +480,80 @@ func TestRealParentOfReadsThisProcess(t *testing.T) {
 		t.Fatalf("parentOf(self) = %+v ok=%v", p, ok)
 	}
 }
+
+// A refusal never suggests a shell, a runtime, a root process or a harness
+// as the terminal to add: an orphan under pid 1 names no process at all.
+func TestWalkHintNamesNoShellRootOrHarness(t *testing.T) {
+	cases := []struct {
+		label string
+		procs map[int]fakeProc
+	}{
+		{"orphan under launchd", map[int]fakeProc{
+			100: {90, "tq", "tq", false, false},
+			90:  {1, "bash", "bash", false, false},
+			1:   {0, "launchd", "/sbin/launchd", false, false},
+		}},
+		{"orphan under systemd", map[int]fakeProc{
+			100: {90, "tq", "tq", false, false},
+			90:  {80, "bash", "bash", false, false},
+			80:  {1, "python3", "python3 agent.py", false, false},
+			1:   {0, "systemd", "/sbin/init", false, false},
+		}},
+		{"dead parent above a shell", map[int]fakeProc{
+			100: {90, "tq", "tq", false, false},
+			90:  {12345, "zsh", "zsh", false, false},
+		}},
+		{"cron", map[int]fakeProc{
+			100: {90, "tq", "tq", false, false},
+			90:  {80, "sh", "sh -c tq", false, false},
+			80:  {1, "cron", "/usr/sbin/cron -f", false, false},
+			1:   {0, "systemd", "/sbin/init", false, false},
+		}},
+		{"scheduled task", map[int]fakeProc{
+			100: {90, "tq.exe", "tq", false, false},
+			90:  {80, "pwsh.exe", "pwsh -File task.ps1", false, false},
+			80:  {70, "svchost.exe", "", false, false},
+			70:  {0, "services.exe", "", false, false},
+		}},
+	}
+	for _, c := range cases {
+		_, why := walk(t, c.label, c.procs, Unverified)
+		if strings.Contains(why, "tq settings anchors add") || !strings.Contains(why, "no terminal found in the ancestry; start tq from a terminal") {
+			t.Fatalf("%s: %q", c.label, why)
+		}
+	}
+	// A terminal below a dead link is still suggested.
+	_, why := walk(t, "unlisted terminal with a dead parent", map[int]fakeProc{
+		100: {90, "tq", "tq", false, false},
+		90:  {80, "zsh", "zsh", false, false},
+		80:  {12345, "Bar-Term", "/Applications/BarTerm.app/Contents/MacOS/Bar-Term", false, false},
+	}, Unverified)
+	if !strings.Contains(why, "tq settings anchors add bar-term") {
+		t.Fatalf("a terminal is suggested: %q", why)
+	}
+}
+
+// A user anchor named like a root process or a runtime is impossible, and
+// the qualified names keep their qualifiers however they got listed.
+func TestWalkUserAnchorsKeepTheQualifiers(t *testing.T) {
+	prev := userAnchors
+	userAnchors = set("systemd", "init", "java")
+	t.Cleanup(func() { userAnchors = prev })
+	walk(t, "systemd by name", map[int]fakeProc{
+		100: {90, "tq", "tq", false, false},
+		90:  {80, "bash", "bash", false, false},
+		80:  {1, "node", "node server.js", false, false},
+		1:   {0, "systemd", "/sbin/init", false, false},
+	}, Unverified)
+	walk(t, "init by name", map[int]fakeProc{
+		100: {90, "tq", "tq", false, false},
+		90:  {1, "bash", "bash", false, false},
+		1:   {0, "init", "/sbin/init", false, false},
+	}, Unverified)
+	walk(t, "java by name", map[int]fakeProc{
+		100: {90, "tq", "tq", false, false},
+		90:  {80, "bash", "bash", false, false},
+		80:  {1, "java", "java -jar agent.jar", false, false},
+		1:   {0, "systemd", "/sbin/init", false, false},
+	}, Unverified)
+}

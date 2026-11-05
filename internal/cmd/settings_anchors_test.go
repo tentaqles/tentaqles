@@ -78,7 +78,7 @@ func TestSettingsAnchorsEscapeHatch(t *testing.T) {
 // declined confirmation writes nothing.
 func TestSettingsAnchorsAddRefusesShellsAndDeclines(t *testing.T) {
 	isolateHome(t)
-	for _, bad := range []string{"bash", "node", "claude", "pwsh.exe", `C:\foo\term.exe`} {
+	for _, bad := range []string{"bash", "node", "claude", "pwsh.exe", `C:\foo\term.exe`, "systemd", "init", "launchd", "svchost.exe", "python", "java"} {
 		if _, err := runTq(t, "settings", "anchors", "add", bad); err == nil || errors.Is(err, errHumanOnly) {
 			t.Fatalf("add %q: %v", bad, err)
 		}

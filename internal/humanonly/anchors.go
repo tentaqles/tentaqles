@@ -25,8 +25,9 @@ type anchorsFile struct {
 func NormalizeAnchor(name string) string { return baseName(name) }
 
 // ValidateAnchor refuses a name that is not an executable name, or that
-// would widen the check: a shell or runtime (an anchor is a terminal, a
-// shell is a login shell or nothing) and a harness.
+// would widen the check: a harness, a shell or runtime (an anchor is a
+// terminal; a shell is a login shell or nothing, a runtime is any program),
+// and a root or service process (it starts services and sessions alike).
 func ValidateAnchor(name string) (string, error) {
 	n := NormalizeAnchor(name)
 	switch {
@@ -38,6 +39,16 @@ func ValidateAnchor(name string) (string, error) {
 		return "", fmt.Errorf("%s is a harness, never an anchor", n)
 	case interpreters[strings.TrimPrefix(n, "-")]:
 		return "", fmt.Errorf("%s is a shell or runtime: a login shell already counts, a plain one never does", n)
+	case runtimeNames[n]:
+		if n == "java" {
+			return "", errors.New("java is a runtime: a JetBrains IDE running as java already counts by its command line, any other java never does")
+		}
+		return "", fmt.Errorf("%s is a runtime: any program, a harness included, can run as it", n)
+	case rootNames[n]:
+		if qualified[n] {
+			return "", fmt.Errorf("%s is a root process: it starts services and sessions alike; the user session's instance already counts by its command line", n)
+		}
+		return "", fmt.Errorf("%s is a root or service process: it starts services and sessions alike, never a terminal", n)
 	case len(n) > 128:
 		return "", errors.New("an anchor name is at most 128 characters")
 	}
@@ -60,8 +71,10 @@ func LoadUserAnchors() ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, a := range f.Anchors {
-		n := NormalizeAnchor(a)
-		if n == "" || seen[n] {
+		// A hand-edited file cannot grant what the command refuses: a
+		// harness, a shell, a runtime or a root process is dropped.
+		n, err := ValidateAnchor(a)
+		if err != nil || seen[n] {
 			continue
 		}
 		seen[n] = true

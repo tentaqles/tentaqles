@@ -119,6 +119,22 @@ var anchorNames = set(
 // ideJava matches the command line of a JetBrains IDE running as java.
 var ideJava = regexp.MustCompile(`idea|phpstorm|pycharm|webstorm|goland|rubymine|datagrip|clion|rider|rustrover|studio`)
 
+// rootNames are the processes at the root of every chain, human or not: the
+// init systems, the service hosts and the schedulers. None is a terminal,
+// so none can be an anchor, built-in or added, and a refusal never suggests
+// one. systemd and init earn their anchor status by a qualifier only (the
+// user instance, WSL's init), never by name.
+var rootNames = set("init", "systemd", "launchd", "svchost", "services", "wininit", "smss", "csrss", "cron", "crond", "atd")
+
+// runtimeNames are interpreters a harness or any program may run as; a name
+// alone says nothing. java is a JetBrains IDE by its command line only.
+var runtimeNames = set("python", "python3", "perl", "ruby", "java")
+
+// qualified are the names whose anchor status needs the command line
+// (systemd --user, WSL's /init, java running an IDE): neither the built-in
+// list nor anchors.yaml can grant them by name alone.
+var qualified = set("systemd", "init", "java")
+
 // userAnchors are the names the developer added with `tq settings anchors
 // add` (anchors.yaml). Detect loads them before each walk; tests set them.
 var userAnchors = map[string]bool{}
@@ -170,13 +186,10 @@ func loginShell(name, cmdline string) bool {
 	return false
 }
 
-// isAnchor reports a session root: a listed or developer-added name, a login
-// shell, the user's systemd instance, WSL's init processes, or a JetBrains
-// IDE running as java.
+// isAnchor reports a session root: the user's systemd instance, WSL's init
+// processes or a JetBrains IDE running as java (by their command line, and
+// by nothing else), a listed or developer-added name, or a login shell.
 func isAnchor(n, name, cmdline string) bool {
-	if anchorNames[n] || userAnchors[n] || loginShell(name, cmdline) {
-		return true
-	}
 	switch n {
 	case "systemd":
 		return strings.Contains(cmdline, "--user")
@@ -185,7 +198,14 @@ func isAnchor(n, name, cmdline string) bool {
 	case "java":
 		return ideJava.MatchString(strings.ToLower(cmdline))
 	}
-	return false
+	return anchorNames[n] || userAnchors[n] || loginShell(name, cmdline)
+}
+
+// anchorCandidate reports whether a refusal may suggest name as a terminal to
+// add: never a harness, a shell or runtime, or a root or service process.
+func anchorCandidate(name string) bool {
+	n := strings.TrimPrefix(baseName(name), "-")
+	return n != "" && !harnessNames[n] && !interpreters[n] && !rootNames[n] && !runtimeNames[n]
 }
 
 // mentionsHarness reports whether an interpreter's command line names a
@@ -235,7 +255,9 @@ func Classify(name, cmdline string, known bool) Kind {
 		return KindNeutral
 	}
 	if !known {
-		if anchorNames[n] || userAnchors[n] {
+		// A terminal is known by its name alone; a qualified name needs the
+		// command line it does not have.
+		if (anchorNames[n] || userAnchors[n]) && !qualified[n] {
 			return KindAnchor
 		}
 		return KindUnknown
@@ -292,8 +314,8 @@ func Walk(pid int, parentOf ParentFunc) (Verdict, Process, string) {
 		}
 		seen[p.PID] = true
 		chain = append(chain, proc)
-		if p.CmdlineKnown && p.Cmdline != "" {
-			top = proc // readable: this user's own process
+		if p.CmdlineKnown && p.Cmdline != "" && anchorCandidate(p.Name) {
+			top = proc // readable (this user's own process) and a possible terminal
 		}
 		switch Classify(p.Name, p.Cmdline, p.CmdlineKnown) {
 		case KindHarness:
@@ -304,7 +326,9 @@ func Walk(pid int, parentOf ParentFunc) (Verdict, Process, string) {
 			if anchored {
 				return Human, Process{}, ""
 			}
-			top = proc
+			if anchorCandidate(p.Name) {
+				top = proc
+			}
 			return unverified(proc, fmt.Sprintf("the command line of %s (pid %d) cannot be read", p.Name, p.PID))
 		case KindAnchor:
 			anchored = true
@@ -315,18 +339,20 @@ func Walk(pid int, parentOf ParentFunc) (Verdict, Process, string) {
 }
 
 // anchorHint names the processes a failed walk saw and the exact command
-// that accepts the top-most one as a terminal.
+// that accepts the top-most one as a terminal. A chain of shells, runtimes
+// and root processes only (an orphan under init) holds no terminal to
+// suggest, and says so.
 func anchorHint(chain []Process, top Process) string {
 	if len(chain) == 0 {
-		return ""
+		return "; no terminal found in the ancestry; start tq from a terminal"
 	}
 	names := make([]string, 0, len(chain))
 	for _, p := range chain {
 		names = append(names, fmt.Sprintf("%s (pid %d)", p.Name, p.PID))
 	}
 	s := "; processes seen: " + strings.Join(names, " <- ")
-	if top.Name != "" {
-		s += fmt.Sprintf("; if %s is your terminal, allow it once with: tq settings anchors add %s", top.Name, NormalizeAnchor(top.Name))
+	if top.Name == "" || !anchorCandidate(top.Name) {
+		return s + "; no terminal found in the ancestry; start tq from a terminal"
 	}
-	return s
+	return s + fmt.Sprintf("; if %s is your terminal, allow it once with: tq settings anchors add %s", top.Name, NormalizeAnchor(top.Name))
 }
