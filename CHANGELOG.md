@@ -140,6 +140,33 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
     id that claims anything a built-in lists is refused at load. Every message gives the full
     path, the first error and `fix or delete <path>, then run tq providers list`;
     `tq providers list` exits non-zero and `tq doctor` reports `provider-file-invalid`.
+- **Round 4: PowerShell command splitting, Google APIs, git transport.**
+  - *PowerShell splitting.* The command splitter reads the PowerShell tool's line, a decoded
+    `-EncodedCommand` and the string of `pwsh -Command` with PowerShell's quoting as well as
+    bash's (`guard.CommandsIn`), so `Write-Host "C:\temp\"; aws ec2 run-instances` and
+    ``git commit -m "fix`"" ; az vm list`` show their second command (a regression from
+    34613fc). The self-protection rules use the same splitter.
+  - *Code is scanned.* A here-string that is run (`iex`, `Invoke-Expression`,
+    `[scriptblock]::Create`, `pwsh -Command`, piped to or assigned and run) is split as
+    commands, and one that is sent (`Invoke-RestMethod -Uri @'...'@`) is scanned; only a
+    here-string written to a file, printed, assigned and never run, or a commit message is
+    text. `python - <<EOF` and `python3 <<EOF` have their imports read.
+  - *Google APIs.* gcloud lists every `*.googleapis.com` host and the GCS API paths
+    (`/storage/`, `/upload/`, `/download/`, `/batch/`), with a new `public` list for
+    `fonts.googleapis.com`, `ajax.googleapis.com` and public GCS object reads; so
+    `www.googleapis.com`, regional and bucket hosts are denied. URL paths are normalised
+    (dot segments, repeated slashes, percent-encoding) before the prefix match.
+  - *API hosts for Slack, Sentry, Oracle; installer CDNs.* Their documentation and status
+    pages pass; `awscli.amazonaws.com`, `dotnetcli.blob.core.windows.net` and the Azure CLI
+    blobs are public.
+  - *Git transport.* A new `git_hosts` list: git over ssh to an out-of-scope git host
+    (`git@github.com:`, `ssh://`), a `git push` over https to one and `ssh -T git@gitlab.com`
+    are denied; an anonymous https clone, fetch, pull or ls-remote is allowed.
+  - *MCP inputs.* A URL is judged only in a URL-shaped field (url, uri, endpoint, href,
+    link, `*Url`) or a value that is one URL, not in free text.
+  - *Provider files.* Unknown keys are errors with `path:line:col` and a did-you-mean;
+    every bad file gives the hook warning; the deny names the file once; `tq doctor` names
+    the workspaces a bad new id affects, or none.
 
 ### The signed integrity record (ADR-0004)
 

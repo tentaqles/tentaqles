@@ -28,12 +28,7 @@ match:
   modules: [google.cloud]
   psmodules: [GoogleCloud]
   cmdlets: ["*-Gcs*", "*-Gce*"]
-  hosts: [oauth2.googleapis.com, sts.googleapis.com, iam.googleapis.com, iamcredentials.googleapis.com,
-    cloudresourcemanager.googleapis.com, serviceusage.googleapis.com, compute.googleapis.com,
-    container.googleapis.com, run.googleapis.com, cloudfunctions.googleapis.com, cloudbuild.googleapis.com,
-    artifactregistry.googleapis.com, secretmanager.googleapis.com, cloudkms.googleapis.com,
-    sqladmin.googleapis.com, bigquery.googleapis.com, pubsub.googleapis.com, logging.googleapis.com,
-    monitoring.googleapis.com, dns.googleapis.com, appengine.googleapis.com, firestore.googleapis.com,
-    spanner.googleapis.com, dataproc.googleapis.com, dataflow.googleapis.com, aiplatform.googleapis.com,
-    storage.googleapis.com/storage/, storage.googleapis.com/upload/storage/, gcr.io]
+  hosts: [googleapis.com, storage.googleapis.com/storage/, storage.googleapis.com/upload/,
+    storage.googleapis.com/download/, storage.googleapis.com/batch/, gcr.io]
+  public: [fonts.googleapis.com, ajax.googleapis.com, storage.googleapis.com/]
   mcp: [gcloud, gcp, googlecloud, bigquery]

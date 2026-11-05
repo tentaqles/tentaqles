@@ -58,12 +58,13 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	var fs []Finding
 	add := func(level, code, ws, msg, fix string) { fs = append(fs, Finding{level, code, ws, msg, fix}) }
 
-	providerFileFindings(add)
 	if len(cfg.Bases) == 0 {
+		providerFileFindings(add, nil)
 		add("error", "no-bases", "", "no base folders registered", "tq init <folder>")
 		return fs
 	}
 	all, errs := resolve.ListWorkspaces(cfg)
+	providerFileFindings(add, all)
 	for _, e := range errs {
 		add("error", "manifest-invalid", "", e.Error(), "fix the manifest, then tq allow <name>")
 	}

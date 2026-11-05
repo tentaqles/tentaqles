@@ -16,4 +16,5 @@ match:
   executables: [tea]
   env: [GITEA_TOKEN, GITEA_SERVER_URL]
   paths: ["~/.config/tea"]
+  git_hosts: [gitea.com]
   mcp: [gitea]

@@ -108,6 +108,8 @@ type Scope struct {
 
 	inHosts  [][]string
 	outHosts []*hostSet
+	inGit    []string
+	outGit   []*hostSet
 
 	bundleMCP map[string]bool
 	inMCP     map[string]bool
@@ -127,6 +129,7 @@ type cmdletClaim struct {
 type hostSet struct {
 	p     *scopedProvider
 	hosts []string
+	m     providers.Match // Hosts and Public, for an out-of-scope provider's API hosts
 }
 
 // NewScope compiles in. It never fails.
@@ -252,8 +255,16 @@ func NewScope(in ScopeInputs) *Scope {
 			if sp.inScope {
 				s.inHosts = append(s.inHosts, claim.Hosts)
 			} else {
-				s.outHosts = append(s.outHosts, &hostSet{sp, claim.Hosts})
+				s.outHosts = append(s.outHosts, &hostSet{p: sp, hosts: claim.Hosts, m: providers.Match{Hosts: claim.Hosts, Public: claim.Public}})
 			}
+		}
+		for _, g := range claim.GitHosts {
+			if sp.inScope {
+				s.inGit = append(s.inGit, g)
+			}
+		}
+		if len(claim.GitHosts) > 0 && !sp.inScope {
+			s.outGit = append(s.outGit, &hostSet{p: sp, hosts: claim.GitHosts})
 		}
 		for _, t := range claim.MCP {
 			if sp.inScope {
@@ -608,15 +619,26 @@ func (s *Scope) mcpInput(cwd, raw string) (scopeHit, bool) {
 	}
 	var found scopeHit
 	ok := false
-	walkStrings(v, func(str string) bool {
-		// a URL anywhere in a string value is a network call of the MCP tool (a fetch or
-		// browser server): its host is judged like a WebFetch's
+	// a URL in a URL-shaped field (url, uri, endpoint, href, link, baseUrl, ...) or a value
+	// that is one URL is the MCP tool's network call (a fetch or browser server): its host is
+	// judged like a WebFetch's. A URL inside free text (an issue body, a memory note) is text
+	// (QA round 3, item 5).
+	walkKeyed(v, "", func(key, str string) bool {
+		if !urlField(key) && !oneURLRe.MatchString(strings.TrimSpace(str)) {
+			return true
+		}
 		for _, m := range urlRe.FindAllStringSubmatch(str, -1) {
-			if h, hit := s.hostHit(cleanHost(m[1]), strings.ToLower(m[2])); hit {
+			if h, hit := s.hostHit(cleanHost(m[1]), m[2]); hit {
 				found, ok = h, true
 				return false
 			}
 		}
+		return true
+	})
+	if ok {
+		return found, true
+	}
+	walkStrings(v, func(str string) bool {
 		if len(str) > 1024 || strings.ContainsAny(str, "\n\r") || !strings.ContainsAny(str, `/\~$%`) {
 			return true
 		}
@@ -627,6 +649,42 @@ func (s *Scope) mcpInput(cwd, raw string) (scopeHit, bool) {
 		return true
 	})
 	return found, ok
+}
+
+// oneURLRe is a string value that is a single URL.
+var oneURLRe = regexp.MustCompile(`(?i)^(?:https?|wss?|ftps?)://\S+$`)
+
+// urlField reports whether a JSON key names a URL: url, uri, endpoint, href, link, or a key
+// ending in url or uri (baseUrl, target_uri).
+func urlField(key string) bool {
+	k := strings.ToLower(key)
+	switch k {
+	case "url", "uri", "endpoint", "href", "link", "urls", "links":
+		return true
+	}
+	return strings.HasSuffix(k, "url") || strings.HasSuffix(k, "uri") || strings.HasSuffix(k, "_endpoint")
+}
+
+// walkKeyed visits every string of a decoded JSON value with the key it sits under (an array
+// element inherits its array's key); it stops when visit returns false.
+func walkKeyed(v any, key string, visit func(key, str string) bool) bool {
+	switch x := v.(type) {
+	case string:
+		return visit(key, x)
+	case []any:
+		for _, e := range x {
+			if !walkKeyed(e, key, visit) {
+				return false
+			}
+		}
+	case map[string]any:
+		for k, e := range x {
+			if !walkKeyed(e, k, visit) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // --- hosts ---
@@ -673,6 +731,91 @@ func bareHost(a string) (host, path string) {
 	return a, path
 }
 
+// sshVerbs open an ssh connection to their host argument.
+var sshVerbs = wordSet("ssh", "scp", "sftp")
+
+// gitNetSubs are the git subcommands that reach a remote, or record one to reach later.
+var gitNetSubs = wordSet("push", "fetch", "pull", "ls-remote", "clone", "remote", "submodule", "archive")
+
+// gitURL reads a git remote URL: its host and whether it uses the ssh transport
+// (git@host:path, ssh://host/path). "" when a is not a remote URL.
+func gitURL(a string) (host string, ssh bool) {
+	a = strings.Trim(a, `"'`)
+	if i := strings.Index(a, "://"); i > 0 {
+		scheme := strings.ToLower(a[:i])
+		rest := a[i+3:]
+		if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+			rest = rest[:j]
+		}
+		if j := strings.LastIndex(rest, "@"); j >= 0 {
+			rest = rest[j+1:]
+		}
+		if j := strings.IndexByte(rest, ':'); j >= 0 {
+			rest = rest[:j]
+		}
+		return cleanHost(rest), scheme == "ssh" || scheme == "git+ssh" || scheme == "ssh+git"
+	}
+	// the scp-like form [user@]host:path: no slash before the colon, a dotted host
+	if i := strings.IndexByte(a, ':'); i > 0 && !strings.ContainsAny(a[:i], `/\`) {
+		h := a[:i]
+		if j := strings.LastIndex(h, "@"); j >= 0 {
+			h = h[j+1:]
+		}
+		if strings.Contains(h, ".") {
+			return cleanHost(h), true
+		}
+	}
+	return "", false
+}
+
+// gitTransport judges a git command that reaches a remote by URL (QA round 3, item 7): the
+// ssh transport to an out-of-scope provider's git host logs in with that provider's key, and
+// a push over https sends its credentials; an anonymous https clone, fetch, pull or ls-remote
+// carries none and is allowed.
+func (s *Scope) gitTransport(args []string) (scopeHit, bool) {
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		switch args[i] {
+		case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path":
+			i++
+		}
+		i++
+	}
+	if i >= len(args) || !gitNetSubs[strings.ToLower(args[i])] {
+		return scopeHit{}, false
+	}
+	sub := strings.ToLower(args[i])
+	for _, a := range args[i+1:] {
+		host, ssh := gitURL(a)
+		if host == "" || !(ssh || sub == "push") {
+			continue
+		}
+		if h, ok := s.gitHostHit(host); ok {
+			return h, true
+		}
+	}
+	return scopeHit{}, false
+}
+
+// gitHostHit reports host when it is an out-of-scope provider's git host (or a subdomain of
+// one) and no in-scope provider lists it.
+func (s *Scope) gitHostHit(host string) (scopeHit, bool) {
+	under := func(g string) bool { return host == g || strings.HasSuffix(host, "."+g) }
+	for _, g := range s.inGit {
+		if under(g) {
+			return scopeHit{}, false
+		}
+	}
+	for _, hs := range s.outGit {
+		for _, g := range hs.hosts {
+			if under(g) {
+				return scopeHit{id: OutOfScopeHostID, subject: host, what: host + " is a git host of " + s.desc(hs.p) + " (its ssh key or token)"}, true
+			}
+		}
+	}
+	return scopeHit{}, false
+}
+
 func hostIn(h, path string, list []string) bool {
 	for _, entry := range list {
 		if providers.HostMatches(entry, h, path) {
@@ -682,17 +825,20 @@ func hostIn(h, path string, list []string) bool {
 	return false
 }
 
-// hostHit judges a request to host h at path (lower-cased; "" for none). A hosts entry
-// matches the host and its subdomains, under its path prefix when it has one (ADR-0007 round
-// 3: API hosts, not whole registrable domains).
+// hostHit judges a request to host h at path ("" for none). The path is normalised first
+// (dot segments, repeated slashes, percent-encoded unreserved characters), then a hosts entry
+// matches the host and its subdomains, under its path prefix when it has one, unless one of
+// the provider's public entries matches it as precisely (ADR-0007 rounds 3 and 4: API hosts,
+// not whole registrable domains).
 func (s *Scope) hostHit(h, path string) (scopeHit, bool) {
+	path = providers.NormalizeURLPath(path)
 	for _, list := range s.inHosts {
 		if hostIn(h, path, list) {
 			return scopeHit{}, false
 		}
 	}
 	for _, hs := range s.outHosts {
-		if hostIn(h, path, hs.hosts) {
+		if hs.m.APIHost(h, path) {
 			return scopeHit{id: OutOfScopeHostID, subject: h, what: h + " is an API host of " + s.desc(hs.p)}, true
 		}
 	}
@@ -1085,6 +1231,26 @@ func (s *Scope) exeSuffixHit(text string) (scopeHit, bool) {
 	return scopeHit{}, false
 }
 
+// pyReadsStdin reports whether python's arguments name no script, module or -c code: it
+// reads its program from stdin (a lone `-`, options, redirections only).
+func pyReadsStdin(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-":
+			return true
+		case a == "-c" || a == "-m" || (strings.HasPrefix(a, "-m") && len(a) > 2):
+			return false
+		case pyValueOpt[a]:
+			i++
+		case strings.HasPrefix(a, "<") || strings.HasPrefix(a, "-"):
+		default:
+			return false // a script
+		}
+	}
+	return true
+}
+
 var pythonRe = regexp.MustCompile(`^(python(\d+(\.\d+)?)?w?|py|pyw)$`)
 
 // pyValueOpt: python options that take a value, so -m is not mistaken for the script.
@@ -1107,7 +1273,7 @@ func isRunner(name string) bool {
 // shell judges a shell command line; ps reads its text with PowerShell's quoting rules (the
 // PowerShell tool, a decoded -EncodedCommand), otherwise bash's.
 func (s *Scope) shell(cwd, raw, text string, depth int, ps bool) (scopeHit, bool) {
-	for _, c := range guard.Commands(raw) {
+	for _, c := range guard.CommandsIn(raw, ps) {
 		base := commandBase(s.set, cwd, c)
 		if c.Base != "" && base != "" {
 			if h, ok := s.pathHit(s.norm(c.Base, cwd)); ok {
@@ -1156,6 +1322,14 @@ func (s *Scope) shell(cwd, raw, text string, depth int, ps bool) (scopeHit, bool
 		}
 		switch {
 		case pythonRe.MatchString(name):
+			// python reading its program from stdin (`python - <<EOF`, `python3 <<EOF`,
+			// `... | python`): the heredoc or piped body is the code, so the modules it
+			// imports are read from the whole line
+			if pyReadsStdin(args) && (strings.Contains(raw, "<<") || strings.Contains(raw, "|")) {
+				if h, ok := s.inlineModuleHit(raw); ok {
+					return h, true
+				}
+			}
 			for i := 0; i < len(args); i++ {
 				a := args[i]
 				if pyValueOpt[a] {
@@ -1240,11 +1414,21 @@ func (s *Scope) shell(cwd, raw, text string, depth int, ps bool) (scopeHit, bool
 					return h, true
 				}
 			}
+		case name == "git":
+			if h, ok := s.gitTransport(args); ok {
+				return h, true
+			}
 		case netVerbs[name]:
 			for _, a := range args {
 				if host, path := bareHost(a); host != "" {
 					if h, ok := s.hostHit(host, path); ok {
 						return h, true
+					}
+					// ssh, scp, sftp to a git host log in with that provider's key
+					if sshVerbs[name] {
+						if h, ok := s.gitHostHit(host); ok {
+							return h, true
+						}
 					}
 				}
 			}

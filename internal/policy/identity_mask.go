@@ -49,7 +49,7 @@ type maskWord struct {
 // with bash rules or (ps) PowerShell rules. Separators (; & | newline) split only outside
 // quotes and outside $( ... ). ok is false when a quote, a here-string or a $( is left open:
 // the caller then blanks nothing.
-func maskSegments(s string, ps bool) (segs [][]maskWord, ok bool) {
+func maskSegments(s string, ps bool) (segs [][]maskWord, pipeAfter []bool, ok bool) {
 	var cur []maskWord
 	var w *maskWord
 	var txt strings.Builder
@@ -129,6 +129,7 @@ func maskSegments(s string, ps bool) (segs [][]maskWord, ok bool) {
 			flush(i)
 			if len(cur) > 0 {
 				segs = append(segs, cur)
+				pipeAfter = append(pipeAfter, ch == '|' && !(i+1 < len(s) && s[i+1] == '|'))
 				cur = nil
 			}
 			continue
@@ -143,7 +144,7 @@ func maskSegments(s string, ps bool) (segs [][]maskWord, ok bool) {
 				i = end - 1
 				continue
 			} else if end < 0 {
-				return nil, false // unterminated
+				return nil, nil, false // unterminated
 			}
 		}
 		begin(i)
@@ -199,13 +200,14 @@ func maskSegments(s string, ps bool) (segs [][]maskWord, ok bool) {
 		}
 	}
 	if state != none || depth != 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	flush(len(s))
 	if len(cur) > 0 {
 		segs = append(segs, cur)
+		pipeAfter = append(pipeAfter, false)
 	}
-	return segs, true
+	return segs, pipeAfter, true
 }
 
 // hereString reads a PowerShell here-string opening at s[i] ('@'): ok with its end (past the
@@ -251,11 +253,11 @@ func maskTextArgs(command string, ps bool) string {
 
 // maskInto blanks the text words of command into b (the same length), b[i] for command[i].
 func maskInto(b []byte, command string, ps bool, depth int) {
-	segs, ok := maskSegments(command, ps)
+	segs, pipeAfter, ok := maskSegments(command, ps)
 	if !ok {
 		return // an unterminated quote: blank nothing
 	}
-	seps := guard.SeparatorSpans(command)
+	seps := guard.SeparatorSpansIn(command, ps)
 	crosses := func(start, end int) bool {
 		for _, sp := range seps {
 			if sp[0] < end && sp[1] > start {
@@ -278,10 +280,13 @@ func maskInto(b []byte, command string, ps bool, depth int) {
 			}
 		}
 	}
-	for _, seg := range segs {
-		// here-strings are text wherever they stand
+	for k, seg := range segs {
+		// a here-string is text only where it is plain data (QA round 3): an argument of a
+		// command that writes or prints it, piped to one, or assigned to a variable that is
+		// only ever written or printed. Run (iex, [scriptblock]::Create, pwsh -Command) or
+		// sent (Invoke-RestMethod -Uri), it is scanned.
 		for _, w := range seg {
-			if w.here {
+			if w.here && hereIsData(segs, pipeAfter, k) {
 				blank(w, 0)
 			}
 		}
@@ -355,6 +360,54 @@ func maskInto(b []byte, command string, ps bool, depth int) {
 	}
 }
 
+// psDataSinks write or print a string and never run it.
+var psDataSinks = wordSet("set-content", "sc", "add-content", "ac", "out-file", "write-host", "write-verbose",
+	"write-debug", "write-information", "out-null")
+
+func segVerb(seg []maskWord) string {
+	for _, w := range seg {
+		if maskAssignRe.MatchString(w.text) || maskWrappers[strings.ToLower(w.text)] {
+			continue
+		}
+		return exeName(w.text)
+	}
+	return ""
+}
+
+// sinkSegment reports whether segment k only writes or prints what it is given: its verb is a
+// data sink, or it is one word (a here-string, a variable) piped into a data sink.
+func sinkSegment(segs [][]maskWord, pipeAfter []bool, k int) bool {
+	if psDataSinks[segVerb(segs[k])] {
+		return true
+	}
+	return len(segs[k]) == 1 && pipeAfter[k] && k+1 < len(segs) && psDataSinks[segVerb(segs[k+1])]
+}
+
+// hereIsData reports whether the here-string in segment k is plain data.
+func hereIsData(segs [][]maskWord, pipeAfter []bool, k int) bool {
+	seg := segs[k]
+	if sinkSegment(segs, pipeAfter, k) {
+		return true
+	}
+	// $v = @'...'@, where every later use of $v is written or printed
+	if len(seg) == 3 && strings.HasPrefix(seg[0].text, "$") && seg[1].text == "=" && seg[2].here {
+		v := strings.ToLower(seg[0].text)
+		for j := k + 1; j < len(segs); j++ {
+			used := false
+			for _, w := range segs[j] {
+				if strings.Contains(strings.ToLower(w.text), v) {
+					used = true
+				}
+			}
+			if used && !sinkSegment(segs, pipeAfter, j) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // nestedCommandFlag reports whether a is the option that makes the next word a command
 // string: -c for bash/sh/zsh; -c, -Command or an unambiguous prefix of it for PowerShell.
 func nestedCommandFlag(a string, ps bool) bool {
@@ -412,7 +465,7 @@ func blankSingleQuoted(command string, ps bool) string {
 	if state != none {
 		return command
 	}
-	seps := guard.SeparatorSpans(command)
+	seps := guard.SeparatorSpansIn(command, ps)
 	for _, sp := range spans {
 		cross := false
 		for _, sep := range seps {

@@ -38,4 +38,5 @@ match:
     az: [devops, repos, pipelines, boards, artifacts, login, extension, account, config, version]
   env: [AZURE_DEVOPS_EXT_PAT, AZURE_DEVOPS_ORG]
   hosts: [dev.azure.com]
+  git_hosts: [dev.azure.com, ssh.dev.azure.com, vs-ssh.visualstudio.com]
   mcp: [devops, ado, azuredevops]

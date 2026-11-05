@@ -64,7 +64,7 @@ func commandsDepth(c, base string, baseUnknown bool, depth int) []Command {
 			continue
 		}
 		if inner, ok := nestedCommand(words); ok && depth < 3 {
-			out = append(out, commandsDepth(inner, base, baseUnknown, depth+1)...)
+			out = append(out, nestedSplit(inner, nestedPS(words[0], false), base, baseUnknown, depth+1)...)
 		}
 	}
 	return out

@@ -11,5 +11,5 @@ notes: "Reached through an MCP connector only. Add the slack entry to the tq bun
 # identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
   env: [SLACK_BOT_TOKEN, SLACK_USER_TOKEN, SLACK_TOKEN]
-  hosts: [slack.com]
+  hosts: [slack.com/api/, hooks.slack.com, files.slack.com, wss-primary.slack.com]
   mcp: [slack]

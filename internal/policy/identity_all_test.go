@@ -113,6 +113,19 @@ func TestScope_EveryProvider(t *testing.T) {
 			check("host "+h+" (WebFetch)", ToolCall{Tool: "WebFetch", URL: url})
 			check("host "+h+" (shell)", bash("curl -s "+url))
 		}
+		for _, g := range m.GitHosts {
+			check("git host "+g+" (ssh)", bash("ssh -T git@"+g))
+			check("git host "+g+" (push)", bash("git push git@"+g+":org/x.git main"))
+		}
+		// a public entry is the vendor's public content: allowed even out of scope
+		for _, pub := range m.Public {
+			checks++
+			host, path, _ := strings.Cut(pub, "/")
+			call := ToolCall{Tool: "WebFetch", URL: "https://" + host + "/" + path + "x"}
+			if d := out.Evaluate(f.cwd, call); d.Action != Allow {
+				t.Errorf("%s public %s: denied out of scope: %s", p.ID, pub, d.Reason())
+			}
+		}
 		for _, tok := range m.MCP {
 			check("mcp "+tok, ToolCall{Tool: "mcp__" + tok + "__x", Content: "{}"})
 		}
@@ -138,7 +151,7 @@ func TestScope_EveryProvider(t *testing.T) {
 // The exact sizes of the catalog's match lists that TestScope_EveryProvider walks.
 const (
 	wantProvidersWithSignals = 57
-	wantEveryProviderChecks  = 584
+	wantEveryProviderChecks  = 582
 )
 
 // TestScope_SharedCLIPrecision: azure-devops owns only the `az devops|repos|...` subcommands;
@@ -238,7 +251,7 @@ func TestScope_UserOverrideCannotAllow(t *testing.T) {
 			t.Fatalf("%s: a new id claiming the built-in %s's %q loaded (errors %v)", c.list, c.owner, c.entry, errs)
 		}
 		msg := errs[0].Error()
-		for _, want := range []string{file, c.owner, "fix or delete " + file + ", then run tq providers list"} {
+		for _, want := range []string{file, c.owner, "fix or delete it, then run tq providers list"} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("%s: the refusal %q does not name %q", c.list, msg, want)
 			}

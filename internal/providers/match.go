@@ -48,6 +48,18 @@ type Match struct {
 	// whole registrable domain that also serves public downloads (githubusercontent.com,
 	// googleapis.com).
 	Hosts []string `yaml:"hosts,omitempty"`
+	// Public are exceptions to Hosts: public content the vendor serves under its API domain
+	// (fonts.googleapis.com, a public GCS object storage.googleapis.com/<bucket>/<object>, an
+	// installer CDN such as awscli.amazonaws.com). An entry is an exact host (no subdomains),
+	// optionally with a path prefix; it wins over a hosts entry it matches at least as
+	// precisely (a longer host, then a longer path), so storage.googleapis.com/storage/ stays
+	// an API path under the public storage.googleapis.com/ (ADR-0007 round 4).
+	Public []string `yaml:"public,omitempty"`
+	// GitHosts are the provider's git transport hosts (github.com, gitlab.com): a git command
+	// over ssh (git@host:, ssh://) or a git push over https to one, and an ssh connection to
+	// one, use the provider's credentials. An anonymous https clone, fetch, pull or ls-remote
+	// does not (ADR-0007 round 4).
+	GitHosts []string `yaml:"git_hosts,omitempty"`
 	// PSModules are PowerShell module names (AWS.Tools, AWSPowerShell): matched as the
 	// argument of Import-Module, Install-Module and the other *-Module / *-PSResource verbs and
 	// `using module`; a dotted child (AWS.Tools.S3) is covered by its parent.
@@ -65,7 +77,7 @@ type Match struct {
 // Empty reports whether m matches nothing.
 func (m Match) Empty() bool {
 	return len(m.Executables)+len(m.Subcommands)+len(m.Images)+len(m.Modules)+len(m.PSModules)+len(m.Cmdlets)+
-		len(m.Env)+len(m.Paths)+len(m.Hosts)+len(m.MCP) == 0
+		len(m.Env)+len(m.Paths)+len(m.Hosts)+len(m.GitHosts)+len(m.MCP) == 0
 }
 
 var (
@@ -78,6 +90,7 @@ var (
 	matchEnvRe      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\*?$`)
 	matchHostRe     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[a-z0-9._~-]+)*/?$`)
 	matchMCPRe      = regexp.MustCompile(`^[a-z0-9]+$`)
+	matchGitHostRe  = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 )
 
 // SplitHost splits a hosts entry into its host and its path prefix ("" when it has none):
@@ -104,6 +117,111 @@ func HostMatches(entry, host, path string) bool {
 		path = "/"
 	}
 	return strings.HasPrefix(path, ep) || path+"/" == ep
+}
+
+// NormalizeURLPath is a URL path as a server resolves it, for the prefix match of a hosts
+// entry (QA round 3): lower-cased, percent-encoded unreserved characters decoded, repeated
+// slashes collapsed, `.` and `..` segments resolved; a trailing slash is kept. "" stays "".
+func NormalizeURLPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		if p[i] == '%' && i+2 < len(p) {
+			if c, ok := unhex(p[i+1], p[i+2]); ok && isUnreserved(c) {
+				b.WriteByte(c)
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(p[i])
+	}
+	raw := strings.ToLower(b.String())
+	trailing := strings.HasSuffix(raw, "/") || strings.HasSuffix(raw, "/.") || strings.HasSuffix(raw, "/..")
+	var out []string
+	for _, seg := range strings.Split(raw, "/") {
+		switch seg {
+		case "", ".":
+		case "..":
+			if len(out) > 0 {
+				out = out[:len(out)-1]
+			}
+		default:
+			out = append(out, seg)
+		}
+	}
+	n := "/" + strings.Join(out, "/")
+	if trailing && n != "/" {
+		n += "/"
+	}
+	return n
+}
+
+func unhex(a, b byte) (byte, bool) {
+	h := func(c byte) (byte, bool) {
+		switch {
+		case c >= '0' && c <= '9':
+			return c - '0', true
+		case c >= 'a' && c <= 'f':
+			return c - 'a' + 10, true
+		case c >= 'A' && c <= 'F':
+			return c - 'A' + 10, true
+		}
+		return 0, false
+	}
+	x, ok1 := h(a)
+	y, ok2 := h(b)
+	return x<<4 | y, ok1 && ok2
+}
+
+func isUnreserved(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' || c == '~'
+}
+
+// hostSpecificity ranks how precisely an entry matched: a longer host, then a longer path.
+func hostSpecificity(entry string) int {
+	h, p := SplitHost(entry)
+	return len(h)*1000 + len(p)
+}
+
+// PublicMatches reports whether a request is covered by a public entry: the exact host (no
+// subdomains) and, with a path prefix, a path under it.
+func PublicMatches(entry, host, path string) bool {
+	eh, ep := SplitHost(entry)
+	if host != eh {
+		return false
+	}
+	if ep == "" {
+		return true
+	}
+	if path == "" {
+		path = "/"
+	}
+	return strings.HasPrefix(path, ep) || path+"/" == ep
+}
+
+// APIHost reports whether a request to host at path (normalised) is one of m's API hosts: a
+// hosts entry matches, and no public entry matches at least as precisely (public content of
+// the vendor: fonts.googleapis.com, a public GCS object, an installer CDN).
+func (m Match) APIHost(host, path string) bool {
+	best := -1
+	for _, e := range m.Hosts {
+		if HostMatches(e, host, path) {
+			if s := hostSpecificity(e); s > best {
+				best = s
+			}
+		}
+	}
+	if best < 0 {
+		return false
+	}
+	for _, e := range m.Public {
+		if PublicMatches(e, host, path) && hostSpecificity(e) >= best {
+			return false
+		}
+	}
+	return true
 }
 
 // HostsOverlap reports whether two hosts entries can match one request: the same host, or
@@ -185,6 +303,12 @@ func (m Match) Validate() error {
 	if err := check("hosts", m.Hosts, matchHostRe); err != nil {
 		return err
 	}
+	if err := check("public", m.Public, matchHostRe); err != nil {
+		return err
+	}
+	if err := check("git_hosts", m.GitHosts, matchGitHostRe); err != nil {
+		return err
+	}
 	if err := check("mcp", m.MCP, matchMCPRe); err != nil {
 		return err
 	}
@@ -240,6 +364,8 @@ func (m Match) Union(o Match) Match {
 		Env:         u(m.Env, o.Env),
 		Paths:       u(m.Paths, o.Paths),
 		Hosts:       u(m.Hosts, o.Hosts),
+		Public:      m.Public, // a user file never adds an exception: it only widens denial
+		GitHosts:    u(m.GitHosts, o.GitHosts),
 		MCP:         u(m.MCP, o.MCP),
 	}
 }

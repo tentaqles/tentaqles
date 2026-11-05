@@ -235,13 +235,16 @@ func TestPreToolUse_BadProviderFiles(t *testing.T) {
 		{"an invalid override (bad match entry) keeps the built-in lists", "aws.yaml",
 			"id: aws\nname: AWS\ncategory: cloud\nmatch:\n  executables: [\"a b\"]\n", "",
 			"Bash", cmdIn("aws s3 ls"), 2, policy.OutOfScopeCLIID, true},
-		{"a broken new id outside the scope changes nothing", "zz.yaml", "id: zz\n" + broken, "",
-			"Bash", cmdIn("git status"), 0, "", false},
+		{"a broken new id outside the scope: work goes on, with a warning", "zz.yaml", "id: zz\n" + broken, "",
+			"Bash", cmdIn("git status"), 0, "", true},
+		{"an unknown key is an error with its line, column and a suggestion", "acme.yaml",
+			"id: acme\nname: Acme\ncategory: cloud\nmatch:\n  executable: [acmectl]\n", "",
+			"Bash", cmdIn("git status"), 0, "", true},
 		{"a broken new id the scope names refuses every call", "zz.yaml", "id: zz\n" + broken, "scope: [zz]\n",
 			"Bash", cmdIn("git status"), 2, policy.GuardErrorID, false},
 		{"a new id claiming a built-in's executable is refused at load", "acme.yaml",
 			"id: acme\nname: Acme\ncategory: cloud\nmatch:\n  executables: [aws]\n", "",
-			"Bash", cmdIn("aws s3 ls"), 2, policy.OutOfScopeCLIID, false},
+			"Bash", cmdIn("aws s3 ls"), 2, policy.OutOfScopeCLIID, true},
 		{"a refused new id the scope names refuses every call", "acme.yaml",
 			"id: acme\nname: Acme\ncategory: cloud\nmatch:\n  executables: [aws]\n", "scope: [acme]\n",
 			"Read", pathIn("file_path", "README.md"), 2, policy.GuardErrorID, false},
@@ -261,12 +264,21 @@ func TestPreToolUse_BadProviderFiles(t *testing.T) {
 			t.Errorf("%s: code=%d rule=%q, want %d %q (%s)", c.name, code, rule, c.code, c.rule, errOut)
 			continue
 		}
-		fix := "fix or delete " + file + ", then run tq providers list"
-		if c.rule == policy.GuardErrorID && !strings.Contains(errOut, fix) {
-			t.Errorf("%s: the refusal does not name the file and the fix: %q", c.name, errOut)
+		const fix = "fix or delete it, then run tq providers list"
+		if c.rule == policy.GuardErrorID {
+			if !strings.Contains(errOut, file) || !strings.Contains(errOut, fix) {
+				t.Errorf("%s: the refusal does not name the file and the fix: %q", c.name, errOut)
+			}
+			if n := strings.Count(errOut, file); n != 1 {
+				t.Errorf("%s: the refusal names the file %d times, want once: %q", c.name, n, errOut)
+			}
 		}
-		if hasWarn := strings.Contains(errOut, "warning") && strings.Contains(errOut, fix); hasWarn != c.warn {
+		hasWarn := strings.Contains(errOut, "warning") && strings.Contains(errOut, file) && strings.Contains(errOut, fix)
+		if hasWarn != c.warn {
 			t.Errorf("%s: warning printed=%v, want %v: %q", c.name, hasWarn, c.warn, errOut)
+		}
+		if strings.Contains(c.body, "executable:") && (!strings.Contains(errOut, file+":5:3") || !strings.Contains(errOut, `did you mean "executables"`)) {
+			t.Errorf("%s: the unknown key is not located and explained: %q", c.name, errOut)
 		}
 	}
 }
@@ -304,7 +316,7 @@ func TestProviders_BadFilesReported(t *testing.T) {
 		t.Fatal("tq providers list exited zero with a bad provider file")
 	}
 	all := errOut.String() + err.Error()
-	for _, want := range []string{bad, "fix or delete " + bad + ", then run tq providers list", "api.acme.example"} {
+	for _, want := range []string{bad, "fix or delete it, then run tq providers list", "api.acme.example"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("providers list does not report %q: %s", want, all)
 		}
@@ -328,6 +340,10 @@ func TestProviders_BadFilesReported(t *testing.T) {
 	for _, f := range findings {
 		if f.Code == "provider-file-invalid" && strings.Contains(f.Msg, bad) && strings.Contains(f.Fix, "tq providers list") {
 			found = true
+			// no workspace names zz: no hint about one, and the fix is said once, in Fix
+			if strings.Contains(f.Msg, "scope names") || strings.Contains(f.Msg, "refused") || strings.Contains(f.Msg, "tq providers list") {
+				t.Errorf("doctor's message carries a hint that does not apply or repeats the fix: %q", f.Msg)
+			}
 		}
 	}
 	if !found {

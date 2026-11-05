@@ -47,10 +47,11 @@ func SelfProtection(set *protect.Set, cwd string, call ToolCall) Decision {
 		return selfProtectionDeny(ProtectedPathID, protectedReason(hit, access), subjectOf(hit, access))
 	}
 	if call.IsShell() {
-		if what, ok := KeychainWrite(call.Command); ok {
+		ps := call.Tool == "PowerShell"
+		if what, ok := keychainWrite(call.Command, ps); ok {
 			return selfProtectionDeny(ProtectedPathID, what+" writes tq's entry in the OS keychain (service "+KeychainService+": the integrity key and the tq secret tokens), a protected location: tq denies every write there; a human changes it with the tq command in a terminal", "the OS keychain")
 		}
-		if what, ok := HumanOnlyInvocation(call.Command); ok {
+		if what, ok := humanOnlyInvocation(call.Command, ps); ok {
 			return selfProtectionDeny(HumanOnlyCommandID, what+" is human-only: run it yourself in a terminal (tq refuses an agent session and confirms before it writes)", what)
 		}
 	}
@@ -80,11 +81,14 @@ const KeychainService = "tentaqles"
 // `delete-generic-password` with `-s` naming it, Linux `secret-tool store`
 // / `clear` with the attribute `service` naming it. what names the tool.
 // Reading an entry is the secret rules' business, not this one's.
-func KeychainWrite(command string) (what string, ok bool) {
+func KeychainWrite(command string) (what string, ok bool) { return keychainWrite(command, false) }
+
+// keychainWrite is KeychainWrite for a line of the given shell (ps: PowerShell's quoting).
+func keychainWrite(command string, ps bool) (what string, ok bool) {
 	names := func(v string) bool {
 		return strings.Contains(strings.ToLower(strings.Trim(v, `"'`)), KeychainService)
 	}
-	for _, c := range guard.Commands(command) {
+	for _, c := range guard.CommandsIn(command, ps) {
 		verb, args, ok := guard.Verb(c.Words)
 		if !ok {
 			continue
@@ -175,7 +179,7 @@ func fileToolAccess(tool string) (string, bool) {
 func protectedTouch(set *protect.Set, cwd string, call ToolCall) (protect.Hit, string, bool) {
 	switch {
 	case call.IsShell():
-		return shellTouch(set, cwd, call.Command)
+		return shellTouch(set, cwd, call.Command, call.Tool == "PowerShell")
 	case call.IsMCP():
 		return mcpTouch(set, cwd, call.Content)
 	}
@@ -434,8 +438,8 @@ func argPaths(a string) []string {
 // shellTouch judges every simple command of a shell command line, then the
 // cross-command routes (a here-doc or stdin fed to an interpreter, `… | xargs
 // rm`, a PowerShell .NET call) that one command in isolation does not show.
-func shellTouch(set *protect.Set, cwd, command string) (protect.Hit, string, bool) {
-	cmds := guard.Commands(command)
+func shellTouch(set *protect.Set, cwd, command string, ps bool) (protect.Hit, string, bool) {
+	cmds := guard.CommandsIn(command, ps)
 	for _, c := range cmds {
 		base := commandBase(set, cwd, c)
 		if h, access, ok := commandTouch(set, cwd, base, c); ok {
@@ -466,7 +470,7 @@ func shellTouch(set *protect.Set, cwd, command string) (protect.Hit, string, boo
 	// A here-doc or stdin body fed to an interpreter is code; guard.Commands
 	// blanks a data here-doc, so the raw command is scanned for a literal
 	// protected path when an interpreter reads a body.
-	if interpreterReadsBody(command) {
+	if interpreterReadsBody(command, ps) {
 		if h, ok := set.Mentions(command); ok {
 			return h, "use", true
 		}
@@ -533,7 +537,7 @@ func commandTouch(set *protect.Set, cwd, base string, c guard.Command) (protect.
 			if !decoded {
 				return protect.Hit{Path: "the command", What: "an encoded PowerShell command tq could not read"}, "decode", true
 			}
-			if h, a, ok := shellTouch(set, base, dec); ok {
+			if h, a, ok := shellTouch(set, base, dec, true); ok {
 				return h, a, true
 			}
 		}
@@ -541,7 +545,7 @@ func commandTouch(set *protect.Set, cwd, base string, c guard.Command) (protect.
 	// eval / iex run a literal string as a command: re-run the rule on it.
 	if name == "eval" || name == "iex" || name == "invoke-expression" {
 		for _, a := range args {
-			if h, acc, ok := shellTouch(set, base, a); ok {
+			if h, acc, ok := shellTouch(set, base, a, name != "eval"); ok {
 				return h, acc, true
 			}
 		}
@@ -748,10 +752,10 @@ func encodedPowerShell(args []string) (script string, present, decoded bool) {
 // `bash <<EOF`), whose body is code the per-command pass does not see (a data
 // here-doc is blanked). The caller then scans the whole command for a literal
 // protected path.
-func interpreterReadsBody(command string) bool {
+func interpreterReadsBody(command string, ps bool) bool {
 	hasHeredoc := strings.Contains(command, "<<")
 	hasPipe := strings.Contains(command, "|")
-	for _, c := range guard.Commands(command) {
+	for _, c := range guard.CommandsIn(command, ps) {
 		verb, args, ok := guard.Verb(c.Words)
 		if !ok {
 			continue
@@ -852,7 +856,13 @@ func gitWrites(words []string) bool {
 // `go run ./cmd/tq`, through any wrapper or nested shell the tokenizer
 // follows. what names the invocation (tq allow, tq hooks install, ...).
 func HumanOnlyInvocation(command string) (what string, ok bool) {
-	for _, c := range guard.Commands(command) {
+	return humanOnlyInvocation(command, false)
+}
+
+// humanOnlyInvocation is HumanOnlyInvocation for a line of the given shell (ps: PowerShell's
+// quoting).
+func humanOnlyInvocation(command string, ps bool) (what string, ok bool) {
+	for _, c := range guard.CommandsIn(command, ps) {
 		verb, args, ok := guard.Verb(c.Words)
 		if !ok {
 			continue

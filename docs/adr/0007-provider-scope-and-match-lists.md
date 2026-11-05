@@ -325,5 +325,93 @@ paths, exact counts: 57 providers, 584 checks, plus LS and a quoted `%APPDATA%` 
 `TestScope_UserOverrideCannotAllow` (a new id claiming a built-in's entry, one row per list),
 `TestPreToolUse_BadProviderFiles`, `TestProviders_BadFilesReported`.
 
+## Round 4 (2026-11-05): PowerShell command splitting, Google APIs, git transport
+
+QA of round 3 found that only the masker had learned PowerShell's quoting: the command
+splitter still read every line with bash's, so in the PowerShell tool
+`Write-Host "C:\temp\"; aws ec2 run-instances` was one quoted word to it and the AWS call was
+never seen as a command (a regression: the base 34613fc stopped one of these). The decisions:
+
+**The splitter has PowerShell's rules too.** `guard.CommandsIn(line, ps)` splits a PowerShell
+line (the PowerShell tool, a decoded `-EncodedCommand`, the string of `pwsh -Command`) with
+PowerShell's quoting (a backslash is ordinary, a backtick escapes, `''` and `""` are quotes
+inside a string, a here-string is one word) and, so no command the bash reading found is
+lost, with bash's as well; a nested shell's string is split with that shell's rules (pwsh,
+powershell, iex: PowerShell; bash, sh, zsh: bash). `guard.SeparatorSpansIn` gives the masker
+the separators of both readings. The identity category and the self-protection rules
+(protected paths, the keychain, human-only tq verbs) use it; the secret rules match the whole
+line with regexes and share no splitter; the v1 git rules keep their own naive pass over the
+raw line, which already finds a git call hidden in a quoted string.
+
+**A here-string or heredoc that is run or sent is code.** The splitter also splits a
+here-string's body as commands when it is run: the argument of `iex`, `Invoke-Expression`,
+`Invoke-Command`, `pwsh -Command`, `[scriptblock]::Create(...)`, piped to one, or assigned to
+a variable a later command runs. The masker blanks a here-string only where it is plain data:
+an argument of `Set-Content`, `Add-Content`, `Out-File`, `Write-Host` (or piped to one), a
+commit message, or assigned to a variable that is only ever written or printed. Round 3
+blanked every here-string, so `Invoke-RestMethod -Uri @'...'@` hid its URL. A bash heredoc fed
+to python (`python - <<EOF`, `python3 <<EOF`, `... | python`) has its imports read like
+`python -c` code; heredocs fed to a shell are split by the tokenizer as before.
+
+**Google APIs: every `*.googleapis.com` host but the public content** (reverses round 3's
+named-host list). `www.googleapis.com` serves only APIs (`/storage/v1`, `/compute/v1`,
+`/oauth2/v4/token`), and regional (`us-central1-aiplatform...`) and bucket
+(`<bucket>.storage.googleapis.com`) hosts are APIs too. gcloud lists `googleapis.com`,
+`storage.googleapis.com/storage/`, `/upload/`, `/download/`, `/batch/` and `gcr.io`, and a new
+`public` list: `fonts.googleapis.com`, `ajax.googleapis.com` and `storage.googleapis.com/`
+(a public object read `storage.googleapis.com/<bucket>/<object>`). A public entry is an exact
+host (no subdomains), optionally with a path prefix, and wins over a hosts entry it matches at
+least as precisely (a longer host, then a longer path): the GCS API paths stay denied under the
+public `storage.googleapis.com/`. A user file never adds a public entry.
+
+**URL paths are normalised before the prefix match**: percent-encoded unreserved characters
+decoded, repeated slashes collapsed, `.` and `..` resolved, lower-cased
+(`github.com/x/../login/oauth/`, `gitlab.com/./api/`, `storage.googleapis.com//storage/`).
+
+**The same rule for Slack, Sentry and Oracle, and the installer CDNs.** slack lists
+`slack.com/api/`, `hooks.slack.com`, `files.slack.com`, `wss-primary.slack.com` (api.slack.com
+and status.slack.com are documentation and status); sentry `sentry.io/api/` and the
+`ingest` hosts, with `docs.sentry.io` public; oci keeps `oraclecloud.com` (its hosts are APIs)
+with `ocistatus.oraclecloud.com` public. Public installer CDNs: `awscli.amazonaws.com` and
+`s3.amazonaws.com/aws-cli/` (aws), `dotnetcli.blob.core.windows.net`,
+`azcliprod.blob.core.windows.net`, `azurecliprod.blob.core.windows.net` (az). The other
+vendors' installers come from GitHub releases or hosts the catalog does not list.
+
+**Git transport.** A new `git_hosts` list (gh: github.com, ssh.github.com; glab: gitlab.com,
+altssh.gitlab.com; bitbucket; azure-devops: dev.azure.com, ssh.dev.azure.com,
+vs-ssh.visualstudio.com; gitea.com; git.heroku.com). A git command that reaches a remote by
+URL (`push`, `fetch`, `pull`, `ls-remote`, `clone`, `remote`, `submodule`, `archive`) over the
+ssh transport (`git@host:path`, `ssh://`) to an out-of-scope git host, a `git push` over https
+to one, and `ssh`/`scp`/`sftp` to one are denied (`identity/out-of-scope-host`): they log in
+with that provider's key or token. An anonymous https clone, fetch, pull or ls-remote stays
+allowed, as decided in round 3. `ssh -T git@gitlab.com` from an Azure identity is denied again
+(round 2 stopped it through the gitlab.com host).
+
+**MCP inputs: URL-shaped fields only.** A URL is judged in a field named url, uri, endpoint,
+href, link (or ending in url/uri) or a value that is one URL; a URL inside free text (an issue
+body, a memory observation) is text.
+
+**Provider files decode strictly.** A key the schema does not have is an error with
+`path:line:col` and the nearest known key (`unknown key "executable" in match (did you mean
+"executables"?)`). Every bad file, a new id the scope does not name included, gives the hook
+warning; the deny names the file once (`<path>: <error> (...); fix or delete it, then run tq
+providers list`); `tq doctor` names the workspaces whose scope names a bad new id, or none,
+and says the fix once.
+
+**Recorded, not changed.** An azure-devops identity runs `az account get-access-token` for any
+resource, `--resource-type arm` and `--resource https://management.azure.com/` included (the
+latter is denied today by the host rule, because the resource is spelled as a URL of az's
+API): the claim is per first subcommand (round 3). A `*` inside a quoted URL is a
+self-protection false positive outside this record.
+
+This round changes `internal/guard` (the PowerShell splitter), `internal/policy`,
+`internal/providers` and the catalog, `internal/doctor` and `internal/cmd`.
+
+Tests: `TestScope_PowerShellCommandSplitting`, `TestSelfProtection_PowerShellCommandSplitting`,
+`TestScope_HereStringsAndHeredocsAsCode`, `TestScope_HostPaths`, `TestScope_MCPURLFields`,
+`TestScope_GitTransport`, `TestScope_Round3Mutants`, `TestScope_EveryProvider` (now with git
+hosts and public entries: 57 providers, 582 checks), `TestPreToolUse_BadProviderFiles`
+(strict keys, warnings, the path once), `TestProviders_BadFilesReported` (doctor hints).
+
 Records are never edited after acceptance. A changed mind is a new record that
 supersedes this one.

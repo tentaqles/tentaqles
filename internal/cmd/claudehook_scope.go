@@ -86,9 +86,9 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set) *
 // scopeCatalogError judges the user provider files for a guard: v2 identity (ADR-0007 round
 // 3). deny is why every call must be refused, or "": a file tq did not load whose id the
 // identity's scope names (its scope: list, an identity, the git provider), or a provider
-// folder tq cannot read. warnings name the files that override a built-in id and did not
-// load: the built-in lists stay in force and work goes on. A bad file with a new id the scope
-// does not name changes nothing here; tq doctor and tq providers list report every bad file.
+// folder tq cannot read. warnings name every other file that did not load: an override of a
+// built-in id (the built-in lists stay in force) or a new id the scope does not name; work
+// goes on. tq doctor and tq providers list report every bad file too.
 // The deny goes through the same fail-closed path as an unreadable manifest
 // (resolve.Result.Unreadable): one mechanism, never a silent skip of the bad file.
 func scopeCatalogError(ws *resolve.Workspace) (deny string, warnings []string) {
@@ -119,11 +119,13 @@ func scopeCatalogError(ws *resolve.Workspace) (deny string, warnings []string) {
 				"): tq cannot tell what this identity may touch, so it denies every call here until a human fixes ~/.tentaqles/providers", nil
 		}
 		switch {
-		case fe.Builtin:
+		case !fe.Builtin && named[fe.ID]:
+			return "identity " + ws.Name + " names provider " + fe.ID + ", whose file does not load: " + fe.Error() +
+				". tq cannot tell what this identity may touch, so it denies every call here", nil
+		default:
+			// an override (the built-in lists apply) or a new id this scope does not name:
+			// work goes on, and the developer is told on every answer (QA round 3, item 8)
 			warnings = append(warnings, "tq: warning: provider file "+fe.Error())
-		case named[fe.ID]:
-			return "the scope of identity " + ws.Name + " names provider " + fe.ID + ", whose file does not load (" + fe.Error() +
-				"): tq cannot tell what this identity may touch, so it denies every call here", nil
 		}
 	}
 	return "", warnings

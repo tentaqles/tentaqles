@@ -109,7 +109,9 @@ optional; validated at load.
 | `cmdlets` | `Verb-Noun`, or `*-<NounPrefix>*` | a command verb: the exact name (`Set-AWSCredential`), or any verb whose noun starts with the prefix (`*-S3*` matches `Get-S3Bucket`); also `Get-Command <name>`; case-insensitive. Pick prefixes no core PowerShell noun starts with |
 | `env` | variable names; a trailing `*` is a prefix (`TF_TOKEN_*`) | a reference: `$NAME`, `${NAME}`, `${#NAME}`, `$env:NAME`, `%NAME%`, `Env:NAME`, `Env:NAME*`, `NAME=`, `export`/`unset`/`set`/`setx`/`printenv`/`declare -p NAME`, `[Environment]::SetEnvironmentVariable('NAME')`, `environ['NAME']`, `getenv("NAME")`, `process.env.NAME`, `const {NAME}=process.env`, `Deno.env.get('NAME')`, `Bun.env.NAME`, Ruby `ENV["NAME"]`/`ENV.fetch("NAME")`, Perl `$ENV{NAME}`; case-insensitive. Not matched inside a single-quoted bash string, a grep pattern, a commit message or a here-string (those are text) |
 | `paths` | `~/...`, `%APPDATA%/...`, `%LOCALAPPDATA%/...`, forward slashes, no `..` or glob | the path and everything under it, in a file tool (Read, Write, Edit, Glob, Grep, LS, ...); `%APPDATA%`/`%LOCALAPPDATA%` expanded in file-tool paths and shell words; a quoted segment (`$env:APPDATA\'GitHub CLI'`) read without its quotes; `tar -C <dir>` and a preceding `cd` set the base; a Glob/Grep `pattern`/`glob`/`path` and a recursive search above the tree. A root whose variable is unset is skipped |
-| `hosts` | lower-case DNS names with a dot, optionally followed by a path prefix (`gitlab.com/api/`) | the host and every subdomain, in a URL anywhere in a shell line, a network verb's bare host, a WebFetch URL and any string of an MCP tool input; with a path prefix, only URLs under it. List **API hosts**, never a whole registrable domain that also serves public content: `api.github.com`, not `githubusercontent.com`; named `*.googleapis.com` API hosts, not `googleapis.com`; `gitlab.com/api/`, not `gitlab.com` |
+| `hosts` | lower-case DNS names with a dot, optionally followed by a path prefix (`gitlab.com/api/`) | the host and every subdomain, in a URL anywhere in a shell line, a network verb's bare host, a WebFetch URL and a URL-shaped field of an MCP tool input (url, uri, endpoint, href, link, `*Url`, or a value that is one URL); with a path prefix, only URLs under it, after the path is normalised (dot segments, repeated slashes, percent-encoded unreserved characters). List **API hosts**, never a whole registrable domain that also serves public content: `api.github.com`, not `githubusercontent.com`; named `*.googleapis.com` API hosts, not `googleapis.com` with the public content in `public`; `gitlab.com/api/`, not `gitlab.com` |
+| `public` | exact hosts, optionally with a path prefix (`fonts.googleapis.com`, `storage.googleapis.com/`) | exceptions to `hosts`: the vendor's public content under its API domain (fonts, a public GCS object, an installer CDN such as `awscli.amazonaws.com`). It wins over a `hosts` entry it matches at least as precisely (a longer host, then a longer path), so `storage.googleapis.com/storage/` stays an API path. A user file cannot add one |
+| `git_hosts` | git hosts (`github.com`, `gitlab.com`) | `ssh`/`scp`/`sftp` to the host, and a git command (`push`, `fetch`, `pull`, `ls-remote`, `clone`, `remote`, `submodule`, `archive`) with a URL on it over the ssh transport (`git@host:path`, `ssh://`), or a `git push` over https. An anonymous https clone, fetch, pull or ls-remote is allowed |
 | `mcp` | `^[a-z0-9]+$` tokens | a token of the MCP server name (split on `_ - .`, adjacent pairs joined: `google-cloud` → `googlecloud`). An MCP server is allowed only when its exact name is the identity's own `claude.bundle.mcp`; any out-of-scope token otherwise denies |
 
 Rules of thumb for a new entry:
@@ -138,10 +140,12 @@ Rules of thumb for a new entry:
 ### A user file that does not load
 
 A file under `~/.tentaqles/providers/` that cannot be read, does not parse or
-validate, sets another provider's identity variable, or (for a new id) claims
-anything a built-in provider lists, is not loaded. Every message names the
-full path, the first error and the fix: `fix or delete <path>, then run tq
-providers list`.
+validate (a key the schema does not have included), sets another provider's
+identity variable, or (for a new id) claims anything a built-in provider
+lists, is not loaded. Every message names the file once, with the line and
+column of a schema error, the first error and the fix:
+`~/.tentaqles/providers/acme.yaml:5:3: unknown key "executable" in match (did
+you mean "executables"?) (...); fix or delete it, then run tq providers list`.
 
 - **It overrides a built-in id** (`gh.yaml`): the built-in entry and its match
   lists stay in force, and the hook prints a warning on stderr with every
@@ -149,7 +153,7 @@ providers list`.
 - **It defines a new id**: calls are refused (`tq/guard-error`) only in a
   workspace whose scope names that id (its `scope:` list, an identity, the git
   provider); a manifest that names it reports the file in its load error.
-  Other workspaces are unaffected.
+  Other workspaces go on, with the same warning on stderr.
 - **A new id may not claim a built-in's entries**: an executable, subcommand,
   image, module, PowerShell module or cmdlet, variable, path (or one under it),
   host (or one under it) or MCP token a built-in provider lists. An in-scope
@@ -159,7 +163,8 @@ providers list`.
 - `tq providers list` prints the catalog, every overlap between providers (the
   same entry, or a host under another's host) and every file it did not load,
   and exits non-zero when one did not load. `tq doctor` reports each one as
-  `provider-file-invalid` (a warning for an override, an error for a new id).
+  `provider-file-invalid` (a warning for an override, an error for a new id,
+  naming the workspaces whose scope names it).
 
 ## Company tools in the catalog
 

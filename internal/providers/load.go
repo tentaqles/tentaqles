@@ -2,6 +2,7 @@ package providers
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -51,6 +52,9 @@ func loadYAMLProvider(name string, data []byte, source string) (Provider, error)
 // parseProvider decodes and validates one provider file named for id; its errors do not
 // repeat the file name (the caller adds it).
 func parseProvider(data []byte, id, source string) (Provider, error) {
+	if err := checkKnownKeys(data); err != nil {
+		return Provider{}, err
+	}
 	var p Provider
 	if err := yaml.Unmarshal(data, &p); err != nil {
 		return Provider{}, err
@@ -115,19 +119,32 @@ func (e *FileError) First() string {
 	return strings.TrimSpace(msg)
 }
 
-// Fix is what the developer does about it.
+// Fix is what the developer does about it; the message has already named the file.
 func (e *FileError) Fix() string {
-	return "fix or delete " + e.Path + ", then run tq providers list"
+	return "fix or delete it, then run tq providers list"
 }
 
-func (e *FileError) Error() string {
-	what := "tq ignores it"
-	if e.Builtin {
-		what = "tq ignores it and uses the built-in " + e.ID + " lists"
-	} else {
-		what = "tq ignores it, and refuses every call in a workspace whose scope names " + e.ID
+// Detail is the file (with the line and column of a schema error: path:5:3) and the first
+// error, without what tq does about it or the fix.
+func (e *FileError) Detail() string {
+	sep := ": "
+	var ke *keyError
+	if errors.As(e.Err, &ke) {
+		sep = ":" // the error starts with line:col
 	}
-	return e.Path + ": " + e.First() + " (" + what + "); " + e.Fix()
+	return e.Path + sep + e.First()
+}
+
+// Error names the file once (with the line and column of a schema error: path:5:3), the
+// first error, what tq does instead and the fix.
+func (e *FileError) Error() string {
+	var what string
+	if e.Builtin {
+		what = "tq uses the built-in " + e.ID + " lists instead"
+	} else {
+		what = "a workspace whose scope names " + e.ID + " is refused every call"
+	}
+	return e.Detail() + " (" + what + "); " + e.Fix()
 }
 
 func (e *FileError) Unwrap() error { return e.Err }

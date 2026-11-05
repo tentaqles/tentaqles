@@ -39,4 +39,5 @@ match:
   env: [GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN, GH_CONFIG_DIR, GH_HOST]
   paths: ["~/.config/gh", "%APPDATA%/GitHub CLI"]
   hosts: [api.github.com, uploads.github.com, github.com/login/oauth/, github.com/login/device/]
+  git_hosts: [github.com, ssh.github.com]
   mcp: [github, gh]

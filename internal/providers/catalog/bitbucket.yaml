@@ -8,4 +8,5 @@ cli: null
 match:
   env: [BITBUCKET_TOKEN, BITBUCKET_APP_PASSWORD, BITBUCKET_USERNAME]
   hosts: [api.bitbucket.org]
+  git_hosts: [bitbucket.org, altssh.bitbucket.org]
   mcp: [bitbucket]

@@ -30,4 +30,5 @@ match:
   env: [OCI_CLI_CONFIG_FILE, OCI_CLI_PROFILE, OCI_CLI_KEY_FILE]
   paths: ["~/.oci"]
   hosts: [oraclecloud.com]
+  public: [ocistatus.oraclecloud.com]
   mcp: [oci, oracle]

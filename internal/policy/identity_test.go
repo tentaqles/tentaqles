@@ -444,7 +444,7 @@ func TestScope_Round3Missed(t *testing.T) {
 		{"Perl $ENV{'X'}", bash(`perl -e "print \$ENV{'AWS_PROFILE'}"`), env},
 		// MCP
 		{"an MCP input holding an API URL", ToolCall{Tool: "mcp__fetch__fetch", Content: `{"url":"https://api.vercel.com/v9/projects"}`}, host},
-		{"a nested MCP input URL", ToolCall{Tool: "mcp__browser__open", Content: `{"args":{"target":"see https://api.github.com/user"}}`}, host},
+		{"a nested MCP input URL", ToolCall{Tool: "mcp__browser__open", Content: `{"args":{"target":"https://api.github.com/user"}}`}, host},
 		{"mcp__gh__", ToolCall{Tool: "mcp__gh__list_pull_requests", Content: "{}"}, mcp},
 		// must allow
 		{"an MCP input holding a public URL", ToolCall{Tool: "mcp__fetch__fetch", Content: `{"url":"https://example.com/docs"}`}, ""},
@@ -564,7 +564,10 @@ func TestMaskTextArgs_FailClosed(t *testing.T) {
 		{"powershell", `git commit -m 'unterminated`, false},
 		{"powershell", `git commit -m "x\" ; echo y`, true},
 		{"powershell", "git commit -m \"a`\"b\"", false},
-		{"powershell", "@'\nliteral\n'@", true},
+		{"powershell", "@'\nliteral\n'@", false}, // a bare here-string is output, maybe run: scanned
+		{"powershell", "@'\nliteral\n'@ | Set-Content x", true},
+		{"powershell", "$n = @'\nliteral\n'@; Set-Content x $n", true},
+		{"powershell", "$n = @'\nliteral\n'@; iex $n", false},
 		{"powershell", "@'\nno end", false},
 	}
 	for _, c := range cases {
@@ -580,4 +583,210 @@ func TestMaskTextArgs_FailClosed(t *testing.T) {
 	if out := maskTextArgsFor(`git commit -m "x\" ; echo y`, "powershell"); !strings.HasSuffix(out, "; echo y") {
 		t.Errorf("PowerShell blanked past the closing quote: %q", out)
 	}
+}
+
+// TestScope_PowerShellCommandSplitting: a PowerShell line is split into commands with
+// PowerShell's quoting (a backslash is ordinary, a backtick escapes, a doubled quote is a quote),
+// in the PowerShell tool, a decoded -EncodedCommand and the string of pwsh -Command, so a
+// string ending in a backslash cannot swallow the commands after it (QA round 3, item 1).
+func TestScope_PowerShellCommandSplitting(t *testing.T) {
+	const cli, path = OutOfScopeCLIID, OutOfScopePathID
+	f := newScopeFixture(t) // az, azure-devops, claude
+	runScopeCases(t, f, []scopeCase{
+		{"Set-Location with a trailing backslash", pwsh(`Set-Location "C:\work\"; aws ec2 run-instances --image-id ami-1 --instance-type t3.micro`), cli},
+		{"an assignment with a trailing backslash", pwsh(`$out = "C:\temp\"; aws ec2 run-instances --image-id ami-1`), cli},
+		{"Write-Host then the install path", pwsh(`Write-Host "C:\temp\"; & "C:\Program Files\Amazon\AWSCLIV2\aws.exe" ec2 run-instances`), cli},
+		{"Write-Host then python -m awscli", pwsh(`Write-Host "C:\temp\"; python -m awscli ec2 run-instances --image-id ami-1`), cli},
+		{"Write-Host then New-EC2Instance", pwsh(`Write-Host "C:\temp\"; New-EC2Instance -ImageId ami-1`), cli},
+		{"Write-Host then docker run", pwsh(`Write-Host "C:\temp\"; docker run --rm amazon/aws-cli ec2 run-instances`), cli},
+		{"Write-Host then Import-Module", pwsh(`Write-Host "C:\temp\"; Import-Module AWS.Tools.EC2`), cli},
+		{"Write-Host then gh auth token", pwsh(`Write-Host "C:\temp\"; gh auth token`), cli},
+		{"Write-Host then a credential read", pwsh(`Write-Host "C:\temp\"; Get-Content "$env:USERPROFILE\.aws\credentials"`), path},
+		{"a commit message ending in a backslash", pwsh(`git commit -m "x\" ; aws s3 ls ; echo \"y"`), cli},
+		{"Bash: the same line is one message", bash(`git commit -m "x\" ; aws s3 ls ; echo \"y"`), ""},
+		{"a separator inside a doubled-quote string", pwsh(`git commit -m 'it''s; aws s3 ls'`), ""},
+		{"a separator inside a doubled double quote", pwsh(`git commit -m "say ""x; aws s3 ls"""`), ""},
+		{"pwsh -Command from bash uses PowerShell rules", bash(`pwsh -Command 'Write-Host "C:\temp\"; aws s3 ls'`), cli},
+		{"an encoded command uses PowerShell rules", pwsh("powershell -EncodedCommand " + encodePS(`Write-Host "C:\temp\"; aws s3 ls`)), cli},
+	})
+	web := newScopeFixture(t, "gh", "vercel", "claude")
+	runScopeCases(t, web, []scopeCase{
+		{"a backtick-escaped quote ends no string", pwsh("git commit -m \"fix`\"\" ; az vm list"), cli},
+		{"echo with a backtick-escaped quote", pwsh("echo \"fix`\"\" ; az vm list"), cli},
+		{"echo 'it''s' then az", pwsh("echo 'it''s' ; az vm list"), cli},
+		{"Bash: echo 'it''s' then az", bash("echo 'it''s' ; az vm list"), cli},
+		{"gh in scope", pwsh(`Write-Host "C:\temp\"; gh pr list`), ""},
+	})
+}
+
+// TestSelfProtection_PowerShellCommandSplitting: the self-protection rules share the splitter
+// and its PowerShell rules.
+func TestSelfProtection_PowerShellCommandSplitting(t *testing.T) {
+	s, state, cwd := selfProtectionSet(t)
+	cfg := filepath.Join(state, "config.yaml")
+	for _, c := range []struct {
+		call ToolCall
+		want string
+	}{
+		{ToolCall{Tool: "PowerShell", Command: `Write-Host "C:\temp\"; Remove-Item ` + cfg}, ProtectedPathID},
+		{ToolCall{Tool: "PowerShell", Command: `Write-Host "C:\temp\"; tq allow acme`}, HumanOnlyCommandID},
+		{ToolCall{Tool: "PowerShell", Command: `Write-Host "C:\temp\"; Get-ChildItem`}, ""},
+	} {
+		d := SelfProtection(s, cwd, c.call)
+		got := ""
+		if d.Action == Deny {
+			got = d.Matched[0].ID
+		}
+		if got != c.want {
+			t.Errorf("%q: got %q, want %q (%s)", c.call.Command, got, c.want, d.Reason())
+		}
+	}
+}
+
+// TestScope_HereStringsAndHeredocsAsCode: a here-string or a heredoc that is run or sent is
+// scanned; only one that is plain data (written to a file, assigned and never run, a commit
+// message) is blanked (QA round 3, item 4).
+func TestScope_HereStringsAndHeredocsAsCode(t *testing.T) {
+	const cli, env, host, path = OutOfScopeCLIID, OutOfScopeEnvID, OutOfScopeHostID, OutOfScopePathID
+	f := newScopeFixture(t) // az, azure-devops, claude
+	runScopeCases(t, f, []scopeCase{
+		{"a here-string URL", pwsh("Invoke-RestMethod -Uri @'\nhttps://api.github.com/user\n'@"), host},
+		{"iex of a here-string", pwsh("iex @'\naws s3 ls\n'@"), cli},
+		{"Invoke-Expression of a here-string", pwsh("Invoke-Expression @'\naws s3 ls\n'@"), cli},
+		{"a here-string piped to Invoke-Expression", pwsh("@'\naws s3 ls\n'@ | Invoke-Expression"), cli},
+		{"a scriptblock from a here-string", pwsh("[scriptblock]::Create(@'\naws s3 ls\n'@).Invoke()"), cli},
+		{"a here-string assigned, then run", pwsh("$s = @'\naws s3 ls\n'@; Invoke-Expression $s"), cli},
+		{"pwsh -Command of a here-string", pwsh("pwsh -NoProfile -Command @'\naws s3 ls\n'@"), cli},
+		{"iex of a here-string with a URL", pwsh("iex @'\ncurl.exe https://api.github.com/user\n'@"), host},
+		{"iex of a here-string with a credential read", pwsh("Invoke-Expression @'\nGet-Content $HOME\\.aws\\credentials\n'@"), path},
+		{"bash reads a heredoc", bash("bash <<'EOF'\naws s3 ls\nEOF"), cli},
+		{"sh -s reads a heredoc", bash("sh -s <<EOF\ngh auth token\nEOF"), cli},
+		{"python - reads a heredoc", bash("python - <<'EOF'\nimport boto3\nprint(boto3.client('s3').list_buckets())\nEOF"), cli},
+		{"python3 reads a heredoc", bash("python3 <<EOF\nfrom google.cloud import storage\nEOF"), cli},
+		{"node reads a heredoc", bash("node <<'EOF'\nconsole.log(process.env.AWS_PROFILE)\nEOF"), env},
+		{"pwsh -Command - reads a heredoc", bash("pwsh -Command - <<'EOF'\nGet-S3Bucket\nEOF"), cli},
+		{"a commit heredoc does not hide the next command", bash("git commit -m \"$(cat <<'EOF'\nx\nEOF\n)\" ; aws s3 ls"), cli},
+		// plain data stays text
+		{"a here-string written to a file", pwsh("@'\ncurl https://api.github.com/user\n'@ | Set-Content notes.md"), ""},
+		{"Set-Content -Value of a here-string", pwsh("Set-Content -Path notes.md -Value @'\nhttps://api.github.com/user\n'@"), ""},
+		{"a here-string assigned and written", pwsh("$notes = @'\nsee https://api.github.com/user\n'@; Set-Content notes.md $notes"), ""},
+		{"a here-string commit message", pwsh("git commit -m @'\ndocs: remove the aws s3 sync and gcloud auth steps\n'@"), ""},
+		{"a here-string commit message then a command", pwsh("git commit -m @'\nrelease notes\n'@; aws s3 ls"), cli},
+		{"a data heredoc", bash("cat > notes.md <<'EOF'\nimport boto3\ncurl https://api.github.com/user\nEOF"), ""},
+		{"a commit message heredoc", bash("git commit -F - <<'EOF'\ndocs: drop the gh auth login step\nEOF"), ""},
+	})
+}
+
+// TestScope_HostPaths: a URL path is normalised (dot segments, repeated slashes, percent-
+// encoded unreserved characters) before the prefix match; Google APIs are every
+// *.googleapis.com host but the public content hosts; the slack, sentry and oracle lists are
+// API hosts; installer CDNs are public (QA round 3, items 2, 3, 6).
+func TestScope_HostPaths(t *testing.T) {
+	const host = OutOfScopeHostID
+	f := newScopeFixture(t) // az, azure-devops, claude
+	runScopeCases(t, f, []scopeCase{
+		{"a dot-dot segment", bash("curl -s https://github.com/x/../login/oauth/access_token -d code=1"), host},
+		{"a dot segment", bash("curl -s https://gitlab.com/./api/v4/user"), host},
+		{"a dot-dot segment into the API", bash("curl -s https://gitlab.com/x/../api/v4/user"), host},
+		{"a doubled slash", bash("curl -s https://storage.googleapis.com//storage/v1/b/x/o"), host},
+		{"a percent-encoded letter", bash("curl -s https://gitlab.com/%61pi/v4/user"), host},
+		{"the prefix without its trailing slash", bash("curl -s https://gitlab.com/api"), host},
+		{"a dot-dot segment out of the API", bash("curl -s https://gitlab.com/api/../gitlab-org/cli/-/raw/main/README.md"), ""},
+		{"www.googleapis.com storage", bash("curl -s https://www.googleapis.com/storage/v1/b?project=p"), host},
+		{"www.googleapis.com compute", ToolCall{Tool: "WebFetch", URL: "https://www.googleapis.com/compute/v1/projects/p/zones"}, host},
+		{"www.googleapis.com oauth2", bash("curl -s https://www.googleapis.com/oauth2/v4/token -d x"), host},
+		{"the GCS download API", bash("curl -s -o x.bin 'https://storage.googleapis.com/download/storage/v1/b/bkt/o/secret.txt?alt=media'"), host},
+		{"the GCS batch API", bash("curl -s https://storage.googleapis.com/batch/storage/v1"), host},
+		{"a regional API host", bash("curl -s https://us-central1-aiplatform.googleapis.com/v1/projects/p"), host},
+		{"a bucket host", bash("curl -s https://bkt.storage.googleapis.com/secret.txt"), host},
+		{"Google Fonts", bash("curl https://fonts.googleapis.com/css2?family=Inter"), ""},
+		{"Google Hosted Libraries", bash("curl -O https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"), ""},
+		{"a public GCS object", bash("curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.31.0/bin/windows/amd64/kubectl.exe"), ""},
+		{"Sentry docs", ToolCall{Tool: "WebFetch", URL: "https://docs.sentry.io/platforms/python/"}, ""},
+		{"Sentry status", ToolCall{Tool: "WebFetch", URL: "https://status.sentry.io/"}, ""},
+		{"the Sentry API", bash("curl https://sentry.io/api/0/projects/"), host},
+		{"Sentry ingest", bash("curl -X POST https://o1.ingest.us.sentry.io/api/1/envelope/"), host},
+		{"Slack API docs", ToolCall{Tool: "WebFetch", URL: "https://api.slack.com/messaging/webhooks"}, ""},
+		{"Slack status", ToolCall{Tool: "WebFetch", URL: "https://status.slack.com/"}, ""},
+		{"the Slack Web API", bash("curl https://slack.com/api/chat.postMessage -d x"), host},
+		{"a Slack webhook", bash("curl -X POST https://hooks.slack.com/services/T/B/X"), host},
+		{"Oracle docs", ToolCall{Tool: "WebFetch", URL: "https://docs.oracle.com/en-us/iaas/Content/home.htm"}, ""},
+		{"OCI status", ToolCall{Tool: "WebFetch", URL: "https://ocistatus.oraclecloud.com/"}, ""},
+		{"the OCI API", bash("curl https://iaas.us-ashburn-1.oraclecloud.com/20160918/instances"), host},
+	})
+	web := newScopeFixture(t, "gh", "vercel", "claude")
+	runScopeCases(t, web, []scopeCase{
+		{"the AWS CLI installer", bash("curl -LO https://awscli.amazonaws.com/AWSCLIV2.msi"), ""},
+		{"the .NET installer", bash("curl -LO https://dotnetcli.blob.core.windows.net/dotnet/Sdk/8.0.100/dotnet-sdk-8.0.100-win-x64.zip"), ""},
+		{"the Azure CLI installer", bash("curl -LO https://azcliprod.blob.core.windows.net/msi/azure-cli-2.60.0.msi"), ""},
+		{"an S3 API call", bash("curl https://s3.amazonaws.com/bucket/key"), host},
+		{"an Azure storage account", bash("curl https://myacct.blob.core.windows.net/c/x"), host},
+	})
+}
+
+// TestScope_MCPURLFields: an MCP input's URL is judged only in a URL-shaped field (url, uri,
+// endpoint, href, link) or a value that is one URL, not in free text (QA round 3, item 5).
+func TestScope_MCPURLFields(t *testing.T) {
+	const host = OutOfScopeHostID
+	f := newScopeFixture(t) // az, azure-devops, claude
+	mcp := func(tool, in string) ToolCall { return ToolCall{Tool: tool, Content: in} }
+	runScopeCases(t, f, []scopeCase{
+		{"url", mcp("mcp__fetch__fetch", `{"url":"https://api.vercel.com/v9/projects"}`), host},
+		{"uri", mcp("mcp__http__get", `{"uri":"https://api.github.com/user"}`), host},
+		{"endpoint, nested", mcp("mcp__http__get", `{"args":{"endpoint":"https://api.github.com/user"}}`), host},
+		{"baseUrl", mcp("mcp__http__get", `{"baseUrl":"https://api.github.com"}`), host},
+		{"href in a list", mcp("mcp__browser__open", `{"links":[{"href":"https://api.github.com/user"}]}`), host},
+		{"a value that is one URL", mcp("mcp__browser__open", `{"target":"https://api.github.com/user"}`), host},
+		{"playwright navigate", mcp("mcp__playwright__browser_navigate", `{"url":"https://ec2.amazonaws.com/?Action=DescribeInstances"}`), host},
+		{"free text in a memory observation", mcp("mcp__memory__create_entities", `{"entities":[{"name":"migr","observations":["old assets lived at https://bucket.s3.amazonaws.com/x"]}]}`), ""},
+		{"free text in an issue body", mcp("mcp__notes__add", `{"title":"broken link","body":"The report link https://reports.s3.amazonaws.com/q3.pdf 404s"}`), ""},
+		{"a public URL", mcp("mcp__fetch__fetch", `{"url":"https://example.com/docs"}`), ""},
+	})
+}
+
+// TestScope_GitTransport: git and ssh to an out-of-scope provider's git host use credentials
+// the identity does not own and are denied; an anonymous https clone, fetch, pull or
+// ls-remote is allowed (QA round 3, item 7).
+func TestScope_GitTransport(t *testing.T) {
+	const host = OutOfScopeHostID
+	f := newScopeFixture(t) // az, azure-devops, claude
+	runScopeCases(t, f, []scopeCase{
+		{"ssh -T github", bash("ssh -T git@github.com"), host},
+		{"ssh -T gitlab", bash("ssh -T git@gitlab.com"), host},
+		{"ssh -p to github", bash("ssh -p 443 git@ssh.github.com"), host},
+		{"push over ssh", bash("git push git@gitlab.com:org/x.git main"), host},
+		{"push over https", bash("git push https://github.com/org/x.git main"), host},
+		{"push with -C", pwsh("git -C sub push https://gitlab.com/org/x.git HEAD"), host},
+		{"fetch over ssh", bash("git fetch git@github.com:org/x.git"), host},
+		{"ls-remote over ssh://", bash("git ls-remote ssh://git@github.com/org/x.git"), host},
+		{"clone over ssh", bash("git clone git@bitbucket.org:org/x.git"), host},
+		{"pull over ssh", bash("git pull git@github.com:org/x.git main"), host},
+		{"remote add over ssh", bash("git remote add gh git@github.com:org/x.git"), host},
+		{"submodule add over ssh", bash("git submodule add git@github.com:org/x.git vendor/x"), host},
+		{"clone over https", bash("git clone https://github.com/Azure/azure-cli.git"), ""},
+		{"fetch over https", bash("git fetch https://gitlab.com/gitlab-org/cli.git"), ""},
+		{"ls-remote over https", bash("git ls-remote https://github.com/org/x.git"), ""},
+		{"pull over https", bash("git pull https://github.com/org/x.git main"), ""},
+		{"an in-scope git host over ssh", bash("git clone git@ssh.dev.azure.com:v3/org/proj/repo"), ""},
+		{"an in-scope push", bash("git push https://dev.azure.com/org/proj/_git/repo main"), ""},
+		{"ssh to a VM", bash("ssh azureuser@myvm.eastus.cloudapp.azure.com"), ""},
+		{"push to a named remote", bash("git push origin main"), ""},
+	})
+	gl := newScopeFixture(t, "glab", "claude")
+	runScopeCases(t, gl, []scopeCase{
+		{"ssh -T gitlab in scope", bash("ssh -T git@gitlab.com"), ""},
+		{"push to gitlab in scope", bash("git push git@gitlab.com:org/x.git main"), ""},
+		{"push to github out of scope", bash("git push git@github.com:org/x.git main"), host},
+	})
+}
+
+// TestScope_Round3Mutants pins the mutants QA round 3 found alive.
+func TestScope_Round3Mutants(t *testing.T) {
+	f := newScopeFixture(t) // az, azure-devops, claude
+	runScopeCases(t, f, []scopeCase{
+		{"every module argument is checked", pwsh("Install-Module -Scope CurrentUser AWS.Tools.S3"), OutOfScopeCLIID},
+		{"a comma list of modules", pwsh("Import-Module Pester,AWS.Tools.S3"), OutOfScopeCLIID},
+		{"gitlab.com/api without a slash", bash("curl -s https://gitlab.com/api"), OutOfScopeHostID},
+		{"gitlab.com/apix is not the API", bash("curl -s https://gitlab.com/apix/readme"), ""},
+	})
 }

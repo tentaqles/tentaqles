@@ -16,5 +16,6 @@ match:
   executables: [sentry-cli]
   env: [SENTRY_AUTH_TOKEN]
   paths: ["~/.sentryclirc"]
-  hosts: [sentry.io]
+  hosts: [sentry.io/api/, ingest.sentry.io, ingest.us.sentry.io, ingest.de.sentry.io]
+  public: [docs.sentry.io]
   mcp: [sentry]
