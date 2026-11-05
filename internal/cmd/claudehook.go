@@ -259,11 +259,12 @@ scan cannot finish are denied (BLOCKED [tq/guard-error], or
 // hookDeadline bounds one whole pre-tool-use decision. A harness that kills
 // a hook at its own timeout (15 s for Claude in the plugin's hooks.json, 30 s
 // for Codex, codexcfg.HookTimeoutSeconds) lets the call run, so tq denies
-// first (PRD v2 §6.3, fail closed): the decision at 9 s, the process
-// watchdog (hookWatchdog) at 10 s, tq_hook.sh's at 11 s.
+// first (PRD v2 §6.3, fail closed): the decision at 6 s, the process
+// watchdog (hookWatchdog) at 7 s, tq_hook.sh's TERM at 7 s and KILL at 8 s,
+// at least 5 s under the shortest harness timeout (Git Bash forks are slow).
 // TestHookDeadlinesUnderHarnessTimeouts pins the order. It leaves room
 // above the scan budget (at most maxScanBudget). Tests lower it.
-var hookDeadline = 9 * time.Second
+var hookDeadline = 6 * time.Second
 
 // hookRun is one pre-tool-use invocation: the flags and what is known about
 // the call so far, so a fail-closed answer (a panic, the deadline) can still

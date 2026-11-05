@@ -114,8 +114,10 @@ func sanitizeDenial(d audit.Denial) audit.Denial {
 	return d
 }
 
-// escapeControl writes a C0 control character or DEL as \xNN and a C1
-// control character as \u00NN; keepNewline leaves a newline as it is.
+// escapeControl writes a C0 control character or DEL as \xNN, and a C1
+// control character or a Unicode bidi override (U+202A–U+202E,
+// U+2066–U+2069, which can make a line read in another order than it is)
+// as \uNNNN; keepNewline leaves a newline as it is.
 func escapeControl(s string, keepNewline bool) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -124,7 +126,9 @@ func escapeControl(s string, keepNewline bool) string {
 			b.WriteRune(r)
 		case r < 0x20 || r == 0x7f:
 			fmt.Fprintf(&b, `\x%02x`, r)
-		case r >= 0x80 && r < 0xa0:
+		case r >= 0x80 && r < 0xa0,
+			r >= 0x202a && r <= 0x202e, // bidi embeddings and overrides
+			r >= 0x2066 && r <= 0x2069: // bidi isolates
 			fmt.Fprintf(&b, `\u%04x`, r)
 		default:
 			b.WriteRune(r)

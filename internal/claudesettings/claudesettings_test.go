@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 )
@@ -104,6 +105,16 @@ func writeOld(t *testing.T, settings, state string) string {
 		}
 	}
 	return dir
+}
+
+// editedAfter makes settings.json newer than the state file: the user (or
+// the harness) changed it after the older render wrote both.
+func editedAfter(t *testing.T, dir string) {
+	t.Helper()
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "settings.json"), later, later); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func readJSON(t *testing.T, p string) map[string]any {
@@ -237,6 +248,7 @@ func TestRenderKeepsADefaultModeTheEvidenceDoesNotName(t *testing.T) {
 		"plan":   "auto",
 	} {
 		dir := writeOld(t, `{"permissions":{"defaultMode":"`+value+`"}}`, `{"allow":["Bash(ls:*)"]}`)
+		editedAfter(t, dir)
 		m := man()
 		m.OldPermissionMode = oldMode
 		if _, err := Render(dir, Desired(m, ""), false); err != nil {
@@ -271,6 +283,7 @@ func TestRenderCorruptStateClaimsNothing(t *testing.T) {
 // render produced, or a skip flag set to false, is the user's.
 func TestRenderLeavesAModeTqNeverWrote(t *testing.T) {
 	dir := writeOld(t, `{"permissions":{"defaultMode":"someFutureMode"},"skipDangerousModePermissionPrompt":false}`, `{}`)
+	editedAfter(t, dir)
 	if _, err := Render(dir, Desired(man(), ""), false); err != nil {
 		t.Fatal(err)
 	}

@@ -105,13 +105,13 @@ fi
 #
 # A tq that hangs is stopped: Claude Code kills a hook at its timeout (15 s
 # in hooks.json) and then RUNS the call, so tq runs in the background under
-# a watchdog that stops it after _tq_deadline seconds (11; tq's own decision
-# deadline is 9 s), and the stop is a deny. Only bash builtins, `sleep` and
+# a watchdog that stops it after _tq_deadline seconds (7, then a KILL at 8; tq's own decision
+# deadline is 6 s), and the stop is a deny. Only bash builtins, `sleep` and
 # `kill` are used (Git Bash, macOS, Linux; no GNU timeout). The background
 # job reads the hook's stdin through an explicit 0<&0, since bash gives an
 # asynchronous command /dev/null otherwise. TQ_HOOK_WRAPPER_DEADLINE may
 # only lower the deadline (tests); a larger value is ignored.
-_tq_deadline=11
+_tq_deadline=7
 case "${TQ_HOOK_WRAPPER_DEADLINE:-}" in
   ''|*[!0-9]*) ;;
   *) [ "$TQ_HOOK_WRAPPER_DEADLINE" -ge 1 ] && [ "$TQ_HOOK_WRAPPER_DEADLINE" -lt "$_tq_deadline" ] && _tq_deadline="$TQ_HOOK_WRAPPER_DEADLINE" ;;

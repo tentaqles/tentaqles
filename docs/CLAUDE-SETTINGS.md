@@ -40,10 +40,15 @@ removes them, and only them:
 - the `allow`, `deny` and `ask` entries the state file records as tq's;
   entries you added by hand stay;
 - `defaultMode`, when the state file shows an older render and the value is
-  exactly the one that render wrote for the manifest's old
-  `claude.permission_mode` (`auto` for none or `auto`, `bypassPermissions`
-  for `bypass`, any other mode as it was); a different value is yours and
-  stays;
+  exactly the one that render wrote: the value `settings.json` still holds
+  when it has not changed since that render wrote it and its state file (an
+  older render rewrote `defaultMode` on every render), else the one it wrote
+  for the manifest's old `claude.permission_mode` (`auto` for none or `auto`,
+  `bypassPermissions` for `bypass`, any other mode as it was); a different
+  value is yours and stays. The value tq wrote is kept in the state file
+  (`legacy_default_mode`) until tq has removed it, so removing
+  `permission_mode` from the manifest first, as `tq doctor` advises, loses
+  nothing;
 - `skipDangerousModePermissionPrompt: true`, on the same evidence;
 - the `permissions` object, when this leaves it empty.
 
@@ -122,9 +127,11 @@ The launcher (`tq run . -- codex`, the `codex` function) starts Codex with
 its full-bypass flag `--dangerously-bypass-approvals-and-sandbox` (PRD v2
 §7.2): tq never sets how Codex asks, and its hook still denies the three
 categories. A flag you type yourself about asking or the sandbox (`-a`,
-`-s`, `--full-auto`, `--yolo`, the bypass flag, a `-c` override of
-`approval_policy` or `sandbox_mode`) goes through as typed and the launcher
-adds nothing. The launch is refused when `tq` is not on the PATH Codex will
+`-s` and the glued `-anever`/`-sread-only`, `--yolo`, the bypass flag, a `-c`
+override of `approval_policy` or `sandbox_mode`, glued ones included) goes
+through as typed and the launcher adds nothing. The flag goes right after
+`exec`, `e`, `resume` or `fork` (which take it themselves in codex 0.154),
+first otherwise. The launch is refused when `tq` is not on the PATH Codex will
 run with, since the Codex hook is a bare `tq claude-hook pre-tool-use
 --agent codex`. `codex-off`
 (`tq run --off -- codex`) starts Codex with its bypass flag, the main

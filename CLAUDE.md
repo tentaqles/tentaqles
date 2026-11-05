@@ -29,7 +29,7 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
     the protected path set of the run (`claudehook_protect.go`), first category that
     denies wins; there is no ask, and a call it cannot judge (an unreadable payload, a
-    panic, the 9 s deadline, an unreadable registry or manifest) is denied as
+    panic, the 6 s deadline, an unreadable registry or manifest) is denied as
     `tq/guard-error` (ADR-0006); every deny is one line in `$TQ_HOME/denials.jsonl`, the
     command redacted by `audit.RedactCommand`, read by `tq status --denials`; `session-start` prints the preamble. `humanonly.go` is the thin wrapper over
     `internal/humanonly` (`refuseAgent`, `humanGate`) that every command writing under

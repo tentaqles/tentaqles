@@ -79,7 +79,7 @@ on stderr and exit 2 (ADR-0006):
 |---|---|
 | a payload that cannot be read (see above) | `the hook payload cannot be read (...)`, `the hook payload names no tool` |
 | a panic in tq's own analysis (`tq: guard panic: …` on stderr too) | `tq guard error (...)` |
-| a decision that takes longer than 9 s; a tq process still running after 10 s (the process watchdog, also under Codex's bare hook command); a tq that `tq_hook.sh` stops after 11 s. All under the harness's own hook timeout (15 s Claude, 30 s Codex), since Claude Code and Codex run a call whose hook they killed (`TestHookDeadlinesUnderHarnessTimeouts` pins the order) | `the guard did not decide within 9s`, `tq did not answer within 10s`, `tq exited with status …` |
+| a decision that takes longer than 6 s; a tq process still running after 7 s (the process watchdog, also under Codex's bare hook command); a tq that `tq_hook.sh` stops (TERM at 7 s, KILL at 8 s), at least 5 s under the hook timeout because Git Bash forks are slow. All under the harness's own hook timeout (15 s Claude, 30 s Codex), since Claude Code and Codex run a call whose hook they killed (`TestHookDeadlinesUnderHarnessTimeouts` pins the order) | `the guard did not decide within 6s`, `tq did not answer within 7s`, `tq exited with status …` |
 | a usage error of `tq claude-hook pre-tool-use` (an unknown flag) | `tq could not run the hook (...)` |
 | a field tq cannot judge: a shell tool with no string `command`, a path field that is not a string, a Read naming no file, invalid UTF-8, and a tool tq does not know (or a lower-case `bash`) whose input carries a `command`, `file_path`, `notebook_path`, `path` or `pattern`. An unknown tool with none of these (a WebFetch-like tool) is allowed | `the hook payload cannot be judged (...)` |
 | `~/.tentaqles/config.yaml` cannot be read or parsed | `tq cannot read its registry (...)` |
@@ -416,18 +416,22 @@ The shell line is redacted before it is written, by a structural rule
 rather than a list of secret shapes (`audit.RedactCommand`): a word is kept
 only when its position says it cannot be a value. Kept are operators, the
 command word of each segment (after `NAME=` assignments and wrappers such as
-`sudo`, `env`, `xargs`; not a word that mixes a capital with a digit), flag
-names (`--name`, `--name=…`, `-x`; a longer single-dash word only when it is a
-known option such as `-Recurse`, otherwise `-p…`), assignment names (`NAME=…`),
+`sudo`, `env`, `xargs`; not a word with a digit followed by a letter, a capital
+outside a Verb-Noun cmdlet, a digit right after a wrapper, nor the word after a
+segment or line that ended on a bare `-p`), flag names (`--name` of letters,
+`--name=…`, `-x`; a longer single-dash word only when it is a known option such
+as `-Recurse`, otherwise `-p…`), assignment names (`NAME=…`; the value of
+`$x =` always masked),
 variable references (`$TOKEN`), the words of the subject the deny matched,
 and a short list of subcommand words (`push`, `s3`, `run-instances`, ...) in
 the subcommand position only (right after the command word, before any flag,
 never for `echo`/`printf`). Every other word is `…`, a quoted word `"…"`,
 here-doc and here-string bodies one placeholder line, every control
-character is dropped, and the line is cut to 240 characters. `git push
+character and bidi override is dropped, and the line is cut to 240 characters. `git push
 https://bob:pw@host main` logs `git push … main`; `mysql -pS3cret` logs
 `mysql -p…`. The leak corpus of `internal/audit/redact_corpus_test.go` (the
-round-1 critic's 40 commands and 38 more) must hold no secret.
+round-1 critic's 40 commands, 38 more and 13 of the round-2 critic's) must
+hold no secret, in the subject too.
 No environment value is ever written. A log that cannot be written changes
 nothing: the deny stands. The file is under the protected paths, so a
 session cannot read or rewrite it; `tq status --denials` reads it for a

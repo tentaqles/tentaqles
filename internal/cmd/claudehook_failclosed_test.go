@@ -373,6 +373,29 @@ func TestDenialLogSchema(t *testing.T) {
 	}
 }
 
+// A secret standing where the verb is never reaches any field of the log
+// line: not the command, not the subject (the verb the guard read), not
+// the reason (ADR-0006, round 3).
+func TestDenialLogVerbShapedSecrets(t *testing.T) {
+	isolateHome(t)
+	dir := testutil.TempDir(t)
+	secrets := []string{"Sup3rS3cretFirst50", "xargspw58", "sudopass67"}
+	for _, cmd := range []string{"Sup3rS3cretFirst50 ; tq allow acme", "xargs xargspw58 ; tq allow acme", "sudo sudopass67 ; tq allow acme"} {
+		if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, cmd)); code != 2 {
+			t.Fatalf("%q: code %d", cmd, code)
+		}
+	}
+	raw, err := os.ReadFile(audit.DenialsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range secrets {
+		if strings.Contains(strings.ToLower(string(raw)), strings.ToLower(s)) {
+			t.Errorf("the log carries %q:\n%s", s, raw)
+		}
+	}
+}
+
 // A fail-closed deny is logged too, naming what was known.
 func TestDenialLogFailClosed(t *testing.T) {
 	isolateHome(t)

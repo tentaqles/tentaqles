@@ -329,7 +329,8 @@ type GitInvocation struct {
 	BaseUnknown bool
 	// Loose: the safety net found the word git in a command that is not a
 	// git call (see looseGit). Hidden is set too. The commit and push rules
-	// ask on it; the identity rules in Decide ignore it.
+	// deny on it (an incomplete scan; tq never asks, ADR-0006); the identity
+	// rules in Decide ignore it.
 	Loose    bool
 	envChdir bool
 }

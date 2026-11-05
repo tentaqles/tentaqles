@@ -43,15 +43,15 @@ anything else does not compile, and `Decision.Reason` only writes `BLOCKED
 Claude in the plugin's `hooks.json`, 30 s for Codex) runs the call, and so
 does one whose hook exits with anything but 0 or 2. Three watchdogs answer
 first, each with a deny: the decision runs in a goroutine that answers into
-buffers and misses `hookDeadline` at 9 s; `RunMain`, the binary's entry
-point, denies a `pre-tool-use` run still going after 10 s and turns any
+buffers and misses `hookDeadline` at 6 s; `RunMain`, the binary's entry
+point, denies a `pre-tool-use` run still going after 7 s and turns any
 command error (an unknown flag) into a deny with exit 2, which is the
 guarantee Codex's bare `tq claude-hook pre-tool-use --agent codex` hook
 gets; the plugin's `tq_hook.sh` runs tq in the background under a watchdog
 of bash builtins, `sleep` and `kill` (no GNU `timeout`; Git Bash, macOS,
-Linux), stops it after 11 s and denies, and turns any status other than 0
+Linux), stops it with a TERM at 7 s and a KILL at 8 s and denies, and turns any status other than 0
 and 2 into exit 2. `TestHookDeadlinesUnderHarnessTimeouts` pins scan budget
-< 9 s < 10 s < 11 s + 1 s < the shortest harness timeout - 2 s. The Codex
+< 6 s < 7 s < 7 s + 1 s <= the shortest harness timeout - 5 s (Git Bash forks are slow on Windows, so a hung tq is denied by about 8 s against Claude's 15 s kill). The Codex
 launcher refuses to start when `tq` is not on the PATH Codex will run with
 (`TestCodexHookResolves`). The deny cases:
 
@@ -59,7 +59,7 @@ launcher refuses to start when `tq` is not on the PATH Codex will run with
 |---|---|---|
 | A payload that cannot be read: a read error, more than 1 MiB, invalid UTF-8, JSON that does not parse into the payload object (not JSON, truncated, an array, a string, a wrong type), `null`, empty, no `tool_name` | `tq/guard-error` | `TestPreToolUse_MalformedPayloadDenies`, `_OversizedPayloadDenies`, `_FieldTypesDeny` |
 | A field tq cannot judge: Bash/PowerShell with no, an empty or a non-string `command`; a `command`/`file_path`/`notebook_path`/`path`/`pattern` that is not a string; a Read naming no file; a tool tq does not know (a lower-case `bash` included) whose input carries one of those fields. An unknown tool with none of them is allowed | `tq/guard-error` | `TestPreToolUse_FieldTypesDeny` |
-| A usage error of the hook command; a process still running after 10 s; a tq that `tq_hook.sh` stops after 11 s or that exits with another status | `tq/guard-error` | `TestRunMainHookErrorsDeny`, `TestRunMainWatchdogDenies`, `test_tq_hook_stops_a_hanging_tq_and_denies`, `test_tq_hook_turns_a_tq_without_decision_into_a_deny` |
+| A usage error of the hook command; a process still running after 7 s; a tq that `tq_hook.sh` stops at 7-8 s or that exits with another status | `tq/guard-error` | `TestRunMainHookErrorsDeny`, `TestRunMainWatchdogDenies`, `test_tq_hook_stops_a_hanging_tq_and_denies`, `test_tq_hook_turns_a_tq_without_decision_into_a_deny` |
 | A panic anywhere in the analysis | `tq/guard-error` | `TestPreToolUseGuardPanicDenies`, the Codex case in `claudehook_codex_wire_test.go` |
 | The decision runs past `hookDeadline` | `tq/guard-error` | `TestPreToolUse_TimeoutDenies` |
 | `~/.tentaqles/config.yaml` cannot be read or parsed | `tq/guard-error` | `TestPreToolUse_UnreadableRegistryDenies` |
@@ -106,16 +106,27 @@ wizard, `tq onboard`, setup plans and `pkg/setupapi`; the preamble prints no
 `permission_mode=`; doctor's `bypass-cloud` and `permission-mode-overridden`
 checks are gone. The Codex launcher (`tq run . -- codex`) starts Codex with
 `--dangerously-bypass-approvals-and-sandbox` (the owner's decision); a flag
-the developer typed about asking or the sandbox (`-a`, `-s`, `--full-auto`,
-`--yolo`, the bypass flag, a `-c` override of `approval_policy` or
-`sandbox_mode`) goes through as typed and nothing is added
+the developer typed about asking or the sandbox (`-a`, `-s` and their glued
+forms `-anever`, `-sread-only`, `--yolo`, the bypass flag, a `-c` override of
+`approval_policy` or `sandbox_mode`, glued `-capproval_policy=...` included)
+goes through as typed and nothing is added; `--full-auto` is not listed
+because codex 0.154 rejects it. The flag goes right after a session
+subcommand that takes it (`exec`, `e`, `resume`, `fork`; codex 0.154's own
+help), and first otherwise
 (`TestLaunchArgsInjectsTheBypassFlag`). The shim folder on an identity PATH is
 Phase 3. The cleaning of old settings decides from evidence only: the
 allow/deny/ask entries a state file that parses records; the `defaultMode`
 equal to what an older render wrote for this manifest's old
 `claude.permission_mode` (the manifest keeps that value as
-`OldPermissionMode`, never applied), not any value in a list of modes; the
-skip flag of an older render's state file. A corrupt state file claims
+`OldPermissionMode`, never applied), or, when `settings.json` has not changed
+since that render wrote it and its state file (an older render rewrote
+`defaultMode` on every render), the value it holds; not any value in a list
+of modes; the skip flag of an older render's state file. The value tq is
+known to have written is kept in the state file (`legacy_default_mode`) until
+tq has removed it, so the evidence outlives a manifest whose
+`permission_mode` the user dropped as `tq doctor` advises
+(`TestRenderRemovesTheModeAfterPermissionModeIsDropped`,
+`TestRenderCarriesTheEvidenceUntilTheValueIsGone`). A corrupt state file claims
 nothing (`TestRenderKeepsADefaultModeTheEvidenceDoesNotName`,
 `TestRenderCorruptStateClaimsNothing`). Codex's marked block is found with
 surrounding white space ignored; a marker line tq cannot match, or an end
@@ -144,21 +155,26 @@ JSON line per deny of every category and every human-only refusal:
 `RedactCommand` is structural, not a list of secret shapes: a word is kept
 only when its position says it cannot be a value. Kept are operators; the
 command word of each segment (after `NAME=` assignments and wrappers such as
-`sudo`, `env`, `xargs`), unless it mixes a capital with a digit; flag names
-(`--name`, `--name=…`, a two-character `-x`, a known single-dash option such
-as `-Recurse`; any other single-dash word keeps its first two characters,
-`-pS3cret` is `-p…`); assignment names (conventional capitals or lower case);
-variable references; the words of the subject the deny matched; and a short
-list of subcommand words in the subcommand position only (right after the
-command word or another kept subcommand, before any flag, never for `echo`,
-`printf` and the like). Every other word is `…`, a quoted word (typographic
+`sudo`, `env`, `xargs`) when its last element has no digit followed by a
+letter, no capital unless it is a Verb-Noun cmdlet, and, after a wrapper, no
+digit at all; not the command word that follows a segment or line ending on
+a bare short flag (`mysql -p`, then the password); flag names (`--name` made
+of letters joined by `-` with an optional trailing number, `--name=…`, a
+two-character `-x`, a known single-dash option such as `-Recurse`; any other
+single-dash word keeps its first two characters, `-pS3cret` is `-p…`);
+assignment names (conventional capitals or lower case; the value of `$x =` is
+always masked); variable references; the words of the subject the deny
+matched, whose verb passes the same command-word rule (`audit.CommandWord`);
+and a short list of subcommand words in the subcommand position only (right
+after the command word or another kept subcommand, before any flag, never for
+`echo`, `printf` and the like). Every other word is `…`, a quoted word (typographic
 quotes included) `"…"`, here-doc and here-string bodies one placeholder line,
-every control character dropped, cut to 240 characters. The leak corpus
+every control character and bidi override dropped, cut to 240 characters. The leak corpus
 (`TestRedactCommandLeakCorpus`: the round-1 critic's 40 commands, which the
 pattern redaction leaked 16 of, and 38 new ones: lower-case passwords after
 `-p`, glued values, secrets in subcommand-looking positions, `$(...)` and
 backticks, PowerShell assignments and here-strings, URLs with userinfo,
-fragments and webhooks, control characters around a value) holds 0 leaks.
+fragments and webhooks, control characters around a value), and 13 command-word-shaped ones the round-2 critic found (a secret after a bare `-p` on the next line or segment, mixed-case and digit-inside command words, `sudo`/`xargs`/`timeout` then a secret, a value after `$x =`, a long flag with a digit inside, a verb-shaped secret in a here-doc body), holds 0 leaks; `TestDenialLogVerbShapedSecrets` checks every field of the log line, subject included.
 `AppendDenial` also masks secret-shaped spans and drops control characters in
 every text field, whatever the caller passed. The log rotates at 1 MiB into
 `denials.jsonl.1` (one previous file kept), and the reader streams a line at
@@ -172,7 +188,7 @@ all), oldest first. `--denials` is a human-only read: it refuses a harness
 session by the env-marker and process-tree detectors (`humanonly.CheckRead`;
 no terminal is required, so a human can pipe `--json`), logs the refusal, and
 writes nothing. Every control character in every field is printed escaped
-(`\x1b`, `\u009b`), in text and in `--json`, so a logged OSC 52 clipboard
+(`\x1b`, `\u009b`), and the Unicode bidi overrides U+202A–U+202E and U+2066–U+2069, in text and in `--json`, so a logged OSC 52 clipboard
 write or a line erase cannot reach the terminal
 (`TestStatusDenialsEscapesControlCharacters`).
 

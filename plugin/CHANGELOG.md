@@ -7,8 +7,8 @@ Releases before 0.16.0 are described on the
 ## [Unreleased]
 
 - **Fail closed (ADR-0006).** `tq_hook.sh` runs tq in the background under a watchdog (bash
-  builtins, `sleep` and `kill`; no GNU `timeout`) that stops a tq still running after 11 s,
-  under the 15 s hook timeout, and denies; `TQ_HOOK_WRAPPER_DEADLINE` can only lower it. It
+  builtins, `sleep` and `kill`; no GNU `timeout`) that stops a tq still running after 7 s
+  (KILL at 8 s), at least 5 s under the 15 s hook timeout, and denies; `TQ_HOOK_WRAPPER_DEADLINE` can only lower it. It
   turns an exit of tq other than 0 (allow) or 2 (deny) on `pre-tool-use` (a crash, a killed
   process) into exit 2 with `BLOCKED [tq/guard-error]`, since Claude Code runs a call on any
   other status; the

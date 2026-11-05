@@ -99,6 +99,37 @@ var leakCorpus = []struct {
 	{"secret in path-like argument", "cat /tmp/SECRETPATHpw11/x", []string{"SECRETPATHpw11"}},
 	{"wrapper then secret", "sudo -u root env TOK=SudoTok1 tool", []string{"SudoTok1"}},
 	{"xargs secret", "echo XargsPw2 | xargs -I{} curl -u u:{} https://x", []string{"XargsPw2"}},
+
+	// Round 3: command-word-shaped secrets the round-2 critic found.
+	{"secret as later command word after a bare -p", "mysql -u root -p ; hunter2pw48", []string{"hunter2pw48"}},
+	{"secret on the line after a bare -p", "mysql -u root -p\nlinetwopw51", []string{"linetwopw51"}},
+	{"mixed-case command word", "ls | CorrectHorseBatteryStaple", []string{"CorrectHorseBatteryStaple"}},
+	{"first command word with digits inside", "s3cr3tfirst49", []string{"s3cr3tfirst49"}},
+	{"first command word mixed and digits", "Sup3rS3cretFirst50 ; tq allow acme", []string{"Sup3rS3cretFirst50"}},
+	{"value after $x =, cmdlet-shaped", "$pw = Hunter-Twopass; Do-Thing", []string{"Hunter-Twopass"}},
+	{"long flag with a digit inside", "curl --abcdef64secret https://x", []string{"abcdef64secret"}},
+	{"path-shaped command word", "/tmp/abc/s3cr3tpath66 run", []string{"s3cr3tpath66"}},
+	{"sudo then a secret", "sudo sudopass67", []string{"sudopass67"}},
+	{"xargs then a secret", "xargs xargspw58", []string{"xargspw58"}},
+	{"timeout then a secret", "timeout 5 zz9secret68", []string{"zz9secret68"}},
+	{"verb-shaped secret in a here-doc body", "cat > notes.txt <<EOF\nverbshapedsecret\nEOF\nls", []string{"verbshapedsecret"}},
+	{"verb-shaped secret in a dash here-doc", "cat <<-END\n\tanotherverbsecret --flag\n\tEND", []string{"anotherverbsecret"}},
+}
+
+// The subject (the verb the guard read plus the matched path or token) goes
+// through the same rule: a secret that stands where the verb is never
+// reaches the subject either (CommandWord).
+func TestCommandWordMasksSecretShapedVerbs(t *testing.T) {
+	for _, w := range []string{"Sup3rS3cretFirst50", "sudopass67", "xargspw58", "zz9secret68", "s3cr3tfirst49", "CorrectHorseBatteryStaple"} {
+		if got := CommandWord(w); got != "…" {
+			t.Errorf("%q kept as %q", w, got)
+		}
+	}
+	for _, w := range []string{"git", "rm", "tq", "Remove-Item", "npm", ""} {
+		if got := CommandWord(w); got != w {
+			t.Errorf("%q became %q", w, got)
+		}
+	}
 }
 
 func TestRedactCommandLeakCorpus(t *testing.T) {

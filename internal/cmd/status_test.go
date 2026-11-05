@@ -98,7 +98,7 @@ func TestStatusDenialsEscapesControlCharacters(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(audit.DenialsPath()), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	evil := "\x1b]52;c;cHduZWQ=\x07\x1b[2K\r\x1b[1Afake ok line\u009b2J"
+	evil := "\x1b]52;c;cHduZWQ=\x07\x1b[2K\r\x1b[1Afake ok line\u009b2J ‮gnp.exe‬ ⁦x⁩"
 	b, _ := json.Marshal(map[string]any{"category": "secrets", "layer": "hook", "tool": evil, "command": evil, "subject": evil,
 		"rule": evil, "reason": evil + "\nsecond", "identity": evil, "cwd": evil, "caller": evil, "harness": evil})
 	if err := os.WriteFile(audit.DenialsPath(), append(b, '\n'), 0o600); err != nil {
@@ -110,7 +110,8 @@ func TestStatusDenialsEscapesControlCharacters(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, r := range out {
-			if (r < 0x20 && r != '\n') || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			if (r < 0x20 && r != '\n') || r == 0x7f || (r >= 0x80 && r < 0xa0) ||
+				(r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
 				t.Fatalf("%v: control character %U reaches the terminal: %q", args, r, out)
 			}
 		}

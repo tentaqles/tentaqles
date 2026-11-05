@@ -18,8 +18,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - **Fail closed.** `pre-tool-use` denies a call it cannot judge with `tq/guard-error`: a
   payload that is not valid JSON or UTF-8, `null`, empty or names no tool (it was allowed); a
   shell tool without a string `command`, a path field that is not a string, a Read naming no
-  file, an unknown or lower-case tool that carries a command or a path; a decision past 9 s,
-  a process still running at 10 s, and a usage error of the hook command (`tq.RunMain`), all
+  file, an unknown or lower-case tool that carries a command or a path; a decision past 6 s,
+  a process still running at 7 s, and a usage error of the hook command (`tq.RunMain`), all
   under the harness hook timeouts (`TestHookDeadlinesUnderHarnessTimeouts`); a `config.yaml`
   tq cannot read; a folder whose marker or manifest is there but no usable manifest can be
   read, and a folder tq's evidence names as an identity (a signed record, the protected
@@ -55,8 +55,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   `Bash(printenv)`, ...) goes too: the hook's secret rules cover it. Codex's `config.toml`
   gets no `approval_policy`/`sandbox_mode` (its marker is found with white space ignored; an
   edited marker is a conflict); the Codex launcher starts Codex with
-  `--dangerously-bypass-approvals-and-sandbox`, a typed approval or sandbox flag going
-  through as typed; `--permission-mode` leaves `tq add`, the setup wizard,
+  `--dangerously-bypass-approvals-and-sandbox` (after `exec`/`resume`/`fork`, which take it
+  themselves), a typed approval or sandbox flag, glued forms included, going through as typed; `--permission-mode` leaves `tq add`, the setup wizard,
   `tq onboard`, setup plans and `pkg/setupapi`; the session preamble drops
   `permission_mode=`; doctor's `bypass-cloud` and `permission-mode-overridden` checks are gone.
   How the harness asks for permission is the harness's own setting.

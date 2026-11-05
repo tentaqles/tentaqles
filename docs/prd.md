@@ -207,7 +207,7 @@ Agent and `mcp__*`, in every Claude permission mode. The identity guard
 (`tq/secret-store-read`, `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`,
 `tq/env-dump`) plus `tq/commit-secret` and `tq/cross-client-mcp` deny; nothing a manifest,
 a global file or a repository file adds or removes. Every rule decision is allow or block;
-tq never asks, and a call it cannot judge (an unreadable payload, a guard panic, the 9 s
+tq never asks, and a call it cannot judge (an unreadable payload, a guard panic, the 6 s
 deadline, an unreadable registry or manifest) is denied as `tq/guard-error`, an incomplete
 commit scan as `tq/commit-secret` (ADR-0006). Codex gets the
 same hook through `$CODEX_HOME/hooks.json` (`internal/codexcfg`); with tq missing the hook

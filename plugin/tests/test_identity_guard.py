@@ -156,7 +156,8 @@ def test_tq_hook_deadline_is_under_the_hook_timeout():
     deadline = int(re.search(r"^_tq_deadline=(\d+)$", src, re.M).group(1))
     hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     timeouts = [h["timeout"] for g in hooks["hooks"]["PreToolUse"] for h in g["hooks"] if "tq_hook.sh" in h["command"]]
-    assert timeouts and deadline + 2 < min(timeouts), (deadline, timeouts)
+    # TERM at the deadline, KILL a second later, and 5 s of margin for slow forks.
+    assert timeouts and deadline + 1 + 5 <= min(timeouts), (deadline, timeouts)
     assert '-lt "$_tq_deadline"' in src  # an override can only lower it
 
 

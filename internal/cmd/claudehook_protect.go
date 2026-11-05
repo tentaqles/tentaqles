@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
@@ -74,7 +75,7 @@ func denialSubject(call policy.ToolCall, subject string) string {
 	case isApplyPatch(call):
 		return joinVerbSubject(call.Tool, subject) // apply_patch <file>
 	case call.IsShell() && call.Command != "":
-		return joinVerbSubject(verbOf(call.Command), subject)
+		return joinVerbSubject(audit.CommandWord(verbOf(call.Command)), subject) // the verb under the log's structural rule (ADR-0006)
 	case call.Path != "":
 		return call.Path
 	}

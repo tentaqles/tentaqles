@@ -22,13 +22,18 @@ import (
 //   - the command word of each segment (the first word after an operator,
 //     after NAME=value assignments and wrappers such as sudo, env, xargs),
 //     when it looks like a command name (letters, digits, . _ + - and a
-//     path), is at most 40 characters and does not mix an upper-case letter
-//     with a digit (a token, not a command);
-//   - flag names: `--name` whole, `--name=` with its value masked, a
+//     path) of at most 40 characters whose last element has no digit
+//     followed by a letter, no capital unless it is a Verb-Noun cmdlet, and
+//     after a wrapper no digit at all (isVerb); not the first word of a
+//     segment or line that follows a segment ending on a bare short flag
+//     (`mysql -p`, then the password);
+//   - flag names: `--name` whole when it is letters joined by - with an
+//     optional trailing number, `--name=` with its value masked, a
 //     two-character `-x`; a longer single-dash word only when it is a known
 //     option (-Recurse, -auto-approve, ...), otherwise its first two
 //     characters (`-pS3cret` is `-p…`);
-//   - the name of an assignment (`NAME=…`, `$env:NAME = …`);
+//   - the name of an assignment (`NAME=…`, `$env:NAME = …`; the value of
+//     `$x = <value>` is always masked);
 //   - variable references ($NAME, ${NAME}, $env:NAME);
 //   - a short list of subcommand words (push, s3, run-instances, ...) only
 //     in the subcommand position: directly after the command word or
@@ -39,9 +44,10 @@ import (
 //
 // Every other word is …, a quoted word is "…" (its quote kept), here-doc and
 // here-string bodies are one placeholder line, every control character
-// (C0 but the newline, DEL, C1) is dropped, and the result is cut to
-// MaxCommandRunes. A secret can only survive as a command word without a
-// digit-and-capital mix, or as one of the listed subcommand words in the
+// (C0 but the newline, DEL, C1) and bidi override is dropped, and the
+// result is cut to MaxCommandRunes. A secret can only survive as a
+// command word of lower-case letters (optionally ending in digits, not
+// after a wrapper), or as one of the listed subcommand words in the
 // subcommand position.
 func RedactCommand(cmd string, keep ...string) string {
 	keepSet := map[string]bool{}
@@ -51,12 +57,13 @@ func RedactCommand(cmd string, keep ...string) string {
 		}
 	}
 	var out []string
+	var st redactState
 	for _, line := range strings.Split(dropHeredocs(stripControl(cmd)), "\n") {
 		if line == heredocPlaceholder || line == hereStringPlaceholder {
 			out = append(out, line)
 			continue
 		}
-		out = append(out, redactLine(line, keepSet))
+		out = append(out, redactLine(line, keepSet, &st))
 	}
 	return truncate(strings.TrimSpace(strings.Join(out, "\n")), MaxCommandRunes)
 }
@@ -92,7 +99,8 @@ func stripControl(s string) string {
 			return r
 		case r == '\t':
 			return ' '
-		case r < 0x20, r == 0x7f, r >= 0x80 && r < 0xa0:
+		case r < 0x20, r == 0x7f, r >= 0x80 && r < 0xa0,
+			r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069: // C0, DEL, C1, bidi overrides
 			return -1
 		}
 		return r
@@ -195,20 +203,39 @@ var (
 	psAssignRe = regexp.MustCompile(`^(\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*)=`)
 	varRefRe   = regexp.MustCompile(`^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|(?:env:)?[A-Za-z_][A-Za-z0-9_]*)$`)
 	verbRe     = regexp.MustCompile(`^[A-Za-z0-9._+~/\\:-]+$`)
-	longFlagRe = regexp.MustCompile(`^--[A-Za-z][A-Za-z0-9-]*$`)
-	shortFlag  = regexp.MustCompile(`^-[A-Za-z0-9]$`)
-	upperRe    = regexp.MustCompile(`[A-Z]`)
-	digitRe    = regexp.MustCompile(`[0-9]`)
+	// A long flag name is words of letters joined by -, with an optional
+	// trailing number (--ipv4, --http2); a digit inside it (--abc64secret)
+	// is a value, not a name.
+	longFlagRe    = regexp.MustCompile(`^--[A-Za-z]+(?:-[A-Za-z]+)*[0-9]*$`)
+	digitLetterRe = regexp.MustCompile(`[0-9][A-Za-z]`)
+	shortFlag     = regexp.MustCompile(`^-[A-Za-z0-9]$`)
+	upperRe       = regexp.MustCompile(`[A-Z]`)
+	digitRe       = regexp.MustCompile(`[0-9]`)
 )
 
+// redactState carries what one line tells the next: a segment that ended
+// on a bare short flag (`mysql -p`, then the password on the next line or
+// after `;`) makes the next command word a value, not a command.
+type redactState struct {
+	bareShortFlag bool
+}
+
 // redactLine applies the structural rule to one line.
-func redactLine(line string, keep map[string]bool) string {
+func redactLine(line string, keep map[string]bool, st *redactState) string {
 	toks := tokenize(line)
 	var out []string
-	expectVerb := true  // the next word is a command word
-	afterRedir := false // the next word is a redirect target
-	subPos := false     // the next positional is in the subcommand position
-	psAssign := false   // the previous words were `$x =`
+	expectVerb := true           // the next word is a command word
+	afterWrapper := false        // the command word follows sudo/env/xargs/...
+	afterRedir := false          // the next word is a redirect target
+	subPos := false              // the next positional is in the subcommand position
+	psAssign := false            // the previous words were `$x =`
+	maskVerb := st.bareShortFlag // the previous segment ended on a bare -x
+	lastBare := false            // the last word of this segment is a bare -x
+	endSegment := func() {
+		maskVerb = lastBare
+		lastBare = false
+		expectVerb, afterWrapper, subPos, psAssign = true, false, false, false
+	}
 	for i, t := range toks {
 		if t.op {
 			out = append(out, t.text)
@@ -216,28 +243,30 @@ func redactLine(line string, keep map[string]bool) string {
 			case strings.ContainsAny(t.text, "<>") && t.text != "<(" && t.text != ">(":
 				afterRedir = true
 			default:
-				expectVerb, subPos, psAssign = true, false, false
+				endSegment()
 			}
 			continue
 		}
 		w := t.text
+		bare := shortFlag.MatchString(w)
 		switch {
 		case keep[w]:
 			out = append(out, w)
-			afterRedir = false
+			afterRedir, lastBare = false, false
 			if expectVerb {
-				expectVerb, subPos = false, true
+				expectVerb, subPos, maskVerb = false, true, false
 			}
 			continue
 		case afterRedir:
 			out = append(out, masked(t))
-			afterRedir = false
+			afterRedir, lastBare = false, false
 			continue
 		case t.quoted != 0:
 			out = append(out, masked(t))
-			expectVerb, subPos = false, false
+			expectVerb, subPos, lastBare, maskVerb = false, false, false, false
 			continue
 		}
+		lastBare = bare && !expectVerb
 		if expectVerb {
 			switch {
 			case assignRe.MatchString(w):
@@ -254,20 +283,16 @@ func redactLine(line string, keep map[string]bool) string {
 				out = append(out, w)
 				continue
 			case psAssign:
-				// $x = <value>: a cmdlet (Verb-Noun) is a command word,
-				// anything else is the value.
+				// $x = <value>: the value, whatever it looks like (a
+				// cmdlet-shaped word can be a password).
 				psAssign = false
-				if cmdletRe.MatchString(w) {
-					out = append(out, w)
-					expectVerb, subPos = false, true
-				} else {
-					out = append(out, "…")
-					expectVerb = false
-				}
+				out = append(out, "…")
+				expectVerb = false
 				continue
-			case isVerb(w):
+			case !maskVerb && isVerb(w, afterWrapper):
 				out = append(out, w)
 				if wrappers[strings.ToLower(baseName(w))] {
+					afterWrapper = true
 					continue // sudo/env/xargs ...: the command word follows
 				}
 				expectVerb = false
@@ -275,7 +300,7 @@ func redactLine(line string, keep map[string]bool) string {
 				continue
 			}
 			out = append(out, "…")
-			expectVerb = false
+			expectVerb, maskVerb = false, false
 			continue
 		}
 		if strings.HasPrefix(w, "-") && len(w) > 1 {
@@ -295,6 +320,7 @@ func redactLine(line string, keep map[string]bool) string {
 		subPos = false
 		out = append(out, "…")
 	}
+	st.bareShortFlag = lastBare
 	return strings.Join(out, " ")
 }
 
@@ -308,16 +334,35 @@ func masked(t token) string {
 	return "…"
 }
 
-// isVerb reports whether w can be kept as a command word.
-func isVerb(w string) bool {
+// isVerb reports whether w can be kept as a command word: a command name
+// (letters, digits, . _ + - and a path) of at most 40 characters whose
+// last element has no digit followed by a letter (s3cr3t, zz9x; python3,
+// node20 and python3.12 pass), no capital unless it is a Verb-Noun cmdlet,
+// and, right after a wrapper (sudo, xargs, timeout ...), no digit at all.
+func isVerb(w string, afterWrapper bool) bool {
 	if len(w) > 40 || !verbRe.MatchString(w) || strings.Contains(w, "=") {
 		return false
 	}
 	b := baseName(w)
-	if b == "" || (upperRe.MatchString(b) && digitRe.MatchString(b)) {
+	switch {
+	case b == "",
+		digitLetterRe.MatchString(b),
+		upperRe.MatchString(b) && !cmdletRe.MatchString(b),
+		afterWrapper && digitRe.MatchString(b):
 		return false
 	}
 	return !secrets.Contains(w)
+}
+
+// CommandWord returns w when the structural rule would keep it as a
+// command word after a wrapper (the strict form: the guard's verb has its
+// sudo/env/xargs already stripped), … otherwise: what a denial's subject may
+// name as the verb.
+func CommandWord(w string) string {
+	if w == "" || isVerb(w, true) {
+		return w
+	}
+	return "…"
 }
 
 func baseName(w string) string {

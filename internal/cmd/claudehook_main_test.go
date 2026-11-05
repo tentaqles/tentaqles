@@ -68,7 +68,7 @@ func TestHookDeadlinesUnderHarnessTimeouts(t *testing.T) {
 	n, _ := strconv.Atoi(string(m[1]))
 	wrapper := time.Duration(n)*time.Second + time.Second // its TERM, then KILL a second later
 
-	const margin = 2 * time.Second
+	const margin = 5 * time.Second
 	steps := []struct {
 		name string
 		d    time.Duration

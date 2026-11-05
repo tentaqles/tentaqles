@@ -26,11 +26,11 @@ import (
 // process start and the other rules. Tests lower it;
 // TQ_HOOK_SCAN_BUDGET (a Go duration, at most maxScanBudget) overrides the
 // default.
-var scanBudget = 7 * time.Second
+var scanBudget = 4 * time.Second
 
-// maxScanBudget keeps the scan inside hookDeadline (9 s), with room for
+// maxScanBudget keeps the scan inside hookDeadline (6 s), with room for
 // process start and the identity lookups.
-const maxScanBudget = 8 * time.Second
+const maxScanBudget = 5 * time.Second
 
 const scanTimedOut = "scan did not finish in time"
 

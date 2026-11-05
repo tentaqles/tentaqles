@@ -465,7 +465,7 @@ func gitSegmentsDepth(c string, depth int) []gitInvocation {
 			covered[firstNonSpace(c, sp.start)] = true
 			if depth >= 3 {
 				// too deep to read: report an unreadable hidden commit so the
-				// commit and push rules ask
+				// commit scan denies (tq never asks, ADR-0006)
 				out = append(out, gitInvocation{GitInvocation: GitInvocation{Sub: "commit", Hidden: true}, start: sp.start},
 					gitInvocation{GitInvocation: GitInvocation{Sub: "push", Hidden: true}, start: sp.start})
 				continue
@@ -596,7 +596,7 @@ func existingDir(d string) error {
 
 // Dir returns the directory this git call acts on: cwd, then a leading
 // `cd <dir>` (first segment only), then every -C in order. It fails when the
-// directory cannot be known or does not exist: callers ask instead of
+// directory cannot be known or does not exist: callers deny instead of
 // scanning the wrong repository.
 func (g GitInvocation) Dir(cwd string) (string, error) {
 	switch {

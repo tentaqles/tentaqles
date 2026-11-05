@@ -296,7 +296,7 @@ Change `tool_name` and `tool_input` for each row:
 
 **Exit codes:** 0 with no output means allow; 2 means block. There is no ask,
 and a call tq cannot judge is blocked: a payload that is not valid JSON or
-names no `tool_name`, a guard crash, a decision slower than 9 s, a folder
+names no `tool_name`, a guard crash, a decision slower than 6 s, a folder
 whose manifest tq cannot read (`BLOCKED [tq/guard-error]`), and a commit whose
 secret scan cannot finish (`BLOCKED [secrets/tq/commit-secret]`).
 
