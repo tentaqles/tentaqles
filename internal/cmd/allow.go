@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -43,7 +44,8 @@ func newAllowCmd() *cobra.Command {
 edited manifest is untrusted until tq allow runs again.
 
 Human-only: an agent session (Claude Code, Codex, a plugin hook) is refused,
-so a session can never trust a folder itself.`,
+so a session can never trust a folder itself; you confirm before the trust
+is written.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := refuseAgent("tq allow"); err != nil {
@@ -60,10 +62,15 @@ so a session can never trust a folder itself.`,
 	}
 }
 
-// trustWorkspace trusts name's current manifest and syncs the git includes.
+// trustWorkspace trusts name's current manifest and syncs the git includes,
+// once the human confirms.
 func trustWorkspace(c *cobra.Command, name string) (*resolve.Workspace, error) {
 	ws, err := findWorkspace(name)
 	if err != nil {
+		return nil, err
+	}
+	about := fmt.Sprintf("tq allow: about to trust %s's manifest as it is now (%s) in %s and rewrite the git include list", ws.Name, ws.Hash[:12], paths.TrustDir())
+	if err := humanGate(c, "tq allow", about); err != nil {
 		return nil, err
 	}
 	if err := trust.Allow(ws.Name, ws.Hash); err != nil {
@@ -87,6 +94,10 @@ func newDenyCmd() *cobra.Command {
 			}
 			ws, err := findWorkspace(args[0])
 			if err != nil {
+				return err
+			}
+			about := fmt.Sprintf("tq deny: about to remove %s's trust record from %s and rewrite the git include list", ws.Name, paths.TrustDir())
+			if err := humanGate(c, "tq deny", about); err != nil {
 				return err
 			}
 			if err := trust.Deny(ws.Name, ws.Hash); err != nil {

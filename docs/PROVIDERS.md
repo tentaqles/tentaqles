@@ -123,7 +123,7 @@ Credential Manager, macOS Keychain, Linux Secret Service), service `tentaqles`, 
 status`); it never prints one or sends it anywhere. The keychain entry is yours to use.
 
 ```
-tq secret set <workspace> <provider>          # hidden prompt on a terminal, or stdin when piped
+tq secret set <workspace> <provider>          # hidden prompt on your terminal (a piped stdin is refused)
 tq secret rm <workspace> <provider>           # aliases: remove, delete
 tq secret status [<workspace> [<provider>]] [--json]
 ```
@@ -137,7 +137,10 @@ tq secret status [<workspace> [<provider>]] [--json]
   every registered workspace, for every provider; with a workspace, every provider, or the
   one named. Columns: WORKSPACE PROVIDER KEYCHAIN. `--json` gives
   `{workspace, provider, account, keychain, error?}` per row.
-- All three are human-only: an agent session is refused ("run it in your own terminal").
+- `set` and `rm` are human-only (ADR-0003): a session is refused ("run it in your own
+  terminal"), by its agent marker, by a harness in the process tree or by a non-terminal
+  stdin or stdout, and you type `yes` before the keychain changes. `status` prints
+  presence only, so it runs anywhere.
 - Not to be confused with `tq secrets audit` (plural), which lists agent-config files holding
   secret-shaped values and `.env` files git would commit, by path and line only.
 

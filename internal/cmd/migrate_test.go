@@ -462,9 +462,12 @@ func TestMigrate_ApplyOnSyntheticTree(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("code=%d err=%v stderr=%q out=%s", code, err, errOut, out)
 	}
+	// The human-only confirmation names the journal, then the journal path
+	// is printed before anything is touched.
 	wantJournal := filepath.Join(e.tqHome, "backups", migTestTS)
-	if first := strings.SplitN(out, "\n", 2)[0]; first != "journal: "+wantJournal {
-		t.Fatalf("first line = %q, want %q", first, "journal: "+wantJournal)
+	lines := strings.SplitN(out, "\n", 3)
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "tq migrate --apply: about to write the journal "+wantJournal) || lines[1] != "journal: "+wantJournal {
+		t.Fatalf("first lines = %q, want the confirmation then %q", lines, "journal: "+wantJournal)
 	}
 	if !strings.Contains(out, "applied. undo with: tq uninstall --restore "+migTestTS) {
 		t.Errorf("missing the undo hint:\n%s", out)

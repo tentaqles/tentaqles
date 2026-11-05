@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -18,7 +19,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/migrate"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 )
 
@@ -66,9 +69,13 @@ func newMigrateCmd() *cobra.Command {
 			"default step) moves each identity's manifest out of its root into\n" +
 			"~/.tentaqles/identities/<name>/manifest.yaml.\n\n" +
 			"Every mutation is journalled before it happens; `tq uninstall --restore`\n" +
-			"replays that journal backwards.",
+			"replays that journal backwards.\n\n" +
+			"Human-only: a session is refused, and you confirm before --apply writes.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			if err := refuseAgent("tq migrate"); err != nil {
+				return err
+			}
 			names, err := parseSteps(stepsCSV)
 			if err != nil {
 				return err
@@ -108,6 +115,9 @@ func newMigrateManifestsCmd() *cobra.Command {
 			"without --apply, and --apply refuses an agent session.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			if err := refuseAgent("tq migrate manifests"); err != nil {
+				return err
+			}
 			return runMigrate(c, []string{manifestsStep}, apply, false, asJSON)
 		},
 	}
@@ -164,6 +174,16 @@ func runMigrate(c *cobra.Command, names []string, apply, force, asJSON bool) err
 	var j *migrate.Journal
 	if apply {
 		ts = migrateNow()
+		about := fmt.Sprintf("tq migrate --apply: about to write the journal %s and apply the steps %s", filepath.Join(paths.Home(), "backups", ts), strings.Join(names, ","))
+		// With --json the line goes to stderr so stdout stays one JSON
+		// document.
+		aboutW := c.OutOrStdout()
+		if asJSON {
+			aboutW = c.ErrOrStderr()
+		}
+		if err := humanonly.Gate("tq migrate", about, aboutW); err != nil {
+			return err
+		}
 		j, err = migrate.Open(ts)
 		if err != nil {
 			return err

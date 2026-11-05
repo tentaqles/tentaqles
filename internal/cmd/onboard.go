@@ -3,11 +3,13 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/onboard"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/termopen"
 	"github.com/tentaqles/tentaqles/internal/workspace"
@@ -25,13 +27,17 @@ func newOnboardCmd() *cobra.Command {
 	var openTerm bool
 	c := &cobra.Command{
 		Use:   "onboard [<name>]",
-		Short: "Set up a client workspace and its company tools: identity, git, cloud, data, agents, chat, email",
+		Short: "Set up a client workspace and its company tools: identity, git, cloud, data, agents, chat, email (human only)",
 		Long: "tq onboard extends tq add with a wizard (or --from <yaml>) that also records the company's\n" +
 			"chat, email, data platform and agent CLIs in the manifest. Every question can be skipped. The manifest\n" +
 			"holds names only: tq onboard never asks for a token. It leaves the workspace untrusted and prints the\n" +
-			"tq allow and login lines for you to run, then offers to open a new terminal in the folder.",
+			"tq allow and login lines for you to run, then offers to open a new terminal in the folder.\n\n" +
+			"Human-only, with or without --from: a session is refused, and you confirm before the folder is written.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := refuseAgent("tq onboard"); err != nil {
+				return err
+			}
 			if base == "" {
 				cfg, err := registry.Load()
 				if err != nil {
@@ -44,10 +50,6 @@ func newOnboardCmd() *cobra.Command {
 			var a *onboard.Answers
 			interactive := from == ""
 			if interactive {
-				// A wizard waits on a keyboard; inside an agent session nobody is there to answer.
-				if _, ok := agentSession(); ok {
-					return fmt.Errorf("tq onboard is interactive and this is an agent session; run it in your own terminal, or pass --from <answers.yaml>")
-				}
 				name := ""
 				if len(args) == 1 {
 					name = args[0]
@@ -79,6 +81,10 @@ func newOnboardCmd() *cobra.Command {
 				return err
 			}
 			o.RunGit = onboardRunGit
+			about := fmt.Sprintf("tq onboard: about to create %s (manifest, git identity, untrusted) and %s", filepath.Join(o.Base, o.Name), filepath.Join(paths.IdentitiesRoot(), o.Name))
+			if err := humanGate(c, "tq onboard", about); err != nil {
+				return err
+			}
 			ws, err := workspace.Add(o)
 			if err != nil {
 				return err
@@ -97,7 +103,7 @@ func newOnboardCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&from, "from", "", "read the answers from a YAML file instead of asking (non-interactive)")
+	c.Flags().StringVar(&from, "from", "", "read the answers from a YAML file instead of asking")
 	c.Flags().StringVar(&base, "base", "", "base folder (default: the only registered base)")
 	c.Flags().BoolVar(&openTerm, "open-terminal", false, "with --from: open a new terminal in the folder afterwards")
 	return c
@@ -106,10 +112,6 @@ func newOnboardCmd() *cobra.Command {
 // openOnboardTerminal opens a new terminal in root. It never closes the current one: that is the
 // user's call, so it says so.
 func openOnboardTerminal(w io.Writer, root string) {
-	if _, ok := agentSession(); ok {
-		fmt.Fprintf(w, "\nNot opening a terminal from an agent session; open one in %s yourself.\n", root)
-		return
-	}
 	l, err := onboardOpenTerminal(root)
 	if err != nil {
 		fmt.Fprintf(w, "\nCould not open a terminal (%v); open one in %s yourself.\n", err, root)

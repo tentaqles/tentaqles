@@ -24,8 +24,16 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `worktrees`, `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
     `claudehook*.go`: `pre-tool-use` runs `guard.Decide`, then the secret rules plus
     `tq/commit-secret` and `tq/cross-client-mcp`, with `tq/guard-error` as the fail-safe;
-    `session-start` prints the preamble. `humanonly.go` keeps `tq allow`, `tq deny`,
-    `tq secret` and `tq run --off` out of agent sessions (environment marker, no prompt).
+    `session-start` prints the preamble. `humanonly.go` is the thin wrapper over
+    `internal/humanonly` (`refuseAgent`, `humanGate`) that every command writing under
+    `paths.Home()` or an identity dir calls.
+  - `internal/humanonly/` — the human-only check of PRD v2 §8.1 (ADR-0003): three
+    detectors (`IsTerminal` on stdin and stdout, the process-tree walker `Walk` with a
+    per-OS `parentOf` in `proctree_*.go`, the `Markers` list), a refusal logged to
+    `$TQ_HOME/denials.jsonl` through `audit.AppendDenial`, and the typed-yes `Gate`
+    read from the controlling terminal. The seams `IsTerminal`, `ParentOf` and
+    `Confirm` are what tests replace (`internal/cmd/main_test.go` sets the human
+    baseline for the whole cmd suite).
   - `internal/trust/` (manifest trust by file hash), `internal/manifest/` (the manifest,
     read from `~/.tentaqles/identities/<ws>/manifest.yaml` with a name-only marker
     `.tentaqles.yaml` in the workspace root, or from the root itself for an identity not
@@ -72,7 +80,11 @@ From `docs/threat-model.md`; each line names the test that keeps it.
 - Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
-- Trust is human-only: `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`.
+- Trust is human-only, and so is every tq write under `$TQ_HOME` or an identity dir:
+  `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`,
+  `TestHumanOnlyCommandsRefuseWithMarkerAndLog`, `TestAddConfirmsBeforeWriting`, and the
+  detector tests of `internal/humanonly` (`TestTTYDetector`, `TestProcessTreeDetector`,
+  `TestEnvMarkerDetector`, `TestGateConfirms`).
 - An edited manifest loses its trust: `TestEditedManifestLosesTrust`.
 - The guard reads the manifest from the protected location only; a marker that names
   another workspace, or has no protected copy, resolves neutral:
@@ -90,7 +102,7 @@ CI's `go` job runs `go vet ./...`, `go test ./... -count=1` and a build; locally
 `[Unreleased]`; a change under `plugin/` also gets its line in `plugin/CHANGELOG.md`, and the
 root entry is then one pointer line.
 
-A change under `internal/guard/`, `internal/policy/`, `internal/trust/`, `internal/hooks/`,
+A change under `internal/guard/`, `internal/policy/`, `internal/trust/`, `internal/humanonly/`, `internal/hooks/`,
 `plugin/hooks/`, `plugin/scripts/tq_hook.sh`, `.github/workflows/`,
 `.goreleaser.yaml`, `.claude-plugin/marketplace.json` or `installers/` crosses a trust
 boundary of `docs/threat-model.md` and needs an ADR under `docs/adr/` (template:

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -74,9 +75,9 @@ func TestEditedManifestLosesTrust(t *testing.T) {
 
 // tq allow and tq deny refuse an agent session by its environment marker:
 // a session cannot trust (or untrust) a folder itself (FR-11).
-// tq add scaffolds a folder for anyone, but only a human gets it trusted: under
-// an agent marker the new manifest stays untrusted and the output hands the
-// human the tq allow line.
+// tq add is human-only too (PRD v2 §8.1): under an agent marker it refuses
+// before anything is written, so a session can never get a folder scaffolded,
+// let alone trusted. A human at a terminal who confirms gets it trusted.
 func TestAddDoesNotTrustFromAgent(t *testing.T) {
 	root := mkLaunchWS(t, "acme", "")
 	base := filepath.Dir(root)
@@ -88,14 +89,14 @@ func TestAddDoesNotTrustFromAgent(t *testing.T) {
 		t.Setenv(k, "1")
 		name := "shadow-" + strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 		out, err := runTq(t, "add", name, "--base", base, "--git-email", "anyone@example.com", "--identities", "gh")
-		if err != nil {
-			t.Fatalf("tq add under %s: %v %q", k, err, out)
+		if !errors.Is(err, errHumanOnly) {
+			t.Fatalf("tq add under %s: want errHumanOnly, got %v %q", k, err, out)
 		}
-		if trust.IsTrusted(name, manifestHash(t, filepath.Join(base, name))) {
-			t.Fatalf("tq add under %s trusted the new folder", k)
+		if _, err := os.Stat(filepath.Join(base, name)); !os.IsNotExist(err) {
+			t.Fatalf("tq add under %s scaffolded the folder", k)
 		}
-		if !strings.Contains(out, "untrusted") || !strings.Contains(out, "tq allow "+name) {
-			t.Fatalf("tq add under %s: want the tq allow line, got %q", k, out)
+		if _, err := os.Stat(filepath.Join(paths.IdentitiesRoot(), name)); !os.IsNotExist(err) {
+			t.Fatalf("tq add under %s wrote an identity dir", k)
 		}
 	}
 	clearAgentMarkers(t)

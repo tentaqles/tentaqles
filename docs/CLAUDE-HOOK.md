@@ -331,7 +331,9 @@ them. The only switches are trust and the off launchers:
   hash; until a workspace is trusted, non-read-only git, gh and cloud
   commands are blocked in it, and an edited manifest loses its trust until
   `tq allow` runs again. `tq deny <ws>` (**human-only**) removes the trust.
-  Both refuse an agent session, so a session cannot trust a folder itself.
+  Both refuse a session (an agent marker, a harness in the process tree, a
+  non-terminal stdin or stdout) and ask you to type `yes` before the trust
+  changes, so a session cannot trust a folder itself (ADR-0003).
 - `claude-off` / `codex-off` (`tq run --off -- claude`) start the agent
   outside tq with the plugin switched off: main logins, no identity env, no
   hook. Use them for tq-free work, never for client work.

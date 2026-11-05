@@ -12,9 +12,22 @@ Tentaqles has two parts:
   identity preamble, the knowledge graph, skills that agents follow (prd,
   feature, fix, ship, the reviews) and five read-only reviewer agents.
 
-**Human-only** means the command refuses to run from an agent session. You run
-it yourself in your own terminal. That keeps decisions about trust and secrets
-with a person.
+**Human-only** means the command refuses to run from an agent session, and asks
+you to confirm before it writes. Every command that writes under `~/.tentaqles`
+or an identity's config folder is human-only: `tq init`, `tq add`, `tq allow`,
+`tq deny`, `tq hooks install|remove`, `tq settings render`, `tq bundle sync|capture`,
+`tq migrate`, `tq uninstall`, `tq setup`, `tq onboard`, `tq secret set|rm`,
+`tq providers add`, `tq login`, `tq run --off` and `tq worktrees prune`. Each one
+refuses, with no prompt, when stdin or stdout is not a terminal, when a harness
+(`claude`, `codex`, `opencode`, `kimi`, or `node` running one of them) is in the
+process tree, or when the environment carries a harness marker; the error names
+the command and the detector, and one line goes to `~/.tentaqles/denials.jsonl`.
+When you run it yourself in a console terminal, it prints what it is about to
+write and asks `Type yes to continue:`; anything else exits 1 with nothing
+written. A dry run or a listing asks nothing. `--yes` never skips the
+confirmation. That keeps decisions about trust, secrets and tq's own files with
+a person. The reading side (`tq list`, `tq doctor`, `tq secret status`,
+`tq hooks status`, `tq bundle diff`, `tq worktrees list`) runs anywhere.
 
 For more detail on a command, run `tq <command> --help`.
 
@@ -26,18 +39,18 @@ For more detail on a command, run `tq <command> --help`.
 
 | Command | What it does |
 |---|---|
-| `tq init <base>` | Registers a base folder (for example `C:\repos`). Each first-level subfolder becomes one client identity. |
-| `tq add <name>` | Creates a workspace folder with a name-only marker (`.tentaqles.yaml`), its manifest under `~/.tentaqles/identities/<name>/manifest.yaml`, identity folders and git identity. |
-| `tq onboard` | A wizard that runs `tq add`, then records the company's chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |
-| `tq setup` | Creates several client workspaces at once from a plan file. |
+| `tq init <base>` | **Human-only.** Registers a base folder (for example `C:\repos`). Each first-level subfolder becomes one client identity. |
+| `tq add <name>` | **Human-only.** Creates a workspace folder with a name-only marker (`.tentaqles.yaml`), its manifest under `~/.tentaqles/identities/<name>/manifest.yaml`, identity folders and git identity, trusted once you confirm. |
+| `tq onboard` | **Human-only**, wizard and `--from` alike. A wizard that runs `tq add`, then records the company's chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |
+| `tq setup` | **Human-only**, wizard and `--from` alike. Creates several client workspaces at once from a plan file. `--yes` is accepted for older scripts but no longer skips the confirmation. |
 | `tq list` | Lists every workspace, whether it is trusted, its git email and its identities. |
 | `tq allow <name>` | **Human-only.** Trusts the workspace's manifest as it is now (by hash). Until then, tq exports nothing for that folder and blocks remote commands in it. Editing the manifest drops the trust. |
 | `tq deny <name>` | **Human-only.** Removes trust from a workspace. |
-| `tq login <cli>` | Runs a CLI's own login (gh, az, aws, ...) with its config stored in the workspace's private config folder. |
-| `tq run <ws> -- <cmd>` | Runs one command with another workspace's identity, without `cd`-ing into it. `tq run --off -- claude` starts Claude with no tq at all. |
-| `tq migrate` | Moves a hand-made tentaqles setup under tq's management. It only shows the plan; add `--apply` to do it. Every step is written to a journal. |
-| `tq migrate manifests` | Moves each identity's manifest out of its folder into `~/.tentaqles/identities/<name>/manifest.yaml`, leaving a name-only marker. It only shows the plan; `--apply` is **human-only**. An identity keeps working as before until you run it; `tq doctor` says `manifest-in-root` meanwhile. |
-| `tq uninstall --restore` | Undoes a migration by replaying its journal backwards. It lists the steps and changes nothing until you add `--yes`. |
+| `tq login <cli>` | **Human-only.** Runs a CLI's own login (gh, az, aws, ...) with its config stored in the workspace's private config folder. |
+| `tq run <ws> -- <cmd>` | Runs one command with another workspace's identity, without `cd`-ing into it. `tq run --off -- claude` (**human-only**) starts Claude with no tq at all. |
+| `tq migrate` | **Human-only.** Moves a hand-made tentaqles setup under tq's management. It only shows the plan; add `--apply` to do it, after the confirmation. Every step is written to a journal. |
+| `tq migrate manifests` | **Human-only.** Moves each identity's manifest out of its folder into `~/.tentaqles/identities/<name>/manifest.yaml`, leaving a name-only marker. It only shows the plan; `--apply` asks for the confirmation first. An identity keeps working as before until you run it; `tq doctor` says `manifest-in-root` meanwhile. |
+| `tq uninstall --restore` | **Human-only.** Undoes a migration by replaying its journal backwards. It lists the steps and changes nothing until you add `--yes`; with `--yes` you still type `yes` at the confirmation before the replay starts. |
 | `tq version` | Prints the tq version. |
 
 ### Shell activation
@@ -45,7 +58,7 @@ For more detail on a command, run `tq <command> --help`.
 | Command | What it does |
 |---|---|
 | `tq activate <shell>` | Prints the code your shell profile runs at startup. It switches identity every time you change folder, and defines the `claude` and `codex` launchers. |
-| `tq hooks install\|remove\|status` | Adds the activation block to your shell profiles, removes it, or shows where it is installed. |
+| `tq hooks install\|remove\|status` | Adds the activation block to your shell profiles, removes it, or shows where it is installed. `install` and `remove` are **human-only**; `status` runs anywhere. |
 | `tq env` | Prints the environment changes for the current folder. The shell hook uses it; you rarely run it yourself. |
 | `claude` / `codex` | Launchers from the activation block. They start the agent with the folder's identity and with permission prompts skipped; tq blocks only identity drift and secret reads. |
 | `claude-off` / `codex-off` | Start the agent with no tq: no identity env, main logins, the plugin switched off. |
@@ -55,26 +68,26 @@ For more detail on a command, run `tq <command> --help`.
 | Command | What it does |
 |---|---|
 | `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. A manifest that carries a top-level block tq does not read gets a warning, never a failure. |
-| `tq providers list\|show\|check\|add` | The catalog of supported tools (cloud, git host, data, agents, chat). `check` shows which CLIs are installed. |
+| `tq providers list\|show\|check\|add` | The catalog of supported tools (cloud, git host, data, agents, chat). `check` shows which CLIs are installed. `add` writes a provider file under `~/.tentaqles/providers/` and is **human-only**. |
 | `tq secrets audit` | Finds secret-shaped values in agent config files, and `.env` files that git would commit. It shows only the path and line, never the value. |
-| `tq worktrees list` / `prune --yes` | Lists leftover git worktrees from agent runs. `prune` removes the ones that are clean, merged and old, and never forces. |
+| `tq worktrees list` / `prune --yes` | Lists leftover git worktrees from agent runs. `prune` (**human-only**) removes the ones that are clean, merged and old, and never forces; `--yes` selects the removal over the listing, then you confirm. |
 
 ### Agent settings and plugins
 
 | Command | What it does |
 |---|---|
-| `tq settings render [--all]` | Writes tq's part of each identity's Claude `settings.json`: baseline permissions, env, status line and hooks. It prints what changed. |
+| `tq settings render [--all]` | **Human-only.** Writes tq's part of each identity's Claude `settings.json`: baseline permissions, env, status line and hooks. It prints what changed. `--dry-run` writes nothing and asks nothing. |
 | `tq bundle catalog` | Shows the shared catalog of plugins, skills and MCP servers. |
 | `tq bundle diff <ws>` | Shows how a workspace's installed plugins differ from its `claude.bundle`. |
-| `tq bundle sync <ws>` | Installs or removes plugins so the identity matches its bundle. |
-| `tq bundle capture` | Builds a bundle entry from an identity that is already set up. |
+| `tq bundle sync <ws>` | **Human-only.** Installs or removes plugins so the identity matches its bundle. |
+| `tq bundle capture` | **Human-only.** Builds a bundle entry from an identity that is already set up; `--write-catalog` asks before it adds the entries to the catalog. |
 
 ### Secrets
 
 | Command | What it does |
 |---|---|
 | `tq dotenv run [--file F] -- <cmd>` | Runs a command with a `.env` file loaded and replaces each value with `[REDACTED:NAME]` in the output. This is the only allowed way for an agent to use a `.env`. |
-| `tq secret set\|rm\|status` | **Human-only.** Stores git-host and issue-tracker tokens (GitHub, Azure DevOps, Jira, Linear, Asana) in the OS keychain. It never prints them. |
+| `tq secret set\|rm\|status` | Stores git-host and issue-tracker tokens (GitHub, Azure DevOps, Jira, Linear, Asana) in the OS keychain. It never prints them. `set` and `rm` are **human-only** (`set` reads the token from a hidden prompt on your terminal); `status` prints present or absent and runs anywhere. |
 
 ### Hooks the agent calls (you don't run these)
 
@@ -284,11 +297,16 @@ masked, whatever its name).
 
 ### Step 7: human-only commands refuse agents
 
-Ask Claude in a session: "run `tq secret status`" (or `tq allow tentaqles`).
+Ask Claude in a session: "run `tq allow tentaqles`" (or `tq hooks install bash`,
+`tq settings render tentaqles`, `tq add shadow --git-email x@y.z`).
 
 **Expected:**
-`tq: human-only: run it in your own terminal ...`, exit 1.
-Run it yourself in a normal terminal **(you)** and it works.
+`tq: tq allow: human-only: run it in your own terminal (an agent session is refused) (env-marker: CLAUDECODE is set)`,
+exit 1, and a `human-only` line appended to `~/.tentaqles/denials.jsonl`
+naming the command and the detector. Nothing is written anywhere else.
+Run it yourself in a console terminal **(you)**: it prints what it is about
+to write, asks `Type yes to continue:`, and proceeds only on `yes`. Pipe its
+stdin or redirect its stdout and it refuses with `tty: ...` instead.
 
 ### Step 8: agent settings
 

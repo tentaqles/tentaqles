@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
@@ -14,9 +15,13 @@ func newLoginCmd() *cobra.Command {
 	var ssoSession string
 	cmd := &cobra.Command{
 		Use:   "login <workspace> <identity>",
-		Short: "Run a CLI's own login flow inside the workspace's private config home",
+		Short: "Run a CLI's own login flow inside the workspace's private config home (human only)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
+			// The CLI writes its credentials under the identity dir: human-only.
+			if err := refuseAgent("tq login"); err != nil {
+				return err
+			}
 			ws, err := findWorkspace(args[0])
 			if err != nil {
 				return err
@@ -40,6 +45,10 @@ func newLoginCmd() *cobra.Command {
 				}
 			} else if sso || ssoSession != "" {
 				return fmt.Errorf("--sso and --sso-session apply to the aws identity only")
+			}
+			about := fmt.Sprintf("tq login: about to run `%s %v`, which writes its credentials under %s", p.LoginCmd, loginArgs, paths.IdentityDir(ws.Name, args[1]))
+			if err := humanGate(c, "tq login", about); err != nil {
+				return err
 			}
 			fmt.Fprintf(c.ErrOrStderr(), "tq: running `%s %v` with %s's private config\n", p.LoginCmd, loginArgs, ws.Name)
 			return execIn(ws, p.LoginCmd, loginArgs, false, func(s string) { fmt.Fprintln(c.ErrOrStderr(), "warning:", s) })

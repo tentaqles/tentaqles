@@ -90,8 +90,8 @@ Status: shipped (v0.9.0)
 **Acceptance checks**
 - `TestHashChangesWhenFileChanges` and `TestEditedManifestLosesTrust` pass: after an edit,
   `tq list` prints `TRUSTED false` until a human runs `tq allow` again.
-- `TestAddDoesNotTrustFromAgent` passes: `tq add` from a session leaves the workspace
-  untrusted and prints the `tq allow` line.
+- `TestAddDoesNotTrustFromAgent` passes: `tq add` from a session is refused before
+  anything is written (PRD v2 §8.1, ADR-0003); a human confirms and gets it trusted.
 
 ### FR-02 The identity follows the folder in every supported shell
 G1. `tq activate <shell>` prints the hook (bash, zsh, fish, PowerShell, pwsh, cmd in
@@ -223,16 +223,32 @@ Status: shipped (v0.9.0)
   `git push --force` exits 0 and `cat .env` exits 2.
 
 ### FR-11 Trust and `tq allow`/`tq deny` are human-only
-G1. `internal/cmd/humanonly.go` refuses when an agent environment marker is set
-(`CLAUDECODE`, `CLAUDE_PLUGIN_ROOT`, the Codex sandbox markers), with no prompt; applied
-to `tq allow`, `tq deny`, `tq secret set|rm|status`, `tq run --off` and the `tq onboard`
-wizard. Skills print the line for the human and never run it.
-Status: shipped (v0.9.0)
+G1. `internal/humanonly` (ADR-0003, PRD v2 §8.1) refuses with no prompt when stdin or
+stdout is not a terminal, when a harness or subagent (`claude`, `codex`, `opencode`,
+`kimi`, or `node` running one) is in the process tree, or when an agent environment
+marker is set (`CLAUDECODE`, `CLAUDE_PLUGIN_ROOT`, `CLAUDE_CODE_ENTRYPOINT`, the Codex
+sandbox and thread markers, `OPENCODE`, `KIMI_CODE`, `TENTAQLES_HEADLESS[_CHILD]`,
+`TQ_HUB_TASK`); each refusal is one line in `$TQ_HOME/denials.jsonl`. A human then types
+`yes` at a confirmation that names what is about to be written. Applied to every command
+that writes under `$TQ_HOME` or an identity dir: `tq init`, `tq add`, `tq allow`,
+`tq deny`, `tq hooks install|remove`, `tq settings render`, `tq bundle sync|capture`,
+`tq migrate`, `tq uninstall`, `tq setup`, `tq onboard`, `tq secret set|rm`,
+`tq providers add`, `tq login`, `tq run --off`, `tq worktrees prune`. `tq secret status`
+is free (presence only). Skills print the line for the human and never run it.
+Status: shipped (v0.9.0: environment marker on `tq allow`, `tq deny`, `tq secret`,
+`tq run --off`, the `tq onboard` wizard); three detectors, the confirmation, the denial log
+and the full command list on the Phase 1 branch (2026-11-05)
 **Acceptance checks**
 - `TestAllowAndDenyRefuseAgents` passes: with `CLAUDECODE=1` alone, `tq allow <ws>` and
   `tq deny <ws>` exit 1 with "human-only" and `$TQ_HOME/trust` is unchanged.
+- `TestHumanOnlyCommandsRefuseWithMarkerAndLog` passes: every command listed refuses under a
+  marker, and the only file the home gains is `denials.jsonl`;
+  `TestHumanOnlyCommandsRefuseWithoutTTYOrUnderAHarnessProcess`, `TestTTYDetector`,
+  `TestProcessTreeDetector`, `TestEnvMarkerDetector`, `TestRefusalIsLogged` cover the
+  detectors; `TestAddConfirmsBeforeWriting`, `TestGateConfirms`,
+  `TestSetup_YesDoesNotSkipConfirm` cover the confirmation.
 - `TestSecretIsHumanOnly` and `TestOnboard_InteractiveRefusedInAgentSession` pass; in a
-  Claude session, "run `tq allow tentaqles`" answers `tq: human-only`, exit 1
+  Claude session, "run `tq allow tentaqles`" answers `tq: tq allow: human-only`, exit 1
   (COMMANDS.md walkthrough, step 7).
 
 ### FR-12 A session with no tq at all (`claude-off`, `codex-off`), human-only
@@ -638,7 +654,7 @@ P2 depth; P3 follow-ups with no dependency on the rest.
 
 | # | Priority | Item | FR | Why this priority | Depends on |
 |---|---|---|---|---|---|
-| B-01 | P0 | The `off` launchers (`claude-off`, `codex-off`, `tq run --off`) need a terminal on stdin as well as no agent marker | FR-12 | The one human-only gap the threat model records (B2); cheap | none |
+| B-01 | P0 | Done 2026-11-05 (ADR-0003): `tq run --off` and every other human-only command need a terminal on stdin and stdout, no harness in the process tree and no agent marker, then a typed `yes` | FR-11, FR-12 | The one human-only gap the threat model recorded (B2) | none |
 | B-03 | P1 | Browser profile per workspace: Chrome and Edge first, for the onboarding login pages and Claude in Chrome or Playwright | FR-27 | Named in the vision's first paragraph; the last identity surface not isolated | D-06 |
 | B-04 | P1 | Shim folder per workspace so unselected CLIs are unreachable; CLI install or link into it | FR-26, FR-30 | The vision's first bullet; what makes "AWS-only terminal" true | a Windows prototype (D-05) |
 | B-05 | P1 | Prompt prefix and window title; the onboarding banner with `--no-banner` | FR-25, FR-29 | Low effort, high clarity | D-01 |

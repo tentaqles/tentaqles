@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/onboard"
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -165,7 +166,7 @@ func TestOnboard_InteractiveRefusedInAgentSession(t *testing.T) {
 		return onboardWizardResult{}, errors.New("no")
 	}
 	_, err := runOnboard(t, "acme", "--base", base)
-	if err == nil || !strings.Contains(err.Error(), "--from") {
+	if !errors.Is(err, errHumanOnly) {
 		t.Fatalf("err = %v", err)
 	}
 	if called {
@@ -173,16 +174,44 @@ func TestOnboard_InteractiveRefusedInAgentSession(t *testing.T) {
 	}
 }
 
-func TestOnboard_AgentSessionNeverOpensATerminal(t *testing.T) {
+// --from is human-only too (DISCOVERY §7.1): a session is refused before the
+// folder is written, and no terminal is opened.
+func TestOnboard_FromRefusedInAgentSession(t *testing.T) {
 	base, opened := isolateOnboard(t)
 	t.Setenv("TENTAQLES_HEADLESS", "1")
 	from := answersFile(t, "name: acme\ngit: { email: tester@acme.test }\n")
-	out, err := runOnboard(t, "--from", from, "--base", base, "--open-terminal")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	_, err := runOnboard(t, "--from", from, "--base", base, "--open-terminal")
+	if !errors.Is(err, errHumanOnly) {
+		t.Fatalf("err = %v", err)
 	}
-	if len(*opened) != 0 || !strings.Contains(out, "Not opening a terminal") {
-		t.Fatalf("opened %v\n%s", *opened, out)
+	if _, err := os.Stat(filepath.Join(base, "acme")); !os.IsNotExist(err) {
+		t.Fatal("a refused onboard must write nothing")
+	}
+	if len(*opened) != 0 {
+		t.Fatalf("opened %v", *opened)
+	}
+}
+
+// The confirmation comes after the answers and before the write: a declined
+// confirmation leaves nothing behind.
+func TestOnboard_DeclinedConfirmationWritesNothing(t *testing.T) {
+	base, opened := isolateOnboard(t)
+	prev := humanonly.Confirm
+	humanonly.Confirm = func(string) (bool, error) { return false, nil }
+	t.Cleanup(func() { humanonly.Confirm = prev })
+	from := answersFile(t, "name: acme\ngit: { email: tester@acme.test }\n")
+	out, err := runOnboard(t, "--from", from, "--base", base, "--open-terminal")
+	if !errors.Is(err, humanonly.ErrAborted) {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "tq onboard: about to create "+filepath.Join(base, "acme")) {
+		t.Fatalf("the confirmation names the folder:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(base, "acme")); !os.IsNotExist(err) {
+		t.Fatal("a declined confirmation must write nothing")
+	}
+	if len(*opened) != 0 {
+		t.Fatalf("opened %v", *opened)
 	}
 }
 

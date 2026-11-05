@@ -26,12 +26,16 @@ func newUninstallCmd() *cobra.Command {
 		Long: "tq uninstall --restore [<ts>|latest] replays a migration journal in reverse:\n" +
 			"identity directories move back, shell profiles and ~/.gitconfig are restored\n" +
 			"from their byte-exact backups, and registry values go back with their original\n" +
-			"types. It lists what it would undo and does nothing until you add --yes.\n\n" +
+			"types. It lists what it would undo and does nothing until you add --yes;\n" +
+			"with --yes you still confirm before the replay starts (human-only).\n\n" +
 			"Removing tq's own hooks and global include is a separate job that this version\n" +
 			"does not do.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			out := c.OutOrStdout()
+			if err := refuseAgent("tq uninstall"); err != nil {
+				return err
+			}
 			if !c.Flags().Changed("restore") {
 				return errors.New("only --restore is implemented in this version")
 			}
@@ -63,6 +67,10 @@ func newUninstallCmd() *cobra.Command {
 				fmt.Fprintln(out, "dry run — nothing changed. Re-run with --yes.")
 				return nil
 			}
+			about := fmt.Sprintf("tq uninstall --restore: about to replay %s of journal %s backwards (identity dirs, shell profiles, ~/.gitconfig, registry values)", entryCount(len(ents)), j.Dir)
+			if err := humanGate(c, "tq uninstall", about); err != nil {
+				return err
+			}
 
 			fmt.Fprintln(out, "undoing:")
 			lines, rerr := j.Restore(uninstallRunner())
@@ -80,7 +88,7 @@ func newUninstallCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&restore, "restore", "", `undo the migration journal for <ts> (or "latest")`)
 	c.Flags().Lookup("restore").NoOptDefVal = "latest"
-	c.Flags().BoolVar(&yes, "yes", false, "actually replay the journal (without this it only lists what it would undo)")
+	c.Flags().BoolVar(&yes, "yes", false, "replay the journal instead of only listing it; you still type yes at the confirmation")
 	return c
 }
 

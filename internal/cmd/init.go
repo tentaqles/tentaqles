@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 )
 
@@ -15,9 +16,19 @@ func newInitCmd() *cobra.Command {
 	var installHook bool
 	cmd := &cobra.Command{
 		Use:   "init <base-folder>",
-		Short: "Register a base folder; each first-level subfolder becomes a terminal identity",
+		Short: "Register a base folder; each first-level subfolder becomes a terminal identity (human only)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := refuseAgent("tq init"); err != nil {
+				return err
+			}
+			about := fmt.Sprintf("tq init: about to register %s in %s and set the git include in ~/.gitconfig", args[0], paths.Config())
+			if installHook {
+				about += ", then write the activation block into the detected shell profiles"
+			}
+			if err := humanGate(c, "tq init", about); err != nil {
+				return err
+			}
 			cfg, err := registry.Load()
 			if err != nil {
 				return err

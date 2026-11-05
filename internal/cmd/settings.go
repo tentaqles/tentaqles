@@ -38,8 +38,14 @@ claude.env:
   - env: tuning for costly plugins (e.g. no per-turn Opus security review)
   - statusLine: tq statusline (replaces unpinned npx status lines only)
 
-Only entries tq wrote earlier are ever removed; anything added by hand stays.`,
+Only entries tq wrote earlier are ever removed; anything added by hand stays.
+
+Human-only: a session is refused, and you confirm before the files are written
+(--dry-run writes nothing and asks nothing).`,
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := refuseAgent("tq settings render"); err != nil {
+				return err
+			}
 			cfg, err := registry.Load()
 			if err != nil {
 				return err
@@ -54,6 +60,16 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.`,
 			want := map[string]bool{}
 			for _, a := range args {
 				want[a] = true
+			}
+			if !dryRun {
+				which := "every registered workspace"
+				if !all {
+					which = strings.Join(args, ", ")
+				}
+				about := fmt.Sprintf("tq settings render: about to write settings.json and the Codex files under %s for %s", paths.IdentitiesRoot(), which)
+				if err := humanGate(c, "tq settings render", about); err != nil {
+					return err
+				}
 			}
 			tqExe := ""
 			if !noStatus {

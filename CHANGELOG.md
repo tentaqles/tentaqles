@@ -41,6 +41,34 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   fails a command.
 - Plugin: see `plugin/CHANGELOG.md` (the loader resolves the marker; the snapshot guard
   reads `tool_input.file_path`).
+### Human-only commands (PRD v2 §8.1, ADR-0003)
+
+- **Three detectors, one confirmation.** Every command that writes under `~/.tentaqles`
+  or an identity config dir is human-only: `tq init`, `tq add`, `tq allow`, `tq deny`,
+  `tq hooks install|remove`, `tq settings render`, `tq bundle sync|capture`, `tq migrate`,
+  `tq uninstall`, `tq setup` (wizard and `--from`), `tq onboard` (wizard and `--from`),
+  `tq secret set|rm`, `tq providers add`, `tq login`, `tq run --off` and
+  `tq worktrees prune`. Each refuses, with no prompt, when stdin or stdout is not a
+  terminal, when a harness or subagent (`claude`, `codex`, `opencode`, `kimi`, or `node`
+  running one of them) is in the process tree, or when the environment carries a harness
+  marker (the earlier list plus `TENTAQLES_HEADLESS_CHILD`, `CLAUDE_CODE_ENTRYPOINT`,
+  `CLAUDE_CODE_SSE_PORT`, `CODEX_THREAD_ID`, `OPENCODE`, `KIMI_CODE`). The error names the
+  command and the detector. A human then sees one line saying what is about to be written
+  and types `yes` at `Type yes to continue:`; anything else exits 1 with nothing written.
+  The logic lives in the new `internal/humanonly` package.
+- **Denial log.** Every refusal appends one JSON line to `~/.tentaqles/denials.jsonl`
+  (time, kind `human-only`, command, reason, pid, cwd; never an environment value).
+- **`--yes` no longer skips the confirmation.** `tq setup --yes` is accepted for older
+  scripts and asks anyway; `tq uninstall --restore --yes` and `tq worktrees prune --yes`
+  still select the replay or the removal over the listing, then ask.
+- **`tq add` no longer scaffolds from a session.** It used to create the folder untrusted;
+  it now refuses, and a confirmed human run trusts the folder. `tq onboard --from` and
+  `tq setup --from` refuse a session the same way.
+- **`tq secret set`** reads the token from the hidden prompt only (a piped stdin is not a
+  terminal). **`tq secret status`** is free to run from a session: it prints presence,
+  never a value.
+- **`tq doctor`** reports a `human-only` check naming the detectors this OS has; a warning
+  on an OS whose process-tree walker is stubbed.
 
 ## [0.9.0] — 2026-11-04
 

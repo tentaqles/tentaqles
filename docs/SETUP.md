@@ -7,8 +7,8 @@ two modes:
 
 - No flags: an interactive wizard walks through the plan step by step and
   applies it at the end.
-- `--from <file>`: load a plan YAML and preview or apply it non-interactively
-  (`--dry-run`, `--yes`, `--json`).
+- `--from <file>`: load a plan YAML and preview or apply it (`--dry-run`,
+  `--json`; `--yes` is accepted for older scripts, the confirmation is still asked).
 
 `tq setup --example` prints a starting-point plan you can copy, edit, and
 feed back in with `--from`.
@@ -85,9 +85,13 @@ touching anything:
   applicable (`[n/a]`, no CLI for that provider).
 
 `--dry-run` stops after preview + tool-check and writes nothing. Without
-`--dry-run`, `tq setup --from` asks `Apply these changes? [y/N]` unless
-`--yes` is passed; on a non-interactive stdin without `--yes` it refuses to
-apply rather than silently doing nothing or silently applying.
+`--dry-run`, `tq setup --from` prints one line saying what it is about to
+write and asks `Type yes to continue:`; anything else exits 1 with nothing
+written. `--yes` is accepted for older scripts but no longer skips that
+confirmation. The command is human-only (`docs/adr/0003-human-only-detection.md`):
+on a non-interactive stdin or stdout, under a harness in the process tree or
+with an agent marker in the environment it refuses before the preview, logs
+the refusal to `~/.tentaqles/denials.jsonl`, and never applies.
 
 `--json` switches preview, tool-check, and (once applied) the report to a
 single JSON object (`{"preview": [...], "toolcheck": {...}, "report": {...}}`)
@@ -159,12 +163,14 @@ Flags:
 - `--open-terminal`: with `--from`, open a new terminal in the folder afterwards. The
   wizard asks instead.
 
-The wizard refuses to start in an agent session (the environment markers
-`internal/cmd/humanonly.go` lists, such as `CLAUDECODE`, `CLAUDE_PLUGIN_ROOT` and
-`CODEX_SANDBOX`); use `--from` there. A new
+`tq setup` and `tq onboard` are human-only, wizard and `--from` alike
+(`internal/humanonly`, ADR-0003): a session is refused by its environment marker
+(`CLAUDECODE`, `CLAUDE_PLUGIN_ROOT`, `CODEX_SANDBOX`, `CODEX_THREAD_ID`, ...), by a
+harness in the process tree, or by a non-terminal stdin or stdout, and a human
+confirms before the folder is written. A new
 terminal opens with Windows Terminal (`wt -d <folder>`) when present, otherwise with cmd's
 `start`; Terminal.app on macOS; the first emulator found on Linux.
-tq never closes or kills a terminal, and opens none from an agent session.
+tq never closes or kills a terminal.
 
 Then it prints the next steps, for you to run:
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 )
 
 // isolateSetupHome mirrors internal/setup's isolateHome helper: it points
@@ -121,25 +123,75 @@ func TestSetup_FromYes_Applies(t *testing.T) {
 	}
 }
 
-func TestSetup_RefusesWithoutTTYOrYes(t *testing.T) {
+// tq setup --from is human-only: without a terminal on stdin it is refused
+// before the plan is applied, --yes or not.
+func TestSetup_RefusesWithoutTTY(t *testing.T) {
 	isolateSetupHome(t)
 	setupTempProfiles(t)
 	base := t.TempDir()
 	planPath := writeTempPlan(t, base)
 
-	prevTTY := setupIsTTY
-	setupIsTTY = func() bool { return false }
-	t.Cleanup(func() { setupIsTTY = prevTTY })
+	prevTTY := humanonly.IsTerminal
+	humanonly.IsTerminal = func(*os.File) bool { return false }
+	t.Cleanup(func() { humanonly.IsTerminal = prevTTY })
+
+	for _, args := range [][]string{{"setup", "--from", planPath}, {"setup", "--from", planPath, "--yes"}} {
+		root := NewRoot()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs(args)
+		if err := root.Execute(); !errors.Is(err, errHumanOnly) {
+			t.Fatalf("%v: want errHumanOnly when stdin is not a terminal, got %v", args, err)
+		}
+		if _, err := os.Stat(filepath.Join(base, "acme")); err == nil {
+			t.Fatal("expected no workspace to be scaffolded")
+		}
+	}
+}
+
+// --yes no longer skips the confirmation: a declined confirmation aborts with
+// nothing written, and --json still reports applied:false.
+func TestSetup_YesDoesNotSkipConfirm(t *testing.T) {
+	isolateSetupHome(t)
+	setupTempProfiles(t)
+	base := t.TempDir()
+	planPath := writeTempPlan(t, base)
+	prevRunGit := setupRunGit
+	setupRunGit = func(...string) (string, error) { return "", nil }
+	t.Cleanup(func() { setupRunGit = prevRunGit })
+
+	prevConfirm := humanonly.Confirm
+	asked := 0
+	humanonly.Confirm = func(string) (bool, error) { asked++; return false, nil }
+	t.Cleanup(func() { humanonly.Confirm = prevConfirm })
 
 	root := NewRoot()
 	var out bytes.Buffer
 	root.SetOut(&out)
-	root.SetArgs([]string{"setup", "--from", planPath})
+	root.SetArgs([]string{"setup", "--from", planPath, "--yes", "--json"})
 	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected an error when stdin is not a TTY and --yes is absent")
+	if !errors.Is(err, humanonly.ErrAborted) || asked != 1 {
+		t.Fatalf("want ErrAborted after one confirmation, got %v (asked %d)", err, asked)
 	}
 	if _, err := os.Stat(filepath.Join(base, "acme")); err == nil {
-		t.Fatal("expected no workspace to be scaffolded")
+		t.Fatal("a declined confirmation must scaffold nothing")
+	}
+	if !strings.Contains(out.String(), `"applied":false`) {
+		t.Fatalf("--json reports the decline: %s", out.String())
+	}
+
+	humanonly.Confirm = func(string) (bool, error) { return true, nil }
+	root = NewRoot()
+	out.Reset()
+	root.SetOut(&out)
+	root.SetArgs([]string{"setup", "--from", planPath, "--yes"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("a confirmed setup applies: %v %s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "tq setup: about to create 1 workspace(s)") {
+		t.Fatalf("the confirmation names what is written: %s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(base, "acme")); err != nil {
+		t.Fatal("expected acme workspace to be scaffolded")
 	}
 }

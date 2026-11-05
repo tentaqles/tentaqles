@@ -135,13 +135,16 @@ func (l launch) run() error {
 
 // runOff is tq run --off: the main install and logins, no tq. The plugin is
 // switched off and the identity environment cleaned; no variable marks the
-// launch. It refuses agent sessions.
-func runOff(name string, args []string, errw func(string)) error {
+// launch. It is human-only: refused from a session, confirmed by the human.
+func runOff(c *cobra.Command, name string, args []string, errw func(string)) error {
 	if err := refuseAgent("tq run --off"); err != nil {
 		return err
 	}
 	if agentProg(name) == "" {
 		return fmt.Errorf("tq run --off starts claude or codex only, not %q: tq run --off -- <claude|codex> [args]", name)
+	}
+	if err := humanGate(c, "tq run --off", "tq run --off: about to start "+name+" with no identity and no guard (your main logins, the plugin off)"); err != nil {
+		return err
 	}
 	errw(offBanner)
 	return execCommand(name, offArgs(name, args), envplan.OffEnviron(os.Environ()))
@@ -190,7 +193,7 @@ func newRunCmd() *cobra.Command {
 				if c.ArgsLenAtDash() > 0 {
 					return errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")
 				}
-				return runOff(args[0], args[1:], func(s string) { fmt.Fprintln(c.ErrOrStderr(), s) })
+				return runOff(c, args[0], args[1:], func(s string) { fmt.Fprintln(c.ErrOrStderr(), s) })
 			}
 			// Flags are not interspersed: after <workspace> only an optional
 			// -- may come before the command word, and everything after it

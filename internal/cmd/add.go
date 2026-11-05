@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
@@ -19,9 +21,14 @@ func newAddCmd() *cobra.Command {
 	var ids string
 	c := &cobra.Command{
 		Use:   "add <name>",
-		Short: "Create a workspace folder with its manifest, identity dirs and git identity",
+		Short: "Create a workspace folder with its manifest, identity dirs and git identity (human only)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			// Human-only: a session never scaffolds a folder, so it can never
+			// get one trusted; the human who confirms gets it trusted.
+			if err := refuseAgent("tq add"); err != nil {
+				return err
+			}
 			o.Name = args[0]
 			for _, id := range strings.Split(strings.ReplaceAll(ids, " ", ""), ",") {
 				if id != "" {
@@ -29,10 +36,7 @@ func newAddCmd() *cobra.Command {
 				}
 			}
 			o.RunGit = addRunGit
-			// Trust is human-only: a session may scaffold a folder but never
-			// trust it itself (the same marker check tq allow makes).
-			agentMarker, agent := agentSession()
-			o.Trust = !agent
+			o.Trust = true
 			if o.Base == "" {
 				cfg, err := registry.Load()
 				if err != nil {
@@ -42,6 +46,10 @@ func newAddCmd() *cobra.Command {
 					return fmt.Errorf("--base required (registered bases: %v)", cfg.Bases)
 				}
 				o.Base = cfg.Bases[0]
+			}
+			about := fmt.Sprintf("tq add: about to create %s (marker, git identity, trusted) and %s (manifest, identity dirs)", filepath.Join(o.Base, o.Name), filepath.Join(paths.IdentitiesRoot(), o.Name))
+			if err := humanGate(c, "tq add", about); err != nil {
+				return err
 			}
 			// The manifest goes under $TQ_HOME (ADR-0002): create it private
 			// to the user first (on Windows: the one icacls run).
@@ -53,11 +61,7 @@ func newAddCmd() *cobra.Command {
 				return err
 			}
 			w := c.OutOrStdout()
-			if agent {
-				fmt.Fprintf(w, "Created %s (untrusted: agent session, %s is set)\n  trust it yourself: tq allow %s\n", ws.Root, agentMarker, ws.Name)
-			} else {
-				fmt.Fprintf(w, "Created %s (trusted)\n", ws.Root)
-			}
+			fmt.Fprintf(w, "Created %s (trusted)\n", ws.Root)
 			for _, id := range ws.Manifest.IdentityNames() {
 				fmt.Fprintf(w, "  login: tq login %s %s\n", ws.Name, id)
 			}

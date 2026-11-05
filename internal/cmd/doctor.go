@@ -6,15 +6,34 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/doctor"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/registry"
 )
 
 var exitFunc = os.Exit
+
+// humanOnlyFinding reports which human-only detectors this OS has: a warning
+// when the process-tree walker is stubbed (the TTY and marker detectors still
+// carry the check), ok otherwise.
+func humanOnlyFinding() doctor.Finding {
+	var parts []string
+	level := "ok"
+	for _, d := range humanonly.Detectors() {
+		if d.Available {
+			parts = append(parts, d.Name+" ("+d.Method+")")
+			continue
+		}
+		level = "warn"
+		parts = append(parts, d.Name+" (unavailable on this OS)")
+	}
+	return doctor.Finding{Level: level, Code: "human-only", Msg: "human-only detectors: " + strings.Join(parts, ", ")}
+}
 
 func newDoctorCmd() *cobra.Command {
 	var asJSON bool
@@ -38,6 +57,7 @@ func newDoctorCmd() *cobra.Command {
 				RunGit: gitcfg.RunGit, RunGitIn: gitcfg.RunGitIn, LookPath: exec.LookPath,
 				RunCLI: runVerifyCmd, VerifyMode: verifyMode,
 			})
+			fs = append(fs, humanOnlyFinding())
 			if asJSON {
 				if err := json.NewEncoder(c.OutOrStdout()).Encode(fs); err != nil {
 					return err

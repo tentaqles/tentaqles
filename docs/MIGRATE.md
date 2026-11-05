@@ -327,11 +327,14 @@ you need it.
 ```
 tq uninstall --restore latest              # list what it would undo
 tq uninstall --restore 20260828T140233Z    # a specific journal
-tq uninstall --restore latest --yes        # actually do it
+tq uninstall --restore latest --yes        # do it: it names the journal, you type yes
 ```
 
 Without `--yes` it prints the journal path and every entry, newest first —
-the order it reverses them in — and changes nothing. `latest` resolves to the
+the order it reverses them in — and changes nothing. With `--yes` it still
+asks you to type `yes` before the replay starts: `tq uninstall` and
+`tq migrate --apply` are human-only (ADR-0003), refused from a session, a
+non-terminal stdin or stdout, or under a harness in the process tree. `latest` resolves to the
 newest backup directory containing a `journal.json`; if a *newer* directory
 holds only a half-written temp file, `latest` refuses to resolve at all
 rather than quietly offering you an older, unrelated migration's restore.
@@ -432,7 +435,9 @@ Install the new `tq` (the installer replaces the binary), then:
   through `tq secret`.
 - **The launchers** `claude-off` and `codex-off` (`tq run --off`) start the
   agent with the plugin switched off and the identity env cleaned; they set
-  no variable, and they refuse an agent session.
+  no variable, and they are human-only: refused from a session, a non-terminal
+  stdin or stdout, or under a harness in the process tree, and confirmed by
+  you before the launch (ADR-0003).
 
 ## This machine, before and after
 

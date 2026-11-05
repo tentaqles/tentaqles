@@ -64,19 +64,31 @@ func newWorktreesCmd() *cobra.Command {
 	var yes bool
 	prune := &cobra.Command{
 		Use:   "prune",
-		Short: "Remove clean, merged, old worktrees (git worktree remove; never --force)",
+		Short: "Remove clean, merged, old worktrees (git worktree remove; never --force; human only)",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			if err := refuseAgent("tq worktrees prune"); err != nil {
+				return err
+			}
 			wts, err := scanWorktrees()
 			if err != nil {
 				return err
 			}
 			minAge := time.Duration(minDays) * 24 * time.Hour
-			repos := map[string]bool{}
+			var prunable []worktree
 			for _, w := range wts {
-				if !w.prunable(minAge) {
-					continue
+				if w.prunable(minAge) {
+					prunable = append(prunable, w)
 				}
+			}
+			if yes && len(prunable) > 0 {
+				about := fmt.Sprintf("tq worktrees prune: about to run git worktree remove (and prune) on %d worktree(s)", len(prunable))
+				if err := humanGate(c, "tq worktrees prune", about); err != nil {
+					return err
+				}
+			}
+			repos := map[string]bool{}
+			for _, w := range prunable {
 				if !yes {
 					fmt.Fprintf(c.OutOrStdout(), "would remove %s (%s)\n", w.Path, w.why())
 					continue

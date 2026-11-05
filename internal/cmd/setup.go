@@ -1,11 +1,9 @@
 package cmd
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"text/tabwriter"
 
@@ -13,32 +11,14 @@ import (
 	"github.com/tentaqles/tentaqles/internal/detect"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/hooks"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/setup"
 )
 
-// setupRunGit is the seam tests use to fake git for `tq setup --from --yes`.
+// setupRunGit is the seam tests use to fake git for `tq setup --from`.
 var setupRunGit = gitcfg.RunGit
-
-// setupIsTTY reports whether stdin is an interactive terminal. Tests
-// override it to exercise the non-interactive refusal path.
-var setupIsTTY = func() bool {
-	fi, err := os.Stdin.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
-
-// setupConfirm prompts and reads a single line from stdin, treating
-// "y"/"yes" (case-insensitive) as confirmation. Tests override it directly
-// rather than faking stdin.
-var setupConfirm = func(prompt string) (bool, error) {
-	fmt.Print(prompt)
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && line == "" {
-		return false, err
-	}
-	line = strings.TrimSpace(strings.ToLower(line))
-	return line == "y" || line == "yes", nil
-}
 
 // setupOutput is what --json prints: the preview, tool check, and (once
 // applied) the report, all together.
@@ -48,9 +28,9 @@ type setupOutput struct {
 	Report    *setup.Report              `json:"report,omitempty"`
 }
 
-// declinedOutput is what --json prints when the user declines the
-// confirmation prompt: the same preview/toolcheck plus an explicit
-// applied:false, so a caller never has to infer it from a missing report.
+// declinedOutput is what --json prints when the human declines the
+// confirmation: the same preview/toolcheck plus an explicit applied:false,
+// so a caller never has to infer it from a missing report.
 type declinedOutput struct {
 	Preview   []setup.Change             `json:"preview"`
 	ToolCheck map[string][]detect.Result `json:"toolcheck"`
@@ -66,6 +46,26 @@ func loadProviderCatalog(errw func(format string, a ...any)) *providers.Catalog 
 	return cat
 }
 
+// setupAbout is the one line the human confirms before a plan is applied.
+func setupAbout(plan *setup.SetupPlan, writePlan string) string {
+	names := make([]string, 0, len(plan.Companies))
+	for _, co := range plan.Companies {
+		names = append(names, co.Name)
+	}
+	trusted := "untrusted"
+	if plan.Trust {
+		trusted = "trusted"
+	}
+	about := fmt.Sprintf("tq setup: about to create %d workspace(s) under %s (%s, %s), register the base in %s and set the git include", len(names), plan.Base, strings.Join(names, ", "), trusted, paths.Config())
+	if len(plan.Hooks) > 0 {
+		about += ", and write the activation block into the " + strings.Join(plan.Hooks, ", ") + " profile(s)"
+	}
+	if writePlan != "" {
+		about += ", and save the plan to " + writePlan
+	}
+	return about
+}
+
 func newSetupCmd() *cobra.Command {
 	var example bool
 	var from string
@@ -74,13 +74,19 @@ func newSetupCmd() *cobra.Command {
 
 	c := &cobra.Command{
 		Use:   "setup",
-		Short: "Scaffold multiple client workspaces from a plan",
+		Short: "Scaffold multiple client workspaces from a plan (human only)",
+		Long: "tq setup creates several client workspaces at once, from the wizard or from a plan\n" +
+			"file (--from). It is human-only: a session is refused, and you confirm before anything\n" +
+			"is written. --yes no longer skips that confirmation; it is accepted for older scripts.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			out := c.OutOrStdout()
 
 			if example {
 				fmt.Fprint(out, setup.ExampleYAML())
 				return nil
+			}
+			if err := refuseAgent("tq setup"); err != nil {
+				return err
 			}
 
 			cat := loadProviderCatalog(func(format string, a ...any) {
@@ -90,20 +96,17 @@ func newSetupCmd() *cobra.Command {
 			var plan *setup.SetupPlan
 
 			if from == "" {
-				if !setupIsTTY() {
-					fmt.Fprintln(c.ErrOrStderr(), "error: the interactive wizard needs a terminal; use --from <file> or --example")
-					exitFunc(1)
-					return nil
-				}
 				wizardPlan, err := runWizard(cat, hooks.ProfilesFn())
 				if err != nil {
 					return err
 				}
 				plan = wizardPlan
+				if err := humanGate(c, "tq setup", setupAbout(plan, writePlan)); err != nil {
+					return err
+				}
 				if err := saveWizardPlan(plan, writePlan); err != nil {
 					fmt.Fprintf(c.ErrOrStderr(), "warning: failed to save plan: %v\n", err)
 				}
-				humanTrustOnly(plan, c.ErrOrStderr())
 				applyReport, err := setup.Apply(plan, cat, setup.ApplyOptions{RunGit: setupRunGit, Profiles: hooks.ProfilesFn()})
 				printReport(out, applyReport)
 				if err != nil {
@@ -142,23 +145,19 @@ func newSetupCmd() *cobra.Command {
 				return nil
 			}
 
-			if !yes {
-				if !setupIsTTY() {
-					return fmt.Errorf("refusing to apply without --yes on a non-interactive stdin")
+			// The confirmation is mandatory, with or without --yes. With
+			// --json its line goes to stderr so stdout stays one JSON document.
+			aboutW := c.OutOrStdout()
+			if asJSON {
+				aboutW = c.ErrOrStderr()
+			}
+			if err := humanonly.Gate("tq setup", setupAbout(plan, ""), aboutW); err != nil {
+				if asJSON && errors.Is(err, humanonly.ErrAborted) {
+					_ = json.NewEncoder(out).Encode(declinedOutput{Preview: changes, ToolCheck: toolcheck, Applied: false})
 				}
-				ok, err := setupConfirm("Apply these changes? [y/N] ")
-				if err != nil {
-					return err
-				}
-				if !ok {
-					if asJSON {
-						return json.NewEncoder(out).Encode(declinedOutput{Preview: changes, ToolCheck: toolcheck, Applied: false})
-					}
-					return nil
-				}
+				return err
 			}
 
-			humanTrustOnly(plan, c.ErrOrStderr())
 			report, err := setup.Apply(plan, cat, setup.ApplyOptions{RunGit: setupRunGit, Profiles: hooks.ProfilesFn()})
 			if asJSON {
 				encErr := json.NewEncoder(out).Encode(setupOutput{Preview: changes, ToolCheck: toolcheck, Report: &report})
@@ -181,7 +180,7 @@ func newSetupCmd() *cobra.Command {
 	c.Flags().StringVar(&from, "from", "", "load a setup plan YAML from this file")
 	c.Flags().StringVar(&writePlan, "write-plan", "", "also save the wizard's answers as a setup plan YAML to this path")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview only; never write anything")
-	c.Flags().BoolVar(&yes, "yes", false, "apply without prompting for confirmation")
+	c.Flags().BoolVar(&yes, "yes", false, "accepted for older scripts; the typed confirmation is always asked")
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 	return c
 }
@@ -219,19 +218,6 @@ func printToolCheck(out interface{ Write([]byte) (int, error) }, cat *providers.
 				fmt.Fprintf(out, "  [missing] %s → %s\n", r.ID, hint)
 			}
 		}
-	}
-}
-
-// humanTrustOnly clears a plan's Trust inside an agent session: a session may
-// scaffold workspaces but never trust them itself (the same marker check
-// tq allow makes). It says so once on w.
-func humanTrustOnly(plan *setup.SetupPlan, w io.Writer) {
-	if plan == nil || !plan.Trust {
-		return
-	}
-	if m, ok := agentSession(); ok {
-		plan.Trust = false
-		fmt.Fprintf(w, "Not trusting the new workspaces from an agent session (%s is set); run tq allow <name> yourself.\n", m)
 	}
 }
 
