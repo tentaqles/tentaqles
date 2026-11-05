@@ -539,6 +539,39 @@ func TestProtectedPaths_GlobTool(t *testing.T) {
 	}
 }
 
+// The tentaqles marketplace clone (P1.4's trust anchor for batch accepts) is
+// write-protected like the plugin cache: writes, deletes and git -C into it
+// are denied, reads are allowed. The plugin's pycache sits inside the state
+// folder, so a Write there is denied too.
+func TestProtectedPaths_MarketplaceCloneAndPycache(t *testing.T) {
+	f := setupProtected(t, "")
+	clone := filepath.Join(paths.IdentityDir("acme", "claude"), "plugins", "marketplaces", "tentaqles")
+	hooksFile := filepath.Join(clone, "plugin", "hooks", "hooks.json")
+	pyc := filepath.Join(f.home, "pycache", "tentaqles", "x.cpython-312.pyc")
+	for _, tc := range []struct {
+		name, tool, input string
+		deny              bool
+	}{
+		{"Write in the clone", "Write", pathIn("file_path", hooksFile), true},
+		{"Edit in the clone", "Edit", `{"file_path":` + jsonPathLit(hooksFile) + `,"old_string":"a","new_string":"b"}`, true},
+		{"rm in the clone", "Bash", cmdIn("rm -rf " + clone), true},
+		{"git -C the clone", "Bash", cmdIn("git -C " + clone + " checkout main"), true},
+		{"git -C the clone, read", "Bash", cmdIn("git -C " + clone + " log -1"), true},
+		{"Read in the clone", "Read", pathIn("file_path", hooksFile), false},
+		{"Write in pycache", "Write", pathIn("file_path", pyc), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, rule, _ := hookDecision(t, f.root, tc.tool, tc.input)
+			if tc.deny && (code != 2 || rule != policy.ProtectedPathID) {
+				t.Fatalf("want deny, code=%d rule=%q", code, rule)
+			}
+			if !tc.deny && code != 0 {
+				t.Fatalf("want allow, code=%d rule=%q", code, rule)
+			}
+		})
+	}
+}
+
 // A PowerShell -EncodedCommand reaches the hook decoded (ADR-0005).
 func TestProtectedPaths_EncodedCommand(t *testing.T) {
 	f := setupProtected(t, "")

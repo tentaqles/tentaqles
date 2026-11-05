@@ -347,7 +347,7 @@ folder, the registered bases, the resolved identity, `$CLAUDE_CONFIG_DIR`,
 |---|---|---|
 | tq's state | everything under `~/.tentaqles`: `config.yaml`, `trust/`, `identities/<ws>/manifest.yaml` and the identity's CLI homes, `denials.jsonl`, `audit.jsonl`, `protected-acl.json`, `anchors.yaml`, `integrity.key`, `bundles/`, `providers/`, `shims/`, `backups/`. In an identity's `claude` or `codex` home only the hook registration: `settings.json`, `settings.local.json`, `hooks.json`, `config.toml` (Claude's memory files, projects and todos there stay writable). The same Codex files under `$CODEX_HOME` | read and write |
 | the root marker | `<base>/<ws>/.tentaqles.yaml` of every registered base (it holds the name only) | write |
-| the plugin | `<config dir>/plugins/cache/tentaqles/**`, `plugins/installed_plugins.json`, `plugins/known_marketplaces.json`, for the identity's Claude home, `$CLAUDE_CONFIG_DIR` and `~/.claude` | write |
+| the plugin | `<config dir>/plugins/cache/tentaqles/**`, `plugins/marketplaces/tentaqles/**` (the marketplace clone, P1.4's trust anchor for batch accepts; git -C into it is denied too), `plugins/installed_plugins.json`, `plugins/known_marketplaces.json`, for the identity's Claude home, `$CLAUDE_CONFIG_DIR` and `~/.claude` | write |
 | the binary | the running `tq`, its directory, and tq-named files beside it; the whole directory when it is tentaqles' own (`%LOCALAPPDATA%\tentaqles\bin`) | write |
 | the keychain | tq's entry in the OS keychain (service `tentaqles`: the integrity key and the `tq secret` tokens) | write |
 

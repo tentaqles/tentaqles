@@ -104,6 +104,14 @@ func TestMatchKinds(t *testing.T) {
 		{filepath.Join(plugin, "scripts", "tq_hook.sh"), KindPlugin},
 		{filepath.Join(home, ".claude", "plugins", "cache", "tentaqles", "tentaqles", "1.0.0", "hooks", "hooks.json"), KindPlugin},
 		{filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), KindPlugin},
+		// the tentaqles marketplace clone (P1.4's trust anchor), in the
+		// default config home and in an identity's
+		{filepath.Join(home, ".claude", "plugins", "marketplaces", "tentaqles"), KindPlugin},
+		{filepath.Join(home, ".claude", "plugins", "marketplaces", "tentaqles", ".git", "config"), KindPlugin},
+		{filepath.Join(claude, "plugins", "marketplaces", "tentaqles", "plugin", "hooks", "hooks.json"), KindPlugin},
+		{filepath.Join(home, ".claude", "plugins", "marketplaces", "other", "x.json"), ""},
+		// the plugin's pycache under the state folder
+		{filepath.Join(state, "pycache", "x.cpython-312.pyc"), KindState},
 		{filepath.Join(home, "repos", "acme", ".tentaqles.yaml"), KindMarker},
 		{filepath.Join(home, "repos", "beta", ".tentaqles.yaml"), KindMarker}, // any workspace of a registered base
 		{filepath.Join(home, "bin", "tq"), KindBinary},

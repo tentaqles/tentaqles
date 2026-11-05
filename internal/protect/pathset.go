@@ -108,6 +108,9 @@ func New(in Inputs) *Set {
 			continue
 		}
 		s.add(filepath.Join(d, "plugins", "cache", "tentaqles"), KindPlugin, true, "the installed tentaqles plugin")
+		// The marketplace clone is P1.4's trust anchor for batch accepts:
+		// writes, deletes and git -C into it are denied, reads allowed.
+		s.add(filepath.Join(d, "plugins", "marketplaces", "tentaqles"), KindPlugin, true, "the tentaqles marketplace clone")
 		s.add(filepath.Join(d, "plugins", "installed_plugins.json"), KindPlugin, false, "the plugin registration")
 		s.add(filepath.Join(d, "plugins", "known_marketplaces.json"), KindPlugin, false, "the plugin registration")
 	}
@@ -497,6 +500,8 @@ func (s *Set) matchState(p, rel string) (Hit, bool) {
 				return Hit{p, KindPlugin, "the plugin registration of " + parts[1]}, true
 			case len(sub) >= 3 && sub[1] == "cache" && sub[2] == "tentaqles":
 				return Hit{p, KindPlugin, "the installed tentaqles plugin"}, true
+			case len(sub) >= 3 && sub[1] == "marketplaces" && sub[2] == "tentaqles":
+				return Hit{p, KindPlugin, "the tentaqles marketplace clone"}, true
 			}
 			return Hit{}, false
 		default:

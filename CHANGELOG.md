@@ -142,6 +142,11 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   alias, a script on disk, or a write program tq does not list) is not caught; P1.4's
   signed record makes a change it misses visible at the next start.
 - Plugin: the PreToolUse matcher gains `Glob` (guarded like `Grep`).
+- **The tentaqles marketplace clone is write-protected.**
+  `<config dir>/plugins/marketplaces/tentaqles/**`, P1.4's trust anchor for batch accepts,
+  joins the plugin cache: writes, deletes and `git -C` into it are denied, reads allowed. A
+  recursive search's `/`-prefixed root (`grep -r x /home/me`, an MSYS `/c/Users/me`) is now
+  checked; only a `findstr`/`dir` switch (`/s`, `/i`, `/c:text`) is skipped.
 - **One marker list.** `internal/markers` holds the harness environment markers;
   `TQ_HOME` is now ignored under any of the twelve (it used to be six).
 - Plugin: see `plugin/CHANGELOG.md` (the fallback guard protects `~/.tentaqles` and the

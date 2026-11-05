@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -114,7 +115,10 @@ func TestSelfProtectionShellAndFileTools(t *testing.T) {
 		{"curl out of state is free", ToolCall{Tool: "Bash", Command: "curl -o out.json https://example.com"}, ""},
 		// recursive searches rooted at home
 		{"grep -r at home", ToolCall{Tool: "Bash", Command: "grep -r email ~"}, ProtectedPathID},
+		{"grep -r at home, Unix spelling", ToolCall{Tool: "Bash", Command: "grep -r email " + unixSpelling(filepath.Dir(state))}, ProtectedPathID},
+		{"rg at home, Unix spelling", ToolCall{Tool: "Bash", Command: "rg email " + unixSpelling(filepath.Dir(state))}, ProtectedPathID},
 		{"grep -r in a project is free", ToolCall{Tool: "Bash", Command: "grep -r foo src"}, ""},
+		{"findstr /s /i with a relative root in a project is free", ToolCall{Tool: "PowerShell", Command: "findstr /s /i x ."}, ""},
 		{"xargs rm via pipe", ToolCall{Tool: "Bash", Command: "echo ~/.tentaqles/config.yaml | xargs rm"}, ProtectedPathID},
 		{"xargs rm plain", ToolCall{Tool: "Bash", Command: "ls ~/.tentaqles/*.yaml | xargs rm -f"}, ProtectedPathID},
 		{"eval literal", ToolCall{Tool: "Bash", Command: "eval 'rm ~/.tentaqles/config.yaml'"}, ProtectedPathID},
@@ -153,6 +157,22 @@ func TestSelfProtectionShellAndFileTools(t *testing.T) {
 	if d := SelfProtection(s, state, ToolCall{Tool: "Grep"}); d.Action != Deny {
 		t.Fatal("a Grep with no path from the state folder reads it")
 	}
+	// findstr's /s and /i are switches, not roots; its relative root "."
+	// run from the home folder is a search of home, which reads the state.
+	if d := SelfProtection(s, filepath.Dir(state), ToolCall{Tool: "PowerShell", Command: "findstr /s /i x ."}); d.Action != Deny {
+		t.Fatalf("findstr /s /i x . from home must deny: %s", d.Reason())
+	}
+}
+
+// unixSpelling writes an absolute path the way a Unix shell (or Git Bash's
+// MSYS on Windows) spells it: forward slashes, a leading "/" and, on Windows,
+// the drive as /c/.
+func unixSpelling(p string) string {
+	p = filepath.ToSlash(p)
+	if runtime.GOOS == "windows" && len(p) >= 2 && p[1] == ':' {
+		return "/" + strings.ToLower(p[:1]) + p[2:]
+	}
+	return p
 }
 
 // Writing or deleting tq's keychain entry (the integrity key, the tq

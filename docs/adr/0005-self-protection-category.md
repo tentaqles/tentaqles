@@ -31,7 +31,7 @@ workspace, `$CLAUDE_CONFIG_DIR`, `$CODEX_HOME` and `os.Executable()`:
 |---|---|---|
 | state | everything under `~/.tentaqles` (`config.yaml`, `trust/`, `identities/<ws>/manifest.yaml` and the identity's CLI homes, `denials.jsonl`, `audit.jsonl`, `protected-acl.json`, `anchors.yaml`, `integrity.key`, `bundles/`, `providers/`, `shims/`, `backups/`); in an identity's `claude` or `codex` home only `settings.json`, `settings.local.json`, `hooks.json`, `config.toml`; the same Codex files under `$CODEX_HOME` | read and write |
 | marker | `<base>/<ws>/.tentaqles.yaml` of every registered base | write |
-| plugin | `<config dir>/plugins/cache/tentaqles/**`, `plugins/installed_plugins.json`, `plugins/known_marketplaces.json`, for the identity's Claude home, `$CLAUDE_CONFIG_DIR` and `~/.claude` | write |
+| plugin | `<config dir>/plugins/cache/tentaqles/**`, `plugins/marketplaces/tentaqles/**` (the marketplace clone, P1.4's trust anchor for batch accepts; git -C into it is denied too), `plugins/installed_plugins.json`, `plugins/known_marketplaces.json`, for the identity's Claude home, `$CLAUDE_CONFIG_DIR` and `~/.claude` | write |
 | binary | the running tq binary, its directory, and tq-named files beside it; the whole directory when it is tentaqles' own (`%LOCALAPPDATA%\tentaqles\bin`) | write |
 
 A harness's own working data inside an identity's config home (Claude's
