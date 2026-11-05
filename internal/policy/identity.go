@@ -1077,7 +1077,7 @@ func (s *Scope) shell(cwd, raw, text string, depth int) (scopeHit, bool) {
 				return h, true
 			}
 		case name == "start": // cmd `start [/switches] ["title"] exe`
-			if t := cmdStartTarget(args); t != "" {
+			for _, t := range cmdStartTargets(args) {
 				if h, ok := s.exeHit(t, ""); ok {
 					return h, true
 				}
@@ -1165,29 +1165,42 @@ func (s *Scope) runnerHit(name string, args []string) (scopeHit, bool) {
 var runnerValueOpt = wordSet("--from", "--spec", "--with", "-p", "--package", "--index-url")
 
 func (s *Scope) dockerRun(args []string) (scopeHit, bool) {
+	// Find `run` (also `container run`) among the leading words, skipping global flags and
+	// their values loosely: any word may be checked, so no option list can shift the parse.
 	i := 0
-	for i < len(args) && strings.HasPrefix(args[i], "-") {
-		i++ // skip pre-run flags (rare; usually none)
+	for i < len(args) && strings.ToLower(args[i]) != "run" {
+		i++
 	}
-	if i >= len(args) || strings.ToLower(args[i]) != "run" {
+	if i >= len(args) {
 		return scopeHit{}, false
 	}
-	i++
-	for i < len(args) {
-		a := args[i]
-		if !strings.HasPrefix(a, "-") {
-			return s.imageHit(a)
+	// Every non-dash word after run is checked against the claimed images, so an unlisted
+	// value option (--platform x, --pull always, -u 0) cannot hide the image; an
+	// --entrypoint value is checked against the executables.
+	rest := args[i+1:]
+	for k := 0; k < len(rest); k++ {
+		a := rest[k]
+		if v, ok := strings.CutPrefix(strings.ToLower(a), "--entrypoint="); ok {
+			if h, hit := s.exeHit(v, ""); hit {
+				return h, true
+			}
+			continue
 		}
-		if dockerRunValueOpt[strings.ToLower(a)] && !strings.Contains(a, "=") {
-			i++
+		if strings.EqualFold(a, "--entrypoint") && k+1 < len(rest) {
+			if h, hit := s.exeHit(rest[k+1], ""); hit {
+				return h, true
+			}
+			continue
 		}
-		i++
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		if h, hit := s.imageHit(a); hit {
+			return h, true
+		}
 	}
 	return scopeHit{}, false
 }
-
-var dockerRunValueOpt = wordSet("-e", "--env", "-v", "--volume", "-p", "--publish", "--name", "-w", "--workdir",
-	"--network", "--mount", "-u", "--user", "--entrypoint", "--env-file", "--label", "-l")
 
 func afterWSL(args []string) string {
 	skip := wordSet("-d", "--distribution", "-u", "--user", "--cd")
@@ -1220,30 +1233,80 @@ func (s *Scope) findExec(args []string) (scopeHit, bool) {
 	return scopeHit{}, false
 }
 
+// startProcessOpts are Start-Process's value options, by kind: the executable, its
+// argument list, and values to skip. PowerShell accepts any unambiguous prefix; a dash
+// word of four or more letters that prefixes a name is read as that option.
+var startProcessOpts = []struct{ name, kind string }{
+	{"-filepath", "exe"}, {"-pspath", "exe"}, {"-literalpath", "exe"},
+	{"-argumentlist", "args"}, {"-args", "args"},
+	{"-windowstyle", "skip"}, {"-workingdirectory", "skip"}, {"-verb", "skip"},
+	{"-redirectstandardoutput", "skip"}, {"-redirectstandarderror", "skip"},
+	{"-redirectstandardinput", "skip"}, {"-credential", "skip"},
+}
+
+func startProcessOpt(a string) string {
+	l := strings.ToLower(a)
+	if !strings.HasPrefix(l, "-") || len(l) < 4 {
+		return ""
+	}
+	for _, o := range startProcessOpts {
+		if l == o.name || strings.HasPrefix(o.name, l) {
+			return o.kind
+		}
+	}
+	return ""
+}
+
+// startProcess checks -FilePath, every positional word and the -ArgumentList contents,
+// skipping the values of the other value options.
 func (s *Scope) startProcess(args []string) (scopeHit, bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if strings.EqualFold(a, "-FilePath") && i+1 < len(args) {
-			return s.exeHit(args[i+1], "")
+		if strings.HasPrefix(a, "-") {
+			kind := startProcessOpt(a)
+			if kind == "" || i+1 >= len(args) {
+				continue // a switch (-Wait, -NoNewWindow, -PassThru)
+			}
+			i++
+			switch kind {
+			case "exe":
+				if h, ok := s.exeHit(args[i], ""); ok {
+					return h, true
+				}
+			case "args":
+				for _, w := range strings.FieldsFunc(args[i], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\'' || r == '"' }) {
+					if h, ok := s.exeHit(w, ""); ok {
+						return h, true
+					}
+				}
+			}
+			continue
 		}
-		if !strings.HasPrefix(a, "-") && strings.Trim(a, `"'`) != "" {
-			return s.exeHit(a, "")
+		if strings.Trim(a, `"'`) == "" {
+			continue
+		}
+		if h, ok := s.exeHit(a, ""); ok {
+			return h, true
 		}
 	}
 	return scopeHit{}, false
 }
 
-// cmdStartTarget reads the exe of a cmd `start [/switches] ["title"] exe` line.
-func cmdStartTarget(args []string) string {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if strings.HasPrefix(a, "/") {
+// cmdStartTargets reads the candidate exe words of a cmd `start [/switches] ["title"] exe`
+// line. The tokenizer drops the quotes, so a title cannot be told from the exe: the first two
+// non-switch words are both checked.
+func cmdStartTargets(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "/") || strings.Trim(a, `"'`) == "" {
 			continue
 		}
-		// a quoted title is the first quoted arg when another non-switch follows it
-		return a
+		out = append(out, a)
+		if len(out) == 2 {
+			break
+		}
 	}
-	return ""
+	return out
 }
 
 // dirArg reads a -C/--directory value from tar-style args.
