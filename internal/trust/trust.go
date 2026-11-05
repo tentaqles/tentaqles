@@ -120,12 +120,14 @@ type Report struct {
 	// PluginFrom and PluginTo are the plugin versions signed and now, set
 	// when the installed tentaqles plugin moved to another version folder;
 	// PluginFiles counts its hook files (by path inside the plugin) that
-	// differ between the two. PluginOnly reports that every change is in
-	// the two plugin folders or in installed_plugins.json#tq: the change is
-	// the version bump and nothing else (tq hooks verify --accept --all).
+	// differ between the two. PluginBump reports that every change lies in
+	// the two plugin folders or in installed_plugins.json#tq. It says where
+	// the changes are, never what they hold: it only makes the workspace a
+	// candidate for tq hooks verify --accept --all, and CheckRelease decides
+	// whether the new folder is the published release.
 	PluginFrom, PluginTo string
 	PluginFiles          int
-	PluginOnly           bool
+	PluginBump           bool
 }
 
 // Trusted reports whether the record verifies, is not revoked, names hash
@@ -224,11 +226,11 @@ func verify(name string) (Report, error) {
 	if now := cov.plugin; rec.Plugin != "" && now != "" && rec.Plugin != now {
 		rep.PluginFrom, rep.PluginTo = path.Base(rec.Plugin), path.Base(now)
 		rep.PluginFiles = pluginDiff(rec.Plugin, rec.Files, now, cur)
-		rep.PluginOnly = true
+		rep.PluginBump = true
 		for _, ch := range rep.Changes {
 			inPlugin := strings.HasPrefix(ch.Path, rec.Plugin+"/") || strings.HasPrefix(ch.Path, now+"/") || ch.Path == cov.installed
 			if !inPlugin {
-				rep.PluginOnly = false
+				rep.PluginBump = false
 				break
 			}
 		}

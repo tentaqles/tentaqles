@@ -552,25 +552,33 @@ func TestInstalledPluginsDecidesAndIsCovered(t *testing.T) {
 	}
 }
 
-// PluginOnly: every change is the version bump (the two plugin folders and
-// installed_plugins.json#tq); anything else beside it is not.
-func TestPluginOnlyChange(t *testing.T) {
+// PluginBump says where the changes are (the two plugin folders and
+// installed_plugins.json#tq), never what they hold: a new version folder
+// whose hooks.json was emptied is still a bump, and only the release
+// comparison refuses it. A change beside the bump makes it no bump.
+func TestPluginBumpSaysWhereNotWhat(t *testing.T) {
 	f := newFixture(t, "acme")
 	f.allow()
-	next := filepath.Join(f.claude, "plugins", "cache", "tentaqles", "tentaqles", "0.17.0")
-	write(t, filepath.Join(next, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.17.0"}`)
-	write(t, filepath.Join(next, "hooks", "hooks.json"), `{"hooks":{}}`)
+	publish(t, f.claude, releaseFiles())
+	files := releaseFiles()
+	files["hooks/hooks.json"] = `{"hooks":{}}`
+	install(t, f, files)
 	os.RemoveAll(f.plugin) // Claude Code may drop the old version folder
-	if rep := f.verify(); !rep.PluginOnly || rep.PluginFrom != "0.16.0" || rep.PluginTo != "0.17.0" {
+	rep := f.verify()
+	if !rep.PluginBump || rep.PluginFrom != "0.16.0" || rep.PluginTo != "0.17.0" {
 		t.Fatalf("%+v", rep)
 	}
+	rel, err := CheckRelease("acme", rep)
+	if err != nil || len(rel.Mismatches) != 1 || rel.Mismatches[0] != "hooks/hooks.json: differs from the release" {
+		t.Fatalf("an emptied hooks.json is not the release: %+v %v", rel, err)
+	}
 	write(t, f.settings, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[]}]}}`)
-	if rep := f.verify(); rep.PluginOnly {
+	if rep := f.verify(); rep.PluginBump {
 		t.Fatalf("a settings change beside the bump: %+v", rep)
 	}
 	write(t, f.settings, `{"theme":"dark","hooks":{"PreToolUse":[]}}`)
 	f.allow()
-	if rep := f.verify(); rep.PluginOnly || rep.PluginFrom != "" {
+	if rep := f.verify(); rep.PluginBump || rep.PluginFrom != "" {
 		t.Fatalf("no bump: %+v", rep)
 	}
 }

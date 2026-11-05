@@ -185,3 +185,12 @@ if [ -n "$CLAUDE_PLUGIN_ROOT" ] && [ "$_dep_seen" != "$_dep_key" ]; then
 fi
 
 fi  # end guard
+
+# --- 6. Never read or write bytecode next to the plugin's sources ---
+# The plugin folder's __pycache__ is outside the signed integrity record
+# (tq hooks verify), so a .pyc planted there must never be what runs: with a
+# pycache prefix Python looks for bytecode only under that prefix, and with
+# no bytecode written there is none to find. Outside the guard on purpose:
+# every run gets it, even one that arrives with TENTAQLES_PY already set.
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPYCACHEPREFIX="${CLAUDE_PLUGIN_DATA:-$HOME/.cache}/tentaqles-pycache"

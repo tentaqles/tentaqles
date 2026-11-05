@@ -115,7 +115,11 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestEnv_NoIdentityAndOneNoticeOnMismatch`, `TestLegacyDowngradeIsUntrusted`,
   `TestSigningRefusesUnderAHarnessProcessTree`.
 - The plugin hook never takes the enforcing binary from the environment:
-  `test_tq_bin_is_not_honoured`.
+  `test_tq_bin_is_not_honoured`, `test_tq_hook_never_runs_a_tq_from_the_plugin_folder`;
+  Python never reads bytecode next to the plugin's sources:
+  `test_a_forged_pyc_next_to_the_sources_is_not_loaded`.
+- A batch accept signs only a plugin folder that is the published release byte for byte:
+  `TestCheckReleaseComparesBytesNotLocation`, `TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly`.
 - The guard reads the manifest from the protected location only; a marker that names
   another workspace, or has no protected copy, resolves neutral:
   `TestResolve_MarkerClientMismatch_Neutral`, `TestResolve_MarkerWithoutProtectedManifest_Neutral`.

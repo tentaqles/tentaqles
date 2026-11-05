@@ -17,9 +17,10 @@ import (
 // pluginSkipTop are the folders of the plugin root that run nothing on
 // their own: skills and agents are prompts, templates are documents, tests
 // are the plugin's own suite. __pycache__ is skipped at any depth (Python
-// rewrites it). Everything else of the loaded plugin is covered: hooks/,
-// scripts/, bin/ (the tq the hook bridge tries first), the tentaqles Python
-// package, .claude-plugin/, settings.json.
+// rewrites it, and tq_env.sh keeps Python from reading it). Everything else
+// of the loaded plugin is covered: hooks/, scripts/, the tentaqles Python
+// package, .claude-plugin/, settings.json, and any file that should not be
+// there (a bin/ the plugin never ships).
 var pluginSkipTop = map[string]bool{"skills": true, "agents": true, "templates": true, "tests": true}
 
 // coverage is what the record of one workspace covers, computed once per

@@ -6,13 +6,19 @@ Releases before 0.16.0 are described on the
 
 ## [Unreleased]
 
-- **`tq_hook.sh` no longer honours `TQ_BIN` (ADR-0004).** An agent can set a variable, and
-  the tq that enforces must not be its choice: the binary is the plugin's own `bin/tq`, then
-  PATH, then the well-known install dirs. The plugin folder, `bin/` included (not
-  `skills/`, `agents/`, `templates/`, `tests/`, `__pycache__`), is covered by the signed
-  integrity record, so a planted `bin/tq` is reported by `tq hooks verify`; a tq on PATH is
-  not covered. The fail-closed fallback is unchanged
-  (`tests/test_tq_off.py::test_tq_bin_is_not_honoured`).
+- **`tq_hook.sh` no longer honours `TQ_BIN` and never runs a tq from the plugin folder
+  (ADR-0004).** An agent can set a variable, and the tq that enforces must not be its
+  choice; the plugin ships no binary, so `$CLAUDE_PLUGIN_ROOT/bin/tq` is not looked at
+  either: the binary is the tq on PATH, then the well-known install dirs. The plugin
+  folder (not `skills/`, `agents/`, `templates/`, `tests/`, `__pycache__`) is covered by the
+  signed integrity record, so a planted `bin/tq` is reported by `tq hooks verify`. The
+  fail-closed fallback is unchanged (`tests/test_tq_off.py::test_tq_bin_is_not_honoured`,
+  `test_tq_hook_never_runs_a_tq_from_the_plugin_folder`).
+- **No bytecode from the plugin folder.** `tq_env.sh` exports `PYTHONDONTWRITEBYTECODE=1`
+  and `PYTHONPYCACHEPREFIX="${CLAUDE_PLUGIN_DATA:-$HOME/.cache}/tentaqles-pycache"` on every
+  run (outside its interpreter guard), so a `.pyc` planted in a `__pycache__` next to the
+  plugin's sources, which the integrity record does not cover, is never loaded
+  (`tests/test_pycache.py`).
 - **The protected manifest location (ADR-0002).** `tentaqles.manifest.loader` resolves a
   root marker (`schema: tentaqles-marker-v1`) to `$TQ_HOME/identities/<name>/manifest.yaml`
   (`~/.tentaqles` when `TQ_HOME` is unset); `_manifest_path` is the file loaded and

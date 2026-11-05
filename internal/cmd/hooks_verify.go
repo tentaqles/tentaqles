@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -38,9 +39,11 @@ registered workspace that has a record.
 
 --accept signs the state as it is now, after you have read the report and
 confirmed: human-only, an agent session is refused. --accept --all lists the
-workspaces whose only change is a new version of the tentaqles plugin, asks
-once, and signs them again; any other change is left for tq hooks verify
---accept <workspace>.`,
+workspaces whose only change is a new version of the tentaqles plugin whose
+folder is the published release byte for byte (the commit the tentaqles
+marketplace clone pins), asks once, and signs them again; any other change,
+or no release to compare with, is left for tq hooks verify --accept
+<workspace>.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			defer trust.MemoScope()()
@@ -84,16 +87,18 @@ once, and signs them again; any other change is left for tq hooks verify
 		},
 	}
 	c.Flags().BoolVar(&accept, "accept", false, "sign the current state as trusted (human only)")
-	c.Flags().BoolVar(&all, "all", false, "every registered workspace; with --accept, sign again those whose only change is a new plugin version, after one confirmation")
+	c.Flags().BoolVar(&all, "all", false, "every registered workspace; with --accept, sign again those whose only change is a new plugin version that is the published release, after one confirmation")
 	return c
 }
 
 // verifyAll is tq hooks verify --all: the report of every workspace that
-// has a record, exit 1 when any does not verify. With --accept it lists
-// the workspaces whose only change is a new version of the tentaqles plugin
-// (trust.Report.PluginOnly, the manifest unchanged), asks the human once,
-// and signs each of them again; every other mismatch is left as it is,
-// listed with the command to read it, and the exit is 1 while any remains.
+// has a record, exit 1 when any does not verify. With --accept it signs
+// again, after one confirmation, the workspaces whose only change is a new
+// version of the tentaqles plugin (trust.Report.PluginBump, the manifest
+// unchanged) and whose new plugin folder is the published release byte for
+// byte (trust.CheckRelease), listing them first. Every other workspace is
+// listed as not accepted with the reasons and left for tq hooks verify
+// --accept <ws>; the exit is 1 while any remains.
 func verifyAll(c *cobra.Command, accept bool) error {
 	if accept {
 		if err := refuseAgent("tq hooks verify --accept --all"); err != nil {
@@ -106,8 +111,17 @@ func verifyAll(c *cobra.Command, accept bool) error {
 	}
 	wss, _ := resolve.ListWorkspaces(cfg)
 	w := c.OutOrStdout()
+	type candidate struct {
+		ws  *resolve.Workspace
+		rep trust.Report
+	}
+	var cands []candidate
 	var bumps, failing []*resolve.Workspace
-	var bumpLines []string
+	// The workspaces to sign, grouped by the release they match (each
+	// identity has its own marketplace clone).
+	var labels []string
+	byLabel := map[string][]string{}
+	why := map[string][]string{}
 	for i := range wss {
 		ws := &wss[i]
 		rep, err := trust.Verify(ws.Name)
@@ -120,17 +134,43 @@ func verifyAll(c *cobra.Command, accept bool) error {
 		printVerifyReport(w, ws, rep)
 		switch {
 		case rep.Trusted(ws.Hash):
-		case rep.Invalid == "" && !rep.Revoked && rep.PluginOnly && rep.ManifestHash == ws.Hash:
-			bumps = append(bumps, ws)
-			bumpLines = append(bumpLines, fmt.Sprintf("%s (plugin tentaqles %s -> %s, %d hook files changed)", ws.Name, rep.PluginFrom, rep.PluginTo, rep.PluginFiles))
+		case rep.Invalid == "" && !rep.Revoked && rep.PluginBump && rep.ManifestHash == ws.Hash:
+			cands = append(cands, candidate{ws, rep})
 		default:
 			failing = append(failing, ws)
+			why[ws.Name] = []string{"changes outside the plugin folder (or the record does not verify)"}
+		}
+	}
+	if !accept {
+		for _, cd := range cands {
+			failing = append(failing, cd.ws)
+		}
+		cands = nil
+	}
+	for _, cd := range cands {
+		rel, err := trust.CheckRelease(cd.ws.Name, cd.rep)
+		switch {
+		case err != nil:
+			failing = append(failing, cd.ws)
+			why[cd.ws.Name] = []string{err.Error()}
+		case len(rel.Mismatches) > 0:
+			failing = append(failing, cd.ws)
+			why[cd.ws.Name] = rel.Mismatches
+		default:
+			bumps = append(bumps, cd.ws)
+			label := fmt.Sprintf("Matches the published release tentaqles %s (%s):", rel.Version, rel.SHA[:12])
+			if _, ok := byLabel[label]; !ok {
+				labels = append(labels, label)
+			}
+			byLabel[label] = append(byLabel[label], fmt.Sprintf("%s (plugin tentaqles %s -> %s, %d hook files changed)", cd.ws.Name, cd.rep.PluginFrom, cd.rep.PluginTo, cd.rep.PluginFiles))
 		}
 	}
 	if accept && len(bumps) > 0 {
-		fmt.Fprintln(w, "Only a new plugin version changed in:")
-		for _, l := range bumpLines {
-			fmt.Fprintln(w, "  "+l)
+		for _, label := range labels {
+			fmt.Fprintln(w, label)
+			for _, l := range byLabel[label] {
+				fmt.Fprintln(w, "  "+l)
+			}
 		}
 		about := fmt.Sprintf("tq hooks verify --accept --all: about to render the identity settings of and sign again the integrity records of %d workspace(s): %s", len(bumps), joinNames(bumps))
 		if err := humanGate(c, "tq hooks verify --accept --all", about); err != nil {
@@ -143,15 +183,22 @@ func verifyAll(c *cobra.Command, accept bool) error {
 		}
 		bumps = nil
 	}
+	sort.Slice(failing, func(i, j int) bool { return failing[i].Name < failing[j].Name })
 	for _, ws := range failing {
-		fmt.Fprintf(w, "not accepted: %s has other changes; read them with: tq hooks verify %s\n", ws.Name, ws.Name)
-	}
-	if n := len(bumps) + len(failing); n > 0 {
-		names := joinNames(append(bumps, failing...))
-		if len(bumps) > 0 {
-			return fmt.Errorf("%d workspace(s) do not verify: %s; a human runs: tq hooks verify --accept --all (plugin version only) or tq hooks verify --accept <workspace>", n, names)
+		if !accept {
+			continue
 		}
-		return fmt.Errorf("%d workspace(s) do not verify: %s; a human runs: tq hooks verify --accept <workspace> after reading the changes", n, names)
+		fmt.Fprintf(w, "not accepted: %s has changes that are not in the published release\n", ws.Name)
+		for _, r := range why[ws.Name] {
+			fmt.Fprintf(w, "  %s\n", r)
+		}
+		fmt.Fprintf(w, "  read them with tq hooks verify %s; a human accepts them with tq hooks verify --accept %s\n", ws.Name, ws.Name)
+	}
+	if n := len(failing); n > 0 {
+		if !accept {
+			return fmt.Errorf("%d workspace(s) do not verify: %s; a human runs: tq hooks verify --accept --all (a new plugin version that is the published release) or tq hooks verify --accept <workspace>", n, joinNames(failing))
+		}
+		return fmt.Errorf("%d workspace(s) not accepted: %s; a human runs: tq hooks verify --accept <workspace> after reading the changes", n, joinNames(failing))
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -359,30 +360,88 @@ func addSignedWS(t *testing.T, base, name string) (pluginRoot string) {
 	return pluginRoot
 }
 
-// bumpPlugin installs version 0.17.0 next to the signed one.
-func bumpPlugin(t *testing.T, pluginRoot string) {
+// gitFixture runs git in dir for a test fixture, with neither the system
+// nor the user's git config and a fixed author.
+func gitFixture(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	next := filepath.Join(filepath.Dir(pluginRoot), "0.17.0")
-	mustWrite(t, filepath.Join(next, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.17.0"}`)
-	mustWrite(t, filepath.Join(next, "scripts", "tq_hook.sh"), "#!/usr/bin/env bash\nexec tq \"$@\"\n")
+	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	c.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@example.com",
+		"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.com")
+	out, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
 }
 
-// tq hooks verify --accept --all signs again, after one confirmation, every
-// workspace whose only change is a new plugin version, listing them first;
-// a workspace with any other change is left untrusted and named.
-func TestHooksVerify_AcceptAllSignsPluginBumpsOnly(t *testing.T) {
+// release017 is the plugin folder of the published release 0.17.0.
+func release017() map[string]string {
+	return map[string]string{
+		".claude-plugin/plugin.json": `{"name":"tentaqles","version":"0.17.0"}`,
+		"hooks/hooks.json":           `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"bash tq_hook.sh pre-tool-use"}]}]}}`,
+		"scripts/tq_hook.sh":         "#!/usr/bin/env bash\nexec tq claude-hook \"$1\"\n",
+	}
+}
+
+// publishRelease writes the tentaqles marketplace clone of ws's Claude
+// identity, one commit holding files under plugin/ pinned by its
+// marketplace.json, and returns the sha.
+func publishRelease(t *testing.T, ws string, files map[string]string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("needs git")
+	}
+	clone := trust.MarketplaceClone(paths.IdentityDir(ws, "claude"))
+	if err := os.MkdirAll(clone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitFixture(t, clone, "init", "-q")
+	for rel, body := range files {
+		mustWrite(t, filepath.Join(clone, "plugin", filepath.FromSlash(rel)), body)
+	}
+	gitFixture(t, clone, "add", "-A")
+	gitFixture(t, clone, "commit", "-q", "-m", "release")
+	sha := strings.TrimSpace(gitFixture(t, clone, "rev-parse", "HEAD"))
+	mustWrite(t, filepath.Join(clone, ".claude-plugin", "marketplace.json"),
+		`{"name":"tentaqles","plugins":[{"name":"tentaqles","source":{"source":"git-subdir","url":"https://github.com/tentaqles/tentaqles.git","path":"plugin","ref":"v0.9.1","sha":"`+sha+`"}}]}`)
+	return sha
+}
+
+// installVersion puts files as the cached plugin folder 0.17.0 of ws.
+func installVersion(t *testing.T, ws string, files map[string]string) {
+	t.Helper()
+	next := filepath.Join(paths.IdentityDir(ws, "claude"), "plugins", "cache", "tentaqles", "tentaqles", "0.17.0")
+	for rel, body := range files {
+		mustWrite(t, filepath.Join(next, filepath.FromSlash(rel)), body)
+	}
+}
+
+// tq hooks verify --accept --all signs again, after one confirmation, the
+// workspaces whose only change is a new plugin version that is the
+// published release byte for byte, listed first under the release; every
+// other workspace is not accepted and named, with why: beta's new folder
+// has an emptied hooks.json (the critic's case: a bump by location alone
+// was accepted before), gamma has a hook edit beside the bump, delta has no
+// marketplace clone to compare with.
+func TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly(t *testing.T) {
 	root, _ := mkIntegrityWS(t, "acme")
 	base := filepath.Dir(root)
-	beta := addSignedWS(t, base, "beta")
-	gamma := addSignedWS(t, base, "gamma")
-	acmePlugin := trust.PluginRoot(paths.IdentityDir("acme", "claude"))
-	for _, p := range []string{acmePlugin, beta, gamma} {
-		bumpPlugin(t, p)
+	for _, n := range []string{"beta", "gamma", "delta"} {
+		addSignedWS(t, base, n)
 	}
-	// gamma also has a hook edit beside the bump.
+	sha := publishRelease(t, "acme", release017())
+	installVersion(t, "acme", release017())
+	publishRelease(t, "beta", release017())
+	emptied := release017()
+	emptied["hooks/hooks.json"] = `{"hooks":{}}`
+	installVersion(t, "beta", emptied)
+	publishRelease(t, "gamma", release017())
+	installVersion(t, "gamma", release017())
 	mustWrite(t, filepath.Join(paths.IdentityDir("gamma", "claude"), "settings.json"), `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[]}]}}`)
+	installVersion(t, "delta", release017())
 
-	if _, err := runTq(t, "hooks", "verify", "--all"); err == nil || !strings.Contains(err.Error(), "3 workspace(s) do not verify") {
+	if _, err := runTq(t, "hooks", "verify", "--all"); err == nil || !strings.Contains(err.Error(), "4 workspace(s) do not verify") {
 		t.Fatalf("--all without --accept reports and exits non-zero: %v", err)
 	}
 	prev := humanonly.Confirm
@@ -391,25 +450,36 @@ func TestHooksVerify_AcceptAllSignsPluginBumpsOnly(t *testing.T) {
 	t.Cleanup(func() { humanonly.Confirm = prev })
 	out, err := runTq(t, "hooks", "verify", "--accept", "--all")
 	if asked != 1 {
-		t.Fatalf("one confirmation for all, got %d", asked)
+		t.Fatalf("one confirmation for all, got %d:\n%s", asked, out)
 	}
-	list := strings.Index(out, "Only a new plugin version changed in:")
+	label := "Matches the published release tentaqles 0.17.0 (" + sha[:12] + "):\n  acme (plugin tentaqles 0.16.0 -> 0.17.0, "
+	list := strings.Index(out, label)
 	gate := strings.Index(out, "tq hooks verify --accept --all: about to")
-	// acme's 0.16.0 has a hooks/hooks.json 0.17.0 lacks: 3 files differ.
-	if list < 0 || gate < 0 || list > gate || !strings.Contains(out, "  acme (plugin tentaqles 0.16.0 -> 0.17.0, 3 hook files changed)") ||
-		!strings.Contains(out, "  beta (plugin tentaqles 0.16.0 -> 0.17.0") || strings.Contains(out[list:gate], "gamma") {
-		t.Fatalf("the bumps are listed before the confirmation, gamma is not among them:\n%s", out)
+	if list < 0 || gate < 0 || list > gate || strings.Contains(out[list:gate], "beta") || strings.Contains(out[list:gate], "gamma") || strings.Contains(out[list:gate], "delta") {
+		t.Fatalf("acme alone is listed under the release, before the confirmation:\n%s", out)
 	}
-	if !strings.Contains(out, "not accepted: gamma has other changes") || err == nil || !strings.Contains(err.Error(), "gamma") {
-		t.Fatalf("gamma is left and named: %v\n%s", err, out)
+	if strings.Contains(out, "Only a new plugin version changed") {
+		t.Fatal("the old label is gone")
 	}
-	for _, n := range []string{"acme", "beta"} {
-		if out, err := runTq(t, "hooks", "verify", n); err != nil || !strings.Contains(out, n+": integrity ok") {
-			t.Fatalf("%s signed again: %v %s", n, err, out)
+	for n, reason := range map[string]string{
+		"beta":  "  hooks/hooks.json: differs from the release",
+		"gamma": "  changes outside the plugin folder",
+		"delta": "  no tentaqles marketplace clone",
+	} {
+		if !strings.Contains(out, "not accepted: "+n+" has changes that are not in the published release\n"+reason) {
+			t.Fatalf("%s is not accepted, with why (%q):\n%s", n, reason, out)
 		}
 	}
-	if _, err := runTq(t, "hooks", "verify", "gamma"); err == nil {
-		t.Fatal("gamma stays untrusted")
+	if err == nil || !strings.Contains(err.Error(), "3 workspace(s) not accepted: beta, delta, gamma") {
+		t.Fatalf("the exit names the three: %v", err)
+	}
+	if out, err := runTq(t, "hooks", "verify", "acme"); err != nil || !strings.Contains(out, "acme: integrity ok") {
+		t.Fatalf("acme signed again: %v %s", err, out)
+	}
+	for _, n := range []string{"beta", "gamma", "delta"} {
+		if _, err := runTq(t, "hooks", "verify", n); err == nil {
+			t.Fatalf("%s stays untrusted", n)
+		}
 	}
 	// An agent never accepts all.
 	t.Setenv("CLAUDECODE", "1")

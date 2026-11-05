@@ -47,8 +47,12 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - **`tq hooks verify [<ws>|--all] [--accept]`.** Prints the record's state, the key id,
   "plugin tentaqles 0.16.0 -> 0.17.0 (N hook files changed)" when the plugin moved to a new
   version folder, and each change with the old and new hash prefixes; exit 1 on a mismatch.
-  `--accept --all` lists the workspaces whose only change is a new plugin version, asks once
-  and signs them again; any other change is left for `--accept <ws>`. With the `integrity`
+  `--accept --all` signs again, after one confirmation, the workspaces whose only change is a
+  new plugin version whose folder is the published release byte for byte (the commit the
+  tentaqles marketplace clone pins; each file's git blob compared), listed first under
+  "Matches the published release tentaqles <version> (<sha12>)"; a file that differs, a file
+  the release lacks, a release file missing, or no clone or pin to compare with, and the
+  workspace is "not accepted" with the reasons, left for `--accept <ws>`. With the `integrity`
   finding the hook's deny says "integrity mismatch: run tq hooks verify <ws>", not
   `tq allow`.
 - **`tq deny` leaves a signed tombstone** (`revoked: true`); tq never deletes a record.

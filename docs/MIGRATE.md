@@ -452,9 +452,13 @@ Install the new `tq` (the installer replaces the binary), then:
   --accept <ws>` (human-only, with a confirmation): no identity in the shell,
   no `claude`/`codex` launch, no mutating git or remote command from the hook,
   one line at every prompt meanwhile. After a plugin update, `tq hooks verify
-  --accept --all` lists every workspace whose only change is the new version,
-  asks once and signs them all. Installing a new tq binary changes nothing: the
-  binary on PATH is not covered (the plugin's own `bin/` is). `tq deny <ws>` leaves a signed tombstone.
+  --accept --all` lists every workspace whose only change is the new version
+  and whose new plugin folder is the published release byte for byte (compared
+  with the commit the tentaqles marketplace clone in that identity's Claude
+  config dir pins), asks once and signs them all; any other workspace, or one
+  without that clone, is listed as not accepted and needs `tq hooks verify
+  --accept <ws>`. Installing a new tq binary changes nothing: the binary on PATH
+  is not covered. `tq deny <ws>` leaves a signed tombstone.
   A `claude.permission_mode: bypass` renders as `bypassPermissions` on the
   trusted manifest alone.
 - **Run `tq settings render --all` once.** It rewrites each identity's

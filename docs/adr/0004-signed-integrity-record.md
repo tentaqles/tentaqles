@@ -47,17 +47,19 @@ it; `permissions` is not covered, because tq never touches it;
 tentaqles entry (not the timestamps); every file of the tentaqles plugin folder
 Claude Code loads (`trust.PluginRoot`: the user-scope `installPath` of
 `installed_plugins.json` when it is a plugin folder, otherwise the highest
-version in the cache, the rule of `plugin/CLAUDE.md`), `bin/`, `hooks/`,
-`scripts/`, the `tentaqles` Python package and `.claude-plugin/` included, except
-`skills/`, `agents/`, `templates/`, `tests/` and any `__pycache__`, which run
-nothing on their own; the Codex `hooks.json` and `config.toml#tq`, the block of
-`config.toml` tq owns (`codexcfg.ManagedBlock`); and every file under
-`$TQ_HOME/shims/` once it exists (Phase 3 creates it). The tq binary on PATH is
-not covered: §8.3 names the hook scripts, the shims and the manifest; which tq a
-shell runs is Phase 3's shim folder, and the binary is the OS's to protect. The
-plugin's own `bin/tq`, which the hook bridge tries first, is covered. A covered
-path that does not exist is recorded as absent; it appearing later is a change,
-and so is a file swapped for a link or a directory.
+version in the cache, the rule of `plugin/CLAUDE.md`), `hooks/`, `scripts/`,
+the `tentaqles` Python package, `.claude-plugin/` and any file that should not be
+there (a `bin/` the plugin never ships) included, except `skills/`, `agents/`,
+`templates/`, `tests/` and any `__pycache__`, which run nothing on their own (for
+`__pycache__`, because `tq_env.sh` exports `PYTHONDONTWRITEBYTECODE=1` and
+`PYTHONPYCACHEPREFIX` under the plugin data dir, so Python never reads the
+bytecode next to the plugin's sources); the Codex `hooks.json` and
+`config.toml#tq`, the block of `config.toml` tq owns (`codexcfg.ManagedBlock`);
+and every file under `$TQ_HOME/shims/` once it exists (Phase 3 creates it). The
+tq binary on PATH is not covered: §8.3 names the hook scripts, the shims and the
+manifest; which tq a shell runs is Phase 3's shim folder, and the binary is the
+OS's to protect. A covered path that does not exist is recorded as absent; it
+appearing later is a change, and so is a file swapped for a link or a directory.
 
 **Keys are canonical** (`trust.Key`): absolute and cleaned, the links of the
 longest existing prefix resolved, forward slashes, lower-cased on Windows. A
@@ -164,16 +166,30 @@ session-start preamble and `tq doctor` report `integrity` (error) listing every
 change, with the plugin upgrade summary first. `tq hooks verify [<ws>]` prints
 the report ("plugin tentaqles 0.16.0 -> 0.17.0 (N hook files changed)" ahead of
 the per-file lines when the plugin moved) and exits 1 on a mismatch; `tq hooks
-verify --all` does so for every workspace, and `tq hooks verify --accept --all`
-lists the workspaces whose only change is a new plugin version
-(`Report.PluginOnly`: every change in the two plugin folders or in
-`installed_plugins.json#tq`, the manifest unchanged), asks once, signs them
-again, and leaves every other mismatch for `tq hooks verify --accept <ws>`. A
-re-sign of `tq migrate manifests` happens only for a record that verifies in
-full, so a move never accepts a change.
+verify --all` does so for every workspace. `tq hooks verify --accept --all`
+signs again in batch only a workspace whose changes all lie in the two plugin
+folders or in `installed_plugins.json#tq`, the manifest unchanged
+(`Report.PluginBump`, a candidate by location and nothing more), and whose new
+plugin folder is the published release byte for byte (`trust.CheckRelease`):
+the release is the commit the tentaqles marketplace clone Claude Code keeps at
+`<config dir>/plugins/marketplaces/tentaqles/` pins in its
+`.claude-plugin/marketplace.json` (source `git-subdir`, `sha`); every covered
+file of the new folder must have that commit's blob at the same path under the
+pinned `path` (the raw bytes hashed as `git hash-object --no-filters` does,
+against `git ls-tree` of the commit), and every covered file of the release
+must be in the folder. A file that differs, a file the release does not have (a
+planted `bin/tq`), a release file that is missing (an emptied or deleted
+`hooks/hooks.json`), no clone, no pinned sha, a sha the clone does not have, or
+git failing, and the workspace is listed as "not accepted: <ws> has changes that
+are not in the published release" with the reasons, for `tq hooks verify
+--accept <ws>`. The workspaces that match are listed first under "Matches the
+published release tentaqles <version> (<sha12>)", then one confirmation signs
+them all. A re-sign of `tq migrate manifests` happens only for a record that
+verifies in full, so a move never accepts a change.
 
-`plugin/scripts/tq_hook.sh` no longer honours `$TQ_BIN`: the binary is the
-plugin's own `bin/tq`, then PATH, then the well-known install dirs.
+`plugin/scripts/tq_hook.sh` no longer honours `$TQ_BIN` and never runs a tq
+from the plugin folder (the plugin ships no binary): it runs the tq on PATH,
+then the one in a well-known install dir.
 
 ## Consequences
 - A hook, an enforcing settings key, a Codex hook file or a shim changed behind
@@ -185,8 +201,13 @@ plugin's own `bin/tq`, then PATH, then the well-known install dirs.
   downgraded to a marker; a same-user program that holds the key can sign (AR1).
 - Updating the plugin (a new version folder in the cache) changes covered files:
   the human runs `tq hooks verify --accept --all` once, after reading the list
-  of workspaces whose only change is the version, or `tq hooks verify --accept
-  <ws>` per workspace. Upgrading tq itself does not. `docs/MIGRATE.md` says so.
+  of workspaces whose new plugin folder is the published release, or `tq hooks
+  verify --accept <ws>` per workspace. Upgrading tq itself does not.
+  `docs/MIGRATE.md` says so.
+- The batch accept trusts the marketplace clone it compares with. A same-user
+  process (or a session past P1.3's protected paths) that rewrites the clone's
+  git objects and its pin can make a forged folder "match"; the confirmation
+  shows the pinned sha for the human to compare with the release they expect.
 - `tq run .` in an untrusted folder no longer launches anything; a neutral
   folder (no workspace) still launches the agent without an identity.
 - Nothing changes for an existing identity on upgrade (§13): its marker keeps
@@ -216,11 +237,13 @@ plugin's own `bin/tq`, then PATH, then the well-known install dirs.
   `TestManifests_MovesJournalsAndKeepsTrust`, `TestManifests_RekeysLegacyTrustRecords`,
   `TestManifests_DoesNotResignAFailingRecord`, `TestSettingsCoversHelpersAndTheHookSwitch`,
   `TestPluginRootIsCoveredButPromptsAndCaches`, `TestInstalledPluginsDecidesAndIsCovered`,
-  `TestPluginOnlyChange`, `TestDeletingKeySnapshotAndRecordDoesNotRestoreLegacy`,
+  `TestPluginBumpSaysWhereNotWhat`, `TestCheckReleaseComparesBytesNotLocation`,
+  `TestCheckReleaseFailsClosed`, `TestDeletingKeySnapshotAndRecordDoesNotRestoreLegacy`,
   `TestLinkedRootIsKeyedAsKeySays`, `TestIntegrityFindingNamesHooksVerify`,
   `TestHooksVerify_ReportsTheHookSwitchAndAPlantedPluginBinary`,
-  `TestHooksVerify_AcceptAllSignsPluginBumpsOnly`, and in the plugin
-  `test_tq_bin_is_not_honoured`.
+  `TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly`, and in the plugin
+  `test_tq_bin_is_not_honoured`, `test_tq_hook_never_runs_a_tq_from_the_plugin_folder`,
+  `test_a_forged_pyc_next_to_the_sources_is_not_loaded`.
 
 ## Alternatives considered
 | Option | Why not |
@@ -230,7 +253,9 @@ plugin's own `bin/tq`, then PATH, then the well-known install dirs.
 | Store the key in a file only | A file under `$TQ_HOME` is one more file a file tool in a session can read; a keychain entry is not reachable through a file path, and writing one takes a command line the P1.3 rule denies. Neither stops a same-user program (AR1). The file is the fallback the PRD allows, and doctor reports it |
 | Cover the tq binary | §8.3 names hooks, shims and manifest; hashing a 10 MB binary at every prompt is waste, and which tq runs is decided by the shim folder of Phase 3 and protected by the OS |
 | Cover the whole `settings.json` | Claude Code rewrites it for a theme, a model or a permission; the record would trip on every session. The enforcing keys are what makes a hook run or a credential helper start |
-| Cover only `hooks/`, `scripts/` and `.claude-plugin/` of the plugin | The hook bridge tries the plugin's `bin/tq` first, and the hooks import the `tentaqles` package: a file outside those three folders runs too. Only prompts, documents and the plugin's tests are left out |
+| Cover only `hooks/`, `scripts/` and `.claude-plugin/` of the plugin | The hooks import the `tentaqles` package, and a file the plugin never ships (a `bin/`) is a change worth naming: a file outside those three folders runs too. Only prompts, documents, the plugin's tests and Python's own cache are left out |
+| Batch-accept a plugin bump by where its changes are | A new version folder is written by whatever writes the cache; an emptied `hooks/hooks.json` there sits exactly where the release's would. Only the bytes of the pinned release tell the two apart |
+| Cover `__pycache__` | Python rewrites it on every new interpreter; the pycache prefix and `PYTHONDONTWRITEBYTECODE` take it out of what runs instead |
 | Pick the plugin folder by the highest version alone | Claude Code loads the folder `installed_plugins.json` names; an older or a local install can be the one that runs. The file's tentaqles entry is covered, so pointing it elsewhere is a change |
 | Take "no key and no snapshot" to mean nothing was ever signed | Deleting both and planting a marker would bring the marker's trust back; the machine marker remembers that a human signed |
 | Resolve every covered path in full | 72 to 101 ms for 30 keys on Windows; the roots are few and a file below a root needs no resolution of its own |

@@ -58,11 +58,11 @@ _upath() {
 # --- Resolve the tq binary ---
 # No environment variable picks the binary: an agent can set variables (a
 # settings env block, an export in the same shell), and the tq that
-# enforces must not be its choice. The order is the plugin's own bin/, PATH,
-# then the well-known install dirs. The plugin folder, bin/ included, is
-# covered by the signed integrity record, so a tq planted in bin/ is
-# reported by tq hooks verify; a tq found on PATH or in an install dir is
-# not covered (the OS's to protect, and Phase 3's shim folder decides it).
+# enforces must not be its choice. Nor does the plugin folder: the plugin
+# ships no binary, so nothing under it is ever run as tq. The order is PATH,
+# then the well-known install dirs; the tq found there is the user's and the
+# OS's to protect (Phase 3's shim folder decides which one an identity
+# shell runs).
 TQ=""
 
 _try() {
@@ -72,18 +72,11 @@ _try() {
   return 0
 }
 
-# 1. Plugin-bundled binary.
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  _try "$CLAUDE_PLUGIN_ROOT/bin/tq" || { [ "$_win" = "1" ] && _try "$CLAUDE_PLUGIN_ROOT/bin/tq.exe"; }
-fi
+# 1. PATH.
+_found="$(command -v tq 2>/dev/null || true)"
+[ -n "$_found" ] && _try "$_found"
 
-# 2. PATH.
-if [ -z "$TQ" ]; then
-  _found="$(command -v tq 2>/dev/null || true)"
-  [ -n "$_found" ] && _try "$_found"
-fi
-
-# 3/4. Well-known install dirs.
+# 2/3. Well-known install dirs.
 if [ -z "$TQ" ] && [ -n "${HOME:-}" ]; then
   _try "$HOME/.tentaqles/bin/tq" || { [ "$_win" = "1" ] && _try "$HOME/.tentaqles/bin/tq.exe"; }
 fi
@@ -91,7 +84,7 @@ if [ -z "$TQ" ] && [ -n "${HOME:-}" ]; then
   _try "$HOME/.local/bin/tq" || { [ "$_win" = "1" ] && _try "$HOME/.local/bin/tq.exe"; }
 fi
 
-# 6. Windows LocalAppData.
+# 4. Windows LocalAppData.
 if [ -z "$TQ" ] && [ "$_win" = "1" ] && [ -n "${LOCALAPPDATA:-}" ]; then
   _lad="$(_upath "$LOCALAPPDATA")"
   _try "$_lad/tentaqles/bin/tq.exe" || _try "$_lad/tentaqles/bin/tq"
