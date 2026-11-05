@@ -47,6 +47,7 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
 		Path         string `json:"path"`
+		Pattern      string `json:"pattern"`
 		Content      string `json:"content"`
 		NewString    string `json:"new_string"`
 		NewSource    string `json:"new_source"`
@@ -65,6 +66,10 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		call.Path = in.NotebookPath
 	case in.Path != "":
 		call.Path = in.Path
+	case p.ToolName == "Glob" && in.Pattern != "":
+		// The Glob tool locates files by its pattern; it is checked like
+		// Grep (a read of what it would list).
+		call.Path = in.Pattern
 	}
 	parts := []string{in.Content, in.NewString, in.NewSource}
 	for _, e := range in.Edits {

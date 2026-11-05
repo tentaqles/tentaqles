@@ -120,7 +120,21 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   no longer refuse a session; `--apply` and a real render still do.
 - **Every hook deny is logged** to `~/.tentaqles/denials.jsonl` (kind = category, layer
   `hook`, tool, command or path, rule, reason, workspace, pid, cwd); never an environment
-  value or file content.
+  value or file content. A logged command line is redacted first: here-doc bodies are
+  blanked and every `NAME=value` assignment's value becomes `NAME=***`, so a pasted
+  password or an inline token never reaches the log.
+- **The path rule catches common spellings** of the §8.2 routes (it stays a text filter,
+  a speed bump, not a sandbox): glued redirects (`x>path`), `${HOME}` expansion, a
+  destructive `find` rooted at or above a protected path, `… | xargs rm`, `eval`/`iex` of
+  a literal string, `curl -o` / `wget -O` / `7z -o`, `awk -i inplace`, an editor
+  (`vim`, `code`), an interpreter run with its cwd inside the state folder or a here-doc /
+  stdin body that names a protected path, and a PowerShell `-EncodedCommand` (decoded from
+  base64 UTF-16LE; an undecodable one is denied). A glob matches a protected path only when
+  it could expand to one (`rm *.log` in a workspace is free; `rm .t*`, `rm *` and
+  `~/.tent*/config.yaml` are denied). A path built at run time (a `$var`, string
+  concatenation, `Join-Path`, an alias, a script on disk) is not caught; P1.4's signed
+  record makes a change it misses visible at the next start.
+- Plugin: the PreToolUse matcher gains `Glob` (guarded like `Grep`).
 - **One marker list.** `internal/markers` holds the harness environment markers;
   `TQ_HOME` is now ignored under any of the twelve (it used to be six).
 - Plugin: see `plugin/CHANGELOG.md` (the fallback guard protects `~/.tentaqles` and the

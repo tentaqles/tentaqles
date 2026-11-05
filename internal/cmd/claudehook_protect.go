@@ -3,8 +3,11 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/audit"
+	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/protect"
@@ -61,19 +64,40 @@ func hookWSName(ws *resolve.Workspace) string {
 	return ws.Name
 }
 
-// denialSubject is what the log records for a call: the command line of a
-// shell tool, the path of a file tool, and the tool name of anything else
-// (an MCP input or a patch may carry content, which is never logged).
+// denialSubject is what the log records for a call: a redacted command line
+// for a shell tool, the path of a file tool, and the tool name of anything
+// else (an MCP input or a patch may carry content, which is never logged).
 func denialSubject(call policy.ToolCall) string {
 	switch {
 	case isApplyPatch(call):
 		return call.Tool
 	case call.IsShell() && call.Command != "":
-		return call.Command
+		return redactCommand(call.Command)
 	case call.Path != "":
 		return call.Path
 	}
 	return call.Tool
+}
+
+// assignValueRe matches a leading NAME=value assignment's value (at the start
+// of a segment, after a separator or a wrapper like sudo/env), so it can be
+// masked in a logged command: a token (GH_TOKEN=x) is a secret.
+var assignValueRe = regexp.MustCompile(`(^|[\s;&|(` + "`" + `])([A-Za-z_][A-Za-z0-9_]*=)([^\s;&|)` + "`" + `]+)`)
+
+// redactCommand makes a shell command line safe to log (PRD v2 §7.3): the
+// bodies of here-docs (a pasted secret, a password) are blanked, every
+// NAME=value assignment value becomes NAME=***, and the result is collapsed
+// to one line and capped. The verb and the matched path survive; secrets in
+// a here-doc body or an inline assignment do not.
+func redactCommand(cmd string) string {
+	cmd = guard.BlankHeredocBodies(cmd)
+	cmd = assignValueRe.ReplaceAllString(cmd, `$1$2***`)
+	cmd = strings.Join(strings.Fields(cmd), " ")
+	const max = 200
+	if len(cmd) > max {
+		cmd = cmd[:max] + "…"
+	}
+	return cmd
 }
 
 // denyKind is the category a policy deny belongs to, for the log.

@@ -281,7 +281,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 				}
 				ws, cfg = gws, gcfg
 				if d := guard.Decide(in); d.Block {
-					logHookDenial(guard.Category, p.ToolName, cmdline, d.Rule, d.Reason, hookWSName(ws), cwd)
+					logHookDenial(guard.Category, p.ToolName, redactCommand(cmdline), d.Rule, d.Reason, hookWSName(ws), cwd)
 					if agent == hookAgentCodex && !asJSON {
 						// Exit 2 blocks in Codex too; the deny answer says so
 						// on stdout as well.

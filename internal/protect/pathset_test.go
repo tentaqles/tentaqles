@@ -171,6 +171,67 @@ func TestBinaryDirectory(t *testing.T) {
 	}
 }
 
+// A glob matches a protected path only if it could expand to one: it names
+// it, or descends into a protected tree. `*.log` in a folder does not match
+// `.tentaqles.yaml`; `.t*`, `*` and a glob descending into the state folder do.
+func TestMatchGlob(t *testing.T) {
+	s, home := fixtureSet(t)
+	state := filepath.Join(home, ".tentaqles")
+	root := filepath.Join(home, "repos", "acme")
+	deny := []string{
+		filepath.Join(root, ".t*"),                   // matches the marker
+		filepath.Join(root, "*"),                     // matches the marker
+		filepath.Join(home, ".tent*", "config.yaml"), // descends into the state folder
+		filepath.Join(home, ".t?ntaqles", "config.yaml"),
+		filepath.Join(state, "*"),            // inside the state folder
+		filepath.Join(state, "**", "*.yaml"), // the Glob tool's recursive form
+		filepath.Join(state, "trust", "*"),
+	}
+	allow := []string{
+		filepath.Join(root, "*.log"), // cannot match .tentaqles.yaml
+		filepath.Join(root, "*.md"),  //
+		filepath.Join(root, "*.go"),  //
+		filepath.Join(root, "*.bak"), //
+		filepath.Join(root, "build", "*"),
+		filepath.Join(root, "src", "*.tmp"),
+		filepath.Join(home, "*.txt"),
+	}
+	for _, p := range deny {
+		if _, ok := s.Match(s.Normalize(p, root)); !ok {
+			t.Errorf("glob %q must be denied", p)
+		}
+	}
+	for _, p := range allow {
+		if h, ok := s.Match(s.Normalize(p, root)); ok {
+			t.Errorf("glob %q must be allowed, matched %s", p, h.What)
+		}
+	}
+}
+
+// A glob under a workspace whose parent directory happens to hold the tq
+// binary is not denied: the binary's directory is protected as itself and
+// its tq files, not as a tree, so `rm *.log` there is free (the critic's
+// fixture: tq.exe sits above the workspace).
+func TestMatchGlobBinaryAncestorIsNotATree(t *testing.T) {
+	home := t.TempDir()
+	if r, err := filepath.EvalSymlinks(home); err == nil {
+		home = r
+	}
+	ws := filepath.Join(home, "scratch", "base", "acme") // under <scratch>, beside tq
+	s := New(Inputs{
+		Home: filepath.Join(home, ".tentaqles"), UserHome: home,
+		Roots:      []string{ws},
+		Executable: filepath.Join(home, "scratch", "tq.exe"), // an ancestor of ws
+	})
+	if h, ok := s.Match(s.Normalize("*.log", ws)); ok {
+		t.Fatalf("a glob under the binary's ancestor dir must be free, matched %s (%s)", h.Path, h.Kind)
+	}
+	// Naming the binary itself with a glob still matches.
+	if _, ok := s.Match(s.Normalize(filepath.Join(home, "scratch", "tq.*"), ws)); !ok {
+		t.Fatal("a glob naming the tq binary is denied")
+	}
+}
+
 func TestMatchIsCaseInsensitiveWherePathsAre(t *testing.T) {
 	if !caseInsensitivePaths() {
 		t.Skip("case-sensitive paths on " + runtime.GOOS)

@@ -1,10 +1,12 @@
 package policy
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/tentaqles/tentaqles/internal/protect"
 )
@@ -82,6 +84,27 @@ func TestSelfProtectionShellAndFileTools(t *testing.T) {
 		{"cd the bin dir then rm tq", ToolCall{Tool: "Bash", Command: "cd " + filepath.ToSlash(filepath.Join(filepath.Dir(state), "bin")) + " && rm tq"}, ProtectedPathID},
 		// Grep with no path searches the cwd
 		{"Grep with no path in the workspace", ToolCall{Tool: "Grep"}, ""},
+		// plain spellings the round-2 critic found (ADR-0005)
+		{"glued redirect", ToolCall{Tool: "Bash", Command: "echo x>~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"glued append", ToolCall{Tool: "Bash", Command: "echo x>>~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"descriptor redirect is not a file", ToolCall{Tool: "Bash", Command: "make 2>&1 | tee build.log"}, ""},
+		{"brace var expansion", ToolCall{Tool: "Bash", Command: "rm ${HOME}/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"find -delete name hits", ToolCall{Tool: "Bash", Command: "find ~ -name config.yaml -delete"}, ProtectedPathID},
+		{"find -delete no name", ToolCall{Tool: "Bash", Command: "find ~/.tentaqles -delete"}, ProtectedPathID},
+		{"find -delete name misses", ToolCall{Tool: "Bash", Command: "find ~ -name '*.log' -delete"}, ""},
+		{"find no action", ToolCall{Tool: "Bash", Command: "find ~ -name config.yaml"}, ""},
+		{"xargs rm via pipe", ToolCall{Tool: "Bash", Command: "echo ~/.tentaqles/config.yaml | xargs rm"}, ProtectedPathID},
+		{"xargs rm plain", ToolCall{Tool: "Bash", Command: "ls ~/.tentaqles/*.yaml | xargs rm -f"}, ProtectedPathID},
+		{"eval literal", ToolCall{Tool: "Bash", Command: "eval 'rm ~/.tentaqles/config.yaml'"}, ProtectedPathID},
+		{"iex literal", ToolCall{Tool: "PowerShell", Command: "iex 'Remove-Item ~/.tentaqles/config.yaml'"}, ProtectedPathID},
+		{"curl -o", ToolCall{Tool: "Bash", Command: "curl -o ~/.tentaqles/config.yaml https://example.com/x"}, ProtectedPathID},
+		{"7z -o glued", ToolCall{Tool: "Bash", Command: "7z x a.7z -o~/.tentaqles"}, ProtectedPathID},
+		{"awk inplace marker", ToolCall{Tool: "Bash", Command: "awk -i inplace '{print}' .tentaqles.yaml"}, ProtectedPathID},
+		{"vim the config", ToolCall{Tool: "Bash", Command: "vim -c 'wq' ~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"cd state then python -c", ToolCall{Tool: "Bash", Command: "cd ~/.tentaqles && python -c \"open('config.yaml','w')\""}, ProtectedPathID},
+		{"python heredoc body names state", ToolCall{Tool: "Bash", Command: "python - <<'EOF'\nopen('" + filepath.ToSlash(state) + "/config.yaml','w')\nEOF"}, ProtectedPathID},
+		{"cat heredoc note is free", ToolCall{Tool: "Bash", Command: "cat > notes.md <<'EOF'\nrm -rf ~/.tentaqles\nEOF"}, ""},
+		{"rm glob in root is free", ToolCall{Tool: "Bash", Command: "rm *.log"}, ""},
 		{"human-only verb", ToolCall{Tool: "Bash", Command: "tq allow acme"}, HumanOnlyCommandID},
 		{"free verb", ToolCall{Tool: "Bash", Command: "tq doctor"}, ""},
 	}
@@ -147,6 +170,38 @@ func TestKeychainWrite(t *testing.T) {
 		if got, ok := KeychainWrite(cmd); ok {
 			t.Errorf("%q: denied as %q", cmd, got)
 		}
+	}
+}
+
+// A PowerShell -EncodedCommand is decoded (base64 UTF-16LE) and the rule is
+// re-run on the script; an undecodable value is denied with its own reason.
+func TestEncodedPowerShell(t *testing.T) {
+	s, _, cwd := selfProtectionSet(t)
+	enc := func(ps string) string {
+		u := utf16.Encode([]rune(ps))
+		b := make([]byte, len(u)*2)
+		for i, r := range u {
+			b[2*i] = byte(r)
+			b[2*i+1] = byte(r >> 8)
+		}
+		return base64.StdEncoding.EncodeToString(b)
+	}
+	for _, flag := range []string{"-EncodedCommand", "-enc", "-e"} {
+		cmd := "powershell " + flag + " " + enc("Remove-Item ~/.tentaqles/config.yaml")
+		if d := SelfProtection(s, cwd, ToolCall{Tool: "PowerShell", Command: cmd}); d.Action != Deny || d.Matched[0].ID != ProtectedPathID {
+			t.Errorf("%s: encoded protected write must deny: %s", flag, d.Reason())
+		}
+	}
+	// An encoded command that targets nothing protected is allowed.
+	ok := "powershell -enc " + enc("Get-Date")
+	if d := SelfProtection(s, cwd, ToolCall{Tool: "PowerShell", Command: ok}); d.Action != Allow {
+		t.Errorf("a harmless encoded command is allowed: %s", d.Reason())
+	}
+	// A value that is not valid base64 UTF-16LE is denied, not skipped.
+	bad := "powershell -EncodedCommand @@@notbase64@@@"
+	d := SelfProtection(s, cwd, ToolCall{Tool: "PowerShell", Command: bad})
+	if d.Action != Deny || !strings.Contains(d.Reason(), "could not be read") {
+		t.Fatalf("an undecodable encoded command must deny: %s", d.Reason())
 	}
 }
 

@@ -238,10 +238,11 @@ def test_hooks_json_pretooluse_matcher_covers_shell_file_and_mcp_tools():
         e for e in hooks["hooks"]["PreToolUse"] if "tq_hook.sh" in e["hooks"][0]["command"]
     )
     rx = re.compile(entry["matcher"])
-    # Agent launches reach tq for subagent model routing (tq decide).
-    for tool in ("Bash", "PowerShell", "Read", "Edit", "Write", "MultiEdit", "Grep", "Agent", "mcp__n8n__x"):
+    # Agent launches reach tq for subagent model routing (tq decide); Glob is
+    # guarded like Grep (a read that can point into a protected path, ADR-0005).
+    for tool in ("Bash", "PowerShell", "Read", "Edit", "Write", "MultiEdit", "Grep", "Glob", "Agent", "mcp__n8n__x"):
         assert rx.search(tool), tool
-    for tool in ("Glob", "TodoWrite", "WebFetch", "AgentX"):
+    for tool in ("TodoWrite", "WebFetch", "AgentX"):
         assert not rx.search(tool), tool
 
 

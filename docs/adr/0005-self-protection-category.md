@@ -114,16 +114,49 @@ under the plugin cache (writes), and a shell command that names either, by a
 text match on the expanded home.
 
 ## Consequences
-- The Phase 1 gate's second half holds for every route a session has: a file
-  tool, an MCP input, the shell and Codex's `apply_patch`.
-  `TestProtectedPaths_Table` drives the hook with one case per write route
-  and per protected path kind, the denied reads, the allowed reads (the
-  marker, the plugin, the binary) and the allowed tq commands, and checks the
-  denial log line by line; `TestProtectedPaths_RuleOrder` pins §6.3;
-  `TestProtectedPaths_Codex`, `TestProtectedPaths_MCPInput`,
-  `TestProtectedPaths_OtherWorkspaceAndNeutralCwd`, `TestKeychainWrite`,
-  `TestHumanOnlyInvocation`, `TestMatchKinds` and `TestNormalizeExpandsAndPlaces`
-  cover the parts.
+- The hook is a text filter, a speed bump, not a sandbox (the owner's bound on
+  this work; AR2). It catches the literal and common spellings of §8.2's
+  routes across the file tools, an MCP input, the shell and Codex's
+  `apply_patch`: file-tool writes and reads; a Codex patch per file; an MCP
+  string that resolves to a protected path; and in the shell a redirect
+  (glued `x>path` included), a copy/move/delete/mkdir/permission/link verb,
+  `truncate`, `tee`, `Set-Content`, `sed -i`, `awk -i inplace`, `perl -i`, an
+  editor (`vim`, `code`, ...), a downloader (`curl -o`, `wget -O`, `7z -o`),
+  `git -C`/`--git-dir` or a writing git sub-command's path argument, a `find`
+  with a destructive action rooted at or above a protected path, `… | xargs
+  rm`, `eval`/`iex` of a literal string, a `cd` into a protected folder then a
+  write or an interpreter, an interpreter's `-c`/`-e`/here-doc/stdin body that
+  names a protected path, a PowerShell `[IO.File]::...` call, a
+  `-EncodedCommand` (decoded), `~`/`$HOME`/`${HOME}`/`$env:USERPROFILE`/
+  `%USERPROFILE%`/`$TQ_HOME`/`$CLAUDE_CONFIG_DIR`/`$CODEX_HOME` expansion, an
+  MSYS `/c/` path, an 8.3 short name, a case variant and a glob (`.t*`, `*`,
+  `~/.tent*/…`) that can expand to a protected path. `TestProtectedPaths_Table`
+  drives one case per write route and path kind; `TestProtectedPaths_RuleOrder`
+  pins §6.3; `TestProtectedPaths_Codex`, `_MCPInput`, `_GlobTool`,
+  `_EncodedCommand`, `_OtherWorkspaceAndNeutralCwd`, `TestDenialLogRedaction`,
+  `TestKeychainWrite`, `TestHumanOnlyInvocation`, `TestMatchGlob`,
+  `TestMatchKinds`, `TestNormalizeExpandsAndPlaces` and
+  `TestSelfProtectionShellAndFileTools` cover the parts, and the `routes.py`
+  corpus is the regression list.
+- **Not caught** (a path or command built at run time; the owner's bound says
+  not to chase these, and P1.4's signed integrity record makes any change
+  they land visible at the next terminal and harness start):
+  - *a variable holding the path* — `D=~/.tentaqles; rm $D/config.yaml`,
+    `T=tq; $T allow x`;
+  - *string concatenation* — `node -e "...homedir()+'/.tent'+'aqles/...'"`;
+  - *a PowerShell cmdlet that composes the path* — `Join-Path $HOME
+    '.tentaqles\config.yaml'` passed to `[IO.File]` or `Copy-Item`;
+  - *a command piped into a shell* — `printf 'tq allow x' | sh` (the string is
+    not an argument the tokenizer reads);
+  - *an alias or function* renamed over `tq` or a verb;
+  - *a script on disk* the agent wrote, then ran (`python evil.py`);
+  - *base64 or other encoding* other than the one PowerShell `-EncodedCommand`
+    case above.
+  The real controls behind the filter are the per-identity config homes
+  (ADR-0001), the state folder private to the user (ADR-0002), the human-only
+  commands' own detectors (ADR-0003), the signed integrity record (P1.4), and
+  the harness's own sandbox and permission settings; a same-user program stays
+  AR1.
 - A session can no longer read the protected manifest, the trust store,
   `config.yaml` or an identity's `settings.json`. The `client-settings` and
   `rollback` skills now draft the manifest and ask the human to write it and
@@ -131,17 +164,15 @@ text match on the expanded home.
   until `tq status` exists (Phase 5).
 - An agent that asks the harness to edit its own identity settings
   (`settings.json` in the identity's Claude home) is denied; the project's
-  `.claude/settings.local.json` is not tq's.
-- Every deny message starts `BLOCKED [<category>/...`. Scripts that matched
-  `BLOCKED:` or `BLOCKED [tq/...` change with it.
-- The shell rules are a text filter like the other two categories: a path
-  built at run time (`python script.py` that writes `~/.tentaqles`, a variable
-  tq does not expand, an alias) gets past them. The human-only commands still
-  refuse on their own detectors (ADR-0003), the state folder is private to the
-  user (ADR-0002), and the signed integrity record (P1.4) detects a changed
-  hook, shim or manifest; same-user programs stay AR1.
+  `.claude/settings.local.json` is not tq's. The Claude plugin's PreToolUse
+  matcher gains `Glob`, so a Glob into the state folder reaches the hook.
+- Every deny message starts `BLOCKED [<category>/...`, and every deny is one
+  redacted line in `~/.tentaqles/denials.jsonl` (a here-doc body blanked, a
+  `NAME=value` masked, no environment value or file content). Scripts that
+  matched `BLOCKED:` or `BLOCKED [tq/...` change with it.
 - `internal/protect`, `internal/markers` and `internal/policy/selfprotect.go`
-  join the paths that cross a trust boundary.
+  join the paths that cross a trust boundary; so does `plugin/hooks/hooks.json`
+  (the matcher) and `plugin/scripts/identity-guard.py` (the fallback).
 
 ## Alternatives considered
 | Option | Why not |

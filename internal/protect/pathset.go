@@ -253,8 +253,11 @@ func (s *Set) Normalize(p, base string) string {
 }
 
 // Match reports whether the canonical path p is protected. A path with a
-// glob (rm -rf ~/.tentaqles/*) matches when a protected path starts with
-// its literal prefix.
+// glob (`rm -rf ~/.tentaqles/*`, `rm .t*` in the root) matches only when the
+// glob could expand to a protected path: the directory its literal prefix
+// names is a protected path, or filepath.Match of the whole pattern matches
+// one. `rm *.log` in the workspace root does not match the marker; `rm .t*`
+// and `rm *` do.
 func (s *Set) Match(p string) (Hit, bool) {
 	if p == "" {
 		return Hit{}, false
@@ -262,18 +265,144 @@ func (s *Set) Match(p string) (Hit, bool) {
 	if h, ok := s.match(p); ok {
 		return h, true
 	}
-	if i := strings.IndexAny(p, "*?["); i >= 0 {
-		prefix := p[:i]
-		for _, e := range s.entries {
-			if strings.HasPrefix(e.path, prefix) {
-				return Hit{p, e.kind, e.what}, true
+	if strings.ContainsAny(p, "*?[") {
+		return s.matchGlob(p)
+	}
+	return Hit{}, false
+}
+
+// matchGlob judges a path that holds a glob. It matches a protected path
+// component by component (filepath.Match per element, case already folded on
+// Windows and macOS by canon): the glob matches when its leading components
+// match every component of a protected path — it names that path (equal
+// length) or descends into it (longer). `*.log` in the workspace root does
+// not match `.tentaqles.yaml` (the last component fails); `.t*`, `*` and
+// `~/.tent*/config.yaml` do.
+func (s *Set) matchGlob(p string) (Hit, bool) {
+	pats := splitComponents(p)
+	// try matches the glob against one protected path: componentwise, the
+	// glob names it (equal length) or, only for a protected tree (the state
+	// folder, an owned directory), descends into it (longer). A non-tree
+	// entry — a file, or a shared bin directory that protects only itself and
+	// its tq files — is matched by name only, so a glob under an unrelated
+	// ancestor of it (`rm *.log` in a workspace whose parent holds tq) is not
+	// denied.
+	try := func(path string, kind Kind, what string, tree bool) (Hit, bool) {
+		cs := splitComponents(path)
+		if len(pats) < len(cs) || (len(pats) > len(cs) && !tree) {
+			return Hit{}, false
+		}
+		for i := range cs {
+			if m, err := filepath.Match(pats[i], cs[i]); err != nil || !m {
+				return Hit{}, false
 			}
 		}
-		if s.home != "" && strings.HasPrefix(s.home, prefix) {
-			return Hit{p, KindState, "the tq state folder"}, true
+		return Hit{p, kind, what}, true
+	}
+	if s.home != "" {
+		if h, ok := try(s.home, KindState, "the tq state folder", true); ok {
+			return h, true
+		}
+	}
+	for _, e := range s.entries {
+		if h, ok := try(e.path, e.kind, e.what, e.tree); ok {
+			return h, true
 		}
 	}
 	return Hit{}, false
+}
+
+// splitComponents splits a canonical path into its path elements, keeping a
+// Windows volume (`C:`) as the first element.
+func splitComponents(p string) []string {
+	p = strings.TrimRight(p, string(filepath.Separator))
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, string(filepath.Separator))
+}
+
+// protectedBaseNames are the file names tq keeps under a protected path. The
+// find rule tests a -name/-path pattern against them: a destructive find
+// whose pattern can match one, rooted at an ancestor of the state, is denied.
+var protectedBaseNames = []string{
+	"config.yaml", "manifest.yaml", "denials.jsonl", "audit.jsonl", "anchors.yaml",
+	"integrity.key", "protected-acl.json", "settings.json", "settings.local.json",
+	"hooks.json", "config.toml", "known_marketplaces.json", "installed_plugins.json",
+	".tentaqles.yaml", "catalog.yaml",
+}
+
+// EachProtected calls fn for every protected path the set holds directly: the
+// state folder and the explicit entries (the resolved workspace marker, the
+// plugin, the binary). It is for the find rule, which needs ancestry.
+func (s *Set) EachProtected(fn func(Hit)) {
+	if s.home != "" {
+		fn(Hit{s.home, KindState, "the tq state folder"})
+	}
+	for _, e := range s.entries {
+		fn(Hit{e.path, e.kind, e.what})
+	}
+}
+
+// FindReaches reports a protected path a destructive find rooted at the
+// canonical dir would reach. A find at or inside a protected path is denied
+// whatever its -name/-path patterns (it runs within the protected tree). A
+// find whose dir only contains a protected path (an ancestor) is denied when
+// it has no name pattern, or one that can match a protected file.
+func (s *Set) FindReaches(dir string, names []string) (Hit, bool) {
+	var found Hit
+	ok := false
+	s.EachProtected(func(h Hit) {
+		if ok {
+			return
+		}
+		switch {
+		case dir == h.Path || under(h.Path, dir):
+			found, ok = h, true // the find root is the protected path or inside it
+		case under(dir, h.Path):
+			if len(names) == 0 {
+				found, ok = h, true
+				return
+			}
+			for _, n := range names {
+				if s.NameHitsProtected(n) {
+					found, ok = h, true
+					return
+				}
+			}
+		}
+	})
+	return found, ok
+}
+
+// NameHitsProtected reports whether a find -name / -path / -iname pattern can
+// match a protected file: filepath.Match of the pattern against a protected
+// base name, or (for a pattern with a separator) against a full protected path.
+func (s *Set) NameHitsProtected(pattern string) bool {
+	pat := pattern
+	if s.ci {
+		pat = strings.ToLower(pat)
+	}
+	if strings.ContainsAny(pat, `/\`) {
+		for _, bn := range protectedBaseNames {
+			if ok, err := filepath.Match(pat, filepath.Join("x", bn)); err == nil && ok {
+				return true
+			}
+		}
+		hit := false
+		s.EachProtected(func(h Hit) {
+			if ok, err := filepath.Match(filepath.FromSlash(pat), h.Path); err == nil && ok {
+				hit = true
+			}
+		})
+		return hit
+	}
+	for _, bn := range protectedBaseNames {
+		if ok, err := filepath.Match(pat, bn); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Set) match(p string) (Hit, bool) {

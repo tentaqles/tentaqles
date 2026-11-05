@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/manifest"
@@ -437,5 +439,83 @@ func TestProtectedPaths_OtherWorkspaceAndNeutralCwd(t *testing.T) {
 	}
 	if code, _, rule, _ := hookDecision(t, neutral, "Bash", cmdIn("tq allow acme")); code != 2 || rule != policy.HumanOnlyCommandID {
 		t.Fatalf("tq allow from a neutral cwd: code=%d rule=%q", code, rule)
+	}
+}
+
+// The denial log never records a secret the command carried: a here-doc body
+// (a pasted password) is blanked and a NAME=value assignment's value is
+// masked, in every category's line (PRD v2 §7.3, ADR-0005).
+func TestDenialLogRedaction(t *testing.T) {
+	f := setupProtected(t, "blocked_commands: [\"gh \"]\n")
+	// self-protection: a here-doc writes the protected manifest; its body
+	// holds a password that must not reach the log.
+	heredoc := "cat > ~/.tentaqles/config.yaml <<'EOF'\npassword: HUNTER2-SECRET\nEOF"
+	if code, _, rule, _ := hookDecision(t, f.root, "Bash", cmdIn(heredoc)); code != 2 || rule != policy.ProtectedPathID {
+		t.Fatalf("heredoc write: code=%d rule=%q", code, rule)
+	}
+	// a protected write carrying a token assignment: the value is masked,
+	// the key survives. (A leading NAME=value hides a following verb from the
+	// identity guard's prefix match, so this is a self-protection denial; the
+	// redaction code path is the same for every category.)
+	token := "GH_TOKEN=tok-SECRET-123 rm ~/.tentaqles/config.yaml"
+	if code, _, rule, _ := hookDecision(t, f.root, "Bash", cmdIn(token)); code != 2 || rule != policy.ProtectedPathID {
+		t.Fatalf("token assignment write: code=%d rule=%q", code, rule)
+	}
+	// a plain blocked-command line (identity) is logged redacted too.
+	if code, _, rule, _ := hookDecision(t, f.root, "Bash", cmdIn("gh pr merge 1")); code != 2 || rule != "blocked-command" {
+		t.Fatalf("blocked gh: code=%d rule=%q", code, rule)
+	}
+	ds := readDenials(t)
+	if len(ds) != 3 {
+		t.Fatalf("want 3 denials, got %d", len(ds))
+	}
+	for _, d := range ds {
+		if strings.Contains(d.Command, "HUNTER2") || strings.Contains(d.Command, "tok-SECRET-123") ||
+			strings.Contains(d.Reason, "HUNTER2") || strings.Contains(d.Reason, "tok-SECRET-123") {
+			t.Fatalf("the log leaked a secret: %+v", d)
+		}
+	}
+	if !strings.Contains(ds[1].Command, "GH_TOKEN=***") {
+		t.Fatalf("the token assignment must be masked to GH_TOKEN=***: %q", ds[1].Command)
+	}
+	if ds[2].Kind != "identity" || ds[2].Command != "gh pr merge 1" {
+		t.Fatalf("the identity line is logged: %+v", ds[2])
+	}
+	raw, err := os.ReadFile(audit.DenialsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"HUNTER2", "tok-SECRET-123"} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("the denial log carries %s", leak)
+		}
+	}
+}
+
+// The Glob tool is guarded like Grep: a pattern that resolves under tq's
+// state is a denied read; one in the workspace is allowed.
+func TestProtectedPaths_GlobTool(t *testing.T) {
+	f := setupProtected(t, "")
+	if code, _, rule, _ := hookDecision(t, f.root, "Glob", pathIn("pattern", filepath.Join(f.home, "**", "*.yaml"))); code != 2 || rule != policy.ProtectedPathID {
+		t.Fatalf("glob into the state folder: code=%d rule=%q", code, rule)
+	}
+	if code, _, rule, _ := hookDecision(t, f.root, "Glob", `{"pattern":"**/*.go"}`); code != 0 || rule != "" {
+		t.Fatalf("glob in the workspace: code=%d rule=%q", code, rule)
+	}
+}
+
+// A PowerShell -EncodedCommand reaches the hook decoded (ADR-0005).
+func TestProtectedPaths_EncodedCommand(t *testing.T) {
+	f := setupProtected(t, "")
+	ps := "Remove-Item " + filepath.Join(f.home, "config.yaml")
+	u := utf16.Encode([]rune(ps))
+	raw := make([]byte, len(u)*2)
+	for i, r := range u {
+		raw[2*i] = byte(r)
+		raw[2*i+1] = byte(r >> 8)
+	}
+	b64 := base64.StdEncoding.EncodeToString(raw)
+	if code, _, rule, _ := hookDecision(t, f.root, "PowerShell", cmdIn("powershell -EncodedCommand "+b64)); code != 2 || rule != policy.ProtectedPathID {
+		t.Fatalf("encoded protected write: code=%d rule=%q", code, rule)
 	}
 }

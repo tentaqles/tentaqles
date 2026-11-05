@@ -36,6 +36,8 @@ Releases before 0.16.0 are described on the
 - **`client-settings` and `rollback` no longer write the manifest.** tq's hook denies a
   session's write to the manifest and the root marker; both skills now print the changed
   manifest and ask the user to write it and run `tq allow <name>`.
+- **The PreToolUse matcher gains `Glob`** so a Glob into tq's state folder reaches the hook
+  (guarded like `Grep`, ADR-0005); `tests/test_identity_guard.py` pins it.
 
 ## [0.16.0] — 2026-11-04
 
