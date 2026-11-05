@@ -173,22 +173,41 @@ verify --all` does so for every workspace. `tq hooks verify --accept --all`
 signs again in batch only a workspace whose changes all lie in the two plugin
 folders or in `installed_plugins.json#tq`, the manifest unchanged
 (`Report.PluginBump`, a candidate by location and nothing more), and whose new
-plugin folder is the published release byte for byte (`trust.CheckRelease`):
-the release is the commit the tentaqles marketplace clone Claude Code keeps at
-`<config dir>/plugins/marketplaces/tentaqles/` pins in its
-`.claude-plugin/marketplace.json` (source `git-subdir`, `sha`); every covered
-file of the new folder must have that commit's blob at the same path under the
-pinned `path` (the raw bytes hashed as `git hash-object --no-filters` does,
-against `git ls-tree` of the commit), and every covered file of the release
+plugin folder is the published release byte for byte (`trust.CheckRelease`).
+The release is the commit this tq was built from, `trust.ReleaseCommit`, set
+at startup from `cmd.Commit`, which the release build injects
+(`.goreleaser.yaml`, `{{.FullCommit}}`) and `tq version` prints: an anchor
+inside the signed binary, outside every file a session could write. It is read
+from the tentaqles marketplace clone Claude Code keeps at
+`<config dir>/plugins/marketplaces/tentaqles/` (`git cat-file -e
+<commit>^{commit}`, then `git ls-tree -r <commit>:plugin`); the clone's own
+`.claude-plugin/marketplace.json` pin is never read, so a clone that re-pins
+itself to a commit it forged gains nothing. Every covered file of the new
+folder must have that commit's blob at the same path (the raw bytes hashed as
+`git hash-object --no-filters` does), and every covered file of the release
 must be in the folder. A file that differs, a file the release does not have (a
 planted `bin/tq`), a release file that is missing (an emptied or deleted
-`hooks/hooks.json`), no clone, no pinned sha, a sha the clone does not have, or
-git failing, and the workspace is listed as "not accepted: <ws> has changes that
-are not in the published release" with the reasons, for `tq hooks verify
---accept <ws>`. The workspaces that match are listed first under "Matches the
-published release tentaqles <version> (<sha12>)", then one confirmation signs
-them all. A re-sign of `tq migrate manifests` happens only for a record that
-verifies in full, so a move never accepts a change.
+`hooks/hooks.json`), a tq built without a commit ("this tq build has no release
+commit"), a clone that lacks the commit ("the clone does not have tq's release
+<sha12>"), no clone, or git failing, and the workspace is listed as "not
+accepted: <ws> has changes that are not in the published release" with the
+reasons, for `tq hooks verify --accept <ws>`. A plugin release newer than the
+tq installed is not the commit tq was built from, so it needs the
+per-workspace accept until tq is upgraded; the output says so. The workspaces
+that match are listed first under "Matches the published release tentaqles
+<version> (<sha12>)", then one confirmation signs them all. A re-sign of `tq
+migrate manifests` happens only for a record that verifies in full, so a move
+never accepts a change.
+
+**Release build.** `.goreleaser.yaml` is a trust-boundary file (`CLAUDE.md`):
+its ldflags gain `-X github.com/tentaqles/tentaqles/internal/cmd.Commit=
+{{.FullCommit}}` next to the version. The commit of a release is the tag the
+root marketplace pins the plugin to in the post-release PR (`docs/RELEASING.md`),
+so the plugin folder of that release is the tree at the commit tq carries. We
+anchor the batch accept there because every other candidate (the clone's pin,
+a file under `~/.tentaqles`) is a file; the binary is checked at install by its
+checksum and build provenance (threat model B8, TM-1, TM-2).
+`TestReleaseBuildInjectsTheCommit` pins the ldflag.
 
 `plugin/scripts/tq_hook.sh` no longer honours `$TQ_BIN` and never runs a tq
 from the plugin folder (the plugin ships no binary): it runs the tq on PATH,
@@ -204,9 +223,11 @@ then the one in a well-known install dir.
   downgraded to a marker; a same-user program that holds the key can sign (AR1).
 - Updating the plugin (a new version folder in the cache) changes covered files:
   the human runs `tq hooks verify --accept --all` once, after reading the list
-  of workspaces whose new plugin folder is the published release, or `tq hooks
-  verify --accept <ws>` per workspace. Upgrading tq itself does not.
-  `docs/MIGRATE.md` says so.
+  of workspaces whose new plugin folder is the release this tq was built from,
+  or `tq hooks verify --accept <ws>` per workspace. A plugin release newer than
+  the tq installed needs the per-workspace accept until tq is upgraded, and a
+  dev build of tq accepts nothing in batch. Upgrading tq itself changes no
+  covered file. `docs/MIGRATE.md` says so.
 - The marketplace clone (`<config dir>/plugins/marketplaces/tentaqles/**`) is a
   trust anchor of the batch accept: P1.3's protected paths deny a session any
   write under it. Its origin must be `https://github.com/tentaqles/tentaqles`
@@ -217,9 +238,10 @@ then the one in a well-known install dir.
   every `GIT_CONFIG*`) are dropped, the system and user config are off
   (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` the null device), and
   `-c core.fsmonitor= -c safe.directory=<clone>` keeps the clone's own config
-  from naming a command. A same-user process outside the harness that rewrites
-  the clone's objects and pin can still make a forged folder "match" (AR1); the
-  confirmation shows the pinned sha for the human to compare.
+  from naming a command. The clone only supplies the objects of tq's own
+  commit: rewriting its pin changes nothing, and forging an object with that
+  commit's id is a hash collision. A same-user process outside the harness that
+  rewrites the clone, or replaces the tq binary, is AR1.
 - `tq run .` in an untrusted folder no longer launches anything; a neutral
   folder (no workspace) still launches the agent without an identity.
 - Nothing changes for an existing identity on upgrade (§13): its marker keeps
@@ -250,7 +272,10 @@ then the one in a well-known install dir.
   `TestManifests_DoesNotResignAFailingRecord`, `TestSettingsCoversHelpersAndTheHookSwitch`,
   `TestPluginRootIsCoveredButPromptsAndCaches`, `TestInstalledPluginsDecidesAndIsCovered`,
   `TestPluginBumpSaysWhereNotWhat`, `TestCheckReleaseComparesBytesNotLocation`,
-  `TestCheckReleaseFailsClosed`, `TestDeletingKeySnapshotAndRecordDoesNotRestoreLegacy`,
+  `TestCheckReleaseFailsClosed`, `TestARepinnedCloneIsRefused`,
+  `TestAPluginReleaseNewerThanTqIsRefused`, `TestCheckReleaseChecksTheOriginAndIgnoresGitEnv`,
+  `TestGitCommandIsClean`, `TestVersionPrintsTheCommit`, `TestReleaseBuildInjectsTheCommit`,
+  `TestDeletingKeySnapshotAndRecordDoesNotRestoreLegacy`,
   `TestLinkedRootIsKeyedAsKeySays`, `TestIntegrityFindingNamesHooksVerify`,
   `TestHooksVerify_ReportsTheHookSwitchAndAPlantedPluginBinary`,
   `TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly`, and in the plugin
@@ -266,7 +291,9 @@ then the one in a well-known install dir.
 | Cover the tq binary | §8.3 names hooks, shims and manifest; hashing a 10 MB binary at every prompt is waste, and which tq runs is decided by the shim folder of Phase 3 and protected by the OS |
 | Cover the whole `settings.json` | Claude Code rewrites it for a theme, a model or a permission; the record would trip on every session. The enforcing keys are what makes a hook run or a credential helper start |
 | Cover only `hooks/`, `scripts/` and `.claude-plugin/` of the plugin | The hooks import the `tentaqles` package, and a file the plugin never ships (a `bin/`) is a change worth naming: a file outside those three folders runs too. Only prompts, documents, the plugin's tests and Python's own cache are left out |
-| Batch-accept a plugin bump by where its changes are | A new version folder is written by whatever writes the cache; an emptied `hooks/hooks.json` there sits exactly where the release's would. Only the bytes of the pinned release tell the two apart |
+| Batch-accept a plugin bump by where its changes are | A new version folder is written by whatever writes the cache; an emptied `hooks/hooks.json` there sits exactly where the release's would. Only the bytes of the release tell the two apart |
+| Take the release from the clone's `marketplace.json` pin | The clone is a set of files: one that forges a commit and re-pins itself to it would match its own forgery. The commit tq was built from is in the signed binary |
+| Accept a plugin release newer than tq in batch | tq knows no commit newer than its own; until tq is upgraded each such workspace is accepted one at a time, after the human reads its report |
 | Cover `__pycache__` | Python rewrites it on every new interpreter; the pycache prefix and `PYTHONDONTWRITEBYTECODE` take it out of what runs instead |
 | Pick the plugin folder by the highest version alone | Claude Code loads the folder `installed_plugins.json` names; an older or a local install can be the one that runs. The file's tentaqles entry is covered, so pointing it elsewhere is a change |
 | Take "no key and no snapshot" to mean nothing was ever signed | Deleting both and planting a marker would bring the marker's trust back; the machine marker remembers that a human signed |

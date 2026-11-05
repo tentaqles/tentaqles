@@ -1,6 +1,7 @@
 package trust
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,9 +34,30 @@ func releaseFiles() map[string]string {
 	}
 }
 
+// setReleaseCommit makes sha the commit this tq was built from, for the test.
+func setReleaseCommit(t *testing.T, sha string) {
+	t.Helper()
+	prev := ReleaseCommit
+	ReleaseCommit = sha
+	t.Cleanup(func() { ReleaseCommit = prev })
+}
+
+// commitFiles writes files under plugin/ of clone and commits them; it
+// returns the new commit.
+func commitFiles(t *testing.T, clone string, files map[string]string, msg string) string {
+	t.Helper()
+	for rel, body := range files {
+		write(t, filepath.Join(clone, "plugin", filepath.FromSlash(rel)), body)
+	}
+	gitFixture(t, clone, "add", "-A")
+	gitFixture(t, clone, "commit", "-q", "-m", msg)
+	return strings.TrimSpace(gitFixture(t, clone, "rev-parse", "HEAD"))
+}
+
 // publish writes the tentaqles marketplace clone of claudeDir: one commit
-// holding files under plugin/, pinned by .claude-plugin/marketplace.json.
-// It returns the sha.
+// holding files under plugin/ (with the pin of .claude-plugin/
+// marketplace.json, which tq never reads), and makes that commit the one
+// this tq was built from. It returns the sha.
 func publish(t *testing.T, claudeDir string, files map[string]string) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -47,15 +69,17 @@ func publish(t *testing.T, claudeDir string, files map[string]string) string {
 	}
 	gitFixture(t, clone, "init", "-q")
 	gitFixture(t, clone, "remote", "add", "origin", "https://github.com/tentaqles/tentaqles.git")
-	for rel, body := range files {
-		write(t, filepath.Join(clone, "plugin", filepath.FromSlash(rel)), body)
-	}
-	gitFixture(t, clone, "add", "-A")
-	gitFixture(t, clone, "commit", "-q", "-m", "release")
-	sha := strings.TrimSpace(gitFixture(t, clone, "rev-parse", "HEAD"))
+	sha := commitFiles(t, clone, files, "release")
+	pin(t, clone, sha)
+	setReleaseCommit(t, sha)
+	return sha
+}
+
+// pin writes the clone's marketplace.json pinning sha (tq ignores it).
+func pin(t *testing.T, clone, sha string) {
+	t.Helper()
 	write(t, filepath.Join(clone, ".claude-plugin", "marketplace.json"),
 		`{"name":"tentaqles","plugins":[{"name":"tentaqles","source":{"source":"git-subdir","url":"https://github.com/tentaqles/tentaqles.git","path":"plugin","ref":"v0.9.1","sha":"`+sha+`"}}]}`)
-	return sha
 }
 
 // install puts files as the cached plugin folder 0.17.0 of f's identity.
@@ -122,6 +146,60 @@ func TestCheckReleaseComparesBytesNotLocation(t *testing.T) {
 	write(t, filepath.Join(next, "skills", "x", "SKILL.md"), "edited\n")
 	if rel, err := check(); err != nil || len(rel.Mismatches) != 0 {
 		t.Fatalf("skills are not compared: %+v %v", rel, err)
+	}
+}
+
+// The critic's case: the clone re-pins itself. It holds tq's release commit,
+// then a commit it forged (an emptied hooks.json, a planted bin/tq), and its
+// marketplace.json pins the forged one, which the cache holds. tq compares
+// with the commit it was built from, never with the pin: refused.
+func TestARepinnedCloneIsRefused(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	sha := publish(t, f.claude, releaseFiles())
+	clone := MarketplaceClone(f.claude)
+	forged := releaseFiles()
+	forged["hooks/hooks.json"] = `{"hooks":{}}`
+	forged["bin/tq"] = "#!/bin/sh\nexit 0\n"
+	forgedSHA := commitFiles(t, clone, forged, "forged")
+	pin(t, clone, forgedSHA)
+	install(t, f, forged)
+	rep := f.verify()
+	rel, err := CheckRelease("acme", rep)
+	if err != nil || rel.SHA != sha {
+		t.Fatalf("compared with tq's commit %s: %+v %v", sha[:12], rel, err)
+	}
+	want := []string{"bin/tq: not in the release", "hooks/hooks.json: differs from the release"}
+	if strings.Join(rel.Mismatches, "|") != strings.Join(want, "|") {
+		t.Fatalf("the forged folder is not tq's release: %v", rel.Mismatches)
+	}
+	// Even with tq's commit gone from the clone's history, the forged pin
+	// is no substitute.
+	setReleaseCommit(t, strings.Repeat("1", 40))
+	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "the clone does not have tq's release") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// A plugin release newer than tq is not the commit tq was built from: the
+// batch refuses it until tq is upgraded.
+func TestAPluginReleaseNewerThanTqIsRefused(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	publish(t, f.claude, releaseFiles())
+	clone := MarketplaceClone(f.claude)
+	newer := releaseFiles()
+	newer[".claude-plugin/plugin.json"] = `{"name":"tentaqles","version":"0.18.0"}`
+	newerSHA := commitFiles(t, clone, newer, "a later plugin release")
+	pin(t, clone, newerSHA)
+	install(t, f, newer)
+	rel, err := CheckRelease("acme", f.verify())
+	if err != nil || len(rel.Mismatches) != 1 || rel.Mismatches[0] != ".claude-plugin/plugin.json: differs from the release" {
+		t.Fatalf("%+v %v", rel, err)
+	}
+	setReleaseCommit(t, newerSHA) // the tq built from the later release
+	if rel, err := CheckRelease("acme", f.verify()); err != nil || len(rel.Mismatches) != 0 {
+		t.Fatalf("an upgraded tq accepts it: %+v %v", rel, err)
 	}
 }
 
@@ -206,33 +284,36 @@ func TestGitCommandIsClean(t *testing.T) {
 	}
 }
 
-// No release to compare with is an error, never a match: no clone, a pin
-// without a sha, a sha the clone does not have, a change that is not a
-// plugin bump alone.
+// No release to compare with is an error, never a match: a tq built without
+// a commit, no clone, a clone without tq's commit, a release commit that is
+// not a commit id, a change that is not a plugin bump alone.
 func TestCheckReleaseFailsClosed(t *testing.T) {
 	f := newFixture(t, "acme")
 	f.allow()
 	install(t, f, releaseFiles())
 	rep := f.verify()
+	setReleaseCommit(t, strings.Repeat("ab", 20))
 	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "no tentaqles marketplace clone") {
 		t.Fatalf("no clone: %v", err)
 	}
-	publish(t, f.claude, releaseFiles())
-	mk := filepath.Join(MarketplaceClone(f.claude), ".claude-plugin", "marketplace.json")
-	raw, _ := os.ReadFile(mk)
-	write(t, mk, `{"plugins":[{"name":"tentaqles","source":{"source":"git-subdir","path":"plugin","ref":"v0.9.1"}}]}`)
-	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "no commit sha") {
-		t.Fatalf("no sha: %v", err)
+	sha := publish(t, f.claude, releaseFiles())
+	setReleaseCommit(t, "")
+	if _, err := CheckRelease("acme", rep); !errors.Is(err, ErrNoReleaseCommit) || !strings.Contains(err.Error(), "this tq build has no release commit") {
+		t.Fatalf("a dev build: %v", err)
 	}
-	write(t, mk, `{"plugins":[{"name":"tentaqles","source":"./plugin"}]}`)
-	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "does not pin") {
-		t.Fatalf("a directory source: %v", err)
+	other := strings.Repeat("0", 40)
+	setReleaseCommit(t, other)
+	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "the clone does not have tq's release "+other[:12]) {
+		t.Fatalf("a clone without tq's commit: %v", err)
 	}
-	write(t, mk, strings.Replace(string(raw), `"sha":"`, `"sha":"`+strings.Repeat("0", 40)+`","x":"`, 1))
-	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "is not in the marketplace clone") {
-		t.Fatalf("an unknown sha: %v", err)
+	setReleaseCommit(t, "v0.9.1")
+	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "is not a commit id") {
+		t.Fatalf("a tag is not a commit id: %v", err)
 	}
-	write(t, mk, string(raw))
+	setReleaseCommit(t, strings.ToUpper(sha))
+	if rel, err := CheckRelease("acme", rep); err != nil || len(rel.Mismatches) != 0 || rel.SHA != sha {
+		t.Fatalf("tq's own commit, in any case: %+v %v", rel, err)
+	}
 	write(t, f.settings, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[]}]}}`)
 	invalidate()
 	if rep := f.verify(); rep.PluginBump {

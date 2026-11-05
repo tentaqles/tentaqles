@@ -48,12 +48,15 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   "plugin tentaqles 0.16.0 -> 0.17.0 (N hook files changed)" when the plugin moved to a new
   version folder, and each change with the old and new hash prefixes; exit 1 on a mismatch.
   `--accept --all` signs again, after one confirmation, the workspaces whose only change is a
-  new plugin version whose folder is the published release byte for byte (the commit the
-  tentaqles marketplace clone pins, its origin the tentaqles repository on GitHub; each
-  file's git blob compared, git run with a cleaned environment), listed first under
-  "Matches the published release tentaqles <version> (<sha12>)"; a file that differs, a file
-  the release lacks, a release file missing, or no clone or pin to compare with, and the
-  workspace is "not accepted" with the reasons, left for `--accept <ws>`. With the `integrity`
+  new plugin version whose folder is, byte for byte, the release this tq was built from (the
+  commit the release build injects into the binary, `cmd.Commit`, printed by `tq version`,
+  read from the tentaqles marketplace clone whose origin is the tentaqles repository on
+  GitHub; the clone's own pin is never read; each file's git blob compared, git run with a
+  cleaned environment), listed first under "Matches the published release tentaqles
+  <version> (<sha12>)"; a file that differs, a file the release lacks, a release file
+  missing, a dev build of tq, or a clone without tq's commit, and the workspace is "not
+  accepted" with the reasons, left for `--accept <ws>`; so is a plugin release newer than
+  the tq installed, until tq is upgraded. `tq version` prints the commit. With the `integrity`
   finding the hook's deny says "integrity mismatch: run tq hooks verify <ws>", not
   `tq allow`.
 - **`tq deny` leaves a signed tombstone** (`revoked: true`); tq never deletes a record.

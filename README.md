@@ -201,7 +201,7 @@ reference.
 
 | Command | Description |
 |---|---|
-| `tq version` | Print the tq version. |
+| `tq version` | Print the tq version and the commit it was built from. |
 | `tq init <base-folder>` | Register a base folder; each first-level subfolder becomes a terminal identity. `--install-hook` also installs the shell activation hook into detected shell profiles. |
 | `tq onboard [<name>]` | Set up one client workspace and record its company tools (identity, git provider, cloud, data platform, agent CLIs, chat, email) through a wizard; `--from <yaml>` answers from a file. Names only, never a token; the workspace is left untrusted and the `tq allow` and login lines are printed for you. See [`docs/SETUP.md`](docs/SETUP.md). |
 | `tq setup` | Interactive wizard that scaffolds one or more companies (workspaces) plus shell hooks from a single flow. `--example` prints a sample plan YAML; `--from <file>` loads a plan instead of prompting (`--dry-run` to preview only; `--yes` is accepted for older scripts, the confirmation is still asked); `--write-plan <path>` also saves the wizard's answers as a plan file; `--json` for machine-readable output. See [`docs/SETUP.md`](docs/SETUP.md). |

@@ -6,13 +6,11 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -24,24 +22,39 @@ import (
 
 // A new version of the tentaqles plugin is signed again in batch (tq hooks
 // verify --accept --all) only when its folder is the published release,
-// byte for byte: the release is the commit the tentaqles marketplace pins
-// (.claude-plugin/marketplace.json of the marketplace clone Claude Code keeps
-// at <config dir>/plugins/marketplaces/tentaqles, source git-subdir with a
-// sha), and every covered file of the new folder must have the blob that
-// commit has at the same path, while every covered file of the release must
-// be in the folder. Location is never enough: a file edited in the new
-// folder, a file the release does not have (a planted bin/tq), a release file
-// missing (an emptied hooks/), no clone, no pin, an origin that is not
+// byte for byte. The release is the commit this tq was built from
+// (ReleaseCommit, injected into the binary by the release build), read from
+// the tentaqles marketplace clone Claude Code keeps at
+// <config dir>/plugins/marketplaces/tentaqles: every covered file of the new
+// folder must have the blob that commit has at the same path under plugin/,
+// and every covered file of the release must be in the folder. Nothing the
+// clone says decides which commit that is: its marketplace.json pin is never
+// read, so a clone that re-pins itself to a commit it forged gains nothing.
+// Location is never enough: a file edited in the new folder, a file the
+// release does not have (a planted bin/tq), a release file missing (an
+// emptied hooks/), a tq built without a commit (a dev build), a clone that
+// lacks the commit, no clone, an origin that is not
 // github.com/tentaqles/tentaqles, or git failing, and the workspace waits for
-// tq hooks verify --accept <ws>. Git runs against the clone alone: a cleaned
+// tq hooks verify --accept <ws>. A plugin release newer than this tq is not
+// the commit tq was built from either: it needs the per-workspace accept
+// until tq is upgraded. Git runs against the clone alone: a cleaned
 // environment (no GIT_DIR, GIT_CONFIG*, ... nor the system or user config)
 // and no file-system monitor. The clone is a trust anchor: P1.3's protected
 // paths keep a session from writing it; a same-user process outside the
 // harness is the accepted risk AR1.
 
+// ReleaseCommit is the full commit this tq was built from; "" for a dev
+// build. internal/cmd sets it at startup from cmd.Commit (the release
+// build's ldflags); tests set it to their fixture's commit.
+var ReleaseCommit = ""
+
+// ErrNoReleaseCommit refuses the batch accept of a tq built without one.
+var ErrNoReleaseCommit = errors.New("this tq build has no release commit; every workspace needs tq hooks verify --accept <ws>")
+
 // Release is the published release a new plugin folder was compared with.
 type Release struct {
-	// Version is the new folder's version, SHA the pinned commit.
+	// Version is the new folder's version, SHA the commit compared with
+	// (ReleaseCommit).
 	Version, SHA string
 	// Mismatches names each difference ("<path>: <why>"); none when the
 	// folder is the release.
@@ -128,46 +141,6 @@ func checkOrigin(clone string) error {
 	return fmt.Errorf("the marketplace clone's origin is %q, not github.com/tentaqles/tentaqles", url)
 }
 
-// releasePin reads the pinned source of the tentaqles plugin from the clone's
-// marketplace.json: the commit and the folder of the plugin in the repo.
-func releasePin(clone string) (sha, dir string, err error) {
-	raw, err := os.ReadFile(filepath.Join(clone, ".claude-plugin", "marketplace.json"))
-	if err != nil {
-		return "", "", fmt.Errorf("no tentaqles marketplace clone at %s: %w", clone, err)
-	}
-	var doc struct {
-		Plugins []struct {
-			Name   string          `json:"name"`
-			Source json.RawMessage `json:"source"`
-		} `json:"plugins"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return "", "", fmt.Errorf("%s is not valid JSON", filepath.Join(clone, ".claude-plugin", "marketplace.json"))
-	}
-	for _, p := range doc.Plugins {
-		if p.Name != "tentaqles" {
-			continue
-		}
-		var src struct {
-			Source string `json:"source"`
-			Path   string `json:"path"`
-			SHA    string `json:"sha"`
-		}
-		if json.Unmarshal(p.Source, &src) != nil || src.Source != "git-subdir" {
-			return "", "", errors.New("the marketplace does not pin tentaqles to a git commit")
-		}
-		if !isHex(src.SHA) || (len(src.SHA) != 40 && len(src.SHA) != 64) {
-			return "", "", errors.New("the marketplace pins tentaqles to no commit sha")
-		}
-		d := path.Clean(strings.Trim(filepath.ToSlash(src.Path), "/"))
-		if d == ".." || strings.HasPrefix(d, "../") {
-			return "", "", fmt.Errorf("the pinned plugin path %q leaves the repo", src.Path)
-		}
-		return strings.ToLower(src.SHA), d, nil
-	}
-	return "", "", errors.New("the marketplace lists no tentaqles plugin")
-}
-
 func isHex(s string) bool {
 	if s == "" {
 		return false
@@ -176,18 +149,16 @@ func isHex(s string) bool {
 	return err == nil
 }
 
-// releaseTree lists the blobs of dir at sha in clone, by path relative to
-// dir, with git ls-tree.
-func releaseTree(clone, sha, dir string) (map[string]string, error) {
-	args := []string{"ls-tree", "-r", "-z", "--full-tree", sha}
-	prefix := ""
-	if dir != "." && dir != "" {
-		args = append(args, "--", dir)
-		prefix = dir + "/"
+// releaseTree lists the blobs of plugin/ at commit in clone, by path relative
+// to plugin/: git cat-file -e <commit>^{commit} first (the clone must have
+// that exact commit), then git ls-tree -r of <commit>:plugin.
+func releaseTree(clone, commit string) (map[string]string, error) {
+	if _, err := gitOutput(clone, "cat-file", "-e", commit+"^{commit}"); err != nil {
+		return nil, fmt.Errorf("the clone does not have tq's release %s; every workspace needs tq hooks verify --accept <ws> (a plugin release newer than this tq needs it until tq is upgraded)", commit[:12])
 	}
-	out, err := gitOutput(clone, args...)
+	out, err := gitOutput(clone, "ls-tree", "-r", "-z", commit+":plugin")
 	if err != nil {
-		return nil, fmt.Errorf("the release %s is not in the marketplace clone: %w", sha[:12], err)
+		return nil, fmt.Errorf("tq's release %s has no plugin folder in the clone: %w", commit[:12], err)
 	}
 	tree := map[string]string{}
 	for _, entry := range strings.Split(string(out), "\x00") {
@@ -199,14 +170,10 @@ func releaseTree(clone, sha, dir string) (map[string]string, error) {
 		if !ok || len(f) != 3 || f[1] != "blob" {
 			continue
 		}
-		rel, ok := strings.CutPrefix(p, prefix)
-		if !ok {
-			continue
-		}
-		tree[rel] = f[0] + " " + f[2]
+		tree[p] = f[0] + " " + f[2]
 	}
 	if len(tree) == 0 {
-		return nil, fmt.Errorf("the release %s has no files under %s", sha[:12], dir)
+		return nil, fmt.Errorf("tq's release %s has no files under plugin/", commit[:12])
 	}
 	return tree, nil
 }
@@ -241,11 +208,12 @@ func skippedInPlugin(rel string) bool {
 }
 
 // CheckRelease compares the plugin folder workspace name loads now with the
-// published release, for a report whose only changes are a new plugin
-// version (Report.PluginBump). It returns an error when there is no release
-// to compare with (no clone, no pin, git failing) and the differences in
-// Release.Mismatches otherwise; the folder is the release only when there
-// is no error and no mismatch.
+// published release this tq was built from (ReleaseCommit), for a report
+// whose only changes are a new plugin version (Report.PluginBump). It
+// returns an error when there is no release to compare with (a dev build, no
+// clone, a foreign origin, a clone without the commit, git failing) and the
+// differences in Release.Mismatches otherwise; the folder is the release
+// only when there is no error and no mismatch.
 func CheckRelease(name string, rep Report) (Release, error) {
 	if !validKey(name) {
 		return Release{}, fmt.Errorf("trust: invalid workspace name %q", name)
@@ -253,25 +221,31 @@ func CheckRelease(name string, rep Report) (Release, error) {
 	if rep.PluginFrom == "" || !rep.PluginBump {
 		return Release{}, errors.New("the change is not a new plugin version alone")
 	}
+	commit := strings.ToLower(strings.TrimSpace(ReleaseCommit))
+	if commit == "" {
+		return Release{}, ErrNoReleaseCommit
+	}
+	if !isHex(commit) || (len(commit) != 40 && len(commit) != 64) {
+		return Release{}, fmt.Errorf("this tq build's release commit %q is not a commit id", ReleaseCommit)
+	}
 	claudeDir := paths.IdentityDir(name, "claude")
 	root := PluginRoot(claudeDir)
 	if root == "" {
 		return Release{}, errors.New("no tentaqles plugin folder is installed")
 	}
 	clone := MarketplaceClone(claudeDir)
-	sha, dir, err := releasePin(clone)
-	if err != nil {
-		return Release{}, err
+	if fi, err := os.Stat(clone); err != nil || !fi.IsDir() {
+		return Release{}, fmt.Errorf("no tentaqles marketplace clone at %s", clone)
 	}
 	if err := checkOrigin(clone); err != nil {
 		return Release{}, err
 	}
-	tree, err := releaseTree(clone, sha, dir)
+	tree, err := releaseTree(clone, commit)
 	if err != nil {
 		return Release{}, err
 	}
-	rel := Release{Version: rep.PluginTo, SHA: sha}
-	sha256Repo := len(sha) == 64
+	rel := Release{Version: rep.PluginTo, SHA: commit}
+	sha256Repo := len(commit) == 64
 	have := map[string]bool{}
 	for _, f := range pluginFiles(root) {
 		have[f] = true

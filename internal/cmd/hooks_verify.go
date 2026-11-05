@@ -40,10 +40,11 @@ registered workspace that has a record.
 --accept signs the state as it is now, after you have read the report and
 confirmed: human-only, an agent session is refused. --accept --all lists the
 workspaces whose only change is a new version of the tentaqles plugin whose
-folder is the published release byte for byte (the commit the tentaqles
-marketplace clone pins), asks once, and signs them again; any other change,
-or no release to compare with, is left for tq hooks verify --accept
-<workspace>.`,
+folder is, byte for byte, the release this tq was built from (its commit,
+built into the binary and shown by tq version, read from the tentaqles
+marketplace clone), asks once, and signs them again; any other change, a
+plugin release newer than this tq, a dev build of tq, or no clone with that
+commit, is left for tq hooks verify --accept <workspace>.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			defer trust.MemoScope()()
@@ -194,6 +195,13 @@ func verifyAll(c *cobra.Command, accept bool) error {
 		}
 		fmt.Fprintf(w, "  read them with tq hooks verify %s; a human accepts them with tq hooks verify --accept %s\n", ws.Name, ws.Name)
 	}
+	if accept && len(failing) > 0 {
+		if trust.ReleaseCommit == "" {
+			fmt.Fprintln(w, "This tq build has no release commit, so nothing is accepted in batch.")
+		} else {
+			fmt.Fprintf(w, "Only the plugin release this tq was built from (%s) is accepted in batch; a plugin release newer than this tq needs tq hooks verify --accept <ws> until tq is upgraded.\n", shortCommit(trust.ReleaseCommit))
+		}
+	}
 	if n := len(failing); n > 0 {
 		if !accept {
 			return fmt.Errorf("%d workspace(s) do not verify: %s; a human runs: tq hooks verify --accept --all (a new plugin version that is the published release) or tq hooks verify --accept <workspace>", n, joinNames(failing))
@@ -201,6 +209,13 @@ func verifyAll(c *cobra.Command, accept bool) error {
 		return fmt.Errorf("%d workspace(s) not accepted: %s; a human runs: tq hooks verify --accept <workspace> after reading the changes", n, joinNames(failing))
 	}
 	return nil
+}
+
+func shortCommit(c string) string {
+	if len(c) > 12 {
+		return c[:12]
+	}
+	return c
 }
 
 func joinNames(wss []*resolve.Workspace) string {

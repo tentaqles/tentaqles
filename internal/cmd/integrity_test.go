@@ -387,26 +387,49 @@ func release017() map[string]string {
 // publishRelease writes the tentaqles marketplace clone of ws's Claude
 // identity, one commit holding files under plugin/ pinned by its
 // marketplace.json, and returns the sha.
-func publishRelease(t *testing.T, ws string, files map[string]string) string {
+func publishRelease(t *testing.T, files map[string]string) (repo, sha string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("needs git")
 	}
-	clone := trust.MarketplaceClone(paths.IdentityDir(ws, "claude"))
-	if err := os.MkdirAll(clone, 0o700); err != nil {
+	repo = filepath.Join(testutil.TempDir(t), "tentaqles")
+	if err := os.MkdirAll(repo, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	gitFixture(t, clone, "init", "-q")
-	gitFixture(t, clone, "remote", "add", "origin", "https://github.com/tentaqles/tentaqles.git")
+	gitFixture(t, repo, "init", "-q")
+	sha = commitRelease(t, repo, files, "release")
+	// The commit this tq was built from (cmd.Commit in a release build).
+	prev := trust.ReleaseCommit
+	trust.ReleaseCommit = sha
+	t.Cleanup(func() { trust.ReleaseCommit = prev })
+	return repo, sha
+}
+
+// commitRelease commits files under plugin/ of repo and returns the commit.
+func commitRelease(t *testing.T, repo string, files map[string]string, msg string) string {
+	t.Helper()
 	for rel, body := range files {
-		mustWrite(t, filepath.Join(clone, "plugin", filepath.FromSlash(rel)), body)
+		mustWrite(t, filepath.Join(repo, "plugin", filepath.FromSlash(rel)), body)
 	}
-	gitFixture(t, clone, "add", "-A")
-	gitFixture(t, clone, "commit", "-q", "-m", "release")
-	sha := strings.TrimSpace(gitFixture(t, clone, "rev-parse", "HEAD"))
+	gitFixture(t, repo, "add", "-A")
+	gitFixture(t, repo, "commit", "-q", "-m", msg)
+	return strings.TrimSpace(gitFixture(t, repo, "rev-parse", "HEAD"))
+}
+
+// cloneRelease clones repo as the tentaqles marketplace clone of ws's Claude
+// identity, its origin the tentaqles repository, its marketplace.json pinning
+// pinned (which tq never reads). It returns the clone.
+func cloneRelease(t *testing.T, repo, ws, pinned string) string {
+	t.Helper()
+	clone := trust.MarketplaceClone(paths.IdentityDir(ws, "claude"))
+	if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitFixture(t, filepath.Dir(clone), "clone", "-q", repo, clone)
+	gitFixture(t, clone, "remote", "set-url", "origin", "https://github.com/tentaqles/tentaqles.git")
 	mustWrite(t, filepath.Join(clone, ".claude-plugin", "marketplace.json"),
-		`{"name":"tentaqles","plugins":[{"name":"tentaqles","source":{"source":"git-subdir","url":"https://github.com/tentaqles/tentaqles.git","path":"plugin","ref":"v0.9.1","sha":"`+sha+`"}}]}`)
-	return sha
+		`{"name":"tentaqles","plugins":[{"name":"tentaqles","source":{"source":"git-subdir","url":"https://github.com/tentaqles/tentaqles.git","path":"plugin","ref":"v0.9.1","sha":"`+pinned+`"}}]}`)
+	return clone
 }
 
 // installVersion puts files as the cached plugin folder 0.17.0 of ws.
@@ -428,21 +451,33 @@ func installVersion(t *testing.T, ws string, files map[string]string) {
 func TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly(t *testing.T) {
 	root, _ := mkIntegrityWS(t, "acme")
 	base := filepath.Dir(root)
-	for _, n := range []string{"beta", "gamma", "delta"} {
+	for _, n := range []string{"beta", "gamma", "delta", "zeta"} {
 		addSignedWS(t, base, n)
 	}
-	sha := publishRelease(t, "acme", release017())
+	repo, sha := publishRelease(t, release017())
+	for _, n := range []string{"acme", "beta", "gamma"} {
+		cloneRelease(t, repo, n, sha)
+	}
 	installVersion(t, "acme", release017())
-	publishRelease(t, "beta", release017())
 	emptied := release017()
 	emptied["hooks/hooks.json"] = `{"hooks":{}}`
 	installVersion(t, "beta", emptied)
-	publishRelease(t, "gamma", release017())
 	installVersion(t, "gamma", release017())
 	mustWrite(t, filepath.Join(paths.IdentityDir("gamma", "claude"), "settings.json"), `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[]}]}}`)
 	installVersion(t, "delta", release017())
+	// zeta: the critic's re-pinned clone. It forged a commit (an emptied
+	// hooks.json, a planted bin/tq) on top of tq's release, pins it, and the
+	// cache holds it.
+	zeta := cloneRelease(t, repo, "zeta", sha)
+	forged := release017()
+	forged["hooks/hooks.json"] = `{"hooks":{}}`
+	forged["bin/tq"] = "#!/bin/sh\nexit 0\n"
+	forgedSHA := commitRelease(t, zeta, forged, "forged")
+	mustWrite(t, filepath.Join(zeta, ".claude-plugin", "marketplace.json"),
+		`{"name":"tentaqles","plugins":[{"name":"tentaqles","source":{"source":"git-subdir","url":"https://github.com/tentaqles/tentaqles.git","path":"plugin","ref":"v0.9.1","sha":"`+forgedSHA+`"}}]}`)
+	installVersion(t, "zeta", forged)
 
-	if _, err := runTq(t, "hooks", "verify", "--all"); err == nil || !strings.Contains(err.Error(), "4 workspace(s) do not verify") {
+	if _, err := runTq(t, "hooks", "verify", "--all"); err == nil || !strings.Contains(err.Error(), "5 workspace(s) do not verify") {
 		t.Fatalf("--all without --accept reports and exits non-zero: %v", err)
 	}
 	prev := humanonly.Confirm
@@ -456,8 +491,13 @@ func TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly(t *testing.T) {
 	label := "Matches the published release tentaqles 0.17.0 (" + sha[:12] + "):\n  acme (plugin tentaqles 0.16.0 -> 0.17.0, "
 	list := strings.Index(out, label)
 	gate := strings.Index(out, "tq hooks verify --accept --all: about to")
-	if list < 0 || gate < 0 || list > gate || strings.Contains(out[list:gate], "beta") || strings.Contains(out[list:gate], "gamma") || strings.Contains(out[list:gate], "delta") {
-		t.Fatalf("acme alone is listed under the release, before the confirmation:\n%s", out)
+	if list < 0 || gate < 0 || list > gate {
+		t.Fatalf("acme is listed under the release, before the confirmation:\n%s", out)
+	}
+	for _, n := range []string{"beta", "gamma", "delta", "zeta"} {
+		if strings.Contains(out[list:gate], n) {
+			t.Fatalf("%s must not be listed under the release:\n%s", n, out)
+		}
 	}
 	if strings.Contains(out, "Only a new plugin version changed") {
 		t.Fatal("the old label is gone")
@@ -466,21 +506,32 @@ func TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly(t *testing.T) {
 		"beta":  "  hooks/hooks.json: differs from the release",
 		"gamma": "  changes outside the plugin folder",
 		"delta": "  no tentaqles marketplace clone",
+		"zeta":  "  bin/tq: not in the release\n  hooks/hooks.json: differs from the release",
 	} {
 		if !strings.Contains(out, "not accepted: "+n+" has changes that are not in the published release\n"+reason) {
 			t.Fatalf("%s is not accepted, with why (%q):\n%s", n, reason, out)
 		}
 	}
-	if err == nil || !strings.Contains(err.Error(), "3 workspace(s) not accepted: beta, delta, gamma") {
-		t.Fatalf("the exit names the three: %v", err)
+	if !strings.Contains(out, "Only the plugin release this tq was built from ("+sha[:12]+") is accepted in batch; a plugin release newer than this tq needs tq hooks verify --accept <ws> until tq is upgraded.") {
+		t.Fatalf("the output says why a newer release waits:\n%s", out)
+	}
+	if err == nil || !strings.Contains(err.Error(), "4 workspace(s) not accepted: beta, delta, gamma, zeta") {
+		t.Fatalf("the exit names the four: %v", err)
 	}
 	if out, err := runTq(t, "hooks", "verify", "acme"); err != nil || !strings.Contains(out, "acme: integrity ok") {
 		t.Fatalf("acme signed again: %v %s", err, out)
 	}
-	for _, n := range []string{"beta", "gamma", "delta"} {
+	for _, n := range []string{"beta", "gamma", "delta", "zeta"} {
 		if _, err := runTq(t, "hooks", "verify", n); err == nil {
 			t.Fatalf("%s stays untrusted", n)
 		}
+	}
+	// A dev build of tq (no release commit) accepts nothing in batch.
+	trust.ReleaseCommit = ""
+	asked = 0
+	out, err = runTq(t, "hooks", "verify", "--accept", "--all")
+	if asked != 0 || err == nil || !strings.Contains(out, "this tq build has no release commit") || !strings.Contains(out, "This tq build has no release commit, so nothing is accepted in batch.") {
+		t.Fatalf("a dev build: asked %d, %v\n%s", asked, err, out)
 	}
 	// An agent never accepts all.
 	t.Setenv("CLAUDECODE", "1")
