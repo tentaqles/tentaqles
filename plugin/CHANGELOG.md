@@ -11,8 +11,16 @@ Releases before 0.16.0 are described on the
   (`~/.tentaqles` when `TQ_HOME` is unset); `_manifest_path` is the file loaded and
   `_client_root` stays the folder; the old layout (the full manifest in the root) still
   loads; a marker whose `client` is not the folder name, or without its protected copy, is
-  unknown. New helpers `protected_manifest_path`, `is_protected_manifest_path` and
-  `workspace_root_for` (`tests/test_manifest_loader_marker.py`).
+  unknown. The loader resolves like tq: the directory must lie under a base registered in
+  `$TQ_HOME/config.yaml` and the identity is that base's first-level folder, so a
+  `.tentaqles.yaml` planted deeper never shadows it; the walk-up applies only on a machine
+  with no `config.yaml`. New helpers `protected_manifest_path`,
+  `is_protected_manifest_path` and `workspace_root_for`
+  (`tests/test_manifest_loader_marker.py`).
+- **`TQ_HOME` is ignored under an agent marker** (`tentaqles.tqhome`, used by the loader and
+  `tentaqles.knowledge`): the hooks read `~/.tentaqles`, so a settings `env` block cannot
+  point them at a forged state folder. The tests set `tqhome.ALLOW_HOME_OVERRIDE`
+  (`tests/conftest.py`); nothing else does.
 - **`snapshot-guard.py` fires again.** It reads the written file from `tool_input.file_path`
   (the hook payload shape; the bare `file_path` stays as a fallback) and snapshots the
   manifest tq reads (the protected copy for a marked workspace) before a Write to the

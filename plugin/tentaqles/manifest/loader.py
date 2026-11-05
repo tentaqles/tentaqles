@@ -8,10 +8,17 @@ Two layouts exist (ADR-0002). In the protected layout the workspace root
 holds a name-only marker, ``.tentaqles.yaml`` with ``schema:
 tentaqles-marker-v1`` and ``client: <name>``, and the manifest lives at
 ``$TQ_HOME/identities/<name>/manifest.yaml`` (``~/.tentaqles`` when
-``TQ_HOME`` is unset). In the old layout the full manifest sits at
-``<root>/.tentaqles.yaml``. The loader walks up from the working directory
-to the root file, then reads the protected copy when there is one; the
-marker's ``client`` must equal the folder name, or the folder is unknown.
+``TQ_HOME`` is unset or the process runs under an agent marker, see
+``tentaqles.tqhome``). In the old layout the full manifest sits at
+``<root>/.tentaqles.yaml``.
+
+The loader resolves a working directory the way tq does: the directory must
+lie under a base registered in ``$TQ_HOME/config.yaml``, and the identity is
+that base's first-level folder, whatever other ``.tentaqles.yaml`` files sit
+deeper. Only on a machine with no ``config.yaml`` at all (the plugin without
+tq) does it walk up from the working directory to the nearest root file. In
+both cases the marker's ``client`` must equal the folder name, or the folder
+is unknown.
 """
 
 from __future__ import annotations
@@ -23,16 +30,24 @@ from typing import Any
 
 import yaml
 
+from tentaqles.tqhome import tq_home
+
 MARKER_SCHEMA = "tentaqles-marker-v1"
 MANIFEST_SCHEMAS = ("tentaqles-client-v1", "tentaqles-client-v2")
 ROOT_FILE = ".tentaqles.yaml"
 PROTECTED_FILE = "manifest.yaml"
 
-
-def tq_home() -> Path:
-    """``$TQ_HOME`` or ``~/.tentaqles``, as tq resolves it."""
-    env = os.environ.get("TQ_HOME")
-    return Path(env) if env else Path.home() / ".tentaqles"
+__all__ = [
+    "tq_home",
+    "protected_manifest_path",
+    "is_protected_manifest_path",
+    "find_manifest",
+    "load_manifest",
+    "workspace_root_for",
+    "get_client_context",
+    "run_preflight_checks",
+    "format_context_summary",
+]
 
 
 def protected_manifest_path(name: str) -> Path:
@@ -51,7 +66,7 @@ def is_protected_manifest_path(path: str | Path) -> bool:
         return False
 
 
-def _find_root_file(cwd: str | Path) -> Path | None:
+def _walk_up(cwd: str | Path) -> Path | None:
     """Walk up from cwd looking for .tentaqles.yaml. Stop at root or after 10 levels."""
     current = Path(cwd).resolve()
     for _ in range(10):
@@ -62,6 +77,49 @@ def _find_root_file(cwd: str | Path) -> Path | None:
         if parent == current:
             break
         current = parent
+    return None
+
+
+def _resolve_dir(p: Path) -> Path:
+    try:
+        return p.resolve()
+    except OSError:
+        return p
+
+
+def _registered_bases() -> list[Path] | None:
+    """The bases of ``$TQ_HOME/config.yaml``, or None when there is no config
+    at all (no tq on this machine: the walk-up applies)."""
+    cfg_path = tq_home() / "config.yaml"
+    if not cfg_path.is_file():
+        return None
+    cfg = _read_yaml(cfg_path) or {}
+    bases = cfg.get("bases") or []
+    if not isinstance(bases, list):
+        return []
+    return [Path(b) for b in bases if isinstance(b, str) and b]
+
+
+def _find_root_file(cwd: str | Path) -> Path | None:
+    """The root file of the workspace that holds cwd, resolved like tq: cwd
+    must lie under a registered base and the identity is that base's
+    first-level folder, so a ``.tentaqles.yaml`` planted deeper never
+    shadows it. At a base root, outside every base, or with no root file in
+    the first-level folder the result is None (neutral)."""
+    bases = _registered_bases()
+    if bases is None:
+        return _walk_up(cwd)
+    c = _resolve_dir(Path(cwd))
+    for base in bases:
+        b = _resolve_dir(base)
+        try:
+            rel = c.relative_to(b)
+        except ValueError:
+            continue
+        if not rel.parts:
+            return None
+        rf = b / rel.parts[0] / ROOT_FILE
+        return rf if rf.is_file() else None
     return None
 
 
@@ -149,14 +207,8 @@ def workspace_root_for(name: str, cwd: str | Path | None = None) -> Path | None:
         ws_root = os.environ.get("TQ_WS_ROOT", "")
         if ws_root and (Path(ws_root) / ROOT_FILE).is_file():
             return Path(ws_root).resolve()
-    cfg = _read_yaml(tq_home() / "config.yaml") or {}
-    bases = cfg.get("bases") or []
-    if not isinstance(bases, list):
-        return None
-    for base in bases:
-        if not isinstance(base, str):
-            continue
-        root = Path(base) / name
+    for base in _registered_bases() or []:
+        root = base / name
         if (root / ROOT_FILE).is_file():
             return root.resolve()
     return None

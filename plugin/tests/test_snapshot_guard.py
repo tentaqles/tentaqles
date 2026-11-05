@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -15,9 +16,17 @@ from pathlib import Path
 
 
 def _run_guard(
-    stdin_payload: dict | str, workspace: Path | None = None, env: dict | None = None
+    stdin_payload: dict | str,
+    workspace: Path | None = None,
+    env: dict | None = None,
+    home: Path | None = None,
 ) -> subprocess.CompletedProcess:
     """Invoke snapshot-guard.py with the given stdin payload.
+
+    The guard runs under the test's own agent marker (the suite runs inside
+    Claude Code), so it ignores TQ_HOME and reads ~/.tentaqles: HOME and
+    USERPROFILE are pointed at ``home`` (an empty temp dir by default) so no
+    run reads the developer's real state folder.
 
     Returns the CompletedProcess so callers can inspect returncode / stdout / stderr.
     """
@@ -29,7 +38,12 @@ def _run_guard(
     else:
         stdin_text = stdin_payload
 
+    if home is None:
+        home = Path(tempfile.mkdtemp(prefix="tq-guard-home-"))
     run_env = dict(os.environ)
+    run_env["HOME"] = str(home)
+    run_env["USERPROFILE"] = str(home)
+    run_env["TQ_HOME"] = ""
     if env:
         run_env.update(env)
     return subprocess.run(
@@ -48,9 +62,11 @@ def _snapshots(root: Path) -> list[dict]:
     return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(snap_dir.glob("*.json"))]
 
 
-def _protected_workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """A marked workspace root, its TQ_HOME and the protected manifest."""
-    tq_home = tmp_path / "tqhome"
+def _protected_workspace(tmp_path: Path, email: str = "before@acme.test") -> tuple[Path, Path, Path]:
+    """A marked workspace root, the home whose .tentaqles holds the state, and
+    the protected manifest."""
+    home = tmp_path / "home"
+    tq_home = home / ".tentaqles"
     root = tmp_path / "base" / "acme"
     root.mkdir(parents=True)
     (root / ".tentaqles.yaml").write_text(
@@ -59,10 +75,10 @@ def _protected_workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
     pp = tq_home / "identities" / "acme" / "manifest.yaml"
     pp.parent.mkdir(parents=True)
     pp.write_text(
-        "schema: tentaqles-client-v2\nclient: acme\ngit:\n  email: before@acme.test\n",
+        f"schema: tentaqles-client-v2\nclient: acme\ngit:\n  email: {email}\n",
         encoding="utf-8",
     )
-    return root, tq_home, pp
+    return root, home, pp
 
 
 # ---------------------------------------------------------------------------
@@ -114,13 +130,13 @@ def test_guard_tool_input_non_manifest_is_a_noop(tmp_path: Path) -> None:
 
 def test_guard_marker_write_snapshots_the_protected_manifest(tmp_path: Path) -> None:
     """A Write to the marker snapshots the manifest tq reads, under the root."""
-    root, tq_home, _ = _protected_workspace(tmp_path)
+    root, home, _ = _protected_workspace(tmp_path)
     payload = {
         "tool_name": "Write",
         "cwd": str(root),
         "tool_input": {"file_path": str(root / ".tentaqles.yaml")},
     }
-    result = _run_guard(payload, env={"TQ_HOME": str(tq_home)})
+    result = _run_guard(payload, home=home)
     assert result.returncode == 0
     snaps = _snapshots(root)
     assert len(snaps) == 1
@@ -130,36 +146,53 @@ def test_guard_marker_write_snapshots_the_protected_manifest(tmp_path: Path) -> 
 
 
 def test_guard_protected_manifest_write_snapshots_under_the_workspace(tmp_path: Path) -> None:
-    """A Write to $TQ_HOME/identities/<name>/manifest.yaml is a manifest write;
-    the snapshot lands under the workspace root the marker names."""
-    root, tq_home, pp = _protected_workspace(tmp_path)
+    """A Write to ~/.tentaqles/identities/<name>/manifest.yaml is a manifest
+    write; the snapshot lands under the workspace root the marker names."""
+    root, home, pp = _protected_workspace(tmp_path)
     payload = {"tool_name": "Write", "cwd": str(root / "src"), "tool_input": {"file_path": str(pp)}}
-    result = _run_guard(payload, env={"TQ_HOME": str(tq_home)})
+    result = _run_guard(payload, home=home)
     assert result.returncode == 0
     snaps = _snapshots(root)
     assert len(snaps) == 1
     assert snaps[0]["manifest"]["git"]["email"] == "before@acme.test"
-    assert not (tq_home / "identities" / "acme" / ".claude").exists()
+    assert not (home / ".tentaqles" / "identities" / "acme" / ".claude").exists()
 
 
 def test_guard_protected_manifest_write_finds_the_root_through_the_registry(tmp_path: Path) -> None:
-    root, tq_home, pp = _protected_workspace(tmp_path)
-    (tq_home / "config.yaml").write_text(f"bases:\n  - {root.parent}\n", encoding="utf-8")
+    root, home, pp = _protected_workspace(tmp_path)
+    (home / ".tentaqles" / "config.yaml").write_text(f"bases:\n  - {root.parent}\n", encoding="utf-8")
     payload = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(pp)}}
-    env = {"TQ_HOME": str(tq_home), "TQ_WS": "", "TQ_WS_ROOT": ""}
-    assert _run_guard(payload, env=env).returncode == 0
+    env = {"TQ_WS": "", "TQ_WS_ROOT": ""}
+    assert _run_guard(payload, env=env, home=home).returncode == 0
     assert len(_snapshots(root)) == 1
 
 
 def test_guard_protected_manifest_write_without_a_root_is_a_noop(tmp_path: Path) -> None:
-    tq_home = tmp_path / "tqhome"
-    pp = tq_home / "identities" / "ghost" / "manifest.yaml"
+    home = tmp_path / "home"
+    pp = home / ".tentaqles" / "identities" / "ghost" / "manifest.yaml"
     pp.parent.mkdir(parents=True)
     pp.write_text("schema: tentaqles-client-v2\nclient: ghost\n", encoding="utf-8")
     payload = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(pp)}}
-    env = {"TQ_HOME": str(tq_home), "TQ_WS": "", "TQ_WS_ROOT": ""}
-    assert _run_guard(payload, env=env).returncode == 0
+    env = {"TQ_WS": "", "TQ_WS_ROOT": ""}
+    assert _run_guard(payload, env=env, home=home).returncode == 0
     assert not list(tmp_path.rglob("snapshots"))
+
+
+def test_guard_ignores_tq_home_under_an_agent_marker(tmp_path: Path) -> None:
+    """A TQ_HOME the harness environment carries (an agent-writable settings
+    env block can set it) must not point the guard at a forged state folder:
+    under an agent marker the real ~/.tentaqles is read."""
+    root, home, _ = _protected_workspace(tmp_path, email="real@acme.test")
+    forged = tmp_path / "forged"
+    fp = forged / "identities" / "acme" / "manifest.yaml"
+    fp.parent.mkdir(parents=True)
+    fp.write_text("schema: tentaqles-client-v2\nclient: acme\ngit:\n  email: forged@acme.test\n", encoding="utf-8")
+    payload = {"tool_name": "Write", "cwd": str(root), "tool_input": {"file_path": str(root / ".tentaqles.yaml")}}
+    result = _run_guard(payload, env={"TQ_HOME": str(forged), "CLAUDECODE": "1"}, home=home)
+    assert result.returncode == 0
+    snaps = _snapshots(root)
+    assert len(snaps) == 1
+    assert snaps[0]["manifest"]["git"]["email"] == "real@acme.test"
 
 
 # ---------------------------------------------------------------------------

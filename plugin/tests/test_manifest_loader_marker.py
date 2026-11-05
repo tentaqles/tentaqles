@@ -159,3 +159,123 @@ def test_no_marker_anywhere_is_unknown(tmp_path, tq_home):
     assert loader.load_manifest(tmp_path) is None
     assert loader.find_manifest(tmp_path) is None
     assert os.environ.get("TQ_HOME") == str(tq_home)
+
+
+# ---------------------------------------------------------------------------
+# Resolution through the registry, like tq (no nested-marker shadowing)
+# ---------------------------------------------------------------------------
+
+
+def _register(tq_home: Path, *bases: Path) -> None:
+    lines = "".join(f"  - {b}\n" for b in bases)
+    (tq_home / "config.yaml").write_text(f"bases:\n{lines}", encoding="utf-8")
+
+
+def test_nested_root_file_cannot_shadow_the_registered_workspace(tmp_path, tq_home):
+    """base/acme/beta/.tentaqles.yaml naming beta is a planted file: tq
+    resolves acme (the base's first-level folder) and so must the plugin."""
+    base = tmp_path / "base"
+    root = base / "acme"
+    _marker(root)
+    pp = _protected(tq_home)
+    _register(tq_home, base)
+    nested = root / "beta"
+    nested.mkdir()
+    (nested / ".tentaqles.yaml").write_text(
+        "schema: tentaqles-client-v2\nclient: beta\ngit:\n  email: beta@evil.test\n", encoding="utf-8"
+    )
+    (nested / "src").mkdir()
+
+    for cwd in (nested, nested / "src", root):
+        data = loader.load_manifest(cwd)
+        assert data is not None, cwd
+        assert data["client"] == "acme"
+        assert data["git"]["email"] == "dev@acme.test"
+        assert Path(data["_manifest_path"]) == pp.resolve()
+        assert Path(data["_client_root"]) == root.resolve()
+        assert loader.find_manifest(cwd) == pp.resolve()
+    assert loader.get_client_context(nested)["client"] == "acme"
+
+
+def test_registry_resolution_is_neutral_at_the_base_root_and_outside_bases(tmp_path, tq_home):
+    base = tmp_path / "base"
+    _marker(base / "acme")
+    _protected(tq_home)
+    _register(tq_home, base)
+    assert loader.load_manifest(base) is None
+    elsewhere = tmp_path / "elsewhere" / "acme"
+    _marker(elsewhere)
+    assert loader.load_manifest(elsewhere) is None, "a folder outside every base is neutral, marker or not"
+    plain = base / "plain" / "deep"
+    plain.mkdir(parents=True)
+    assert loader.load_manifest(plain) is None, "a first-level folder without a root file is neutral"
+
+
+def test_registry_resolution_reads_the_old_layout_too(tmp_path, tq_home):
+    base = tmp_path / "base"
+    root = base / "acme"
+    root.mkdir(parents=True)
+    rf = root / ".tentaqles.yaml"
+    rf.write_text(MANIFEST, encoding="utf-8")
+    _register(tq_home, base)
+    data = loader.load_manifest(root / "repo")
+    assert data is not None and data["client"] == "acme"
+    assert Path(data["_manifest_path"]) == rf.resolve()
+
+
+def test_without_a_registry_the_walk_up_still_applies(tmp_path, tq_home):
+    """No config.yaml: the plugin without tq keeps finding the nearest root file."""
+    root = tmp_path / "anywhere" / "acme"
+    root.mkdir(parents=True)
+    (root / ".tentaqles.yaml").write_text(MANIFEST, encoding="utf-8")
+    (root / "deep").mkdir()
+    assert not (tq_home / "config.yaml").exists()
+    data = loader.load_manifest(root / "deep")
+    assert data is not None and data["client"] == "acme"
+
+
+# ---------------------------------------------------------------------------
+# TQ_HOME under an agent marker
+# ---------------------------------------------------------------------------
+
+
+def test_tq_home_is_ignored_under_an_agent_marker(tmp_path, monkeypatch):
+    from tentaqles import knowledge, tqhome
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    forged = tmp_path / "forged"
+    monkeypatch.setenv("TQ_HOME", str(forged))
+    for k in tqhome.AGENT_MARKERS:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(tqhome, "ALLOW_HOME_OVERRIDE", False)
+
+    assert tqhome.tq_home() == forged, "no marker: TQ_HOME applies"
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert tqhome.tq_home() == home / ".tentaqles"
+    assert loader.tq_home() == home / ".tentaqles"
+    assert knowledge.tq_home() == home / ".tentaqles"
+    monkeypatch.setattr(tqhome, "ALLOW_HOME_OVERRIDE", True)
+    assert tqhome.tq_home() == forged, "the tests' override seam"
+
+
+def test_forged_tq_home_cannot_supply_the_manifest_under_a_marker(tmp_path, monkeypatch):
+    from tentaqles import tqhome
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    root = tmp_path / "base" / "acme"
+    _marker(root)
+    real = _protected(home / ".tentaqles")
+    forged = tmp_path / "forged"
+    _protected(forged, body=MANIFEST.replace("dev@acme.test", "forged@acme.test"))
+    monkeypatch.setenv("TQ_HOME", str(forged))
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setattr(tqhome, "ALLOW_HOME_OVERRIDE", False)
+
+    data = loader.load_manifest(root)
+    assert data is not None
+    assert data["git"]["email"] == "dev@acme.test"
+    assert Path(data["_manifest_path"]) == real.resolve()

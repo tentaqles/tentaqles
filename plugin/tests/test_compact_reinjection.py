@@ -42,6 +42,14 @@ def _workspace(tmp_path: Path) -> Path:
 
 def _run(cwd: Path, source: str) -> str:
     env = dict(os.environ)
+    # An empty home: the hook ignores TQ_HOME under the suite's agent marker and
+    # must not read the developer's ~/.tentaqles/config.yaml (its registered
+    # bases would make the temp workspace unknown).
+    home = cwd / ".home"
+    home.mkdir(exist_ok=True)
+    env["HOME"] = str(home)
+    env["USERPROFILE"] = str(home)
+    env["TQ_HOME"] = ""
     extra = [p for p in sys.path if p and ("site-packages" in p or p == str(PLUGIN_ROOT))]
     env["PYTHONPATH"] = os.pathsep.join([str(PLUGIN_ROOT), *extra])
     proc = subprocess.run(

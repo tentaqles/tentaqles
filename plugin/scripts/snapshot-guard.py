@@ -74,7 +74,9 @@ def _target(file_path: str, cwd: str | None) -> tuple[str | None, dict]:
             # Not loadable as a manifest (an unknown schema, say): keep the
             # raw root file so the snapshot still records what was there.
             return str(root), _read_yaml(p)
-        return str(root), _public(manifest)
+        # The loader resolves like tq: the workspace is the registered base's
+        # first-level folder, which may be above a root file planted deeper.
+        return str(manifest.get("_client_root") or root), _public(manifest)
     if loader.is_protected_manifest_path(p):
         name = p.parent.name
         root = loader.workspace_root_for(name, cwd=cwd)

@@ -45,7 +45,11 @@ def _read_yaml(path: Path) -> dict:
 
 
 def tq_home() -> Path:
-    return Path(os.environ.get("TQ_HOME") or (Path.home() / ".tentaqles"))
+    """``$TQ_HOME`` or ``~/.tentaqles``; under an agent marker the default
+    (see ``tentaqles.tqhome``)."""
+    from tentaqles.tqhome import tq_home as _tq_home
+
+    return _tq_home()
 
 
 def config_files() -> list[Path]:
