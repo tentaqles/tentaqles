@@ -118,11 +118,20 @@ def test_a_forged_pyc_next_to_the_sources_is_not_loaded(tmp_path, plugin_copy):
     assert sorted(tmp_path.rglob("*.pyc")) == [forged]
 
 
+def _script_markers():
+    """The agent markers tq_env.sh checks (tq's internal/markers list; a Go
+    test pins the two together)."""
+    text = (SCRIPTS / "tq_env.sh").read_text(encoding="utf-8")
+    line = next(l for l in text.splitlines() if l.startswith("for _tq_m in "))
+    return line[len("for _tq_m in "):].split(";")[0].split()
+
+
 def _prefix_after_sourcing(tmp_path, **env_extra):
     """PYTHONPYCACHEPREFIX after sourcing tq_env.sh with TENTAQLES_PY set (the
-    guard skips the rest, the exports still run)."""
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("PYTHONPYCACHEPREFIX", "TQ_HOME", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE")}
+    guard skips the rest, the exports still run), from an environment with no
+    agent marker but the ones given."""
+    drop = {"PYTHONPYCACHEPREFIX", "TQ_HOME", *_script_markers()}
+    env = {k: v for k, v in os.environ.items() if k.upper() not in drop}
     env.update(HOME=str(tmp_path), USERPROFILE=str(tmp_path), TENTAQLES_PY=Path(sys.executable).as_posix())
     env.update(env_extra)
     script = '. "$1"; printf "%s|%s" "$PYTHONPYCACHEPREFIX" "$PYTHONDONTWRITEBYTECODE"'
@@ -139,6 +148,7 @@ def test_the_prefix_is_in_the_tq_home_as_paths_home_resolves_it(tmp_path):
     other = tmp_path / "other-home"
     assert _same_path(_prefix_after_sourcing(tmp_path, TQ_HOME=str(other)), other / "pycache")
     assert _same_path(_prefix_after_sourcing(tmp_path), tmp_path / ".tentaqles" / "pycache")
-    for marker in ("CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS"):
+    assert len(_script_markers()) == 12
+    for marker in _script_markers():
         got = _prefix_after_sourcing(tmp_path, TQ_HOME=str(other), **{marker: "1"})
         assert _same_path(got, tmp_path / ".tentaqles" / "pycache"), (marker, got)

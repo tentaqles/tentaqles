@@ -13,6 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -537,6 +538,44 @@ func TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	if _, err := runTq(t, "hooks", "verify", "--accept", "--all"); !errors.Is(err, errHumanOnly) {
 		t.Fatalf("%v", err)
+	}
+}
+
+// The signed integrity record, the machine marker trust/.signed and the
+// legacy snapshot sit in the state folder P1.3 protects: the hook denies a
+// session every write to them (protected-path), and they stay as signed.
+func TestProtectedPaths_SignedRecordAndMachineMarker(t *testing.T) {
+	f := setupProtected(t, "")
+	record := trust.SignedRecordPath("acme")
+	marker := trust.SignedMarkerPath()
+	before := map[string][]byte{}
+	for _, p := range []string{record, marker} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("precondition: %s exists after the signature: %v", p, err)
+		}
+		before[p] = b
+	}
+	for _, tc := range []struct{ name, tool, input string }{
+		{"Write trust/acme.json", "Write", `{"file_path":` + jsonPathLit(record) + `,"content":"{}"}`},
+		{"Edit trust/acme.json", "Edit", `{"file_path":` + jsonPathLit(record) + `,"old_string":"a","new_string":"b"}`},
+		{"Write trust/.signed", "Write", `{"file_path":` + jsonPathLit(marker) + `,"content":""}`},
+		{"Write trust/legacy.json", "Write", pathIn("file_path", trust.LegacyListPath())},
+		{"rm the record by its ~ path", "Bash", cmdIn("rm -f ~/.tentaqles/trust/acme.json")},
+		{"rm trust/.signed", "Bash", cmdIn("rm -f " + filepath.ToSlash(marker))},
+		{"Remove-Item trust/.signed", "PowerShell", cmdIn(`Remove-Item -Force $env:USERPROFILE\.tentaqles\trust\.signed`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, category, rule, errOut := hookDecision(t, f.root, tc.tool, tc.input)
+			if code != 2 || rule != policy.ProtectedPathID {
+				t.Fatalf("want a protected-path deny, code=%d category=%q rule=%q %s", code, category, rule, errOut)
+			}
+		})
+	}
+	for p, b := range before {
+		if got, _ := os.ReadFile(p); string(got) != string(b) {
+			t.Fatalf("%s changed", p)
+		}
 	}
 }
 

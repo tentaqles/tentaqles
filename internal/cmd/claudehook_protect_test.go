@@ -56,9 +56,6 @@ func setupProtected(t *testing.T, extra string) protectedFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(name, h); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("TQ_WS", name)
 
 	claude := paths.IdentityDir(name, "claude")
@@ -79,6 +76,12 @@ func setupProtected(t *testing.T, extra string) protectedFixture {
 		if err := os.WriteFile(p, []byte("x\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Signed last: the integrity record (ADR-0004) covers the identity's
+	// settings and the installed plugin, so a workspace signed before they
+	// were written would be an integrity mismatch, not a trusted one.
+	if err := trust.Allow(name, h); err != nil {
+		t.Fatal(err)
 	}
 	return f
 }
