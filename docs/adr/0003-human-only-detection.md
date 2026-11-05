@@ -28,13 +28,26 @@ writes under `$TQ_HOME` or an identity config dir: `init`, `add`, `allow`, `deny
 `worktrees prune`. Each refuses, with no prompt, when any of three detectors fires:
 
 1. stdin or stdout is not an interactive terminal (`humanonly.IsTerminal`);
-2. the process tree holds a harness or subagent: the parent chain is walked to the
-   root and each executable's base name is matched against `claude`, `codex`,
-   `opencode`, `kimi` (with or without `.exe`), and `node` when its command line
-   mentions `claude` or `codex`. Windows reads a toolhelp snapshot and the command
-   line from the PEB; Linux reads `/proc/<pid>/stat`, `comm` and `cmdline`; macOS
-   uses `sysctl kern.proc` and `kern.procargs2` with `ps` as the last resort; any
-   other OS has the walker stubbed and `tq doctor` says so;
+2. the process tree holds a harness or subagent, or cannot prove a human ancestry:
+   the parent chain is walked to the root. Each executable's base name is matched
+   against `claude`, `codex`, `opencode`, `kimi` (with or without `.exe`); for an
+   interpreter or shell (`bun`, `deno`, `npx`, `node`, `cmd`, `pwsh`, `powershell`,
+   `sh`, `bash`, `zsh`, `fish`, `dash`) the command line decides: `claude-code`,
+   `@anthropic-ai/claude-code`, `codex.js`, `@openai/codex`, `opencode`, `kimi-code`
+   or a bare `claude` / `codex` word refuses, and a command line that cannot be read
+   is unknown and refuses too. The chain must pass through an anchor, a process only
+   a human session starts (a terminal emulator, a login shell, the desktop shell,
+   `sshd`, `tmux`, an editor's integrated terminal): a parent that exited before an
+   anchor was seen, a chain that reaches the root with no anchor (an orphan
+   re-parented to `init`, a service, a scheduled task), a pid reused by a process
+   younger than its child (Windows), a loop, or an OS without a walker ends as
+   "cannot establish a human ancestry" and refuses. A process of another user or
+   session (a service, `sshd` as root, `init`) is never this user's harness and is
+   read as known with an empty command line. Windows reads a toolhelp snapshot, the
+   command line from the PEB, creation times and session ids; Linux reads
+   `/proc/<pid>/stat`, `comm`, `cmdline` and the owner uid; macOS uses `sysctl
+   kern.proc` and `kern.procargs2` with `ps` as the last resort; any other OS has
+   the walker stubbed, refuses, and `tq doctor` says so;
 3. the environment carries a harness marker: `TENTAQLES_HEADLESS`,
    `TENTAQLES_HEADLESS_CHILD`, `CLAUDE_PLUGIN_ROOT`, `CLAUDECODE`,
    `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `TQ_HUB_TASK`, `CODEX_SANDBOX`,
@@ -69,7 +82,20 @@ process tree and a scripted answer; `go test` itself may run inside a harness.
   denial log; `TestAddDoesNotTrustFromAgent` now proves a session gets no folder at
   all; `TestAllowAndDenyRefuseAgents`, `TestSecretIsHumanOnly`,
   `TestRunOffRefusesAgents` and `TestOnboard_FromRefusedInAgentSession` keep their
-  commands refused.
+  commands refused; `TestDeclinedConfirmationWritesNothing` hashes the home and the
+  workspace before and after a declined confirmation for every write.
+- What the three detectors stop, and what they do not. They stop a harness and its
+  children: a session with the marker, a child of `claude`, `codex`, `opencode` or
+  `kimi` however many shells deep, an npm-installed harness running as `node`, `bun`
+  or `deno`, a subagent through `bash -c "codex ..."`, and an orphaned or re-parented
+  child of a dead harness (its chain no longer reaches a terminal or login shell). A
+  same-user program that drives a pseudo-terminal with a scrubbed environment from
+  outside the harness tree is not stopped, nor is a harness tq does not know by
+  name: to the detectors both look like a human at a terminal. The protected-path
+  rules (Phase 1 P1.3) and the signed integrity record (P1.4) are the controls for
+  what such a program could change; this piece is the first of the three.
+- A denial log that cannot be written never lets the command through: the refusal
+  stands and the error says so (`refusal could not be logged`).
 - A human types `yes` once per write. Scripts that drove `tq setup --from --yes`,
   `tq uninstall --restore --yes` or `tq add` non-interactively stop working by
   design: they are not a human at a terminal.
@@ -89,6 +115,6 @@ process tree and a scripted answer; `go test` itself may run inside a harness.
 |---|---|
 | Keep the environment marker as the only detector | One lost variable opens every write; PRD v2 §8.1 asks for all three |
 | A hook rule in `internal/policy` that denies `tq allow` and friends in the shell | The hook sees only tool calls through the harness; a subagent or a reworded command bypasses it, and the command itself must refuse |
-| Read the confirmation from stdin | A piped `yes` would pass; the first detector already requires a terminal, and the controlling terminal is the only reader a program cannot script |
+| Read the confirmation from stdin | A piped `yes` would pass; the first detector already requires a terminal, so the answer is read from that terminal (`CONIN$`, `/dev/tty`) and a redirected stdin cannot supply it |
 | Skip the confirmation on `--yes` | §8.1 makes the confirmation unconditional; a flag an agent can type is not a human |
 | Shell out to `ps` / `Get-CimInstance` for the tree on every OS | Seconds on Windows (see `listProcesses` in `migrate.go`); the toolhelp snapshot and `/proc` are milliseconds and need no subprocess |

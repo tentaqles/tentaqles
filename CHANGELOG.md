@@ -49,8 +49,11 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   `tq uninstall`, `tq setup` (wizard and `--from`), `tq onboard` (wizard and `--from`),
   `tq secret set|rm`, `tq providers add`, `tq login`, `tq run --off` and
   `tq worktrees prune`. Each refuses, with no prompt, when stdin or stdout is not a
-  terminal, when a harness or subagent (`claude`, `codex`, `opencode`, `kimi`, or `node`
-  running one of them) is in the process tree, or when the environment carries a harness
+  terminal, when a harness or subagent (`claude`, `codex`, `opencode`, `kimi`, or a shell or
+  runtime such as `node`, `bun`, `deno`, `npx`, `bash`, `pwsh` or `cmd` whose command line
+  names one) is in the process tree, when the chain cannot be followed to a terminal, a
+  login shell or the desktop shell (an orphaned child of a dead harness, a reused pid, an
+  unreadable command line, a service), or when the environment carries a harness
   marker (the earlier list plus `TENTAQLES_HEADLESS_CHILD`, `CLAUDE_CODE_ENTRYPOINT`,
   `CLAUDE_CODE_SSE_PORT`, `CODEX_THREAD_ID`, `OPENCODE`, `KIMI_CODE`). The error names the
   command and the detector. A human then sees one line saying what is about to be written

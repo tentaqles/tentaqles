@@ -101,7 +101,8 @@ scripts.
 `--write-plan <path>` additionally saves the wizard's answers to that path
 as a plan file (on top of the always-written
 `~/.tentaqles/last-setup.yaml`), so you can inspect what the wizard decided
-or replay it non-interactively later with `--from`.
+or replay it later with `--from`, which skips the prompts but still needs a
+terminal and a typed `yes`.
 
 ## The login step
 

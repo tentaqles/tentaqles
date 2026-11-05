@@ -12,8 +12,19 @@ import (
 	"github.com/tentaqles/tentaqles/internal/audit"
 )
 
+// terminalChain is a developer's process tree as the walker would read it:
+// self <- pwsh <- WindowsTerminal.exe <- explorer.exe <- (exited).
+func terminalChain() ParentFunc {
+	return fakeTree(map[int]fakeProc{
+		selfPID(): {90, "tq.exe", "tq", false, false},
+		90:        {80, "pwsh.exe", "pwsh -NoLogo", false, false},
+		80:        {70, "WindowsTerminal.exe", "wt", false, false},
+		70:        {7777, "explorer.exe", "explorer", false, false},
+	})
+}
+
 // human puts the process in the state of a developer at a terminal: an
-// isolated TQ_HOME, both standard streams a terminal, no harness in the
+// isolated TQ_HOME, both standard streams a terminal, a terminal in the
 // process tree, no marker in the environment and a confirmation that says
 // yes. Each test then breaks exactly one of those.
 func human(t *testing.T) string {
@@ -32,7 +43,7 @@ func human(t *testing.T) string {
 	}
 	prevTTY, prevParent, prevConfirm := IsTerminal, ParentOf, Confirm
 	IsTerminal = func(*os.File) bool { return true }
-	ParentOf = func(int) (int, string, string, bool) { return 0, "", "", false }
+	ParentOf = terminalChain()
 	Confirm = func(string) (bool, error) { return true, nil }
 	t.Cleanup(func() { IsTerminal, ParentOf, Confirm = prevTTY, prevParent, prevConfirm })
 	return filepath.Join(home, ".tentaqles")
@@ -61,6 +72,9 @@ func denials(t *testing.T) []audit.Denial {
 
 func TestHumanPasses(t *testing.T) {
 	human(t)
+	if processTreeMethod == "" {
+		t.Skip("no process-tree walker on this OS: every human-only command refuses here")
+	}
 	if r := Detect(); r != nil {
 		t.Fatalf("a human at a terminal must pass, got %+v", r)
 	}
@@ -90,31 +104,46 @@ func TestTTYDetector(t *testing.T) {
 
 func TestProcessTreeDetector(t *testing.T) {
 	human(t)
+	if processTreeMethod == "" {
+		t.Skip("no process-tree walker on this OS")
+	}
 	ParentOf = fakeTree(map[int]fakeProc{
-		selfPID(): {90, "tq.exe", ""},
-		90:        {80, "bash.exe", ""},
-		80:        {70, "claude.exe", ""},
-		70:        {0, "WindowsTerminal.exe", ""},
+		selfPID(): {90, "tq.exe", "", false, false},
+		90:        {80, "bash.exe", "bash", false, false},
+		80:        {70, "claude.exe", "claude", false, false},
+		70:        {0, "WindowsTerminal.exe", "", false, false},
 	})
 	r := Detect()
 	if r == nil || r.Detector != DetectorProcessTree || !strings.Contains(r.Reason, "claude.exe") {
 		t.Fatalf("claude.exe in the tree must refuse: %+v", r)
 	}
-	ParentOf = fakeTree(map[int]fakeProc{
-		selfPID(): {90, "tq.exe", ""},
-		90:        {80, "pwsh.exe", ""},
-		80:        {0, "WindowsTerminal.exe", ""},
-	})
+	ParentOf = terminalChain()
 	if r := Detect(); r != nil {
 		t.Fatalf("pwsh under WindowsTerminal must pass: %+v", r)
 	}
 	ParentOf = fakeTree(map[int]fakeProc{
-		selfPID(): {90, "tq", ""},
-		90:        {80, "node", "node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"},
-		80:        {0, "zsh", ""},
+		selfPID(): {90, "tq", "", false, false},
+		90:        {80, "node", "node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", false, false},
+		80:        {0, "zsh", "-zsh", false, false},
 	})
-	if r := Detect(); r == nil || r.Detector != DetectorProcessTree {
+	if r := Detect(); r == nil || r.Detector != DetectorProcessTree || !strings.Contains(r.Reason, "node") {
 		t.Fatalf("node running claude must refuse: %+v", r)
+	}
+	// An orphan: the parent is gone before any terminal was seen.
+	ParentOf = fakeTree(map[int]fakeProc{
+		selfPID(): {90, "tq", "", false, false},
+		90:        {12345, "bash", "bash", false, false},
+	})
+	if r := Detect(); r == nil || r.Detector != DetectorProcessTree || !strings.HasPrefix(r.Reason, "cannot establish a human ancestry") {
+		t.Fatalf("an orphaned chain must refuse: %+v", r)
+	}
+	// Pid reuse on Windows.
+	ParentOf = fakeTree(map[int]fakeProc{
+		selfPID(): {90, "tq.exe", "", false, false},
+		90:        {80, "pwsh.exe", "pwsh", false, true},
+	})
+	if r := Detect(); r == nil || !strings.Contains(r.Reason, "reused") {
+		t.Fatalf("a reused pid must refuse: %+v", r)
 	}
 }
 
@@ -132,10 +161,12 @@ func TestEnvMarkerDetector(t *testing.T) {
 			}
 		})
 	}
-	// An empty value is not a marker.
-	t.Setenv("CLAUDECODE", "  ")
-	if r := Detect(); r != nil {
-		t.Fatalf("a blank marker is not set: %+v", r)
+	if processTreeMethod != "" {
+		// An empty value is not a marker.
+		t.Setenv("CLAUDECODE", "  ")
+		if r := Detect(); r != nil {
+			t.Fatalf("a blank marker is not set: %+v", r)
+		}
 	}
 	// The two variables tq sets in human terminals are never markers.
 	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
@@ -177,8 +208,43 @@ func TestRefusalIsLogged(t *testing.T) {
 	}
 }
 
+// A denial log that cannot be written never lets the command through: the
+// refusal stands and the error says the log failed.
+func TestRefusalStandsWhenTheLogCannotBeWritten(t *testing.T) {
+	home := human(t)
+	t.Setenv("CLAUDECODE", "1")
+	// A directory where the log file should be.
+	if err := os.MkdirAll(audit.DenialsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := Check("tq allow")
+	if !errors.Is(err, ErrHumanOnly) {
+		t.Fatalf("the refusal must stand: %v", err)
+	}
+	if !strings.Contains(err.Error(), "refusal could not be logged: ") || !strings.Contains(err.Error(), "env-marker: CLAUDECODE is set") {
+		t.Fatalf("the error names the log failure and the detector: %v", err)
+	}
+	// A regular file where the state directory should be.
+	t.Setenv("TQ_HOME", filepath.Join(home, "not-a-dir", "state"))
+	if err := os.WriteFile(filepath.Join(home, "not-a-dir"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = Check("tq deny")
+	if !errors.Is(err, ErrHumanOnly) || !strings.Contains(err.Error(), "refusal could not be logged: ") {
+		t.Fatalf("an unwritable state dir: %v", err)
+	}
+	asked := false
+	Confirm = func(string) (bool, error) { asked = true; return true, nil }
+	if err := Gate("tq deny", "x", &bytes.Buffer{}); !errors.Is(err, ErrHumanOnly) || asked {
+		t.Fatalf("a refusal with a failed log never reaches the confirmation: %v asked=%v", err, asked)
+	}
+}
+
 func TestGateConfirms(t *testing.T) {
 	human(t)
+	if processTreeMethod == "" {
+		t.Skip("no process-tree walker on this OS")
+	}
 	var prompt string
 	Confirm = func(p string) (bool, error) { prompt = p; return false, nil }
 	var out bytes.Buffer

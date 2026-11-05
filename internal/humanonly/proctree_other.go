@@ -2,9 +2,10 @@
 
 package humanonly
 
-// processTreeMethod is empty: this OS has no walker, and tq doctor says so.
+// processTreeMethod is empty: this OS has no walker. The walk cannot
+// establish a human ancestry here, so every human-only command refuses, and
+// tq doctor says so.
 const processTreeMethod = ""
 
-// parentOf is stubbed: the process-tree detector never fires here, and the
-// TTY and marker detectors carry the check.
-func parentOf(int) (int, string, string, bool) { return 0, "", "", false }
+// parentOf is stubbed: no parent can be read.
+func parentOf(int) (Parent, bool) { return Parent{}, false }

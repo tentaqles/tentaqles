@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"text/tabwriter"
 
@@ -17,8 +18,11 @@ import (
 	"github.com/tentaqles/tentaqles/internal/setup"
 )
 
-// setupRunGit is the seam tests use to fake git for `tq setup --from`.
-var setupRunGit = gitcfg.RunGit
+// Seams for tests: git for `tq setup`, and the interactive wizard.
+var (
+	setupRunGit = gitcfg.RunGit
+	setupWizard = runWizard
+)
 
 // setupOutput is what --json prints: the preview, tool check, and (once
 // applied) the report, all together.
@@ -96,13 +100,18 @@ func newSetupCmd() *cobra.Command {
 			var plan *setup.SetupPlan
 
 			if from == "" {
-				wizardPlan, err := runWizard(cat, hooks.ProfilesFn())
+				wizardPlan, err := setupWizard(cat, hooks.ProfilesFn())
 				if err != nil {
 					return err
 				}
 				plan = wizardPlan
+				// The one confirmation: the wizard asked nothing that writes,
+				// and the base folder is created only past this point.
 				if err := humanGate(c, "tq setup", setupAbout(plan, writePlan)); err != nil {
 					return err
+				}
+				if err := os.MkdirAll(plan.Base, 0o755); err != nil {
+					return fmt.Errorf("create base folder: %w", err)
 				}
 				if err := saveWizardPlan(plan, writePlan); err != nil {
 					fmt.Fprintf(c.ErrOrStderr(), "warning: failed to save plan: %v\n", err)

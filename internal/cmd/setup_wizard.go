@@ -133,19 +133,19 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 	}
 	base = setup.ExpandHome(strings.TrimSpace(base))
 
+	// A missing base folder is created after the human-only confirmation,
+	// with the rest of the plan (setup.go); the wizard only asks.
 	if _, err := os.Stat(base); os.IsNotExist(err) {
 		var create bool
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewConfirm().
-				Title(fmt.Sprintf("%s does not exist. Create it?", base)).
+				Title(fmt.Sprintf("%s does not exist. Create it when the plan is applied?", base)).
 				Value(&create),
 		)).Run(); err != nil {
 			return nil, err
 		}
-		if create {
-			if err := os.MkdirAll(base, 0o755); err != nil {
-				return nil, fmt.Errorf("create base folder: %w", err)
-			}
+		if !create {
+			return nil, fmt.Errorf("setup cancelled: base folder %s does not exist", base)
 		}
 	}
 
@@ -297,15 +297,13 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 	for _, ch := range changes {
 		previewLines = append(previewLines, fmt.Sprintf("%s  %s  %s", ch.Kind, ch.Target, ch.Detail))
 	}
-	var apply bool
+	// The preview is shown here; the one confirmation is the human-only
+	// gate in setup.go (one typed yes, PRD v2 §8.1), so the wizard asks
+	// nothing more.
 	if err := huh.NewForm(huh.NewGroup(
-		huh.NewNote().Title("Preview").Description(strings.Join(previewLines, "\n")),
-		huh.NewConfirm().Title("Apply these changes?").Value(&apply),
+		huh.NewNote().Title("Preview").Description(strings.Join(previewLines, "\n") + "\n\nNext: tq says what it is about to write and asks you to type yes."),
 	)).Run(); err != nil {
 		return nil, err
-	}
-	if !apply {
-		return nil, fmt.Errorf("setup cancelled before apply")
 	}
 
 	if err := plan.Validate(cat); err != nil {

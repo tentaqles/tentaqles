@@ -19,8 +19,11 @@ or an identity's config folder is human-only: `tq init`, `tq add`, `tq allow`,
 `tq migrate`, `tq uninstall`, `tq setup`, `tq onboard`, `tq secret set|rm`,
 `tq providers add`, `tq login`, `tq run --off` and `tq worktrees prune`. Each one
 refuses, with no prompt, when stdin or stdout is not a terminal, when a harness
-(`claude`, `codex`, `opencode`, `kimi`, or `node` running one of them) is in the
-process tree, or when the environment carries a harness marker; the error names
+(`claude`, `codex`, `opencode`, `kimi`, or a shell or runtime such as `node`,
+`bun`, `bash` or `pwsh` whose command line names one) is in the process tree,
+when that tree cannot be followed to a terminal, a login shell or the desktop
+shell (an orphaned child of a dead harness, a service), or when the environment
+carries a harness marker; the error names
 the command and the detector, and one line goes to `~/.tentaqles/denials.jsonl`.
 When you run it yourself in a console terminal, it prints what it is about to
 write and asks `Type yes to continue:`; anything else exits 1 with nothing

@@ -149,7 +149,8 @@ before anything is applied. The wizard refuses to finish with zero companies
 — it re-prompts, and if you decline twice it aborts with an error rather than
 applying an empty plan.
 
-For non-interactive or repeatable setups, drive it from a YAML plan instead:
+For repeatable setups, drive it from a YAML plan instead; `--from` skips the
+prompts but still needs a terminal and a typed `yes`:
 
 ```sh
 tq setup --example > setup.yaml       # write a two-company sample plan

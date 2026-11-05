@@ -495,7 +495,8 @@ Status: planned (v0.10)
 ### FR-28 An onboarding wizard that provisions a workspace without further manual steps
 G1. Today `tq onboard [<name>]` (`internal/cmd/onboard.go`, `onboard_wizard.go`) runs
 `tq add` then a wizard for the git identity, cloud, data platform, chat, email and agent
-CLIs, every prompt with Skip; `--from <answers.yaml>` is non-interactive; it opens a new
+CLIs, every prompt with Skip; `--from <answers.yaml>` skips the prompts but still needs a
+terminal and a typed yes (human-only, ADR-0003); it opens a new
 terminal (`internal/termopen`), leaves the workspace untrusted until `tq allow`, and never
 asks for a token. Missing: "Other" with free text, more providers, multi-select data
 platforms, a `blocked_commands` list, resume after a failed step, the browser prompt

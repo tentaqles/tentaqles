@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
@@ -89,8 +90,14 @@ func Detect() *Refusal {
 	if m, ok := EnvMarker(); ok {
 		return &Refusal{DetectorEnvMarker, m + " is set"}
 	}
-	if p, ok := Walk(selfPID(), ParentOf); ok {
+	if processTreeMethod == "" {
+		return &Refusal{DetectorProcessTree, "cannot establish a human ancestry: no process-tree walker on " + runtime.GOOS}
+	}
+	switch v, p, why := Walk(selfPID(), ParentOf); v {
+	case Harness:
 		return &Refusal{DetectorProcessTree, fmt.Sprintf("%s (pid %d) is in the process tree", p.Name, p.PID)}
+	case Unverified:
+		return &Refusal{DetectorProcessTree, "cannot establish a human ancestry: " + why}
 	}
 	return nil
 }
@@ -98,14 +105,18 @@ func Detect() *Refusal {
 // Check refuses command unless a human at a terminal runs it. A refusal is
 // appended to the denial log (time, command, reason, pid, cwd; no environment
 // value) and returned as an error wrapping ErrHumanOnly that names the
-// command and the detector. It never prompts.
+// command and the detector. A log that cannot be written never lets the
+// command through: the refusal stands and the error says the log failed.
+// It never prompts.
 func Check(command string) error {
 	r := Detect()
 	if r == nil {
 		return nil
 	}
 	cwd, _ := os.Getwd()
-	_ = audit.AppendDenial(audit.Denial{Kind: "human-only", Command: command, Reason: r.String(), PID: os.Getpid(), Cwd: cwd})
+	if lerr := audit.AppendDenial(audit.Denial{Kind: "human-only", Command: command, Reason: r.String(), PID: os.Getpid(), Cwd: cwd}); lerr != nil {
+		return fmt.Errorf("%s: %w (%s); refusal could not be logged: %v", command, ErrHumanOnly, r, lerr)
+	}
 	return fmt.Errorf("%s: %w (%s)", command, ErrHumanOnly, r)
 }
 
