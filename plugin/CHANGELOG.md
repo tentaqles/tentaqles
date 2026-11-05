@@ -35,8 +35,11 @@ Releases before 0.16.0 are described on the
   (`tests/test_manifest_loader_marker.py`).
 - **`TQ_HOME` is ignored under an agent marker** (`tentaqles.tqhome`, used by the loader and
   `tentaqles.knowledge`): the hooks read `~/.tentaqles`, so a settings `env` block cannot
-  point them at a forged state folder. The tests set `tqhome.ALLOW_HOME_OVERRIDE`
-  (`tests/conftest.py`); nothing else does.
+  point them at a forged state folder. The markers are tq's one list
+  (`internal/markers`, 12 names: Claude Code's entrypoint and SSE port, Codex's thread,
+  OpenCode and Kimi Code among them), repeated in `tqhome.AGENT_MARKERS` and pinned to
+  the Go file by `tests/test_tqhome_markers.py`. The tests set
+  `tqhome.ALLOW_HOME_OVERRIDE` (`tests/conftest.py`); nothing else does.
 - **`snapshot-guard.py` fires again.** It reads the written file from `tool_input.file_path`
   (the hook payload shape; the bare `file_path` stays as a fallback) and snapshots the
   manifest tq reads (the protected copy for a marked workspace) before a Write to the

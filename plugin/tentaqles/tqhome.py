@@ -4,7 +4,9 @@
 ignored and the default is used: the plugin's hooks inherit the harness
 environment, and a workspace's agent-writable Claude settings can set
 ``TQ_HOME`` to a forged state folder carrying its own manifests. The markers
-are the list of tq's ``internal/cmd/humanonly.go``.
+are tq's one list, ``internal/markers/markers.go``, word for word (an
+installed plugin has no Go source to read, so the list is repeated here and
+``tests/test_tqhome_markers.py`` compares the two).
 
 ``ALLOW_HOME_OVERRIDE`` lets ``TQ_HOME`` apply under a marker; the tests set
 it (they run under Claude Code with ``TQ_HOME`` pointing at a temp dir) and
@@ -18,11 +20,17 @@ from pathlib import Path
 
 AGENT_MARKERS = (
     "TENTAQLES_HEADLESS",
+    "TENTAQLES_HEADLESS_CHILD",
     "CLAUDE_PLUGIN_ROOT",
     "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SSE_PORT",
     "TQ_HUB_TASK",
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
+    "CODEX_THREAD_ID",
+    "OPENCODE",
+    "KIMI_CODE",
 )
 
 ALLOW_HOME_OVERRIDE = False
