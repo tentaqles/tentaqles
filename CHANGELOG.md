@@ -72,6 +72,22 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   never a value.
 - **`tq doctor`** reports a `human-only` check naming the detectors this OS has; a warning
   on an OS whose process-tree walker is stubbed.
+- **Real terminals pass.** The process tree proves a human by reaching an anchor: a
+  terminal emulator (Windows Terminal, ConEmu, mintty, Terminal.app, iTerm2, GNOME,
+  Konsole, kitty, WezTerm and the rest), a login shell, the desktop shell and its helpers,
+  a session manager (`systemd --user`, `gnome-session-binary`, `plasma_session`,
+  `loginwindow`), `sshd`, `mosh-server`, `tmux`, `screen`, `getty`, WSL's `init`, or an
+  editor's integrated terminal (VS Code, Zed, Fleet, the JetBrains IDEs, also as `java`);
+  Cursor and Windsurf are not anchors. Above the first anchor a dead, reused, looping or
+  unreadable link ends the chain as a human's (the desktop shell's own parent is a dead pid
+  on every Windows box). Git Bash under mintty counts as a terminal: its MSYS2 / Cygwin pty
+  pipes are recognised and the confirmation is read from them.
+- **`tq settings anchors`** lists the accepted terminals; `tq settings anchors add <exe>` and
+  `remove <exe>` (human-only, confirmed) keep yours in `~/.tentaqles/anchors.yaml`. A
+  refusal that cannot establish a human ancestry names every process it saw and prints the
+  exact `add` line for the top-most one that is yours.
+- A denial log that cannot be written never lets a command through: the refusal stands and
+  the error adds `refusal could not be logged: <err>`.
 
 ## [0.9.0] — 2026-11-04
 

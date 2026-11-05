@@ -23,7 +23,9 @@ refuses, with no prompt, when stdin or stdout is not a terminal, when a harness
 `bun`, `bash` or `pwsh` whose command line names one) is in the process tree,
 when that tree cannot be followed to a terminal, a login shell or the desktop
 shell (an orphaned child of a dead harness, a service), or when the environment
-carries a harness marker; the error names
+carries a harness marker. Git Bash under mintty counts as a terminal (its MSYS2
+pty pipes are recognised). A terminal tq does not know by name is refused with
+the exact `tq settings anchors add <name>` line to run once. The error names
 the command and the detector, and one line goes to `~/.tentaqles/denials.jsonl`.
 When you run it yourself in a console terminal, it prints what it is about to
 write and asks `Type yes to continue:`; anything else exits 1 with nothing
@@ -80,6 +82,7 @@ For more detail on a command, run `tq <command> --help`.
 | Command | What it does |
 |---|---|
 | `tq settings render [--all]` | **Human-only.** Writes tq's part of each identity's Claude `settings.json`: baseline permissions, env, status line and hooks. It prints what changed. `--dry-run` writes nothing and asks nothing. |
+| `tq settings anchors` / `add <exe>` / `remove <exe>` | Lists the terminal processes the human-only check accepts as a session root (built-in and yours, `~/.tentaqles/anchors.yaml`). `add` and `remove` are **human-only**; a refusal that says "cannot establish a human ancestry" prints the `add` line for your terminal. A shell, a runtime or a harness is never accepted. |
 | `tq bundle catalog` | Shows the shared catalog of plugins, skills and MCP servers. |
 | `tq bundle diff <ws>` | Shows how a workspace's installed plugins differ from its `claude.bundle`. |
 | `tq bundle sync <ws>` | **Human-only.** Installs or removes plugins so the identity matches its bundle. |

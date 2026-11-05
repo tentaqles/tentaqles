@@ -1,10 +1,10 @@
 // Package humanonly decides whether a tq command that writes under the
 // Tentaqles config area runs for a human (PRD v2 §8.1). Three detectors refuse
 // the command, with no prompt and one line in the denial log: stdin or stdout
-// is not a terminal, a harness or subagent process is in the process tree, or
-// the environment carries a harness marker. When all three pass, Gate prints
-// what is about to be written and asks the human to type yes before any write
-// lands.
+// is not a terminal, the process tree holds a harness or cannot be followed
+// to a terminal, or the environment carries a harness marker. When all three
+// pass, Gate prints what is about to be written and asks the human to type
+// yes before any write lands.
 package humanonly
 
 import (
@@ -16,7 +16,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/tentaqles/tentaqles/internal/audit"
 )
 
@@ -51,8 +50,9 @@ var Markers = []string{
 // Seams. Tests replace them; production keeps the real terminal, the real
 // process tree and a confirmation read from the terminal.
 var (
-	// IsTerminal reports whether f is an interactive terminal.
-	IsTerminal = func(f *os.File) bool { return f != nil && term.IsTerminal(f.Fd()) }
+	// IsTerminal reports whether f is an interactive terminal: a tty, a
+	// console, or on Windows a Cygwin / MSYS2 pty (mintty's Git Bash).
+	IsTerminal = isTerminal
 	// ParentOf reads one step of the process tree (per OS; see proctree_*.go).
 	ParentOf ParentFunc = parentOf
 	// Confirm prints prompt and reports whether the human typed yes. The real
@@ -93,6 +93,7 @@ func Detect() *Refusal {
 	if processTreeMethod == "" {
 		return &Refusal{DetectorProcessTree, "cannot establish a human ancestry: no process-tree walker on " + runtime.GOOS}
 	}
+	loadUserAnchorSet()
 	switch v, p, why := Walk(selfPID(), ParentOf); v {
 	case Harness:
 		return &Refusal{DetectorProcessTree, fmt.Sprintf("%s (pid %d) is in the process tree", p.Name, p.PID)}
@@ -140,14 +141,15 @@ func Gate(command, about string, out io.Writer) error {
 }
 
 // confirmOnTerminal prints prompt on stderr (so a --json stdout stays clean)
-// and reads one line from the controlling terminal (CONIN$ on Windows,
-// /dev/tty elsewhere), so a piped stdin can never answer for the human.
+// and reads one line from the terminal itself (CONIN$ or the Cygwin pty on
+// Windows, /dev/tty elsewhere), so a redirected stdin can never answer for
+// the human.
 func confirmOnTerminal(prompt string) (bool, error) {
-	tty, err := openTTY()
+	tty, done, err := openTTY()
 	if err != nil {
 		return false, fmt.Errorf("no terminal to read the confirmation from: %w", err)
 	}
-	defer tty.Close()
+	defer done()
 	fmt.Fprint(os.Stderr, prompt)
 	line, err := bufio.NewReader(tty).ReadString('\n')
 	if err != nil && line == "" {

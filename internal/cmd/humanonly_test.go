@@ -55,6 +55,9 @@ var humanOnlyCommands = [][]string{
 	{"login", "acme", "gh"},
 	{"run", "--off", "--", "claude"},
 	{"worktrees", "prune", "--yes"},
+	{"settings", "anchors", "add", "foo-term"},
+	{"settings", "anchors", "remove", "foo-term"},
+	{"migrate", "manifests", "--apply"},
 }
 
 // readDenials parses the denial log.
@@ -238,6 +241,7 @@ func TestFreeCommandsRunUnderAMarker(t *testing.T) {
 		{"doctor"},
 		{"hooks", "status"},
 		{"settings", "--help"},
+		{"settings", "anchors"},
 		{"bundle", "catalog"},
 		{"bundle", "diff", "acme"},
 		{"providers", "list"},
@@ -344,11 +348,11 @@ func TestDeclinedConfirmationWritesNothing(t *testing.T) {
 		}},
 		{"allow", func(t *testing.T) ([]string, []string, func(*testing.T)) {
 			root := mkLaunchWS(t, "acme", "")
-			if err := trust.Deny(manifestHash(t, root)); err != nil {
+			if err := trust.Deny("acme", manifestHash(t, root)); err != nil {
 				t.Fatal(err)
 			}
 			return []string{"allow", "acme"}, []string{paths.Home(), filepath.Dir(root)}, func(t *testing.T) {
-				if trust.IsTrusted(manifestHash(t, root)) {
+				if trust.IsTrusted("acme", manifestHash(t, root)) {
 					t.Fatal("a declined allow trusted the workspace")
 				}
 			}
@@ -356,7 +360,7 @@ func TestDeclinedConfirmationWritesNothing(t *testing.T) {
 		{"deny", func(t *testing.T) ([]string, []string, func(*testing.T)) {
 			root := mkLaunchWS(t, "acme", "")
 			return []string{"deny", "acme"}, []string{paths.Home(), filepath.Dir(root)}, func(t *testing.T) {
-				if !trust.IsTrusted(manifestHash(t, root)) {
+				if !trust.IsTrusted("acme", manifestHash(t, root)) {
 					t.Fatal("a declined deny removed the trust")
 				}
 			}
@@ -418,6 +422,21 @@ func TestDeclinedConfirmationWritesNothing(t *testing.T) {
 			calls := fakeExec(t)
 			return []string{"run", "--off", "--", "claude"}, []string{paths.Home()}, noLaunch(calls)
 		}},
+		{"settings anchors add", func(t *testing.T) ([]string, []string, func(*testing.T)) {
+			isolateHome(t)
+			return []string{"settings", "anchors", "add", "foo-term"}, []string{paths.Home()}, nil
+		}},
+		{"settings anchors remove", func(t *testing.T) ([]string, []string, func(*testing.T)) {
+			isolateHome(t)
+			if _, _, err := humanonly.AddUserAnchor("foo-term"); err != nil {
+				t.Fatal(err)
+			}
+			return []string{"settings", "anchors", "remove", "foo-term"}, []string{paths.Home()}, func(t *testing.T) {
+				if got, _ := humanonly.LoadUserAnchors(); strings.Join(got, ",") != "foo-term" {
+					t.Fatalf("a declined remove changed anchors.yaml: %v", got)
+				}
+			}
+		}},
 		{"worktrees prune --yes", func(t *testing.T) ([]string, []string, func(*testing.T)) {
 			if _, err := exec.LookPath("git"); err != nil {
 				t.Skip("git not installed")
@@ -461,7 +480,13 @@ func TestDeclinedConfirmationWritesNothing(t *testing.T) {
 			if asked != 1 {
 				t.Fatalf("tq %s: asked %d times", strings.Join(args, " "), asked)
 			}
-			if !strings.Contains(out, "tq "+args[0]+": about to") && !strings.Contains(out, "tq "+strings.Join(args[:2], " ")+": about to") {
+			named := false
+			for i := 1; i <= len(args); i++ {
+				if strings.Contains(out, "tq "+strings.Join(args[:i], " ")+": about to") {
+					named = true
+				}
+			}
+			if !named {
 				t.Fatalf("tq %s: the line names what is written:\n%s", strings.Join(args, " "), out)
 			}
 			if after := treeDigest(t, dirs...); after != before {

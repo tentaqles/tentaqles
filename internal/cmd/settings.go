@@ -19,8 +19,8 @@ import (
 )
 
 func newSettingsCmd() *cobra.Command {
-	c := &cobra.Command{Use: "settings", Short: "Manage the tq-owned part of each identity's Claude settings.json"}
-	c.AddCommand(newSettingsRenderCmd())
+	c := &cobra.Command{Use: "settings", Short: "Manage the tq-owned part of each identity's Claude settings.json, and the terminals the human-only check accepts"}
+	c.AddCommand(newSettingsRenderCmd(), newSettingsAnchorsCmd())
 	return c
 }
 

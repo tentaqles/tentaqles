@@ -115,9 +115,8 @@ func newMigrateManifestsCmd() *cobra.Command {
 			"without --apply, and --apply refuses an agent session.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			if err := refuseAgent("tq migrate manifests"); err != nil {
-				return err
-			}
+			// The dry run is free to read; --apply refuses a session and
+			// confirms inside runMigrate.
 			return runMigrate(c, []string{manifestsStep}, apply, false, asJSON)
 		},
 	}

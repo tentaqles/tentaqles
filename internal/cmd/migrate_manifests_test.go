@@ -50,7 +50,11 @@ func TestMigrateManifests_DryRunApplyAndRestore(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("apply: code=%d err=%v stderr=%q out=%s", code, err, errOut, out)
 	}
-	if !strings.HasPrefix(out, "journal: "+filepath.Join(e.tqHome, "backups", migTestTS)+"\n") || !strings.HasSuffix(out, "applied. undo with: tq uninstall --restore "+migTestTS+"\n") {
+	// The human-only confirmation names the journal (ADR-0003), then the
+	// journal path is printed before anything is touched.
+	lines := strings.SplitN(out, "\n", 3)
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "tq migrate --apply: about to write the journal "+filepath.Join(e.tqHome, "backups", migTestTS)) ||
+		lines[1] != "journal: "+filepath.Join(e.tqHome, "backups", migTestTS) || !strings.HasSuffix(out, "applied. undo with: tq uninstall --restore "+migTestTS+"\n") {
 		t.Fatalf("apply output:\n%s", out)
 	}
 	if readFile(t, rootFile) != string(manifest.MarkerBytes("alpha")) {

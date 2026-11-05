@@ -27,7 +27,9 @@ writes under `$TQ_HOME` or an identity config dir: `init`, `add`, `allow`, `deny
 `--from`), `secret set`, `secret rm`, `providers add`, `login`, `run --off` and
 `worktrees prune`. Each refuses, with no prompt, when any of three detectors fires:
 
-1. stdin or stdout is not an interactive terminal (`humanonly.IsTerminal`);
+1. stdin or stdout is not an interactive terminal (`humanonly.IsTerminal`: a tty, a
+   console, or on Windows an MSYS2 / Cygwin pty pipe, which is what mintty gives Git
+   Bash in place of a console);
 2. the process tree holds a harness or subagent, or cannot prove a human ancestry:
    the parent chain is walked to the root. Each executable's base name is matched
    against `claude`, `codex`, `opencode`, `kimi` (with or without `.exe`); for an
@@ -36,14 +38,22 @@ writes under `$TQ_HOME` or an identity config dir: `init`, `add`, `allow`, `deny
    `@anthropic-ai/claude-code`, `codex.js`, `@openai/codex`, `opencode`, `kimi-code`
    or a bare `claude` / `codex` word refuses, and a command line that cannot be read
    is unknown and refuses too. The chain must pass through an anchor, a process only
-   a human session starts (a terminal emulator, a login shell, the desktop shell,
-   `sshd`, `tmux`, an editor's integrated terminal): a parent that exited before an
-   anchor was seen, a chain that reaches the root with no anchor (an orphan
-   re-parented to `init`, a service, a scheduled task), a pid reused by a process
-   younger than its child (Windows), a loop, or an OS without a walker ends as
-   "cannot establish a human ancestry" and refuses. A process of another user or
-   session (a service, `sshd` as root, `init`) is never this user's harness and is
-   read as known with an empty command line. Windows reads a toolhelp snapshot, the
+   a human session starts: a terminal emulator, a login shell (`-bash`, `zsh -l`),
+   the desktop shell and its helpers (`explorer`, `sihost`,
+   `StartMenuExperienceHost`), a session manager (`gnome-session-binary`,
+   `plasma_session`, `ksmserver`, `loginwindow`, `systemd --user`), `sshd`,
+   `mosh-server`, `tmux`, `screen`, `getty`/`login`, WSL's `init` (`/init`,
+   `SessionLeader`, `Relay(`), an editor's integrated terminal (VS Code, Zed,
+   Fleet, the JetBrains IDEs, also as `java` with the IDE on its command line), or a
+   name the developer added with `tq settings anchors add` (`~/.tentaqles/anchors.yaml`).
+   Below the first anchor, a parent that exited, a chain that reaches the root with
+   no anchor (an orphan re-parented to `init`, a service, a scheduled task), a pid
+   reused by a process younger than its child (Windows), a loop, an unreadable
+   command line, or an OS without a walker ends as "cannot establish a human
+   ancestry" and refuses; above an anchor the same links end a human's chain (the
+   desktop shell's own parent is a dead pid on every Windows box). A process of
+   another user or session (a service, `sshd` as root, `init`) is never this user's
+   harness and is read as known with an empty command line. Windows reads a toolhelp snapshot, the
    command line from the PEB, creation times and session ids; Linux reads
    `/proc/<pid>/stat`, `comm`, `cmdline` and the owner uid; macOS uses `sysctl
    kern.proc` and `kern.procargs2` with `ps` as the last resort; any other OS has
@@ -91,9 +101,27 @@ process tree and a scripted answer; `go test` itself may run inside a harness.
   child of a dead harness (its chain no longer reaches a terminal or login shell). A
   same-user program that drives a pseudo-terminal with a scrubbed environment from
   outside the harness tree is not stopped, nor is a harness tq does not know by
-  name: to the detectors both look like a human at a terminal. The protected-path
-  rules (Phase 1 P1.3) and the signed integrity record (P1.4) are the controls for
-  what such a program could change; this piece is the first of the three.
+  name: to the detectors both look like a human at a terminal. Plainly: `tmux`,
+  `screen` and `conhost` are anchors, so a same-user program that starts a tmux or
+  screen session, or a conhost, and runs tq inside it obtains an anchored,
+  pty-backed chain and passes all three detectors; so does one that runs
+  `wsl -e bash -c "tq ..."` from Windows, since the distro's `init` is the session
+  root and the Windows-side parent is invisible from inside WSL. That is the accepted
+  limit of §8.1's three detectors: they tell a harness and its children from a
+  human, not a hostile same-user program from a human. The protected-path rules
+  (Phase 1 P1.3) and the signed integrity record (P1.4) are the controls on what such
+  a program can change; this piece is the first of the three.
+- The anchor list is a whitelist, so it refuses a terminal it does not know. The
+  refusal names every process the walk saw and the top-most one that is this
+  user's, with the exact `tq settings anchors add <name>` line; the developer runs
+  it once (human-only, confirmed) from a terminal tq knows, and the name lands in
+  `~/.tentaqles/anchors.yaml`. A shell, a runtime or a harness is never accepted as
+  an anchor. Cursor and Windsurf are not anchors: they host agents.
+- Git Bash under mintty has no console: its stdin and stdout are MSYS2 pty pipes.
+  On Windows the terminal detector also accepts a pipe named
+  `\msys-*-pty*-{from,to}-master` or `\cygwin-*-pty*-...` (the go-isatty rule,
+  reimplemented over `GetFileInformationByHandleEx`), and the confirmation is read
+  from that pty when `CONIN$` cannot be opened.
 - A denial log that cannot be written never lets the command through: the refusal
   stands and the error says so (`refusal could not be logged`).
 - A human types `yes` once per write. Scripts that drove `tq setup --from --yes`,
