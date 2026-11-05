@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/mcpscope"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -50,6 +51,17 @@ func Sync(ws *resolve.Workspace, cat *Catalog, o Options) (Report, error) {
 
 	// Collected up front so they're reported even when a later step fails.
 	rep.Warnings = cat.Validate()
+
+	// guard: v2 (ADR-0007): a bundle server outside the identity's scope is not written; the
+	// render would take it out again and the hook denies its tools.
+	if j := mcpscope.For(ws.Name, ws.Manifest); j != nil {
+		for name, e := range d.MCP {
+			if why, out := j.Out(name, map[string]any(e)); out {
+				delete(d.MCP, name)
+				rep.Warnings = append(rep.Warnings, fmt.Sprintf("mcp %s not written: %s, outside the scope of identity %s", name, why, ws.Name))
+			}
+		}
+	}
 
 	if _, err := os.Stat(filepath.Join(dir, "sessions")); err != nil {
 		rep.Warnings = append(rep.Warnings,

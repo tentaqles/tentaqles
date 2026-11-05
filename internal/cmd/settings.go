@@ -110,6 +110,9 @@ Human-only: a session is refused, and you confirm before the files are written
 					fmt.Fprintf(c.OutOrStdout(), "  %s\n", ch)
 				}
 				codexChanged := renderCodex(c, ws, dryRun)
+				// guard: v2: the PATH mask and the in-scope MCP lists (ADR-0007); neither is
+				// covered by the integrity record, so no re-sign.
+				renderScope(c, ws, dryRun)
 				if !dryRun && (res.Changed || codexChanged) {
 					// settings.json and the Codex files are covered by the
 					// integrity record: a human's render signs it again,
@@ -166,6 +169,7 @@ func renderIdentityFilesFor(c *cobra.Command, ws *resolve.Workspace, force bool)
 				fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not re-rendered: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
 			}
 		}
+		renderScope(c, ws, false)
 	}
 	renderCodex(c, ws, false)
 }

@@ -196,6 +196,7 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 		identity += " · CLAUDE_CONFIG_DIR=" + expectedDir
 	}
 	b.WriteString(identity + "\n")
+	b.WriteString(scopeLine(res.Workspace)) // trusted only: the scope the guard enforces
 
 	b.WriteString("\ntq doctor:\n")
 	if len(rep.Findings) == 0 {
