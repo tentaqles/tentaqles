@@ -3,8 +3,9 @@
 The plugin folder's ``__pycache__`` is outside the signed integrity record
 (``tq hooks verify`` skips it, Python rewrites it), so a ``.pyc`` planted there
 must never be what runs. tq_env.sh exports ``PYTHONDONTWRITEBYTECODE=1`` and
-``PYTHONPYCACHEPREFIX`` (under the plugin data dir): Python then looks for
-bytecode only under the prefix, and writes none anywhere.
+``PYTHONPYCACHEPREFIX=<tq home>/pycache``, inside the state folder tq
+protects, ``<tq home>`` resolved as tq's ``paths.Home`` does: Python then
+looks for bytecode only under the prefix, and writes none anywhere.
 """
 
 from __future__ import annotations
@@ -67,10 +68,15 @@ def plugin_copy(tmp_path):
     for name in ("_path.py", "tq_run.sh", "tq_env.sh"):
         shutil.copy2(SCRIPTS / name, root / "scripts" / name)
     (root / "scripts" / "probe.py").write_text(
-        "import sys\nfrom _path import setup_paths\nsetup_paths()\nprint('probe-ran', sys.implementation.cache_tag)\n",
+        "import sys\nfrom _path import setup_paths\nsetup_paths()\nprint('probe-ran', sys.implementation.cache_tag)\n"
+        "print('prefix', sys.pycache_prefix)\n",
         encoding="utf-8",
     )
     return root
+
+
+def _same_path(a: str, b) -> bool:
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(str(b)))
 
 
 def _env(tmp_path, root):
@@ -102,15 +108,37 @@ def test_a_forged_pyc_next_to_the_sources_is_not_loaded(tmp_path, plugin_copy):
     assert p.returncode == 0, p.stderr
     assert f"probe-ran {sys.implementation.cache_tag}" in p.stdout, p.stdout
     assert MARKER not in p.stdout + p.stderr
+    # tq_run.sh exports CLAUDE_PLUGIN_ROOT, an agent marker: the prefix is in
+    # ~/.tentaqles whatever TQ_HOME says, as the hook's tq reads it.
+    prefix = next(line for line in p.stdout.splitlines() if line.startswith("prefix "))[len("prefix "):]
+    assert _same_path(prefix, tmp_path / ".tentaqles" / "pycache"), prefix
 
-    # No bytecode is written, next to the sources or under the prefix.
-    assert sorted(x.name for x in forged.parent.iterdir()) == [forged.name]
-    assert not list((tmp_path / "data").rglob("*.pyc"))
+    # No bytecode is written, next to the sources or under the prefix: the
+    # forged file is the only one there is.
+    assert sorted(tmp_path.rglob("*.pyc")) == [forged]
 
 
-def test_tq_env_exports_outside_its_guard():
-    """The exports run even when TENTAQLES_PY arrives set (the guard skips the rest)."""
-    text = (SCRIPTS / "tq_env.sh").read_text(encoding="utf-8")
-    tail = text[text.index("fi  # end guard"):]
-    assert "export PYTHONDONTWRITEBYTECODE=1" in tail
-    assert 'export PYTHONPYCACHEPREFIX="${CLAUDE_PLUGIN_DATA:-$HOME/.cache}/tentaqles-pycache"' in tail
+def _prefix_after_sourcing(tmp_path, **env_extra):
+    """PYTHONPYCACHEPREFIX after sourcing tq_env.sh with TENTAQLES_PY set (the
+    guard skips the rest, the exports still run)."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("PYTHONPYCACHEPREFIX", "TQ_HOME", "CLAUDE_PLUGIN_ROOT", "CLAUDECODE")}
+    env.update(HOME=str(tmp_path), USERPROFILE=str(tmp_path), TENTAQLES_PY=Path(sys.executable).as_posix())
+    env.update(env_extra)
+    script = '. "$1"; printf "%s|%s" "$PYTHONPYCACHEPREFIX" "$PYTHONDONTWRITEBYTECODE"'
+    p = subprocess.run([BASH, "-c", script, "probe", str(SCRIPTS / "tq_env.sh")], capture_output=True, text=True, env=env, timeout=60)
+    assert p.returncode == 0, p.stderr
+    prefix, nowrite = p.stdout.split("|")
+    assert nowrite == "1"
+    return prefix
+
+
+def test_the_prefix_is_in_the_tq_home_as_paths_home_resolves_it(tmp_path):
+    """<tq home>/pycache on every OS: TQ_HOME when no agent marker is set,
+    ~/.tentaqles when TQ_HOME is unset or a marker is set."""
+    other = tmp_path / "other-home"
+    assert _same_path(_prefix_after_sourcing(tmp_path, TQ_HOME=str(other)), other / "pycache")
+    assert _same_path(_prefix_after_sourcing(tmp_path), tmp_path / ".tentaqles" / "pycache")
+    for marker in ("CLAUDECODE", "CLAUDE_PLUGIN_ROOT", "TENTAQLES_HEADLESS"):
+        got = _prefix_after_sourcing(tmp_path, TQ_HOME=str(other), **{marker: "1"})
+        assert _same_path(got, tmp_path / ".tentaqles" / "pycache"), (marker, got)

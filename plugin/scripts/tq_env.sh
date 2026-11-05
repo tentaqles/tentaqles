@@ -190,7 +190,23 @@ fi  # end guard
 # The plugin folder's __pycache__ is outside the signed integrity record
 # (tq hooks verify), so a .pyc planted there must never be what runs: with a
 # pycache prefix Python looks for bytecode only under that prefix, and with
-# no bytecode written there is none to find. Outside the guard on purpose:
-# every run gets it, even one that arrives with TENTAQLES_PY already set.
+# no bytecode written there is none to find. The prefix is <tq home>/pycache,
+# inside the state folder tq protects (P1.3), on every OS. <tq home> is
+# resolved as tq's paths.Home does: $TQ_HOME, or ~/.tentaqles when TQ_HOME is
+# unset or an agent marker is set (the hooks run under one, and a session's
+# settings can set TQ_HOME). Outside the guard on purpose: every run gets
+# it, even one that arrives with TENTAQLES_PY already set.
+_tq_home="${TQ_HOME:-}"
+for _tq_m in TENTAQLES_HEADLESS CLAUDE_PLUGIN_ROOT CLAUDECODE TQ_HUB_TASK CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED; do
+  eval "_tq_v=\${$_tq_m:-}"
+  [ -n "$_tq_v" ] && _tq_home=""
+done
+[ -n "$_tq_home" ] || _tq_home="$HOME/.tentaqles"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    # Python on Windows wants C:/..., not /c/...
+    command -v cygpath >/dev/null 2>&1 && _tq_home="$(cygpath -m "$_tq_home" 2>/dev/null || printf '%s' "$_tq_home")" ;;
+esac
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPYCACHEPREFIX="${CLAUDE_PLUGIN_DATA:-$HOME/.cache}/tentaqles-pycache"
+export PYTHONPYCACHEPREFIX="$_tq_home/pycache"
+unset _tq_home _tq_m _tq_v

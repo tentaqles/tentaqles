@@ -397,6 +397,7 @@ func publishRelease(t *testing.T, ws string, files map[string]string) string {
 		t.Fatal(err)
 	}
 	gitFixture(t, clone, "init", "-q")
+	gitFixture(t, clone, "remote", "add", "origin", "https://github.com/tentaqles/tentaqles.git")
 	for rel, body := range files {
 		mustWrite(t, filepath.Join(clone, "plugin", filepath.FromSlash(rel)), body)
 	}

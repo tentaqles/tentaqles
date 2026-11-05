@@ -31,8 +31,13 @@ import (
 // commit has at the same path, while every covered file of the release must
 // be in the folder. Location is never enough: a file edited in the new
 // folder, a file the release does not have (a planted bin/tq), a release file
-// missing (an emptied hooks/), no clone, no pin, or git failing, and the
-// workspace waits for tq hooks verify --accept <ws>.
+// missing (an emptied hooks/), no clone, no pin, an origin that is not
+// github.com/tentaqles/tentaqles, or git failing, and the workspace waits for
+// tq hooks verify --accept <ws>. Git runs against the clone alone: a cleaned
+// environment (no GIT_DIR, GIT_CONFIG*, ... nor the system or user config)
+// and no file-system monitor. The clone is a trust anchor: P1.3's protected
+// paths keep a session from writing it; a same-user process outside the
+// harness is the accepted risk AR1.
 
 // Release is the published release a new plugin folder was compared with.
 type Release struct {
@@ -49,13 +54,48 @@ func MarketplaceClone(claudeDir string) string {
 	return filepath.Join(claudeDir, "plugins", "marketplaces", "tentaqles")
 }
 
-// gitOutput runs git in dir with a deadline, no prompt and no pager. A seam
-// for tests; nothing else replaces it.
+// gitEnvDrop are the variables that would point git at another repository,
+// object store, index, exec path or configuration than the clone's own:
+// the batch accept compares with the clone and nothing else.
+var gitEnvDrop = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_EXEC_PATH"}
+
+// gitEnv is env without gitEnvDrop and every GIT_CONFIG* variable, with the
+// system and global config off, no prompt and no pager.
+func gitEnv(env []string) []string {
+	out := make([]string, 0, len(env)+4)
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		u := strings.ToUpper(k) // Windows names are case-insensitive
+		drop := strings.HasPrefix(u, "GIT_CONFIG")
+		for _, d := range gitEnvDrop {
+			if u == d {
+				drop = true
+			}
+		}
+		if !drop {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat")
+}
+
+// gitCommand is git with args in the clone dir: the cleaned environment
+// (gitEnv), no file-system monitor (a command the clone's config could
+// name), and the clone named safe so git's ownership check is about it
+// alone.
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	pre := []string{"-c", "core.fsmonitor=", "-c", "safe.directory=" + filepath.ToSlash(dir), "-C", dir}
+	c := exec.CommandContext(ctx, "git", append(pre, args...)...)
+	c.Env = gitEnv(os.Environ())
+	return c
+}
+
+// gitOutput runs git in dir (gitCommand) with a deadline. A seam for tests;
+// nothing else replaces it.
 var gitOutput = func(dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	c.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat")
+	c := gitCommand(ctx, dir, args...)
 	var stderr bytes.Buffer
 	c.Stderr = &stderr
 	out, err := c.Output()
@@ -63,6 +103,29 @@ var gitOutput = func(dir string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return out, nil
+}
+
+// releaseOrigins are the remotes a marketplace clone may come from: the
+// tentaqles repository on GitHub, over https or ssh.
+var releaseOrigins = []string{
+	"https://github.com/tentaqles/tentaqles", "https://github.com/tentaqles/tentaqles.git",
+	"git@github.com:tentaqles/tentaqles", "git@github.com:tentaqles/tentaqles.git",
+}
+
+// checkOrigin refuses a clone whose origin is not the tentaqles repository:
+// a release is the tentaqles one or none.
+func checkOrigin(clone string) error {
+	out, err := gitOutput(clone, "remote", "get-url", "origin")
+	if err != nil {
+		return fmt.Errorf("the marketplace clone has no origin to check: %w", err)
+	}
+	url := strings.TrimSpace(string(out))
+	for _, o := range releaseOrigins {
+		if url == o {
+			return nil
+		}
+	}
+	return fmt.Errorf("the marketplace clone's origin is %q, not github.com/tentaqles/tentaqles", url)
 }
 
 // releasePin reads the pinned source of the tentaqles plugin from the clone's
@@ -198,6 +261,9 @@ func CheckRelease(name string, rep Report) (Release, error) {
 	clone := MarketplaceClone(claudeDir)
 	sha, dir, err := releasePin(clone)
 	if err != nil {
+		return Release{}, err
+	}
+	if err := checkOrigin(clone); err != nil {
 		return Release{}, err
 	}
 	tree, err := releaseTree(clone, sha, dir)

@@ -15,9 +15,11 @@ Releases before 0.16.0 are described on the
   fail-closed fallback is unchanged (`tests/test_tq_off.py::test_tq_bin_is_not_honoured`,
   `test_tq_hook_never_runs_a_tq_from_the_plugin_folder`).
 - **No bytecode from the plugin folder.** `tq_env.sh` exports `PYTHONDONTWRITEBYTECODE=1`
-  and `PYTHONPYCACHEPREFIX="${CLAUDE_PLUGIN_DATA:-$HOME/.cache}/tentaqles-pycache"` on every
-  run (outside its interpreter guard), so a `.pyc` planted in a `__pycache__` next to the
-  plugin's sources, which the integrity record does not cover, is never loaded
+  and `PYTHONPYCACHEPREFIX=<tq home>/pycache` on every run (outside its interpreter guard)
+  and every OS, `<tq home>` resolved as tq's `paths.Home` does (`TQ_HOME`, or
+  `~/.tentaqles` when it is unset or an agent marker is set), so a `.pyc` planted in a
+  `__pycache__` next to the plugin's sources, which the integrity record does not cover, is
+  never loaded, and the only place Python would look is inside the protected state folder
   (`tests/test_pycache.py`).
 - **The protected manifest location (ADR-0002).** `tentaqles.manifest.loader` resolves a
   root marker (`schema: tentaqles-marker-v1`) to `$TQ_HOME/identities/<name>/manifest.yaml`

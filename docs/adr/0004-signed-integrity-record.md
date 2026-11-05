@@ -52,8 +52,11 @@ the `tentaqles` Python package, `.claude-plugin/` and any file that should not b
 there (a `bin/` the plugin never ships) included, except `skills/`, `agents/`,
 `templates/`, `tests/` and any `__pycache__`, which run nothing on their own (for
 `__pycache__`, because `tq_env.sh` exports `PYTHONDONTWRITEBYTECODE=1` and
-`PYTHONPYCACHEPREFIX` under the plugin data dir, so Python never reads the
-bytecode next to the plugin's sources); the Codex `hooks.json` and
+`PYTHONPYCACHEPREFIX=<tq home>/pycache` on every OS, `<tq home>` resolved as
+`paths.Home` does (`TQ_HOME`, or `~/.tentaqles` when it is unset or an agent
+marker is set), so Python never reads the bytecode next to the plugin's
+sources and the only place it would look is inside the protected state
+folder); the Codex `hooks.json` and
 `config.toml#tq`, the block of `config.toml` tq owns (`codexcfg.ManagedBlock`);
 and every file under `$TQ_HOME/shims/` once it exists (Phase 3 creates it). The
 tq binary on PATH is not covered: §8.3 names the hook scripts, the shims and the
@@ -204,10 +207,19 @@ then the one in a well-known install dir.
   of workspaces whose new plugin folder is the published release, or `tq hooks
   verify --accept <ws>` per workspace. Upgrading tq itself does not.
   `docs/MIGRATE.md` says so.
-- The batch accept trusts the marketplace clone it compares with. A same-user
-  process (or a session past P1.3's protected paths) that rewrites the clone's
-  git objects and its pin can make a forged folder "match"; the confirmation
-  shows the pinned sha for the human to compare with the release they expect.
+- The marketplace clone (`<config dir>/plugins/marketplaces/tentaqles/**`) is a
+  trust anchor of the batch accept: P1.3's protected paths deny a session any
+  write under it. Its origin must be `https://github.com/tentaqles/tentaqles`
+  or `git@github.com:tentaqles/tentaqles` (with or without `.git`), and every
+  git call runs against the clone alone: the variables that would point git
+  elsewhere (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+  `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_EXEC_PATH`,
+  every `GIT_CONFIG*`) are dropped, the system and user config are off
+  (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` the null device), and
+  `-c core.fsmonitor= -c safe.directory=<clone>` keeps the clone's own config
+  from naming a command. A same-user process outside the harness that rewrites
+  the clone's objects and pin can still make a forged folder "match" (AR1); the
+  confirmation shows the pinned sha for the human to compare.
 - `tq run .` in an untrusted folder no longer launches anything; a neutral
   folder (no workspace) still launches the agent without an identity.
 - Nothing changes for an existing identity on upgrade (§13): its marker keeps

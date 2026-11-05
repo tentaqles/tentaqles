@@ -49,7 +49,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   version folder, and each change with the old and new hash prefixes; exit 1 on a mismatch.
   `--accept --all` signs again, after one confirmation, the workspaces whose only change is a
   new plugin version whose folder is the published release byte for byte (the commit the
-  tentaqles marketplace clone pins; each file's git blob compared), listed first under
+  tentaqles marketplace clone pins, its origin the tentaqles repository on GitHub; each
+  file's git blob compared, git run with a cleaned environment), listed first under
   "Matches the published release tentaqles <version> (<sha12>)"; a file that differs, a file
   the release lacks, a release file missing, or no clone or pin to compare with, and the
   workspace is "not accepted" with the reasons, left for `--accept <ws>`. With the `integrity`

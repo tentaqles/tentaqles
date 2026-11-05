@@ -46,6 +46,7 @@ func publish(t *testing.T, claudeDir string, files map[string]string) string {
 		t.Fatal(err)
 	}
 	gitFixture(t, clone, "init", "-q")
+	gitFixture(t, clone, "remote", "add", "origin", "https://github.com/tentaqles/tentaqles.git")
 	for rel, body := range files {
 		write(t, filepath.Join(clone, "plugin", filepath.FromSlash(rel)), body)
 	}
@@ -121,6 +122,87 @@ func TestCheckReleaseComparesBytesNotLocation(t *testing.T) {
 	write(t, filepath.Join(next, "skills", "x", "SKILL.md"), "edited\n")
 	if rel, err := check(); err != nil || len(rel.Mismatches) != 0 {
 		t.Fatalf("skills are not compared: %+v %v", rel, err)
+	}
+}
+
+// A clone whose origin is not the tentaqles repository is no release, and
+// git runs against the clone whatever the environment says: GIT_DIR,
+// GIT_CONFIG_* and the like are dropped.
+func TestCheckReleaseChecksTheOriginAndIgnoresGitEnv(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	publish(t, f.claude, releaseFiles())
+	install(t, f, releaseFiles())
+	rep := f.verify()
+	clone := MarketplaceClone(f.claude)
+
+	// A hostile environment: another repository, and config through the env.
+	other := t.TempDir()
+	gitFixture(t, other, "init", "-q")
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "remote.origin.url")
+	t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/tentaqles/tentaqles.git")
+	if rel, err := CheckRelease("acme", rep); err != nil || len(rel.Mismatches) != 0 {
+		t.Fatalf("git runs against the clone alone: %+v %v", rel, err)
+	}
+
+	for url, ok := range map[string]bool{
+		"git@github.com:tentaqles/tentaqles.git":      true,
+		"https://github.com/tentaqles/tentaqles":      true,
+		"https://github.com/evil/tentaqles.git":       false,
+		"https://github.com/tentaqles/tentaqles.gitx": false,
+		"file:///tmp/tentaqles":                       false,
+	} {
+		os.Unsetenv("GIT_DIR")
+		gitFixture(t, clone, "remote", "set-url", "origin", url)
+		t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+		_, err := CheckRelease("acme", rep)
+		if ok && err != nil {
+			t.Fatalf("%s is the tentaqles repository: %v", url, err)
+		}
+		if !ok && (err == nil || !strings.Contains(err.Error(), "not github.com/tentaqles/tentaqles")) {
+			t.Fatalf("%s must be refused: %v", url, err)
+		}
+	}
+	os.Unsetenv("GIT_DIR")
+	gitFixture(t, clone, "remote", "remove", "origin")
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "no origin") {
+		t.Fatalf("no origin: %v", err)
+	}
+}
+
+// Every git call has the cleaned environment and the two overrides.
+func TestGitCommandIsClean(t *testing.T) {
+	for _, kv := range []string{"GIT_DIR=/x", "GIT_WORK_TREE=/x", "GIT_INDEX_FILE=/x", "GIT_OBJECT_DIRECTORY=/x", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/x",
+		"GIT_CONFIG=/x", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=evil", "GIT_CONFIG_PARAMETERS='core.fsmonitor=evil'",
+		"GIT_CONFIG_GLOBAL=/x", "GIT_CONFIG_SYSTEM=/x", "GIT_EXEC_PATH=/x"} {
+		k, v, _ := strings.Cut(kv, "=")
+		t.Setenv(k, v)
+	}
+	t.Setenv("Git_Dir", "/x") // Windows names are case-insensitive
+	clone := filepath.Join(t.TempDir(), "clone")
+	c := gitCommand(t.Context(), clone, "ls-tree", "HEAD")
+	args := strings.Join(c.Args[1:], " ")
+	if want := "-c core.fsmonitor= -c safe.directory=" + filepath.ToSlash(clone) + " -C " + clone + " ls-tree HEAD"; args != want {
+		t.Fatalf("args %q, want %q", args, want)
+	}
+	set := map[string]string{}
+	for _, kv := range c.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(strings.ToUpper(k), "GIT_") {
+			set[strings.ToUpper(k)] = v
+		}
+	}
+	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_SYSTEM", "GIT_EXEC_PATH"} {
+		if _, ok := set[k]; ok {
+			t.Errorf("%s must be dropped", k)
+		}
+	}
+	if set["GIT_CONFIG_NOSYSTEM"] != "1" || set["GIT_CONFIG_GLOBAL"] != os.DevNull || set["GIT_TERMINAL_PROMPT"] != "0" {
+		t.Fatalf("%v", set)
 	}
 }
 
