@@ -63,6 +63,30 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - `commitscan.AskError`/`IsAsk` are `IncompleteError`/`IsIncomplete`; `resolve.Result` gains
   `Name` and `Unreadable`; `humanonly.CheckRead` is the human-only check of a read.
 
+### The provider scope and the identity category for every tool (ADR-0006)
+
+- **`manifest.Scope()`**: the sorted catalog ids an identity may touch, derived from what a
+  manifest already declares (the identities block, or claude and gh for a v1 manifest, the
+  `cloud` block, the catalog id of `git.provider`, the chat, email and data_platform
+  providers, `agents`, the providers of `claude.bundle.mcp`) plus an optional `scope:` list
+  of catalog ids. Existing manifests stay valid.
+- **Match lists as catalog data.** Every one of the 62 files in
+  `internal/providers/catalog/` gains a `match:` block (`executables`, `modules`, `env`,
+  `paths`, `hosts`, `mcp`), validated at load; a user file under
+  `~/.tentaqles/providers/<id>.yaml` adds to a built-in provider's lists and never shortens
+  them. Generic tools (docker, helm, kubectl, terraform, pulumi, npm, psql, dbt) are never
+  matched by command name. See `docs/PROVIDERS.md`, "Match lists".
+- **`guard: v2`** (a top-level manifest scalar; the dropped `guard:` mapping still loads as
+  no flag) turns on six identity rules in `tq claude-hook pre-tool-use`, for every tool, after
+  the manifest's blocked commands and before secrets: `identity/out-of-scope-cli` (by name,
+  path, wrapper, nested shell, `python -m`, package runner, `Start-Process`),
+  `identity/out-of-scope-env`, `identity/out-of-scope-path`, `identity/out-of-scope-host`
+  (URLs in shell lines, network verbs' hosts, WebFetch), `identity/out-of-scope-mcp` and
+  `identity/other-identity` (another identity's workspace root or `~/.tentaqles/identities/<other>`).
+  The deny names the identity's scope and asks the model to report instead of retrying.
+  `wrong-cloud` is folded in: it does not run under the flag. Without the flag, and in a
+  neutral cwd, the v1 rules are unchanged. See `docs/CLAUDE-HOOK.md`, "Identity scope".
+
 ### The signed integrity record (ADR-0004)
 
 - **Trust is a signed record over the files that make the hook run.** `tq allow` writes

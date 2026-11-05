@@ -50,6 +50,7 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		Content      string `json:"content"`
 		NewString    string `json:"new_string"`
 		NewSource    string `json:"new_source"`
+		URL          string `json:"url"`
 		Edits        []struct {
 			NewString string `json:"new_string"`
 		} `json:"edits"`
@@ -58,6 +59,7 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		_ = json.Unmarshal(raw, &in)
 	}
 	call.Command = strings.TrimSpace(in.Command)
+	call.URL = strings.TrimSpace(in.URL)
 	switch {
 	case in.FilePath != "":
 		call.Path = in.FilePath
@@ -251,6 +253,11 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 // policyDecisionWith is policyDecision with the rule set and the protected
 // path set already built (a patch judges many files with one of each).
 func policyDecisionWith(set *policy.Set, prot *protect.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
+	// The identity category's v2 rules (guard: v2, ADR-0006) come before secrets (§6.3);
+	// the manifest's blocked commands and the v1 identity rules ran in guard.Decide.
+	if d := hookScope(ws, cfg, prot).Evaluate(cwd, call); d.Action == policy.Deny {
+		return d
+	}
 	d := policyRules(set, cwd, ws, cfg, call, deadline)
 	if d.Action != policy.Deny {
 		// Self-protection comes last (§6.3); the first category that

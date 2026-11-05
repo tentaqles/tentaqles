@@ -130,14 +130,16 @@ The categories are evaluated in the order of PRD v2 §6.3 and the first one
 that denies is the one reported:
 
 1. **identity** — the manifest's `blocked_commands`, then the identity guard
-   below (shell tools only), and `tq/cross-client-mcp` (MCP tools);
+   below (shell tools only), then, when the manifest sets `guard: v2`, the
+   provider-scope rules of [Identity scope](#identity-scope-guard-v2-pre-tool-use)
+   (every tool), and `tq/cross-client-mcp` (MCP tools);
 2. **secrets** — the secret rules, `tq/commit-secret`;
 3. **self-protection** — `tq/protected-path`, `tq/human-only-command`; run
    only when nothing above denied.
 
 A command that matches both a blocked command and a protected path reports
 `blocked-command`; one that runs a wrong cloud CLI on the manifest reports
-`wrong-cloud`.
+`wrong-cloud` (under `guard: v2`, `out-of-scope-cli`).
 
 Inside the identity category, `internal/guard/guard.go`'s `Decide` function
 applies rules in this exact order — the **first** matching rule wins and
@@ -153,6 +155,8 @@ produces the block:
    AWS-configured workspace. Providers listed in the trusted manifest's
    `cloud.also` (e.g. `also: [aws]`; names `azure`, `aws`, `gcp`, `digitalocean` (aliases: `az`, `gcloud`, `do`, `doctl`)) are allowed too; the block message
    then names the set ("azure + aws"). A repo manifest cannot add clouds.
+   Under `guard: v2` this rule does not run: `identity/out-of-scope-cli`
+   judges these CLIs and every other provider's (ADR-0006).
 3. **`neutral-remote`** — cwd resolves to **no** trusted tq workspace
    (`Neutral`), and the command is a remote mutation (`gh` anything, any
    cloud CLI, or `git push|fetch|pull|clone`). Everything else in a
@@ -219,6 +223,69 @@ Everything else an agent can do (a force push, a cloud delete, a migration
 against production, an edit to the project's `.claude/settings.local.json`)
 is Claude Code's own permission settings' business, not tq's. tq's own
 files, hooks, plugin and binary are the self-protection category's (below).
+
+## Identity scope (`guard: v2`, `pre-tool-use`)
+
+A trusted workspace whose manifest sets the top-level `guard: v2` has its
+**provider scope** enforced in every tool (PRD v2 §6, ADR-0006). The scope is
+`manifest.Scope()`: the identities block (claude and gh for a v1 manifest),
+every cloud of the `cloud` block, the catalog id of `git.provider`, the chat,
+email and data_platform providers, `agents`, the providers whose MCP server
+`claude.bundle.mcp` lists, and the optional `scope:` list of catalog ids:
+
+```yaml
+guard: v2
+identities: { az: {}, claude: {} }
+git: { provider: azure-devops }
+cloud: { provider: azure }
+scope: [terraform]        # optional: providers used without a private config home
+```
+
+Every catalog provider outside the scope is matched by its `match:` lists
+([PROVIDERS.md](PROVIDERS.md#match-lists)), and a match denies:
+
+| Rule | What it denies |
+|---|---|
+| `identity/out-of-scope-cli` | the provider's CLI run by name or path (`aws`, `/usr/local/bin/aws`, `"C:\Program Files\Amazon\AWSCLIV2\aws.exe"`, `aws.cmd`), behind `sudo`/`env`/`xargs`/`&`, inside `bash -c`, `cmd /c`, `pwsh -c`, `iex`, `eval` or a decoded `-EncodedCommand`; `python -m awscli` (`py`, `python3.12`, `-mawscli`); a runner's package (`npx vercel`, `pnpm dlx`, `yarn dlx`, `npm exec`, `bunx`, `uvx awscli`, `pipx run`, `uv tool run`); `Start-Process aws`; a Windows-suffixed name anywhere in the line |
+| `identity/out-of-scope-env` | a reference to the provider's variable: `$AWS_PROFILE`, `${AWS_PROFILE}`, `$env:AWS_PROFILE`, `%AWS_PROFILE%`, `env:AWS_PROFILE`, `AWS_PROFILE=x cmd`, `docker run -e AWS_PROFILE=x`, `export`/`unset`/`set`/`setx`/`printenv AWS_PROFILE`, `os.environ['AWS_PROFILE']`, `getenv("AWS_PROFILE")`, `process.env.AWS_PROFILE`. A bare name (`git commit -m "document AWS_PROFILE"`) is not a reference |
+| `identity/out-of-scope-path` | the provider's credential paths (`~/.aws`, `~/.config/gcloud`, `~/.config/gh`, ...): Read, Write, Edit, MultiEdit, Glob, Grep, NotebookRead, NotebookEdit; any shell word or redirect, relative to a preceding `cd`; a `cd` into one; a mention in the line or inline code after `~`, `$HOME`, `%USERPROFILE%`, `$env:USERPROFILE`, `%APPDATA%` expansion and the MSYS `/c/` spelling; a path string in an MCP input |
+| `identity/out-of-scope-host` | the provider's API hosts (`amazonaws.com` and its subdomains, `api.github.com`, ...): a URL anywhere in a shell line (`curl`, `wget`, `Invoke-WebRequest`, `iwr`, `irm`, inline code), a bare host argument of a network verb (`curl ec2.amazonaws.com/...`, `http GET api.vercel.com/...`, `ssh`, `scp`), a WebFetch URL |
+| `identity/out-of-scope-mcp` | an `mcp__<server>__*` tool whose server name, split on `_ - .`, carries the provider's MCP token (`mcp__aws__*`, `mcp__plugin_vercel_vercel__*`, `mcp__claude_ai_Vercel__*`) and no in-scope provider's |
+| `identity/other-identity` | a path under another identity's workspace root (`<base>/<other>` for every registered base) or its folder `~/.tentaqles/identities/<other>` (its Claude and Codex homes included), by every route above |
+
+What an in-scope provider claims is never denied because another provider
+lists it too: `az` is both az's and azure-devops's, `graph.microsoft.com` is
+az's, teams' and outlook's. Generic tools (docker, helm, kubectl, terraform,
+pulumi, npm, psql, dbt) are never denied by command name.
+
+The deny names the category, the provider and the scope so the model reports
+instead of retrying:
+
+```
+BLOCKED [identity/out-of-scope-cli]: aws is the CLI of AWS (aws), outside the scope of identity company-x (scope: az, azure-devops, claude). tq denies it in every tool; do not retry another way: tell the developer, who does it from the identity that owns it or adds the provider to this identity's scope (source: builtin)
+```
+
+and is one line in the denial log whose `command` is the verb and the token
+matched (`aws`, `python -m awscli`, `AWS_PROFILE`, `ec2.amazonaws.com`, the
+path, `mcp__aws`), never the rest of the line.
+
+Without `guard: v2` the v1 rules apply unchanged (`wrong-cloud` for six cloud
+CLIs, nothing else of the scope). A **neutral** cwd (no workspace) never gets
+the v2 rules: there is no scope to compare against, and `neutral-remote`
+already refuses remote git, gh and cloud commands there. An untrusted or
+mismatched workspace is judged by `untrusted` and `neutral-remote`.
+
+### Limits
+
+A text filter, not a sandbox: it matches literal spellings. A command, path,
+host or variable built at run time (`a=aw; ${a}s`, `$(echo aws)`,
+`os.path.join(home, '.aws')`), a script file whose body runs the CLI, an
+alias or shell function, a renamed copy of a CLI, an unquoted install path
+without a Windows suffix, an endpoint the catalog does not list (a custom
+domain, an IP), a schemeless host outside a network verb, and a program
+reading a variable from its own environment are not caught. The PATH,
+environment and harness-config layers and the identity's private config
+homes are what make those routes fail.
 
 ## `session-start` output
 

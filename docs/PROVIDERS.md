@@ -11,8 +11,10 @@ how to install it, how to log in" is data: the **provider catalog**.
   `tq` binary at build time (`//go:embed catalog/*.yaml`).
 - User overrides / custom providers: `~/.tentaqles/providers/*.yaml` (or
   `$TQ_HOME/providers/*.yaml`). A file here with the same id as a built-in
-  provider replaces it entirely; a new id adds a new provider. Written by
-  `tq providers add` or by hand.
+  provider replaces it, except its `match:` lists, which are added to the
+  built-in ones (an override never shortens what the guard recognises); a
+  new id adds a new provider. Written by `tq providers add` or by hand (a
+  human: the folder is under the protected tq home).
 
 Load order: embedded catalog first, then user files layered on top by id.
 
@@ -57,6 +59,13 @@ blocked_commands_suggested:  # optional list of commands to warn/block on
 mcp: github                  # optional: the tq bundle catalog MCP entry (and mcpServers key)
                              # the agent reaches this provider through; default: the id
 notes: "..."                 # optional prose for onboarding and doctor (how it authenticates)
+
+match:                       # what the guard denies when an identity's scope leaves gh out
+  executables: [gh]
+  env: [GH_TOKEN, GITHUB_TOKEN, GH_CONFIG_DIR]
+  paths: ["~/.config/gh", "%APPDATA%/GitHub CLI"]
+  hosts: [api.github.com, uploads.github.com]
+  mcp: [github]
 ```
 
 ### Rules
@@ -80,6 +89,41 @@ notes: "..."                 # optional prose for onboarding and doctor (how it 
 - Unverified install package ids (found via research, not personally
   confirmed) still get an `id` field plus a `note: "unverified package id"`
   rather than being omitted.
+
+## Match lists
+
+Every catalog file carries a `match:` block: the literal spellings the guard's
+identity category recognises as this provider when an identity's scope
+(`manifest.Scope()`, see [CLAUDE-HOOK.md](CLAUDE-HOOK.md#identity-scope-guard-v2-pre-tool-use))
+leaves it out and the manifest sets `guard: v2` (ADR-0006). All six lists are
+optional; validated at load.
+
+| List | Entries | Matched as |
+|---|---|---|
+| `executables` | `^[A-Za-z0-9][A-Za-z0-9._+-]*$`, no suffix | the command word's last path element, lower-cased, `.exe` `.cmd` `.bat` `.ps1` `.com` stripped; a runner's package (`npx`, `uvx`, `pipx run`, ...); `Start-Process` |
+| `modules` | dotted Python names (`awscli`, `azure.cli`) | `python -m <module>` (or a submodule of it) |
+| `env` | variable names; a trailing `*` is a prefix (`TF_TOKEN_*`) | a reference: `$NAME`, `${NAME}`, `$env:NAME`, `%NAME%`, `env:NAME`, `NAME=`, `export`/`unset`/`set`/`setx`/`printenv NAME`, `environ['NAME']`, `getenv("NAME")`, `process.env.NAME`; case-insensitive |
+| `paths` | `~/...`, `%APPDATA%/...`, `%LOCALAPPDATA%/...`, forward slashes, no `..` or glob | the path and everything under it (a root whose variable is unset is skipped) |
+| `hosts` | lower-case DNS names with a dot | the host and every subdomain |
+| `mcp` | `^[a-z0-9]+$` tokens | one token of the MCP server name split on `_ - .` |
+
+Rules of thumb for a new entry:
+
+- List the vendor's **own** CLI, variables, credential files, API hosts and MCP
+  server names. Leave out what an application uses at run time (an
+  `OPENAI_API_KEY`, a `STRIPE_SECRET_KEY`, an app's `*.supabase.co` URL) and
+  documentation sites.
+- A generic tool that talks to whatever the project configures (docker, helm,
+  kubectl, terraform, pulumi, npm, psql, dbt) lists no executable: only its
+  global credential files and vendor endpoints. A command name too generic to
+  deny (cursor's `agent`) is left out too.
+- An entry another provider also lists is fine: whatever an in-scope provider
+  claims is never denied (`az` is az's and azure-devops's).
+- To extend a built-in provider, copy its file to `~/.tentaqles/providers/`
+  and add the entries (the rest of the file still replaces the built-in entry,
+  so keep its `identity`, `cli` and `login`; the `match:` lists are merged
+  either way). To stop the guard matching a provider, add it to the
+  identity's `scope:`.
 
 ## Company tools in the catalog
 

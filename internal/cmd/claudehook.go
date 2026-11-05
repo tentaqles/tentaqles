@@ -621,6 +621,8 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 		}
 	}
 	in.Blocked = effectiveBlocked(ws)
+	// guard: v2 on a trusted manifest: the provider scope judges cloud CLIs (ADR-0006).
+	in.Scoped = rep.Result.Workspace != nil && m.GuardV2()
 
 	expectedGH := strings.TrimSpace(m.Git.User)
 	if expectedGH == "" {

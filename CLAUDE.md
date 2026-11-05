@@ -18,14 +18,18 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
   - `internal/policy/` — the five secret rules of `builtin.go` (`tq/secret-store-read`,
     `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`), the
     two self-protection rules of `selfprotect.go` (`tq/protected-path`,
-    `tq/human-only-command`, ADR-0005) and their evaluator; nothing else is a rule. Every
+    `tq/human-only-command`, ADR-0005), the six identity rules of `identity.go` under
+    `guard: v2` (`policy.Scope`: `out-of-scope-cli`, `-env`, `-path`, `-host`, `-mcp`,
+    `other-identity`, read from the catalog's `match:` lists and `manifest.Scope()`,
+    ADR-0006) and their evaluator; nothing else is a rule. Every
     rule carries its category (`identity`, `secrets`, `self-protection`); a deny reads
     `BLOCKED [<category>/<rule>]`.
   - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `init`, `add`,
     `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `status`, `bundle`,
     `providers`, `setup`, `onboard`, `secret`, `secrets`, `settings`, `statusline`,
     `worktrees`, `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
-    `claudehook*.go`: `pre-tool-use` runs `guard.Decide` (identity), then the secret rules
+    `claudehook*.go`: `pre-tool-use` runs `guard.Decide` (identity), the provider-scope
+    rules under `guard: v2` (`claudehook_scope.go`), then the secret rules
     plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
     the protected path set of the run (`claudehook_protect.go`), first category that
     denies wins; there is no ask, and a call it cannot judge (an unreadable payload, a
@@ -95,6 +99,15 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
 ## Must not trade off
 From `docs/threat-model.md`; each line names the test that keeps it.
 - Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.
+- Under `guard: v2` everything outside the identity's provider scope is denied in every
+  tool (CLI by name, path, wrapper, `python -m`; variables; credential paths; API hosts; MCP
+  servers; other identities' roots), before secrets, with a message naming the scope; the
+  same identity's in-scope CLIs and ordinary dev commands pass; without the flag the v1
+  rules are unchanged: `TestPreToolUse_ScopeReferenceScenario`, `TestPreToolUse_ScopeRuleOrder`,
+  `TestPreToolUse_ScopeV1Unchanged`, `TestScope_OutOfScopeCLI`, `TestScope_OutOfScopeEnv`,
+  `TestScope_OutOfScopePath`, `TestScope_OutOfScopeHost`, `TestScope_OutOfScopeMCP`,
+  `TestScope_OtherIdentity`, `TestScope_InScopeWins`, `TestCatalogMatchLists`,
+  `TestUserOverrideExtendsMatch`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
 - Trust is human-only, and so is every tq write under `$TQ_HOME` or an identity dir:
