@@ -47,7 +47,9 @@ const (
 
 	// CarryComment introduced a shell function that an older tq migrate
 	// carried over verbatim from the hand-installed block. RemoveCarriedFile
-	// recognises that exact text and removes it.
+	// recognises that exact text and removes it. The text is what that older
+	// tq wrote into users' profiles, so it never changes; the plan it names
+	// was dropped (the manifest carries no permission mode, PRD v2 §13).
 	CarryComment = "# carried over by tq migrate; permission_mode will move into the manifest"
 
 	// carriedGuard reproduces the `else` branch the carried wrapper used to

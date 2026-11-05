@@ -425,11 +425,13 @@ by hand.
 
 Install the new `tq` (the installer replaces the binary), then:
 
-- **Manifests need nothing.** A top-level block tq does not read is
-  ignored; `tq doctor` warns `manifest-dropped-block` and never fails.
-  Removing such a block changes the manifest hash, so run `tq allow <ws>`
-  afterwards. The identity rules and the secret rules are always on, in
-  every Claude permission mode, and no rule asks for a confirmation.
+- **Manifests need nothing.** A top-level block tq does not read, and the
+  `claude.permission_mode` and `claude.permissions` keys it no longer reads,
+  are ignored; `tq doctor` warns `manifest-dropped-block` and never fails.
+  Removing such a block or key changes the manifest hash, so run
+  `tq allow <ws>` afterwards. The identity rules and the secret rules are
+  always on, in every Claude permission mode, and no rule asks for a
+  confirmation.
 - **Manifests can move under `~/.tentaqles`.** New identities get their
   manifest at `~/.tentaqles/identities/<ws>/manifest.yaml` with a name-only
   marker in the folder (ADR-0002); an existing identity keeps its manifest
@@ -461,13 +463,14 @@ Install the new `tq` (the installer replaces the binary), then:
   <ws>`. Upgrade tq before or with the plugin: a plugin release newer than the
   tq installed needs the per-workspace accept until tq is upgraded. Installing a new tq binary changes nothing: the binary on PATH
   is not covered. `tq deny <ws>` leaves a signed tombstone.
-  A `claude.permission_mode: bypass` renders as `bypassPermissions` on the
-  trusted manifest alone.
 - **Run `tq settings render --all` once.** It rewrites each identity's
-  Claude settings and the Codex `config.toml` block (always
-  `approval_policy = "on-request"`, `sandbox_mode = "workspace-write"`),
-  and removes files an earlier tq wrote into the Codex identity. Trust tq's
-  hook again in Codex's `/hooks` if it asks.
+  Claude settings, removing the permission settings an earlier tq wrote
+  there (the `permissions` entries it recorded, its `defaultMode` and
+  `skipDangerousModePermissionPrompt`; your own entries stay, see
+  [CLAUDE-SETTINGS.md](CLAUDE-SETTINGS.md)), removes the marked block an
+  earlier tq wrote at the head of the Codex `config.toml` and the other
+  files it wrote into the Codex identity, and signs the record again. Trust
+  tq's hook again in Codex's `/hooks` if it asks.
 - **The state folder** (`~/.tentaqles`): folders tq does not use are left
   in place and never deleted; `tq doctor` lists them as `state-dir-unused`
   (a warning); remove them yourself. Tokens in the keychain stay usable

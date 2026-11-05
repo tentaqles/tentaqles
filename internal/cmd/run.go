@@ -23,11 +23,10 @@ var claudeSubcommands = []string{"agents", "attach", "auth", "auto-mode", "docto
 	"update", "upgrade"}
 
 // launchClaudeArgs is the launcher's claude command line: it adds
-// --dangerously-skip-permissions, whatever claude.permission_mode says (tq
-// sets no permission mode of its own beyond this skip, docs/prd.md D-30;
-// the identity and secret rules run in the hook in every mode). A
-// --permission-mode or --dangerously-skip-permissions typed on this command
-// line replaces it, and claude's subcommands, --help and --version get
+// --dangerously-skip-permissions (tq sets no permission mode of its own
+// beyond this skip; the identity and secret rules run in the hook in every
+// mode). A claude --permission-mode or --dangerously-skip-permissions typed
+// on this command line replaces it, and claude's subcommands, --help and --version get
 // nothing. An agent's nested claude (agent true) never gets bypass from the
 // launcher: it keeps claude's own prompts.
 func launchClaudeArgs(args []string, agent bool) []string {

@@ -43,15 +43,14 @@ type Provider struct {
 // Company mirrors internal/setup.Company field-for-field (a type alias to
 // an internal type is not allowed across the internal/ boundary).
 type Company struct {
-	Name           string
-	DisplayName    string
-	Color          string
-	GitName        string
-	GitEmail       string
-	GitUser        string
-	GitProvider    string
-	Identities     []string
-	PermissionMode string
+	Name        string
+	DisplayName string
+	Color       string
+	GitName     string
+	GitEmail    string
+	GitUser     string
+	GitProvider string
+	Identities  []string
 	// Company services (spec B §6), see services.go: "" Chat/Email skip a block.
 	Chat  string
 	Email string
@@ -155,17 +154,16 @@ func fromInternalProvider(p providers.Provider) Provider {
 
 func (c Company) toInternal() setup.Company {
 	return setup.Company{
-		Name:           c.Name,
-		DisplayName:    c.DisplayName,
-		Color:          c.Color,
-		GitName:        c.GitName,
-		GitEmail:       c.GitEmail,
-		GitUser:        c.GitUser,
-		GitProvider:    c.GitProvider,
-		Identities:     c.Identities,
-		PermissionMode: c.PermissionMode,
-		Chat:           serviceBlock(c.Chat),
-		Email:          serviceBlock(c.Email),
+		Name:        c.Name,
+		DisplayName: c.DisplayName,
+		Color:       c.Color,
+		GitName:     c.GitName,
+		GitEmail:    c.GitEmail,
+		GitUser:     c.GitUser,
+		GitProvider: c.GitProvider,
+		Identities:  c.Identities,
+		Chat:        serviceBlock(c.Chat),
+		Email:       serviceBlock(c.Email),
 	}
 }
 

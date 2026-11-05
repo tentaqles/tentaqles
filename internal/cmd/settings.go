@@ -28,15 +28,17 @@ func newSettingsRenderCmd() *cobra.Command {
 	var all, dryRun, noStatus bool
 	c := &cobra.Command{
 		Use:   "render [workspace...]",
-		Short: "Write the baseline permissions, env and status line into identity settings.json",
+		Short: "Write the baseline env and status line into identity settings.json",
 		Long: `Brings each workspace's Claude identity settings.json in line with tq's
-baseline plus the manifest's claude.permission_mode / claude.permissions /
-claude.env:
+baseline plus the manifest's claude.env:
 
-  - permissions.defaultMode (manifest permission_mode; empty means auto)
-  - permissions.allow: common read-only commands; deny: credential stores
   - env: tuning for costly plugins (e.g. no per-turn Opus security review)
   - statusLine: tq statusline (replaces unpinned npx status lines only)
+
+tq writes no permission setting. The first render after an upgrade removes
+the permission settings an older tq wrote (the allow/deny/ask entries its
+state file records, and the defaultMode and skipDangerousModePermissionPrompt
+it set); an emptied permissions object goes.
 
 Only entries tq wrote earlier are ever removed; anything added by hand stays.
 

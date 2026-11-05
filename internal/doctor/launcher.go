@@ -8,13 +8,12 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/hooks"
-	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
 // Owned by WS2 (spec E §8): checks about the claude/codex launcher.
 
 func init() {
-	Register(Check{Name: "launcher", Workspace: permissionModeOverridden, Global: claudeAliasShadow})
+	Register(Check{Name: "launcher", Global: claudeAliasShadow})
 }
 
 // shellAliasRe matches an alias of claude or codex in a shell profile and
@@ -190,21 +189,4 @@ func funcEndLine(text string, off int, kind string) int {
 		}
 	}
 	return start
-}
-
-// permissionModeOverridden notes a claude.permission_mode other than bypass
-// (or bypassPermissions, which ModeFor passes through as bypass):
-// the launcher starts claude in bypass anyway (spec E §8.1, §19 Q3), and the
-// value only sets defaultMode for sessions started outside it.
-func permissionModeOverridden(w *resolve.Workspace, _ Deps, add AddFunc) {
-	if w == nil || w.Manifest == nil {
-		return
-	}
-	pm := w.Manifest.Claude.PermissionMode
-	if pm == "" || pm == "bypass" || pm == "bypassPermissions" {
-		return
-	}
-	add("info", "permission-mode-overridden", w.Name,
-		fmt.Sprintf("claude.permission_mode is %s; the claude launcher starts in bypass anyway", pm),
-		"it still sets permissions.defaultMode for IDE sessions; launched sessions keep tq's identity and secret checks either way")
 }

@@ -111,11 +111,11 @@ func TestAdd_ScaffoldsEverything(t *testing.T) {
 	cfg.AddBase(base)
 	cfg.Save()
 
-	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", Identities: []string{"claude", "gh"}, PermissionMode: "acceptEdits", RunGit: fakeGit, Trust: true})
+	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", Identities: []string{"claude", "gh"}, RunGit: fakeGit, Trust: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ws.Name != "acme" || ws.Manifest.Claude.PermissionMode != "acceptEdits" {
+	if ws.Name != "acme" {
 		t.Fatalf("%+v", ws)
 	}
 	for _, p := range []string{

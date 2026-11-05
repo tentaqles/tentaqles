@@ -56,6 +56,22 @@ func TestLoad_RefusesUnknownKeysAndSecrets(t *testing.T) {
 	}
 }
 
+// TestLoad_IgnoresRetiredPermissionMode: an answer file an older tq wrote
+// with permission_mode parses (the key is dropped, never read); unknown keys
+// are still refused.
+func TestLoad_IgnoresRetiredPermissionMode(t *testing.T) {
+	a, err := Load(writeFile(t, "name: acme\npermission_mode: bypass\ngit: { email: a@b.test }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Validate(); err != nil || a.Name != "acme" || a.Git.Email != "a@b.test" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	if _, err := Load(writeFile(t, "name: acme\npermission_mode: bypass\nbogus: 1\n")); err == nil {
+		t.Error("an unknown key next to the retired one must still be refused")
+	}
+}
+
 func TestValidate(t *testing.T) {
 	cases := map[string]string{
 		"no name":         "git: { email: a@b.test }\n",

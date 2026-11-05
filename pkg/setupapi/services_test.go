@@ -15,7 +15,7 @@ func servicesPlan(base string) Plan {
 		Base:  base,
 		Trust: true,
 		Companies: []Company{{
-			Name: "acme", GitName: "tester", GitEmail: "tester@acme.test", Identities: []string{"claude"}, PermissionMode: "default",
+			Name: "acme", GitName: "tester", GitEmail: "tester@acme.test", Identities: []string{"claude"},
 			Chat:  "teams",
 			Email: "",
 		}},

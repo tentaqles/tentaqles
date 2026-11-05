@@ -37,8 +37,8 @@ templates and images by digest (C10) and use the platform's secret scanning.
   `gh api repos/<o>/<r>/git/ref/tags/<tag> --jq '.object.type + " " + .object.sha'`.
   If the type is `commit`, that SHA is the pin. If it is `tag` (an annotated
   tag), dereference it: `gh api repos/<o>/<r>/git/tags/<sha> --jq .object.sha`.
-  tq refuses unpinned refs: `@main`/`@master` (`tq/gha-branch-ref`) and
-  `@latest`/`@head` (`tq/gha-unpinned`).
+  Leave no unpinned ref: `@main`/`@master` and `@latest`/`@head` are all
+  replaced.
 - **C2 permissions**: `permissions: contents: read` at the top of every
   workflow; grant `id-token: write`, `pull-requests: write` or `packages: write`
   per job only. `persist-credentials: false` on every checkout.
@@ -75,7 +75,7 @@ templates and images by digest (C10) and use the platform's secret scanning.
 - **C8 attestations**: build in CI; sign or attest release artifacts
   (`actions/attest-build-provenance` pinned, or Sigstore `cosign`).
 - **C9 branch protection**: required checks, reviews, no force push to the
-  default branch (tq denies it locally too).
+  default branch.
 - **C10 images and toolchains**: `FROM image@sha256:...` with the tag kept in a
   comment, exact tool versions. Resolve a digest with
   `docker buildx imagetools inspect <image>:<tag>` (the `Digest:` line, the

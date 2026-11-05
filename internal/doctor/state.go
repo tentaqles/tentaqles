@@ -11,8 +11,10 @@ import (
 // gate) and no longer reads. tq never deletes them; the user does.
 var unusedStateEntries = []string{"hub", "packs", "guard", "guard.yaml", "decide", "build-gate"}
 
-// manifestDroppedBlock warns when a loaded manifest still carries blocks tq
-// 0.9.0 stopped reading (manifest.DroppedBlocks, recorded in Manifest.Ignored).
+// manifestDroppedBlock warns when a loaded manifest still carries blocks or
+// claude keys tq stopped reading (manifest.DroppedBlocks since 0.9.0,
+// manifest.DroppedClaudeKeys since the permission settings were retired;
+// both recorded in Manifest.Ignored).
 // The manifest loads regardless; removing a block changes its hash, so the
 // fix ends with tq allow.
 func manifestDroppedBlock(ws string, ignored []string, add func(level, code, ws, msg, fix string)) {
@@ -20,7 +22,7 @@ func manifestDroppedBlock(ws string, ignored []string, add func(level, code, ws,
 		return
 	}
 	add("warn", "manifest-dropped-block", ws,
-		"manifest still carries blocks tq no longer reads (since 0.9.0): "+strings.Join(ignored, ", "),
+		"manifest still carries blocks tq no longer reads: "+strings.Join(ignored, ", "),
 		"remove them from the manifest, then tq allow "+ws)
 }
 

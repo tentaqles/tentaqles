@@ -74,7 +74,7 @@ Deliver, for each recommendation:
 2. The DDL, lock-safe: `CREATE INDEX CONCURRENTLY ...` (Postgres, outside a
    transaction) or `... WITH (ONLINE = ON)` (SQL Server, where supported),
    inside a migration file. Use the `db-migration` skill to ship it; ad-hoc
-   DDL through `psql`/`sqlcmd` triggers tq's `tq/sql-destructive-shell` ask.
+   DDL through `psql`/`sqlcmd` leaves no trace in the migration history.
 3. Indexes it makes redundant (to drop later, after checking usage).
 4. Write-cost note.
 5. Verification: the same `EXPLAIN (ANALYZE, BUFFERS)` before and after, with

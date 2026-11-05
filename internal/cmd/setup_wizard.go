@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/tentaqles/tentaqles/internal/detect"
 	"github.com/tentaqles/tentaqles/internal/hooks"
-	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/setup"
@@ -20,14 +19,13 @@ import (
 // companyAnswers holds one company's raw wizard answers before they are
 // turned into a setup.Company.
 type companyAnswers struct {
-	Name           string
-	DisplayName    string
-	Color          string
-	GitName        string
-	GitEmail       string
-	GitUser        string
-	Identities     []string
-	PermissionMode string
+	Name        string
+	DisplayName string
+	Color       string
+	GitName     string
+	GitEmail    string
+	GitUser     string
+	Identities  []string
 }
 
 // wizardAnswers holds everything gathered across the wizard's steps before
@@ -57,19 +55,6 @@ func buildProviderOptions(cat *providers.Catalog) []huh.Option[string] {
 	return opts
 }
 
-// permissionModeOptions returns manifest.PermissionModes with the empty
-// ("unset") entry dropped, as huh Select options.
-func permissionModeOptions() []huh.Option[string] {
-	opts := make([]huh.Option[string], 0, len(manifest.PermissionModes))
-	for _, m := range manifest.PermissionModes {
-		if m == "" {
-			continue
-		}
-		opts = append(opts, huh.NewOption(m, m))
-	}
-	return opts
-}
-
 // planFromAnswers is a pure function that turns wizardAnswers into a
 // setup.SetupPlan. It does no I/O and applies no defaults beyond what the
 // forms already validated.
@@ -77,14 +62,13 @@ func planFromAnswers(a wizardAnswers) *setup.SetupPlan {
 	companies := make([]setup.Company, 0, len(a.Companies))
 	for _, ca := range a.Companies {
 		companies = append(companies, setup.Company{
-			Name:           ca.Name,
-			DisplayName:    ca.DisplayName,
-			Color:          ca.Color,
-			GitName:        ca.GitName,
-			GitEmail:       ca.GitEmail,
-			GitUser:        ca.GitUser,
-			Identities:     ca.Identities,
-			PermissionMode: ca.PermissionMode,
+			Name:        ca.Name,
+			DisplayName: ca.DisplayName,
+			Color:       ca.Color,
+			GitName:     ca.GitName,
+			GitEmail:    ca.GitEmail,
+			GitUser:     ca.GitUser,
+			Identities:  ca.Identities,
 		})
 	}
 	return &setup.SetupPlan{
@@ -96,7 +80,7 @@ func planFromAnswers(a wizardAnswers) *setup.SetupPlan {
 }
 
 // runWizard drives the interactive `tq setup` flow described in the task
-// brief: welcome, base folder, company loop (providers + permission mode),
+// brief: welcome, base folder, company loop (providers),
 // tool check, hooks, preview, and apply.
 func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPlan, error) {
 	var consent bool
@@ -188,13 +172,9 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("Providers for "+ca.Name).
+				Title("Providers for " + ca.Name).
 				Options(buildProviderOptions(cat)...).
 				Value(&ca.Identities),
-			huh.NewSelect[string]().
-				Title("Permission mode for "+ca.Name).
-				Options(permissionModeOptions()...).
-				Value(&ca.PermissionMode),
 		)).Run(); err != nil {
 			return nil, err
 		}

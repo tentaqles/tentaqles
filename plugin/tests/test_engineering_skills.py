@@ -97,14 +97,19 @@ def test_skills_point_to_tq_features() -> None:
         return (SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8")
 
     db = read("db-migration")
-    assert "tq/migration-edit" in db and "tq/sql-destructive-shell" in db
+    # tq only denies, and only on identity, secrets and its own state: a skill
+    # never cites a retired rule or says tq asks.
+    for retired in ("tq/migration-edit", "tq/sql-destructive-shell", "tq/mcp-sql-write", "guard asks"):
+        assert retired not in db, retired
+        assert retired not in read("index-advisor"), retired
+    assert "migration file" in db
     assert "references/review-checklist.md" in db and "`critic`" in db
     for forbidden in ("tq decide", "tq pack", "db-reviewer", "rls-tests` skill", "db pack"):
         assert forbidden not in db, forbidden
         assert forbidden not in (SKILLS_DIR / "db-migration" / "references" / "review-checklist.md").read_text(encoding="utf-8"), forbidden
     assert "tq dotenv run" in read("auth-security")
     assert "tq decide" not in read("auth-security") and "rls-tests" not in read("auth-security")
-    assert "tq/sql-destructive-shell" in read("index-advisor")
+    assert "db-migration" in read("index-advisor")
 
 
 TEMPLATES = sorted((SKILLS_DIR / "ci-pipeline" / "templates").glob("*.yml"))

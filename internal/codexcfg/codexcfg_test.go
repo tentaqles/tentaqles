@@ -33,24 +33,21 @@ func readFile(t *testing.T, p string) (string, bool) {
 	return string(b), err == nil
 }
 
-// pinned is Want for the one plan tq renders.
+// pinned is Want for a workspace that isolates codex.
 func pinned() Want {
-	p := Pinned
-	return Want{Plan: &p, Hook: true}
+	return Want{Hook: true}
 }
 
-func TestRenderTopLevelOnAndOff(t *testing.T) {
+// TestRenderWritesNoConfigKeys: a render leaves a user config.toml byte for
+// byte and writes only the hook; a removal takes the hook back.
+func TestRenderWritesNoConfigKeys(t *testing.T) {
 	dir := write(t, user)
 	res, err := Render(dir, pinned(), false)
-	if err != nil || len(res.Changed) == 0 || len(res.Conflicts) != 0 {
+	if err != nil || len(res.Changed) != 1 || !hasPath(res.Changed, filepath.Join(dir, HooksFile)) || len(res.Conflicts) != 0 {
 		t.Fatalf("on: %+v %v", res, err)
 	}
-	got := read(t, dir)
-	if !strings.HasPrefix(got, beginMarker+"\napproval_policy = \"on-request\"\nsandbox_mode = \"workspace-write\"\n"+endMarker+"\n") {
-		t.Fatalf("managed block must lead the file:\n%s", got)
-	}
-	if !strings.HasSuffix(got, user) {
-		t.Fatalf("user content changed:\n%s", got)
+	if read(t, dir) != user {
+		t.Fatalf("config.toml must be left as it was:\n%q", read(t, dir))
 	}
 	if res, _ := Render(dir, pinned(), false); len(res.Changed) != 0 {
 		t.Fatalf("second render must be a no-op: %v", res.Changed)
@@ -59,31 +56,42 @@ func TestRenderTopLevelOnAndOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	if read(t, dir) != user {
-		t.Fatalf("removal must restore the user file exactly:\n%q", read(t, dir))
+		t.Fatalf("removal must leave the user file exactly:\n%q", read(t, dir))
 	}
 	if _, ok := readFile(t, filepath.Join(dir, HooksFile)); ok {
 		t.Errorf("%s must be removed", HooksFile)
 	}
 }
 
-// The blocks of older tq versions (the unattended and the guard-mode
-// markers) are replaced, not duplicated.
-func TestRenderReplacesLegacyBlocks(t *testing.T) {
-	for _, legacy := range []string{
-		legacyBegin + "\napproval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n" + legacyEnd + "\n" + user,
-		modeBegin + "\napproval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n" + modeEnd + "\n" + user,
+// TestRenderRemovesOldBlocks: the marked block an older tq wrote (its
+// approval_policy and sandbox_mode), and the blocks of the unattended and
+// guard-mode markers, are removed; the user's lines stay, including an
+// approval_policy or sandbox_mode of their own outside a block. A file that
+// held only tq's block is removed.
+func TestRenderRemovesOldBlocks(t *testing.T) {
+	mine := "sandbox_mode = \"read-only\"\n" + user
+	for _, old := range []string{
+		beginMarker + "\napproval_policy = \"on-request\"\nsandbox_mode = \"workspace-write\"\n" + endMarker + "\n" + mine,
+		legacyBegin + "\napproval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n" + legacyEnd + "\n" + mine,
+		modeBegin + "\napproval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n" + modeEnd + "\n" + mine,
 	} {
-		dir := write(t, legacy)
-		if _, err := Render(dir, pinned(), false); err != nil {
-			t.Fatal(err)
+		for _, w := range []Want{pinned(), {}} {
+			dir := write(t, old)
+			res, err := Render(dir, w, false)
+			if err != nil || !hasPath(res.Changed, filepath.Join(dir, "config.toml")) || len(res.Conflicts) != 0 {
+				t.Fatalf("%+v: %+v %v", w, res, err)
+			}
+			if got := read(t, dir); got != mine {
+				t.Fatalf("only tq's block goes:\n%q", got)
+			}
 		}
-		got := read(t, dir)
-		if strings.Contains(got, legacyBegin) || strings.Contains(got, modeBegin) || strings.Count(got, "approval_policy") != 1 || !strings.HasSuffix(got, user) {
-			t.Fatalf("legacy block must go:\n%s", got)
-		}
-		if !strings.Contains(got, `approval_policy = "on-request"`) || !strings.Contains(got, `sandbox_mode = "workspace-write"`) {
-			t.Fatalf("the pinned pair replaces it:\n%s", got)
-		}
+	}
+	dir := write(t, beginMarker+"\napproval_policy = \"on-request\"\nsandbox_mode = \"workspace-write\"\n"+endMarker+"\n")
+	if _, err := Render(dir, pinned(), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readFile(t, filepath.Join(dir, "config.toml")); ok {
+		t.Fatal("a config.toml holding only tq's block is removed")
 	}
 }
 
@@ -180,25 +188,11 @@ func TestRenderDryRun(t *testing.T) {
 		t.Fatalf("removal on an empty dir must not create files: %v", entries)
 	}
 	res, err := Render(dir, pinned(), true)
-	if err != nil || len(res.Changed) != 2 {
+	if err != nil || len(res.Changed) != 1 {
 		t.Fatalf("dry run: %+v %v", res, err)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("dry run must not write: %v", entries)
-	}
-}
-
-func TestRenderConfigConflictStillWritesHook(t *testing.T) {
-	dir := write(t, "approval_policy = \"never\"\n"+user)
-	res, err := Render(dir, pinned(), false)
-	if err != nil || len(res.Conflicts) != 1 || !strings.Contains(res.Conflicts[0], "approval_policy") {
-		t.Fatalf("want one conflict: %+v %v", res, err)
-	}
-	if read(t, dir) != "approval_policy = \"never\"\n"+user {
-		t.Fatal("config.toml must be unchanged on a conflict")
-	}
-	if _, ok := readFile(t, filepath.Join(dir, HooksFile)); !ok {
-		t.Fatal("the hook is independent of the config conflict")
 	}
 }
 
@@ -212,6 +206,11 @@ func TestRenderUnterminatedBlockIsConflict(t *testing.T) {
 		}
 		if read(t, dir) != broken {
 			t.Fatalf("file must be byte-identical:\n%q", read(t, dir))
+		}
+		if w.Hook {
+			if _, ok := readFile(t, filepath.Join(dir, HooksFile)); !ok {
+				t.Fatal("the hook is independent of the config conflict")
+			}
 		}
 	}
 }

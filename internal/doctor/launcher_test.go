@@ -5,9 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/tentaqles/tentaqles/internal/manifest"
-	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
 type launcherFinding struct{ level, code, ws, msg, fix string }
@@ -38,7 +35,7 @@ func launcherHomeDeps(home string) Deps {
 
 func TestLauncherChecksAreRegistered(t *testing.T) {
 	for _, c := range Registered() {
-		if c.Name == "launcher" && c.Global != nil && c.Workspace != nil {
+		if c.Name == "launcher" && c.Global != nil {
 			return
 		}
 	}
@@ -100,28 +97,6 @@ func TestClaudeAliasShadow(t *testing.T) {
 	claudeAliasShadow(launcherHomeDeps(t.TempDir()), add)
 	if len(*fs) != 0 {
 		t.Fatalf("%+v", *fs)
-	}
-}
-
-func TestPermissionModeOverridden(t *testing.T) {
-	for _, c := range []struct {
-		mode string
-		want bool
-	}{{"", false}, {"bypass", false}, {"bypassPermissions", false}, {"default", true}, {"acceptEdits", true}, {"plan", true}, {"auto", true}, {"dontAsk", true}} {
-		w := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{Client: "acme"}}
-		w.Manifest.Claude.PermissionMode = c.mode
-		fs, add := collectLauncher()
-		permissionModeOverridden(w, Deps{}, add)
-		if got := len(*fs) > 0; got != c.want {
-			t.Fatalf("%q: finding = %v, want %v", c.mode, got, c.want)
-		}
-		if c.want {
-			f := (*fs)[0]
-			if f.level != "info" || f.code != "permission-mode-overridden" || f.ws != "acme" ||
-				!strings.Contains(f.msg, "claude.permission_mode is "+c.mode+"; the claude launcher starts in bypass anyway") {
-				t.Fatalf("%+v", f)
-			}
-		}
 	}
 }
 

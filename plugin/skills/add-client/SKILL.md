@@ -26,7 +26,6 @@ gaps.
 | Git name | No | Acme Dev | Passed to `--git-name` |
 | Identities | No | `claude,gh` | Comma list: `claude,codex,gemini,cursor,gh,az,aws,gcloud,kube,npm` (default `claude,gh`) |
 | Display name | No | "Acme Corp" | Passed to `--display-name` |
-| Permission mode | No | default | `default\|acceptEdits\|plan\|bypass`, passed to `--permission-mode` |
 
 Cloud, database, and PM-tool preferences are still useful context for the
 client's `CLAUDE.md`, but `tq add` does not manage those sections — capture

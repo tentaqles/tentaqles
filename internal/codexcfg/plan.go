@@ -2,7 +2,7 @@ package codexcfg
 
 import "strings"
 
-// Codex values tq writes.
+// Codex values the launcher passes.
 const (
 	ApprovalOnRequest = "on-request"
 	SandboxWorkspace  = "workspace-write"
@@ -11,16 +11,16 @@ const (
 	BypassFlag = "--dangerously-bypass-approvals-and-sandbox"
 )
 
-// Plan is what tq pins in Codex: the approval policy and the sandbox.
+// Plan is the approval and sandbox flags the launcher passes to Codex. tq
+// writes neither into config.toml.
 type Plan struct {
-	Approval string // approval_policy / -a
-	Sandbox  string // sandbox_mode / -s
+	Approval string // -a
+	Sandbox  string // -s
 }
 
-// Pinned is the one plan tq renders into every Codex identity: Codex asks
-// on request and writes inside the workspace. tq's guard (the identity and
-// secret rules) runs through the PreToolUse hook; everything else is
-// Codex's own permission system (docs/prd.md D-30).
+// Pinned is the plan `tq run . -- codex` launches with: -a on-request
+// -s workspace-write, the launch Codex has always had under tq. tq's guard
+// (the identity and secret rules) runs through the PreToolUse hook.
 var Pinned = Plan{Approval: ApprovalOnRequest, Sandbox: SandboxWorkspace}
 
 // Flags are the launch flags for p (nil for a zero Plan).

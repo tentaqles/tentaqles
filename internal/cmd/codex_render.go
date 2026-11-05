@@ -11,10 +11,11 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// renderCodex renders tq's pinned Codex settings (codexcfg.Pinned: the
-// config.toml block and the hooks.json entries) into ws's Codex identity
-// when the workspace isolates a codex identity, and removes what older tq
-// versions wrote there (the guard-mode rules file, the unattended profile).
+// renderCodex renders tq's Codex hook (the hooks.json entries) into ws's
+// Codex identity when the workspace isolates a codex identity, and removes
+// what older tq versions wrote there (the marked config.toml blocks with
+// their approval_policy and sandbox_mode, the guard-mode rules file, the
+// unattended profile).
 // When the workspace no longer isolates codex but its identity dir is still
 // there, everything tq wrote into it is removed (the user's own files stay).
 // It prints nothing when everything is up to date, and reports whether a
@@ -26,8 +27,7 @@ func renderCodex(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
 	dir := paths.IdentityDir(ws.Name, "codex")
 	want := codexcfg.Want{}
 	if codexIsolated(ws) {
-		p := codexcfg.Pinned
-		want = codexcfg.Want{Plan: &p, Hook: true}
+		want = codexcfg.Want{Hook: true}
 	} else if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return false
 	}

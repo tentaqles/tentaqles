@@ -112,20 +112,19 @@ func Apply(p *SetupPlan, cat *providers.Catalog, o ApplyOptions) (Report, error)
 
 		ids := effectiveIdentities(c)
 		_, err := workspace.Add(workspace.AddOptions{
-			Base:           base,
-			Name:           c.Name,
-			GitName:        c.GitName,
-			GitEmail:       c.GitEmail,
-			GitUser:        c.GitUser,
-			GitProvider:    c.GitProvider,
-			DisplayName:    c.DisplayName,
-			Color:          c.Color,
-			Identities:     ids,
-			PermissionMode: c.PermissionMode,
-			Trust:          p.Trust,
-			RunGit:         o.RunGit,
-			Chat:           c.Chat,
-			Email:          c.Email,
+			Base:        base,
+			Name:        c.Name,
+			GitName:     c.GitName,
+			GitEmail:    c.GitEmail,
+			GitUser:     c.GitUser,
+			GitProvider: c.GitProvider,
+			DisplayName: c.DisplayName,
+			Color:       c.Color,
+			Identities:  ids,
+			Trust:       p.Trust,
+			RunGit:      o.RunGit,
+			Chat:        c.Chat,
+			Email:       c.Email,
 		})
 		if err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", c.Name, err))

@@ -37,7 +37,7 @@ cloud: { provider: azure }
 	}
 }
 
-func TestLoad_V2_ExplicitIdentitiesAndPermission(t *testing.T) {
+func TestLoad_V2_ExplicitIdentities(t *testing.T) {
 	p := write(t, `
 schema: tentaqles-client-v2
 client: globex
@@ -45,7 +45,6 @@ git: { name: Maria, email: m@globex.io }
 identities:
   claude: { share_capabilities: false }
   aws: { profile: globex }
-claude: { permission_mode: bypass }
 `)
 	m, err := Load(p)
 	if err != nil {
@@ -54,7 +53,7 @@ claude: { permission_mode: bypass }
 	if got := m.IdentityNames(); !reflect.DeepEqual(got, []string{"aws", "claude"}) {
 		t.Fatalf("identities %v", got)
 	}
-	if m.Claude.PermissionMode != "bypass" || m.Identities["aws"].Profile != "globex" {
+	if m.Identities["aws"].Profile != "globex" {
 		t.Fatalf("%+v", m)
 	}
 	if sc := m.Identities["claude"].ShareCapabilities; sc == nil || *sc {
@@ -83,13 +82,6 @@ func TestLoad_MissingClient_Rejected(t *testing.T) {
 	}
 }
 
-func TestLoad_InvalidPermissionMode_Rejected(t *testing.T) {
-	_, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nclaude: { permission_mode: yolo }\n"))
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestLoad_SecretLikeValue_Rejected(t *testing.T) {
 	for _, v := range []string{"ghp_abcdefghijklmnopqrstuvwxyz0123456789", "sk-ant-abcdef", "AKIAIOSFODNN7EXAMPLE", "Bearer xyz"} {
 		_, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\ngit: { name: \""+v+"\" }\n"))
@@ -111,7 +103,6 @@ func TestLoad_ClaudeBundle(t *testing.T) {
 schema: tentaqles-client-v2
 client: uplabs
 claude:
-  permission_mode: acceptEdits
   bundle:
     marketplaces: [claude-plugins-official, aws]
     plugins: [superpowers, aws-core@aws]

@@ -13,7 +13,7 @@ import (
 
 func servicesCompany() Company {
 	return Company{
-		Name: "acme", GitName: "tester", GitEmail: "tester@acme.test", Identities: []string{"claude"}, PermissionMode: "default",
+		Name: "acme", GitName: "tester", GitEmail: "tester@acme.test", Identities: []string{"claude"},
 		Chat:  &manifest.Service{Provider: "slack"},
 		Email: &manifest.Service{Provider: "none"},
 	}

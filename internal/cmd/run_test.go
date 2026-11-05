@@ -153,9 +153,10 @@ func fakeExec(t *testing.T) *[]launched {
 	return &calls
 }
 
-// mkLaunchWS writes and trusts a workspace with claude and codex identities
-// and the given claude.permission_mode, in the old layout (the manifest in
-// the root); it returns the root.
+// mkLaunchWS writes and trusts a workspace with claude and codex identities,
+// in the old layout (the manifest in the root); it returns the root. A
+// non-empty permMode writes the claude.permission_mode an older manifest
+// carried, which tq no longer reads.
 func mkLaunchWS(t *testing.T, name, permMode string) string {
 	t.Helper()
 	root, _ := mkLaunchWSLayout(t, name, permMode, false)
@@ -235,9 +236,10 @@ func TestLaunchClaudeArgs(t *testing.T) {
 	}
 }
 
-// The launcher starts claude in bypass whatever claude.permission_mode says.
+// The launcher starts claude in bypass, also for an older manifest that
+// still carries a claude.permission_mode (ignored, manifest.DroppedClaudeKeys).
 func TestRunClaudeAlwaysBypass(t *testing.T) {
-	for _, pm := range manifest.PermissionModes {
+	for _, pm := range []string{"", "default", "acceptEdits", "plan", "auto", "dontAsk", "bypass"} {
 		t.Run("mode="+pm, func(t *testing.T) {
 			mkLaunchWS(t, "acme", pm)
 			clearAgentMarkers(t)

@@ -59,10 +59,10 @@ func TestRun_UntrustedAndDriftAndBypassCloud(t *testing.T) {
 	root := filepath.Join(base, "acme")
 	os.MkdirAll(root, 0o755)
 	mp := filepath.Join(root, manifest.FileName)
-	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: { claude: {}, az: {} }\nclaude: { permission_mode: bypass }\n"), 0o600)
+	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: { claude: {}, az: {} }\n"), 0o600)
 
 	fs := Run(cfg, deps(map[string]string{"TQ_WS": "other"}, root, nil))
-	for _, code := range []string{"untrusted", "bypass-cloud", "git-include-missing", "git-useconfigonly"} {
+	for _, code := range []string{"untrusted", "git-include-missing", "git-useconfigonly"} {
 		if !has(fs, code) {
 			t.Fatalf("missing %s in %+v", code, fs)
 		}

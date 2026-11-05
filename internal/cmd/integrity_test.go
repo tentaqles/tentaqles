@@ -650,7 +650,7 @@ func TestSettingsRender_ResignsForAHuman(t *testing.T) {
 	if out, err := runTq(t, "allow", "acme"); err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
-	mustWrite(t, mp, "schema: tentaqles-client-v2\nclient: acme\ngit: { email: tester@example.com }\nidentities: { claude: {}, codex: {} }\nclaude: { permission_mode: acceptEdits }\n")
+	mustWrite(t, mp, "schema: tentaqles-client-v2\nclient: acme\ngit: { email: tester@example.com }\nidentities: { claude: {}, codex: {} }\nclaude: { env: { FOO: bar } }\n")
 	h, _ := trust.HashFile(mp)
 	if err := trust.Allow("acme", h); err != nil {
 		t.Fatal(err)

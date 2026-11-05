@@ -65,6 +65,23 @@ func TestPlan_YAMLRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLoadPlan_IgnoresRetiredPermissionMode: a plan an older tq wrote, with
+// a company permission_mode, still loads and validates; the key is ignored.
+func TestLoadPlan_IgnoresRetiredPermissionMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plan.yaml")
+	body := "base: /repos\ncompanies:\n  - name: acme\n    git_name: A\n    git_email: a@acme.com\n    permission_mode: yolo\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LoadPlan(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Validate(nil); err != nil || p.Companies[0].Name != "acme" {
+		t.Fatalf("%+v %v", p, err)
+	}
+}
+
 func TestLoadPlan_TrustDefaultsTrueWhenAbsent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.yaml")
@@ -96,7 +113,7 @@ func TestValidate_Errors(t *testing.T) {
 		return &SetupPlan{
 			Base: "/repos",
 			Companies: []Company{
-				{Name: "acme", GitName: "A", GitEmail: "a@acme.com", Identities: []string{"claude", "gh"}, PermissionMode: "default"},
+				{Name: "acme", GitName: "A", GitEmail: "a@acme.com", Identities: []string{"claude", "gh"}},
 			},
 		}
 	}
@@ -114,14 +131,6 @@ func TestValidate_Errors(t *testing.T) {
 		p.Companies[0].Identities = []string{"not-a-real-provider"}
 		if err := p.Validate(cat); err == nil {
 			t.Fatal("expected error for unknown identity")
-		}
-	})
-
-	t.Run("bad permission mode", func(t *testing.T) {
-		p := base()
-		p.Companies[0].PermissionMode = "yolo"
-		if err := p.Validate(cat); err == nil {
-			t.Fatal("expected error for bad permission mode")
 		}
 	})
 
@@ -272,8 +281,8 @@ func TestApply_EndToEnd(t *testing.T) {
 		Trust: true,
 		Hooks: []string{"bash"},
 		Companies: []Company{
-			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude", "gh"}, PermissionMode: "default"},
-			{Name: "globex", GitName: "Jane", GitEmail: "jane@globex.com", Identities: []string{"claude", "gh"}, PermissionMode: "default"},
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude", "gh"}},
+			{Name: "globex", GitName: "Jane", GitEmail: "jane@globex.com", Identities: []string{"claude", "gh"}},
 		},
 	}
 	hp := tempProfiles(t, "bash")
@@ -324,8 +333,8 @@ func TestApply_ContinuesOnCompanyError(t *testing.T) {
 		Base:  base,
 		Trust: true,
 		Companies: []Company{
-			{Name: "badco", GitName: "Bad", GitEmail: "not-a-valid-email\x01", PermissionMode: "default"},
-			{Name: "goodco", GitName: "Good", GitEmail: "good@goodco.com", PermissionMode: "default"},
+			{Name: "badco", GitName: "Bad", GitEmail: "not-a-valid-email\x01"},
+			{Name: "goodco", GitName: "Good", GitEmail: "good@goodco.com"},
 		},
 	}
 
@@ -353,7 +362,7 @@ func TestApply_TrustFalse(t *testing.T) {
 		Base:  base,
 		Trust: false,
 		Companies: []Company{
-			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}, PermissionMode: "default"},
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}},
 		},
 	}
 	report, err := Apply(p, cat, ApplyOptions{RunGit: fakeGit, Profiles: hooks.Profiles{}})
@@ -416,7 +425,7 @@ func TestApply_SkipDetectsHalfCreated(t *testing.T) {
 		Base:  base,
 		Trust: false,
 		Companies: []Company{
-			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}, PermissionMode: "default"},
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}},
 		},
 	}
 	// First run scaffolds but never trusts: a half-created workspace.
