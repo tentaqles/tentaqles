@@ -438,6 +438,178 @@ func TestSettingsEnforcingKeysOnly(t *testing.T) {
 	}
 }
 
+// The switch that turns every hook off, the credential and telemetry
+// helpers, the AWS hooks, the login method, and any key ending in Helper or
+// Command are covered; permissions (which tq never touches) is not.
+func TestSettingsCoversHelpersAndTheHookSwitch(t *testing.T) {
+	f := newFixture(t, "acme")
+	base := `"hooks":{"PreToolUse":[]}`
+	write(t, f.settings, "{"+base+"}")
+	f.allow()
+	write(t, f.settings, "{"+base+`,"permissions":{"allow":["Bash(ls)"],"defaultMode":"acceptEdits"}}`)
+	if rep := f.verify(); !rep.Trusted(f.hash) {
+		t.Fatalf("permissions is not covered: %v", rep.Changes)
+	}
+	for _, kv := range []string{
+		`"disableAllHooks":true`,
+		`"apiKeyHelper":"/tmp/key.sh"`,
+		`"otelHeadersHelper":"/tmp/h.sh"`,
+		`"awsAuthRefresh":"aws sso login"`,
+		`"awsCredentialExport":"/tmp/creds.sh"`,
+		`"forceLoginMethod":"console"`,
+		`"someFutureHelper":"/tmp/x"`,
+		`"fileSuggestionCommand":"/tmp/y"`,
+	} {
+		write(t, f.settings, "{"+base+","+kv+"}")
+		if c := changeFor(t, f.verify(), f.settings+blockSuffix); c.Kind != "changed" {
+			t.Fatalf("%s must be covered: %+v", kv, c)
+		}
+	}
+}
+
+// The whole loaded plugin folder is covered (bin/, the Python package, the
+// plugin's settings.json) except skills/, agents/, templates/, tests/ and
+// __pycache__ at any depth.
+func TestPluginRootIsCoveredButPromptsAndCaches(t *testing.T) {
+	f := newFixture(t, "acme")
+	write(t, filepath.Join(f.plugin, "tentaqles", "memory", "store.py"), "x = 1\n")
+	write(t, filepath.Join(f.plugin, "tentaqles", "memory", "__pycache__", "store.cpython-312.pyc"), "pyc")
+	f.allow()
+	planted := filepath.Join(f.plugin, "bin", "tq")
+	write(t, planted, "#!/bin/sh\nexit 0\n")
+	if c := changeFor(t, f.verify(), planted); c.Kind != "added" {
+		t.Fatalf("a planted bin/tq is reported: %+v", c)
+	}
+	os.Remove(planted)
+	for _, p := range []string{
+		filepath.Join(f.plugin, "tentaqles", "memory", "store.py"),
+		filepath.Join(f.plugin, "settings.json"),
+		filepath.Join(f.plugin, "README.md"),
+	} {
+		write(t, p, "changed\n")
+		if rep := f.verify(); len(rep.Changes) != 1 || rep.Changes[0].Path != Key(p) {
+			t.Fatalf("%s is covered: %v", p, rep.Changes)
+		}
+		f.allow()
+	}
+	for _, p := range []string{
+		filepath.Join(f.plugin, "skills", "x", "SKILL.md"),
+		filepath.Join(f.plugin, "agents", "critic.md"),
+		filepath.Join(f.plugin, "templates", "adr.md"),
+		filepath.Join(f.plugin, "tests", "test_x.py"),
+		filepath.Join(f.plugin, "tentaqles", "memory", "__pycache__", "store.cpython-312.pyc"),
+		filepath.Join(f.plugin, "__pycache__", "x.pyc"),
+	} {
+		write(t, p, "changed\n")
+		if rep := f.verify(); !rep.Trusted(f.hash) {
+			t.Fatalf("%s is not covered: %v", p, rep.Changes)
+		}
+	}
+}
+
+// installed_plugins.json decides which folder is covered (the user-scope
+// tentaqles entry whose installPath is a plugin folder, before the highest
+// version), and its tentaqles installPath and version are covered: an
+// entry pointed at another folder is a change, a timestamp is not.
+func TestInstalledPluginsDecidesAndIsCovered(t *testing.T) {
+	f := newFixture(t, "acme")
+	higher := filepath.Join(f.claude, "plugins", "cache", "tentaqles", "tentaqles", "0.99.0")
+	write(t, filepath.Join(higher, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.99.0"}`)
+	installed := filepath.Join(f.claude, "plugins", "installed_plugins.json")
+	doc := func(path, stamp string) string {
+		b, _ := json.Marshal(map[string]any{"version": 2, "plugins": map[string]any{
+			"tentaqles@tentaqles": []any{
+				map[string]any{"scope": "project", "installPath": higher, "version": "0.99.0", "lastUpdated": stamp},
+				map[string]any{"scope": "user", "installPath": path, "version": "0.16.0", "installedAt": stamp, "lastUpdated": stamp},
+			},
+			"other@market": []any{map[string]any{"scope": "user", "installPath": "/x", "version": "1", "lastUpdated": stamp}},
+		}})
+		return string(b)
+	}
+	write(t, installed, doc(f.plugin, "2026-11-05T00:00:00Z"))
+	if got := PluginRoot(f.claude); got != filepath.Clean(f.plugin) {
+		t.Fatalf("the user-scope installPath wins over the highest version: %s", got)
+	}
+	f.allow()
+	if readRec(t, "acme").Plugin != Key(f.plugin) {
+		t.Fatal("the record names the installed folder")
+	}
+	write(t, installed, doc(f.plugin, "2026-12-01T00:00:00Z"))
+	if rep := f.verify(); !rep.Trusted(f.hash) {
+		t.Fatalf("timestamps and other plugins are not covered: %v", rep.Changes)
+	}
+	write(t, installed, doc(higher, "2026-12-01T00:00:00Z"))
+	rep := f.verify()
+	if c := changeFor(t, rep, installed+blockSuffix); c.Kind != "changed" {
+		t.Fatalf("%+v", c)
+	}
+	if rep.PluginFrom != "0.16.0" || rep.PluginTo != "0.99.0" {
+		t.Fatalf("the installPath moved the covered folder: %+v", rep)
+	}
+	write(t, installed, "not json")
+	if got := PluginRoot(f.claude); got != filepath.Clean(higher) {
+		t.Fatalf("an unreadable file falls back to the highest version: %s", got)
+	}
+}
+
+// PluginOnly: every change is the version bump (the two plugin folders and
+// installed_plugins.json#tq); anything else beside it is not.
+func TestPluginOnlyChange(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	next := filepath.Join(f.claude, "plugins", "cache", "tentaqles", "tentaqles", "0.17.0")
+	write(t, filepath.Join(next, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.17.0"}`)
+	write(t, filepath.Join(next, "hooks", "hooks.json"), `{"hooks":{}}`)
+	os.RemoveAll(f.plugin) // Claude Code may drop the old version folder
+	if rep := f.verify(); !rep.PluginOnly || rep.PluginFrom != "0.16.0" || rep.PluginTo != "0.17.0" {
+		t.Fatalf("%+v", rep)
+	}
+	write(t, f.settings, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[]}]}}`)
+	if rep := f.verify(); rep.PluginOnly {
+		t.Fatalf("a settings change beside the bump: %+v", rep)
+	}
+	write(t, f.settings, `{"theme":"dark","hooks":{"PreToolUse":[]}}`)
+	f.allow()
+	if rep := f.verify(); rep.PluginOnly || rep.PluginFrom != "" {
+		t.Fatalf("no bump: %+v", rep)
+	}
+}
+
+// The critic's sequence: after a signature, delete the record, the legacy
+// snapshot and the key (file or keychain), plant a marker: the machine
+// marker trust/.signed remains, so the marker does not count.
+func TestDeletingKeySnapshotAndRecordDoesNotRestoreLegacy(t *testing.T) {
+	for _, mode := range []string{"key-file", "keychain"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t, "acme")
+			if mode == "key-file" {
+				keyring.MockInitWithError(errors.New("no keychain"))
+				t.Cleanup(keyring.MockInit)
+			}
+			f.allow()
+			if !exists(SignedMarkerPath()) {
+				t.Fatal("the first signature writes trust/.signed")
+			}
+			os.Remove(SignedRecordPath("acme"))
+			os.Remove(LegacyListPath())
+			if mode == "key-file" {
+				os.Remove(KeyFile())
+			} else {
+				keyring.MockInit()
+			}
+			write(t, LegacyRecordPath(f.hash), "")
+			write(t, RecordPath("acme", f.hash), "")
+			invalidate()
+			if v := Check("acme", f.hash); v.OK {
+				t.Fatalf("a planted marker must not count after a signature: %+v", v)
+			}
+			if len(LegacyMarkers("acme", f.hash)) != 0 {
+				t.Fatal("no marker counts")
+			}
+		})
+	}
+}
+
 // The tq-owned block of the Codex config.toml is covered, the rest of the
 // file is the user's.
 func TestCodexBlockIsCoveredNotTheRest(t *testing.T) {
@@ -497,6 +669,39 @@ func TestKeysAreCanonical(t *testing.T) {
 		if Key(`C:\x\Y`) != Key("c:/x/y") || Key(`C:\x\settings.json#tq`) != "c:/x/settings.json#tq" {
 			t.Fatalf("%s %s", Key(`C:\x\Y`), Key(`C:\x\settings.json#tq`))
 		}
+	}
+}
+
+// A root reached through a link (an identity dir moved elsewhere and linked
+// back, doctor's identity-dir-linked) gets the key Key gives it: a symlink
+// is resolved to where the folder lives; a Windows junction, which Go
+// treats as a folder (Lstat and EvalSymlinks do not follow mount points),
+// keeps its own path. Either way the derived key and Key agree, and a
+// change behind the link is seen.
+func TestLinkedRootIsKeyedAsKeySays(t *testing.T) {
+	f := newFixture(t, "acme")
+	target := filepath.Join(t.TempDir(), "claude-elsewhere")
+	if err := os.Rename(f.claude, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeDirLink(target, f.claude); err != nil {
+		t.Skipf("cannot create a directory link here: %v", err)
+	}
+	invalidate()
+	want := Key(f.settings + blockSuffix)
+	found := false
+	for _, k := range Covered("acme") {
+		if k == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Covered must use Key's key %s: %v", want, Covered("acme"))
+	}
+	f.allow()
+	write(t, filepath.Join(target, "settings.json"), `{"hooks":{}}`)
+	if c := changeFor(t, f.verify(), f.settings+blockSuffix); c.Kind != "changed" {
+		t.Fatalf("%+v", c)
 	}
 }
 

@@ -11,15 +11,21 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - **Trust is a signed record over the files that make the hook run.** `tq allow` writes
   `~/.tentaqles/trust/<ws>.json`: the manifest hash and the sha256 of every covered file
   (the protected manifest and the root marker, `settings.json#tq` (the `hooks`,
-  `enabledPlugins`, `enabledMcpjsonServers`, `disableAllMcpServers`, `env` and `statusLine`
-  keys of the identity's Claude `settings.json`, so a theme or model change is no change),
-  every file under `hooks/`, `scripts/` and `.claude-plugin/` of the tentaqles plugin
-  installed in its Claude config dir, the Codex `hooks.json` and the tq-owned block of its
-  `config.toml`, every file under `~/.tentaqles/shims/`) under an HMAC-SHA256 signature
-  with the id of the key. The tq binary is not covered. A covered file that is absent is
-  recorded as absent and is a change when it appears. Keys are canonical (cleaned, links
-  resolved, forward slashes, lower-cased on Windows), so another spelling of `TQ_HOME`
-  verifies. The key is 32 random bytes in the OS keychain (service `tentaqles`, account
+  `disableAllHooks`, `enabledPlugins`, `enabledMcpjsonServers`, `disableAllMcpServers`,
+  `env`, `statusLine`, `apiKeyHelper`, `otelHeadersHelper`, `awsAuthRefresh`,
+  `awsCredentialExport` and `forceLoginMethod` keys of the identity's Claude
+  `settings.json`, and any key ending in `Helper` or `Command`; not `permissions`, and a
+  theme or model change is no change), `installed_plugins.json#tq` (the tentaqles
+  `installPath` and version), every file of the tentaqles plugin folder Claude Code loads
+  (from `installPath`, else the highest cached version) except `skills/`, `agents/`,
+  `templates/`, `tests/` and `__pycache__`, so its `bin/` is covered, the Codex
+  `hooks.json` and the tq-owned block of its `config.toml`, every file under
+  `~/.tentaqles/shims/`) under an HMAC-SHA256 signature with the id of the key. The tq
+  binary on PATH is not covered. A covered file that is absent is recorded as absent and is
+  a change when it appears. Keys are canonical (cleaned, links resolved, forward slashes,
+  lower-cased on Windows), so another spelling of `TQ_HOME` verifies; only the roots are
+  resolved, so a prompt in a signed workspace costs about 25 ms over a neutral folder on
+  Windows. The key is 32 random bytes in the OS keychain (service `tentaqles`, account
   `integrity-key`, made the first time a human signs, never by a check); when the keychain is
   unavailable the key is the file `~/.tentaqles/integrity.key` (0600) and `tq doctor` warns
   `integrity-key-file`. A record signed with another key reports "integrity key changed".
@@ -38,14 +44,21 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   reaches the shell line); `tq run <ws>` and `tq run .` refuse and launch nothing; the
   session-start preamble and `tq doctor` report `integrity` and `untrusted` with every
   change.
-- **`tq hooks verify [<ws>] [--accept]`.** Prints the record's state, the key id, "plugin
-  tentaqles 0.16.0 -> 0.17.0 (N hook files changed)" when the plugin moved to a new version
-  folder, and each change with the old and new hash prefixes; exit 1 on a mismatch.
+- **`tq hooks verify [<ws>|--all] [--accept]`.** Prints the record's state, the key id,
+  "plugin tentaqles 0.16.0 -> 0.17.0 (N hook files changed)" when the plugin moved to a new
+  version folder, and each change with the old and new hash prefixes; exit 1 on a mismatch.
+  `--accept --all` lists the workspaces whose only change is a new plugin version, asks once
+  and signs them again; any other change is left for `--accept <ws>`. With the `integrity`
+  finding the hook's deny says "integrity mismatch: run tq hooks verify <ws>", not
+  `tq allow`.
 - **`tq deny` leaves a signed tombstone** (`revoked: true`); tq never deletes a record.
 - **Older trust markers** (`trust/<hash>`, `trust/<ws>/<hash>`) count until the first
   signature on the machine, then only while the signed snapshot `trust/legacy.json` taken
   then lists them, and never for a workspace that has a signed record: a marker planted later,
-  or a deleted record with a marker in its place, is untrusted. While a marker counts,
+  or a deleted record with a marker in its place, is untrusted. The first signature also
+  writes `trust/.signed`, never deleted: with it, a missing key or snapshot makes no marker
+  count, so deleting the record, the snapshot and the key does not bring a marker's trust
+  back. While a marker counts,
   `tq doctor` warns `integrity-record-legacy` and every prompt prints "tq: legacy trust
   record: run tq allow <ws> to sign hooks and manifest". `tq migrate manifests --apply`
   replaces a counting marker by a signed record (`rekey-trust`, journaled with the snapshot,

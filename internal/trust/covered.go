@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,6 +13,24 @@ import (
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 )
+
+// pluginSkipTop are the folders of the plugin root that run nothing on
+// their own: skills and agents are prompts, templates are documents, tests
+// are the plugin's own suite. __pycache__ is skipped at any depth (Python
+// rewrites it). Everything else of the loaded plugin is covered: hooks/,
+// scripts/, bin/ (the tq the hook bridge tries first), the tentaqles Python
+// package, .claude-plugin/, settings.json.
+var pluginSkipTop = map[string]bool{"skills": true, "agents": true, "templates": true, "tests": true}
+
+// coverage is what the record of one workspace covers, computed once per
+// memo scope.
+type coverage struct {
+	keys []string
+	// plugin is the key of the plugin root covered, "" when none.
+	plugin string
+	// installed is the key of installed_plugins.json#tq.
+	installed string
+}
 
 // Covered lists the keys (Key) of what the integrity record of workspace
 // name covers (PRD v2 §8.3: the hook scripts, the shims and the manifest;
@@ -22,50 +41,120 @@ import (
 //     the first registered base that has that folder (in the old layout
 //     this is the manifest itself);
 //   - "settings.json#tq": the keys of the identity's Claude settings.json
-//     that decide what runs (enforcingSettingsKeys), not the rest of the
+//     that decide what runs (enforcingSettingsKey), not the rest of the
 //     file, which Claude Code rewrites for a theme or a model;
-//   - every file under hooks/, scripts/ and .claude-plugin/ of the
-//     tentaqles plugin installed in the identity's Claude config dir, the
-//     highest installed version (plugin/CLAUDE.md);
+//   - "plugins/installed_plugins.json#tq": where Claude Code loads the
+//     tentaqles plugin from and its version;
+//   - every file of the loaded tentaqles plugin's folder (PluginRoot)
+//     outside skills/, agents/, templates/, tests/ and __pycache__;
 //   - the identity's Codex hooks.json and "config.toml#tq", the block of
 //     config.toml tq owns;
 //   - every file under $TQ_HOME/shims/ when it exists.
 //
-// The tq binary is not covered: Phase 3's shim folder decides which tq the
-// shell runs, and the binary is the OS's to protect.
+// The tq binary on PATH is not covered: Phase 3's shim folder decides which
+// tq the shell runs, and the binary is the OS's to protect.
 //
-// A path that does not exist is still covered: the record stores it as
-// absent, and it appearing later is a change.
-func Covered(name string) []string {
-	var out []string
-	out = append(out, Key(paths.ManifestPath(name)))
-	if root := workspaceRoot(name); root != "" {
-		out = append(out, Key(filepath.Join(root, manifest.FileName)))
-	}
-	claude := paths.IdentityDir(name, "claude")
-	out = append(out, Key(filepath.Join(claude, "settings.json")+blockSuffix))
-	if pr := PluginRoot(claude); pr != "" {
-		for _, sub := range []string{"hooks", "scripts", ".claude-plugin"} {
-			for _, f := range filesUnder(filepath.Join(pr, sub)) {
-				out = append(out, Key(f))
-			}
-		}
-	}
-	codex := paths.IdentityDir(name, "codex")
-	out = append(out, Key(filepath.Join(codex, "hooks.json")), Key(filepath.Join(codex, "config.toml")+blockSuffix))
-	for _, f := range filesUnder(filepath.Join(paths.Home(), "shims")) {
-		out = append(out, Key(f))
-	}
-	sort.Strings(out)
-	return dedupe(out)
-}
+// Each root (the manifest's folder, the workspace root, the Claude and
+// Codex identity dirs, the plugin folder, the shims folder) is resolved
+// once (Key) and the files under it are keyed by joining their relative
+// path, so the links of a root are followed and a link inside it is a
+// change. A path that does not exist is still covered: the record stores it
+// as absent, and it appearing later is a change.
+func Covered(name string) []string { return coverageOf(name).keys }
 
 // pluginKey is the key of name's covered plugin folder, "" when none.
-func pluginKey(name string) string {
-	if pr := PluginRoot(paths.IdentityDir(name, "claude")); pr != "" {
-		return Key(pr)
+func pluginKey(name string) string { return coverageOf(name).plugin }
+
+func coverageOf(name string) coverage {
+	if c, ok := memoCoverage(name); ok {
+		return c
 	}
-	return ""
+	c := computeCoverage(name)
+	storeCoverage(name, c)
+	return c
+}
+
+func computeCoverage(name string) coverage {
+	var c coverage
+	add := func(root, rel string) string {
+		k := joinKey(root, rel)
+		c.keys = append(c.keys, k)
+		return k
+	}
+	// Two full resolutions (the state folder and the workspace root); every
+	// other root is derived from its parent (keyUnder).
+	home := paths.Home()
+	homeKey := Key(home)
+	idDir := filepath.Join(paths.IdentitiesRoot(), name)
+	id := keyUnder(homeKey, home, idDir)
+	add(id, "manifest.yaml")
+	if root := workspaceRoot(name); root != "" {
+		add(Key(root), manifest.FileName)
+	}
+	claudeDir := paths.IdentityDir(name, "claude")
+	claude := keyUnder(id, idDir, claudeDir)
+	add(claude, "settings.json"+blockSuffix)
+	c.installed = add(claude, "plugins/installed_plugins.json"+blockSuffix)
+	if pr := PluginRoot(claudeDir); pr != "" {
+		c.plugin = keyUnder(claude, claudeDir, pr)
+		for _, rel := range pluginFiles(pr) {
+			add(c.plugin, rel)
+		}
+	}
+	codexDir := paths.IdentityDir(name, "codex")
+	codex := keyUnder(id, idDir, codexDir)
+	add(codex, "hooks.json")
+	add(codex, "config.toml"+blockSuffix)
+	shimsDir := filepath.Join(home, "shims")
+	if rels := relFilesUnder(shimsDir, nil); len(rels) > 0 {
+		shims := keyUnder(homeKey, home, shimsDir)
+		for _, rel := range rels {
+			add(shims, rel)
+		}
+	}
+	sort.Strings(c.keys)
+	c.keys = dedupe(c.keys)
+	return c
+}
+
+// keyUnder is the key of dir, a folder under base whose key is baseKey: the
+// relative path joined to baseKey, after one Lstat per folder between them
+// shows none of them is a link (a symlink, or on Windows a junction, which
+// Lstat reports as irregular); otherwise, or when dir is not under base,
+// Key(dir), which resolves the links. A folder that does not exist ends the
+// check: nothing below it can be a link. The result equals Key(dir).
+func keyUnder(baseKey, base, dir string) string {
+	rel, err := filepath.Rel(base, dir)
+	if err != nil || paths.IsOutside(rel) {
+		return Key(dir)
+	}
+	if rel == "." {
+		return baseKey
+	}
+	cur := base
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if err != nil {
+			if absent(err) {
+				break
+			}
+			return Key(dir)
+		}
+		if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 || !fi.IsDir() {
+			return Key(dir)
+		}
+	}
+	return joinKey(baseKey, rel)
+}
+
+// joinKey is the key of rel (forward slashes) under the root key root.
+func joinKey(root, rel string) string {
+	k := root + "/" + filepath.ToSlash(rel)
+	if runtime.GOOS == "windows" {
+		k = strings.ToLower(k)
+	}
+	return k
 }
 
 // workspaceRoot is <base>/<name> for the first registered base that holds
@@ -84,12 +173,23 @@ func workspaceRoot(name string) string {
 	return ""
 }
 
-// PluginRoot is the folder of the tentaqles plugin installed in claudeDir
-// (a Claude config dir): <claudeDir>/plugins/cache/<marketplace>/tentaqles/
-// <version>/ with a .claude-plugin/plugin.json, the highest version when
-// several are installed (Claude Code keeps old versions in the cache, and
-// a text sort puts 0.10.0 before 0.9.0). "" when none is installed.
+// isPluginDir reports a folder with .claude-plugin/plugin.json.
+func isPluginDir(dir string) bool {
+	fi, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json"))
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// PluginRoot is the folder of the tentaqles plugin Claude Code loads for the
+// Claude config dir claudeDir: the installPath its
+// plugins/installed_plugins.json names for tentaqles (the user-scope entry
+// first), when that folder holds .claude-plugin/plugin.json; otherwise the
+// highest version under <claudeDir>/plugins/cache/<marketplace>/tentaqles/
+// (Claude Code keeps old versions in the cache, and a text sort puts 0.10.0
+// before 0.9.0). "" when none is installed.
 func PluginRoot(claudeDir string) string {
+	if p := installedRoot(claudeDir); p != "" {
+		return p
+	}
 	matches, _ := filepath.Glob(filepath.Join(claudeDir, "plugins", "cache", "*", "tentaqles", "*", ".claude-plugin", "plugin.json"))
 	best := ""
 	var bestV []int
@@ -101,6 +201,64 @@ func PluginRoot(claudeDir string) string {
 		}
 	}
 	return best
+}
+
+// installedRoot is the installPath of tentaqles in claudeDir's
+// installed_plugins.json, "" when there is none that is a plugin folder.
+func installedRoot(claudeDir string) string {
+	entries, ok, err := readInstalled(filepath.Join(claudeDir, "plugins", "installed_plugins.json"))
+	if err != nil || !ok {
+		return ""
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Scope == "user" && entries[j].Scope != "user" })
+	for _, e := range entries {
+		if e.InstallPath != "" && filepath.IsAbs(e.InstallPath) && isPluginDir(e.InstallPath) {
+			return filepath.Clean(e.InstallPath)
+		}
+	}
+	return ""
+}
+
+// pluginFiles lists the covered files of the plugin folder root, relative,
+// forward slashes, sorted.
+func pluginFiles(root string) []string {
+	return relFilesUnder(root, func(rel string, d fs.DirEntry) bool {
+		if !d.IsDir() {
+			return false
+		}
+		if d.Name() == "__pycache__" {
+			return true
+		}
+		return !strings.Contains(rel, "/") && pluginSkipTop[d.Name()]
+	})
+}
+
+// relFilesUnder lists every entry under dir that is not a directory
+// (regular files, and anything else as a path whose hash is irregular),
+// relative to dir with forward slashes, sorted; nothing when dir does not
+// exist. skip, when set, prunes a directory. Symlinked directories are not
+// followed.
+func relFilesUnder(dir string, skip func(rel string, d fs.DirEntry) bool) []string {
+	var out []string
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == dir {
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if skip != nil && skip(rel, d) {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() {
+			out = append(out, rel)
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
 }
 
 // parseVersion reads the numeric parts of a version folder name
@@ -137,24 +295,6 @@ func lessVersion(a, b []int) bool {
 		}
 	}
 	return false
-}
-
-// filesUnder lists every entry under dir recursively (regular files, and
-// anything else as a path whose hash is irregular), sorted; nothing when
-// dir does not exist. Symlinked directories are not followed.
-func filesUnder(dir string) []string {
-	var out []string
-	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || p == dir {
-			return nil
-		}
-		if !d.IsDir() {
-			out = append(out, p)
-		}
-		return nil
-	})
-	sort.Strings(out)
-	return out
 }
 
 func dedupe(xs []string) []string {

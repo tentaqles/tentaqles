@@ -36,23 +36,39 @@ nothing and any change to a value fails).
 
 **What it covers** (`trust.Covered`): the protected manifest; the root marker
 (in the old layout, the manifest itself); `settings.json#tq`, the canonical JSON
-of the keys of the identity's Claude `settings.json` that decide what runs
-(`hooks`, `enabledPlugins`, `enabledMcpjsonServers`, `disableAllMcpServers`,
-`env`, `statusLine`), so Claude Code's own rewrites of the theme or the model do
-not trip it; every file under `hooks/`, `scripts/` and `.claude-plugin/` of the
-tentaqles plugin installed in the identity's Claude config dir (the highest
-installed version, the rule of `plugin/CLAUDE.md`); the Codex `hooks.json` and
-`config.toml#tq`, the block of `config.toml` tq owns (`codexcfg.ManagedBlock`);
-and every file under `$TQ_HOME/shims/` once it exists (Phase 3 creates it). The
-tq binary is not covered: §8.3 names the hook scripts, the shims and the
-manifest; which tq a shell runs is Phase 3's shim folder, and the binary is the
-OS's to protect. A covered path that does not exist is recorded as absent; it
-appearing later is a change, and so is a file swapped for a link or a directory.
+of the keys of the identity's Claude `settings.json` that decide what runs or
+with which credentials (`hooks`, `disableAllHooks`, `enabledPlugins`,
+`enabledMcpjsonServers`, `disableAllMcpServers`, `env`, `statusLine`,
+`apiKeyHelper`, `otelHeadersHelper`, `awsAuthRefresh`, `awsCredentialExport`,
+`forceLoginMethod`, and any other key whose name ends in `Helper` or
+`Command`), so Claude Code's own rewrites of the theme or the model do not trip
+it; `permissions` is not covered, because tq never touches it;
+`plugins/installed_plugins.json#tq`, the `installPath` and `version` of each
+tentaqles entry (not the timestamps); every file of the tentaqles plugin folder
+Claude Code loads (`trust.PluginRoot`: the user-scope `installPath` of
+`installed_plugins.json` when it is a plugin folder, otherwise the highest
+version in the cache, the rule of `plugin/CLAUDE.md`), `bin/`, `hooks/`,
+`scripts/`, the `tentaqles` Python package and `.claude-plugin/` included, except
+`skills/`, `agents/`, `templates/`, `tests/` and any `__pycache__`, which run
+nothing on their own; the Codex `hooks.json` and `config.toml#tq`, the block of
+`config.toml` tq owns (`codexcfg.ManagedBlock`); and every file under
+`$TQ_HOME/shims/` once it exists (Phase 3 creates it). The tq binary on PATH is
+not covered: §8.3 names the hook scripts, the shims and the manifest; which tq a
+shell runs is Phase 3's shim folder, and the binary is the OS's to protect. The
+plugin's own `bin/tq`, which the hook bridge tries first, is covered. A covered
+path that does not exist is recorded as absent; it appearing later is a change,
+and so is a file swapped for a link or a directory.
 
-**Keys are canonical** (`trust.Key`): absolute and cleaned, the symlinks of the
+**Keys are canonical** (`trust.Key`): absolute and cleaned, the links of the
 longest existing prefix resolved, forward slashes, lower-cased on Windows. A
 record signed from a shell whose `TQ_HOME` is typed in another case, or with
-`C:/` for `C:\`, verifies from any other spelling with no phantom change.
+`C:/` for `C:\`, verifies from any other spelling with no phantom change. Only
+the roots are resolved (the state folder and the workspace root in full; the
+identity, Claude, Codex, plugin and shims folders derived from their parent
+with one `Lstat` per folder between, resolved in full only when one is a link);
+a file's key is its root's key joined with its relative path. A Windows junction
+is a folder to Go (since 1.23 `Lstat` and `EvalSymlinks` do not follow mount
+points), so it keeps its own path; what lies behind it is still hashed.
 
 **The key** is 32 random bytes in the OS keychain through go-keyring, service
 `tentaqles` (the service `internal/secret` uses), account `integrity-key`,
@@ -83,8 +99,11 @@ signature invalid (run: …)", "untrusted: integrity key changed (…)");
 changed/added/removed, old and new hash) and, when the plugin moved to another
 version folder, the two versions and how many hook files differ between them.
 Within a command (`trust.MemoScope`, opened by the hook, `tq env`, `tq run`,
-`tq doctor` and the status line) each workspace is verified once; every
-signature clears the memo; nothing is cached on disk.
+`tq doctor`, `tq hooks verify` and the status line) each workspace is verified
+once; every signature clears the memo; nothing is cached on disk. The covered
+files are hashed eight at a time. Measured on Windows over 20 interleaved runs
+with the real plugin (106 covered keys), `tq env` at a steady prompt in a signed
+workspace costs about 25 ms over the same command in a neutral folder.
 
 **Every signature is human-only, at the lowest layer.** `trust.SignRecord`,
 `trust.Deny` and the legacy snapshot pass `trust.HumanCheck`, which is
@@ -103,17 +122,25 @@ the files as rendered.
 
 **Legacy markers.** The markers of older versions (`trust/<hash>`,
 `trust/<name>/<hash>`) are empty files anyone can create, so they cannot count
-forever. Before anything is signed on the machine (no key and no list) every
-marker counts, as for the tq that wrote it (§13). The first signature takes a
-signed snapshot of the markers then on disk, `trust/legacy.json`; from then on
-a marker counts only while the snapshot lists it and verifies, and never for a
-workspace that has a signed record file (valid, revoked or broken). Every
-signature or revocation of a workspace removes its markers and drops them from
-the snapshot; `tq migrate manifests --apply` replaces each marker that counts by
-a signed record (`rekey-trust`, the snapshot rewrite journaled with it, so
-`tq uninstall --restore` makes the markers count again). A marker planted after
-the snapshot, or a deleted record with a marker planted in its place, is
-untrusted; a missing or forged snapshot makes no marker count (fail closed).
+forever. Before anything is signed on the machine (no key, no snapshot and no
+machine marker) every marker counts, as for the tq that wrote it (§13). The
+first signature writes the machine marker `trust/.signed`, a plain empty file
+whose presence alone says that a human has signed on this machine and which tq
+never deletes, and takes a signed snapshot of the markers then on disk,
+`trust/legacy.json`; from then on a marker counts only while the snapshot lists
+it and verifies under the key, and never for a workspace that has a signed
+record file (valid, revoked or broken). Every signature or revocation of a
+workspace removes its markers and drops them from the snapshot; `tq migrate
+manifests --apply` replaces each marker that counts by a signed record
+(`rekey-trust`, the snapshot rewrite journaled with it, so `tq uninstall
+--restore` makes the markers count again). A marker planted after the snapshot,
+or a deleted record with a marker planted in its place, is untrusted; with the
+machine marker present, a missing key or a missing or forged snapshot makes no
+marker count (fail closed), so deleting the record, the snapshot and the key and
+planting a marker does not bring trust back. Deleting the machine marker as
+well, that is every trust file under `~/.tentaqles`, is outside the hook's
+reach: P1.3's protected-path rules deny it from a session, and a same-user
+process outside the harness is the accepted risk AR1.
 While a workspace is on a counting marker, `tq doctor` warns
 `integrity-record-legacy` and every prompt prints "tq: legacy trust record: run
 tq allow <ws> to sign hooks and manifest".
@@ -123,7 +150,10 @@ mismatch as untrusted with the reason and a `Mismatch` flag. The hook treats a
 mismatch at least as strictly as a workspace never allowed: doctor reports
 `untrusted` with `integrity`, so the guard refuses every mutating git, and a
 remote mutation (`git push`, `gh`, a cloud CLI) is judged as from no workspace,
-refused with the reason naming the first changed file. `tq env`, at every
+refused with the reason naming the first changed file; with the `integrity`
+finding the guard's reasons (`internal/guard`, the rules `untrusted` and
+`neutral-remote`, their text only) say "integrity mismatch: run tq hooks verify
+<ws>" instead of `tq allow`. `tq env`, at every
 prompt, withholds the identity env and prints one line, fixed words plus the
 workspace name when it matches `workspace.NameRe` (never a path or anything a
 folder name or a manifest holds; `tq hooks verify` prints the paths): "tq:
@@ -133,7 +163,12 @@ run <ws>` and `tq run .` refuse with the reason and launch nothing. The
 session-start preamble and `tq doctor` report `integrity` (error) listing every
 change, with the plugin upgrade summary first. `tq hooks verify [<ws>]` prints
 the report ("plugin tentaqles 0.16.0 -> 0.17.0 (N hook files changed)" ahead of
-the per-file lines when the plugin moved) and exits 1 on a mismatch; a
+the per-file lines when the plugin moved) and exits 1 on a mismatch; `tq hooks
+verify --all` does so for every workspace, and `tq hooks verify --accept --all`
+lists the workspaces whose only change is a new plugin version
+(`Report.PluginOnly`: every change in the two plugin folders or in
+`installed_plugins.json#tq`, the manifest unchanged), asks once, signs them
+again, and leaves every other mismatch for `tq hooks verify --accept <ws>`. A
 re-sign of `tq migrate manifests` happens only for a record that verifies in
 full, so a move never accepts a change.
 
@@ -149,8 +184,9 @@ plugin's own `bin/tq`, then PATH, then the well-known install dirs.
 - A record cannot be forged with a file tool, and a signed workspace cannot be
   downgraded to a marker; a same-user program that holds the key can sign (AR1).
 - Updating the plugin (a new version folder in the cache) changes covered files:
-  the human runs `tq hooks verify --accept <ws>` once per workspace after the
-  summary line. Upgrading tq itself does not. `docs/MIGRATE.md` says so.
+  the human runs `tq hooks verify --accept --all` once, after reading the list
+  of workspaces whose only change is the version, or `tq hooks verify --accept
+  <ws>` per workspace. Upgrading tq itself does not. `docs/MIGRATE.md` says so.
 - `tq run .` in an untrusted folder no longer launches anything; a neutral
   folder (no workspace) still launches the agent without an identity.
 - Nothing changes for an existing identity on upgrade (§13): its marker keeps
@@ -178,7 +214,12 @@ plugin's own `bin/tq`, then PATH, then the well-known install dirs.
   `TestRun_IntegrityListsTheChangedFiles`, `TestRun_IntegrityKeyFileWarns`,
   `TestRun_IntegrityLegacyRecordWarns`, `TestRunForCwd_UntrustedIsStructural`,
   `TestManifests_MovesJournalsAndKeepsTrust`, `TestManifests_RekeysLegacyTrustRecords`,
-  `TestManifests_DoesNotResignAFailingRecord`, and in the plugin
+  `TestManifests_DoesNotResignAFailingRecord`, `TestSettingsCoversHelpersAndTheHookSwitch`,
+  `TestPluginRootIsCoveredButPromptsAndCaches`, `TestInstalledPluginsDecidesAndIsCovered`,
+  `TestPluginOnlyChange`, `TestDeletingKeySnapshotAndRecordDoesNotRestoreLegacy`,
+  `TestLinkedRootIsKeyedAsKeySays`, `TestIntegrityFindingNamesHooksVerify`,
+  `TestHooksVerify_ReportsTheHookSwitchAndAPlantedPluginBinary`,
+  `TestHooksVerify_AcceptAllSignsPluginBumpsOnly`, and in the plugin
   `test_tq_bin_is_not_honoured`.
 
 ## Alternatives considered
@@ -188,7 +229,11 @@ plugin's own `bin/tq`, then PATH, then the well-known install dirs.
 | Sign with an asymmetric key (Ed25519) | The verifier and the signer are the same user on the same machine; a public key buys nothing here and the private key needs the same keychain. HMAC-SHA256 is in the standard library and the record stays one small file |
 | Store the key in a file only | A file under `$TQ_HOME` is one more file a file tool in a session can read; a keychain entry is not reachable through a file path, and writing one takes a command line the P1.3 rule denies. Neither stops a same-user program (AR1). The file is the fallback the PRD allows, and doctor reports it |
 | Cover the tq binary | §8.3 names hooks, shims and manifest; hashing a 10 MB binary at every prompt is waste, and which tq runs is decided by the shim folder of Phase 3 and protected by the OS |
-| Cover the whole `settings.json` | Claude Code rewrites it for a theme, a model or a permission; the record would trip on every session. The enforcing keys are what makes a hook run |
+| Cover the whole `settings.json` | Claude Code rewrites it for a theme, a model or a permission; the record would trip on every session. The enforcing keys are what makes a hook run or a credential helper start |
+| Cover only `hooks/`, `scripts/` and `.claude-plugin/` of the plugin | The hook bridge tries the plugin's `bin/tq` first, and the hooks import the `tentaqles` package: a file outside those three folders runs too. Only prompts, documents and the plugin's tests are left out |
+| Pick the plugin folder by the highest version alone | Claude Code loads the folder `installed_plugins.json` names; an older or a local install can be the one that runs. The file's tentaqles entry is covered, so pointing it elsewhere is a change |
+| Take "no key and no snapshot" to mean nothing was ever signed | Deleting both and planting a marker would bring the marker's trust back; the machine marker remembers that a human signed |
+| Resolve every covered path in full | 72 to 101 ms for 30 keys on Windows; the roots are few and a file below a root needs no resolution of its own |
 | Delete the record on `tq deny` | A deleted record is indistinguishable from one never written, and a planted marker would count again; the tombstone and the signed legacy snapshot make deletion untrusted |
 | Let a marker count until a signed record exists for that workspace | An agent deletes the record and plants a marker; without the snapshot nothing tells the two apart |
 | Interpolate the changed path into the prompt line | A path is user-controlled text in a line the shell evaluates; quoting per shell is one bug away from injection. The line is fixed words and a validated name; the paths are in `tq hooks verify` |

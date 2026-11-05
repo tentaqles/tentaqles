@@ -78,15 +78,21 @@ func trustWorkspace(c *cobra.Command, name, what string) (*resolve.Workspace, er
 	if err := humanGate(c, what, about); err != nil {
 		return nil, err
 	}
+	return ws, signWorkspace(c, ws)
+}
+
+// signWorkspace is trustWorkspace past the gate: render, sign, sync the git
+// includes. tq hooks verify --accept --all gates once and signs several.
+func signWorkspace(c *cobra.Command, ws *resolve.Workspace) error {
 	renderIdentityFilesFor(c, ws, true)
 	if err := trust.Allow(ws.Name, ws.Hash); err != nil {
-		return nil, err
+		return err
 	}
 	if err := syncGitIncludes(); err != nil {
-		return nil, err
+		return err
 	}
 	fmt.Fprintf(c.OutOrStdout(), "Trusted %s (%s)\n", ws.Name, ws.Hash[:12])
-	return ws, nil
+	return nil
 }
 
 func newDenyCmd() *cobra.Command {

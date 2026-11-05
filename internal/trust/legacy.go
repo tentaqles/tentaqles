@@ -16,20 +16,25 @@ import (
 // The markers of older versions (trust/<hash>, trust/<name>/<hash>) are
 // empty files anyone can create, so they cannot count forever. The rule:
 //
-//   - before anything was ever signed on this machine (no key and no list),
-//     every marker counts, as it did for the tq that wrote it (PRD §13:
-//     nothing changes for an existing identity on upgrade);
-//   - the first signature takes a signed snapshot of the markers then on
-//     disk, trust/legacy.json; from then on a marker counts only while the
-//     snapshot lists it and the snapshot verifies. A marker created later
-//     (a downgrade) never counts, and a missing or forged snapshot makes
-//     none count (fail closed);
+//   - before anything was ever signed on this machine (no key, no list and
+//     no machine marker trust/.signed), every marker counts, as it did for
+//     the tq that wrote it (PRD §13: nothing changes for an existing
+//     identity on upgrade);
+//   - the first signature writes trust/.signed (never deleted) and takes a
+//     signed snapshot of the markers then on disk, trust/legacy.json; from
+//     then on a marker counts only while the snapshot lists it and the
+//     snapshot verifies under the key. A marker created later (a downgrade)
+//     never counts, and a missing or forged snapshot, or a missing key,
+//     makes none count (fail closed);
 //   - a workspace that has a signed record file (valid, revoked or broken)
 //     never counts a marker again, and every signature or revocation of a
 //     workspace removes its markers and drops them from the snapshot.
 //
-// So a signed record cannot be downgraded by deleting it and planting a
-// marker: the planted marker is not in the snapshot.
+// So a signed record cannot be downgraded by deleting it, the snapshot and
+// the key and planting a marker: the machine marker remains. Deleting
+// trust/.signed as well, that is every trust file, is a write under the
+// state folder: P1.3's protected-path rules deny it from a session, and a
+// same-user program outside the harness is AR1.
 
 const legacySchema = "tentaqles-integrity-legacy-v1"
 
@@ -158,7 +163,11 @@ func allowedLegacy() legacyState {
 func readLegacy() legacyState {
 	ks := readKey()
 	listExists := exists(LegacyListPath())
-	if !ks.ok && ks.err == nil && !listExists {
+	// Nothing was ever signed here only when there is no key, no snapshot
+	// and no machine marker: a key or snapshot that went missing after a
+	// signature leaves the marker, and then no legacy marker counts.
+	_, markerErr := os.Lstat(SignedMarkerPath())
+	if !ks.ok && ks.err == nil && !listExists && markerErr != nil {
 		return legacyState{all: true}
 	}
 	if ks.err != nil || !ks.ok || !listExists {

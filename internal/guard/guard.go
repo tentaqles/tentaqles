@@ -268,8 +268,14 @@ func Decide(in Input) Decision {
 			}
 		}
 	}
+	// integrity: the workspace's signed record fails (ADR-0004); the fix is
+	// tq hooks verify, not tq allow.
+	integrity := has(in.Findings, "integrity")
 	if in.Neutral {
 		if IsRemoteMutation(in.Command) {
+			if integrity {
+				return block("neutral-remote", fmt.Sprintf("integrity mismatch: run tq hooks verify %s; refusing a remote/cloud command with no identity.\n  %s", client, in.NeutralReason))
+			}
 			return block("neutral-remote", fmt.Sprintf("cwd is not inside a trusted tq workspace (%s); refusing a remote/cloud command with no identity.\n  Fix: cd into a workspace, or run: tq allow <name>", in.NeutralReason))
 		}
 		return Decision{}
@@ -280,6 +286,9 @@ func Decide(in Input) Decision {
 	// untrusted manifest is no reason to refuse it. Mutating git stays blocked.
 	readOnlyGit := git && IsReadOnlyGit(in.Command)
 	if git && !readOnlyGit && has(in.Findings, "untrusted") {
+		if integrity {
+			return block("untrusted", fmt.Sprintf("workspace %s is not trusted: integrity mismatch: run tq hooks verify %s; git is refused until a human accepts the change", client, client))
+		}
 		return block("untrusted", fmt.Sprintf("workspace %s is not trusted; git is refused until you run: tq allow %s", client, client))
 	}
 	if git && !readOnlyGit && has(in.Findings, "env-drift") {

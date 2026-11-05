@@ -194,6 +194,28 @@ func TestReadOnlyGitExemptFromEnvDriftAndUntrusted(t *testing.T) {
 	}
 }
 
+// With the doctor finding integrity (a signed record that fails), the
+// reason says what fixes it: tq hooks verify, not tq allow. The rules and
+// what they block are unchanged; without the finding the text is as before.
+func TestIntegrityFindingNamesHooksVerify(t *testing.T) {
+	want := "integrity mismatch: run tq hooks verify acme"
+	d := Decide(Input{Command: "git commit -m x", Client: "acme", Findings: []string{"untrusted", "integrity"}})
+	if !d.Block || d.Rule != "untrusted" || !strings.Contains(d.Reason, want) || strings.Contains(d.Reason, "tq allow") {
+		t.Fatalf("untrusted rule: %+v", d)
+	}
+	d = Decide(Input{Command: "git push origin main", Client: "acme", Neutral: true, Findings: []string{"untrusted", "integrity"},
+		NeutralReason: "untrusted: integrity mismatch, changed c:/x/hooks.json (run: tq hooks verify acme)"})
+	if !d.Block || d.Rule != "neutral-remote" || !strings.Contains(d.Reason, want) || !strings.Contains(d.Reason, "c:/x/hooks.json") || strings.Contains(d.Reason, "tq allow") {
+		t.Fatalf("neutral-remote: %+v", d)
+	}
+	if d := Decide(Input{Command: "git commit -m x", Client: "acme", Findings: []string{"untrusted"}}); !strings.Contains(d.Reason, "tq allow acme") {
+		t.Fatalf("a workspace never allowed keeps tq allow: %+v", d)
+	}
+	if d := Decide(Input{Command: "git push", Neutral: true, NeutralReason: "outside any base"}); !strings.Contains(d.Reason, "tq allow <name>") {
+		t.Fatalf("a neutral folder keeps its text: %+v", d)
+	}
+}
+
 func TestStripHeredocs(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"python - <<'EOF'\nprint('git commit')\nEOF\ngit status", "python - <<'EOF'\ngit status"},

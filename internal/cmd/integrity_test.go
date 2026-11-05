@@ -95,8 +95,12 @@ func TestPreToolUse_IntegrityMismatchDeniesRemoteAndGit(t *testing.T) {
 			t.Fatalf("%s: want a deny naming the file, got %d %q", cmd, code, errOut)
 		}
 	}
-	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, root, `git commit -m x`)); code != 2 || !strings.Contains(errOut, "not trusted") {
-		t.Fatalf("a local commit is refused as untrusted: %d %q", code, errOut)
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, root, `git commit -m x`))
+	if code != 2 || !strings.Contains(errOut, "not trusted") || !strings.Contains(errOut, "integrity mismatch: run tq hooks verify acme") || strings.Contains(errOut, "tq allow") {
+		t.Fatalf("a local commit is refused as untrusted, pointing at tq hooks verify: %d %q", code, errOut)
+	}
+	if _, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, root, "git push origin main")); !strings.Contains(errOut, "integrity mismatch: run tq hooks verify acme") || strings.Contains(errOut, "tq allow") {
+		t.Fatalf("the remote deny points at tq hooks verify: %q", errOut)
 	}
 	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, root, "ls -la")); code != 0 {
 		t.Fatalf("a plain command still runs: %d %q", code, errOut)
@@ -312,6 +316,105 @@ func TestHooksVerify_SummarisesAPluginUpgrade(t *testing.T) {
 	i, j := strings.Index(out, summary), strings.Index(out, "  added ")
 	if i < 0 || j < 0 || i > j {
 		t.Fatalf("the summary comes ahead of the per-file lines:\n%s", out)
+	}
+}
+
+// disableAllHooks in the identity's settings.json, which turns tq's hook
+// off, is a change tq hooks verify reports; so is a tq planted in the
+// plugin's bin/, the first place the hook bridge looks for tq.
+func TestHooksVerify_ReportsTheHookSwitchAndAPlantedPluginBinary(t *testing.T) {
+	_, hooksJSON := mkIntegrityWS(t, "acme")
+	settings := filepath.Join(paths.IdentityDir("acme", "claude"), "settings.json")
+	mustWrite(t, settings, `{"hooks":{"PreToolUse":[]},"disableAllHooks":true}`)
+	out, err := runTq(t, "hooks", "verify", "acme")
+	if err == nil || !strings.Contains(out, "changed  "+trust.Key(settings+"#tq")) {
+		t.Fatalf("disableAllHooks must be reported: %v\n%s", err, out)
+	}
+	mustWrite(t, settings, `{"hooks":{"PreToolUse":[]}}`)
+	planted := filepath.Join(filepath.Dir(filepath.Dir(hooksJSON)), "bin", "tq")
+	mustWrite(t, planted, "#!/bin/sh\nexit 0\n")
+	out, err = runTq(t, "hooks", "verify", "acme")
+	if err == nil || !strings.Contains(out, "added    "+trust.Key(planted)+"  (absent) -> ") {
+		t.Fatalf("a planted plugin bin/tq must be reported: %v\n%s", err, out)
+	}
+}
+
+// addSignedWS adds a signed protected-layout workspace with the plugin in
+// its Claude config dir to the registered base of the current home.
+func addSignedWS(t *testing.T, base, name string) (pluginRoot string) {
+	t.Helper()
+	root := filepath.Join(base, name)
+	mustWrite(t, filepath.Join(root, manifest.FileName), string(manifest.MarkerBytes(name)))
+	mp := paths.ManifestPath(name)
+	mustWrite(t, mp, "schema: tentaqles-client-v2\nclient: "+name+"\ngit: { email: tester@example.com }\nidentities: { claude: {} }\n")
+	claude := paths.IdentityDir(name, "claude")
+	pluginRoot = filepath.Join(claude, "plugins", "cache", "tentaqles", "tentaqles", "0.16.0")
+	mustWrite(t, filepath.Join(claude, "settings.json"), `{"hooks":{"PreToolUse":[]}}`)
+	mustWrite(t, filepath.Join(pluginRoot, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.16.0"}`)
+	mustWrite(t, filepath.Join(pluginRoot, "scripts", "tq_hook.sh"), "#!/usr/bin/env bash\nexit 0\n")
+	h, _ := trust.HashFile(mp)
+	if err := trust.Allow(name, h); err != nil {
+		t.Fatal(err)
+	}
+	return pluginRoot
+}
+
+// bumpPlugin installs version 0.17.0 next to the signed one.
+func bumpPlugin(t *testing.T, pluginRoot string) {
+	t.Helper()
+	next := filepath.Join(filepath.Dir(pluginRoot), "0.17.0")
+	mustWrite(t, filepath.Join(next, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.17.0"}`)
+	mustWrite(t, filepath.Join(next, "scripts", "tq_hook.sh"), "#!/usr/bin/env bash\nexec tq \"$@\"\n")
+}
+
+// tq hooks verify --accept --all signs again, after one confirmation, every
+// workspace whose only change is a new plugin version, listing them first;
+// a workspace with any other change is left untrusted and named.
+func TestHooksVerify_AcceptAllSignsPluginBumpsOnly(t *testing.T) {
+	root, _ := mkIntegrityWS(t, "acme")
+	base := filepath.Dir(root)
+	beta := addSignedWS(t, base, "beta")
+	gamma := addSignedWS(t, base, "gamma")
+	acmePlugin := trust.PluginRoot(paths.IdentityDir("acme", "claude"))
+	for _, p := range []string{acmePlugin, beta, gamma} {
+		bumpPlugin(t, p)
+	}
+	// gamma also has a hook edit beside the bump.
+	mustWrite(t, filepath.Join(paths.IdentityDir("gamma", "claude"), "settings.json"), `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[]}]}}`)
+
+	if _, err := runTq(t, "hooks", "verify", "--all"); err == nil || !strings.Contains(err.Error(), "3 workspace(s) do not verify") {
+		t.Fatalf("--all without --accept reports and exits non-zero: %v", err)
+	}
+	prev := humanonly.Confirm
+	asked := 0
+	humanonly.Confirm = func(string) (bool, error) { asked++; return true, nil }
+	t.Cleanup(func() { humanonly.Confirm = prev })
+	out, err := runTq(t, "hooks", "verify", "--accept", "--all")
+	if asked != 1 {
+		t.Fatalf("one confirmation for all, got %d", asked)
+	}
+	list := strings.Index(out, "Only a new plugin version changed in:")
+	gate := strings.Index(out, "tq hooks verify --accept --all: about to")
+	// acme's 0.16.0 has a hooks/hooks.json 0.17.0 lacks: 3 files differ.
+	if list < 0 || gate < 0 || list > gate || !strings.Contains(out, "  acme (plugin tentaqles 0.16.0 -> 0.17.0, 3 hook files changed)") ||
+		!strings.Contains(out, "  beta (plugin tentaqles 0.16.0 -> 0.17.0") || strings.Contains(out[list:gate], "gamma") {
+		t.Fatalf("the bumps are listed before the confirmation, gamma is not among them:\n%s", out)
+	}
+	if !strings.Contains(out, "not accepted: gamma has other changes") || err == nil || !strings.Contains(err.Error(), "gamma") {
+		t.Fatalf("gamma is left and named: %v\n%s", err, out)
+	}
+	for _, n := range []string{"acme", "beta"} {
+		if out, err := runTq(t, "hooks", "verify", n); err != nil || !strings.Contains(out, n+": integrity ok") {
+			t.Fatalf("%s signed again: %v %s", n, err, out)
+		}
+	}
+	if _, err := runTq(t, "hooks", "verify", "gamma"); err == nil {
+		t.Fatal("gamma stays untrusted")
+	}
+	// An agent never accepts all.
+	t.Setenv("CLAUDECODE", "1")
+	if _, err := runTq(t, "hooks", "verify", "--accept", "--all"); !errors.Is(err, errHumanOnly) {
+		t.Fatalf("%v", err)
 	}
 }
 

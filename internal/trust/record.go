@@ -110,16 +110,13 @@ func SignRecord(name, hash string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := map[string]string{}
-	for _, p := range Covered(name) {
-		h, err := currentHash(p)
-		if err != nil {
-			return nil, fmt.Errorf("trust: hashing %s: %w", p, err)
-		}
-		files[p] = h
+	cov := computeCoverage(name)
+	files, err := hashKeys(cov.keys)
+	if err != nil {
+		return nil, err
 	}
 	return marshalSigned(Record{Schema: Schema, Workspace: name, ManifestHash: hash, Files: files,
-		Plugin: pluginKey(name), KeyID: keyID(key), SignedAt: now().UTC().Format(time.RFC3339)}, key)
+		Plugin: cov.plugin, KeyID: keyID(key), SignedAt: now().UTC().Format(time.RFC3339)}, key)
 }
 
 // tombstone is the signed revoked record of name.

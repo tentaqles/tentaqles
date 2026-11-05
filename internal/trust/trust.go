@@ -120,9 +120,12 @@ type Report struct {
 	// PluginFrom and PluginTo are the plugin versions signed and now, set
 	// when the installed tentaqles plugin moved to another version folder;
 	// PluginFiles counts its hook files (by path inside the plugin) that
-	// differ between the two.
+	// differ between the two. PluginOnly reports that every change is in
+	// the two plugin folders or in installed_plugins.json#tq: the change is
+	// the version bump and nothing else (tq hooks verify --accept --all).
 	PluginFrom, PluginTo string
 	PluginFiles          int
+	PluginOnly           bool
 }
 
 // Trusted reports whether the record verifies, is not revoked, names hash
@@ -190,23 +193,22 @@ func verify(name string) (Report, error) {
 		return rep, nil
 	}
 	rep.ManifestHash, rep.Files = rec.ManifestHash, len(rec.Files)
-	cur := map[string]string{}
+	cov := coverageOf(name)
 	seen := map[string]bool{}
 	var all []string
-	for _, p := range append(keysOf(rec.Files), Covered(name)...) {
+	for _, p := range append(keysOf(rec.Files), cov.keys...) {
 		if !seen[p] {
 			seen[p] = true
 			all = append(all, p)
 		}
 	}
 	sort.Strings(all)
+	cur, err := hashKeys(all)
+	if err != nil {
+		return rep, err
+	}
 	for _, p := range all {
-		h, err := currentHash(p)
-		if err != nil {
-			return rep, fmt.Errorf("trust: hashing %s: %w", p, err)
-		}
-		cur[p] = h
-		old := rec.Files[p]
+		h, old := cur[p], rec.Files[p]
 		if old == h {
 			continue
 		}
@@ -219,9 +221,17 @@ func verify(name string) (Report, error) {
 		}
 		rep.Changes = append(rep.Changes, Change{Path: p, Kind: kind, Old: old, New: h})
 	}
-	if now := pluginKey(name); rec.Plugin != "" && now != "" && rec.Plugin != now {
+	if now := cov.plugin; rec.Plugin != "" && now != "" && rec.Plugin != now {
 		rep.PluginFrom, rep.PluginTo = path.Base(rec.Plugin), path.Base(now)
 		rep.PluginFiles = pluginDiff(rec.Plugin, rec.Files, now, cur)
+		rep.PluginOnly = true
+		for _, ch := range rep.Changes {
+			inPlugin := strings.HasPrefix(ch.Path, rec.Plugin+"/") || strings.HasPrefix(ch.Path, now+"/") || ch.Path == cov.installed
+			if !inPlugin {
+				rep.PluginOnly = false
+				break
+			}
+		}
 	}
 	return rep, nil
 }

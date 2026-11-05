@@ -14,10 +14,11 @@ import (
 // nothing is cached; nothing is ever cached on disk.
 var memo struct {
 	sync.Mutex
-	depth  int
-	verify map[string]verifyResult
-	key    *keyState
-	legacy *legacyState
+	depth    int
+	verify   map[string]verifyResult
+	coverage map[string]coverage
+	key      *keyState
+	legacy   *legacyState
 }
 
 type verifyResult struct {
@@ -53,7 +54,29 @@ func MemoScope() (end func()) {
 }
 
 func clearLocked() {
-	memo.verify, memo.key, memo.legacy = nil, nil, nil
+	memo.verify, memo.coverage, memo.key, memo.legacy = nil, nil, nil, nil
+}
+
+func memoCoverage(name string) (coverage, bool) {
+	memo.Lock()
+	defer memo.Unlock()
+	if memo.depth == 0 || memo.coverage == nil {
+		return coverage{}, false
+	}
+	c, ok := memo.coverage[name]
+	return c, ok
+}
+
+func storeCoverage(name string, c coverage) {
+	memo.Lock()
+	defer memo.Unlock()
+	if memo.depth == 0 {
+		return
+	}
+	if memo.coverage == nil {
+		memo.coverage = map[string]coverage{}
+	}
+	memo.coverage[name] = c
 }
 
 // invalidate drops everything cached: tq wrote a record, a key or the list.

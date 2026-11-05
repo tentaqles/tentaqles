@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/tentaqles/tentaqles/internal/codexcfg"
@@ -40,25 +43,45 @@ const irregular = "!irregular"
 const invalidJSON = "!invalid-json"
 
 // blockSuffix marks a virtual covered path, the part of a file tq covers:
-// "<dir>/config.toml#tq" is the block of a Codex config.toml tq owns, and
-// "<dir>/settings.json#tq" the enforcing keys of a Claude settings.json.
+// "<dir>/config.toml#tq" is the block of a Codex config.toml tq owns,
+// "<dir>/settings.json#tq" the enforcing keys of a Claude settings.json,
+// and "<dir>/installed_plugins.json#tq" where Claude Code loads the
+// tentaqles plugin from.
 const blockSuffix = "#tq"
 
 // enforcingSettingsKeys are the keys of a Claude settings.json that decide
-// what runs: the hooks, the plugins and MCP servers that are on, the
-// environment of every tool call, the status line command. The rest
-// (theme, model, permissions the user sets in Claude Code) is not covered.
-var enforcingSettingsKeys = []string{"hooks", "enabledPlugins", "enabledMcpjsonServers", "disableAllMcpServers", "env", "statusLine"}
+// what runs or with which credentials: the hooks and the switch that turns
+// them all off, the plugins and MCP servers that are on, the environment of
+// every tool call, the status line, the login method and the credential
+// helpers. Any other key whose name ends in "Helper" or "Command" names a
+// program Claude Code runs and is covered too (enforcingSettingsKey). The
+// rest (theme, model, and permissions, which tq never touches) is not.
+var enforcingSettingsKeys = []string{
+	"hooks", "disableAllHooks", "enabledPlugins", "enabledMcpjsonServers", "disableAllMcpServers",
+	"env", "statusLine", "apiKeyHelper", "otelHeadersHelper", "awsAuthRefresh", "awsCredentialExport", "forceLoginMethod",
+}
+
+func enforcingSettingsKey(k string) bool {
+	for _, e := range enforcingSettingsKeys {
+		if k == e {
+			return true
+		}
+	}
+	return strings.HasSuffix(k, "Helper") || strings.HasSuffix(k, "Command")
+}
 
 // currentHash is the hash of a covered key as the record stores it: ""
 // when it is absent, irregular when it exists but is not a regular file,
 // the hex sha256 of its bytes otherwise. A "#tq" key hashes the part tq
-// covers (blockHash, settingsHash). A file that exists but cannot be read
-// is an error, which every caller treats as untrusted.
+// covers (blockHash, settingsHash, installedHash). A file that exists but
+// cannot be read is an error, which every caller treats as untrusted.
 func currentHash(key string) (string, error) {
 	if file, ok := strings.CutSuffix(key, blockSuffix); ok {
-		if strings.EqualFold(filepath.Base(file), "settings.json") {
+		switch strings.ToLower(filepath.Base(file)) {
+		case "settings.json":
 			return settingsHash(file)
+		case "installed_plugins.json":
+			return installedHash(file)
 		}
 		return blockHash(file)
 	}
@@ -126,9 +149,8 @@ func settingsHash(file string) (string, error) {
 		if json.Unmarshal(raw, &doc) != nil || doc == nil {
 			return invalidJSON, nil
 		}
-		for _, k := range enforcingSettingsKeys {
-			v, ok := doc[k]
-			if !ok {
+		for k, v := range doc {
+			if !enforcingSettingsKey(k) {
 				continue
 			}
 			c, err := canonicalJSON(v)
@@ -144,6 +166,127 @@ func settingsHash(file string) (string, error) {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// installedEntry is what installed_plugins.json#tq keeps of one install of
+// the tentaqles plugin: where Claude Code loads it from, and its version.
+type installedEntry struct {
+	Plugin      string `json:"plugin"`
+	InstallPath string `json:"installPath"`
+	Version     string `json:"version"`
+	// Scope picks the entry PluginRoot uses (user first); not hashed.
+	Scope string `json:"-"`
+}
+
+// readInstalled reads the tentaqles entries of a Claude config dir's
+// plugins/installed_plugins.json, sorted. ok is false when the file is not
+// a JSON object with a plugins map.
+func readInstalled(file string) (entries []installedEntry, ok bool, err error) {
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		if absent(err) {
+			return nil, true, nil
+		}
+		return nil, false, err
+	}
+	var doc struct {
+		Plugins map[string][]struct {
+			InstallPath string `json:"installPath"`
+			Version     string `json:"version"`
+			Scope       string `json:"scope"`
+		} `json:"plugins"`
+	}
+	if json.Unmarshal(raw, &doc) != nil {
+		return nil, false, nil
+	}
+	for name, insts := range doc.Plugins {
+		if !strings.HasPrefix(name, "tentaqles@") {
+			continue
+		}
+		for _, in := range insts {
+			entries = append(entries, installedEntry{name, in.InstallPath, in.Version, in.Scope})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Plugin != entries[j].Plugin {
+			return entries[i].Plugin < entries[j].Plugin
+		}
+		return entries[i].InstallPath < entries[j].InstallPath
+	})
+	return entries, true, nil
+}
+
+// installedHash is the sha256 of the tentaqles entries of
+// installed_plugins.json, installPath and version only: an absent file and
+// one without the plugin project to [], a file that is not JSON is
+// invalidJSON. The timestamps Claude Code rewrites are not covered.
+func installedHash(file string) (string, error) {
+	fi, err := os.Lstat(file)
+	switch {
+	case err != nil && !absent(err):
+		return "", err
+	case err == nil && !fi.Mode().IsRegular():
+		return irregular, nil
+	}
+	entries, ok, err := readInstalled(file)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return invalidJSON, nil
+	}
+	if entries == nil {
+		entries = []installedEntry{}
+	}
+	b, err := json.Marshal(entries)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// hashKeys hashes every key (currentHash), a few at a time: the files are
+// small and many, and opening them is what costs on Windows.
+func hashKeys(keys []string) (map[string]string, error) {
+	type result struct {
+		key, hash string
+		err       error
+	}
+	out := make(map[string]string, len(keys))
+	jobs := make(chan string)
+	results := make(chan result)
+	workers := 8
+	if len(keys) < workers {
+		workers = len(keys)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := range jobs {
+				h, err := currentHash(k)
+				results <- result{k, h, err}
+			}
+		}()
+	}
+	go func() {
+		for _, k := range keys {
+			jobs <- k
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+	var first error
+	for r := range results {
+		if r.err != nil && first == nil {
+			first = fmt.Errorf("trust: hashing %s: %w", r.key, r.err)
+		}
+		out[r.key] = r.hash
+	}
+	return out, first
 }
 
 // canonicalJSON re-encodes a JSON value with object keys sorted and no

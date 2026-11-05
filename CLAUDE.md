@@ -43,10 +43,12 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     baseline for the whole cmd suite).
   - `internal/trust/` (the signed integrity record per workspace, `trust/<name>.json`:
     manifest, marker, the enforcing keys of the Claude settings (`settings.json#tq`), the
-    installed plugin's hooks, scripts and manifest, Codex hook files and shims, under an
-    HMAC whose key is in the OS keychain; every signature passes `HumanCheck`; `tq deny`
-    leaves a signed tombstone; legacy markers count only from the signed snapshot
-    `trust/legacy.json`; ADR-0004), `internal/manifest/` (the manifest,
+    tentaqles entry of `installed_plugins.json`, the loaded plugin folder but its skills,
+    agents, templates, tests and caches, Codex hook files and shims, under an HMAC whose
+    key is in the OS keychain; only the roots are resolved; every signature passes
+    `HumanCheck`; `tq deny` leaves a signed tombstone; legacy markers count only from the
+    signed snapshot `trust/legacy.json`, never once `trust/.signed` exists without it;
+    ADR-0004), `internal/manifest/` (the manifest,
     read from `~/.tentaqles/identities/<ws>/manifest.yaml` with a name-only marker
     `.tentaqles.yaml` in the workspace root, or from the root itself for an identity not
     yet migrated with `tq migrate manifests`, ADR-0002; a top-level block tq does not

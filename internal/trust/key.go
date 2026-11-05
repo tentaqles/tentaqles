@@ -130,6 +130,9 @@ func signingKey() ([]byte, error) {
 		return nil, s.err
 	}
 	if s.ok {
+		if err := markSigned(); err != nil {
+			return nil, err
+		}
 		return s.key, nil
 	}
 	k := make([]byte, keyBytes)
@@ -157,7 +160,29 @@ func signingKey() ([]byte, error) {
 	if err := snapshotLegacy(k); err != nil {
 		return nil, err
 	}
+	if err := markSigned(); err != nil {
+		return nil, err
+	}
 	return k, nil
+}
+
+// SignedMarkerPath is the machine marker trust/.signed: an empty file whose
+// presence alone says that a human has signed on this machine. Every
+// signature writes it when it is absent and tq never deletes it, so a
+// machine whose key or legacy snapshot went missing is not mistaken for one
+// that never signed (legacy.go): with the marker, no legacy marker counts.
+func SignedMarkerPath() string { return filepath.Join(paths.TrustDir(), ".signed") }
+
+func markSigned() error {
+	p := SignedMarkerPath()
+	if _, err := os.Lstat(p); err == nil {
+		return nil
+	}
+	if err := writeAtomic(p, nil); err != nil {
+		return err
+	}
+	invalidate()
+	return nil
 }
 
 func decodeKey(s string) ([]byte, error) {

@@ -59,8 +59,10 @@ _upath() {
 # No environment variable picks the binary: an agent can set variables (a
 # settings env block, an export in the same shell), and the tq that
 # enforces must not be its choice. The order is the plugin's own bin/, PATH,
-# then the well-known install dirs; the binary that runs is a covered file
-# of the signed integrity record (tq hooks verify), so a swap is reported.
+# then the well-known install dirs. The plugin folder, bin/ included, is
+# covered by the signed integrity record, so a tq planted in bin/ is
+# reported by tq hooks verify; a tq found on PATH or in an install dir is
+# not covered (the OS's to protect, and Phase 3's shim folder decides it).
 TQ=""
 
 _try() {
