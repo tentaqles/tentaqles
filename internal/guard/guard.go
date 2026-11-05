@@ -30,6 +30,9 @@ type Input struct {
 	ExpectedGHUser string   // manifest.Git.User (or ExpectedUser)
 	ActualGHUser   string   // from `gh api user --jq .login` ("" if unknown / not run)
 	Findings       []string // doctor codes for cwd: "untrusted","env-drift","git-email-drift","claude-config-drift",...
+	// Scoped: the manifest sets guard: v2, so the provider scope judges every provider
+	// CLI (policy.Scope, ADR-0006) and wrong-cloud, its subset, does not run here.
+	Scoped bool
 }
 
 // Decision is the outcome of Decide.
@@ -257,7 +260,7 @@ func Decide(in Input) Decision {
 			return block("blocked-command", fmt.Sprintf("Command '%s' is blocked by client manifest.\n  Client: %s", b, client))
 		}
 	}
-	if p := strings.ToLower(in.CloudProvider); p != "" && p != "none" {
+	if p := strings.ToLower(in.CloudProvider); p != "" && p != "none" && !in.Scoped {
 		allowed := map[string]bool{p: true}
 		for _, x := range in.ExtraClouds {
 			allowed[strings.ToLower(strings.TrimSpace(x))] = true

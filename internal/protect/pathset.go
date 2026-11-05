@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/tentaqles/tentaqles/internal/paths"
 )
@@ -82,6 +83,10 @@ type Set struct {
 	binDir   string // canonical directory of the binary ("" when unknown)
 	env      func(string) string
 	ci       bool // case-insensitive paths
+	// canonMemo memoizes canon for the run: the identity rules and the
+	// self-protection rules resolve the same paths (symlink resolution is
+	// the costly part of a hook call on Windows).
+	canonMemo sync.Map // map[string]string
 }
 
 // New computes the set.
@@ -158,14 +163,26 @@ func (s *Set) add(p string, k Kind, tree bool, what string) {
 // case (Windows, and macOS by default).
 func caseInsensitivePaths() bool { return runtime.GOOS == "windows" || runtime.GOOS == "darwin" }
 
+// Canon is canon for the guard's identity category (policy.Scope), which
+// compares its own paths (credential folders, other identities' roots)
+// with what Normalize returns.
+func (s *Set) Canon(p string) string { return s.canon(p) }
+
+// CaseInsensitive reports whether the set compares paths without case.
+func (s *Set) CaseInsensitive() bool { return s.ci }
+
 // canon makes an absolute path canonical: cleaned, the symlinks of its
 // existing prefix resolved, and folded to lower case where paths are
 // compared without case.
 func (s *Set) canon(p string) string {
+	if v, ok := s.canonMemo.Load(p); ok {
+		return v.(string)
+	}
 	r := paths.Resolve(p)
 	if s.ci {
 		r = strings.ToLower(r)
 	}
+	s.canonMemo.Store(p, r)
 	return r
 }
 
