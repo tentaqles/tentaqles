@@ -45,7 +45,7 @@ Restore the workspace `.tentaqles.yaml` to a previously captured snapshot.
 
    Use the `captured_at` value (or the filename stem) as the `<timestamp_prefix>`.
 
-5. The command outputs the manifest as JSON. Parse it and write it back to `.tentaqles.yaml` in YAML format. The file lives at `<workspace_path>/.tentaqles.yaml`.
+5. The command outputs the manifest as JSON. Parse it and write it back, in YAML format, to the file tq reads: `~/.tentaqles/identities/<name>/manifest.yaml` when `<workspace_path>/.tentaqles.yaml` is a marker (`schema: tentaqles-marker-v1`), otherwise `<workspace_path>/.tentaqles.yaml` itself. `tentaqles.manifest.loader.load_manifest(<workspace_path>)["_manifest_path"]` names it.
 
    Write the file using the standard Write tool. This will also trigger a new snapshot via the snapshot-guard hook (preserving the rollback action in history).
 
@@ -57,4 +57,4 @@ Restore the workspace `.tentaqles.yaml` to a previously captured snapshot.
 
 - If the user wants to preview what changed before restoring, you can compare two snapshots manually (read both JSON files and diff the `manifest` keys).
 - The `auto-switch` reason means an identity switch triggered the snapshot automatically (tq switches the identity via its shell hook; the plugin verifies it and records the snapshot) — this is the most common restore target.
-- The `manifest-edit` reason means a Write to `.tentaqles.yaml` triggered the snapshot — useful for undoing accidental edits.
+- The `manifest-edit` reason means a Write to the manifest (or to its marker) triggered the snapshot — useful for undoing accidental edits.

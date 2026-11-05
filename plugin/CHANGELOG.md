@@ -6,6 +6,19 @@ Releases before 0.16.0 are described on the
 
 ## [Unreleased]
 
+- **The protected manifest location (ADR-0002).** `tentaqles.manifest.loader` resolves a
+  root marker (`schema: tentaqles-marker-v1`) to `$TQ_HOME/identities/<name>/manifest.yaml`
+  (`~/.tentaqles` when `TQ_HOME` is unset); `_manifest_path` is the file loaded and
+  `_client_root` stays the folder; the old layout (the full manifest in the root) still
+  loads; a marker whose `client` is not the folder name, or without its protected copy, is
+  unknown. New helpers `protected_manifest_path`, `is_protected_manifest_path` and
+  `workspace_root_for` (`tests/test_manifest_loader_marker.py`).
+- **`snapshot-guard.py` fires again.** It reads the written file from `tool_input.file_path`
+  (the hook payload shape; the bare `file_path` stays as a fallback) and snapshots the
+  manifest tq reads (the protected copy for a marked workspace) before a Write to the
+  marker, the protected copy or an old-layout manifest. `scripts/snapshot.py capture`
+  reads the same manifest (`tests/test_snapshot_guard.py`).
+
 ## [0.16.0] — 2026-11-04
 
 Ships with tq v0.9.0. The plugin adds, on top of tq's identity and secrets hook, the

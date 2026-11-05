@@ -151,7 +151,7 @@ Reading personal data locally is never blocked. The plugin masks secrets and the
 
 ### Workspace detection
 
-When a Claude Code session starts, Tentaqles walks up from the current directory looking for `.tentaqles.yaml`. The first one it finds defines the client context. Every subfolder inherits it.
+When a Claude Code session starts, Tentaqles walks up from the current directory looking for `.tentaqles.yaml`. The first one it finds defines the client context: either the manifest itself, or a name-only marker (`schema: tentaqles-marker-v1`) pointing at the manifest under `~/.tentaqles/identities/<name>/manifest.yaml` (`$TQ_HOME` when set). Every subfolder inherits it.
 
 ```
 ~/repos/my-client/
@@ -311,7 +311,7 @@ All hooks are automatic and run silently.
 | Hook | Fires on | What it does |
 |------|----------|-------------|
 | `SessionStart` | Session begins (and after compaction) | `bootstrap.py` (one-time deps install, started in the background — never blocks), `tq_hook.sh session-start` → `tq claude-hook session-start` (report resolved identity + `tq doctor`; no switching), then `session-preamble.py --memory-only` (inject memory context; after a compaction, re-inject decisions, hot nodes and open pending instead) |
-| `PreToolUse` | Before Bash, PowerShell, file and MCP tool calls | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest and block on drift or an untrusted folder (exit 2); deny `.env` and secret-store reads, environment dumps, a commit that would record a secret, and a cross-client MCP server. Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. On a Write to `.tentaqles.yaml`, `snapshot-guard.py` records a snapshot first |
+| `PreToolUse` | Before Bash, PowerShell, file and MCP tool calls | `tq_hook.sh pre-tool-use` → `tq claude-hook pre-tool-use` — verify git/gh/cloud identity against the workspace manifest and block on drift or an untrusted folder (exit 2); deny `.env` and secret-store reads, environment dumps, a commit that would record a secret, and a cross-client MCP server. Falls back to `identity-guard.py` (fail-closed) if `tq` isn't installed. On a Write to the manifest (or its marker), `snapshot-guard.py` records a snapshot first |
 | `PostToolUse` | After Bash/Edit/Write | `knowledge-capture.py` — scan output for decisions, record file touches and fix atoms |
 | `Stop` | Claude finishes a turn | `stop-capture.py` — once per session, if the conversation weighed alternatives, ask Claude to record the decisions; once per session, if the context passes ~350k tokens, suggest `/compact` or session-wrap (non-blocking) |
 | `SessionEnd` | Session ends (any reason) | `session-end.py` — parse transcript, detect open threads, save summary to memory; the detached worker also extracts semantic facts with `claude -p --model haiku` (opt out: `TENTAQLES_SEMANTIC_FACTS=0`) |

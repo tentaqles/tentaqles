@@ -7,8 +7,9 @@ Usage:
     python snapshot.py restore <workspace_path> <timestamp>
     python snapshot.py prune   <workspace_path>
 
-Reads .tentaqles.yaml from the workspace path to supply manifest data
-for captures.
+Reads the workspace's manifest (the protected copy under $TQ_HOME for a
+marked workspace, the root .tentaqles.yaml in the old layout) to supply
+manifest data for captures.
 """
 
 from __future__ import annotations
@@ -26,7 +27,17 @@ from pathlib import Path
 
 
 def _load_yaml_manifest(workspace_path: Path) -> dict:
-    """Load .tentaqles.yaml from workspace_path. Returns {} on failure."""
+    """The manifest tq reads for workspace_path: the protected copy for a
+    marked workspace, the root file otherwise. A root file the loader does
+    not accept is read raw, so the snapshot still records it. {} on failure."""
+    try:
+        from tentaqles.manifest.loader import load_manifest
+
+        data = load_manifest(workspace_path)
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if not str(k).startswith("_")}
+    except Exception:
+        pass
     try:
         import yaml  # type: ignore
 

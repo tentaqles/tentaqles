@@ -20,8 +20,10 @@ class SnapshotManager:
     """Manages workspace snapshots.
 
     Args:
-        workspace_path: Path to the client workspace root (directory that
-            contains .tentaqles.yaml and .claude/).
+        workspace_path: Path to the client workspace root (the folder that
+            holds .tentaqles.yaml, the marker or the manifest, and .claude/).
+            The manifest itself may live under $TQ_HOME (ADR-0002); the
+            snapshot always captures the copy tq reads.
         max_snapshots: Maximum snapshots to retain. Older ones are pruned
             after each ``capture`` call.
     """
@@ -113,7 +115,9 @@ class SnapshotManager:
         """Load a snapshot and return its manifest dict.
 
         Does NOT write anything to disk — the caller is responsible for
-        writing the manifest back to ``.tentaqles.yaml``.
+        writing the manifest back to the file tq reads (``_manifest_path``
+        from ``tentaqles.manifest.loader``: the protected copy for a marked
+        workspace, ``.tentaqles.yaml`` in the old layout).
 
         Args:
             identifier: ISO timestamp prefix (e.g. ``"2026-04-12T14-30"``) or
