@@ -151,7 +151,7 @@ Reading personal data locally is never blocked. The plugin masks secrets and the
 
 ### Workspace detection
 
-When a Claude Code session starts, Tentaqles resolves the current directory the way tq does: it must lie under a base registered in `~/.tentaqles/config.yaml`, and that base's first-level folder is the client, whose `.tentaqles.yaml` is either the manifest itself or a name-only marker (`schema: tentaqles-marker-v1`) pointing at the manifest under `~/.tentaqles/identities/<name>/manifest.yaml`. A `.tentaqles.yaml` planted deeper never changes the client. Without tq (no `config.yaml`), Tentaqles walks up from the current directory to the nearest `.tentaqles.yaml` instead. Every subfolder inherits the client.
+When a Claude Code session starts, Tentaqles resolves the current directory the way tq does: it must lie under a base registered in `~/.tentaqles/config.yaml`, and that base's first-level folder is the client, whose `.tentaqles.yaml` is either the manifest itself or a name-only marker (`schema: tentaqles-marker-v1`) pointing at the manifest under `~/.tentaqles/identities/<name>/manifest.yaml`. A `.tentaqles.yaml` planted deeper never changes the client. Without a `config.yaml` a session finds no client, as tq would (outside any base); only a plain process on a machine without tq walks up from the current directory to the nearest `.tentaqles.yaml`. Every subfolder inherits the client.
 
 ```
 ~/repos/my-client/

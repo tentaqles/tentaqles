@@ -29,6 +29,10 @@ def _env(tmp_path: Path, vault: Path, tq_home: Path) -> dict:
     env["HOME"] = str(tq_home.parent)
     env["USERPROFILE"] = str(tq_home.parent)
     env["TQ_HOME"] = str(tq_home)
+    # Under a marker the loader resolves through the registry only, so the
+    # workspace's base (tmp_path, which holds ws/) is registered.
+    tq_home.mkdir(parents=True, exist_ok=True)
+    (tq_home / "config.yaml").write_text(f"bases:\n  - {tmp_path}\n", encoding="utf-8")
     env["PYTHONPATH"] = str(PLUGIN_ROOT)
     env["TENTAQLES_VAULT_DIR"] = str(vault)
     env["TENTAQLES_SEMANTIC_FACTS"] = "0"

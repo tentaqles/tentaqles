@@ -15,10 +15,10 @@ tentaqles-marker-v1`` and ``client: <name>``, and the manifest lives at
 The loader resolves a working directory the way tq does: the directory must
 lie under a base registered in ``$TQ_HOME/config.yaml``, and the identity is
 that base's first-level folder, whatever other ``.tentaqles.yaml`` files sit
-deeper. Only on a machine with no ``config.yaml`` at all (the plugin without
-tq) does it walk up from the working directory to the nearest root file. In
-both cases the marker's ``client`` must equal the folder name, or the folder
-is unknown.
+deeper. With no ``config.yaml`` at all, an agent session is neutral (tq would
+resolve "outside any base"); only a plain process on a machine without tq
+walks up from the working directory to the nearest root file. In every case
+the marker's ``client`` must equal the folder name, or the folder is unknown.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from typing import Any
 
 import yaml
 
-from tentaqles.tqhome import tq_home
+from tentaqles.tqhome import agent_session, tq_home
 
 MARKER_SCHEMA = "tentaqles-marker-v1"
 MANIFEST_SCHEMAS = ("tentaqles-client-v1", "tentaqles-client-v2")
@@ -105,9 +105,16 @@ def _find_root_file(cwd: str | Path) -> Path | None:
     must lie under a registered base and the identity is that base's
     first-level folder, so a ``.tentaqles.yaml`` planted deeper never
     shadows it. At a base root, outside every base, or with no root file in
-    the first-level folder the result is None (neutral)."""
+    the first-level folder the result is None (neutral).
+
+    With no ``config.yaml`` at all the answer depends on the process: under an
+    agent marker it is neutral, as tq itself would resolve "outside any base";
+    only a plain process without tq (an old install) walks up to the nearest
+    root file."""
     bases = _registered_bases()
     if bases is None:
+        if agent_session():
+            return None
         return _walk_up(cwd)
     c = _resolve_dir(Path(cwd))
     for base in bases:

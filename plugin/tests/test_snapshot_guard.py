@@ -44,6 +44,8 @@ def _run_guard(
     run_env["HOME"] = str(home)
     run_env["USERPROFILE"] = str(home)
     run_env["TQ_HOME"] = ""
+    # The guard is a hook: it always runs under an agent marker.
+    run_env["CLAUDECODE"] = "1"
     if env:
         run_env.update(env)
     return subprocess.run(
@@ -78,6 +80,8 @@ def _protected_workspace(tmp_path: Path, email: str = "before@acme.test") -> tup
         f"schema: tentaqles-client-v2\nclient: acme\ngit:\n  email: {email}\n",
         encoding="utf-8",
     )
+    # The hook resolves through the registry, as tq does.
+    (tq_home / "config.yaml").write_text(f"bases:\n  - {root.parent}\n", encoding="utf-8")
     return root, home, pp
 
 

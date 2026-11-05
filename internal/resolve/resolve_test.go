@@ -148,31 +148,81 @@ func TestResolve_TrustIsKeyedByName(t *testing.T) {
 	_ = cfg
 }
 
-// A symlink (or anything but a regular file) at the root file resolves
-// neutral: the guard never reads, and the migration never writes, through it.
+// Anything but a regular file at the root file, or as the protected copy,
+// resolves neutral: the guard never reads, and the migration never writes,
+// through it. The directory stand-ins run everywhere; the symlink case is
+// skipped only where the process cannot create one.
 func TestResolve_RootFileSymlink_Neutral(t *testing.T) {
 	base, cfg := setup(t)
 	_, pp := mkProtected(t, base, "acme", true)
-	evil := filepath.Join(base, "evil")
-	os.MkdirAll(evil, 0o755)
-	link := filepath.Join(evil, manifest.FileName)
-	if err := os.Symlink(pp, link); err != nil {
-		if runtime.GOOS == "windows" {
-			t.Skipf("this process cannot create a symlink (developer mode or SeCreateSymbolicLinkPrivilege needed): %v", err)
+
+	t.Run("root-file-directory", func(t *testing.T) {
+		dir := filepath.Join(base, "dirfile")
+		os.MkdirAll(filepath.Join(dir, manifest.FileName), 0o755)
+		r := Resolve(dir, cfg)
+		if r.Workspace != nil || r.Untrusted != nil || r.Reason != "marker is not a regular file" {
+			t.Fatalf("%+v", r)
 		}
-		t.Fatal(err)
-	}
-	r := Resolve(evil, cfg)
-	if r.Workspace != nil || r.Untrusted != nil || r.Reason != "marker is not a regular file" {
-		t.Fatalf("%+v", r)
-	}
-	if _, errs := ListWorkspaces(cfg); len(errs) != 1 || !strings.Contains(errs[0].Error(), "not a regular file") {
-		t.Fatalf("errs = %v", errs)
-	}
-	// A directory in place of the root file is not a manifest either.
-	dir := filepath.Join(base, "dirfile")
-	os.MkdirAll(filepath.Join(dir, manifest.FileName), 0o755)
-	if r := Resolve(dir, cfg); r.Workspace != nil || r.Reason != "marker is not a regular file" {
+		_, errs := ListWorkspaces(cfg)
+		if len(errs) != 1 || !strings.Contains(errs[0].Error(), dir) || !strings.Contains(errs[0].Error(), "marker is not a regular file") {
+			t.Fatalf("errs = %v", errs)
+		}
+		os.RemoveAll(dir)
+	})
+
+	t.Run("protected-copy-directory", func(t *testing.T) {
+		// A marker whose protected copy is a directory.
+		marked := filepath.Join(base, "marked")
+		os.MkdirAll(marked, 0o755)
+		os.WriteFile(filepath.Join(marked, manifest.FileName), manifest.MarkerBytes("marked"), 0o644)
+		os.MkdirAll(paths.ManifestPath("marked"), 0o755)
+		r := Resolve(marked, cfg)
+		if r.Workspace != nil || r.Untrusted != nil || r.Reason != "protected manifest is not a regular file" {
+			t.Fatalf("marker: %+v", r)
+		}
+		// An old-layout manifest whose protected copy is a directory: the
+		// copy would win, so it must be a regular file too.
+		old := mkws(t, base, "oldbad", true)
+		os.MkdirAll(paths.ManifestPath("oldbad"), 0o755)
+		r = Resolve(old, cfg)
+		if r.Workspace != nil || r.Untrusted != nil || r.Reason != "protected manifest is not a regular file" {
+			t.Fatalf("old layout: %+v", r)
+		}
+		_, errs := ListWorkspaces(cfg)
+		if len(errs) != 2 {
+			t.Fatalf("errs = %v", errs)
+		}
+		for _, e := range errs {
+			if !strings.Contains(e.Error(), "protected manifest is not a regular file") {
+				t.Fatalf("errs = %v", errs)
+			}
+		}
+		os.RemoveAll(marked)
+		os.RemoveAll(old)
+		os.RemoveAll(filepath.Dir(paths.ManifestPath("marked")))
+		os.RemoveAll(filepath.Dir(paths.ManifestPath("oldbad")))
+	})
+
+	t.Run("root-file-symlink", func(t *testing.T) {
+		evil := filepath.Join(base, "evil")
+		os.MkdirAll(evil, 0o755)
+		if err := os.Symlink(pp, filepath.Join(evil, manifest.FileName)); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skipf("this process cannot create a symlink (developer mode or SeCreateSymbolicLinkPrivilege needed): %v", err)
+			}
+			t.Fatal(err)
+		}
+		r := Resolve(evil, cfg)
+		if r.Workspace != nil || r.Untrusted != nil || r.Reason != "marker is not a regular file" {
+			t.Fatalf("%+v", r)
+		}
+		if _, errs := ListWorkspaces(cfg); len(errs) != 1 || !strings.Contains(errs[0].Error(), "marker is not a regular file") {
+			t.Fatalf("errs = %v", errs)
+		}
+	})
+
+	// acme itself is untouched by any of it.
+	if r := Resolve(filepath.Join(base, "acme"), cfg); r.Workspace == nil {
 		t.Fatalf("%+v", r)
 	}
 }

@@ -13,8 +13,9 @@ Releases before 0.16.0 are described on the
   loads; a marker whose `client` is not the folder name, or without its protected copy, is
   unknown. The loader resolves like tq: the directory must lie under a base registered in
   `$TQ_HOME/config.yaml` and the identity is that base's first-level folder, so a
-  `.tentaqles.yaml` planted deeper never shadows it; the walk-up applies only on a machine
-  with no `config.yaml`. New helpers `protected_manifest_path`,
+  `.tentaqles.yaml` planted deeper never shadows it; with no `config.yaml` an agent
+  session is neutral (tq would resolve "outside any base"), and the walk-up applies only
+  to a plain process on a machine without tq. New helpers `protected_manifest_path`,
   `is_protected_manifest_path` and `workspace_root_for`
   (`tests/test_manifest_loader_marker.py`).
 - **`TQ_HOME` is ignored under an agent marker** (`tentaqles.tqhome`, used by the loader and

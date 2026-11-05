@@ -247,61 +247,120 @@ func TestManifests_RekeysLegacyTrustRecords(t *testing.T) {
 	}
 }
 
-// A symlink at a root file is never read or written: the plan leaves the
-// workspace out with a warning, and a symlink swapped in after the plan
-// makes the apply refuse.
+// Anything but a regular file at a root file, or as a protected copy, is
+// never read or written: the plan leaves the workspace out with a warning,
+// and a non-regular root file swapped in after the plan makes the apply
+// refuse. The directory stand-ins run everywhere; the symlink case is
+// skipped only where the process cannot create one.
 func TestManifests_RefusesASymlinkedRootFile(t *testing.T) {
-	e := newMfEnv(t)
-	alphaRoot, _ := e.oldLayout("alpha", true)
-	pp := e.protected("gamma")
-	evil := filepath.Join(e.base, "evil")
-	stMkdir(t, evil)
-	if err := os.Symlink(pp, filepath.Join(evil, manifest.FileName)); err != nil {
-		if runtime.GOOS == "windows" {
-			t.Skipf("this process cannot create a symlink (developer mode or SeCreateSymbolicLinkPrivilege needed): %v", err)
-		}
-		t.Fatal(err)
-	}
 	st := stepRegistry["manifests"]
-	p, err := st.Plan(e.deps())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range p.Changes {
-		if strings.Contains(c.Path, evil) {
-			t.Fatalf("a symlinked root file must not be planned: %+v", c)
+	leftOut := func(t *testing.T, p Plan, root, reason string) {
+		t.Helper()
+		for _, c := range p.Changes {
+			if strings.Contains(c.Path, root) {
+				t.Fatalf("%s must not be planned: %+v", root, c)
+			}
 		}
-	}
-	found := false
-	for _, w := range p.Warnings {
-		if strings.Contains(w, evil) && strings.Contains(w, "not a regular file") {
-			found = true
+		for _, w := range p.Warnings {
+			if strings.Contains(w, root) && strings.Contains(w, reason) {
+				return
+			}
 		}
+		t.Fatalf("the plan must say why %s was left out (%q): %v", root, reason, p.Warnings)
 	}
-	if !found {
-		t.Fatalf("the plan must say why evil was left out: %v", p.Warnings)
-	}
-	// Swap alpha's root file for a symlink between the plan and the apply.
-	alphaBody := stRead(t, alphaRoot)
-	os.Remove(alphaRoot)
-	if err := os.Symlink(pp, alphaRoot); err != nil {
-		t.Fatal(err)
-	}
-	err = st.Apply(e.deps(), p, e.journal())
-	if err == nil || !strings.Contains(err.Error(), "machine changed") {
-		t.Fatalf("apply must refuse: %v", err)
-	}
-	if _, err := os.Lstat(paths.ManifestPath("alpha")); err == nil {
-		t.Fatal("nothing may be written")
-	}
-	if stRead(t, pp) != stRead(t, pp) || !strings.Contains(stRead(t, pp), "gamma@x.io") {
-		t.Fatal("the symlink target must be untouched")
-	}
-	_ = alphaBody
-	// And applyManifest itself refuses a non-regular root file.
-	if err := applyManifest(mfAction{ws: "alpha", rootFile: alphaRoot, protected: paths.ManifestPath("alpha"), copy: true}, e.journal()); err == nil || !strings.Contains(err.Error(), "not a regular file") {
-		t.Fatalf("applyManifest must refuse a symlink: %v", err)
-	}
+
+	t.Run("root-file-directory", func(t *testing.T) {
+		e := newMfEnv(t)
+		alphaRoot, _ := e.oldLayout("alpha", true)
+		dir := filepath.Join(e.base, "dirfile")
+		stMkdir(t, filepath.Join(dir, manifest.FileName))
+		p, err := st.Plan(e.deps())
+		if err != nil {
+			t.Fatal(err)
+		}
+		leftOut(t, p, dir, "marker is not a regular file")
+		if len(p.Changes) != 2 {
+			t.Fatalf("alpha alone is planned: %+v", p.Changes)
+		}
+		// A directory swapped in for alpha's root file after the plan.
+		os.Remove(alphaRoot)
+		stMkdir(t, alphaRoot)
+		err = st.Apply(e.deps(), p, e.journal())
+		if err == nil || !strings.Contains(err.Error(), "machine changed") {
+			t.Fatalf("apply must refuse: %v", err)
+		}
+		if _, err := os.Lstat(paths.ManifestPath("alpha")); err == nil {
+			t.Fatal("nothing may be written")
+		}
+		// And applyManifest itself refuses a non-regular root file.
+		if err := applyManifest(mfAction{ws: "alpha", rootFile: alphaRoot, protected: paths.ManifestPath("alpha"), copy: true}, e.journal()); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("applyManifest must refuse a directory: %v", err)
+		}
+	})
+
+	t.Run("protected-copy-directory", func(t *testing.T) {
+		e := newMfEnv(t)
+		e.oldLayout("alpha", true)
+		// A marked workspace whose protected copy is a directory, and an
+		// old-layout one with a directory where its protected copy would go.
+		marked := filepath.Join(e.base, "marked")
+		stWrite(t, filepath.Join(marked, manifest.FileName), string(manifest.MarkerBytes("marked")))
+		stMkdir(t, paths.ManifestPath("marked"))
+		oldRoot, _ := e.oldLayout("oldbad", true)
+		stMkdir(t, paths.ManifestPath("oldbad"))
+		p, err := st.Plan(e.deps())
+		if err != nil {
+			t.Fatal(err)
+		}
+		leftOut(t, p, marked, "protected manifest is not a regular file")
+		leftOut(t, p, filepath.Dir(oldRoot), "protected manifest is not a regular file")
+		if len(p.Changes) != 2 {
+			t.Fatalf("alpha alone is planned: %+v", p.Changes)
+		}
+		if err := st.Apply(e.deps(), p, e.journal()); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Lstat(paths.ManifestPath("oldbad")); err != nil || !fi.IsDir() || stRead(t, oldRoot) == string(manifest.MarkerBytes("oldbad")) {
+			t.Fatal("the left-out workspace must be untouched")
+		}
+	})
+
+	t.Run("root-file-symlink", func(t *testing.T) {
+		e := newMfEnv(t)
+		alphaRoot, _ := e.oldLayout("alpha", true)
+		pp := e.protected("gamma")
+		evil := filepath.Join(e.base, "evil")
+		stMkdir(t, evil)
+		if err := os.Symlink(pp, filepath.Join(evil, manifest.FileName)); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skipf("this process cannot create a symlink (developer mode or SeCreateSymbolicLinkPrivilege needed): %v", err)
+			}
+			t.Fatal(err)
+		}
+		p, err := st.Plan(e.deps())
+		if err != nil {
+			t.Fatal(err)
+		}
+		leftOut(t, p, evil, "marker is not a regular file")
+		// Swap alpha's root file for a symlink between the plan and the apply.
+		os.Remove(alphaRoot)
+		if err := os.Symlink(pp, alphaRoot); err != nil {
+			t.Fatal(err)
+		}
+		err = st.Apply(e.deps(), p, e.journal())
+		if err == nil || !strings.Contains(err.Error(), "machine changed") {
+			t.Fatalf("apply must refuse: %v", err)
+		}
+		if _, err := os.Lstat(paths.ManifestPath("alpha")); err == nil {
+			t.Fatal("nothing may be written")
+		}
+		if !strings.Contains(stRead(t, pp), "gamma@x.io") {
+			t.Fatal("the symlink target must be untouched")
+		}
+		if err := applyManifest(mfAction{ws: "alpha", rootFile: alphaRoot, protected: paths.ManifestPath("alpha"), copy: true}, e.journal()); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("applyManifest must refuse a symlink: %v", err)
+		}
+	})
 }
 
 func TestManifests_RestorePutsTheManifestBack(t *testing.T) {

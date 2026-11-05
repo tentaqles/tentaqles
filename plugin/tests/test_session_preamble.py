@@ -50,6 +50,11 @@ def _run_preamble(cwd: Path, *args: str) -> str:
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
     env["TQ_HOME"] = ""
+    # The hook always runs under an agent marker and then resolves through
+    # the registry only: register the workspace's base (cwd is the root).
+    env["CLAUDECODE"] = "1"
+    (home / ".tentaqles").mkdir(exist_ok=True)
+    (home / ".tentaqles" / "config.yaml").write_text(f"bases:\n  - {cwd.parent}\n", encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         input=json.dumps({"cwd": str(cwd)}),

@@ -74,9 +74,10 @@ defense in depth: an icacls failure is reported, never a command failure.
 
 The plugin's loader (`plugin/tentaqles/manifest/loader.py`) resolves a directory the way
 `resolve` does: it must lie under a base of `$TQ_HOME/config.yaml`, the identity is that
-base's first-level folder, and a `.tentaqles.yaml` planted deeper never shadows it; only
-on a machine with no `config.yaml` (the plugin without tq) does it walk up to the nearest
-root file. A marker resolves to the protected copy; `_manifest_path` names the file loaded
+base's first-level folder, and a `.tentaqles.yaml` planted deeper never shadows it. With
+no `config.yaml` an agent session is neutral, as tq would be outside any base; only a
+plain process on a machine without tq walks up to the nearest root file. A marker
+resolves to the protected copy; `_manifest_path` names the file loaded
 and `_client_root` stays the folder. `snapshot-guard.py` snapshots the copy tq reads
 before a Write to the marker, the protected copy or an old-layout file.
 

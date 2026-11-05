@@ -224,12 +224,31 @@ def test_registry_resolution_reads_the_old_layout_too(tmp_path, tq_home):
 
 
 def test_without_a_registry_the_walk_up_still_applies(tmp_path, tq_home):
-    """No config.yaml: the plugin without tq keeps finding the nearest root file."""
+    """No config.yaml and no agent marker: the plugin without tq keeps
+    finding the nearest root file."""
     root = tmp_path / "anywhere" / "acme"
     root.mkdir(parents=True)
     (root / ".tentaqles.yaml").write_text(MANIFEST, encoding="utf-8")
     (root / "deep").mkdir()
     assert not (tq_home / "config.yaml").exists()
+    data = loader.load_manifest(root / "deep")
+    assert data is not None and data["client"] == "acme"
+
+
+def test_agent_session_without_a_registry_is_neutral(tmp_path, tq_home, monkeypatch):
+    """Under an agent marker with no config.yaml the walk-up is off: tq itself
+    would resolve "outside any base", so a nested root file is unknown."""
+    root = tmp_path / "anywhere" / "acme"
+    (root / "deep").mkdir(parents=True)
+    (root / ".tentaqles.yaml").write_text(MANIFEST, encoding="utf-8")
+    assert not (tq_home / "config.yaml").exists()
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert loader.load_manifest(root / "deep") is None
+    assert loader.load_manifest(root) is None
+    assert loader.find_manifest(root / "deep") is None
+    assert loader.get_client_context(root / "deep")["client"] == "unknown"
+    # Registering the base brings it back, as on a machine with tq.
+    _register(tq_home, tmp_path / "anywhere")
     data = loader.load_manifest(root / "deep")
     assert data is not None and data["client"] == "acme"
 
@@ -269,8 +288,10 @@ def test_forged_tq_home_cannot_supply_the_manifest_under_a_marker(tmp_path, monk
     root = tmp_path / "base" / "acme"
     _marker(root)
     real = _protected(home / ".tentaqles")
+    _register(home / ".tentaqles", tmp_path / "base")
     forged = tmp_path / "forged"
     _protected(forged, body=MANIFEST.replace("dev@acme.test", "forged@acme.test"))
+    _register(forged, tmp_path / "base")
     monkeypatch.setenv("TQ_HOME", str(forged))
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setattr(tqhome, "ALLOW_HOME_OVERRIDE", False)
