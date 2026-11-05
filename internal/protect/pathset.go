@@ -246,6 +246,19 @@ func (s *Set) Normalize(p, base string) string {
 		}
 	}
 	p = filepath.FromSlash(p)
+	if runtime.GOOS == "windows" && rootedNoVolume(p) {
+		// `\`, `/`, `\Users\x`: rooted at the current drive, not relative.
+		// filepath.IsAbs says false for them; give them the drive of the
+		// directory the call runs in (or of the state folder).
+		vol := filepath.VolumeName(base)
+		if vol == "" {
+			vol = filepath.VolumeName(s.homeRaw)
+		}
+		if vol == "" {
+			return ""
+		}
+		p = vol + p
+	}
 	if !filepath.IsAbs(p) && !winAbsRe.MatchString(p) {
 		if base == "" {
 			return ""
@@ -253,6 +266,12 @@ func (s *Set) Normalize(p, base string) string {
 		p = filepath.Join(base, p)
 	}
 	return s.canon(filepath.Clean(p))
+}
+
+// rootedNoVolume reports a Windows path rooted at the current drive with no
+// volume: a single leading separator (`\`, `\x`), not a UNC `\\server`.
+func rootedNoVolume(p string) bool {
+	return len(p) >= 1 && p[0] == '\\' && (len(p) == 1 || p[1] != '\\')
 }
 
 // Match reports whether the canonical path p is protected. A path with a

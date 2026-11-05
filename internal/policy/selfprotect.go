@@ -652,29 +652,18 @@ func recursiveSearchRoots(name string, args []string) ([]string, bool) {
 	if !rec {
 		return nil, false
 	}
+	// Every non-dash word is tested as a root, "/"-prefixed ones included
+	// (`grep -r x /home/me`, an MSYS `/c/Users/me`, `findstr x /home`). A
+	// real cmd.exe switch such as `/s` never resolves to an ancestor of the
+	// state folder, so testing it costs nothing.
 	var roots []string
 	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			continue
+		if !strings.HasPrefix(a, "-") {
+			roots = append(roots, a)
 		}
-		// A "/"-prefixed word is a root (`grep -r x /home/me`, an MSYS
-		// `/c/Users/me`), except a cmd.exe-style switch (`/s`, `/i`,
-		// `/c:text`) of findstr or dir.
-		if cmdSwitchStyle[name] && cmdSwitchRe.MatchString(a) {
-			continue
-		}
-		roots = append(roots, a)
 	}
 	return roots, true
 }
-
-// cmdSwitchStyle are the search commands that take cmd.exe-style `/x`
-// switches; for every other command a "/"-prefixed word is a path.
-var cmdSwitchStyle = wordSet("findstr", "dir")
-
-// cmdSwitchRe matches a cmd.exe switch: a slash, letters, and an optional
-// `:value`, with no further path separator.
-var cmdSwitchRe = regexp.MustCompile(`^/[A-Za-z]+(:[^/\\]*)?$`)
 
 // findTouch judges a find invocation: a destructive action (-delete, -exec
 // and friends) rooted at a directory that is, contains or is contained by a

@@ -69,6 +69,20 @@ func TestNormalizeExpandsAndPlaces(t *testing.T) {
 	if got := s.Normalize("config.yaml", ""); got != "" {
 		t.Errorf("a relative path with no base is unplaceable, got %q", got)
 	}
+	// On Windows `\`, `/` and `\x` are rooted at the current drive, not
+	// relative to cwd.
+	if runtime.GOOS == "windows" {
+		vol := filepath.VolumeName(cwd)
+		for in, want := range map[string]string{
+			`\`:        s.canon(vol + `\`),
+			"/":        s.canon(vol + `\`),
+			`\Windows`: s.canon(vol + `\Windows`),
+		} {
+			if got := s.Normalize(in, cwd); got != want {
+				t.Errorf("Normalize(%q) = %q, want %q", in, got, want)
+			}
+		}
+	}
 }
 
 func TestMatchKinds(t *testing.T) {

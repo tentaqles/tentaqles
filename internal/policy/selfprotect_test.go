@@ -162,6 +162,44 @@ func TestSelfProtectionShellAndFileTools(t *testing.T) {
 	if d := SelfProtection(s, filepath.Dir(state), ToolCall{Tool: "PowerShell", Command: "findstr /s /i x ."}); d.Action != Deny {
 		t.Fatalf("findstr /s /i x . from home must deny: %s", d.Reason())
 	}
+	// A switch-shaped single-segment root ("/home" on Unix, the MSYS drive
+	// "/c" on Windows) that resolves to an ancestor of the fixture home is a
+	// root, not a switch: it is denied.
+	u := unixSpelling(filepath.Dir(state))
+	seg := u
+	if i := strings.Index(u[1:], "/"); i >= 0 {
+		seg = u[:i+1]
+	}
+	if d := SelfProtection(s, cwd, ToolCall{Tool: "PowerShell", Command: "findstr /s x " + seg}); d.Action != Deny {
+		t.Fatalf("findstr /s x %s (an ancestor of home) must deny: %s", seg, d.Reason())
+	}
+	// A drive root is an ancestor of home. The Grep/Glob tools carry a path
+	// verbatim (`/`, `C:\`, `C:/`) and must not read `/` as relative.
+	toolRoots := []string{"/"}
+	if runtime.GOOS == "windows" {
+		vol := filepath.VolumeName(state)
+		toolRoots = append(toolRoots, vol+`\`, vol+"/", `\`)
+	}
+	for _, r := range toolRoots {
+		for _, tool := range []string{"Grep", "Glob"} {
+			if d := SelfProtection(s, cwd, ToolCall{Tool: tool, Path: r}); d.Action != Deny {
+				t.Errorf("%s path %q: a search of the drive root must deny: %s", tool, r, d.Reason())
+			}
+		}
+	}
+	// Shell recursive searches rooted at a drive root (forward-slash spelling,
+	// which the tokenizer reads cleanly) deny too.
+	shellRoots := []string{"/"}
+	if runtime.GOOS == "windows" {
+		shellRoots = append(shellRoots, filepath.VolumeName(state)+"/")
+	}
+	for _, r := range shellRoots {
+		for _, cmd := range []string{"grep -r x " + r, "rg x " + r, "findstr /s x " + r, "Get-ChildItem -Recurse " + r} {
+			if d := SelfProtection(s, cwd, ToolCall{Tool: "PowerShell", Command: cmd}); d.Action != Deny {
+				t.Errorf("%q: a search of the drive root must deny: %s", cmd, d.Reason())
+			}
+		}
+	}
 }
 
 // unixSpelling writes an absolute path the way a Unix shell (or Git Bash's
