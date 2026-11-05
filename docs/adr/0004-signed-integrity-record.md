@@ -238,7 +238,13 @@ then the one in a well-known install dir.
   every `GIT_CONFIG*`) are dropped, the system and user config are off
   (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` the null device), and
   `-c core.fsmonitor= -c safe.directory=<clone>` keeps the clone's own config
-  from naming a command. The clone only supplies the objects of tq's own
+  from naming a command. Replace objects are off (`--no-replace-objects`,
+  `GIT_NO_REPLACE_OBJECTS=1`; `GIT_REPLACE_REF_BASE` and `GIT_GRAFT_FILE`
+  dropped), `git rev-parse --verify <commit>^{commit}` must answer exactly
+  tq's commit, and a clone with `objects/info/alternates`, `info/grafts`, a
+  `shallow` file or any ref under `refs/replace/` is refused ("the clone is
+  altered: <what>"): each could make tq's commit id stand for another tree. The
+  clone only supplies the objects of tq's own
   commit: rewriting its pin changes nothing, and forging an object with that
   commit's id is a hash collision. A same-user process outside the harness that
   rewrites the clone, or replaces the tq binary, is AR1.
@@ -272,7 +278,7 @@ then the one in a well-known install dir.
   `TestManifests_DoesNotResignAFailingRecord`, `TestSettingsCoversHelpersAndTheHookSwitch`,
   `TestPluginRootIsCoveredButPromptsAndCaches`, `TestInstalledPluginsDecidesAndIsCovered`,
   `TestPluginBumpSaysWhereNotWhat`, `TestCheckReleaseComparesBytesNotLocation`,
-  `TestCheckReleaseFailsClosed`, `TestARepinnedCloneIsRefused`,
+  `TestCheckReleaseFailsClosed`, `TestARepinnedCloneIsRefused`, `TestAnAlteredCloneIsRefused`,
   `TestAPluginReleaseNewerThanTqIsRefused`, `TestCheckReleaseChecksTheOriginAndIgnoresGitEnv`,
   `TestGitCommandIsClean`, `TestVersionPrintsTheCommit`, `TestReleaseBuildInjectsTheCommit`,
   `TestDeletingKeySnapshotAndRecordDoesNotRestoreLegacy`,

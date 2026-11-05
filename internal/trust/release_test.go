@@ -181,6 +181,60 @@ func TestARepinnedCloneIsRefused(t *testing.T) {
 	}
 }
 
+// A clone whose repository could make tq's commit id stand for other content
+// is refused: a replace ref pointing tq's release at a tampered commit (git
+// would otherwise read the tampered tree for tq's id), a graft, borrowed
+// objects, a shallow clone, a packed replace ref.
+func TestAnAlteredCloneIsRefused(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	sha := publish(t, f.claude, releaseFiles())
+	clone := MarketplaceClone(f.claude)
+	tampered := releaseFiles()
+	tampered["hooks/hooks.json"] = `{"hooks":{}}`
+	tamperedSHA := commitFiles(t, clone, tampered, "tampered")
+	install(t, f, tampered)
+	rep := f.verify()
+
+	// The replace ref: plain git now shows the tampered tree for tq's id.
+	gitFixture(t, clone, "replace", sha, tamperedSHA)
+	if got := gitFixture(t, clone, "show", sha+":plugin/hooks/hooks.json"); got != `{"hooks":{}}` {
+		t.Fatalf("precondition: the replace ref redirects tq's release, got %q", got)
+	}
+	_, err := CheckRelease("acme", rep)
+	if err == nil || !strings.Contains(err.Error(), "the clone is altered: refs/replace/"+sha) {
+		t.Fatalf("a replace ref: %v", err)
+	}
+	gitFixture(t, clone, "replace", "-d", sha)
+	gitDir := filepath.Join(clone, ".git")
+	if rel, err := CheckRelease("acme", rep); err != nil || len(rel.Mismatches) != 1 || rel.Mismatches[0] != "hooks/hooks.json: differs from the release" {
+		t.Fatalf("unaltered again, compared with tq's own tree: %+v %v", rel, err)
+	}
+
+	for _, c := range []struct{ file, body, what string }{
+		{"info/grafts", sha + " " + tamperedSHA + "\n", "info/grafts"},
+		{"objects/info/alternates", filepath.ToSlash(t.TempDir()) + "\n", "objects/info/alternates"},
+		{"shallow", sha + "\n", "shallow"},
+	} {
+		p := filepath.Join(gitDir, filepath.FromSlash(c.file))
+		write(t, p, c.body)
+		if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "the clone is altered: "+c.what) {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		os.Remove(p)
+	}
+
+	// A replace ref that only lives in packed-refs.
+	gitFixture(t, clone, "replace", sha, tamperedSHA)
+	gitFixture(t, clone, "pack-refs", "--all")
+	if _, err := os.Stat(filepath.Join(gitDir, "refs", "replace", sha)); err == nil {
+		t.Fatal("precondition: the replace ref is packed")
+	}
+	if _, err := CheckRelease("acme", rep); err == nil || !strings.Contains(err.Error(), "the clone is altered: refs/replace/"+sha) {
+		t.Fatalf("a packed replace ref: %v", err)
+	}
+}
+
 // A plugin release newer than tq is not the commit tq was built from: the
 // batch refuses it until tq is upgraded.
 func TestAPluginReleaseNewerThanTqIsRefused(t *testing.T) {
@@ -260,10 +314,12 @@ func TestGitCommandIsClean(t *testing.T) {
 		t.Setenv(k, v)
 	}
 	t.Setenv("Git_Dir", "/x") // Windows names are case-insensitive
+	t.Setenv("GIT_REPLACE_REF_BASE", "refs/evil/")
+	t.Setenv("GIT_GRAFT_FILE", "/x/grafts")
 	clone := filepath.Join(t.TempDir(), "clone")
 	c := gitCommand(t.Context(), clone, "ls-tree", "HEAD")
 	args := strings.Join(c.Args[1:], " ")
-	if want := "-c core.fsmonitor= -c safe.directory=" + filepath.ToSlash(clone) + " -C " + clone + " ls-tree HEAD"; args != want {
+	if want := "--no-replace-objects -c core.fsmonitor= -c safe.directory=" + filepath.ToSlash(clone) + " -C " + clone + " ls-tree HEAD"; args != want {
 		t.Fatalf("args %q, want %q", args, want)
 	}
 	set := map[string]string{}
@@ -279,7 +335,12 @@ func TestGitCommandIsClean(t *testing.T) {
 			t.Errorf("%s must be dropped", k)
 		}
 	}
-	if set["GIT_CONFIG_NOSYSTEM"] != "1" || set["GIT_CONFIG_GLOBAL"] != os.DevNull || set["GIT_TERMINAL_PROMPT"] != "0" {
+	for _, k := range []string{"GIT_REPLACE_REF_BASE", "GIT_GRAFT_FILE"} {
+		if _, ok := set[k]; ok {
+			t.Errorf("%s must be dropped", k)
+		}
+	}
+	if set["GIT_CONFIG_NOSYSTEM"] != "1" || set["GIT_CONFIG_GLOBAL"] != os.DevNull || set["GIT_TERMINAL_PROMPT"] != "0" || set["GIT_NO_REPLACE_OBJECTS"] != "1" {
 		t.Fatalf("%v", set)
 	}
 }

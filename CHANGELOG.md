@@ -52,7 +52,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   commit the release build injects into the binary, `cmd.Commit`, printed by `tq version`,
   read from the tentaqles marketplace clone whose origin is the tentaqles repository on
   GitHub; the clone's own pin is never read; each file's git blob compared, git run with a
-  cleaned environment), listed first under "Matches the published release tentaqles
+  cleaned environment and no replace objects; a clone with alternates, grafts, a shallow
+  file or a replace ref is refused as altered), listed first under "Matches the published release tentaqles
   <version> (<sha12>)"; a file that differs, a file the release lacks, a release file
   missing, a dev build of tq, or a clone without tq's commit, and the workspace is "not
   accepted" with the reasons, left for `--accept <ws>`; so is a plugin release newer than

@@ -70,7 +70,8 @@ func MarketplaceClone(claudeDir string) string {
 // gitEnvDrop are the variables that would point git at another repository,
 // object store, index, exec path or configuration than the clone's own:
 // the batch accept compares with the clone and nothing else.
-var gitEnvDrop = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_EXEC_PATH"}
+var gitEnvDrop = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_EXEC_PATH",
+	"GIT_REPLACE_REF_BASE", "GIT_GRAFT_FILE", "GIT_NO_REPLACE_OBJECTS"}
 
 // gitEnv is env without gitEnvDrop and every GIT_CONFIG* variable, with the
 // system and global config off, no prompt and no pager.
@@ -89,15 +90,17 @@ func gitEnv(env []string) []string {
 			out = append(out, kv)
 		}
 	}
-	return append(out, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat")
+	return append(out, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat",
+		"GIT_NO_REPLACE_OBJECTS=1")
 }
 
 // gitCommand is git with args in the clone dir: the cleaned environment
-// (gitEnv), no file-system monitor (a command the clone's config could
-// name), and the clone named safe so git's ownership check is about it
-// alone.
+// (gitEnv), no replace objects (a refs/replace/ ref would make one commit
+// id stand for another tree), no file-system monitor (a command the
+// clone's config could name), and the clone named safe so git's ownership
+// check is about it alone.
 func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	pre := []string{"-c", "core.fsmonitor=", "-c", "safe.directory=" + filepath.ToSlash(dir), "-C", dir}
+	pre := []string{"--no-replace-objects", "-c", "core.fsmonitor=", "-c", "safe.directory=" + filepath.ToSlash(dir), "-C", dir}
 	c := exec.CommandContext(ctx, "git", append(pre, args...)...)
 	c.Env = gitEnv(os.Environ())
 	return c
@@ -149,14 +152,52 @@ func isHex(s string) bool {
 	return err == nil
 }
 
-// releaseTree lists the blobs of plugin/ at commit in clone, by path relative
-// to plugin/: git cat-file -e <commit>^{commit} first (the clone must have
-// that exact commit), then git ls-tree -r of <commit>:plugin.
-func releaseTree(clone, commit string) (map[string]string, error) {
-	if _, err := gitOutput(clone, "cat-file", "-e", commit+"^{commit}"); err != nil {
-		return nil, fmt.Errorf("the clone does not have tq's release %s; every workspace needs tq hooks verify --accept <ws> (a plugin release newer than this tq needs it until tq is upgraded)", commit[:12])
+// cloneAltered names what in the clone's repository could make a commit id
+// stand for other content, or "": objects borrowed from another store
+// (objects/info/alternates), rewritten history (info/grafts), a shallow
+// clone (shallow), or a replace ref (refs/replace/, loose or packed).
+func cloneAltered(clone string) (string, error) {
+	out, err := gitOutput(clone, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", fmt.Errorf("the marketplace clone is not a git repository: %w", err)
 	}
-	out, err := gitOutput(clone, "ls-tree", "-r", "-z", commit+":plugin")
+	gitDir := filepath.FromSlash(strings.TrimSpace(string(out)))
+	for _, rel := range []string{"objects/info/alternates", "info/grafts", "shallow"} {
+		if _, err := os.Lstat(filepath.Join(gitDir, filepath.FromSlash(rel))); err == nil {
+			return rel, nil
+		}
+	}
+	refs, err := gitOutput(clone, "for-each-ref", "--format=%(refname)", "refs/replace/")
+	if err != nil {
+		return "", err
+	}
+	if r := strings.TrimSpace(string(refs)); r != "" {
+		return strings.SplitN(r, "\n", 2)[0], nil
+	}
+	return "", nil
+}
+
+// releaseTree lists the blobs of plugin/ at commit in clone, by path relative
+// to plugin/: the clone must be unaltered (cloneAltered), git rev-parse
+// --verify <commit>^{commit} must answer exactly that commit, then git
+// ls-tree -r of <commit>:plugin.
+func releaseTree(clone, commit string) (map[string]string, error) {
+	what, err := cloneAltered(clone)
+	if err != nil {
+		return nil, err
+	}
+	if what != "" {
+		return nil, fmt.Errorf("the clone is altered: %s; every workspace needs tq hooks verify --accept <ws>", what)
+	}
+	notThere := fmt.Errorf("the clone does not have tq's release %s; every workspace needs tq hooks verify --accept <ws> (a plugin release newer than this tq needs it until tq is upgraded)", commit[:12])
+	out, err := gitOutput(clone, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
+	if err != nil {
+		return nil, notThere
+	}
+	if got := strings.ToLower(strings.TrimSpace(string(out))); got != commit {
+		return nil, fmt.Errorf("the clone resolves tq's release %s to %s", commit[:12], got)
+	}
+	out, err = gitOutput(clone, "ls-tree", "-r", "-z", commit+":plugin")
 	if err != nil {
 		return nil, fmt.Errorf("tq's release %s has no plugin folder in the clone: %w", commit[:12], err)
 	}
