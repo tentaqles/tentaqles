@@ -119,21 +119,28 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - **Dry runs are free.** `tq migrate` without `--apply` and `tq settings render --dry-run`
   no longer refuse a session; `--apply` and a real render still do.
 - **Every hook deny is logged** to `~/.tentaqles/denials.jsonl` (kind = category, layer
-  `hook`, tool, command or path, rule, reason, workspace, pid, cwd); never an environment
-  value or file content. A logged command line is redacted first: here-doc bodies are
-  blanked and every `NAME=value` assignment's value becomes `NAME=***`, so a pasted
-  password or an inline token never reaches the log.
+  `hook`, tool, command, rule, reason, workspace, pid, cwd); never an environment value or
+  file content, and for a shell command no arguments at all: the `command` field is the
+  verb (the first word, after `sudo`/`env` and `NAME=value`/`$env:` assignments are
+  stripped) plus the one protected path or token the denial named, never the rest of the
+  line — so a pasted password, an inline token, a flag value or a URL never reaches the log.
 - **The path rule catches common spellings** of the §8.2 routes (it stays a text filter,
   a speed bump, not a sandbox): glued redirects (`x>path`), `${HOME}` expansion, a
   destructive `find` rooted at or above a protected path, `… | xargs rm`, `eval`/`iex` of
-  a literal string, `curl -o` / `wget -O` / `7z -o`, `awk -i inplace`, an editor
-  (`vim`, `code`), an interpreter run with its cwd inside the state folder or a here-doc /
-  stdin body that names a protected path, and a PowerShell `-EncodedCommand` (decoded from
-  base64 UTF-16LE; an undecodable one is denied). A glob matches a protected path only when
-  it could expand to one (`rm *.log` in a workspace is free; `rm .t*`, `rm *` and
-  `~/.tent*/config.yaml` are denied). A path built at run time (a `$var`, string
-  concatenation, `Join-Path`, an alias, a script on disk) is not caught; P1.4's signed
-  record makes a change it misses visible at the next start.
+  a literal string, interpreters matched by prefix (`python3.12`, `node20`, `ruby`, `perl`,
+  `php`, `deno`, `bun`) — their `-c`/`-e` code, any path argument, `ruby -i`/`perl -i`, and
+  a here-doc, stdin or piped body that names a protected path; download, archive, export
+  and convert programs (`curl -o`, `wget -O`, `7z -o`, `unzip -d`, `Invoke-WebRequest
+  -OutFile`, `Invoke-RestMethod`, `Start-BitsTransfer`, `Expand-Archive`, `Export-* -Path`,
+  `certutil`, `fsutil file`, `patch`, `sort -o`); an editor (`vim`, `code`); a recursive
+  search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem -Recurse`, the Grep/Glob tools)
+  rooted at the home folder above the state; and a PowerShell `-EncodedCommand` (any
+  accepted prefix `-e`…`-enco`, and `-ec`; decoded from base64 UTF-16LE, an undecodable
+  one denied). A glob matches a protected path only when it could expand to one (`rm *.log`
+  in a workspace is free; `rm .t*`, `rm *` and `~/.tent*/config.yaml` are denied). A path
+  built at run time (a `$var`, string concatenation, `Join-Path`, a pipe into a shell, an
+  alias, a script on disk, or a write program tq does not list) is not caught; P1.4's
+  signed record makes a change it misses visible at the next start.
 - Plugin: the PreToolUse matcher gains `Glob` (guarded like `Grep`).
 - **One marker list.** `internal/markers` holds the harness environment markers;
   `TQ_HOME` is now ignored under any of the twelve (it used to be six).

@@ -32,8 +32,13 @@ func Append(e Event) error {
 // refused it and where. Kind is the guard category (identity, secrets,
 // self-protection) for a hook deny, human-only for a refused command;
 // Layer says which layer caught it (hook, command). It carries no
-// environment value and no file content: Command is the command line or
-// the path, never what was read or written.
+// environment value and no file content, and for a hook deny no command
+// arguments: Command is the verb (the first word, after sudo/env and
+// NAME=value assignments are stripped) plus the one path or token the
+// denial named (the matched protected path, the human-only tq verb), never
+// the rest of the command line — so a secret in an argument, a here-doc
+// body, an assignment value or a flag is never logged. For a human-only
+// refusal (internal/humanonly) Command is the command name only.
 type Denial struct {
 	Time      time.Time `json:"time"`
 	Kind      string    `json:"kind"`

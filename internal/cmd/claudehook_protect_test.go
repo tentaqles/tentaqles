@@ -373,8 +373,9 @@ func TestDenyPrefixNamesTheCategory(t *testing.T) {
 		t.Fatalf("secrets: %q", errOut)
 	}
 	ds := readDenials(t)
-	if len(ds) != 2 || ds[0].Kind != "identity" || ds[0].Rule != "neutral-remote" || ds[0].Command != "git push" ||
-		ds[1].Kind != "secrets" || ds[1].Rule != "tq/env-dump" || ds[1].Tool != "Bash" || ds[0].Layer != audit.LayerHook {
+	// The log carries the verb only, never the argument ("push").
+	if len(ds) != 2 || ds[0].Kind != "identity" || ds[0].Rule != "neutral-remote" || ds[0].Command != "git" ||
+		ds[1].Kind != "secrets" || ds[1].Rule != "tq/env-dump" || ds[1].Command != "printenv" || ds[1].Tool != "Bash" || ds[0].Layer != audit.LayerHook {
 		t.Fatalf("denials %+v", ds)
 	}
 }
@@ -397,8 +398,12 @@ func TestProtectedPaths_Codex(t *testing.T) {
 		t.Fatalf("a plain patch: code %d out %q", code, out)
 	}
 	ds := readDenials(t)
-	if len(ds) != 2 || ds[0].Command != f.manifest || ds[0].Tool != "apply_patch" || strings.Contains(ds[0].Command, "Begin Patch") {
+	// The log records "apply_patch <file>", never the patch text.
+	if len(ds) != 2 || ds[0].Command != "apply_patch "+f.manifest || ds[0].Tool != "apply_patch" || strings.Contains(ds[0].Command, "Begin Patch") {
 		t.Fatalf("the log records the file, never the patch: %+v", ds)
+	}
+	if ds[1].Command != "tq allow" {
+		t.Fatalf("the human-only line logs the verb phrase once: %q", ds[1].Command)
 	}
 }
 
@@ -442,53 +447,83 @@ func TestProtectedPaths_OtherWorkspaceAndNeutralCwd(t *testing.T) {
 	}
 }
 
-// The denial log never records a secret the command carried: a here-doc body
-// (a pasted password) is blanked and a NAME=value assignment's value is
-// masked, in every category's line (PRD v2 §7.3, ADR-0005).
+// The denial log records no arguments at all (PRD v2 §7.3, ADR-0005): only
+// the verb (after sudo/env/assignments are stripped) plus the matched path.
+// A here-doc body, an assignment value, a flag or a quoted secret never
+// reaches the log, in every category's line.
 func TestDenialLogRedaction(t *testing.T) {
 	f := setupProtected(t, "blocked_commands: [\"gh \"]\n")
-	// self-protection: a here-doc writes the protected manifest; its body
-	// holds a password that must not reach the log.
-	heredoc := "cat > ~/.tentaqles/config.yaml <<'EOF'\npassword: HUNTER2-SECRET\nEOF"
-	if code, _, rule, _ := hookDecision(t, f.root, "Bash", cmdIn(heredoc)); code != 2 || rule != policy.ProtectedPathID {
-		t.Fatalf("heredoc write: code=%d rule=%q", code, rule)
+	cfgPath := filepath.Join(f.home, "config.yaml")
+	cases := []struct {
+		name, tool, cmd, wantPrefix, wantRule, wantKind string
+	}{
+		{"heredoc password", "Bash", "cat > ~/.tentaqles/config.yaml <<'EOF'\npassword: HUNTER2-PASTED\nEOF", "cat ", policy.ProtectedPathID, "self-protection"},
+		{"leading assignment", "Bash", "GH_TOKEN=tok-INLINE-9 rm ~/.tentaqles/config.yaml", "rm ", policy.ProtectedPathID, "self-protection"},
+		{"export then rm", "Bash", "export GH_TOKEN=tok-EXPORT-9; rm ~/.tentaqles/config.yaml", "", policy.ProtectedPathID, "self-protection"},
+		{"ps env assignment then remove", "PowerShell", "$env:GH_TOKEN='tok-PS-9'; Remove-Item ~/.tentaqles/config.yaml", "remove-item ", policy.ProtectedPathID, "self-protection"},
+		{"auth header", "Bash", "curl -H 'Authorization: Bearer tok-HEADER-9' -o ~/.tentaqles/config.yaml https://x", "curl ", policy.ProtectedPathID, "self-protection"},
+		{"identity blocked", "Bash", "gh pr merge 1", "gh", "blocked-command", "identity"},
 	}
-	// a protected write carrying a token assignment: the value is masked,
-	// the key survives. (A leading NAME=value hides a following verb from the
-	// identity guard's prefix match, so this is a self-protection denial; the
-	// redaction code path is the same for every category.)
-	token := "GH_TOKEN=tok-SECRET-123 rm ~/.tentaqles/config.yaml"
-	if code, _, rule, _ := hookDecision(t, f.root, "Bash", cmdIn(token)); code != 2 || rule != policy.ProtectedPathID {
-		t.Fatalf("token assignment write: code=%d rule=%q", code, rule)
-	}
-	// a plain blocked-command line (identity) is logged redacted too.
-	if code, _, rule, _ := hookDecision(t, f.root, "Bash", cmdIn("gh pr merge 1")); code != 2 || rule != "blocked-command" {
-		t.Fatalf("blocked gh: code=%d rule=%q", code, rule)
-	}
-	ds := readDenials(t)
-	if len(ds) != 3 {
-		t.Fatalf("want 3 denials, got %d", len(ds))
-	}
-	for _, d := range ds {
-		if strings.Contains(d.Command, "HUNTER2") || strings.Contains(d.Command, "tok-SECRET-123") ||
-			strings.Contains(d.Reason, "HUNTER2") || strings.Contains(d.Reason, "tok-SECRET-123") {
-			t.Fatalf("the log leaked a secret: %+v", d)
+	secrets := []string{"HUNTER2-PASTED", "tok-INLINE-9", "tok-EXPORT-9", "tok-PS-9", "tok-HEADER-9", "pr merge"}
+	for _, c := range cases {
+		if code, _, rule, _ := hookDecision(t, f.root, c.tool, cmdIn(c.cmd)); code != 2 || rule != c.wantRule {
+			t.Fatalf("%s: code=%d rule=%q", c.name, code, rule)
 		}
 	}
-	if !strings.Contains(ds[1].Command, "GH_TOKEN=***") {
-		t.Fatalf("the token assignment must be masked to GH_TOKEN=***: %q", ds[1].Command)
+	ds := readDenials(t)
+	if len(ds) != len(cases) {
+		t.Fatalf("want %d denials, got %d", len(cases), len(ds))
 	}
-	if ds[2].Kind != "identity" || ds[2].Command != "gh pr merge 1" {
-		t.Fatalf("the identity line is logged: %+v", ds[2])
+	for i, c := range cases {
+		d := ds[i]
+		if d.Kind != c.wantKind {
+			t.Errorf("%s: kind=%q want %q", c.name, d.Kind, c.wantKind)
+		}
+		if c.wantPrefix != "" && !strings.HasPrefix(d.Command, c.wantPrefix) {
+			t.Errorf("%s: command %q, want prefix %q", c.name, d.Command, c.wantPrefix)
+		}
+		// Every protected-path line ends in the matched config path; no line
+		// carries more than the verb and that path.
+		if c.wantRule == policy.ProtectedPathID && !strings.Contains(strings.ToLower(d.Command), strings.ToLower(cfgPath)) {
+			t.Errorf("%s: command %q should name the matched path", c.name, d.Command)
+		}
 	}
 	raw, err := os.ReadFile(audit.DenialsPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, leak := range []string{"HUNTER2", "tok-SECRET-123"} {
+	for _, leak := range secrets {
 		if strings.Contains(string(raw), leak) {
-			t.Fatalf("the denial log carries %s", leak)
+			t.Fatalf("the denial log carries %q", leak)
 		}
+	}
+}
+
+// Grep and Glob rooted at the home folder (an ancestor of the state folder)
+// are denied — the recursive search would read tq's state — while a search
+// inside the workspace is allowed (ADR-0005 round 3).
+func TestProtectedPaths_AncestorSearch(t *testing.T) {
+	f := setupProtected(t, "")
+	home := filepath.Dir(f.home) // the user home, parent of ~/.tentaqles
+	for _, tc := range []struct {
+		name, tool, input string
+		deny              bool
+	}{
+		{"Grep at home", "Grep", `{"pattern":"email","path":` + jsonPathLit(home) + `}`, true},
+		{"Glob at home", "Glob", `{"pattern":"**/manifest.yaml","path":` + jsonPathLit(home) + `}`, true},
+		{"grep -r at home", "Bash", cmdIn("grep -r email " + home), true},
+		{"Grep in the workspace", "Grep", `{"pattern":"x","path":` + jsonPathLit(f.root) + `}`, false},
+		{"grep -r in a project", "Bash", cmdIn("grep -r foo src"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, rule, _ := hookDecision(t, f.root, tc.tool, tc.input)
+			if tc.deny && (code != 2 || rule != policy.ProtectedPathID) {
+				t.Fatalf("want deny, code=%d rule=%q", code, rule)
+			}
+			if !tc.deny && code != 0 {
+				t.Fatalf("want allow, code=%d rule=%q", code, rule)
+			}
+		})
 	}
 }
 

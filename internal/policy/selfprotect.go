@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf16"
 
@@ -43,17 +44,29 @@ func SelfProtection(set *protect.Set, cwd string, call ToolCall) Decision {
 		return Decision{}
 	}
 	if hit, access, ok := protectedTouch(set, cwd, call); ok {
-		return selfProtectionDeny(ProtectedPathID, protectedReason(hit, access))
+		return selfProtectionDeny(ProtectedPathID, protectedReason(hit, access), subjectOf(hit, access))
 	}
 	if call.IsShell() {
 		if what, ok := KeychainWrite(call.Command); ok {
-			return selfProtectionDeny(ProtectedPathID, what+" writes tq's entry in the OS keychain (service "+KeychainService+": the integrity key and the tq secret tokens), a protected location: tq denies every write there; a human changes it with the tq command in a terminal")
+			return selfProtectionDeny(ProtectedPathID, what+" writes tq's entry in the OS keychain (service "+KeychainService+": the integrity key and the tq secret tokens), a protected location: tq denies every write there; a human changes it with the tq command in a terminal", "the OS keychain")
 		}
 		if what, ok := HumanOnlyInvocation(call.Command); ok {
-			return selfProtectionDeny(HumanOnlyCommandID, what+" is human-only: run it yourself in a terminal (tq refuses an agent session and confirms before it writes)")
+			return selfProtectionDeny(HumanOnlyCommandID, what+" is human-only: run it yourself in a terminal (tq refuses an agent session and confirms before it writes)", what)
 		}
 	}
 	return Decision{}
+}
+
+// subjectOf is the one token a protected-path denial names for the log: the
+// matched path, or a short phrase when there is no single path.
+func subjectOf(hit protect.Hit, access string) string {
+	switch access {
+	case "decode":
+		return "an encoded command"
+	case "search", "home-write":
+		return "the home folder"
+	}
+	return hit.Path
 }
 
 // KeychainService is the OS keychain service tq keeps its entries under:
@@ -120,13 +133,19 @@ func KeychainWrite(command string) (what string, ok bool) {
 	return "", false
 }
 
-func selfProtectionDeny(id, reason string) Decision {
-	return Decision{Action: Deny, Matched: []*Rule{{ID: id, Category: CategorySelfProtection, Action: Deny, Reason: reason, Source: "builtin"}}}
+func selfProtectionDeny(id, reason, subject string) Decision {
+	return Decision{Action: Deny, Matched: []*Rule{{ID: id, Category: CategorySelfProtection, Action: Deny, Reason: reason, Source: "builtin", Subject: subject}}}
 }
 
 func protectedReason(hit protect.Hit, access string) string {
 	if access == "decode" {
 		return "the encoded command could not be read: tq denies a PowerShell -EncodedCommand it cannot decode (a protected path may be its target)"
+	}
+	if access == "search" {
+		return "searching the home folder would read tq's state; search a project folder"
+	}
+	if access == "home-write" {
+		return "a destructive find on the home folder would delete within tq's state; target a project folder"
 	}
 	if hit.ReadDenied() {
 		return fmt.Sprintf("%s is %s, a protected path: tq denies every read, write, copy, move and delete there (this call would %s it); a human changes it with the tq command in a terminal", hit.Path, hit.What, access)
@@ -170,6 +189,13 @@ func protectedTouch(set *protect.Set, cwd string, call ToolCall) (protect.Hit, s
 			return protect.Hit{}, "", false
 		}
 		path = cwd // a Grep/Glob with no path searches the cwd
+	}
+	// Grep and Glob recurse: a search rooted at an ancestor of the state
+	// folder would read it, even when the root itself is not protected.
+	if call.Tool == "Grep" || call.Tool == "Glob" {
+		if set.SearchReadsState(set.Normalize(path, cwd)) {
+			return protect.Hit{Path: "the home folder", What: "an ancestor of the tq state folder"}, "search", true
+		}
 	}
 	if hit, ok := set.Match(set.Normalize(path, cwd)); ok && (access == accessWrite || hit.ReadDenied()) {
 		return hit, access, true
@@ -243,30 +269,48 @@ var writeWords = wordSet(
 	"tar", "zip", "unzip", "7z",
 	"curl", "wget",
 	"vim", "vi", "nvim", "nano", "emacs", "ed", "code", "notepad", "notepad++", "subl", "gedit", "micro",
+	// download, archive, export, convert and in-place programs whose write
+	// target is one of their path arguments (ADR-0005 round 3)
+	"invoke-webrequest", "iwr", "invoke-restmethod", "irm", "start-bitstransfer",
+	"expand-archive", "patch", "certutil", "fsutil", "sort",
 )
 
-// interpreterVerbs run code. With cwd inside a protected directory, or a
-// here-doc / stdin body that names a protected path, they are denied.
-var interpreterVerbs = wordSet(
-	"python", "python3", "python2", "py", "node", "nodejs", "deno", "bun",
-	"perl", "ruby", "php", "bash", "sh", "zsh", "dash", "ksh", "fish", "pwsh", "powershell",
-)
+// interpreterRe matches an interpreter command word, versioned forms
+// included (python3.12, node20). Such a command's inline code, every path
+// argument, and a here-doc / stdin body it reads are judged.
+var interpreterRe = regexp.MustCompile(`^(python(\d+(\.\d+)?)?|py|node(\d+)?|nodejs|ruby|perl|php|deno|bun|pwsh|powershell|bash|sh|zsh|dash|ksh|fish)$`)
+
+func isInterpreter(name string) bool { return interpreterRe.MatchString(name) }
+
+// inlineFlagsFor returns the flags whose next argument is inline code for an
+// interpreter (matched by prefix, so python3.12 reuses python's).
+func inlineFlagsFor(name string) []string {
+	switch {
+	case strings.HasPrefix(name, "python") || name == "py" || name == "py2" || name == "py3":
+		return []string{"-c"}
+	case strings.HasPrefix(name, "node") || name == "nodejs" || name == "bun":
+		return []string{"-e", "--eval", "-p", "--print"}
+	case name == "deno":
+		return []string{"eval"}
+	case name == "perl":
+		return []string{"-e", "-E"}
+	case name == "ruby":
+		return []string{"-e"}
+	case name == "php":
+		return []string{"-r"}
+	case name == "pwsh" || name == "powershell":
+		return []string{"-c", "-command"}
+	}
+	return nil
+}
 
 // readWords print their arguments.
 var readWords = wordSet(
 	"cat", "type", "more", "less", "head", "tail", "bat", "nl", "strings", "xxd", "od",
 	"grep", "rg", "egrep", "fgrep", "findstr", "gc", "get-content", "select-string", "sls",
-	"awk", "cut", "sort", "uniq", "wc", "diff", "cmp", "comm", "jq", "yq",
-	"source", ".", "bash", "sh", "zsh", "dash", "ksh", "fish", "pwsh", "powershell",
+	"awk", "cut", "uniq", "wc", "diff", "cmp", "comm", "jq", "yq",
+	"source", ".",
 )
-
-// inlineFlags name, per interpreter, the flag whose next argument is code.
-var inlineFlags = map[string][]string{
-	"python": {"-c"}, "python3": {"-c"}, "python2": {"-c"}, "py": {"-c"},
-	"node": {"-e", "--eval", "-p", "--print"}, "nodejs": {"-e", "--eval", "-p", "--print"},
-	"deno": {"eval"}, "bun": {"-e", "--eval"},
-	"perl": {"-e", "-E"}, "ruby": {"-e"}, "php": {"-r"},
-}
 
 func wordSet(words ...string) map[string]bool {
 	m := make(map[string]bool, len(words))
@@ -274,6 +318,17 @@ func wordSet(words ...string) map[string]bool {
 		m[w] = true
 	}
 	return m
+}
+
+// inPlace reports whether a ruby/perl invocation edits its file arguments in
+// place (-i, -pi, -ni), which makes a path argument a write.
+func inPlace(args []string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "i") && !strings.Contains(a, "e") && !strings.Contains(a, "E") {
+			return true
+		}
+	}
+	return false
 }
 
 // verbClass classifies a command word with its arguments.
@@ -293,22 +348,18 @@ func verbClass(name string, args []string) int {
 			}
 		}
 		return classRead
-	case name == "perl":
-		for _, a := range args {
-			if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "i") && !strings.Contains(a, "e") && !strings.Contains(a, "E") {
-				return classWrite // -i, -pi, -ni: in place
-			}
-		}
+	case (name == "ruby" || name == "perl") && inPlace(args):
+		return classWrite
+	case isInterpreter(name):
 		return classInline
 	case name == "find":
 		return classNone // findTouch judges it
+	case strings.HasPrefix(name, "export-"):
+		return classWrite // Export-Clixml, Export-Csv, … write their -Path value
 	case writeWords[name]:
 		return classWrite
 	case readWords[name]:
 		return classRead
-	}
-	if _, ok := inlineFlags[name]; ok {
-		return classInline
 	}
 	return classNone
 }
@@ -507,6 +558,15 @@ func commandTouch(set *protect.Set, cwd, base string, c guard.Command) (protect.
 		}
 		return protect.Hit{}, "", false
 	}
+	// A recursive search (grep -r, rg, findstr /s, Get-ChildItem -Recurse)
+	// rooted at an ancestor of the state folder would read it.
+	if roots, ok := recursiveSearchRoots(name, args); ok {
+		for _, r := range roots {
+			if set.SearchReadsState(set.Normalize(r, base)) {
+				return protect.Hit{Path: "the home folder", What: "an ancestor of the tq state folder"}, "search", true
+			}
+		}
+	}
 	class := verbClass(name, args)
 	if baseProtected && (class == classWrite || class == classInline || (class == classRead && baseHit.ReadDenied())) {
 		access := accessWrite
@@ -533,18 +593,72 @@ func commandTouch(set *protect.Set, cwd, base string, c guard.Command) (protect.
 			}
 		}
 	case classInline:
-		flags := inlineFlags[name]
-		for i := 0; i+1 < len(args); i++ {
+		// Every non-flag argument is checked as a path (a script or a path
+		// passed to `-c`/`-e` code, `ruby -i <file>`), and each inline-code
+		// flag's argument is scanned for a protected path it names.
+		flags := inlineFlagsFor(name)
+		for i := 0; i < len(args); i++ {
+			a := args[i]
 			for _, f := range flags {
-				if args[i] == f {
+				if a == f && i+1 < len(args) {
 					if h, ok := set.Mentions(args[i+1]); ok {
 						return h, "use", true
 					}
 				}
 			}
+			if strings.HasPrefix(a, "-") {
+				continue
+			}
+			for _, p := range argPaths(a) {
+				if h, ok := match(p); ok {
+					return h, accessWrite, true
+				}
+			}
 		}
 	}
 	return protect.Hit{}, "", false
+}
+
+// recursiveSearchRoots reports whether a command is a recursive search and,
+// if so, its candidate root arguments (the non-flag words; the search
+// pattern among them never resolves to an ancestor of the state folder, so
+// testing them all is safe).
+func recursiveSearchRoots(name string, args []string) ([]string, bool) {
+	rec := false
+	switch name {
+	case "grep", "egrep", "fgrep", "rg", "ag", "ripgrep":
+		for _, a := range args {
+			if a == "-r" || a == "-R" || a == "--recursive" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "rR")) {
+				rec = true
+			}
+		}
+		if name == "rg" || name == "ag" || name == "ripgrep" {
+			rec = true // recursive by default
+		}
+	case "findstr":
+		for _, a := range args {
+			if strings.EqualFold(a, "/s") {
+				rec = true
+			}
+		}
+	case "get-childitem", "gci", "ls", "dir", " childitem":
+		for _, a := range args {
+			l := strings.ToLower(a)
+			if l == "-recurse" || l == "-r" || l == "-s" {
+				rec = true
+			}
+		}
+	}
+	if !rec {
+		return nil, false
+	}
+	var roots []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "/") {
+			roots = append(roots, a)
+		}
+	}
+	return roots, true
 }
 
 // findTouch judges a find invocation: a destructive action (-delete, -exec
@@ -581,20 +695,35 @@ func findTouch(set *protect.Set, base string, args []string) (protect.Hit, strin
 		dirs = []string{"."}
 	}
 	for _, d := range dirs {
-		if hit, ok := set.FindReaches(set.Normalize(d, base), names); ok {
+		nd := set.Normalize(d, base)
+		// A destructive find rooted on the whole home folder would delete
+		// within tq's state whatever its -name (an identity dir, a trust
+		// hash), on the same principle as a recursive read of home.
+		if set.SearchReadsState(nd) {
+			return protect.Hit{Path: "the home folder", What: "an ancestor of the tq state folder"}, "home-write", true
+		}
+		if hit, ok := set.FindReaches(nd, names); ok {
 			return hit, accessWrite, true
 		}
 	}
 	return protect.Hit{}, "", false
 }
 
-// encodedPowerShell finds a -EncodedCommand / -enc / -e argument and decodes
-// its base64 UTF-16LE value. present reports the flag was seen; decoded
-// reports the value parsed.
+// encodedFlag reports whether a is a PowerShell -EncodedCommand flag:
+// any case-insensitive prefix of `-encodedcommand` of length >= 2 that
+// PowerShell would resolve (`-e`, `-en`, `-enc`, `-enco`, …), plus the `-ec`
+// alias.
+func encodedFlag(a string) bool {
+	l := strings.ToLower(a)
+	return l == "-ec" || (len(l) >= 2 && strings.HasPrefix("-encodedcommand", l))
+}
+
+// encodedPowerShell finds a -EncodedCommand (or an accepted prefix) argument
+// and decodes its base64 UTF-16LE value. present reports the flag was seen;
+// decoded reports the value parsed.
 func encodedPowerShell(args []string) (script string, present, decoded bool) {
 	for i := 0; i+1 < len(args); i++ {
-		a := strings.ToLower(args[i])
-		if a == "-encodedcommand" || a == "-enc" || a == "-e" || a == "-ec" || a == "-encoded" {
+		if encodedFlag(args[i]) {
 			present = true
 			raw, err := base64.StdEncoding.DecodeString(args[i+1])
 			if err != nil || len(raw)%2 != 0 {
@@ -610,17 +739,20 @@ func encodedPowerShell(args []string) (script string, present, decoded bool) {
 	return "", false, false
 }
 
-// interpreterReadsBody reports whether the command feeds a here-doc or stdin
-// to an interpreter (`python - <<EOF`, `cat x | sh`, `bash <<EOF`), whose body
-// is code the per-command pass does not see (a data here-doc is blanked).
+// interpreterReadsBody reports whether the command feeds a here-doc, stdin,
+// or a pipe to an interpreter (`python - <<EOF`, `echo code | python`,
+// `bash <<EOF`), whose body is code the per-command pass does not see (a data
+// here-doc is blanked). The caller then scans the whole command for a literal
+// protected path.
 func interpreterReadsBody(command string) bool {
 	hasHeredoc := strings.Contains(command, "<<")
+	hasPipe := strings.Contains(command, "|")
 	for _, c := range guard.Commands(command) {
 		verb, args, ok := guard.Verb(c.Words)
 		if !ok {
 			continue
 		}
-		if !interpreterVerbs[guard.BaseName(verb)] {
+		if !isInterpreter(guard.BaseName(verb)) {
 			continue
 		}
 		if hasHeredoc {
@@ -630,6 +762,22 @@ func interpreterReadsBody(command string) bool {
 			if a == "-" {
 				return true // reads the script from stdin
 			}
+		}
+		// A bare interpreter with no script argument reads its code from
+		// stdin; a pipe feeds it.
+		if hasPipe && !hasScriptArg(args) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasScriptArg reports whether an interpreter's arguments include a script
+// file or inline code (so it is not reading stdin).
+func hasScriptArg(args []string) bool {
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			return true
 		}
 	}
 	return false

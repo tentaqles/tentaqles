@@ -94,6 +94,11 @@ type Rule struct {
 	SkipHeredocData bool   `yaml:"-"`
 	Reason          string `yaml:"reason"`
 	Source          string `yaml:"-"` // "builtin"
+	// Subject is the one path or token a denial names for the log (the
+	// matched protected path, the human-only tq verb, "the OS keychain"),
+	// never the rest of the command line. Empty for a rule with no such
+	// subject (the secret rules). See audit.Denial.
+	Subject string `yaml:"-"`
 
 	tool, command, path, content, except *regexp.Regexp
 }

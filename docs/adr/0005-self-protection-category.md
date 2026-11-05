@@ -120,14 +120,21 @@ text match on the expanded home.
   `apply_patch`: file-tool writes and reads; a Codex patch per file; an MCP
   string that resolves to a protected path; and in the shell a redirect
   (glued `x>path` included), a copy/move/delete/mkdir/permission/link verb,
-  `truncate`, `tee`, `Set-Content`, `sed -i`, `awk -i inplace`, `perl -i`, an
-  editor (`vim`, `code`, ...), a downloader (`curl -o`, `wget -O`, `7z -o`),
-  `git -C`/`--git-dir` or a writing git sub-command's path argument, a `find`
-  with a destructive action rooted at or above a protected path, `… | xargs
-  rm`, `eval`/`iex` of a literal string, a `cd` into a protected folder then a
-  write or an interpreter, an interpreter's `-c`/`-e`/here-doc/stdin body that
-  names a protected path, a PowerShell `[IO.File]::...` call, a
-  `-EncodedCommand` (decoded), `~`/`$HOME`/`${HOME}`/`$env:USERPROFILE`/
+  `truncate`, `tee`, `Set-Content`, `sed -i`, `awk -i inplace`, `perl -i`,
+  `ruby -i`, an editor (`vim`, `code`, ...), a downloader or converter
+  (`curl -o`, `wget -O`, `7z -o`, `Invoke-WebRequest -OutFile`,
+  `Start-BitsTransfer`, `Expand-Archive`, `Export-* -Path`, `certutil`,
+  `fsutil file`, `patch`, `sort -o`, `unzip -d`), `git -C`/`--git-dir` or a
+  writing git sub-command's path argument, a `find` with a destructive action
+  rooted at or above a protected path, `… | xargs rm`, `eval`/`iex` of a
+  literal string, a `cd` into a protected folder then a write or an
+  interpreter, an interpreter (`python3.12`, `node20`, `ruby`, `php`, …) whose
+  `-c`/`-e` code, path argument, or here-doc/stdin/pipe body names a protected
+  path, a recursive search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem
+  -Recurse`, the Grep/Glob tools) rooted at the home folder above the state,
+  a PowerShell `[IO.File]::...` call, a `-EncodedCommand` (decoded; any
+  accepted prefix `-e`…`-enco`, and `-ec`),
+  `~`/`$HOME`/`${HOME}`/`$env:USERPROFILE`/
   `%USERPROFILE%`/`$TQ_HOME`/`$CLAUDE_CONFIG_DIR`/`$CODEX_HOME` expansion, an
   MSYS `/c/` path, an 8.3 short name, a case variant and a glob (`.t*`, `*`,
   `~/.tent*/…`) that can expand to a protected path. `TestProtectedPaths_Table`
@@ -138,20 +145,22 @@ text match on the expanded home.
   `TestMatchKinds`, `TestNormalizeExpandsAndPlaces` and
   `TestSelfProtectionShellAndFileTools` cover the parts, and the `routes.py`
   corpus is the regression list.
-- **Not caught** (a path or command built at run time; the owner's bound says
-  not to chase these, and P1.4's signed integrity record makes any change
-  they land visible at the next terminal and harness start):
-  - *a variable holding the path* — `D=~/.tentaqles; rm $D/config.yaml`,
-    `T=tq; $T allow x`;
-  - *string concatenation* — `node -e "...homedir()+'/.tent'+'aqles/...'"`;
-  - *a PowerShell cmdlet that composes the path* — `Join-Path $HOME
+- **Not caught — the named limits after round 3** (a path or command built at
+  run time; the owner's bound says not to chase these, and P1.4's signed
+  integrity record makes any change they land visible at the next terminal and
+  harness start):
+  - *a path held in a variable* — `D=~/.tentaqles; rm $D/config.yaml`,
+    `T=tq; $T allow x`, a PowerShell `$p = Join-Path …; Set-Content $p`;
+  - *a path built by string concatenation or a cmdlet at run time* —
+    `node -e "...homedir()+'/.tent'+'aqles/...'"`, `Join-Path $HOME
     '.tentaqles\config.yaml'` passed to `[IO.File]` or `Copy-Item`;
-  - *a command piped into a shell* — `printf 'tq allow x' | sh` (the string is
-    not an argument the tokenizer reads);
-  - *an alias or function* renamed over `tq` or a verb;
+  - *a command assembled then piped into a shell* — `printf 'tq allow x' | sh`
+    (the string is not an argument the tokenizer reads);
+  - *an alias or shell function* renamed over `tq` or a write verb;
+  - *a write program tq does not list* run with a protected path argument;
   - *a script on disk* the agent wrote, then ran (`python evil.py`);
-  - *base64 or other encoding* other than the one PowerShell `-EncodedCommand`
-    case above.
+  - *base64 or another encoding* other than the one PowerShell
+    `-EncodedCommand` case.
   The real controls behind the filter are the per-identity config homes
   (ADR-0001), the state folder private to the user (ADR-0002), the human-only
   commands' own detectors (ADR-0003), the signed integrity record (P1.4), and
@@ -167,9 +176,13 @@ text match on the expanded home.
   `.claude/settings.local.json` is not tq's. The Claude plugin's PreToolUse
   matcher gains `Glob`, so a Glob into the state folder reaches the hook.
 - Every deny message starts `BLOCKED [<category>/...`, and every deny is one
-  redacted line in `~/.tentaqles/denials.jsonl` (a here-doc body blanked, a
-  `NAME=value` masked, no environment value or file content). Scripts that
-  matched `BLOCKED:` or `BLOCKED [tq/...` change with it.
+  line in `~/.tentaqles/denials.jsonl` whose `command` carries no arguments:
+  the verb (the first word, after `sudo`/`env` and `NAME=value` assignments
+  are stripped, skipping a PowerShell `$env:X=`/`$x=` assignment) plus the one
+  path or token the denial named, never the rest of the line — so a secret in
+  an argument, a here-doc body, an assignment value, a flag or a URL never
+  reaches the log. Scripts that matched `BLOCKED:` or `BLOCKED [tq/...` change
+  with the prefix.
 - `internal/protect`, `internal/markers` and `internal/policy/selfprotect.go`
   join the paths that cross a trust boundary; so does `plugin/hooks/hooks.json`
   (the matcher) and `plugin/scripts/identity-guard.py` (the fallback).

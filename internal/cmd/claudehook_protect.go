@@ -3,7 +3,6 @@ package cmd
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/audit"
@@ -64,40 +63,58 @@ func hookWSName(ws *resolve.Workspace) string {
 	return ws.Name
 }
 
-// denialSubject is what the log records for a call: a redacted command line
-// for a shell tool, the path of a file tool, and the tool name of anything
-// else (an MCP input or a patch may carry content, which is never logged).
-func denialSubject(call policy.ToolCall) string {
+// denialSubject is what the log records for a call (PRD v2 §7.3, ADR-0005):
+// no arguments, only the verb plus the one path or token the denial named.
+// A shell tool logs its verb (the first word, after sudo/env/assignments)
+// and the subject; a file tool logs its path; an MCP call or a patch logs
+// the tool name. Never the rest of the command line, so a secret in an
+// argument, a here-doc body, an assignment value or a flag never reaches the
+// log.
+func denialSubject(call policy.ToolCall, subject string) string {
 	switch {
 	case isApplyPatch(call):
-		return call.Tool
+		return joinVerbSubject(call.Tool, subject) // apply_patch <file>
 	case call.IsShell() && call.Command != "":
-		return redactCommand(call.Command)
+		return joinVerbSubject(verbOf(call.Command), subject)
 	case call.Path != "":
 		return call.Path
 	}
 	return call.Tool
 }
 
-// assignValueRe matches a leading NAME=value assignment's value (at the start
-// of a segment, after a separator or a wrapper like sudo/env), so it can be
-// masked in a logged command: a token (GH_TOKEN=x) is a secret.
-var assignValueRe = regexp.MustCompile(`(^|[\s;&|(` + "`" + `])([A-Za-z_][A-Za-z0-9_]*=)([^\s;&|)` + "`" + `]+)`)
-
-// redactCommand makes a shell command line safe to log (PRD v2 §7.3): the
-// bodies of here-docs (a pasted secret, a password) are blanked, every
-// NAME=value assignment value becomes NAME=***, and the result is collapsed
-// to one line and capped. The verb and the matched path survive; secrets in
-// a here-doc body or an inline assignment do not.
-func redactCommand(cmd string) string {
-	cmd = guard.BlankHeredocBodies(cmd)
-	cmd = assignValueRe.ReplaceAllString(cmd, `$1$2***`)
-	cmd = strings.Join(strings.Fields(cmd), " ")
-	const max = 200
-	if len(cmd) > max {
-		cmd = cmd[:max] + "…"
+// joinVerbSubject combines a verb and a subject for the log, dropping an
+// empty part and never repeating the verb (a human-only subject such as
+// "tq allow" already begins with it).
+func joinVerbSubject(verb, subject string) string {
+	switch {
+	case verb == "":
+		return subject
+	case subject == "" || subject == verb || strings.HasPrefix(subject, verb+" "):
+		if subject != "" {
+			return subject
+		}
+		return verb
 	}
-	return cmd
+	return verb + " " + subject
+}
+
+// verbOf returns the verb of a shell command line for the log: the first
+// command's verb (guard.Verb strips a leading sudo/env wrapper and bash
+// NAME=value assignments), skipping a PowerShell `$env:X=` / `$x=` assignment
+// and moving to the next command, so an assignment holding a token is never
+// the logged word.
+func verbOf(command string) string {
+	for _, c := range guard.Commands(command) {
+		v, _, ok := guard.Verb(c.Words)
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(v, "$") || strings.Contains(v, "=") {
+			continue // a shell variable assignment, not a verb
+		}
+		return guard.BaseName(v)
+	}
+	return ""
 }
 
 // denyKind is the category a policy deny belongs to, for the log.

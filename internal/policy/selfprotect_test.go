@@ -89,10 +89,32 @@ func TestSelfProtectionShellAndFileTools(t *testing.T) {
 		{"glued append", ToolCall{Tool: "Bash", Command: "echo x>>~/.tentaqles/config.yaml"}, ProtectedPathID},
 		{"descriptor redirect is not a file", ToolCall{Tool: "Bash", Command: "make 2>&1 | tee build.log"}, ""},
 		{"brace var expansion", ToolCall{Tool: "Bash", Command: "rm ${HOME}/.tentaqles/config.yaml"}, ProtectedPathID},
-		{"find -delete name hits", ToolCall{Tool: "Bash", Command: "find ~ -name config.yaml -delete"}, ProtectedPathID},
-		{"find -delete no name", ToolCall{Tool: "Bash", Command: "find ~/.tentaqles -delete"}, ProtectedPathID},
-		{"find -delete name misses", ToolCall{Tool: "Bash", Command: "find ~ -name '*.log' -delete"}, ""},
+		{"find -delete under home", ToolCall{Tool: "Bash", Command: "find ~ -name config.yaml -delete"}, ProtectedPathID},
+		{"find -delete in state", ToolCall{Tool: "Bash", Command: "find ~/.tentaqles -delete"}, ProtectedPathID},
+		{"find -delete any name under home", ToolCall{Tool: "Bash", Command: "find ~ -name '*.log' -delete"}, ProtectedPathID},
+		{"find -exec rm under home", ToolCall{Tool: "Bash", Command: "find ~ -name acme -type d -exec rm -rf {} +"}, ProtectedPathID},
+		{"find destructive in workspace is free", ToolCall{Tool: "Bash", Command: "find . -name '*.pyc' -delete"}, ""},
 		{"find no action", ToolCall{Tool: "Bash", Command: "find ~ -name config.yaml"}, ""},
+		// interpreters by prefix, path arguments, in-place, stdin/pipe bodies
+		{"python3.12 -c literal", ToolCall{Tool: "Bash", Command: "python3.12 -c \"open(r'" + filepath.ToSlash(state) + "/config.yaml','w')\""}, ProtectedPathID},
+		{"python -c with path arg", ToolCall{Tool: "Bash", Command: "python -c \"import sys;open(sys.argv[1],'w')\" ~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"node -e with path arg", ToolCall{Tool: "Bash", Command: "node -e \"x\" ~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"ruby -i file", ToolCall{Tool: "Bash", Command: "ruby -i -pe 'x' ~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"echo code piped to python", ToolCall{Tool: "Bash", Command: "echo \"open(r'" + filepath.ToSlash(state) + "/config.yaml','w')\" | python"}, ProtectedPathID},
+		{"python a project script is free", ToolCall{Tool: "Bash", Command: "python build.py --out dist"}, ""},
+		// write programs added in round 3
+		{"Invoke-WebRequest -OutFile", ToolCall{Tool: "PowerShell", Command: "Invoke-WebRequest https://x -OutFile ~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"Expand-Archive -DestinationPath", ToolCall{Tool: "PowerShell", Command: "Expand-Archive e.zip -DestinationPath ~/.tentaqles -Force"}, ProtectedPathID},
+		{"patch file", ToolCall{Tool: "Bash", Command: "patch ~/.tentaqles/config.yaml < d.diff"}, ProtectedPathID},
+		{"certutil -decode", ToolCall{Tool: "PowerShell", Command: "certutil -decode x.b64 ~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"fsutil file createnew", ToolCall{Tool: "PowerShell", Command: "fsutil file createnew ~/.tentaqles/x 0"}, ProtectedPathID},
+		{"Export-Clixml -Path", ToolCall{Tool: "PowerShell", Command: "Get-Date | Export-Clixml -Path ~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"sort -o marker", ToolCall{Tool: "Bash", Command: "sort -o .tentaqles.yaml x"}, ProtectedPathID},
+		{"Start-BitsTransfer -Destination", ToolCall{Tool: "PowerShell", Command: "Start-BitsTransfer -Source https://x -Destination ~/.tentaqles/config.yaml"}, ProtectedPathID},
+		{"curl out of state is free", ToolCall{Tool: "Bash", Command: "curl -o out.json https://example.com"}, ""},
+		// recursive searches rooted at home
+		{"grep -r at home", ToolCall{Tool: "Bash", Command: "grep -r email ~"}, ProtectedPathID},
+		{"grep -r in a project is free", ToolCall{Tool: "Bash", Command: "grep -r foo src"}, ""},
 		{"xargs rm via pipe", ToolCall{Tool: "Bash", Command: "echo ~/.tentaqles/config.yaml | xargs rm"}, ProtectedPathID},
 		{"xargs rm plain", ToolCall{Tool: "Bash", Command: "ls ~/.tentaqles/*.yaml | xargs rm -f"}, ProtectedPathID},
 		{"eval literal", ToolCall{Tool: "Bash", Command: "eval 'rm ~/.tentaqles/config.yaml'"}, ProtectedPathID},
@@ -186,7 +208,7 @@ func TestEncodedPowerShell(t *testing.T) {
 		}
 		return base64.StdEncoding.EncodeToString(b)
 	}
-	for _, flag := range []string{"-EncodedCommand", "-enc", "-e"} {
+	for _, flag := range []string{"-EncodedCommand", "-enco", "-enc", "-en", "-e", "-ec", "-ENC"} {
 		cmd := "powershell " + flag + " " + enc("Remove-Item ~/.tentaqles/config.yaml")
 		if d := SelfProtection(s, cwd, ToolCall{Tool: "PowerShell", Command: cmd}); d.Action != Deny || d.Matched[0].ID != ProtectedPathID {
 			t.Errorf("%s: encoded protected write must deny: %s", flag, d.Reason())

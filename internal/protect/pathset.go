@@ -345,34 +345,49 @@ func (s *Set) EachProtected(fn func(Hit)) {
 }
 
 // FindReaches reports a protected path a destructive find rooted at the
-// canonical dir would reach. A find at or inside a protected path is denied
-// whatever its -name/-path patterns (it runs within the protected tree). A
-// find whose dir only contains a protected path (an ancestor) is denied when
-// it has no name pattern, or one that can match a protected file.
+// canonical dir would reach. A find at or inside a protected tree (the state
+// folder, an owned directory) is denied whatever its -name/-path patterns. A
+// find whose dir contains a protected path (an ancestor of it) is denied when
+// it has no name pattern or one that can match a protected file. A shared,
+// non-tree protected directory (a bin folder that holds tq) is matched by
+// name only, so a find rooted inside it — a workspace whose parent happens to
+// hold tq — is not denied.
 func (s *Set) FindReaches(dir string, names []string) (Hit, bool) {
-	var found Hit
-	ok := false
-	s.EachProtected(func(h Hit) {
-		if ok {
-			return
+	nameHits := func() bool {
+		if len(names) == 0 {
+			return true
 		}
+		for _, n := range names {
+			if s.NameHitsProtected(n) {
+				return true
+			}
+		}
+		return false
+	}
+	consider := func(path string, kind Kind, what string, tree bool) (Hit, bool) {
 		switch {
-		case dir == h.Path || under(h.Path, dir):
-			found, ok = h, true // the find root is the protected path or inside it
-		case under(dir, h.Path):
-			if len(names) == 0 {
-				found, ok = h, true
-				return
-			}
-			for _, n := range names {
-				if s.NameHitsProtected(n) {
-					found, ok = h, true
-					return
-				}
+		case dir == path:
+			return Hit{path, kind, what}, true
+		case tree && under(path, dir):
+			return Hit{path, kind, what}, true // the find runs inside a protected tree
+		case under(dir, path): // dir contains the protected path
+			if nameHits() {
+				return Hit{path, kind, what}, true
 			}
 		}
-	})
-	return found, ok
+		return Hit{}, false
+	}
+	if s.home != "" {
+		if h, ok := consider(s.home, KindState, "the tq state folder", true); ok {
+			return h, true
+		}
+	}
+	for _, e := range s.entries {
+		if h, ok := consider(e.path, e.kind, e.what, e.tree); ok {
+			return h, true
+		}
+	}
+	return Hit{}, false
 }
 
 // NameHitsProtected reports whether a find -name / -path / -iname pattern can
@@ -403,6 +418,22 @@ func (s *Set) NameHitsProtected(pattern string) bool {
 		}
 	}
 	return false
+}
+
+// SearchReadsState reports whether a recursive search rooted at the
+// canonical dir would descend into tq's state folder: the state folder is
+// strictly inside dir, and dir is not itself inside a registered base (where
+// client repositories live on boxes that keep them under the home folder).
+func (s *Set) SearchReadsState(dir string) bool {
+	if dir == "" || s.home == "" || !under(dir, s.home) {
+		return false // the state folder is not below the search root
+	}
+	for _, b := range s.bases {
+		if dir == b || under(b, dir) {
+			return false // the search root is inside a registered base
+		}
+	}
+	return true
 }
 
 func (s *Set) match(p string) (Hit, bool) {

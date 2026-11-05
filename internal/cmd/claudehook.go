@@ -281,7 +281,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 				}
 				ws, cfg = gws, gcfg
 				if d := guard.Decide(in); d.Block {
-					logHookDenial(guard.Category, p.ToolName, redactCommand(cmdline), d.Rule, d.Reason, hookWSName(ws), cwd)
+					logHookDenial(guard.Category, p.ToolName, denialSubject(call, ""), d.Rule, d.Reason, hookWSName(ws), cwd)
 					if agent == hookAgentCodex && !asJSON {
 						// Exit 2 blocks in Codex too; the deny answer says so
 						// on stdout as well.
@@ -295,9 +295,9 @@ permissionDecision JSON so Claude Code asks the user.`,
 				ws, cfg = resolveTrusted(cwd)
 			}
 
-			// subject is what the denial log records for the call: the
-			// command line, the path, or the tool name (never content).
-			subject := denialSubject(call)
+			// subject is the one path/token the denial names for the log
+			// (never the command line); the log pairs it with the verb.
+			subject := ""
 			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline)
 			// A Codex apply_patch names its files only in the patch text: the
 			// file rules run on every file it writes, and a patch tq cannot
@@ -306,7 +306,7 @@ permissionDecision JSON so Claude Code asks the user.`,
 			if isApplyPatch(call) || (agent == hookAgentCodex && isFileWriteTool(call.Tool) && call.Path == "") {
 				deny := func(why string) error {
 					reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies an edit it cannot judge"
-					logHookDenial(guardErrorID, p.ToolName, subject, guardErrorID, reason, hookWSName(ws), cwd)
+					logHookDenial(guardErrorID, p.ToolName, denialSubject(call, ""), guardErrorID, reason, hookWSName(ws), cwd)
 					if agent == hookAgentCodex && !asJSON {
 						writeCodexDeny(c.OutOrStdout(), reason)
 					}
@@ -335,7 +335,10 @@ permissionDecision JSON so Claude Code asks the user.`,
 				}
 			}
 			if d.Action == policy.Deny {
-				logHookDenial(denyKind(d), p.ToolName, subject, d.Matched[0].ID, d.Reason(), hookWSName(ws), cwd)
+				if subject == "" {
+					subject = d.Matched[0].Subject
+				}
+				logHookDenial(denyKind(d), p.ToolName, denialSubject(call, subject), d.Matched[0].ID, d.Reason(), hookWSName(ws), cwd)
 			}
 			if agent == hookAgentCodex && !asJSON && d.Action != policy.Allow {
 				// Codex fails open on a hook ask: codexAnswer never sends one.

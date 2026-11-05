@@ -232,6 +232,58 @@ func TestMatchGlobBinaryAncestorIsNotATree(t *testing.T) {
 	}
 }
 
+// A recursive search rooted at an ancestor of the state folder reads it;
+// one inside a registered base (repos kept under home) does not.
+func TestSearchReadsState(t *testing.T) {
+	home := t.TempDir()
+	if r, err := filepath.EvalSymlinks(home); err == nil {
+		home = r
+	}
+	base := filepath.Join(home, "repos")
+	s := New(Inputs{Home: filepath.Join(home, ".tentaqles"), UserHome: home, Bases: []string{base}})
+	deny := []string{home, filepath.Dir(home)}
+	allow := []string{
+		base, filepath.Join(base, "acme"), // inside a base
+		filepath.Join(home, ".tentaqles"), // the state folder itself (handled by the path rule, not an ancestor read)
+		filepath.Join(home, "other"),      // a sibling that does not contain the state folder
+	}
+	for _, d := range deny {
+		if !s.SearchReadsState(s.canon(d)) {
+			t.Errorf("a search rooted at %q reaches the state folder", d)
+		}
+	}
+	for _, d := range allow {
+		if s.SearchReadsState(s.canon(d)) {
+			t.Errorf("a search rooted at %q must not be an ancestor read", d)
+		}
+	}
+}
+
+// A destructive find inside a workspace whose parent directory holds tq is
+// free (the binary directory is matched by name, not as a tree); a find on
+// the whole home folder, or inside the state folder, is not.
+func TestFindReachesSharedBinaryDir(t *testing.T) {
+	home := t.TempDir()
+	if r, err := filepath.EvalSymlinks(home); err == nil {
+		home = r
+	}
+	scratch := filepath.Join(home, "scratch")
+	ws := filepath.Join(scratch, "base", "acme")
+	s := New(Inputs{
+		Home: filepath.Join(home, ".tentaqles"), UserHome: home,
+		Roots: []string{ws}, Executable: filepath.Join(scratch, "tq.exe"),
+	})
+	if _, ok := s.FindReaches(s.canon(ws), []string{"*.pyc"}); ok {
+		t.Fatal("a find inside a workspace under the binary's dir must be free")
+	}
+	if _, ok := s.FindReaches(s.canon(filepath.Join(home, ".tentaqles")), nil); !ok {
+		t.Fatal("a find inside the state folder is denied")
+	}
+	if _, ok := s.FindReaches(s.canon(ws), []string{".tentaqles.yaml"}); !ok {
+		t.Fatal("a find whose -name matches the workspace marker is denied")
+	}
+}
+
 func TestMatchIsCaseInsensitiveWherePathsAre(t *testing.T) {
 	if !caseInsensitivePaths() {
 		t.Skip("case-sensitive paths on " + runtime.GOOS)
