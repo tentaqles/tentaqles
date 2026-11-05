@@ -63,6 +63,32 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - `commitscan.AskError`/`IsAsk` are `IncompleteError`/`IsIncomplete`; `resolve.Result` gains
   `Name` and `Unreadable`; `humanonly.CheckRead` is the human-only check of a read.
 
+### The identity PATH, environment and MCP list from the scope (ADR-0007)
+
+- **Layer 2, PATH** (`guard: v2` only): `tq env` and every launch (`tq run`) filter the
+  inherited PATH. A folder whose runnable files are all out-of-scope CLIs (the AWS CLI's
+  install folder for an Azure-only identity) is dropped, so `aws` is command-not-found; a
+  folder shared with other tools (npm's global folder, scoop, WinGet Links, `/usr/local/bin`)
+  stays, and `~/.tentaqles/identities/<ws>/path-mask/` goes first with a stub per out-of-scope
+  name (`<name>: command not found`, exit 127). The mask is written by `tq allow` and
+  `tq settings render`, never by `tq env`, and used only when its files are exactly tq's;
+  otherwise the prompt says `tq: PATH mask missing`. Leaving the folder restores the PATH byte
+  for byte (a change you made inside it is kept). The bash and zsh hooks pass their own PATH
+  spelling to `tq env` on Windows (`__TQ_SH_PATH`, excluded from MSYS conversion), so Git Bash
+  gets `/c/...` entries back. `tq run <ws> -- <cmd>` resolves `<cmd>` on the identity PATH.
+  Cost: 0.24 ms per prompt in the folder, about 12 ms on entering it (Windows, 59 entries).
+- **Layer 2, environment**: the out-of-scope providers' variables of the match lists
+  (`AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `GOOGLE_APPLICATION_CREDENTIALS`, `GITHUB_TOKEN`,
+  `TF_TOKEN_*`, ...) are unset in the identity terminal and launches, and restored on leaving;
+  a variable an in-scope provider claims is kept.
+- **Layer 3, MCP**: `tq settings render` (and `tq allow`) removes the MCP servers tq can tell
+  are out of scope (name token, `url` host or `command` of an out-of-scope provider) from the
+  identity's `.claude.json` (user and project scope) and Codex `config.toml`; servers that
+  match no provider stay; removed entries are kept in `mcp-out-of-scope.json` beside the
+  config. `tq bundle sync` skips an out-of-scope bundle server.
+- **Layer 1**: the session-start preamble states the scope in one line.
+- Without `guard: v2` nothing changes.
+
 ### The provider scope and the identity category for every tool (ADR-0007)
 
 - **Merged onto ADR-0006.** The deny's scope line (`Scope of identity <name>: ...`) now lists the

@@ -63,8 +63,10 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `protected-acl`; `pathset.go`, the protected path set of PRD v2 §8.2 the hook's
     `tq/protected-path` matches against), `internal/registry/`, `internal/resolve/` (which file is the
     manifest, both layouts), `internal/workspace/`, `internal/paths/`,
-    `internal/envplan/`, `internal/shell/` (activation hooks and the `claude`/`codex`
-    launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
+    `internal/envplan/` (the env diff, and under `guard: v2` the identity PATH, the PATH
+    mask and the out-of-scope variables unset, ADR-0007), `internal/mcpscope/` (the
+    out-of-scope MCP servers removed from the identity's Claude and Codex homes),
+    `internal/shell/` (activation hooks and the `claude`/`codex` launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
     `internal/doctor/`, `internal/setup/` and `internal/onboard/` (`tq setup`,
     `tq onboard`), `internal/migrate/`, `internal/bundle/`, `internal/providers/` (the
     embedded catalog), `internal/claudesettings/`, `internal/codexcfg/`,
@@ -122,6 +124,18 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestScope_HereStringsAndHeredocsAsCode`, `TestScope_HostPaths`, `TestScope_GitTransport`,
   `TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFiles`,
   `TestPreToolUse_GuardMappingIsV1`.
+- Under `guard: v2` the §6.1 scenario also fails before the hook (ADR-0007): an
+  out-of-scope CLI does not resolve on the identity PATH (its folder dropped, or masked by
+  a stub in a shared folder) while in-scope CLIs do, its variables are unset, leaving the
+  folder restores PATH and variables exactly, `tq run` resolves on the identity PATH, the
+  render leaves no out-of-scope MCP server in the identity's Claude and Codex homes and
+  never touches one that matches no provider, the mask folder is used only as tq wrote it,
+  and the preamble states the scope: `TestEnv_ScopeReferenceScenario_PATH`,
+  `TestSettingsRender_ScopeReferenceScenario_MCP`, `TestSessionStart_ScopeLine`,
+  `TestEnv_ScopeLayerRestoreAndV1`, `TestPathLayer_ScenarioAwsNotOnPath`,
+  `TestPathLayer_SharedDirIsMasked`, `TestPathLayer_TamperedMaskIsNotUsed`,
+  `TestLayer_EnterAndLeaveRestoresExactly`, `TestPathSyntax_MSYS`, `TestFilterClaude`,
+  `TestFilterCodex`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
 - Trust is human-only, and so is every tq write under `$TQ_HOME` or an identity dir:

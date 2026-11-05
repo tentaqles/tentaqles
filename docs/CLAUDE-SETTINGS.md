@@ -72,6 +72,34 @@ A manifest that still carries `claude.permission_mode` or
 `claude.permissions` loads; tq does not read them and `tq doctor` warns
 `manifest-dropped-block`. Remove them, then `tq allow`.
 
+### MCP servers and the PATH mask under `guard: v2`
+
+For a workspace whose manifest sets `guard: v2` (ADR-0007), the render also
+brings the identity's harness config in line with its provider scope:
+
+- **MCP servers.** Every server tq can tell is out of scope is removed from
+  `<identity>/claude/.claude.json` (the top-level `mcpServers`, user scope,
+  and every `projects[<path>].mcpServers`, local scope) and from
+  `<identity>/codex/config.toml` (`[mcp_servers.<name>]` and its sub-tables,
+  or a one-line `name = { ... }` under `[mcp_servers]`). Out of scope means a
+  token of the name (split on `_ - .`) is an out-of-scope provider's `mcp`
+  entry and no in-scope provider's, its `url` is an out-of-scope API host, or
+  its `command` is an out-of-scope CLI. A server that matches no provider is
+  never touched. Each removed entry is appended to `mcp-out-of-scope.json` in
+  the same folder; to bring one back, add its provider to the manifest's
+  `scope:`, `tq allow`, and copy it back. `--dry-run` lists what would go.
+  Claude Code rewrites `.claude.json` while a session runs: render with the
+  sessions of that identity closed (the render warns when one looks open).
+- **The PATH mask.** `~/.tentaqles/identities/<ws>/path-mask/`, one stub per
+  out-of-scope executable name, which `tq env` puts first on the identity PATH
+  when a folder shared with other tools holds such a CLI. Removed when the
+  flag is off.
+
+Not rendered, and judged by the hook alone: a project `.mcp.json`, plugin MCP
+servers, claude.ai connectors, a machine-wide `managed-mcp.json`,
+`--mcp-config`, Codex's project `.codex/config.toml`, and the global
+`~/.claude.json` an identity without a `claude` identity loads.
+
 Settings changes apply to running sessions immediately.
 
 ## `tq statusline`

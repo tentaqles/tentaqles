@@ -114,6 +114,18 @@ optional; validated at load.
 | `git_hosts` | git hosts (`github.com`, `gitlab.com`) | `ssh`/`scp`/`sftp` to the host, and a git command (`push`, `fetch`, `pull`, `ls-remote`, `clone`, `remote`, `submodule`, `archive`) with a URL on it over the ssh transport (`git@host:path`, `ssh://`), or a `git push` over https. An anonymous https clone, fetch, pull or ls-remote is allowed |
 | `mcp` | `^[a-z0-9]+$` tokens | a token of the MCP server name (split on `_ - .`, adjacent pairs joined: `google-cloud` → `googlecloud`). An MCP server is allowed only when its exact name is the identity's own `claude.bundle.mcp`; any out-of-scope token otherwise denies |
 
+The same lists drive the layers before the hook (ADR-0007), under `guard: v2`:
+
+| List | Layer | Effect for a provider outside the scope |
+|---|---|---|
+| `executables` | PATH (`tq env`, `tq run`) | a PATH folder holding only these is dropped; a shared folder is kept and the identity's `path-mask/` stub answers `command not found` (exit 127) |
+| `env` | environment (`tq env`, `tq run`) | unset in the identity terminal and launches, restored on leaving (`TF_TOKEN_*` unsets every match) |
+| `mcp`, `hosts`, `executables` | harness config (`tq settings render`) | an MCP server whose name token, `url` host or `command` is the provider's is removed from the identity's `.claude.json` and Codex `config.toml` (kept in `mcp-out-of-scope.json`) |
+
+An entry an in-scope provider also lists is never hidden, unset or removed. After
+editing a user provider file, run `tq settings render <ws>` so the PATH mask
+holds the new names (until then the prompt says `tq: PATH mask missing`).
+
 Rules of thumb for a new entry:
 
 - List the vendor's CLI, its SDK modules (`boto3`, `google.cloud`, `stripe`), its
