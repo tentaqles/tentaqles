@@ -22,7 +22,8 @@ login:
 # identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [gcloud, gsutil, bq]
+  images: ["google/cloud-sdk", "cloudsdktool/google-cloud-cli"]
   env: [CLOUDSDK_CONFIG, GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLOUD_PROJECT, CLOUDSDK_CORE_PROJECT, CLOUDSDK_AUTH_ACCESS_TOKEN_FILE]
   paths: ["~/.config/gcloud", "%APPDATA%/gcloud"]
-  hosts: [cloudresourcemanager.googleapis.com, compute.googleapis.com, storage.googleapis.com, iam.googleapis.com, container.googleapis.com, run.googleapis.com, cloudfunctions.googleapis.com, bigquery.googleapis.com, sqladmin.googleapis.com]
+  hosts: [googleapis.com, gcr.io]
   mcp: [gcloud, gcp, googlecloud, bigquery]

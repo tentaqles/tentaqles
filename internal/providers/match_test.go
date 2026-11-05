@@ -39,8 +39,11 @@ func TestCatalogMatchLists(t *testing.T) {
 		if err := p.Match.Validate(); err != nil {
 			t.Errorf("%s: %v", id, err)
 		}
-		if p.CLI != nil && !slices.Contains(genericTools, id) && !slices.Contains(p.Match.Executables, p.CLI.Command) {
-			t.Errorf("%s: match.executables %v lacks the CLI %q", id, p.Match.Executables, p.CLI.Command)
+		if p.CLI != nil && !slices.Contains(genericTools, id) {
+			_, claimedAsSub := p.Match.Subcommands[p.CLI.Command]
+			if !slices.Contains(p.Match.Executables, p.CLI.Command) && !claimedAsSub {
+				t.Errorf("%s: match does not claim the CLI %q (as an executable or subcommands key)", id, p.CLI.Command)
+			}
 		}
 		if slices.Contains(genericTools, id) && p.CLI != nil && slices.Contains(p.Match.Executables, p.CLI.Command) {
 			t.Errorf("%s: a generic tool must not match its command %q by name", id, p.CLI.Command)

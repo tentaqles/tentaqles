@@ -22,7 +22,8 @@ identity:
     PGSERVICEFILE: "{dir}/pg_service.conf"
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
-# A generic tool: it talks to whatever the project configures, so its command is
-# never denied by name; only its global credential files and vendor endpoints are.
-match:
-  paths: ["~/.pgpass", "~/.pg_service.conf", "%APPDATA%/postgresql/pgpass.conf"]
+# A generic tool: its command talks to whatever the project configures, so it is
+# never matched by name.
+# Cross-cloud local config (kubeconfig, npmrc, docker config, ...): the developer's
+# own file, readable under any identity, so no path is claimed here.
+match: {}

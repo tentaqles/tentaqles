@@ -26,9 +26,8 @@ identity:
     regardless of TF_CLI_CONFIG_FILE
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
-# A generic tool: it talks to whatever the project configures, so its command is
-# never denied by name; only its global credential files and vendor endpoints are.
+# A generic tool: its command talks to whatever the project configures, so it is
+# never matched by name.
 match:
   env: ["TF_TOKEN_*"]
-  paths: ["~/.terraform.d/credentials.tfrc.json", "%APPDATA%/terraform.d/credentials.tfrc.json"]
   hosts: [app.terraform.io]

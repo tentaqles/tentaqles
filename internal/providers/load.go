@@ -126,6 +126,114 @@ func Load() (*Catalog, error) {
 	return c, nil
 }
 
+// LoadAll is Load but never stops at the first bad user file: it loads every readable,
+// valid user file over the embedded catalog and returns one error per file it skipped, so
+// `tq providers list` and `tq doctor` can report them all and the hook can fail closed
+// naming them (ADR-0006 round 2). The embedded catalog alone still errors.
+func LoadAll() (*Catalog, []error) {
+	c, err := loadEmbedded()
+	if err != nil {
+		return nil, []error{err}
+	}
+	var errs []error
+	dir := UserDir()
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		if !os.IsNotExist(rerr) {
+			errs = append(errs, rerr)
+		}
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		p, err := loadYAMLProvider(e.Name(), data, path)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		c.override(p)
+	}
+	if cerr := c.checkEnvCollisions(); cerr != nil {
+		errs = append(errs, cerr)
+	}
+	return c, errs
+}
+
+// Overlaps reports every pair of providers that claim the same executable (same first
+// subcommand or both wholesale), credential path tree, API host or MCP token, so nothing is
+// silent (ADR-0006 round 2). Each string is one human-readable overlap.
+func (c *Catalog) Overlaps() []string {
+	var out []string
+	ps := c.All()
+	seen := map[string]bool{}
+	add := func(kind, a, b, what string) {
+		if a > b {
+			a, b = b, a
+		}
+		key := kind + "|" + a + "|" + b + "|" + what
+		if a == b || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, fmt.Sprintf("%s and %s both claim %s %q", a, b, kind, what))
+	}
+	for i := range ps {
+		for j := i + 1; j < len(ps); j++ {
+			a, b := ps[i], ps[j]
+			for _, e := range a.Match.Executables {
+				if contains(b.Match.Executables, e) {
+					add("executable", a.ID, b.ID, e)
+				}
+			}
+			for exe, subs := range a.Match.Subcommands {
+				for _, sub := range subs {
+					for _, bs := range b.Match.Subcommands[exe] {
+						if sub == bs {
+							add("subcommand", a.ID, b.ID, exe+" "+sub)
+						}
+					}
+					if contains(b.Match.Executables, exe) {
+						add("subcommand", a.ID, b.ID, exe+" "+sub)
+					}
+				}
+			}
+			for _, h := range a.Match.Hosts {
+				if contains(b.Match.Hosts, h) {
+					add("host", a.ID, b.ID, h)
+				}
+			}
+			for _, t := range a.Match.MCP {
+				if contains(b.Match.MCP, t) {
+					add("MCP token", a.ID, b.ID, t)
+				}
+			}
+			for _, p := range a.Match.Paths {
+				if contains(b.Match.Paths, p) {
+					add("path", a.ID, b.ID, p)
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 var (
 	mustLoadOnce sync.Once
 	mustLoadC    *Catalog

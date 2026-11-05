@@ -32,9 +32,10 @@ verify:
   subscription: { json: name }
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# Note: azure-devops owns only the `az devops|repos|pipelines|boards|artifacts|login|extension` subcommands; the rest of `az` and ~/.azure belong to the az provider.
 match:
-  executables: [az]
-  env: [AZURE_DEVOPS_EXT_PAT, AZURE_DEVOPS_ORG, AZURE_CONFIG_DIR]
-  paths: ["~/.azure"]
+  subcommands:
+    az: [devops, repos, pipelines, boards, artifacts, login, extension]
+  env: [AZURE_DEVOPS_EXT_PAT, AZURE_DEVOPS_ORG]
   hosts: [dev.azure.com]
   mcp: [devops, ado, azuredevops]

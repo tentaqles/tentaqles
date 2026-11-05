@@ -35,8 +35,8 @@ verify:
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
 match:
-  executables: [gh]
+  executables: [gh, hub]
   env: [GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN, GH_CONFIG_DIR, GH_HOST]
   paths: ["~/.config/gh", "%APPDATA%/GitHub CLI"]
-  hosts: [api.github.com, uploads.github.com]
+  hosts: [api.github.com, uploads.github.com, githubusercontent.com]
   mcp: [github]

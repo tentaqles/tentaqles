@@ -22,6 +22,7 @@ login:
 # identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
 match:
   executables: [az, azd]
+  images: ["mcr.microsoft.com/azure-cli"]
   modules: [azure.cli]
   env: [AZURE_CONFIG_DIR, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_CLIENT_CERTIFICATE_PATH, AZURE_FEDERATED_TOKEN_FILE, ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID]
   paths: ["~/.azure", "~/.azd"]

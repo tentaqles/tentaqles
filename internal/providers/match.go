@@ -17,9 +17,19 @@ import (
 type Match struct {
 	// Executables are command names, without a Windows suffix: the guard strips .exe, .cmd,
 	// .bat, .ps1 and .com from the word it reads, so `aws` matches aws, aws.exe, aws.cmd and
-	// C:\Program Files\Amazon\AWSCLIV2\aws.exe. Also matched as the package of a runner
-	// (npx, bunx, pnpm dlx, pipx run, uvx).
+	// C:\Program Files\Amazon\AWSCLIV2\aws.exe. The provider owns the whole command. Also
+	// matched as the package of a runner (npx, bunx, pnpm dlx, pipx run, uvx), a docker-run
+	// image's basename, and a find -exec / Get-Command / Start-Process target.
 	Executables []string `yaml:"executables,omitempty"`
+	// Subcommands claims part of a CLI another provider owns wholesale: exe -> the first
+	// subcommands this provider owns (azure-devops owns `az devops|repos|pipelines|boards|
+	// artifacts|login|extension`, not `az vm`). A command matches a provider when its exe is
+	// in Executables (any subcommand) or its exe+first-subcommand is in Subcommands. The most
+	// precise in-scope claim wins (ADR-0006, round 2).
+	Subcommands map[string][]string `yaml:"subcommands,omitempty"`
+	// Images are docker/podman image names (basename, no tag) whose container is the
+	// provider's CLI: amazon/aws-cli, cloudsdktool/google-cloud-cli.
+	Images []string `yaml:"images,omitempty"`
 	// Modules are Python modules run with `python -m <module>` (awscli, azure.cli).
 	Modules []string `yaml:"modules,omitempty"`
 	// Env are environment variable names (credentials, profiles, config homes). A trailing *
@@ -42,11 +52,13 @@ type Match struct {
 
 // Empty reports whether m matches nothing.
 func (m Match) Empty() bool {
-	return len(m.Executables)+len(m.Modules)+len(m.Env)+len(m.Paths)+len(m.Hosts)+len(m.MCP) == 0
+	return len(m.Executables)+len(m.Subcommands)+len(m.Images)+len(m.Modules)+len(m.Env)+len(m.Paths)+len(m.Hosts)+len(m.MCP) == 0
 }
 
 var (
 	matchExeRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+	matchSubRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	matchImageRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 	matchModuleRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 	matchEnvRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\*?$`)
 	matchHostRe   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
@@ -68,6 +80,17 @@ func (m Match) Validate() error {
 		return nil
 	}
 	if err := check("executables", m.Executables, matchExeRe); err != nil {
+		return err
+	}
+	for exe, subs := range m.Subcommands {
+		if !matchExeRe.MatchString(exe) {
+			return fmt.Errorf("subcommands: %q is not a valid executable name", exe)
+		}
+		if err := check("subcommands["+exe+"]", subs, matchSubRe); err != nil {
+			return err
+		}
+	}
+	if err := check("images", m.Images, matchImageRe); err != nil {
 		return err
 	}
 	if err := check("modules", m.Modules, matchModuleRe); err != nil {
@@ -114,8 +137,20 @@ func (m Match) Union(o Match) Match {
 		}
 		return out
 	}
+	var subs map[string][]string
+	if len(m.Subcommands)+len(o.Subcommands) > 0 {
+		subs = map[string][]string{}
+		for k, v := range m.Subcommands {
+			subs[k] = append([]string{}, v...)
+		}
+		for k, v := range o.Subcommands {
+			subs[k] = u(subs[k], v)
+		}
+	}
 	return Match{
 		Executables: u(m.Executables, o.Executables),
+		Subcommands: subs,
+		Images:      u(m.Images, o.Images),
 		Modules:     u(m.Modules, o.Modules),
 		Env:         u(m.Env, o.Env),
 		Paths:       u(m.Paths, o.Paths),
