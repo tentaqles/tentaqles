@@ -12,6 +12,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
+	"github.com/zalando/go-keyring"
 )
 
 // mfEnv is a machine with a tq home and one base, no git needed.
@@ -31,6 +32,9 @@ func newMfEnv(t *testing.T) *mfEnv {
 		t.Setenv("USERPROFILE", home)
 	}
 	t.Setenv("TQ_HOME", filepath.Join(root, "tqhome"))
+	// No integrity key yet: the machine has never signed, as before an
+	// upgrade (legacy markers count until the first signature).
+	keyring.MockInit()
 	e := &mfEnv{t: t, base: filepath.Join(home, "repos")}
 	stMkdir(t, e.base)
 	e.cfg = &registry.Config{Bases: []string{stNormalize(t, e.base)}}
@@ -55,15 +59,25 @@ func (e *mfEnv) oldLayout(name string, trusted bool) (string, string) {
 	return mp, h
 }
 
-// protected writes a protected-layout workspace and returns the protected path.
+// protected writes a protected-layout workspace, signs it and returns the
+// protected path.
 func (e *mfEnv) protected(name string) string {
+	e.t.Helper()
+	pp := e.protectedUnsigned(name)
+	h, _ := trust.HashFile(pp)
+	if err := trust.Allow(name, h); err != nil {
+		e.t.Fatal(err)
+	}
+	return pp
+}
+
+// protectedUnsigned is protected without the signature.
+func (e *mfEnv) protectedUnsigned(name string) string {
 	e.t.Helper()
 	stWrite(e.t, filepath.Join(e.base, name, manifest.FileName), string(manifest.MarkerBytes(name)))
 	pp := paths.ManifestPath(name)
 	stMkdir(e.t, filepath.Dir(pp))
 	stWrite(e.t, pp, "schema: tentaqles-client-v2\nclient: "+name+"\ngit:\n  email: "+name+"@x.io\n")
-	h, _ := trust.HashFile(pp)
-	trust.Allow(name, h)
 	return pp
 }
 
@@ -200,24 +214,34 @@ func TestManifests_MovesJournalsAndKeepsTrust(t *testing.T) {
 }
 
 // A trust marker of an older tq (hash-only trust/<hash>, or the name-keyed
-// trust/<name>/<hash>) is replaced by a signed integrity record, for a
-// workspace in either layout; the record counts only for that name, and a
-// restore brings the marker back.
+// trust/<name>/<hash>) that counts is replaced by a signed integrity
+// record, for a workspace in either layout; the record counts only for
+// that name, and a restore brings the marker and the snapshot back. A
+// marker planted after the first signature does not count and is never
+// turned into a signed record.
 func TestManifests_RekeysLegacyTrustRecords(t *testing.T) {
 	e := newMfEnv(t)
+	// The machine as an older tq left it: markers, nothing signed.
 	alphaRoot, alphaHash := e.oldLayout("alpha", false)
 	e.legacyTrust(alphaHash)
-	gammaPP := e.protected("gamma") // signed already by trust.Allow
-	gammaHash, _ := trust.HashFile(gammaPP)
-	deltaPP := e.protected("delta")
+	deltaPP := e.protectedUnsigned("delta")
 	deltaHash, _ := trust.HashFile(deltaPP)
-	os.Remove(trust.SignedRecordPath("delta"))
 	stWrite(t, trust.RecordPath("delta", deltaHash), "")
+	// The first signature (gamma) takes the snapshot of those markers.
+	gammaPP := e.protected("gamma")
+	gammaHash, _ := trust.HashFile(gammaPP)
+	// A marker planted afterwards.
+	epsPP := e.protectedUnsigned("epsilon")
+	epsHash, _ := trust.HashFile(epsPP)
+	stWrite(t, trust.RecordPath("epsilon", epsHash), "")
 	if !trust.IsTrusted("alpha", alphaHash) || !trust.IsTrusted("evil", alphaHash) {
 		t.Fatal("precondition: a hash-only marker counts for any name until replaced")
 	}
 	if !trust.IsTrusted("delta", deltaHash) || trust.IsTrusted("evil", deltaHash) {
 		t.Fatal("precondition: a name-keyed marker counts for its name")
+	}
+	if trust.IsTrusted("epsilon", epsHash) {
+		t.Fatal("precondition: a marker planted after the snapshot does not count")
 	}
 
 	st := stepRegistry["manifests"]
@@ -233,7 +257,7 @@ func TestManifests_RekeysLegacyTrustRecords(t *testing.T) {
 	}
 	if len(rekeys) != 2 || rekeys[0].Path != trust.LegacyRecordPath(alphaHash) || !strings.Contains(rekeys[0].Detail, trust.SignedRecordPath("alpha")) ||
 		rekeys[1].Path != trust.RecordPath("delta", deltaHash) || !strings.Contains(rekeys[1].Detail, trust.SignedRecordPath("delta")) {
-		t.Fatalf("rekeys = %+v (gamma is signed already)", rekeys)
+		t.Fatalf("rekeys = %+v (gamma is signed already, epsilon's marker does not count)", rekeys)
 	}
 	for _, c := range p.Changes {
 		if c.Kind == kindSignIntegrity {
@@ -267,18 +291,52 @@ func TestManifests_RekeysLegacyTrustRecords(t *testing.T) {
 	}
 	_ = alphaRoot
 
-	// Restore: the markers come back, the signed records go.
+	if trust.IsTrusted("epsilon", epsHash) || trust.HasRecord("epsilon", epsHash) || !trust.HasLegacyNameRecord("epsilon", epsHash) {
+		t.Fatal("epsilon's planted marker was neither trusted nor signed")
+	}
+
+	// Restore: the markers and the snapshot come back, the signed records
+	// go, and the markers count again.
 	if lines, err := j.Restore(Runner{}); err != nil {
 		t.Fatalf("%v\n%s", err, strings.Join(lines, "\n"))
 	}
-	if trust.HasRecord("alpha", alphaHash) || !trust.HasLegacyRecord(alphaHash) {
-		t.Fatal("alpha: restore must put the hash-only marker back")
+	if trust.HasRecord("alpha", alphaHash) || !trust.HasLegacyRecord(alphaHash) || !trust.IsTrusted("alpha", alphaHash) {
+		t.Fatal("alpha: restore must put the hash-only marker back, counting")
 	}
-	if trust.HasRecord("delta", deltaHash) || !trust.HasLegacyNameRecord("delta", deltaHash) {
-		t.Fatal("delta: restore must put the name-keyed marker back")
+	if trust.HasRecord("delta", deltaHash) || !trust.HasLegacyNameRecord("delta", deltaHash) || !trust.IsTrusted("delta", deltaHash) {
+		t.Fatal("delta: restore must put the name-keyed marker back, counting")
 	}
 	if !trust.HasRecord("gamma", gammaHash) {
 		t.Fatal("gamma's signed record was never touched")
+	}
+}
+
+// A workspace whose signed record fails (a covered file changed) is moved
+// but not signed again: the move must not accept the change.
+func TestManifests_DoesNotResignAFailingRecord(t *testing.T) {
+	e := newMfEnv(t)
+	_, h := e.oldLayout("alpha", true)
+	settings := filepath.Join(paths.IdentityDir("alpha", "claude"), "settings.json")
+	stMkdir(t, filepath.Dir(settings))
+	stWrite(t, settings, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[]}]}}`)
+	if trust.IsTrusted("alpha", h) {
+		t.Fatal("precondition: settings.json#tq changed after the signature")
+	}
+	st := stepRegistry["manifests"]
+	p, err := st.Plan(e.deps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range p.Changes {
+		if c.Kind == kindSignIntegrity {
+			t.Fatalf("a failing record must not be signed again: %+v", c)
+		}
+	}
+	if err := st.Apply(e.deps(), p, e.journal()); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := trust.Verify("alpha"); err != nil || rep.Trusted(h) || len(rep.Changes) == 0 {
+		t.Fatalf("still failing after the move: %+v %v", rep, err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
 var Shells = []string{"bash", "zsh", "fish", "pwsh", "powershell", "cmd"}
@@ -37,10 +38,38 @@ func checkOps(ops envplan.Ops) error {
 			return fmt.Errorf("refusing to emit: value for %s contains a line break or NUL", k)
 		}
 	}
-	if strings.ContainsAny(ops.Warn, "\r\n\x00") {
-		return fmt.Errorf("refusing to emit: the warning contains a line break or NUL")
-	}
 	return nil
+}
+
+// NoticeText is the fixed message of a notice: one of three sentences, with
+// the workspace name only when it is a valid workspace name
+// (workspace.NameRe: lower-case letters, digits, '.', '_', '-'), so nothing
+// a folder name, a manifest or a file path holds ever reaches the shell
+// line. The paths are what `tq hooks verify` prints. ok is false for an
+// unknown kind.
+func NoticeText(n envplan.Notice) (string, bool) {
+	ws := n.Workspace
+	if !workspace.NameRe.MatchString(ws) {
+		ws = ""
+	}
+	switch n.Kind {
+	case envplan.NoticeUntrusted:
+		if ws == "" {
+			return "tq: untrusted: this workspace carries no identity, run tq doctor", true
+		}
+		return "tq: untrusted: run tq allow " + ws, true
+	case envplan.NoticeMismatch:
+		if ws == "" {
+			return "tq: integrity mismatch: this workspace carries no identity, run tq doctor", true
+		}
+		return "tq: integrity mismatch: run tq hooks verify " + ws, true
+	case envplan.NoticeLegacy:
+		if ws == "" {
+			return "tq: legacy trust record: run tq doctor", true
+		}
+		return "tq: legacy trust record: run tq allow " + ws + " to sign hooks and manifest", true
+	}
+	return "", false
 }
 
 func Emit(sh string, ops envplan.Ops) (string, error) {
@@ -65,7 +94,15 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 	if err := checkOps(ops); err != nil {
 		return "", err
 	}
-	if !ops.Changed && ops.Warn == "" {
+	notice := ""
+	if ops.Notice != nil {
+		t, ok := NoticeText(*ops.Notice)
+		if !ok {
+			return "", fmt.Errorf("refusing to emit: unknown notice %q", ops.Notice.Kind)
+		}
+		notice = t
+	}
+	if !ops.Changed && notice == "" {
 		return "", nil
 	}
 	if sh == "cmd" {
@@ -89,15 +126,15 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 			b.WriteString(set(k, ops.Set[k]) + "\n")
 		}
 	}
-	if ops.Warn != "" {
-		b.WriteString(warn(sh, ops.Warn) + "\n")
+	if notice != "" {
+		b.WriteString(warn(sh, notice) + "\n")
 	}
 	return b.String(), nil
 }
 
-// warn is the shell line that prints msg on stderr. msg holds no line
-// break (checkOps); for cmd the characters it cannot print plainly are
-// escaped.
+// warn is the shell line that prints msg on stderr. msg is a NoticeText:
+// fixed words and a validated workspace name, nothing any shell treats as
+// syntax; it is still quoted for the shell.
 func warn(sh, msg string) string {
 	switch sh {
 	case "fish":
@@ -105,8 +142,7 @@ func warn(sh, msg string) string {
 	case "pwsh", "powershell":
 		return "[Console]::Error.WriteLine(" + psq(msg) + ")"
 	case "cmd":
-		r := strings.NewReplacer("^", "^^", "&", "^&", "|", "^|", "<", "^<", ">", "^>", "%", "%%", "(", "^(", ")", "^)")
-		return "echo " + r.Replace(msg) + " 1>&2"
+		return "echo " + msg + " 1>&2"
 	default: // bash, zsh
 		return "printf '%s\\n' " + sq(msg) + " >&2"
 	}

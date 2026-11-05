@@ -22,8 +22,8 @@ func findingOf(fs []Finding, code string) *Finding {
 	return nil
 }
 
-// integrity lists every covered file that changed since a human signed; it
-// replaces the plain untrusted finding, whose fix would be wrong.
+// integrity lists every covered file that changed since a human signed;
+// untrusted is reported with it, both pointing at tq hooks verify.
 func TestRun_IntegrityListsTheChangedFiles(t *testing.T) {
 	cfg, ws := setupTrustedWorkspace(t, "acme", "dev@acme.com")
 	mp := filepath.Join(ws, manifest.FileName)
@@ -31,14 +31,14 @@ func TestRun_IntegrityListsTheChangedFiles(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(settings, []byte("{}\n"), 0o600)
+	os.WriteFile(settings, []byte(`{"hooks":{"PreToolUse":[]}}`), 0o600)
 	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: dev@acme.com }\nidentities: { claude: {} }\n# edited\n"), 0o600)
 	fs := Run(cfg, deps(nil, ws, nil))
 	f := findingOf(fs, "integrity")
 	if f == nil || f.Level != "error" || f.Workspace != "acme" {
 		t.Fatalf("%+v", fs)
 	}
-	for _, want := range []string{"2 covered file(s) changed", "added " + settings, "changed " + mp} {
+	for _, want := range []string{"2 covered file(s) changed", "changed " + trust.Key(settings+"#tq"), "changed " + trust.Key(mp)} {
 		if !strings.Contains(f.Msg, want) {
 			t.Fatalf("message lacks %q: %s", want, f.Msg)
 		}
@@ -46,8 +46,8 @@ func TestRun_IntegrityListsTheChangedFiles(t *testing.T) {
 	if !strings.Contains(f.Fix, "tq hooks verify acme") || !strings.Contains(f.Fix, "tq hooks verify --accept acme") {
 		t.Fatalf("fix: %s", f.Fix)
 	}
-	if has(fs, "untrusted") {
-		t.Fatal("a mismatch is not the plain untrusted")
+	if u := findingOf(fs, "untrusted"); u == nil || u.Fix != "tq hooks verify acme" {
+		t.Fatalf("untrusted is reported with the mismatch: %+v", fs)
 	}
 	if Exit(fs) != 1 {
 		t.Fatal("an integrity error exits 1")
@@ -84,9 +84,13 @@ func TestRun_IntegrityKeyFileWarns(t *testing.T) {
 func TestRun_IntegrityLegacyRecordWarns(t *testing.T) {
 	cfg, ws := setupTrustedWorkspace(t, "acme", "dev@acme.com")
 	h, _ := trust.HashFile(filepath.Join(ws, manifest.FileName))
-	if err := os.Remove(trust.SignedRecordPath("acme")); err != nil {
+	// The machine as an older tq left it: no key, no signed record, a
+	// marker.
+	keyring.MockInit()
+	if err := os.RemoveAll(paths.TrustDir()); err != nil {
 		t.Fatal(err)
 	}
+	os.MkdirAll(paths.TrustDir(), 0o700)
 	os.WriteFile(trust.LegacyRecordPath(h), nil, 0o600)
 	fs := Run(cfg, deps(nil, ws, nil))
 	f := findingOf(fs, "integrity-record-legacy")

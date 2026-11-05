@@ -14,6 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 var exitFunc = os.Exit
@@ -42,6 +43,7 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Verify hooks, trust, git and env against the manifests (never mutates)",
 		RunE: func(c *cobra.Command, _ []string) error {
+			defer trust.MemoScope()()
 			cfg, err := registry.Load()
 			if err != nil {
 				return err

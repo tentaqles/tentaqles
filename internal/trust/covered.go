@@ -13,59 +13,59 @@ import (
 	"github.com/tentaqles/tentaqles/internal/registry"
 )
 
-// Executable is the running tq binary, symlinks resolved. It is a package
-// variable so tests can point it at a file of their own; nothing else sets
-// it.
-var Executable = func() (string, error) {
-	p, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		p = r
-	}
-	return p, nil
-}
-
-// Covered lists the paths the integrity record of workspace name covers
-// (PRD v2 §8.3, the owner's decision of 2026-11-05), sorted:
+// Covered lists the keys (Key) of what the integrity record of workspace
+// name covers (PRD v2 §8.3: the hook scripts, the shims and the manifest;
+// the owner's decisions of 2026-11-05), sorted:
 //
 //   - the protected manifest, $TQ_HOME/identities/<name>/manifest.yaml;
 //   - the root marker <root>/.tentaqles.yaml, root being <base>/<name> for
 //     the first registered base that has that folder (in the old layout
 //     this is the manifest itself);
-//   - the identity's Claude settings.json;
-//   - every file under hooks/, scripts/ and .claude-plugin/ of the tentaqles
-//     plugin installed in the identity's Claude config dir, the highest
-//     installed version (plugin/CLAUDE.md);
-//   - the identity's Codex hooks.json and the tq-owned block of its
-//     config.toml (the "<dir>/config.toml#tq" virtual path);
-//   - every file under $TQ_HOME/shims/ when it exists;
-//   - the running tq binary (Executable).
+//   - "settings.json#tq": the keys of the identity's Claude settings.json
+//     that decide what runs (enforcingSettingsKeys), not the rest of the
+//     file, which Claude Code rewrites for a theme or a model;
+//   - every file under hooks/, scripts/ and .claude-plugin/ of the
+//     tentaqles plugin installed in the identity's Claude config dir, the
+//     highest installed version (plugin/CLAUDE.md);
+//   - the identity's Codex hooks.json and "config.toml#tq", the block of
+//     config.toml tq owns;
+//   - every file under $TQ_HOME/shims/ when it exists.
+//
+// The tq binary is not covered: Phase 3's shim folder decides which tq the
+// shell runs, and the binary is the OS's to protect.
 //
 // A path that does not exist is still covered: the record stores it as
 // absent, and it appearing later is a change.
 func Covered(name string) []string {
 	var out []string
-	out = append(out, paths.ManifestPath(name))
+	out = append(out, Key(paths.ManifestPath(name)))
 	if root := workspaceRoot(name); root != "" {
-		out = append(out, filepath.Join(root, manifest.FileName))
+		out = append(out, Key(filepath.Join(root, manifest.FileName)))
 	}
 	claude := paths.IdentityDir(name, "claude")
-	out = append(out, filepath.Join(claude, "settings.json"))
+	out = append(out, Key(filepath.Join(claude, "settings.json")+blockSuffix))
 	if pr := PluginRoot(claude); pr != "" {
 		for _, sub := range []string{"hooks", "scripts", ".claude-plugin"} {
-			out = append(out, filesUnder(filepath.Join(pr, sub))...)
+			for _, f := range filesUnder(filepath.Join(pr, sub)) {
+				out = append(out, Key(f))
+			}
 		}
 	}
 	codex := paths.IdentityDir(name, "codex")
-	out = append(out, filepath.Join(codex, "hooks.json"), filepath.Join(codex, "config.toml")+blockSuffix)
-	out = append(out, filesUnder(filepath.Join(paths.Home(), "shims"))...)
-	if exe, err := Executable(); err == nil && exe != "" {
-		out = append(out, exe)
+	out = append(out, Key(filepath.Join(codex, "hooks.json")), Key(filepath.Join(codex, "config.toml")+blockSuffix))
+	for _, f := range filesUnder(filepath.Join(paths.Home(), "shims")) {
+		out = append(out, Key(f))
 	}
 	sort.Strings(out)
 	return dedupe(out)
+}
+
+// pluginKey is the key of name's covered plugin folder, "" when none.
+func pluginKey(name string) string {
+	if pr := PluginRoot(paths.IdentityDir(name, "claude")); pr != "" {
+		return Key(pr)
+	}
+	return ""
 }
 
 // workspaceRoot is <base>/<name> for the first registered base that holds

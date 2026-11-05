@@ -193,6 +193,7 @@ func newStatuslineCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			defer trust.MemoScope()()
 			var in statusline.Input
 			_ = json.NewDecoder(c.InOrStdin()).Decode(&in)
 			cwd := in.Workspace.CurrentDir

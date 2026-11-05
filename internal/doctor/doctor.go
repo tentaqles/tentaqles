@@ -90,9 +90,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	for _, w := range all {
 		trusted := trust.IsTrusted(w.Name, w.Hash)
 		if !trusted {
-			if !integrityMismatch(w.Name, w.Hash, add) {
-				add("warn", "untrusted", w.Name, "manifest not trusted", "tq allow "+w.Name)
-			}
+			untrustedFindings(w.Name, w.Hash, add)
 		} else {
 			integrityLegacy(w.Name, w.Hash, add)
 		}

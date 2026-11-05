@@ -191,6 +191,7 @@ func newRunCmd() *cobra.Command {
 		Example: "  tq run acme -- claude\n  tq run . -- claude -p \"...\"\n  tq run --off -- claude",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			defer trust.MemoScope()()
 			if off {
 				if c.ArgsLenAtDash() > 0 {
 					return errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")

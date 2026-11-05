@@ -67,11 +67,31 @@ type Ops struct {
 	Changed bool
 	From    string
 	To      string
-	// Warn is one line the shell prints on stderr at this prompt, whether
-	// or not anything changed: the integrity mismatch that keeps a
-	// workspace's identity out of the shell (tq env sets it).
-	Warn string
+	// Notice is the one line the shell prints on stderr at this prompt,
+	// whether or not anything changed (tq env sets it; shell.Emit renders
+	// it from fixed text, never from a path or the manifest).
+	Notice *Notice
 }
+
+// Notice says why the cwd's workspace carries no identity, or carries it
+// through an older trust marker. Workspace is a name; shell.Emit prints it
+// only when it is a valid workspace name.
+type Notice struct {
+	Kind      string
+	Workspace string
+}
+
+// The kinds of Notice.
+const (
+	// NoticeUntrusted: never allowed, or revoked; the fix is tq allow.
+	NoticeUntrusted = "untrusted"
+	// NoticeMismatch: the integrity record does not verify or a covered
+	// file changed; the fix is tq hooks verify.
+	NoticeMismatch = "mismatch"
+	// NoticeLegacy: trusted through a marker of an older tq; tq allow signs
+	// the hooks and the manifest.
+	NoticeLegacy = "legacy"
+)
 
 // Diff computes the shell operations to move from the current env to desired,
 // restoring anything tq previously changed that is no longer desired.

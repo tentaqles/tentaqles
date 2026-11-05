@@ -234,23 +234,34 @@ func TestRunForCwd_UntrustedIsStructural(t *testing.T) {
 		t.Fatalf("expected structural Untrusted with Mismatch, got %+v", r.Result)
 	}
 	// An edit after tq allow is an integrity mismatch (the signed record
-	// exists and names the manifest), not a plain untrusted: the fix is
-	// tq hooks verify, not tq allow.
-	if !contains(r.Codes(), "integrity") || contains(r.Codes(), "untrusted") {
+	// exists and names the manifest), and untrusted as well: every consumer
+	// of the codes (the guard refuses mutating git on untrusted) treats it
+	// at least as strictly as a workspace never allowed. The fix of both is
+	// tq hooks verify.
+	if !contains(r.Codes(), "integrity") || !contains(r.Codes(), "untrusted") {
 		t.Fatalf("codes %v", r.Codes())
 	}
 	for _, f := range r.Findings {
-		if f.Code == "integrity" && (!strings.Contains(f.Msg, "changed "+mp) || !strings.Contains(f.Fix, "tq hooks verify acme")) {
+		if f.Code == "integrity" && (!strings.Contains(f.Msg, "changed "+trust.Key(mp)) || !strings.Contains(f.Fix, "tq hooks verify acme")) {
 			t.Fatalf("the finding names the manifest and tq hooks verify: %+v", f)
 		}
+		if f.Code == "untrusted" && f.Fix != "tq hooks verify acme" {
+			t.Fatalf("untrusted after a mismatch points at tq hooks verify: %+v", f)
+		}
 	}
-	// Never allowed: plain untrusted, fix tq allow.
-	if err := os.Remove(trust.SignedRecordPath("acme")); err != nil {
+	// Revoked: plain untrusted, fix tq allow.
+	h, _ := trust.HashFile(mp)
+	if err := trust.Deny("acme", h); err != nil {
 		t.Fatal(err)
 	}
 	r = RunForCwd(cfg, d)
 	if r.Result.Mismatch || !contains(r.Codes(), "untrusted") || contains(r.Codes(), "integrity") {
 		t.Fatalf("%+v %v", r.Result, r.Codes())
+	}
+	for _, f := range r.Findings {
+		if f.Code == "untrusted" && f.Fix != "tq allow acme" {
+			t.Fatalf("%+v", f)
+		}
 	}
 }
 

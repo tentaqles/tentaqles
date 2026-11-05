@@ -3,7 +3,6 @@ package resolve
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -21,12 +20,16 @@ func TestResolve_IntegrityMismatchIsUntrustedWithReason(t *testing.T) {
 	}
 	settings := filepath.Join(paths.IdentityDir("acme", "claude"), "settings.json")
 	os.MkdirAll(filepath.Dir(settings), 0o700)
-	os.WriteFile(settings, []byte("{}\n"), 0o600)
+	os.WriteFile(settings, []byte(`{"theme":"dark"}`), 0o600)
+	if r := Resolve(root, cfg); r.Workspace == nil {
+		t.Fatalf("a settings.json without enforcing keys is no change: %+v", r)
+	}
+	os.WriteFile(settings, []byte(`{"hooks":{"PreToolUse":[]}}`), 0o600)
 	r := Resolve(root, cfg)
-	if r.Workspace != nil || r.Untrusted == nil || !r.Mismatch {
+	if r.Workspace != nil || r.Untrusted == nil || !r.Mismatch || r.Legacy {
 		t.Fatalf("%+v", r)
 	}
-	if want := "untrusted: integrity mismatch, added " + settings + " (run: tq hooks verify acme)"; r.Reason != want {
+	if want := "untrusted: integrity mismatch, changed " + trust.Key(settings+"#tq") + " (run: tq hooks verify acme)"; r.Reason != want {
 		t.Fatalf("reason %q, want %q", r.Reason, want)
 	}
 	h, _ := trust.HashFile(pp)
@@ -34,7 +37,7 @@ func TestResolve_IntegrityMismatchIsUntrustedWithReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = Resolve(root, cfg)
-	if r.Workspace != nil || r.Untrusted == nil || r.Mismatch || !strings.HasPrefix(r.Reason, "untrusted (run: tq allow acme)") {
-		t.Fatalf("%+v", r)
+	if r.Workspace != nil || r.Untrusted == nil || r.Mismatch || r.Reason != "untrusted: trust revoked by tq deny (run: tq allow acme)" {
+		t.Fatalf("a revoked workspace is untrusted with tq allow as the fix: %+v", r)
 	}
 }

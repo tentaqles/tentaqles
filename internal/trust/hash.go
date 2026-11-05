@@ -1,16 +1,17 @@
 package trust
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
-	"time"
 
 	"github.com/tentaqles/tentaqles/internal/codexcfg"
 )
@@ -34,36 +35,34 @@ func HashFile(path string) (string, error) {
 // so a file swapped for a link is a change, and so is the reverse.
 const irregular = "!irregular"
 
-// blockSuffix marks the virtual covered path of the tq-owned block of a
-// Codex config.toml: "<dir>/config.toml#tq". The rest of the file is the
-// user's and stays out of the record.
+// invalidJSON is the hash recorded for a settings.json tq cannot parse: it
+// differs from every projection, so breaking the file is a change.
+const invalidJSON = "!invalid-json"
+
+// blockSuffix marks a virtual covered path, the part of a file tq covers:
+// "<dir>/config.toml#tq" is the block of a Codex config.toml tq owns, and
+// "<dir>/settings.json#tq" the enforcing keys of a Claude settings.json.
 const blockSuffix = "#tq"
 
-// memoThreshold: a regular file of at least this size (the tq binary) keeps
-// its hash in an in-process memo keyed by size and mtime, so the several
-// trust checks one command makes hash it once. Smaller files are hashed on
-// every call. Nothing is cached on disk.
-const memoThreshold = 1 << 20
+// enforcingSettingsKeys are the keys of a Claude settings.json that decide
+// what runs: the hooks, the plugins and MCP servers that are on, the
+// environment of every tool call, the status line command. The rest
+// (theme, model, permissions the user sets in Claude Code) is not covered.
+var enforcingSettingsKeys = []string{"hooks", "enabledPlugins", "enabledMcpjsonServers", "disableAllMcpServers", "env", "statusLine"}
 
-type memoEntry struct {
-	size  int64
-	mtime time.Time
-	hash  string
-}
-
-var memo sync.Map
-
-// currentHash is the hash of a covered path as the record stores it: ""
+// currentHash is the hash of a covered key as the record stores it: ""
 // when it is absent, irregular when it exists but is not a regular file,
-// the hex sha256 of its bytes otherwise. For a "#tq" path it is the hash of
-// the managed block of that config.toml ("" when the file or the block is
-// missing). A file that exists but cannot be read is an error, which every
-// caller treats as untrusted.
-func currentHash(path string) (string, error) {
-	if file, ok := strings.CutSuffix(path, blockSuffix); ok {
+// the hex sha256 of its bytes otherwise. A "#tq" key hashes the part tq
+// covers (blockHash, settingsHash). A file that exists but cannot be read
+// is an error, which every caller treats as untrusted.
+func currentHash(key string) (string, error) {
+	if file, ok := strings.CutSuffix(key, blockSuffix); ok {
+		if strings.EqualFold(filepath.Base(file), "settings.json") {
+			return settingsHash(file)
+		}
 		return blockHash(file)
 	}
-	fi, err := os.Lstat(path)
+	fi, err := os.Lstat(key)
 	if err != nil {
 		if absent(err) {
 			return "", nil
@@ -73,23 +72,7 @@ func currentHash(path string) (string, error) {
 	if !fi.Mode().IsRegular() {
 		return irregular, nil
 	}
-	big := fi.Size() >= memoThreshold
-	if big {
-		if v, ok := memo.Load(path); ok {
-			e := v.(memoEntry)
-			if e.size == fi.Size() && e.mtime.Equal(fi.ModTime()) {
-				return e.hash, nil
-			}
-		}
-	}
-	h, err := HashFile(path)
-	if err != nil {
-		return "", err
-	}
-	if big {
-		memo.Store(path, memoEntry{fi.Size(), fi.ModTime(), h})
-	}
-	return h, nil
+	return HashFile(key)
 }
 
 // absent reports a stat error that means "nothing there": the file, or a
@@ -119,4 +102,58 @@ func blockHash(file string) (string, error) {
 	}
 	sum := sha256.Sum256([]byte(block))
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// settingsHash is the sha256 of the canonical JSON of the enforcing keys of
+// a Claude settings.json (encoding/json sorts object keys; numbers keep
+// their text). An absent file projects to {} like a file without those
+// keys: neither runs anything. A file that is not a JSON object is
+// invalidJSON.
+func settingsHash(file string) (string, error) {
+	proj := map[string]json.RawMessage{}
+	fi, err := os.Lstat(file)
+	switch {
+	case err != nil && !absent(err):
+		return "", err
+	case err == nil && !fi.Mode().IsRegular():
+		return irregular, nil
+	case err == nil:
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return "", err
+		}
+		var doc map[string]json.RawMessage
+		if json.Unmarshal(raw, &doc) != nil || doc == nil {
+			return invalidJSON, nil
+		}
+		for _, k := range enforcingSettingsKeys {
+			v, ok := doc[k]
+			if !ok {
+				continue
+			}
+			c, err := canonicalJSON(v)
+			if err != nil {
+				return invalidJSON, nil
+			}
+			proj[k] = c
+		}
+	}
+	b, err := json.Marshal(proj)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// canonicalJSON re-encodes a JSON value with object keys sorted and no
+// whitespace, numbers kept as written.
+func canonicalJSON(v json.RawMessage) (json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(v))
+	dec.UseNumber()
+	var x any
+	if err := dec.Decode(&x); err != nil {
+		return nil, err
+	}
+	return json.Marshal(x)
 }

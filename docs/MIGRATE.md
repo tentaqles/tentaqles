@@ -257,19 +257,27 @@ editing the marker changes nothing about the trust hash.
 
 The step also brings the trust record up to date (ADR-0004). Trust is now a
 signed integrity record, `~/.tentaqles/trust/<name>.json`, over the manifest
-and the files that enforce the identity (the marker, the Claude
-`settings.json`, the installed plugin's hooks and scripts, the Codex hook
-files, the shims, the tq binary). Older versions wrote an empty marker,
+and the files that make the hook run (the marker, the enforcing keys of the
+Claude `settings.json`, the installed plugin's hooks and scripts, the Codex
+hook files, the shims). Older versions wrote an empty marker,
 `~/.tentaqles/trust/<hash>` (keyed by the manifest's bytes alone) or
-`~/.tentaqles/trust/<name>/<hash>`. For every identity (either layout) that is
-trusted through such a marker the plan shows a journalled `rekey-trust` change
-per marker: the signed record is written and the marker removed; the marker
-keeps counting for that identity until it runs (`tq doctor` says
-`integrity-record-legacy`; `tq allow <name>` does the same without a
-migration). An identity that already has a signed record and is moved gets it
-signed again (`sign-integrity`, the old record backed up), because the marker
-and the protected copy it covers have changed: a trusted identity stays
-trusted across the move.
+`~/.tentaqles/trust/<name>/<hash>`. Those markers count until the first
+signature on the machine; that signature takes a signed snapshot of them,
+`~/.tentaqles/trust/legacy.json`, and from then on a marker counts only while
+the snapshot lists it, and never for an identity that has a signed record. For
+every identity (either layout) trusted through a marker that counts, the plan
+shows a journalled `rekey-trust` change per marker: the signed record is
+written, the marker removed and dropped from the snapshot; the marker keeps
+counting for that identity until it runs (`tq doctor` says
+`integrity-record-legacy`, every prompt says "tq: legacy trust record: run tq
+allow <name> to sign hooks and manifest"; `tq allow <name>` does the same
+without a migration). A marker that does not count is never turned into a
+signed record. An identity whose signed record verifies in full and is moved
+gets it signed again (`sign-integrity`, the old record backed up), because the
+marker and the protected copy it covers have changed: a trusted identity stays
+trusted across the move. One whose record fails is moved but not signed again:
+read `tq hooks verify <name>` first. `--apply` signs, so it passes the
+human-only check of every signature.
 
 An identity that already holds both files (a protected copy and an old full
 manifest left in the root; `tq doctor` says `manifest-root-stale`) only gets
@@ -430,18 +438,22 @@ Install the new `tq` (the installer replaces the binary), then:
   `tq uninstall --restore`). `tq doctor` warns `manifest-in-root` until
   then; on Windows it also reports `protected-acl` for the state folder.
 - **Trust is a signed record (ADR-0004).** `tq allow <ws>` signs
-  `~/.tentaqles/trust/<ws>.json` over the manifest, the marker, the identity's
-  Claude `settings.json`, the installed plugin's hooks and scripts, the Codex
-  hook files, the shims and the tq binary; the key lives in the OS keychain
-  (`tentaqles` / `integrity-key`), or in `~/.tentaqles/integrity.key` when the
-  keychain is unavailable (`tq doctor`: `integrity-key-file`). A marker an
-  older `tq` wrote still counts until `tq allow <ws>` or `tq migrate manifests
-  --apply` replaces it (`tq doctor`: `integrity-record-legacy`). From then on,
-  installing this tq, updating the plugin or changing a covered file makes the
-  workspace untrusted until you read `tq hooks verify <ws>` and run
-  `tq hooks verify --accept <ws>` (human-only): no identity in the shell, no
-  `claude`/`codex` launch, one line at every prompt meanwhile. A
-  `claude.permission_mode: bypass` renders as `bypassPermissions` on the
+  `~/.tentaqles/trust/<ws>.json` over the manifest, the marker, the enforcing
+  keys of the identity's Claude `settings.json`, the installed plugin's hooks
+  and scripts, the Codex hook files and the shims; the key lives in the OS
+  keychain (`tentaqles` / `integrity-key`), or in `~/.tentaqles/integrity.key`
+  when the keychain is unavailable (`tq doctor`: `integrity-key-file`). A
+  marker an older `tq` wrote still counts until `tq allow <ws>` or `tq migrate
+  manifests --apply` replaces it, with `integrity-record-legacy` in `tq doctor`
+  and a line at every prompt meanwhile; after the first signature a marker
+  created by anything but an older tq never counts. From then on, updating the
+  plugin (a new version folder) or changing a covered file makes the workspace
+  untrusted until you read `tq hooks verify <ws>` and run `tq hooks verify
+  --accept <ws>` (human-only, with a confirmation): no identity in the shell,
+  no `claude`/`codex` launch, no mutating git or remote command from the hook,
+  one line at every prompt meanwhile. Installing a new tq binary changes
+  nothing: the binary is not covered. `tq deny <ws>` leaves a signed tombstone.
+  A `claude.permission_mode: bypass` renders as `bypassPermissions` on the
   trusted manifest alone.
 - **Run `tq settings render --all` once.** It rewrites each identity's
   Claude settings and the Codex `config.toml` block (always

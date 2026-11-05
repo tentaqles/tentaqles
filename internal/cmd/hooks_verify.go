@@ -21,19 +21,21 @@ func newHooksVerifyCmd() *cobra.Command {
 	var accept bool
 	c := &cobra.Command{
 		Use:   "verify [workspace]",
-		Short: "Check the signed integrity record (manifest, hooks, shims, tq) and list what changed; --accept re-signs (human only)",
+		Short: "Check the signed integrity record (manifest, hooks, settings, shims) and list what changed; --accept re-signs (human only)",
 		Long: `tq hooks verify checks a workspace's signed integrity record against the files
-it covers: the protected manifest and the root marker, the identity's Claude
-settings.json, the installed tentaqles plugin's hooks/, scripts/ and
-.claude-plugin/, the Codex hooks.json and the tq-owned block of config.toml,
-every file under ~/.tentaqles/shims/ and the tq binary that runs. It prints
-each change with the old and new hash and exits 1 when anything differs, when
-the signature does not verify, or when there is no record.
+it covers: the protected manifest and the root marker, the enforcing keys of the
+identity's Claude settings.json (hooks, enabledPlugins, enabledMcpjsonServers,
+disableAllMcpServers, env, statusLine), the installed tentaqles plugin's
+hooks/, scripts/ and .claude-plugin/, the Codex hooks.json and the tq-owned
+block of config.toml, and every file under ~/.tentaqles/shims/. It prints the
+key id, a summary line when the plugin moved to a new version folder, and each
+change with the old and new hash, and exits 1 when anything differs, when the
+key or the signature does not verify, or when there is no record.
 
 Without a workspace it checks the current folder's.
 
---accept signs the state as it is now, after you have read the report:
-human-only, an agent session is refused.`,
+--accept signs the state as it is now, after you have read the report and
+confirmed: human-only, an agent session is refused.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if accept {
@@ -61,6 +63,8 @@ human-only, an agent session is refused.`,
 				return fmt.Errorf("%s has no integrity record; run: tq allow %s", ws.Name, ws.Name)
 			case rep.Invalid != "":
 				return fmt.Errorf("%s: %s; a human runs: tq hooks verify --accept %s", ws.Name, rep.Invalid, ws.Name)
+			case rep.Revoked:
+				return fmt.Errorf("%s: trust revoked; run: tq allow %s", ws.Name, ws.Name)
 			case !rep.Trusted(ws.Hash):
 				return fmt.Errorf("%s: integrity mismatch; read the changes above, then a human runs: tq hooks verify --accept %s", ws.Name, ws.Name)
 			}
@@ -102,10 +106,16 @@ func printVerifyReport(w io.Writer, ws *resolve.Workspace, rep trust.Report) {
 	case rep.Invalid != "":
 		fmt.Fprintf(w, "%s: %s (%s)\n", ws.Name, rep.Invalid, trust.SignedRecordPath(ws.Name))
 		return
+	case rep.Revoked:
+		fmt.Fprintf(w, "%s: trust revoked by tq deny on %s (%s)\n", ws.Name, rep.SignedAt, trust.SignedRecordPath(ws.Name))
+		return
 	}
-	fmt.Fprintf(w, "%s: integrity record signed %s over %d covered files, manifest %s\n", ws.Name, rep.SignedAt, rep.Files, rep.ManifestHash[:12])
+	fmt.Fprintf(w, "%s: integrity record signed %s with key %s over %d covered files, manifest %s\n", ws.Name, rep.SignedAt, rep.KeyID, rep.Files, rep.ManifestHash[:12])
 	if rep.ManifestHash != ws.Hash {
 		fmt.Fprintf(w, "  manifest hash now %s\n", ws.Hash[:12])
+	}
+	if rep.PluginFrom != "" {
+		fmt.Fprintf(w, "  plugin tentaqles %s -> %s (%d hook files changed)\n", rep.PluginFrom, rep.PluginTo, rep.PluginFiles)
 	}
 	for _, ch := range rep.Changes {
 		fmt.Fprintf(w, "  %-8s %s  %s -> %s\n", ch.Kind, ch.Path, shortHash(ch.Old), shortHash(ch.New))
@@ -121,11 +131,8 @@ func printVerifyReport(w io.Writer, ws *resolve.Workspace, rep trust.Report) {
 }
 
 func shortHash(h string) string {
-	switch {
-	case h == "":
+	if h == "" {
 		return "(absent)"
-	case len(h) > 12 && h[0] != '!':
-		return h[:12]
 	}
-	return h
+	return trust.Short(h)
 }

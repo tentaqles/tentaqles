@@ -32,14 +32,15 @@ const (
 //
 // The manifest's bytes do not change, so neither does its hash: a trusted
 // manifest stays trusted after the move and an untrusted one stays
-// untrusted. A workspace with a signed integrity record (ADR-0004) gets it
-// signed again after the move, since the marker and the protected copy are
-// covered files (sign-integrity, the old record backed up). A workspace
-// trusted through a marker of an older tq (trust/<hash> or
-// trust/<name>/<hash>) gets a signed record instead (rekey-trust), in either
-// layout. Every write is journaled before it happens, so `tq uninstall
-// --restore` puts the manifest back in the root, removes the protected copy
-// and restores the old trust record.
+// untrusted. A workspace whose signed integrity record (ADR-0004) verifies
+// in full gets it signed again after the move, since the marker and the
+// protected copy are covered files (sign-integrity, the old record backed
+// up); one whose record fails keeps it as it is, failing, for the human to
+// read in tq hooks verify. A workspace trusted through a marker of an older
+// tq that still counts (trust.LegacyMarkers) gets a signed record instead
+// (rekey-trust), in either layout. Every write is journaled before it
+// happens, so `tq uninstall --restore` puts the manifest back in the root,
+// removes the protected copy and restores the old trust record.
 //
 // The step is never in the default --steps: an identity changes layout only
 // when the human asks (PRD v2 §13, "behind a flag").
@@ -127,26 +128,23 @@ func planManifests(d Deps) (mfPlan, error) {
 	}
 	for _, w := range all {
 		pp := paths.ManifestPath(w.Name)
-		signed := trust.HasRecord(w.Name, w.Hash)
+		v := trust.Check(w.Name, w.Hash)
+		// Only a record that verifies in full is signed again after the
+		// move: re-signing one that fails would accept what changed.
+		signed := v.Kind == trust.KindTrusted
 		switch {
 		case w.StaleRoot != "":
 			mp.acts = append(mp.acts, mfAction{ws: w.Name, rootFile: w.StaleRoot, protected: pp, hash: w.Hash, resign: signed})
 		case !w.Protected:
-			mp.acts = append(mp.acts, mfAction{ws: w.Name, rootFile: w.ManifestPath, protected: pp, hash: w.Hash, trusted: trust.IsTrusted(w.Name, w.Hash), copy: true, resign: signed})
+			mp.acts = append(mp.acts, mfAction{ws: w.Name, rootFile: w.ManifestPath, protected: pp, hash: w.Hash, trusted: v.OK, copy: true, resign: signed})
 		default:
 			p.Skipped = append(p.Skipped, fmt.Sprintf("workspace %s: manifest already protected (%s)", w.Name, w.ManifestPath))
 		}
-		if !signed {
-			var legacy []string
-			if trust.HasLegacyRecord(w.Hash) {
-				legacy = append(legacy, trust.LegacyRecordPath(w.Hash))
-			}
-			if trust.HasLegacyNameRecord(w.Name, w.Hash) {
-				legacy = append(legacy, trust.RecordPath(w.Name, w.Hash))
-			}
-			if len(legacy) > 0 {
-				mp.rekeys = append(mp.rekeys, rekeyAction{ws: w.Name, hash: w.Hash, legacy: legacy})
-			}
+		// Only markers that count are replaced by a signed record: one
+		// planted after the snapshot, or one beside a signed record, never
+		// becomes trust (trust.LegacyMarkers).
+		if legacy := trust.LegacyMarkers(w.Name, w.Hash); len(legacy) > 0 {
+			mp.rekeys = append(mp.rekeys, rekeyAction{ws: w.Name, hash: w.Hash, legacy: legacy})
 		}
 	}
 	for _, a := range mp.acts {
@@ -253,9 +251,10 @@ func applyResign(a mfAction, j *Journal) error {
 }
 
 // applyRekey turns legacy trust markers into a signed integrity record:
-// record and write trust/<name>.json, then back up, record and delete each
-// marker. Reversed newest first, a restore brings the markers back and
-// removes the signed record.
+// record and write trust/<name>.json, back up, record and delete each
+// marker, then back up and rewrite the signed snapshot of legacy markers
+// without them. Reversed newest first, a restore brings the snapshot and
+// the markers back and removes the signed record.
 func applyRekey(r rekeyAction, j *Journal) error {
 	signed := trust.SignedRecordPath(r.ws)
 	if _, err := os.Lstat(signed); err == nil {
@@ -289,5 +288,19 @@ func applyRekey(r rekeyAction, j *Journal) error {
 			return err
 		}
 	}
-	return nil
+	// The replaced markers leave the signed snapshot of legacy markers,
+	// journaled too, so a restore lets them count again.
+	content, ok, err := trust.LegacyListWithout(r.legacy)
+	if err != nil || !ok {
+		return err
+	}
+	list := trust.LegacyListPath()
+	b, err := j.BackupFile(list)
+	if err != nil {
+		return err
+	}
+	if err := j.RecordWriteFile("manifests", list, b); err != nil {
+		return err
+	}
+	return writeFileSync(list, content, 0o600)
 }

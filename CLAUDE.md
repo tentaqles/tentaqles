@@ -42,9 +42,11 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `Confirm` are what tests replace (`internal/cmd/main_test.go` sets the human
     baseline for the whole cmd suite).
   - `internal/trust/` (the signed integrity record per workspace, `trust/<name>.json`:
-    manifest, marker, Claude settings, the installed plugin's hooks and scripts, Codex hook
-    files, shims and the tq binary under an HMAC whose key is in the OS keychain; ADR-0004),
-    `internal/manifest/` (the manifest,
+    manifest, marker, the enforcing keys of the Claude settings (`settings.json#tq`), the
+    installed plugin's hooks, scripts and manifest, Codex hook files and shims, under an
+    HMAC whose key is in the OS keychain; every signature passes `HumanCheck`; `tq deny`
+    leaves a signed tombstone; legacy markers count only from the signed snapshot
+    `trust/legacy.json`; ADR-0004), `internal/manifest/` (the manifest,
     read from `~/.tentaqles/identities/<ws>/manifest.yaml` with a name-only marker
     `.tentaqles.yaml` in the workspace root, or from the root itself for an identity not
     yet migrated with `tq migrate manifests`, ADR-0002; a top-level block tq does not
@@ -102,10 +104,14 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   in the shell; the categories run blocked_commands → identity → secrets →
   self-protection and every deny is logged: `TestProtectedPaths_Table`,
   `TestProtectedPaths_RuleOrder`, `TestProtectedPaths_Codex`, `TestKeychainWrite`.
-- The integrity record is signed and covers the hooks, the settings, the shims and the tq
-  binary; a mismatch withholds the identity and refuses the launch:
+- The integrity record is signed and covers the hooks, the enforcing settings keys and the
+  shims; a mismatch is at least as strict as untrusted (the hook denies mutating git and
+  remote commands), withholds the identity and refuses the launch; a signed workspace never
+  falls back to a legacy marker; only a human signs:
   `TestFlippedByteFailsVerification`, `TestPluginHookChangesAreNamed`,
-  `TestRun_RefusesOnIntegrityMismatch`, `TestEnv_NoIdentityAndOneWarningOnMismatch`.
+  `TestPreToolUse_IntegrityMismatchDeniesRemoteAndGit`, `TestRun_RefusesOnIntegrityMismatch`,
+  `TestEnv_NoIdentityAndOneNoticeOnMismatch`, `TestLegacyDowngradeIsUntrusted`,
+  `TestSigningRefusesUnderAHarnessProcessTree`.
 - The plugin hook never takes the enforcing binary from the environment:
   `test_tq_bin_is_not_honoured`.
 - The guard reads the manifest from the protected location only; a marker that names

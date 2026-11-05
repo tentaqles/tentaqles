@@ -18,13 +18,13 @@ import (
 
 // fixture is a workspace with everything the integrity record covers: the
 // marker and the protected manifest, a Claude identity with settings.json
-// and an installed plugin, a Codex identity with its hook files, and a
-// stand-in for the tq binary. The OS keychain is go-keyring's mock.
+// and an installed plugin, a Codex identity with its hook files. The OS
+// keychain is go-keyring's mock, emptied for each fixture.
 type fixture struct {
-	t                                   *testing.T
-	name, home, base, root, mp, hash    string
-	claude, codex, plugin, exe, marker  string
-	settings, hooksJSON, hookSH, cfgTOM string
+	t                                    *testing.T
+	name, home, base, root, mp, hash     string
+	claude, codex, plugin, marker        string
+	settings, hooksJSON, hookSH, cfgTOML string
 }
 
 func write(t *testing.T, p, body string) {
@@ -48,6 +48,7 @@ func newFixture(t *testing.T, name string) *fixture {
 	}
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
 	keyring.MockInit()
+	invalidate()
 	f := &fixture{t: t, name: name, home: home, base: filepath.Join(home, "repos")}
 	f.root = filepath.Join(f.base, name)
 	if err := os.MkdirAll(f.root, 0o755); err != nil {
@@ -66,7 +67,7 @@ func newFixture(t *testing.T, name string) *fixture {
 	write(t, f.mp, "schema: tentaqles-client-v2\nclient: "+name+"\ngit: { email: "+name+"@x.io }\nidentities: { claude: {}, codex: {} }\n")
 	f.claude = paths.IdentityDir(name, "claude")
 	f.settings = filepath.Join(f.claude, "settings.json")
-	write(t, f.settings, "{}\n")
+	write(t, f.settings, `{"theme":"dark","hooks":{"PreToolUse":[]}}`)
 	f.plugin = filepath.Join(f.claude, "plugins", "cache", "tentaqles", "tentaqles", "0.16.0")
 	write(t, filepath.Join(f.plugin, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.16.0"}`)
 	f.hooksJSON = filepath.Join(f.plugin, "hooks", "hooks.json")
@@ -76,13 +77,8 @@ func newFixture(t *testing.T, name string) *fixture {
 	write(t, filepath.Join(f.plugin, "skills", "x", "SKILL.md"), "not covered\n")
 	f.codex = paths.IdentityDir(name, "codex")
 	write(t, filepath.Join(f.codex, "hooks.json"), `{"hooks":{}}`)
-	f.cfgTOM = filepath.Join(f.codex, "config.toml")
-	write(t, f.cfgTOM, "model = \"one\"\n"+codexBlock)
-	f.exe = filepath.Join(home, "bin", "tq.exe")
-	write(t, f.exe, "the tq binary\n")
-	prev := Executable
-	Executable = func() (string, error) { return f.exe, nil }
-	t.Cleanup(func() { Executable = prev })
+	f.cfgTOML = filepath.Join(f.codex, "config.toml")
+	write(t, f.cfgTOML, "model = \"one\"\n"+codexBlock)
 	h, err := HashFile(f.mp)
 	if err != nil {
 		t.Fatal(err)
@@ -96,8 +92,8 @@ func (f *fixture) allow() {
 	if err := Allow(f.name, f.hash); err != nil {
 		f.t.Fatal(err)
 	}
-	if !IsTrusted(f.name, f.hash) {
-		f.t.Fatal("Allow must trust the state it signed")
+	if v := Check(f.name, f.hash); !v.OK || v.Kind != KindTrusted {
+		f.t.Fatalf("Allow must trust the state it signed: %+v", v)
 	}
 }
 
@@ -119,16 +115,26 @@ func (f *fixture) append(p, extra string) {
 	write(f.t, p, string(b)+extra)
 }
 
-// changeFor returns the change naming path, or fails.
-func changeFor(t *testing.T, rep Report, path string) Change {
+// changeFor returns the change naming path (its key), or fails.
+func changeFor(t *testing.T, rep Report, p string) Change {
 	t.Helper()
+	k := Key(p)
 	for _, c := range rep.Changes {
-		if c.Path == path {
+		if c.Path == k {
 			return c
 		}
 	}
-	t.Fatalf("no change names %s; changes: %v", path, rep.Changes)
+	t.Fatalf("no change names %s; changes: %v", k, rep.Changes)
 	return Change{}
+}
+
+func readRec(t *testing.T, name string) Record {
+	t.Helper()
+	rec, ok, err := readRecord(name)
+	if !ok || err != nil {
+		t.Fatalf("record of %s: %v %v", name, ok, err)
+	}
+	return rec
 }
 
 func TestKeyServiceMatchesSecret(t *testing.T) {
@@ -138,8 +144,8 @@ func TestKeyServiceMatchesSecret(t *testing.T) {
 }
 
 // A signed record round-trips: Allow writes trust/<name>.json with the
-// schema, the workspace, the manifest hash, the covered files, a time and
-// a signature; Verify reads it back as trusted.
+// schema, the workspace, the manifest hash, the covered keys, the plugin,
+// the key id, a time and a signature; Verify reads it back as trusted.
 func TestSignedRecordRoundTrips(t *testing.T) {
 	f := newFixture(t, "acme")
 	if IsTrusted("acme", f.hash) {
@@ -154,33 +160,42 @@ func TestSignedRecordRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Schema != Schema || rec.Workspace != "acme" || rec.ManifestHash != f.hash || rec.SignedAt == "" || len(rec.Signature) != 64 {
+	if rec.Schema != Schema || rec.Workspace != "acme" || rec.ManifestHash != f.hash || rec.SignedAt == "" || len(rec.Signature) != 64 ||
+		len(rec.KeyID) != 12 || rec.Plugin != Key(f.plugin) || rec.Revoked {
 		t.Fatalf("%+v", rec)
 	}
-	for _, p := range []string{f.mp, f.marker, f.settings, f.hooksJSON, f.hookSH, filepath.Join(f.plugin, ".claude-plugin", "plugin.json"),
-		filepath.Join(f.codex, "hooks.json"), f.cfgTOM + blockSuffix, f.exe} {
-		if rec.Files[p] == "" {
-			t.Errorf("%s must be covered and present", p)
+	for _, p := range []string{f.mp, f.marker, f.settings + blockSuffix, f.hooksJSON, f.hookSH, filepath.Join(f.plugin, ".claude-plugin", "plugin.json"),
+		filepath.Join(f.codex, "hooks.json"), f.cfgTOML + blockSuffix} {
+		if rec.Files[Key(p)] == "" {
+			t.Errorf("%s must be covered and present", Key(p))
 		}
 	}
-	if _, ok := rec.Files[filepath.Join(f.plugin, "skills", "x", "SKILL.md")]; ok {
+	if _, ok := rec.Files[Key(filepath.Join(f.plugin, "skills", "x", "SKILL.md"))]; ok {
 		t.Error("skills are not covered")
 	}
-	if h := rec.Files[filepath.Join(f.home, ".tentaqles", "shims")]; h != "" {
-		t.Error("no shims folder: nothing under it is covered")
-	}
 	rep := f.verify()
-	if !rep.Exists || rep.Invalid != "" || !rep.Trusted(f.hash) || rep.Files != len(rec.Files) || rep.SignedAt != rec.SignedAt {
+	if !rep.Exists || rep.Invalid != "" || !rep.Trusted(f.hash) || rep.Files != len(rec.Files) || rep.SignedAt != rec.SignedAt || rep.KeyID != rec.KeyID {
 		t.Fatalf("%+v", rep)
-	}
-	if v := Check("acme", f.hash); !v.OK || v.Reason != "" {
-		t.Fatalf("%+v", v)
 	}
 	if !HasRecord("acme", f.hash) || HasRecord("acme", strings.Repeat("0", 64)) {
 		t.Fatal("HasRecord names the manifest hash")
 	}
 	if fi, _ := os.Stat(SignedRecordPath("acme")); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("record mode %o", fi.Mode().Perm())
+	}
+}
+
+// The tq binary is not covered (PRD §8.3 names hooks, shims and manifest).
+func TestBinaryIsNotCovered(t *testing.T) {
+	newFixture(t, "acme")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range Covered("acme") {
+		if k == Key(exe) {
+			t.Fatalf("the running binary is covered: %s", k)
+		}
 	}
 }
 
@@ -207,22 +222,18 @@ func TestFlippedByteFailsVerification(t *testing.T) {
 		t.Fatalf("%+v", rep)
 	}
 	v := Check("acme", f.hash)
-	if v.OK || !v.Mismatch || !strings.Contains(v.Reason, "integrity record signature invalid") || !strings.Contains(v.Reason, "tq hooks verify acme") {
+	if v.OK || !v.Mismatch || v.Kind != KindMismatch || !strings.Contains(v.Reason, "integrity record signature invalid") || !strings.Contains(v.Reason, "tq hooks verify acme") {
 		t.Fatalf("%+v", v)
 	}
 }
 
 // Whitespace is not signed: a re-indented record still verifies; a record
-// whose signature is edited does not.
+// whose signature is edited does not; one that is not JSON is unreadable.
 func TestOnlyValuesAreSigned(t *testing.T) {
 	f := newFixture(t, "acme")
 	f.allow()
 	p := SignedRecordPath("acme")
-	raw, _ := os.ReadFile(p)
-	var rec Record
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		t.Fatal(err)
-	}
+	rec := readRec(t, "acme")
 	compact, _ := json.Marshal(rec)
 	if err := os.WriteFile(p, compact, 0o600); err != nil {
 		t.Fatal(err)
@@ -236,26 +247,46 @@ func TestOnlyValuesAreSigned(t *testing.T) {
 	if rep := f.verify(); rep.Invalid != "integrity record signature invalid" {
 		t.Fatalf("%+v", rep)
 	}
+	rec.Signature = ""
+	rec.Revoked = true
+	b, _ = json.Marshal(rec)
+	os.WriteFile(p, b, 0o600)
+	if rep := f.verify(); rep.Invalid != "integrity record signature invalid" || rep.Revoked {
+		t.Fatalf("an unsigned revocation is not one: %+v", rep)
+	}
 	os.WriteFile(p, []byte("{not json"), 0o600)
 	if rep := f.verify(); !rep.Exists || !strings.HasPrefix(rep.Invalid, "integrity record unreadable") {
 		t.Fatalf("%+v", rep)
 	}
 }
 
-// A record signed with another key fails: the mock keychain is emptied, a
-// new key is generated, and the old record no longer verifies.
-func TestRecordSignedWithAnotherKeyFails(t *testing.T) {
+// A record signed with another key reports "integrity key changed", naming
+// both key ids, not an opaque signature failure; a human re-signs.
+func TestKeyChangeIsReportedByID(t *testing.T) {
 	f := newFixture(t, "acme")
 	f.allow()
+	old := readRec(t, "acme").KeyID
 	if KeyFromFile() {
 		t.Fatal("the keychain worked: no fallback file")
 	}
-	keyring.MockInit() // a fresh keychain: no key, so the next use generates one
-	rep := f.verify()
-	if rep.Invalid != "integrity record signature invalid" || IsTrusted("acme", f.hash) {
+	keyring.MockInit() // a fresh keychain: no key
+	invalidate()
+	if rep := f.verify(); rep.Invalid != "integrity key missing (the record was signed with key "+old+")" {
 		t.Fatalf("%+v", rep)
 	}
+	if err := keyring.Set(Service, KeyAccount, strings.Repeat("ab", 32)); err != nil {
+		t.Fatal(err)
+	}
+	invalidate()
+	rep := f.verify()
+	want := "integrity key changed (the record was signed with key " + old + ", the key now is " + rep.KeyID + ")"
+	if rep.Invalid != want || rep.KeyID == old || IsTrusted("acme", f.hash) {
+		t.Fatalf("%+v want %q", rep, want)
+	}
 	f.allow() // re-signed under the new key
+	if readRec(t, "acme").KeyID != rep.KeyID {
+		t.Fatal("the record carries the new key id")
+	}
 }
 
 // The record is for one workspace: copied under another name it is invalid,
@@ -282,7 +313,7 @@ func TestEditedManifestIsNamed(t *testing.T) {
 	f.append(f.mp, "language: en\n")
 	h2, _ := HashFile(f.mp)
 	v := Check("acme", h2)
-	if v.OK || !v.Mismatch || !strings.Contains(v.Reason, "changed "+f.mp) || !strings.Contains(v.Reason, "tq hooks verify acme") {
+	if v.OK || !v.Mismatch || !strings.Contains(v.Reason, "changed "+Key(f.mp)) || !strings.Contains(v.Reason, "tq hooks verify acme") {
 		t.Fatalf("%+v", v)
 	}
 	if IsTrusted("acme", f.hash) {
@@ -292,7 +323,6 @@ func TestEditedManifestIsNamed(t *testing.T) {
 	if c.Kind != "changed" || c.Old != f.hash || c.New != h2 {
 		t.Fatalf("%+v", c)
 	}
-	// tq allow re-signs the state as it is now and trust returns.
 	f.hash = h2
 	f.allow()
 	if rep := f.verify(); len(rep.Changes) != 0 {
@@ -308,11 +338,8 @@ func TestPluginHookChangesAreNamed(t *testing.T) {
 	f.allow()
 	f.append(f.hooksJSON, "\n")
 	v := Check("acme", f.hash)
-	if v.OK || !strings.Contains(v.Reason, "changed "+f.hooksJSON) {
+	if v.OK || !strings.Contains(v.Reason, "changed "+Key(f.hooksJSON)) {
 		t.Fatalf("%+v", v)
-	}
-	if c := changeFor(t, f.verify(), f.hooksJSON); c.Kind != "changed" {
-		t.Fatalf("%+v", c)
 	}
 	f.allow()
 
@@ -324,11 +351,10 @@ func TestPluginHookChangesAreNamed(t *testing.T) {
 
 	added := filepath.Join(f.plugin, "hooks", "new.sh")
 	write(t, added, "#!/bin/sh\n")
-	rep := f.verify()
-	if c := changeFor(t, rep, added); c.Kind != "added" || c.Old != "" || c.New == "" {
+	if c := changeFor(t, f.verify(), added); c.Kind != "added" || c.Old != "" || c.New == "" {
 		t.Fatalf("%+v", c)
 	}
-	if v := Check("acme", f.hash); v.OK || !strings.Contains(v.Reason, "added "+added) {
+	if v := Check("acme", f.hash); v.OK || !strings.Contains(v.Reason, "added "+Key(added)) {
 		t.Fatalf("%+v", v)
 	}
 	f.allow()
@@ -337,24 +363,39 @@ func TestPluginHookChangesAreNamed(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 	f.allow()
-	if rep := f.verify(); !rep.Trusted(f.hash) {
-		t.Fatalf("%+v", rep)
+}
+
+// A new plugin version folder is summarised by version and the number of
+// hook files that differ between the two folders.
+func TestPluginVersionChangeIsSummarised(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	next := filepath.Join(f.claude, "plugins", "cache", "tentaqles", "tentaqles", "0.17.0")
+	write(t, filepath.Join(next, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.17.0"}`)
+	write(t, filepath.Join(next, "hooks", "hooks.json"), `{"hooks":{}}`)            // same
+	write(t, filepath.Join(next, "scripts", "tq_hook.sh"), "#!/usr/bin/env bash\n") // differs
+	write(t, filepath.Join(next, "scripts", "new.py"), "print()\n")                 // new
+	rep := f.verify()
+	if rep.PluginFrom != "0.16.0" || rep.PluginTo != "0.17.0" || rep.PluginFiles != 3 {
+		t.Fatalf("plugin.json, tq_hook.sh and new.py differ: %+v", rep)
+	}
+	if rep.Trusted(f.hash) {
+		t.Fatal("a new plugin version is a change")
 	}
 }
 
-// A covered file that is absent when signed is recorded as absent; it
-// appearing later is a change. A file swapped for a directory or link is
-// a change too.
+// A covered file absent when signed is recorded as absent; it appearing
+// later is a change. A file swapped for a directory is a change too.
 func TestAbsentCoveredFileAppearingIsAChange(t *testing.T) {
 	f := newFixture(t, "acme")
-	os.Remove(f.settings)
+	codexHooks := filepath.Join(f.codex, "hooks.json")
+	os.Remove(codexHooks)
 	f.allow()
-	rec, _, _ := readRecord("acme")
-	if h, ok := rec.Files[f.settings]; !ok || h != "" {
-		t.Fatalf("absent settings.json is recorded as absent: %q %v", h, ok)
+	if h, ok := readRec(t, "acme").Files[Key(codexHooks)]; !ok || h != "" {
+		t.Fatalf("absent hooks.json is recorded as absent: %q %v", h, ok)
 	}
-	write(t, f.settings, "{}\n")
-	if c := changeFor(t, f.verify(), f.settings); c.Kind != "added" {
+	write(t, codexHooks, "{}")
+	if c := changeFor(t, f.verify(), codexHooks); c.Kind != "added" {
 		t.Fatalf("%+v", c)
 	}
 	f.allow()
@@ -367,20 +408,33 @@ func TestAbsentCoveredFileAppearingIsAChange(t *testing.T) {
 	}
 }
 
-// The running tq binary is covered: another binary enforcing is a change.
-func TestBinaryChangeIsNamed(t *testing.T) {
+// settings.json is covered through its enforcing keys only: Claude's own
+// rewrite of the theme or the model is not a change; a hook, a plugin
+// switch, an env entry or a status line is; a broken file is.
+func TestSettingsEnforcingKeysOnly(t *testing.T) {
 	f := newFixture(t, "acme")
 	f.allow()
-	write(t, f.exe, "another binary\n")
-	if c := changeFor(t, f.verify(), f.exe); c.Kind != "changed" {
-		t.Fatalf("%+v", c)
+	write(t, f.settings, "{\n  \"model\": \"opus\",\n  \"hooks\": {\"PreToolUse\": []},\n  \"theme\": \"light\"\n}\n")
+	if rep := f.verify(); !rep.Trusted(f.hash) {
+		t.Fatalf("theme, model and formatting are not covered: %v", rep.Changes)
 	}
-	other := filepath.Join(f.home, "elsewhere", "tq")
-	write(t, other, "a third binary\n")
-	Executable = func() (string, error) { return other, nil }
-	rep := f.verify()
-	if c := changeFor(t, rep, other); c.Kind != "added" {
-		t.Fatalf("%+v", c)
+	for _, edit := range []string{
+		`{"hooks":{}}`,
+		`{"hooks":{"PreToolUse":[]},"enabledPlugins":{"tentaqles@tentaqles":false}}`,
+		`{"hooks":{"PreToolUse":[]},"env":{"TQ_HOME":"/forged"}}`,
+		`{"hooks":{"PreToolUse":[]},"statusLine":{"type":"command","command":"x"}}`,
+		`{"hooks":{"PreToolUse":[]},"disableAllMcpServers":false}`,
+		`{"hooks":{"PreToolUse":[]},"enabledMcpjsonServers":["evil"]}`,
+		`not json`,
+	} {
+		write(t, f.settings, edit)
+		if c := changeFor(t, f.verify(), f.settings+blockSuffix); c.Kind != "changed" {
+			t.Fatalf("%s: %+v", edit, c)
+		}
+	}
+	os.Remove(f.settings)
+	if c := changeFor(t, f.verify(), f.settings+blockSuffix); c.Kind != "changed" {
+		t.Fatalf("a deleted settings.json drops the hooks: %+v", c)
 	}
 }
 
@@ -389,16 +443,16 @@ func TestBinaryChangeIsNamed(t *testing.T) {
 func TestCodexBlockIsCoveredNotTheRest(t *testing.T) {
 	f := newFixture(t, "acme")
 	f.allow()
-	write(t, f.cfgTOM, "model = \"two\"\n"+codexBlock)
+	write(t, f.cfgTOML, "model = \"two\"\n"+codexBlock)
 	if rep := f.verify(); !rep.Trusted(f.hash) {
 		t.Fatalf("the user's keys are not covered: %v", rep.Changes)
 	}
-	write(t, f.cfgTOM, "model = \"two\"\n"+strings.Replace(codexBlock, "on-request", "never", 1))
-	if c := changeFor(t, f.verify(), f.cfgTOM+blockSuffix); c.Kind != "changed" {
+	write(t, f.cfgTOML, "model = \"two\"\n"+strings.Replace(codexBlock, "on-request", "never", 1))
+	if c := changeFor(t, f.verify(), f.cfgTOML+blockSuffix); c.Kind != "changed" {
 		t.Fatalf("%+v", c)
 	}
-	os.Remove(f.cfgTOM)
-	if c := changeFor(t, f.verify(), f.cfgTOM+blockSuffix); c.Kind != "removed" {
+	os.Remove(f.cfgTOML)
+	if c := changeFor(t, f.verify(), f.cfgTOML+blockSuffix); c.Kind != "removed" {
 		t.Fatalf("%+v", c)
 	}
 }
@@ -416,6 +470,33 @@ func TestShimsAreCovered(t *testing.T) {
 	f.append(shim, "exec evil\n")
 	if c := changeFor(t, f.verify(), shim); c.Kind != "changed" {
 		t.Fatalf("%+v", c)
+	}
+}
+
+// Keys are canonical: a record signed from a shell whose TQ_HOME is spelled
+// with forward slashes, or in another case on Windows, verifies from the
+// usual spelling with no phantom change, and the reverse.
+func TestKeysAreCanonical(t *testing.T) {
+	f := newFixture(t, "acme")
+	home := os.Getenv("TQ_HOME")
+	spellings := []string{filepath.ToSlash(home)}
+	if runtime.GOOS == "windows" {
+		spellings = append(spellings, strings.ToUpper(home), strings.ReplaceAll(strings.ToLower(home), `\`, "/"))
+	}
+	for _, s := range spellings {
+		t.Setenv("TQ_HOME", s)
+		invalidate()
+		f.allow()
+		t.Setenv("TQ_HOME", home)
+		invalidate()
+		if rep := f.verify(); !rep.Trusted(f.hash) {
+			t.Fatalf("signed with TQ_HOME=%q: phantom changes %v", s, rep.Changes)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		if Key(`C:\x\Y`) != Key("c:/x/y") || Key(`C:\x\settings.json#tq`) != "c:/x/settings.json#tq" {
+			t.Fatalf("%s %s", Key(`C:\x\Y`), Key(`C:\x\settings.json#tq`))
+		}
 	}
 }
 
@@ -454,10 +535,8 @@ func TestKeychainUnavailableFallsBackToFile(t *testing.T) {
 	if len(strings.TrimSpace(string(raw))) != 64 {
 		t.Fatalf("the key file holds the hex key")
 	}
-	if rep := f.verify(); !rep.Trusted(f.hash) {
-		t.Fatalf("%+v", rep)
-	}
 	keyring.MockInit() // the keychain works again, but holds no key
+	invalidate()
 	if rep := f.verify(); !rep.Trusted(f.hash) {
 		t.Fatalf("the file key still signs: %+v", rep)
 	}
@@ -466,77 +545,212 @@ func TestKeychainUnavailableFallsBackToFile(t *testing.T) {
 	}
 }
 
-// The keychain key wins when both exist; a malformed key is an error that
-// names the fix and never a value.
+// Verifying never creates a key; a malformed key is an error that names
+// the fix and never a value; the record never holds the key.
 func TestKeySources(t *testing.T) {
 	f := newFixture(t, "acme")
+	if Check("acme", f.hash).OK {
+		t.Fatal("nothing signed")
+	}
+	if _, err := keyring.Get(Service, KeyAccount); !errors.Is(err, keyring.ErrNotFound) {
+		t.Fatal("a check must not create a key")
+	}
 	if err := keyring.Set(Service, KeyAccount, "zz"); err != nil {
 		t.Fatal(err)
 	}
+	invalidate()
 	err := Allow("acme", f.hash)
 	if err == nil || !strings.Contains(err.Error(), "malformed") || strings.Contains(err.Error(), "zz") {
 		t.Fatalf("%v", err)
 	}
 	keyring.MockInit()
+	invalidate()
 	f.allow()
 	k, _ := keyring.Get(Service, KeyAccount)
 	if len(k) != 64 {
 		t.Fatalf("the generated key is 32 bytes hex in the keychain")
 	}
-	if _, err := Verify("acme"); err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range []string{SignedRecordPath("acme")} {
-		raw, _ := os.ReadFile(s)
-		if strings.Contains(string(raw), k) {
-			t.Fatal("the record never holds the key")
-		}
+	raw, _ := os.ReadFile(SignedRecordPath("acme"))
+	if strings.Contains(string(raw), k) {
+		t.Fatal("the record never holds the key")
 	}
 }
 
-// A legacy marker of an older tq (trust/<name>/<hash> or trust/<hash>)
-// counts until a signed record replaces it; Allow writes the signed record
-// and removes the markers for that hash; Deny removes every form.
-func TestLegacyRecordsCountUntilResigned(t *testing.T) {
+// Signing is human-only at the lowest layer: with HumanCheck refusing,
+// Allow, Deny and the legacy list refuse, write nothing and create no key.
+func TestSigningRefusesWithoutAHuman(t *testing.T) {
 	f := newFixture(t, "acme")
-	write(t, LegacyRecordPath(f.hash), "")
-	if !HasLegacyRecord(f.hash) || HasRecord("acme", f.hash) || !IsTrusted("acme", f.hash) {
-		t.Fatal("a hash-only marker counts for the name resolve checked")
+	refusal := errors.New("human-only: refused")
+	prev := HumanCheck
+	var asked []string
+	HumanCheck = func(what string) error { asked = append(asked, what); return refusal }
+	t.Cleanup(func() { HumanCheck = prev })
+	if err := Allow("acme", f.hash); !errors.Is(err, refusal) {
+		t.Fatalf("Allow: %v", err)
 	}
-	if rep := f.verify(); rep.Exists {
-		t.Fatal("no signed record yet")
+	if _, err := SignRecord("acme", f.hash); !errors.Is(err, refusal) {
+		t.Fatalf("SignRecord: %v", err)
 	}
-	if err := Deny("acme", f.hash); err != nil {
-		t.Fatal(err)
+	if err := Deny("acme", f.hash); !errors.Is(err, refusal) {
+		t.Fatalf("Deny: %v", err)
 	}
-	if HasLegacyRecord(f.hash) || IsTrusted("acme", f.hash) {
-		t.Fatal("Deny removes the hash-only marker")
+	if _, _, err := LegacyListWithout(nil); !errors.Is(err, refusal) {
+		t.Fatalf("LegacyListWithout: %v", err)
 	}
-	write(t, RecordPath("acme", f.hash), "")
-	if !HasLegacyNameRecord("acme", f.hash) || !IsTrusted("acme", f.hash) || IsTrusted("evil", f.hash) {
-		t.Fatal("a name-keyed marker counts for its name")
+	if exists(SignedRecordPath("acme")) || exists(LegacyListPath()) || KeyFromFile() {
+		t.Fatal("nothing may be written")
 	}
+	if _, err := keyring.Get(Service, KeyAccount); !errors.Is(err, keyring.ErrNotFound) {
+		t.Fatal("no key may be created")
+	}
+	if len(asked) != 4 || asked[0] != "tq: sign the integrity record of acme" {
+		t.Fatalf("%q", asked)
+	}
+}
+
+// Deny writes a signed tombstone that trusts nothing and is never removed:
+// deleting it does not bring a legacy marker back.
+func TestDenyLeavesASignedTombstone(t *testing.T) {
+	f := newFixture(t, "acme")
 	f.allow()
-	if HasLegacyNameRecord("acme", f.hash) || !HasRecord("acme", f.hash) {
-		t.Fatal("Allow replaces the marker with the signed record")
-	}
-	if _, err := os.Stat(filepath.Join(paths.TrustDir(), "acme")); err == nil {
-		t.Fatal("the empty per-name folder goes")
-	}
-	// A signed record that fails is not rescued by a marker.
-	write(t, LegacyRecordPath(f.hash), "")
-	f.append(f.hooksJSON, " ")
-	if IsTrusted("acme", f.hash) {
-		t.Fatal("the signed record decides once it exists")
-	}
 	if err := Deny("acme", f.hash); err != nil {
 		t.Fatal(err)
 	}
-	if IsTrusted("acme", f.hash) || HasLegacyRecord(f.hash) || HasRecord("acme", f.hash) {
-		t.Fatal("deny must clear every form")
+	rec := readRec(t, "acme")
+	if !rec.Revoked || rec.ManifestHash != "" || len(rec.Files) != 0 || rec.Signature == "" {
+		t.Fatalf("%+v", rec)
+	}
+	rep := f.verify()
+	if !rep.Exists || !rep.Revoked || rep.Invalid != "" || rep.Trusted(f.hash) {
+		t.Fatalf("%+v", rep)
+	}
+	v := Check("acme", f.hash)
+	if v.OK || v.Mismatch || v.Kind != KindUntrusted || !strings.Contains(v.Reason, "revoked") || !strings.Contains(v.Reason, "tq allow acme") {
+		t.Fatalf("%+v", v)
+	}
+	if HasRecord("acme", f.hash) {
+		t.Fatal("a tombstone is not a record for the hash")
 	}
 	if err := Deny("acme", f.hash); err != nil {
 		t.Fatalf("a second deny is not an error: %v", err)
+	}
+	// Deleting the tombstone and planting a marker: still untrusted.
+	os.Remove(SignedRecordPath("acme"))
+	write(t, LegacyRecordPath(f.hash), "")
+	write(t, RecordPath("acme", f.hash), "")
+	invalidate()
+	if v := Check("acme", f.hash); v.OK {
+		t.Fatalf("a planted marker after a signature must not count: %+v", v)
+	}
+	f.allow()
+}
+
+// Legacy markers: before anything is signed they count, as for the tq that
+// wrote them (hash-only for any name, name-keyed for its name). The first
+// signature snapshots them; a listed marker keeps counting for its
+// workspace, a marker created after the snapshot never counts, and a
+// missing or forged snapshot makes none count. Allow replaces a marker
+// with the signed record and drops it from the snapshot.
+func TestLegacyMarkersCountOnlyFromTheSnapshot(t *testing.T) {
+	f := newFixture(t, "acme")
+	hb := strings.Repeat("b", 64)
+	write(t, LegacyRecordPath(f.hash), "")
+	write(t, RecordPath("beta", hb), "")
+	if v := Check("acme", f.hash); !v.OK || v.Kind != KindLegacy {
+		t.Fatalf("pre-snapshot hash-only marker: %+v", v)
+	}
+	if !IsTrusted("beta", hb) || IsTrusted("evil", hb) || !IsTrusted("evil", f.hash) {
+		t.Fatal("name-keyed for its name, hash-only for any name")
+	}
+	if exists(LegacyListPath()) {
+		t.Fatal("a check writes nothing")
+	}
+
+	// The first signature (another workspace) takes the snapshot.
+	g := newFixtureIn(t, f, "gamma")
+	g.allow()
+	if !exists(LegacyListPath()) {
+		t.Fatal("the first signature writes trust/legacy.json")
+	}
+	invalidate()
+	if v := Check("acme", f.hash); !v.OK || v.Kind != KindLegacy {
+		t.Fatalf("a listed marker still counts: %+v", v)
+	}
+	if !IsTrusted("beta", hb) {
+		t.Fatal("beta is listed")
+	}
+	planted := strings.Repeat("c", 64)
+	write(t, LegacyRecordPath(planted), "")
+	write(t, RecordPath("delta", planted), "")
+	invalidate()
+	if IsTrusted("delta", planted) || len(LegacyMarkers("delta", planted)) != 0 {
+		t.Fatal("a marker created after the snapshot never counts")
+	}
+	if !HasLegacyRecord(planted) || !HasLegacyNameRecord("delta", planted) {
+		t.Fatal("the files are there; they do not count")
+	}
+
+	// Allow replaces acme's marker and drops it from the snapshot.
+	f.allow()
+	if HasLegacyRecord(f.hash) {
+		t.Fatal("Allow removes the marker")
+	}
+	l, ok := verifiedLegacy(readKey().key)
+	if !ok || strings.Contains(strings.Join(l.Markers, ","), f.hash) || !strings.Contains(strings.Join(l.Markers, ","), "beta/"+hb) {
+		t.Fatalf("snapshot %+v %v", l, ok)
+	}
+
+	// A forged or deleted snapshot: no marker counts.
+	raw, _ := os.ReadFile(LegacyListPath())
+	write(t, LegacyListPath(), strings.Replace(string(raw), `"markers": [`, `"markers": [`+"\n    \""+planted+"\",", 1))
+	invalidate()
+	if IsTrusted("beta", hb) || IsTrusted("delta", planted) {
+		t.Fatal("a snapshot that does not verify allows nothing")
+	}
+	os.Remove(LegacyListPath())
+	invalidate()
+	if IsTrusted("beta", hb) {
+		t.Fatal("a deleted snapshot allows nothing once a key exists")
+	}
+}
+
+// newFixtureIn adds workspace name next to f's, in the same home.
+func newFixtureIn(t *testing.T, f *fixture, name string) *fixture {
+	t.Helper()
+	g := &fixture{t: t, name: name, home: f.home, base: f.base, root: filepath.Join(f.base, name)}
+	g.marker = filepath.Join(g.root, manifest.FileName)
+	write(t, g.marker, string(manifest.MarkerBytes(name)))
+	g.mp = paths.ManifestPath(name)
+	write(t, g.mp, "schema: tentaqles-client-v2\nclient: "+name+"\ngit: { email: "+name+"@x.io }\n")
+	g.hash, _ = HashFile(g.mp)
+	return g
+}
+
+// Within a memo scope a workspace is verified once however often it is
+// asked; a signature clears the memo; outside a scope nothing is cached.
+func TestVerifyOncePerScope(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	end := MemoScope()
+	before := Verifications()
+	for i := 0; i < 3; i++ {
+		if !IsTrusted("acme", f.hash) {
+			t.Fatal("trusted")
+		}
+		f.verify()
+	}
+	if n := Verifications() - before; n != 1 {
+		t.Fatalf("%d verifications in one scope", n)
+	}
+	f.allow() // a signature clears the memo
+	f.verify()
+	if n := Verifications() - before; n != 2 {
+		t.Fatalf("%d verifications", n)
+	}
+	end()
+	f.append(f.hooksJSON, " ")
+	if IsTrusted("acme", f.hash) {
+		t.Fatal("outside a scope nothing is cached")
 	}
 }
 
@@ -573,8 +787,7 @@ func TestHashChangesWhenFileChanges(t *testing.T) {
 	}
 }
 
-// Covered is sorted and names each path once; the old layout's manifest in
-// the root is the marker path.
+// Covered is sorted, canonical and names each key once.
 func TestCoveredList(t *testing.T) {
 	f := newFixture(t, "acme")
 	got := Covered("acme")
@@ -585,15 +798,20 @@ func TestCoveredList(t *testing.T) {
 	}
 	has := func(p string) bool {
 		for _, g := range got {
-			if g == p {
+			if g == Key(p) {
 				return true
 			}
 		}
 		return false
 	}
-	for _, p := range []string{f.mp, f.marker, f.settings, f.hooksJSON, f.hookSH, f.cfgTOM + blockSuffix, filepath.Join(f.codex, "hooks.json"), f.exe} {
+	for _, p := range []string{f.mp, f.marker, f.settings + blockSuffix, f.hooksJSON, f.hookSH, f.cfgTOML + blockSuffix, filepath.Join(f.codex, "hooks.json")} {
 		if !has(p) {
-			t.Errorf("%s not covered: %v", p, got)
+			t.Errorf("%s not covered: %v", Key(p), got)
+		}
+	}
+	for _, g := range got {
+		if strings.Contains(g, `\`) {
+			t.Fatalf("keys use forward slashes: %s", g)
 		}
 	}
 }

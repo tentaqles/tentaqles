@@ -21,21 +21,30 @@ const Schema = "tentaqles-integrity-v1"
 // ADR-0004): the manifest hash and the hash of every covered file at the
 // moment a human allowed the workspace, under an HMAC-SHA256 signature. A
 // file hash of "" records that the file was absent then; it appearing
-// later is a change.
+// later is a change. A revoked record (tq deny) is a signed tombstone: it
+// holds no files and trusts nothing, and it stays, so that a workspace
+// that once had a record never falls back to a legacy marker.
 type Record struct {
 	Schema       string            `json:"schema"`
 	Workspace    string            `json:"workspace"`
-	ManifestHash string            `json:"manifest_hash"`
-	Files        map[string]string `json:"files"`
-	SignedAt     string            `json:"signed_at"`
-	Signature    string            `json:"signature,omitempty"`
+	Revoked      bool              `json:"revoked,omitempty"`
+	ManifestHash string            `json:"manifest_hash,omitempty"`
+	Files        map[string]string `json:"files,omitempty"`
+	// Plugin is the key of the tentaqles plugin folder covered, "" when none
+	// is installed; it names the version a later report compares against.
+	Plugin string `json:"plugin,omitempty"`
+	// KeyID is the id of the key that signed (keyID), so a record signed
+	// with another key reports "integrity key changed".
+	KeyID     string `json:"key_id"`
+	SignedAt  string `json:"signed_at"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // payload is the canonical JSON the signature covers: every field but the
-// signature, in this order, map keys sorted (encoding/json sorts them), no
-// whitespace. The file on disk is indented for reading; only the payload
-// is signed, so re-indenting the file changes nothing and any change to a
-// value does.
+// signature, in this order and always present, map keys sorted (encoding/
+// json sorts them), no whitespace. The file on disk is indented and omits
+// empty fields; only the payload is signed, so re-indenting the file
+// changes nothing and any change to a value does.
 func (r Record) payload() ([]byte, error) {
 	files := r.Files
 	if files == nil {
@@ -44,10 +53,13 @@ func (r Record) payload() ([]byte, error) {
 	return json.Marshal(struct {
 		Schema       string            `json:"schema"`
 		Workspace    string            `json:"workspace"`
+		Revoked      bool              `json:"revoked"`
 		ManifestHash string            `json:"manifest_hash"`
 		Files        map[string]string `json:"files"`
+		Plugin       string            `json:"plugin"`
+		KeyID        string            `json:"key_id"`
 		SignedAt     string            `json:"signed_at"`
-	}{r.Schema, r.Workspace, r.ManifestHash, files, r.SignedAt})
+	}{r.Schema, r.Workspace, r.Revoked, r.ManifestHash, files, r.Plugin, r.KeyID, r.SignedAt})
 }
 
 func (r Record) sign(key []byte) (string, error) {
@@ -86,9 +98,17 @@ var now = time.Now
 // manifest), and every covered file (Covered) is hashed. It returns the
 // record's bytes for the caller to write: Allow writes them to
 // SignedRecordPath; `tq migrate manifests` writes them under its journal.
+// It refuses unless a human at a terminal runs tq (HumanCheck).
 func SignRecord(name, hash string) ([]byte, error) {
 	if !validKey(name) || !validKey(hash) {
 		return nil, fmt.Errorf("trust: invalid workspace name %q or hash %q", name, hash)
+	}
+	if err := HumanCheck("tq: sign the integrity record of " + name); err != nil {
+		return nil, err
+	}
+	key, err := signingKey()
+	if err != nil {
+		return nil, err
 	}
 	files := map[string]string{}
 	for _, p := range Covered(name) {
@@ -98,12 +118,17 @@ func SignRecord(name, hash string) ([]byte, error) {
 		}
 		files[p] = h
 	}
-	rec := Record{Schema: Schema, Workspace: name, ManifestHash: hash, Files: files,
-		SignedAt: now().UTC().Format(time.RFC3339)}
-	key, err := loadKey()
-	if err != nil {
-		return nil, err
-	}
+	return marshalSigned(Record{Schema: Schema, Workspace: name, ManifestHash: hash, Files: files,
+		Plugin: pluginKey(name), KeyID: keyID(key), SignedAt: now().UTC().Format(time.RFC3339)}, key)
+}
+
+// tombstone is the signed revoked record of name.
+func tombstone(name string, key []byte) ([]byte, error) {
+	return marshalSigned(Record{Schema: Schema, Workspace: name, Revoked: true, KeyID: keyID(key),
+		SignedAt: now().UTC().Format(time.RFC3339)}, key)
+}
+
+func marshalSigned(rec Record, key []byte) ([]byte, error) {
 	sig, err := rec.sign(key)
 	if err != nil {
 		return nil, err

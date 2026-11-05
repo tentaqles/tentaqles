@@ -42,6 +42,10 @@ type Result struct {
 	// the fix is `tq hooks verify`, not `tq allow`, and Reason names the
 	// first changed file.
 	Mismatch bool
+	// Legacy is set with Workspace when it is trusted through a marker of
+	// an older tq, which covers the manifest's bytes but no hook file:
+	// `tq allow` signs a record that does.
+	Legacy bool
 }
 
 func norm(p string) string {
@@ -209,11 +213,12 @@ func load(base, root, name string) Result {
 	ws := &Workspace{Name: name, Root: root, Base: base, ManifestPath: loc.path, Hash: h, Manifest: m,
 		Protected: loc.protected, StaleRoot: loc.staleRoot}
 	// The signed integrity record decides (trust.Check): the manifest hash,
-	// the hooks, the shims and the tq binary must be as a human signed them.
-	if v := trust.Check(name, h); !v.OK {
+	// the hook files and the shims must be as a human signed them.
+	v := trust.Check(name, h)
+	if !v.OK {
 		return Result{Reason: v.Reason, Untrusted: ws, Mismatch: v.Mismatch}
 	}
-	return Result{Workspace: ws}
+	return Result{Workspace: ws, Legacy: v.Kind == trust.KindLegacy}
 }
 
 // ListWorkspaces returns every first-level child of every base that has a

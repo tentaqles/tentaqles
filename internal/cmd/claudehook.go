@@ -20,6 +20,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // hookPayload is the subset of the Claude Code hook JSON tq reads. It never
@@ -98,6 +99,7 @@ func newSessionStartCmd() *cobra.Command {
 		Use:   "session-start",
 		Short: "SessionStart hook: print the workspace identity preamble",
 		RunE: func(c *cobra.Command, _ []string) error {
+			defer trust.MemoScope()()
 			// session-start must never block a session: an oversized payload
 			// is reported as "could not resolve" and still exits 0.
 			p, _, perr := readHookPayload(c.InOrStdin())
@@ -232,6 +234,9 @@ line in ~/.tentaqles/denials.jsonl. The hook asks only when the commit
 secret scan fails or the guard itself errors: the ask prints the PreToolUse
 permissionDecision JSON so Claude Code asks the user.`,
 		RunE: func(c *cobra.Command, _ []string) (rerr error) {
+			// One verification of the integrity record per call, however
+			// often resolve and doctor ask (trust.MemoScope).
+			defer trust.MemoScope()()
 			// Fail safe: a panic anywhere in the analysis asks the user. A Go
 			// panic would otherwise exit 2 with a stack trace, which Claude
 			// Code reads as a block. exit marks a deliberate exit so the
@@ -512,6 +517,16 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 	in.Client = m.Client
 	in.ExpectedEmail = strings.TrimSpace(m.Git.Email)
 	in.CloudProvider = manifest.CloudProviderName(cloudString(m.Cloud, "provider"))
+	// An integrity mismatch is at least as strict as a workspace never
+	// allowed: doctor reports untrusted for it too, so the guard refuses
+	// every mutating git; and a remote mutation (git push, gh, a cloud CLI)
+	// is judged as from no workspace at all, refused with the reason, which
+	// names the first changed file and tq hooks verify. The blocked-command
+	// and wrong-cloud rules of the manifest still run first.
+	if rep.Result.Workspace == nil && rep.Result.Mismatch && guard.IsRemoteMutation(cmdline) {
+		in.Neutral = true
+		in.NeutralReason = rep.Result.Reason
+	}
 	// cloud.also widens what the guard allows, so only a TRUSTED manifest may
 	// set it: an edited (untrusted) one must not unlock another cloud CLI.
 	if rep.Result.Workspace != nil {

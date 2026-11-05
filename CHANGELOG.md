@@ -8,34 +8,49 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ### The signed integrity record (ADR-0004)
 
-- **Trust is a signed record over the files that enforce the identity.** `tq allow` writes
+- **Trust is a signed record over the files that make the hook run.** `tq allow` writes
   `~/.tentaqles/trust/<ws>.json`: the manifest hash and the sha256 of every covered file
-  (the protected manifest and the root marker, the identity's Claude `settings.json`, every
-  file under `hooks/`, `scripts/` and `.claude-plugin/` of the tentaqles plugin installed in
-  its Claude config dir, the Codex `hooks.json` and the tq-owned block of its `config.toml`,
-  every file under `~/.tentaqles/shims/`, and the tq binary that runs) under an HMAC-SHA256
-  signature. A covered file that is absent is recorded as absent and is a change when it
-  appears. The key is 32 random bytes in the OS keychain (service `tentaqles`, account
-  `integrity-key`, generated on first use); when the keychain is unavailable the key is the
-  file `~/.tentaqles/integrity.key` (0600) and `tq doctor` warns `integrity-key-file`.
-- **A mismatch is untrusted everywhere.** Every command and the hook verify through
-  `resolve`: a changed, added or removed covered file, or a record whose signature does not
-  verify, makes the workspace untrusted with the reason naming the first changed file and
-  `tq hooks verify <ws>`. `tq env` (every prompt) exports no identity and emits one line the
-  shell prints on stderr; `tq run <ws>` and `tq run .` refuse and launch nothing (`tq run .`
-  no longer warns and launches without an identity); the session-start preamble and
-  `tq doctor` report `integrity` with every change.
-- **`tq hooks verify [<ws>] [--accept]`.** Prints the record's state and each change with the
-  old and new hash prefixes, exit 1 on a mismatch; `--accept` signs the current state again,
-  human-only (an agent session is refused). `tq allow` renders the identity files and then
-  signs, so the rendered settings are covered; `tq settings render` and `tq bundle sync`
-  sign again after writing a covered file, outside an agent session only (in a session the
-  record stays stale and the human is told the command).
-- **Older trust markers still count** (`trust/<hash>`, `trust/<ws>/<hash>`) for a workspace
-  without a signed record, until `tq allow` or `tq migrate manifests --apply` replaces
-  them (`rekey-trust`, journaled, restorable); `tq doctor` warns `integrity-record-legacy`
-  meanwhile. The manifests migration signs again the record of a workspace it moves
-  (`sign-integrity`, the old record backed up).
+  (the protected manifest and the root marker, `settings.json#tq` (the `hooks`,
+  `enabledPlugins`, `enabledMcpjsonServers`, `disableAllMcpServers`, `env` and `statusLine`
+  keys of the identity's Claude `settings.json`, so a theme or model change is no change),
+  every file under `hooks/`, `scripts/` and `.claude-plugin/` of the tentaqles plugin
+  installed in its Claude config dir, the Codex `hooks.json` and the tq-owned block of its
+  `config.toml`, every file under `~/.tentaqles/shims/`) under an HMAC-SHA256 signature
+  with the id of the key. The tq binary is not covered. A covered file that is absent is
+  recorded as absent and is a change when it appears. Keys are canonical (cleaned, links
+  resolved, forward slashes, lower-cased on Windows), so another spelling of `TQ_HOME`
+  verifies. The key is 32 random bytes in the OS keychain (service `tentaqles`, account
+  `integrity-key`, made the first time a human signs, never by a check); when the keychain is
+  unavailable the key is the file `~/.tentaqles/integrity.key` (0600) and `tq doctor` warns
+  `integrity-key-file`. A record signed with another key reports "integrity key changed".
+- **Only a human signs.** Every signature (`tq allow`, `tq hooks verify --accept`, `tq deny`,
+  `tq add` and `tq setup`, the re-sign after `tq settings render` or `tq bundle sync`,
+  `tq migrate manifests`) passes the human-only check of ADR-0003 inside `internal/trust`;
+  `tq allow` and `--accept` also confirm. `tq allow` renders the identity files first, for a
+  workspace not yet trusted too, and signs once, after.
+- **A mismatch is at least as strict as untrusted.** Every command and the hook verify
+  through `resolve`, once per command: a changed, added or removed covered file, a record
+  whose key or signature does not verify, makes the workspace untrusted with the reason
+  naming the first changed file and `tq hooks verify <ws>`. The hook refuses every mutating
+  git and every remote command (`git push`, `gh`, cloud CLIs) for it. `tq env` exports no
+  identity and prints one fixed line at every prompt, "tq: integrity mismatch: run tq hooks
+  verify <ws>" (a workspace never allowed: "tq: untrusted: run tq allow <ws>"; no path ever
+  reaches the shell line); `tq run <ws>` and `tq run .` refuse and launch nothing; the
+  session-start preamble and `tq doctor` report `integrity` and `untrusted` with every
+  change.
+- **`tq hooks verify [<ws>] [--accept]`.** Prints the record's state, the key id, "plugin
+  tentaqles 0.16.0 -> 0.17.0 (N hook files changed)" when the plugin moved to a new version
+  folder, and each change with the old and new hash prefixes; exit 1 on a mismatch.
+- **`tq deny` leaves a signed tombstone** (`revoked: true`); tq never deletes a record.
+- **Older trust markers** (`trust/<hash>`, `trust/<ws>/<hash>`) count until the first
+  signature on the machine, then only while the signed snapshot `trust/legacy.json` taken
+  then lists them, and never for a workspace that has a signed record: a marker planted later,
+  or a deleted record with a marker in its place, is untrusted. While a marker counts,
+  `tq doctor` warns `integrity-record-legacy` and every prompt prints "tq: legacy trust
+  record: run tq allow <ws> to sign hooks and manifest". `tq migrate manifests --apply`
+  replaces a counting marker by a signed record (`rekey-trust`, journaled with the snapshot,
+  restorable) and signs again the record of a workspace it moves only when that record
+  verifies in full (`sign-integrity`).
 - **Plugin:** `tq_hook.sh` no longer honours `TQ_BIN`; see `plugin/CHANGELOG.md`.
 
 ### The manifest moves under `~/.tentaqles` (ADR-0002)
