@@ -6,6 +6,29 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### The manifest moves under `~/.tentaqles` (ADR-0002)
+
+- **Protected manifest location.** `tq add`, `tq onboard` and `tq setup` write the manifest
+  to `~/.tentaqles/identities/<ws>/manifest.yaml` (0600 in a 0700 folder) and leave a
+  name-only marker at `<root>/.tentaqles.yaml` (`schema: tentaqles-marker-v1`,
+  `client: <ws>`). The guard and every command read only the protected copy; a marker
+  whose `client` is not the folder name, or whose protected copy is missing, resolves
+  neutral with the reason. Trust is unchanged: the hash of the file read, `tq allow` and
+  `tq deny` as before; editing the marker never changes it.
+- **Existing identities keep working.** A full manifest still at `<root>/.tentaqles.yaml`
+  resolves exactly as before; `tq doctor` warns `manifest-in-root` naming the migration,
+  and `manifest-root-stale` when both files exist (the protected copy is the one read).
+- **`tq migrate manifests`** (also `tq migrate --steps manifests`; never a default step):
+  a dry run by default; `--apply` is human-only, copies each manifest byte for byte (same
+  hash, so trust carries over), rewrites the root file as the marker and journals both
+  writes; `tq uninstall --restore` puts the manifest back in the root.
+- **The state folder is private to the user.** 0700 directories and 0600 files on macOS
+  and Linux; on Windows `tq init`, `tq add` and `tq migrate manifests --apply` run
+  `icacls` on `~/.tentaqles` once, record the outcome in `protected-acl.json`, and
+  `tq doctor` reports `protected-acl`; an icacls failure never fails a command.
+- Plugin: see `plugin/CHANGELOG.md` (the loader resolves the marker; the snapshot guard
+  reads `tool_input.file_path`).
+
 ## [0.9.0] — 2026-11-04
 
 tq is an identity isolator with secrets protection for developers who work across several

@@ -27,7 +27,7 @@ For more detail on a command, run `tq <command> --help`.
 | Command | What it does |
 |---|---|
 | `tq init <base>` | Registers a base folder (for example `C:\repos`). Each first-level subfolder becomes one client identity. |
-| `tq add <name>` | Creates a workspace folder with its manifest (`.tentaqles.yaml`), identity folders and git identity. |
+| `tq add <name>` | Creates a workspace folder with a name-only marker (`.tentaqles.yaml`), its manifest under `~/.tentaqles/identities/<name>/manifest.yaml`, identity folders and git identity. |
 | `tq onboard` | A wizard that runs `tq add`, then records the company's chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |
 | `tq setup` | Creates several client workspaces at once from a plan file. |
 | `tq list` | Lists every workspace, whether it is trusted, its git email and its identities. |
@@ -36,6 +36,7 @@ For more detail on a command, run `tq <command> --help`.
 | `tq login <cli>` | Runs a CLI's own login (gh, az, aws, ...) with its config stored in the workspace's private config folder. |
 | `tq run <ws> -- <cmd>` | Runs one command with another workspace's identity, without `cd`-ing into it. `tq run --off -- claude` starts Claude with no tq at all. |
 | `tq migrate` | Moves a hand-made tentaqles setup under tq's management. It only shows the plan; add `--apply` to do it. Every step is written to a journal. |
+| `tq migrate manifests` | Moves each identity's manifest out of its folder into `~/.tentaqles/identities/<name>/manifest.yaml`, leaving a name-only marker. It only shows the plan; `--apply` is **human-only**. An identity keeps working as before until you run it; `tq doctor` says `manifest-in-root` meanwhile. |
 | `tq uninstall --restore` | Undoes a migration by replaying its journal backwards. It lists the steps and changes nothing until you add `--yes`. |
 | `tq version` | Prints the tq version. |
 
@@ -322,9 +323,12 @@ These need real accounts, so only you can run them:
   Codex too.
 - **Git host token:** run `tq secret set <ws> github`, then `tq secret status`.
   **Expected:** the token is listed as stored, and its value is never printed.
-- **Wrong identity:** in a Claude session inside a workspace, edit
-  `.tentaqles.yaml`, then ask it to `git push`. **Expected:** blocked as
-  `untrusted` until you run `tq allow <ws>` **(you)**.
+- **Wrong identity:** in a Claude session inside a workspace, edit the
+  manifest (`~/.tentaqles/identities/<ws>/manifest.yaml`; the folder's
+  `.tentaqles.yaml` is only a marker, unless the identity has not been
+  migrated yet and still holds the manifest there), then ask it to
+  `git push`. **Expected:** blocked as `untrusted` until you run
+  `tq allow <ws>` **(you)**.
 
 ### Quick troubleshooting
 

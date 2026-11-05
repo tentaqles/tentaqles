@@ -26,9 +26,14 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `tq/commit-secret` and `tq/cross-client-mcp`, with `tq/guard-error` as the fail-safe;
     `session-start` prints the preamble. `humanonly.go` keeps `tq allow`, `tq deny`,
     `tq secret` and `tq run --off` out of agent sessions (environment marker, no prompt).
-  - `internal/trust/` (manifest trust by file hash), `internal/manifest/` (the manifest;
-    a top-level block tq does not know is recorded as dropped, never read),
-    `internal/registry/`, `internal/resolve/`, `internal/workspace/`, `internal/paths/`,
+  - `internal/trust/` (manifest trust by file hash), `internal/manifest/` (the manifest,
+    read from `~/.tentaqles/identities/<ws>/manifest.yaml` with a name-only marker
+    `.tentaqles.yaml` in the workspace root, or from the root itself for an identity not
+    yet migrated with `tq migrate manifests`, ADR-0002; a top-level block tq does not
+    know is recorded as dropped, never read), `internal/protect/` (the state folder
+    private to the user: modes, and on Windows the one icacls run `tq doctor` reports as
+    `protected-acl`), `internal/registry/`, `internal/resolve/` (which file is the
+    manifest, both layouts), `internal/workspace/`, `internal/paths/`,
     `internal/envplan/`, `internal/shell/` (activation hooks and the `claude`/`codex`
     launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
     `internal/doctor/`, `internal/setup/` and `internal/onboard/` (`tq setup`,
@@ -69,6 +74,9 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
 - Trust is human-only: `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`.
 - An edited manifest loses its trust: `TestEditedManifestLosesTrust`.
+- The guard reads the manifest from the protected location only; a marker that names
+  another workspace, or has no protected copy, resolves neutral:
+  `TestResolve_MarkerClientMismatch_Neutral`, `TestResolve_MarkerWithoutProtectedManifest_Neutral`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
 
 ## Project config

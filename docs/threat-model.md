@@ -1,6 +1,6 @@
 # Threat model
 
-Document status: draft    Updated: 2026-11-04    Cites: `docs/CLAUDE-HOOK.md`, `docs/RELEASING.md`, `docs/adr/0001-guard-narrows-to-identity-and-secrets.md`
+Document status: draft    Updated: 2026-11-05    Cites: `docs/CLAUDE-HOOK.md`, `docs/RELEASING.md`, `docs/adr/0001-guard-narrows-to-identity-and-secrets.md`, `docs/adr/0002-protected-manifest-location.md`
 Reviewed by: the repo owner    Next review: 2027-02-01, or on every new trust boundary
 
 Four questions, answered per trust boundary (Shostack). The requirements live in
@@ -36,7 +36,8 @@ the text guard, and every action the owner left to the harness's permission sett
 
 Assets worth protecting: each client's identity and credentials (cross-client leaks are
 the worst outcome), secrets in `.env` files, credential stores and the keychain, the trust
-markers under `$TQ_HOME/trust/`, and the integrity of what users install.
+markers under `$TQ_HOME/trust/`, the manifests under `$TQ_HOME/identities/<ws>/`
+(ADR-0002), and the integrity of what users install.
 
 ## 2. What can go wrong
 
@@ -45,7 +46,7 @@ markers under `$TQ_HOME/trust/`, and the integrity of what users install.
 |---|---|---|---|---|
 | Spoofing | An agent runs `git push` or a cloud command while the shell is set to another client's identity | `guard.Decide` (`internal/guard/guard.go`) blocks on git email, gh user or cloud drift with exit 2; `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`, `TestInlineIdentityOverride`, `TestPreToolUse_SecretRules` (the git email drift case). Rewordings (`env git`, `sh -c`, aliases) are listed in `docs/CLAUDE-HOOK.md`; per-workspace config folders are the real separation | done | tq |
 | Tampering | An agent trusts an untrusted folder itself, or scaffolds one as trusted | `tq allow` and `tq deny` refuse an agent session by its environment marker (`internal/cmd/humanonly.go`); `tq add` and `tq setup` leave a new folder untrusted from a session; `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`. Writing the marker file under `$TQ_HOME/trust/` with a file tool is not caught: no rule guards the state folder any more (AR2, D-31) | done; the state folder is AR2 | tq |
-| Tampering | An agent edits a trusted manifest to add a cloud or a blocked command exemption | trust is by file hash (`internal/trust`): an edit makes the workspace untrusted until a human runs `tq allow`; a repository manifest cannot add clouds; `TestEditedManifestLosesTrust`, `TestPreToolUse_UntrustedManifestCannotAddClouds` | done | tq |
+| Tampering | An agent edits a trusted manifest to add a cloud or a blocked command exemption | trust is by file hash (`internal/trust`): an edit makes the workspace untrusted until a human runs `tq allow`; a repository manifest cannot add clouds; `TestEditedManifestLosesTrust`, `TestPreToolUse_UntrustedManifestCannotAddClouds`. The manifest tq reads lives under `$TQ_HOME/identities/<ws>/manifest.yaml`, outside the folder the session works in, and the workspace root holds a name-only marker (ADR-0002); a marker that names another workspace resolves neutral; `TestResolve_MarkerResolvesToProtectedManifest`, `TestResolve_MarkerClientMismatch_Neutral`. An identity not yet migrated keeps its manifest in the root until the human runs `tq migrate manifests` (`tq doctor`: `manifest-in-root`) | done | tq |
 | Repudiation | An agent's blocked actions leave no trace | the block reason goes to the transcript (stderr, exit 2) and identity switches to `audit.jsonl` (`internal/audit`); hook decisions are not logged by tq, and a same-user process can rewrite the audit file (AR1) | accepted (AR1) | tq |
 | Information disclosure | An agent reads a `.env` file, a credential store or prints the environment into the transcript | the five secret rules of `internal/policy/builtin.go` deny the call; `tq dotenv run` masks values in output (`internal/dotenv`); `TestPreToolUse_SecretRules`, `TestBuiltinDecisions`, `TestPolicy_ReadEnvDenied_WindowsPath`, `TestDotenvRunLoadsAndMasks` | done | tq |
 | Information disclosure | A commit records a `.env`, a private key or a secret-shaped value | `tq/commit-secret` scans what the commit would record, the working tree included when the command also stages (`internal/commitscan`); `TestPolicy_CommitWithSecretDenied`, `TestAdded_StagedAndChainedAdd` | done | tq |
