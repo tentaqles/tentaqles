@@ -1,7 +1,9 @@
 package doctor
 
 import (
+	"os"
 	"runtime"
+	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/protect"
@@ -15,7 +17,29 @@ import (
 // human runs the migration.
 
 func init() {
-	Register(Check{Name: "protected", Global: protectedACL})
+	Register(Check{Name: "protected", Global: func(d Deps, add AddFunc) {
+		protectedACL(d, add)
+		tqHomeOverride(d, add)
+	}})
+}
+
+// tqHomeOverride reports a TQ_HOME that points away from ~/.tentaqles. An
+// agent session ignores it (paths.Home), so a session's hook reads the
+// default folder while a human's shell with TQ_HOME set reads another: the
+// two must not be confused for each other.
+func tqHomeOverride(d Deps, add AddFunc) {
+	env := d.Env
+	if env == nil {
+		env = os.LookupEnv
+	}
+	v, ok := env("TQ_HOME")
+	v = strings.TrimSpace(v)
+	if !ok || v == "" || samePath(v, paths.DefaultHome()) {
+		return
+	}
+	add("warn", "tq-home-override", "",
+		"TQ_HOME="+v+" points away from the default "+paths.DefaultHome()+"; an agent session ignores TQ_HOME and reads the default, so the hook and this shell may not see the same identities",
+		"unset TQ_HOME unless you set it yourself on purpose")
 }
 
 // protectGOOS is runtime.GOOS behind a seam so the Windows-only ACL check is

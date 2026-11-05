@@ -373,7 +373,7 @@ func TestApply_TrustFalse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if trust.IsTrusted(h) {
+	if trust.IsTrusted("acme", h) {
 		t.Fatal("trust: false must not auto-trust the new workspace")
 	}
 	inc, err := os.ReadFile(gitcfg.IncludeFile())

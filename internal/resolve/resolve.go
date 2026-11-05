@@ -124,29 +124,52 @@ type location struct {
 // a base is neutral.
 func locate(root, name string) (location, string) {
 	rf := filepath.Join(root, manifest.FileName)
-	if _, err := os.Stat(rf); err != nil {
+	// Lstat: a symlink at the root file would read (and let the migration
+	// write through to) a file elsewhere; only a regular file counts.
+	fi, err := os.Lstat(rf)
+	if err != nil {
 		return location{}, "no manifest"
+	}
+	if !fi.Mode().IsRegular() {
+		return location{}, "marker is not a regular file"
 	}
 	kind, client, err := manifest.Peek(rf)
 	if err != nil {
 		return location{}, fmt.Sprintf("manifest invalid: %v", err)
 	}
 	pp := paths.ManifestPath(name)
+	pfi, perr := os.Lstat(pp)
 	switch kind {
 	case manifest.KindMarker:
 		if !sameName(client, name) {
 			return location{}, fmt.Sprintf("marker names workspace %q but the folder is %q", client, name)
 		}
-		if _, err := os.Stat(pp); err != nil {
+		if perr != nil {
 			return location{}, fmt.Sprintf("marker without a protected manifest (expected %s)", pp)
+		}
+		if !pfi.Mode().IsRegular() {
+			return location{}, "protected manifest is not a regular file"
 		}
 		return location{path: pp, protected: true}, ""
 	case manifest.KindManifest:
-		if _, err := os.Stat(pp); err == nil {
+		if perr == nil {
+			if !pfi.Mode().IsRegular() {
+				return location{}, "protected manifest is not a regular file"
+			}
 			return location{path: pp, protected: true, staleRoot: rf}, ""
 		}
 	}
 	return location{path: rf}, ""
+}
+
+// clientMismatch is the reason a manifest whose client is not the folder
+// name resolves neutral: a manifest copied from another workspace (a replay
+// of its trusted bytes) must not lend that workspace's identity to the folder.
+func clientMismatch(m *manifest.Manifest, name string) string {
+	if sameName(m.Client, name) {
+		return ""
+	}
+	return fmt.Sprintf("manifest names client %q but the folder is %q", m.Client, name)
 }
 
 // ManifestFile is the file tq reads as the manifest of the workspace at
@@ -171,13 +194,16 @@ func load(base, root, name string) Result {
 	if err != nil {
 		return Result{Reason: fmt.Sprintf("manifest invalid: %v", err)}
 	}
+	if reason := clientMismatch(m, name); reason != "" {
+		return Result{Reason: reason}
+	}
 	h, err := trust.HashFile(loc.path)
 	if err != nil {
 		return Result{Reason: fmt.Sprintf("manifest invalid: %v", err)}
 	}
 	ws := &Workspace{Name: name, Root: root, Base: base, ManifestPath: loc.path, Hash: h, Manifest: m,
 		Protected: loc.protected, StaleRoot: loc.staleRoot}
-	if !trust.IsTrusted(h) {
+	if !trust.IsTrusted(name, h) {
 		return Result{Reason: fmt.Sprintf("untrusted (run: tq allow %s)", name), Untrusted: ws}
 	}
 	return Result{Workspace: ws}
@@ -215,6 +241,10 @@ func ListWorkspaces(cfg *registry.Config) ([]Workspace, []error) {
 			m, err := manifest.Load(loc.path)
 			if err != nil {
 				errs = append(errs, err)
+				continue
+			}
+			if reason := clientMismatch(m, e.Name()); reason != "" {
+				errs = append(errs, fmt.Errorf("%s: %s", root, reason))
 				continue
 			}
 			h, _ := trust.HashFile(loc.path)

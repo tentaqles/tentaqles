@@ -215,7 +215,7 @@ func newRunCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if !trust.IsTrusted(w.Hash) {
+				if !trust.IsTrusted(w.Name, w.Hash) {
 					return fmt.Errorf("workspace %s is untrusted; run: tq allow %s", w.Name, w.Name)
 				}
 				ws = w

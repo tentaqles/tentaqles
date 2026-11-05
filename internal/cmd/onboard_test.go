@@ -88,7 +88,7 @@ func TestOnboard_FromWritesValidManifestWithSkippedBlocks(t *testing.T) {
 		}
 	}
 	h, _ := trust.HashFile(mp)
-	if trust.IsTrusted(h) {
+	if trust.IsTrusted("acme", h) {
 		t.Fatal("onboard must leave the workspace untrusted: tq allow is the human's")
 	}
 	for _, want := range []string{"(untrusted)", "tq allow acme", "tq login acme claude", "slack", "/tentaqles:onboard"} {

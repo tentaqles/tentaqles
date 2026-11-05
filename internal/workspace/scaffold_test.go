@@ -51,8 +51,11 @@ func TestAdd_CreatesMarkerAndProtectedManifest(t *testing.T) {
 		t.Fatalf("protected manifest:\n%s", raw)
 	}
 	h, _ := trust.HashFile(pp)
-	if ws.Hash != h || !trust.IsTrusted(h) {
-		t.Fatal("trust is the hash of the protected manifest")
+	if ws.Hash != h || !trust.IsTrusted("acme", h) {
+		t.Fatal("trust is the hash of the protected manifest, keyed by the workspace name")
+	}
+	if trust.IsTrusted("other", h) {
+		t.Fatal("the record belongs to acme alone")
 	}
 	if runtime.GOOS != "windows" {
 		for p, want := range map[string]os.FileMode{pp: 0o600, filepath.Dir(pp): 0o700, paths.IdentitiesRoot(): 0o700, paths.Home(): 0o700} {
@@ -181,7 +184,7 @@ func TestAdd_TrustFalseLeavesUntrusted(t *testing.T) {
 	if ws == nil || ws.Root == "" || ws.Manifest == nil {
 		t.Fatalf("expected a workspace value, got %+v", ws)
 	}
-	if trust.IsTrusted(ws.Hash) {
+	if trust.IsTrusted(ws.Name, ws.Hash) {
 		t.Fatal("workspace should not be trusted when Trust is false")
 	}
 	inc, err := os.ReadFile(gitcfg.IncludeFile())

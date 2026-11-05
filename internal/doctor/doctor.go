@@ -88,7 +88,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	var verifyJobs []verifyJob
 	verifyCovers := map[string]bool{}
 	for _, w := range all {
-		trusted := trust.IsTrusted(w.Hash)
+		trusted := trust.IsTrusted(w.Name, w.Hash)
 		if !trusted {
 			add("warn", "untrusted", w.Name, "manifest not trusted", "tq allow "+w.Name)
 		}

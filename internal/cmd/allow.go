@@ -66,7 +66,7 @@ func trustWorkspace(c *cobra.Command, name string) (*resolve.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := trust.Allow(ws.Hash); err != nil {
+	if err := trust.Allow(ws.Name, ws.Hash); err != nil {
 		return nil, err
 	}
 	if err := syncGitIncludes(); err != nil {
@@ -89,7 +89,7 @@ func newDenyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := trust.Deny(ws.Hash); err != nil {
+			if err := trust.Deny(ws.Name, ws.Hash); err != nil {
 				return err
 			}
 			if err := syncGitIncludes(); err != nil {

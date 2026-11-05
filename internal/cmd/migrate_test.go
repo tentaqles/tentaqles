@@ -166,7 +166,7 @@ func (e *migEnv) addWorkspace(name, gitName, gitEmail string, identities ...stri
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(name, h); err != nil {
 		e.t.Fatal(err)
 	}
 	return wsRoot

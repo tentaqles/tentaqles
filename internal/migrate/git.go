@@ -39,7 +39,7 @@ var stepChangeKinds = []string{
 	kindRemoveLink, kindMoveDir, kindMakeLink,
 	kindUnsetGlobal, kindSetGlobal, kindRemoveIncludeIf, kindRemoveInclude,
 	kindAddInclude, kindRewriteWSFile, kindSyncIncludeFile,
-	kindWriteProtectedManifest, kindWriteMarker,
+	kindWriteProtectedManifest, kindWriteMarker, kindRekeyTrust,
 }
 
 // gitStep takes the hand-rolled git identity setup -- a global user.email, one
@@ -187,7 +187,7 @@ func planGit(d Deps) (Plan, *gitActions, error) {
 	byFile := map[string]wsRef{}
 	var trusted []resolve.Workspace
 	for _, w := range all {
-		ok := trust.IsTrusted(w.Hash)
+		ok := trust.IsTrusted(w.Name, w.Hash)
 		byFile[normKey(gitcfg.WorkspaceFile(w.Root))] = wsRef{name: w.Name, root: w.Root, trusted: ok}
 		if ok {
 			trusted = append(trusted, w)

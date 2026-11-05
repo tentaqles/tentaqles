@@ -70,7 +70,7 @@ func setupWorkspace(t *testing.T, b *manifest.Bundle) (*resolve.Workspace, *regi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(ws.Name, h); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,7 +208,7 @@ func TestDiff_ReportsMissingAndExtra(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(ws.Name, h); err != nil {
 		t.Fatal(err)
 	}
 	cfg2, _ := registry.Load()

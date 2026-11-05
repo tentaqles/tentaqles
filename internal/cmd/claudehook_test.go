@@ -88,7 +88,7 @@ func setupTrustedWorkspaceWithManifest(t *testing.T, name, body string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(name, h); err != nil {
 		t.Fatal(err)
 	}
 	// TQ_WS matches so the env-drift finding does not mask the rule under test.

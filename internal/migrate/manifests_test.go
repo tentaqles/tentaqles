@@ -48,7 +48,7 @@ func (e *mfEnv) oldLayout(name string, trusted bool) (string, string) {
 		e.t.Fatal(err)
 	}
 	if trusted {
-		if err := trust.Allow(h); err != nil {
+		if err := trust.Allow(name, h); err != nil {
 			e.t.Fatal(err)
 		}
 	}
@@ -63,8 +63,15 @@ func (e *mfEnv) protected(name string) string {
 	stMkdir(e.t, filepath.Dir(pp))
 	stWrite(e.t, pp, "schema: tentaqles-client-v2\nclient: "+name+"\ngit:\n  email: "+name+"@x.io\n")
 	h, _ := trust.HashFile(pp)
-	trust.Allow(h)
+	trust.Allow(name, h)
 	return pp
+}
+
+// legacyTrust writes the hash-only record an older tq wrote.
+func (e *mfEnv) legacyTrust(hash string) {
+	e.t.Helper()
+	stMkdir(e.t, paths.TrustDir())
+	stWrite(e.t, trust.LegacyRecordPath(hash), "")
 }
 
 func (e *mfEnv) deps() Deps { return Deps{Cfg: e.cfg, Env: os.LookupEnv} }
@@ -96,6 +103,10 @@ func TestManifests_MovesJournalsAndKeepsTrust(t *testing.T) {
 	gammaPP := e.protected("gamma")
 	alphaBytes := stRead(t, alphaRoot)
 	betaBytes := stRead(t, betaRoot)
+	// An older tq created alpha's identity folder world-readable.
+	if err := os.MkdirAll(filepath.Dir(paths.ManifestPath("alpha")), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	st := stepRegistry["manifests"]
 	p, err := st.Plan(e.deps())
@@ -163,8 +174,133 @@ func TestManifests_MovesJournalsAndKeepsTrust(t *testing.T) {
 			t.Fatalf("protected manifest mode %o, want 0600", fi.Mode().Perm())
 		}
 		if fi, _ := os.Stat(filepath.Dir(paths.ManifestPath("alpha"))); fi.Mode().Perm() != 0o700 {
-			t.Fatalf("identities/alpha mode %o, want 0700", fi.Mode().Perm())
+			t.Fatalf("identities/alpha mode %o, want 0700 (it existed as 0755 before the move)", fi.Mode().Perm())
 		}
+	}
+}
+
+// A hash-only trust record of an older tq is rekeyed by workspace name, for
+// a workspace in either layout, and carries over only for that name.
+func TestManifests_RekeysLegacyTrustRecords(t *testing.T) {
+	e := newMfEnv(t)
+	alphaRoot, alphaHash := e.oldLayout("alpha", false)
+	e.legacyTrust(alphaHash)
+	gammaPP := e.protected("gamma") // keyed already by trust.Allow
+	gammaHash, _ := trust.HashFile(gammaPP)
+	deltaPP := e.protected("delta")
+	deltaHash, _ := trust.HashFile(deltaPP)
+	os.Remove(trust.RecordPath("delta", deltaHash))
+	e.legacyTrust(deltaHash)
+	if !trust.IsTrusted("alpha", alphaHash) || !trust.IsTrusted("evil", alphaHash) {
+		t.Fatal("precondition: a legacy record counts for any name until rekeyed")
+	}
+
+	st := stepRegistry["manifests"]
+	p, err := st.Plan(e.deps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rekeys []Change
+	for _, c := range p.Changes {
+		if c.Kind == kindRekeyTrust {
+			rekeys = append(rekeys, c)
+		}
+	}
+	if len(rekeys) != 2 || rekeys[0].Path != trust.LegacyRecordPath(alphaHash) || !strings.Contains(rekeys[0].Detail, trust.RecordPath("alpha", alphaHash)) ||
+		rekeys[1].Path != trust.LegacyRecordPath(deltaHash) {
+		t.Fatalf("rekeys = %+v (gamma is keyed already)", rekeys)
+	}
+	j := e.journal()
+	if err := st.Apply(e.deps(), p, j); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, hash string }{{"alpha", alphaHash}, {"delta", deltaHash}, {"gamma", gammaHash}} {
+		if !trust.HasRecord(c.name, c.hash) || trust.HasLegacyRecord(c.hash) {
+			t.Fatalf("%s: keyed record wanted, legacy record gone", c.name)
+		}
+		if trust.IsTrusted("evil", c.hash) {
+			t.Fatalf("%s's bytes must not be trusted under another name", c.name)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(filepath.Dir(trust.RecordPath("alpha", alphaHash))); fi.Mode().Perm() != 0o700 {
+			t.Fatalf("trust/alpha mode %o", fi.Mode().Perm())
+		}
+	}
+	// alpha moved too and is still trusted, from the keyed record.
+	if r := resolve.Resolve(filepath.Join(e.base, "alpha"), e.cfg); r.Workspace == nil || !r.Workspace.Protected {
+		t.Fatalf("%+v", r)
+	}
+	_ = alphaRoot
+
+	// Restore: the legacy records come back, the keyed ones go.
+	if lines, err := j.Restore(Runner{}); err != nil {
+		t.Fatalf("%v\n%s", err, strings.Join(lines, "\n"))
+	}
+	for _, c := range []struct{ name, hash string }{{"alpha", alphaHash}, {"delta", deltaHash}} {
+		if trust.HasRecord(c.name, c.hash) || !trust.HasLegacyRecord(c.hash) {
+			t.Fatalf("%s: restore must put the legacy record back", c.name)
+		}
+	}
+	if !trust.HasRecord("gamma", gammaHash) {
+		t.Fatal("gamma's keyed record was never touched")
+	}
+}
+
+// A symlink at a root file is never read or written: the plan leaves the
+// workspace out with a warning, and a symlink swapped in after the plan
+// makes the apply refuse.
+func TestManifests_RefusesASymlinkedRootFile(t *testing.T) {
+	e := newMfEnv(t)
+	alphaRoot, _ := e.oldLayout("alpha", true)
+	pp := e.protected("gamma")
+	evil := filepath.Join(e.base, "evil")
+	stMkdir(t, evil)
+	if err := os.Symlink(pp, filepath.Join(evil, manifest.FileName)); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("this process cannot create a symlink (developer mode or SeCreateSymbolicLinkPrivilege needed): %v", err)
+		}
+		t.Fatal(err)
+	}
+	st := stepRegistry["manifests"]
+	p, err := st.Plan(e.deps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range p.Changes {
+		if strings.Contains(c.Path, evil) {
+			t.Fatalf("a symlinked root file must not be planned: %+v", c)
+		}
+	}
+	found := false
+	for _, w := range p.Warnings {
+		if strings.Contains(w, evil) && strings.Contains(w, "not a regular file") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the plan must say why evil was left out: %v", p.Warnings)
+	}
+	// Swap alpha's root file for a symlink between the plan and the apply.
+	alphaBody := stRead(t, alphaRoot)
+	os.Remove(alphaRoot)
+	if err := os.Symlink(pp, alphaRoot); err != nil {
+		t.Fatal(err)
+	}
+	err = st.Apply(e.deps(), p, e.journal())
+	if err == nil || !strings.Contains(err.Error(), "machine changed") {
+		t.Fatalf("apply must refuse: %v", err)
+	}
+	if _, err := os.Lstat(paths.ManifestPath("alpha")); err == nil {
+		t.Fatal("nothing may be written")
+	}
+	if stRead(t, pp) != stRead(t, pp) || !strings.Contains(stRead(t, pp), "gamma@x.io") {
+		t.Fatal("the symlink target must be untouched")
+	}
+	_ = alphaBody
+	// And applyManifest itself refuses a non-regular root file.
+	if err := applyManifest(mfAction{ws: "alpha", rootFile: alphaRoot, protected: paths.ManifestPath("alpha"), copy: true}, e.journal()); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("applyManifest must refuse a symlink: %v", err)
 	}
 }
 

@@ -30,7 +30,7 @@ func newListCmd() *cobra.Command {
 			}
 			rows := make([]row, 0, len(all))
 			for _, w := range all {
-				rows = append(rows, row{w.Name, w.Root, w.Manifest.Git.Email, trust.IsTrusted(w.Hash), w.Manifest.IdentityNames()})
+				rows = append(rows, row{w.Name, w.Root, w.Manifest.Git.Email, trust.IsTrusted(w.Name, w.Hash), w.Manifest.IdentityNames()})
 			}
 			if asJSON {
 				return json.NewEncoder(c.OutOrStdout()).Encode(map[string]any{"bases": cfg.Bases, "workspaces": rows, "errors": fmt.Sprint(errs)})

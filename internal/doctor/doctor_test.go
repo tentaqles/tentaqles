@@ -68,7 +68,7 @@ func TestRun_UntrustedAndDriftAndBypassCloud(t *testing.T) {
 		}
 	}
 	h, _ := trust.HashFile(mp)
-	trust.Allow(h)
+	trust.Allow("acme", h)
 	fs = Run(cfg, deps(map[string]string{"TQ_WS": "other"}, root, nil))
 	if has(fs, "untrusted") || !has(fs, "env-drift") {
 		t.Fatalf("%+v", fs)
@@ -115,7 +115,7 @@ func TestRun_GitWorkspaceFileTampered(t *testing.T) {
 	mp := filepath.Join(root, manifest.FileName)
 	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: { claude: {} }\n"), 0o600)
 	h, _ := trust.HashFile(mp)
-	trust.Allow(h)
+	trust.Allow("acme", h)
 	wf := filepath.Join(root, ".gitconfig-tentaqles")
 
 	// A well-formed tq file is clean.
@@ -147,7 +147,7 @@ func TestRun_BundleDrift(t *testing.T) {
 	mp := filepath.Join(root, manifest.FileName)
 	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@acme.com }\nidentities: { claude: {} }\nclaude: { bundle: { mcp: [github] } }\n"), 0o600)
 	h, _ := trust.HashFile(mp)
-	trust.Allow(h)
+	trust.Allow("acme", h)
 
 	cat := &bundle.Catalog{
 		Marketplaces: map[string]bundle.Marketplace{},
@@ -224,7 +224,7 @@ func TestRun_IncludeIfUnmanagedAndIncludeOrphan(t *testing.T) {
 	mp := filepath.Join(root, manifest.FileName)
 	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: {}\n"), 0o600)
 	h, _ := trust.HashFile(mp)
-	trust.Allow(h)
+	trust.Allow("acme", h)
 	os.WriteFile(gitcfg.WorkspaceFile(root), []byte("# managed by tq\n[user]\n\temail = a@b\n"), 0o644)
 	// tq's own include file exists, so it must not be reported as an orphan.
 	os.WriteFile(gitcfg.IncludeFile(), []byte("# managed by tq\n"), 0o644)
@@ -306,7 +306,7 @@ func TestRun_IdentityDirLinked(t *testing.T) {
 	mp := filepath.Join(root, manifest.FileName)
 	os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: { claude: {}, gh: {} }\n"), 0o600)
 	h, _ := trust.HashFile(mp)
-	trust.Allow(h)
+	trust.Allow("acme", h)
 	os.WriteFile(gitcfg.WorkspaceFile(root), []byte("# managed by tq\n[user]\n\temail = a@b\n"), 0o644)
 
 	// gh is a real directory; claude is a link to an external one.

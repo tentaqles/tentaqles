@@ -42,10 +42,15 @@ var (
 		return u.Username, nil
 	}
 	runICACLS = func(dir, account string) (string, error) {
-		out, err := exec.Command("icacls", dir, "/inheritance:r", "/grant:r", account+":(OI)(CI)F").CombinedOutput()
+		out, err := exec.Command("icacls", dir, "/inheritance:r", "/grant:r", account+":(OI)(CI)F", systemGrant).CombinedOutput()
 		return strings.TrimSpace(string(out)), err
 	}
 )
+
+// systemGrant keeps the local system account on the folder alongside the
+// user: removing inheritance would otherwise strip it, and backup, indexing
+// and the installer's own service context run as SYSTEM.
+const systemGrant = "SYSTEM:(OI)(CI)F"
 
 // Command is the icacls line tq runs, for messages. An empty account prints
 // the placeholder <user>.
@@ -53,7 +58,20 @@ func Command(dir, account string) string {
 	if account == "" {
 		account = "<user>"
 	}
-	return fmt.Sprintf(`icacls "%s" /inheritance:r /grant:r "%s:(OI)(CI)F"`, dir, account)
+	return fmt.Sprintf(`icacls "%s" /inheritance:r /grant:r "%s:(OI)(CI)F" "%s"`, dir, account, systemGrant)
+}
+
+// MkdirPrivate creates dir and its missing parents with mode 0700 and, on
+// Unix, sets 0700 on dir itself even when it already existed with a wider
+// mode (a migrated identity's folder was created 0755 by an older tq).
+func MkdirPrivate(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return os.Chmod(dir, 0o700)
 }
 
 // EnsureHome creates paths.Home() with mode 0700 and, on Windows, restricts

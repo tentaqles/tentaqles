@@ -26,7 +26,7 @@ func fake(t *testing.T, osName string, icaclsErr error) *[]string {
 	goos = osName
 	currentUser = func() (string, error) { return `BOX\someone`, nil }
 	runICACLS = func(dir, account string) (string, error) {
-		calls = append(calls, dir+"|"+account)
+		calls = append(calls, dir+"|"+account+"|"+systemGrant)
 		if icaclsErr != nil {
 			return "Access is denied.", icaclsErr
 		}
@@ -45,8 +45,12 @@ func TestEnsureHome_CreatesPrivateDirAndRunsICACLSOnce(t *testing.T) {
 	if err != nil || !fi.IsDir() {
 		t.Fatalf("home not created: %v", err)
 	}
-	if len(*calls) != 1 || (*calls)[0] != paths.Home()+`|BOX\someone` {
+	// The user and SYSTEM are granted; nothing else survives /inheritance:r.
+	if len(*calls) != 1 || (*calls)[0] != paths.Home()+`|BOX\someone|SYSTEM:(OI)(CI)F` {
 		t.Fatalf("icacls calls = %v", *calls)
+	}
+	if c := Command(paths.Home(), `BOX\someone`); !strings.Contains(c, `"BOX\someone:(OI)(CI)F" "SYSTEM:(OI)(CI)F"`) {
+		t.Fatalf("Command = %s", c)
 	}
 	rec, err := ReadRecord()
 	if err != nil || rec == nil || !rec.OK || !strings.Contains(rec.Detail, "processed") || rec.At.IsZero() {
@@ -101,7 +105,32 @@ func TestReadRecord_CorruptIsAnError(t *testing.T) {
 
 func TestCommand(t *testing.T) {
 	c := Command(`C:\Users\x\.tentaqles`, "")
-	if !strings.Contains(c, "/inheritance:r") || !strings.Contains(c, "<user>:(OI)(CI)F") {
+	if !strings.Contains(c, "/inheritance:r") || !strings.Contains(c, "<user>:(OI)(CI)F") || !strings.Contains(c, "SYSTEM:(OI)(CI)F") {
 		t.Fatal(c)
+	}
+}
+
+func TestMkdirPrivate_TightensAnExistingDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "identities", "acme")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := MkdirPrivate(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := MkdirPrivate(filepath.Join(dir, "new", "deep")); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	for _, p := range []string{dir, filepath.Join(dir, "new"), filepath.Join(dir, "new", "deep")} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o700 {
+			t.Fatalf("%s mode %o, want 0700", p, fi.Mode().Perm())
+		}
 	}
 }

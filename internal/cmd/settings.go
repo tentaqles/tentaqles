@@ -66,7 +66,7 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.`,
 					continue
 				}
 				n++
-				if !trust.IsTrusted(ws.Hash) {
+				if !trust.IsTrusted(ws.Name, ws.Hash) {
 					fmt.Fprintf(c.OutOrStdout(), "%s: skipped (manifest not trusted; run tq allow %s)\n", ws.Name, ws.Name)
 					continue
 				}
@@ -122,7 +122,7 @@ func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
 	if ws == nil {
 		return
 	}
-	if trust.IsTrusted(ws.Hash) {
+	if trust.IsTrusted(ws.Name, ws.Hash) {
 		dir := paths.IdentityDir(ws.Name, "claude")
 		if _, err := os.Stat(dir); err == nil {
 			d := claudesettings.Desired(ws.Manifest, statuslineExe())

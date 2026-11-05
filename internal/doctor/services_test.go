@@ -34,7 +34,7 @@ func servicesWorkspace(t *testing.T, extra string) (*registry.Config, string) {
 		t.Fatal(err)
 	}
 	h, _ := trust.HashFile(mp)
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow("acme", h); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(paths.IdentityDir("acme", "claude"), 0o700); err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/protect"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -113,7 +114,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 		}
 	}
 	// 0700 / 0600: the protected area is private to the user.
-	if err := os.MkdirAll(filepath.Dir(pp), 0o700); err != nil {
+	if err := protect.MkdirPrivate(filepath.Dir(pp)); err != nil {
 		return nil, err
 	}
 	if err := os.WriteFile(pp, append([]byte("# tentaqles workspace manifest — names only, never secrets\n"), raw...), 0o600); err != nil {
@@ -146,7 +147,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if o.Trust {
 		// Trust first, then sync: SyncGit only wires trusted workspaces into git's
 		// include chain, so the new workspace must be trusted before it can appear.
-		if err := trust.Allow(h); err != nil {
+		if err := trust.Allow(o.Name, h); err != nil {
 			return nil, err
 		}
 		if err := SyncGit(cfg); err != nil {

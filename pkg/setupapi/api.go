@@ -267,7 +267,7 @@ func ExistingWorkspaces() ([]Workspace, error) {
 			Name:       w.Name,
 			Root:       w.Root,
 			Email:      w.Manifest.Git.Email,
-			Trusted:    trust.IsTrusted(w.Hash),
+			Trusted:    trust.IsTrusted(w.Name, w.Hash),
 			Identities: w.Manifest.IdentityNames(),
 		}
 	}

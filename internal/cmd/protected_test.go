@@ -13,6 +13,9 @@ import (
 // folder's ACL. protect's own tests cover the icacls path with a fake.
 func TestMain(m *testing.M) {
 	ensureProtectedHome = func() error { return os.MkdirAll(paths.Home(), 0o700) }
+	// The tests point TQ_HOME at temp dirs and run under Claude Code, whose
+	// marker makes paths.Home ignore TQ_HOME; allow the override here.
+	paths.AllowHomeOverride = true
 	os.Exit(m.Run())
 }
 

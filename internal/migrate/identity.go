@@ -100,7 +100,7 @@ func planIdentity(d Deps) (Plan, []idAction, error) {
 	// simply not allowed to move it yet.
 	var targets []string
 	for _, w := range all {
-		trusted := trust.IsTrusted(w.Hash)
+		trusted := trust.IsTrusted(w.Name, w.Hash)
 		if !trusted {
 			p.Skipped = append(p.Skipped, fmt.Sprintf("workspace %s: not trusted, so tq will not touch its identity directories (tq allow %s, then re-run)", w.Name, w.Name))
 		}

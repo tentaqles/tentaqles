@@ -34,7 +34,7 @@ func mkProtected(t *testing.T, base, name string, trusted bool) (root, pp string
 	}
 	if trusted {
 		h, _ := trust.HashFile(pp)
-		trust.Allow(h)
+		trust.Allow(name, h)
 	}
 	return root, pp
 }
@@ -76,7 +76,103 @@ func TestResolve_MarkerWithoutProtectedManifest_Neutral(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := Resolve(root, cfg)
-	if r.Workspace != nil || r.Untrusted != nil || !strings.Contains(r.Reason, pp) {
+	if r.Workspace != nil || r.Untrusted != nil {
+		t.Fatalf("%+v", r)
+	}
+	// The reason is the missing protected copy, named by its expected path,
+	// found before any attempt to load it: a Load error ("manifest invalid",
+	// "no such file") would mean the existence check is gone.
+	if !strings.HasPrefix(r.Reason, "marker without a protected manifest") || !strings.Contains(r.Reason, pp) {
+		t.Fatalf("reason %q must name the expected path %s", r.Reason, pp)
+	}
+	if strings.Contains(r.Reason, "manifest invalid") || strings.Contains(strings.ToLower(r.Reason), "no such file") || strings.Contains(strings.ToLower(r.Reason), "cannot find") {
+		t.Fatalf("the missing copy must be detected before loading: %q", r.Reason)
+	}
+}
+
+// The replay: a trusted manifest copied into another folder must not lend
+// that folder the original's identity, in either layout. The manifest's
+// client must be the folder name.
+func TestResolve_ReplayOfATrustedManifest_Neutral(t *testing.T) {
+	base, cfg := setup(t)
+	_, pp := mkProtected(t, base, "acme", true)
+	acme, err := os.ReadFile(pp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Old layout: acme's trusted bytes at base/evil/.tentaqles.yaml.
+	evil := filepath.Join(base, "evil")
+	os.MkdirAll(evil, 0o755)
+	if err := os.WriteFile(filepath.Join(evil, manifest.FileName), acme, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := Resolve(evil, cfg)
+	if r.Workspace != nil || r.Untrusted != nil || !strings.Contains(r.Reason, `"acme"`) || !strings.Contains(r.Reason, `"evil"`) {
+		t.Fatalf("old-layout replay must be neutral with the mismatch named: %+v", r)
+	}
+	// Protected layout: a marker for evil and acme's bytes as evil's copy.
+	evil2 := filepath.Join(base, "evil2")
+	os.MkdirAll(evil2, 0o755)
+	os.WriteFile(filepath.Join(evil2, manifest.FileName), manifest.MarkerBytes("evil2"), 0o644)
+	pp2 := paths.ManifestPath("evil2")
+	os.MkdirAll(filepath.Dir(pp2), 0o700)
+	if err := os.WriteFile(pp2, acme, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r = Resolve(evil2, cfg)
+	if r.Workspace != nil || r.Untrusted != nil || !strings.Contains(r.Reason, `"acme"`) || !strings.Contains(r.Reason, `"evil2"`) {
+		t.Fatalf("protected-layout replay must be neutral with the mismatch named: %+v", r)
+	}
+	// Neither is listed as a workspace either, so nothing recommends
+	// migrating or trusting it.
+	ws, errs := ListWorkspaces(cfg)
+	if len(ws) != 1 || ws[0].Name != "acme" || len(errs) != 2 {
+		t.Fatalf("%+v %v", ws, errs)
+	}
+	// And acme itself is untouched.
+	if r := Resolve(filepath.Join(base, "acme"), cfg); r.Workspace == nil {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// Trust is keyed by workspace name and hash: the same bytes trusted for acme
+// are not trusted for a folder of another name (defense in depth behind the
+// client check).
+func TestResolve_TrustIsKeyedByName(t *testing.T) {
+	base, cfg := setup(t)
+	_, pp := mkProtected(t, base, "acme", true)
+	h, _ := trust.HashFile(pp)
+	if !trust.IsTrusted("acme", h) || trust.IsTrusted("evil", h) {
+		t.Fatal("a trust record belongs to one workspace name")
+	}
+	_ = cfg
+}
+
+// A symlink (or anything but a regular file) at the root file resolves
+// neutral: the guard never reads, and the migration never writes, through it.
+func TestResolve_RootFileSymlink_Neutral(t *testing.T) {
+	base, cfg := setup(t)
+	_, pp := mkProtected(t, base, "acme", true)
+	evil := filepath.Join(base, "evil")
+	os.MkdirAll(evil, 0o755)
+	link := filepath.Join(evil, manifest.FileName)
+	if err := os.Symlink(pp, link); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("this process cannot create a symlink (developer mode or SeCreateSymbolicLinkPrivilege needed): %v", err)
+		}
+		t.Fatal(err)
+	}
+	r := Resolve(evil, cfg)
+	if r.Workspace != nil || r.Untrusted != nil || r.Reason != "marker is not a regular file" {
+		t.Fatalf("%+v", r)
+	}
+	if _, errs := ListWorkspaces(cfg); len(errs) != 1 || !strings.Contains(errs[0].Error(), "not a regular file") {
+		t.Fatalf("errs = %v", errs)
+	}
+	// A directory in place of the root file is not a manifest either.
+	dir := filepath.Join(base, "dirfile")
+	os.MkdirAll(filepath.Join(dir, manifest.FileName), 0o755)
+	if r := Resolve(dir, cfg); r.Workspace != nil || r.Reason != "marker is not a regular file" {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -104,7 +200,7 @@ func TestResolve_BothFiles_ProtectedWinsAndRootIsStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, _ := trust.HashFile(pp)
-	trust.Allow(h)
+	trust.Allow("acme", h)
 	r := Resolve(root, cfg)
 	if r.Workspace == nil {
 		t.Fatalf("%+v", r)
@@ -185,7 +281,7 @@ func mkws(t *testing.T, base, name string, trusted bool) string {
 	os.WriteFile(p, []byte("schema: tentaqles-client-v2\nclient: "+name+"\ngit: { email: "+name+"@x.io }\n"), 0o600)
 	if trusted {
 		h, _ := trust.HashFile(p)
-		trust.Allow(h)
+		trust.Allow(name, h)
 	}
 	return root
 }

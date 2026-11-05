@@ -136,7 +136,7 @@ func (e *stepEnv) addWorkspace(name, gitName, gitEmail string, identities ...str
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(name, h); err != nil {
 		e.t.Fatal(err)
 	}
 	return root
@@ -637,7 +637,7 @@ func TestSortedChangeKindsAreStable(t *testing.T) {
 	// A guard for Task 5: the command layer prints Kind verbatim, so the set of
 	// kinds the identity, git and manifests steps emit is part of the contract.
 	want := []string{
-		"add-include", "make-link", "move-dir", "remove-include", "remove-includeif",
+		"add-include", "make-link", "move-dir", "rekey-trust", "remove-include", "remove-includeif",
 		"remove-link", "rewrite-ws-file", "set-global", "sync-include-file", "unset-global",
 		"write-marker", "write-protected-manifest",
 	}

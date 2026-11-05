@@ -31,7 +31,7 @@ func newBundleSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !trust.IsTrusted(ws.Hash) {
+			if !trust.IsTrusted(ws.Name, ws.Hash) {
 				return fmt.Errorf("workspace %s is untrusted; run: tq allow %s", ws.Name, ws.Name)
 			}
 			cat, err := bundle.LoadCatalog()

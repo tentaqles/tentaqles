@@ -25,7 +25,7 @@ func codexWS(t *testing.T) *resolve.Workspace {
 		Identities: map[string]manifest.Identity{"codex": {}, "gh": {}},
 	}
 	w := &resolve.Workspace{Name: "acme", Hash: "hash-codex", Root: filepath.Join(t.TempDir(), "acme"), Manifest: m}
-	if err := trust.Allow(w.Hash); err != nil {
+	if err := trust.Allow(w.Name, w.Hash); err != nil {
 		t.Fatal(err)
 	}
 	return w

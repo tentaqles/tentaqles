@@ -52,7 +52,7 @@ func halfCreatedDetail(root string) string {
 		return reason
 	}
 	h, err := trust.HashFile(mp)
-	if err != nil || !trust.IsTrusted(h) {
+	if err != nil || !trust.IsTrusted(filepath.Base(root), h) {
 		return "exists but not trusted — run: tq allow " + filepath.Base(root)
 	}
 	if _, err := os.Stat(gitcfg.WorkspaceFile(root)); err != nil {

@@ -190,7 +190,7 @@ func mkLaunchWSLayout(t *testing.T, name, permMode string, protected bool) (stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(name, h); err != nil {
 		t.Fatal(err)
 	}
 	return root, mp

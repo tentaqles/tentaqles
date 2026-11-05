@@ -44,7 +44,7 @@ func TestEditedManifestLosesTrust(t *testing.T) {
 				}
 				return h
 			}
-			if !trust.IsTrusted(hash()) {
+			if !trust.IsTrusted("acme", hash()) {
 				t.Fatal("mkLaunchWSLayout trusts the manifest")
 			}
 			b, err := os.ReadFile(mp)
@@ -54,7 +54,7 @@ func TestEditedManifestLosesTrust(t *testing.T) {
 			if err := os.WriteFile(mp, append(b, "language: en\n"...), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if trust.IsTrusted(hash()) {
+			if trust.IsTrusted("acme", hash()) {
 				t.Fatal("an edited manifest must lose its trust")
 			}
 			calls := fakeExec(t)
@@ -65,7 +65,7 @@ func TestEditedManifestLosesTrust(t *testing.T) {
 			if err != nil || !strings.Contains(out, "Trusted acme") {
 				t.Fatalf("tq allow: %v %q", err, out)
 			}
-			if !trust.IsTrusted(hash()) {
+			if !trust.IsTrusted("acme", hash()) {
 				t.Fatal("tq allow trusts the edited manifest as it is now")
 			}
 		})
@@ -91,7 +91,7 @@ func TestAddDoesNotTrustFromAgent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tq add under %s: %v %q", k, err, out)
 		}
-		if trust.IsTrusted(manifestHash(t, filepath.Join(base, name))) {
+		if trust.IsTrusted(name, manifestHash(t, filepath.Join(base, name))) {
 			t.Fatalf("tq add under %s trusted the new folder", k)
 		}
 		if !strings.Contains(out, "untrusted") || !strings.Contains(out, "tq allow "+name) {
@@ -103,7 +103,7 @@ func TestAddDoesNotTrustFromAgent(t *testing.T) {
 	if err != nil || !strings.Contains(out, "(trusted)") {
 		t.Fatalf("a human tq add: %v %q", err, out)
 	}
-	if !trust.IsTrusted(manifestHash(t, filepath.Join(base, "human"))) {
+	if !trust.IsTrusted("human", manifestHash(t, filepath.Join(base, "human"))) {
 		t.Fatal("a human tq add trusts the new folder")
 	}
 }
@@ -119,14 +119,14 @@ func TestAllowAndDenyRefuseAgents(t *testing.T) {
 			}
 		}
 	}
-	if !trust.IsTrusted(manifestHash(t, root)) {
+	if !trust.IsTrusted("acme", manifestHash(t, root)) {
 		t.Fatal("a refused deny changes nothing")
 	}
 	clearAgentMarkers(t)
 	if out, err := runTq(t, "deny", "acme"); err != nil || !strings.Contains(out, "Denied acme") {
 		t.Fatalf("a human deny: %v %q", err, out)
 	}
-	if trust.IsTrusted(manifestHash(t, root)) {
+	if trust.IsTrusted("acme", manifestHash(t, root)) {
 		t.Fatal("deny removes the trust")
 	}
 }
