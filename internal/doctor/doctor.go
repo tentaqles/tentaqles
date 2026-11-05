@@ -94,6 +94,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 		memoryStale(w.Name, w.Root, time.Now(), add)
 		manifestDroppedBlock(w.Name, w.Manifest.Ignored, add)
+		manifestLayout(&w, add)
 		if trusted && w.Manifest.Claude.Bundle != nil {
 			if cat == nil {
 				c, err := bundle.LoadCatalog()

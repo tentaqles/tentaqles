@@ -43,6 +43,11 @@ func newAddCmd() *cobra.Command {
 				}
 				o.Base = cfg.Bases[0]
 			}
+			// The manifest goes under $TQ_HOME (ADR-0002): create it private
+			// to the user first (on Windows: the one icacls run).
+			if err := ensureProtectedHome(); err != nil {
+				return err
+			}
 			ws, err := workspace.Add(o)
 			if err != nil {
 				return err

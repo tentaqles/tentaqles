@@ -10,6 +10,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/onboard"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/termopen"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -69,7 +70,7 @@ func TestOnboard_FromWritesValidManifestWithSkippedBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	mp := filepath.Join(base, "acme", manifest.FileName)
+	mp := paths.ManifestPath("acme") // the protected location (ADR-0002)
 	m, err := manifest.Load(mp)
 	if err != nil {
 		t.Fatalf("the written manifest must load: %v", err)
@@ -115,7 +116,7 @@ email: { provider: none }
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	m, err := manifest.Load(filepath.Join(base, "acme", manifest.FileName))
+	m, err := manifest.Load(paths.ManifestPath("acme"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +199,7 @@ func TestOnboard_WizardResultIsWritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	m, err := manifest.Load(filepath.Join(base, "acme", manifest.FileName))
+	m, err := manifest.Load(paths.ManifestPath("acme"))
 	if err != nil || m.Chat.Provider != "teams" {
 		t.Fatalf("manifest %+v err %v", m, err)
 	}

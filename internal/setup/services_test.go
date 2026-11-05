@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
@@ -134,7 +135,8 @@ func TestApply_WritesServiceBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply: %v; warnings=%v", err, report.Warnings)
 	}
-	m, err := manifest.Load(filepath.Join(base, "acme", manifest.FileName))
+	// The manifest lives in the protected location (ADR-0002).
+	m, err := manifest.Load(paths.ManifestPath("acme"))
 	if err != nil {
 		t.Fatal(err)
 	}

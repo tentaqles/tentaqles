@@ -13,10 +13,11 @@ import (
 
 func init() { register(gitStep{}) }
 
-// Change.Kind values the identity and git steps emit. The command layer prints
-// them verbatim, so they are part of tq's output contract; stepChangeKinds is
-// the complete set, kept next to the constants so a new kind cannot be added
-// without noticing that `tq migrate --json` gains a value.
+// Change.Kind values the identity and git steps emit (the manifests step's
+// two are in manifests.go). The command layer prints them verbatim, so they
+// are part of tq's output contract; stepChangeKinds is the complete set,
+// kept next to the constants so a new kind cannot be added without noticing
+// that `tq migrate --json` gains a value.
 const (
 	kindRemoveLink      = "remove-link"
 	kindMoveDir         = "move-dir"
@@ -38,6 +39,7 @@ var stepChangeKinds = []string{
 	kindRemoveLink, kindMoveDir, kindMakeLink,
 	kindUnsetGlobal, kindSetGlobal, kindRemoveIncludeIf, kindRemoveInclude,
 	kindAddInclude, kindRewriteWSFile, kindSyncIncludeFile,
+	kindWriteProtectedManifest, kindWriteMarker,
 }
 
 // gitStep takes the hand-rolled git identity setup -- a global user.email, one

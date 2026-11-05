@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -17,6 +18,15 @@ import (
 type Workspace struct {
 	Name, Root, Base, ManifestPath, Hash string
 	Manifest                             *manifest.Manifest
+	// Protected reports that ManifestPath is the protected copy under
+	// paths.ManifestPath(Name), with a name-only marker at
+	// <Root>/.tentaqles.yaml (ADR-0002). False is the old layout: the full
+	// manifest at the root, read as before until `tq migrate manifests`.
+	Protected bool
+	// StaleRoot names a full manifest still sitting at <Root>/.tentaqles.yaml
+	// while the protected copy exists and is the one read; "" otherwise.
+	// Nothing reads it; tq doctor reports it.
+	StaleRoot string
 }
 
 type Result struct {
@@ -81,28 +91,101 @@ func Resolve(cwd string, cfg *registry.Config) Result {
 	return Result{Reason: "outside any base"}
 }
 
+// sameName compares a marker's client with the folder name the way the
+// filesystem compares names: case-insensitively on Windows.
+func sameName(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// location is where a workspace's manifest is read from.
+type location struct {
+	// path is the file to Load: the protected copy or the old root file.
+	path      string
+	protected bool
+	// staleRoot is a full manifest left at the root next to a protected copy.
+	staleRoot string
+}
+
+// locate decides which file is the manifest of the workspace at root, from
+// what sits at <root>/.tentaqles.yaml (ADR-0002):
+//
+//   - a marker (tentaqles-marker-v1): its client must equal the folder name,
+//     and the protected copy paths.ManifestPath(name) must exist; the
+//     protected copy is read. Anything else resolves neutral with the reason;
+//   - a full manifest (tentaqles-client-v1|v2): the old layout, read from the
+//     root, unless a protected copy exists too, in which case the protected
+//     one wins and the root file is reported as stale;
+//   - anything else is handed to manifest.Load for its exact error.
+//
+// The absent root file is "no manifest", as before: an unmarked folder under
+// a base is neutral.
+func locate(root, name string) (location, string) {
+	rf := filepath.Join(root, manifest.FileName)
+	if _, err := os.Stat(rf); err != nil {
+		return location{}, "no manifest"
+	}
+	kind, client, err := manifest.Peek(rf)
+	if err != nil {
+		return location{}, fmt.Sprintf("manifest invalid: %v", err)
+	}
+	pp := paths.ManifestPath(name)
+	switch kind {
+	case manifest.KindMarker:
+		if !sameName(client, name) {
+			return location{}, fmt.Sprintf("marker names workspace %q but the folder is %q", client, name)
+		}
+		if _, err := os.Stat(pp); err != nil {
+			return location{}, fmt.Sprintf("marker without a protected manifest (expected %s)", pp)
+		}
+		return location{path: pp, protected: true}, ""
+	case manifest.KindManifest:
+		if _, err := os.Stat(pp); err == nil {
+			return location{path: pp, protected: true, staleRoot: rf}, ""
+		}
+	}
+	return location{path: rf}, ""
+}
+
+// ManifestFile is the file tq reads as the manifest of the workspace at
+// root (the protected copy or the old root file), with protected set for
+// the former; reason is non-empty, and path empty, when root has no usable
+// manifest. Callers that only need the file, not the workspace, use it
+// instead of spelling the layout themselves.
+func ManifestFile(root string) (path string, protected bool, reason string) {
+	loc, reason := locate(root, filepath.Base(root))
+	if reason != "" {
+		return "", false, reason
+	}
+	return loc.path, loc.protected, ""
+}
+
 func load(base, root, name string) Result {
-	mp := filepath.Join(root, manifest.FileName)
-	if _, err := os.Stat(mp); err != nil {
-		return Result{Reason: "no manifest"}
+	loc, reason := locate(root, name)
+	if reason != "" {
+		return Result{Reason: reason}
 	}
-	m, err := manifest.Load(mp)
+	m, err := manifest.Load(loc.path)
 	if err != nil {
 		return Result{Reason: fmt.Sprintf("manifest invalid: %v", err)}
 	}
-	h, err := trust.HashFile(mp)
+	h, err := trust.HashFile(loc.path)
 	if err != nil {
 		return Result{Reason: fmt.Sprintf("manifest invalid: %v", err)}
 	}
-	ws := &Workspace{Name: name, Root: root, Base: base, ManifestPath: mp, Hash: h, Manifest: m}
+	ws := &Workspace{Name: name, Root: root, Base: base, ManifestPath: loc.path, Hash: h, Manifest: m,
+		Protected: loc.protected, StaleRoot: loc.staleRoot}
 	if !trust.IsTrusted(h) {
 		return Result{Reason: fmt.Sprintf("untrusted (run: tq allow %s)", name), Untrusted: ws}
 	}
 	return Result{Workspace: ws}
 }
 
-// ListWorkspaces returns every first-level child of every base that has a manifest,
-// trusted or not, sorted by name. Invalid manifests are returned as errors.
+// ListWorkspaces returns every first-level child of every base that has a
+// manifest (either layout), trusted or not, sorted by name. Invalid manifests
+// and markers that resolve to nothing are returned as errors.
 func ListWorkspaces(cfg *registry.Config) ([]Workspace, []error) {
 	var out []Workspace
 	var errs []error
@@ -121,17 +204,22 @@ func ListWorkspaces(cfg *registry.Config) ([]Workspace, []error) {
 				continue
 			}
 			root := filepath.Join(nb, e.Name())
-			mp := filepath.Join(root, manifest.FileName)
-			if _, err := os.Stat(mp); err != nil {
+			if _, err := os.Stat(filepath.Join(root, manifest.FileName)); err != nil {
 				continue
 			}
-			m, err := manifest.Load(mp)
+			loc, reason := locate(root, e.Name())
+			if reason != "" {
+				errs = append(errs, fmt.Errorf("%s: %s", root, reason))
+				continue
+			}
+			m, err := manifest.Load(loc.path)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
-			h, _ := trust.HashFile(mp)
-			out = append(out, Workspace{Name: e.Name(), Root: root, Base: base, ManifestPath: mp, Hash: h, Manifest: m})
+			h, _ := trust.HashFile(loc.path)
+			out = append(out, Workspace{Name: e.Name(), Root: root, Base: base, ManifestPath: loc.path, Hash: h, Manifest: m,
+				Protected: loc.protected, StaleRoot: loc.staleRoot})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

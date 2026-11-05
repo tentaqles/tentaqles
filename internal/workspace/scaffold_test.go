@@ -18,6 +18,74 @@ import (
 
 func fakeGit(...string) (string, error) { return "", nil }
 
+// tq add creates the protected layout (ADR-0002): a name-only marker in the
+// root, the manifest under $TQ_HOME/identities/<name>/manifest.yaml, private
+// to the user.
+func TestAdd_CreatesMarkerAndProtectedManifest(t *testing.T) {
+	isolateHome(t)
+	base := testutil.TempDir(t)
+	cfg := &registry.Config{}
+	cfg.AddBase(base)
+	cfg.Save()
+
+	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", RunGit: fakeGit, Trust: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pp := paths.ManifestPath("acme")
+	if !ws.Protected || !registry.SamePath(ws.ManifestPath, pp) {
+		t.Fatalf("%+v", ws)
+	}
+	marker, err := os.ReadFile(filepath.Join(base, "acme", manifest.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(marker) != string(manifest.MarkerBytes("acme")) {
+		t.Fatalf("root file must be the name-only marker:\n%s", marker)
+	}
+	raw, err := os.ReadFile(pp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "schema: tentaqles-client-v2") || !strings.Contains(string(raw), "email: m@acme.com") || !strings.HasPrefix(string(raw), "# tentaqles workspace manifest") {
+		t.Fatalf("protected manifest:\n%s", raw)
+	}
+	h, _ := trust.HashFile(pp)
+	if ws.Hash != h || !trust.IsTrusted(h) {
+		t.Fatal("trust is the hash of the protected manifest")
+	}
+	if runtime.GOOS != "windows" {
+		for p, want := range map[string]os.FileMode{pp: 0o600, filepath.Dir(pp): 0o700, paths.IdentitiesRoot(): 0o700, paths.Home(): 0o700} {
+			fi, err := os.Stat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fi.Mode().Perm() != want {
+				t.Errorf("%s mode %o, want %o", p, fi.Mode().Perm(), want)
+			}
+		}
+	}
+	cfg2, _ := registry.Load()
+	r := resolve.Resolve(filepath.Join(base, "acme", "deep"), cfg2)
+	if r.Workspace == nil || !r.Workspace.Protected || r.Workspace.Manifest.Git.Email != "m@acme.com" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestAdd_RefusesALeftoverProtectedManifest(t *testing.T) {
+	isolateHome(t)
+	base := testutil.TempDir(t)
+	pp := paths.ManifestPath("acme")
+	os.MkdirAll(filepath.Dir(pp), 0o700)
+	os.WriteFile(pp, []byte("schema: tentaqles-client-v2\nclient: acme\n"), 0o600)
+	if _, err := Add(AddOptions{Base: base, Name: "acme", GitEmail: "x@y", RunGit: fakeGit, Trust: true}); err == nil || !strings.Contains(err.Error(), pp) {
+		t.Fatalf("a leftover protected manifest must not be overwritten: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "acme")); err == nil {
+		t.Fatal("nothing may be scaffolded")
+	}
+}
+
 // isolateHome creates a temp dir and points TQ_HOME/HOME (or USERPROFILE on
 // Windows) at it, so gitcfg.Sync/EnsureGlobal never touch the real developer
 // home directory. Returns the temp home dir.

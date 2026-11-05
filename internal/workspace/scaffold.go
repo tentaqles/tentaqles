@@ -68,9 +68,16 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 		return nil, err
 	}
 	root := filepath.Join(base, o.Name)
+	// The protected layout (ADR-0002): the manifest under $TQ_HOME, a
+	// name-only marker in the root. Either file already there is a workspace
+	// tq will not overwrite.
 	mp := filepath.Join(root, manifest.FileName)
+	pp := paths.ManifestPath(o.Name)
 	if _, err := os.Stat(mp); err == nil {
 		return nil, fmt.Errorf("%s already exists", mp)
+	}
+	if _, err := os.Stat(pp); err == nil {
+		return nil, fmt.Errorf("%s already exists (a previous %s workspace? remove it first)", pp, o.Name)
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
@@ -90,8 +97,8 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Scaffold everything else BEFORE the manifest: the manifest is what makes
-	// a directory look like a workspace, so writing it last means an
+	// Scaffold everything else BEFORE the marker: the marker is what makes a
+	// directory look like a workspace, so writing it last means an
 	// interrupted run never leaves a half-created workspace behind.
 	for _, id := range o.Identities {
 		d := paths.IdentityDir(o.Name, id)
@@ -105,13 +112,20 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 			}
 		}
 	}
+	// 0700 / 0600: the protected area is private to the user.
+	if err := os.MkdirAll(filepath.Dir(pp), 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(pp, append([]byte("# tentaqles workspace manifest — names only, never secrets\n"), raw...), 0o600); err != nil {
+		return nil, err
+	}
 	if err := gitcfg.WriteWorkspace(root, o.GitName, o.GitEmail); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(mp, append([]byte("# tentaqles workspace manifest — names only, never secrets\n"), raw...), 0o644); err != nil {
+	if err := os.WriteFile(mp, manifest.MarkerBytes(o.Name), 0o644); err != nil {
 		return nil, err
 	}
-	loaded, err := manifest.Load(mp)
+	loaded, err := manifest.Load(pp)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +139,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err := cfg.Save(); err != nil {
 		return nil, err
 	}
-	h, err := trust.HashFile(mp)
+	h, err := trust.HashFile(pp)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +160,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	}
 	if !o.Trust {
 		return &resolve.Workspace{
-			Name: o.Name, Root: root, Base: base, ManifestPath: mp, Hash: h, Manifest: loaded,
+			Name: o.Name, Root: root, Base: base, ManifestPath: pp, Hash: h, Manifest: loaded, Protected: true,
 		}, nil
 	}
 	res := resolve.Resolve(root, cfg)

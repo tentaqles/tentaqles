@@ -12,6 +12,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -153,8 +154,19 @@ func fakeExec(t *testing.T) *[]launched {
 }
 
 // mkLaunchWS writes and trusts a workspace with claude and codex identities
-// and the given claude.permission_mode; it returns the root.
+// and the given claude.permission_mode, in the old layout (the manifest in
+// the root); it returns the root.
 func mkLaunchWS(t *testing.T, name, permMode string) string {
+	t.Helper()
+	root, _ := mkLaunchWSLayout(t, name, permMode, false)
+	return root
+}
+
+// mkLaunchWSLayout is mkLaunchWS with a choice of layout: protected writes
+// the name-only marker in the root and the manifest under
+// paths.ManifestPath(name) (ADR-0002). It returns the root and the file the
+// trust hash is taken from.
+func mkLaunchWSLayout(t *testing.T, name, permMode string, protected bool) (string, string) {
 	t.Helper()
 	root := mkUntrusted(t, name)
 	body := "schema: tentaqles-client-v2\nclient: " + name + "\ngit: { email: tester@example.com }\nidentities: { claude: {}, codex: {} }\n"
@@ -162,6 +174,15 @@ func mkLaunchWS(t *testing.T, name, permMode string) string {
 		body += "claude: { permission_mode: " + permMode + " }\n"
 	}
 	mp := filepath.Join(root, manifest.FileName)
+	if protected {
+		if err := os.WriteFile(mp, manifest.MarkerBytes(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mp = paths.ManifestPath(name)
+		if err := os.MkdirAll(filepath.Dir(mp), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +193,7 @@ func mkLaunchWS(t *testing.T, name, permMode string) string {
 	if err := trust.Allow(h); err != nil {
 		t.Fatal(err)
 	}
-	return root
+	return root, mp
 }
 
 func runTq(t *testing.T, args ...string) (string, error) {

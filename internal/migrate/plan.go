@@ -62,8 +62,10 @@ type Step interface {
 
 // stepOrder is the order steps always run in, regardless of the order the user
 // lists them: identity moves the directories, git rewrites config that may
-// point at them, then the shell and cmd steps adopt the launchers.
-var stepOrder = []string{"identity", "git", "shell", "cmd"}
+// point at them, then the shell and cmd steps adopt the launchers; manifests
+// (never a default) moves each manifest into the protected location last,
+// after everything that reads it from the old place has run.
+var stepOrder = []string{"identity", "git", "shell", "cmd", "manifests"}
 
 // registry of available steps, populated by each step file's init so that
 // adding a step never requires editing this file.

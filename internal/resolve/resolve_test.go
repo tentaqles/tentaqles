@@ -8,10 +8,163 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
+
+// ---------------------------------------------------------------- ADR-0002
+// The protected layout: a name-only marker in the identity root, the manifest
+// under $TQ_HOME/identities/<name>/manifest.yaml.
+
+// mkProtected writes a protected-layout workspace: the marker at the root and
+// the manifest under paths.ManifestPath(name).
+func mkProtected(t *testing.T, base, name string, trusted bool) (root, pp string) {
+	t.Helper()
+	root = filepath.Join(base, name)
+	os.MkdirAll(filepath.Join(root, "repo", "src"), 0o755)
+	if err := os.WriteFile(filepath.Join(root, manifest.FileName), manifest.MarkerBytes(name), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pp = paths.ManifestPath(name)
+	os.MkdirAll(filepath.Dir(pp), 0o700)
+	if err := os.WriteFile(pp, []byte("schema: tentaqles-client-v2\nclient: "+name+"\ngit: { email: "+name+"@x.io }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if trusted {
+		h, _ := trust.HashFile(pp)
+		trust.Allow(h)
+	}
+	return root, pp
+}
+
+func TestResolve_MarkerResolvesToProtectedManifest(t *testing.T) {
+	base, cfg := setup(t)
+	root, pp := mkProtected(t, base, "acme", true)
+	r := Resolve(filepath.Join(root, "repo", "src"), cfg)
+	if r.Workspace == nil || r.Reason != "" {
+		t.Fatalf("%+v", r)
+	}
+	w := r.Workspace
+	if w.Name != "acme" || !registry.SamePath(w.Root, root) || !registry.SamePath(w.ManifestPath, pp) || !w.Protected || w.StaleRoot != "" {
+		t.Fatalf("%+v", w)
+	}
+	if w.Manifest.Git.Email != "acme@x.io" {
+		t.Fatalf("the guard must read the protected copy, got %+v", w.Manifest.Git)
+	}
+}
+
+func TestResolve_MarkerClientMismatch_Neutral(t *testing.T) {
+	base, cfg := setup(t)
+	root, _ := mkProtected(t, base, "acme", true)
+	// The marker says it is another workspace: a copied folder, or a marker an
+	// agent rewrote to borrow another identity.
+	if err := os.WriteFile(filepath.Join(root, manifest.FileName), manifest.MarkerBytes("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := Resolve(root, cfg)
+	if r.Workspace != nil || r.Untrusted != nil || !strings.Contains(r.Reason, `"other"`) || !strings.Contains(r.Reason, `"acme"`) {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestResolve_MarkerWithoutProtectedManifest_Neutral(t *testing.T) {
+	base, cfg := setup(t)
+	root, pp := mkProtected(t, base, "acme", true)
+	if err := os.Remove(pp); err != nil {
+		t.Fatal(err)
+	}
+	r := Resolve(root, cfg)
+	if r.Workspace != nil || r.Untrusted != nil || !strings.Contains(r.Reason, pp) {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestResolve_OldLayoutStillResolves(t *testing.T) {
+	base, cfg := setup(t)
+	root := mkws(t, base, "legacy", true)
+	r := Resolve(root, cfg)
+	if r.Workspace == nil || r.Workspace.Protected || r.Workspace.StaleRoot != "" {
+		t.Fatalf("%+v", r)
+	}
+	if !registry.SamePath(r.Workspace.ManifestPath, filepath.Join(root, manifest.FileName)) {
+		t.Fatalf("%+v", r.Workspace)
+	}
+}
+
+// Both files present: the protected copy is the one read, the root copy is
+// reported for tq doctor and nothing else.
+func TestResolve_BothFiles_ProtectedWinsAndRootIsStale(t *testing.T) {
+	base, cfg := setup(t)
+	root := mkws(t, base, "acme", false) // a full manifest at the root, untrusted
+	pp := paths.ManifestPath("acme")
+	os.MkdirAll(filepath.Dir(pp), 0o700)
+	if err := os.WriteFile(pp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: protected@x.io }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := trust.HashFile(pp)
+	trust.Allow(h)
+	r := Resolve(root, cfg)
+	if r.Workspace == nil {
+		t.Fatalf("%+v", r)
+	}
+	w := r.Workspace
+	if !w.Protected || !registry.SamePath(w.ManifestPath, pp) || w.Manifest.Git.Email != "protected@x.io" {
+		t.Fatalf("%+v", w)
+	}
+	if !registry.SamePath(w.StaleRoot, filepath.Join(root, manifest.FileName)) {
+		t.Fatalf("StaleRoot = %q", w.StaleRoot)
+	}
+}
+
+// Trust is the hash of the protected manifest: editing it loses trust, editing
+// the marker alone changes nothing about the hash.
+func TestResolve_EditedProtectedManifestLosesTrust_MarkerEditDoesNot(t *testing.T) {
+	base, cfg := setup(t)
+	root, pp := mkProtected(t, base, "acme", true)
+	before := Resolve(root, cfg)
+	if before.Workspace == nil {
+		t.Fatalf("%+v", before)
+	}
+	// A comment added to the marker: same name, same hash, still trusted.
+	mp := filepath.Join(root, manifest.FileName)
+	b, _ := os.ReadFile(mp)
+	if err := os.WriteFile(mp, append(b, "# edited\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := Resolve(root, cfg)
+	if after.Workspace == nil || after.Workspace.Hash != before.Workspace.Hash {
+		t.Fatalf("a marker edit must not change the trust hash: %+v", after)
+	}
+	// An edit of the protected manifest drops the trust until tq allow.
+	if err := os.WriteFile(pp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: other@x.io }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := Resolve(root, cfg)
+	if r.Workspace != nil || r.Untrusted == nil || !strings.HasPrefix(r.Reason, "untrusted") {
+		t.Fatalf("an edited protected manifest must lose trust: %+v", r)
+	}
+}
+
+func TestListWorkspaces_BothLayouts(t *testing.T) {
+	base, cfg := setup(t)
+	mkws(t, base, "legacy", true)
+	mkProtected(t, base, "modern", true)
+	// A marker that names the wrong folder is reported, not listed.
+	bad, _ := mkProtected(t, base, "bad", true)
+	os.WriteFile(filepath.Join(bad, manifest.FileName), manifest.MarkerBytes("elsewhere"), 0o644)
+	ws, errs := ListWorkspaces(cfg)
+	if len(ws) != 2 || ws[0].Name != "legacy" || ws[1].Name != "modern" {
+		t.Fatalf("%+v %v", ws, errs)
+	}
+	if ws[0].Protected || !ws[1].Protected {
+		t.Fatalf("%+v", ws)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "bad") {
+		t.Fatalf("errs = %v", errs)
+	}
+}
 
 func setup(t *testing.T) (base string, cfg *registry.Config) {
 	t.Helper()

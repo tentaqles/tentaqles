@@ -29,6 +29,9 @@ func newInitCmd() *cobra.Command {
 			if err := cfg.Save(); err != nil {
 				return err
 			}
+			if err := ensureProtectedHome(); err != nil {
+				return err
+			}
 			if err := gitcfg.EnsureGlobal(gitcfg.RunGit); err != nil {
 				return err
 			}

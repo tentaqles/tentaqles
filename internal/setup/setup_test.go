@@ -13,6 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/hooks"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/providers"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -360,9 +361,13 @@ func TestApply_TrustFalse(t *testing.T) {
 		t.Fatalf("unexpected error: %v; warnings=%v", err, report.Warnings)
 	}
 	root := filepath.Join(base, "acme")
-	mp := filepath.Join(root, manifest.FileName)
-	if _, err := os.Stat(mp); err != nil {
-		t.Fatalf("manifest should still be scaffolded: %v", err)
+	if _, err := os.Stat(filepath.Join(root, manifest.FileName)); err != nil {
+		t.Fatalf("marker should still be scaffolded: %v", err)
+	}
+	// Trust is the hash of the manifest tq reads (the protected copy).
+	mp, _, reason := resolve.ManifestFile(root)
+	if reason != "" {
+		t.Fatalf("manifest should still be scaffolded: %s", reason)
 	}
 	h, err := trust.HashFile(mp)
 	if err != nil {

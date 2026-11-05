@@ -635,10 +635,11 @@ func TestGitStep_ApplyIsIdempotentAgainstAlreadyCleanState(t *testing.T) {
 
 func TestSortedChangeKindsAreStable(t *testing.T) {
 	// A guard for Task 5: the command layer prints Kind verbatim, so the set of
-	// kinds these two steps emit is part of the contract.
+	// kinds the identity, git and manifests steps emit is part of the contract.
 	want := []string{
 		"add-include", "make-link", "move-dir", "remove-include", "remove-includeif",
 		"remove-link", "rewrite-ws-file", "set-global", "sync-include-file", "unset-global",
+		"write-marker", "write-protected-manifest",
 	}
 	got := append([]string(nil), stepChangeKinds...)
 	sort.Strings(got)
