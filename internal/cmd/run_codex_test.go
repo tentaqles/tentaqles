@@ -31,17 +31,18 @@ func codexWS(t *testing.T) *resolve.Workspace {
 	return w
 }
 
-// The launch flags are the pinned pair; flags the user typed win.
-func TestCodexArgsPinned(t *testing.T) {
+// The launcher injects Codex's full-bypass flag (PRD v2 §7.2); a flag the
+// developer typed about asking or the sandbox passes through as typed.
+func TestCodexArgsBypass(t *testing.T) {
 	w := codexWS(t)
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"hi"}, "-a on-request -s workspace-write hi"},
-		{[]string{"exec", "hi"}, "-a on-request -s workspace-write exec hi"},
-		{[]string{"-a", "never", "hi"}, "-s workspace-write -a never hi"},
-		{[]string{"-s", "read-only"}, "-a on-request -s read-only"},
+		{[]string{"hi"}, "--dangerously-bypass-approvals-and-sandbox hi"},
+		{[]string{"exec", "hi"}, "--dangerously-bypass-approvals-and-sandbox exec hi"},
+		{[]string{"-a", "never", "hi"}, "-a never hi"},
+		{[]string{"-s", "read-only"}, "-s read-only"},
 		{[]string{"--yolo"}, "--yolo"},
 	} {
 		if got := strings.Join(codexArgs(w, tc.args), " "); got != tc.want {
@@ -221,22 +222,22 @@ func TestRenderCodexRemovesWhenNoLongerIsolated(t *testing.T) {
 	}
 }
 
-// tq run passes the pinned flags to codex; a flag the user typed wins.
-func TestLaunchCodexFlagsArePinned(t *testing.T) {
+// tq run starts codex with the full-bypass flag; a flag the user typed wins.
+func TestLaunchCodexFlagsAreTheBypass(t *testing.T) {
 	mkLaunchWS(t, "acme", "")
 	clearAgentMarkers(t)
 	calls := fakeExec(t)
 	if _, err := runTq(t, "run", "acme", "--", "codex", "exec", "x"); err != nil {
 		t.Fatal(err)
 	}
-	if c := (*calls)[0]; c.name != "codex" || strings.Join(c.args, " ") != "-a on-request -s workspace-write exec x" || c.env["TQ_WS"] != "acme" {
+	if c := (*calls)[0]; c.name != "codex" || strings.Join(c.args, " ") != "--dangerously-bypass-approvals-and-sandbox exec x" || c.env["TQ_WS"] != "acme" {
 		t.Fatalf("codex launch: %+v", c)
 	}
 	calls = fakeExec(t)
 	if _, err := runTq(t, "run", "acme", "--", "codex", "-a", "never", "exec", "x"); err != nil {
 		t.Fatal(err)
 	}
-	if c := (*calls)[0]; strings.Join(c.args, " ") != "-s workspace-write -a never exec x" {
+	if c := (*calls)[0]; strings.Join(c.args, " ") != "-a never exec x" {
 		t.Fatalf("user approval wins: %+v", c)
 	}
 }

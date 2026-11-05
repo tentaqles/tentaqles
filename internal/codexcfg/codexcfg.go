@@ -53,19 +53,28 @@ func legacyProfileKeys(sandbox string) string {
 }
 
 // strip removes every managed block, current or legacy (marker lines
-// included). ok is false when a begin marker has no end marker after it:
-// nothing is then safe to remove.
+// included). A marker matches with its surrounding white space ignored (an
+// editor's trailing space must not leave tq's approval_policy behind). ok
+// is false when a begin marker has no end marker after it, or when a line
+// naming tq's block ("managed by tq") is left that no marker form matches:
+// nothing is then safe to remove, and the render reports a conflict.
 func strip(s string) (string, bool) {
 	var out []string
 	in := false
 	for _, l := range strings.SplitAfter(s, "\n") {
-		t := strings.TrimRight(l, "\r\n")
+		t := strings.Join(strings.Fields(l), " ")
 		switch {
 		case t == beginMarker || t == legacyBegin || t == modeBegin:
 			in = true
 		case t == endMarker || t == legacyEnd || t == modeEnd:
+			if !in {
+				return s, false // an end marker with no begin: an edited block
+			}
 			in = false
 		case !in:
+			if strings.Contains(t, "managed by tq") {
+				return s, false
+			}
 			out = append(out, l)
 		}
 	}
@@ -141,7 +150,7 @@ func ManagedBlock(content string) (string, bool) {
 	var b strings.Builder
 	in := false
 	for _, l := range strings.SplitAfter(content, "\n") {
-		t := strings.TrimRight(l, "\r\n")
+		t := strings.TrimSpace(l)
 		switch {
 		case t == beginMarker:
 			in = true
@@ -182,7 +191,7 @@ func Render(dir string, w Want, dryRun bool) (Result, error) {
 		return res, err
 	}
 	if rest, ok := strip(cur); !ok {
-		res.Conflicts = append(res.Conflicts, "config.toml: tq's managed block in "+p+" has no end marker; fix it by hand")
+		res.Conflicts = append(res.Conflicts, "config.toml: tq's managed block in "+p+" has no end marker, or a marker line tq cannot match; fix it by hand")
 	} else if rest != cur {
 		plan = append(plan, change{path: p, content: rest, remove: rest == ""})
 	}

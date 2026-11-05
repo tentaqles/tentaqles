@@ -40,12 +40,15 @@ removes them, and only them:
 - the `allow`, `deny` and `ask` entries the state file records as tq's;
   entries you added by hand stay;
 - `defaultMode`, when the state file shows an older render and the value is
-  one that render wrote (`auto`, `bypassPermissions`, `default`,
-  `acceptEdits`, `plan`, `dontAsk`);
+  exactly the one that render wrote for the manifest's old
+  `claude.permission_mode` (`auto` for none or `auto`, `bypassPermissions`
+  for `bypass`, any other mode as it was); a different value is yours and
+  stays;
 - `skipDangerousModePermissionPrompt: true`, on the same evidence;
 - the `permissions` object, when this leaves it empty.
 
-With no state file nothing of these is touched. `--dry-run` lists each
+With no state file, or one that does not parse, nothing of these is
+touched: a corrupt state file claims nothing. `--dry-run` lists each
 removal (`permissions.allow: removed 2 tq entries (…)`,
 `permissions.defaultMode: removed (was auto)`, …). The new state file
 records no permission entry, so a `defaultMode` you set by hand afterwards
@@ -115,9 +118,15 @@ removes what tq wrote.
   trust it once in `/hooks`**, and skips a changed hook until you trust it
   again. tq never passes `--dangerously-bypass-hook-trust`.
 
-The launcher (`tq run . -- codex`, the `codex` function) passes
-`-a on-request -s workspace-write`; a flag you type yourself (`-a`, `-s`,
-a `-c` override of either, `--yolo`) wins. `codex-off`
+The launcher (`tq run . -- codex`, the `codex` function) starts Codex with
+its full-bypass flag `--dangerously-bypass-approvals-and-sandbox` (PRD v2
+§7.2): tq never sets how Codex asks, and its hook still denies the three
+categories. A flag you type yourself about asking or the sandbox (`-a`,
+`-s`, `--full-auto`, `--yolo`, the bypass flag, a `-c` override of
+`approval_policy` or `sandbox_mode`) goes through as typed and the launcher
+adds nothing. The launch is refused when `tq` is not on the PATH Codex will
+run with, since the Codex hook is a bare `tq claude-hook pre-tool-use
+--agent codex`. `codex-off`
 (`tq run --off -- codex`) starts Codex with its bypass flag, the main
 `~/.codex` and no tq.
 

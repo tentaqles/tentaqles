@@ -114,6 +114,52 @@ def test_tq_hook_turns_a_tq_without_decision_into_a_deny(tmp_path, status):
     assert "BLOCKED [tq/guard-error]" in p.stderr
 
 
+@pytest.mark.parametrize("case", CASES, ids=[c.get("name", c["command"])[:40] for c in CASES])
+def test_fallback_never_answers_ask(case):
+    """The fallback guard answers by exit code only (0 or 2) and never prints a
+    permission decision, let alone an ask (PRD v2 §6.3)."""
+    p = run_guard(case["command"])
+    assert p.returncode in (0, 2)
+    assert "ask" not in p.stdout.lower()
+    assert "permissionDecision" not in p.stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_tq_hook_stops_a_hanging_tq_and_denies(tmp_path):
+    """A tq that hangs is stopped before the harness timeout and the call is denied
+    (Claude Code runs a call whose hook it killed). The fake reads stdin first, so
+    the payload reaches the background tq."""
+    import time
+
+    fake = tmp_path / "tq"
+    # exec: tq is one process; a stopped tq leaves nothing holding the pipes.
+    fake.write_text("#!/bin/sh\ncat >/dev/null; exec sleep 30\n")
+    fake.chmod(0o755)
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT), TQ_HOOK_WRAPPER_DEADLINE="2")
+    start = time.monotonic()
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input='{"tool_name":"Bash"}', capture_output=True, text=True, env=env,
+        timeout=20,
+    )
+    elapsed = time.monotonic() - start
+    assert p.returncode == 2, (p.returncode, p.stderr)
+    assert "BLOCKED [tq/guard-error]" in p.stderr
+    assert elapsed < 10, elapsed
+
+
+def test_tq_hook_deadline_is_under_the_hook_timeout():
+    """The wrapper's own deadline (plus the one second its kill takes) stays under
+    the PreToolUse timeout of hooks.json, and a larger override is ignored."""
+    import re
+
+    src = HOOK.read_text(encoding="utf-8")
+    deadline = int(re.search(r"^_tq_deadline=(\d+)$", src, re.M).group(1))
+    hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    timeouts = [h["timeout"] for g in hooks["hooks"]["PreToolUse"] for h in g["hooks"] if "tq_hook.sh" in h["command"]]
+    assert timeouts and deadline + 2 < min(timeouts), (deadline, timeouts)
+    assert '-lt "$_tq_deadline"' in src  # an override can only lower it
+
+
 @pytest.mark.skipif(BASH is None, reason="needs bash")
 @pytest.mark.parametrize("status", [0, 2])
 def test_tq_hook_passes_a_decision_through(tmp_path, status):

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -86,6 +88,35 @@ func TestStatusDenials(t *testing.T) {
 	}
 	if _, err := runStatus(t, "--identity", "acme"); err == nil {
 		t.Error("--identity without --denials must fail")
+	}
+}
+
+// A log line carrying terminal escapes (an OSC 52 clipboard write, a line
+// erase, CR, BEL, a C1 CSI) prints them escaped, in text and in --json.
+func TestStatusDenialsEscapesControlCharacters(t *testing.T) {
+	isolateHome(t)
+	if err := os.MkdirAll(filepath.Dir(audit.DenialsPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	evil := "\x1b]52;c;cHduZWQ=\x07\x1b[2K\r\x1b[1Afake ok line\u009b2J"
+	b, _ := json.Marshal(map[string]any{"category": "secrets", "layer": "hook", "tool": evil, "command": evil, "subject": evil,
+		"rule": evil, "reason": evil + "\nsecond", "identity": evil, "cwd": evil, "caller": evil, "harness": evil})
+	if err := os.WriteFile(audit.DenialsPath(), append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"--denials"}, {"--denials", "--json"}} {
+		out, err := runStatus(t, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range out {
+			if (r < 0x20 && r != '\n') || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+				t.Fatalf("%v: control character %U reaches the terminal: %q", args, r, out)
+			}
+		}
+		if !strings.Contains(out, `\x1b]52`) && !strings.Contains(out, `\\x1b]52`) {
+			t.Errorf("%v: the escape is not shown escaped: %q", args, out)
+		}
 	}
 }
 

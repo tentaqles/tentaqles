@@ -2,33 +2,31 @@ package cmd
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/tentaqles/tentaqles/internal/policy"
-	"github.com/tentaqles/tentaqles/internal/registry"
-	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// A commit scan that could not finish (stubbed here) is a deny for both
+// A commit the real scan cannot bound (--pathspec-from-file: the
+// commitscan IncompleteError branch, nothing stubbed) is a deny for both
 // agents: Claude gets exit 2 and the reason on stderr, Codex the deny JSON
-// as well. Neither ever gets an ask.
+// as well. Neither ever gets an ask, and the reason says the scan could not
+// vouch.
 func TestPreToolUseIncompleteScanDeniesBothAgents(t *testing.T) {
 	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
-	prev := hookPolicyDecision
-	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time) policy.Decision {
-		return ruleDecision(policy.Deny, "tq/commit-secret", "the secret "+scanTimedOut)
+	gitRepo(t, root)
+	if err := os.WriteFile(filepath.Join(root, "list.txt"), []byte("a.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { hookPolicyDecision = prev })
-	cmd := hookPayloadFor(t, root, `git commit -m "feat: x"`)
+	cmd := hookPayloadFor(t, root, `git commit --pathspec-from-file=list.txt -m "feat: x"`)
 	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, cmd)
 	dec, reason := codexAnswerJSON(t, out)
-	if code != 2 || dec != "deny" || !strings.Contains(reason, "secrets/tq/commit-secret") {
+	if code != 2 || dec != "deny" || !strings.Contains(reason, "secrets/tq/commit-secret") || !strings.Contains(reason, "pathspec-from-file") {
 		t.Fatalf("codex: code %d %q %q", code, dec, reason)
 	}
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, cmd)
-	if code != 2 || out != "" || !strings.Contains(errOut, "BLOCKED [secrets/tq/commit-secret]") {
+	if code != 2 || out != "" || !strings.Contains(errOut, "BLOCKED [secrets/tq/commit-secret]") || !strings.Contains(errOut, "could not scan") {
 		t.Fatalf("claude: code %d out %q err %q", code, out, errOut)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/audit"
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
@@ -54,6 +55,44 @@ func TestPreToolUse_MalformedPayloadDenies(t *testing.T) {
 	} {
 		sub := "the hook payload"
 		wantGuardErrorDeny(t, name, payload, sub)
+	}
+}
+
+// A payload whose fields tq cannot judge is denied: a shell tool without a
+// string command, a path field that is not a string, a Read naming no file,
+// an unknown (or lower-case) tool that carries a command or a path, invalid
+// UTF-8. An unknown tool with neither is allowed (ADR-0006).
+func TestPreToolUse_FieldTypesDeny(t *testing.T) {
+	isolateHome(t)
+	dir := testutil.TempDir(t)
+	cwd := jsonPath(t, dir)
+	for name, payload := range map[string]string{
+		"Bash no tool_input":          `{"tool_name":"Bash","cwd":` + cwd + `}`,
+		"Bash tool_input string":      `{"tool_name":"Bash","cwd":` + cwd + `,"tool_input":"git push"}`,
+		"Bash command number":         `{"tool_name":"Bash","cwd":` + cwd + `,"tool_input":{"command":7}}`,
+		"Bash command array":          `{"tool_name":"Bash","cwd":` + cwd + `,"tool_input":{"command":["git","push"]}}`,
+		"Bash empty command":          `{"tool_name":"Bash","cwd":` + cwd + `,"tool_input":{"command":"  "}}`,
+		"PowerShell no command":       `{"tool_name":"PowerShell","cwd":` + cwd + `,"tool_input":{}}`,
+		"Read file_path number":       `{"tool_name":"Read","cwd":` + cwd + `,"tool_input":{"file_path":7}}`,
+		"Read no file":                `{"tool_name":"Read","cwd":` + cwd + `,"tool_input":{}}`,
+		"Write file_path object":      `{"tool_name":"Write","cwd":` + cwd + `,"tool_input":{"file_path":{"p":"x"},"content":"y"}}`,
+		"Edit file_path array":        `{"tool_name":"Edit","cwd":` + cwd + `,"tool_input":{"file_path":["x"]}}`,
+		"Grep path number":            `{"tool_name":"Grep","cwd":` + cwd + `,"tool_input":{"pattern":"x","path":1}}`,
+		"lower-case bash with a push": `{"tool_name":"bash","cwd":` + cwd + `,"tool_input":{"command":"git push"}}`,
+		"unknown tool with a command": `{"tool_name":"Shell","cwd":` + cwd + `,"tool_input":{"command":"ls"}}`,
+		"unknown tool with a path":    `{"tool_name":"Open","cwd":` + cwd + `,"tool_input":{"file_path":"/etc/passwd"}}`,
+		"invalid UTF-8":               "{\"tool_name\":\"Bash\",\"cwd\":" + cwd + ",\"tool_input\":{\"command\":\"git push \xff\xfe\"}}",
+	} {
+		wantGuardErrorDeny(t, name, payload, "the hook payload")
+	}
+	for name, payload := range map[string]string{
+		"unknown tool with neither": `{"tool_name":"WebFetchLike","cwd":` + cwd + `,"tool_input":{"url":"https://x","prompt":"p"}}`,
+		"TodoWrite":                 `{"tool_name":"TodoWrite","cwd":` + cwd + `,"tool_input":{"todos":[]}}`,
+		"Bash ls":                   `{"tool_name":"Bash","cwd":` + cwd + `,"tool_input":{"command":"ls"}}`,
+	} {
+		if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, payload); code != 0 {
+			t.Errorf("%s: code=%d err=%q, want allow", name, code, errOut)
+		}
 	}
 }
 
@@ -141,20 +180,68 @@ func TestPreToolUse_MissingOrBrokenManifestDenies(t *testing.T) {
 	}
 }
 
+// When tq's own evidence says a folder is an identity, a manifest that is
+// gone denies every call there (ADR-0006, round 2): the legacy root
+// manifest deleted while the signed record stays, and a config.yaml that is
+// missing while the signed record names the folder as its root. A folder no
+// evidence names stays neutral.
+func TestPreToolUse_GoneManifestWithEvidenceDenies(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
+	ls := hookPayloadFor(t, root, "ls")
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// config.yaml missing: the signed record still names the root.
+	cfg, err := os.ReadFile(paths.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths.Config()); err != nil {
+		t.Fatal(err)
+	}
+	wantGuardErrorDeny(t, "config.yaml missing", ls, "identity acme's signed record names it as its root")
+	wantGuardErrorDeny(t, "config.yaml missing, subfolder", hookPayloadFor(t, sub, "ls"), "identity acme's signed record")
+	if err := os.WriteFile(paths.Config(), cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The legacy root manifest deleted: no marker, but a signed record.
+	if err := os.Remove(filepath.Join(root, manifest.FileName)); err != nil {
+		t.Fatal(err)
+	}
+	wantGuardErrorDeny(t, "root manifest deleted", ls, "identity acme has a signed record")
+
+	// A folder no evidence names: neutral, its ls runs.
+	other := filepath.Join(filepath.Dir(root), "plain")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, other, "ls")); code != 0 {
+		t.Fatalf("a folder no evidence names: code=%d err=%q", code, errOut)
+	}
+	outside := testutil.TempDir(t)
+	if code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, outside, "ls")); code != 0 {
+		t.Fatalf("outside every base: code=%d err=%q", code, errOut)
+	}
+}
+
 // No code path emits an ask: the source of the hook and the rules never
 // writes a permissionDecision of "ask" and has no ask verdict (the Phase 2
 // gate). The behaviour tests above and the incomplete-scan test cover every
 // former ask case: the commit scan, a guard panic, and a Codex call.
 func TestNoAskCodePath(t *testing.T) {
-	askRe := regexp.MustCompile(`"permissionDecision"\s*:\s*"ask"|"ask"|policy\.Ask\b|\bAsk\s+Action\b|CONFIRM \[`)
-	for _, dir := range []string{".", "../policy", "../guard", "../commitscan"} {
+	askRe := regexp.MustCompile(`"permissionDecision"\s*:\s*"ask"|"ask"|'ask'|policy\.Ask\b|\bAsk\s+Action\b|CONFIRM \[`)
+	src := map[string]bool{".go": true, ".py": true, ".sh": true, ".json": true}
+	for _, dir := range []string{".", "../policy", "../guard", "../commitscan", "../codexcfg", "../hooks",
+		"../../plugin/scripts", "../../plugin/hooks"} {
 		ents, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, e := range ents {
 			n := e.Name()
-			if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			if !src[filepath.Ext(n)] || strings.HasSuffix(n, "_test.go") {
 				continue
 			}
 			b, err := os.ReadFile(filepath.Join(dir, n))
@@ -172,6 +259,63 @@ func TestNoAskCodePath(t *testing.T) {
 	for _, r := range policy.Builtin() {
 		if r.Action != policy.Deny {
 			t.Errorf("%s: %q", r.ID, r.Action)
+		}
+	}
+}
+
+// Behaviour, not text: across a corpus of payloads (allowed calls, each
+// deny category, every fail-closed shape) and every output mode (Claude,
+// Codex, --json), the hook exits 0 or 2 and every JSON answer it prints is
+// a deny or a --json object; none is an ask. A reintroduced ask built from
+// split strings fails here even when the source scan misses it.
+func TestNoAskAnswerInAnyOutput(t *testing.T) {
+	root := setupTrustedWorkspaceWithManifest(t, "acme", "blocked_commands: [\"npm publish\"]\n")
+	gitRepo(t, root)
+	if err := os.WriteFile(filepath.Join(root, "list.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cwd := jsonPath(t, root)
+	payloads := []string{
+		hookPayloadFor(t, root, "ls"),
+		hookPayloadFor(t, root, "npm publish"),
+		hookPayloadFor(t, root, "printenv"),
+		hookPayloadFor(t, root, "cat .env"),
+		hookPayloadFor(t, root, "tq allow acme"),
+		hookPayloadFor(t, root, `git commit --pathspec-from-file=list.txt -m "x"`),
+		hookPayloadFor(t, root, `git commit -m "x"`),
+		`{"tool_name":"Read","cwd":` + cwd + `,"tool_input":{"file_path":".env"}}`,
+		`{"tool_name":"Write","cwd":` + cwd + `,"tool_input":{"file_path":` + jsonPath(t, paths.Config()) + `,"content":"x"}}`,
+		`{"tool_name":"apply_patch","cwd":` + cwd + `,"tool_input":{"command":"not a patch"}}`,
+		`{"tool_name":"mcp__x__y","cwd":` + cwd + `,"tool_input":{"q":1}}`,
+		`not json`, ``, `null`, `{"tool_name":"bash","tool_input":{"command":"x"}}`,
+		`{"tool_name":"Bash","tool_input":{"command":7}}`,
+	}
+	for _, p := range payloads {
+		for _, args := range [][]string{
+			{"claude-hook", "pre-tool-use"},
+			{"claude-hook", "pre-tool-use", "--agent", "codex"},
+			{"claude-hook", "pre-tool-use", "--json"},
+		} {
+			code, out, _ := runHook(t, args, p)
+			if code != 0 && code != 2 {
+				t.Errorf("%v %q: exit %d", args, p, code)
+			}
+			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+				if line == "" {
+					continue
+				}
+				var v map[string]any
+				if err := json.Unmarshal([]byte(line), &v); err != nil {
+					t.Errorf("%v %q: stdout is not JSON: %q", args, p, line)
+					continue
+				}
+				if h, ok := v["hookSpecificOutput"].(map[string]any); ok && h["permissionDecision"] != "deny" {
+					t.Errorf("%v %q: answer %v", args, p, h["permissionDecision"])
+				}
+				if strings.Contains(strings.ToLower(line), `"ask"`) {
+					t.Errorf("%v %q: an ask in %q", args, p, line)
+				}
+			}
 		}
 	}
 }

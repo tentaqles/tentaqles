@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
@@ -152,4 +154,41 @@ func readRecord(name string) (rec Record, exists bool, err error) {
 		return Record{}, true, errors.New("not valid JSON")
 	}
 	return rec, true, nil
+}
+
+// HasSignedRecord reports whether trust/<name>.json is there and is not a
+// tombstone. It reads the file and does not verify it: it is evidence that
+// a folder was an identity (the hook fails closed on it, ADR-0006), never a
+// reason to trust anything.
+func HasSignedRecord(name string) bool {
+	rec, exists, err := readRecord(name)
+	return exists && (err != nil || !rec.Revoked)
+}
+
+// SignedRoots maps the root folder of every identity with a signed record
+// that is not a tombstone (the folder of its covered root marker, as a Key)
+// to the identity's name. Unverified, like HasSignedRecord: evidence only.
+func SignedRoots() map[string]string {
+	ents, err := os.ReadDir(paths.TrustDir())
+	if err != nil {
+		return nil
+	}
+	idRoot := Key(paths.IdentitiesRoot()) + "/"
+	out := map[string]string{}
+	for _, e := range ents {
+		name, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || e.IsDir() || name == "legacy" {
+			continue
+		}
+		rec, exists, err := readRecord(name)
+		if !exists || err != nil || rec.Revoked {
+			continue
+		}
+		for k := range rec.Files {
+			if root, ok := strings.CutSuffix(k, "/"+manifest.FileName); ok && !strings.HasPrefix(k, idRoot) {
+				out[root] = name
+			}
+		}
+	}
+	return out
 }

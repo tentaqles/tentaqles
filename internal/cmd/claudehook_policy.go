@@ -87,6 +87,77 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 	return call
 }
 
+// knownTools are the tool names the hook judges by their fields. A tool
+// outside this list and outside mcp__* is judged by what it carries: one
+// with a command or path field is denied (tq cannot tell what it runs or
+// touches: a renamed or lower-case "bash" is not a pass), one without is
+// allowed (WebFetch-like tools tq has no rule for).
+var knownTools = map[string]bool{
+	"Bash": true, "PowerShell": true, "Read": true, "Write": true, "Edit": true, "MultiEdit": true,
+	"NotebookEdit": true, "NotebookRead": true, "Grep": true, "Glob": true, "LS": true, "Agent": true,
+	"Task": true, "apply_patch": true, "WebFetch": true, "WebSearch": true, "TodoWrite": true,
+	"BashOutput": true, "KillShell": true, "ExitPlanMode": true, "Skill": true, "SlashCommand": true,
+}
+
+// commandOrPathFields are the tool_input keys that name what a call runs or
+// touches.
+var commandOrPathFields = []string{"command", "file_path", "notebook_path", "path", "pattern"}
+
+// payloadFieldError is why the hook cannot judge p from its fields, or ""
+// (PRD v2 §6.3, fail closed; ADR-0006): a shell tool whose command is
+// missing, empty or not a string; a field that names a path or a command
+// but is not a string; a Read with no path; an unknown tool that carries a
+// command or a path.
+func payloadFieldError(p hookPayload) string {
+	if strings.HasPrefix(p.ToolName, "mcp__") {
+		return ""
+	}
+	raw := unwrapToolInput(p.ToolInput)
+	var in map[string]json.RawMessage
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &in); err != nil {
+			return "tool_input is not an object"
+		}
+	}
+	str := func(k string) (string, bool, bool) { // value, present, isString
+		v, ok := in[k]
+		if !ok {
+			return "", false, false
+		}
+		var s string
+		if json.Unmarshal(v, &s) != nil {
+			return "", true, false
+		}
+		return s, true, true
+	}
+	if !knownTools[p.ToolName] {
+		for _, k := range commandOrPathFields {
+			if _, present, _ := str(k); present {
+				return fmt.Sprintf("the tool %q is not one tq knows and its input carries %q", p.ToolName, k)
+			}
+		}
+		return ""
+	}
+	for _, k := range commandOrPathFields {
+		if _, present, isStr := str(k); present && !isStr {
+			return fmt.Sprintf("tool_input.%s of %s is not a string", k, p.ToolName)
+		}
+	}
+	switch p.ToolName {
+	case "Bash", "PowerShell":
+		if c, _, _ := str("command"); strings.TrimSpace(c) == "" {
+			return p.ToolName + " has no command"
+		}
+	case "Read", "NotebookRead":
+		f, _, _ := str("file_path")
+		n, _, _ := str("notebook_path")
+		if strings.TrimSpace(f) == "" && strings.TrimSpace(n) == "" {
+			return p.ToolName + " names no file"
+		}
+	}
+	return ""
+}
+
 // unwrapToolInput returns tool_input as a JSON object, accepting both the
 // object form and the JSON-encoded-string form Claude Code may send.
 func unwrapToolInput(raw json.RawMessage) json.RawMessage {

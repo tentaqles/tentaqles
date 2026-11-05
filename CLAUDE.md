@@ -29,7 +29,7 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
     the protected path set of the run (`claudehook_protect.go`), first category that
     denies wins; there is no ask, and a call it cannot judge (an unreadable payload, a
-    panic, the 12 s deadline, an unreadable registry or manifest) is denied as
+    panic, the 9 s deadline, an unreadable registry or manifest) is denied as
     `tq/guard-error` (ADR-0006); every deny is one line in `$TQ_HOME/denials.jsonl`, the
     command redacted by `audit.RedactCommand`, read by `tq status --denials`; `session-start` prints the preamble. `humanonly.go` is the thin wrapper over
     `internal/humanonly` (`refuseAgent`, `humanGate`) that every command writing under
@@ -137,16 +137,26 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestNoAskCodePath`, `TestNoAskVerdict`, `TestPreToolUse_MalformedPayloadDenies`,
   `TestPreToolUseGuardPanicDenies`, `TestPreToolUse_TimeoutDenies`,
   `TestPreToolUse_UnreadableRegistryDenies`, `TestPreToolUse_MissingOrBrokenManifestDenies`,
-  `TestPreToolUseIncompleteScanDeniesBothAgents`, `test_unreadable_payload_denies`,
-  `test_tq_hook_turns_a_tq_without_decision_into_a_deny`.
+  `TestPreToolUseIncompleteScanDeniesBothAgents`, `TestPreToolUse_FieldTypesDeny`,
+  `TestPreToolUse_GoneManifestWithEvidenceDenies`, `TestNoAskAnswerInAnyOutput`,
+  `TestRunMainHookErrorsDeny`, `TestRunMainWatchdogDenies`, `TestCodexHookResolves`,
+  `test_unreadable_payload_denies`, `test_tq_hook_turns_a_tq_without_decision_into_a_deny`,
+  `test_tq_hook_stops_a_hanging_tq_and_denies`, `test_fallback_never_answers_ask`.
+- Every hook deadline is under the shortest harness hook timeout (a harness runs a call whose
+  hook it killed): `TestHookDeadlinesUnderHarnessTimeouts`,
+  `test_tq_hook_deadline_is_under_the_hook_timeout`.
 - Every deny is logged with identity, caller, tool, rule, category and layer, and the logged
   command carries no secret tq can recognise; only a human reads the log:
-  `TestDenialLogSchema`, `TestDenialLogRedaction`, `TestRedactCommand`,
-  `TestAppendDenialMasksEveryField`, `TestStatusDenialsRefusesAgent`.
+  `TestDenialLogSchema`, `TestDenialLogRedaction`, `TestRedactCommandLeakCorpus` (0 leaks),
+  `TestAppendDenialMasksEveryField`, `TestStatusDenialsRefusesAgent`,
+  `TestStatusDenialsEscapesControlCharacters`, `TestDenialLogRotatesAndStreams`.
 - tq writes no permission setting of the harness, cleans the ones it wrote, and an old
   manifest with `claude.permission_mode`/`claude.permissions` still loads (PRD v2 §7.2,
   §13): `TestRenderFreshWritesNoPermissionKey`, `TestRenderCleansWhatTheOldRenderWrote`,
-  `TestRenderWritesNoConfigKeys`, `TestLoadRecordsDroppedClaudeKeys`.
+  `TestRenderWritesNoConfigKeys`, `TestLoadRecordsDroppedClaudeKeys`,
+  `TestRenderKeepsADefaultModeTheEvidenceDoesNotName`, `TestRenderCorruptStateClaimsNothing`,
+  `TestRenderMarkerVariants`, `TestNothingWrittenNamesAPermissionMode`; the Codex launcher
+  adds only the full-bypass flag: `TestLaunchArgsInjectsTheBypassFlag`.
 
 ## Project config
 CI's `go` job runs `go vet ./...`, `go test ./... -count=1` and a build; locally run

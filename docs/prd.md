@@ -207,7 +207,7 @@ Agent and `mcp__*`, in every Claude permission mode. The identity guard
 (`tq/secret-store-read`, `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`,
 `tq/env-dump`) plus `tq/commit-secret` and `tq/cross-client-mcp` deny; nothing a manifest,
 a global file or a repository file adds or removes. Every rule decision is allow or block;
-tq never asks, and a call it cannot judge (an unreadable payload, a guard panic, the 12 s
+tq never asks, and a call it cannot judge (an unreadable payload, a guard panic, the 9 s
 deadline, an unreadable registry or manifest) is denied as `tq/guard-error`, an incomplete
 commit scan as `tq/commit-secret` (ADR-0006). Codex gets the
 same hook through `$CODEX_HOME/hooks.json` (`internal/codexcfg`); with tq missing the hook
@@ -540,7 +540,8 @@ Status: planned (v0.10)
 G1. Each harness needs the identity redirect, the launcher and the hook of FR-10. Today
 Claude Code is full (a launcher that always adds `--dangerously-skip-permissions`, the
 hook, the status line, bundles); Codex has `CODEX_HOME`, the `config.toml` block, a hooks
-file the user trusts once in `/hooks` and launch flags `-a on-request -s workspace-write`;
+file the user trusts once in `/hooks` and a launcher that adds
+`--dangerously-bypass-approvals-and-sandbox` (ADR-0006; typed approval or sandbox flags win);
 OpenCode has a catalog entry (`opencode.yaml`) with config dirs only; Kimi Code has none.
 D-11: OpenCode next, Kimi Code later once its hook support is checked; Codex best effort.
 Status: planned (v0.10)

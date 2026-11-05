@@ -286,7 +286,7 @@ func TestAdopt_RealPowerShellProfile(t *testing.T) {
 
 	// The old claude wrapper is dropped, not carried: it would replace the
 	// launcher tq activate defines (final review M2).
-	if strings.Contains(newContent, CarryComment) || strings.Contains(newContent, carriedGuard) {
+	if strings.Contains(newContent, oldCarryComment) || strings.Contains(newContent, carriedGuard) {
 		t.Error("the claude wrapper must not be carried over")
 	}
 	if !strings.Contains(cs.Detail(), "drop the claude wrapper") {
@@ -393,7 +393,7 @@ func TestAdopt_RealBashrc(t *testing.T) {
 	if strings.Contains(newContent, LegacyStartMarker) {
 		t.Error("bash should not get a tq-legacy wrapper")
 	}
-	if strings.Contains(newContent, CarryComment) {
+	if strings.Contains(newContent, oldCarryComment) {
 		t.Error("bash should not get a carried wrapper")
 	}
 	assertCRLFOnly(t, newContent)
@@ -741,10 +741,10 @@ func TestRemoveCarried_LeavesEditedWrapper(t *testing.T) {
 			return strings.Replace(s, "--dangerously-skip-permissions @args }", "--permission-mode auto @args }", 1)
 		},
 		"line added":     func(s string) string { return strings.Replace(s, "@args }\r\n}", "@args }\r\nWrite-Host hi\r\n}", 1) },
-		"comment edited": func(s string) string { return strings.Replace(s, CarryComment, CarryComment+" (mine)", 1) },
+		"comment edited": func(s string) string { return strings.Replace(s, oldCarryComment, oldCarryComment+" (mine)", 1) },
 	} {
 		t.Run(name, func(t *testing.T) {
-			ci := strings.Index(content, CarryComment)
+			ci := strings.Index(content, oldCarryComment)
 			edited := content[:ci] + edit(content[ci:])
 			if edited == content {
 				t.Fatal("the edit did not apply")

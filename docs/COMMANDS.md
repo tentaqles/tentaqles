@@ -77,7 +77,7 @@ For more detail on a command, run `tq <command> --help`.
 | Command | What it does |
 |---|---|
 | `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. `integrity` (an error, with `untrusted`) lists every covered file that changed since the record was signed, or says the key changed or the signature does not verify; `integrity-key-file` warns that the signing key is the plain-file fallback; `integrity-record-legacy` warns that a workspace is trusted through a marker of an older tq. A manifest that carries a top-level block tq does not read gets a warning, never a failure. |
-| `tq status [--denials [--last N] [--identity <ws>] [--category <c>]] [--json]` | Without `--denials`, the `tq doctor` report (`tq status` is its successor name; `tq doctor` stays). With `--denials` (**human-only read**: refuses an agent session, needs no terminal, writes nothing), the newest N entries of `~/.tentaqles/denials.jsonl` (20; `--last 0` for all), oldest first: time, identity, category/rule, layer (`hook`, `filesystem`, `human-only`), caller (`harness`, `subagent`, `no-tty`) and harness, tool, the redacted command and the first line of the reason. `--identity` and `--category` (`identity`, `secrets`, `self-protection`, `tq/guard-error`) filter; `--json` prints a JSON array. |
+| `tq status [--denials [--last N] [--identity <ws>] [--category <c>]] [--json]` | Without `--denials`, the `tq doctor` report (`tq status` is its successor name; `tq doctor` stays). With `--denials` (**human-only read**: refuses an agent session, needs no terminal, writes nothing), the newest N entries of `~/.tentaqles/denials.jsonl` (20; `--last 0` for all), oldest first: time, identity, category/rule, layer (`hook`, `filesystem`, `human-only`), caller (`harness`, `subagent`, `no-tty`) and harness, tool, the redacted command and the first line of the reason. `--identity` and `--category` (`identity`, `secrets`, `self-protection`, `tq/guard-error`) filter; `--json` prints a JSON array. Every control character in every field is printed escaped (`\x1b`), so a logged string cannot drive your terminal. It reads `denials.jsonl.1` (the log rotates at 1 MiB) and `denials.jsonl` a line at a time. |
 | `tq providers list\|show\|check\|add` | The catalog of supported tools (cloud, git host, data, agents, chat). `check` shows which CLIs are installed. `add` writes a provider file under `~/.tentaqles/providers/` and is **human-only**. |
 | `tq secrets audit` | Finds secret-shaped values in agent config files, and `.env` files that git would commit. It shows only the path and line, never the value. |
 | `tq worktrees list` / `prune --yes` | Lists leftover git worktrees from agent runs. `prune` (**human-only**) removes the ones that are clean, merged and old, and never forces; `--yes` selects the removal over the listing, then you confirm. |
@@ -296,7 +296,7 @@ Change `tool_name` and `tool_input` for each row:
 
 **Exit codes:** 0 with no output means allow; 2 means block. There is no ask,
 and a call tq cannot judge is blocked: a payload that is not valid JSON or
-names no `tool_name`, a guard crash, a decision slower than 12 s, a folder
+names no `tool_name`, a guard crash, a decision slower than 9 s, a folder
 whose manifest tq cannot read (`BLOCKED [tq/guard-error]`), and a commit whose
 secret scan cannot finish (`BLOCKED [secrets/tq/commit-secret]`).
 

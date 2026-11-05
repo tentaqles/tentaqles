@@ -414,7 +414,7 @@ func TestProtectedPaths_Codex(t *testing.T) {
 	if len(ds) != 2 || ds[0].Command != "apply_patch" || ds[0].Subject != "apply_patch "+f.manifest || ds[0].Tool != "apply_patch" || strings.Contains(ds[0].Subject, "Begin Patch") {
 		t.Fatalf("the log records the file, never the patch: %+v", ds)
 	}
-	if ds[1].Subject != "tq allow" || ds[1].Command != "tq allow acme" {
+	if ds[1].Subject != "tq allow" || ds[1].Command != "tq allow …" {
 		t.Fatalf("the human-only line: subject %q command %q", ds[1].Subject, ds[1].Command)
 	}
 }

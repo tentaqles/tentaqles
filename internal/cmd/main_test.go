@@ -44,5 +44,9 @@ func TestMain(m *testing.M) {
 	humanonly.Confirm = func(string) (bool, error) { return true, nil }
 	ensureProtectedHome = func() error { return os.MkdirAll(paths.Home(), 0o700) }
 	paths.AllowHomeOverride = true
+	// The test binary is not tq: the codex launch tests do not look for a tq
+	// on PATH (TestCodexHookResolves tests the real check).
+	realCodexHookResolves = codexHookResolves
+	codexHookResolves = func([]string) error { return nil }
 	os.Exit(m.Run())
 }

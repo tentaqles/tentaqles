@@ -127,6 +127,14 @@ func (l launch) run() error {
 	case "claude":
 		args = launchClaudeArgs(args, agent)
 	case "codex":
+		if codexIsolated(l.ws) {
+			// Codex's hooks.json runs a bare `tq claude-hook pre-tool-use
+			// --agent codex`; a tq Codex cannot find runs no guard at all,
+			// so the launch is refused (ADR-0006).
+			if err := codexHookResolves(envplan.Environ(l.ws, os.Environ())); err != nil {
+				return err
+			}
+		}
 		args = codexArgs(l.ws, args)
 	}
 	return execCommand(l.name, args, envplan.Environ(l.ws, os.Environ()))

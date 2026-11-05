@@ -125,7 +125,9 @@ func readJSON(t *testing.T, p string) map[string]any {
 // The dry run names every removal and writes nothing.
 func TestRenderCleansWhatTheOldRenderWrote(t *testing.T) {
 	dir := writeOld(t, oldSettings, oldState)
-	want := Desired(man(), "")
+	m := man()
+	m.OldPermissionMode = "bypass" // what the old render wrote bypassPermissions for
+	want := Desired(m, "")
 
 	res, err := Render(dir, want, true)
 	if err != nil || !res.Changed {
@@ -222,6 +224,46 @@ func TestRenderWithoutStateLeavesPermissionSettings(t *testing.T) {
 	}
 	if got["skipDangerousModePermissionPrompt"] != true {
 		t.Error("the user's skip flag was removed")
+	}
+}
+
+// The defaultMode is tq's only when it is what the old render wrote for
+// this manifest's old permission_mode; another value is the user's, even
+// one an older render could have written for some other manifest.
+func TestRenderKeepsADefaultModeTheEvidenceDoesNotName(t *testing.T) {
+	for oldMode, value := range map[string]string{
+		"":       "bypassPermissions", // the old render wrote auto
+		"bypass": "plan",              // the user changed it after
+		"plan":   "auto",
+	} {
+		dir := writeOld(t, `{"permissions":{"defaultMode":"`+value+`"}}`, `{"allow":["Bash(ls:*)"]}`)
+		m := man()
+		m.OldPermissionMode = oldMode
+		if _, err := Render(dir, Desired(m, ""), false); err != nil {
+			t.Fatal(err)
+		}
+		got := readJSON(t, filepath.Join(dir, "settings.json"))
+		if p, _ := got["permissions"].(map[string]any); p == nil || p["defaultMode"] != value {
+			t.Errorf("old mode %q: the user's %q was removed: %v", oldMode, value, got)
+		}
+	}
+}
+
+// A state file that is corrupt or does not parse claims nothing: no entry
+// is tq's and it is no evidence of an older render.
+func TestRenderCorruptStateClaimsNothing(t *testing.T) {
+	for _, state := range []string{`{"allow":["Bash(git status:*)"`, `not json`, `[]`} {
+		dir := writeOld(t, oldSettings, state)
+		m := man()
+		m.OldPermissionMode = "bypass"
+		if _, err := Render(dir, Desired(m, ""), false); err != nil {
+			t.Fatal(err)
+		}
+		got := readJSON(t, filepath.Join(dir, "settings.json"))
+		p := got["permissions"].(map[string]any)
+		if p["defaultMode"] != "bypassPermissions" || len(toStrings(p["allow"])) != 3 || got["skipDangerousModePermissionPrompt"] != true {
+			t.Errorf("state %q claimed something: %v", state, got)
+		}
 	}
 }
 

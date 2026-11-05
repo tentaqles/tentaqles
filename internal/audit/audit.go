@@ -4,7 +4,9 @@
 package audit
 
 import (
+	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,49 +95,132 @@ func AppendDenial(d Denial) error {
 	d.Command = truncate(RedactText(d.Command), MaxCommandRunes)
 	d.Subject = RedactText(d.Subject)
 	d.Reason = RedactText(d.Reason)
-	return appendLine(DenialsPath(), d)
+	return appendDenialLine(DenialsPath(), d)
+}
+
+// MaxDenialLog is the size at which the denial log rotates: the current
+// file becomes denials.jsonl.1 (replacing the one before) and a new file
+// starts, so the log holds at most about twice this.
+var MaxDenialLog int64 = 1 << 20
+
+// appendDenialLine rotates the log when the line would take it past
+// MaxDenialLog, then appends. A rotation that fails (another hook rotated
+// first) changes nothing: the line is appended all the same.
+func appendDenialLine(path string, d Denial) error {
+	b, err := json.Marshal(d)
+	if err != nil {
+		return err
+	}
+	if fi, err := os.Stat(path); err == nil && fi.Size()+int64(len(b))+1 > MaxDenialLog {
+		_ = os.Rename(path, path+".1")
+	}
+	return appendBytes(path, append(b, '\n'))
+}
+
+// EachDenial calls fn for every well-formed line of the denial log, oldest
+// first (the rotated denials.jsonl.1, then denials.jsonl), reading one line
+// at a time; it stops when fn returns false. A line that does not parse, or
+// is longer than a denial can be, is skipped. A missing file is no denials.
+func EachDenial(fn func(Denial) bool) error {
+	for _, path := range []string{DenialsPath() + ".1", DenialsPath()} {
+		more, err := eachDenialIn(path, fn)
+		if err != nil || !more {
+			return err
+		}
+	}
+	return nil
+}
+
+func eachDenialIn(path string, fn func(Denial) bool) (bool, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 64<<10)
+	for {
+		line, err := readLine(r, 64<<10)
+		if len(line) > 0 {
+			if d, ok := parseDenial(line); ok && !fn(d) {
+				return false, nil
+			}
+		}
+		if err == io.EOF {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+}
+
+// readLine reads one line, dropping (and returning empty) a line longer
+// than limit so one runaway line cannot make the reader allocate without
+// bound.
+func readLine(r *bufio.Reader, limit int) ([]byte, error) {
+	var buf []byte
+	tooLong := false
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if !tooLong {
+			if len(buf)+len(chunk) > limit {
+				tooLong, buf = true, nil
+			} else {
+				buf = append(buf, chunk...)
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if tooLong {
+			return nil, err
+		}
+		return buf, err
+	}
+}
+
+func parseDenial(raw []byte) (Denial, bool) {
+	line := strings.TrimSpace(string(raw))
+	if line == "" {
+		return Denial{}, false
+	}
+	var d Denial
+	if json.Unmarshal([]byte(line), &d) != nil {
+		return Denial{}, false
+	}
+	if d.Category == "" {
+		// A line written before ADR-0006 named the category kind and the
+		// identity workspace.
+		var old struct {
+			Kind      string `json:"kind"`
+			Workspace string `json:"workspace"`
+		}
+		_ = json.Unmarshal([]byte(line), &old)
+		d.Category, d.Identity = old.Kind, old.Workspace
+		if d.Category == "human-only" {
+			d.Category, d.Layer = "self-protection", LayerHumanOnly
+		}
+	}
+	return d, true
 }
 
 // ReadDenials returns every well-formed line of the denial log, oldest
-// first; a line that does not parse is skipped. A missing log is no
-// denials.
+// first (EachDenial).
 func ReadDenials() ([]Denial, error) {
-	raw, err := os.ReadFile(DenialsPath())
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
 	var out []Denial
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var d Denial
-		if json.Unmarshal([]byte(line), &d) != nil {
-			continue
-		}
-		if d.Category == "" {
-			// A line written before ADR-0006 named the category kind and
-			// the identity workspace.
-			var old struct {
-				Kind      string `json:"kind"`
-				Workspace string `json:"workspace"`
-			}
-			_ = json.Unmarshal([]byte(line), &old)
-			d.Category, d.Identity = old.Kind, old.Workspace
-			if d.Category == "human-only" {
-				d.Category, d.Layer = "self-protection", LayerHumanOnly
-			}
-		}
-		out = append(out, d)
-	}
-	return out, nil
+	err := EachDenial(func(d Denial) bool { out = append(out, d); return true })
+	return out, err
 }
 
 func appendLine(path string, v any) error {
+	b, _ := json.Marshal(v)
+	return appendBytes(path, append(b, '\n'))
+}
+
+func appendBytes(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -144,7 +229,6 @@ func appendLine(path string, v any) error {
 		return err
 	}
 	defer f.Close()
-	b, _ := json.Marshal(v)
-	_, err = f.Write(append(b, '\n'))
+	_, err = f.Write(b)
 	return err
 }

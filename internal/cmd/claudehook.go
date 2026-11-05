@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/audit"
@@ -257,10 +258,12 @@ scan cannot finish are denied (BLOCKED [tq/guard-error], or
 
 // hookDeadline bounds one whole pre-tool-use decision. A harness that kills
 // a hook at its own timeout (15 s for Claude in the plugin's hooks.json, 30 s
-// for Codex) lets the call run, so tq denies first (PRD v2 §6.3, fail
-// closed). It leaves room above the scan budget (at most maxScanBudget) for
-// process start and the identity lookups. Tests lower it.
-var hookDeadline = 12 * time.Second
+// for Codex, codexcfg.HookTimeoutSeconds) lets the call run, so tq denies
+// first (PRD v2 §6.3, fail closed): the decision at 9 s, the process
+// watchdog (hookWatchdog) at 10 s, tq_hook.sh's at 11 s.
+// TestHookDeadlinesUnderHarnessTimeouts pins the order. It leaves room
+// above the scan budget (at most maxScanBudget). Tests lower it.
+var hookDeadline = 9 * time.Second
 
 // hookRun is one pre-tool-use invocation: the flags and what is known about
 // the call so far, so a fail-closed answer (a panic, the deadline) can still
@@ -272,7 +275,8 @@ type hookRun struct {
 	mu       sync.Mutex
 	tool     string
 	cwd      string
-	command  string // the redacted shell line, or the file path, or the tool
+	command  string // the file path or the tool name; for a shell call, see shell
+	shell    string // the shell line, redacted only when it is logged
 	caller   string
 	identity string
 }
@@ -338,9 +342,15 @@ func (run *hookRun) decide(in io.Reader, out, errw io.Writer) int {
 	if p.ToolName == "" {
 		return run.failClosed(out, errw, "the hook payload names no tool")
 	}
+	if why := payloadFieldError(p); why != "" {
+		return run.failClosed(out, errw, "the hook payload cannot be judged ("+why+")")
+	}
 	call := toolCallFrom(p, cwd)
 	run.mu.Lock()
 	run.command = logCommand(call)
+	if call.IsShell() {
+		run.shell = call.Command
+	}
 	run.mu.Unlock()
 
 	var ws *resolve.Workspace
@@ -440,7 +450,7 @@ func (run *hookRun) deny(out, errw io.Writer, category, rule, reason, subject, l
 	run.mu.Lock()
 	d := audit.Denial{
 		Category: category, Layer: layer, Caller: run.caller, Harness: run.agent,
-		Tool: run.tool, Command: run.command, Subject: subject,
+		Tool: run.tool, Command: run.loggedCommand(subject), Subject: subject,
 		Rule: rule, Reason: reason, Identity: run.identity, PID: os.Getpid(), Cwd: run.cwd,
 	}
 	run.mu.Unlock()
@@ -451,6 +461,16 @@ func (run *hookRun) deny(out, errw io.Writer, category, rule, reason, subject, l
 	}
 	emitDecision(out, errw, run.asJSON, true, category, rule, reason)
 	return 2
+}
+
+// loggedCommand is the command the log records: the shell line through
+// audit.RedactCommand, keeping the words of the subject the deny matched;
+// otherwise the path or the tool name. Called with run.mu held.
+func (run *hookRun) loggedCommand(subject string) string {
+	if run.shell != "" {
+		return audit.RedactCommand(run.shell, subject)
+	}
+	return run.command
 }
 
 // guardErrorID names the fail-closed deny of a call the guard cannot judge
@@ -504,6 +524,11 @@ func readHookPayload(r io.Reader) (hookPayload, string, error) {
 	}
 	if len(raw) > maxHookPayload {
 		return p, "", errPayloadTooLarge
+	}
+	if !utf8.Valid(raw) {
+		// encoding/json would read invalid UTF-8 as U+FFFD, judging a
+		// different command than the one the harness runs.
+		return p, "", errors.New("the payload is not valid UTF-8")
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return p, "", fmt.Errorf("malformed JSON: %w", err)

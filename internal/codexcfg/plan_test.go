@@ -5,37 +5,33 @@ import (
 	"testing"
 )
 
-func TestPinnedFlags(t *testing.T) {
-	if got := strings.Join(Pinned.Flags(), " "); got != "-a on-request -s workspace-write" {
-		t.Fatalf("flags: %q", got)
-	}
-	if got := (Plan{}).Flags(); got != nil {
-		t.Fatalf("zero plan: %v", got)
-	}
-}
-
-func TestLaunchArgs(t *testing.T) {
-	p := Pinned
-	for _, tc := range []struct {
-		p    Plan
-		args []string
+// The launcher starts Codex with its full-bypass flag (PRD v2 §7.2, the
+// owner's decision of 2026-11-05) and never sets how Codex asks: a flag the
+// developer typed that says how Codex should ask or sandbox wins, and the
+// line goes through as typed.
+func TestLaunchArgsInjectsTheBypassFlag(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
 		want string
 	}{
-		{p, []string{"hi"}, "-a on-request -s workspace-write hi"},
-		{p, []string{"exec", "hi"}, "-a on-request -s workspace-write exec hi"},
-		{p, []string{"-a", "never", "hi"}, "-s workspace-write -a never hi"},
-		{p, []string{"--ask-for-approval=never"}, "-s workspace-write --ask-for-approval=never"},
-		{p, []string{"-s", "read-only"}, "-a on-request -s read-only"},
-		{p, []string{"--sandbox=read-only"}, "-a on-request --sandbox=read-only"},
-		{p, []string{"-c", "sandbox_mode=\"read-only\""}, "-a on-request -c sandbox_mode=\"read-only\""},
-		{p, []string{"--config=approval_policy=\"never\""}, "-s workspace-write --config=approval_policy=\"never\""},
-		{p, []string{"--yolo"}, "--yolo"},
-		{p, []string{BypassFlag, "x"}, BypassFlag + " x"},
-		{p, []string{"--", "-a"}, "-a on-request -s workspace-write -- -a"},
-		{Plan{}, []string{"hi"}, "hi"},
+		{nil, BypassFlag},
+		{[]string{"hi"}, BypassFlag + " hi"},
+		{[]string{"exec", "hi"}, BypassFlag + " exec hi"},
+		{[]string{"--model", "x", "exec", "hi"}, BypassFlag + " --model x exec hi"},
+		{[]string{"--", "-a"}, BypassFlag + " -- -a"},
+		// The developer's own choice passes through unchanged.
+		{[]string{"-a", "never", "hi"}, "-a never hi"},
+		{[]string{"--ask-for-approval=on-request"}, "--ask-for-approval=on-request"},
+		{[]string{"-s", "read-only"}, "-s read-only"},
+		{[]string{"--sandbox=read-only"}, "--sandbox=read-only"},
+		{[]string{"--full-auto"}, "--full-auto"},
+		{[]string{"-c", `sandbox_mode="read-only"`}, `-c sandbox_mode="read-only"`},
+		{[]string{"--config=approval_policy=\"never\""}, "--config=approval_policy=\"never\""},
+		{[]string{BypassFlag, "hi"}, BypassFlag + " hi"},
+		{[]string{"--yolo"}, "--yolo"},
 	} {
-		if got := strings.Join(LaunchArgs(tc.p, tc.args), " "); got != tc.want {
-			t.Errorf("%+v %v: got %q want %q", tc.p, tc.args, got, tc.want)
+		if got := strings.Join(LaunchArgs(c.in), " "); got != c.want {
+			t.Errorf("%q: got %q want %q", c.in, got, c.want)
 		}
 	}
 }

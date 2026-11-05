@@ -40,6 +40,10 @@ const stateSchema = 2
 type Managed struct {
 	Env        map[string]string
 	StatusLine map[string]any // nil: leave the status line alone
+	// OldDefaultMode is the permissions.defaultMode an older render wrote
+	// for this manifest (oldModeFor of its dropped claude.permission_mode):
+	// the only value the cleaning removes. Never written.
+	OldDefaultMode string
 }
 
 // Owned records what tq wrote, so the next render can take it back. Allow,
@@ -62,10 +66,18 @@ type Owned struct {
 // removes defaultMode or skipDangerousModePermissionPrompt.
 func (o Owned) legacyRender() bool { return o.found && o.Schema < stateSchema }
 
-// legacyModes are the permissions.defaultMode values an older render wrote:
-// "auto" for an empty or auto manifest mode, "bypassPermissions" for bypass,
-// and the other manifest modes as they were.
-var legacyModes = []string{"auto", "bypassPermissions", "default", "acceptEdits", "plan", "dontAsk"}
+// oldModeFor is what an older render wrote as permissions.defaultMode for
+// a manifest's claude.permission_mode, on every render: "auto" for none or
+// auto, "bypassPermissions" for bypass, any other value as it was.
+func oldModeFor(m string) string {
+	switch m {
+	case "", "auto":
+		return "auto"
+	case "bypass":
+		return "bypassPermissions"
+	}
+	return m
+}
 
 // baselineEnv tunes plugins that otherwise cost a lot: the security-guidance
 // plugin's Stop review ran a headless Opus session after every file-changing
@@ -81,7 +93,7 @@ var baselineEnv = map[string]string{
 // Desired computes the managed settings for a workspace manifest. tqExe is
 // the tq binary the status line should call ("" to leave it alone).
 func Desired(m *manifest.Manifest, tqExe string) Managed {
-	want := Managed{Env: map[string]string{}}
+	want := Managed{Env: map[string]string{}, OldDefaultMode: oldModeFor(m.OldPermissionMode)}
 	for k, v := range baselineEnv {
 		want.Env[k] = v
 	}
@@ -99,13 +111,15 @@ func Desired(m *manifest.Manifest, tqExe string) Managed {
 }
 
 // cleanLegacyPermissions removes from next the permission settings an older
-// render wrote, and only those: the allow/deny/ask entries prev records as
-// tq's (an entry the user added stays), then, when prev is evidence of an
-// older render, a defaultMode of legacyModes and a
-// skipDangerousModePermissionPrompt of true. A permissions object this
-// emptied is removed; one that was already empty, or that still holds
-// anything else, is left.
-func cleanLegacyPermissions(next map[string]any, prev Owned) {
+// render wrote, and only those, decided from the evidence: the allow/deny/
+// ask entries prev (a state file that parsed) records as tq's (an entry the
+// user added stays); when prev is an older render's state file, the
+// defaultMode equal to oldMode (what that render wrote for this manifest's
+// old permission_mode; any other value is the user's) and a
+// skipDangerousModePermissionPrompt of true (an older render wrote it on
+// every render). A permissions object this emptied is removed; one that
+// was already empty, or that still holds anything else, is left.
+func cleanLegacyPermissions(next map[string]any, prev Owned, oldMode string) {
 	perms, ok := next["permissions"].(map[string]any)
 	removed := false
 	if ok {
@@ -126,7 +140,7 @@ func cleanLegacyPermissions(next map[string]any, prev Owned) {
 				perms[key] = toAny(kept)
 			}
 		}
-		if mode, isStr := perms["defaultMode"].(string); isStr && prev.legacyRender() && contains(legacyModes, mode) {
+		if mode, isStr := perms["defaultMode"].(string); isStr && prev.legacyRender() && oldMode != "" && mode == oldMode {
 			delete(perms, "defaultMode")
 			removed = true
 		}
@@ -143,7 +157,7 @@ func cleanLegacyPermissions(next map[string]any, prev Owned) {
 func Apply(current map[string]any, want Managed, prev Owned) (map[string]any, Owned) {
 	next := deepCopy(current)
 	owned := Owned{Schema: stateSchema}
-	cleanLegacyPermissions(next, prev)
+	cleanLegacyPermissions(next, prev, want.OldDefaultMode)
 
 	env, _ := next["env"].(map[string]any)
 	if env == nil {
@@ -259,13 +273,16 @@ func summarize(cur, next map[string]any) []string {
 	return out
 }
 
+// loadOwned reads the state file. One that is missing, unreadable or does
+// not parse claims nothing: no entry is tq's and it is no evidence of an
+// older render.
 func loadOwned(dir string) Owned {
 	var o Owned
 	raw, err := os.ReadFile(filepath.Join(dir, stateFile))
-	if err == nil {
-		_ = json.Unmarshal(raw, &o)
-		o.found = true
+	if err != nil || json.Unmarshal(raw, &o) != nil {
+		return Owned{}
 	}
+	o.found = true
 	return o
 }
 

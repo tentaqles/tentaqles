@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
@@ -134,8 +133,8 @@ func logCommand(call policy.ToolCall) string {
 	switch {
 	case isApplyPatch(call):
 		return call.Tool
-	case call.IsShell() && call.Command != "":
-		return audit.RedactCommand(call.Command)
+	case call.IsShell():
+		return call.Tool // the line itself goes through audit.RedactCommand at the deny
 	case call.Path != "":
 		return call.Path
 	}

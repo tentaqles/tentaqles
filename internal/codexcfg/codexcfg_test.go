@@ -95,6 +95,37 @@ func TestRenderRemovesOldBlocks(t *testing.T) {
 	}
 }
 
+// A marker with a trailing space, leading indent or CRLF still finds tq's
+// block and removes it; a marker tq cannot match (edited words) is a
+// conflict and leaves the file alone. Never an approval_policy left behind
+// with the conflict unreported.
+func TestRenderMarkerVariants(t *testing.T) {
+	block := "\napproval_policy = \"on-request\"\nsandbox_mode = \"workspace-write\"\n"
+	for name, old := range map[string]string{
+		"trailing space": beginMarker + "   " + block + endMarker + " \n" + user,
+		"indent":         "  " + beginMarker + block + "\t" + endMarker + "\n" + user,
+		"crlf":           beginMarker + "\r" + strings.ReplaceAll(block, "\n", "\r\n") + endMarker + "\r\n" + user,
+	} {
+		dir := write(t, old)
+		res, err := Render(dir, Want{}, false)
+		if err != nil || len(res.Conflicts) != 0 {
+			t.Fatalf("%s: %+v %v", name, res, err)
+		}
+		if got := read(t, dir); strings.Contains(got, "approval_policy") || strings.Contains(got, "managed by tq") {
+			t.Fatalf("%s: tq's block left behind:\n%q", name, got)
+		}
+	}
+	edited := "# >>> managed by  tq: edited\n" + block + endMarker + "\n" + user
+	dir := write(t, edited)
+	res, err := Render(dir, Want{}, false)
+	if err != nil || len(res.Conflicts) == 0 {
+		t.Fatalf("an edited marker must be a conflict: %+v %v", res, err)
+	}
+	if read(t, dir) != edited {
+		t.Fatal("a conflict leaves the file byte-identical")
+	}
+}
+
 func TestRenderRemovesOwnedProfileOnly(t *testing.T) {
 	owned := legacyBegin + "\napproval_policy = \"never\"\nsandbox_mode = \"read-only\"\n" + legacyEnd + "\n"
 	dir := write(t, user)

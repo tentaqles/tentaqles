@@ -16,13 +16,18 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   are gone; a rule whose action is not deny does not compile (`TestNoAskCodePath`,
   `TestNoAskVerdict`).
 - **Fail closed.** `pre-tool-use` denies a call it cannot judge with `tq/guard-error`: a
-  payload that is not valid JSON, `null`, empty or names no tool (it was allowed); a decision
-  that takes longer than 12 s, under the harness's own hook timeout; a `config.yaml` tq
-  cannot read; a folder whose marker or manifest is there but no usable manifest can be read
-  (a marker without its protected copy, a manifest that does not parse), for every tool,
-  until a human fixes it. A folder with no marker stays neutral. Under `--agent codex` every
-  deny writes the Codex deny JSON and exits 2. The plugin turns any other exit of tq into a
-  deny (`plugin/CHANGELOG.md`).
+  payload that is not valid JSON or UTF-8, `null`, empty or names no tool (it was allowed); a
+  shell tool without a string `command`, a path field that is not a string, a Read naming no
+  file, an unknown or lower-case tool that carries a command or a path; a decision past 9 s,
+  a process still running at 10 s, and a usage error of the hook command (`tq.RunMain`), all
+  under the harness hook timeouts (`TestHookDeadlinesUnderHarnessTimeouts`); a `config.yaml`
+  tq cannot read; a folder whose marker or manifest is there but no usable manifest can be
+  read, and a folder tq's evidence names as an identity (a signed record, the protected
+  manifest) whose marker, manifest or `config.yaml` entry is gone, for every tool, until a
+  human fixes it. A folder no evidence names stays neutral. Under `--agent codex` every deny
+  writes the Codex deny JSON and exits 2; the Codex launch is refused when `tq` is not on its
+  PATH. The plugin stops a hanging tq and turns any other exit into a deny
+  (`plugin/CHANGELOG.md`).
 - **The identity's scope in the deny.** An identity deny ends with `Scope of identity <name>:
   git <host>; cloud <provider>; MCP <servers>`, so the model reports the mistake instead of
   retrying.
@@ -30,19 +35,28 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   now has `category`, `rule`, `layer` (`hook`, `filesystem` for a protected path,
   `human-only`), `caller` (`harness`, `subagent` from the payload's `agent_id`, `no-tty`),
   `harness` (`claude`, `codex`), `tool`, `command`, `subject`, `reason`, `identity`, `cwd`,
-  `pid`. `command` is the shell line with here-doc and quoted bodies dropped, assignment and
-  credential-flag values masked, secret-shaped spans `[REDACTED:<pattern>]`, long tokens
-  `…`, cut to 240 characters. `kind` and `workspace` are renamed `category` and `identity`;
-  old lines still read.
+  `pid`. `command` is the shell line redacted by a structural rule: only operators, command
+  words, flag names, assignment names, variable references, the matched subject and a list of
+  subcommand words in the subcommand position are kept, every other word is `…` (0 leaks on
+  a 78-command corpus with secrets in every argument shape). Control characters are dropped.
+  The log rotates at 1 MiB into `denials.jsonl.1`. `kind` and `workspace` are renamed
+  `category` and `identity`; old lines still read.
 - **`tq status`**, the successor name of `tq doctor` (which stays): the doctor report, and with
   `--denials [--last N] [--identity <ws>] [--category <c>] [--json]` the newest entries of the
-  denial log. `--denials` refuses an agent session (it writes nothing and needs no terminal).
+  denial log, read a line at a time, every control character printed escaped. `--denials`
+  refuses an agent session (it writes nothing and needs no terminal).
 - **No permission settings.** `claude.permission_mode` and `claude.permissions` leave the
   manifest (an old manifest that has them loads; they are reported as dropped);
   `tq settings render` writes no `permissions.defaultMode`, no allow, deny or ask list (the
   allow and deny baselines are gone) and no `skipDangerousModePermissionPrompt`, and the next
-  render removes the ones tq wrote, keeping yours; Codex's `config.toml` gets no
-  `approval_policy`/`sandbox_mode`; `--permission-mode` leaves `tq add`, the setup wizard,
+  render removes the ones tq wrote, keeping yours (decided from evidence: the state file's
+  entries, the `defaultMode` an older render wrote for the manifest's old `permission_mode`;
+  a corrupt state file claims nothing). The deny baseline (`Read(~/.ssh/id_*)`,
+  `Bash(printenv)`, ...) goes too: the hook's secret rules cover it. Codex's `config.toml`
+  gets no `approval_policy`/`sandbox_mode` (its marker is found with white space ignored; an
+  edited marker is a conflict); the Codex launcher starts Codex with
+  `--dangerously-bypass-approvals-and-sandbox`, a typed approval or sandbox flag going
+  through as typed; `--permission-mode` leaves `tq add`, the setup wizard,
   `tq onboard`, setup plans and `pkg/setupapi`; the session preamble drops
   `permission_mode=`; doctor's `bypass-cloud` and `permission-mode-overridden` checks are gone.
   How the harness asks for permission is the harness's own setting.

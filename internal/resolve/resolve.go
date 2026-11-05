@@ -72,7 +72,41 @@ func norm(p string) string {
 }
 
 // Resolve is fail-closed: any doubt returns a nil Workspace with a Reason.
+//
+// A neutral result is Unreadable too when tq's own evidence says the folder
+// is an identity whose manifest is gone (ADR-0006): a folder under a base
+// with no marker or manifest left while identity <name> still has a signed
+// record or a protected manifest, and a folder outside every base (a
+// config.yaml that is missing or lost the base) that a signed record names
+// as its root.
 func Resolve(cwd string, cfg *registry.Config) Result {
+	r := resolveCwd(cwd, cfg)
+	if r.Workspace != nil || r.Untrusted != nil || r.Unreadable {
+		return r
+	}
+	if r.Name != "" {
+		if r.Reason == "no manifest" && (trust.HasSignedRecord(r.Name) || regularFile(paths.ManifestPath(r.Name))) {
+			r.Unreadable = true
+			r.Reason = fmt.Sprintf("the folder has no marker or manifest, but identity %s has a signed record or a protected manifest", r.Name)
+		}
+		return r
+	}
+	key := trust.Key(cwd)
+	for root, name := range trust.SignedRoots() {
+		if key == root || strings.HasPrefix(key, root+"/") {
+			return Result{Name: name, Unreadable: true, Reason: fmt.Sprintf(
+				"the folder is under no registered base (%s), but identity %s's signed record names it as its root", r.Reason, name)}
+		}
+	}
+	return r
+}
+
+func regularFile(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+func resolveCwd(cwd string, cfg *registry.Config) Result {
 	c := norm(cwd)
 	// Case-preserving (but symlink-resolved) form of cwd, used only to recover the
 	// on-disk-cased workspace name/root — never for the containment comparison.

@@ -49,11 +49,13 @@ prints them as a JSON array. It is human-only: a harness session is refused
 			if last < 0 {
 				return fmt.Errorf("--last must be 0 (all) or more")
 			}
-			ds, err := audit.ReadDenials()
+			ds, err := lastDenials(identity, category, last)
 			if err != nil {
 				return fmt.Errorf("reading the denial log: %w", err)
 			}
-			ds = filterDenials(ds, identity, category, last)
+			for i := range ds {
+				ds[i] = sanitizeDenial(ds[i])
+			}
 			if asJSON {
 				if ds == nil {
 					ds = []audit.Denial{}
@@ -75,23 +77,60 @@ prints them as a JSON array. It is human-only: a harness session is refused
 	return c
 }
 
-// filterDenials keeps the entries of identity and category (either empty:
-// any), then the newest last of them (0: all), oldest first.
-func filterDenials(ds []audit.Denial, identity, category string, last int) []audit.Denial {
+// lastDenials streams the log (audit.EachDenial) and keeps the newest last
+// entries of identity and category (either empty: any; last 0: all),
+// oldest first, without holding the whole log.
+func lastDenials(identity, category string, last int) ([]audit.Denial, error) {
 	var out []audit.Denial
-	for _, d := range ds {
+	err := audit.EachDenial(func(d audit.Denial) bool {
 		if identity != "" && !strings.EqualFold(d.Identity, identity) {
-			continue
+			return true
 		}
 		if category != "" && !strings.EqualFold(d.Category, category) {
-			continue
+			return true
 		}
 		out = append(out, d)
-	}
+		if last > 0 && len(out) > 2*last {
+			out = append(out[:0:0], out[len(out)-last:]...)
+		}
+		return true
+	})
 	if last > 0 && len(out) > last {
 		out = out[len(out)-last:]
 	}
-	return out
+	return out, err
+}
+
+// sanitizeDenial escapes every control character in every text field (C0
+// but the newline, DEL, C1: ESC, OSC, CSI, CR, BEL, ...), so a logged string
+// cannot drive the terminal that reads it (an OSC 52 clipboard write, a line
+// erase, a fake line). The newline survives only in the reason, which is
+// printed one line at a time; in the other fields it is escaped too.
+func sanitizeDenial(d audit.Denial) audit.Denial {
+	for _, f := range []*string{&d.Category, &d.Layer, &d.Caller, &d.Harness, &d.Tool, &d.Command, &d.Subject, &d.Rule, &d.Identity, &d.Cwd} {
+		*f = escapeControl(*f, false)
+	}
+	d.Reason = escapeControl(d.Reason, true)
+	return d
+}
+
+// escapeControl writes a C0 control character or DEL as \xNN and a C1
+// control character as \u00NN; keepNewline leaves a newline as it is.
+func escapeControl(s string, keepNewline bool) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' && keepNewline:
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case r >= 0x80 && r < 0xa0:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // printDenials prints each denial as a header line (time, identity,
@@ -118,7 +157,7 @@ func printDenials(w io.Writer, ds []audit.Denial) {
 		fmt.Fprintf(w, "%s  %s  %s  layer=%s  caller=%s  tool=%s\n", d.Time.Local().Format("2006-01-02 15:04:05"),
 			ident, rule, orDash(d.Layer), orDash(caller), orDash(d.Tool))
 		if d.Command != "" {
-			fmt.Fprintf(w, "    %s\n", strings.ReplaceAll(d.Command, "\n", " ⏎ "))
+			fmt.Fprintf(w, "    %s\n", d.Command)
 		}
 		reason, _, _ := strings.Cut(d.Reason, "\n")
 		fmt.Fprintf(w, "    %s\n", reason)

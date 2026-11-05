@@ -107,6 +107,11 @@ type Manifest struct {
 	// (the cut of 2026-11-03, docs/prd.md D-29, and the permission settings
 	// retired on 2026-11-05); loading never fails on them.
 	Ignored []string `yaml:"-"`
+	// OldPermissionMode is the claude.permission_mode an older manifest
+	// still carries ("" when none or not a string). tq never applies it: it
+	// is the evidence `tq settings render` needs to tell the defaultMode an
+	// older render wrote from one the user set (ADR-0006).
+	OldPermissionMode string `yaml:"-"`
 }
 
 // DroppedBlocks are the manifest blocks that tq 0.9.0 stops reading: the Jev
@@ -143,6 +148,19 @@ func droppedBlocksIn(raw []byte) []string {
 		}
 	}
 	return out
+}
+
+// oldPermissionMode reads claude.permission_mode out of raw, for evidence
+// only (Manifest.OldPermissionMode).
+func oldPermissionMode(raw []byte) string {
+	var top struct {
+		Claude map[string]any `yaml:"claude"`
+	}
+	if yaml.Unmarshal(raw, &top) != nil || top.Claude == nil {
+		return ""
+	}
+	s, _ := top.Claude["permission_mode"].(string)
+	return s
 }
 
 var secretRe = regexp.MustCompile(`(?i)\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9\-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,})`)
@@ -186,6 +204,7 @@ func Load(path string) (*Manifest, error) {
 	}
 	m.Path = path
 	m.Ignored = droppedBlocksIn(raw)
+	m.OldPermissionMode = oldPermissionMode(raw)
 	return &m, nil
 }
 

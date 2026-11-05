@@ -2,80 +2,39 @@ package codexcfg
 
 import "strings"
 
-// Codex values the launcher passes.
-const (
-	ApprovalOnRequest = "on-request"
-	SandboxWorkspace  = "workspace-write"
-	// BypassFlag is Codex's own bypass flag; tq never adds it, but a user who
-	// typed it keeps it (LaunchArgs).
-	BypassFlag = "--dangerously-bypass-approvals-and-sandbox"
-)
+// BypassFlag is Codex's full-bypass flag (DISCOVERY.md §4, Codex 0.154.0).
+const BypassFlag = "--dangerously-bypass-approvals-and-sandbox"
 
-// Plan is the approval and sandbox flags the launcher passes to Codex. tq
-// writes neither into config.toml.
-type Plan struct {
-	Approval string // -a
-	Sandbox  string // -s
-}
-
-// Pinned is the plan `tq run . -- codex` launches with: -a on-request
-// -s workspace-write, the launch Codex has always had under tq. tq's guard
-// (the identity and secret rules) runs through the PreToolUse hook.
-var Pinned = Plan{Approval: ApprovalOnRequest, Sandbox: SandboxWorkspace}
-
-// Flags are the launch flags for p (nil for a zero Plan).
-func (p Plan) Flags() []string {
-	var out []string
-	if p.Approval != "" {
-		out = append(out, "-a", p.Approval)
-	}
-	if p.Sandbox != "" {
-		out = append(out, "-s", p.Sandbox)
-	}
-	return out
-}
-
-// LaunchArgs prepends p's flags to a codex command line, leaving alone what
-// the user typed: an explicit -a/--ask-for-approval or approval_policy
-// override keeps its approval, an explicit -s/--sandbox or sandbox_mode
-// override keeps its sandbox, and a typed bypass flag (or --yolo) gets
-// nothing added.
-func LaunchArgs(p Plan, args []string) []string {
-	if p.Approval == "" && p.Sandbox == "" {
-		return args
-	}
-	userA, userS := false, false
+// LaunchArgs is the codex command line the launcher runs: BypassFlag first
+// (PRD v2 §7.2, the owner's decision of 2026-11-05), then what the
+// developer typed. tq never sets how Codex asks, so when the developer typed
+// a flag that does (-a/--ask-for-approval, -s/--sandbox, --full-auto,
+// --yolo, the bypass flag itself, or a -c/--config override of
+// approval_policy or sandbox_mode) the line goes through exactly as typed.
+// Arguments after `--` are not flags.
+func LaunchArgs(args []string) []string {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
 			break
 		}
 		switch {
-		case a == BypassFlag || a == "--yolo":
+		case a == BypassFlag || a == "--yolo" || a == "--full-auto",
+			a == "-a" || a == "--ask-for-approval" || strings.HasPrefix(a, "--ask-for-approval="),
+			a == "-s" || a == "--sandbox" || strings.HasPrefix(a, "--sandbox="):
 			return args
-		case a == "-a" || a == "--ask-for-approval" || strings.HasPrefix(a, "--ask-for-approval="):
-			userA = true
-		case a == "-s" || a == "--sandbox" || strings.HasPrefix(a, "--sandbox="):
-			userS = true
 		case a == "-c" || a == "--config":
-			if i+1 < len(args) {
-				userA = userA || configKey(args[i+1], "approval_policy")
-				userS = userS || configKey(args[i+1], "sandbox_mode")
+			if i+1 < len(args) && (configKey(args[i+1], "approval_policy") || configKey(args[i+1], "sandbox_mode")) {
+				return args
 			}
 		case strings.HasPrefix(a, "--config="):
 			v := strings.TrimPrefix(a, "--config=")
-			userA = userA || configKey(v, "approval_policy")
-			userS = userS || configKey(v, "sandbox_mode")
+			if configKey(v, "approval_policy") || configKey(v, "sandbox_mode") {
+				return args
+			}
 		}
 	}
-	var pre []string
-	if !userA && p.Approval != "" {
-		pre = append(pre, "-a", p.Approval)
-	}
-	if !userS && p.Sandbox != "" {
-		pre = append(pre, "-s", p.Sandbox)
-	}
-	return append(pre, args...)
+	return append([]string{BypassFlag}, args...)
 }
 
 func configKey(kv, key string) bool {
