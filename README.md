@@ -208,8 +208,9 @@ reference.
 | `tq hooks status` | Show install status (`installed`, `present (unmanaged)`, `missing`, `no profile`) for each known shell. |
 | `tq hooks install <shell...>` | Install tq's activation block into shell profile(s). `--all-detected` targets every detected shell. Human-only. |
 | `tq hooks remove <shell...>` | Remove tq's activation block from shell profile(s). `--all-detected` targets every detected shell. Human-only. |
+| `tq hooks verify [<name>]` | Check a workspace's signed integrity record against the files it covers (manifest, marker, Claude settings, the installed plugin's hooks and scripts, Codex hook files, shims, the tq binary) and list what changed; exit 1 on a mismatch. `--accept` signs the current state again (human-only). |
 | `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. Flags: `--base`, `--git-email` (required), `--git-name`, `--display-name`, `--color`, `--git-provider`, `--identities` (default `claude,gh`), `--permission-mode`. Human-only: a session is refused; you confirm, and the folder is trusted. |
-| `tq allow <name>` | Trust a workspace's current manifest, by hash, so it can export env. Human-only: it refuses an agent session. Editing the manifest drops the trust until `tq allow` runs again. |
+| `tq allow <name>` | Trust a workspace as it is now: signs the integrity record over the manifest, the identity's Claude settings and installed plugin hooks, the Codex hook files, the shims and the tq binary, so the workspace can export env. Human-only: it refuses an agent session. An edit to any covered file drops the trust until a human signs again (`tq allow`, or `tq hooks verify --accept`). |
 | `tq deny <name>` | Revoke trust for a workspace. Human-only. |
 | `tq list` | List workspaces under all registered bases. `--json` for machine-readable output. |
 | `tq env` | Print the env changes for the current directory (used by the shell hook). `--shell <name>`, `--json`. |
@@ -367,8 +368,15 @@ using) — or pass `--force` if you're sure it's safe.
 Machine-wide state lives under `~/.tentaqles/` (override with `$TQ_HOME`):
 
 - `~/.tentaqles/config.yaml` — the list of registered base folders.
-- `~/.tentaqles/trust/<sha256>` — one empty marker file per trusted manifest,
-  named after the manifest's SHA-256.
+- `~/.tentaqles/trust/<workspace>.json` — the signed integrity record of one
+  trusted workspace: the manifest's SHA-256 and the hash of every covered file
+  (marker, Claude settings, the installed plugin's hooks and scripts, Codex hook
+  files, shims, the tq binary), under an HMAC-SHA256 signature whose key sits in
+  the OS keychain (service `tentaqles`, account `integrity-key`; the fallback
+  `~/.tentaqles/integrity.key` is used only when the keychain is unavailable
+  and `tq doctor` warns about it). The markers of older versions
+  (`trust/<sha256>`, `trust/<workspace>/<sha256>`) still count until
+  `tq allow` or `tq migrate manifests` replaces them.
 - `~/.tentaqles/identities/<workspace>/<cli>/` — the private config home for
   one CLI in one workspace (`CLAUDE_CONFIG_DIR`, `GH_CONFIG_DIR`,
   `AZURE_CONFIG_DIR`, …), so credentials that `tq login` causes a CLI to write

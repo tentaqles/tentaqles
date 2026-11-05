@@ -293,20 +293,21 @@ func TestRunDotResolvesCwd(t *testing.T) {
 	}
 }
 
-func TestRunDotUntrustedRunsNeutralWithWarning(t *testing.T) {
+// tq run . in an untrusted workspace refuses: nothing launches, with or
+// without an identity (PRD v2 §8.3). A never-trusted folder names tq allow;
+// a mismatch names the changed file and tq hooks verify
+// (TestRun_RefusesOnIntegrityMismatch).
+func TestRunDotUntrustedRefuses(t *testing.T) {
 	root := mkUntrusted(t, "evil")
 	clearAgentMarkers(t)
 	chdir(t, root)
 	calls := fakeExec(t)
-	out, err := runTq(t, "run", ".", "--", "claude")
-	if err != nil {
-		t.Fatal(err)
+	_, err := runTq(t, "run", ".", "--", "claude")
+	if err == nil || !strings.Contains(err.Error(), "workspace evil is untrusted (run: tq allow evil)") {
+		t.Fatalf("want the refusal, got %v", err)
 	}
-	if !strings.Contains(out, "untrusted") || len(*calls) != 1 {
-		t.Fatalf("want a warning and a neutral launch: %q %+v", out, *calls)
-	}
-	if _, ok := (*calls)[0].env["TQ_WS"]; ok {
-		t.Fatal("an untrusted workspace's identity must not be applied")
+	if len(*calls) != 0 {
+		t.Fatalf("nothing may launch: %+v", *calls)
 	}
 }
 

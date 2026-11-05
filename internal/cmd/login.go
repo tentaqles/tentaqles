@@ -26,8 +26,8 @@ func newLoginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !trust.IsTrusted(ws.Name, ws.Hash) {
-				return fmt.Errorf("workspace %s is untrusted; run: tq allow %s", ws.Name, ws.Name)
+			if v := trust.Check(ws.Name, ws.Hash); !v.OK {
+				return fmt.Errorf("workspace %s is %s", ws.Name, v.Reason)
 			}
 			p, ok := envplan.Providers()[args[1]]
 			if !ok || p.LoginCmd == "" {

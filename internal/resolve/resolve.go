@@ -37,6 +37,11 @@ type Result struct {
 	// callers can name the workspace without parsing Reason; every fail-closed
 	// caller that only looks at Workspace is unaffected.
 	Untrusted *Workspace
+	// Mismatch is set with Untrusted when the workspace's signed integrity
+	// record exists but does not verify or match (a covered file changed):
+	// the fix is `tq hooks verify`, not `tq allow`, and Reason names the
+	// first changed file.
+	Mismatch bool
 }
 
 func norm(p string) string {
@@ -203,8 +208,10 @@ func load(base, root, name string) Result {
 	}
 	ws := &Workspace{Name: name, Root: root, Base: base, ManifestPath: loc.path, Hash: h, Manifest: m,
 		Protected: loc.protected, StaleRoot: loc.staleRoot}
-	if !trust.IsTrusted(name, h) {
-		return Result{Reason: fmt.Sprintf("untrusted (run: tq allow %s)", name), Untrusted: ws}
+	// The signed integrity record decides (trust.Check): the manifest hash,
+	// the hooks, the shims and the tq binary must be as a human signed them.
+	if v := trust.Check(name, h); !v.OK {
+		return Result{Reason: v.Reason, Untrusted: ws, Mismatch: v.Mismatch}
 	}
 	return Result{Workspace: ws}
 }

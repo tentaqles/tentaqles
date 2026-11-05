@@ -113,8 +113,13 @@ func TestManifests_MovesJournalsAndKeepsTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Changes) != 4 {
-		t.Fatalf("two changes per old-layout workspace, got %+v", p.Changes)
+	// Two changes per old-layout workspace, plus the re-signed integrity
+	// record of the trusted one (its marker and protected copy are covered).
+	if len(p.Changes) != 5 {
+		t.Fatalf("got %+v", p.Changes)
+	}
+	if p.Changes[4].Kind != kindSignIntegrity || p.Changes[4].Path != trust.SignedRecordPath("alpha") {
+		t.Fatalf("%+v", p.Changes[4])
 	}
 	if p.Changes[0].Kind != kindWriteProtectedManifest || p.Changes[0].Path != paths.ManifestPath("alpha") || !strings.Contains(p.Changes[0].Detail, "trust carries over") {
 		t.Fatalf("%+v", p.Changes[0])
@@ -154,11 +159,12 @@ func TestManifests_MovesJournalsAndKeepsTrust(t *testing.T) {
 	if rb.Workspace != nil || rb.Untrusted == nil || rb.Untrusted.Hash != betaHash || !rb.Untrusted.Protected {
 		t.Fatalf("beta: %+v", rb)
 	}
-	// Journaled: one write-file per protected copy, one per root rewrite.
-	if len(j.Entries) != 4 {
+	// Journaled: one write-file per protected copy, one per root rewrite,
+	// then the re-signed record of alpha with the old record backed up.
+	if len(j.Entries) != 5 {
 		t.Fatalf("entries = %+v", j.Entries)
 	}
-	for i, ent := range j.Entries {
+	for i, ent := range j.Entries[:4] {
 		if ent.Op != OpWriteFile || ent.Step != "manifests" {
 			t.Fatalf("entry %d: %+v", i, ent)
 		}
@@ -169,6 +175,12 @@ func TestManifests_MovesJournalsAndKeepsTrust(t *testing.T) {
 			t.Fatalf("the root file must be backed up: %+v", ent)
 		}
 	}
+	if ent := j.Entries[4]; ent.Op != OpWriteFile || ent.Args["Path"] != trust.SignedRecordPath("alpha") || ent.Args["Backup"] == "" {
+		t.Fatalf("the old record is backed up before the re-sign: %+v", ent)
+	}
+	if rep, err := trust.Verify("alpha"); err != nil || !rep.Trusted(alphaHash) {
+		t.Fatalf("alpha's record covers the moved files: %+v %v", rep, err)
+	}
 	if runtime.GOOS != "windows" {
 		if fi, _ := os.Stat(paths.ManifestPath("alpha")); fi.Mode().Perm() != 0o600 {
 			t.Fatalf("protected manifest mode %o, want 0600", fi.Mode().Perm())
@@ -177,22 +189,35 @@ func TestManifests_MovesJournalsAndKeepsTrust(t *testing.T) {
 			t.Fatalf("identities/alpha mode %o, want 0700 (it existed as 0755 before the move)", fi.Mode().Perm())
 		}
 	}
+	// Restore: the old record comes back with the old layout, and alpha is
+	// trusted as before.
+	if lines, err := j.Restore(Runner{}); err != nil {
+		t.Fatalf("%v\n%s", err, strings.Join(lines, "\n"))
+	}
+	if r := resolve.Resolve(filepath.Join(e.base, "alpha"), e.cfg); r.Workspace == nil || r.Workspace.Protected {
+		t.Fatalf("after restore alpha is the old layout and trusted: %+v", r)
+	}
 }
 
-// A hash-only trust record of an older tq is rekeyed by workspace name, for
-// a workspace in either layout, and carries over only for that name.
+// A trust marker of an older tq (hash-only trust/<hash>, or the name-keyed
+// trust/<name>/<hash>) is replaced by a signed integrity record, for a
+// workspace in either layout; the record counts only for that name, and a
+// restore brings the marker back.
 func TestManifests_RekeysLegacyTrustRecords(t *testing.T) {
 	e := newMfEnv(t)
 	alphaRoot, alphaHash := e.oldLayout("alpha", false)
 	e.legacyTrust(alphaHash)
-	gammaPP := e.protected("gamma") // keyed already by trust.Allow
+	gammaPP := e.protected("gamma") // signed already by trust.Allow
 	gammaHash, _ := trust.HashFile(gammaPP)
 	deltaPP := e.protected("delta")
 	deltaHash, _ := trust.HashFile(deltaPP)
-	os.Remove(trust.RecordPath("delta", deltaHash))
-	e.legacyTrust(deltaHash)
+	os.Remove(trust.SignedRecordPath("delta"))
+	stWrite(t, trust.RecordPath("delta", deltaHash), "")
 	if !trust.IsTrusted("alpha", alphaHash) || !trust.IsTrusted("evil", alphaHash) {
-		t.Fatal("precondition: a legacy record counts for any name until rekeyed")
+		t.Fatal("precondition: a hash-only marker counts for any name until replaced")
+	}
+	if !trust.IsTrusted("delta", deltaHash) || trust.IsTrusted("evil", deltaHash) {
+		t.Fatal("precondition: a name-keyed marker counts for its name")
 	}
 
 	st := stepRegistry["manifests"]
@@ -206,44 +231,54 @@ func TestManifests_RekeysLegacyTrustRecords(t *testing.T) {
 			rekeys = append(rekeys, c)
 		}
 	}
-	if len(rekeys) != 2 || rekeys[0].Path != trust.LegacyRecordPath(alphaHash) || !strings.Contains(rekeys[0].Detail, trust.RecordPath("alpha", alphaHash)) ||
-		rekeys[1].Path != trust.LegacyRecordPath(deltaHash) {
-		t.Fatalf("rekeys = %+v (gamma is keyed already)", rekeys)
+	if len(rekeys) != 2 || rekeys[0].Path != trust.LegacyRecordPath(alphaHash) || !strings.Contains(rekeys[0].Detail, trust.SignedRecordPath("alpha")) ||
+		rekeys[1].Path != trust.RecordPath("delta", deltaHash) || !strings.Contains(rekeys[1].Detail, trust.SignedRecordPath("delta")) {
+		t.Fatalf("rekeys = %+v (gamma is signed already)", rekeys)
+	}
+	for _, c := range p.Changes {
+		if c.Kind == kindSignIntegrity {
+			t.Fatalf("no workspace here has a signed record to re-sign: %+v", c)
+		}
 	}
 	j := e.journal()
 	if err := st.Apply(e.deps(), p, j); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range []struct{ name, hash string }{{"alpha", alphaHash}, {"delta", deltaHash}, {"gamma", gammaHash}} {
-		if !trust.HasRecord(c.name, c.hash) || trust.HasLegacyRecord(c.hash) {
-			t.Fatalf("%s: keyed record wanted, legacy record gone", c.name)
+		if !trust.HasRecord(c.name, c.hash) || trust.HasLegacyRecord(c.hash) || trust.HasLegacyNameRecord(c.name, c.hash) {
+			t.Fatalf("%s: signed record wanted, markers gone", c.name)
 		}
 		if trust.IsTrusted("evil", c.hash) {
 			t.Fatalf("%s's bytes must not be trusted under another name", c.name)
 		}
-	}
-	if runtime.GOOS != "windows" {
-		if fi, _ := os.Stat(filepath.Dir(trust.RecordPath("alpha", alphaHash))); fi.Mode().Perm() != 0o700 {
-			t.Fatalf("trust/alpha mode %o", fi.Mode().Perm())
+		if rep, err := trust.Verify(c.name); err != nil || !rep.Trusted(c.hash) {
+			t.Fatalf("%s: %+v %v", c.name, rep, err)
 		}
 	}
-	// alpha moved too and is still trusted, from the keyed record.
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(trust.SignedRecordPath("alpha")); fi.Mode().Perm() != 0o600 {
+			t.Fatalf("record mode %o", fi.Mode().Perm())
+		}
+	}
+	// alpha moved too and is still trusted, from the signed record, which
+	// covers the marker and the protected copy as they are after the move.
 	if r := resolve.Resolve(filepath.Join(e.base, "alpha"), e.cfg); r.Workspace == nil || !r.Workspace.Protected {
 		t.Fatalf("%+v", r)
 	}
 	_ = alphaRoot
 
-	// Restore: the legacy records come back, the keyed ones go.
+	// Restore: the markers come back, the signed records go.
 	if lines, err := j.Restore(Runner{}); err != nil {
 		t.Fatalf("%v\n%s", err, strings.Join(lines, "\n"))
 	}
-	for _, c := range []struct{ name, hash string }{{"alpha", alphaHash}, {"delta", deltaHash}} {
-		if trust.HasRecord(c.name, c.hash) || !trust.HasLegacyRecord(c.hash) {
-			t.Fatalf("%s: restore must put the legacy record back", c.name)
-		}
+	if trust.HasRecord("alpha", alphaHash) || !trust.HasLegacyRecord(alphaHash) {
+		t.Fatal("alpha: restore must put the hash-only marker back")
+	}
+	if trust.HasRecord("delta", deltaHash) || !trust.HasLegacyNameRecord("delta", deltaHash) {
+		t.Fatal("delta: restore must put the name-keyed marker back")
 	}
 	if !trust.HasRecord("gamma", gammaHash) {
-		t.Fatal("gamma's keyed record was never touched")
+		t.Fatal("gamma's signed record was never touched")
 	}
 }
 
@@ -279,8 +314,8 @@ func TestManifests_RefusesASymlinkedRootFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		leftOut(t, p, dir, "marker is not a regular file")
-		if len(p.Changes) != 2 {
-			t.Fatalf("alpha alone is planned: %+v", p.Changes)
+		if len(p.Changes) != 3 {
+			t.Fatalf("alpha alone is planned (its move and its re-signed record): %+v", p.Changes)
 		}
 		// A directory swapped in for alpha's root file after the plan.
 		os.Remove(alphaRoot)
@@ -314,8 +349,8 @@ func TestManifests_RefusesASymlinkedRootFile(t *testing.T) {
 		}
 		leftOut(t, p, marked, "protected manifest is not a regular file")
 		leftOut(t, p, filepath.Dir(oldRoot), "protected manifest is not a regular file")
-		if len(p.Changes) != 2 {
-			t.Fatalf("alpha alone is planned: %+v", p.Changes)
+		if len(p.Changes) != 3 {
+			t.Fatalf("alpha alone is planned (its move and its re-signed record): %+v", p.Changes)
 		}
 		if err := st.Apply(e.deps(), p, e.journal()); err != nil {
 			t.Fatal(err)
@@ -406,7 +441,10 @@ func TestManifests_StaleRootOnlyGetsTheMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Changes) != 1 || p.Changes[0].Kind != kindWriteMarker || p.Changes[0].Path != rootFile {
+	// The marker rewrite, then the re-signed record (acme is trusted and the
+	// root file is a covered path).
+	if len(p.Changes) != 2 || p.Changes[0].Kind != kindWriteMarker || p.Changes[0].Path != rootFile ||
+		p.Changes[1].Kind != kindSignIntegrity || p.Changes[1].Path != trust.SignedRecordPath("acme") {
 		t.Fatalf("%+v", p.Changes)
 	}
 	j := e.journal()
@@ -448,7 +486,7 @@ func TestManifests_RunIsDryByDefault(t *testing.T) {
 	before := stRead(t, alphaRoot)
 	steps, _ := Steps([]string{"manifests"})
 	plans, err := Run(e.deps(), steps, false, nil)
-	if err != nil || len(plans["manifests"].Changes) != 2 {
+	if err != nil || len(plans["manifests"].Changes) != 3 {
 		t.Fatalf("%v %+v", err, plans)
 	}
 	if stRead(t, alphaRoot) != before {

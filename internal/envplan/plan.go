@@ -67,6 +67,10 @@ type Ops struct {
 	Changed bool
 	From    string
 	To      string
+	// Warn is one line the shell prints on stderr at this prompt, whether
+	// or not anything changed: the integrity mismatch that keeps a
+	// workspace's identity out of the shell (tq env sets it).
+	Warn string
 }
 
 // Diff computes the shell operations to move from the current env to desired,

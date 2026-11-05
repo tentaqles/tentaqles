@@ -40,8 +40,12 @@ func newAllowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "allow <name>",
 		Short: "Trust a workspace's current manifest so it can export env (human only)",
-		Long: `tq allow <name> trusts the workspace manifest as it is now (a hash). An
-edited manifest is untrusted until tq allow runs again.
+		Long: `tq allow <name> trusts the workspace as it is now: it renders the identity's
+settings, then signs the integrity record over the manifest and the root
+marker, the enforcing keys of the identity's Claude settings.json, the
+installed tentaqles plugin's hooks, scripts and manifest, the Codex hook files
+and the shims (tq hooks verify lists them). An edit to any of them is
+untrusted until a human signs again (tq allow, or tq hooks verify --accept).
 
 Human-only: an agent session (Claude Code, Codex, a plugin hook) is refused,
 so a session can never trust a folder itself; you confirm before the trust
@@ -51,28 +55,30 @@ is written.`,
 			if err := refuseAgent("tq allow"); err != nil {
 				return err
 			}
-			ws, err := trustWorkspace(c, args[0])
-			if err != nil {
-				return err
-			}
-			// Re-render the identity files for the manifest as trusted now.
-			renderIdentityFiles(c, ws)
-			return nil
+			_, err := trustWorkspace(c, args[0], "tq allow")
+			return err
 		},
 	}
 }
 
-// trustWorkspace trusts name's current manifest and syncs the git includes,
-// once the human confirms.
-func trustWorkspace(c *cobra.Command, name string) (*resolve.Workspace, error) {
+// trustWorkspace signs name's current state as trusted, once the human
+// confirms (what names the command in the gate: tq allow, or tq hooks
+// verify --accept). The identity files are rendered first, for a workspace
+// that is not trusted yet too, because the record covers them
+// (settings.json#tq, the Codex hook files); the record is then signed once,
+// over the files as rendered; the git includes, which list only trusted
+// workspaces, are synced last.
+func trustWorkspace(c *cobra.Command, name, what string) (*resolve.Workspace, error) {
 	ws, err := findWorkspace(name)
 	if err != nil {
 		return nil, err
 	}
-	about := fmt.Sprintf("tq allow: about to trust %s's manifest as it is now (%s) in %s and rewrite the git include list", ws.Name, ws.Hash[:12], paths.TrustDir())
-	if err := humanGate(c, "tq allow", about); err != nil {
+	about := fmt.Sprintf("%s: about to render %s's identity settings, sign its integrity record over the manifest (%s) and the hook files as they are now in %s, and rewrite the git include list",
+		what, ws.Name, ws.Hash[:12], trust.SignedRecordPath(ws.Name))
+	if err := humanGate(c, what, about); err != nil {
 		return nil, err
 	}
+	renderIdentityFilesFor(c, ws, true)
 	if err := trust.Allow(ws.Name, ws.Hash); err != nil {
 		return nil, err
 	}

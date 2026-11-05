@@ -37,7 +37,7 @@ func newHooksCmd() *cobra.Command {
 		Use:   "hooks",
 		Short: "Manage tq's shell activation hook in your profile files (install and remove are human only)",
 	}
-	cmd.AddCommand(newHooksStatusCmd(), newHooksInstallCmd(), newHooksRemoveCmd())
+	cmd.AddCommand(newHooksStatusCmd(), newHooksInstallCmd(), newHooksRemoveCmd(), newHooksVerifyCmd())
 	return cmd
 }
 

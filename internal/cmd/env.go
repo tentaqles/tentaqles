@@ -39,8 +39,15 @@ func newEnvCmd() *cobra.Command {
 			if ops.Changed && ops.From != ops.To {
 				_ = audit.Append(audit.Event{Kind: "switch", From: ops.From, To: ops.To, Cwd: cwd, Reason: res.Reason})
 			}
+			// An integrity mismatch keeps the identity out (no env is
+			// desired for an untrusted workspace) and says so at every
+			// prompt, the way direnv nags until `direnv allow`: one line
+			// naming the first changed file and the command to run.
+			if res.Untrusted != nil && res.Mismatch {
+				ops.Warn = "tq: " + res.Untrusted.Name + " " + res.Reason
+			}
 			if asJSON {
-				return json.NewEncoder(c.OutOrStdout()).Encode(map[string]any{"workspace": wsName(res), "reason": res.Reason, "set": ops.Set, "unset": ops.Unset})
+				return json.NewEncoder(c.OutOrStdout()).Encode(map[string]any{"workspace": wsName(res), "reason": res.Reason, "set": ops.Set, "unset": ops.Unset, "warning": ops.Warn})
 			}
 			out, err := shell.Emit(sh, ops)
 			if err != nil {

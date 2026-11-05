@@ -105,7 +105,6 @@ def test_guard_does_not_import_tentaqles():
 def test_tq_hook_falls_back_when_tq_missing(tmp_path):
     env = hook_env(
         tmp_path,
-        TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -126,7 +125,6 @@ def test_tq_hook_falls_back_when_tq_missing(tmp_path):
 def test_tq_hook_session_start_fallback_message(tmp_path):
     env = hook_env(
         tmp_path,
-        TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -168,7 +166,6 @@ def test_tq_hook_blocks_when_no_python(tmp_path):
     env = hook_env(
         tmp_path,
         with_python=False,
-        TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -200,7 +197,6 @@ def _no_python_env(tmp_path):
     env = hook_env(
         tmp_path,
         with_python=False,
-        TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -259,12 +255,11 @@ def test_tq_hook_unknown_event_blocks(tmp_path):
 @pytest.mark.skipif(BASH is None, reason="needs bash")
 def test_tq_hook_falls_through_when_tq_not_executable(tmp_path):
     """A resolved-but-unrunnable tq (exit 126/127) must fall back, not pass."""
-    broken = tmp_path / "tq"
+    broken = tmp_path / "tq"  # found on PATH (hook_env puts tmp_path there)
     broken.write_text("not-an-executable" + chr(10))
     broken.chmod(0o755)
     env = hook_env(
         tmp_path,
-        TQ_BIN=str(broken),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -287,7 +282,7 @@ def test_tq_hook_execs_tq_when_present(tmp_path):
     fake = tmp_path / "tq"
     fake.write_text('#!/bin/sh\necho "argv:$*"; cat; exit 0\n')
     fake.chmod(0o755)
-    env = hook_env(tmp_path, TQ_BIN=str(fake), CLAUDE_PLUGIN_ROOT=str(ROOT))
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))  # the fake tq is on PATH
     p = subprocess.run(
         [BASH, str(HOOK), "session-start"],
         input="{}",
@@ -327,7 +322,7 @@ def test_tq_hook_refuses_the_retired_events(tmp_path, event):
     fake = tmp_path / "tq"
     fake.write_text('#!/bin/sh\necho ran\n')
     fake.chmod(0o755)
-    env = hook_env(tmp_path, TQ_BIN=str(fake), CLAUDE_PLUGIN_ROOT=str(ROOT))
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))  # the fake tq is on PATH
     p = subprocess.run(
         [BASH, str(HOOK), event], input="{}", capture_output=True, text=True, env=env
     )

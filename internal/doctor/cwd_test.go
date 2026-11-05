@@ -3,6 +3,7 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
@@ -36,6 +37,11 @@ func setupTrustedWorkspace(t *testing.T, name, email string) (*registry.Config, 
 	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
+	// On disk too: the integrity record finds the workspace root through
+	// the registry (trust.Covered).
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
 	root := filepath.Join(base, name)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
@@ -224,11 +230,27 @@ func TestRunForCwd_UntrustedIsStructural(t *testing.T) {
 		RunGitIn: func(string, ...string) (string, error) { return "", nil },
 		LookPath: func(string) (string, error) { return "/usr/bin/git", nil }}
 	r := RunForCwd(cfg, d)
-	if r.Result.Workspace != nil || r.Result.Untrusted == nil || r.Result.Untrusted.Name != "acme" {
-		t.Fatalf("expected structural Untrusted, got %+v", r.Result)
+	if r.Result.Workspace != nil || r.Result.Untrusted == nil || r.Result.Untrusted.Name != "acme" || !r.Result.Mismatch {
+		t.Fatalf("expected structural Untrusted with Mismatch, got %+v", r.Result)
 	}
-	if !contains(r.Codes(), "untrusted") {
+	// An edit after tq allow is an integrity mismatch (the signed record
+	// exists and names the manifest), not a plain untrusted: the fix is
+	// tq hooks verify, not tq allow.
+	if !contains(r.Codes(), "integrity") || contains(r.Codes(), "untrusted") {
 		t.Fatalf("codes %v", r.Codes())
+	}
+	for _, f := range r.Findings {
+		if f.Code == "integrity" && (!strings.Contains(f.Msg, "changed "+mp) || !strings.Contains(f.Fix, "tq hooks verify acme")) {
+			t.Fatalf("the finding names the manifest and tq hooks verify: %+v", f)
+		}
+	}
+	// Never allowed: plain untrusted, fix tq allow.
+	if err := os.Remove(trust.SignedRecordPath("acme")); err != nil {
+		t.Fatal(err)
+	}
+	r = RunForCwd(cfg, d)
+	if r.Result.Mismatch || !contains(r.Codes(), "untrusted") || contains(r.Codes(), "integrity") {
+		t.Fatalf("%+v %v", r.Result, r.Codes())
 	}
 }
 

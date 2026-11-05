@@ -162,8 +162,11 @@ func execIn(ws *resolve.Workspace, name string, args []string, applyClaudeArgs b
 }
 
 // cwdWorkspace resolves `.`: the current folder's trusted workspace, or nil
-// (neutral) with a warning when it is untrusted or invalid.
-func cwdWorkspace(warn func(string)) (*resolve.Workspace, error) {
+// when the folder is neutral. A folder that is a workspace but untrusted
+// is refused (PRD v2 §8.3): the reason names the first changed file and
+// the command that fixes it (tq hooks verify after a mismatch, tq allow
+// for a never-trusted one). Nothing launches without the identity.
+func cwdWorkspace() (*resolve.Workspace, error) {
 	cfg, err := registry.Load()
 	if err != nil {
 		return nil, err
@@ -171,7 +174,7 @@ func cwdWorkspace(warn func(string)) (*resolve.Workspace, error) {
 	cwd, _ := os.Getwd()
 	res := resolve.Resolve(cwd, cfg)
 	if res.Workspace == nil && res.Untrusted != nil {
-		warn(fmt.Sprintf("workspace %s is untrusted; running without its identity (tq allow %s)", res.Untrusted.Name, res.Untrusted.Name))
+		return nil, fmt.Errorf("workspace %s is %s", res.Untrusted.Name, res.Reason)
 	}
 	return res.Workspace, nil
 }
@@ -188,7 +191,6 @@ func newRunCmd() *cobra.Command {
 		Example: "  tq run acme -- claude\n  tq run . -- claude -p \"...\"\n  tq run --off -- claude",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			warn := func(s string) { fmt.Fprintln(c.ErrOrStderr(), "warning:", s) }
 			if off {
 				if c.ArgsLenAtDash() > 0 {
 					return errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")
@@ -208,7 +210,7 @@ func newRunCmd() *cobra.Command {
 			}
 			var ws *resolve.Workspace
 			if args[0] == "." {
-				w, err := cwdWorkspace(warn)
+				w, err := cwdWorkspace()
 				if err != nil {
 					return err
 				}
@@ -218,8 +220,8 @@ func newRunCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if !trust.IsTrusted(w.Name, w.Hash) {
-					return fmt.Errorf("workspace %s is untrusted; run: tq allow %s", w.Name, w.Name)
+				if v := trust.Check(w.Name, w.Hash); !v.OK {
+					return fmt.Errorf("workspace %s is %s", w.Name, v.Reason)
 				}
 				ws = w
 			}

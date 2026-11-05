@@ -86,8 +86,8 @@ Human-only: a session is refused, and you confirm before the files are written
 					continue
 				}
 				n++
-				if !trust.IsTrusted(ws.Name, ws.Hash) {
-					fmt.Fprintf(c.OutOrStdout(), "%s: skipped (manifest not trusted; run tq allow %s)\n", ws.Name, ws.Name)
+				if v := trust.Check(ws.Name, ws.Hash); !v.OK {
+					fmt.Fprintf(c.OutOrStdout(), "%s: skipped (%s)\n", ws.Name, v.Reason)
 					continue
 				}
 				dir := paths.IdentityDir(ws.Name, "claude")
@@ -107,7 +107,13 @@ Human-only: a session is refused, and you confirm before the files are written
 				for _, ch := range res.Changes {
 					fmt.Fprintf(c.OutOrStdout(), "  %s\n", ch)
 				}
-				renderCodex(c, ws, dryRun)
+				codexChanged := renderCodex(c, ws, dryRun)
+				if !dryRun && (res.Changed || codexChanged) {
+					// settings.json and the Codex files are covered by the
+					// integrity record: a human's render signs it again,
+					// an agent session leaves it stale.
+					resignCovered(c, ws)
+				}
 			}
 			if n == 0 {
 				return fmt.Errorf("no matching workspace")
@@ -134,15 +140,23 @@ func statuslineExe() string {
 	return ""
 }
 
-// renderIdentityFiles re-renders ws's Claude identity settings and its Codex
-// files after a trust change, so they match at once rather than at the next
-// tq settings render. Errors are warnings: the trust is already written,
-// and tq doctor reports the drift.
+// renderIdentityFiles re-renders ws's Claude identity settings (for a
+// trusted workspace) and its Codex files after a trust change, so they
+// match at once rather than at the next tq settings render. Errors are
+// warnings: tq doctor reports the drift.
 func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
+	renderIdentityFilesFor(c, ws, false)
+}
+
+// renderIdentityFilesFor is renderIdentityFiles; force renders the Claude
+// settings whether or not ws is trusted yet. tq allow forces it: it renders
+// for the manifest it is about to sign, before the record that covers the
+// rendered files is written.
+func renderIdentityFilesFor(c *cobra.Command, ws *resolve.Workspace, force bool) {
 	if ws == nil {
 		return
 	}
-	if trust.IsTrusted(ws.Name, ws.Hash) {
+	if force || trust.IsTrusted(ws.Name, ws.Hash) {
 		dir := paths.IdentityDir(ws.Name, "claude")
 		if _, err := os.Stat(dir); err == nil {
 			d := claudesettings.Desired(ws.Manifest, statuslineExe())
@@ -152,6 +166,24 @@ func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
 		}
 	}
 	renderCodex(c, ws, false)
+}
+
+// resignCovered signs ws's integrity record again after a tq command wrote
+// a covered file (settings.json#tq, the Codex hook files) for a workspace
+// that was trusted when the command started. Signing is a human act and
+// takes the same gate as tq allow (refuseAgent: the three detectors); a
+// refused re-sign leaves the record stale and names what the human runs.
+func resignCovered(c *cobra.Command, ws *resolve.Workspace) {
+	if ws == nil {
+		return
+	}
+	if err := refuseAgent("tq: sign the integrity record of " + ws.Name); err != nil {
+		fmt.Fprintf(c.ErrOrStderr(), "%s: a covered file changed but the integrity record was not signed again (%v); it is stale until a human runs: tq hooks verify --accept %s\n", ws.Name, err, ws.Name)
+		return
+	}
+	if err := trust.Allow(ws.Name, ws.Hash); err != nil {
+		fmt.Fprintf(c.ErrOrStderr(), "warning: %s: integrity record not signed again: %v (run tq hooks verify --accept %s)\n", ws.Name, err, ws.Name)
+	}
 }
 
 func newStatuslineCmd() *cobra.Command {

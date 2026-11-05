@@ -138,6 +138,29 @@ func stripLegacyRules(s string) (string, bool) {
 	return rest, true
 }
 
+// ManagedBlock returns the block tq owns in a config.toml's content (the
+// current markers, both lines included) and whether there is one. The
+// integrity record (internal/trust) covers that block and nothing else of
+// the file, which is otherwise the user's.
+func ManagedBlock(content string) (string, bool) {
+	var b strings.Builder
+	in := false
+	for _, l := range strings.SplitAfter(content, "\n") {
+		t := strings.TrimRight(l, "\r\n")
+		switch {
+		case t == beginMarker:
+			in = true
+			b.WriteString(l)
+		case t == endMarker && in:
+			b.WriteString(l)
+			return b.String(), true
+		case in:
+			b.WriteString(l)
+		}
+	}
+	return "", false
+}
+
 func readOpt(p string) (string, bool, error) {
 	b, err := os.ReadFile(p)
 	if os.IsNotExist(err) {

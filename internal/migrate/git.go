@@ -39,7 +39,7 @@ var stepChangeKinds = []string{
 	kindRemoveLink, kindMoveDir, kindMakeLink,
 	kindUnsetGlobal, kindSetGlobal, kindRemoveIncludeIf, kindRemoveInclude,
 	kindAddInclude, kindRewriteWSFile, kindSyncIncludeFile,
-	kindWriteProtectedManifest, kindWriteMarker, kindRekeyTrust,
+	kindWriteProtectedManifest, kindWriteMarker, kindRekeyTrust, kindSignIntegrity,
 }
 
 // gitStep takes the hand-rolled git identity setup -- a global user.email, one

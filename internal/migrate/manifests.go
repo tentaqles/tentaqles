@@ -21,6 +21,7 @@ const (
 	kindWriteProtectedManifest = "write-protected-manifest"
 	kindWriteMarker            = "write-marker"
 	kindRekeyTrust             = "rekey-trust"
+	kindSignIntegrity          = "sign-integrity"
 )
 
 // manifestsStep moves each old-layout manifest out of its identity root into
@@ -29,14 +30,16 @@ const (
 // root file is rewritten as the name-only marker. A full manifest left in
 // the root next to a protected copy (StaleRoot) only gets the marker rewrite.
 //
-// Trust is the hash of the manifest's bytes, and the bytes do not change, so
-// a trusted manifest stays trusted after the move and an untrusted one stays
-// untrusted. What the step does rekey is a trust record of an older tq
-// (trust/<hash>, keyed by the hash alone): it becomes trust/<name>/<hash>,
-// keyed by the workspace name too, for every workspace that has one, in
-// either layout. Every write is journaled before it happens, so
-// `tq uninstall --restore` puts the manifest back in the root, removes the
-// protected copy and restores the old trust record.
+// The manifest's bytes do not change, so neither does its hash: a trusted
+// manifest stays trusted after the move and an untrusted one stays
+// untrusted. A workspace with a signed integrity record (ADR-0004) gets it
+// signed again after the move, since the marker and the protected copy are
+// covered files (sign-integrity, the old record backed up). A workspace
+// trusted through a marker of an older tq (trust/<hash> or
+// trust/<name>/<hash>) gets a signed record instead (rekey-trust), in either
+// layout. Every write is journaled before it happens, so `tq uninstall
+// --restore` puts the manifest back in the root, removes the protected copy
+// and restores the old trust record.
 //
 // The step is never in the default --steps: an identity changes layout only
 // when the human asks (PRD v2 §13, "behind a flag").
@@ -52,10 +55,17 @@ type mfAction struct {
 	// protected location first; false means the protected copy already
 	// exists and only the root file is rewritten as the marker.
 	copy bool
+	// resign says the workspace has a signed integrity record, to sign
+	// again once the files it covers have moved.
+	resign bool
 }
 
-// rekeyAction is one legacy trust record to key by workspace name.
-type rekeyAction struct{ ws, hash string }
+// rekeyAction is one workspace trusted through legacy markers (the paths
+// in legacy) that gets a signed integrity record instead.
+type rekeyAction struct {
+	ws, hash string
+	legacy   []string
+}
 
 // mfPlan is what planManifests derives: the plan and the typed actions
 // behind it.
@@ -87,6 +97,16 @@ func (manifestsStep) Apply(d Deps, p Plan, j *Journal) error {
 			return fmt.Errorf("manifests %s: %w", a.ws, err)
 		}
 	}
+	// The records are signed after every move: they cover the marker and
+	// the protected copy as they are now.
+	for _, a := range fresh.acts {
+		if !a.resign {
+			continue
+		}
+		if err := applyResign(a, j); err != nil {
+			return fmt.Errorf("manifests %s: %w", a.ws, err)
+		}
+	}
 	for _, r := range fresh.rekeys {
 		if err := applyRekey(r, j); err != nil {
 			return fmt.Errorf("manifests %s: %w", r.ws, err)
@@ -107,16 +127,26 @@ func planManifests(d Deps) (mfPlan, error) {
 	}
 	for _, w := range all {
 		pp := paths.ManifestPath(w.Name)
+		signed := trust.HasRecord(w.Name, w.Hash)
 		switch {
 		case w.StaleRoot != "":
-			mp.acts = append(mp.acts, mfAction{ws: w.Name, rootFile: w.StaleRoot, protected: pp})
+			mp.acts = append(mp.acts, mfAction{ws: w.Name, rootFile: w.StaleRoot, protected: pp, hash: w.Hash, resign: signed})
 		case !w.Protected:
-			mp.acts = append(mp.acts, mfAction{ws: w.Name, rootFile: w.ManifestPath, protected: pp, hash: w.Hash, trusted: trust.IsTrusted(w.Name, w.Hash), copy: true})
+			mp.acts = append(mp.acts, mfAction{ws: w.Name, rootFile: w.ManifestPath, protected: pp, hash: w.Hash, trusted: trust.IsTrusted(w.Name, w.Hash), copy: true, resign: signed})
 		default:
 			p.Skipped = append(p.Skipped, fmt.Sprintf("workspace %s: manifest already protected (%s)", w.Name, w.ManifestPath))
 		}
-		if trust.HasLegacyRecord(w.Hash) && !trust.HasRecord(w.Name, w.Hash) {
-			mp.rekeys = append(mp.rekeys, rekeyAction{ws: w.Name, hash: w.Hash})
+		if !signed {
+			var legacy []string
+			if trust.HasLegacyRecord(w.Hash) {
+				legacy = append(legacy, trust.LegacyRecordPath(w.Hash))
+			}
+			if trust.HasLegacyNameRecord(w.Name, w.Hash) {
+				legacy = append(legacy, trust.RecordPath(w.Name, w.Hash))
+			}
+			if len(legacy) > 0 {
+				mp.rekeys = append(mp.rekeys, rekeyAction{ws: w.Name, hash: w.Hash, legacy: legacy})
+			}
 		}
 	}
 	for _, a := range mp.acts {
@@ -130,9 +160,17 @@ func planManifests(d Deps) (mfPlan, error) {
 		p.Changes = append(p.Changes, Change{Step: "manifests", Kind: kindWriteMarker, Path: a.rootFile,
 			Detail: "replace the manifest with the name-only marker (client: " + a.ws + ")", Danger: true})
 	}
+	for _, a := range mp.acts {
+		if a.resign {
+			p.Changes = append(p.Changes, Change{Step: "manifests", Kind: kindSignIntegrity, Path: trust.SignedRecordPath(a.ws),
+				Detail: "sign the integrity record again after the move (the marker and the protected copy are covered files)"})
+		}
+	}
 	for _, r := range mp.rekeys {
-		p.Changes = append(p.Changes, Change{Step: "manifests", Kind: kindRekeyTrust, Path: trust.LegacyRecordPath(r.hash),
-			Detail: "trust record keyed by workspace name too: " + trust.RecordPath(r.ws, r.hash)})
+		for _, legacy := range r.legacy {
+			p.Changes = append(p.Changes, Change{Step: "manifests", Kind: kindRekeyTrust, Path: legacy,
+				Detail: "replaced by the signed integrity record " + trust.SignedRecordPath(r.ws)})
+		}
 	}
 	return mp, nil
 }
@@ -191,36 +229,65 @@ func applyManifest(a mfAction, j *Journal) error {
 	return writeFileSync(a.rootFile, manifest.MarkerBytes(a.ws), mode)
 }
 
-// applyRekey turns a legacy trust record into a name-keyed one: record and
-// write trust/<name>/<hash>, then back up, record and delete trust/<hash>.
-// Reversed newest first, a restore brings the legacy record back and
-// removes the keyed one.
-func applyRekey(r rekeyAction, j *Journal) error {
-	keyed, legacy := trust.RecordPath(r.ws, r.hash), trust.LegacyRecordPath(r.hash)
-	if _, err := os.Lstat(keyed); err == nil {
-		return fmt.Errorf("%s already exists; re-run tq migrate", keyed)
-	}
-	if err := j.RecordWriteFile("manifests", keyed, Backup{}); err != nil {
-		return err
-	}
-	if err := protect.MkdirPrivate(filepath.Dir(keyed)); err != nil {
-		return err
-	}
-	if err := writeFileSync(keyed, nil, 0o600); err != nil {
-		return err
-	}
-	b, err := j.BackupFile(legacy)
+// applyResign signs a workspace's integrity record again, after its files
+// moved: the old record is backed up and recorded, then the new one is
+// written. Reversed, a restore puts the old record back, which matches the
+// restored layout.
+func applyResign(a mfAction, j *Journal) error {
+	signed := trust.SignedRecordPath(a.ws)
+	b, err := j.BackupFile(signed)
 	if err != nil {
 		return err
 	}
 	if b.Rel == "" {
-		return fmt.Errorf("%s vanished since the plan was computed; re-run tq migrate", legacy)
+		return fmt.Errorf("%s vanished since the plan was computed; re-run tq migrate", signed)
 	}
-	if err := j.RecordDeleteFile("manifests", legacy, b); err != nil {
+	raw, err := trust.SignRecord(a.ws, a.hash)
+	if err != nil {
 		return err
 	}
-	if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
+	if err := j.RecordWriteFile("manifests", signed, b); err != nil {
 		return err
+	}
+	return writeFileSync(signed, raw, 0o600)
+}
+
+// applyRekey turns legacy trust markers into a signed integrity record:
+// record and write trust/<name>.json, then back up, record and delete each
+// marker. Reversed newest first, a restore brings the markers back and
+// removes the signed record.
+func applyRekey(r rekeyAction, j *Journal) error {
+	signed := trust.SignedRecordPath(r.ws)
+	if _, err := os.Lstat(signed); err == nil {
+		return fmt.Errorf("%s already exists; re-run tq migrate", signed)
+	}
+	raw, err := trust.SignRecord(r.ws, r.hash)
+	if err != nil {
+		return err
+	}
+	if err := j.RecordWriteFile("manifests", signed, Backup{}); err != nil {
+		return err
+	}
+	if err := protect.MkdirPrivate(filepath.Dir(signed)); err != nil {
+		return err
+	}
+	if err := writeFileSync(signed, raw, 0o600); err != nil {
+		return err
+	}
+	for _, legacy := range r.legacy {
+		b, err := j.BackupFile(legacy)
+		if err != nil {
+			return err
+		}
+		if b.Rel == "" {
+			return fmt.Errorf("%s vanished since the plan was computed; re-run tq migrate", legacy)
+		}
+		if err := j.RecordDeleteFile("manifests", legacy, b); err != nil {
+			return err
+		}
+		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }

@@ -638,7 +638,7 @@ func TestSortedChangeKindsAreStable(t *testing.T) {
 	// kinds the identity, git and manifests steps emit is part of the contract.
 	want := []string{
 		"add-include", "make-link", "move-dir", "rekey-trust", "remove-include", "remove-includeif",
-		"remove-link", "rewrite-ws-file", "set-global", "sync-include-file", "unset-global",
+		"remove-link", "rewrite-ws-file", "set-global", "sign-integrity", "sync-include-file", "unset-global",
 		"write-marker", "write-protected-manifest",
 	}
 	got := append([]string(nil), stepChangeKinds...)

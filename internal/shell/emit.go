@@ -37,6 +37,9 @@ func checkOps(ops envplan.Ops) error {
 			return fmt.Errorf("refusing to emit: value for %s contains a line break or NUL", k)
 		}
 	}
+	if strings.ContainsAny(ops.Warn, "\r\n\x00") {
+		return fmt.Errorf("refusing to emit: the warning contains a line break or NUL")
+	}
 	return nil
 }
 
@@ -62,7 +65,7 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 	if err := checkOps(ops); err != nil {
 		return "", err
 	}
-	if !ops.Changed {
+	if !ops.Changed && ops.Warn == "" {
 		return "", nil
 	}
 	if sh == "cmd" {
@@ -73,16 +76,38 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 		}
 	}
 	var b strings.Builder
-	for _, k := range ops.Unset {
-		b.WriteString(unset(k) + "\n")
+	if ops.Changed {
+		for _, k := range ops.Unset {
+			b.WriteString(unset(k) + "\n")
+		}
+		keys := make([]string, 0, len(ops.Set))
+		for k := range ops.Set {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(set(k, ops.Set[k]) + "\n")
+		}
 	}
-	keys := make([]string, 0, len(ops.Set))
-	for k := range ops.Set {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		b.WriteString(set(k, ops.Set[k]) + "\n")
+	if ops.Warn != "" {
+		b.WriteString(warn(sh, ops.Warn) + "\n")
 	}
 	return b.String(), nil
+}
+
+// warn is the shell line that prints msg on stderr. msg holds no line
+// break (checkOps); for cmd the characters it cannot print plainly are
+// escaped.
+func warn(sh, msg string) string {
+	switch sh {
+	case "fish":
+		return "printf '%s\\n' " + fishq(msg) + " >&2"
+	case "pwsh", "powershell":
+		return "[Console]::Error.WriteLine(" + psq(msg) + ")"
+	case "cmd":
+		r := strings.NewReplacer("^", "^^", "&", "^&", "|", "^|", "<", "^<", ">", "^>", "%", "%%", "(", "^(", ")", "^)")
+		return "echo " + r.Replace(msg) + " 1>&2"
+	default: // bash, zsh
+		return "printf '%s\\n' " + sq(msg) + " >&2"
+	}
 }

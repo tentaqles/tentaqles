@@ -6,6 +6,11 @@ Releases before 0.16.0 are described on the
 
 ## [Unreleased]
 
+- **`tq_hook.sh` no longer honours `TQ_BIN` (ADR-0004).** An agent can set a variable, and
+  the tq that enforces must not be its choice: the binary is the plugin's own `bin/tq`, then
+  PATH, then the well-known install dirs, and the one that runs is a covered file of the
+  signed integrity record (`tq hooks verify`). The fail-closed fallback is unchanged
+  (`tests/test_tq_off.py::test_tq_bin_is_not_honoured`).
 - **The protected manifest location (ADR-0002).** `tentaqles.manifest.loader` resolves a
   root marker (`schema: tentaqles-marker-v1`) to `$TQ_HOME/identities/<name>/manifest.yaml`
   (`~/.tentaqles` when `TQ_HOME` is unset); `_manifest_path` is the file loaded and

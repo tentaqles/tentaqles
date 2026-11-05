@@ -41,7 +41,10 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     read from the controlling terminal. The seams `IsTerminal`, `ParentOf` and
     `Confirm` are what tests replace (`internal/cmd/main_test.go` sets the human
     baseline for the whole cmd suite).
-  - `internal/trust/` (manifest trust by file hash), `internal/manifest/` (the manifest,
+  - `internal/trust/` (the signed integrity record per workspace, `trust/<name>.json`:
+    manifest, marker, Claude settings, the installed plugin's hooks and scripts, Codex hook
+    files, shims and the tq binary under an HMAC whose key is in the OS keychain; ADR-0004),
+    `internal/manifest/` (the manifest,
     read from `~/.tentaqles/identities/<ws>/manifest.yaml` with a name-only marker
     `.tentaqles.yaml` in the workspace root, or from the root itself for an identity not
     yet migrated with `tq migrate manifests`, ADR-0002; a top-level block tq does not
@@ -92,13 +95,19 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`,
   `TestHumanOnlyCommandsRefuseWithMarkerAndLog`, `TestAddConfirmsBeforeWriting`, and the
   detector tests of `internal/humanonly` (`TestTTYDetector`, `TestProcessTreeDetector`,
-  `TestEnvMarkerDetector`, `TestGateConfirms`).
+  `TestEnvMarkerDetector`, `TestGateConfirms`), `TestHooksVerify_ReportExitAndAccept`.
 - An edited manifest loses its trust: `TestEditedManifestLosesTrust`.
 - A session cannot read or write tq's state, nor write the root marker, the installed
   plugin, the tq binary or tq's keychain entry, by any tool, nor run a human-only tq verb
   in the shell; the categories run blocked_commands → identity → secrets →
   self-protection and every deny is logged: `TestProtectedPaths_Table`,
   `TestProtectedPaths_RuleOrder`, `TestProtectedPaths_Codex`, `TestKeychainWrite`.
+- The integrity record is signed and covers the hooks, the settings, the shims and the tq
+  binary; a mismatch withholds the identity and refuses the launch:
+  `TestFlippedByteFailsVerification`, `TestPluginHookChangesAreNamed`,
+  `TestRun_RefusesOnIntegrityMismatch`, `TestEnv_NoIdentityAndOneWarningOnMismatch`.
+- The plugin hook never takes the enforcing binary from the environment:
+  `test_tq_bin_is_not_honoured`.
 - The guard reads the manifest from the protected location only; a marker that names
   another workspace, or has no protected copy, resolves neutral:
   `TestResolve_MarkerClientMismatch_Neutral`, `TestResolve_MarkerWithoutProtectedManifest_Neutral`.

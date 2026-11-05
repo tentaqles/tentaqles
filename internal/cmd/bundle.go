@@ -35,8 +35,8 @@ func newBundleSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !trust.IsTrusted(ws.Name, ws.Hash) {
-				return fmt.Errorf("workspace %s is untrusted; run: tq allow %s", ws.Name, ws.Name)
+			if v := trust.Check(ws.Name, ws.Hash); !v.OK {
+				return fmt.Errorf("workspace %s is %s", ws.Name, v.Reason)
 			}
 			cat, err := bundle.LoadCatalog()
 			if err != nil {
@@ -53,6 +53,11 @@ func newBundleSyncCmd() *cobra.Command {
 			rep, err := bundle.Sync(ws, cat, bundle.Options{Force: force})
 			if err != nil {
 				return err
+			}
+			if rep.Settings {
+				// settings.json is a covered file: the record is signed
+				// again for a human, left stale for an agent session.
+				resignCovered(c, ws)
 			}
 			if asJSON {
 				return json.NewEncoder(c.OutOrStdout()).Encode(rep)

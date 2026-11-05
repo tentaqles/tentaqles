@@ -56,6 +56,11 @@ _upath() {
 }
 
 # --- Resolve the tq binary ---
+# No environment variable picks the binary: an agent can set variables (a
+# settings env block, an export in the same shell), and the tq that
+# enforces must not be its choice. The order is the plugin's own bin/, PATH,
+# then the well-known install dirs; the binary that runs is a covered file
+# of the signed integrity record (tq hooks verify), so a swap is reported.
 TQ=""
 
 _try() {
@@ -65,23 +70,18 @@ _try() {
   return 0
 }
 
-# 1. $TQ_BIN wins, but only if executable.
-if [ -n "${TQ_BIN:-}" ]; then
-  _try "$TQ_BIN" || { [ "$_win" = "1" ] && _try "${TQ_BIN}.exe"; }
-fi
-
-# 2. Plugin-bundled binary.
-if [ -z "$TQ" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+# 1. Plugin-bundled binary.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
   _try "$CLAUDE_PLUGIN_ROOT/bin/tq" || { [ "$_win" = "1" ] && _try "$CLAUDE_PLUGIN_ROOT/bin/tq.exe"; }
 fi
 
-# 3. PATH.
+# 2. PATH.
 if [ -z "$TQ" ]; then
   _found="$(command -v tq 2>/dev/null || true)"
   [ -n "$_found" ] && _try "$_found"
 fi
 
-# 4/5. Well-known install dirs.
+# 3/4. Well-known install dirs.
 if [ -z "$TQ" ] && [ -n "${HOME:-}" ]; then
   _try "$HOME/.tentaqles/bin/tq" || { [ "$_win" = "1" ] && _try "$HOME/.tentaqles/bin/tq.exe"; }
 fi

@@ -49,10 +49,10 @@ For more detail on a command, run `tq <command> --help`.
 | `tq onboard` | **Human-only**, wizard and `--from` alike. A wizard that runs `tq add`, then records the company's chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |
 | `tq setup` | **Human-only**, wizard and `--from` alike. Creates several client workspaces at once from a plan file. `--yes` is accepted for older scripts but no longer skips the confirmation. |
 | `tq list` | Lists every workspace, whether it is trusted, its git email and its identities. |
-| `tq allow <name>` | **Human-only.** Trusts the workspace's manifest as it is now (by hash). Until then, tq exports nothing for that folder and blocks remote commands in it. Editing the manifest drops the trust. |
+| `tq allow <name>` | **Human-only.** Trusts the workspace as it is now: signs the integrity record over the manifest, the identity's Claude `settings.json`, the installed plugin's hooks and scripts, the Codex hook files, the shims and the tq binary. Until then, tq exports nothing for that folder and blocks remote commands in it. An edit to any covered file drops the trust (`tq hooks verify` says what changed). |
 | `tq deny <name>` | **Human-only.** Removes trust from a workspace. |
 | `tq login <cli>` | **Human-only.** Runs a CLI's own login (gh, az, aws, ...) with its config stored in the workspace's private config folder. |
-| `tq run <ws> -- <cmd>` | Runs one command with another workspace's identity, without `cd`-ing into it. `tq run --off -- claude` (**human-only**) starts Claude with no tq at all. |
+| `tq run <ws> -- <cmd>` | Runs one command with another workspace's identity, without `cd`-ing into it (`tq run .` is the current folder's). An untrusted workspace, or one whose integrity record does not match, is refused with the reason: nothing launches without its identity. `tq run --off -- claude` (**human-only**) starts Claude with no tq at all. |
 | `tq migrate` | **Human-only with `--apply`.** Moves a hand-made tentaqles setup under tq's management. Without `--apply` it only shows the plan, and that dry run is free to run from a session; `--apply` refuses a session and asks for the confirmation. Every step is written to a journal. |
 | `tq migrate manifests` | **Human-only with `--apply`** (the dry run is free). Moves each identity's manifest out of its folder into `~/.tentaqles/identities/<name>/manifest.yaml`, leaving a name-only marker. It only shows the plan; `--apply` asks for the confirmation first. An identity keeps working as before until you run it; `tq doctor` says `manifest-in-root` meanwhile. |
 | `tq uninstall --restore` | **Human-only.** Undoes a migration by replaying its journal backwards. It lists the steps and changes nothing until you add `--yes`; with `--yes` you still type `yes` at the confirmation before the replay starts. |
@@ -64,6 +64,7 @@ For more detail on a command, run `tq <command> --help`.
 |---|---|
 | `tq activate <shell>` | Prints the code your shell profile runs at startup. It switches identity every time you change folder, and defines the `claude` and `codex` launchers. |
 | `tq hooks install\|remove\|status` | Adds the activation block to your shell profiles, removes it, or shows where it is installed. `install` and `remove` are **human-only**; `status` runs anywhere. |
+| `tq hooks verify [<ws>] [--accept]` | Checks the workspace's signed integrity record against the files it covers and prints each change with its old and new hash (exit 1 on a mismatch). Without a name it checks the current folder's. `--accept` is **human-only**: it signs the current state again, after you have read the report. |
 | `tq env` | Prints the environment changes for the current folder. The shell hook uses it; you rarely run it yourself. |
 | `claude` / `codex` | Launchers from the activation block. They start the agent with the folder's identity and with permission prompts skipped; tq blocks only identity drift and secret reads. |
 | `claude-off` / `codex-off` | Start the agent with no tq: no identity env, main logins, the plugin switched off. |
@@ -72,7 +73,7 @@ For more detail on a command, run `tq <command> --help`.
 
 | Command | What it does |
 |---|---|
-| `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. A manifest that carries a top-level block tq does not read gets a warning, never a failure. |
+| `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. `integrity` (an error) lists every covered file that changed since the record was signed; `integrity-key-file` warns that the signing key is the plain-file fallback; `integrity-record-legacy` warns that a workspace is trusted through a marker of an older tq. A manifest that carries a top-level block tq does not read gets a warning, never a failure. |
 | `tq providers list\|show\|check\|add` | The catalog of supported tools (cloud, git host, data, agents, chat). `check` shows which CLIs are installed. `add` writes a provider file under `~/.tentaqles/providers/` and is **human-only**. |
 | `tq secrets audit` | Finds secret-shaped values in agent config files, and `.env` files that git would commit. It shows only the path and line, never the value. |
 | `tq worktrees list` / `prune --yes` | Lists leftover git worktrees from agent runs. `prune` (**human-only**) removes the ones that are clean, merged and old, and never forces; `--yes` selects the removal over the listing, then you confirm. |
