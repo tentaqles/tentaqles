@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/audit"
@@ -37,7 +38,16 @@ func newEnvCmd() *cobra.Command {
 			cwd, _ := os.Getwd()
 			res := resolve.Resolve(cwd, cfg)
 			prev := envplan.DecodeState(os.Getenv(envplan.StateVar))
-			ops, _ := envplan.Diff(envplan.Desired(res.Workspace), os.LookupEnv, prev, wsName(res))
+			// guard: v2 adds the PATH and environment layer (ADR-0007): the identity PATH
+			// and the out-of-scope variables unset, both restored on leaving.
+			senv := envplan.ShellEnv(sh)
+			want, maskNotice := envplan.Plan(res.Workspace, prev, senv)
+			if p, ok := want.Set["PATH"]; ok && sh == "cmd" && strings.ContainsAny(p, "\"%!") {
+				// cmd.exe cannot quote these; its PATH is left as it is rather than the
+				// whole line refused.
+				delete(want.Set, "PATH")
+			}
+			ops, _ := envplan.DiffWant(want, senv.Lookup, prev, wsName(res))
 			if ops.Changed && ops.From != ops.To {
 				_ = audit.Append(audit.Event{Kind: "switch", From: ops.From, To: ops.To, Cwd: cwd, Reason: res.Reason})
 			}
@@ -47,6 +57,9 @@ func newEnvCmd() *cobra.Command {
 			// workspace name and the command to run (shell.NoticeText; the
 			// changed files are what tq hooks verify prints).
 			ops.Notice = envNotice(res)
+			if ops.Notice == nil {
+				ops.Notice = maskNotice
+			}
 			if asJSON {
 				notice := ""
 				if ops.Notice != nil {

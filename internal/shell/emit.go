@@ -68,6 +68,11 @@ func NoticeText(n envplan.Notice) (string, bool) {
 			return "tq: legacy trust record: run tq doctor", true
 		}
 		return "tq: legacy trust record: run tq allow " + ws + " to sign hooks and manifest", true
+	case envplan.NoticeMask:
+		if ws == "" {
+			return "tq: PATH mask missing: out-of-scope CLIs still resolve here, run tq doctor", true
+		}
+		return "tq: PATH mask missing: out-of-scope CLIs still resolve here, run tq settings render " + ws, true
 	}
 	return "", false
 }
@@ -80,7 +85,17 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 		set = func(k, v string) string { return "export " + k + "=" + sq(v) }
 		unset = func(k string) string { return "unset " + k }
 	case "fish":
-		set = func(k, v string) string { return "set -gx " + k + " " + fishq(v) }
+		set = func(k, v string) string {
+			if k == "PATH" {
+				// fish holds PATH as a list: one quoted word per entry.
+				var w []string
+				for _, e := range strings.Split(v, ":") {
+					w = append(w, fishq(e))
+				}
+				return "set -gx PATH " + strings.Join(w, " ")
+			}
+			return "set -gx " + k + " " + fishq(v)
+		}
 		unset = func(k string) string { return "set -e " + k }
 	case "pwsh", "powershell":
 		set = func(k, v string) string { return "$env:" + k + " = " + psq(v) }

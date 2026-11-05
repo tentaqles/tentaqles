@@ -137,7 +137,18 @@ func (l launch) run() error {
 		}
 		args = codexArgs(l.ws, args)
 	}
-	return execCommand(l.name, args, envplan.Environ(l.ws, os.Environ()))
+	env := envplan.Environ(l.ws, os.Environ())
+	name := l.name
+	if envplan.LayerFor(l.ws) != nil {
+		// guard: v2 (ADR-0007): the command resolves on the identity PATH, not on tq's own,
+		// so tq run <ws> -- aws from outside the folder does not find the aws it dropped.
+		p, err := envplan.LookPath(name, env)
+		if err != nil {
+			return fmt.Errorf("%s: command not found on the PATH of identity %s (%v)", name, l.ws.Name, err)
+		}
+		name = p
+	}
+	return execCommand(name, args, env)
 }
 
 // runOff is tq run --off: the main install and logins, no tq. The plugin is
