@@ -85,6 +85,7 @@ FILE_WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 FILE_READ_TOOLS = ("Read", "Grep", "NotebookRead")
 SHELL_TOOLS = ("Bash", "PowerShell")
 PROTECTED_ID = "self-protection/tq/protected-path"
+GUARD_ERROR_ID = "tq/guard-error"
 
 
 def _norm(p: str) -> str:
@@ -181,12 +182,19 @@ def main() -> None:
     except Exception:
         raw = "{}"
 
+    # Fail closed (PRD v2 §6.3, ADR-0006): a payload that does not parse into
+    # an object naming a tool is a call this guard cannot judge.
     try:
-        payload = json.loads(raw) if raw.strip() else {}
+        payload = json.loads(raw)
     except (json.JSONDecodeError, TypeError, ValueError):
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
+        payload = None
+    if not isinstance(payload, dict) or not isinstance(payload.get("tool_name"), str) or not payload.get("tool_name"):
+        print(
+            f"BLOCKED [{GUARD_ERROR_ID}]: the hook payload cannot be read; tq denies a call it cannot judge "
+            f"(tq is not installed: this is the fallback guard). Install tq: {INSTALL_URL}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     tool_input = payload.get("tool_input", {})
     if isinstance(tool_input, str):

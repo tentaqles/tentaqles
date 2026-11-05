@@ -1,6 +1,6 @@
-// Package policy decides whether one Claude Code tool call is allowed, needs
-// the user's confirmation ("ask"), or is refused ("deny"), from declarative
-// rules. It is pure: the caller parses the hook payload into a ToolCall and
+// Package policy decides whether one Claude Code tool call is allowed or
+// refused ("deny"), from declarative rules. There is no third verdict: PRD v2
+// §6.3 has no ask and no mode. It is pure: the caller parses the hook payload into a ToolCall and
 // gathers every fact (the rule set, whether a file exists) first.
 //
 // The only rules are the built-in secret rules (Builtin): nothing a
@@ -16,12 +16,11 @@ import (
 	"github.com/tentaqles/tentaqles/internal/guard"
 )
 
-// Action is a rule's verdict.
+// Action is a rule's verdict: Allow or Deny, nothing else (PRD v2 §6.3).
 type Action string
 
 const (
 	Allow Action = ""
-	Ask   Action = "ask"
 	Deny  Action = "deny"
 )
 
@@ -29,10 +28,7 @@ const (
 func (a Action) StricterThan(b Action) bool { return a.rank() > b.rank() }
 
 func (a Action) rank() int {
-	switch a {
-	case Deny:
-		return 2
-	case Ask:
+	if a == Deny {
 		return 1
 	}
 	return 0
@@ -108,8 +104,8 @@ func (r *Rule) Compile() error {
 	if r.ID == "" {
 		return fmt.Errorf("rule without id")
 	}
-	if r.Action != Ask && r.Action != Deny {
-		return fmt.Errorf("rule %s: action must be ask or deny, got %q", r.ID, r.Action)
+	if r.Action != Deny {
+		return fmt.Errorf("rule %s: action must be deny, got %q", r.ID, r.Action)
 	}
 	if r.Command == "" && r.Path == "" && r.Content == "" && r.Tool == "" {
 		return fmt.Errorf("rule %s: needs at least one of tool, command, path, content", r.ID)
@@ -224,21 +220,17 @@ func (r *Rule) Ref() string {
 }
 
 // Reason renders the decision for the hook's stderr / permissionDecisionReason:
-// BLOCKED [<category>/<rule>]: ... (CONFIRM for an ask), one line per rule.
+// BLOCKED [<category>/<rule>]: ..., one line per rule.
 func (d Decision) Reason() string {
 	if d.Action == Allow {
 		return ""
 	}
 	var b strings.Builder
-	verb := "BLOCKED"
-	if d.Action == Ask {
-		verb = "CONFIRM"
-	}
 	for i, r := range d.Matched {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "%s [%s]: %s (source: %s)", verb, r.Ref(), r.Reason, r.Source)
+		fmt.Fprintf(&b, "BLOCKED [%s]: %s (source: %s)", r.Ref(), r.Reason, r.Source)
 	}
 	return b.String()
 }

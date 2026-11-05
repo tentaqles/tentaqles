@@ -31,8 +31,11 @@ When you run it yourself in a console terminal, it prints what it is about to
 write and asks `Type yes to continue:`; anything else exits 1 with nothing
 written. A dry run or a listing asks nothing. `--yes` never skips the
 confirmation. That keeps decisions about trust, secrets and tq's own files with
-a person. The reading side (`tq list`, `tq doctor`, `tq secret status`,
-`tq hooks status`, `tq bundle diff`, `tq worktrees list`) runs anywhere.
+a person. The reading side (`tq list`, `tq doctor`, `tq status`, `tq secret
+status`, `tq hooks status`, `tq bundle diff`, `tq worktrees list`) runs
+anywhere, except `tq status --denials`: it writes nothing but refuses an
+agent session (the denial log spans every identity), without needing a
+terminal, so you can pipe it.
 
 For more detail on a command, run `tq <command> --help`.
 
@@ -74,6 +77,7 @@ For more detail on a command, run `tq <command> --help`.
 | Command | What it does |
 |---|---|
 | `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. `integrity` (an error, with `untrusted`) lists every covered file that changed since the record was signed, or says the key changed or the signature does not verify; `integrity-key-file` warns that the signing key is the plain-file fallback; `integrity-record-legacy` warns that a workspace is trusted through a marker of an older tq. A manifest that carries a top-level block tq does not read gets a warning, never a failure. |
+| `tq status [--denials [--last N] [--identity <ws>] [--category <c>]] [--json]` | Without `--denials`, the `tq doctor` report (`tq status` is its successor name; `tq doctor` stays). With `--denials` (**human-only read**: refuses an agent session, needs no terminal, writes nothing), the newest N entries of `~/.tentaqles/denials.jsonl` (20; `--last 0` for all), oldest first: time, identity, category/rule, layer (`hook`, `filesystem`, `human-only`), caller (`harness`, `subagent`, `no-tty`) and harness, tool, the redacted command and the first line of the reason. `--identity` and `--category` (`identity`, `secrets`, `self-protection`, `tq/guard-error`) filter; `--json` prints a JSON array. |
 | `tq providers list\|show\|check\|add` | The catalog of supported tools (cloud, git host, data, agents, chat). `check` shows which CLIs are installed. `add` writes a provider file under `~/.tentaqles/providers/` and is **human-only**. |
 | `tq secrets audit` | Finds secret-shaped values in agent config files, and `.env` files that git would commit. It shows only the path and line, never the value. |
 | `tq worktrees list` / `prune --yes` | Lists leftover git worktrees from agent runs. `prune` (**human-only**) removes the ones that are clean, merged and old, and never forces; `--yes` selects the removal over the listing, then you confirm. |
@@ -82,7 +86,7 @@ For more detail on a command, run `tq <command> --help`.
 
 | Command | What it does |
 |---|---|
-| `tq settings render [--all]` | **Human-only** (except `--dry-run`, free from a session). Writes tq's part of each identity's Claude `settings.json`: baseline permissions, env, status line and hooks. It prints what changed. `--dry-run` writes nothing and asks nothing. |
+| `tq settings render [--all]` | **Human-only** (except `--dry-run`, free from a session). Writes tq's part of each identity's Claude `settings.json`: baseline env, status line and hooks, and no permission setting (the first render after an upgrade removes the ones an older tq wrote, keeping yours). It prints what changed. `--dry-run` writes nothing and asks nothing. |
 | `tq settings anchors` / `add <exe>` / `remove <exe>` | Lists the terminal processes the human-only check accepts as a session root (built-in and yours, `~/.tentaqles/anchors.yaml`). `add` and `remove` are **human-only**; a refusal that says "cannot establish a human ancestry" prints the `add` line for your terminal. A shell, a runtime or a harness is never accepted. |
 | `tq bundle catalog` | Shows the shared catalog of plugins, skills and MCP servers. |
 | `tq bundle diff <ws>` | Shows how a workspace's installed plugins differ from its `claude.bundle`. |
@@ -290,7 +294,25 @@ Change `tool_name` and `tool_input` for each row:
 | `Bash`: `echo x > ~/.tentaqles/config.yaml` | `BLOCKED [self-protection/tq/protected-path]`, `exit 2` |
 | `Bash`: `tq allow acme` | `BLOCKED [self-protection/tq/human-only-command]`, `exit 2` |
 
-**Exit codes:** 0 with no output means allow; 2 means block. There is no ask.
+**Exit codes:** 0 with no output means allow; 2 means block. There is no ask,
+and a call tq cannot judge is blocked: a payload that is not valid JSON or
+names no `tool_name`, a guard crash, a decision slower than 12 s, a folder
+whose manifest tq cannot read (`BLOCKED [tq/guard-error]`), and a commit whose
+secret scan cannot finish (`BLOCKED [secrets/tq/commit-secret]`).
+
+Every block above is one line in the denial log. Read it yourself **(you)**,
+in your own terminal:
+
+```bash
+tq status --denials --last 5
+tq status --denials --category secrets --json
+```
+
+**Expected:** one entry per block, newest last, with the identity, the
+category and rule, the layer (`hook`, or `filesystem` for a protected path),
+the caller, the tool and the command, its values masked (a quoted string reads
+`"…"`, `GH_TOKEN=…`). From a Claude session the same command is refused as
+human-only.
 
 ### Step 6: secrets stay masked
 
@@ -311,8 +333,8 @@ Ask Claude in a session: "run `tq allow tentaqles`" (or `tq hooks install bash`,
 
 **Expected:**
 `tq: tq allow: human-only: run it in your own terminal (an agent session is refused) (env-marker: CLAUDECODE is set)`,
-exit 1, and a `human-only` line appended to `~/.tentaqles/denials.jsonl`
-naming the command and the detector. Nothing is written anywhere else.
+exit 1, and a line with layer `human-only` appended to
+`~/.tentaqles/denials.jsonl` naming the command and the detector. Nothing is written anywhere else.
 Run it yourself in a console terminal **(you)**: it prints what it is about
 to write, asks `Type yes to continue:`, and proceeds only on `yes`. Pipe its
 stdin or redirect its stdout and it refuses with `tty: ...` instead.

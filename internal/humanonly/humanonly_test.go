@@ -198,7 +198,7 @@ func TestRefusalIsLogged(t *testing.T) {
 	cwd, _ := os.Getwd()
 	for i, want := range []struct{ cmd, reason string }{{"tq allow", "env-marker: CLAUDECODE is set"}, {"tq hooks install", "tty: stdin is not a terminal"}} {
 		d := ds[i]
-		if d.Kind != "human-only" || d.Command != want.cmd || d.Reason != want.reason || d.PID != os.Getpid() || d.Cwd != cwd || d.Time.IsZero() {
+		if d.Category != "self-protection" || d.Layer != audit.LayerHumanOnly || d.Command != want.cmd || d.Reason != want.reason || d.PID != os.Getpid() || d.Cwd != cwd || d.Time.IsZero() {
 			t.Fatalf("denial %d = %+v, want %+v", i, d, want)
 		}
 	}

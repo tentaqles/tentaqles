@@ -159,7 +159,7 @@ func TestHumanOnlyCommandsRefuseWithMarkerAndLog(t *testing.T) {
 			t.Fatalf("tq %s: want %d denials, got %d", strings.Join(args, " "), i+1, len(ds))
 		}
 		d := ds[i]
-		if d.Kind != "human-only" || !strings.HasPrefix(d.Command, "tq "+args[0]) || d.Reason != "env-marker: CLAUDE_CODE_ENTRYPOINT is set" || d.PID != os.Getpid() || d.Cwd == "" {
+		if d.Category != "self-protection" || d.Layer != audit.LayerHumanOnly || !strings.HasPrefix(d.Command, "tq "+args[0]) || d.Reason != "env-marker: CLAUDE_CODE_ENTRYPOINT is set" || d.PID != os.Getpid() || d.Cwd == "" {
 			t.Fatalf("tq %s: denial %+v", strings.Join(args, " "), d)
 		}
 	}

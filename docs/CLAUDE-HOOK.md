@@ -9,8 +9,9 @@ tq guards three categories and nothing else (PRD v2 §7.1): **identity** (the
 identity a command runs under, the manifest's blocked commands),
 **secrets**, and **self-protection** (tq's own state, hooks, plugin and
 binary, and the human-only tq commands; ADR-0005). It has no modes and no
-other rules; every decision is allow or block, in every Claude permission
-mode.
+other rules; every decision is allow or deny, whatever the harness's own
+permission setting, and a call tq cannot judge is denied (fail closed,
+ADR-0006).
 
 ## Subcommands
 
@@ -40,7 +41,9 @@ Both subcommands accept the hook JSON Claude Code provides. The fields
 - `tool_name` — `Bash` and `PowerShell` go through the identity guard, the
   secret rules and the self-protection rules; every other tool (Read, Edit,
   Write, MultiEdit, NotebookEdit, Grep, `mcp__*`) goes through the secret
-  and self-protection rules. A payload without `tool_name` is allowed.
+  and self-protection rules. A payload without `tool_name` is denied.
+- `agent_id`, `agent_type` — set by Claude Code for a subagent's call; the
+  denial log names the caller `subagent` when either is present.
 - `cwd` — the directory to resolve a workspace from. Falls back to the
   process's actual working directory if omitted or empty.
 - `tool_input` — `command` for shell tools; `file_path` / `notebook_path` /
@@ -50,10 +53,11 @@ Both subcommands accept the hook JSON Claude Code provides. The fields
 
 Any other fields in the payload (session id, etc.) are ignored.
 
-The payload is capped at 1 MiB. A larger payload is a protocol violation,
-not a parse error: `pre-tool-use` prints
-`BLOCKED: hook payload exceeds 1 MiB` to stderr and exits 2 (fail closed),
-while `session-start` prints its "could not resolve" line and exits 0.
+The payload is capped at 1 MiB. A payload `pre-tool-use` cannot read (more
+than 1 MiB, JSON that does not parse into the payload object, `null`, empty,
+no `tool_name`) is denied, see [Fail closed](#fail-closed). `session-start`
+prints its "could not resolve" line for an oversized payload and exits 0, and
+resolves its own working directory for one that does not parse.
 
 ### Exit codes
 
@@ -62,21 +66,30 @@ while `session-start` prints its "could not resolve" line and exits 0.
 | `0` | Allow. `session-start` always exits 0 (it never blocks a session). |
 | `2` | Block (`pre-tool-use` only). A `BLOCKED [<category>/<rule>]: ...` message is written to **stderr** (`BLOCKED [identity/wrong-cloud]: ...`, `BLOCKED [secrets/tq/env-file-read]: ...`, `BLOCKED [self-protection/tq/protected-path]: ...`); stdout is not used for the block message. Every block is also one line in the denial log (see [Self-protection](#self-protection-pre-tool-use)). |
 
-If the guard itself fails while it analyses a call (a panic in tq's own
-code), `pre-tool-use` fails safe: it asks, printing the PreToolUse decision
-JSON to stdout with the reason
-`CONFIRM [tq/guard-error]: tq guard error; please review the command yourself (…)`,
-and writes `tq: guard panic: …` to stderr. It never allows the call and
-never crashes (a Go crash exits 2 with a stack trace, which Claude Code
-reads as a block). A payload that names no tool for Codex, or a file edit
-tq cannot judge, is denied under the same id. This is the only ask tq ever
-prints: every other decision is allow or block.
+There are two answers and no third: tq never asks (PRD v2 §6.3).
 
-```json
-{"hookSpecificOutput": {"hookEventName": "PreToolUse",
-  "permissionDecision": "ask",
-  "permissionDecisionReason": "CONFIRM [tq/guard-error]: tq guard error; please review the command yourself (…)"}}
-```
+### Fail closed
+
+`pre-tool-use` denies every call it cannot judge, with
+`BLOCKED [tq/guard-error]: <why>; tq denies a call it cannot judge. Report
+this to the developer instead of retrying; `tq doctor` shows what is wrong`
+on stderr and exit 2 (ADR-0006):
+
+| Case | Why it names |
+|---|---|
+| a payload that cannot be read (see above) | `the hook payload cannot be read (...)`, `the hook payload names no tool` |
+| a panic in tq's own analysis (`tq: guard panic: …` on stderr too) | `tq guard error (...)` |
+| a decision that takes longer than 12 s, under the harness's own hook timeout (Claude Code and Codex run a call whose hook they killed) | `the guard did not decide within 12s` |
+| `~/.tentaqles/config.yaml` cannot be read or parsed | `tq cannot read its registry (...)` |
+| the folder carries tq's marker or manifest but tq cannot read a usable manifest (a marker without its protected copy, a manifest that does not parse or validate) — every tool, until a human fixes it | `the manifest of identity <name> cannot be read (...)` |
+| a Codex patch tq cannot parse, or one too big to judge in the budget | the parse error, or `split the patch` |
+
+A commit whose secret scan cannot finish is denied by its own rule,
+`BLOCKED [secrets/tq/commit-secret]: the secret scan ...; tq denies a commit
+it could not scan`. The plugin's `tq_hook.sh` turns any other exit of tq
+(a crash the runtime could not recover, a killed process) into exit 2 with
+`BLOCKED [tq/guard-error]`, and the fallback guard that runs without tq denies
+a payload it cannot read the same way.
 
 `session-start` writes its preamble to **stdout** and always returns 0,
 even when it can't resolve a workspace — a hook that fails a session start
@@ -101,13 +114,9 @@ usual stderr message and exit code.
   call is allowed and for `tq/guard-error`.
 - `rule` — the rule that matched: an identity rule (`git-email-drift`, …),
   a secret rule id (`tq/env-dump`, …) or a self-protection rule id
-  (`tq/protected-path`, `tq/human-only-command`); `""` when the call is
-  simply allowed. For the fail-safe ask, `block` is `false` and `rule` is
-  `tq/guard-error`.
+  (`tq/protected-path`, `tq/human-only-command`), or `tq/guard-error` for a
+  call tq could not judge; `""` when the call is allowed.
 - `reason` — the full multi-line message (`""` when allowed).
-
-With `--json`, the fail-safe ask is reported in this object instead of the
-`hookSpecificOutput` JSON, so the flag is for scripts, not for the hook.
 
 `session-start` has no `--json` flag: its output is the fixed preamble
 format described below.
@@ -284,9 +293,9 @@ From PowerShell:
 '{"tool_name":"Bash","cwd":"' + ($PWD.Path -replace '\\','\\\\') + '","tool_input":{"command":"git push"}}' | tq claude-hook pre-tool-use; $LASTEXITCODE
 ```
 
-`"tool_name"` is required: a payload without it always looks like an
-allow. The JSON must be valid — a mistyped backslash in a Windows path
-makes the payload unparseable, which is also an allow. To test a secret
+`"tool_name"` is required: a payload without it is denied
+(`tq/guard-error`). The JSON must be valid — a mistyped backslash in a Windows
+path makes the payload unparseable, which is denied too. To test a secret
 rule on a file tool:
 
 ```sh
@@ -296,7 +305,7 @@ echo '{"tool_name":"Read","cwd":"'$PWD'","tool_input":{"file_path":"'$PWD'/.env"
 A block prints `BLOCKED [<category>/<rule>]: ...` to stderr and the exit
 code is `2`; an allowed command prints nothing and exits `0`. Every block
 also appends a line to `~/.tentaqles/denials.jsonl` (`$TQ_HOME` outside an
-agent session).
+agent session); read it with `tq status --denials`.
 
 To test `session-start`:
 
@@ -317,9 +326,9 @@ file adds or removes.
 | `tq/secret-store-read`, `tq/secret-store-shell` | reading, from a file tool or the shell, SSH private keys, `~/.aws/credentials`, `.git-credentials`, `.netrc`, docker/gh/azure token files, the tq catalog |
 | `tq/env-file-read`, `tq/env-file-shell` | reading or printing `.env*` (templates such as `.env.example` exempt) |
 | `tq/env-dump` | `printenv`, `env`, `set`, `export -p`, `declare -p`, `typeset -p`, `cmd /c set`, `Get-ChildItem`/`gci`/`dir`/`ls env:`, each as the command word of a segment (start, or after `;` `&` `\|` `(` a backtick or a newline, or as the first word of a quoted `-c` script: `bash -c 'set'`) with no arguments; and `[Environment]::GetEnvironmentVariables(` anywhere. `set -e`, `echo set` or `git commit -m "set the flag"` are not dumps |
-| `tq/commit-secret` | before a `git commit` runs, scans what it would record: the staged diff, plus the working tree and untracked files when the command also runs `git add` or `commit -a`, so `git add -A && git commit` is covered. Committing a `.env`, private key or `.pem` is refused by name. The reason lists `file:line (pattern)` and never the value. A known-fake fixture line can carry `tq:allow-secret` (or `gitleaks:allow`) |
+| `tq/commit-secret` | before a `git commit` runs, scans what it would record: the staged diff, plus the working tree and untracked files when the command also runs `git add` or `commit -a`, so `git add -A && git commit` is covered. Committing a `.env`, private key or `.pem` is refused by name. The reason lists `file:line (pattern)` and never the value. A known-fake fixture line can carry `tq:allow-secret` (or `gitleaks:allow`). A scan that cannot finish (the hook budget, the 1 MiB limits, an unreadable file, `--pathspec-from-file`, a repository it cannot place) denies the commit too: commit fewer files, or commit it from your own terminal |
 | `tq/cross-client-mcp` | an MCP server that another client's bundle declares, and this workspace's bundle does not |
-| `tq/guard-error` | the fail-safe: a guard panic asks (see Exit codes); a call tq cannot judge is denied |
+| `tq/guard-error` | a call tq cannot judge, denied (see [Fail closed](#fail-closed)) |
 
 ### Limits
 
@@ -328,7 +337,7 @@ file adds or removes.
   is not a `cat`.
 - A command that runs `git -C other-repo commit` is scanned in the hook's
   cwd, not in `other-repo`.
-- A malformed payload is allowed; only an oversized one fails closed.
+- A payload tq cannot read is denied ([Fail closed](#fail-closed)).
 
 ## Self-protection (`pre-tool-use`)
 
@@ -381,18 +390,38 @@ the controls behind them.
 
 Every deny of every category appends one JSON line to
 `~/.tentaqles/denials.jsonl`, the same file the human-only commands log
-their refusals to:
+their refusals to (PRD v2 §7.3, ADR-0006):
 
 ```json
-{"time":"2026-11-05T10:00:00Z","kind":"self-protection","layer":"hook","tool":"Bash","command":"rm -rf ~/.tentaqles/trust","rule":"tq/protected-path","reason":"BLOCKED [self-protection/tq/protected-path]: ...","workspace":"acme","pid":4242,"cwd":"C:\\repos\\acme"}
+{"time":"2026-11-05T10:00:00Z","category":"identity","layer":"hook","caller":"harness","harness":"claude","tool":"Bash","command":"GH_TOKEN=… aws ec2 run-instances --image-id ami-1 --tag-specifications '…'","rule":"wrong-cloud","reason":"BLOCKED [identity/wrong-cloud]: ...","identity":"acme","pid":4242,"cwd":"C:\\repos\\acme"}
 ```
 
-`kind` is the category (`tq/guard-error` for a call tq could not judge),
-`command` is the shell line or the file path; for an MCP call it is the tool
-name and for a patch the file it is denied on, never the input or the
-content. No environment value is ever written. A log that cannot be written
-changes nothing: the deny stands. The file is under the protected paths, so
-a session cannot read or rewrite it.
+| Field | Value |
+|---|---|
+| `category` | `identity`, `secrets`, `self-protection`, or `tq/guard-error` for a call tq could not judge |
+| `rule` | the rule id |
+| `layer` | `hook`; `filesystem` for `tq/protected-path`; `human-only` for a tq command's own refusal |
+| `caller` | `harness` (the main session) or `subagent` (the payload carries `agent_id`/`agent_type`); for a human-only refusal `harness` or `no-tty` |
+| `harness` | `claude` or `codex` |
+| `tool` | the tool name |
+| `command` | the shell line, redacted (below); a file tool's path; for an MCP call or a patch the tool name, never the input or the content |
+| `subject` | the one path or token the deny named (the protected path, the human-only verb) |
+| `reason` | the message the model saw |
+| `identity`, `cwd`, `pid`, `time` | the identity the folder maps to, the folder, the process, when |
+
+The shell line is redacted before it is written: here-doc and here-string
+bodies and the body of every quoted string are dropped (`…`), the value of a
+`NAME=value` or `$env:NAME = value` assignment and of a credential flag
+(`--password`, `--token`, `-H`, `--header`, `--auth`, `--cookie`, `-u
+user:password`, ...) is masked, every secret-shaped span tq knows (token
+prefixes, JWTs, Bearer values, connection strings, private keys) becomes
+`[REDACTED:<pattern>]`, every other 24+ character word mixing letters and
+digits becomes `…`, and the line is cut to 240 characters. It is a text
+filter: a short secret typed as a bare argument (`mysql -pS3cret`) stays.
+No environment value is ever written. A log that cannot be written changes
+nothing: the deny stands. The file is under the protected paths, so a
+session cannot read or rewrite it; `tq status --denials` reads it for a
+human (see `COMMANDS.md`), and refuses an agent session.
 
 ## Using a .env without printing it
 
@@ -412,14 +441,14 @@ tq dotenv run --file .env.local -- bash -c 'psql "$DATABASE_URL" -c "select 1"'
 value of 6+ characters with `[REDACTED:NAME]` in the command's stdout and
 stderr. The agent only ever writes `$NAME`. Templates (`.env.example`,
 `.sample`, `.template`, …) stay readable. `tq dotenv run` runs an arbitrary
-command, so it is never pre-approved: it goes through the permission mode
-like the command it wraps.
+command, so tq never pre-approves it: the harness's own permission settings
+treat it like the command it wraps.
 
 ## Turning rules on and off
 
 There is nothing to turn. The identity rules and the secret rules are always
-on, in every Claude permission mode, and no file an agent can write changes
-them. The only switches are trust and the off launchers:
+on, whatever the harness's own permission setting, and no file an agent can
+write changes them. The only switches are trust and the off launchers:
 
 - `tq allow <ws>` (**human-only**) trusts the manifest as it is now, by
   hash; until a workspace is trusted, non-read-only git, gh and cloud

@@ -5,9 +5,9 @@
 // chained `git add` / `commit -a` / `commit <paths>` will pick up.
 //
 // Every scan runs in the directory the command acts on (a leading `cd`, then
-// `git -C`; see guard.GitInvocation.Dir), and fails toward asking: a file too
+// `git -C`; see guard.GitInvocation.Dir), and fails toward denying: a file too
 // large to read, a directory tq cannot resolve or an unbounded pathspec is an
-// AskError, never a silent skip.
+// IncompleteError, never a silent skip.
 package commitscan
 
 import (
@@ -43,14 +43,14 @@ func (h Hit) String() string {
 	return fmt.Sprintf("%s:%d (%s)", h.File, h.Line, h.Pattern)
 }
 
-// AskError means the commit cannot be scanned safely; callers ask.
-type AskError struct{ Reason string }
+// IncompleteError means the commit cannot be scanned safely; the hook denies.
+type IncompleteError struct{ Reason string }
 
-func (e *AskError) Error() string { return e.Reason }
+func (e *IncompleteError) Error() string { return e.Reason }
 
-// IsAsk reports whether err is an AskError.
-func IsAsk(err error) bool {
-	var a *AskError
+// IsIncomplete reports whether err is an IncompleteError.
+func IsIncomplete(err error) bool {
+	var a *IncompleteError
 	return errors.As(err, &a)
 }
 
@@ -58,7 +58,7 @@ func IsAsk(err error) bool {
 var envFileRe = regexp.MustCompile(`(?i)(^|/)\.env(\.[a-z0-9_-]+)?$|(^|/)id_(rsa|ed25519|ecdsa|dsa)$|\.(pem|p12|pfx|key)$|(^|/)credentials\.json$`)
 var envTemplateRe = regexp.MustCompile(`(?i)\.env\.(example|sample|template|dist|defaults|schema)$`)
 
-const askPathspecFile = "the commit reads its paths from --pathspec-from-file, which tq cannot bound; name the paths or stage them first"
+const incompletePathspecFile = "the commit reads its paths from --pathspec-from-file, which tq cannot bound; name the paths or stage them first"
 
 // Plan says what a command will commit.
 type Plan struct {
@@ -73,8 +73,8 @@ type Plan struct {
 	// CommitPaths are the pathspecs of `git commit [-i|-o] [--] <paths>`:
 	// their working-tree content is committed.
 	CommitPaths []string
-	// Ask is set when the commit cannot be bounded.
-	Ask string
+	// Incomplete is set when the commit cannot be bounded.
+	Incomplete string
 }
 
 // PlanFor inspects command. A command without git commit yields Commits=false.
@@ -111,7 +111,7 @@ type AddCall struct {
 // parseAdd reads one git add call's arguments.
 func parseAdd(dir string, args []string) (AddCall, string) {
 	a := AddCall{Dir: dir}
-	ask := ""
+	unbounded := ""
 	for i := 0; i < len(args); i++ {
 		w := args[i]
 		switch {
@@ -121,7 +121,7 @@ func parseAdd(dir string, args []string) (AddCall, string) {
 		case w == "--update":
 			a.Update = true
 		case w == "--pathspec-from-file" || strings.HasPrefix(w, "--pathspec-from-file="):
-			ask = askPathspecFile
+			unbounded = incompletePathspecFile
 		case strings.HasPrefix(w, "--"):
 		case strings.HasPrefix(w, "-") && len(w) > 1:
 			if strings.Contains(w[1:], "u") {
@@ -139,7 +139,7 @@ func parseAdd(dir string, args []string) (AddCall, string) {
 	if len(a.Specs) == 0 {
 		a.Whole = true // git add -A / --all / -u with no pathspec: the whole tree
 	}
-	return a, ask
+	return a, unbounded
 }
 
 // planItem is one git call and the directory it runs in, relative to its
@@ -155,7 +155,7 @@ type planItem struct {
 // and returns a plan for every repository that commits. `git add -A` in a
 // subdirectory stages the whole repository, and `git -C sub commit` records
 // what a root-level add staged, so grouping by directory would miss both. A
-// call whose directory cannot be resolved is an AskError.
+// call whose directory cannot be resolved is an IncompleteError.
 func Plans(cwd, command string, run Runner) ([]DirPlan, error) {
 	invs := guard.GitInvocations(guard.StripHeredocs(command))
 	if !PlanFor(command).Commits {
@@ -176,7 +176,7 @@ func Plans(cwd, command string, run Runner) ([]DirPlan, error) {
 		}
 		d, err := inv.Dir(cwd)
 		if err != nil {
-			return nil, &AskError{Reason: "could not tell which repository this commit records in: " + err.Error()}
+			return nil, &IncompleteError{Reason: "could not tell which repository this commit records in: " + err.Error()}
 		}
 		tp, ok := tops[d]
 		if !ok {
@@ -210,9 +210,9 @@ func Plans(cwd, command string, run Runner) ([]DirPlan, error) {
 		dp := DirPlan{Dir: groups[k].top, Plan: p}
 		for _, it := range groups[k].items {
 			if it.inv.Sub == "add" || it.inv.Sub == "stage" {
-				a, ask := parseAdd(it.dir, it.inv.Args)
-				if ask != "" {
-					dp.Ask = ask
+				a, unbounded := parseAdd(it.dir, it.inv.Args)
+				if unbounded != "" {
+					dp.Incomplete = unbounded
 				}
 				dp.Adds = append(dp.Adds, a)
 			}
@@ -252,17 +252,17 @@ var (
 )
 
 // commitArgs reads the arguments of one git commit.
-func commitArgs(args []string) (all bool, paths []string, ask string) {
+func commitArgs(args []string) (all bool, paths []string, unbounded string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--":
 			paths = append(paths, args[i+1:]...)
-			return all, paths, ask
+			return all, paths, unbounded
 		case a == "--all":
 			all = true
 		case a == "--pathspec-from-file" || strings.HasPrefix(a, "--pathspec-from-file="):
-			ask = askPathspecFile
+			unbounded = incompletePathspecFile
 		case longValueOpts[a]:
 			i++
 		case strings.HasPrefix(a, "--"):
@@ -286,7 +286,7 @@ func commitArgs(args []string) (all bool, paths []string, ask string) {
 			paths = append(paths, a)
 		}
 	}
-	return all, paths, ask
+	return all, paths, unbounded
 }
 
 func planOf(items []planItem) Plan {
@@ -321,7 +321,7 @@ func planOf(items []planItem) Plan {
 			}
 		case "commit":
 			p.Commits = true
-			all, cps, ask := commitArgs(inv.Args)
+			all, cps, unbounded := commitArgs(inv.Args)
 			if all {
 				p.WorkingDir = true
 				p.CommitAll = true
@@ -339,8 +339,8 @@ func planOf(items []planItem) Plan {
 					p.CommitPaths = append(p.CommitPaths, tp)
 				}
 			}
-			if ask != "" {
-				p.Ask = ask
+			if unbounded != "" {
+				p.Incomplete = unbounded
 			}
 		}
 	}
@@ -374,7 +374,7 @@ func Scan(dir, command string, run Runner) []Hit {
 // ScanCtx returns every secret the command would commit, scanning git output
 // in the directory each commit acts on. A plain git error (no HEAD yet)
 // narrows the scan, because the commit itself will fail or record nothing;
-// an AskError, an oversized git output or the end of ctx is returned.
+// an IncompleteError, an oversized git output or the end of ctx is returned.
 func ScanCtx(ctx context.Context, cwd, command string, run Runner) ([]Hit, error) {
 	plans, err := Plans(cwd, command, run)
 	if err != nil {
@@ -489,7 +489,7 @@ func (c *collector) gitIn(dir string, args ...string) (string, bool, error) {
 			return "", false, c.ctx.Err()
 		}
 		if errors.Is(err, ErrTooLarge) {
-			return "", false, &AskError{Reason: fmt.Sprintf("what this commit records is larger than the %d MiB scan limit; commit fewer files", maxTotalBytes>>20)}
+			return "", false, &IncompleteError{Reason: fmt.Sprintf("what this commit records is larger than the %d MiB scan limit; commit fewer files", maxTotalBytes>>20)}
 		}
 		if c.lenient && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 			return "", false, nil
@@ -502,14 +502,14 @@ func (c *collector) gitIn(dir string, args ...string) (string, bool, error) {
 func (c *collector) charge(n int) error {
 	c.total += n
 	if c.total > maxTotalBytes {
-		return &AskError{Reason: fmt.Sprintf("what this commit records is larger than the %d MiB scan limit; commit fewer files", maxTotalBytes>>20)}
+		return &IncompleteError{Reason: fmt.Sprintf("what this commit records is larger than the %d MiB scan limit; commit fewer files", maxTotalBytes>>20)}
 	}
 	return nil
 }
 
 func (c *collector) collect() (lines []AddedLine, names []string, err error) {
-	if c.plan.Ask != "" {
-		return nil, nil, &AskError{Reason: c.plan.Ask}
+	if c.plan.Incomplete != "" {
+		return nil, nil, &IncompleteError{Reason: c.plan.Incomplete}
 	}
 	type diffSpec struct {
 		dir    string
@@ -655,8 +655,8 @@ func (c *collector) binary(name string, staged bool) ([]AddedLine, error) {
 	if staged {
 		raw, got, gerr := c.git("cat-file", "-p", ":"+name)
 		if gerr != nil {
-			if IsAsk(gerr) {
-				return nil, &AskError{Reason: fmt.Sprintf("%s is larger than the %d MiB scan limit and was not scanned; commit it separately and confirm", name, maxTotalBytes>>20)}
+			if IsIncomplete(gerr) {
+				return nil, &IncompleteError{Reason: fmt.Sprintf("%s is larger than the %d MiB scan limit and was not scanned; commit it separately", name, maxTotalBytes>>20)}
 			}
 			return nil, gerr
 		}
@@ -698,13 +698,13 @@ func fileLines(f, text string) []AddedLine {
 }
 
 func tooLarge(name string) error {
-	return &AskError{Reason: fmt.Sprintf("%s is larger than the %d MiB scan limit and was not scanned; commit it separately and confirm", name, maxFileBytes>>20)}
+	return &IncompleteError{Reason: fmt.Sprintf("%s is larger than the %d MiB scan limit and was not scanned; commit it separately", name, maxFileBytes>>20)}
 }
 
 // readBounded reads a file from disk for scanning. ok is false for anything
 // that is not a regular file (a symlink, a FIFO, a device, a directory: git
 // records a link's text, never its target) and for binary content. A text
-// file over the per-file cap is an AskError naming the file.
+// file over the per-file cap is an IncompleteError naming the file.
 func readBounded(p, name string) (text string, ok bool, err error) {
 	fi, err := os.Lstat(p)
 	if err != nil || !fi.Mode().IsRegular() {
@@ -712,12 +712,12 @@ func readBounded(p, name string) (text string, ok bool, err error) {
 	}
 	f, err := openFile(p)
 	if err != nil {
-		return "", false, &AskError{Reason: name + " could not be opened to scan it; check the file and confirm"}
+		return "", false, &IncompleteError{Reason: name + " could not be opened to scan it; check the file"}
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
 	if err != nil {
-		return "", false, &AskError{Reason: name + " could not be read to scan it; check the file and confirm"}
+		return "", false, &IncompleteError{Reason: name + " could not be read to scan it; check the file"}
 	}
 	return decodeLimited(raw, name)
 }
@@ -727,7 +727,7 @@ var openFile = os.Open
 
 // decodeLimited turns raw file bytes into text: UTF-16 LE/BE with a BOM is
 // decoded, a UTF-8 BOM dropped, other NUL-carrying content is binary (ok
-// false). Text over the per-file cap is an AskError.
+// false). Text over the per-file cap is an IncompleteError.
 func decodeLimited(raw []byte, name string) (string, bool, error) {
 	text, isText := decode(raw)
 	if !isText {
@@ -740,7 +740,7 @@ func decodeLimited(raw []byte, name string) (string, bool, error) {
 }
 
 // DecodeLimited is decodeLimited for the push rule: UTF-16 with a BOM is
-// decoded, binary is ok=false, text over the per-file cap is an AskError.
+// decoded, binary is ok=false, text over the per-file cap is an IncompleteError.
 func DecodeLimited(raw []byte, name string) (string, bool, error) { return decodeLimited(raw, name) }
 
 // FileLines splits decoded file text into numbered lines.

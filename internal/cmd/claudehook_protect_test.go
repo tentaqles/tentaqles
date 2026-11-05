@@ -307,8 +307,12 @@ func TestProtectedPaths_Table(t *testing.T) {
 		t.Fatalf("denials logged = %d, want %d", len(ds), denied)
 	}
 	for _, d := range ds {
-		if d.Kind != policy.CategorySelfProtection || d.Layer != audit.LayerHook || d.Tool == "" || d.Command == "" ||
-			(d.Rule != policy.ProtectedPathID && d.Rule != policy.HumanOnlyCommandID) || d.Workspace != "acme" || d.Reason == "" || d.Cwd == "" {
+		wantLayer := audit.LayerHook
+		if d.Rule == policy.ProtectedPathID {
+			wantLayer = audit.LayerFilesystem
+		}
+		if d.Category != policy.CategorySelfProtection || d.Layer != wantLayer || d.Tool == "" || d.Command == "" ||
+			(d.Rule != policy.ProtectedPathID && d.Rule != policy.HumanOnlyCommandID) || d.Identity != "acme" || d.Reason == "" || d.Cwd == "" {
 			t.Fatalf("denial %+v", d)
 		}
 	}
@@ -357,7 +361,11 @@ func TestProtectedPaths_RuleOrder(t *testing.T) {
 		t.Fatalf("denials logged = %d, want %d", len(ds), len(cases))
 	}
 	for i, d := range ds {
-		if d.Kind != cases[i].category || d.Rule != cases[i].rule || d.Layer != audit.LayerHook || d.Workspace != "acme" {
+		wantLayer := audit.LayerHook
+		if d.Rule == policy.ProtectedPathID {
+			wantLayer = audit.LayerFilesystem
+		}
+		if d.Category != cases[i].category || d.Rule != cases[i].rule || d.Layer != wantLayer || d.Identity != "acme" {
 			t.Fatalf("denial %d: %+v", i, d)
 		}
 	}
@@ -376,9 +384,9 @@ func TestDenyPrefixNamesTheCategory(t *testing.T) {
 		t.Fatalf("secrets: %q", errOut)
 	}
 	ds := readDenials(t)
-	// The log carries the verb only, never the argument ("push").
-	if len(ds) != 2 || ds[0].Kind != "identity" || ds[0].Rule != "neutral-remote" || ds[0].Command != "git" ||
-		ds[1].Kind != "secrets" || ds[1].Rule != "tq/env-dump" || ds[1].Command != "printenv" || ds[1].Tool != "Bash" || ds[0].Layer != audit.LayerHook {
+	// The log carries the redacted command (ADR-0006).
+	if len(ds) != 2 || ds[0].Category != "identity" || ds[0].Rule != "neutral-remote" || ds[0].Command != "git push" ||
+		ds[1].Category != "secrets" || ds[1].Rule != "tq/env-dump" || ds[1].Command != "printenv" || ds[1].Tool != "Bash" || ds[0].Layer != audit.LayerHook {
 		t.Fatalf("denials %+v", ds)
 	}
 }
@@ -389,11 +397,11 @@ func TestProtectedPaths_Codex(t *testing.T) {
 	f := setupProtected(t, "")
 	patch := "*** Begin Patch\n*** Update File: " + f.manifest + "\n@@\n-a\n+b\n*** End Patch\n"
 	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, applyPatchPayload(t, f.root, patch))
-	if dec, reason := codexAnswerJSON(t, out); code != 0 || dec != "deny" || !strings.Contains(reason, "self-protection/"+policy.ProtectedPathID) {
+	if dec, reason := codexAnswerJSON(t, out); code != 2 || dec != "deny" || !strings.Contains(reason, "self-protection/"+policy.ProtectedPathID) {
 		t.Fatalf("apply_patch on the manifest: code %d out %q", code, out)
 	}
 	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, hookPayloadFor(t, f.root, "tq allow acme"))
-	if dec, reason := codexAnswerJSON(t, out); code != 0 || dec != "deny" || !strings.Contains(reason, "self-protection/"+policy.HumanOnlyCommandID) {
+	if dec, reason := codexAnswerJSON(t, out); code != 2 || dec != "deny" || !strings.Contains(reason, "self-protection/"+policy.HumanOnlyCommandID) {
 		t.Fatalf("tq allow under codex: code %d out %q", code, out)
 	}
 	ok := "*** Begin Patch\n*** Add File: notes.md\n+hello\n*** End Patch\n"
@@ -401,12 +409,13 @@ func TestProtectedPaths_Codex(t *testing.T) {
 		t.Fatalf("a plain patch: code %d out %q", code, out)
 	}
 	ds := readDenials(t)
-	// The log records "apply_patch <file>", never the patch text.
-	if len(ds) != 2 || ds[0].Command != "apply_patch "+f.manifest || ds[0].Tool != "apply_patch" || strings.Contains(ds[0].Command, "Begin Patch") {
+	// The log records the tool as the command and "apply_patch <file>" as
+	// the subject, never the patch text.
+	if len(ds) != 2 || ds[0].Command != "apply_patch" || ds[0].Subject != "apply_patch "+f.manifest || ds[0].Tool != "apply_patch" || strings.Contains(ds[0].Subject, "Begin Patch") {
 		t.Fatalf("the log records the file, never the patch: %+v", ds)
 	}
-	if ds[1].Command != "tq allow" {
-		t.Fatalf("the human-only line logs the verb phrase once: %q", ds[1].Command)
+	if ds[1].Subject != "tq allow" || ds[1].Command != "tq allow acme" {
+		t.Fatalf("the human-only line: subject %q command %q", ds[1].Subject, ds[1].Command)
 	}
 }
 
@@ -450,10 +459,11 @@ func TestProtectedPaths_OtherWorkspaceAndNeutralCwd(t *testing.T) {
 	}
 }
 
-// The denial log records no arguments at all (PRD v2 §7.3, ADR-0005): only
-// the verb (after sudo/env/assignments are stripped) plus the matched path.
-// A here-doc body, an assignment value, a flag or a quoted secret never
-// reaches the log, in every category's line.
+// The denial log records the command redacted (PRD v2 §7.3, ADR-0006) and,
+// as subject, the verb (after sudo/env/assignments are stripped) plus the
+// matched path (ADR-0005). A here-doc body, an assignment value, a
+// credential flag's value or a quoted secret never reaches the log, in
+// every category's line.
 func TestDenialLogRedaction(t *testing.T) {
 	f := setupProtected(t, "blocked_commands: [\"gh \"]\n")
 	cfgPath := filepath.Join(f.home, "config.yaml")
@@ -467,7 +477,7 @@ func TestDenialLogRedaction(t *testing.T) {
 		{"auth header", "Bash", "curl -H 'Authorization: Bearer tok-HEADER-9' -o ~/.tentaqles/config.yaml https://x", "curl ", policy.ProtectedPathID, "self-protection"},
 		{"identity blocked", "Bash", "gh pr merge 1", "gh", "blocked-command", "identity"},
 	}
-	secrets := []string{"HUNTER2-PASTED", "tok-INLINE-9", "tok-EXPORT-9", "tok-PS-9", "tok-HEADER-9", "pr merge"}
+	secrets := []string{"HUNTER2-PASTED", "tok-INLINE-9", "tok-EXPORT-9", "tok-PS-9", "tok-HEADER-9"}
 	for _, c := range cases {
 		if code, _, rule, _ := hookDecision(t, f.root, c.tool, cmdIn(c.cmd)); code != 2 || rule != c.wantRule {
 			t.Fatalf("%s: code=%d rule=%q", c.name, code, rule)
@@ -479,16 +489,15 @@ func TestDenialLogRedaction(t *testing.T) {
 	}
 	for i, c := range cases {
 		d := ds[i]
-		if d.Kind != c.wantKind {
-			t.Errorf("%s: kind=%q want %q", c.name, d.Kind, c.wantKind)
+		if d.Category != c.wantKind {
+			t.Errorf("%s: kind=%q want %q", c.name, d.Category, c.wantKind)
 		}
-		if c.wantPrefix != "" && !strings.HasPrefix(d.Command, c.wantPrefix) {
-			t.Errorf("%s: command %q, want prefix %q", c.name, d.Command, c.wantPrefix)
+		if c.wantPrefix != "" && !strings.HasPrefix(d.Subject, c.wantPrefix) && !strings.HasPrefix(d.Command, c.wantPrefix) {
+			t.Errorf("%s: subject %q command %q, want prefix %q", c.name, d.Subject, d.Command, c.wantPrefix)
 		}
-		// Every protected-path line ends in the matched config path; no line
-		// carries more than the verb and that path.
-		if c.wantRule == policy.ProtectedPathID && !strings.Contains(strings.ToLower(d.Command), strings.ToLower(cfgPath)) {
-			t.Errorf("%s: command %q should name the matched path", c.name, d.Command)
+		// Every protected-path line's subject names the matched config path.
+		if c.wantRule == policy.ProtectedPathID && !strings.Contains(strings.ToLower(d.Subject), strings.ToLower(cfgPath)) {
+			t.Errorf("%s: subject %q should name the matched path", c.name, d.Subject)
 		}
 	}
 	raw, err := os.ReadFile(audit.DenialsPath())

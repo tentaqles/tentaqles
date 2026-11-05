@@ -51,7 +51,7 @@ func TestPlanFor_CommitPathspecs(t *testing.T) {
 		{`git commit -qm x a.csv`, Plan{Commits: true, WorkingDir: true, CommitPaths: []string{"a.csv"}}},
 		{`git commit --author "A <a@b.c>" --date now -m x`, Plan{Commits: true}},
 		{`git commit -F msg.txt --cleanup strip`, Plan{Commits: true}},
-		{`git commit --pathspec-from-file=list.txt -m x`, Plan{Commits: true, Ask: askPathspecFile}},
+		{`git commit --pathspec-from-file=list.txt -m x`, Plan{Commits: true, Incomplete: incompletePathspecFile}},
 	}
 	for _, c := range cases {
 		if got := PlanFor(c.cmd); !reflect.DeepEqual(got, c.want) {
@@ -79,8 +79,8 @@ func TestAdded_CommitPathspecScansWorkingTree(t *testing.T) {
 	if added, _ := Added(dir, `git commit -m "feat: x"`, gitcfg.RunGitIn); hasText(added, "529") {
 		t.Fatal("a plain commit must not see unstaged changes")
 	}
-	if _, err := Added(dir, `git commit --pathspec-from-file=l.txt -m x`, gitcfg.RunGitIn); !IsAsk(err) {
-		t.Fatalf("pathspec-from-file: err=%v, want an ask", err)
+	if _, err := Added(dir, `git commit --pathspec-from-file=l.txt -m x`, gitcfg.RunGitIn); !IsIncomplete(err) {
+		t.Fatalf("pathspec-from-file: err=%v, want an incomplete scan", err)
 	}
 }
 
@@ -90,11 +90,11 @@ func TestAdded_LargeUntrackedFileAsks(t *testing.T) {
 	big := strings.Repeat(testCPFRow+"\n", (maxFileBytes/len(testCPFRow))+10)
 	write(t, dir, "export.csv", big)
 	_, err := Added(dir, `git add -A && git commit -m "feat: export"`, gitcfg.RunGitIn)
-	if !IsAsk(err) || !strings.Contains(err.Error(), "export.csv") || !strings.Contains(err.Error(), "1 MiB") {
-		t.Fatalf("err=%v, want an ask naming export.csv and the cap", err)
+	if !IsIncomplete(err) || !strings.Contains(err.Error(), "export.csv") || !strings.Contains(err.Error(), "1 MiB") {
+		t.Fatalf("err=%v, want an incomplete scan naming export.csv and the cap", err)
 	}
-	if _, err := ScanCtx(context.Background(), dir, `git add -A && git commit -m "feat: export"`, gitcfg.RunGitIn); !IsAsk(err) {
-		t.Fatalf("secret scan: err=%v, want an ask", err)
+	if _, err := ScanCtx(context.Background(), dir, `git add -A && git commit -m "feat: export"`, gitcfg.RunGitIn); !IsIncomplete(err) {
+		t.Fatalf("secret scan: err=%v, want an incomplete scan", err)
 	}
 	// a large binary still passes
 	os.Remove(filepath.Join(dir, "export.csv"))
@@ -192,8 +192,8 @@ func TestAdded_ScansTargetDirectory(t *testing.T) {
 			t.Errorf("%s: %+v %v", c, added, err)
 		}
 	}
-	if _, err := Added(cwd, `git -C nowhere commit -m x`, gitcfg.RunGitIn); !IsAsk(err) {
-		t.Fatalf("missing dir: err=%v, want an ask", err)
+	if _, err := Added(cwd, `git -C nowhere commit -m x`, gitcfg.RunGitIn); !IsIncomplete(err) {
+		t.Fatalf("missing dir: err=%v, want an incomplete scan", err)
 	}
 }
 
@@ -215,7 +215,7 @@ func TestReadBounded_OpenFailureAsks(t *testing.T) {
 	defer func() { openFile = orig }()
 	openFile = func(string) (*os.File, error) { return nil, errors.New("locked") }
 	_, _, err := readBounded(filepath.Join(dir, "a.txt"), "a.txt")
-	if !IsAsk(err) || !strings.Contains(err.Error(), "a.txt") {
-		t.Fatalf("err=%v, want an ask naming a.txt", err)
+	if !IsIncomplete(err) || !strings.Contains(err.Error(), "a.txt") {
+		t.Fatalf("err=%v, want an incomplete scan naming a.txt", err)
 	}
 }

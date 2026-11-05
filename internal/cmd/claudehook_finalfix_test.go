@@ -29,11 +29,13 @@ func wantDeny(t *testing.T, ws, cmd, rule string) {
 	}
 }
 
-func wantAsk(t *testing.T, ws, cmd, rule, sub string) {
+// wantIncomplete: a commit the scan could not vouch for is denied (PRD v2
+// §6.3, no ask), and the reason says why.
+func wantIncomplete(t *testing.T, ws, cmd, rule, sub string) {
 	t.Helper()
 	code, out := hook(t, ws, cmd)
-	if code == 2 || !strings.Contains(out, `"ask"`) || !strings.Contains(out, rule) || !strings.Contains(out, sub) {
-		t.Errorf("%s: want ask %s %q, got code=%d %q", cmd, rule, sub, code, out)
+	if code != 2 || strings.Contains(out, `"ask"`) || !strings.Contains(out, rule) || !strings.Contains(out, sub) || !strings.Contains(out, "could not scan") {
+		t.Errorf("%s: want deny %s %q, got code=%d %q", cmd, rule, sub, code, out)
 	}
 }
 
@@ -100,8 +102,8 @@ func TestFinal_C1_ScansTargetRepository(t *testing.T) {
 	} {
 		wantDeny(t, ws, c, "tq/commit-secret")
 	}
-	// A repository the hook cannot open is not vouched for: the one ask left.
-	wantAsk(t, ws, `git -C missing commit -m "feat: cfg"`, "tq/commit-secret", "")
+	// A repository the hook cannot open is not vouched for: denied.
+	wantIncomplete(t, ws, `git -C missing commit -m "feat: cfg"`, "tq/commit-secret", "")
 	// The clean cwd commits.
 	if code, out := hook(t, ws, `git commit --allow-empty -m "feat: nothing"`); code != 0 || out != "" {
 		t.Fatalf("clean commit: code=%d %q", code, out)
@@ -140,14 +142,14 @@ func TestFinal_C3_CommandWordForms(t *testing.T) {
 }
 
 // C4: a file too large to scan is never skipped silently.
-func TestFinal_C4_LargeFileAsks(t *testing.T) {
+func TestFinal_C4_LargeFileDenies(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
 	gitRepo(t, ws)
 	line := strings.Repeat("x", 99) + "\n"
 	if err := os.WriteFile(filepath.Join(ws, "export.csv"), []byte(strings.Repeat(line, (1<<20)/len(line)+100)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	wantAsk(t, ws, `git add -A && git commit -m "feat: export"`, "tq/commit-secret", "scan limit")
+	wantIncomplete(t, ws, `git add -A && git commit -m "feat: export"`, "tq/commit-secret", "scan limit")
 }
 
 // I1: one budget for the whole decision, under the plugin's 15 s timeout.
@@ -179,15 +181,15 @@ func TestFinal_I1_SharedBudget(t *testing.T) {
 	if d := time.Since(start); d > 3*time.Second {
 		t.Fatalf("commit took %v with a 300ms budget: the budget is not honoured", d)
 	}
-	if code == 2 || !strings.Contains(out, "scan did not finish in time") || !strings.Contains(out, "tq/commit-secret") {
-		t.Fatalf("the commit rule must ask on the deadline: code=%d %q", code, out)
+	if code != 2 || !strings.Contains(out, "scan did not finish in time") || !strings.Contains(out, "tq/commit-secret") {
+		t.Fatalf("the commit rule must deny on the deadline: code=%d %q", code, out)
 	}
 }
 
-func TestFinal_I1_OversizedDiffAsks(t *testing.T) {
+func TestFinal_I1_OversizedDiffDenies(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
 	run := gitRepo(t, ws)
 	line := strings.Repeat("x", 99) + "\n"
 	stage(t, ws, run, "big.txt", strings.Repeat(line, (9<<20)/len(line)))
-	wantAsk(t, ws, `git commit -m "feat: big"`, "tq/commit-secret", "scan limit")
+	wantIncomplete(t, ws, `git commit -m "feat: big"`, "tq/commit-secret", "scan limit")
 }

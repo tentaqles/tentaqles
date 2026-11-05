@@ -97,10 +97,19 @@ fi
 # Run tq. Not exec'd so that a broken binary (126 "cannot execute" / 127 "not
 # found") can still fall through to the Python fallback; the child inherits
 # stdin, so the hook payload passes through unchanged.
+#
+# pre-tool-use fails closed (PRD v2 §6.3, ADR-0006): tq answers 0 (allow)
+# or 2 (deny). Any other status (a crash the Go runtime could not recover,
+# a killed process, a usage error) is a call tq did not judge, and Claude
+# Code would run it on a non-2 exit, so it becomes a deny here.
 if [ -n "$TQ" ]; then
   "$TQ" claude-hook "$_event"
   _status=$?
   if [ "$_status" != "126" ] && [ "$_status" != "127" ]; then
+    if [ "$_event" = "pre-tool-use" ] && [ "$_status" != "0" ] && [ "$_status" != "2" ]; then
+      echo "BLOCKED [tq/guard-error]: tq exited with status ${_status} without a decision; tq denies a call it cannot judge. Report this to the developer instead of retrying; \`tq doctor\` shows what is wrong" >&2
+      exit 2
+    fi
     exit "$_status"
   fi
 fi

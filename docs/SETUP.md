@@ -37,7 +37,6 @@ companies:
       identities:
         - claude
         - gh
-      permission_mode: acceptEdits
     - name: globex
       display_name: Globex Corporation
       color: green
@@ -46,7 +45,6 @@ companies:
       identities:
         - claude
         - gh
-      permission_mode: default
 hooks:
     - bash
     - zsh
@@ -67,7 +65,6 @@ trust: true
 | `companies[].git_email` | yes | Git `user.email` for this workspace. Must look like an email. |
 | `companies[].git_user` | no | Optional platform username (e.g. GitHub handle), stored alongside git identity but not used by git itself. |
 | `companies[].identities` | no | List of provider ids (from the provider catalog, e.g. `claude`, `gh`, `aws`) to isolate per workspace. Defaults to `[claude, gh]` if omitted. Each id must be known to the catalog (`tq providers list`) or `Validate` rejects the plan. |
-| `companies[].permission_mode` | yes | Claude Code permission mode for this workspace. Must be one of the values in `manifest.PermissionModes` (e.g. `default`, `acceptEdits`, `bypass`). It becomes `permissions.defaultMode` for sessions started outside tq's launcher; the `claude` launcher always starts in bypass, and tq sets no permission mode of its own beyond that (see [CLAUDE-SETTINGS.md](CLAUDE-SETTINGS.md)). |
 | `hooks` | no | List of shells (`bash`, `zsh`, `fish`, `pwsh`, `powershell`) to install the `tq activate` line into. Shells already carrying a hand-installed activation line are detected as "present (unmanaged)" and left untouched — never duplicated. |
 | `companies[].chat`, `companies[].email` | no | The company's chat and email blocks, written into the new workspace's manifest with the same checks as a hand-written one (see [PROVIDERS.md](PROVIDERS.md#company-services-in-the-manifest)). A token-shaped value in any field is refused, naming the field and never the value. |
 | `trust` | no, defaults to `true` | Whether newly scaffolded workspaces are auto-trusted with `tq allow` as part of apply. If the key is absent from the YAML it defaults to `true`; set it to `false` explicitly to scaffold without trusting. |
@@ -91,7 +88,8 @@ written. `--yes` is accepted for older scripts but no longer skips that
 confirmation. The command is human-only (`docs/adr/0003-human-only-detection.md`):
 on a non-interactive stdin or stdout, under a harness in the process tree or
 with an agent marker in the environment it refuses before the preview, logs
-the refusal to `~/.tentaqles/denials.jsonl`, and never applies.
+the refusal to `~/.tentaqles/denials.jsonl` (layer `human-only`; read it with
+`tq status --denials` from your own terminal), and never applies.
 
 `--json` switches preview, tool-check, and (once applied) the report to a
 single JSON object (`{"preview": [...], "toolcheck": {...}, "report": {...}}`)
@@ -159,7 +157,7 @@ Flags:
 - `--from <yaml>`: answers from a file instead of the wizard. Keys follow the manifest
   (`name`, `base`, `display_name`, `git: {email, name, provider, user}`, `identities`,
   `cloud: {provider, also}`, `data_platform`, `agents`, `chat`, `email`, plus
-  `color` and `permission_mode`). Unknown keys and token-shaped values are refused.
+  `color`). Unknown keys and token-shaped values are refused.
 - `--base <dir>`: the base folder; the default is the only registered base.
 - `--open-terminal`: with `--from`, open a new terminal in the folder afterwards. The
   wizard asks instead.

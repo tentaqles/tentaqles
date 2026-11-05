@@ -125,13 +125,19 @@ func denyKind(d policy.Decision) string {
 	return guardErrorID
 }
 
-// logHookDenial appends one line to the denial log (PRD v2 §7.3): the
-// category, the layer, the tool, the command or path, the rule, the reason
-// the model saw and the workspace; never the environment, never file
-// content. A log that cannot be written changes nothing: the deny stands.
-func logHookDenial(kind, tool, subject, rule, reason, ws, cwd string) {
-	_ = audit.AppendDenial(audit.Denial{
-		Kind: kind, Layer: audit.LayerHook, Tool: tool, Command: subject,
-		Rule: rule, Reason: reason, Workspace: ws, PID: os.Getpid(), Cwd: cwd,
-	})
+// logCommand is what the denial log records as the command of a call (PRD
+// v2 §7.3, ADR-0006): a shell line through audit.RedactCommand (here-doc
+// and quoted bodies, assignment and credential-flag values, secret-shaped
+// spans and long tokens masked, cut); a file tool's path; for an MCP call or
+// a patch the tool name, never its input or content.
+func logCommand(call policy.ToolCall) string {
+	switch {
+	case isApplyPatch(call):
+		return call.Tool
+	case call.IsShell() && call.Command != "":
+		return audit.RedactCommand(call.Command)
+	case call.Path != "":
+		return call.Path
+	}
+	return call.Tool
 }

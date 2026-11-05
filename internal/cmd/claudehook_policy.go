@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,14 +107,25 @@ func nonEmpty(xs []string) []string {
 	return out
 }
 
-// resolveTrusted maps cwd to its trusted workspace, or nil. Errors mean nil:
-// the built-in rules still apply without a workspace.
-func resolveTrusted(cwd string) (*resolve.Workspace, *registry.Config) {
+// resolveCwd maps cwd to its workspace (Result.Workspace is the trusted one,
+// nil for a neutral or untrusted cwd: the built-in rules still apply). A
+// registry tq cannot read is the error, and the hook denies on it.
+func resolveCwd(cwd string) (resolve.Result, *registry.Config, error) {
 	cfg, err := registry.Load()
 	if err != nil {
-		return nil, nil
+		return resolve.Result{}, nil, err
 	}
-	return resolve.Resolve(cwd, cfg).Workspace, cfg
+	return resolve.Resolve(cwd, cfg), cfg, nil
+}
+
+// unreadableReason words the fail-closed deny of a cwd that names a
+// workspace whose manifest tq cannot read (PRD v2 §6.3, "missing manifest").
+func unreadableReason(res resolve.Result) string {
+	name := res.Name
+	if name == "" {
+		name = "this folder"
+	}
+	return fmt.Sprintf("the manifest of identity %s cannot be read (%s): tq cannot tell what this identity may touch, so it denies every call here until a human fixes the manifest", name, res.Reason)
 }
 
 // hookRuleIDs are the rules the hook applies, and the only ids it reports
@@ -190,8 +200,9 @@ func policyRules(set *policy.Set, cwd string, ws *resolve.Workspace, cfg *regist
 		case len(hits) > 0:
 			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/commit-secret", commitReason(hits)))
 		case err != nil:
-			// The one ask left: a scan that could not vouch for the commit.
-			d = policy.Merge(d, ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err)))
+			// A scan that could not vouch for the commit denies it (PRD v2
+			// §6.3: no ask; the owner's decision of 2026-11-05).
+			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/commit-secret", "the secret "+commitScanIncomplete(ctx, err)))
 		}
 	}
 	if call.IsMCP() {
@@ -233,18 +244,21 @@ const maxScanBytes = commitscan.MaxTotalBytes
 
 var errScanTooLarge = errors.New("too large to scan")
 
-// commitScanAsk words the ask for a commit scan that could not finish; it
-// completes "the secret ...".
-func commitScanAsk(ctx context.Context, err error) string {
+// commitScanIncomplete words the deny of a commit whose secret scan could
+// not finish; it completes "the secret ...". tq denies what it could not
+// scan: the agent narrows the commit, or the developer commits it from
+// their own terminal.
+func commitScanIncomplete(ctx context.Context, err error) string {
+	const tail = "; tq denies a commit it could not scan (a developer can commit it from their own terminal)"
 	switch {
 	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
-		return scanTimedOut + "; retry, or commit fewer files"
-	case commitscan.IsAsk(err):
-		return "scan cannot vouch for this commit: " + err.Error()
+		return scanTimedOut + "; retry, or commit fewer files" + tail
+	case commitscan.IsIncomplete(err):
+		return "scan cannot vouch for this commit: " + err.Error() + tail
 	case errors.Is(err, errScanTooLarge):
-		return fmt.Sprintf("scan stopped: what this commit records is larger than the %d MiB scan limit; commit fewer files", maxScanBytes>>20)
+		return fmt.Sprintf("scan stopped: what this commit records is larger than the %d MiB scan limit; commit fewer files", maxScanBytes>>20) + tail
 	}
-	return "scan could not read what this commit records; check the repository state or confirm"
+	return "scan could not read what this commit records; check the repository state" + tail
 }
 
 // mcpOwner returns the client whose bundle declares server when the current
@@ -271,15 +285,4 @@ func mcpOwner(ws *resolve.Workspace, cfg *registry.Config, server string) string
 		}
 	}
 	return ""
-}
-
-// writeAsk emits the PreToolUse JSON that makes Claude Code ask the user.
-func writeAsk(w io.Writer, reason string) error {
-	return json.NewEncoder(w).Encode(map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":            "PreToolUse",
-			"permissionDecision":       "ask",
-			"permissionDecisionReason": reason,
-		},
-	})
 }

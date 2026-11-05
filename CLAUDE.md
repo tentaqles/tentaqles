@@ -22,14 +22,16 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     rule carries its category (`identity`, `secrets`, `self-protection`); a deny reads
     `BLOCKED [<category>/<rule>]`.
   - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `init`, `add`,
-    `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `bundle`,
+    `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `status`, `bundle`,
     `providers`, `setup`, `onboard`, `secret`, `secrets`, `settings`, `statusline`,
     `worktrees`, `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
     `claudehook*.go`: `pre-tool-use` runs `guard.Decide` (identity), then the secret rules
     plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
     the protected path set of the run (`claudehook_protect.go`), first category that
-    denies wins, with `tq/guard-error` as the fail-safe; every deny is one line in
-    `$TQ_HOME/denials.jsonl`; `session-start` prints the preamble. `humanonly.go` is the thin wrapper over
+    denies wins; there is no ask, and a call it cannot judge (an unreadable payload, a
+    panic, the 12 s deadline, an unreadable registry or manifest) is denied as
+    `tq/guard-error` (ADR-0006); every deny is one line in `$TQ_HOME/denials.jsonl`, the
+    command redacted by `audit.RedactCommand`, read by `tq status --denials`; `session-start` prints the preamble. `humanonly.go` is the thin wrapper over
     `internal/humanonly` (`refuseAgent`, `humanGate`) that every command writing under
     `paths.Home()` or an identity dir calls.
   - `internal/markers/` — the one list of harness environment markers; `internal/paths`
@@ -130,6 +132,21 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   an agent session: `TestResolve_ReplayOfATrustedManifest_Neutral`,
   `TestTrustIsKeyedByWorkspaceName`, `TestHome_IgnoresTQHomeUnderAnAgentMarker`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
+- The hook has no ask and fails closed: a payload it cannot read, a guard panic, the
+  deadline, an unreadable registry or manifest, and an incomplete commit scan all deny:
+  `TestNoAskCodePath`, `TestNoAskVerdict`, `TestPreToolUse_MalformedPayloadDenies`,
+  `TestPreToolUseGuardPanicDenies`, `TestPreToolUse_TimeoutDenies`,
+  `TestPreToolUse_UnreadableRegistryDenies`, `TestPreToolUse_MissingOrBrokenManifestDenies`,
+  `TestPreToolUseIncompleteScanDeniesBothAgents`, `test_unreadable_payload_denies`,
+  `test_tq_hook_turns_a_tq_without_decision_into_a_deny`.
+- Every deny is logged with identity, caller, tool, rule, category and layer, and the logged
+  command carries no secret tq can recognise; only a human reads the log:
+  `TestDenialLogSchema`, `TestDenialLogRedaction`, `TestRedactCommand`,
+  `TestAppendDenialMasksEveryField`, `TestStatusDenialsRefusesAgent`.
+- tq writes no permission setting of the harness, cleans the ones it wrote, and an old
+  manifest with `claude.permission_mode`/`claude.permissions` still loads (PRD v2 §7.2,
+  §13): `TestRenderFreshWritesNoPermissionKey`, `TestRenderCleansWhatTheOldRenderWrote`,
+  `TestRenderWritesNoConfigKeys`, `TestLoadRecordsDroppedClaudeKeys`.
 
 ## Project config
 CI's `go` job runs `go vet ./...`, `go test ./... -count=1` and a build; locally run

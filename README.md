@@ -29,9 +29,8 @@ Claude permission mode: the **identity** a command runs under (a `git push`,
 from a stale shell is blocked with the reason) and **secrets** (`.env` reads,
 environment dumps, credential-store reads and a commit that would record a
 secret are blocked; `tq dotenv run` is the way to use a `.env`). Every
-decision is allow or block, never a confirmation (the one exception is the
-fail-safe when the guard itself fails, which asks); anything else is Claude
-Code's own permission settings' business. See
+decision is allow or block, never a confirmation, and a call tq cannot judge
+is blocked; anything else is the harness's own permission settings' business. See
 [docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md).
 
 ## Install
@@ -142,8 +141,8 @@ each one.
 
 Run it with no flags for the interactive wizard, which walks through eight
 steps: welcome/consent, base folder (offering to create it), a repeatable
-company loop (name, display name, color, git name/email/user, providers,
-permission mode), a tool-check summary of what's installed vs. missing, shell
+company loop (name, display name, color, git name/email/user, providers),
+a tool-check summary of what's installed vs. missing, shell
 hook selection, a full preview of every change, and a final confirmation
 before anything is applied. The wizard refuses to finish with zero companies
 — it re-prompts, and if you decline twice it aborts with an error rather than
@@ -209,7 +208,7 @@ reference.
 | `tq hooks install <shell...>` | Install tq's activation block into shell profile(s). `--all-detected` targets every detected shell. Human-only. |
 | `tq hooks remove <shell...>` | Remove tq's activation block from shell profile(s). `--all-detected` targets every detected shell. Human-only. |
 | `tq hooks verify [<name>\|--all]` | Check a workspace's signed integrity record against the files it covers (manifest, marker, the enforcing keys of the Claude settings, the loaded plugin folder and its `installed_plugins.json` entry, Codex hook files, shims) and list what changed; exit 1 on a mismatch. `--accept` signs the current state again: human-only, after you confirm; `--accept --all` signs every workspace whose only change is a new plugin version that is the published release byte for byte, with one confirmation. |
-| `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. Flags: `--base`, `--git-email` (required), `--git-name`, `--display-name`, `--color`, `--git-provider`, `--identities` (default `claude,gh`), `--permission-mode`. Human-only: a session is refused; you confirm, and the folder is trusted. |
+| `tq add <name>` | Create a workspace folder with its manifest, identity dirs and git identity. Flags: `--base`, `--git-email` (required), `--git-name`, `--display-name`, `--color`, `--git-provider`, `--identities` (default `claude,gh`). Human-only: a session is refused; you confirm, and the folder is trusted. |
 | `tq allow <name>` | Trust a workspace as it is now: renders the identity's settings, then signs the integrity record over the manifest, the enforcing keys of the identity's Claude settings, the installed plugin hooks, the Codex hook files and the shims, so the workspace can export env. Human-only: it refuses an agent session and you confirm. An edit to any covered file drops the trust until a human signs again (`tq allow`, or `tq hooks verify --accept`). |
 | `tq deny <name>` | Revoke trust for a workspace. Human-only. |
 | `tq list` | List workspaces under all registered bases. `--json` for machine-readable output. |
@@ -231,7 +230,7 @@ reference.
 | `tq secret set\|rm\|status <workspace> <provider>` | Keep a git-host or issue-tracker token (`github`, `azure-devops`, `jira`, `linear`, `asana`) in the OS keychain; `set` reads it from a hidden prompt on your terminal, `status` shows present or absent and never a value. `set` and `rm` are human-only; `status` runs anywhere. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md#tq-secret). |
 | `tq secrets audit` | List agent-config files holding secret-shaped values, and `.env` files git would commit; path and line only, never the value. `--root <dir>` adds a directory, `--json`. |
 | `tq dotenv run [--file F]... -- <command>` | Run a command with a `.env` loaded into its environment and every loaded value replaced by `[REDACTED:NAME]` in its output. See [docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md#using-a-env-without-printing-it). |
-| `tq settings render [workspace...]` | Write the tq-owned part of each Claude identity's `settings.json` (baseline permissions, env, status line) and the Codex identity's `config.toml` and `hooks.json`. `--all`, `--dry-run`, `--no-statusline`. Human-only (`--dry-run` writes and asks nothing and is free from a session). `tq settings anchors` lists the terminals the human-only check accepts; `add <exe>` / `remove <exe>` (human-only) keep yours in `~/.tentaqles/anchors.yaml`. See [`docs/CLAUDE-SETTINGS.md`](docs/CLAUDE-SETTINGS.md). |
+| `tq settings render [workspace...]` | Write the tq-owned part of each Claude identity's `settings.json` (baseline env and status line; no permission setting, and the ones an older tq wrote are removed) and the Codex identity's `hooks.json` (the `config.toml` block an older tq wrote is removed). `--all`, `--dry-run`, `--no-statusline`. Human-only (`--dry-run` writes and asks nothing and is free from a session). `tq settings anchors` lists the terminals the human-only check accepts; `add <exe>` / `remove <exe>` (human-only) keep yours in `~/.tentaqles/anchors.yaml`. See [`docs/CLAUDE-SETTINGS.md`](docs/CLAUDE-SETTINGS.md). |
 | `tq statusline` | The Claude Code status line: client, git email, model, context size, cost. |
 | `tq worktrees list\|prune` | List linked git worktrees in every workspace repo; `prune` removes the clean, merged, old ones (`--older-than` days, `--yes` to remove instead of listing, then you confirm; human-only). |
 | `tq claude-hook session-start\|pre-tool-use` | What the Claude Code plugin's hooks call: the identity preamble, and the allow-or-block decision for each tool call. See [docs/CLAUDE-HOOK.md](docs/CLAUDE-HOOK.md). |
@@ -393,8 +392,8 @@ Machine-wide state lives under `~/.tentaqles/` (override with `$TQ_HOME`):
 Per-workspace state:
 
 - `~/.tentaqles/identities/<workspace>/manifest.yaml` — the manifest: workspace
-  name, git name/email, which CLI identities to isolate, Claude permission
-  mode. Names only, never secrets. `<base>/<workspace>/.tentaqles.yaml` is a
+  name, git name/email, which CLI identities to isolate. Names only, never
+  secrets. `<base>/<workspace>/.tentaqles.yaml` is a
   name-only marker pointing at it; an identity created before this layout keeps
   the full manifest in the folder until you run `tq migrate manifests`
   (`docs/adr/0002-protected-manifest-location.md`).

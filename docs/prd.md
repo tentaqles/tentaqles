@@ -207,17 +207,19 @@ Agent and `mcp__*`, in every Claude permission mode. The identity guard
 (`tq/secret-store-read`, `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`,
 `tq/env-dump`) plus `tq/commit-secret` and `tq/cross-client-mcp` deny; nothing a manifest,
 a global file or a repository file adds or removes. Every rule decision is allow or block;
-the one confirmation tq ever emits is the fail-safe `tq/guard-error` on a guard panic (a
-deny in Codex), and a call tq cannot judge is denied under the same id. Codex gets the
+tq never asks, and a call it cannot judge (an unreadable payload, a guard panic, the 12 s
+deadline, an unreadable registry or manifest) is denied as `tq/guard-error`, an incomplete
+commit scan as `tq/commit-secret` (ADR-0006). Codex gets the
 same hook through `$CODEX_HOME/hooks.json` (`internal/codexcfg`); with tq missing the hook
 falls back to `plugin/scripts/identity-guard.py`, with no Python it blocks shell tools.
-The rules are text filters and a hook timeout fails open (AR2).
+The rules are text filters (AR2); tq denies before the harness's hook timeout, and the
+plugin turns any exit of tq other than allow or deny into a deny.
 Status: shipped (v0.9.0)
 **Acceptance checks**
 - `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`, `TestPreToolUse_SecretRules`,
   `TestBuiltinIsTheFiveSecretRules`, `TestPolicy_CrossClientMCPDenied`,
-  `TestPolicy_CommitWithSecretDenied`, `TestPreToolUseGuardPanicAsks` and
-  `TestPreToolUseAgentCodexNeverAsks` pass.
+  `TestPolicy_CommitWithSecretDenied`, `TestPreToolUseGuardPanicDenies`, `TestNoAskCodePath` and
+  `TestPreToolUseIncompleteScanDeniesBothAgents` pass.
 - `test_hooks_json_pretooluse_matcher_covers_shell_file_and_mcp_tools` and
   `test_tq_hook_blocks_when_no_python` pass; in the COMMANDS.md walkthrough step 5 table,
   `git push --force` exits 0 and `cat .env` exits 2.
@@ -430,19 +432,21 @@ Status: shipped (v0.9.0)
 
 ### FR-23 Settings render, status line and Codex render
 G1. `tq settings render [--all]` writes tq's part of each identity's Claude `settings.json`
-(baseline permissions, env, status line, hooks), keeps hand edits and prints what changed
-(`internal/claudesettings`, `docs/CLAUDE-SETTINGS.md`); a trusted manifest's
-`claude.permission_mode: bypass` renders as `bypassPermissions` (D-30); `tq statusline`
-(hidden) shows the client and the git email; the Codex identity gets a `config.toml` block
-pinning `approval_policy = "on-request"` and `sandbox_mode = "workspace-write"`, the same
-pair as launch flags, and a hooks file merged with the user's own (`internal/codexcfg`).
+(env, status line), writes no permission setting, keeps hand edits and prints what changed
+(`internal/claudesettings`, `docs/CLAUDE-SETTINGS.md`); the first render after an upgrade
+removes the permission settings an older tq wrote (the entries its state file records, its
+`defaultMode` and `skipDangerousModePermissionPrompt`) and leaves the user's own; `tq
+statusline` (hidden) shows the client and the git email; the Codex identity gets a hooks
+file merged with the user's own and nothing in its `config.toml`, where the block an older
+tq wrote is removed (`internal/codexcfg`).
 Status: shipped (v0.9.0)
 **Acceptance checks**
 - `tq settings render --all` twice in a row prints `up to date` for every identity on the
   second run (COMMANDS.md walkthrough, step 8).
-- `TestApplyKeepsUserEntriesAndTakesBackOwned`, `TestApplyLeavesCustomStatusLine`,
+- `TestApplyKeepsUserEntries`, `TestApplyLeavesCustomStatusLine`,
+  `TestRenderCleansWhatTheOldRenderWrote`, `TestRenderFreshWritesNoPermissionKey`,
   `TestRenderHotBandAndNeutral`, `TestRenderHooksMergesWithUserHooks`,
-  `TestRenderConfigConflictStillWritesHook`, `TestPinnedFlags` and `TestLaunchArgs` pass.
+  `TestRenderRemovesOldBlocks`, `TestPinnedFlags` and `TestLaunchArgs` pass.
 
 ### FR-24 Documentation matches the command list
 The docs are the operator's runbook: `docs/COMMANDS.md` (every command and skill plus a
@@ -544,7 +548,7 @@ Status: planned (v0.10)
 - An OpenCode session started from a workspace runs the tq PreToolUse hook: a `.env` read
   is blocked with `tq/env-file-read`; a `kimi` catalog entry exists and `tq login <ws>
   kimi` writes under `~/.tentaqles/identities/<ws>/kimi`.
-- `TestRunClaudeAlwaysBypass` and `TestPreToolUseAgentCodexNeverAsks` keep passing.
+- `TestRunClaudeAlwaysBypass` and `TestPreToolUseIncompleteScanDeniesBothAgents` keep passing.
 
 ## 5. Data
 
@@ -612,10 +616,10 @@ Its blocks (`internal/manifest/manifest.go`): `schema`, `client`, `display_name`
 `language`, `color`; `git` (name, email, provider, user, host, expected_user); `cloud`
 (the primary provider, `also`, expected account or subscription, profile); `database`,
 `data_platform`, `chat`, `email` (a provider name each); `stack`; `claude`
-(`permission_mode`, `bundle`, `permissions` with allow, deny and ask, `env`);
-`blocked_commands` (enforced by `blocked-command`); `agents`; `identities` (one entry per
-CLI login, derived by `tq add`). A top-level key outside this list is ignored on load and
-reported by `tq doctor` (`manifest-dropped-block`). The issue-tracker credential has no
+(`bundle`, `env`); `blocked_commands` (enforced by `blocked-command`); `agents`;
+`identities` (one entry per CLI login, derived by `tq add`). The retired
+`claude.permission_mode` and `claude.permissions` keys, like a top-level key outside this
+list, are ignored on load and reported by `tq doctor` (`manifest-dropped-block`). The issue-tracker credential has no
 manifest block: the provider is the `tq secret` account name.
 
 The **state folder** `$TQ_HOME` (`~/.tentaqles`): `identities/<ws>/<id>/` (config homes

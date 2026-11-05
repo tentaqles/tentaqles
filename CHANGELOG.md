@@ -6,6 +6,49 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### Deny only, fail closed, no permission settings, the denial log (ADR-0006)
+
+- **tq never asks.** The hook has two answers, allow and deny (PRD v2 §6.3). A commit whose
+  secret scan cannot finish (the hook budget, the size limits, an unreadable file,
+  `--pathspec-from-file`, a repository it cannot place) is denied as
+  `BLOCKED [secrets/tq/commit-secret]`, and a guard panic is denied as
+  `BLOCKED [tq/guard-error]`. `policy.Ask`, the `CONFIRM` prefix and the PreToolUse ask JSON
+  are gone; a rule whose action is not deny does not compile (`TestNoAskCodePath`,
+  `TestNoAskVerdict`).
+- **Fail closed.** `pre-tool-use` denies a call it cannot judge with `tq/guard-error`: a
+  payload that is not valid JSON, `null`, empty or names no tool (it was allowed); a decision
+  that takes longer than 12 s, under the harness's own hook timeout; a `config.yaml` tq
+  cannot read; a folder whose marker or manifest is there but no usable manifest can be read
+  (a marker without its protected copy, a manifest that does not parse), for every tool,
+  until a human fixes it. A folder with no marker stays neutral. Under `--agent codex` every
+  deny writes the Codex deny JSON and exits 2. The plugin turns any other exit of tq into a
+  deny (`plugin/CHANGELOG.md`).
+- **The identity's scope in the deny.** An identity deny ends with `Scope of identity <name>:
+  git <host>; cloud <provider>; MCP <servers>`, so the model reports the mistake instead of
+  retrying.
+- **The denial log records the command, redacted.** Each line of `~/.tentaqles/denials.jsonl`
+  now has `category`, `rule`, `layer` (`hook`, `filesystem` for a protected path,
+  `human-only`), `caller` (`harness`, `subagent` from the payload's `agent_id`, `no-tty`),
+  `harness` (`claude`, `codex`), `tool`, `command`, `subject`, `reason`, `identity`, `cwd`,
+  `pid`. `command` is the shell line with here-doc and quoted bodies dropped, assignment and
+  credential-flag values masked, secret-shaped spans `[REDACTED:<pattern>]`, long tokens
+  `…`, cut to 240 characters. `kind` and `workspace` are renamed `category` and `identity`;
+  old lines still read.
+- **`tq status`**, the successor name of `tq doctor` (which stays): the doctor report, and with
+  `--denials [--last N] [--identity <ws>] [--category <c>] [--json]` the newest entries of the
+  denial log. `--denials` refuses an agent session (it writes nothing and needs no terminal).
+- **No permission settings.** `claude.permission_mode` and `claude.permissions` leave the
+  manifest (an old manifest that has them loads; they are reported as dropped);
+  `tq settings render` writes no `permissions.defaultMode`, no allow, deny or ask list (the
+  allow and deny baselines are gone) and no `skipDangerousModePermissionPrompt`, and the next
+  render removes the ones tq wrote, keeping yours; Codex's `config.toml` gets no
+  `approval_policy`/`sandbox_mode`; `--permission-mode` leaves `tq add`, the setup wizard,
+  `tq onboard`, setup plans and `pkg/setupapi`; the session preamble drops
+  `permission_mode=`; doctor's `bypass-cloud` and `permission-mode-overridden` checks are gone.
+  How the harness asks for permission is the harness's own setting.
+- `commitscan.AskError`/`IsAsk` are `IncompleteError`/`IsIncomplete`; `resolve.Result` gains
+  `Name` and `Unreadable`; `humanonly.CheckRead` is the human-only check of a read.
+
 ### The signed integrity record (ADR-0004)
 
 - **Trust is a signed record over the files that make the hook run.** `tq allow` writes

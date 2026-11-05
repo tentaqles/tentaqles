@@ -73,6 +73,14 @@ func Detect() *Refusal {
 	if !IsTerminal(os.Stdout) {
 		return &Refusal{DetectorTTY, "stdout is not a terminal"}
 	}
+	return DetectAgent()
+}
+
+// DetectAgent runs the two detectors that find a harness (the environment
+// markers and the process tree), not the terminal one: it is the check of a
+// human-only READ, which a human may pipe (`tq status --denials --json |
+// jq`). It returns nil when neither finds a harness.
+func DetectAgent() *Refusal {
 	if m, ok := EnvMarker(); ok {
 		return &Refusal{DetectorEnvMarker, m + " is set"}
 	}
@@ -96,12 +104,29 @@ func Detect() *Refusal {
 // command through: the refusal stands and the error says the log failed.
 // It never prompts.
 func Check(command string) error {
-	r := Detect()
+	return refuse(command, Detect())
+}
+
+// CheckRead refuses a human-only read (it writes nothing, so it needs no
+// terminal and no confirmation) when a harness runs it: DetectAgent, then
+// the same refusal, logged the same way, as Check.
+func CheckRead(command string) error {
+	return refuse(command, DetectAgent())
+}
+
+func refuse(command string, r *Refusal) error {
 	if r == nil {
 		return nil
 	}
 	cwd, _ := os.Getwd()
-	if lerr := audit.AppendDenial(audit.Denial{Kind: "human-only", Command: command, Reason: r.String(), PID: os.Getpid(), Cwd: cwd}); lerr != nil {
+	caller := audit.CallerHarness
+	if r.Detector == DetectorTTY {
+		caller = audit.CallerNoTTY
+	}
+	if lerr := audit.AppendDenial(audit.Denial{
+		Category: "self-protection", Layer: audit.LayerHumanOnly, Caller: caller,
+		Command: command, Rule: "tq/human-only-command", Reason: r.String(), PID: os.Getpid(), Cwd: cwd,
+	}); lerr != nil {
 		return fmt.Errorf("%s: %w (%s); refusal could not be logged: %v", command, ErrHumanOnly, r, lerr)
 	}
 	return fmt.Errorf("%s: %w (%s)", command, ErrHumanOnly, r)

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,22 +16,6 @@ import (
 func toolPayload(t *testing.T, cwd, tool, input string) string {
 	t.Helper()
 	return `{"tool_name":` + jsonPath(t, tool) + `,"cwd":` + jsonPath(t, cwd) + `,"tool_input":` + input + `}`
-}
-
-// askReason parses the PreToolUse ask JSON, failing the test if out isn't one.
-func askReason(t *testing.T, out string) string {
-	t.Helper()
-	var v struct {
-		H struct {
-			Event    string `json:"hookEventName"`
-			Decision string `json:"permissionDecision"`
-			Reason   string `json:"permissionDecisionReason"`
-		} `json:"hookSpecificOutput"`
-	}
-	if err := json.Unmarshal([]byte(out), &v); err != nil || v.H.Decision != "ask" || v.H.Event != "PreToolUse" {
-		t.Fatalf("not an ask decision: %q (%v)", out, err)
-	}
-	return v.H.Reason
 }
 
 func TestPolicy_ReadEnvDenied_WindowsPath(t *testing.T) {

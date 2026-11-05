@@ -6,6 +6,12 @@ Releases before 0.16.0 are described on the
 
 ## [Unreleased]
 
+- **Fail closed (ADR-0006).** `tq_hook.sh` turns an exit of tq other than 0 (allow) or 2 (deny)
+  on `pre-tool-use` (a crash the runtime could not recover, a killed process) into exit 2 with
+  `BLOCKED [tq/guard-error]`, since Claude Code runs a call on any other status; the
+  fallback `identity-guard.py` denies a payload it cannot parse or that names no tool (it was
+  allowed) (`tests/test_identity_guard.py`). tq itself never asks any more, so no skill may
+  rely on a confirm from tq.
 - **`tq_hook.sh` no longer honours `TQ_BIN` and never runs a tq from the plugin folder
   (ADR-0004).** An agent can set a variable, and the tq that enforces must not be its
   choice; the plugin ships no binary, so `$CLAUDE_PLUGIN_ROOT/bin/tq` is not looked at

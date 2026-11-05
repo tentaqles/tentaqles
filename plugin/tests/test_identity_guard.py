@@ -86,11 +86,46 @@ def test_string_tool_input():
     assert p.returncode == 2
 
 
-def test_malformed_stdin_allows():
+@pytest.mark.parametrize(
+    "raw",
+    ["not json", "", "[]", "null", '"Bash"', "{}", '{"tool_name": ""}', '{"tool_name": 7}', '{"tool_input": {"command": "ls"}}'],
+)
+def test_unreadable_payload_denies(raw):
+    """Fail closed (PRD v2 §6.3, ADR-0006): a payload the fallback cannot read is denied."""
     p = subprocess.run(
-        [sys.executable, str(GUARD)], input="not json", capture_output=True, text=True
+        [sys.executable, str(GUARD)], input=raw, capture_output=True, text=True
     )
-    assert p.returncode == 0
+    assert p.returncode == 2
+    assert "BLOCKED [tq/guard-error]" in p.stderr
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize("status", [1, 3, 134, 137])
+def test_tq_hook_turns_a_tq_without_decision_into_a_deny(tmp_path, status):
+    """pre-tool-use: tq answers 0 or 2; any other exit (a crash, a kill) denies."""
+    fake = tmp_path / "tq"
+    fake.write_text("#!/bin/sh\ncat >/dev/null; exit %d\n" % status)
+    fake.chmod(0o755)
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))  # the fake tq is on PATH
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input='{"tool_name":"Bash"}', capture_output=True, text=True, env=env
+    )
+    assert p.returncode == 2
+    assert "BLOCKED [tq/guard-error]" in p.stderr
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize("status", [0, 2])
+def test_tq_hook_passes_a_decision_through(tmp_path, status):
+    fake = tmp_path / "tq"
+    fake.write_text("#!/bin/sh\ncat >/dev/null; exit %d\n" % status)
+    fake.chmod(0o755)
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input='{"tool_name":"Bash"}', capture_output=True, text=True, env=env
+    )
+    assert p.returncode == status
+    assert "guard-error" not in p.stderr
 
 
 def test_guard_does_not_import_tentaqles():

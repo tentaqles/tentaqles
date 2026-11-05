@@ -46,6 +46,18 @@ type Result struct {
 	// an older tq, which covers the manifest's bytes but no hook file:
 	// `tq allow` signs a record that does.
 	Legacy bool
+	// Name is the workspace folder cwd maps to under a base, "" outside
+	// every base and at a base root; set whatever the outcome.
+	Name string
+	// Unreadable is set (with Workspace and Untrusted nil) when the folder
+	// carries tq's marker or manifest but tq cannot read a usable manifest
+	// for it: a marker without its protected copy, a file that is not a
+	// regular file, a manifest that does not parse or hash. The guard still
+	// treats it as neutral; the hook denies every call there (PRD v2 §6.3,
+	// fail closed on a missing manifest). A folder with no marker, a marker
+	// that names another workspace and a manifest whose client is another
+	// folder are not unreadable: they are neutral.
+	Unreadable bool
 }
 
 func norm(p string) string {
@@ -95,7 +107,9 @@ func Resolve(cwd string, cfg *registry.Config) Result {
 		rel := strings.TrimPrefix(cOrig[len(nb):], string(filepath.Separator))
 		name := strings.SplitN(rel, string(filepath.Separator), 2)[0]
 		root := filepath.Join(nb, name)
-		return load(nb, root, name)
+		r := load(nb, root, name)
+		r.Name = name
+		return r
 	}
 	return Result{Reason: "outside any base"}
 }
@@ -116,6 +130,9 @@ type location struct {
 	protected bool
 	// staleRoot is a full manifest left at the root next to a protected copy.
 	staleRoot string
+	// unreadable is set with a reason when the root carries tq's file but
+	// no usable manifest can be read (Result.Unreadable).
+	unreadable bool
 }
 
 // locate decides which file is the manifest of the workspace at root, from
@@ -140,11 +157,11 @@ func locate(root, name string) (location, string) {
 		return location{}, "no manifest"
 	}
 	if !fi.Mode().IsRegular() {
-		return location{}, "marker is not a regular file"
+		return location{unreadable: true}, "marker is not a regular file"
 	}
 	kind, client, err := manifest.Peek(rf)
 	if err != nil {
-		return location{}, fmt.Sprintf("manifest invalid: %v", err)
+		return location{unreadable: true}, fmt.Sprintf("manifest invalid: %v", err)
 	}
 	pp := paths.ManifestPath(name)
 	pfi, perr := os.Lstat(pp)
@@ -154,16 +171,16 @@ func locate(root, name string) (location, string) {
 			return location{}, fmt.Sprintf("marker names workspace %q but the folder is %q", client, name)
 		}
 		if perr != nil {
-			return location{}, fmt.Sprintf("marker without a protected manifest (expected %s)", pp)
+			return location{unreadable: true}, fmt.Sprintf("marker without a protected manifest (expected %s)", pp)
 		}
 		if !pfi.Mode().IsRegular() {
-			return location{}, "protected manifest is not a regular file"
+			return location{unreadable: true}, "protected manifest is not a regular file"
 		}
 		return location{path: pp, protected: true}, ""
 	case manifest.KindManifest:
 		if perr == nil {
 			if !pfi.Mode().IsRegular() {
-				return location{}, "protected manifest is not a regular file"
+				return location{unreadable: true}, "protected manifest is not a regular file"
 			}
 			return location{path: pp, protected: true, staleRoot: rf}, ""
 		}
@@ -197,18 +214,18 @@ func ManifestFile(root string) (path string, protected bool, reason string) {
 func load(base, root, name string) Result {
 	loc, reason := locate(root, name)
 	if reason != "" {
-		return Result{Reason: reason}
+		return Result{Reason: reason, Unreadable: loc.unreadable}
 	}
 	m, err := manifest.Load(loc.path)
 	if err != nil {
-		return Result{Reason: fmt.Sprintf("manifest invalid: %v", err)}
+		return Result{Reason: fmt.Sprintf("manifest invalid: %v", err), Unreadable: true}
 	}
 	if reason := clientMismatch(m, name); reason != "" {
 		return Result{Reason: reason}
 	}
 	h, err := trust.HashFile(loc.path)
 	if err != nil {
-		return Result{Reason: fmt.Sprintf("manifest invalid: %v", err)}
+		return Result{Reason: fmt.Sprintf("manifest invalid: %v", err), Unreadable: true}
 	}
 	ws := &Workspace{Name: name, Root: root, Base: base, ManifestPath: loc.path, Hash: h, Manifest: m,
 		Protected: loc.protected, StaleRoot: loc.staleRoot}
