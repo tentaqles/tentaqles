@@ -100,7 +100,11 @@ type Manifest struct {
 	Email        *Service `yaml:"email,omitempty"`
 	DataPlatform *Service `yaml:"data_platform,omitempty"`
 	Agents       []string `yaml:"agents,omitempty"`
-	Path         string   `yaml:"-"`
+	// Guard is the guard: v2 flag (scope.go); ExtraScope adds catalog ids to the
+	// derived provider scope (Scope).
+	Guard      GuardFlag `yaml:"guard,omitempty"`
+	ExtraScope []string  `yaml:"scope,omitempty"`
+	Path       string    `yaml:"-"`
 	// Ignored lists the top-level blocks of DroppedBlocks, then the claude keys
 	// of DroppedClaudeKeys (as "claude.<key>"), that the file still carries.
 	// Load records them so `tq doctor` can warn that tq no longer reads them
@@ -136,9 +140,14 @@ func droppedBlocksIn(raw []byte) []string {
 	}
 	var out []string
 	for _, k := range DroppedBlocks {
-		if _, ok := top[k]; ok {
-			out = append(out, k)
+		v, ok := top[k]
+		if !ok {
+			continue
 		}
+		if _, scalar := v.(string); scalar && k == "guard" {
+			continue // guard: v2 is the flag of the v2 identity rules, not the dropped block
+		}
+		out = append(out, k)
 	}
 	if claude, ok := top["claude"].(map[string]any); ok {
 		for _, k := range DroppedClaudeKeys {
@@ -200,6 +209,12 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.ValidateServices(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.Guard.validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.validateScope(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Path = path

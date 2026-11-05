@@ -20,3 +20,11 @@ login:
   args: ["auth", "login"]
 verify:
   args: ["auth", "status"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [glab]
+  env: [GITLAB_TOKEN, GLAB_CONFIG_DIR, GITLAB_HOST]
+  paths: ["~/.config/glab-cli", "%APPDATA%/glab-cli"]
+  hosts: [gitlab.com]
+  mcp: [gitlab]

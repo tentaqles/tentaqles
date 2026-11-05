@@ -18,3 +18,11 @@ identity:
     CLOUDSDK_CONFIG: "{dir}"
 login:
   args: ["auth", "login"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [gcloud, gsutil, bq]
+  env: [CLOUDSDK_CONFIG, GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLOUD_PROJECT, CLOUDSDK_CORE_PROJECT, CLOUDSDK_AUTH_ACCESS_TOKEN_FILE]
+  paths: ["~/.config/gcloud", "%APPDATA%/gcloud"]
+  hosts: [cloudresourcemanager.googleapis.com, compute.googleapis.com, storage.googleapis.com, iam.googleapis.com, container.googleapis.com, run.googleapis.com, cloudfunctions.googleapis.com, bigquery.googleapis.com, sqladmin.googleapis.com]
+  mcp: [gcloud, gcp, googlecloud, bigquery]

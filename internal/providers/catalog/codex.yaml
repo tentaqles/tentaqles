@@ -17,3 +17,10 @@ identity:
     CODEX_HOME: "{dir}"
 login:
   args: ["login"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [codex]
+  env: [CODEX_HOME]
+  paths: ["~/.codex/auth.json"]
+  mcp: [codex]

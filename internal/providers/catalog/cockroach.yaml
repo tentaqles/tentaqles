@@ -13,3 +13,11 @@ install:
 identity:
   env:
     COCKROACH_CERTS_DIR: "{dir}/certs"
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [cockroach, ccloud]
+  env: [COCKROACH_CERTS_DIR, COCKROACH_URL]
+  paths: ["~/.cockroach-certs"]
+  hosts: [cockroachlabs.cloud]
+  mcp: [cockroach, cockroachdb]

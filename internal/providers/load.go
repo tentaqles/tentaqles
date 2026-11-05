@@ -118,10 +118,7 @@ func Load() (*Catalog, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, exists := c.byID[p.ID]; !exists {
-			c.order = append(c.order, p.ID)
-		}
-		c.byID[p.ID] = p
+		c.override(p)
 	}
 	if err := c.checkEnvCollisions(); err != nil {
 		return nil, err
@@ -177,14 +174,28 @@ func mustLoadUncached() (*Catalog, error) {
 			if err != nil {
 				continue
 			}
-			if _, exists := c.byID[p.ID]; !exists {
-				c.order = append(c.order, p.ID)
-			}
-			c.byID[p.ID] = p
+			c.override(p)
 		}
 	}
 	return c, nil
 }
+
+// override puts a user provider file into the catalog: a new id is appended, a known id is
+// replaced, except its match lists, which are the union of both (Match.Union): a user file
+// extends what the guard recognises and never shortens it (ADR-0006).
+func (c *Catalog) override(p Provider) {
+	prev, exists := c.byID[p.ID]
+	if !exists {
+		c.order = append(c.order, p.ID)
+	} else {
+		p.Match = prev.Match.Union(p.Match)
+	}
+	c.byID[p.ID] = p
+}
+
+// Embedded returns the embedded catalog alone, without the user files: what tests and a
+// caller that must not read the tq home use.
+func Embedded() (*Catalog, error) { return loadEmbedded() }
 
 // Get returns the provider with the given id.
 func (c *Catalog) Get(id string) (Provider, bool) {

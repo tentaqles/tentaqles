@@ -18,3 +18,12 @@ identity:
     AZURE_CONFIG_DIR: "{dir}"
 login:
   args: ["login"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [az, azd]
+  modules: [azure.cli]
+  env: [AZURE_CONFIG_DIR, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_CLIENT_CERTIFICATE_PATH, AZURE_FEDERATED_TOKEN_FILE, ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID]
+  paths: ["~/.azure", "~/.azd"]
+  hosts: [management.azure.com, management.core.windows.net, core.windows.net, vault.azure.net, graph.microsoft.com]
+  mcp: [azure, azmcp]

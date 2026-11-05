@@ -5,3 +5,9 @@ docs: https://developers.asana.com
 cli: null
 mcp: asana
 notes: "No CLI login: store a personal access token with tq secret set <ws> asana (auth keychain), or name the variable in tracker.env for tq dotenv (auth env). The Asana MCP connector covers a Claude session."
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  env: [ASANA_ACCESS_TOKEN, ASANA_PAT]
+  hosts: [app.asana.com]
+  mcp: [asana]

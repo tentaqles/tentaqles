@@ -19,3 +19,10 @@ identity:
     CLINE_DIR: "{dir}"
 login:
   args: ["auth"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [cline]
+  env: [CLINE_DIR]
+  paths: ["~/.cline"]
+  mcp: [cline]

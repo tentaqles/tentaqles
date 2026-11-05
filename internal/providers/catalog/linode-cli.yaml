@@ -22,3 +22,12 @@ login:
 verify:
   args: ["--skip-config", "show-users"]
   account: { regex: '^\*\s+(\S+)' }
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [linode-cli, linode]
+  modules: [linodecli]
+  env: [LINODE_CLI_TOKEN, LINODE_TOKEN, LINODE_CLI_CONFIG]
+  paths: ["~/.config/linode-cli"]
+  hosts: [api.linode.com]
+  mcp: [linode, akamai]

@@ -25,3 +25,9 @@ install:
 # Setting it per workspace separated agent definitions and left every provider
 # credential shared. XDG_DATA_HOME would move auth.json, but it is a generic
 # variable that would relocate unrelated tools, so it is not an option here.
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [opencode]
+  paths: ["~/.local/share/opencode/auth.json"]
+  mcp: [opencode]

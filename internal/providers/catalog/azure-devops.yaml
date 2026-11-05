@@ -30,3 +30,11 @@ verify:
   logged_out_when: "az login"
   account: { json: user.name }
   subscription: { json: name }
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [az]
+  env: [AZURE_DEVOPS_EXT_PAT, AZURE_DEVOPS_ORG, AZURE_CONFIG_DIR]
+  paths: ["~/.azure"]
+  hosts: [dev.azure.com]
+  mcp: [devops, ado, azuredevops]

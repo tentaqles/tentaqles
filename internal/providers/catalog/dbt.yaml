@@ -20,3 +20,11 @@ identity:
 verify:
   args: ["debug"]
   logged_out_when: 'profiles\.yml file \[ERROR not found\]'
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0006; docs/PROVIDERS.md, "Match lists").
+# A generic tool: it talks to whatever the project configures, so its command is
+# never denied by name; only its global credential files and vendor endpoints are.
+match:
+  env: [DBT_CLOUD_API_KEY, DBT_PROFILES_DIR]
+  paths: ["~/.dbt/profiles.yml"]
+  hosts: [cloud.getdbt.com]
