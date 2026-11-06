@@ -32,7 +32,7 @@ type fixture struct {
 }
 
 func TestCanonicalSuite(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "plugin", "tests", "fixtures", "guard_cases.json"))
+	raw, err := os.ReadFile(filepath.Join("testdata", "guard_cases.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

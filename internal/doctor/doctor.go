@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/tentaqles/tentaqles/internal/bundle"
 	"github.com/tentaqles/tentaqles/internal/detect"
@@ -96,7 +95,6 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		} else {
 			integrityLegacy(w.Name, w.Hash, add)
 		}
-		memoryStale(w.Name, w.Root, time.Now(), add)
 		manifestDroppedBlock(w.Name, w.Manifest.Ignored, add)
 		manifestLayout(&w, add)
 		if trusted && w.Manifest.Claude.Bundle != nil {

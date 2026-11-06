@@ -36,8 +36,7 @@ jobs:
           export TQ_HOME=$(mktemp -d) HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=$HOME/.gitconfig
           mkdir -p $HOME/work
           # A runner has no terminal: the human-only verbs refuse and write nothing (ADR-0009).
-          if ./tq init $HOME/work; then echo "tq init ran without a human"; exit 1; fi
-          if ./tq add acme --git-email a@acme.com; then echo "tq add ran without a human"; exit 1; fi
+          if ./tq reach $HOME/work/acme; then echo "tq reach ran without a human"; exit 1; fi
           test ! -e "$TQ_HOME/config.yaml"
           eval "$(./tq activate bash)"
           # PROMPT_COMMAND only fires at an interactive prompt; call the hook explicitly after each cd
@@ -53,8 +52,7 @@ jobs:
           $env:GIT_CONFIG_GLOBAL = "$env:USERPROFILE\.gitconfig"
           New-Item -ItemType Directory -Force "$env:USERPROFILE\work" | Out-Null
           # A runner has no terminal: the human-only verbs refuse and write nothing (ADR-0009).
-          .\tq.exe init "$env:USERPROFILE\work"; if ($LASTEXITCODE -eq 0) { throw "tq init ran without a human" }
-          .\tq.exe add acme --git-email a@acme.com; if ($LASTEXITCODE -eq 0) { throw "tq add ran without a human" }
+          .\tq.exe reach "$env:USERPROFILE\work\acme"; if ($LASTEXITCODE -eq 0) { throw "tq reach ran without a human" }
           if (Test-Path "$env:TQ_HOME\config.yaml") { throw "a refused verb wrote config.yaml" }
           $tq = (Resolve-Path .\tq.exe).Path
           & $tq activate pwsh | Out-String | Invoke-Expression
@@ -122,12 +120,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with: { python-version: '3.12' }
-      # Keep in step with [project].dependencies in plugin/pyproject.toml.
-      # fastembed is not among them — it lives in the `embeddings` extra, and
-      # memory writes degrade to a NULL embedding without it. Leaving it
-      # uninstalled here is what keeps that degradation honestly tested
-      # (see plugin/tests/test_embeddings_optional.py).
-      - run: pip install pyyaml pathspec pytest numpy
+      - run: pip install pytest
       - name: pytest
         env:
           PYTHONPATH: ${{ github.workspace }}/plugin

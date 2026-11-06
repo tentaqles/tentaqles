@@ -4,22 +4,13 @@
 # Usage: bash tq_hook.sh <session-start|pre-tool-use>
 #
 # Resolves the `tq` binary and runs `tq claude-hook <event>` (stdin passes
-# straight through, exit status is propagated). If no binary is found, falls
-# back to the dependency-free Python guard next to this script
-# (pre-tool-use) or prints an install notice (session-start).
+# straight through, exit status is propagated).
 #
-# The fallback deliberately does NOT go through tq_run.sh/tq_env.sh: that path
-# can synchronously pip-install plugin deps, which would blow the PreToolUse
-# timeout and fail OPEN. identity-guard.py needs nothing but a stdlib Python,
-# so an interpreter is resolved here instead.
-#
-# FAIL-CLOSED: if neither `tq` nor any Python interpreter can be found, the
-# pre-tool-use hook blocks (exit 2) rather than allowing an unverified remote
-# command. On such a box every Bash tool call is blocked until `tq` or Python
-# is installed. A missing/unknown event also exits 2, so a misconfigured hook
+# FAIL-CLOSED: if tq cannot be found or run, pre-tool-use denies every tool
+# (exit 2). A missing or unknown event also exits 2, so a misconfigured hook
 # cannot silently disable enforcement.
 #
-# This is a bash script (not POSIX sh) — but it avoids arrays and other
+# This is a bash script (not POSIX sh), but it avoids arrays and other
 # constructs that break under older bashes on Windows/macOS.
 
 set -u
@@ -95,8 +86,8 @@ if [ -z "$TQ" ] && [ "$_win" = "1" ] && [ -n "${USERPROFILE:-}" ]; then
 fi
 
 # Run tq. Not exec'd so that a broken binary (126 "cannot execute" / 127 "not
-# found") can still fall through to the Python fallback; the child inherits
-# stdin, so the hook payload passes through unchanged.
+# found") still reaches the deny below; the child inherits stdin, so the hook
+# payload passes through unchanged.
 #
 # pre-tool-use fails closed (PRD v2 §6.3, ADR-0006): tq answers 0 (allow)
 # or 2 (deny). Any other status (a crash the Go runtime could not recover,
@@ -148,65 +139,11 @@ if [ -n "$TQ" ]; then
   fi
 fi
 
-# --- Fallback: tq is not installed (or could not be executed) ---
+# --- tq is not installed (or could not be executed) ---
 if [ "$_event" != "pre-tool-use" ]; then
-  echo "Tentaqles: tq is not installed — identity enforcement is in fallback mode (remote git/gh/cloud commands are blocked). Install: $INSTALL_URL"
+  echo "Tentaqles: tq is not installed, so every tool call is blocked. Install: $INSTALL_URL"
   exit 0
 fi
 
-# Resolve a stdlib-only Python interpreter for identity-guard.py.
-PY=""
-PY_LAUNCHER=0
-
-if [ -n "${TENTAQLES_PY:-}" ] && [ -x "${TENTAQLES_PY}" ]; then
-  if timeout 5 "$TENTAQLES_PY" -c "import sys" >/dev/null 2>&1 || { ! command -v timeout >/dev/null 2>&1 && "$TENTAQLES_PY" -c "import sys" >/dev/null 2>&1; }; then
-    PY="$TENTAQLES_PY"
-  fi
-fi
-
-# Every probe is bounded and Store-Python (WindowsApps) paths are skipped:
-# a broken Store Python hangs instead of failing, and an unbounded probe
-# here stalls every tool call. `py -3` goes last for the same reason (the
-# launcher prefers the newest install, often the Store one).
-_to=""
-command -v timeout >/dev/null 2>&1 && _to="timeout 5"
-if [ -z "$PY" ]; then
-  for _probe in python3 python; do
-    case "$(command -v "$_probe" 2>/dev/null)" in
-      ""|*[Ww]indows[Aa]pps*) continue ;;
-    esac
-    if $_to "$_probe" -c "import sys" >/dev/null 2>&1; then
-      PY="$_probe"
-      break
-    fi
-  done
-fi
-
-if [ -z "$PY" ] && [ "$_win" = "1" ]; then
-  if $_to py -3 -c "import sys" >/dev/null 2>&1; then
-    PY="py"
-    PY_LAUNCHER=1
-  fi
-fi
-
-if [ -z "$PY" ]; then
-  # The PreToolUse matcher also covers file and MCP tools; only a shell
-  # command can carry an identity-sensitive remote mutation, so a payload
-  # that clearly names another tool is let through. A payload whose tool is
-  # unknown or unreadable still fails closed.
-  _payload="$(cat)"
-  _tool="$(printf '%s' "$_payload" | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
-  case "$_tool" in
-    ""|Bash|PowerShell) ;;
-    *) exit 0 ;;
-  esac
-  echo "BLOCKED: tq is not installed and no python interpreter was found; refusing without a verified identity. Install tq: $INSTALL_URL" >&2
-  exit 2
-fi
-
-TQ_FALLBACK=1
-export TQ_FALLBACK
-if [ "$PY_LAUNCHER" = "1" ]; then
-  exec "$PY" -3 "$_self_dir/identity-guard.py"
-fi
-exec "$PY" "$_self_dir/identity-guard.py"
+echo "BLOCKED [tq/guard-error]: tq is not installed or cannot run, so nothing can judge this call; tq denies a call it cannot judge. Report this to the developer instead of retrying. Install: $INSTALL_URL" >&2
+exit 2
