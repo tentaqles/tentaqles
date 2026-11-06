@@ -27,3 +27,4 @@ verify:
 match:
   env: [DBT_CLOUD_API_KEY]
   hosts: [cloud.getdbt.com]
+  mcp_packages: ["dbt-mcp"]

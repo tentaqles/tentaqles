@@ -1,6 +1,8 @@
 # tq shell hook (powershell)
 if (-not (Test-Path Variable:global:__tq_prev_prompt)) { $global:__tq_prev_prompt = $function:prompt }
-function global:__tq_hook { if ($env:TQ_ENABLED -eq '0') { return }; try { $o = (& '/opt/tq/bin/tq' env --shell powershell | Out-String); if ($o.Trim()) { Invoke-Expression $o } } catch { } }
+# tq prints UTF-8: the console encoding is UTF-8 for the one call and put back after, as mise does,
+# so a PATH folder with accents or CJK characters in its name arrives as it is.
+function global:__tq_hook { if ($env:TQ_ENABLED -eq '0') { return }; $__tq_e = $null; try { $__tq_e = [Console]::OutputEncoding; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }; try { $o = (& '/opt/tq/bin/tq' env --shell powershell | Out-String) } catch { $o = '' } finally { if ($null -ne $__tq_e) { try { [Console]::OutputEncoding = $__tq_e } catch { } } }; try { if ($o.Trim()) { Invoke-Expression $o } } catch { } }
 function global:prompt { __tq_hook; & $global:__tq_prev_prompt }
 # A simple function's $args never holds a literal --: the parameter binder
 # eats it. For tq run, tq dotenv run and tq redact run, __tq_args puts it

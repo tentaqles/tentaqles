@@ -18,7 +18,7 @@ func TestEmit_NoticeLinePerShell(t *testing.T) {
 		"fish":       "printf '%s\\n' 'tq: integrity mismatch: run tq hooks verify acme' >&2\n",
 		"pwsh":       "[Console]::Error.WriteLine('tq: integrity mismatch: run tq hooks verify acme')\n",
 		"powershell": "[Console]::Error.WriteLine('tq: integrity mismatch: run tq hooks verify acme')\n",
-		"cmd":        "echo tq: integrity mismatch: run tq hooks verify acme 1>&2\n",
+		"cmd":        "echo tq: integrity mismatch: run tq hooks verify acme\n",
 	}
 	for sh, w := range want {
 		got, err := Emit(sh, ops)

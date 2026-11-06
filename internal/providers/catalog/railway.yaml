@@ -18,3 +18,4 @@ match:
   paths: ["~/.railway"]
   hosts: [backboard.railway.app, backboard.railway.com]
   mcp: [railway]
+  mcp_packages: ["@railway/mcp-server"]

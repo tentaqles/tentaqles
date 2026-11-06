@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/paths"
 )
@@ -36,6 +38,22 @@ func terminalChain(pid int) (humanonly.Parent, bool) {
 // it otherwise, ADR-0002): every test points TQ_HOME at a temp dir and some
 // set a marker on purpose.
 func TestMain(m *testing.M) {
+	// The test binary is the stub program of the PATH masks the tests write (ADR-0007).
+	if ok, code := envplan.StubMain(os.Stderr); ok {
+		os.Exit(code)
+	}
+	// And tq itself for a test that runs a real shell hook (TQ_TEST_BE_TQ=1): the arguments
+	// are tq's.
+	if os.Getenv("TQ_TEST_BE_TQ") == "1" {
+		paths.AllowHomeOverride = true
+		root := NewRoot()
+		root.SetArgs(os.Args[1:])
+		if err := root.Execute(); err != nil {
+			fmt.Fprintln(os.Stderr, "tq:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	for _, k := range humanonly.Markers {
 		_ = os.Unsetenv(k)
 	}
@@ -48,5 +66,6 @@ func TestMain(m *testing.M) {
 	// on PATH (TestCodexHookResolves tests the real check).
 	realCodexHookResolves = codexHookResolves
 	codexHookResolves = func([]string) error { return nil }
+	envplan.StubSource = os.Executable // the mask stubs the tests run are this binary
 	os.Exit(m.Run())
 }

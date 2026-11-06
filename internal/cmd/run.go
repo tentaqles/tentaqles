@@ -139,9 +139,13 @@ func (l launch) run() error {
 	}
 	env := envplan.Environ(l.ws, os.Environ())
 	name := l.name
-	if envplan.LayerFor(l.ws) != nil {
-		// guard: v2 (ADR-0007): the command resolves on the identity PATH, not on tq's own,
-		// so tq run <ws> -- aws from outside the folder does not find the aws it dropped.
+	if layer := envplan.LayerFor(l.ws); layer != nil {
+		// guard: v2 (ADR-0007): an out-of-scope CLI is refused however it is spelled (aws,
+		// aws.exe, its install path); anything else resolves on the identity PATH, not on tq's
+		// own, so tq run <ws> -- aws from outside the folder does not find the aws it dropped.
+		if layer.IsMasked(name) {
+			return fmt.Errorf("%s: command not found on the PATH of identity %s (outside its scope)", name, l.ws.Name)
+		}
 		p, err := envplan.LookPath(name, env)
 		if err != nil {
 			return fmt.Errorf("%s: command not found on the PATH of identity %s (%v)", name, l.ws.Name, err)

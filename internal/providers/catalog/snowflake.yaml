@@ -28,3 +28,4 @@ match:
   paths: ["~/.snowflake", "~/.snowsql"]
   hosts: [snowflakecomputing.com]
   mcp: [snowflake]
+  mcp_packages: ["snowflake-labs-mcp"]

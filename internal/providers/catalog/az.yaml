@@ -31,3 +31,5 @@ match:
   hosts: [management.azure.com, management.core.windows.net, core.windows.net, vault.azure.net, graph.microsoft.com]
   public: [dotnetcli.blob.core.windows.net, azcliprod.blob.core.windows.net, azurecliprod.blob.core.windows.net]
   mcp: [azure, azmcp]
+  mcp_packages: ["@azure/mcp", "azmcp", "mcr.microsoft.com/azure-sdk/azure-mcp", "msmcp-azure"]
+  mcp_hosts: [azurewebsites.net, azure-api.net]

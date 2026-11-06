@@ -260,7 +260,7 @@ func policyDecisionWith(set *policy.Set, prot *protect.Set, cwd string, ws *reso
 	// the manifest's blocked commands and the v1 identity rules ran in guard.Decide. An
 	// unreadable manifest (guard: v3, an unknown scope: id) and an unreadable provider
 	// catalog were already denied by pre-tool-use's one fail-closed path.
-	if d := hookScope(ws, cfg, prot).Evaluate(cwd, call); d.Action == policy.Deny {
+	if d := hookScope(ws, cfg, prot, cwd).Evaluate(cwd, call); d.Action == policy.Deny {
 		return d
 	}
 	d := policyRules(set, cwd, ws, cfg, call, deadline)

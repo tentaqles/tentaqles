@@ -76,3 +76,24 @@ func TestGuardFlag(t *testing.T) {
 		t.Fatalf("guard: strict loaded: %v", err)
 	}
 }
+
+// TestMCPAllow: mcp.allow is a list of exact MCP server names a human keeps under guard: v2
+// (the owner's hybrid list, ADR-0007); names only, each once.
+func TestMCPAllow(t *testing.T) {
+	m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nmcp: { allow: [my-db, plugin_tools_srv, docs.v2] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.MCPAllow(); !reflect.DeepEqual(got, []string{"my-db", "plugin_tools_srv", "docs.v2"}) {
+		t.Fatalf("MCPAllow = %v", got)
+	}
+	none, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"))
+	if err != nil || none.MCPAllow() != nil {
+		t.Fatalf("no mcp block: %v %v", none.MCPAllow(), err)
+	}
+	for _, body := range []string{"mcp: { allow: [\"npx -y x\"] }\n", "mcp: { allow: [\"a/b\"] }\n", "mcp: { allow: [x, x] }\n", "mcp: { allow: [\"\"] }\n", "mcp: { allow: [\"$(x)\"] }\n"} {
+		if _, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"+body)); err == nil || !strings.Contains(err.Error(), "mcp.allow") {
+			t.Errorf("%q loaded: %v", body, err)
+		}
+	}
+}

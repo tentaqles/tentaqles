@@ -29,3 +29,5 @@ verify:
 match:
   env: [PULUMI_ACCESS_TOKEN]
   hosts: [api.pulumi.com]
+  mcp_packages: ["@pulumi/mcp-server"]
+  mcp_hosts: [mcp.ai.pulumi.com]

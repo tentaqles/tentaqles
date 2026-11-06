@@ -17,3 +17,4 @@ match:
   env: [HOSTINGER_API_TOKEN]
   hosts: [developers.hostinger.com]
   mcp: [hostinger]
+  mcp_packages: ["hostinger-api-mcp"]

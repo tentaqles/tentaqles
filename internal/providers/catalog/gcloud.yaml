@@ -32,3 +32,4 @@ match:
     storage.googleapis.com/download/, storage.googleapis.com/batch/, gcr.io]
   public: [fonts.googleapis.com, ajax.googleapis.com, storage.googleapis.com/]
   mcp: [gcloud, gcp, googlecloud, bigquery]
+  mcp_packages: ["@google-cloud/", "google-cloud-", "gcloud-mcp", "@googlecloud/", "us-docker.pkg.dev/cloud-run/mcp/", "gcp-mcp", "mcp/gcp", "mcp/google"]

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/mcpscope"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/protect"
@@ -43,6 +44,7 @@ func identityScope(m *manifest.Manifest) string {
 var scopeMemo struct {
 	ws   *resolve.Workspace
 	prot *protect.Set
+	cwd  string
 	s    *policy.Scope
 }
 
@@ -50,11 +52,11 @@ var scopeMemo struct {
 // neutral cwd), an untrusted one (judged by the untrusted and neutral rules), or a manifest
 // without guard: v2. A patch judges many files with the same ws and prot: the scope is
 // compiled once for them.
-func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set) *policy.Scope {
+func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set, cwd string) *policy.Scope {
 	if ws == nil || ws.Manifest == nil || !ws.Manifest.GuardV2() || prot == nil {
 		return nil
 	}
-	if scopeMemo.ws == ws && scopeMemo.prot == prot {
+	if scopeMemo.ws == ws && scopeMemo.prot == prot && scopeMemo.cwd == cwd {
 		return scopeMemo.s
 	}
 	roots, dirs := otherIdentities(ws, cfg)
@@ -63,23 +65,19 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set) *
 	// embedded match is what an in-scope provider CLAIMS, so a user file can never widen a
 	// claim (ADR-0007). A user file that does not load is left out: its built-in entry (an
 	// override) stays in force, and a new id the scope names was denied by scopeCatalogError.
-	cat, _ := providers.LoadAll()
-	embedded := map[string]providers.Match{}
-	if ec, err := providers.Embedded(); err == nil {
-		for _, p := range ec.All() {
-			embedded[p.ID] = p.Match
-		}
-	}
-	var bundleMCP []string
-	if ws.Manifest.Claude.Bundle != nil {
-		bundleMCP = ws.Manifest.Claude.Bundle.MCP
-	}
+	// The PATH, environment and MCP layers read the same (policy.CatalogInputs, ADR-0008).
+	provs, embedded := policy.CatalogInputs()
 	s := policy.NewScope(policy.ScopeInputs{
-		Identity: ws.Name, Scope: ws.Manifest.Scope(), Providers: cat.All(), Embedded: embedded,
-		BundleMCP: bundleMCP, Set: prot, UserHome: home, Env: os.Getenv,
+		Identity: ws.Name, Scope: ws.Manifest.Scope(), Providers: provs, Embedded: embedded,
+		BundleMCP: ws.Manifest.BundleMCP(), MCPAllow: ws.Manifest.MCPAllow(), Set: prot, UserHome: home, Env: os.Getenv,
 		OtherRoots: roots, OtherDirs: dirs,
+		// An mcp__ call is judged by its server's entry in the identity's harness config too
+		// (ADR-0008); read only on the first MCP call of the run.
+		MCPEntries: func() map[string][]map[string]any {
+			return mcpscope.Entries(paths.IdentityDir(ws.Name, "claude"), paths.IdentityDir(ws.Name, "codex"), cwd, ws.Root)
+		},
 	})
-	scopeMemo.ws, scopeMemo.prot, scopeMemo.s = ws, prot, s
+	scopeMemo.ws, scopeMemo.prot, scopeMemo.cwd, scopeMemo.s = ws, prot, cwd, s
 	return s
 }
 

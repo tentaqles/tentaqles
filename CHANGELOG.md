@@ -87,6 +87,38 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   match no provider stay; removed entries are kept in `mcp-out-of-scope.json` beside the
   config. `tq bundle sync` skips an out-of-scope bundle server.
 - **Layer 1**: the session-start preamble states the scope in one line.
+- **Round 2** (critic findings): `__TQ_STATE` is zlib-compressed and holds one PATH (a 3.5 KB
+  PATH now survives cmd.exe; one over cmd.exe's 8191-character line is left as it is with a
+  notice at every prompt). cmd.exe takes every PATH character (`% ! ^ & | < > "`), with
+  delayed expansion on too. The mask covers every spelling (`aws.exe`/`.com` link to the tq
+  binary acting as a stub, plus `.bat .cmd .ps1 .vbs .js`), comes back once fixed, and `tq run`
+  refuses an out-of-scope name however spelled. Generic tools' variables (`NPM_TOKEN`,
+  `TF_TOKEN_*`) are never unset; ambiguous names (`cn tea snow render vc fly atlas copilot
+  goose`) are never hidden. MCP servers are attributed by name, command, args (new match list
+  `mcp_packages`), env keys and url, at render and in the hook (`mcp__<server>__*` judged by the
+  server's config entry). `.claude.json` keeps its formatting; a corrupt
+  `mcp-out-of-scope.json` is moved aside.
+- **Round 3**: a server name defined in several sources is denied when any of its entries is
+  out of scope (user, local, `.mcp.json`, installed plugins' `.mcp.json`, Codex, and the
+  entries render removed); vendor remote endpoints (`mcp_hosts`: `mcp.vercel.com`,
+  `mcp.supabase.com`, `*.mcp.cloudflare.com`, `api.githubcopilot.com`), more `mcp_packages`
+  and images, PyPI-normalized names, a command's file name, shell-wrapped strings, docker
+  `-e` variables and `--prebuilt` toolsets attribute a server; gh's env gains
+  `GITHUB_PERSONAL_ACCESS_TOKEN`. A lost or corrupt `__TQ_STATE` with `TQ_WS` set fails
+  closed with a notice; launches carry their own state. cmd.exe's line budget is measured
+  (8192). The mask stub is always the tq binary.
+- **Round 4**: the PowerShell and cmd hooks read tq's UTF-8 output as UTF-8 (accented and CJK
+  PATH folders survive), every catalog vendor's official MCP host or package is catalog data,
+  a package runner's out-of-scope CLI or module and a vendor's referenced credential variable
+  attribute an MCP server, plugin `mcpServers` paths and arrays are read, a missing state is
+  lost in harness shells too, and the scope line says claude.ai connectors stay listed.
+- **The hybrid MCP list** (owner's decision, 2026-11-05): an MCP server is kept only when the
+  catalog attributes it to an in-scope provider, when it is a general-purpose server of
+  `internal/providers/mcp_general.yaml` (playwright, context7, memory, filesystem, fetch, git,
+  sequential-thinking, time, everything, postgres, sqlite, puppeteer, chrome-devtools,
+  microsoft-learn), or when the manifest's new `mcp.allow` names it; everything else is moved
+  to `mcp-out-of-scope.json` at render and denied by the hook (connectors and plugin servers
+  too).
 - Without `guard: v2` nothing changes.
 
 ### The provider scope and the identity category for every tool (ADR-0007)

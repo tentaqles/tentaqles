@@ -50,3 +50,4 @@ match:
   hosts: [amazonaws.com, amazonaws.com.cn, api.aws]
   public: [awscli.amazonaws.com, s3.amazonaws.com/aws-cli/]
   mcp: [aws, awslabs, amazonq, bedrock, s3]
+  mcp_packages: ["awslabs.", "@awslabs/", "@aws/", "@aws-sdk/", "public.ecr.aws/awslabs/", "public.ecr.aws/awslabs-mcp/", "aws-mcp", "mcp-proxy-for-aws", "aws-api-mcp-server", "github.com/awslabs/", "mcp/aws"]

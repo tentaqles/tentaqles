@@ -18,3 +18,4 @@ match:
   paths: ["~/.config/tea"]
   git_hosts: [gitea.com]
   mcp: [gitea]
+  mcp_packages: ["gitea-mcp", "docker.gitea.com/gitea-mcp-server"]

@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -99,6 +100,46 @@ func unknownProviderHint(id string) string {
 		return ": the user provider file " + fe.Error()
 	}
 	return ""
+}
+
+// BundleMCP is claude.bundle.mcp: the identity's own MCP servers by exact name (ADR-0006
+// round 2), nil without a bundle.
+func (m *Manifest) BundleMCP() []string {
+	if m == nil || m.Claude.Bundle == nil {
+		return nil
+	}
+	return m.Claude.Bundle.MCP
+}
+
+// MCPBlock is the manifest's mcp: block.
+type MCPBlock struct {
+	Allow []string `yaml:"allow,omitempty"`
+}
+
+// MCPAllow is mcp.allow: the exact MCP server names a human keeps (ADR-0007), nil when none.
+// The manifest is the protected copy, so only a human edits it.
+func (m *Manifest) MCPAllow() []string {
+	if m == nil || len(m.MCP.Allow) == 0 {
+		return nil
+	}
+	return append([]string{}, m.MCP.Allow...)
+}
+
+var mcpNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+// validateMCP checks mcp.allow: server names only (letters, digits, . _ -), each once.
+func (m *Manifest) validateMCP() error {
+	seen := map[string]bool{}
+	for _, n := range m.MCP.Allow {
+		if !mcpNameRe.MatchString(n) {
+			return fmt.Errorf("mcp.allow: %q is not an MCP server name (letters, digits, . _ -)", n)
+		}
+		if seen[n] {
+			return fmt.Errorf("mcp.allow: %q is listed twice", n)
+		}
+		seen[n] = true
+	}
+	return nil
 }
 
 // validateScope checks the scope: list: catalog ids, each once.

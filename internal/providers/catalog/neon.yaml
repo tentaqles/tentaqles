@@ -18,3 +18,5 @@ match:
   paths: ["~/.config/neonctl"]
   hosts: [console.neon.tech]
   mcp: [neon]
+  mcp_packages: ["@neondatabase/mcp-server-neon"]
+  mcp_hosts: [mcp.neon.tech]

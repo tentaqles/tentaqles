@@ -18,3 +18,5 @@ match:
   paths: ["~/.wrangler", "%APPDATA%/xdg.config/.wrangler", "~/.cloudflared"]
   hosts: [api.cloudflare.com]
   mcp: [cloudflare, wrangler]
+  mcp_packages: ["@cloudflare/", "mcp/cloudflare"]
+  mcp_hosts: [mcp.cloudflare.com]

@@ -52,11 +52,21 @@ type ScopeInputs struct {
 	// the tq home (~/.tentaqles/identities/<name>), to its name.
 	OtherRoots map[string]string
 	OtherDirs  map[string]string
+	// MCPEntries loads the MCP servers of the identity's harness config, by server name
+	// (ADR-0007): an mcp__<server>__ call is judged by its entry too. Called once, on the
+	// first MCP call; nil when the caller has none.
+	MCPEntries func() map[string][]map[string]any
+	// MCPAllow is the manifest's mcp.allow: exact MCP server names kept though no in-scope
+	// provider claims them and they are not general-purpose (the hybrid list, ADR-0007).
+	MCPAllow []string
 }
 
 type scopedProvider struct {
 	id, name string
 	inScope  bool
+	generic  bool     // providers.Provider.GenericTool (ADR-0007)
+	packages []string // match.mcp_packages (ADR-0007)
+	mcpHosts []string // match.mcp_hosts (ADR-0007)
 }
 
 // exeClaim is one provider's claim on an executable: wholesale, or a set of first subcommands.
@@ -118,6 +128,12 @@ type Scope struct {
 	mentions []mention
 	needles  []string
 	envRes   map[string]*regexp.Regexp
+
+	mcpLoad    func() map[string][]map[string]any
+	mcpEntries map[string][]map[string]any // by the tool-name spelling of the server name; every source's entry
+	mcpLoaded  bool
+	mcpAllow   map[string]bool
+	general    []providers.GeneralMCP
 }
 
 // cmdletClaim is one provider's cmdlets entry (exact or *-NounPrefix*).
@@ -137,7 +153,11 @@ func NewScope(in ScopeInputs) *Scope {
 	s := &Scope{identity: in.Identity, scope: append([]string{}, in.Scope...), set: in.Set, env: in.Env,
 		exeClaims: map[string][]exeClaim{}, modClaims: map[string][]exeClaim{},
 		imgClaims: map[string][]exeClaim{}, psClaims: map[string][]exeClaim{}, bundleMCP: map[string]bool{}, inMCP: map[string]bool{},
-		outMCP: map[string]*scopedProvider{}, envRes: map[string]*regexp.Regexp{}}
+		outMCP: map[string]*scopedProvider{}, envRes: map[string]*regexp.Regexp{}, mcpLoad: in.MCPEntries, mcpAllow: map[string]bool{}}
+	for _, n := range in.MCPAllow {
+		s.mcpAllow[MCPToolName(n)] = true
+	}
+	s.general, _ = providers.MCPGeneral()
 	if s.env == nil {
 		s.env = func(string) string { return "" }
 	}
@@ -202,6 +222,7 @@ func NewScope(in ScopeInputs) *Scope {
 		if claim.Empty() {
 			continue
 		}
+		sp.generic, sp.packages, sp.mcpHosts = pv.GenericTool(), claim.MCPPackages, claim.MCPHosts
 		s.provs = append(s.provs, sp)
 		for _, e := range claim.Executables {
 			n := exeName(e)
@@ -377,6 +398,9 @@ func (s *Scope) judge(cwd string, call ToolCall) (scopeHit, bool) {
 		return s.shell(cwd, call.Command, text, 0, call.Tool == "PowerShell")
 	case call.IsMCP():
 		if h, ok := s.mcpServer(call.MCPServer()); ok {
+			return h, true
+		}
+		if h, ok := s.mcpByEntry(call.MCPServer()); ok {
 			return h, true
 		}
 		return s.mcpInput(cwd, call.Content)

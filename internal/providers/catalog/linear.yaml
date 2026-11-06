@@ -11,3 +11,4 @@ match:
   env: [LINEAR_API_KEY]
   hosts: [api.linear.app]
   mcp: [linear]
+  mcp_hosts: [mcp.linear.app]

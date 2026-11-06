@@ -27,3 +27,4 @@ match:
   env: [JIRA_API_TOKEN, ATLASSIAN_API_TOKEN]
   hosts: [atlassian.net, api.atlassian.com]
   mcp: [atlassian, jira]
+  mcp_hosts: [mcp.atlassian.com]

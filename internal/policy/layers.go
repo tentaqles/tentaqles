@@ -13,10 +13,31 @@ import (
 // same match lists the hook judges by, with the same in-scope-wins rule, so a name an
 // earlier layer hides is a name the hook denies, and a name the hook allows is never hidden.
 
-// ScopeFor compiles identity's scope from the catalog with no path facts (no protected path
-// set, no other identities): what the PATH, the environment and the MCP render need.
-func ScopeFor(identity string, scope []string, provs []providers.Provider) *Scope {
-	return NewScope(ScopeInputs{Identity: identity, Scope: scope, Providers: provs})
+// CatalogInputs are the catalog facts every compiled scope reads, the hook's and the layers'
+// alike, so the two share one definition (ADR-0007, ADR-0008): the merged catalog for what is
+// denied and the embedded-only match per id for what an in-scope provider claims (a user file
+// can never widen a claim). A user file that does not load is left out (scopeCatalogError).
+func CatalogInputs() (provs []providers.Provider, embedded map[string]providers.Match) {
+	cat, _ := providers.LoadAll()
+	embedded = map[string]providers.Match{}
+	if ec, err := providers.Embedded(); err == nil {
+		for _, p := range ec.All() {
+			embedded[p.ID] = p.Match
+		}
+	}
+	if cat != nil {
+		provs = cat.All()
+	}
+	return provs, embedded
+}
+
+// ScopeFor compiles identity's scope from the catalog (CatalogInputs) with no path facts (no
+// protected path set, no other identities): what the PATH, the environment and the MCP render
+// need. bundleMCP is the manifest's claude.bundle.mcp (the exact-name rule), mcpAllow its
+// mcp.allow (the hybrid MCP list).
+func ScopeFor(identity string, scope, bundleMCP, mcpAllow []string) *Scope {
+	provs, embedded := CatalogInputs()
+	return NewScope(ScopeInputs{Identity: identity, Scope: scope, Providers: provs, Embedded: embedded, BundleMCP: bundleMCP, MCPAllow: mcpAllow})
 }
 
 // Identity is the workspace name the scope was compiled for.
@@ -25,23 +46,41 @@ func (s *Scope) Identity() string { return s.identity }
 // IDs are the sorted catalog ids in scope.
 func (s *Scope) IDs() []string { return append([]string{}, s.scope...) }
 
-// OutOfScopeExecutables returns the executable names (lower case, no Windows suffix) of the
-// providers outside the scope that no in-scope provider also claims, each mapped to its
-// provider's catalog id: what out-of-scope-cli denies by name.
+// OutOfScopeExecutables returns the executable names (lower case, no Windows suffix) that an
+// out-of-scope provider claims wholesale and no in-scope provider claims at all (wholesale or
+// by a subcommand: az stays when azure-devops is in scope), each mapped to that provider's
+// catalog id: the names out-of-scope-cli denies in every form.
 func (s *Scope) OutOfScopeExecutables() map[string]string {
-	out := make(map[string]string, len(s.outExe))
-	for n, sp := range s.outExe {
-		out[n] = sp.id
+	out := map[string]string{}
+	for n, claims := range s.exeClaims {
+		if id, ok := wholeOut(claims); ok {
+			out[n] = id
+		}
 	}
 	return out
 }
 
+func wholeOut(claims []exeClaim) (string, bool) {
+	id := ""
+	for _, c := range claims {
+		if c.p.inScope {
+			return "", false
+		}
+		if c.wildcard && id == "" {
+			id = c.p.id
+		}
+	}
+	return id, id != ""
+}
+
 // OutOfScopeExecutable reports whether a file or command name (a path, a Windows suffix and
-// the case are ignored, as the hook reads a command word) is an out-of-scope executable, and
-// whose.
+// the case are ignored, as the hook reads a command word) is an out-of-scope executable by
+// OutOfScopeExecutables' rule, and whose.
 func (s *Scope) OutOfScopeExecutable(name string) (id string, ok bool) {
-	if sp := s.outExe[exeName(name)]; sp != nil {
-		return sp.id, true
+	for _, n := range exeCandidates(name) {
+		if claims, found := s.exeClaims[n]; found {
+			return wholeOut(claims)
+		}
 	}
 	return "", false
 }
@@ -49,7 +88,8 @@ func (s *Scope) OutOfScopeExecutable(name string) (id string, ok bool) {
 // OutOfScopeEnv returns the names, out of names (the variables an environment holds), that
 // are an out-of-scope provider's variables no in-scope provider claims, sorted and spelled as
 // given. Names compare case-insensitively, as the catalog spells them upper case; a trailing
-// * of a match entry is a prefix.
+// * of a match entry is a prefix. A generic tool's variables (providers.GenericTool: NPM_TOKEN,
+// TF_TOKEN_*) are never returned: they belong to the project.
 func (s *Scope) OutOfScopeEnv(names []string) []string {
 	var out []string
 	for _, n := range names {
@@ -58,6 +98,9 @@ func (s *Scope) OutOfScopeEnv(names []string) []string {
 			continue
 		}
 		for _, e := range s.outEnv {
+			if e.p != nil && e.p.generic {
+				continue
+			}
 			if (!e.prefix && u == e.name) || (e.prefix && strings.HasPrefix(u, e.name) && len(u) > len(e.name)) {
 				out = append(out, n)
 				break
@@ -83,13 +126,9 @@ func (s *Scope) OutOfScopeMCPServer(name string) (what string, ok bool) {
 // OutOfScopeHost reports whether host is an out-of-scope provider's API host (the host or a
 // parent domain listed) that no in-scope provider lists. what names the provider.
 func (s *Scope) OutOfScopeHost(host string) (what string, ok bool) {
-	h, hit := s.hostHit(strings.Trim(strings.ToLower(host), "."))
+	h, hit := s.hostHit(strings.Trim(strings.ToLower(host), "."), "")
 	if !hit {
 		return "", false
 	}
 	return h.what, true
 }
-
-// URLHost is the host of a URL with a scheme (http, https, ws, wss, ftp, ftps), lower case,
-// or "".
-func URLHost(u string) string { return urlHost(u) }

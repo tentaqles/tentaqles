@@ -26,7 +26,7 @@ func scopeLine(ws *resolve.Workspace) string {
 	if len(ids) > 0 {
 		list = strings.Join(ids, ", ")
 	}
-	return "Scope: " + list + ". Identity " + ws.Name + " may use these providers only: any other provider's CLI, MCP server, variable, credential file or API host is out of scope and tq blocks it; if a task needs one, stop and tell the developer.\n"
+	return "Scope: " + list + ". Identity " + ws.Name + " may use these providers only: any other provider's CLI, MCP server, variable, credential file or API host is out of scope and tq blocks it (a claude.ai connector of another provider stays listed, tq cannot remove it, but its tools are denied); if a task needs one, stop and tell the developer.\n"
 }
 
 // renderScope writes what a guard: v2 identity's earlier layers need on disk (ADR-0007): the
@@ -87,6 +87,13 @@ func renderScope(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
 		}
 		removed, err := mcpscope.FilterClaude(claudeDir, j, dryRun)
 		report("claude", removed, err)
+		// A plugin's MCP servers are in the plugin's own files: reported, never edited; the
+		// hook denies their tools.
+		for _, ps := range mcpscope.PluginServers(claudeDir) {
+			if why, out := j.Out(ps.ToolName, ps.Entry); out {
+				fmt.Fprintf(c.ErrOrStderr(), "warning: %s claude: plugin %s brings MCP server %s (%s); the hook denies its tools, disable the plugin for this identity to drop them (%s)\n", ws.Name, ps.Plugin, ps.Server, why, ps.File)
+			}
+		}
 	}
 	codexDir := paths.IdentityDir(ws.Name, "codex")
 	if fi, err := os.Stat(codexDir); err == nil && fi.IsDir() {

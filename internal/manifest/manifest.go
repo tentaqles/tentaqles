@@ -104,7 +104,10 @@ type Manifest struct {
 	// derived provider scope (Scope).
 	Guard      GuardFlag `yaml:"guard,omitempty"`
 	ExtraScope []string  `yaml:"scope,omitempty"`
-	Path       string    `yaml:"-"`
+	// MCP is the mcp: block: allow lists the exact MCP server names kept under guard: v2 though
+	// no in-scope provider claims them and they are not general-purpose (scope.go, ADR-0008).
+	MCP  MCPBlock `yaml:"mcp,omitempty"`
+	Path string   `yaml:"-"`
 	// Ignored lists the top-level blocks of DroppedBlocks, then the claude keys
 	// of DroppedClaudeKeys (as "claude.<key>"), that the file still carries.
 	// Load records them so `tq doctor` can warn that tq no longer reads them
@@ -215,6 +218,9 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.validateScope(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.validateMCP(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Path = path

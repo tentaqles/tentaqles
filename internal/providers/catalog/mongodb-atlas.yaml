@@ -18,3 +18,4 @@ match:
   paths: ["~/.config/atlascli"]
   hosts: [cloud.mongodb.com]
   mcp: [mongodb, atlas]
+  mcp_packages: ["mongodb-mcp-server", "mcp/mongodb"]

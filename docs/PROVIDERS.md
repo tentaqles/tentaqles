@@ -120,9 +120,37 @@ The same lists drive the layers before the hook (ADR-0007), under `guard: v2`:
 |---|---|---|
 | `executables` | PATH (`tq env`, `tq run`) | a PATH folder holding only these is dropped; a shared folder is kept and the identity's `path-mask/` stub answers `command not found` (exit 127) |
 | `env` | environment (`tq env`, `tq run`) | unset in the identity terminal and launches, restored on leaving (`TF_TOKEN_*` unsets every match) |
-| `mcp`, `hosts`, `executables` | harness config (`tq settings render`) | an MCP server whose name token, `url` host or `command` is the provider's is removed from the identity's `.claude.json` and Codex `config.toml` (kept in `mcp-out-of-scope.json`) |
+| `mcp`, `mcp_packages`, `images`, `hosts`, `env`, `executables` | harness config (`tq settings render`) and the hook | an MCP server whose name token, package or image (`command`/`args`), `env` key, `url` host or `command` is the provider's is removed from the identity's `.claude.json` and Codex `config.toml` (kept in `mcp-out-of-scope.json`), and its `mcp__<server>__*` tools are denied |
 
-An entry an in-scope provider also lists is never hidden, unset or removed. After
+`mcp_packages` (ADR-0007) lists prefixes of what an MCP server's config runs:
+`awslabs.`, `@aws/`, `public.ecr.aws/awslabs/`, `@modelcontextprotocol/server-github`,
+`ghcr.io/github/github-mcp-server`; matched case-insensitively against the command and
+each arg (a version suffix included, a script under `node_modules/<pkg>/` by its package,
+`-`, `_` and `.` alike, a `git+`/URL scheme removed, a path also by its file name).
+`mcp_hosts` lists a vendor's remote MCP endpoints (`mcp.vercel.com`,
+`mcp.cloudflare.com` and its subdomains): an MCP server whose url, or a URL among
+its args (`mcp-remote <url>`), is on one is the provider's. It is read only by the
+MCP layer and the hook's MCP rule, never by the network rules of `hosts`.
+
+**The hybrid MCP list** (the owner's choice of 2026-11-05, ADR-0007). Under
+`guard: v2` an MCP server is kept only when the catalog attributes it to an
+in-scope provider, when it is a general-purpose, provider-free server of
+`internal/providers/mcp_general.yaml`, or when its exact name is in the
+manifest's `mcp.allow`; every other server is moved to `mcp-out-of-scope.json`
+at render and denied by the hook. `mcp_general.yaml` lists playwright, context7,
+memory, filesystem, fetch, git, sequential-thinking, time, everything, postgres,
+sqlite, puppeteer, chrome-devtools and microsoft-learn, each with the
+`mcp_packages`, `mcp_hosts` and `images` its entries are matched by (a package
+up to a version, path or tag; never a name alone) and `mcp` tokens for a
+claude.ai connector. `mcp.allow` is a list of server names in the protected
+manifest (letters, digits, `.`, `_`, `-`; each once), so only a human edits it.
+
+An entry an in-scope provider also lists is never hidden, unset or removed. Two
+rules of `internal/providers/generic.go` narrow the PATH and environment layers:
+a generic tool (its CLI command is in none of its match lists: docker, kubectl,
+terraform, npm, ...) never has its variables unset, and an ambiguous word
+(`cn`, `tea`, `snow`, `render`, `vc`, `fly`, `atlas`, `copilot`, `goose`) is
+never dropped from or masked on the PATH. After
 editing a user provider file, run `tq settings render <ws>` so the PATH mask
 holds the new names (until then the prompt says `tq: PATH mask missing`).
 

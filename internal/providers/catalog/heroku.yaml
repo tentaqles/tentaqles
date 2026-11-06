@@ -18,3 +18,4 @@ match:
   hosts: [api.heroku.com, git.heroku.com]
   git_hosts: [git.heroku.com]
   mcp: [heroku]
+  mcp_packages: ["@heroku/mcp-server"]

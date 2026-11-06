@@ -29,3 +29,5 @@ match:
   hosts: [gitlab.com/api/, gitlab.com/oauth/]
   git_hosts: [gitlab.com, altssh.gitlab.com]
   mcp: [gitlab]
+  mcp_packages: ["@modelcontextprotocol/server-gitlab", "@zereight/mcp-gitlab"]
+  mcp_hosts: [gitlab.com]

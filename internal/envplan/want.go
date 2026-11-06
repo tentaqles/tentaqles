@@ -94,9 +94,22 @@ func Plan(ws *resolve.Workspace, prev State, env Env) (Want, *Notice) {
 	if !ok {
 		return w, nil
 	}
-	if prev.WS == ws.Name && prev.PathSet != "" && cur == prev.PathSet && (!l.HasMask(cur, env.Syntax) || l.MaskReady()) {
-		w.Set["PATH"] = cur
-		return w, nil
+	if prev.WS == ws.Name && prev.PathSet != "" && cur == prev.PathSet {
+		// The fast path: no folder is read. The mask folder is still checked (one directory
+		// read, names and sizes): on the PATH only while it is as tq wrote it, back on it as
+		// soon as it is again, and a notice at every prompt while it is wanted and missing.
+		has := l.HasMask(cur, env.Syntax)
+		if !prev.MaskWanted && !has {
+			w.Set["PATH"] = cur
+			return w, nil
+		}
+		if ready := l.MaskReady(); has == ready && prev.MaskWanted {
+			w.Set["PATH"], w.MaskWanted = cur, true
+			if !ready {
+				return w, &Notice{Kind: NoticeMask, Workspace: ws.Name}
+			}
+			return w, nil
+		}
 	}
 	base := cur
 	if orig, tracked := trackedPath(prev); tracked && prev.PathSet != "" {
@@ -108,6 +121,7 @@ func Plan(ws *resolve.Workspace, prev State, env Env) (Want, *Notice) {
 	}
 	np, rep := l.FilterPath(base, env.Syntax)
 	w.Set["PATH"] = np
+	w.MaskWanted = len(rep.Shared) > 0
 	if rep.MaskMissing {
 		return w, &Notice{Kind: NoticeMask, Workspace: ws.Name}
 	}

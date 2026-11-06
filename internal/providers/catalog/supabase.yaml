@@ -23,3 +23,5 @@ match:
   paths: ["~/.supabase"]
   hosts: [api.supabase.com, supabase.co]
   mcp: [supabase]
+  mcp_packages: ["@supabase/mcp-server-supabase", "mcp/supabase"]
+  mcp_hosts: [mcp.supabase.com]

@@ -2,8 +2,6 @@
 package envplan
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"os"
 	"sort"
 
@@ -48,23 +46,27 @@ type State struct {
 	// spelling: a PATH still equal to it needs no work at the next prompt, and one the user
 	// changed since is merged back (MergePath) on leaving.
 	PathSet string `json:"path,omitempty"`
+	// Sep is PathSet's list separator (the shell's).
+	Sep string `json:"sep,omitempty"`
+	// MaskWanted: a PATH folder of PathSet holds an out-of-scope CLI beside other tools, so the
+	// mask folder belongs on the PATH; the next prompt puts it back (or takes it off) as soon
+	// as the folder is (or stops being) as tq wrote it, and says so while it is missing.
+	MaskWanted bool `json:"mw,omitempty"`
+
+	// The compact spelling of PathSet in the encoding (encodeState): the entries of the
+	// recorded PATH it drops and the mask entry it puts first.
+	PathDrop    []int  `json:"pd,omitempty"`
+	PathMask    string `json:"pm,omitempty"`
+	PathCompact bool   `json:"pc,omitempty"`
 }
 
-func (s State) Encode() string {
-	b, _ := json.Marshal(s)
-	return base64.RawURLEncoding.EncodeToString(b)
-}
+// Encode is the __TQ_STATE value (state.go): zlib-compressed JSON, with the PATH tq wrote
+// spelled as the entries it dropped from the recorded one, so the state holds one PATH, not
+// two. cmd.exe reads a line of at most 8191 characters: a 3.5 KB PATH must fit with room.
+func (s State) Encode() string { return encodeState(s) }
 
-func DecodeState(enc string) State {
-	var s State
-	if b, err := base64.RawURLEncoding.DecodeString(enc); err == nil {
-		_ = json.Unmarshal(b, &s)
-	}
-	if s.Prev == nil {
-		s.Prev = map[string]*string{}
-	}
-	return s
-}
+// DecodeState reads Encode's value, and the plain base64 JSON of tq before it.
+func DecodeState(enc string) State { return decodeState(enc) }
 
 type Ops struct {
 	Set     map[string]string
@@ -100,6 +102,12 @@ const (
 	// shared with other tools holds an out-of-scope CLI) and the folder is
 	// missing or changed; the fix is tq settings render (ADR-0007).
 	NoticeMask = "path-mask"
+	// NoticeCmdLong: the identity PATH is longer than a cmd.exe line, so cmd.exe keeps the
+	// PATH it has (out-of-scope CLIs still resolve there); the rest of the identity applies.
+	NoticeCmdLong = "cmd-path-long"
+	// NoticeStateLost: TQ_WS was set but __TQ_STATE was gone or unreadable; tq unset its own
+	// variables and mask folders and cannot put back the values from before it (lost.go).
+	NoticeStateLost = "state-lost"
 )
 
 // Want is what a workspace wants of the environment: the variables to set and, for a
@@ -112,6 +120,8 @@ type Want struct {
 	// PathOrig replaces the recorded PATH before tq (State.Prev): the user changed PATH
 	// inside the identity and the merged PATH (MergePath) is what leaving restores.
 	PathOrig *string
+	// MaskWanted: the PATH holds a shared folder with an out-of-scope CLI (State.MaskWanted).
+	MaskWanted bool
 }
 
 // Diff computes the shell operations to move from the current env to desired,
@@ -185,7 +195,7 @@ func DiffWant(want Want, current func(string) (string, bool), prev State, wsName
 		}
 	}
 	if p, ok := desired["PATH"]; ok {
-		next.PathSet = p
+		next.PathSet, next.Sep, next.MaskWanted = p, sep, want.MaskWanted
 		if want.PathOrig != nil {
 			for k := range next.Prev {
 				if envKey(k) == envKey("PATH") && next.Prev[k] != nil {
@@ -196,7 +206,7 @@ func DiffWant(want Want, current func(string) (string, bool), prev State, wsName
 		}
 	}
 	// A new PATH record alone is a change of state: the next prompt compares against it.
-	ops.Changed = len(ops.Set)+len(ops.Unset) > 0 || next.PathSet != prev.PathSet
+	ops.Changed = len(ops.Set)+len(ops.Unset) > 0 || next.PathSet != prev.PathSet || next.MaskWanted != prev.MaskWanted
 	if !ops.Changed {
 		return ops, next
 	}

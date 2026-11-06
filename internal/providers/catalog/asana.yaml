@@ -11,3 +11,4 @@ match:
   env: [ASANA_ACCESS_TOKEN, ASANA_PAT]
   hosts: [app.asana.com]
   mcp: [asana]
+  mcp_hosts: [mcp.asana.com]

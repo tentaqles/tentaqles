@@ -68,6 +68,10 @@ func NoticeText(n envplan.Notice) (string, bool) {
 			return "tq: legacy trust record: run tq doctor", true
 		}
 		return "tq: legacy trust record: run tq allow " + ws + " to sign hooks and manifest", true
+	case envplan.NoticeStateLost:
+		return "tq: shell state lost: tq unset its own variables and cannot restore the values from before it; open a new terminal to get them back", true
+	case envplan.NoticeCmdLong:
+		return "tq: PATH over cmd.exe's 8191-character line: out-of-scope CLIs still resolve here, shorten PATH or use PowerShell", true
 	case envplan.NoticeMask:
 		if ws == "" {
 			return "tq: PATH mask missing: out-of-scope CLIs still resolve here, run tq doctor", true
@@ -77,7 +81,40 @@ func NoticeText(n envplan.Notice) (string, bool) {
 	return "", false
 }
 
-func Emit(sh string, ops envplan.Ops) (string, error) {
+// CmdLineMax is the longest line tq may print to the cmd.exe hook, in bytes. Measured through
+// the hook's own form (`@if "!!"=="" (for /f ... do @%%L) else (...)`, delayed expansion off
+// and on): a printed line of 8192 characters runs, one of 8193 is dropped together with every
+// line after it (TestEmit_Cmd_LineBudget). cmd.exe's 8191-character command line plus the `@`
+// the body adds is that budget. tq env leaves a longer PATH alone and says so (ADR-0007);
+// Emit refuses a longer line rather than lose it silently. Bytes, not characters: cmd.exe
+// reads the UTF-8 tq prints byte by byte, so this is the conservative count.
+const CmdLineMax = 8192
+
+// Opts are the shell-specific choices of an emit.
+type Opts struct {
+	// CmdDelayed: the cmd.exe that runs the lines has delayed expansion on (the hook tests
+	// "!!"), which would eat a ! and, on a line holding one, a ^: those are escaped.
+	CmdDelayed bool
+}
+
+// Emit renders ops for shell sh.
+func Emit(sh string, ops envplan.Ops) (string, error) { return EmitOpts(sh, ops, Opts{}) }
+
+// cmdValue is a value as a `set "K=V"` line run from the hook's for /f must spell it: the
+// for variable's text is not parsed again for %, &, |, <, > or quotes (verified), so only
+// delayed expansion needs escaping.
+func cmdValue(v string, o Opts) string {
+	if o.CmdDelayed && strings.Contains(v, "!") {
+		return strings.NewReplacer("^", "^^", "!", "^!").Replace(v)
+	}
+	return v
+}
+
+// CmdSetLine is the line Emit prints to cmd.exe to set k to v.
+func CmdSetLine(k, v string, o Opts) string { return `set "` + k + "=" + cmdValue(v, o) + `"` }
+
+// EmitOpts is Emit with shell-specific options.
+func EmitOpts(sh string, ops envplan.Ops, o Opts) (string, error) {
 	var set func(k, v string) string
 	var unset func(k string) string
 	switch sh {
@@ -101,7 +138,7 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 		set = func(k, v string) string { return "$env:" + k + " = " + psq(v) }
 		unset = func(k string) string { return "Remove-Item -ErrorAction SilentlyContinue Env:" + k }
 	case "cmd":
-		set = func(k, v string) string { return `set "` + k + "=" + v + `"` }
+		set = func(k, v string) string { return CmdSetLine(k, v, o) }
 		unset = func(k string) string { return `set "` + k + `="` }
 	default:
 		return "", fmt.Errorf("unknown shell %q (known: %s)", sh, strings.Join(Shells, ", "))
@@ -122,8 +159,8 @@ func Emit(sh string, ops envplan.Ops) (string, error) {
 	}
 	if sh == "cmd" {
 		for k, v := range ops.Set {
-			if strings.ContainsAny(v, "\"\r\n%!") {
-				return "", fmt.Errorf("cmd: value for %s contains a character cmd.exe cannot quote", k)
+			if n := len(set(k, v)); n > CmdLineMax {
+				return "", fmt.Errorf("cmd: the line for %s is %d characters, over cmd.exe's %d", k, n, CmdLineMax)
 			}
 		}
 	}
@@ -157,7 +194,9 @@ func warn(sh, msg string) string {
 	case "pwsh", "powershell":
 		return "[Console]::Error.WriteLine(" + psq(msg) + ")"
 	case "cmd":
-		return "echo " + msg + " 1>&2"
+		// The hook runs each line from a for /f variable, whose text cmd.exe never parses
+		// for a redirection (verified): the line goes to the console as it is.
+		return "echo " + msg
 	default: // bash, zsh
 		return "printf '%s\\n' " + sq(msg) + " >&2"
 	}

@@ -1,0 +1,65 @@
+# General-purpose MCP servers that belong to no provider (ADR-0007, the owner's hybrid MCP
+# list, 2026-11-05). Under guard: v2 an MCP server is kept when the catalog attributes it to an
+# in-scope provider, when it matches one of these, or when its exact name is in the manifest's
+# mcp.allow; every other server is moved to mcp-out-of-scope.json at render and denied by the
+# hook. An entry matches by what it runs, never by its name alone: the package or image of its
+# command or args (mcp_packages, compared PyPI-style and up to a version, a path or a tag), its
+# url's host (mcp_hosts), or a docker image (images). mcp tokens name a claude.ai connector.
+servers:
+  - name: playwright
+    match:
+      mcp: [playwright]
+      mcp_packages: ["@playwright/mcp", "@executeautomation/playwright-mcp-server", "mcp/playwright"]
+  - name: context7
+    match:
+      mcp: [context7]
+      mcp_packages: ["@upstash/context7-mcp", "mcp/context7"]
+      mcp_hosts: [mcp.context7.com]
+  - name: memory
+    match:
+      mcp: [memory]
+      mcp_packages: ["@modelcontextprotocol/server-memory", "mcp/memory"]
+  - name: filesystem
+    match:
+      mcp: [filesystem]
+      mcp_packages: ["@modelcontextprotocol/server-filesystem", "mcp/filesystem"]
+  - name: fetch
+    match:
+      mcp: [fetch]
+      mcp_packages: ["mcp-server-fetch", "@modelcontextprotocol/server-fetch", "mcp/fetch"]
+  - name: git
+    match:
+      mcp: [git]
+      mcp_packages: ["mcp-server-git", "@modelcontextprotocol/server-git", "mcp/git"]
+  - name: sequential-thinking
+    match:
+      mcp: [sequentialthinking]
+      mcp_packages: ["@modelcontextprotocol/server-sequential-thinking", "mcp/sequentialthinking"]
+  - name: time
+    match:
+      mcp: [time]
+      mcp_packages: ["mcp-server-time", "@modelcontextprotocol/server-time", "mcp/time"]
+  - name: everything
+    match:
+      mcp: [everything]
+      mcp_packages: ["@modelcontextprotocol/server-everything", "mcp/everything"]
+  - name: postgres
+    match:
+      mcp: [postgres]
+      mcp_packages: ["@modelcontextprotocol/server-postgres", "postgres-mcp", "mcp/postgres"]
+  - name: sqlite
+    match:
+      mcp: [sqlite]
+      mcp_packages: ["mcp-server-sqlite", "@modelcontextprotocol/server-sqlite", "mcp/sqlite"]
+  - name: puppeteer
+    match:
+      mcp: [puppeteer]
+      mcp_packages: ["@modelcontextprotocol/server-puppeteer", "mcp/puppeteer"]
+  - name: chrome-devtools
+    match:
+      mcp: [chromedevtools]
+      mcp_packages: ["chrome-devtools-mcp"]
+  - name: microsoft-learn
+    match:
+      mcp: [microsoftlearn]
+      mcp_hosts: [learn.microsoft.com]

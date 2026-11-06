@@ -29,3 +29,4 @@ match:
   paths: ["~/.twilio-cli"]
   hosts: [api.twilio.com]
   mcp: [twilio]
+  mcp_packages: ["@twilio-alpha/mcp"]

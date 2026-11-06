@@ -29,3 +29,4 @@ match:
   paths: ["~/.render"]
   hosts: [api.render.com]
   mcp: [render]
+  mcp_hosts: [mcp.render.com]

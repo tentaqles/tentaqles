@@ -22,3 +22,5 @@ match:
   paths: ["~/.local/share/com.vercel.cli", "%APPDATA%/com.vercel.cli"]
   hosts: [api.vercel.com]
   mcp: [vercel]
+  mcp_packages: ["@vercel/mcp", "mcp/vercel"]
+  mcp_hosts: [mcp.vercel.com]

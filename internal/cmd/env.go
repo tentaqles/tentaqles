@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/audit"
@@ -17,7 +16,7 @@ import (
 
 func newEnvCmd() *cobra.Command {
 	var sh string
-	var asJSON bool
+	var asJSON, cmdDelayed bool
 	c := &cobra.Command{
 		Use:   "env",
 		Short: "Print the env changes for the current directory (used by the shell hook)",
@@ -41,13 +40,35 @@ func newEnvCmd() *cobra.Command {
 			// guard: v2 adds the PATH and environment layer (ADR-0007): the identity PATH
 			// and the out-of-scope variables unset, both restored on leaving.
 			senv := envplan.ShellEnv(sh)
-			want, maskNotice := envplan.Plan(res.Workspace, prev, senv)
-			if p, ok := want.Set["PATH"]; ok && sh == "cmd" && strings.ContainsAny(p, "\"%!") {
-				// cmd.exe cannot quote these; its PATH is left as it is rather than the
-				// whole line refused.
-				delete(want.Set, "PATH")
+			// A shell whose state is gone while TQ_WS is set fails closed (ADR-0007): tq's own
+			// variables and mask folders go, the folder's identity is applied afresh, and the
+			// prompt says the values from before tq are lost.
+			real, lost := senv, envplan.LostState(senv)
+			if lost {
+				senv, prev = envplan.Forget(senv), envplan.State{}
+			} else if prev.WS != "" {
+				// A state that names fewer variables than tq set (an older or hand-written one).
+				if u, found := envplan.Unrecorded(senv, prev); found {
+					senv, lost = u, true
+				}
 			}
+			want, maskNotice := envplan.Plan(res.Workspace, prev, senv)
 			ops, _ := envplan.DiffWant(want, senv.Lookup, prev, wsName(res))
+			if sh == "cmd" && cmdTooLong(ops, cmdDelayed) {
+				// cmd.exe reads no line over 8191 characters: an identity PATH that long (or
+				// the state recording it) cannot reach the shell. PATH is left as it is, the
+				// rest of the identity still applies, and the prompt says so every time.
+				if _, ok := want.Set["PATH"]; ok {
+					delete(want.Set, "PATH")
+					want.PathOrig, want.MaskWanted = nil, false
+					ops, _ = envplan.DiffWant(want, senv.Lookup, prev, wsName(res))
+					maskNotice = &envplan.Notice{Kind: envplan.NoticeCmdLong, Workspace: wsName(res)}
+				}
+			}
+			if lost {
+				envplan.FinishForget(&ops, real, senv)
+				maskNotice = ops.Notice
+			}
 			if ops.Changed && ops.From != ops.To {
 				_ = audit.Append(audit.Event{Kind: "switch", From: ops.From, To: ops.To, Cwd: cwd, Reason: res.Reason})
 			}
@@ -57,7 +78,7 @@ func newEnvCmd() *cobra.Command {
 			// workspace name and the command to run (shell.NoticeText; the
 			// changed files are what tq hooks verify prints).
 			ops.Notice = envNotice(res)
-			if ops.Notice == nil {
+			if ops.Notice == nil || lost {
 				ops.Notice = maskNotice
 			}
 			if asJSON {
@@ -67,7 +88,7 @@ func newEnvCmd() *cobra.Command {
 				}
 				return json.NewEncoder(c.OutOrStdout()).Encode(map[string]any{"workspace": wsName(res), "reason": res.Reason, "set": ops.Set, "unset": ops.Unset, "notice": notice})
 			}
-			out, err := shell.Emit(sh, ops)
+			out, err := shell.EmitOpts(sh, ops, shell.Opts{CmdDelayed: cmdDelayed})
 			if err != nil {
 				return err
 			}
@@ -77,7 +98,18 @@ func newEnvCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&sh, "shell", "bash", "one of "+fmt.Sprint(shell.Shells))
 	c.Flags().BoolVar(&asJSON, "json", false, "print JSON instead of shell code")
+	c.Flags().BoolVar(&cmdDelayed, "cmd-delayed", false, "cmd.exe with delayed expansion on (the cmd hook passes it): escape ! and ^")
 	return c
+}
+
+// cmdTooLong reports whether a line of ops would be over what cmd.exe reads.
+func cmdTooLong(ops envplan.Ops, delayed bool) bool {
+	for k, v := range ops.Set {
+		if len(shell.CmdSetLine(k, v, shell.Opts{CmdDelayed: delayed})) > shell.CmdLineMax {
+			return true
+		}
+	}
+	return false
 }
 
 func wsName(r resolve.Result) string {

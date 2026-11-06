@@ -72,12 +72,22 @@ type Match struct {
 	// split on _ - . and lower-cased; the server matches when one of its tokens is listed
 	// (aws matches aws, awslabs-aws-api and plugin_x_aws).
 	MCP []string `yaml:"mcp,omitempty"`
+	// MCPPackages are prefixes of the package, image or module an MCP server's config runs
+	// (awslabs., @aws/, public.ecr.aws/, @modelcontextprotocol/server-github): a server whose
+	// command or one of its args starts with one is the provider's, whatever its name
+	// (ADR-0007). Matched case-insensitively, a version suffix included.
+	MCPPackages []string `yaml:"mcp_packages,omitempty"`
+	// MCPHosts are hosts of a vendor's own remote MCP endpoints (mcp.vercel.com,
+	// mcp.cloudflare.com and its subdomains): an MCP server whose url, or a URL among its args
+	// (mcp-remote <url>), is on one is the provider's (ADR-0007). Kept apart from Hosts, which
+	// the hook's network rules read.
+	MCPHosts []string `yaml:"mcp_hosts,omitempty"`
 }
 
 // Empty reports whether m matches nothing.
 func (m Match) Empty() bool {
 	return len(m.Executables)+len(m.Subcommands)+len(m.Images)+len(m.Modules)+len(m.PSModules)+len(m.Cmdlets)+
-		len(m.Env)+len(m.Paths)+len(m.Hosts)+len(m.GitHosts)+len(m.MCP) == 0
+		len(m.Env)+len(m.Paths)+len(m.Hosts)+len(m.GitHosts)+len(m.MCP)+len(m.MCPPackages)+len(m.MCPHosts) == 0
 }
 
 var (
@@ -91,6 +101,7 @@ var (
 	matchHostRe     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[a-z0-9._~-]+)*/?$`)
 	matchMCPRe      = regexp.MustCompile(`^[a-z0-9]+$`)
 	matchGitHostRe  = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+	matchPkgRe      = regexp.MustCompile(`^[@A-Za-z0-9][A-Za-z0-9@._/:+-]*$`)
 )
 
 // SplitHost splits a hosts entry into its host and its path prefix ("" when it has none):
@@ -309,6 +320,17 @@ func (m Match) Validate() error {
 	if err := check("git_hosts", m.GitHosts, matchGitHostRe); err != nil {
 		return err
 	}
+	if err := check("mcp_hosts", m.MCPHosts, matchGitHostRe); err != nil {
+		return err
+	}
+	if err := check("mcp_packages", m.MCPPackages, matchPkgRe); err != nil {
+		return err
+	}
+	for _, p := range m.MCPPackages {
+		if strings.Contains(p, "..") {
+			return fmt.Errorf("mcp_packages: %q holds ..", p)
+		}
+	}
 	if err := check("mcp", m.MCP, matchMCPRe); err != nil {
 		return err
 	}
@@ -367,5 +389,7 @@ func (m Match) Union(o Match) Match {
 		Public:      m.Public, // a user file never adds an exception: it only widens denial
 		GitHosts:    u(m.GitHosts, o.GitHosts),
 		MCP:         u(m.MCP, o.MCP),
+		MCPPackages: u(m.MCPPackages, o.MCPPackages),
+		MCPHosts:    u(m.MCPHosts, o.MCPHosts),
 	}
 }

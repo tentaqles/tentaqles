@@ -13,3 +13,4 @@ match:
   env: [SLACK_BOT_TOKEN, SLACK_USER_TOKEN, SLACK_TOKEN]
   hosts: [slack.com/api/, hooks.slack.com, files.slack.com, wss-primary.slack.com]
   mcp: [slack]
+  mcp_packages: ["@modelcontextprotocol/server-slack", "slack-mcp-server"]

@@ -383,7 +383,10 @@ func TestLayer_EnterAndLeaveRestoresExactly(t *testing.T) {
 			return DecodeState(sh[StateVar])
 		}
 		st := step(ws, State{})
-		for _, k := range []string{"AWS_PROFILE", "TF_TOKEN_app_terraform_io", "GITHUB_TOKEN"} {
+		if sh["TF_TOKEN_app_terraform_io"] != "t" {
+			t.Fatalf("%s: a generic tool's variable was unset", syn.Sep)
+		}
+		for _, k := range []string{"AWS_PROFILE", "GITHUB_TOKEN"} {
 			if _, set := sh[k]; set {
 				t.Fatalf("%s: %s survives in the identity environment", syn.Sep, k)
 			}
@@ -523,7 +526,7 @@ func TestLayer_UnsetNames(t *testing.T) {
 	l := LayerFor(companyX(t, true))
 	got := l.UnsetNames([]string{"AWS_PROFILE", "AZURE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "TF_TOKEN_x", "TF_TOKEN_", "GH_TOKEN", "PATH", "HOME", "aws_profile"},
 		map[string]string{"GH_TOKEN": "set by tq"})
-	want := []string{"AWS_PROFILE", "TF_TOKEN_x", "aws_profile"}
+	want := []string{"AWS_PROFILE", "aws_profile"} // TF_TOKEN_*: terraform is a generic tool
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("UnsetNames = %v, want %v", got, want)
 	}

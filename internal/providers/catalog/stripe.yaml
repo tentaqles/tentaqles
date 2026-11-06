@@ -20,3 +20,5 @@ match:
   paths: ["~/.config/stripe"]
   hosts: [api.stripe.com]
   mcp: [stripe]
+  mcp_packages: ["@stripe/mcp", "mcp/stripe"]
+  mcp_hosts: [mcp.stripe.com]

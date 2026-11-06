@@ -19,3 +19,5 @@ match:
   hosts: [sentry.io/api/, ingest.sentry.io, ingest.us.sentry.io, ingest.de.sentry.io]
   public: [docs.sentry.io]
   mcp: [sentry]
+  mcp_packages: ["@sentry/mcp-server", "mcp/sentry"]
+  mcp_hosts: [mcp.sentry.dev]

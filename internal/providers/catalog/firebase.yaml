@@ -18,3 +18,4 @@ match:
   paths: ["~/.config/configstore/firebase-tools.json"]
   hosts: [firebase.googleapis.com]
   mcp: [firebase]
+  mcp_packages: ["firebase-tools"]

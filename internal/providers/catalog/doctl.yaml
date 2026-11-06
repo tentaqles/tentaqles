@@ -35,3 +35,4 @@ match:
   paths: ["~/.config/doctl", "%APPDATA%/doctl"]
   hosts: [api.digitalocean.com, digitaloceanspaces.com]
   mcp: [digitalocean]
+  mcp_packages: ["@digitalocean/mcp"]

@@ -2,6 +2,7 @@ package envplan
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -92,6 +93,70 @@ func Clean(base []string) []string {
 	return out
 }
 
+// launchState appends to out the __TQ_STATE recording every variable out changed from
+// cleaned (the environment before the identity), with the PATH tq wrote. A neutral launch
+// (ws nil) carries none.
+func launchState(ws *resolve.Workspace, cleaned, out []string) []string {
+	if ws == nil {
+		return out
+	}
+	type kv struct{ k, v string }
+	index := func(env []string) map[string]kv {
+		m := map[string]kv{}
+		for _, e := range env {
+			k, v, _ := splitKV(e)
+			if k != "" && envKey(k) != envKey(StateVar) {
+				m[envKey(k)] = kv{k, v}
+			}
+		}
+		return m
+	}
+	before, after := index(cleaned), index(out)
+	st := State{WS: ws.Name, Prev: map[string]*string{}}
+	keys := map[string]bool{}
+	for k := range before {
+		keys[k] = true
+	}
+	for k := range after {
+		keys[k] = true
+	}
+	for k := range keys {
+		b, hadB := before[k]
+		a, hasA := after[k]
+		if hadB == hasA && b.v == a.v {
+			continue
+		}
+		name := a.k
+		if !hasA {
+			name = b.k
+		}
+		if k == envKey("PATH") {
+			name = "PATH"
+			if hasA {
+				st.PathSet, st.Sep = a.v, string(os.PathListSeparator)
+				for _, e := range filepath.SplitList(a.v) {
+					if isAnyMask(e) {
+						st.MaskWanted = true
+					}
+				}
+			}
+		}
+		if hadB {
+			v := b.v
+			st.Prev[name] = &v
+		} else {
+			st.Prev[name] = nil
+		}
+	}
+	res := make([]string, 0, len(out)+1)
+	for _, e := range out {
+		if k, _, _ := splitKV(e); envKey(k) != envKey(StateVar) {
+			res = append(res, e)
+		}
+	}
+	return append(res, StateVar+"="+st.Encode())
+}
+
 // lookup is the value of k in an environment list ("" when absent).
 func lookup(env []string, k string) string {
 	for _, kv := range env {
@@ -108,7 +173,15 @@ func lookup(env []string, k string) string {
 // out-of-scope variables are removed and PATH is the identity PATH
 // (FilterPath of the cleaned PATH), so a launch from outside the folder
 // (tq run <ws>, an editor) gets the same layer as the identity terminal.
+//
+// The launch carries a __TQ_STATE of what it changed (launchState), so a shell started in it
+// (the harness's Bash tool, a terminal from an editor) can leave the identity and is never
+// taken for a shell whose state was lost.
 func Environ(ws *resolve.Workspace, base []string) []string {
+	return launchState(ws, Clean(base), environOf(ws, base))
+}
+
+func environOf(ws *resolve.Workspace, base []string) []string {
 	desired := Desired(ws)
 	if l := LayerFor(ws); l != nil {
 		return l.environ(desired, Clean(base))

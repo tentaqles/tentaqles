@@ -140,7 +140,11 @@ const (
 // classify reads one PATH folder: one directory read, and only for a folder that holds an
 // out-of-scope name a look at its other files (their extension on Windows, a stat on POSIX).
 func (l *Layer) classify(dir string) int {
-	if dir == "" || !filepath.IsAbs(dir) || underSystemRoot(dir) {
+	if runtime.GOOS == "windows" {
+		// cmd.exe and CreateProcess read a quoted entry ("C:\Program Files\x") as the folder.
+		dir = strings.Trim(dir, `"`)
+	}
+	if dir == "" || !filepath.IsAbs(dir) || underSystemRoot(dir) || isNetworkPath(dir) {
 		return dirKeep
 	}
 	es, err := os.ReadDir(dir)
@@ -179,8 +183,13 @@ func (l *Layer) outExecutable(name string) bool {
 			return false
 		}
 	}
-	_, ok := l.scope.OutOfScopeExecutable(name)
-	return ok
+	return l.IsMasked(name)
+}
+
+// isNetworkPath: a UNC folder (\\server\share, //server/share) is never read; a prompt hook
+// must not wait on the network.
+func isNetworkPath(dir string) bool {
+	return strings.HasPrefix(dir, `\\`) || strings.HasPrefix(dir, "//")
 }
 
 // isExecutable reports whether a file another tool may need is runnable from PATH: on

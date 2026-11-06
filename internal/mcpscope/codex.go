@@ -21,6 +21,18 @@ var (
 	tomlStrKeyRe = regexp.MustCompile(`^\s*(command|url)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 	tomlInlineRe = regexp.MustCompile(`^\s*("[^"]+"|'[^']+'|[A-Za-z0-9_-]+)\s*=\s*\{(.*)\}\s*(#.*)?$`)
 	inlineStrRe  = regexp.MustCompile(`\b(command|url)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	// The args and env of a server: the quoted strings of an args array, the keys of an env
+	// table or inline table.
+	tomlStrRe       = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"|'([^']*)'`)
+	tomlArgsRe      = regexp.MustCompile(`^\s*args\s*=\s*(\[.*)$`)
+	tomlEnvInlineRe = regexp.MustCompile(`^\s*env\s*=\s*\{(.*)\}`)
+	tomlKeyRe       = regexp.MustCompile(`(?:^|[{,])\s*("[^"]+"|'[^']+'|[A-Za-z0-9_-]+)\s*=`)
+	inlineArgsRe    = regexp.MustCompile(`\bargs\s*=\s*(\[[^\]]*\])`)
+	inlineEnvRe     = regexp.MustCompile(`\benv\s*=\s*\{([^}]*)\}`)
+	tomlBearerRe    = regexp.MustCompile(`^\s*bearer_token_env_var\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	tomlEnvVarsRe   = regexp.MustCompile(`^\s*env_vars\s*=\s*(\[.*)$`)
+	tomlHdrInlineRe = regexp.MustCompile(`^\s*env_http_headers\s*=\s*\{(.*)\}`)
+	tomlKVStrRe     = regexp.MustCompile(`(?:^|[{,])\s*(?:"[^"]+"|'[^']+'|[A-Za-z0-9_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 )
 
 // tomlKeyPath splits a dotted TOML key (mcp_servers."aws-api".env) into its parts.
@@ -75,10 +87,26 @@ func scanCodex(content string) ([]line, map[string]map[string]any) {
 		}
 		return facts[n]
 	}
+	addArgs := func(f map[string]any, s string) {
+		a, _ := f["args"].([]any)
+		for _, m := range tomlStrRe.FindAllStringSubmatch(s, -1) {
+			a = append(a, m[1]+m[2])
+		}
+		f["args"] = a
+	}
+	addEnv := func(f map[string]any, k string) {
+		e, _ := f["env"].(map[string]any)
+		if e == nil {
+			e = map[string]any{}
+		}
+		e[k] = ""
+		f["env"] = e
+	}
 	var lines []line
 	table := []string{}
-	depth := 0 // open [ of a multi-line array value
-	inML := "" // the delimiter of an open multi-line string
+	depth := 0   // open [ of a multi-line array value
+	inML := ""   // the delimiter of an open multi-line string
+	argsOf := "" // the server whose multi-line args array is open
 	for _, l := range strings.SplitAfter(content, "\n") {
 		if l == "" {
 			continue
@@ -91,22 +119,71 @@ func scanCodex(content string) ([]line, map[string]map[string]any) {
 				inML = ""
 			}
 		case depth > 0:
+			if argsOf != "" {
+				addArgs(fact(argsOf), t)
+			}
 			depth += bracketDelta(t)
+			if depth <= 0 {
+				depth, argsOf = 0, ""
+			}
 		case strings.HasPrefix(strings.TrimSpace(t), "#"):
 			// a comment: no header, no value
 		default:
+			argsOf = ""
 			if m := tomlHeaderRe.FindStringSubmatch(t); m != nil {
 				table = tomlKeyPath(m[1])
 			} else if len(table) == 1 && table[0] == "mcp_servers" {
 				if m := tomlInlineRe.FindStringSubmatch(t); m != nil {
 					ln.inline = unquoteKey(m[1])
-					for _, f := range inlineStrRe.FindAllStringSubmatch(m[2], -1) {
-						fact(ln.inline)[f[1]] = f[2] + f[3]
+					f := fact(ln.inline)
+					for _, s := range inlineStrRe.FindAllStringSubmatch(m[2], -1) {
+						f[s[1]] = s[2] + s[3]
+					}
+					if a := inlineArgsRe.FindStringSubmatch(m[2]); a != nil {
+						addArgs(f, a[1])
+					}
+					if e := inlineEnvRe.FindStringSubmatch(m[2]); e != nil {
+						for _, k := range tomlKeyRe.FindAllStringSubmatch(e[1], -1) {
+							addEnv(f, unquoteKey(k[1]))
+						}
 					}
 				}
 			} else if len(table) == 2 && table[0] == "mcp_servers" {
+				f := fact(table[1])
 				if m := tomlStrKeyRe.FindStringSubmatch(t); m != nil {
-					fact(table[1])[m[1]] = m[2] + m[3]
+					f[m[1]] = m[2] + m[3]
+				}
+				if m := tomlArgsRe.FindStringSubmatch(t); m != nil {
+					addArgs(f, m[1])
+					argsOf = table[1]
+				}
+				// Codex's credential fields name variables: bearer_token_env_var, env_vars,
+				// env_http_headers (header -> variable).
+				if m := tomlBearerRe.FindStringSubmatch(t); m != nil {
+					addEnv(f, m[1]+m[2])
+				}
+				if m := tomlEnvVarsRe.FindStringSubmatch(t); m != nil {
+					for _, q := range tomlStrRe.FindAllStringSubmatch(m[1], -1) {
+						addEnv(f, q[1]+q[2])
+					}
+				}
+				if m := tomlHdrInlineRe.FindStringSubmatch(t); m != nil {
+					for _, kv := range tomlKVStrRe.FindAllStringSubmatch(m[1], -1) {
+						addEnv(f, kv[1]+kv[2])
+					}
+				}
+				if m := tomlEnvInlineRe.FindStringSubmatch(t); m != nil {
+					for _, k := range tomlKeyRe.FindAllStringSubmatch(m[1], -1) {
+						addEnv(f, unquoteKey(k[1]))
+					}
+				}
+			} else if len(table) == 3 && table[0] == "mcp_servers" && table[2] == "env_http_headers" {
+				if m := tomlKVStrRe.FindStringSubmatch(t); m != nil {
+					addEnv(fact(table[1]), m[1]+m[2])
+				}
+			} else if len(table) == 3 && table[0] == "mcp_servers" && table[2] == "env" {
+				if m := tomlKeyRe.FindStringSubmatch(t); m != nil {
+					addEnv(fact(table[1]), unquoteKey(m[1]))
 				}
 			}
 			for _, d := range []string{`"""`, `'''`} {
@@ -116,8 +193,8 @@ func scanCodex(content string) ([]line, map[string]map[string]any) {
 			}
 			if i := strings.Index(t, "="); i >= 0 && inML == "" {
 				depth = bracketDelta(t[i+1:])
-				if depth < 0 {
-					depth = 0
+				if depth <= 0 {
+					depth, argsOf = 0, ""
 				}
 			}
 		}
@@ -128,6 +205,11 @@ func scanCodex(content string) ([]line, map[string]map[string]any) {
 		lines = append(lines, ln)
 	}
 	return lines, facts
+}
+
+func isCommentOrBlank(l string) bool {
+	t := strings.TrimSpace(l)
+	return t == "" || strings.HasPrefix(t, "#")
 }
 
 // bracketDelta counts [ minus ] outside quoted strings.
@@ -183,21 +265,46 @@ func FilterCodex(dir string, j *Judge, dryRun bool) ([]Removed, error) {
 	var kept strings.Builder
 	text := map[string]*strings.Builder{}
 	var order []string
+	// A run of a removed server's lines ends with the comments and blank lines before the next
+	// table: they are kept (they belong to what follows); the rest of the run is removed.
+	var run []line
+	runName := ""
+	flush := func() {
+		end := len(run)
+		for end > 0 && isCommentOrBlank(run[end-1].text) {
+			end--
+		}
+		if runName != "" && end > 0 {
+			if text[runName] == nil {
+				text[runName] = &strings.Builder{}
+				order = append(order, runName)
+			}
+			for _, ln := range run[:end] {
+				text[runName].WriteString(ln.text)
+			}
+		}
+		for _, ln := range run[end:] {
+			kept.WriteString(ln.text)
+		}
+		run, runName = nil, ""
+	}
 	for _, ln := range lines {
 		n := ln.server
 		if n == "" {
 			n = ln.inline
 		}
 		if _, drop := out[n]; n != "" && drop {
-			if text[n] == nil {
-				text[n] = &strings.Builder{}
-				order = append(order, n)
+			if runName != n {
+				flush()
+				runName = n
 			}
-			text[n].WriteString(ln.text)
+			run = append(run, ln)
 			continue
 		}
+		flush()
 		kept.WriteString(ln.text)
 	}
+	flush()
 	now := time.Now().UTC().Format(time.RFC3339)
 	var removed []Removed
 	for _, n := range order {

@@ -83,17 +83,39 @@ brings the identity's harness config in line with its provider scope:
   `<identity>/codex/config.toml` (`[mcp_servers.<name>]` and its sub-tables,
   or a one-line `name = { ... }` under `[mcp_servers]`). Out of scope means a
   token of the name (split on `_ - .`) is an out-of-scope provider's `mcp`
-  entry and no in-scope provider's, its `url` is an out-of-scope API host, or
-  its `command` is an out-of-scope CLI. A server that matches no provider is
-  never touched. Each removed entry is appended to `mcp-out-of-scope.json` in
-  the same folder; to bring one back, add its provider to the manifest's
+  entry and no in-scope provider's, the package or image its `command`/`args`
+  run is one of an out-of-scope provider's `mcp_packages` or `images`, one of
+  its `env` keys is an out-of-scope provider's variable, its `url` is an
+  out-of-scope API host, or its `command` is an out-of-scope CLI. Every other
+  server is kept only when (the owner's hybrid list, ADR-0007) the catalog
+  attributes it to an in-scope provider or `claude.bundle.mcp` declares it,
+  it is a general-purpose server of `internal/providers/mcp_general.yaml`
+  (playwright, context7, memory, filesystem, fetch, git, sequential-thinking,
+  time, everything, postgres, sqlite, puppeteer, chrome-devtools,
+  microsoft-learn; matched by what it runs, not its name), or its exact name
+  is in the manifest's `mcp.allow`:
+
+  ```yaml
+  mcp:
+    allow: [team-tool, plugin_tools_srv]   # exact server names; letters, digits, . _ -
+  ```
+
+  `mcp.allow` never keeps a server attributed to an out-of-scope provider.
+  The hook judges `mcp__<server>__*` the same way for every same-named entry
+  (a claude.ai connector by its name). `.claude.json` is edited in place: its indentation and
+  key order stay. Each removed entry is appended to `mcp-out-of-scope.json` in
+  the same folder (a file there tq cannot read is moved aside to
+  `.corrupt-<time>`, never overwritten); to bring one back, add its provider to the manifest's
   `scope:`, `tq allow`, and copy it back. `--dry-run` lists what would go.
   Claude Code rewrites `.claude.json` while a session runs: render with the
   sessions of that identity closed (the render warns when one looks open).
 - **The PATH mask.** `~/.tentaqles/identities/<ws>/path-mask/`, one stub per
-  out-of-scope executable name, which `tq env` puts first on the identity PATH
-  when a folder shared with other tools holds such a CLI. Removed when the
-  flag is off.
+  out-of-scope executable name in every spelling (extensionless, and on
+  Windows `.exe`/`.com` hard links to `tq-stub.exe`, a link to the tq binary,
+  plus `.bat`, `.cmd`, `.ps1`, `.vbs`, `.js`), which `tq env` puts first on the
+  identity PATH when a folder shared with other tools holds such a CLI.
+  Removed when the flag is off. The hook judges an `mcp__<server>__*` call by
+  the same server entries.
 
 Not rendered, and judged by the hook alone: a project `.mcp.json`, plugin MCP
 servers, claude.ai connectors, a machine-wide `managed-mcp.json`,

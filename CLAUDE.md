@@ -135,7 +135,23 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestEnv_ScopeLayerRestoreAndV1`, `TestPathLayer_ScenarioAwsNotOnPath`,
   `TestPathLayer_SharedDirIsMasked`, `TestPathLayer_TamperedMaskIsNotUsed`,
   `TestLayer_EnterAndLeaveRestoresExactly`, `TestPathSyntax_MSYS`, `TestFilterClaude`,
-  `TestFilterCodex`.
+  `TestFilterCodex`; round 2: the state fits cmd.exe and every shell restores byte for byte,
+  the mask answers every spelling and comes back once fixed, generic tools' variables and
+  ambiguous names are left alone, MCP servers are attributed by their config entry at render
+  and in the hook: `TestEnv_ScopeReferenceScenario_SharedFolder`,
+  `TestEnv_ScopeReferenceScenario_CmdExe`, `TestPathLayer_MaskCoversEverySpelling`,
+  `TestPathLayer_MaskComesBack`, `TestState_FitsCmdLine`, `TestEmit_Cmd_RoundTripsEveryCharacter`,
+  `TestPreToolUse_MCPJudgedByConfigEntry`, `TestOutOfScopeMCPEntry`,
+  `TestOutOfScopeEnv_SkipsGenericTools`; round 3: a same-named server is denied when any
+  source's entry is out of scope, every vendor fixture is attributed, a lost state fails
+  closed: `TestOutOfScopeMCPEntry_VendorFixtures`, `TestScope_MCPSameNameAnySourceDenies`,
+  `TestEntries`, `TestEntries_RemovedStillJudged`, `TestLostState_FailsClosed`,
+  `TestUnrecorded`, `TestEmit_Cmd_LineBudget`, `TestPathLayer_StubIsTheTQBinary`; round 4:
+  `TestEnv_UnicodePathFoldersRoundTrip`, `TestMCPVendorsHaveMCPData`,
+  `TestOutOfScopeMCPEntry_Round3Fixtures`, `TestFilterCodex_CredentialFields`,
+  `TestPluginServers_EveryShape`, `TestLostState_HarnessMissingStateIsLost`; the hybrid MCP
+  list: `TestJudgeMCP_Hybrid`, `TestScope_MCPHybridInTheHook`, `TestJudgeMCP_FixtureKeptSets`,
+  `TestSettingsRender_HybridMCP`, `TestMCPGeneral`, `TestMCPAllow`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
 - Trust is human-only, and so is every tq write under `$TQ_HOME` or an identity dir:

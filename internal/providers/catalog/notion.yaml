@@ -17,3 +17,5 @@ match:
   env: [NOTION_TOKEN, NOTION_API_KEY]
   hosts: [api.notion.com]
   mcp: [notion]
+  mcp_packages: ["@notionhq/notion-mcp-server", "mcp/notion"]
+  mcp_hosts: [mcp.notion.com]

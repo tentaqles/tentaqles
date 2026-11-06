@@ -18,3 +18,4 @@ match:
   paths: ["~/.netlify", "~/.config/netlify", "%APPDATA%/netlify"]
   hosts: [api.netlify.com]
   mcp: [netlify]
+  mcp_packages: ["@netlify/mcp"]

@@ -49,13 +49,11 @@ func TestEmit_Golden(t *testing.T) {
 	}
 }
 
-func TestEmit_Cmd_RejectsUnquotableValue(t *testing.T) {
-	_, err := Emit("cmd", sample())
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "WEIRD") {
-		t.Fatalf("error should mention WEIRD: %v", err)
+// cmd.exe takes every character through the hook (emit_cmd_windows_test.go); a quote is kept.
+func TestEmit_Cmd_KeepsQuotes(t *testing.T) {
+	out, err := Emit("cmd", sample())
+	if err != nil || !strings.Contains(out, `set "WEIRD=a"b$c`+"`d\"") {
+		t.Fatalf("%v %q", err, out)
 	}
 }
 
