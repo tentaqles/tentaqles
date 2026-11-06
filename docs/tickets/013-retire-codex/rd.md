@@ -1,6 +1,6 @@
 # 013: Retire Codex support
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: removing Codex code touches the guard, trust and protected paths, and a slip can drop a check Claude Code sessions rely on, or make every existing identity's signed record read as changed
 **UI:** none
 
