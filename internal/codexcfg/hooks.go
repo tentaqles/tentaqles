@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,11 @@ const (
 	PreToolUseCommand   = "tq claude-hook pre-tool-use --agent codex"
 	SessionStartCommand = "tq claude-hook session-start --agent codex"
 )
+
+// HookTimeoutSeconds is the timeout tq registers for its Codex hooks. Codex
+// runs a call whose hook it killed, so tq's own deadlines stay well under it
+// (internal/cmd TestHookDeadlinesUnderHarnessTimeouts).
+const HookTimeoutSeconds = 30
 
 // hookEvents are the events tq registers, in file order.
 var hookEvents = []struct {
@@ -72,7 +78,7 @@ func ourGroup(command, status string) map[string]any {
 		"hooks": []any{map[string]any{
 			"type":          "command",
 			"command":       command,
-			"timeout":       json.Number("30"),
+			"timeout":       json.Number(strconv.Itoa(HookTimeoutSeconds)),
 			"statusMessage": status,
 		}},
 	}

@@ -32,3 +32,15 @@ verify:
   # active marker; Extract takes the first non-empty group.
   account:
     regex: 'account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)[^\n]*\n\s*- Active account: true|account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)'
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [gh, hub]
+  env: [GH_TOKEN, GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN, GH_CONFIG_DIR, GH_HOST]
+  paths: ["~/.config/gh", "%APPDATA%/GitHub CLI"]
+  hosts: [api.github.com, uploads.github.com, github.com/login/oauth/, github.com/login/device/]
+  git_hosts: [github.com, ssh.github.com]
+  mcp: [github, gh]
+  mcp_packages: ["@modelcontextprotocol/server-github", "ghcr.io/github/github-mcp-server", "github-mcp-server", "github.com/github/github-mcp-server", "@github/", "mcp/github"]
+  images: ["mcp/github", "ghcr.io/github/github-mcp-server"]
+  mcp_hosts: [api.githubcopilot.com]

@@ -45,10 +45,12 @@ const (
 	// written into the user's real profile and outlives this release.
 	legacyNote = "  (your pre-tq setup, kept verbatim by tq migrate; delete this block by hand when you no longer need TQ_ENABLED=0)"
 
-	// CarryComment introduced a shell function that an older tq migrate
+	// oldCarryComment introduced a shell function that an older tq migrate
 	// carried over verbatim from the hand-installed block. RemoveCarriedFile
-	// recognises that exact text and removes it.
-	CarryComment = "# carried over by tq migrate; permission_mode will move into the manifest"
+	// recognises that exact text and removes it. The text is what that older
+	// tq wrote into users' profiles, so it never changes; the plan it names
+	// was dropped (the manifest carries no permission mode, PRD v2 §13).
+	oldCarryComment = "# carried over by tq migrate; permission_mode will move into the manifest"
 
 	// carriedGuard reproduces the `else` branch the carried wrapper used to
 	// live in, so setting TQ_ENABLED=0 still hands control to the legacy
@@ -669,7 +671,7 @@ func dedent(s, indent string) string {
 
 // RemoveCarriedFile plans the removal of the `claude` wrapper an older
 // tq migrate carried over after the managed block: the blank line, the
-// CarryComment line, the optional carriedGuard line, the dedented
+// oldCarryComment line, the optional carriedGuard line, the dedented
 // `function claude { ... }` (with --dangerously-skip-permissions) and the
 // guard's closing brace, exactly as Adopt used to write them. Anything else
 // (a wrapper the user edited or wrote) is left alone, Changed false.
@@ -721,7 +723,7 @@ func findCarried(content string) (start, end int, fn string, ok bool) {
 		return 0, 0, "", false
 	}
 	for _, eol := range []string{"\r\n", "\n"} {
-		head := eol + CarryComment + eol
+		head := eol + oldCarryComment + eol
 		i := strings.Index(content[em:], head)
 		if i < 0 {
 			continue

@@ -12,6 +12,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -34,6 +35,9 @@ func isolateHome(t *testing.T) string {
 	// __TQ_STATE. `tq env` would then "restore" that shell's variables and
 	// emit unsets for a neutral cwd, so start every test from a clean slate.
 	unsetenv(t, envplan.StateVar)
+	// And the workspace markers it carries: TQ_WS without a state is a lost state (ADR-0008).
+	unsetenv(t, "TQ_WS")
+	unsetenv(t, "TQ_WS_ROOT")
 	keyring.MockInit() // never the real OS keychain in tests
 	// Nor from a shell with the activation kill switch set.
 	unsetenv(t, "TQ_ENABLED")
@@ -152,9 +156,21 @@ func fakeExec(t *testing.T) *[]launched {
 	return &calls
 }
 
-// mkLaunchWS writes and trusts a workspace with claude and codex identities
-// and the given claude.permission_mode; it returns the root.
+// mkLaunchWS writes and trusts a workspace with claude and codex identities,
+// in the old layout (the manifest in the root); it returns the root. A
+// non-empty permMode writes the claude.permission_mode an older manifest
+// carried, which tq no longer reads.
 func mkLaunchWS(t *testing.T, name, permMode string) string {
+	t.Helper()
+	root, _ := mkLaunchWSLayout(t, name, permMode, false)
+	return root
+}
+
+// mkLaunchWSLayout is mkLaunchWS with a choice of layout: protected writes
+// the name-only marker in the root and the manifest under
+// paths.ManifestPath(name) (ADR-0002). It returns the root and the file the
+// trust hash is taken from.
+func mkLaunchWSLayout(t *testing.T, name, permMode string, protected bool) (string, string) {
 	t.Helper()
 	root := mkUntrusted(t, name)
 	body := "schema: tentaqles-client-v2\nclient: " + name + "\ngit: { email: tester@example.com }\nidentities: { claude: {}, codex: {} }\n"
@@ -162,6 +178,15 @@ func mkLaunchWS(t *testing.T, name, permMode string) string {
 		body += "claude: { permission_mode: " + permMode + " }\n"
 	}
 	mp := filepath.Join(root, manifest.FileName)
+	if protected {
+		if err := os.WriteFile(mp, manifest.MarkerBytes(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mp = paths.ManifestPath(name)
+		if err := os.MkdirAll(filepath.Dir(mp), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -169,10 +194,10 @@ func mkLaunchWS(t *testing.T, name, permMode string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(name, h); err != nil {
 		t.Fatal(err)
 	}
-	return root
+	return root, mp
 }
 
 func runTq(t *testing.T, args ...string) (string, error) {
@@ -214,9 +239,10 @@ func TestLaunchClaudeArgs(t *testing.T) {
 	}
 }
 
-// The launcher starts claude in bypass whatever claude.permission_mode says.
+// The launcher starts claude in bypass, also for an older manifest that
+// still carries a claude.permission_mode (ignored, manifest.DroppedClaudeKeys).
 func TestRunClaudeAlwaysBypass(t *testing.T) {
-	for _, pm := range manifest.PermissionModes {
+	for _, pm := range []string{"", "default", "acceptEdits", "plan", "auto", "dontAsk", "bypass"} {
 		t.Run("mode="+pm, func(t *testing.T) {
 			mkLaunchWS(t, "acme", pm)
 			clearAgentMarkers(t)
@@ -272,20 +298,21 @@ func TestRunDotResolvesCwd(t *testing.T) {
 	}
 }
 
-func TestRunDotUntrustedRunsNeutralWithWarning(t *testing.T) {
+// tq run . in an untrusted workspace refuses: nothing launches, with or
+// without an identity (PRD v2 §8.3). A never-trusted folder names tq allow;
+// a mismatch names the changed file and tq hooks verify
+// (TestRun_RefusesOnIntegrityMismatch).
+func TestRunDotUntrustedRefuses(t *testing.T) {
 	root := mkUntrusted(t, "evil")
 	clearAgentMarkers(t)
 	chdir(t, root)
 	calls := fakeExec(t)
-	out, err := runTq(t, "run", ".", "--", "claude")
-	if err != nil {
-		t.Fatal(err)
+	_, err := runTq(t, "run", ".", "--", "claude")
+	if err == nil || !strings.Contains(err.Error(), "workspace evil is untrusted (run: tq allow evil)") {
+		t.Fatalf("want the refusal, got %v", err)
 	}
-	if !strings.Contains(out, "untrusted") || len(*calls) != 1 {
-		t.Fatalf("want a warning and a neutral launch: %q %+v", out, *calls)
-	}
-	if _, ok := (*calls)[0].env["TQ_WS"]; ok {
-		t.Fatal("an untrusted workspace's identity must not be applied")
+	if len(*calls) != 0 {
+		t.Fatalf("nothing may launch: %+v", *calls)
 	}
 }
 

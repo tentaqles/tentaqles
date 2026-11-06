@@ -21,3 +21,11 @@ login:
   args: ["auth", "login"]
 verify:
   args: ["auth", "whoami"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [turso]
+  env: [TURSO_API_TOKEN, TURSO_CONFIG_FOLDER]
+  paths: ["~/.config/turso"]
+  hosts: [api.turso.tech]
+  mcp: [turso]

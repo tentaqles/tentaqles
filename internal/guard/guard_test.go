@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,8 +57,8 @@ func TestCanonicalSuite(t *testing.T) {
 			if c.Expect.TQ.Block && d.Rule != c.Expect.TQ.Rule {
 				t.Fatalf("rule=%q want %q", d.Rule, c.Expect.TQ.Rule)
 			}
-			if d.Block && len(d.Reason) < 8 || d.Block && d.Reason[:8] != "BLOCKED:" {
-				t.Fatalf("reason must start with BLOCKED: got %q", d.Reason)
+			if d.Block && !strings.HasPrefix(d.Reason, "BLOCKED [identity/"+d.Rule+"]: ") {
+				t.Fatalf("reason must start with BLOCKED [identity/<rule>]: got %q", d.Reason)
 			}
 		})
 	}
@@ -193,6 +194,28 @@ func TestReadOnlyGitExemptFromEnvDriftAndUntrusted(t *testing.T) {
 	}
 }
 
+// With the doctor finding integrity (a signed record that fails), the
+// reason says what fixes it: tq hooks verify, not tq allow. The rules and
+// what they block are unchanged; without the finding the text is as before.
+func TestIntegrityFindingNamesHooksVerify(t *testing.T) {
+	want := "integrity mismatch: run tq hooks verify acme"
+	d := Decide(Input{Command: "git commit -m x", Client: "acme", Findings: []string{"untrusted", "integrity"}})
+	if !d.Block || d.Rule != "untrusted" || !strings.Contains(d.Reason, want) || strings.Contains(d.Reason, "tq allow") {
+		t.Fatalf("untrusted rule: %+v", d)
+	}
+	d = Decide(Input{Command: "git push origin main", Client: "acme", Neutral: true, Findings: []string{"untrusted", "integrity"},
+		NeutralReason: "untrusted: integrity mismatch, changed c:/x/hooks.json (run: tq hooks verify acme)"})
+	if !d.Block || d.Rule != "neutral-remote" || !strings.Contains(d.Reason, want) || !strings.Contains(d.Reason, "c:/x/hooks.json") || strings.Contains(d.Reason, "tq allow") {
+		t.Fatalf("neutral-remote: %+v", d)
+	}
+	if d := Decide(Input{Command: "git commit -m x", Client: "acme", Findings: []string{"untrusted"}}); !strings.Contains(d.Reason, "tq allow acme") {
+		t.Fatalf("a workspace never allowed keeps tq allow: %+v", d)
+	}
+	if d := Decide(Input{Command: "git push", Neutral: true, NeutralReason: "outside any base"}); !strings.Contains(d.Reason, "tq allow <name>") {
+		t.Fatalf("a neutral folder keeps its text: %+v", d)
+	}
+}
+
 func TestStripHeredocs(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"python - <<'EOF'\nprint('git commit')\nEOF\ngit status", "python - <<'EOF'\ngit status"},
@@ -239,5 +262,24 @@ func TestExtraClouds(t *testing.T) {
 	in := Input{Client: "acme", CloudProvider: "azure", Command: "aws s3 ls"}
 	if d := Decide(in); !d.Block || d.Rule != "wrong-cloud" {
 		t.Fatalf("aws without cloud.also: block=%v rule=%q", d.Block, d.Rule)
+	}
+}
+
+// TestScopedSkipsWrongCloud: under guard: v2 (Input.Scoped) the provider scope judges cloud
+// CLIs (policy's identity/out-of-scope-cli, ADR-0007), so wrong-cloud does not run; the
+// manifest's blocked commands and the drift rules still do. Without the flag wrong-cloud
+// behaves as before.
+func TestScopedSkipsWrongCloud(t *testing.T) {
+	in := Input{Command: "aws ec2 run-instances", Client: "company-x", CloudProvider: "azure"}
+	if d := Decide(in); !d.Block || d.Rule != "wrong-cloud" {
+		t.Fatalf("v1: %+v", d)
+	}
+	in.Scoped = true
+	if d := Decide(in); d.Block {
+		t.Fatalf("v2 still ran wrong-cloud: %+v", d)
+	}
+	in.Blocked = []string{"aws ec2"}
+	if d := Decide(in); !d.Block || d.Rule != "blocked-command" {
+		t.Fatalf("v2 skipped blocked-command: %+v", d)
 	}
 }

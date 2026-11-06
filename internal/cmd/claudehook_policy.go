@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/commitscan"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/protect"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -46,9 +46,12 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
 		Path         string `json:"path"`
+		Pattern      string `json:"pattern"`
+		Glob         string `json:"glob"`
 		Content      string `json:"content"`
 		NewString    string `json:"new_string"`
 		NewSource    string `json:"new_source"`
+		URL          string `json:"url"`
 		Edits        []struct {
 			NewString string `json:"new_string"`
 		} `json:"edits"`
@@ -57,6 +60,9 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		_ = json.Unmarshal(raw, &in)
 	}
 	call.Command = strings.TrimSpace(in.Command)
+	call.URL = strings.TrimSpace(in.URL)
+	call.Pattern = strings.TrimSpace(in.Pattern)
+	call.Glob = strings.TrimSpace(in.Glob)
 	switch {
 	case in.FilePath != "":
 		call.Path = in.FilePath
@@ -64,6 +70,10 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		call.Path = in.NotebookPath
 	case in.Path != "":
 		call.Path = in.Path
+	case p.ToolName == "Glob" && in.Pattern != "":
+		// The Glob tool locates files by its pattern; the self-protection rules read it as
+		// the path. The identity rules read Pattern/Glob with Path (searchHit).
+		call.Path = in.Pattern
 	}
 	parts := []string{in.Content, in.NewString, in.NewSource}
 	for _, e := range in.Edits {
@@ -80,6 +90,77 @@ func toolCallFrom(p hookPayload, cwd string) policy.ToolCall {
 		}
 	}
 	return call
+}
+
+// knownTools are the tool names the hook judges by their fields. A tool
+// outside this list and outside mcp__* is judged by what it carries: one
+// with a command or path field is denied (tq cannot tell what it runs or
+// touches: a renamed or lower-case "bash" is not a pass), one without is
+// allowed (WebFetch-like tools tq has no rule for).
+var knownTools = map[string]bool{
+	"Bash": true, "PowerShell": true, "Read": true, "Write": true, "Edit": true, "MultiEdit": true,
+	"NotebookEdit": true, "NotebookRead": true, "Grep": true, "Glob": true, "LS": true, "Agent": true,
+	"Task": true, "apply_patch": true, "WebFetch": true, "WebSearch": true, "TodoWrite": true,
+	"BashOutput": true, "KillShell": true, "ExitPlanMode": true, "Skill": true, "SlashCommand": true,
+}
+
+// commandOrPathFields are the tool_input keys that name what a call runs or
+// touches.
+var commandOrPathFields = []string{"command", "file_path", "notebook_path", "path", "pattern"}
+
+// payloadFieldError is why the hook cannot judge p from its fields, or ""
+// (PRD v2 §6.3, fail closed; ADR-0006): a shell tool whose command is
+// missing, empty or not a string; a field that names a path or a command
+// but is not a string; a Read with no path; an unknown tool that carries a
+// command or a path.
+func payloadFieldError(p hookPayload) string {
+	if strings.HasPrefix(p.ToolName, "mcp__") {
+		return ""
+	}
+	raw := unwrapToolInput(p.ToolInput)
+	var in map[string]json.RawMessage
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &in); err != nil {
+			return "tool_input is not an object"
+		}
+	}
+	str := func(k string) (string, bool, bool) { // value, present, isString
+		v, ok := in[k]
+		if !ok {
+			return "", false, false
+		}
+		var s string
+		if json.Unmarshal(v, &s) != nil {
+			return "", true, false
+		}
+		return s, true, true
+	}
+	if !knownTools[p.ToolName] {
+		for _, k := range commandOrPathFields {
+			if _, present, _ := str(k); present {
+				return fmt.Sprintf("the tool %q is not one tq knows and its input carries %q", p.ToolName, k)
+			}
+		}
+		return ""
+	}
+	for _, k := range commandOrPathFields {
+		if _, present, isStr := str(k); present && !isStr {
+			return fmt.Sprintf("tool_input.%s of %s is not a string", k, p.ToolName)
+		}
+	}
+	switch p.ToolName {
+	case "Bash", "PowerShell":
+		if c, _, _ := str("command"); strings.TrimSpace(c) == "" {
+			return p.ToolName + " has no command"
+		}
+	case "Read", "NotebookRead":
+		f, _, _ := str("file_path")
+		n, _, _ := str("notebook_path")
+		if strings.TrimSpace(f) == "" && strings.TrimSpace(n) == "" {
+			return p.ToolName + " names no file"
+		}
+	}
+	return ""
 }
 
 // unwrapToolInput returns tool_input as a JSON object, accepting both the
@@ -102,14 +183,25 @@ func nonEmpty(xs []string) []string {
 	return out
 }
 
-// resolveTrusted maps cwd to its trusted workspace, or nil. Errors mean nil:
-// the built-in rules still apply without a workspace.
-func resolveTrusted(cwd string) (*resolve.Workspace, *registry.Config) {
+// resolveCwd maps cwd to its workspace (Result.Workspace is the trusted one,
+// nil for a neutral or untrusted cwd: the built-in rules still apply). A
+// registry tq cannot read is the error, and the hook denies on it.
+func resolveCwd(cwd string) (resolve.Result, *registry.Config, error) {
 	cfg, err := registry.Load()
 	if err != nil {
-		return nil, nil
+		return resolve.Result{}, nil, err
 	}
-	return resolve.Resolve(cwd, cfg).Workspace, cfg
+	return resolve.Resolve(cwd, cfg), cfg, nil
+}
+
+// unreadableReason words the fail-closed deny of a cwd that names a
+// workspace whose manifest tq cannot read (PRD v2 §6.3, "missing manifest").
+func unreadableReason(res resolve.Result) string {
+	name := res.Name
+	if name == "" {
+		name = "this folder"
+	}
+	return fmt.Sprintf("the manifest of identity %s cannot be read (%s): tq cannot tell what this identity may touch, so it denies every call here until a human fixes the manifest", name, res.Reason)
 }
 
 // hookRuleIDs are the rules the hook applies, and the only ids it reports
@@ -149,17 +241,39 @@ func buildPolicy() *policy.Set {
 	return hookSet
 }
 
-// policyDecision evaluates the hook's rule set plus the two checks that need
-// I/O: the commit secret scan and the cross-client MCP check.
+// policyDecision evaluates, in the order of PRD v2 §6.3 after the identity
+// guard: the secret rules plus the two checks that need I/O (the commit
+// secret scan and the cross-client MCP check), then, when nothing denied,
+// the self-protection rules (policy.SelfProtection) on the protected path
+// set of this run.
 //
 // deadline ends the scan; the hook computes it at entry (start plus the
 // scan budget), so the identity lookups that ran before count against it.
 func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
-	return policyDecisionWith(buildPolicy(), cwd, ws, cfg, call, deadline)
+	return policyDecisionWith(buildPolicy(), protectedSet(ws, cfg), cwd, ws, cfg, call, deadline)
 }
 
-// policyDecisionWith is policyDecision with the rule set already built.
-func policyDecisionWith(set *policy.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
+// policyDecisionWith is policyDecision with the rule set and the protected
+// path set already built (a patch judges many files with one of each).
+func policyDecisionWith(set *policy.Set, prot *protect.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
+	// The identity category's v2 rules (guard: v2, ADR-0007) come before secrets (§6.3);
+	// the manifest's blocked commands and the v1 identity rules ran in guard.Decide. An
+	// unreadable manifest (guard: v3, an unknown scope: id) and an unreadable provider
+	// catalog were already denied by pre-tool-use's one fail-closed path.
+	if d := hookScope(ws, cfg, prot, cwd).Evaluate(cwd, call); d.Action == policy.Deny {
+		return d
+	}
+	d := policyRules(set, cwd, ws, cfg, call, deadline)
+	if d.Action != policy.Deny {
+		// Self-protection comes last (§6.3); the first category that
+		// denies is the one reported.
+		d = policy.Merge(d, policy.SelfProtection(prot, cwd, call))
+	}
+	return d
+}
+
+// policyRules is the secrets category plus the cross-client MCP check.
+func policyRules(set *policy.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
 	d := set.Evaluate(call)
 	if call.IsShell() && commitscan.PlanFor(call.Command).Commits {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
@@ -169,8 +283,9 @@ func policyDecisionWith(set *policy.Set, cwd string, ws *resolve.Workspace, cfg 
 		case len(hits) > 0:
 			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/commit-secret", commitReason(hits)))
 		case err != nil:
-			// The one ask left: a scan that could not vouch for the commit.
-			d = policy.Merge(d, ruleDecision(policy.Ask, "tq/commit-secret", "the secret "+commitScanAsk(ctx, err)))
+			// A scan that could not vouch for the commit denies it (PRD v2
+			// §6.3: no ask; the owner's decision of 2026-11-05).
+			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/commit-secret", "the secret "+commitScanIncomplete(ctx, err)))
 		}
 	}
 	if call.IsMCP() {
@@ -182,8 +297,16 @@ func policyDecisionWith(set *policy.Set, cwd string, ws *resolve.Workspace, cfg 
 	return d
 }
 
+// ruleCategories are the categories of the hook's own rules (PRD v2 §7.1):
+// the commit scan is secrets, the cross-client MCP check is identity (a
+// server outside the identity's scope); tq/guard-error has none.
+var ruleCategories = map[string]string{
+	"tq/commit-secret":    policy.CategorySecrets,
+	"tq/cross-client-mcp": policy.CategoryIdentity,
+}
+
 func ruleDecision(a policy.Action, id, reason string) policy.Decision {
-	return policy.Decision{Action: a, Matched: []*policy.Rule{{ID: id, Action: a, Reason: reason, Source: "builtin"}}}
+	return policy.Decision{Action: a, Matched: []*policy.Rule{{ID: id, Category: ruleCategories[id], Action: a, Reason: reason, Source: "builtin"}}}
 }
 
 func commitReason(hits []commitscan.Hit) string {
@@ -204,18 +327,21 @@ const maxScanBytes = commitscan.MaxTotalBytes
 
 var errScanTooLarge = errors.New("too large to scan")
 
-// commitScanAsk words the ask for a commit scan that could not finish; it
-// completes "the secret ...".
-func commitScanAsk(ctx context.Context, err error) string {
+// commitScanIncomplete words the deny of a commit whose secret scan could
+// not finish; it completes "the secret ...". tq denies what it could not
+// scan: the agent narrows the commit, or the developer commits it from
+// their own terminal.
+func commitScanIncomplete(ctx context.Context, err error) string {
+	const tail = "; tq denies a commit it could not scan (a developer can commit it from their own terminal)"
 	switch {
 	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
-		return scanTimedOut + "; retry, or commit fewer files"
-	case commitscan.IsAsk(err):
-		return "scan cannot vouch for this commit: " + err.Error()
+		return scanTimedOut + "; retry, or commit fewer files" + tail
+	case commitscan.IsIncomplete(err):
+		return "scan cannot vouch for this commit: " + err.Error() + tail
 	case errors.Is(err, errScanTooLarge):
-		return fmt.Sprintf("scan stopped: what this commit records is larger than the %d MiB scan limit; commit fewer files", maxScanBytes>>20)
+		return fmt.Sprintf("scan stopped: what this commit records is larger than the %d MiB scan limit; commit fewer files", maxScanBytes>>20) + tail
 	}
-	return "scan could not read what this commit records; check the repository state or confirm"
+	return "scan could not read what this commit records; check the repository state" + tail
 }
 
 // mcpOwner returns the client whose bundle declares server when the current
@@ -242,15 +368,4 @@ func mcpOwner(ws *resolve.Workspace, cfg *registry.Config, server string) string
 		}
 	}
 	return ""
-}
-
-// writeAsk emits the PreToolUse JSON that makes Claude Code ask the user.
-func writeAsk(w io.Writer, reason string) error {
-	return json.NewEncoder(w).Encode(map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":            "PreToolUse",
-			"permissionDecision":       "ask",
-			"permissionDecisionReason": reason,
-		},
-	})
 }

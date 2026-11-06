@@ -23,11 +23,10 @@ var claudeSubcommands = []string{"agents", "attach", "auth", "auto-mode", "docto
 	"update", "upgrade"}
 
 // launchClaudeArgs is the launcher's claude command line: it adds
-// --dangerously-skip-permissions, whatever claude.permission_mode says (tq
-// sets no permission mode of its own beyond this skip, docs/prd.md D-30;
-// the identity and secret rules run in the hook in every mode). A
-// --permission-mode or --dangerously-skip-permissions typed on this command
-// line replaces it, and claude's subcommands, --help and --version get
+// --dangerously-skip-permissions (tq sets no permission mode of its own
+// beyond this skip; the identity and secret rules run in the hook in every
+// mode). A claude --permission-mode or --dangerously-skip-permissions typed
+// on this command line replaces it, and claude's subcommands, --help and --version get
 // nothing. An agent's nested claude (agent true) never gets bypass from the
 // launcher: it keeps claude's own prompts.
 func launchClaudeArgs(args []string, agent bool) []string {
@@ -128,20 +127,46 @@ func (l launch) run() error {
 	case "claude":
 		args = launchClaudeArgs(args, agent)
 	case "codex":
+		if codexIsolated(l.ws) {
+			// Codex's hooks.json runs a bare `tq claude-hook pre-tool-use
+			// --agent codex`; a tq Codex cannot find runs no guard at all,
+			// so the launch is refused (ADR-0006).
+			if err := codexHookResolves(envplan.Environ(l.ws, os.Environ())); err != nil {
+				return err
+			}
+		}
 		args = codexArgs(l.ws, args)
 	}
-	return execCommand(l.name, args, envplan.Environ(l.ws, os.Environ()))
+	env := envplan.Environ(l.ws, os.Environ())
+	name := l.name
+	if layer := envplan.LayerFor(l.ws); layer != nil {
+		// guard: v2 (ADR-0008): an out-of-scope CLI is refused however it is spelled (aws,
+		// aws.exe, its install path); anything else resolves on the identity PATH, not on tq's
+		// own, so tq run <ws> -- aws from outside the folder does not find the aws it dropped.
+		if layer.IsMasked(name) {
+			return fmt.Errorf("%s: command not found on the PATH of identity %s (outside its scope)", name, l.ws.Name)
+		}
+		p, err := envplan.LookPath(name, env)
+		if err != nil {
+			return fmt.Errorf("%s: command not found on the PATH of identity %s (%v)", name, l.ws.Name, err)
+		}
+		name = p
+	}
+	return execCommand(name, args, env)
 }
 
 // runOff is tq run --off: the main install and logins, no tq. The plugin is
 // switched off and the identity environment cleaned; no variable marks the
-// launch. It refuses agent sessions.
-func runOff(name string, args []string, errw func(string)) error {
+// launch. It is human-only: refused from a session, confirmed by the human.
+func runOff(c *cobra.Command, name string, args []string, errw func(string)) error {
 	if err := refuseAgent("tq run --off"); err != nil {
 		return err
 	}
 	if agentProg(name) == "" {
 		return fmt.Errorf("tq run --off starts claude or codex only, not %q: tq run --off -- <claude|codex> [args]", name)
+	}
+	if err := humanGate(c, "tq run --off", "tq run --off: about to start "+name+" with no identity and no guard (your main logins, the plugin off)"); err != nil {
+		return err
 	}
 	errw(offBanner)
 	return execCommand(name, offArgs(name, args), envplan.OffEnviron(os.Environ()))
@@ -159,8 +184,11 @@ func execIn(ws *resolve.Workspace, name string, args []string, applyClaudeArgs b
 }
 
 // cwdWorkspace resolves `.`: the current folder's trusted workspace, or nil
-// (neutral) with a warning when it is untrusted or invalid.
-func cwdWorkspace(warn func(string)) (*resolve.Workspace, error) {
+// when the folder is neutral. A folder that is a workspace but untrusted
+// is refused (PRD v2 §8.3): the reason names the first changed file and
+// the command that fixes it (tq hooks verify after a mismatch, tq allow
+// for a never-trusted one). Nothing launches without the identity.
+func cwdWorkspace() (*resolve.Workspace, error) {
 	cfg, err := registry.Load()
 	if err != nil {
 		return nil, err
@@ -168,7 +196,7 @@ func cwdWorkspace(warn func(string)) (*resolve.Workspace, error) {
 	cwd, _ := os.Getwd()
 	res := resolve.Resolve(cwd, cfg)
 	if res.Workspace == nil && res.Untrusted != nil {
-		warn(fmt.Sprintf("workspace %s is untrusted; running without its identity (tq allow %s)", res.Untrusted.Name, res.Untrusted.Name))
+		return nil, fmt.Errorf("workspace %s is %s", res.Untrusted.Name, res.Reason)
 	}
 	return res.Workspace, nil
 }
@@ -185,12 +213,12 @@ func newRunCmd() *cobra.Command {
 		Example: "  tq run acme -- claude\n  tq run . -- claude -p \"...\"\n  tq run --off -- claude",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			warn := func(s string) { fmt.Fprintln(c.ErrOrStderr(), "warning:", s) }
+			defer trust.MemoScope()()
 			if off {
 				if c.ArgsLenAtDash() > 0 {
 					return errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")
 				}
-				return runOff(args[0], args[1:], func(s string) { fmt.Fprintln(c.ErrOrStderr(), s) })
+				return runOff(c, args[0], args[1:], func(s string) { fmt.Fprintln(c.ErrOrStderr(), s) })
 			}
 			// Flags are not interspersed: after <workspace> only an optional
 			// -- may come before the command word, and everything after it
@@ -205,7 +233,7 @@ func newRunCmd() *cobra.Command {
 			}
 			var ws *resolve.Workspace
 			if args[0] == "." {
-				w, err := cwdWorkspace(warn)
+				w, err := cwdWorkspace()
 				if err != nil {
 					return err
 				}
@@ -215,8 +243,8 @@ func newRunCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if !trust.IsTrusted(w.Hash) {
-					return fmt.Errorf("workspace %s is untrusted; run: tq allow %s", w.Name, w.Name)
+				if v := trust.Check(w.Name, w.Hash); !v.OK {
+					return fmt.Errorf("workspace %s is %s", w.Name, v.Reason)
 				}
 				ws = w
 			}

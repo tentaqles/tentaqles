@@ -20,32 +20,32 @@ func Builtin() []Rule {
 	return []Rule{
 		// --- secrets: reading ------------------------------------------------
 		{
-			ID: "tq/secret-store-read", Action: Deny,
+			ID: "tq/secret-store-read", Category: CategorySecrets, Action: Deny,
 			Tool:   "Read|Grep|NotebookRead",
 			Path:   `(^|/)\.ssh/id_[a-z0-9_]+$|(^|/)\.aws/credentials$|(^|/)\.git-credentials$|(^|/)\.netrc$|(^|/)\.docker/config\.json$|(^|/)\.azure/(accesstokens\.json|msal_token_cache\.[a-z]+)$|(^|/)\.tentaqles/bundles/catalog\.yaml$|(^|/)\.config/gh/hosts\.yml$`,
 			Reason: "credential stores (SSH keys, cloud/git credentials, the tq catalog) are never read into the conversation",
 		},
 		{
-			ID: "tq/secret-store-shell", Action: Deny,
+			ID: "tq/secret-store-shell", Category: CategorySecrets, Action: Deny,
 			Command: readVerbs + seg + `(\.ssh[/\\]id_[a-z0-9_]+\b|\.aws[/\\]credentials\b|\.git-credentials\b|\.netrc\b|bundles[/\\]catalog\.yaml\b|gh[/\\]hosts\.yml\b)`,
 			Except:  `\.ssh[/\\]id_[a-z0-9_]+\.pub\b`,
 			Reason:  "credential stores (SSH keys, cloud/git credentials, the tq catalog) are never printed into the conversation",
 		},
 		{
-			ID: "tq/env-file-read", Action: Deny,
+			ID: "tq/env-file-read", Category: CategorySecrets, Action: Deny,
 			Tool:   "Read|Grep|NotebookRead",
 			Path:   `(^|/)\.env(\.[^/]*)?$`,
 			Except: envExcept,
 			Reason: "reading a .env file puts its secrets in the transcript. Use `tq dotenv run -- <command>` instead and reference the variable as $NAME (use `tq dotenv run -- bash -c '...'` when the command needs $NAME expansion); values are masked in its output.",
 		},
 		{
-			ID: "tq/env-file-shell", Action: Deny,
+			ID: "tq/env-file-shell", Category: CategorySecrets, Action: Deny,
 			Command: readVerbs + seg + `(^|[\s/\\'"=])\.env(\.[a-z0-9_-]+)?\b`,
 			Except:  envExcept,
 			Reason:  "printing a .env file puts its secrets in the transcript. Use `tq dotenv run -- <command>` instead and reference the variable as $NAME (use `tq dotenv run -- bash -c '...'` when the command needs $NAME expansion); values are masked in its output.",
 		},
 		{
-			ID: "tq/env-dump", Action: Deny,
+			ID: "tq/env-dump", Category: CategorySecrets, Action: Deny,
 			// The dump must be the command word of a segment (start, or after
 			// ; && || | ( a backtick or a newline, optionally behind `cmd /c`)
 			// with no arguments: `set -e`, `echo set`, `Set-Content` and

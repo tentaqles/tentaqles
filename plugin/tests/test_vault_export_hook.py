@@ -23,7 +23,16 @@ def _env(tmp_path: Path, vault: Path, tq_home: Path) -> dict:
     env = dict(os.environ)
     env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
     env["CLAUDE_PLUGIN_DATA"] = str(tmp_path / "data")
+    # The hook runs under an agent marker (CLAUDE_PLUGIN_ROOT), so it ignores
+    # TQ_HOME and reads ~/.tentaqles: the home is the temp tree whose
+    # .tentaqles holds knowledge.yaml (tq_home is <home>/.tentaqles).
+    env["HOME"] = str(tq_home.parent)
+    env["USERPROFILE"] = str(tq_home.parent)
     env["TQ_HOME"] = str(tq_home)
+    # Under a marker the loader resolves through the registry only, so the
+    # workspace's base (tmp_path, which holds ws/) is registered.
+    tq_home.mkdir(parents=True, exist_ok=True)
+    (tq_home / "config.yaml").write_text(f"bases:\n  - {tmp_path}\n", encoding="utf-8")
     env["PYTHONPATH"] = str(PLUGIN_ROOT)
     env["TENTAQLES_VAULT_DIR"] = str(vault)
     env["TENTAQLES_SEMANTIC_FACTS"] = "0"
@@ -39,8 +48,8 @@ def _workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
     clips = tmp_path / "clips"
     clips.mkdir()
     (clips / "note.md").write_text("---\ntitle: Queue retries\n---\nRetry webhooks from a queue.\n", encoding="utf-8")
-    tq_home = tmp_path / "tq-home"
-    tq_home.mkdir()
+    tq_home = tmp_path / "home" / ".tentaqles"
+    tq_home.mkdir(parents=True)
     (tq_home / "knowledge.yaml").write_text(f"ingest:\n  acme: ['{clips.as_posix()}']\n", encoding="utf-8")
     return ws, clips, tq_home
 
@@ -86,7 +95,7 @@ def test_export_script_says_so_when_nothing_is_configured(tmp_path: Path) -> Non
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / ".tentaqles.yaml").write_text("schema: tentaqles-client-v2\nclient: acme\n", encoding="utf-8")
-    env = _env(tmp_path, tmp_path / "unused", tmp_path / "tq-home")
+    env = _env(tmp_path, tmp_path / "unused", tmp_path / "home" / ".tentaqles")
     env.pop("TENTAQLES_VAULT_DIR")
 
     done = subprocess.run(

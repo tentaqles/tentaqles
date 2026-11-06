@@ -97,11 +97,10 @@ D10 of [references/review-checklist.md](references/review-checklist.md).
   Drizzle, DACPAC) need a `### Rollback` subsection under the spec's
   `## Migration plan` instead.
 - **Never edit a migration that was applied anywhere shared.** Write a new
-  one. tq's guard asks on this (`tq/migration-edit`): treat that prompt as a
-  stop sign, not a formality.
-- Ad-hoc DDL through `psql`/`sqlcmd`/`supabase db query` triggers
-  `tq/sql-destructive-shell`, and writes through a database MCP server trigger
-  `tq/mcp-sql-write`. Move the statement into a migration file instead.
+  one.
+- Ad-hoc DDL through `psql`/`sqlcmd`/`supabase db query`, and writes through a
+  database MCP server, leave no trace in the migration history. Move the
+  statement into a migration file instead.
 - Connection strings stay in env: `tq dotenv run -- npx prisma migrate deploy`
   or `tq dotenv run -- bash -c 'psql "$DATABASE_URL" -f up.sql'`. Never print
   the URL.

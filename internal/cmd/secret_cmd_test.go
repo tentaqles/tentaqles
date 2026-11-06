@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/secret"
 )
 
@@ -208,20 +209,19 @@ func TestSecretSetHiddenPromptOnATerminal(t *testing.T) {
 	}
 }
 
-// TestSecretIsHumanOnly: each agent marker alone refuses set, rm and status, with the hub's
-// human-only wording, before stdin or the keychain is touched.
+// TestSecretIsHumanOnly: each agent marker alone refuses set and rm, with the
+// human-only wording, before stdin or the keychain is touched. status prints
+// presence only, so a session may run it.
 func TestSecretIsHumanOnly(t *testing.T) {
 	secretWS(t)
 	secret.Set("acme", "jira", secretCmdValue())
-	markers := [][2]string{{"TENTAQLES_HEADLESS", "1"}, {"CLAUDECODE", "1"}, {"CLAUDE_PLUGIN_ROOT", "/p"}, {"TQ_HUB_TASK", `{"hub":"c1"}`}}
+	markers := [][2]string{{"TENTAQLES_HEADLESS", "1"}, {"CLAUDECODE", "1"}, {"CLAUDE_PLUGIN_ROOT", "/p"}, {"TQ_HUB_TASK", `{"hub":"c1"}`}, {"CODEX_THREAD_ID", "t1"}}
 	for _, m := range markers {
 		t.Run(m[0], func(t *testing.T) {
 			t.Setenv(m[0], m[1])
 			for _, args := range [][]string{
 				{"secret", "set", "acme", "jira"},
 				{"secret", "rm", "acme", "jira"},
-				{"secret", "status"},
-				{"secret", "status", "acme", "--json"},
 			} {
 				in := &countingReader{}
 				out, errOut, err := runTQIn(t, in, args...)
@@ -233,9 +233,46 @@ func TestSecretIsHumanOnly(t *testing.T) {
 				}
 				noValue(t, out, errOut, err.Error())
 			}
+			for _, args := range [][]string{
+				{"secret", "status"},
+				{"secret", "status", "acme", "--json"},
+			} {
+				out, errOut, err := runTQIn(t, &countingReader{}, args...)
+				if err != nil || !strings.Contains(out, "present") {
+					t.Fatalf("%v: status is free to run anywhere: %v %q", args, err, out)
+				}
+				noValue(t, out, errOut)
+			}
 		})
 	}
 	if v, _ := secret.Get("acme", "jira"); v != secretCmdValue() {
 		t.Fatal("an agent session changed the keychain")
+	}
+}
+
+// The confirmation comes before the keychain changes and before the token is
+// read: a declined set stores nothing and reads nothing.
+func TestSecretSetAndRmConfirm(t *testing.T) {
+	secretWS(t)
+	prev := humanonly.Confirm
+	humanonly.Confirm = func(string) (bool, error) { return false, nil }
+	t.Cleanup(func() { humanonly.Confirm = prev })
+	in := &countingReader{}
+	out, _, err := runTQIn(t, in, "secret", "set", "acme", "jira")
+	if !errors.Is(err, humanonly.ErrAborted) || in.reads != 0 {
+		t.Fatalf("declined set: err=%v reads=%d", err, in.reads)
+	}
+	if !strings.Contains(out, "tq secret set: about to replace the OS keychain entry") {
+		t.Fatalf("the confirmation names the entry: %q", out)
+	}
+	if ok, _ := secret.Has("acme", "jira"); ok {
+		t.Fatal("a declined set stored a token")
+	}
+	secret.Set("acme", "jira", secretCmdValue())
+	if _, _, err := runTQIn(t, in, "secret", "rm", "acme", "jira"); !errors.Is(err, humanonly.ErrAborted) {
+		t.Fatalf("declined rm: %v", err)
+	}
+	if ok, _ := secret.Has("acme", "jira"); !ok {
+		t.Fatal("a declined rm removed the token")
 	}
 }

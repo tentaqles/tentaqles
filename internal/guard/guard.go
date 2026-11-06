@@ -30,14 +30,22 @@ type Input struct {
 	ExpectedGHUser string   // manifest.Git.User (or ExpectedUser)
 	ActualGHUser   string   // from `gh api user --jq .login` ("" if unknown / not run)
 	Findings       []string // doctor codes for cwd: "untrusted","env-drift","git-email-drift","claude-config-drift",...
+	// Scoped: the manifest sets guard: v2, so the provider scope judges every provider
+	// CLI (policy.Scope, ADR-0007) and wrong-cloud, its subset, does not run here.
+	Scoped bool
 }
 
 // Decision is the outcome of Decide.
 type Decision struct {
 	Block  bool
 	Rule   string // "blocked-command"|"wrong-cloud"|"neutral-remote"|"git-email-drift"|"gh-user"|"env-drift"|"untrusted"|"claude-config-drift"|""
-	Reason string // multi-line message for stderr (starts with "BLOCKED: ")
+	Reason string // multi-line message for stderr (starts with "BLOCKED [identity/<rule>]: ")
 }
+
+// Category is the guard category every rule of Decide belongs to (PRD v2
+// §7.1): the manifest's blocked commands and identity drift are both the
+// identity category.
+const Category = "identity"
 
 // sepPattern is the single shared definition of what separates one shell
 // "segment" from another for our purposes: the classic command separators
@@ -237,7 +245,9 @@ func has(fs []string, code string) bool {
 // non-read-only git with both emails known) ->
 // gh-user (gh only, both users known).
 func Decide(in Input) Decision {
-	block := func(rule, msg string) Decision { return Decision{Block: true, Rule: rule, Reason: "BLOCKED: " + msg} }
+	block := func(rule, msg string) Decision {
+		return Decision{Block: true, Rule: rule, Reason: "BLOCKED [" + Category + "/" + rule + "]: " + msg}
+	}
 	client := in.Client
 	if client == "" {
 		client = "unknown"
@@ -250,7 +260,7 @@ func Decide(in Input) Decision {
 			return block("blocked-command", fmt.Sprintf("Command '%s' is blocked by client manifest.\n  Client: %s", b, client))
 		}
 	}
-	if p := strings.ToLower(in.CloudProvider); p != "" && p != "none" {
+	if p := strings.ToLower(in.CloudProvider); p != "" && p != "none" && !in.Scoped {
 		allowed := map[string]bool{p: true}
 		for _, x := range in.ExtraClouds {
 			allowed[strings.ToLower(strings.TrimSpace(x))] = true
@@ -261,8 +271,14 @@ func Decide(in Input) Decision {
 			}
 		}
 	}
+	// integrity: the workspace's signed record fails (ADR-0004); the fix is
+	// tq hooks verify, not tq allow.
+	integrity := has(in.Findings, "integrity")
 	if in.Neutral {
 		if IsRemoteMutation(in.Command) {
+			if integrity {
+				return block("neutral-remote", fmt.Sprintf("integrity mismatch: run tq hooks verify %s; refusing a remote/cloud command with no identity.\n  %s", client, in.NeutralReason))
+			}
 			return block("neutral-remote", fmt.Sprintf("cwd is not inside a trusted tq workspace (%s); refusing a remote/cloud command with no identity.\n  Fix: cd into a workspace, or run: tq allow <name>", in.NeutralReason))
 		}
 		return Decision{}
@@ -273,6 +289,9 @@ func Decide(in Input) Decision {
 	// untrusted manifest is no reason to refuse it. Mutating git stays blocked.
 	readOnlyGit := git && IsReadOnlyGit(in.Command)
 	if git && !readOnlyGit && has(in.Findings, "untrusted") {
+		if integrity {
+			return block("untrusted", fmt.Sprintf("workspace %s is not trusted: integrity mismatch: run tq hooks verify %s; git is refused until a human accepts the change", client, client))
+		}
 		return block("untrusted", fmt.Sprintf("workspace %s is not trusted; git is refused until you run: tq allow %s", client, client))
 	}
 	if git && !readOnlyGit && has(in.Findings, "env-drift") {
@@ -313,7 +332,8 @@ type GitInvocation struct {
 	BaseUnknown bool
 	// Loose: the safety net found the word git in a command that is not a
 	// git call (see looseGit). Hidden is set too. The commit and push rules
-	// ask on it; the identity rules in Decide ignore it.
+	// deny on it (an incomplete scan; tq never asks, ADR-0006); the identity
+	// rules in Decide ignore it.
 	Loose    bool
 	envChdir bool
 }

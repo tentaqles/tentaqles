@@ -41,6 +41,20 @@ def _run_preamble(cwd: Path, *args: str) -> str:
     env = dict(os.environ)
     extra = [p for p in sys.path if p and ("site-packages" in p or p == str(PLUGIN_ROOT))]
     env["PYTHONPATH"] = os.pathsep.join([str(PLUGIN_ROOT), *extra])
+    # The hook reads ~/.tentaqles (TQ_HOME is ignored under the agent marker the
+    # suite runs with); an empty home has no config.yaml, so the loader walks up
+    # from cwd as on a machine without tq, instead of reading the developer's
+    # registered bases.
+    home = cwd / ".home"
+    home.mkdir(exist_ok=True)
+    env["HOME"] = str(home)
+    env["USERPROFILE"] = str(home)
+    env["TQ_HOME"] = ""
+    # The hook always runs under an agent marker and then resolves through
+    # the registry only: register the workspace's base (cwd is the root).
+    env["CLAUDECODE"] = "1"
+    (home / ".tentaqles").mkdir(exist_ok=True)
+    (home / ".tentaqles" / "config.yaml").write_text(f"bases:\n  - {cwd.parent}\n", encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         input=json.dumps({"cwd": str(cwd)}),

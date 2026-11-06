@@ -2,80 +2,80 @@ package codexcfg
 
 import "strings"
 
-// Codex values tq writes.
-const (
-	ApprovalOnRequest = "on-request"
-	SandboxWorkspace  = "workspace-write"
-	// BypassFlag is Codex's own bypass flag; tq never adds it, but a user who
-	// typed it keeps it (LaunchArgs).
-	BypassFlag = "--dangerously-bypass-approvals-and-sandbox"
-)
+// BypassFlag is Codex's full-bypass flag (DISCOVERY.md §4, Codex 0.154.0).
+const BypassFlag = "--dangerously-bypass-approvals-and-sandbox"
 
-// Plan is what tq pins in Codex: the approval policy and the sandbox.
-type Plan struct {
-	Approval string // approval_policy / -a
-	Sandbox  string // sandbox_mode / -s
+// sessionSubcommands are the codex 0.154 subcommands that start a session
+// and take BypassFlag themselves (`codex exec --help`, `resume --help`,
+// `fork --help`). For them the flag goes after the subcommand: a root flag
+// before `exec` parses, but nothing says exec honours it.
+var sessionSubcommands = map[string]bool{"exec": true, "e": true, "resume": true, "fork": true}
+
+// valueFlags are the codex options that take the next argument as their
+// value, so that argument is not the subcommand.
+var valueFlags = map[string]bool{
+	"-c": true, "--config": true, "-m": true, "--model": true, "-p": true, "--profile": true,
+	"-s": true, "--sandbox": true, "-a": true, "--ask-for-approval": true, "-C": true, "--cd": true,
+	"-i": true, "--image": true, "--add-dir": true, "--enable": true, "--disable": true,
+	"--remote": true, "--remote-auth-token-env": true, "--local-provider": true,
 }
 
-// Pinned is the one plan tq renders into every Codex identity: Codex asks
-// on request and writes inside the workspace. tq's guard (the identity and
-// secret rules) runs through the PreToolUse hook; everything else is
-// Codex's own permission system (docs/prd.md D-30).
-var Pinned = Plan{Approval: ApprovalOnRequest, Sandbox: SandboxWorkspace}
-
-// Flags are the launch flags for p (nil for a zero Plan).
-func (p Plan) Flags() []string {
-	var out []string
-	if p.Approval != "" {
-		out = append(out, "-a", p.Approval)
-	}
-	if p.Sandbox != "" {
-		out = append(out, "-s", p.Sandbox)
-	}
-	return out
-}
-
-// LaunchArgs prepends p's flags to a codex command line, leaving alone what
-// the user typed: an explicit -a/--ask-for-approval or approval_policy
-// override keeps its approval, an explicit -s/--sandbox or sandbox_mode
-// override keeps its sandbox, and a typed bypass flag (or --yolo) gets
-// nothing added.
-func LaunchArgs(p Plan, args []string) []string {
-	if p.Approval == "" && p.Sandbox == "" {
-		return args
-	}
-	userA, userS := false, false
+// LaunchArgs is the codex command line the launcher runs: BypassFlag (PRD
+// v2 §7.2, the owner's decision of 2026-11-05) plus what the developer
+// typed. The flag goes right after a session subcommand (exec, e, resume,
+// fork) when there is one, first otherwise. tq never sets how Codex asks:
+// when the developer typed a flag that does (-a/--ask-for-approval,
+// -s/--sandbox, their glued forms -anever and -sread-only, --yolo, the
+// bypass flag itself, or a -c/--config override of approval_policy or
+// sandbox_mode, glued -capproval_policy=... included) the line goes through
+// exactly as typed. Arguments after `--` are not flags. (--full-auto is not
+// listed: codex 0.154 rejects it.)
+func LaunchArgs(args []string) []string {
+	sub := -1
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
 			break
 		}
-		switch {
-		case a == BypassFlag || a == "--yolo":
+		if typedPermission(a, args, i) {
 			return args
-		case a == "-a" || a == "--ask-for-approval" || strings.HasPrefix(a, "--ask-for-approval="):
-			userA = true
-		case a == "-s" || a == "--sandbox" || strings.HasPrefix(a, "--sandbox="):
-			userS = true
-		case a == "-c" || a == "--config":
-			if i+1 < len(args) {
-				userA = userA || configKey(args[i+1], "approval_policy")
-				userS = userS || configKey(args[i+1], "sandbox_mode")
-			}
-		case strings.HasPrefix(a, "--config="):
-			v := strings.TrimPrefix(a, "--config=")
-			userA = userA || configKey(v, "approval_policy")
-			userS = userS || configKey(v, "sandbox_mode")
+		}
+		if !strings.HasPrefix(a, "-") && sub < 0 {
+			sub = i
+		}
+		if valueFlags[a] {
+			i++ // its value
 		}
 	}
-	var pre []string
-	if !userA && p.Approval != "" {
-		pre = append(pre, "-a", p.Approval)
+	if sub >= 0 && sessionSubcommands[args[sub]] {
+		out := append([]string{}, args[:sub+1]...)
+		out = append(out, BypassFlag)
+		return append(out, args[sub+1:]...)
 	}
-	if !userS && p.Sandbox != "" {
-		pre = append(pre, "-s", p.Sandbox)
+	return append([]string{BypassFlag}, args...)
+}
+
+// typedPermission reports whether args[i] says how Codex asks or sandboxes.
+func typedPermission(a string, args []string, i int) bool {
+	switch {
+	case a == BypassFlag || a == "--yolo":
+		return true
+	case a == "-a" || a == "--ask-for-approval" || strings.HasPrefix(a, "--ask-for-approval="):
+		return true
+	case a == "-s" || a == "--sandbox" || strings.HasPrefix(a, "--sandbox="):
+		return true
+	case len(a) > 2 && !strings.HasPrefix(a, "--") && (a[:2] == "-a" || a[:2] == "-s"):
+		return true // -anever, -sread-only, -a=never
+	case a == "-c" || a == "--config":
+		return i+1 < len(args) && (configKey(args[i+1], "approval_policy") || configKey(args[i+1], "sandbox_mode"))
+	case strings.HasPrefix(a, "--config="):
+		v := strings.TrimPrefix(a, "--config=")
+		return configKey(v, "approval_policy") || configKey(v, "sandbox_mode")
+	case len(a) > 2 && strings.HasPrefix(a, "-c") && !strings.HasPrefix(a, "--"):
+		v := strings.TrimPrefix(strings.TrimPrefix(a, "-c"), "=")
+		return configKey(v, "approval_policy") || configKey(v, "sandbox_mode")
 	}
-	return append(pre, args...)
+	return false
 }
 
 func configKey(kv, key string) bool {

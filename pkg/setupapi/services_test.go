@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 func servicesPlan(base string) Plan {
@@ -13,7 +15,7 @@ func servicesPlan(base string) Plan {
 		Base:  base,
 		Trust: true,
 		Companies: []Company{{
-			Name: "acme", GitName: "tester", GitEmail: "tester@acme.test", Identities: []string{"claude"}, PermissionMode: "default",
+			Name: "acme", GitName: "tester", GitEmail: "tester@acme.test", Identities: []string{"claude"},
 			Chat:  "teams",
 			Email: "",
 		}},
@@ -59,7 +61,9 @@ func TestApply_WritesTheServiceBlocks(t *testing.T) {
 	if _, err := Apply(p); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(base, "acme", ".tentaqles.yaml"))
+	// The manifest lives in the protected location (ADR-0002); the root
+	// file is the name-only marker.
+	raw, err := os.ReadFile(paths.ManifestPath("acme"))
 	if err != nil {
 		t.Fatal(err)
 	}

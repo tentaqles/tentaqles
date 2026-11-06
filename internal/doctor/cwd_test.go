@@ -3,6 +3,7 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
@@ -36,6 +37,11 @@ func setupTrustedWorkspace(t *testing.T, name, email string) (*registry.Config, 
 	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
+	// On disk too: the integrity record finds the workspace root through
+	// the registry (trust.Covered).
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
 	root := filepath.Join(base, name)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
@@ -49,7 +55,7 @@ func setupTrustedWorkspace(t *testing.T, name, email string) (*registry.Config, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(name, h); err != nil {
 		t.Fatal(err)
 	}
 	return cfg, root
@@ -224,11 +230,38 @@ func TestRunForCwd_UntrustedIsStructural(t *testing.T) {
 		RunGitIn: func(string, ...string) (string, error) { return "", nil },
 		LookPath: func(string) (string, error) { return "/usr/bin/git", nil }}
 	r := RunForCwd(cfg, d)
-	if r.Result.Workspace != nil || r.Result.Untrusted == nil || r.Result.Untrusted.Name != "acme" {
-		t.Fatalf("expected structural Untrusted, got %+v", r.Result)
+	if r.Result.Workspace != nil || r.Result.Untrusted == nil || r.Result.Untrusted.Name != "acme" || !r.Result.Mismatch {
+		t.Fatalf("expected structural Untrusted with Mismatch, got %+v", r.Result)
 	}
-	if !contains(r.Codes(), "untrusted") {
+	// An edit after tq allow is an integrity mismatch (the signed record
+	// exists and names the manifest), and untrusted as well: every consumer
+	// of the codes (the guard refuses mutating git on untrusted) treats it
+	// at least as strictly as a workspace never allowed. The fix of both is
+	// tq hooks verify.
+	if !contains(r.Codes(), "integrity") || !contains(r.Codes(), "untrusted") {
 		t.Fatalf("codes %v", r.Codes())
+	}
+	for _, f := range r.Findings {
+		if f.Code == "integrity" && (!strings.Contains(f.Msg, "changed "+trust.Key(mp)) || !strings.Contains(f.Fix, "tq hooks verify acme")) {
+			t.Fatalf("the finding names the manifest and tq hooks verify: %+v", f)
+		}
+		if f.Code == "untrusted" && f.Fix != "tq hooks verify acme" {
+			t.Fatalf("untrusted after a mismatch points at tq hooks verify: %+v", f)
+		}
+	}
+	// Revoked: plain untrusted, fix tq allow.
+	h, _ := trust.HashFile(mp)
+	if err := trust.Deny("acme", h); err != nil {
+		t.Fatal(err)
+	}
+	r = RunForCwd(cfg, d)
+	if r.Result.Mismatch || !contains(r.Codes(), "untrusted") || contains(r.Codes(), "integrity") {
+		t.Fatalf("%+v %v", r.Result, r.Codes())
+	}
+	for _, f := range r.Findings {
+		if f.Code == "untrusted" && f.Fix != "tq allow acme" {
+			t.Fatalf("%+v", f)
+		}
 	}
 }
 

@@ -31,8 +31,9 @@ func TestPreToolUseHeredocsDoNotCrash(t *testing.T) {
 	}
 }
 
-// Any panic in the guard's analysis asks: never allow, never crash.
-func TestPreToolUseGuardPanicAsks(t *testing.T) {
+// Any panic in the guard's analysis denies: never allow, never ask, never
+// crash (PRD v2 §6.3, fail closed).
+func TestPreToolUseGuardPanicDenies(t *testing.T) {
 	isolateHome(t)
 	prev := hookPolicyDecision
 	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time) policy.Decision {
@@ -43,16 +44,13 @@ func TestPreToolUseGuardPanicAsks(t *testing.T) {
 	t.Cleanup(func() { hookPolicyDecision = prev })
 	dir := testutil.TempDir(t)
 
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, "ls"))
-	if code != 0 {
-		t.Fatalf("code=%d, want 0 with an ask", code)
-	}
-	if r := askReason(t, out); !strings.Contains(r, "tq guard error; please review") || !strings.Contains(r, "tq/guard-error") {
-		t.Errorf("reason = %q", r)
+	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, dir, "ls"))
+	if code != 2 || out != "" || !strings.Contains(errOut, "BLOCKED [tq/guard-error]: tq guard error") || strings.Contains(errOut, "goroutine") {
+		t.Errorf("code=%d out=%q err=%q", code, out, errOut)
 	}
 
 	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, dir, "ls"))
-	if code != 0 || !strings.Contains(out, `"rule":"tq/guard-error"`) || !strings.Contains(out, `"block":false`) {
+	if code != 2 || !strings.Contains(out, `"rule":"tq/guard-error"`) || !strings.Contains(out, `"block":true`) {
 		t.Errorf("--json: code=%d out=%q", code, out)
 	}
 }

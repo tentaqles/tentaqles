@@ -25,23 +25,24 @@ func codexWS(t *testing.T) *resolve.Workspace {
 		Identities: map[string]manifest.Identity{"codex": {}, "gh": {}},
 	}
 	w := &resolve.Workspace{Name: "acme", Hash: "hash-codex", Root: filepath.Join(t.TempDir(), "acme"), Manifest: m}
-	if err := trust.Allow(w.Hash); err != nil {
+	if err := trust.Allow(w.Name, w.Hash); err != nil {
 		t.Fatal(err)
 	}
 	return w
 }
 
-// The launch flags are the pinned pair; flags the user typed win.
-func TestCodexArgsPinned(t *testing.T) {
+// The launcher injects Codex's full-bypass flag (PRD v2 §7.2); a flag the
+// developer typed about asking or the sandbox passes through as typed.
+func TestCodexArgsBypass(t *testing.T) {
 	w := codexWS(t)
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"hi"}, "-a on-request -s workspace-write hi"},
-		{[]string{"exec", "hi"}, "-a on-request -s workspace-write exec hi"},
-		{[]string{"-a", "never", "hi"}, "-s workspace-write -a never hi"},
-		{[]string{"-s", "read-only"}, "-a on-request -s read-only"},
+		{[]string{"hi"}, "--dangerously-bypass-approvals-and-sandbox hi"},
+		{[]string{"exec", "hi"}, "exec --dangerously-bypass-approvals-and-sandbox hi"},
+		{[]string{"-a", "never", "hi"}, "-a never hi"},
+		{[]string{"-s", "read-only"}, "-s read-only"},
 		{[]string{"--yolo"}, "--yolo"},
 	} {
 		if got := strings.Join(codexArgs(w, tc.args), " "); got != tc.want {
@@ -93,9 +94,8 @@ func TestRenderCodexWritesPinnedFiles(t *testing.T) {
 	if out := renderOut(t, w, false); !strings.Contains(out, "updated") {
 		t.Fatalf("render: %q", out)
 	}
-	b, _ := os.ReadFile(cfg)
-	if !strings.Contains(string(b), `approval_policy = "on-request"`) || !strings.Contains(string(b), `sandbox_mode = "workspace-write"`) || !strings.HasSuffix(string(b), userCfg) {
-		t.Fatalf("config.toml:\n%s", b)
+	if b, _ := os.ReadFile(cfg); string(b) != userCfg {
+		t.Fatalf("tq writes nothing into config.toml:\n%s", b)
 	}
 	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); !ok {
 		t.Fatal("hooks.json must carry tq's PreToolUse entry")
@@ -136,21 +136,28 @@ func TestRenderCodexRemovesOldRulesFile(t *testing.T) {
 	}
 }
 
-func TestRenderCodexReportsConflicts(t *testing.T) {
+// TestRenderCodexRemovesOldConfigBlock: the config.toml block an older tq
+// wrote is removed on the next render; a key the user set outside it stays.
+func TestRenderCodexRemovesOldConfigBlock(t *testing.T) {
 	w := codexWS(t)
 	dir := paths.IdentityDir("acme", "codex")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("sandbox_mode = \"read-only\"\n"), 0o600); err != nil {
+	mine := "sandbox_mode = \"read-only\"\n"
+	old := "# >>> managed by tq: edit with tq settings render, not by hand\napproval_policy = \"on-request\"\nsandbox_mode = \"workspace-write\"\n# <<< managed by tq\n" + mine
+	cfg := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfg, []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out := renderOut(t, w, false)
-	if !strings.Contains(out, "not changed") || !strings.Contains(out, "sandbox_mode") {
-		t.Fatalf("conflict: %q", out)
+	if out := renderOut(t, w, false); !strings.Contains(out, "config.toml") || strings.Contains(out, "not changed") {
+		t.Fatalf("render: %q", out)
+	}
+	if b, _ := os.ReadFile(cfg); string(b) != mine {
+		t.Fatalf("config.toml keeps the user's key only:\n%s", b)
 	}
 	if _, _, ok := codexcfg.FindHook(dir, "PreToolUse"); !ok {
-		t.Fatal("the hook is written despite the config conflict")
+		t.Fatal("the hook is written")
 	}
 }
 
@@ -215,22 +222,22 @@ func TestRenderCodexRemovesWhenNoLongerIsolated(t *testing.T) {
 	}
 }
 
-// tq run passes the pinned flags to codex; a flag the user typed wins.
-func TestLaunchCodexFlagsArePinned(t *testing.T) {
+// tq run starts codex with the full-bypass flag; a flag the user typed wins.
+func TestLaunchCodexFlagsAreTheBypass(t *testing.T) {
 	mkLaunchWS(t, "acme", "")
 	clearAgentMarkers(t)
 	calls := fakeExec(t)
 	if _, err := runTq(t, "run", "acme", "--", "codex", "exec", "x"); err != nil {
 		t.Fatal(err)
 	}
-	if c := (*calls)[0]; c.name != "codex" || strings.Join(c.args, " ") != "-a on-request -s workspace-write exec x" || c.env["TQ_WS"] != "acme" {
+	if c := (*calls)[0]; c.name != "codex" || strings.Join(c.args, " ") != "exec --dangerously-bypass-approvals-and-sandbox x" || c.env["TQ_WS"] != "acme" {
 		t.Fatalf("codex launch: %+v", c)
 	}
 	calls = fakeExec(t)
 	if _, err := runTq(t, "run", "acme", "--", "codex", "-a", "never", "exec", "x"); err != nil {
 		t.Fatal(err)
 	}
-	if c := (*calls)[0]; strings.Join(c.args, " ") != "-s workspace-write -a never exec x" {
+	if c := (*calls)[0]; strings.Join(c.args, " ") != "-a never exec x" {
 		t.Fatalf("user approval wins: %+v", c)
 	}
 }

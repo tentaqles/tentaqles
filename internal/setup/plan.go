@@ -18,15 +18,14 @@ import (
 
 // Company describes one client/company to scaffold as a tq workspace.
 type Company struct {
-	Name           string   `yaml:"name"`
-	DisplayName    string   `yaml:"display_name,omitempty"`
-	Color          string   `yaml:"color,omitempty"`
-	GitName        string   `yaml:"git_name"`
-	GitEmail       string   `yaml:"git_email"`
-	GitUser        string   `yaml:"git_user,omitempty"`
-	GitProvider    string   `yaml:"git_provider,omitempty"`
-	Identities     []string `yaml:"identities,omitempty"`
-	PermissionMode string   `yaml:"permission_mode,omitempty"`
+	Name        string   `yaml:"name"`
+	DisplayName string   `yaml:"display_name,omitempty"`
+	Color       string   `yaml:"color,omitempty"`
+	GitName     string   `yaml:"git_name"`
+	GitEmail    string   `yaml:"git_email"`
+	GitUser     string   `yaml:"git_user,omitempty"`
+	GitProvider string   `yaml:"git_provider,omitempty"`
+	Identities  []string `yaml:"identities,omitempty"`
 	// Company services (spec B §6), written into the new workspace's manifest. nil skips a block.
 	Chat  *manifest.Service `yaml:"chat,omitempty"`
 	Email *manifest.Service `yaml:"email,omitempty"`
@@ -114,8 +113,7 @@ func (p *SetupPlan) Save(path string) error {
 
 // Validate checks structural rules on the plan: a base is set, at least
 // one company is present, company names match the workspace naming rule
-// and are unique, identities are known to cat, and permission modes are
-// valid.
+// and are unique, and identities are known to cat.
 func (p *SetupPlan) Validate(cat *providers.Catalog) error {
 	if p.Base == "" {
 		return fmt.Errorf("base is required")
@@ -141,9 +139,6 @@ func (p *SetupPlan) Validate(cat *providers.Catalog) error {
 			}
 		}
 
-		if !contains(manifest.PermissionModes, c.PermissionMode) {
-			return fmt.Errorf("company %q: invalid permission_mode %q (must be one of %v)", c.Name, c.PermissionMode, manifest.PermissionModes)
-		}
 		if err := c.validateServices(); err != nil {
 			return fmt.Errorf("company %q: %w", c.Name, err)
 		}
@@ -168,22 +163,20 @@ func Example() *SetupPlan {
 		Hooks: []string{"bash", "zsh", "pwsh"},
 		Companies: []Company{
 			{
-				Name:           "acme",
-				DisplayName:    "Acme Corp",
-				Color:          "blue",
-				GitName:        "Jane Doe",
-				GitEmail:       "jane@acme.com",
-				Identities:     []string{"claude", "gh"},
-				PermissionMode: "acceptEdits",
+				Name:        "acme",
+				DisplayName: "Acme Corp",
+				Color:       "blue",
+				GitName:     "Jane Doe",
+				GitEmail:    "jane@acme.com",
+				Identities:  []string{"claude", "gh"},
 			},
 			{
-				Name:           "globex",
-				DisplayName:    "Globex Corporation",
-				Color:          "green",
-				GitName:        "Jane Doe",
-				GitEmail:       "jane@globex.com",
-				Identities:     []string{"claude", "gh"},
-				PermissionMode: "default",
+				Name:        "globex",
+				DisplayName: "Globex Corporation",
+				Color:       "green",
+				GitName:     "Jane Doe",
+				GitEmail:    "jane@globex.com",
+				Identities:  []string{"claude", "gh"},
 			},
 		},
 	}

@@ -60,7 +60,7 @@ func mkTrustedWithBundle(t *testing.T, b *manifest.Bundle) *resolve.Workspace {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(ws.Name, h); err != nil {
 		t.Fatal(err)
 	}
 

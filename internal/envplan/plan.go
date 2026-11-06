@@ -2,8 +2,7 @@
 package envplan
 
 import (
-	"encoding/base64"
-	"encoding/json"
+	"os"
 	"sort"
 
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -43,23 +42,31 @@ func Desired(ws *resolve.Workspace) map[string]string {
 type State struct {
 	WS   string             `json:"ws"`
 	Prev map[string]*string `json:"prev"`
+	// PathSet is the PATH tq last wrote for a guard: v2 identity (ADR-0008), in the shell's
+	// spelling: a PATH still equal to it needs no work at the next prompt, and one the user
+	// changed since is merged back (MergePath) on leaving.
+	PathSet string `json:"path,omitempty"`
+	// Sep is PathSet's list separator (the shell's).
+	Sep string `json:"sep,omitempty"`
+	// MaskWanted: a PATH folder of PathSet holds an out-of-scope CLI beside other tools, so the
+	// mask folder belongs on the PATH; the next prompt puts it back (or takes it off) as soon
+	// as the folder is (or stops being) as tq wrote it, and says so while it is missing.
+	MaskWanted bool `json:"mw,omitempty"`
+
+	// The compact spelling of PathSet in the encoding (encodeState): the entries of the
+	// recorded PATH it drops and the mask entry it puts first.
+	PathDrop    []int  `json:"pd,omitempty"`
+	PathMask    string `json:"pm,omitempty"`
+	PathCompact bool   `json:"pc,omitempty"`
 }
 
-func (s State) Encode() string {
-	b, _ := json.Marshal(s)
-	return base64.RawURLEncoding.EncodeToString(b)
-}
+// Encode is the __TQ_STATE value (state.go): zlib-compressed JSON, with the PATH tq wrote
+// spelled as the entries it dropped from the recorded one, so the state holds one PATH, not
+// two. cmd.exe reads a line of at most 8191 characters: a 3.5 KB PATH must fit with room.
+func (s State) Encode() string { return encodeState(s) }
 
-func DecodeState(enc string) State {
-	var s State
-	if b, err := base64.RawURLEncoding.DecodeString(enc); err == nil {
-		_ = json.Unmarshal(b, &s)
-	}
-	if s.Prev == nil {
-		s.Prev = map[string]*string{}
-	}
-	return s
-}
+// DecodeState reads Encode's value, and the plain base64 JSON of tq before it.
+func DecodeState(enc string) State { return decodeState(enc) }
 
 type Ops struct {
 	Set     map[string]string
@@ -67,29 +74,112 @@ type Ops struct {
 	Changed bool
 	From    string
 	To      string
+	// Notice is the one line the shell prints on stderr at this prompt,
+	// whether or not anything changed (tq env sets it; shell.Emit renders
+	// it from fixed text, never from a path or the manifest).
+	Notice *Notice
+}
+
+// Notice says why the cwd's workspace carries no identity, or carries it
+// through an older trust marker. Workspace is a name; shell.Emit prints it
+// only when it is a valid workspace name.
+type Notice struct {
+	Kind      string
+	Workspace string
+}
+
+// The kinds of Notice.
+const (
+	// NoticeUntrusted: never allowed, or revoked; the fix is tq allow.
+	NoticeUntrusted = "untrusted"
+	// NoticeMismatch: the integrity record does not verify or a covered
+	// file changed; the fix is tq hooks verify.
+	NoticeMismatch = "mismatch"
+	// NoticeLegacy: trusted through a marker of an older tq; tq allow signs
+	// the hooks and the manifest.
+	NoticeLegacy = "legacy"
+	// NoticeMask: a guard: v2 identity's PATH needs its mask folder (a folder
+	// shared with other tools holds an out-of-scope CLI) and the folder is
+	// missing or changed; the fix is tq settings render (ADR-0008).
+	NoticeMask = "path-mask"
+	// NoticeCmdLong: the identity PATH is longer than a cmd.exe line, so cmd.exe keeps the
+	// PATH it has (out-of-scope CLIs still resolve there); the rest of the identity applies.
+	NoticeCmdLong = "cmd-path-long"
+	// NoticeStateLost: TQ_WS was set but __TQ_STATE was gone or unreadable; tq unset its own
+	// variables and mask folders and cannot put back the values from before it (lost.go).
+	NoticeStateLost = "state-lost"
+)
+
+// Want is what a workspace wants of the environment: the variables to set and, for a
+// guard: v2 identity (ADR-0008), the variables to unset. PathSep is the shell's PATH list
+// separator, used when a PATH tq changed is restored.
+type Want struct {
+	Set     map[string]string
+	Unset   []string
+	PathSep string
+	// PathOrig replaces the recorded PATH before tq (State.Prev): the user changed PATH
+	// inside the identity and the merged PATH (MergePath) is what leaving restores.
+	PathOrig *string
+	// MaskWanted: the PATH holds a shared folder with an out-of-scope CLI (State.MaskWanted).
+	MaskWanted bool
 }
 
 // Diff computes the shell operations to move from the current env to desired,
 // restoring anything tq previously changed that is no longer desired.
 func Diff(desired map[string]string, current func(string) (string, bool), prev State, wsName string) (Ops, State) {
+	return DiffWant(Want{Set: desired}, current, prev, wsName)
+}
+
+// DiffWant is Diff for a Want: every variable tq sets or unsets is recorded with its value
+// before tq touched it (State.Prev) and put back once no longer wanted, so leaving the folder
+// restores the shell exactly. PATH is put back through MergePath.
+func DiffWant(want Want, current func(string) (string, bool), prev State, wsName string) (Ops, State) {
+	desired := want.Set
+	if desired == nil {
+		desired = map[string]string{}
+	}
+	unset := map[string]bool{}
+	for _, k := range want.Unset {
+		unset[k] = true
+	}
+	sep := want.PathSep
+	if sep == "" {
+		sep = string(os.PathListSeparator)
+	}
 	ops := Ops{Set: map[string]string{}, From: prev.WS, To: wsName}
 	next := State{WS: wsName, Prev: map[string]*string{}}
 	for k, v := range prev.Prev {
 		next.Prev[k] = v
 	}
-	// 1. restore vars we set that are no longer wanted
+	// 1. restore vars we set (or unset) that are no longer wanted
 	for k, orig := range prev.Prev {
-		if _, want := desired[k]; want {
+		if _, want := desired[k]; want || unset[k] {
 			continue
 		}
-		if orig == nil {
+		switch {
+		case orig == nil:
 			ops.Unset = append(ops.Unset, k)
-		} else {
+		case envKey(k) == envKey("PATH") && prev.PathSet != "":
+			cur, _ := current(k)
+			ops.Set[k] = MergePath(*orig, prev.PathSet, cur, sep)
+		default:
 			ops.Set[k] = *orig
 		}
 		delete(next.Prev, k)
 	}
-	// 2. set what differs
+	// 2. unset what the identity leaves out (guard: v2), remembering the value
+	for _, k := range want.Unset {
+		cur, ok := current(k)
+		if !ok {
+			continue
+		}
+		if _, tracked := next.Prev[k]; !tracked {
+			c := cur
+			next.Prev[k] = &c
+		}
+		ops.Unset = append(ops.Unset, k)
+	}
+	// 3. set what differs
 	for k, v := range desired {
 		cur, ok := current(k)
 		if _, tracked := next.Prev[k]; !tracked {
@@ -104,7 +194,19 @@ func Diff(desired map[string]string, current func(string) (string, bool), prev S
 			ops.Set[k] = v
 		}
 	}
-	ops.Changed = len(ops.Set)+len(ops.Unset) > 0
+	if p, ok := desired["PATH"]; ok {
+		next.PathSet, next.Sep, next.MaskWanted = p, sep, want.MaskWanted
+		if want.PathOrig != nil {
+			for k := range next.Prev {
+				if envKey(k) == envKey("PATH") && next.Prev[k] != nil {
+					o := *want.PathOrig
+					next.Prev[k] = &o
+				}
+			}
+		}
+	}
+	// A new PATH record alone is a change of state: the next prompt compares against it.
+	ops.Changed = len(ops.Set)+len(ops.Unset) > 0 || next.PathSet != prev.PathSet || next.MaskWanted != prev.MaskWanted
 	if !ops.Changed {
 		return ops, next
 	}

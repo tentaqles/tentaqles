@@ -24,3 +24,11 @@ login:
   args: ["login"]
 verify:
   args: ["info", "-o", "json"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [scw]
+  env: [SCW_ACCESS_KEY, SCW_SECRET_KEY, SCW_CONFIG_PATH, SCW_DEFAULT_PROJECT_ID]
+  paths: ["~/.config/scw"]
+  hosts: [api.scaleway.com]
+  mcp: [scaleway]

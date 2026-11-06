@@ -20,8 +20,10 @@ def _flat(name: str) -> str:
 def test_supply_chain_handles_no_actions() -> None:
     body = _body("supply-chain")
     for token in ("references/checklist.md", "SBOM", "CycloneDX", "lockfile", "secret scanning", "Scorecard",
-                  "tq/gha-branch-ref", "no GitHub Actions", "GitLab"):
+                  "@main", "no GitHub Actions", "GitLab"):
         assert token in body, token
+    for retired in ("tq/gha-branch-ref", "tq/gha-unpinned", "tq refuses", "tq denies"):
+        assert retired not in body, retired
     assert "add .github/workflows/<changed-file>" in body and "add .github" + chr(10) not in body
     for forbidden in ("TENTAQLES_HEADLESS", "--headless", "build-gate", "tq decide", "build engine", "AskUserQuestion"):
         assert forbidden not in body, forbidden
@@ -57,9 +59,11 @@ def test_supply_chain_per_ecosystem_and_resolution() -> None:
         assert token in body, token
 
 
-def test_ci_pipeline_says_branch_refs_are_refused_and_knows_no_packs() -> None:
+def test_ci_pipeline_forbids_branch_refs_and_knows_no_packs() -> None:
     body = _body("ci-pipeline")
-    assert "tq/gha-branch-ref" in body and "denies" in body
+    assert "@main" in body and "@latest" in body
+    for retired in ("tq/gha-branch-ref", "tq/gha-unpinned", "asks on"):
+        assert retired not in body, retired
     assert "`security-reviewer`" in body
     for forbidden in ("tq pack", "tq decide", "packs."):
         assert forbidden not in body, forbidden

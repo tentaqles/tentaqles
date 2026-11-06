@@ -47,14 +47,13 @@ func TestPlanFromAnswers(t *testing.T) {
 		Base: "C:/repos",
 		Companies: []companyAnswers{
 			{
-				Name:           "acme",
-				DisplayName:    "Acme Corp",
-				Color:          "blue",
-				GitName:        "Jane Doe",
-				GitEmail:       "jane@acme.com",
-				GitUser:        "janedoe",
-				Identities:     []string{"claude", "gh"},
-				PermissionMode: "acceptEdits",
+				Name:        "acme",
+				DisplayName: "Acme Corp",
+				Color:       "blue",
+				GitName:     "Jane Doe",
+				GitEmail:    "jane@acme.com",
+				GitUser:     "janedoe",
+				Identities:  []string{"claude", "gh"},
 			},
 		},
 		Hooks: []string{"bash", "pwsh"},
@@ -76,8 +75,7 @@ func TestPlanFromAnswers(t *testing.T) {
 	}
 	c := plan.Companies[0]
 	if c.Name != "acme" || c.DisplayName != "Acme Corp" || c.Color != "blue" ||
-		c.GitName != "Jane Doe" || c.GitEmail != "jane@acme.com" || c.GitUser != "janedoe" ||
-		c.PermissionMode != "acceptEdits" {
+		c.GitName != "Jane Doe" || c.GitEmail != "jane@acme.com" || c.GitUser != "janedoe" {
 		t.Errorf("unexpected company fields: %+v", c)
 	}
 	if len(c.Identities) != 2 || c.Identities[0] != "claude" || c.Identities[1] != "gh" {
@@ -100,8 +98,8 @@ func TestPlanFromAnswers_DuplicateNamesRejectedByValidate(t *testing.T) {
 	plan := planFromAnswers(wizardAnswers{
 		Base: "C:/repos",
 		Companies: []companyAnswers{
-			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}, PermissionMode: "default"},
-			{Name: "acme", GitName: "Jane", GitEmail: "jane@other.com", Identities: []string{"claude"}, PermissionMode: "default"},
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}},
+			{Name: "acme", GitName: "Jane", GitEmail: "jane@other.com", Identities: []string{"claude"}},
 		},
 	})
 	err := plan.Validate(cat)
@@ -120,7 +118,7 @@ func TestSaveWizardPlan_WritesBothFiles(t *testing.T) {
 
 	plan := planFromAnswers(wizardAnswers{
 		Base:      dir,
-		Companies: []companyAnswers{{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}, PermissionMode: "default"}},
+		Companies: []companyAnswers{{Name: "acme", GitName: "Jane", GitEmail: "jane@acme.com", Identities: []string{"claude"}}},
 	})
 	if err := saveWizardPlan(plan, extra); err != nil {
 		t.Fatal(err)

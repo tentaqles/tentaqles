@@ -106,7 +106,7 @@ func TestRun_OldManifestWarnsAndExitsZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(hash); err != nil {
+	if err := trust.Allow("acme", hash); err != nil {
 		t.Fatal(err)
 	}
 	wsGit := gitcfg.WorkspaceFile(root)

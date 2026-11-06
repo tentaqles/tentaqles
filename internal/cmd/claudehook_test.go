@@ -88,7 +88,7 @@ func setupTrustedWorkspaceWithManifest(t *testing.T, name, body string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(name, h); err != nil {
 		t.Fatal(err)
 	}
 	// TQ_WS matches so the env-drift finding does not mask the rule under test.
@@ -107,7 +107,7 @@ func TestPreToolUse_NoWorkspace_AllowsLs(t *testing.T) {
 func TestPreToolUse_NoWorkspace_BlocksPush(t *testing.T) {
 	isolateHome(t)
 	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, testutil.TempDir(t), "git push"))
-	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED:") {
+	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED [identity/") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }
@@ -147,10 +147,11 @@ func TestPreToolUse_NonBashToolAllowed(t *testing.T) {
 	}
 }
 
-func TestPreToolUse_MalformedStdinAllows(t *testing.T) {
+// A payload tq cannot read is denied (PRD v2 §6.3, fail closed; ADR-0006).
+func TestPreToolUse_MalformedStdinDenies(t *testing.T) {
 	isolateHome(t)
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, "not json")
-	if code != 0 || out != "" || errOut != "" {
+	if code != 2 || out != "" || !strings.Contains(errOut, "BLOCKED [tq/guard-error]: the hook payload cannot be read") {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
 	}
 }
@@ -297,7 +298,7 @@ func TestRenderSessionStart_Workspace(t *testing.T) {
 	want := "Client: Acme (en)\n" +
 		"Git: github.com as acme-bot (dev@acme.com)\n" +
 		"Cloud: azure (acme-prod subscription)\n" +
-		"Identity: acme · CLAUDE_CONFIG_DIR=/home/acme/.tentaqles/identities/acme/claude · permission_mode=default\n" +
+		"Identity: acme · CLAUDE_CONFIG_DIR=/home/acme/.tentaqles/identities/acme/claude\n" +
 		"\ntq doctor:\n" +
 		"- [ok] all checks passed\n" +
 		"\nRules: tq blocks git/gh/cloud commands on identity drift (exit 2). Run `tq doctor` for details.\n"
@@ -384,7 +385,7 @@ func TestPreToolUse_OversizedPayloadFailsClosed(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("code=%d want 2 (err=%q)", code, errOut)
 	}
-	if !strings.Contains(errOut, "BLOCKED: hook payload exceeds 1 MiB") {
+	if !strings.Contains(errOut, "BLOCKED [tq/guard-error]: the hook payload cannot be read (hook payload exceeds 1 MiB)") {
 		t.Fatalf("stderr=%q", errOut)
 	}
 }
@@ -398,7 +399,7 @@ func TestPreToolUse_PayloadAtLimitStillParsed(t *testing.T) {
 		t.Fatalf("payload len=%d", len(payload))
 	}
 	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, payload)
-	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED:") || strings.Contains(errOut, "exceeds") {
+	if code != 2 || !strings.HasPrefix(errOut, "BLOCKED [identity/") || strings.Contains(errOut, "exceeds") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }

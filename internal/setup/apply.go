@@ -10,6 +10,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
@@ -42,11 +43,16 @@ func loginCommand(p providers.Provider) string {
 }
 
 // halfCreatedDetail reports why an existing workspace at root is unusable,
-// or "" when it looks complete: the manifest must be trusted and the
-// per-workspace git identity file must exist.
-func halfCreatedDetail(root, mp string) string {
+// or "" when it looks complete: the manifest tq reads (the protected copy
+// or the old root file) must be trusted and the per-workspace git identity
+// file must exist.
+func halfCreatedDetail(root string) string {
+	mp, _, reason := resolve.ManifestFile(root)
+	if reason != "" {
+		return reason
+	}
 	h, err := trust.HashFile(mp)
-	if err != nil || !trust.IsTrusted(h) {
+	if err != nil || !trust.IsTrusted(filepath.Base(root), h) {
 		return "exists but not trusted — run: tq allow " + filepath.Base(root)
 	}
 	if _, err := os.Stat(gitcfg.WorkspaceFile(root)); err != nil {
@@ -94,7 +100,7 @@ func Apply(p *SetupPlan, cat *providers.Catalog, o ApplyOptions) (Report, error)
 			// interrupted earlier run can leave one that was never trusted or
 			// whose git identity file is missing. Report those as needing
 			// attention instead of silently counting them as applied.
-			if detail := halfCreatedDetail(root, mp); detail != "" {
+			if detail := halfCreatedDetail(root); detail != "" {
 				report.Changes = append(report.Changes, Change{Kind: "workspace-skip", Target: c.Name, Detail: detail})
 				report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %s", c.Name, detail))
 				continue
@@ -106,20 +112,19 @@ func Apply(p *SetupPlan, cat *providers.Catalog, o ApplyOptions) (Report, error)
 
 		ids := effectiveIdentities(c)
 		_, err := workspace.Add(workspace.AddOptions{
-			Base:           base,
-			Name:           c.Name,
-			GitName:        c.GitName,
-			GitEmail:       c.GitEmail,
-			GitUser:        c.GitUser,
-			GitProvider:    c.GitProvider,
-			DisplayName:    c.DisplayName,
-			Color:          c.Color,
-			Identities:     ids,
-			PermissionMode: c.PermissionMode,
-			Trust:          p.Trust,
-			RunGit:         o.RunGit,
-			Chat:           c.Chat,
-			Email:          c.Email,
+			Base:        base,
+			Name:        c.Name,
+			GitName:     c.GitName,
+			GitEmail:    c.GitEmail,
+			GitUser:     c.GitUser,
+			GitProvider: c.GitProvider,
+			DisplayName: c.DisplayName,
+			Color:       c.Color,
+			Identities:  ids,
+			Trust:       p.Trust,
+			RunGit:      o.RunGit,
+			Chat:        c.Chat,
+			Email:       c.Email,
 		})
 		if err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", c.Name, err))

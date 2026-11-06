@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/onboard"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/termopen"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -69,7 +71,7 @@ func TestOnboard_FromWritesValidManifestWithSkippedBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	mp := filepath.Join(base, "acme", manifest.FileName)
+	mp := paths.ManifestPath("acme") // the protected location (ADR-0002)
 	m, err := manifest.Load(mp)
 	if err != nil {
 		t.Fatalf("the written manifest must load: %v", err)
@@ -87,7 +89,7 @@ func TestOnboard_FromWritesValidManifestWithSkippedBlocks(t *testing.T) {
 		}
 	}
 	h, _ := trust.HashFile(mp)
-	if trust.IsTrusted(h) {
+	if trust.IsTrusted("acme", h) {
 		t.Fatal("onboard must leave the workspace untrusted: tq allow is the human's")
 	}
 	for _, want := range []string{"(untrusted)", "tq allow acme", "tq login acme claude", "slack", "/tentaqles:onboard"} {
@@ -115,7 +117,7 @@ email: { provider: none }
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	m, err := manifest.Load(filepath.Join(base, "acme", manifest.FileName))
+	m, err := manifest.Load(paths.ManifestPath("acme"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +166,7 @@ func TestOnboard_InteractiveRefusedInAgentSession(t *testing.T) {
 		return onboardWizardResult{}, errors.New("no")
 	}
 	_, err := runOnboard(t, "acme", "--base", base)
-	if err == nil || !strings.Contains(err.Error(), "--from") {
+	if !errors.Is(err, errHumanOnly) {
 		t.Fatalf("err = %v", err)
 	}
 	if called {
@@ -172,16 +174,44 @@ func TestOnboard_InteractiveRefusedInAgentSession(t *testing.T) {
 	}
 }
 
-func TestOnboard_AgentSessionNeverOpensATerminal(t *testing.T) {
+// --from is human-only too (DISCOVERY §7.1): a session is refused before the
+// folder is written, and no terminal is opened.
+func TestOnboard_FromRefusedInAgentSession(t *testing.T) {
 	base, opened := isolateOnboard(t)
 	t.Setenv("TENTAQLES_HEADLESS", "1")
 	from := answersFile(t, "name: acme\ngit: { email: tester@acme.test }\n")
-	out, err := runOnboard(t, "--from", from, "--base", base, "--open-terminal")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	_, err := runOnboard(t, "--from", from, "--base", base, "--open-terminal")
+	if !errors.Is(err, errHumanOnly) {
+		t.Fatalf("err = %v", err)
 	}
-	if len(*opened) != 0 || !strings.Contains(out, "Not opening a terminal") {
-		t.Fatalf("opened %v\n%s", *opened, out)
+	if _, err := os.Stat(filepath.Join(base, "acme")); !os.IsNotExist(err) {
+		t.Fatal("a refused onboard must write nothing")
+	}
+	if len(*opened) != 0 {
+		t.Fatalf("opened %v", *opened)
+	}
+}
+
+// The confirmation comes after the answers and before the write: a declined
+// confirmation leaves nothing behind.
+func TestOnboard_DeclinedConfirmationWritesNothing(t *testing.T) {
+	base, opened := isolateOnboard(t)
+	prev := humanonly.Confirm
+	humanonly.Confirm = func(string) (bool, error) { return false, nil }
+	t.Cleanup(func() { humanonly.Confirm = prev })
+	from := answersFile(t, "name: acme\ngit: { email: tester@acme.test }\n")
+	out, err := runOnboard(t, "--from", from, "--base", base, "--open-terminal")
+	if !errors.Is(err, humanonly.ErrAborted) {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "tq onboard: about to create "+filepath.Join(base, "acme")) {
+		t.Fatalf("the confirmation names the folder:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(base, "acme")); !os.IsNotExist(err) {
+		t.Fatal("a declined confirmation must write nothing")
+	}
+	if len(*opened) != 0 {
+		t.Fatalf("opened %v", *opened)
 	}
 }
 
@@ -198,7 +228,7 @@ func TestOnboard_WizardResultIsWritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	m, err := manifest.Load(filepath.Join(base, "acme", manifest.FileName))
+	m, err := manifest.Load(paths.ManifestPath("acme"))
 	if err != nil || m.Chat.Provider != "teams" {
 		t.Fatalf("manifest %+v err %v", m, err)
 	}

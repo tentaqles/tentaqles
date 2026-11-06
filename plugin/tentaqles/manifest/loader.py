@@ -1,24 +1,76 @@
 """
 Tentaqles client manifest loader.
 
-Discovers and loads .tentaqles.yaml files by walking up from the current
-working directory, providing client context for Claude Code sessions.
+Discovers and loads the client manifest for a working directory, providing
+client context for Claude Code sessions.
+
+Two layouts exist (ADR-0002). In the protected layout the workspace root
+holds a name-only marker, ``.tentaqles.yaml`` with ``schema:
+tentaqles-marker-v1`` and ``client: <name>``, and the manifest lives at
+``$TQ_HOME/identities/<name>/manifest.yaml`` (``~/.tentaqles`` when
+``TQ_HOME`` is unset or the process runs under an agent marker, see
+``tentaqles.tqhome``). In the old layout the full manifest sits at
+``<root>/.tentaqles.yaml``.
+
+The loader resolves a working directory the way tq does: the directory must
+lie under a base registered in ``$TQ_HOME/config.yaml``, and the identity is
+that base's first-level folder, whatever other ``.tentaqles.yaml`` files sit
+deeper. With no ``config.yaml`` at all, an agent session is neutral (tq would
+resolve "outside any base"); only a plain process on a machine without tq
+walks up from the working directory to the nearest root file. In every case
+the marker's ``client`` must equal the folder name, or the folder is unknown.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from tentaqles.tqhome import agent_session, tq_home
 
-def find_manifest(cwd: str | Path) -> Path | None:
+MARKER_SCHEMA = "tentaqles-marker-v1"
+MANIFEST_SCHEMAS = ("tentaqles-client-v1", "tentaqles-client-v2")
+ROOT_FILE = ".tentaqles.yaml"
+PROTECTED_FILE = "manifest.yaml"
+
+__all__ = [
+    "tq_home",
+    "protected_manifest_path",
+    "is_protected_manifest_path",
+    "find_manifest",
+    "load_manifest",
+    "workspace_root_for",
+    "get_client_context",
+    "run_preflight_checks",
+    "format_context_summary",
+]
+
+
+def protected_manifest_path(name: str) -> Path:
+    """The protected manifest of workspace ``name``."""
+    return tq_home() / "identities" / name / PROTECTED_FILE
+
+
+def is_protected_manifest_path(path: str | Path) -> bool:
+    """Whether ``path`` is some workspace's protected manifest."""
+    p = Path(path)
+    if p.name != PROTECTED_FILE:
+        return False
+    try:
+        return p.parent.parent.resolve() == (tq_home() / "identities").resolve()
+    except OSError:
+        return False
+
+
+def _walk_up(cwd: str | Path) -> Path | None:
     """Walk up from cwd looking for .tentaqles.yaml. Stop at root or after 10 levels."""
     current = Path(cwd).resolve()
     for _ in range(10):
-        candidate = current / ".tentaqles.yaml"
+        candidate = current / ROOT_FILE
         if candidate.is_file():
             return candidate
         parent = current.parent
@@ -28,23 +80,145 @@ def find_manifest(cwd: str | Path) -> Path | None:
     return None
 
 
-def load_manifest(cwd: str | Path) -> dict | None:
-    """Locate and parse .tentaqles.yaml, validating schema version."""
-    path = find_manifest(cwd)
-    if path is None:
+def _resolve_dir(p: Path) -> Path:
+    try:
+        return p.resolve()
+    except OSError:
+        return p
+
+
+def _registered_bases() -> list[Path] | None:
+    """The bases of ``$TQ_HOME/config.yaml``, or None when there is no config
+    at all (no tq on this machine: the walk-up applies)."""
+    cfg_path = tq_home() / "config.yaml"
+    if not cfg_path.is_file():
         return None
+    cfg = _read_yaml(cfg_path) or {}
+    bases = cfg.get("bases") or []
+    if not isinstance(bases, list):
+        return []
+    return [Path(b) for b in bases if isinstance(b, str) and b]
+
+
+def _find_root_file(cwd: str | Path) -> Path | None:
+    """The root file of the workspace that holds cwd, resolved like tq: cwd
+    must lie under a registered base and the identity is that base's
+    first-level folder, so a ``.tentaqles.yaml`` planted deeper never
+    shadows it. At a base root, outside every base, or with no root file in
+    the first-level folder the result is None (neutral).
+
+    With no ``config.yaml`` at all the answer depends on the process: under an
+    agent marker it is neutral, as tq itself would resolve "outside any base";
+    only a plain process without tq (an old install) walks up to the nearest
+    root file."""
+    bases = _registered_bases()
+    if bases is None:
+        if agent_session():
+            return None
+        return _walk_up(cwd)
+    c = _resolve_dir(Path(cwd))
+    for base in bases:
+        b = _resolve_dir(base)
+        try:
+            rel = c.relative_to(b)
+        except ValueError:
+            continue
+        if not rel.parts:
+            return None
+        rf = b / rel.parts[0] / ROOT_FILE
+        return rf if rf.is_file() else None
+    return None
+
+
+def _same_name(a: str, b: str) -> bool:
+    """Folder names compare case-insensitively on Windows, as tq does."""
+    if os.name == "nt":
+        return a.casefold() == b.casefold()
+    return a == b
+
+
+def _read_yaml(path: Path) -> dict | None:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        if not isinstance(data, dict):
-            return None
-        if data.get("schema") not in ("tentaqles-client-v1", "tentaqles-client-v2"):
-            return None
-        data["_manifest_path"] = str(path)
-        data["_client_root"] = str(path.parent)
-        return data
     except (OSError, yaml.YAMLError):
         return None
+    return data if isinstance(data, dict) else None
+
+
+def _resolve_manifest(root_file: Path) -> Path | None:
+    """The file to load for a root file: the protected copy or the root file itself.
+
+    A marker whose client is not the folder name, or whose protected copy is
+    missing, resolves to nothing: the folder is unknown, never a guess.
+    """
+    head = _read_yaml(root_file)
+    if head is None:
+        return None
+    schema = head.get("schema")
+    name = root_file.parent.name
+    if schema == MARKER_SCHEMA:
+        client = head.get("client")
+        if not isinstance(client, str) or not client or not _same_name(client, name):
+            return None
+        pp = protected_manifest_path(name)
+        return pp.resolve() if pp.is_file() else None
+    if schema in MANIFEST_SCHEMAS:
+        pp = protected_manifest_path(name)
+        if pp.is_file():
+            return pp.resolve()
+    return root_file
+
+
+def find_manifest(cwd: str | Path) -> Path | None:
+    """Locate the manifest file read for cwd: the protected copy for a marked
+    root, the root file itself in the old layout, None when there is none."""
+    root_file = _find_root_file(cwd)
+    if root_file is None:
+        return None
+    return _resolve_manifest(root_file)
+
+
+def load_manifest(cwd: str | Path) -> dict | None:
+    """Locate and parse the manifest, validating schema version.
+
+    ``_manifest_path`` is the file actually loaded; ``_client_root`` is the
+    folder that holds the root file (marker or manifest).
+    """
+    root_file = _find_root_file(cwd)
+    if root_file is None:
+        return None
+    path = _resolve_manifest(root_file)
+    if path is None:
+        return None
+    data = _read_yaml(path)
+    if data is None:
+        return None
+    if data.get("schema") not in MANIFEST_SCHEMAS:
+        return None
+    data["_manifest_path"] = str(path)
+    data["_client_root"] = str(root_file.parent)
+    return data
+
+
+def workspace_root_for(name: str, cwd: str | Path | None = None) -> Path | None:
+    """The identity root of workspace ``name``: the folder whose marker (or
+    manifest) names it. Tries, in order, the cwd walk-up, the identity
+    shell's own ``TQ_WS``/``TQ_WS_ROOT``, then every ``<base>/<name>`` of the
+    bases registered in ``$TQ_HOME/config.yaml``."""
+    if cwd is not None:
+        data = load_manifest(cwd)
+        if data and _same_name(str(data.get("client", "")), name):
+            return Path(data["_client_root"]).resolve()
+    if _same_name(os.environ.get("TQ_WS", ""), name):
+        ws_root = os.environ.get("TQ_WS_ROOT", "")
+        if ws_root and (Path(ws_root) / ROOT_FILE).is_file():
+            return Path(ws_root).resolve()
+    for base in _registered_bases() or []:
+        root = base / name
+        if (root / ROOT_FILE).is_file():
+            return root.resolve()
+    return None
 
 
 def _extract_section(manifest: dict, key: str) -> dict:
@@ -221,18 +395,18 @@ def format_context_summary(context: dict, checks: list[dict]) -> str:
 
             if section == "git" and "email" in cmd:
                 warnings.append(
-                    f"\u26a0 Git email mismatch: current={actual}, expected={expected}"
-                    f'\n  \u2192 Fix: git config user.email "{expected}"'
+                    f"⚠ Git email mismatch: current={actual}, expected={expected}"
+                    f'\n  → Fix: git config user.email "{expected}"'
                 )
             elif section == "cloud":
                 warnings.append(
-                    f"\u26a0 Cloud check failed: expected={expected}, actual={actual}"
-                    f"\n  \u2192 Command: {cmd}"
+                    f"⚠ Cloud check failed: expected={expected}, actual={actual}"
+                    f"\n  → Command: {cmd}"
                 )
             else:
                 warnings.append(
-                    f"\u26a0 {section} check failed: expected={expected}, actual={actual}"
-                    f"\n  \u2192 Command: {cmd}"
+                    f"⚠ {section} check failed: expected={expected}, actual={actual}"
+                    f"\n  → Command: {cmd}"
                 )
 
     if warnings:

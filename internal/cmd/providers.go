@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -28,9 +29,11 @@ func newProvidersListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List providers in the catalog",
 		RunE: func(c *cobra.Command, _ []string) error {
-			cat, err := providers.Load()
-			if err != nil {
-				return err
+			// LoadAll reports every bad user file instead of aborting on the first (ADR-0007
+			// round 2), so a single broken file never hides the rest of the catalog.
+			cat, loadErrs := providers.LoadAll()
+			if cat == nil {
+				return fmt.Errorf("provider catalog: %v", loadErrs)
 			}
 			var ps []providers.Provider
 			if category != "" {
@@ -54,7 +57,23 @@ func newProvidersListCmd() *cobra.Command {
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, p.Category, cliCol, identity, p.Source)
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			// Overlaps between providers (the same entry, a host under another's) are
+			// reported, never silent (ADR-0007 rounds 2 and 3).
+			for _, o := range cat.Overlaps() {
+				fmt.Fprintf(c.ErrOrStderr(), "overlap: %s\n", o)
+			}
+			// A provider file tq did not load is an error: the list printed is not what the
+			// file says, so the command fails (ADR-0007 round 3).
+			for _, e := range loadErrs {
+				fmt.Fprintf(c.ErrOrStderr(), "error: %v\n", e)
+			}
+			if len(loadErrs) > 0 {
+				return fmt.Errorf("%d provider file(s) did not load; see the errors above", len(loadErrs))
+			}
+			return nil
 		},
 	}
 	c.Flags().StringVar(&category, "category", "", "filter by category")
@@ -180,9 +199,12 @@ func newProvidersAddCmd() *cobra.Command {
 	var force bool
 	c := &cobra.Command{
 		Use:   "add <id>",
-		Short: "Add or override a provider as a user file under providers/",
+		Short: "Add or override a provider as a user file under providers/ (human only)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := refuseAgent("tq providers add"); err != nil {
+				return err
+			}
 			id := args[0]
 
 			cat, err := providers.Load()
@@ -234,6 +256,9 @@ func newProvidersAddCmd() *cobra.Command {
 				p.Verify = &providers.VerifyCmd{Cmd: providers.Cmd{Args: fields}}
 			}
 
+			if err := humanGate(c, "tq providers add", "tq providers add: about to write "+filepath.Join(providers.UserDir(), id+".yaml")); err != nil {
+				return err
+			}
 			path, err := providers.WriteUser(p)
 			if err != nil {
 				return err

@@ -14,3 +14,13 @@ install:
     npm: "vercel"
 login:
   args: ["login"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [vercel, vc]
+  env: [VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID]
+  paths: ["~/.local/share/com.vercel.cli", "%APPDATA%/com.vercel.cli"]
+  hosts: [api.vercel.com]
+  mcp: [vercel]
+  mcp_packages: ["@vercel/mcp", "mcp/vercel"]
+  mcp_hosts: [mcp.vercel.com]

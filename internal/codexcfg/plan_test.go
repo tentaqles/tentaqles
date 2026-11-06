@@ -5,37 +5,45 @@ import (
 	"testing"
 )
 
-func TestPinnedFlags(t *testing.T) {
-	if got := strings.Join(Pinned.Flags(), " "); got != "-a on-request -s workspace-write" {
-		t.Fatalf("flags: %q", got)
-	}
-	if got := (Plan{}).Flags(); got != nil {
-		t.Fatalf("zero plan: %v", got)
-	}
-}
-
-func TestLaunchArgs(t *testing.T) {
-	p := Pinned
-	for _, tc := range []struct {
-		p    Plan
-		args []string
+// The launcher starts Codex with its full-bypass flag (PRD v2 §7.2, the
+// owner's decision of 2026-11-05), after a session subcommand that takes it
+// (codex 0.154: exec, e, resume, fork), and never sets how Codex asks: a
+// flag the developer typed that says how Codex should ask or sandbox, glued
+// forms included, wins and the line goes through as typed.
+func TestLaunchArgsInjectsTheBypassFlag(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
 		want string
 	}{
-		{p, []string{"hi"}, "-a on-request -s workspace-write hi"},
-		{p, []string{"exec", "hi"}, "-a on-request -s workspace-write exec hi"},
-		{p, []string{"-a", "never", "hi"}, "-s workspace-write -a never hi"},
-		{p, []string{"--ask-for-approval=never"}, "-s workspace-write --ask-for-approval=never"},
-		{p, []string{"-s", "read-only"}, "-a on-request -s read-only"},
-		{p, []string{"--sandbox=read-only"}, "-a on-request --sandbox=read-only"},
-		{p, []string{"-c", "sandbox_mode=\"read-only\""}, "-a on-request -c sandbox_mode=\"read-only\""},
-		{p, []string{"--config=approval_policy=\"never\""}, "-s workspace-write --config=approval_policy=\"never\""},
-		{p, []string{"--yolo"}, "--yolo"},
-		{p, []string{BypassFlag, "x"}, BypassFlag + " x"},
-		{p, []string{"--", "-a"}, "-a on-request -s workspace-write -- -a"},
-		{Plan{}, []string{"hi"}, "hi"},
+		{nil, BypassFlag},
+		{[]string{"hi"}, BypassFlag + " hi"},
+		{[]string{"exec", "hi"}, "exec " + BypassFlag + " hi"},
+		{[]string{"e", "hi"}, "e " + BypassFlag + " hi"},
+		{[]string{"resume", "--last"}, "resume " + BypassFlag + " --last"},
+		{[]string{"fork", "--last"}, "fork " + BypassFlag + " --last"},
+		{[]string{"--model", "x", "exec", "hi"}, "--model x exec " + BypassFlag + " hi"},
+		{[]string{"-m", "exec", "hi"}, BypassFlag + " -m exec hi"}, // exec is -m's value; hi is the prompt
+		{[]string{"--", "-a"}, BypassFlag + " -- -a"},
+		{[]string{"--full-auto"}, BypassFlag + " --full-auto"}, // not a 0.154 flag: codex says so itself
+		// The developer's own choice passes through unchanged.
+		{[]string{"-a", "never", "hi"}, "-a never hi"},
+		{[]string{"-anever", "hi"}, "-anever hi"},
+		{[]string{"-a=never"}, "-a=never"},
+		{[]string{"--ask-for-approval=on-request"}, "--ask-for-approval=on-request"},
+		{[]string{"-s", "read-only"}, "-s read-only"},
+		{[]string{"-sread-only"}, "-sread-only"},
+		{[]string{"exec", "--sandbox=read-only", "x"}, "exec --sandbox=read-only x"},
+		{[]string{"-c", `sandbox_mode="read-only"`}, `-c sandbox_mode="read-only"`},
+		{[]string{`-capproval_policy="never"`}, `-capproval_policy="never"`},
+		{[]string{`-c=approval_policy="never"`}, `-c=approval_policy="never"`},
+		{[]string{"--config=approval_policy=\"never\""}, "--config=approval_policy=\"never\""},
+		{[]string{BypassFlag, "hi"}, BypassFlag + " hi"},
+		{[]string{"--yolo"}, "--yolo"},
+		// A -c that is about something else adds the flag.
+		{[]string{"-cmodel=o3", "hi"}, BypassFlag + " -cmodel=o3 hi"},
 	} {
-		if got := strings.Join(LaunchArgs(tc.p, tc.args), " "); got != tc.want {
-			t.Errorf("%+v %v: got %q want %q", tc.p, tc.args, got, tc.want)
+		if got := strings.Join(LaunchArgs(c.in), " "); got != c.want {
+			t.Errorf("%q: got %q want %q", c.in, got, c.want)
 		}
 	}
 }

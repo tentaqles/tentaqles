@@ -71,11 +71,10 @@ func TestPreviewApply_RoundTrip(t *testing.T) {
 		Hooks: []string{"bash"},
 		Companies: []Company{
 			{
-				Name:           "acme",
-				GitName:        "Jane Doe",
-				GitEmail:       "jane@acme.com",
-				Identities:     []string{"claude", "gh"},
-				PermissionMode: "acceptEdits",
+				Name:       "acme",
+				GitName:    "Jane Doe",
+				GitEmail:   "jane@acme.com",
+				Identities: []string{"claude", "gh"},
 			},
 		},
 	}

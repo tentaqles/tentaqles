@@ -17,7 +17,7 @@ func SyncGit(cfg *registry.Config) error {
 	all, _ := resolve.ListWorkspaces(cfg)
 	roots := make([]string, 0, len(all))
 	for _, w := range all {
-		if !trust.IsTrusted(w.Hash) {
+		if !trust.IsTrusted(w.Name, w.Hash) {
 			continue
 		}
 		roots = append(roots, w.Root)

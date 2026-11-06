@@ -12,9 +12,30 @@ Tentaqles has two parts:
   identity preamble, the knowledge graph, skills that agents follow (prd,
   feature, fix, ship, the reviews) and five read-only reviewer agents.
 
-**Human-only** means the command refuses to run from an agent session. You run
-it yourself in your own terminal. That keeps decisions about trust and secrets
-with a person.
+**Human-only** means the command refuses to run from an agent session, and asks
+you to confirm before it writes. Every command that writes under `~/.tentaqles`
+or an identity's config folder is human-only: `tq init`, `tq add`, `tq allow`,
+`tq deny`, `tq hooks install|remove`, `tq settings render`, `tq bundle sync|capture`,
+`tq migrate`, `tq uninstall`, `tq setup`, `tq onboard`, `tq secret set|rm`,
+`tq providers add`, `tq login`, `tq run --off` and `tq worktrees prune`. Each one
+refuses, with no prompt, when stdin or stdout is not a terminal, when a harness
+(`claude`, `codex`, `opencode`, `kimi`, or a shell or runtime such as `node`,
+`bun`, `bash` or `pwsh` whose command line names one) is in the process tree,
+when that tree cannot be followed to a terminal, a login shell or the desktop
+shell (an orphaned child of a dead harness, a service), or when the environment
+carries a harness marker. Git Bash under mintty counts as a terminal (its MSYS2
+pty pipes are recognised). A terminal tq does not know by name is refused with
+the exact `tq settings anchors add <name>` line to run once. The error names
+the command and the detector, and one line goes to `~/.tentaqles/denials.jsonl`.
+When you run it yourself in a console terminal, it prints what it is about to
+write and asks `Type yes to continue:`; anything else exits 1 with nothing
+written. A dry run or a listing asks nothing. `--yes` never skips the
+confirmation. That keeps decisions about trust, secrets and tq's own files with
+a person. The reading side (`tq list`, `tq doctor`, `tq status`, `tq secret
+status`, `tq hooks status`, `tq bundle diff`, `tq worktrees list`) runs
+anywhere, except `tq status --denials`: it writes nothing but refuses an
+agent session (the denial log spans every identity), without needing a
+terminal, so you can pipe it.
 
 For more detail on a command, run `tq <command> --help`.
 
@@ -26,25 +47,27 @@ For more detail on a command, run `tq <command> --help`.
 
 | Command | What it does |
 |---|---|
-| `tq init <base>` | Registers a base folder (for example `C:\repos`). Each first-level subfolder becomes one client identity. |
-| `tq add <name>` | Creates a workspace folder with its manifest (`.tentaqles.yaml`), identity folders and git identity. |
-| `tq onboard` | A wizard that runs `tq add`, then records the company's chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |
-| `tq setup` | Creates several client workspaces at once from a plan file. |
+| `tq init <base>` | **Human-only.** Registers a base folder (for example `C:\repos`). Each first-level subfolder becomes one client identity. |
+| `tq add <name>` | **Human-only.** Creates a workspace folder with a name-only marker (`.tentaqles.yaml`), its manifest under `~/.tentaqles/identities/<name>/manifest.yaml`, identity folders and git identity, trusted once you confirm. |
+| `tq onboard` | **Human-only**, wizard and `--from` alike. A wizard that runs `tq add`, then records the company's chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |
+| `tq setup` | **Human-only**, wizard and `--from` alike. Creates several client workspaces at once from a plan file. `--yes` is accepted for older scripts but no longer skips the confirmation. |
 | `tq list` | Lists every workspace, whether it is trusted, its git email and its identities. |
-| `tq allow <name>` | **Human-only.** Trusts the workspace's manifest as it is now (by hash). Until then, tq exports nothing for that folder and blocks remote commands in it. Editing the manifest drops the trust. |
+| `tq allow <name>` | **Human-only.** Trusts the workspace as it is now: renders the identity's settings, then signs the integrity record over the manifest, the enforcing keys of the identity's Claude `settings.json` (`hooks`, `enabledPlugins`, MCP switches, `env`, `statusLine`), the installed plugin's hooks and scripts, the Codex hook files and the shims. Until then, tq exports nothing for that folder, blocks mutating git and remote commands in it, and every prompt says "tq: untrusted: run tq allow <name>". An edit to any covered file drops the trust (`tq hooks verify` says what changed). |
 | `tq deny <name>` | **Human-only.** Removes trust from a workspace. |
-| `tq login <cli>` | Runs a CLI's own login (gh, az, aws, ...) with its config stored in the workspace's private config folder. |
-| `tq run <ws> -- <cmd>` | Runs one command with another workspace's identity, without `cd`-ing into it. `tq run --off -- claude` starts Claude with no tq at all. |
-| `tq migrate` | Moves a hand-made tentaqles setup under tq's management. It only shows the plan; add `--apply` to do it. Every step is written to a journal. |
-| `tq uninstall --restore` | Undoes a migration by replaying its journal backwards. It lists the steps and changes nothing until you add `--yes`. |
-| `tq version` | Prints the tq version. |
+| `tq login <cli>` | **Human-only.** Runs a CLI's own login (gh, az, aws, ...) with its config stored in the workspace's private config folder. |
+| `tq run <ws> -- <cmd>` | Runs one command with another workspace's identity, without `cd`-ing into it (`tq run .` is the current folder's). An untrusted workspace, or one whose integrity record does not match, is refused with the reason: nothing launches without its identity. `tq run --off -- claude` (**human-only**) starts Claude with no tq at all. |
+| `tq migrate` | **Human-only with `--apply`.** Moves a hand-made tentaqles setup under tq's management. Without `--apply` it only shows the plan, and that dry run is free to run from a session; `--apply` refuses a session and asks for the confirmation. Every step is written to a journal. |
+| `tq migrate manifests` | **Human-only with `--apply`** (the dry run is free). Moves each identity's manifest out of its folder into `~/.tentaqles/identities/<name>/manifest.yaml`, leaving a name-only marker. It only shows the plan; `--apply` asks for the confirmation first. An identity keeps working as before until you run it; `tq doctor` says `manifest-in-root` meanwhile. |
+| `tq uninstall --restore` | **Human-only.** Undoes a migration by replaying its journal backwards. It lists the steps and changes nothing until you add `--yes`; with `--yes` you still type `yes` at the confirmation before the replay starts. |
+| `tq version` | Prints the tq version and the commit it was built from (`unknown (dev build)` for a local build). |
 
 ### Shell activation
 
 | Command | What it does |
 |---|---|
 | `tq activate <shell>` | Prints the code your shell profile runs at startup. It switches identity every time you change folder, and defines the `claude` and `codex` launchers. |
-| `tq hooks install\|remove\|status` | Adds the activation block to your shell profiles, removes it, or shows where it is installed. |
+| `tq hooks install\|remove\|status` | Adds the activation block to your shell profiles, removes it, or shows where it is installed. `install` and `remove` are **human-only**; `status` runs anywhere. |
+| `tq hooks verify [<ws>\|--all] [--accept]` | Checks the workspace's signed integrity record against the files it covers and prints the key id, "plugin tentaqles A -> B (N hook files changed)" when the plugin moved to a new version, and each change with its old and new hash (exit 1 on a mismatch). Without a name it checks the current folder's; `--all` checks every workspace. `--accept` is **human-only**: it prints the report, asks you to confirm, and signs the current state again. `--accept --all` lists the workspaces whose only change is a new plugin version that is, byte for byte, the release this tq was built from ("Matches the published release tentaqles <version> (<sha12>)", the commit `tq version` prints, read from the tentaqles marketplace clone), asks once, and signs them; anything else, a plugin release newer than tq (until tq is upgraded), a dev build of tq, or no clone with that commit, is "not accepted" and waits for `--accept <ws>`. |
 | `tq env` | Prints the environment changes for the current folder. The shell hook uses it; you rarely run it yourself. |
 | `claude` / `codex` | Launchers from the activation block. They start the agent with the folder's identity and with permission prompts skipped; tq blocks only identity drift and secret reads. |
 | `claude-off` / `codex-off` | Start the agent with no tq: no identity env, main logins, the plugin switched off. |
@@ -53,27 +76,29 @@ For more detail on a command, run `tq <command> --help`.
 
 | Command | What it does |
 |---|---|
-| `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. A manifest that carries a top-level block tq does not read gets a warning, never a failure. |
-| `tq providers list\|show\|check\|add` | The catalog of supported tools (cloud, git host, data, agents, chat). `check` shows which CLIs are installed. |
+| `tq doctor` | Checks hooks, trust, git identity, plugins, settings and the shell launcher against every manifest. It changes nothing. Each problem comes with the fix to run. `integrity` (an error, with `untrusted`) lists every covered file that changed since the record was signed, or says the key changed or the signature does not verify; `integrity-key-file` warns that the signing key is the plain-file fallback; `integrity-record-legacy` warns that a workspace is trusted through a marker of an older tq. A manifest that carries a top-level block tq does not read gets a warning, never a failure. |
+| `tq status [--denials [--last N] [--identity <ws>] [--category <c>]] [--json]` | Without `--denials`, the `tq doctor` report (`tq status` is its successor name; `tq doctor` stays). With `--denials` (**human-only read**: refuses an agent session, needs no terminal, writes nothing), the newest N entries of `~/.tentaqles/denials.jsonl` (20; `--last 0` for all), oldest first: time, identity, category/rule, layer (`hook`, `filesystem`, `human-only`), caller (`harness`, `subagent`, `no-tty`) and harness, tool, the redacted command and the first line of the reason. `--identity` and `--category` (`identity`, `secrets`, `self-protection`, `tq/guard-error`) filter; `--json` prints a JSON array. Every control character in every field is printed escaped (`\x1b`), so a logged string cannot drive your terminal. It reads `denials.jsonl.1` (the log rotates at 1 MiB) and `denials.jsonl` a line at a time. |
+| `tq providers list\|show\|check\|add` | The catalog of supported tools (cloud, git host, data, agents, chat). `check` shows which CLIs are installed. `add` writes a provider file under `~/.tentaqles/providers/` and is **human-only**. |
 | `tq secrets audit` | Finds secret-shaped values in agent config files, and `.env` files that git would commit. It shows only the path and line, never the value. |
-| `tq worktrees list` / `prune --yes` | Lists leftover git worktrees from agent runs. `prune` removes the ones that are clean, merged and old, and never forces. |
+| `tq worktrees list` / `prune --yes` | Lists leftover git worktrees from agent runs. `prune` (**human-only**) removes the ones that are clean, merged and old, and never forces; `--yes` selects the removal over the listing, then you confirm. |
 
 ### Agent settings and plugins
 
 | Command | What it does |
 |---|---|
-| `tq settings render [--all]` | Writes tq's part of each identity's Claude `settings.json`: baseline permissions, env, status line and hooks. It prints what changed. |
+| `tq settings render [--all]` | **Human-only** (except `--dry-run`, free from a session). Writes tq's part of each identity's Claude `settings.json`: baseline env, status line and hooks, and no permission setting (the first render after an upgrade removes the ones an older tq wrote, keeping yours). It prints what changed. `--dry-run` writes nothing and asks nothing. |
+| `tq settings anchors` / `add <exe>` / `remove <exe>` | Lists the terminal processes the human-only check accepts as a session root (built-in and yours, `~/.tentaqles/anchors.yaml`). `add` and `remove` are **human-only**; a refusal that says "cannot establish a human ancestry" prints the `add` line for your terminal. A shell, a runtime or a harness is never accepted. |
 | `tq bundle catalog` | Shows the shared catalog of plugins, skills and MCP servers. |
 | `tq bundle diff <ws>` | Shows how a workspace's installed plugins differ from its `claude.bundle`. |
-| `tq bundle sync <ws>` | Installs or removes plugins so the identity matches its bundle. |
-| `tq bundle capture` | Builds a bundle entry from an identity that is already set up. |
+| `tq bundle sync <ws>` | **Human-only.** Installs or removes plugins so the identity matches its bundle. |
+| `tq bundle capture` | **Human-only.** Builds a bundle entry from an identity that is already set up; `--write-catalog` asks before it adds the entries to the catalog. |
 
 ### Secrets
 
 | Command | What it does |
 |---|---|
 | `tq dotenv run [--file F] -- <cmd>` | Runs a command with a `.env` file loaded and replaces each value with `[REDACTED:NAME]` in the output. This is the only allowed way for an agent to use a `.env`. |
-| `tq secret set\|rm\|status` | **Human-only.** Stores git-host and issue-tracker tokens (GitHub, Azure DevOps, Jira, Linear, Asana) in the OS keychain. It never prints them. |
+| `tq secret set\|rm\|status` | Stores git-host and issue-tracker tokens (GitHub, Azure DevOps, Jira, Linear, Asana) in the OS keychain. It never prints them. `set` and `rm` are **human-only** (`set` reads the token from a hidden prompt on your terminal); `status` prints present or absent and runs anywhere. |
 
 ### Hooks the agent calls (you don't run these)
 
@@ -260,14 +285,34 @@ Change `tool_name` and `tool_input` for each row:
 | Tool call | Expected |
 |---|---|
 | `Bash`: `git status` | nothing printed, `exit 0` (allowed) |
-| `Read`: `file_path` = `...\.env` | `BLOCKED [tq/env-file-read]`, `exit 2` |
-| `Bash`: `cat .env` | `BLOCKED [tq/env-file-shell]`, `exit 2` |
-| `Bash`: `printenv` | `BLOCKED [tq/env-dump]`, `exit 2` |
-| `Bash`: `cat ~/.aws/credentials` | `BLOCKED [tq/secret-store-shell]`, `exit 2` |
+| `Read`: `file_path` = `...\.env` | `BLOCKED [secrets/tq/env-file-read]`, `exit 2` |
+| `Bash`: `cat .env` | `BLOCKED [secrets/tq/env-file-shell]`, `exit 2` |
+| `Bash`: `printenv` | `BLOCKED [secrets/tq/env-dump]`, `exit 2` |
+| `Bash`: `cat ~/.aws/credentials` | `BLOCKED [secrets/tq/secret-store-shell]`, `exit 2` |
 | `Bash`: `git push --force origin main` | nothing printed, `exit 0`: tq does not guard it; Claude's own permission settings do |
-| `Bash`: `git push` with `cwd` in an untrusted folder | `BLOCKED` with the `untrusted` reason, `exit 2` |
+| `Bash`: `git push` with `cwd` in an untrusted folder | `BLOCKED [identity/untrusted]`, `exit 2` |
+| `Bash`: `echo x > ~/.tentaqles/config.yaml` | `BLOCKED [self-protection/tq/protected-path]`, `exit 2` |
+| `Bash`: `tq allow acme` | `BLOCKED [self-protection/tq/human-only-command]`, `exit 2` |
 
-**Exit codes:** 0 with no output means allow; 2 means block. There is no ask.
+**Exit codes:** 0 with no output means allow; 2 means block. There is no ask,
+and a call tq cannot judge is blocked: a payload that is not valid JSON or
+names no `tool_name`, a guard crash, a decision slower than 6 s, a folder
+whose manifest tq cannot read (`BLOCKED [tq/guard-error]`), and a commit whose
+secret scan cannot finish (`BLOCKED [secrets/tq/commit-secret]`).
+
+Every block above is one line in the denial log. Read it yourself **(you)**,
+in your own terminal:
+
+```bash
+tq status --denials --last 5
+tq status --denials --category secrets --json
+```
+
+**Expected:** one entry per block, newest last, with the identity, the
+category and rule, the layer (`hook`, or `filesystem` for a protected path),
+the caller, the tool and the command, its values masked (a quoted string reads
+`"…"`, `GH_TOKEN=…`). From a Claude session the same command is refused as
+human-only.
 
 ### Step 6: secrets stay masked
 
@@ -283,11 +328,16 @@ masked, whatever its name).
 
 ### Step 7: human-only commands refuse agents
 
-Ask Claude in a session: "run `tq secret status`" (or `tq allow tentaqles`).
+Ask Claude in a session: "run `tq allow tentaqles`" (or `tq hooks install bash`,
+`tq settings render tentaqles`, `tq add shadow --git-email x@y.z`).
 
 **Expected:**
-`tq: human-only: run it in your own terminal ...`, exit 1.
-Run it yourself in a normal terminal **(you)** and it works.
+`tq: tq allow: human-only: run it in your own terminal (an agent session is refused) (env-marker: CLAUDECODE is set)`,
+exit 1, and a line with layer `human-only` appended to
+`~/.tentaqles/denials.jsonl` naming the command and the detector. Nothing is written anywhere else.
+Run it yourself in a console terminal **(you)**: it prints what it is about
+to write, asks `Type yes to continue:`, and proceeds only on `yes`. Pipe its
+stdin or redirect its stdout and it refuses with `tty: ...` instead.
 
 ### Step 8: agent settings
 
@@ -322,9 +372,12 @@ These need real accounts, so only you can run them:
   Codex too.
 - **Git host token:** run `tq secret set <ws> github`, then `tq secret status`.
   **Expected:** the token is listed as stored, and its value is never printed.
-- **Wrong identity:** in a Claude session inside a workspace, edit
-  `.tentaqles.yaml`, then ask it to `git push`. **Expected:** blocked as
-  `untrusted` until you run `tq allow <ws>` **(you)**.
+- **Wrong identity:** in a Claude session inside a workspace, edit the
+  manifest (`~/.tentaqles/identities/<ws>/manifest.yaml`; the folder's
+  `.tentaqles.yaml` is only a marker, unless the identity has not been
+  migrated yet and still holds the manifest there), then ask it to
+  `git push`. **Expected:** blocked as `untrusted` until you run
+  `tq allow <ws>` **(you)**.
 
 ### Quick troubleshooting
 

@@ -172,6 +172,13 @@ func maskQuoted(c string) string {
 	var q byte
 	for i := 0; i < len(b); i++ {
 		ch := b[i]
+		// A ${...} parameter expansion is one word, not a brace group: blank
+		// its braces so segmentSpans does not split `${HOME}/x` at them. The
+		// value is expanded later (internal/protect). Single quotes take it
+		// literally, so skip there.
+		if (q == 0 || q == '"') && ch == '$' && i+1 < len(b) && b[i+1] == '{' {
+			maskBraces(b, i+1)
+		}
 		switch q {
 		case 0:
 			switch ch {
@@ -201,6 +208,26 @@ func maskQuoted(c string) string {
 		}
 	}
 	return string(b)
+}
+
+// maskBraces blanks the braces of the ${...} expansion whose opening brace
+// is at index open (b[open]=='{'), matching nested braces, so sepRegexp does
+// not treat them as separators.
+func maskBraces(b []byte, open int) {
+	depth := 0
+	for j := open; j < len(b); j++ {
+		switch b[j] {
+		case '{':
+			depth++
+			b[j] = 0x01
+		case '}':
+			depth--
+			b[j] = 0x01
+			if depth == 0 {
+				return
+			}
+		}
+	}
 }
 
 func isSepByte(ch byte) bool {
@@ -438,7 +465,7 @@ func gitSegmentsDepth(c string, depth int) []gitInvocation {
 			covered[firstNonSpace(c, sp.start)] = true
 			if depth >= 3 {
 				// too deep to read: report an unreadable hidden commit so the
-				// commit and push rules ask
+				// commit scan denies (tq never asks, ADR-0006)
 				out = append(out, gitInvocation{GitInvocation: GitInvocation{Sub: "commit", Hidden: true}, start: sp.start},
 					gitInvocation{GitInvocation: GitInvocation{Sub: "push", Hidden: true}, start: sp.start})
 				continue
@@ -569,7 +596,7 @@ func existingDir(d string) error {
 
 // Dir returns the directory this git call acts on: cwd, then a leading
 // `cd <dir>` (first segment only), then every -C in order. It fails when the
-// directory cannot be known or does not exist: callers ask instead of
+// directory cannot be known or does not exist: callers deny instead of
 // scanning the wrong repository.
 func (g GitInvocation) Dir(cwd string) (string, error) {
 	switch {

@@ -56,6 +56,13 @@ _upath() {
 }
 
 # --- Resolve the tq binary ---
+# No environment variable picks the binary: an agent can set variables (a
+# settings env block, an export in the same shell), and the tq that
+# enforces must not be its choice. Nor does the plugin folder: the plugin
+# ships no binary, so nothing under it is ever run as tq. The order is PATH,
+# then the well-known install dirs; the tq found there is the user's and the
+# OS's to protect (Phase 3's shim folder decides which one an identity
+# shell runs).
 TQ=""
 
 _try() {
@@ -65,23 +72,11 @@ _try() {
   return 0
 }
 
-# 1. $TQ_BIN wins, but only if executable.
-if [ -n "${TQ_BIN:-}" ]; then
-  _try "$TQ_BIN" || { [ "$_win" = "1" ] && _try "${TQ_BIN}.exe"; }
-fi
+# 1. PATH.
+_found="$(command -v tq 2>/dev/null || true)"
+[ -n "$_found" ] && _try "$_found"
 
-# 2. Plugin-bundled binary.
-if [ -z "$TQ" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  _try "$CLAUDE_PLUGIN_ROOT/bin/tq" || { [ "$_win" = "1" ] && _try "$CLAUDE_PLUGIN_ROOT/bin/tq.exe"; }
-fi
-
-# 3. PATH.
-if [ -z "$TQ" ]; then
-  _found="$(command -v tq 2>/dev/null || true)"
-  [ -n "$_found" ] && _try "$_found"
-fi
-
-# 4/5. Well-known install dirs.
+# 2/3. Well-known install dirs.
 if [ -z "$TQ" ] && [ -n "${HOME:-}" ]; then
   _try "$HOME/.tentaqles/bin/tq" || { [ "$_win" = "1" ] && _try "$HOME/.tentaqles/bin/tq.exe"; }
 fi
@@ -89,7 +84,7 @@ if [ -z "$TQ" ] && [ -n "${HOME:-}" ]; then
   _try "$HOME/.local/bin/tq" || { [ "$_win" = "1" ] && _try "$HOME/.local/bin/tq.exe"; }
 fi
 
-# 6. Windows LocalAppData.
+# 4. Windows LocalAppData.
 if [ -z "$TQ" ] && [ "$_win" = "1" ] && [ -n "${LOCALAPPDATA:-}" ]; then
   _lad="$(_upath "$LOCALAPPDATA")"
   _try "$_lad/tentaqles/bin/tq.exe" || _try "$_lad/tentaqles/bin/tq"
@@ -102,10 +97,53 @@ fi
 # Run tq. Not exec'd so that a broken binary (126 "cannot execute" / 127 "not
 # found") can still fall through to the Python fallback; the child inherits
 # stdin, so the hook payload passes through unchanged.
+#
+# pre-tool-use fails closed (PRD v2 §6.3, ADR-0006): tq answers 0 (allow)
+# or 2 (deny). Any other status (a crash the Go runtime could not recover,
+# a killed process, a usage error) is a call tq did not judge, and Claude
+# Code would run it on a non-2 exit, so it becomes a deny here.
+#
+# A tq that hangs is stopped: Claude Code kills a hook at its timeout (15 s
+# in hooks.json) and then RUNS the call, so tq runs in the background under
+# a watchdog that stops it after _tq_deadline seconds (7, then a KILL at 8; tq's own decision
+# deadline is 6 s), and the stop is a deny. Only bash builtins, `sleep` and
+# `kill` are used (Git Bash, macOS, Linux; no GNU timeout). The background
+# job reads the hook's stdin through an explicit 0<&0, since bash gives an
+# asynchronous command /dev/null otherwise. TQ_HOOK_WRAPPER_DEADLINE may
+# only lower the deadline (tests); a larger value is ignored.
+_tq_deadline=7
+case "${TQ_HOOK_WRAPPER_DEADLINE:-}" in
+  ''|*[!0-9]*) ;;
+  *) [ "$TQ_HOOK_WRAPPER_DEADLINE" -ge 1 ] && [ "$TQ_HOOK_WRAPPER_DEADLINE" -lt "$_tq_deadline" ] && _tq_deadline="$TQ_HOOK_WRAPPER_DEADLINE" ;;
+esac
+
 if [ -n "$TQ" ]; then
-  "$TQ" claude-hook "$_event"
+  "$TQ" claude-hook "$_event" 0<&0 &
+  _tq_pid=$!
+  (
+    _i=0
+    while [ "$_i" -lt "$_tq_deadline" ]; do
+      sleep 1
+      kill -0 "$_tq_pid" 2>/dev/null || exit 0
+      _i=$((_i + 1))
+    done
+    kill "$_tq_pid" 2>/dev/null
+    sleep 1
+    kill -9 "$_tq_pid" 2>/dev/null
+  ) </dev/null >/dev/null 2>&1 &
+  _tq_watch=$!
+  wait "$_tq_pid"
   _status=$?
+  kill "$_tq_watch" 2>/dev/null
   if [ "$_status" != "126" ] && [ "$_status" != "127" ]; then
+    if [ "$_status" != "0" ] && [ "$_status" != "2" ]; then
+      if [ "$_event" = "pre-tool-use" ]; then
+        echo "BLOCKED [tq/guard-error]: tq exited with status ${_status} without a decision (a tq still running after ${_tq_deadline}s is stopped); tq denies a call it cannot judge. Report this to the developer instead of retrying; \`tq doctor\` shows what is wrong" >&2
+        exit 2
+      fi
+      echo "Tentaqles: tq did not print the session preamble (status ${_status}); run \`tq doctor\`."
+      exit 0
+    fi
     exit "$_status"
   fi
 fi

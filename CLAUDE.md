@@ -16,21 +16,57 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `wrong-cloud`, `neutral-remote`, `untrusted`, `env-drift`, `claude-config-drift`,
     `git-email-drift`, `gh-user`) and the shell tokenizer the hook uses.
   - `internal/policy/` — the five secret rules of `builtin.go` (`tq/secret-store-read`,
-    `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`) and
-    their evaluator; nothing else is a rule.
+    `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`), the
+    two self-protection rules of `selfprotect.go` (`tq/protected-path`,
+    `tq/human-only-command`, ADR-0005), the six identity rules of `identity.go` under
+    `guard: v2` (`policy.Scope`: `out-of-scope-cli`, `-env`, `-path`, `-host`, `-mcp`,
+    `other-identity`, read from the catalog's `match:` lists and `manifest.Scope()`,
+    ADR-0007) and their evaluator; nothing else is a rule. Every
+    rule carries its category (`identity`, `secrets`, `self-protection`); a deny reads
+    `BLOCKED [<category>/<rule>]`.
   - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `init`, `add`,
-    `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `bundle`,
+    `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `status`, `bundle`,
     `providers`, `setup`, `onboard`, `secret`, `secrets`, `settings`, `statusline`,
     `worktrees`, `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
-    `claudehook*.go`: `pre-tool-use` runs `guard.Decide`, then the secret rules plus
-    `tq/commit-secret` and `tq/cross-client-mcp`, with `tq/guard-error` as the fail-safe;
-    `session-start` prints the preamble. `humanonly.go` keeps `tq allow`, `tq deny`,
-    `tq secret` and `tq run --off` out of agent sessions (environment marker, no prompt).
-  - `internal/trust/` (manifest trust by file hash), `internal/manifest/` (the manifest;
-    a top-level block tq does not know is recorded as dropped, never read),
-    `internal/registry/`, `internal/resolve/`, `internal/workspace/`, `internal/paths/`,
-    `internal/envplan/`, `internal/shell/` (activation hooks and the `claude`/`codex`
-    launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
+    `claudehook*.go`: `pre-tool-use` runs `guard.Decide` (identity), the provider-scope
+    rules under `guard: v2` (`claudehook_scope.go`), then the secret rules
+    plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
+    the protected path set of the run (`claudehook_protect.go`), first category that
+    denies wins; there is no ask, and a call it cannot judge (an unreadable payload, a
+    panic, the 6 s deadline, an unreadable registry or manifest) is denied as
+    `tq/guard-error` (ADR-0006); every deny is one line in `$TQ_HOME/denials.jsonl`, the
+    command redacted by `audit.RedactCommand`, read by `tq status --denials`; `session-start` prints the preamble. `humanonly.go` is the thin wrapper over
+    `internal/humanonly` (`refuseAgent`, `humanGate`) that every command writing under
+    `paths.Home()` or an identity dir calls.
+  - `internal/markers/` — the one list of harness environment markers; `internal/paths`
+    (TQ_HOME ignored under a marker) and `internal/humanonly` both read it.
+  - `internal/humanonly/` — the human-only check of PRD v2 §8.1 (ADR-0003): three
+    detectors (`IsTerminal` on stdin and stdout, the process-tree walker `Walk` with a
+    per-OS `parentOf` in `proctree_*.go`, the `Markers` list), a refusal logged to
+    `$TQ_HOME/denials.jsonl` through `audit.AppendDenial`, and the typed-yes `Gate`
+    read from the controlling terminal. The seams `IsTerminal`, `ParentOf` and
+    `Confirm` are what tests replace (`internal/cmd/main_test.go` sets the human
+    baseline for the whole cmd suite).
+  - `internal/trust/` (the signed integrity record per workspace, `trust/<name>.json`:
+    manifest, marker, the enforcing keys of the Claude settings (`settings.json#tq`), the
+    tentaqles entry of `installed_plugins.json`, the loaded plugin folder but its skills,
+    agents, templates, tests and caches, Codex hook files and shims, under an HMAC whose
+    key is in the OS keychain; only the roots are resolved; every signature passes
+    `HumanCheck`; `tq deny` leaves a signed tombstone; legacy markers count only from the
+    signed snapshot `trust/legacy.json`, never once `trust/.signed` exists without it;
+    ADR-0004), `internal/manifest/` (the manifest,
+    read from `~/.tentaqles/identities/<ws>/manifest.yaml` with a name-only marker
+    `.tentaqles.yaml` in the workspace root, or from the root itself for an identity not
+    yet migrated with `tq migrate manifests`, ADR-0002; a top-level block tq does not
+    know is recorded as dropped, never read), `internal/protect/` (the state folder
+    private to the user: modes, and on Windows the one icacls run `tq doctor` reports as
+    `protected-acl`; `pathset.go`, the protected path set of PRD v2 §8.2 the hook's
+    `tq/protected-path` matches against), `internal/registry/`, `internal/resolve/` (which file is the
+    manifest, both layouts), `internal/workspace/`, `internal/paths/`,
+    `internal/envplan/` (the env diff, and under `guard: v2` the identity PATH, the PATH
+    mask and the out-of-scope variables unset, ADR-0008), `internal/mcpscope/` (the
+    out-of-scope MCP servers removed from the identity's Claude and Codex homes),
+    `internal/shell/` (activation hooks and the `claude`/`codex` launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
     `internal/doctor/`, `internal/setup/` and `internal/onboard/` (`tq setup`,
     `tq onboard`), `internal/migrate/`, `internal/bundle/`, `internal/providers/` (the
     embedded catalog), `internal/claudesettings/`, `internal/codexcfg/`,
@@ -74,11 +110,119 @@ need no ticket.
 ## Must not trade off
 From `docs/threat-model.md`; each line names the test that keeps it.
 - Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.
+- Under `guard: v2` everything outside the identity's provider scope is denied in every
+  tool (CLI by name, path, wrapper, `python -m`; variables; credential paths; API hosts; MCP
+  servers; other identities' roots), before secrets, with a message naming the scope; the
+  same identity's in-scope CLIs and ordinary dev commands pass; without the flag the v1
+  rules are unchanged: `TestPreToolUse_ScopeReferenceScenario`, `TestPreToolUse_ScopeRuleOrder`,
+  `TestPreToolUse_ScopeV1Unchanged`, `TestScope_OutOfScopeCLI`, `TestScope_OutOfScopeEnv`,
+  `TestScope_OutOfScopePath`, `TestScope_OutOfScopeHost`, `TestScope_OutOfScopeMCP`,
+  `TestScope_OtherIdentity`, `TestScope_InScopeWins`, `TestCatalogMatchLists`,
+  `TestUserOverrideExtendsMatch`.
+- Under `guard: v2` the scope is provider-specific (a shared CLI is owned per subcommand, a
+  user file can only widen denial, a new user id may not claim a built-in's entry), a folder
+  whose manifest cannot be read denies every tool with `tq/guard-error`, a bad user provider
+  file keeps the built-in lists (an override) or denies only where the scope names it (a new
+  id), a PowerShell line is split into commands with PowerShell's quoting as well as bash's,
+  and grep patterns / commit messages / data here-strings stay text, by each shell's own
+  quoting, while real expansions and run or sent here-strings are scanned: `TestScope_EveryProvider` (every entry of every
+  list), `TestScope_SharedCLIPrecision`, `TestScope_UserOverrideCannotAllow`,
+  `TestScope_MCPExactAllowAndPrecedence`, `TestScope_Mutants`, `TestScope_Round3Missed`,
+  `TestScope_Round3FalsePositives`, `TestScope_PerShellQuoting`, `TestMaskTextArgs_FailClosed`,
+  `TestScope_PowerShellCommandSplitting`, `TestSelfProtection_PowerShellCommandSplitting`,
+  `TestScope_HereStringsAndHeredocsAsCode`, `TestScope_HostPaths`, `TestScope_GitTransport`,
+  `TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFiles`,
+  `TestPreToolUse_GuardMappingIsV1`.
+- Under `guard: v2` the §6.1 scenario also fails before the hook (ADR-0008): an
+  out-of-scope CLI does not resolve on the identity PATH (its folder dropped, or masked by
+  a stub in a shared folder) while in-scope CLIs do, its variables are unset, leaving the
+  folder restores PATH and variables exactly, `tq run` resolves on the identity PATH, the
+  render leaves no out-of-scope MCP server in the identity's Claude and Codex homes and
+  never touches one that matches no provider, the mask folder is used only as tq wrote it,
+  and the preamble states the scope: `TestEnv_ScopeReferenceScenario_PATH`,
+  `TestSettingsRender_ScopeReferenceScenario_MCP`, `TestSessionStart_ScopeLine`,
+  `TestEnv_ScopeLayerRestoreAndV1`, `TestPathLayer_ScenarioAwsNotOnPath`,
+  `TestPathLayer_SharedDirIsMasked`, `TestPathLayer_TamperedMaskIsNotUsed`,
+  `TestLayer_EnterAndLeaveRestoresExactly`, `TestPathSyntax_MSYS`, `TestFilterClaude`,
+  `TestFilterCodex`; round 2: the state fits cmd.exe and every shell restores byte for byte,
+  the mask answers every spelling and comes back once fixed, generic tools' variables and
+  ambiguous names are left alone, MCP servers are attributed by their config entry at render
+  and in the hook: `TestEnv_ScopeReferenceScenario_SharedFolder`,
+  `TestEnv_ScopeReferenceScenario_CmdExe`, `TestPathLayer_MaskCoversEverySpelling`,
+  `TestPathLayer_MaskComesBack`, `TestState_FitsCmdLine`, `TestEmit_Cmd_RoundTripsEveryCharacter`,
+  `TestPreToolUse_MCPJudgedByConfigEntry`, `TestOutOfScopeMCPEntry`,
+  `TestOutOfScopeEnv_SkipsGenericTools`; round 3: a same-named server is denied when any
+  source's entry is out of scope, every vendor fixture is attributed, a lost state fails
+  closed: `TestOutOfScopeMCPEntry_VendorFixtures`, `TestScope_MCPSameNameAnySourceDenies`,
+  `TestEntries`, `TestEntries_RemovedStillJudged`, `TestLostState_FailsClosed`,
+  `TestUnrecorded`, `TestEmit_Cmd_LineBudget`, `TestPathLayer_StubIsTheTQBinary`; round 4:
+  `TestEnv_UnicodePathFoldersRoundTrip`, `TestMCPVendorsHaveMCPData`,
+  `TestOutOfScopeMCPEntry_Round3Fixtures`, `TestFilterCodex_CredentialFields`,
+  `TestPluginServers_EveryShape`, `TestLostState_HarnessMissingStateIsLost`; the hybrid MCP
+  list: `TestJudgeMCP_Hybrid`, `TestScope_MCPHybridInTheHook`, `TestJudgeMCP_FixtureKeptSets`,
+  `TestSettingsRender_HybridMCP`, `TestMCPGeneral`, `TestMCPAllow`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
-- Trust is human-only: `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`.
+- Trust is human-only, and so is every tq write under `$TQ_HOME` or an identity dir:
+  `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`,
+  `TestHumanOnlyCommandsRefuseWithMarkerAndLog`, `TestAddConfirmsBeforeWriting`, and the
+  detector tests of `internal/humanonly` (`TestTTYDetector`, `TestProcessTreeDetector`,
+  `TestEnvMarkerDetector`, `TestGateConfirms`), `TestHooksVerify_ReportExitAndAccept`.
 - An edited manifest loses its trust: `TestEditedManifestLosesTrust`.
+- A session cannot read or write tq's state, nor write the root marker, the installed
+  plugin, the tq binary or tq's keychain entry, by any tool, nor run a human-only tq verb
+  in the shell; the categories run blocked_commands → identity → secrets →
+  self-protection and every deny is logged: `TestProtectedPaths_Table`,
+  `TestProtectedPaths_RuleOrder`, `TestProtectedPaths_Codex`, `TestKeychainWrite`.
+- The integrity record is signed and covers the hooks, the enforcing settings keys and the
+  shims; a mismatch is at least as strict as untrusted (the hook denies mutating git and
+  remote commands), withholds the identity and refuses the launch; a signed workspace never
+  falls back to a legacy marker; only a human signs:
+  `TestFlippedByteFailsVerification`, `TestPluginHookChangesAreNamed`,
+  `TestPreToolUse_IntegrityMismatchDeniesRemoteAndGit`, `TestRun_RefusesOnIntegrityMismatch`,
+  `TestEnv_NoIdentityAndOneNoticeOnMismatch`, `TestLegacyDowngradeIsUntrusted`,
+  `TestSigningRefusesUnderAHarnessProcessTree`.
+- The plugin hook never takes the enforcing binary from the environment:
+  `test_tq_bin_is_not_honoured`, `test_tq_hook_never_runs_a_tq_from_the_plugin_folder`;
+  Python never reads bytecode next to the plugin's sources:
+  `test_a_forged_pyc_next_to_the_sources_is_not_loaded`.
+- A batch accept signs only a plugin folder that is, byte for byte, the release tq was built
+  from (the commit in the binary, never the clone's pin):
+  `TestCheckReleaseComparesBytesNotLocation`, `TestARepinnedCloneIsRefused`,
+  `TestHooksVerify_AcceptAllSignsThePublishedReleaseOnly`, `TestReleaseBuildInjectsTheCommit`.
+- The guard reads the manifest from the protected location only; a marker that names
+  another workspace, or has no protected copy, resolves neutral:
+  `TestResolve_MarkerClientMismatch_Neutral`, `TestResolve_MarkerWithoutProtectedManifest_Neutral`.
+- A trusted manifest copied into another folder lends it nothing (the manifest's `client`
+  must be the folder name; trust is keyed by name and hash), and `TQ_HOME` is ignored in
+  an agent session: `TestResolve_ReplayOfATrustedManifest_Neutral`,
+  `TestTrustIsKeyedByWorkspaceName`, `TestHome_IgnoresTQHomeUnderAnAgentMarker`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
+- The hook has no ask and fails closed: a payload it cannot read, a guard panic, the
+  deadline, an unreadable registry or manifest, and an incomplete commit scan all deny:
+  `TestNoAskCodePath`, `TestNoAskVerdict`, `TestPreToolUse_MalformedPayloadDenies`,
+  `TestPreToolUseGuardPanicDenies`, `TestPreToolUse_TimeoutDenies`,
+  `TestPreToolUse_UnreadableRegistryDenies`, `TestPreToolUse_MissingOrBrokenManifestDenies`,
+  `TestPreToolUseIncompleteScanDeniesBothAgents`, `TestPreToolUse_FieldTypesDeny`,
+  `TestPreToolUse_GoneManifestWithEvidenceDenies`, `TestNoAskAnswerInAnyOutput`,
+  `TestRunMainHookErrorsDeny`, `TestRunMainWatchdogDenies`, `TestCodexHookResolves`,
+  `test_unreadable_payload_denies`, `test_tq_hook_turns_a_tq_without_decision_into_a_deny`,
+  `test_tq_hook_stops_a_hanging_tq_and_denies`, `test_fallback_never_answers_ask`.
+- Every hook deadline is under the shortest harness hook timeout (a harness runs a call whose
+  hook it killed): `TestHookDeadlinesUnderHarnessTimeouts`,
+  `test_tq_hook_deadline_is_under_the_hook_timeout`.
+- Every deny is logged with identity, caller, tool, rule, category and layer, and the logged
+  command carries no secret tq can recognise; only a human reads the log:
+  `TestDenialLogSchema`, `TestDenialLogRedaction`, `TestRedactCommandLeakCorpus` (0 leaks),
+  `TestAppendDenialMasksEveryField`, `TestStatusDenialsRefusesAgent`,
+  `TestStatusDenialsEscapesControlCharacters`, `TestDenialLogRotatesAndStreams`.
+- tq writes no permission setting of the harness, cleans the ones it wrote, and an old
+  manifest with `claude.permission_mode`/`claude.permissions` still loads (PRD v2 §7.2,
+  §13): `TestRenderFreshWritesNoPermissionKey`, `TestRenderCleansWhatTheOldRenderWrote`,
+  `TestRenderWritesNoConfigKeys`, `TestLoadRecordsDroppedClaudeKeys`,
+  `TestRenderKeepsADefaultModeTheEvidenceDoesNotName`, `TestRenderCorruptStateClaimsNothing`,
+  `TestRenderMarkerVariants`, `TestNothingWrittenNamesAPermissionMode`; the Codex launcher
+  adds only the full-bypass flag: `TestLaunchArgsInjectsTheBypassFlag`.
 
 ## Project config
 CI's `go` job runs `go vet ./...`, `go test ./... -count=1` and a build; locally run
@@ -87,7 +231,8 @@ CI's `go` job runs `go vet ./...`, `go test ./... -count=1` and a build; locally
 `[Unreleased]`; a change under `plugin/` also gets its line in `plugin/CHANGELOG.md`, and the
 root entry is then one pointer line.
 
-A change under `internal/guard/`, `internal/policy/`, `internal/trust/`, `internal/hooks/`,
+A change under `internal/guard/`, `internal/policy/`, `internal/trust/`, `internal/humanonly/`,
+`internal/markers/`, `internal/protect/`, `internal/hooks/`,
 `plugin/hooks/`, `plugin/scripts/tq_hook.sh`, `.github/workflows/`,
 `.goreleaser.yaml`, `.claude-plugin/marketplace.json` or `installers/` crosses a trust
 boundary of `docs/threat-model.md` and needs an ADR under `docs/adr/` (template:

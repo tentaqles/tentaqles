@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/hooks"
@@ -18,12 +19,25 @@ func shellArgs(args []string, allDetected bool, profiles hooks.Profiles) []hooks
 	return shells
 }
 
+// profilesOf names the profile file of each shell, for the confirmation line.
+func profilesOf(shells []hooks.Shell, profiles hooks.Profiles) string {
+	names := make([]string, 0, len(shells))
+	for _, sh := range shells {
+		p := profiles[sh]
+		if p == "" {
+			p = string(sh) + " (no profile)"
+		}
+		names = append(names, p)
+	}
+	return strings.Join(names, ", ")
+}
+
 func newHooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hooks",
-		Short: "Manage tq's shell activation hook in your profile files",
+		Short: "Manage tq's shell activation hook in your profile files (install and remove are human only)",
 	}
-	cmd.AddCommand(newHooksStatusCmd(), newHooksInstallCmd(), newHooksRemoveCmd())
+	cmd.AddCommand(newHooksStatusCmd(), newHooksInstallCmd(), newHooksRemoveCmd(), newHooksVerifyCmd())
 	return cmd
 }
 
@@ -47,12 +61,18 @@ func newHooksInstallCmd() *cobra.Command {
 	var allDetected bool
 	cmd := &cobra.Command{
 		Use:   "install [shell...]",
-		Short: "Install tq's activation block into shell profile(s)",
+		Short: "Install tq's activation block into shell profile(s) (human only)",
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := refuseAgent("tq hooks install"); err != nil {
+				return err
+			}
 			profiles := hooks.ProfilesFn()
 			shells := shellArgs(args, allDetected, profiles)
 			if len(shells) == 0 {
 				return fmt.Errorf("specify one or more shells, or pass --all-detected")
+			}
+			if err := humanGate(c, "tq hooks install", "tq hooks install: about to write the tq activation block into "+profilesOf(shells, profiles)); err != nil {
+				return err
 			}
 			w := c.OutOrStdout()
 			for _, sh := range shells {
@@ -73,12 +93,18 @@ func newHooksRemoveCmd() *cobra.Command {
 	var allDetected bool
 	cmd := &cobra.Command{
 		Use:   "remove [shell...]",
-		Short: "Remove tq's activation block from shell profile(s)",
+		Short: "Remove tq's activation block from shell profile(s) (human only)",
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := refuseAgent("tq hooks remove"); err != nil {
+				return err
+			}
 			profiles := hooks.ProfilesFn()
 			shells := shellArgs(args, allDetected, profiles)
 			if len(shells) == 0 {
 				return fmt.Errorf("specify one or more shells, or pass --all-detected")
+			}
+			if err := humanGate(c, "tq hooks remove", "tq hooks remove: about to remove the tq activation block from "+profilesOf(shells, profiles)); err != nil {
+				return err
 			}
 			w := c.OutOrStdout()
 			for _, sh := range shells {

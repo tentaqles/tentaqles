@@ -86,11 +86,93 @@ def test_string_tool_input():
     assert p.returncode == 2
 
 
-def test_malformed_stdin_allows():
+@pytest.mark.parametrize(
+    "raw",
+    ["not json", "", "[]", "null", '"Bash"', "{}", '{"tool_name": ""}', '{"tool_name": 7}', '{"tool_input": {"command": "ls"}}'],
+)
+def test_unreadable_payload_denies(raw):
+    """Fail closed (PRD v2 §6.3, ADR-0006): a payload the fallback cannot read is denied."""
     p = subprocess.run(
-        [sys.executable, str(GUARD)], input="not json", capture_output=True, text=True
+        [sys.executable, str(GUARD)], input=raw, capture_output=True, text=True
     )
-    assert p.returncode == 0
+    assert p.returncode == 2
+    assert "BLOCKED [tq/guard-error]" in p.stderr
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize("status", [1, 3, 134, 137])
+def test_tq_hook_turns_a_tq_without_decision_into_a_deny(tmp_path, status):
+    """pre-tool-use: tq answers 0 or 2; any other exit (a crash, a kill) denies."""
+    fake = tmp_path / "tq"
+    fake.write_text("#!/bin/sh\ncat >/dev/null; exit %d\n" % status)
+    fake.chmod(0o755)
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))  # the fake tq is on PATH
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input='{"tool_name":"Bash"}', capture_output=True, text=True, env=env
+    )
+    assert p.returncode == 2
+    assert "BLOCKED [tq/guard-error]" in p.stderr
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c.get("name", c["command"])[:40] for c in CASES])
+def test_fallback_never_answers_ask(case):
+    """The fallback guard answers by exit code only (0 or 2) and never prints a
+    permission decision, let alone an ask (PRD v2 §6.3)."""
+    p = run_guard(case["command"])
+    assert p.returncode in (0, 2)
+    assert "ask" not in p.stdout.lower()
+    assert "permissionDecision" not in p.stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_tq_hook_stops_a_hanging_tq_and_denies(tmp_path):
+    """A tq that hangs is stopped before the harness timeout and the call is denied
+    (Claude Code runs a call whose hook it killed). The fake reads stdin first, so
+    the payload reaches the background tq."""
+    import time
+
+    fake = tmp_path / "tq"
+    # exec: tq is one process; a stopped tq leaves nothing holding the pipes.
+    fake.write_text("#!/bin/sh\ncat >/dev/null; exec sleep 30\n")
+    fake.chmod(0o755)
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT), TQ_HOOK_WRAPPER_DEADLINE="2")
+    start = time.monotonic()
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input='{"tool_name":"Bash"}', capture_output=True, text=True, env=env,
+        timeout=20,
+    )
+    elapsed = time.monotonic() - start
+    assert p.returncode == 2, (p.returncode, p.stderr)
+    assert "BLOCKED [tq/guard-error]" in p.stderr
+    assert elapsed < 10, elapsed
+
+
+def test_tq_hook_deadline_is_under_the_hook_timeout():
+    """The wrapper's own deadline (plus the one second its kill takes) stays under
+    the PreToolUse timeout of hooks.json, and a larger override is ignored."""
+    import re
+
+    src = HOOK.read_text(encoding="utf-8")
+    deadline = int(re.search(r"^_tq_deadline=(\d+)$", src, re.M).group(1))
+    hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    timeouts = [h["timeout"] for g in hooks["hooks"]["PreToolUse"] for h in g["hooks"] if "tq_hook.sh" in h["command"]]
+    # TERM at the deadline, KILL a second later, and 5 s of margin for slow forks.
+    assert timeouts and deadline + 1 + 5 <= min(timeouts), (deadline, timeouts)
+    assert '-lt "$_tq_deadline"' in src  # an override can only lower it
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize("status", [0, 2])
+def test_tq_hook_passes_a_decision_through(tmp_path, status):
+    fake = tmp_path / "tq"
+    fake.write_text("#!/bin/sh\ncat >/dev/null; exit %d\n" % status)
+    fake.chmod(0o755)
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input='{"tool_name":"Bash"}', capture_output=True, text=True, env=env
+    )
+    assert p.returncode == status
+    assert "guard-error" not in p.stderr
 
 
 def test_guard_does_not_import_tentaqles():
@@ -105,7 +187,6 @@ def test_guard_does_not_import_tentaqles():
 def test_tq_hook_falls_back_when_tq_missing(tmp_path):
     env = hook_env(
         tmp_path,
-        TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -126,7 +207,6 @@ def test_tq_hook_falls_back_when_tq_missing(tmp_path):
 def test_tq_hook_session_start_fallback_message(tmp_path):
     env = hook_env(
         tmp_path,
-        TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -168,7 +248,6 @@ def test_tq_hook_blocks_when_no_python(tmp_path):
     env = hook_env(
         tmp_path,
         with_python=False,
-        TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -200,7 +279,6 @@ def _no_python_env(tmp_path):
     env = hook_env(
         tmp_path,
         with_python=False,
-        TQ_BIN=str(tmp_path / "nope"),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -238,10 +316,11 @@ def test_hooks_json_pretooluse_matcher_covers_shell_file_and_mcp_tools():
         e for e in hooks["hooks"]["PreToolUse"] if "tq_hook.sh" in e["hooks"][0]["command"]
     )
     rx = re.compile(entry["matcher"])
-    # Agent launches reach tq for subagent model routing (tq decide).
-    for tool in ("Bash", "PowerShell", "Read", "Edit", "Write", "MultiEdit", "Grep", "Agent", "mcp__n8n__x"):
+    # Agent launches reach tq for subagent model routing (tq decide); Glob is
+    # guarded like Grep (a read that can point into a protected path, ADR-0005).
+    for tool in ("Bash", "PowerShell", "Read", "Edit", "Write", "MultiEdit", "Grep", "Glob", "Agent", "mcp__n8n__x"):
         assert rx.search(tool), tool
-    for tool in ("Glob", "TodoWrite", "WebFetch", "AgentX"):
+    for tool in ("TodoWrite", "WebFetch", "AgentX"):
         assert not rx.search(tool), tool
 
 
@@ -258,12 +337,11 @@ def test_tq_hook_unknown_event_blocks(tmp_path):
 @pytest.mark.skipif(BASH is None, reason="needs bash")
 def test_tq_hook_falls_through_when_tq_not_executable(tmp_path):
     """A resolved-but-unrunnable tq (exit 126/127) must fall back, not pass."""
-    broken = tmp_path / "tq"
+    broken = tmp_path / "tq"  # found on PATH (hook_env puts tmp_path there)
     broken.write_text("not-an-executable" + chr(10))
     broken.chmod(0o755)
     env = hook_env(
         tmp_path,
-        TQ_BIN=str(broken),
         HOME=str(tmp_path),
         LOCALAPPDATA=str(tmp_path),
         USERPROFILE=str(tmp_path),
@@ -286,7 +364,7 @@ def test_tq_hook_execs_tq_when_present(tmp_path):
     fake = tmp_path / "tq"
     fake.write_text('#!/bin/sh\necho "argv:$*"; cat; exit 0\n')
     fake.chmod(0o755)
-    env = hook_env(tmp_path, TQ_BIN=str(fake), CLAUDE_PLUGIN_ROOT=str(ROOT))
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))  # the fake tq is on PATH
     p = subprocess.run(
         [BASH, str(HOOK), "session-start"],
         input="{}",
@@ -326,10 +404,89 @@ def test_tq_hook_refuses_the_retired_events(tmp_path, event):
     fake = tmp_path / "tq"
     fake.write_text('#!/bin/sh\necho ran\n')
     fake.chmod(0o755)
-    env = hook_env(tmp_path, TQ_BIN=str(fake), CLAUDE_PLUGIN_ROOT=str(ROOT))
+    env = hook_env(tmp_path, CLAUDE_PLUGIN_ROOT=str(ROOT))  # the fake tq is on PATH
     p = subprocess.run(
         [BASH, str(HOOK), event], input="{}", capture_output=True, text=True, env=env
     )
     assert p.returncode == 2
     assert "unknown event '" + event + "'" in p.stderr
     assert "ran" not in p.stdout
+
+
+# --- self-protection in the fallback (ADR-0005) ------------------------------
+
+
+def _run_tool(tmp_path, tool, tool_input, cwd=None):
+    """Run the fallback guard with HOME/USERPROFILE pointed at tmp_path."""
+    payload = {"cwd": cwd or str(tmp_path / "work"), "tool_name": tool, "tool_input": tool_input}
+    env = dict(os.environ, TQ_FALLBACK="1", HOME=str(tmp_path), USERPROFILE=str(tmp_path))
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    return subprocess.run(
+        [sys.executable, str(GUARD)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _fallback_protected_cases(tmp_path):
+    state = tmp_path / ".tentaqles"
+    plugin = tmp_path / ".claude" / "plugins" / "cache" / "tentaqles" / "tentaqles" / "0.16.0"
+    work = tmp_path / "work"
+    return [
+        # (tool, tool_input, blocked)
+        ("Write", {"file_path": str(state / "config.yaml"), "content": "x"}, True),
+        ("Edit", {"file_path": str(state / "identities" / "acme" / "manifest.yaml")}, True),
+        ("MultiEdit", {"file_path": str(state / "trust" / "acme" / "abc"), "edits": []}, True),
+        ("NotebookEdit", {"notebook_path": str(state / "x.ipynb")}, True),
+        ("Read", {"file_path": str(state / "identities" / "acme" / "manifest.yaml")}, True),
+        ("Grep", {"pattern": "x", "path": str(state)}, True),
+        ("Write", {"file_path": str(plugin / "hooks" / "hooks.json")}, True),
+        ("Edit", {"file_path": str(plugin / "scripts" / "tq_hook.sh")}, True),
+        ("Read", {"file_path": str(plugin / "skills" / "ship" / "SKILL.md")}, False),
+        ("Bash", {"command": "echo x > ~/.tentaqles/config.yaml"}, True),
+        ("Bash", {"command": "rm -rf $HOME/.tentaqles/trust"}, True),
+        ("Bash", {"command": "cat ~/.tentaqles"}, True),
+        ("PowerShell", {"command": "Remove-Item -Recurse $env:USERPROFILE\\.tentaqles\\trust"}, True),
+        ("Bash", {"command": "cp mine.json " + str(plugin / "hooks" / "hooks.json")}, True),
+        ("Write", {"file_path": str(work / "notes.md")}, False),
+        ("Read", {"file_path": str(work / ".tentaqles.yaml")}, False),
+        ("Bash", {"command": "cat .tentaqles.yaml"}, False),
+        ("Bash", {"command": "ls -la ~/.tentaqles-other"}, False),
+        ("Bash", {"command": "ls -la"}, False),
+    ]
+
+
+def test_fallback_denies_protected_paths(tmp_path):
+    for tool, tool_input, blocked in _fallback_protected_cases(tmp_path):
+        p = _run_tool(tmp_path, tool, tool_input)
+        assert (p.returncode == 2) == blocked, (tool, tool_input, p.stderr)
+        if blocked:
+            assert p.stderr.startswith("BLOCKED [self-protection/tq/protected-path]: "), p.stderr
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_tq_hook_fallback_protects_the_state_folder(tmp_path):
+    """Through tq_hook.sh with tq missing: a Write under ~/.tentaqles is denied."""
+    env = hook_env(
+        tmp_path,
+        TQ_BIN=str(tmp_path / "nope"),
+        HOME=str(tmp_path),
+        LOCALAPPDATA=str(tmp_path),
+        USERPROFILE=str(tmp_path),
+        CLAUDE_PLUGIN_ROOT=str(ROOT),
+    )
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    payload = json.dumps(
+        {
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(tmp_path / ".tentaqles" / "config.yaml"), "content": "x"},
+        }
+    )
+    p = subprocess.run(
+        [BASH, str(HOOK), "pre-tool-use"], input=payload, capture_output=True, text=True, env=env
+    )
+    assert p.returncode == 2, p.stderr
+    assert "self-protection/tq/protected-path" in p.stderr

@@ -10,6 +10,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/protect"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -26,10 +27,9 @@ type AddOptions struct {
 	// decides which CLI an expected_user is checked against, so an empty value
 	// on a GitLab workspace would have tq comparing a GitLab handle to whatever
 	// gh reports.
-	GitProvider    string
-	Identities     []string
-	PermissionMode string
-	RunGit         func(args ...string) (string, error)
+	GitProvider string
+	Identities  []string
+	RunGit      func(args ...string) (string, error)
 	// Trust says whether the workspace should be trusted (and wired into
 	// git's include chain) after scaffolding. When false, Add still creates
 	// everything on disk but leaves the workspace untrusted.
@@ -68,9 +68,16 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 		return nil, err
 	}
 	root := filepath.Join(base, o.Name)
+	// The protected layout (ADR-0002): the manifest under $TQ_HOME, a
+	// name-only marker in the root. Either file already there is a workspace
+	// tq will not overwrite.
 	mp := filepath.Join(root, manifest.FileName)
+	pp := paths.ManifestPath(o.Name)
 	if _, err := os.Stat(mp); err == nil {
 		return nil, fmt.Errorf("%s already exists", mp)
+	}
+	if _, err := os.Stat(pp); err == nil {
+		return nil, fmt.Errorf("%s already exists (a previous %s workspace? remove it first)", pp, o.Name)
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
@@ -79,7 +86,6 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 		Schema: "tentaqles-client-v2", Client: o.Name, DisplayName: o.DisplayName, Color: o.Color,
 		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail, User: o.GitUser, Provider: o.GitProvider},
 		Identities: map[string]manifest.Identity{},
-		Claude:     manifest.Claude{PermissionMode: o.PermissionMode},
 		Chat:       o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents,
 		Cloud: o.Cloud,
 	}
@@ -90,8 +96,8 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Scaffold everything else BEFORE the manifest: the manifest is what makes
-	// a directory look like a workspace, so writing it last means an
+	// Scaffold everything else BEFORE the marker: the marker is what makes a
+	// directory look like a workspace, so writing it last means an
 	// interrupted run never leaves a half-created workspace behind.
 	for _, id := range o.Identities {
 		d := paths.IdentityDir(o.Name, id)
@@ -105,13 +111,20 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 			}
 		}
 	}
+	// 0700 / 0600: the protected area is private to the user.
+	if err := protect.MkdirPrivate(filepath.Dir(pp)); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(pp, append([]byte("# tentaqles workspace manifest — names only, never secrets\n"), raw...), 0o600); err != nil {
+		return nil, err
+	}
 	if err := gitcfg.WriteWorkspace(root, o.GitName, o.GitEmail); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(mp, append([]byte("# tentaqles workspace manifest — names only, never secrets\n"), raw...), 0o644); err != nil {
+	if err := os.WriteFile(mp, manifest.MarkerBytes(o.Name), 0o644); err != nil {
 		return nil, err
 	}
-	loaded, err := manifest.Load(mp)
+	loaded, err := manifest.Load(pp)
 	if err != nil {
 		return nil, err
 	}
@@ -125,14 +138,14 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err := cfg.Save(); err != nil {
 		return nil, err
 	}
-	h, err := trust.HashFile(mp)
+	h, err := trust.HashFile(pp)
 	if err != nil {
 		return nil, err
 	}
 	if o.Trust {
 		// Trust first, then sync: SyncGit only wires trusted workspaces into git's
 		// include chain, so the new workspace must be trusted before it can appear.
-		if err := trust.Allow(h); err != nil {
+		if err := trust.Allow(o.Name, h); err != nil {
 			return nil, err
 		}
 		if err := SyncGit(cfg); err != nil {
@@ -146,7 +159,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	}
 	if !o.Trust {
 		return &resolve.Workspace{
-			Name: o.Name, Root: root, Base: base, ManifestPath: mp, Hash: h, Manifest: loaded,
+			Name: o.Name, Root: root, Base: base, ManifestPath: pp, Hash: h, Manifest: loaded, Protected: true,
 		}, nil
 	}
 	res := resolve.Resolve(root, cfg)

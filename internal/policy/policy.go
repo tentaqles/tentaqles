@@ -1,6 +1,6 @@
-// Package policy decides whether one Claude Code tool call is allowed, needs
-// the user's confirmation ("ask"), or is refused ("deny"), from declarative
-// rules. It is pure: the caller parses the hook payload into a ToolCall and
+// Package policy decides whether one Claude Code tool call is allowed or
+// refused ("deny"), from declarative rules. There is no third verdict: PRD v2
+// §6.3 has no ask and no mode. It is pure: the caller parses the hook payload into a ToolCall and
 // gathers every fact (the rule set, whether a file exists) first.
 //
 // The only rules are the built-in secret rules (Builtin): nothing a
@@ -16,12 +16,11 @@ import (
 	"github.com/tentaqles/tentaqles/internal/guard"
 )
 
-// Action is a rule's verdict.
+// Action is a rule's verdict: Allow or Deny, nothing else (PRD v2 §6.3).
 type Action string
 
 const (
 	Allow Action = ""
-	Ask   Action = "ask"
 	Deny  Action = "deny"
 )
 
@@ -29,10 +28,7 @@ const (
 func (a Action) StricterThan(b Action) bool { return a.rank() > b.rank() }
 
 func (a Action) rank() int {
-	switch a {
-	case Deny:
-		return 2
-	case Ask:
+	if a == Deny {
 		return 1
 	}
 	return 0
@@ -45,6 +41,9 @@ type ToolCall struct {
 	Path    string // file path (Read/Edit/Write/NotebookEdit/Grep), slash-normalized
 	Content string // text being written (Write content, Edit new_string, …) or the raw MCP input
 	Exists  bool   // Path exists on disk before the call
+	URL     string // the URL a WebFetch reads
+	Pattern string // the Glob/Grep pattern
+	Glob    string // the Grep glob filter
 }
 
 // IsShell reports whether the call runs a shell command.
@@ -74,7 +73,11 @@ func NormalizePath(p string) string {
 // subject (command, path, content) before matching, so `.env.example` can be
 // exempted without also exempting a `.env` in the same command.
 type Rule struct {
-	ID           string `yaml:"id"`
+	ID string `yaml:"id"`
+	// Category is the guard category the rule belongs to (identity,
+	// secrets, self-protection; PRD v2 §7.1): the deny message reads
+	// BLOCKED [<category>/<id>]. Empty for the fail-safe tq/guard-error.
+	Category     string `yaml:"-"`
 	Action       Action `yaml:"action"`
 	Tool         string `yaml:"tool,omitempty"`    // regex on the tool name, anchored
 	Command      string `yaml:"command,omitempty"` // regex on the shell command
@@ -90,6 +93,11 @@ type Rule struct {
 	SkipHeredocData bool   `yaml:"-"`
 	Reason          string `yaml:"reason"`
 	Source          string `yaml:"-"` // "builtin"
+	// Subject is the one path or token a denial names for the log (the
+	// matched protected path, the human-only tq verb, "the OS keychain"),
+	// never the rest of the command line. Empty for a rule with no such
+	// subject (the secret rules). See audit.Denial.
+	Subject string `yaml:"-"`
 
 	tool, command, path, content, except *regexp.Regexp
 }
@@ -99,8 +107,8 @@ func (r *Rule) Compile() error {
 	if r.ID == "" {
 		return fmt.Errorf("rule without id")
 	}
-	if r.Action != Ask && r.Action != Deny {
-		return fmt.Errorf("rule %s: action must be ask or deny, got %q", r.ID, r.Action)
+	if r.Action != Deny {
+		return fmt.Errorf("rule %s: action must be deny, got %q", r.ID, r.Action)
 	}
 	if r.Command == "" && r.Path == "" && r.Content == "" && r.Tool == "" {
 		return fmt.Errorf("rule %s: needs at least one of tool, command, path, content", r.ID)
@@ -205,21 +213,27 @@ type Decision struct {
 	Matched []*Rule
 }
 
-// Reason renders the decision for the hook's stderr / permissionDecisionReason.
+// Ref names the rule in a decision: <category>/<id>, or the id alone for a
+// rule outside the three categories.
+func (r *Rule) Ref() string {
+	if r.Category != "" {
+		return r.Category + "/" + r.ID
+	}
+	return r.ID
+}
+
+// Reason renders the decision for the hook's stderr / permissionDecisionReason:
+// BLOCKED [<category>/<rule>]: ..., one line per rule.
 func (d Decision) Reason() string {
 	if d.Action == Allow {
 		return ""
 	}
 	var b strings.Builder
-	verb := "BLOCKED"
-	if d.Action == Ask {
-		verb = "CONFIRM"
-	}
 	for i, r := range d.Matched {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "%s [%s]: %s (source: %s)", verb, r.ID, r.Reason, r.Source)
+		fmt.Fprintf(&b, "BLOCKED [%s]: %s (source: %s)", r.Ref(), r.Reason, r.Source)
 	}
 	return b.String()
 }

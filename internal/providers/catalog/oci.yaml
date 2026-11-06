@@ -22,3 +22,13 @@ identity:
     OCI_CLI_CONFIG_FILE: "{dir}/config"
 login:
   args: ["session", "authenticate"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [oci]
+  modules: [oci_cli]
+  env: [OCI_CLI_CONFIG_FILE, OCI_CLI_PROFILE, OCI_CLI_KEY_FILE]
+  paths: ["~/.oci"]
+  hosts: [oraclecloud.com]
+  public: [ocistatus.oraclecloud.com]
+  mcp: [oci, oracle]

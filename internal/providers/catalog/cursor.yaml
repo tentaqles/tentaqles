@@ -23,3 +23,10 @@ install:
 # honest answer until someone confirms where the file store actually lands.
 login:
   args: ["login"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# Note: the CLI's command is `agent`, a name too generic to deny; cursor-agent is matched.
+match:
+  executables: [cursor-agent]
+  paths: ["~/.cursor/cli-config.json"]
+  mcp: [cursor]

@@ -104,18 +104,27 @@ func TestBuildSkipsBadRuleButKeepsOthers(t *testing.T) {
 func TestReasonAndMerge(t *testing.T) {
 	s := builtinSet(t)
 	d := s.Evaluate(ToolCall{Tool: "Bash", Command: "printenv"})
-	if !strings.HasPrefix(d.Reason(), "BLOCKED [tq/env-dump]") {
+	if !strings.HasPrefix(d.Reason(), "BLOCKED [secrets/tq/env-dump]") {
 		t.Errorf("reason = %q", d.Reason())
 	}
-	ask := Decision{Action: Ask, Matched: []*Rule{{ID: "tq/commit-secret", Action: Ask, Reason: "scan", Source: "builtin"}}}
-	if !strings.HasPrefix(ask.Reason(), "CONFIRM [tq/commit-secret]") {
-		t.Errorf("ask reason = %q", ask.Reason())
+	if m := Merge(Decision{}, d); m.Action != Deny {
+		t.Errorf("merge lost the deny: %q", m.Action)
 	}
-	if m := Merge(ask, d); m.Action != Deny {
-		t.Errorf("merge kept %q", m.Action)
+	if m := Merge(d, Decision{}); m.Action != Deny {
+		t.Errorf("merge lost the deny: %q", m.Action)
 	}
-	if m := Merge(Decision{}, ask); m.Action != Ask {
-		t.Errorf("merge lost ask")
+}
+
+// PRD v2 §6.3: there is no ask verdict. A rule that says ask does not compile.
+func TestNoAskVerdict(t *testing.T) {
+	r := Rule{ID: "x", Action: Action("ask"), Command: "x"}
+	if err := r.Compile(); err == nil {
+		t.Fatal("a rule with action ask compiled")
+	}
+	for _, b := range Builtin() {
+		if b.Action != Deny {
+			t.Errorf("%s: action %q, want deny", b.ID, b.Action)
+		}
 	}
 }
 

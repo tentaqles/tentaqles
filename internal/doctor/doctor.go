@@ -59,10 +59,12 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	add := func(level, code, ws, msg, fix string) { fs = append(fs, Finding{level, code, ws, msg, fix}) }
 
 	if len(cfg.Bases) == 0 {
+		providerFileFindings(add, nil)
 		add("error", "no-bases", "", "no base folders registered", "tq init <folder>")
 		return fs
 	}
 	all, errs := resolve.ListWorkspaces(cfg)
+	providerFileFindings(add, all)
 	for _, e := range errs {
 		add("error", "manifest-invalid", "", e.Error(), "fix the manifest, then tq allow <name>")
 	}
@@ -88,12 +90,15 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	var verifyJobs []verifyJob
 	verifyCovers := map[string]bool{}
 	for _, w := range all {
-		trusted := trust.IsTrusted(w.Hash)
+		trusted := trust.IsTrusted(w.Name, w.Hash)
 		if !trusted {
-			add("warn", "untrusted", w.Name, "manifest not trusted", "tq allow "+w.Name)
+			untrustedFindings(w.Name, w.Hash, add)
+		} else {
+			integrityLegacy(w.Name, w.Hash, add)
 		}
 		memoryStale(w.Name, w.Root, time.Now(), add)
 		manifestDroppedBlock(w.Name, w.Manifest.Ignored, add)
+		manifestLayout(&w, add)
 		if trusted && w.Manifest.Claude.Bundle != nil {
 			if cat == nil {
 				c, err := bundle.LoadCatalog()
@@ -129,9 +134,6 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			claudeChecks(&w, add)
 			runWorkspaceChecks(&w, d, add)
 			mcpServiceChecks(&w, add)
-		}
-		if w.Manifest.Claude.PermissionMode == "bypass" && w.Manifest.HasCloudIdentity() {
-			add("warn", "bypass-cloud", w.Name, "permission_mode bypass with a cloud identity: Claude may run cloud CLIs without a confirmation", "")
 		}
 		wf := gitcfg.WorkspaceFile(w.Root)
 		wsGitFile[normPath(wf)] = w.Name

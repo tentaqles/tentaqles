@@ -57,8 +57,8 @@ func RunForCwd(cfg *registry.Config, d Deps) CwdReport {
 		add("warn", "hook-missing", "", "inside a base but no tq state in this shell: is the hook installed?", "tq init prints the profile line")
 	}
 	if res.Workspace == nil {
-		if res.Untrusted != nil {
-			add("warn", "untrusted", res.Untrusted.Name, "manifest not trusted", "tq allow "+res.Untrusted.Name)
+		if u := res.Untrusted; u != nil {
+			untrustedFindings(u.Name, u.Hash, add)
 		}
 		return rep
 	}

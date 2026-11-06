@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/tentaqles/tentaqles/internal/detect"
 	"github.com/tentaqles/tentaqles/internal/hooks"
-	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/setup"
@@ -20,14 +19,13 @@ import (
 // companyAnswers holds one company's raw wizard answers before they are
 // turned into a setup.Company.
 type companyAnswers struct {
-	Name           string
-	DisplayName    string
-	Color          string
-	GitName        string
-	GitEmail       string
-	GitUser        string
-	Identities     []string
-	PermissionMode string
+	Name        string
+	DisplayName string
+	Color       string
+	GitName     string
+	GitEmail    string
+	GitUser     string
+	Identities  []string
 }
 
 // wizardAnswers holds everything gathered across the wizard's steps before
@@ -57,19 +55,6 @@ func buildProviderOptions(cat *providers.Catalog) []huh.Option[string] {
 	return opts
 }
 
-// permissionModeOptions returns manifest.PermissionModes with the empty
-// ("unset") entry dropped, as huh Select options.
-func permissionModeOptions() []huh.Option[string] {
-	opts := make([]huh.Option[string], 0, len(manifest.PermissionModes))
-	for _, m := range manifest.PermissionModes {
-		if m == "" {
-			continue
-		}
-		opts = append(opts, huh.NewOption(m, m))
-	}
-	return opts
-}
-
 // planFromAnswers is a pure function that turns wizardAnswers into a
 // setup.SetupPlan. It does no I/O and applies no defaults beyond what the
 // forms already validated.
@@ -77,14 +62,13 @@ func planFromAnswers(a wizardAnswers) *setup.SetupPlan {
 	companies := make([]setup.Company, 0, len(a.Companies))
 	for _, ca := range a.Companies {
 		companies = append(companies, setup.Company{
-			Name:           ca.Name,
-			DisplayName:    ca.DisplayName,
-			Color:          ca.Color,
-			GitName:        ca.GitName,
-			GitEmail:       ca.GitEmail,
-			GitUser:        ca.GitUser,
-			Identities:     ca.Identities,
-			PermissionMode: ca.PermissionMode,
+			Name:        ca.Name,
+			DisplayName: ca.DisplayName,
+			Color:       ca.Color,
+			GitName:     ca.GitName,
+			GitEmail:    ca.GitEmail,
+			GitUser:     ca.GitUser,
+			Identities:  ca.Identities,
 		})
 	}
 	return &setup.SetupPlan{
@@ -96,7 +80,7 @@ func planFromAnswers(a wizardAnswers) *setup.SetupPlan {
 }
 
 // runWizard drives the interactive `tq setup` flow described in the task
-// brief: welcome, base folder, company loop (providers + permission mode),
+// brief: welcome, base folder, company loop (providers),
 // tool check, hooks, preview, and apply.
 func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPlan, error) {
 	var consent bool
@@ -133,19 +117,19 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 	}
 	base = setup.ExpandHome(strings.TrimSpace(base))
 
+	// A missing base folder is created after the human-only confirmation,
+	// with the rest of the plan (setup.go); the wizard only asks.
 	if _, err := os.Stat(base); os.IsNotExist(err) {
 		var create bool
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewConfirm().
-				Title(fmt.Sprintf("%s does not exist. Create it?", base)).
+				Title(fmt.Sprintf("%s does not exist. Create it when the plan is applied?", base)).
 				Value(&create),
 		)).Run(); err != nil {
 			return nil, err
 		}
-		if create {
-			if err := os.MkdirAll(base, 0o755); err != nil {
-				return nil, fmt.Errorf("create base folder: %w", err)
-			}
+		if !create {
+			return nil, fmt.Errorf("setup cancelled: base folder %s does not exist", base)
 		}
 	}
 
@@ -188,13 +172,9 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("Providers for "+ca.Name).
+				Title("Providers for " + ca.Name).
 				Options(buildProviderOptions(cat)...).
 				Value(&ca.Identities),
-			huh.NewSelect[string]().
-				Title("Permission mode for "+ca.Name).
-				Options(permissionModeOptions()...).
-				Value(&ca.PermissionMode),
 		)).Run(); err != nil {
 			return nil, err
 		}
@@ -297,15 +277,13 @@ func runWizard(cat *providers.Catalog, profiles hooks.Profiles) (*setup.SetupPla
 	for _, ch := range changes {
 		previewLines = append(previewLines, fmt.Sprintf("%s  %s  %s", ch.Kind, ch.Target, ch.Detail))
 	}
-	var apply bool
+	// The preview is shown here; the one confirmation is the human-only
+	// gate in setup.go (one typed yes, PRD v2 §8.1), so the wizard asks
+	// nothing more.
 	if err := huh.NewForm(huh.NewGroup(
-		huh.NewNote().Title("Preview").Description(strings.Join(previewLines, "\n")),
-		huh.NewConfirm().Title("Apply these changes?").Value(&apply),
+		huh.NewNote().Title("Preview").Description(strings.Join(previewLines, "\n") + "\n\nNext: tq says what it is about to write and asks you to type yes."),
 	)).Run(); err != nil {
 		return nil, err
-	}
-	if !apply {
-		return nil, fmt.Errorf("setup cancelled before apply")
 	}
 
 	if err := plan.Validate(cat); err != nil {

@@ -29,7 +29,7 @@ func TestRegisteredChecksRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, _ := trust.HashFile(mp)
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow("acme", h); err != nil {
 		t.Fatal(err)
 	}
 

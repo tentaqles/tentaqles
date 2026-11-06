@@ -29,14 +29,6 @@ var readHidden = func(r io.Reader) ([]byte, error) {
 	return term.ReadPassword(f.Fd())
 }
 
-// secretHumanOnly refuses agent sessions (the environment-marker check) before anything else runs.
-func secretHumanOnly() error {
-	if _, ok := agentSession(); ok {
-		return errHumanOnly
-	}
-	return nil
-}
-
 // secretWorkspace checks the names and that the workspace is registered (trusted or not: a token
 // can be stored before tq allow).
 func secretWorkspace(ws, provider string) (*resolve.Workspace, error) {
@@ -60,11 +52,12 @@ func newSecretCmd() *cobra.Command {
 These commands manage the keychain entry: service "tentaqles", account
 "<workspace>/<provider>".
 
-  tq secret set <ws> <provider>     store a token (hidden prompt, or stdin)
+  tq secret set <ws> <provider>     store a token (hidden prompt on your terminal)
   tq secret rm <ws> <provider>      remove it
   tq secret status [<ws> [<prov>]]  present or absent, never the value
 
-They are human-only: an agent session is refused.`,
+set and rm are human-only: a session is refused, and you confirm before the
+keychain changes. status is free to run anywhere: it never prints a value.`,
 	}
 	c.AddCommand(newSecretSetCmd(), newSecretRmCmd(), newSecretStatusCmd())
 	return c
@@ -73,18 +66,22 @@ They are human-only: an agent session is refused.`,
 func newSecretSetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <workspace> <provider>",
-		Short: "Store a tracker token in the OS keychain, from a hidden prompt or stdin",
-		Long: `Reads the token from a hidden prompt on a terminal, or from stdin when it is
-piped. The token is stored under service "tentaqles", account
-"<workspace>/<provider>", replacing any earlier one. It is never printed.
+		Short: "Store a tracker token in the OS keychain, from a hidden prompt (human only)",
+		Long: `Reads the token from a hidden prompt on your terminal (a piped stdin is refused:
+the command is human-only). The token is stored under service "tentaqles",
+account "<workspace>/<provider>", replacing any earlier one. It is never printed.
 Providers: ` + strings.Join(manifest.TrackerProviders, ", ") + ".",
 		Args: cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := secretHumanOnly(); err != nil {
+			if err := refuseAgent("tq secret set"); err != nil {
 				return err
 			}
 			ws, provider := args[0], args[1]
 			if _, err := secretWorkspace(ws, provider); err != nil {
+				return err
+			}
+			about := fmt.Sprintf("tq secret set: about to replace the OS keychain entry %s / %s with the token you type next", secret.Service, secret.Account(ws, provider))
+			if err := humanGate(c, "tq secret set", about); err != nil {
 				return err
 			}
 			value, err := readSecretValue(c, ws, provider)
@@ -127,14 +124,18 @@ func newSecretRmCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "rm <workspace> <provider>",
 		Aliases: []string{"remove", "delete"},
-		Short:   "Remove a tracker token from the OS keychain",
+		Short:   "Remove a tracker token from the OS keychain (human only)",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := secretHumanOnly(); err != nil {
+			if err := refuseAgent("tq secret rm"); err != nil {
 				return err
 			}
 			ws, provider := args[0], args[1]
 			if _, err := secretWorkspace(ws, provider); err != nil {
+				return err
+			}
+			about := fmt.Sprintf("tq secret rm: about to remove the OS keychain entry %s / %s", secret.Service, secret.Account(ws, provider))
+			if err := humanGate(c, "tq secret rm", about); err != nil {
 				return err
 			}
 			if err := secret.Delete(ws, provider); err != nil {
@@ -183,12 +184,10 @@ func newSecretStatusCmd() *cobra.Command {
 		Use:   "status [<workspace> [<provider>]]",
 		Short: "Show which tracker tokens the OS keychain holds (present or absent, never the value)",
 		Long: `With no workspace: every registered workspace, for every tracker provider.
-With a workspace: every tracker provider. With a provider: just that one.`,
+With a workspace: every tracker provider. With a provider: just that one.
+It prints presence only, so a session may run it.`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := secretHumanOnly(); err != nil {
-				return err
-			}
 			var rows []secretRow
 			if len(args) > 0 {
 				only := ""

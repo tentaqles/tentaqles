@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,9 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/doctor"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
@@ -20,6 +24,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // hookPayload is the subset of the Claude Code hook JSON tq reads. It never
@@ -30,7 +35,15 @@ type hookPayload struct {
 	HookEventName string          `json:"hook_event_name"`
 	ToolName      string          `json:"tool_name"`
 	ToolInput     json.RawMessage `json:"tool_input"`
+	// AgentID and AgentType are set by Claude Code when the call comes from
+	// a subagent; the denial log names the caller from them.
+	AgentID   string `json:"agent_id"`
+	AgentType string `json:"agent_type"`
 }
+
+// hookPolicyDecision is policyDecision; tests replace it to make the
+// analysis panic or stall.
+var hookPolicyDecision = policyDecision
 
 // lookupGHUser resolves the gh login active for the workspace env. It is a
 // package var so tests can stub it and never shell out to the real gh.
@@ -98,10 +111,12 @@ func newSessionStartCmd() *cobra.Command {
 		Use:   "session-start",
 		Short: "SessionStart hook: print the workspace identity preamble",
 		RunE: func(c *cobra.Command, _ []string) error {
+			defer trust.MemoScope()()
 			// session-start must never block a session: an oversized payload
-			// is reported as "could not resolve" and still exits 0.
+			// is reported as "could not resolve" and still exits 0; one that
+			// does not parse resolves the process's own cwd.
 			p, _, perr := readHookPayload(c.InOrStdin())
-			if perr != nil {
+			if errors.Is(perr, errPayloadTooLarge) {
 				fmt.Fprintf(c.OutOrStdout(), "Tentaqles: tq could not resolve this workspace (%s)\n", perr)
 				return nil
 			}
@@ -176,16 +191,12 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 		fmt.Fprintf(&b, "Cloud: %s (%s subscription)\n", cloudProvider, cloudSub)
 	}
 
-	permMode := m.Claude.PermissionMode
-	if permMode == "" {
-		permMode = "default"
-	}
 	identity := "Identity: " + ws.Name
 	if expectedDir != "" {
 		identity += " · CLAUDE_CONFIG_DIR=" + expectedDir
 	}
-	identity += " · permission_mode=" + permMode
 	b.WriteString(identity + "\n")
+	b.WriteString(scopeLine(res.Workspace)) // trusted only: the scope the guard enforces
 
 	b.WriteString("\ntq doctor:\n")
 	if len(rep.Findings) == 0 {
@@ -213,182 +224,299 @@ func newPreToolUseCmd() *cobra.Command {
 	agent := hookAgentClaude
 	c := &cobra.Command{
 		Use:   "pre-tool-use",
-		Short: "Allow (exit 0), ask (JSON on stdout) or block (exit 2) the tool call in the PreToolUse payload",
-		Long: `Reads a Claude Code PreToolUse payload on stdin and decides:
+		Short: "Allow (exit 0) or deny (exit 2) the tool call in the PreToolUse payload",
+		Long: `Reads a Claude Code PreToolUse payload on stdin and decides, in order
+(the first category that matches denies; no match allows):
 
-  1. identity: Bash/PowerShell commands go through the workspace identity
-     guard (git email, gh user, cloud CLI, blocked commands, trust);
+  1. identity: the manifest's blocked commands, then Bash/PowerShell
+     commands through the workspace identity guard (git email, gh user,
+     cloud CLI, trust) and the cross-client MCP check;
   2. secrets: every tool call (shell, file read, MCP) goes through tq's
-     built-in secret rules, a secret scan of what a git commit would
-     record and a cross-client MCP check.
+     built-in secret rules and a secret scan of what a git commit would
+     record;
+  3. self-protection: a read, write, copy, move or delete of a protected
+     path (tq's state folder, the workspace marker, the installed plugin,
+     the tq binary) in any tool, and a human-only tq command in the shell.
 
-Deny exits 2 with the reason on stderr. The hook asks only when the commit
-secret scan fails or the guard itself errors: the ask prints the PreToolUse
-permissionDecision JSON so Claude Code asks the user.`,
-		RunE: func(c *cobra.Command, _ []string) (rerr error) {
-			// Fail safe: a panic anywhere in the analysis asks the user. A Go
-			// panic would otherwise exit 2 with a stack trace, which Claude
-			// Code reads as a block. exit marks a deliberate exit so the
-			// recover never swallows it (exitFunc may panic in tests).
-			exiting := false
-			exit := func(code int) { exiting = true; exitFunc(code) }
-			defer func() {
-				if r := recover(); r != nil {
-					if exiting {
-						panic(r)
-					}
-					rerr = guardPanicAsk(c, asJSON, agent, r)
-				}
-			}()
-			// One scan deadline from hook entry: the gh/git identity
-			// lookups below count against it (hooks must never stall).
-			scanDeadline := time.Now().Add(hookScanBudget())
-			p, cmdline, perr := readHookPayload(c.InOrStdin())
-			if perr != nil {
-				fmt.Fprintln(c.ErrOrStderr(), "BLOCKED: "+perr.Error())
-				exit(2)
-				return nil
-			}
-			if p.ToolName == "" {
-				if agent == hookAgentCodex && !asJSON {
-					// A Codex payload tq cannot read is not allowed.
-					writeCodexDeny(c.OutOrStdout(), "BLOCKED ["+guardErrorID+"]: the hook payload names no tool; tq denies a call it cannot judge")
-				}
-				return nil
-			}
-			cwd := strings.TrimSpace(p.Cwd)
-			if cwd == "" {
-				cwd, _ = os.Getwd()
-			}
-			call := toolCallFrom(p, cwd)
-
-			var ws *resolve.Workspace
-			var cfg *registry.Config
-			if cmdline != "" {
-				in, gws, gcfg, err := gatherGuardInput(cwd, cmdline)
-				if err != nil {
-					// Registry/resolve failure: treat cwd as neutral, which fails
-					// closed only for remote mutations.
-					in = guard.Input{Command: cmdline, Neutral: true, NeutralReason: "tq error: " + err.Error()}
-				}
-				ws, cfg = gws, gcfg
-				if d := guard.Decide(in); d.Block {
-					if agent == hookAgentCodex && !asJSON {
-						// Exit 2 blocks in Codex too; the deny answer says so
-						// on stdout as well.
-						writeCodexDeny(c.OutOrStdout(), d.Reason)
-					}
-					emitDecision(c, asJSON, true, d.Rule, d.Reason)
-					exit(2)
-					return nil
-				}
-			} else {
-				ws, cfg = resolveTrusted(cwd)
-			}
-
-			d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline)
-			// A Codex apply_patch names its files only in the patch text: the
-			// file rules run on every file it writes, and a patch tq cannot
-			// read, or one too big to judge in the budget, is denied. The
-			// rule set is built once.
-			if isApplyPatch(call) || (agent == hookAgentCodex && isFileWriteTool(call.Tool) && call.Path == "") {
-				deny := func(why string) error {
-					reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies an edit it cannot judge"
-					if agent == hookAgentCodex && !asJSON {
-						writeCodexDeny(c.OutOrStdout(), reason)
-					}
-					emitDecision(c, asJSON, true, guardErrorID, reason)
-					exit(2)
-					return nil
-				}
-				files, err := parseApplyPatch(call.Command)
-				if err != nil {
-					return deny(err.Error())
-				}
-				if len(files) > maxPatchFiles {
-					return deny(fmt.Sprintf("the patch writes %d files, more than the %d tq judges in one call: split the patch", len(files), maxPatchFiles))
-				}
-				set := buildPolicy()
-				for _, fc := range patchCalls(files, cwd) {
-					if time.Now().After(scanDeadline) {
-						return deny("the patch took longer than the hook budget to judge: split the patch")
-					}
-					d = policy.Merge(d, policyDecisionWith(set, cwd, ws, cfg, fc, scanDeadline))
-				}
-			}
-			if agent == hookAgentCodex && !asJSON && d.Action != policy.Allow {
-				// Codex fails open on a hook ask: codexAnswer never sends one.
-				if code := codexAnswer(c.OutOrStdout(), call, d); code != 0 {
-					exit(code)
-				}
-				return nil
-			}
-			switch d.Action {
-			case policy.Deny:
-				emitDecision(c, asJSON, true, d.Matched[0].ID, d.Reason())
-				exit(2)
-			case policy.Ask:
-				if asJSON {
-					emitDecision(c, asJSON, false, d.Matched[0].ID, d.Reason())
-					return nil
-				}
-				return writeAsk(c.OutOrStdout(), d.Reason())
-			default:
-				if asJSON {
-					emitDecision(c, asJSON, false, "", "")
-				}
+There are two verdicts, allow and deny; tq never asks. Deny exits 2 with
+BLOCKED [<category>/<rule>]: <reason> on stderr and one line in
+~/.tentaqles/denials.jsonl. tq fails closed: a payload it cannot read, a
+guard crash, a decision that takes longer than the hook deadline, a
+registry or a workspace manifest it cannot read, and a commit whose secret
+scan cannot finish are denied (BLOCKED [tq/guard-error], or
+[secrets/tq/commit-secret] for the scan).`,
+		RunE: func(c *cobra.Command, _ []string) error {
+			if code := runPreToolUse(c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr(), asJSON, agent); code != 0 {
+				exitFunc(code)
 			}
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "print the decision as JSON")
-	c.Flags().StringVar(&agent, "agent", hookAgentClaude, "the agent calling the hook: claude or codex (Codex never gets an ask)")
+	c.Flags().StringVar(&agent, "agent", hookAgentClaude, "the agent calling the hook: claude or codex")
 	return c
 }
 
-// hookPolicyDecision is policyDecision; tests replace it to make the
-// analysis panic.
-var hookPolicyDecision = policyDecision
+// hookDeadline bounds one whole pre-tool-use decision. A harness that kills
+// a hook at its own timeout (15 s for Claude in the plugin's hooks.json, 30 s
+// for Codex, codexcfg.HookTimeoutSeconds) lets the call run, so tq denies
+// first (PRD v2 §6.3, fail closed): the decision at 6 s, the process
+// watchdog (hookWatchdog) at 7 s, tq_hook.sh's TERM at 7 s and KILL at 8 s,
+// at least 5 s under the shortest harness timeout (Git Bash forks are slow).
+// TestHookDeadlinesUnderHarnessTimeouts pins the order. It leaves room
+// above the scan budget (at most maxScanBudget). Tests lower it.
+var hookDeadline = 6 * time.Second
 
-// guardErrorID names the fail-safe ask of a guard panic (and the deny of a
-// patch tq cannot judge).
+// hookRun is one pre-tool-use invocation: the flags and what is known about
+// the call so far, so a fail-closed answer (a panic, the deadline) can still
+// name the tool, the cwd and the identity in the denial log.
+type hookRun struct {
+	asJSON bool
+	agent  string
+
+	mu       sync.Mutex
+	tool     string
+	cwd      string
+	command  string // the file path or the tool name; for a shell call, see shell
+	shell    string // the shell line, redacted only when it is logged
+	caller   string
+	identity string
+}
+
+// runPreToolUse decides one call and returns the exit code. The decision
+// runs in its own goroutine and answers into buffers; the caller's writers
+// get the buffers when it finishes, or a deny when it panics or misses
+// hookDeadline. There is no other way out: every path is allow or deny.
+func runPreToolUse(in io.Reader, out, errw io.Writer, asJSON bool, agent string) int {
+	run := &hookRun{asJSON: asJSON, agent: agent, caller: audit.CallerHarness}
+	var bo, be bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				bo.Reset()
+				be.Reset()
+				detail := fmt.Sprint(r)
+				if len(detail) > 200 {
+					detail = detail[:200] + "…"
+				}
+				fmt.Fprintln(&be, "tq: guard panic: "+detail)
+				done <- run.failClosed(&bo, &be, "tq guard error ("+detail+")")
+			}
+		}()
+		done <- run.decide(in, &bo, &be)
+	}()
+	timer := time.NewTimer(hookDeadline)
+	defer timer.Stop()
+	select {
+	case code := <-done:
+		_, _ = io.Copy(out, &bo)
+		_, _ = io.Copy(errw, &be)
+		return code
+	case <-timer.C:
+		return run.failClosed(out, errw, fmt.Sprintf("the guard did not decide within %s", hookDeadline))
+	}
+}
+
+// decide is the analysis: payload, identity guard, secret rules,
+// self-protection. It writes its answer to out/errw and returns the code.
+func (run *hookRun) decide(in io.Reader, out, errw io.Writer) int {
+	if hookDecideTestHook != nil {
+		hookDecideTestHook()
+	}
+	// One verification of the integrity record per call, however often
+	// resolve and doctor ask (trust.MemoScope).
+	defer trust.MemoScope()()
+	// One scan deadline from hook entry: the gh/git identity lookups below
+	// count against it (hooks must never stall).
+	scanDeadline := time.Now().Add(hookScanBudget())
+	p, cmdline, perr := readHookPayload(in)
+	if perr != nil {
+		return run.failClosed(out, errw, "the hook payload cannot be read ("+perr.Error()+")")
+	}
+	cwd := strings.TrimSpace(p.Cwd)
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	run.mu.Lock()
+	run.tool, run.cwd = p.ToolName, cwd
+	if p.AgentID != "" || p.AgentType != "" {
+		run.caller = audit.CallerSubagent
+	}
+	run.mu.Unlock()
+	if p.ToolName == "" {
+		return run.failClosed(out, errw, "the hook payload names no tool")
+	}
+	if why := payloadFieldError(p); why != "" {
+		return run.failClosed(out, errw, "the hook payload cannot be judged ("+why+")")
+	}
+	call := toolCallFrom(p, cwd)
+	run.mu.Lock()
+	run.command = logCommand(call)
+	if call.IsShell() {
+		run.shell = call.Command
+	}
+	run.mu.Unlock()
+
+	var ws *resolve.Workspace
+	var cfg *registry.Config
+	if cmdline != "" {
+		in, gws, gcfg, res, err := gatherGuardInput(cwd, cmdline)
+		if err != nil {
+			return run.failClosed(out, errw, "tq cannot read its registry ("+err.Error()+")")
+		}
+		run.setIdentity(res)
+		if res.Unreadable {
+			return run.failClosed(out, errw, unreadableReason(res))
+		}
+		ws, cfg = gws, gcfg
+		if d := guard.Decide(in); d.Block {
+			return run.deny(out, errw, guard.Category, d.Rule, d.Reason+scopeNote(ws), "", audit.LayerHook)
+		}
+	} else {
+		res, gcfg, err := resolveCwd(cwd)
+		if err != nil {
+			return run.failClosed(out, errw, "tq cannot read its registry ("+err.Error()+")")
+		}
+		run.setIdentity(res)
+		if res.Unreadable {
+			return run.failClosed(out, errw, unreadableReason(res))
+		}
+		ws, cfg = res.Workspace, gcfg
+	}
+	why, warnings := scopeCatalogError(ws)
+	if why != "" {
+		return run.failClosed(out, errw, why)
+	}
+	// A broken override of a built-in provider: the built-in lists are in force; say so on
+	// stderr with every answer until a human fixes the file (ADR-0007 round 3).
+	for _, w := range warnings {
+		fmt.Fprintln(errw, w)
+	}
+
+	// subject is the one path/token the denial names for the log.
+	subject := ""
+	d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline)
+	// A Codex apply_patch names its files only in the patch text: the file
+	// rules run on every file it writes, and a patch tq cannot read, or one
+	// too big to judge in the budget, is denied. The rule set and the
+	// protected path set are built once.
+	if isApplyPatch(call) || (run.agent == hookAgentCodex && isFileWriteTool(call.Tool) && call.Path == "") {
+		files, err := parseApplyPatch(call.Command)
+		if err != nil {
+			return run.failClosed(out, errw, err.Error())
+		}
+		if len(files) > maxPatchFiles {
+			return run.failClosed(out, errw, fmt.Sprintf("the patch writes %d files, more than the %d tq judges in one call: split the patch", len(files), maxPatchFiles))
+		}
+		set := buildPolicy()
+		prot := protectedSet(ws, cfg)
+		for _, fc := range patchCalls(files, cwd) {
+			if time.Now().After(scanDeadline) {
+				return run.failClosed(out, errw, "the patch took longer than the hook budget to judge: split the patch")
+			}
+			fd := policyDecisionWith(set, prot, cwd, ws, cfg, fc, scanDeadline)
+			if fd.Action == policy.Deny && d.Action != policy.Deny {
+				subject = fc.Path // the first file the patch is denied on
+			}
+			d = policy.Merge(d, fd)
+		}
+	}
+	if d.Action == policy.Deny {
+		r := d.Matched[0]
+		if subject == "" {
+			subject = r.Subject
+		}
+		layer := audit.LayerHook
+		if r.ID == policy.ProtectedPathID || r.ID == policy.OtherIdentityID {
+			layer = audit.LayerFilesystem
+		}
+		reason := d.Reason()
+		if r.Category == policy.CategoryIdentity {
+			reason += scopeNote(ws)
+		}
+		return run.deny(out, errw, denyKind(d), r.ID, reason, denialSubject(call, subject), layer)
+	}
+	if run.asJSON {
+		emitDecision(out, errw, true, false, "", "", "")
+	}
+	return 0
+}
+
+// setIdentity records the identity the cwd maps to for the log: the trusted
+// workspace, else the untrusted one, else none.
+func (run *hookRun) setIdentity(res resolve.Result) {
+	name := hookWSName(res.Workspace)
+	if name == "" {
+		name = hookWSName(res.Untrusted)
+	}
+	if name == "" {
+		name = res.Name
+	}
+	run.mu.Lock()
+	run.identity = name
+	run.mu.Unlock()
+}
+
+// deny answers a deny of category/rule: the log line, the Codex deny JSON
+// under --agent codex, the --json object or the reason on stderr, exit 2.
+func (run *hookRun) deny(out, errw io.Writer, category, rule, reason, subject, layer string) int {
+	run.mu.Lock()
+	d := audit.Denial{
+		Category: category, Layer: layer, Caller: run.caller, Harness: run.agent,
+		Tool: run.tool, Command: run.loggedCommand(subject), Subject: subject,
+		Rule: rule, Reason: reason, Identity: run.identity, PID: os.Getpid(), Cwd: run.cwd,
+	}
+	run.mu.Unlock()
+	// A log that cannot be written changes nothing: the deny stands.
+	_ = audit.AppendDenial(d)
+	if run.agent == hookAgentCodex && !run.asJSON {
+		writeCodexDeny(out, reason)
+	}
+	emitDecision(out, errw, run.asJSON, true, category, rule, reason)
+	return 2
+}
+
+// loggedCommand is the command the log records: the shell line through
+// audit.RedactCommand, keeping the words of the subject the deny matched;
+// otherwise the path or the tool name. Called with run.mu held.
+func (run *hookRun) loggedCommand(subject string) string {
+	if run.shell != "" {
+		return audit.RedactCommand(run.shell, subject)
+	}
+	return run.command
+}
+
+// guardErrorID names the fail-closed deny of a call the guard cannot judge
+// (PRD v2 §6.3): an unreadable payload, a panic, the deadline, a registry
+// or manifest tq cannot read, a patch it cannot parse.
 const guardErrorID = "tq/guard-error"
 
-// guardPanicAsk answers a panic in the hook's analysis with an ask: never an
-// allow, never a crash. It only formats the panic value (no stack walk), so
-// it stays cheap. Under --agent codex it is a deny: Codex lets a hook ask
-// run, so an ask there would fail open.
-func guardPanicAsk(c *cobra.Command, asJSON bool, agent string, r any) error {
-	detail := fmt.Sprint(r)
-	if len(detail) > 200 {
-		detail = detail[:200] + "…"
-	}
-	reason := "CONFIRM [" + guardErrorID + "]: tq guard error; please review the command yourself (" + detail + ")"
-	fmt.Fprintln(c.ErrOrStderr(), "tq: guard panic: "+detail)
-	if asJSON {
-		emitDecision(c, asJSON, false, guardErrorID, reason)
-		return nil
-	}
-	if agent == hookAgentCodex {
-		writeCodexDeny(c.OutOrStdout(), codexAskPrefix+"\n"+reason)
-		return nil
-	}
-	return writeAsk(c.OutOrStdout(), reason)
+// hookDecideTestHook runs at the start of every decision when a test sets it (a decision
+// that spins, to prove the deadline and the watchdog end the process). Nil in tq.
+var hookDecideTestHook func()
+
+// failClosed denies a call the guard cannot judge.
+func (run *hookRun) failClosed(out, errw io.Writer, why string) int {
+	reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies a call it cannot judge. Report this to the developer instead of retrying; `tq doctor` shows what is wrong"
+	return run.deny(out, errw, guardErrorID, guardErrorID, reason, "", audit.LayerHook)
 }
 
 // emitDecision reports a decision: the --json object on stdout when asked
-// for, and for blocks the reason on stderr (Claude Code shows stderr of an
-// exit-2 hook to the model).
-func emitDecision(c *cobra.Command, asJSON, block bool, rule, reason string) {
+// for (block, the category, the rule id and the reason), and for blocks the
+// reason on stderr (Claude Code shows stderr of an exit-2 hook to the
+// model).
+func emitDecision(out, errw io.Writer, asJSON, block bool, category, rule, reason string) {
 	if asJSON {
-		_ = json.NewEncoder(c.OutOrStdout()).Encode(struct {
-			Block  bool   `json:"block"`
-			Rule   string `json:"rule"`
-			Reason string `json:"reason"`
-		}{block, rule, reason})
+		_ = json.NewEncoder(out).Encode(struct {
+			Block    bool   `json:"block"`
+			Category string `json:"category,omitempty"`
+			Rule     string `json:"rule"`
+			Reason   string `json:"reason"`
+		}{block, category, rule, reason})
 	}
 	if block {
-		fmt.Fprintln(c.ErrOrStderr(), reason)
+		fmt.Fprintln(errw, reason)
 	}
 }
 
@@ -402,22 +530,26 @@ const maxHookPayload = 1 << 20
 var errPayloadTooLarge = errors.New("hook payload exceeds 1 MiB")
 
 // readHookPayload decodes the hook JSON and extracts the shell command
-// (Bash or PowerShell). Any
-// protocol problem (malformed JSON, non-Bash tool, no command) yields "",
-// which the caller treats as allow: tq never blocks on its own parse errors.
-// The one exception is an oversized payload, reported as errPayloadTooLarge so
-// the caller can fail closed instead of allowing a command it never read.
+// (Bash or PowerShell; "" for any other tool). A payload tq cannot read
+// (a read error, more than maxHookPayload, JSON that does not parse into
+// the payload object) is an error, and pre-tool-use denies it (PRD v2 §6.3,
+// fail closed): tq never allows a call it did not read.
 func readHookPayload(r io.Reader) (hookPayload, string, error) {
 	var p hookPayload
 	raw, err := io.ReadAll(io.LimitReader(r, maxHookPayload+1))
 	if err != nil {
-		return p, "", nil
+		return p, "", fmt.Errorf("reading stdin: %w", err)
 	}
 	if len(raw) > maxHookPayload {
 		return p, "", errPayloadTooLarge
 	}
+	if !utf8.Valid(raw) {
+		// encoding/json would read invalid UTF-8 as U+FFFD, judging a
+		// different command than the one the harness runs.
+		return p, "", errors.New("the payload is not valid UTF-8")
+	}
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return p, "", nil
+		return p, "", fmt.Errorf("malformed JSON: %w", err)
 	}
 	if !isShellTool(p.ToolName) {
 		return p, "", nil
@@ -449,8 +581,10 @@ func toolInputCommand(raw json.RawMessage) string {
 
 // gatherGuardInput does all the I/O the guard needs: registry + cwd resolution,
 // doctor findings, manifest facts and (only when the command is gh) the actual
-// gh login.
-func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *registry.Config, error) {
+// gh login. It also returns the resolution, so the hook can deny when the
+// cwd names a workspace whose manifest tq cannot read; a registry it
+// cannot read is the error.
+func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *registry.Config, resolve.Result, error) {
 	if strings.TrimSpace(cwd) == "" {
 		// If Getwd also fails, cwd stays empty: resolve finds no workspace, the
 		// input is neutral, and the guard fails closed for remote mutations.
@@ -458,7 +592,7 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 	}
 	cfg, err := registry.Load()
 	if err != nil {
-		return guard.Input{}, nil, nil, err
+		return guard.Input{}, nil, nil, resolve.Result{}, err
 	}
 	rep := doctor.RunForCwd(cfg, doctor.Deps{
 		Env:      os.LookupEnv,
@@ -479,13 +613,23 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 	if ws == nil {
 		in.Neutral = true
 		in.NeutralReason = rep.Result.Reason
-		return in, nil, cfg, nil
+		return in, nil, cfg, rep.Result, nil
 	}
 
 	m := ws.Manifest
 	in.Client = m.Client
 	in.ExpectedEmail = strings.TrimSpace(m.Git.Email)
 	in.CloudProvider = manifest.CloudProviderName(cloudString(m.Cloud, "provider"))
+	// An integrity mismatch is at least as strict as a workspace never
+	// allowed: doctor reports untrusted for it too, so the guard refuses
+	// every mutating git; and a remote mutation (git push, gh, a cloud CLI)
+	// is judged as from no workspace at all, refused with the reason, which
+	// names the first changed file and tq hooks verify. The blocked-command
+	// and wrong-cloud rules of the manifest still run first.
+	if rep.Result.Workspace == nil && rep.Result.Mismatch && guard.IsRemoteMutation(cmdline) {
+		in.Neutral = true
+		in.NeutralReason = rep.Result.Reason
+	}
 	// cloud.also widens what the guard allows, so only a TRUSTED manifest may
 	// set it: an edited (untrusted) one must not unlock another cloud CLI.
 	if rep.Result.Workspace != nil {
@@ -494,6 +638,8 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 		}
 	}
 	in.Blocked = effectiveBlocked(ws)
+	// guard: v2 on a trusted manifest: the provider scope judges cloud CLIs (ADR-0007).
+	in.Scoped = rep.Result.Workspace != nil && m.GuardV2()
 
 	expectedGH := strings.TrimSpace(m.Git.User)
 	if expectedGH == "" {
@@ -509,7 +655,7 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, *resolve.Workspace, *re
 	}
 	// Only a TRUSTED workspace is handed on: the cross-client MCP check
 	// compares bundles, and an untrusted manifest must not take part.
-	return in, rep.Result.Workspace, cfg, nil
+	return in, rep.Result.Workspace, cfg, rep.Result, nil
 }
 
 // effectiveBlocked is the union of the manifest's top-level, git and cloud

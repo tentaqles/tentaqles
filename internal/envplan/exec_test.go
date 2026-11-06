@@ -10,8 +10,15 @@ func TestEnviron_ReplacesAndStripsState(t *testing.T) {
 	base := []string{"PATH=/bin", "CLAUDE_CONFIG_DIR=/old", StateVar + "=abc", "KEEP=1"}
 	got := Environ(ws("acme", "claude"), base)
 	joined := strings.Join(got, "\n")
-	if strings.Contains(joined, "CLAUDE_CONFIG_DIR=/old") || strings.Contains(joined, StateVar) {
+	// The old state is gone; the launch carries its own (ADR-0008, round 3), naming acme.
+	if strings.Contains(joined, "CLAUDE_CONFIG_DIR=/old") || strings.Contains(joined, StateVar+"=abc") {
 		t.Fatalf("%v", got)
+	}
+	if _, rec := DecodeState(envMap(got)[StateVar]).Prev["CLAUDE_CONFIG_DIR"]; !rec {
+		t.Fatalf("CLAUDE_CONFIG_DIR not recorded: %v", got)
+	}
+	if st, ok := DecodeStateOK(envMap(got)[StateVar]); !ok || st.WS != "acme" {
+		t.Fatalf("launch state = %+v %v", st, ok)
 	}
 	if !strings.Contains(joined, "KEEP=1") || !strings.Contains(joined, "TQ_WS=acme") || !strings.Contains(joined, "CLAUDE_CONFIG_DIR=") {
 		t.Fatalf("%v", got)
@@ -38,8 +45,8 @@ func TestEnviron_UndoesOtherWorkspaceShellState(t *testing.T) {
 	if _, ok := got["GH_CONFIG_DIR"]; ok {
 		t.Fatalf("GH_CONFIG_DIR leaked from workspace a: %v", got)
 	}
-	if _, ok := got[StateVar]; ok {
-		t.Fatalf("%s kept: %v", StateVar, got)
+	if st, ok := DecodeStateOK(got[StateVar]); !ok || st.WS != "b" {
+		t.Fatalf("%s is not the launch's own: %+v", StateVar, st)
 	}
 	if want := Desired(b)["CLAUDE_CONFIG_DIR"]; got["CLAUDE_CONFIG_DIR"] != want {
 		t.Fatalf("CLAUDE_CONFIG_DIR = %q, want %q", got["CLAUDE_CONFIG_DIR"], want)

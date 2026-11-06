@@ -31,6 +31,8 @@ func (identityStep) Name() string { return "identity" }
 // points at target, and after the step target points back at dir.
 type idAction struct {
 	ws, id string
+	// hash is the manifest hash the workspace was trusted under when planned.
+	hash string
 	// dir is paths.IdentityDir(ws, id) -- the link today, the real directory
 	// afterwards.
 	dir string
@@ -80,6 +82,19 @@ func (identityStep) Apply(d Deps, p Plan, j *Journal) error {
 			return fmt.Errorf("identity %s/%s: %w", a.ws, a.id, err)
 		}
 	}
+	// The integrity record names covered files by path, and a link resolves to its target on
+	// Unix, so the move changes those paths with the same bytes. Only a workspace the plan just
+	// found trusted is here, and only a human signs (trust.HumanCheck inside Allow).
+	signed := map[string]bool{}
+	for _, a := range acts {
+		if signed[a.ws] {
+			continue
+		}
+		signed[a.ws] = true
+		if err := trust.Allow(a.ws, a.hash); err != nil {
+			return fmt.Errorf("identity %s: sign the moved folders: %w", a.ws, err)
+		}
+	}
 	return nil
 }
 
@@ -100,7 +115,7 @@ func planIdentity(d Deps) (Plan, []idAction, error) {
 	// simply not allowed to move it yet.
 	var targets []string
 	for _, w := range all {
-		trusted := trust.IsTrusted(w.Hash)
+		trusted := trust.IsTrusted(w.Name, w.Hash)
 		if !trusted {
 			p.Skipped = append(p.Skipped, fmt.Sprintf("workspace %s: not trusted, so tq will not touch its identity directories (tq allow %s, then re-run)", w.Name, w.Name))
 		}
@@ -135,7 +150,7 @@ func planIdentity(d Deps) (Plan, []idAction, error) {
 				p.Skipped = append(p.Skipped, fmt.Sprintf("%s/%s: link points at itself", w.Name, id))
 				continue
 			}
-			acts = append(acts, idAction{ws: w.Name, id: id, dir: dir, target: target})
+			acts = append(acts, idAction{ws: w.Name, id: id, hash: w.Hash, dir: dir, target: target})
 		}
 	}
 	for _, a := range acts {

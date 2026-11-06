@@ -37,8 +37,6 @@ func KnownIdentities() []string {
 	return knownIdentities
 }
 
-var PermissionModes = []string{"", "default", "acceptEdits", "plan", "auto", "dontAsk", "bypass"}
-
 type Git struct {
 	Name         string `yaml:"name"`
 	Email        string `yaml:"email"`
@@ -67,21 +65,11 @@ type Identity struct {
 }
 
 type Claude struct {
-	PermissionMode string       `yaml:"permission_mode"`
-	Bundle         *Bundle      `yaml:"bundle"`
-	Permissions    *Permissions `yaml:"permissions"`
+	Bundle *Bundle `yaml:"bundle"`
 	// Env is merged into the identity's settings.json env by
 	// `tq settings render`. Values are checked like the rest of the manifest:
 	// a secret-shaped value makes the manifest fail to load.
 	Env map[string]string `yaml:"env"`
-}
-
-// Permissions are extra settings.json permission rules for this workspace,
-// added on top of tq's baseline by `tq settings render`.
-type Permissions struct {
-	Allow []string `yaml:"allow"`
-	Deny  []string `yaml:"deny"`
-	Ask   []string `yaml:"ask"`
 }
 
 // Bundle lists the catalog entries this workspace's Claude identity dir
@@ -112,11 +100,25 @@ type Manifest struct {
 	Email        *Service `yaml:"email,omitempty"`
 	DataPlatform *Service `yaml:"data_platform,omitempty"`
 	Agents       []string `yaml:"agents,omitempty"`
-	Path         string   `yaml:"-"`
-	// Ignored lists the top-level blocks of DroppedBlocks that the file still
-	// carries. Load records them so `tq doctor` can warn that tq no longer reads
-	// them (the cut of 2026-11-03, docs/prd.md D-29); loading never fails on them.
+	// Guard is the guard: v2 flag (scope.go); ExtraScope adds catalog ids to the
+	// derived provider scope (Scope).
+	Guard      GuardFlag `yaml:"guard,omitempty"`
+	ExtraScope []string  `yaml:"scope,omitempty"`
+	// MCP is the mcp: block: allow lists the exact MCP server names kept under guard: v2 though
+	// no in-scope provider claims them and they are not general-purpose (scope.go, ADR-0008).
+	MCP  MCPBlock `yaml:"mcp,omitempty"`
+	Path string   `yaml:"-"`
+	// Ignored lists the top-level blocks of DroppedBlocks, then the claude keys
+	// of DroppedClaudeKeys (as "claude.<key>"), that the file still carries.
+	// Load records them so `tq doctor` can warn that tq no longer reads them
+	// (the cut of 2026-11-03, docs/prd.md D-29, and the permission settings
+	// retired on 2026-11-05); loading never fails on them.
 	Ignored []string `yaml:"-"`
+	// OldPermissionMode is the claude.permission_mode an older manifest
+	// still carries ("" when none or not a string). tq never applies it: it
+	// is the evidence `tq settings render` needs to tell the defaultMode an
+	// older render wrote from one the user set (ADR-0006).
+	OldPermissionMode string `yaml:"-"`
 }
 
 // DroppedBlocks are the manifest blocks that tq 0.9.0 stops reading: the Jev
@@ -124,6 +126,12 @@ type Manifest struct {
 // the data classification. A manifest that still carries one loads normally;
 // the block is listed in Manifest.Ignored and reported by `tq doctor`.
 var DroppedBlocks = []string{"decision", "guard", "tracker", "packs", "data"}
+
+// DroppedClaudeKeys are the keys of the claude block tq no longer reads: the
+// permission mode and the permission rules (PRD v2 §13: permission modes of
+// any kind are a non-goal). A manifest that still carries one loads normally;
+// the key is listed in Manifest.Ignored as "claude.<key>" and never decoded.
+var DroppedClaudeKeys = []string{"permission_mode", "permissions"}
 
 // droppedBlocksIn returns, in DroppedBlocks order, the dropped top-level keys
 // present in raw. A file that does not parse as a mapping yields none; the
@@ -135,11 +143,36 @@ func droppedBlocksIn(raw []byte) []string {
 	}
 	var out []string
 	for _, k := range DroppedBlocks {
-		if _, ok := top[k]; ok {
-			out = append(out, k)
+		v, ok := top[k]
+		if !ok {
+			continue
+		}
+		if _, scalar := v.(string); scalar && k == "guard" {
+			continue // guard: v2 is the flag of the v2 identity rules, not the dropped block
+		}
+		out = append(out, k)
+	}
+	if claude, ok := top["claude"].(map[string]any); ok {
+		for _, k := range DroppedClaudeKeys {
+			if _, ok := claude[k]; ok {
+				out = append(out, "claude."+k)
+			}
 		}
 	}
 	return out
+}
+
+// oldPermissionMode reads claude.permission_mode out of raw, for evidence
+// only (Manifest.OldPermissionMode).
+func oldPermissionMode(raw []byte) string {
+	var top struct {
+		Claude map[string]any `yaml:"claude"`
+	}
+	if yaml.Unmarshal(raw, &top) != nil || top.Claude == nil {
+		return ""
+	}
+	s, _ := top.Claude["permission_mode"].(string)
+	return s
 }
 
 var secretRe = regexp.MustCompile(`(?i)\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9\-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,})`)
@@ -172,11 +205,8 @@ func Load(path string) (*Manifest, error) {
 	for name := range m.Identities {
 		known := KnownIdentities()
 		if !contains(known, name) {
-			return nil, fmt.Errorf("%s: unknown identity %q (known: %v)", path, name, known)
+			return nil, fmt.Errorf("%s: unknown identity %q (known: %v)%s", path, name, known, unknownProviderHint(name))
 		}
-	}
-	if !contains(PermissionModes, m.Claude.PermissionMode) {
-		return nil, fmt.Errorf("%s: claude.permission_mode must be one of default|acceptEdits|plan|auto|dontAsk|bypass", path)
 	}
 	if err := m.validateCloud(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -184,8 +214,18 @@ func Load(path string) (*Manifest, error) {
 	if err := m.ValidateServices(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	if err := m.Guard.validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.validateScope(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.validateMCP(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	m.Path = path
 	m.Ignored = droppedBlocksIn(raw)
+	m.OldPermissionMode = oldPermissionMode(raw)
 	return &m, nil
 }
 

@@ -10,14 +10,18 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf16"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/migrate"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 )
 
@@ -61,93 +65,166 @@ func newMigrateCmd() *cobra.Command {
 			"tentaqles setup to the one tq maintains: identity directories moved inside\n" +
 			"tq with a junction left behind, the global git identity replaced by tq's\n" +
 			"include file, hand-pasted shell hooks adopted, and (with --steps cmd) the\n" +
-			"legacy cmd.exe AutoRun hook cleared.\n\n" +
+			"legacy cmd.exe AutoRun hook cleared. `tq migrate manifests` (never a\n" +
+			"default step) moves each identity's manifest out of its root into\n" +
+			"~/.tentaqles/identities/<name>/manifest.yaml.\n\n" +
 			"Every mutation is journalled before it happens; `tq uninstall --restore`\n" +
-			"replays that journal backwards.",
+			"replays that journal backwards.\n\n" +
+			"Human-only to apply: a session is refused, and you confirm before --apply\n" +
+			"writes. The dry run reads and is free to run from a session.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			out := c.OutOrStdout()
-
+			// A dry run is a read (ADR-0005: dry runs are free); --apply
+			// refuses a session here, before anything is resolved, and
+			// confirms inside runMigrate.
+			if apply {
+				if err := refuseAgent("tq migrate --apply"); err != nil {
+					return err
+				}
+			}
 			names, err := parseSteps(stepsCSV)
 			if err != nil {
 				return err
 			}
-			// Steps() returns them in tq's own order (identity, git, shell,
-			// cmd) whatever order they were listed in, and rejects unknown
-			// names. Never re-sort what it hands back.
-			steps, err := migrate.Steps(names)
-			if err != nil {
-				return err
-			}
-
-			cfg, err := registry.Load()
-			if err != nil {
-				return err
-			}
-
-			d := migrate.Deps{
-				Cfg: cfg,
-				Git: migrateGit,
-				Reg: migrateReg,
-				Env: os.LookupEnv,
-				// Memoised: the identity step asks once while planning and
-				// again while applying, and enumerating processes costs
-				// seconds on Windows. One list also means the refusal the user
-				// reads in the plan is the refusal that fires on apply.
-				Processes: onceProcesses(migrateProcesses),
-				Force:     force,
-			}
-
-			// The journal is opened, and its path printed, before anything is
-			// touched: a user who interrupts the run mid-way still knows where
-			// the undo lives.
-			ts := ""
-			var j *migrate.Journal
-			if apply {
-				ts = migrateNow()
-				j, err = migrate.Open(ts)
-				if err != nil {
-					return err
-				}
-				if !asJSON {
-					fmt.Fprintf(out, "journal: %s\n", j.Dir)
-				}
-			}
-
-			// One Run call for the whole set. Reconstructing a Plan from JSON
-			// and handing it to Apply would be rejected: each step cross-checks
-			// the plan against one it derives in the same call.
-			plans, runErr := migrate.Run(d, steps, apply, j)
-
-			if asJSON {
-				if err := writeMigrateJSON(out, ts, plans, apply && runErr == nil); err != nil {
-					return err
-				}
-			} else {
-				renderPlans(out, plans)
-			}
-
-			if runErr != nil {
-				step, msg := splitStepErr(runErr, names)
-				fmt.Fprintf(c.ErrOrStderr(), "stopped at %s: %s; restore with: tq uninstall --restore %s\n", step, msg, ts)
-				exitFunc(1)
-				return nil
-			}
-			if !asJSON {
-				if apply {
-					fmt.Fprintf(out, "applied. undo with: tq uninstall --restore %s\n", ts)
-				} else {
-					fmt.Fprintln(out, "dry run — nothing changed. Re-run with --apply.")
-				}
-			}
-			return nil
+			return runMigrate(c, names, apply, force, asJSON)
 		},
 	}
 	c.Flags().BoolVar(&apply, "apply", false, "perform the migration (without this it only shows what it would do)")
 	c.Flags().StringVar(&stepsCSV, "steps", defaultSteps, "comma-separated steps to run: "+strings.Join(migrate.KnownSteps(), ", "))
 	c.Flags().BoolVar(&force, "force", false, "proceed past advisory refusals (a directory in use, a changed AutoRun value)")
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
+	c.AddCommand(newMigrateManifestsCmd())
 	return c
+}
+
+// manifestsStep is the migrate step that moves manifests into the protected
+// location (ADR-0002). It is human-only to apply: the manifest and the
+// trust record are what the guard reads, and an agent must never relocate
+// them (PRD v2 §8.1).
+const manifestsStep = "manifests"
+
+func newMigrateManifestsCmd() *cobra.Command {
+	var (
+		apply  bool
+		asJSON bool
+	)
+	c := &cobra.Command{
+		Use:   "manifests",
+		Short: "Move each identity's manifest out of its root into ~/.tentaqles (human only with --apply)",
+		Long: "For every identity whose manifest still sits at <root>/.tentaqles.yaml, copies\n" +
+			"it byte for byte to ~/.tentaqles/identities/<name>/manifest.yaml and replaces\n" +
+			"the root file with a name-only marker (schema tentaqles-marker-v1, client).\n" +
+			"The bytes do not change, so neither does the trust hash: a trusted manifest\n" +
+			"stays trusted, an untrusted one stays untrusted. Both writes are journalled;\n" +
+			"`tq uninstall --restore` puts the manifest back in the root.\n\n" +
+			"The same step runs as `tq migrate --steps manifests`. It changes nothing\n" +
+			"without --apply, and --apply refuses an agent session.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			// The dry run is free to read; --apply refuses a session and
+			// confirms inside runMigrate.
+			return runMigrate(c, []string{manifestsStep}, apply, false, asJSON)
+		},
+	}
+	c.Flags().BoolVar(&apply, "apply", false, "perform the move (without this it only shows what it would do)")
+	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
+	return c
+}
+
+// runMigrate plans the named steps and, with apply, performs them under a
+// journal. Both `tq migrate` and `tq migrate manifests` end here.
+func runMigrate(c *cobra.Command, names []string, apply, force, asJSON bool) error {
+	out := c.OutOrStdout()
+
+	// Steps() returns them in tq's own order (identity, git, shell, cmd,
+	// manifests) whatever order they were listed in, and rejects unknown
+	// names. Never re-sort what it hands back.
+	steps, err := migrate.Steps(names)
+	if err != nil {
+		return err
+	}
+	if apply && slices.Contains(names, manifestsStep) {
+		if err := refuseAgent("tq migrate manifests --apply"); err != nil {
+			return err
+		}
+		// The protected area is created private to the user before anything
+		// is moved into it (on Windows: the one icacls run).
+		if err := ensureProtectedHome(); err != nil {
+			return err
+		}
+	}
+
+	cfg, err := registry.Load()
+	if err != nil {
+		return err
+	}
+
+	d := migrate.Deps{
+		Cfg: cfg,
+		Git: migrateGit,
+		Reg: migrateReg,
+		Env: os.LookupEnv,
+		// Memoised: the identity step asks once while planning and
+		// again while applying, and enumerating processes costs
+		// seconds on Windows. One list also means the refusal the user
+		// reads in the plan is the refusal that fires on apply.
+		Processes: onceProcesses(migrateProcesses),
+		Force:     force,
+	}
+
+	// The journal is opened, and its path printed, before anything is
+	// touched: a user who interrupts the run mid-way still knows where
+	// the undo lives.
+	ts := ""
+	var j *migrate.Journal
+	if apply {
+		ts = migrateNow()
+		about := fmt.Sprintf("tq migrate --apply: about to write the journal %s and apply the steps %s", filepath.Join(paths.Home(), "backups", ts), strings.Join(names, ","))
+		// With --json the line goes to stderr so stdout stays one JSON
+		// document.
+		aboutW := c.OutOrStdout()
+		if asJSON {
+			aboutW = c.ErrOrStderr()
+		}
+		if err := humanonly.Gate("tq migrate", about, aboutW); err != nil {
+			return err
+		}
+		j, err = migrate.Open(ts)
+		if err != nil {
+			return err
+		}
+		if !asJSON {
+			fmt.Fprintf(out, "journal: %s\n", j.Dir)
+		}
+	}
+
+	// One Run call for the whole set. Reconstructing a Plan from JSON
+	// and handing it to Apply would be rejected: each step cross-checks
+	// the plan against one it derives in the same call.
+	plans, runErr := migrate.Run(d, steps, apply, j)
+
+	if asJSON {
+		if err := writeMigrateJSON(out, ts, plans, apply && runErr == nil); err != nil {
+			return err
+		}
+	} else {
+		renderPlans(out, plans)
+	}
+
+	if runErr != nil {
+		step, msg := splitStepErr(runErr, names)
+		fmt.Fprintf(c.ErrOrStderr(), "stopped at %s: %s; restore with: tq uninstall --restore %s\n", step, msg, ts)
+		exitFunc(1)
+		return nil
+	}
+	if !asJSON {
+		if apply {
+			fmt.Fprintf(out, "applied. undo with: tq uninstall --restore %s\n", ts)
+		} else {
+			fmt.Fprintln(out, "dry run — nothing changed. Re-run with --apply.")
+		}
+	}
+	return nil
 }
 
 // parseSteps splits the --steps list, dropping blanks so a trailing comma is

@@ -24,12 +24,13 @@ import (
 // never stall). The plugin's PreToolUse timeout is 15 s; when Claude Code
 // kills a hook the call proceeds, so the budget keeps a wide margin for
 // process start and the other rules. Tests lower it;
-// TQ_HOOK_SCAN_BUDGET (a Go duration, at most 12s) overrides the default.
-var scanBudget = 8 * time.Second
+// TQ_HOOK_SCAN_BUDGET (a Go duration, at most maxScanBudget) overrides the
+// default.
+var scanBudget = 4 * time.Second
 
-// maxScanBudget keeps a 5 s margin under the plugin's 15 s PreToolUse
-// timeout for process start and the identity lookups.
-const maxScanBudget = 10 * time.Second
+// maxScanBudget keeps the scan inside hookDeadline (6 s), with room for
+// process start and the identity lookups.
+const maxScanBudget = 5 * time.Second
 
 const scanTimedOut = "scan did not finish in time"
 

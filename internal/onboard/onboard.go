@@ -42,12 +42,11 @@ type Cloud struct {
 // Answers is one onboarding run. Every block but name and git.email is optional: a nil block is a
 // skipped question, and it stays out of the manifest.
 type Answers struct {
-	Name           string `yaml:"name"`
-	Base           string `yaml:"base,omitempty"`
-	DisplayName    string `yaml:"display_name,omitempty"`
-	Color          string `yaml:"color,omitempty"`
-	PermissionMode string `yaml:"permission_mode,omitempty"`
-	Git            Git    `yaml:"git"`
+	Name        string `yaml:"name"`
+	Base        string `yaml:"base,omitempty"`
+	DisplayName string `yaml:"display_name,omitempty"`
+	Color       string `yaml:"color,omitempty"`
+	Git         Git    `yaml:"git"`
 	// Identities overrides the identities derived from the other answers.
 	Identities   []string          `yaml:"identities,omitempty"`
 	Cloud        *Cloud            `yaml:"cloud,omitempty"`
@@ -67,13 +66,50 @@ func Load(path string) (*Answers, error) {
 	return Parse(raw)
 }
 
+// retiredKeys are top-level answer keys an older tq wrote and this one no
+// longer reads (permission_mode: PRD v2 §13, permission modes of any kind are
+// a non-goal). An answer file that still carries one parses; the key is
+// dropped before the strict decode and never read.
+var retiredKeys = []string{"permission_mode"}
+
+// dropRetiredKeys returns raw without the top-level retiredKeys, or raw as
+// it is when it holds none (or does not parse; the strict decode reports it).
+func dropRetiredKeys(raw []byte) []byte {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return raw
+	}
+	top := doc.Content[0]
+	if top.Kind != yaml.MappingNode {
+		return raw
+	}
+	kept := top.Content[:0:0]
+	dropped := false
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		if slices.Contains(retiredKeys, top.Content[i].Value) {
+			dropped = true
+			continue
+		}
+		kept = append(kept, top.Content[i], top.Content[i+1])
+	}
+	if !dropped {
+		return raw
+	}
+	top.Content = kept
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
 // Parse reads answers from YAML.
 func Parse(raw []byte) (*Answers, error) {
 	if manifest.LooksLikeSecret(string(raw)) {
 		return nil, manifest.ErrSecretLike
 	}
 	var a Answers
-	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec := yaml.NewDecoder(bytes.NewReader(dropRetiredKeys(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&a); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("onboard answers: %w", err)
@@ -134,9 +170,6 @@ func (a *Answers) Validate() error {
 	}
 	if a.Git.Provider != "" && !slices.Contains(GitProviders, a.Git.Provider) {
 		return fmt.Errorf("git.provider: unknown git host %q (known: %s)", a.Git.Provider, strings.Join(GitProviders, ", "))
-	}
-	if !slices.Contains(manifest.PermissionModes, a.PermissionMode) {
-		return fmt.Errorf("permission_mode %q: use default, acceptEdits, plan, auto, dontAsk or bypass", a.PermissionMode)
 	}
 	if err := a.validateCloud(); err != nil {
 		return err
@@ -272,8 +305,8 @@ func (a *Answers) AddOptions() (workspace.AddOptions, error) {
 	return workspace.AddOptions{
 		Base: a.Base, Name: a.Name, DisplayName: a.DisplayName, Color: a.Color,
 		GitName: a.Git.Name, GitEmail: a.Git.Email, GitUser: a.Git.User, GitProvider: a.Git.Provider,
-		Identities: a.identities(), PermissionMode: a.PermissionMode,
-		Chat: a.Chat, Email: a.Email, DataPlatform: a.DataPlatform,
+		Identities: a.identities(),
+		Chat:       a.Chat, Email: a.Email, DataPlatform: a.DataPlatform,
 		Agents: slices.Clone(a.Agents), Cloud: a.cloudBlock(),
 	}, nil
 }

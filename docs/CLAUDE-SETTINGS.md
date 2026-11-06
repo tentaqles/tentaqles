@@ -16,40 +16,113 @@ It writes the tq-owned part of each identity's `settings.json`:
 
 | Key | Value |
 |---|---|
-| `permissions.defaultMode` | the manifest's `claude.permission_mode` as it is. Empty means `auto`; `bypass` becomes `bypassPermissions` (the manifest is hash-trusted by `tq allow`, so the value is the human's own choice). It applies to sessions started outside the launcher (an IDE): the `claude` launcher always starts in bypass (see `CLAUDE-HOOK.md`, "Turning rules on and off"). tq sets no permission mode of its own beyond that skip |
-| `permissions.allow` | common read-only commands (git status/diff/log, gh pr view/checks, ls/cat/grep/rg, test runners, …) so auto mode does not stop on them |
-| `permissions.deny` | credential stores (SSH keys, cloud/git credentials, the tq catalog), `printenv`, `gh repo delete` — a second layer behind the PreToolUse guard |
-| `skipDangerousModePermissionPrompt` | `true`: the launcher always starts Claude in bypass, so Claude's bypass warning is skipped |
 | `env` | `ENABLE_STOP_REVIEW=0`, `SECURITY_REVIEW_MODEL=claude-sonnet-5-5` and `SG_AGENTIC_MODEL=claude-sonnet-5-5`: the security-guidance plugin keeps its commit/push review (on Sonnet; its agentic path reads `SG_AGENTIC_MODEL`) but stops running a headless Opus review after every turn |
 | `statusLine` | `tq statusline`, but only when there is none, it is an unpinned `npx …@latest` / ccstatusline, or tq set it before. A custom script is left alone. |
 
-After an upgrade that changes what tq renders (0.9.0 did, for Codex),
-`tq doctor` reports `settings-drift` for every identity until you run
-`tq settings render --all` once.
+tq writes no permission setting: no `permissions` rules, no `defaultMode`.
+The `claude` launcher starts Claude with `--dangerously-skip-permissions`,
+and tq's PreToolUse hook denies what the identity and secret rules forbid
+(see `CLAUDE-HOOK.md`).
 
-**Only what tq wrote is ever taken back.** The entries tq added are recorded
-in `<identity>/.tq-settings-state.json`; the next render replaces exactly
-those, so rules you add by hand stay. An entry you already had is never
-claimed by tq.
+After an upgrade that changes what tq renders, `tq doctor` reports
+`settings-drift` for every identity until you run `tq settings render --all`
+once.
+
+**Only what tq wrote is ever taken back.** What tq wrote is recorded in
+`<identity>/.tq-settings-state.json`; the next render replaces exactly that,
+so keys you add by hand stay. A value you already had is never claimed by tq.
+
+**Cleaning what an older tq wrote.** Older versions also wrote
+`permissions.defaultMode`, `permissions.allow`/`deny`/`ask` and
+`skipDangerousModePermissionPrompt`. The first render after the upgrade
+removes them, and only them:
+
+- the `allow`, `deny` and `ask` entries the state file records as tq's;
+  entries you added by hand stay;
+- `defaultMode`, when the state file shows an older render and the value is
+  exactly the one that render wrote: the value `settings.json` still holds
+  when it has not changed since that render wrote it and its state file (an
+  older render rewrote `defaultMode` on every render), else the one it wrote
+  for the manifest's old `claude.permission_mode` (`auto` for none or `auto`,
+  `bypassPermissions` for `bypass`, any other mode as it was); a different
+  value is yours and stays. The value tq wrote is kept in the state file
+  (`legacy_default_mode`) until tq has removed it, so removing
+  `permission_mode` from the manifest first, as `tq doctor` advises, loses
+  nothing;
+- `skipDangerousModePermissionPrompt: true`, on the same evidence;
+- the `permissions` object, when this leaves it empty.
+
+With no state file, or one that does not parse, nothing of these is
+touched: a corrupt state file claims nothing. `--dry-run` lists each
+removal (`permissions.allow: removed 2 tq entries (…)`,
+`permissions.defaultMode: removed (was auto)`, …). The new state file
+records no permission entry, so a `defaultMode` you set by hand afterwards
+stays.
 
 Per-workspace additions live in the manifest (and need `tq allow` after an
 edit, like any manifest change):
 
 ```yaml
 claude:
-  permission_mode: auto        # default|acceptEdits|plan|auto|dontAsk|bypass
-  permissions:
-    allow: ["Bash(make:*)"]
-    ask:   ["Bash(az webapp deploy:*)"]
-    deny:  ["Bash(terraform apply:*)"]
   env:
     SOME_FLAG: "1"             # secret-shaped values make the manifest fail to load
 ```
 
-A deny always wins over an allow for the same entry.
+A manifest that still carries `claude.permission_mode` or
+`claude.permissions` loads; tq does not read them and `tq doctor` warns
+`manifest-dropped-block`. Remove them, then `tq allow`.
 
-Settings changes apply to running sessions immediately, including the
-permission mode.
+### MCP servers and the PATH mask under `guard: v2`
+
+For a workspace whose manifest sets `guard: v2` (ADR-0008), the render also
+brings the identity's harness config in line with its provider scope:
+
+- **MCP servers.** Every server tq can tell is out of scope is removed from
+  `<identity>/claude/.claude.json` (the top-level `mcpServers`, user scope,
+  and every `projects[<path>].mcpServers`, local scope) and from
+  `<identity>/codex/config.toml` (`[mcp_servers.<name>]` and its sub-tables,
+  or a one-line `name = { ... }` under `[mcp_servers]`). Out of scope means a
+  token of the name (split on `_ - .`) is an out-of-scope provider's `mcp`
+  entry and no in-scope provider's, the package or image its `command`/`args`
+  run is one of an out-of-scope provider's `mcp_packages` or `images`, one of
+  its `env` keys is an out-of-scope provider's variable, its `url` is an
+  out-of-scope API host, or its `command` is an out-of-scope CLI. Every other
+  server is kept only when (the owner's hybrid list, ADR-0008) the catalog
+  attributes it to an in-scope provider or `claude.bundle.mcp` declares it,
+  it is a general-purpose server of `internal/providers/mcp_general.yaml`
+  (playwright, context7, memory, filesystem, fetch, git, sequential-thinking,
+  time, everything, postgres, sqlite, puppeteer, chrome-devtools,
+  microsoft-learn; matched by what it runs, not its name), or its exact name
+  is in the manifest's `mcp.allow`:
+
+  ```yaml
+  mcp:
+    allow: [team-tool, plugin_tools_srv]   # exact server names; letters, digits, . _ -
+  ```
+
+  `mcp.allow` never keeps a server attributed to an out-of-scope provider.
+  The hook judges `mcp__<server>__*` the same way for every same-named entry
+  (a claude.ai connector by its name). `.claude.json` is edited in place: its indentation and
+  key order stay. Each removed entry is appended to `mcp-out-of-scope.json` in
+  the same folder (a file there tq cannot read is moved aside to
+  `.corrupt-<time>`, never overwritten); to bring one back, add its provider to the manifest's
+  `scope:`, `tq allow`, and copy it back. `--dry-run` lists what would go.
+  Claude Code rewrites `.claude.json` while a session runs: render with the
+  sessions of that identity closed (the render warns when one looks open).
+- **The PATH mask.** `~/.tentaqles/identities/<ws>/path-mask/`, one stub per
+  out-of-scope executable name in every spelling (extensionless, and on
+  Windows `.exe`/`.com` hard links to `tq-stub.exe`, a link to the tq binary,
+  plus `.bat`, `.cmd`, `.ps1`, `.vbs`, `.js`), which `tq env` puts first on the
+  identity PATH when a folder shared with other tools holds such a CLI.
+  Removed when the flag is off. The hook judges an `mcp__<server>__*` call by
+  the same server entries.
+
+Not rendered, and judged by the hook alone: a project `.mcp.json`, plugin MCP
+servers, claude.ai connectors, a machine-wide `managed-mcp.json`,
+`--mcp-config`, Codex's project `.codex/config.toml`, and the global
+`~/.claude.json` an identity without a `claude` identity loads.
+
+Settings changes apply to running sessions immediately.
 
 ## `tq statusline`
 
@@ -86,22 +159,12 @@ are kept; delete those by hand once you have checked them.
 
 tq gives Codex CLI the same two things it gives Claude: a private config
 home per workspace and the PreToolUse hook (identity drift and secrets).
-Codex's own approvals and sandbox stay Codex's: tq pins one pair and sets no
-permission of its own beyond it.
+tq writes nothing into Codex's `config.toml`.
 
 **What tq writes**, into the workspace's Codex identity home (`CODEX_HOME`),
 on `tq settings render`, `tq allow` and `tq deny`. A workspace without a
 Codex identity gets nothing; when the identity is dropped, the next render
 removes what tq wrote.
-
-- A marked block at the head of `config.toml`, the same for every workspace:
-
-  ```
-  # >>> managed by tq: edit with tq settings render, not by hand
-  approval_policy = "on-request"
-  sandbox_mode = "workspace-write"
-  # <<< managed by tq
-  ```
 
 - tq's entries in `hooks.json`: PreToolUse runs
   `tq claude-hook pre-tool-use --agent codex` and SessionStart runs
@@ -110,23 +173,30 @@ removes what tq wrote.
   trust it once in `/hooks`**, and skips a changed hook until you trust it
   again. tq never passes `--dangerously-bypass-hook-trust`.
 
-The launcher (`tq run . -- codex`, the `codex` function) passes the same
-pair as flags, `-a on-request -s workspace-write`; a flag you type yourself
-(`-a`, `-s`, `-c approval_policy=…`, `--yolo`) wins. `codex-off`
+The launcher (`tq run . -- codex`, the `codex` function) starts Codex with
+its full-bypass flag `--dangerously-bypass-approvals-and-sandbox` (PRD v2
+§7.2): tq never sets how Codex asks, and its hook still denies the three
+categories. A flag you type yourself about asking or the sandbox (`-a`,
+`-s` and the glued `-anever`/`-sread-only`, `--yolo`, the bypass flag, a `-c`
+override of `approval_policy` or `sandbox_mode`, glued ones included) goes
+through as typed and the launcher adds nothing. The flag goes right after
+`exec`, `e`, `resume` or `fork` (which take it themselves in codex 0.154),
+first otherwise. The launch is refused when `tq` is not on the PATH Codex will
+run with, since the Codex hook is a bare `tq claude-hook pre-tool-use
+--agent codex`. `codex-off`
 (`tq run --off -- codex`) starts Codex with its bypass flag, the main
 `~/.codex` and no tq.
 
-A render replaces only what tq owns: its own `config.toml` block (by its
-markers) and a `rules/tq.rules` or profile file that tq wrote. Your own
-`rules/*.rules` files, and a `tq.rules` tq did not write, are never touched.
+A render removes only what an older tq wrote: its marked `config.toml`
+block (by its markers, with the two keys inside it), and a `rules/tq.rules`
+or profile file that tq wrote. Keys you set in `config.toml` outside that
+block, your own `rules/*.rules` files, and a `tq.rules` tq did not write,
+are never touched.
 
-**Codex and the hook.** Codex parses a hook `ask` but does not support it:
-it reports an error and continues the call. So tq never sends one: the one
-confirm the hook can raise (the commit secret scan that could not finish, or
-the `tq/guard-error` fail-safe) is a block in Codex, with the reason
-`tq: this needs your confirm; Codex hooks cannot ask. Run it yourself, or use claude`.
-An identity-guard block (wrong git email, blocked command, untrusted
-workspace) answers Codex with a deny as well as exit 2.
+**Codex and the hook.** tq never sends an ask, to any harness (ADR-0006).
+Every deny under `--agent codex`, whatever the category, answers Codex with
+the PreToolUse deny JSON on stdout and exits 2, so either half blocks; a call
+tq cannot judge is a deny of `tq/guard-error`.
 
 **`apply_patch`.** Codex sends the patch text, not a file path. The hook
 reads its file headers (`*** Add File:`, `*** Update File:`,
@@ -134,12 +204,12 @@ reads its file headers (`*** Add File:`, `*** Update File:`,
 file the patch writes. A patch whose file list tq cannot read is blocked
 (`tq/guard-error`).
 
-**Conflicts.** A user-owned `approval_policy` or `sandbox_mode` in
-`config.toml` is left alone and reported on each render ("not changed"); an
+**Conflicts.** An old tq block in `config.toml` without its end marker, an
 invalid `hooks.json`, or a hook group that mixes tq's handler with yours, is
-a conflict, and tq never touches your keys or files. The config block and
-the hook entries are independent: a conflict in one still writes the other,
-so the hook keeps running and the identity guard keeps blocking.
+a conflict, reported on each render ("not changed"), and tq never touches
+your keys or files. `config.toml` and the hook entries are independent: a
+conflict in one still writes the other, so the hook keeps running and the
+identity guard keeps blocking.
 
 ## `tq doctor` checks
 
@@ -152,7 +222,6 @@ so the hook keeps running and the identity guard keeps blocking.
 | `plugin-foreign-path` | an identity's `installed_plugins.json` points at another identity's plugin cache or at `~/.claude` (a config dir copied from a sibling); hooks then run another identity's files. Reinstall the plugin inside the identity |
 | `memory-stale` | a workspace's `.claude/memory.db` was last written more than 48 h before its newest Claude transcript: the plugin hooks are not capturing |
 | `python-store-alias` | `python3` is the Microsoft Store alias (slower hook start); set `TENTAQLES_PY` |
-| `permission-mode-overridden` | (info) `claude.permission_mode` is not bypass, and the `claude` launcher starts in bypass anyway; the value still drives `defaultMode` |
 | `claude-alias-shadow` | a shell profile defines something that stands in for tq's `claude`/`codex` launcher: a PowerShell alias, an alias that runs another command, or a function of that name after tq's activation (warn: delete it), or an alias that calls the launcher with extra flags (info) |
 | `codex-hooks-missing` | tq's PreToolUse entry is not in the codex identity's `hooks.json`: Codex runs without tq's guard. Fix: `tq settings render <ws>` |
 | `codex-hooks-disabled` | the codex identity's `config.toml` sets `[features] hooks = false` |

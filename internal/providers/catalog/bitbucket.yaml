@@ -3,3 +3,10 @@ name: Bitbucket
 category: vcs
 docs: https://bitbucket.org
 cli: null
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  env: [BITBUCKET_TOKEN, BITBUCKET_APP_PASSWORD, BITBUCKET_USERNAME]
+  hosts: [api.bitbucket.org]
+  git_hosts: [bitbucket.org, altssh.bitbucket.org]
+  mcp: [bitbucket]

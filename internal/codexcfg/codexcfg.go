@@ -1,22 +1,20 @@
-// Package codexcfg renders tq's pinned Codex settings into a CODEX_HOME,
-// leaving everything the user wrote as it was:
+// Package codexcfg renders tq's Codex hook into a CODEX_HOME, leaving
+// everything the user wrote as it was: tq's entries in hooks.json
+// (PreToolUse runs `tq claude-hook pre-tool-use --agent codex`, SessionStart
+// `tq claude-hook session-start --agent codex`). tq writes nothing into
+// config.toml.
 //
-//   - a marked block of top-level keys (approval_policy, sandbox_mode) at the
-//     head of config.toml: Pinned, the same for every workspace;
-//   - tq's entries in hooks.json: PreToolUse runs `tq claude-hook pre-tool-use
-//     --agent codex`, SessionStart `tq claude-hook session-start --agent codex`.
-//
-// The launch flags (Plan.Flags) carry the same pair on `tq run . -- codex`.
-// What older tq versions wrote is removed when tq owns it: the guard-mode
+// What older tq versions wrote is removed when tq owns it: the marked
+// config.toml blocks (the current marker and the unattended and guard-mode
+// ones; keys outside a marked block are the user's and stay), the guard-mode
 // exec-policy file rules/tq.rules and the unattended profile file
-// tq-unattended.config.toml; their marked config.toml blocks are replaced.
+// tq-unattended.config.toml.
 package codexcfg
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -34,16 +32,10 @@ const (
 	legacyRulesHead = modeBegin + "\n"
 )
 
-var (
-	tableRe  = regexp.MustCompile(`^\s*\[`)
-	topKeyRe = regexp.MustCompile(`^\s*(approval_policy|sandbox_mode)\s*=`)
-)
-
-// Want is what Render brings a CODEX_HOME in line with. A nil Plan removes
-// everything tq wrote.
+// Want is what Render brings a CODEX_HOME in line with. The zero Want
+// removes everything tq wrote.
 type Want struct {
-	Plan *Plan
-	// Hook writes tq's hooks.json entries (only with a Plan).
+	// Hook writes tq's hooks.json entries; false removes them.
 	Hook bool
 }
 
@@ -54,24 +46,35 @@ type Result struct {
 	Conflicts []string // "<what>: <why>"
 }
 
-func keys(approval, sandbox string) string {
-	return fmt.Sprintf("approval_policy = %q\nsandbox_mode = %q\n", approval, sandbox)
+// legacyProfileKeys is the content of the unattended profile file an older
+// tq wrote, read only to recognise that file.
+func legacyProfileKeys(sandbox string) string {
+	return fmt.Sprintf("approval_policy = %q\nsandbox_mode = %q\n", "never", sandbox)
 }
 
 // strip removes every managed block, current or legacy (marker lines
-// included). ok is false when a begin marker has no end marker after it:
-// nothing is then safe to remove.
+// included). A marker matches with its surrounding white space ignored (an
+// editor's trailing space must not leave tq's approval_policy behind). ok
+// is false when a begin marker has no end marker after it, or when a line
+// naming tq's block ("managed by tq") is left that no marker form matches:
+// nothing is then safe to remove, and the render reports a conflict.
 func strip(s string) (string, bool) {
 	var out []string
 	in := false
 	for _, l := range strings.SplitAfter(s, "\n") {
-		t := strings.TrimRight(l, "\r\n")
+		t := strings.Join(strings.Fields(l), " ")
 		switch {
 		case t == beginMarker || t == legacyBegin || t == modeBegin:
 			in = true
 		case t == endMarker || t == legacyEnd || t == modeEnd:
+			if !in {
+				return s, false // an end marker with no begin: an edited block
+			}
 			in = false
 		case !in:
+			if strings.Contains(t, "managed by tq") {
+				return s, false
+			}
 			out = append(out, l)
 		}
 	}
@@ -82,7 +85,7 @@ func strip(s string) (string, bool) {
 // wrote into the profile file, for any sandbox, with nothing else in it.
 func ownedProfile(s string) bool {
 	for _, sb := range []string{"read-only", "workspace-write", "danger-full-access"} {
-		if s == legacyBegin+"\n"+keys("never", sb)+legacyEnd+"\n" {
+		if s == legacyBegin+"\n"+legacyProfileKeys(sb)+legacyEnd+"\n" {
 			return true
 		}
 	}
@@ -138,6 +141,30 @@ func stripLegacyRules(s string) (string, bool) {
 	return rest, true
 }
 
+// ManagedBlock returns the block an older tq wrote in a config.toml's
+// content (the current markers, both lines included) and whether there is
+// one. The integrity record (internal/trust) covers that block and nothing
+// else of the file, which is otherwise the user's; once Render has removed
+// it there is none.
+func ManagedBlock(content string) (string, bool) {
+	var b strings.Builder
+	in := false
+	for _, l := range strings.SplitAfter(content, "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case t == beginMarker:
+			in = true
+			b.WriteString(l)
+		case t == endMarker && in:
+			b.WriteString(l)
+			return b.String(), true
+		case in:
+			b.WriteString(l)
+		}
+	}
+	return "", false
+}
+
 func readOpt(p string) (string, bool, error) {
 	b, err := os.ReadFile(p)
 	if os.IsNotExist(err) {
@@ -150,44 +177,23 @@ func readOpt(p string) (string, bool, error) {
 }
 
 // Render brings dir (a CODEX_HOME) in line with w. Each part is independent:
-// a user-owned key or file is a conflict for that part only, and the others
-// are still written, so a user approval_policy never keeps tq's hook out.
+// a user-owned file is a conflict for that part only, and the others are
+// still written.
 func Render(dir string, w Want, dryRun bool) (Result, error) {
 	var res Result
 	var plan []change
 
-	// config.toml: the top-level block.
+	// config.toml: the marked blocks an older tq wrote are removed (their
+	// approval_policy and sandbox_mode with them); the rest is the user's.
 	p := filepath.Join(dir, "config.toml")
 	cur, _, err := readOpt(p)
 	if err != nil {
 		return res, err
 	}
 	if rest, ok := strip(cur); !ok {
-		res.Conflicts = append(res.Conflicts, "config.toml: tq's managed block in "+p+" has no end marker; fix it by hand")
-	} else {
-		conflict := ""
-		if w.Plan != nil {
-			for _, l := range strings.Split(rest, "\n") {
-				if tableRe.MatchString(l) {
-					break
-				}
-				if topKeyRe.MatchString(l) {
-					conflict = "config.toml already sets " + strings.TrimSpace(strings.SplitN(l, "=", 2)[0]) + "; remove it to let tq manage it (" + p + ")"
-					break
-				}
-			}
-		}
-		if conflict != "" {
-			res.Conflicts = append(res.Conflicts, conflict)
-		} else {
-			next := rest
-			if w.Plan != nil {
-				next = beginMarker + "\n" + keys(w.Plan.Approval, w.Plan.Sandbox) + endMarker + "\n" + rest
-			}
-			if next != cur {
-				plan = append(plan, change{path: p, content: next, remove: next == ""})
-			}
-		}
+		res.Conflicts = append(res.Conflicts, "config.toml: tq's managed block in "+p+" has no end marker, or a marker line tq cannot match; fix it by hand")
+	} else if rest != cur {
+		plan = append(plan, change{path: p, content: rest, remove: rest == ""})
 	}
 
 	// The legacy profile file: removed when tq wrote it, else left alone.
@@ -213,7 +219,7 @@ func Render(dir string, w Want, dryRun bool) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	wantHook := w.Plan != nil && w.Hook
+	wantHook := w.Hook
 	if hexists || wantHook {
 		next, remove, conflict := planHooks([]byte(hcur), hexists, wantHook)
 		switch {

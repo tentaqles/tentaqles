@@ -25,3 +25,11 @@ login:
   args: ["context", "create"]
 verify:
   args: ["context", "active"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [hcloud]
+  env: [HCLOUD_TOKEN, HCLOUD_CONFIG]
+  paths: ["~/.config/hcloud"]
+  hosts: [api.hetzner.cloud]
+  mcp: [hetzner, hcloud]

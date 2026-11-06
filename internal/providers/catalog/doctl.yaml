@@ -26,3 +26,13 @@ identity:
     DIGITALOCEAN_CONFIG: "{dir}/config.yaml"
 login:
   args: ["auth", "init"]
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [doctl]
+  images: ["digitalocean/doctl"]
+  env: [DIGITALOCEAN_ACCESS_TOKEN, DIGITALOCEAN_TOKEN, DIGITALOCEAN_CONFIG]
+  paths: ["~/.config/doctl", "%APPDATA%/doctl"]
+  hosts: [api.digitalocean.com, digitaloceanspaces.com]
+  mcp: [digitalocean]
+  mcp_packages: ["@digitalocean/mcp"]

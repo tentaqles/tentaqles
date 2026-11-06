@@ -91,6 +91,57 @@ def test_tq_run_cannot_run_on_a_bare_box(tmp_path, extra):
     assert p.returncode != 0 or p.stderr != ""
 
 
+def test_tq_bin_is_not_honoured(tmp_path):
+    """TQ_BIN never picks the binary (PRD v2 §8.3): an agent can set a variable, and the tq that
+    enforces must not be its choice. A fake tq named only by TQ_BIN never runs; with no tq on PATH
+    the hook falls back as on a bare box."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    fake = elsewhere / "tq"
+    fake.write_text('#!/bin/sh\necho "argv:$*"; exit 0\n')
+    fake.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k not in ("TENTAQLES_PY", "TQ_ENABLED")}
+    env.update(
+        PATH=os.path.dirname(BASH),  # bash and its coreutils only: no tq anywhere on PATH
+        TQ_BIN=str(fake),
+        HOME=str(tmp_path),
+        USERPROFILE=str(tmp_path),
+        LOCALAPPDATA=str(tmp_path),
+        CLAUDE_PLUGIN_ROOT=str(ROOT),
+    )
+    p = subprocess.run([BASH, str(HOOK), "session-start"], input="{}", capture_output=True, text=True,
+                       env=env, timeout=30)
+    assert p.returncode == 0
+    assert "argv:" not in p.stdout, "the TQ_BIN binary ran"
+    assert "tq is not installed" in p.stdout
+    assert "TQ_BIN" not in HOOK.read_text(encoding="utf-8")
+
+
+def test_tq_hook_never_runs_a_tq_from_the_plugin_folder(tmp_path):
+    """The plugin ships no binary: a tq planted in $CLAUDE_PLUGIN_ROOT/bin is never run.
+    With no tq on PATH or in the install dirs, the hook falls back as on a bare box."""
+    root = tmp_path / "plugin"
+    for name in ("tq", "tq.exe"):
+        planted = root / "bin" / name
+        planted.parent.mkdir(parents=True, exist_ok=True)
+        planted.write_text('#!/bin/sh\necho "planted-ran $*"\nexit 0\n')
+        planted.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k not in ("TENTAQLES_PY", "TQ_ENABLED", "TQ_BIN")}
+    env.update(
+        PATH=os.path.dirname(BASH),  # bash and its coreutils only: no tq anywhere on PATH
+        HOME=str(tmp_path),
+        USERPROFILE=str(tmp_path),
+        LOCALAPPDATA=str(tmp_path),
+        CLAUDE_PLUGIN_ROOT=str(root),
+    )
+    p = subprocess.run([BASH, str(HOOK), "session-start"], input="{}", capture_output=True, text=True,
+                       env=env, timeout=30)
+    assert p.returncode == 0
+    assert "planted-ran" not in p.stdout + p.stderr, "a tq from the plugin folder ran"
+    assert "tq is not installed" in p.stdout
+    assert "CLAUDE_PLUGIN_ROOT/bin" not in HOOK.read_text(encoding="utf-8")
+
+
 def test_scripts_have_no_off_switch():
     """Neither script exits early on an environment variable (the off launcher switches the plugin off instead)."""
     for script in (HOOK, RUN):

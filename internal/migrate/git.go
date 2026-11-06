@@ -13,10 +13,11 @@ import (
 
 func init() { register(gitStep{}) }
 
-// Change.Kind values the identity and git steps emit. The command layer prints
-// them verbatim, so they are part of tq's output contract; stepChangeKinds is
-// the complete set, kept next to the constants so a new kind cannot be added
-// without noticing that `tq migrate --json` gains a value.
+// Change.Kind values the identity and git steps emit (the manifests step's
+// two are in manifests.go). The command layer prints them verbatim, so they
+// are part of tq's output contract; stepChangeKinds is the complete set,
+// kept next to the constants so a new kind cannot be added without noticing
+// that `tq migrate --json` gains a value.
 const (
 	kindRemoveLink      = "remove-link"
 	kindMoveDir         = "move-dir"
@@ -38,6 +39,7 @@ var stepChangeKinds = []string{
 	kindRemoveLink, kindMoveDir, kindMakeLink,
 	kindUnsetGlobal, kindSetGlobal, kindRemoveIncludeIf, kindRemoveInclude,
 	kindAddInclude, kindRewriteWSFile, kindSyncIncludeFile,
+	kindWriteProtectedManifest, kindWriteMarker, kindRekeyTrust, kindSignIntegrity,
 }
 
 // gitStep takes the hand-rolled git identity setup -- a global user.email, one
@@ -185,7 +187,7 @@ func planGit(d Deps) (Plan, *gitActions, error) {
 	byFile := map[string]wsRef{}
 	var trusted []resolve.Workspace
 	for _, w := range all {
-		ok := trust.IsTrusted(w.Hash)
+		ok := trust.IsTrusted(w.Name, w.Hash)
 		byFile[normKey(gitcfg.WorkspaceFile(w.Root))] = wsRef{name: w.Name, root: w.Root, trusted: ok}
 		if ok {
 			trusted = append(trusted, w)

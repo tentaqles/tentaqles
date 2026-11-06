@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/bundle"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -24,23 +25,39 @@ func newBundleSyncCmd() *cobra.Command {
 	var force, asJSON bool
 	c := &cobra.Command{
 		Use:   "sync <workspace>",
-		Short: "Materialize a workspace's claude.bundle into its Claude identity dir",
+		Short: "Materialize a workspace's claude.bundle into its Claude identity dir (human only)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := refuseAgent("tq bundle sync"); err != nil {
+				return err
+			}
 			ws, err := findWorkspace(args[0])
 			if err != nil {
 				return err
 			}
-			if !trust.IsTrusted(ws.Hash) {
-				return fmt.Errorf("workspace %s is untrusted; run: tq allow %s", ws.Name, ws.Name)
+			if v := trust.Check(ws.Name, ws.Hash); !v.OK {
+				return fmt.Errorf("workspace %s is %s", ws.Name, v.Reason)
 			}
 			cat, err := bundle.LoadCatalog()
 			if err != nil {
 				return err
 			}
+			about := fmt.Sprintf("tq bundle sync: about to write settings.json, skills and MCP servers from the catalog into %s", paths.IdentityDir(ws.Name, "claude"))
+			aboutW := c.OutOrStdout()
+			if asJSON {
+				aboutW = c.ErrOrStderr() // stdout stays one JSON document
+			}
+			if err := humanonly.Gate("tq bundle sync", about, aboutW); err != nil {
+				return err
+			}
 			rep, err := bundle.Sync(ws, cat, bundle.Options{Force: force})
 			if err != nil {
 				return err
+			}
+			if rep.Settings {
+				// settings.json is a covered file: the record is signed
+				// again for a human, left stale for an agent session.
+				resignCovered(c, ws)
 			}
 			if asJSON {
 				return json.NewEncoder(c.OutOrStdout()).Encode(rep)
@@ -106,9 +123,12 @@ func newBundleCaptureCmd() *cobra.Command {
 	var writeCatalog bool
 	c := &cobra.Command{
 		Use:   "capture [workspace]",
-		Short: "Reconstruct a claude.bundle manifest fragment and catalog entries from an existing Claude identity dir",
+		Short: "Reconstruct a claude.bundle manifest fragment and catalog entries from an existing Claude identity dir (human only)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := refuseAgent("tq bundle capture"); err != nil {
+				return err
+			}
 			d := dir
 			if d == "" {
 				if len(args) == 0 {
@@ -119,6 +139,11 @@ func newBundleCaptureCmd() *cobra.Command {
 					return err
 				}
 				d = paths.IdentityDir(ws.Name, "claude")
+			}
+			if writeCatalog {
+				if err := humanGate(c, "tq bundle capture", "tq bundle capture: about to add the entries captured from "+d+" to "+paths.Catalog()); err != nil {
+					return err
+				}
 			}
 			captured, err := bundle.Capture(d)
 			if err != nil {

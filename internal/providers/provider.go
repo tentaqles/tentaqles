@@ -110,6 +110,10 @@ type Provider struct {
 	// isolatable CLI login (an env var, the keychain, an MCP connector).
 	Notes string `yaml:"notes,omitempty"`
 
+	// Match is what the guard's identity category recognises as this provider when it is
+	// outside an identity's scope (PRD v2 §6.3, ADR-0007). See match.go.
+	Match Match `yaml:"match,omitempty"`
+
 	// Source is "embedded" for catalog entries or the file path for user
 	// overrides. Never serialized.
 	Source string `yaml:"-"`
@@ -184,6 +188,9 @@ func (p Provider) Validate() error {
 	}
 	if hasControlChars(p.Notes) {
 		return fmt.Errorf("provider %q: notes must not contain control characters", p.ID)
+	}
+	if err := p.Match.Validate(); err != nil {
+		return fmt.Errorf("provider %q: match.%w", p.ID, err)
 	}
 	if p.CLI != nil && p.CLI.Command == "" {
 		return fmt.Errorf("provider %q: cli.command is required when cli is set", p.ID)

@@ -30,3 +30,10 @@ identity:
   env:
     GEMINI_CLI_HOME: "{dir}"
     GEMINI_FORCE_FILE_STORAGE: "true"
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [gemini]
+  env: [GEMINI_CLI_HOME]
+  paths: ["~/.gemini"]
+  mcp: [gemini]

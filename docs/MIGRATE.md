@@ -20,6 +20,7 @@ tq migrate                          # show the plan, change nothing
 tq migrate --apply                  # do it
 tq migrate --steps git --apply      # do only the git step
 tq migrate --json                   # the same plan as one JSON object
+tq migrate manifests                # move each manifest under ~/.tentaqles (plan only)
 ```
 
 Every mutation is written to a journal **before** it happens, and
@@ -27,7 +28,7 @@ Every mutation is written to a journal **before** it happens, and
 
 ## Steps
 
-There are four steps. `--steps` takes a comma-separated list; the default is
+There are five steps. `--steps` takes a comma-separated list; the default is
 `identity,git,shell`.
 
 | Step | Default | What it does |
@@ -36,11 +37,12 @@ There are four steps. `--steps` takes a comma-separated list; the default is
 | `git` | yes | Removes the global `user.email` and the hand-written `includeIf` blocks, and replaces them with `tq`'s managed include file. |
 | `shell` | yes | Replaces hand-installed activation blocks in shell profiles with `tq`'s marker-delimited managed block. |
 | `cmd` | **no** | Clears the legacy `cmd.exe` `AutoRun` value (Windows only). |
+| `manifests` | **no** | Moves each identity's manifest out of its folder into `~/.tentaqles/identities/<name>/manifest.yaml`, leaving a name-only marker behind (ADR-0002). Also `tq migrate manifests`. |
 
-Steps always run in `tq`'s own order — `identity`, `git`, `shell`, `cmd` —
-whatever order you list them in, because `identity` moves directories that
-`git` and `shell` then point at. Duplicates collapse; an unknown name is an
-error rather than a silent no-op.
+Steps always run in `tq`'s own order — `identity`, `git`, `shell`, `cmd`,
+`manifests` — whatever order you list them in, because `identity` moves
+directories that `git` and `shell` then point at. Duplicates collapse; an
+unknown name is an error rather than a silent no-op.
 
 Two things about `--apply` that hold for every step. First, apply does not
 trust the plan you read: it re-derives the plan from the machine and refuses
@@ -234,6 +236,74 @@ back as `REG_EXPAND_SZ` rather than freezing a `%VARIABLE%` into a literal
 path. The shims directory itself is left alone: deleting it is a separate
 decision.
 
+### `manifests`
+
+Not in the default `--steps`; `tq migrate manifests` is the same step on its
+own. It moves each identity's manifest out of the folder an agent works in
+(PRD v2 §8.2, ADR-0002), two journalled writes per identity:
+
+1. `write-protected-manifest`: `<root>/.tentaqles.yaml` is copied byte for
+   byte to `~/.tentaqles/identities/<name>/manifest.yaml` (a 0600 file in a
+   0700 folder);
+2. `write-marker`: the root file is rewritten as the name-only marker,
+   `schema: tentaqles-marker-v1` and `client: <name>`.
+
+Trust is the hash of the manifest's bytes, and the bytes do not change: a
+trusted identity stays trusted, an untrusted one stays untrusted (run
+`tq allow <name>` afterwards, as before). From then on `tq` and the plugin
+read only the protected copy. The marker's `client` must equal the folder
+name, and so must the manifest's own `client`, or the folder is neutral;
+editing the marker changes nothing about the trust hash.
+
+The step also brings the trust record up to date (ADR-0004). Trust is now a
+signed integrity record, `~/.tentaqles/trust/<name>.json`, over the manifest
+and the files that make the hook run (the marker, the enforcing keys of the
+Claude `settings.json`, the installed plugin's hooks and scripts, the Codex
+hook files, the shims). Older versions wrote an empty marker,
+`~/.tentaqles/trust/<hash>` (keyed by the manifest's bytes alone) or
+`~/.tentaqles/trust/<name>/<hash>`. Those markers count until the first
+signature on the machine; that signature takes a signed snapshot of them,
+`~/.tentaqles/trust/legacy.json`, and from then on a marker counts only while
+the snapshot lists it, and never for an identity that has a signed record. For
+every identity (either layout) trusted through a marker that counts, the plan
+shows a journalled `rekey-trust` change per marker: the signed record is
+written, the marker removed and dropped from the snapshot; the marker keeps
+counting for that identity until it runs (`tq doctor` says
+`integrity-record-legacy`, every prompt says "tq: legacy trust record: run tq
+allow <name> to sign hooks and manifest"; `tq allow <name>` does the same
+without a migration). A marker that does not count is never turned into a
+signed record. An identity whose signed record verifies in full and is moved
+gets it signed again (`sign-integrity`, the old record backed up), because the
+marker and the protected copy it covers have changed: a trusted identity stays
+trusted across the move. One whose record fails is moved but not signed again:
+read `tq hooks verify <name>` first. `--apply` signs, so it passes the
+human-only check of every signature.
+
+An identity that already holds both files (a protected copy and an old full
+manifest left in the root; `tq doctor` says `manifest-root-stale`) only gets
+the marker rewrite. An identity already in the new layout is skipped with a
+`skip:` line. Nothing in the old layout changes until you run this step:
+`tq doctor` warns `manifest-in-root` for each identity still waiting, and
+every command keeps reading that identity's manifest from its root.
+
+`--apply` refuses an agent session (human-only). It also makes `~/.tentaqles`
+private to your user if that has not happened yet: 0700 on macOS and Linux
+(an identity folder an older `tq` created wider is tightened when its
+manifest moves in), and on Windows one `icacls` run that removes the
+inherited permissions and grants your account and SYSTEM full control
+(`tq init` and `tq add` do the same). The outcome is recorded in
+`~/.tentaqles/protected-acl.json` and `tq doctor` reports it as
+`protected-acl`; an `icacls` failure never fails the command.
+
+Two refusals: a `.tentaqles.yaml` that is not a regular file (a symlink,
+say) is never read or written through, so that identity is left out with a
+warning; and `TQ_HOME` is ignored in an agent session, so the step, like
+every command, reads `~/.tentaqles` there (`tq doctor` says
+`tq-home-override` when `TQ_HOME` points elsewhere).
+
+`tq uninstall --restore` puts each manifest back in its root and removes the
+protected copy: the identity is the old layout again, trusted as it was.
+
 ## The journal
 
 Every `--apply` opens a journal at:
@@ -273,11 +343,14 @@ you need it.
 ```
 tq uninstall --restore latest              # list what it would undo
 tq uninstall --restore 20260828T140233Z    # a specific journal
-tq uninstall --restore latest --yes        # actually do it
+tq uninstall --restore latest --yes        # do it: it names the journal, you type yes
 ```
 
 Without `--yes` it prints the journal path and every entry, newest first —
-the order it reverses them in — and changes nothing. `latest` resolves to the
+the order it reverses them in — and changes nothing. With `--yes` it still
+asks you to type `yes` before the replay starts: `tq uninstall` and
+`tq migrate --apply` are human-only (ADR-0003), refused from a session, a
+non-terminal stdin or stdout, or under a harness in the process tree. `latest` resolves to the
 newest backup directory containing a `journal.json`; if a *newer* directory
 holds only a half-written temp file, `latest` refuses to resolve at all
 rather than quietly offering you an older, unrelated migration's restore.
@@ -352,26 +425,61 @@ by hand.
 
 Install the new `tq` (the installer replaces the binary), then:
 
-- **Manifests need nothing.** A top-level block tq does not read is
-  ignored; `tq doctor` warns `manifest-dropped-block` and never fails.
-  Removing such a block changes the manifest hash, so run `tq allow <ws>`
-  afterwards. The identity rules and the secret rules are always on, in
-  every Claude permission mode, and no rule asks for a confirmation.
-- **Trust is one thing.** `tq allow <ws>` trusts the manifest as it is;
-  nothing else is read from `$TQ_HOME/trust/`. A `claude.permission_mode:
-  bypass` renders as `bypassPermissions` on the trusted manifest alone.
+- **Manifests need nothing.** A top-level block tq does not read, and the
+  `claude.permission_mode` and `claude.permissions` keys it no longer reads,
+  are ignored; `tq doctor` warns `manifest-dropped-block` and never fails.
+  Removing such a block or key changes the manifest hash, so run
+  `tq allow <ws>` afterwards. The identity rules and the secret rules are
+  always on, in every Claude permission mode, and no rule asks for a
+  confirmation.
+- **Manifests can move under `~/.tentaqles`.** New identities get their
+  manifest at `~/.tentaqles/identities/<ws>/manifest.yaml` with a name-only
+  marker in the folder (ADR-0002); an existing identity keeps its manifest
+  in the folder, resolving exactly as before, until you run
+  `tq migrate manifests --apply` (human-only, journalled, reversible with
+  `tq uninstall --restore`). `tq doctor` warns `manifest-in-root` until
+  then; on Windows it also reports `protected-acl` for the state folder.
+- **Trust is a signed record (ADR-0004).** `tq allow <ws>` signs
+  `~/.tentaqles/trust/<ws>.json` over the manifest, the marker, the enforcing
+  keys of the identity's Claude `settings.json`, the installed plugin's hooks
+  and scripts, the Codex hook files and the shims; the key lives in the OS
+  keychain (`tentaqles` / `integrity-key`), or in `~/.tentaqles/integrity.key`
+  when the keychain is unavailable (`tq doctor`: `integrity-key-file`). A
+  marker an older `tq` wrote still counts until `tq allow <ws>` or `tq migrate
+  manifests --apply` replaces it, with `integrity-record-legacy` in `tq doctor`
+  and a line at every prompt meanwhile; after the first signature a marker
+  created by anything but an older tq never counts. From then on, updating the
+  plugin (a new version folder) or changing a covered file makes the workspace
+  untrusted until you read `tq hooks verify <ws>` and run `tq hooks verify
+  --accept <ws>` (human-only, with a confirmation): no identity in the shell,
+  no `claude`/`codex` launch, no mutating git or remote command from the hook,
+  one line at every prompt meanwhile. After a plugin update, `tq hooks verify
+  --accept --all` lists every workspace whose only change is the new version
+  and whose new plugin folder is, byte for byte, the release this tq was built
+  from (the commit `tq version` prints, read from the tentaqles marketplace
+  clone in that identity's Claude config dir), asks once and signs them all;
+  any other workspace, one without that clone, and every workspace under a dev
+  build of tq is listed as not accepted and needs `tq hooks verify --accept
+  <ws>`. Upgrade tq before or with the plugin: a plugin release newer than the
+  tq installed needs the per-workspace accept until tq is upgraded. Installing a new tq binary changes nothing: the binary on PATH
+  is not covered. `tq deny <ws>` leaves a signed tombstone.
 - **Run `tq settings render --all` once.** It rewrites each identity's
-  Claude settings and the Codex `config.toml` block (always
-  `approval_policy = "on-request"`, `sandbox_mode = "workspace-write"`),
-  and removes files an earlier tq wrote into the Codex identity. Trust tq's
-  hook again in Codex's `/hooks` if it asks.
+  Claude settings, removing the permission settings an earlier tq wrote
+  there (the `permissions` entries it recorded, its `defaultMode` and
+  `skipDangerousModePermissionPrompt`; your own entries stay, see
+  [CLAUDE-SETTINGS.md](CLAUDE-SETTINGS.md)), removes the marked block an
+  earlier tq wrote at the head of the Codex `config.toml` and the other
+  files it wrote into the Codex identity, and signs the record again. Trust
+  tq's hook again in Codex's `/hooks` if it asks.
 - **The state folder** (`~/.tentaqles`): folders tq does not use are left
   in place and never deleted; `tq doctor` lists them as `state-dir-unused`
   (a warning); remove them yourself. Tokens in the keychain stay usable
   through `tq secret`.
 - **The launchers** `claude-off` and `codex-off` (`tq run --off`) start the
   agent with the plugin switched off and the identity env cleaned; they set
-  no variable, and they refuse an agent session.
+  no variable, and they are human-only: refused from a session, a non-terminal
+  stdin or stdout, or under a harness in the process tree, and confirmed by
+  you before the launch (ADR-0003).
 
 ## This machine, before and after
 
@@ -527,7 +635,8 @@ afterwards.
   interrupted one; it will refuse to usefully replay a completed one.
 - **`--force` is a real risk, not a formality.** For the identity in-use
   refusal specifically, the answer is always to close the process.
-- **Manifests are not converted.** `tq` reads both v1 and v2, so migration
-  deliberately leaves manifest schemas alone.
+- **Manifest schemas are not converted.** `tq` reads both v1 and v2, so
+  migration deliberately leaves the schema alone; the `manifests` step moves
+  the file and keeps its bytes.
 - **`tq uninstall` is not an uninstaller in this version.** Only
   `--restore` is implemented.

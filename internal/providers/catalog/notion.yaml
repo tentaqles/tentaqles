@@ -10,3 +10,12 @@ cli:
 # Catalogued so tq can detect whether it is installed and a workspace can
 # record that a client uses it -- but with no identity block, because
 # claiming one tq cannot honour is worse than claiming none.
+# match: what the guard's identity category recognises as this provider when an
+# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+match:
+  executables: [ntn]
+  env: [NOTION_TOKEN, NOTION_API_KEY]
+  hosts: [api.notion.com]
+  mcp: [notion]
+  mcp_packages: ["@notionhq/notion-mcp-server", "mcp/notion"]
+  mcp_hosts: [mcp.notion.com]

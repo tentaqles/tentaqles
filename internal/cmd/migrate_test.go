@@ -166,7 +166,7 @@ func (e *migEnv) addWorkspace(name, gitName, gitEmail string, identities ...stri
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	if err := trust.Allow(h); err != nil {
+	if err := trust.Allow(name, h); err != nil {
 		e.t.Fatal(err)
 	}
 	return wsRoot
@@ -180,8 +180,18 @@ func (e *migEnv) linkIdentity(ws, id, legacy string) string {
 	migWrite(e.t, filepath.Join(legacy, "marker.txt"), ws+"/"+id)
 	dir := paths.IdentityDir(ws, id)
 	migMkdir(e.t, filepath.Dir(dir))
+	// The record covers the identity folder, so a link made after signing is a change: sign
+	// again what was trusted (a Unix symlink resolves to another covered path).
+	mp := filepath.Join(e.base, ws, ".tentaqles.yaml")
+	h, hashErr := trust.HashFile(mp)
+	wasTrusted := hashErr == nil && trust.IsTrusted(ws, h)
 	if err := migrate.MakeLink(dir, legacy); err != nil {
 		e.t.Skipf("MakeLink(%s -> %s): %v (this platform cannot create links unprivileged)", dir, legacy, err)
+	}
+	if wasTrusted {
+		if err := trust.Allow(ws, h); err != nil {
+			e.t.Fatal(err)
+		}
 	}
 	return legacy
 }
@@ -462,9 +472,12 @@ func TestMigrate_ApplyOnSyntheticTree(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("code=%d err=%v stderr=%q out=%s", code, err, errOut, out)
 	}
+	// The human-only confirmation names the journal, then the journal path
+	// is printed before anything is touched.
 	wantJournal := filepath.Join(e.tqHome, "backups", migTestTS)
-	if first := strings.SplitN(out, "\n", 2)[0]; first != "journal: "+wantJournal {
-		t.Fatalf("first line = %q, want %q", first, "journal: "+wantJournal)
+	lines := strings.SplitN(out, "\n", 3)
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "tq migrate --apply: about to write the journal "+wantJournal) || lines[1] != "journal: "+wantJournal {
+		t.Fatalf("first lines = %q, want the confirmation then %q", lines, "journal: "+wantJournal)
 	}
 	if !strings.Contains(out, "applied. undo with: tq uninstall --restore "+migTestTS) {
 		t.Errorf("missing the undo hint:\n%s", out)

@@ -12,7 +12,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// Under --agent codex a guard panic is a Codex deny: Codex lets an ask run.
+// Under --agent codex a guard panic is a Codex deny: every Codex deny writes the deny JSON and exits 2.
 func TestPreToolUseAgentCodexPanicDenies(t *testing.T) {
 	isolateHome(t)
 	prev := hookPolicyDecision
@@ -23,7 +23,7 @@ func TestPreToolUseAgentCodexPanicDenies(t *testing.T) {
 	dir := testutil.TempDir(t)
 	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, hookPayloadFor(t, dir, "ls"))
 	dec, reason := codexAnswerJSON(t, out)
-	if code != 0 || dec != "deny" || !strings.Contains(reason, "tq/guard-error") {
+	if code != 2 || dec != "deny" || !strings.Contains(reason, "tq/guard-error") {
 		t.Fatalf("code %d out %q", code, out)
 	}
 }
