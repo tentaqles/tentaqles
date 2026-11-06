@@ -1,6 +1,6 @@
 # 006: `tentaqles off` and `tentaqles on`
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: if an agent can switch the guard off or forge a raw session, every protection of that identity is gone with no human involved
 **UI:** none
 
