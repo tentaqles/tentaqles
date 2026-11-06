@@ -248,8 +248,9 @@ func writeFileAtomic(p string, b []byte) error {
 }
 
 // writeStubLinks makes the stub program (a hard link to the tq binary, a copy when the two are
-// on different volumes) and links every .exe and .com name to it. A link that already is the
-// stub is left alone.
+// on different volumes, and always a copy on Windows) and links every .exe and .com name to it.
+// A link that already is the stub is left alone. Windows Server refuses to delete a hard link to
+// a running image, and the tq that renders or removes the mask is that image.
 func (l *Layer) writeStubLinks(links []string) (bool, error) {
 	src, err := StubSource()
 	if err != nil {
@@ -263,7 +264,7 @@ func (l *Layer) writeStubLinks(links []string) (bool, error) {
 	}
 	if cur, err := os.Stat(stub); err != nil || !os.SameFile(cur, sfi) && cur.Size() != sfi.Size() {
 		_ = os.Remove(stub)
-		if err := os.Link(src, stub); err != nil {
+		if runtime.GOOS == "windows" || os.Link(src, stub) != nil {
 			if err := copyFile(src, stub); err != nil {
 				return false, fmt.Errorf("the stub program: %w", err)
 			}
