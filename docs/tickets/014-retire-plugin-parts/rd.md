@@ -1,6 +1,6 @@
 # 014: Cut the plugin down to onboarding, memory and the graph
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: this removes the plugin's guard hook, and if ticket 002's registration isn't in place an identity loses its guard; it also deletes code that can only come back from git history
 **UI:** none
 
