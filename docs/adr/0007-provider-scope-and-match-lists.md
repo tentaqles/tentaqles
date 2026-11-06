@@ -404,6 +404,16 @@ latter is denied today by the host rule, because the resource is spelled as a UR
 API): the claim is per first subcommand (round 3). A `*` inside a quoted URL is a
 self-protection false positive outside this record.
 
+**Stalls (follow-up).** A QA run once saw one `tq claude-hook pre-tool-use` spin at full CPU
+for minutes and write no denial line, neither the decision's nor the watchdog's. It was not
+reproduced (800 runs of the same input on both builds, the longest 1.4 s), and the hook's
+time bounds hold for a goroutine in a tight loop under garbage collection
+(`TestHookStall_SpinningDecisionIsDenied`, `TestHookStall_WatchdogEndsAStuckMainGoroutine`).
+Fuzzing the shell entry point and the masker (`FuzzScopeShell`, `FuzzMaskText`, each input
+under 50 ms; cost grows linearly to 100 KB) found one defect, an empty here-string slicing
+out of range, fixed. The plugin's own timeout stays the backstop for a process that does not
+run Go code at all.
+
 This round changes `internal/guard` (the PowerShell splitter), `internal/policy`,
 `internal/providers` and the catalog, `internal/doctor` and `internal/cmd`.
 

@@ -227,7 +227,11 @@ func hereString(s string, i int) (end int, body string, ok bool) {
 	if k < 0 {
 		return -1, "", false
 	}
-	return j + k + len(closer), s[j+1 : j+k], true
+	body = "" // an empty here-string: the closer follows the opening line
+	if k > 0 {
+		body = s[j+1 : j+k]
+	}
+	return j + k + len(closer), body, true
 }
 
 // maskWrappers precede the verb of a simple command.

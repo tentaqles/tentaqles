@@ -28,6 +28,9 @@ func RunMain(args []string, stdout, stderr io.Writer) int {
 			hookExit(hookStartupDeny(stdout, stderr, codex, fmt.Sprintf("tq did not answer within %s", hookWatchdog)))
 		})
 		defer t.Stop()
+		if hookStartTestHook != nil {
+			hookStartTestHook()
+		}
 	}
 	root := NewRoot()
 	root.SetArgs(args)
@@ -46,6 +49,10 @@ func RunMain(args []string, stdout, stderr io.Writer) int {
 // hookWatchdog is the process-level backstop of a pre-tool-use run: one
 // second over hookDeadline. Tests lower it.
 var hookWatchdog = hookDeadline + time.Second
+
+// hookStartTestHook runs on the main goroutine right after the watchdog is armed when a test
+// sets it (startup that never reaches the decision). Nil in tq.
+var hookStartTestHook func()
 
 // hookExit ends the process from the watchdog; tests replace it.
 var hookExit = os.Exit

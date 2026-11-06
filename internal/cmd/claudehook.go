@@ -320,6 +320,9 @@ func runPreToolUse(in io.Reader, out, errw io.Writer, asJSON bool, agent string)
 // decide is the analysis: payload, identity guard, secret rules,
 // self-protection. It writes its answer to out/errw and returns the code.
 func (run *hookRun) decide(in io.Reader, out, errw io.Writer) int {
+	if hookDecideTestHook != nil {
+		hookDecideTestHook()
+	}
 	// One verification of the integrity record per call, however often
 	// resolve and doctor ask (trust.MemoScope).
 	defer trust.MemoScope()()
@@ -487,6 +490,10 @@ func (run *hookRun) loggedCommand(subject string) string {
 // (PRD v2 §6.3): an unreadable payload, a panic, the deadline, a registry
 // or manifest tq cannot read, a patch it cannot parse.
 const guardErrorID = "tq/guard-error"
+
+// hookDecideTestHook runs at the start of every decision when a test sets it (a decision
+// that spins, to prove the deadline and the watchdog end the process). Nil in tq.
+var hookDecideTestHook func()
 
 // failClosed denies a call the guard cannot judge.
 func (run *hookRun) failClosed(out, errw io.Writer, why string) int {

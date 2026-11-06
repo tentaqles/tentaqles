@@ -167,6 +167,11 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   - *Provider files.* Unknown keys are errors with `path:line:col` and a did-you-mean;
     every bad file gives the hook warning; the deny names the file once; `tq doctor` names
     the workspaces a bad new id affects, or none.
+  - *Stalls.* An empty PowerShell here-string (`@'` then `'@` on the next line) no longer
+    panics the splitter (the hook denied every such call as a guard error). New tests run the
+    real hook entry point with a decision, and the main goroutine, stuck in a tight loop
+    while garbage collections run: the deadline and the watchdog deny on time. Fuzz targets
+    `FuzzScopeShell` and `FuzzMaskText` bound every input to 50 ms.
 
 ### The signed integrity record (ADR-0004)
 

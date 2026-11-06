@@ -616,6 +616,10 @@ func TestScope_PowerShellCommandSplitting(t *testing.T) {
 		{"echo 'it''s' then az", pwsh("echo 'it''s' ; az vm list"), cli},
 		{"Bash: echo 'it''s' then az", bash("echo 'it''s' ; az vm list"), cli},
 		{"gh in scope", pwsh(`Write-Host "C:\temp\"; gh pr list`), ""},
+		// an empty here-string (found by FuzzScopeShell: it sliced out of range)
+		{"an empty here-string written to a file", pwsh("@'\n'@ | Set-Content x"), ""},
+		{"an empty here-string, then a command", pwsh("$x = @'\n'@; az vm list"), cli},
+		{"an empty double-quoted here-string", pwsh("@\"\n\"@ | Set-Content x"), ""},
 	})
 }
 
