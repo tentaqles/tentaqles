@@ -12,6 +12,8 @@
   "ticketsDir": "specs/tickets",
   "jobDir": ".job",
   "mainBranch": "main",
+  "commitTrailer": "",
+  "prFooter": "",
   "requirementId": "REQ-\\d+",
   "riskQuestion": "What happens to a customer if this breaks?",
   "highRiskPaths": [],

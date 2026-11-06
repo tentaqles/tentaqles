@@ -185,7 +185,7 @@ node .claude/hooks/gate.mjs risky <the checked-out branch> fix/<slug>
 
 It lists the files on High-risk paths and exits 1 if there are any.
 
-- **Exit 0 (Low and Medium paths).** It may land with no ticket. Start the `lander` agent on its fix path. Give it the branch `fix/<slug>`, the worktree's absolute path and the slug `<slug>`. Don't merge it yourself. It replies `LANDED`, `NEEDS TICKET`, `CONFLICT`, `FAILED` or `MOVED`. Pass that on as it is.
+- **Exit 0 (Low and Medium paths).** It may land with no ticket. Start the `lander` agent on its fix path. Give it the branch `fix/<slug>`, the worktree's absolute path and the slug `<slug>`. Don't merge it yourself. It replies `LANDED`, `NEEDS TICKET`, `CONFLICT`, `FAILED`, `MOVED` or `REFUSED`. Pass that on as it is.
 - **Exit 1 (a High-risk path).** Stop. Show the owner the list and your evidence. It goes through a ticket with `/write-tickets`. Leave the branch and the failing test for that ticket to pick up.
 
 If anything in step 5 failed, leave it on the branch and say what's left. Don't push from here.

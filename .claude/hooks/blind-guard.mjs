@@ -128,7 +128,7 @@ function cliBash(cmd, commands, cwd, root) {
   const rest = w.slice(1);
   const help = rest.length === 0 || ["--help", "-h", "help", "--version", "version"].includes(rest[0]) ||
     (rest.at(-1) === "--help" || rest.at(-1) === "-h");
-  if (!help || rest.length > 4 || rest.some((a) => /[=/]/.test(a))) return deny("You can only read the command's own help here, like `tq --help` or `tq add --help`.");
+  if (!help || rest.length > 4 || rest.some((a) => /[=/]/.test(a))) return deny("You can only read the command's own help here: the command with --help, or a subcommand with --help.");
   return allow();
 }
 

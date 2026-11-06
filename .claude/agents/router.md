@@ -41,10 +41,14 @@ How the tools behave:
 1. Read `.claude/project.json`. If `confirmed` isn't true, tell the owner in one line to run `/write-tickets` in a normal session first, and wait. Run `gate doctor`, and pass on any failing line.
 2. Start the monitor (see "The monitor").
 3. Run `gate jobs`, which holds the job list from any earlier session. Read `BOARD.md`. If it doesn't exist or has no `ready` tickets, tell the owner in one line and wait.
-4. Check for in-flight work from an earlier session. Glob `.claude/worktrees/*/.job/ticket.json`, and read each one's `.job/<t>/status.json`. If a ticket's step isn't `done`, don't start a second lead for it. Tell the owner which tickets look in flight, and ask whether to continue them.
+4. Check for in-flight work from an earlier session. Only this check decides what happens to a ticket that has a worktree. Glob `.claude/worktrees/*/.job/ticket.json`, and read each one's `.job/<t>/status.json`.
+   - Step is `done` and the note says `continued in ...`: the work moved to another worktree. Skip this one.
+   - Step is `done` and board status is still `ready`: it PASSED but hasn't landed. Run `gate check <t>` in that worktree. If it exits 0, send it to the lander as under **PASS**, from step 3. Don't start a new ticket-lead for it. If it fails, treat it as in flight.
+   - Step isn't `done`: don't start a second lead for it. Tell the owner which tickets look in flight, and ask whether to continue them.
    - To continue, first try `SendMessage` to the agent ID in `gate jobs`.
    - If that fails, start a new ticket-lead with the prompt `Ticket: <t>` and a second line `From: <branch> Worktree: <path>`.
 5. Work out which tickets can start now:
+   - Step 4 didn't find it, and
    - Status is `ready`, and
    - Runs is `alongside`, or Runs is `waits for NNN` and NNN shows `landed`.
    - Anything else waits. Never start or change a `draft` ticket.
@@ -85,7 +89,15 @@ Open P2 and P3 items don't hold up a landing. Mention them in the line you send 
 
 **STOP or a question**: ask the owner one short question with `AskUserQuestion`, with the options, your recommendation first. Then resume the same lead with `SendMessage`, with the answer. If the ticket or the code already settles it, you can decide and resume, as long as it doesn't change what users see.
 
-For **take over** or **park**, resume the lead so it records that, then mark the job. Parked: run `gate park <t>`, which sets the board and commits it.
+For **park**, resume the lead so it records that, then mark the job. Parked: run `gate park <t>`, which sets the board and commits it.
+
+**Take over** means the owner finishes the ticket by hand:
+
+1. Resume the lead. It records step `waiting` with the note `taken over by the owner`, and returns STOP. Mark the job `waiting`.
+2. The owner works in the ticket's worktree and commits.
+3. When they say they're finished, resume the lead. It starts at verify and review, with a fresh verifier and reviewer, and returns PASS or STOP as usual.
+
+`gate check` still needs the builder's hook marker. So a takeover with no builder hook run yet needs a builder round first. The lead does that.
 
 **Partial or stuck** (it hit its turn limit, or came back with no clear result): read its `state.md`. Resume the SAME agent with `SendMessage` and specific guidance on what's left. Resume it at most twice for one problem. After that, ask the owner.
 
@@ -93,7 +105,7 @@ For **take over** or **park**, resume the lead so it records that, then mark the
 
 Run these from this session, because the Workflow tool can't run inside a subagent:
 
-- `/deep-review` on the ticket's branch.
+- `/deep-review` on the ticket's branch. Call it with the Workflow tool, name `deep-review`, args `{ "base": "<checked-out branch>", "dir": "<ticket worktree>", "skeptics": 3 }`. `clean: false` means it audited nothing. Don't treat that as a pass. Fix the args and run it again.
 - `/first-time-user` if user-visible behaviour changed. Follow that skill: it says when you can run it yourself and when the owner has to, in a normal session.
 
 Confirmed findings go back to the same ticket-lead with `SendMessage`, as another fix round. It will return PASS again. Land it when a later pass has nothing confirmed. Don't repeat a full `/deep-review` for a small fix unless the fix touched a High-risk path.
@@ -111,7 +123,7 @@ Its reply starts with one word. The branch never moves unless it says `LANDED`.
 
 **`CONFLICT` or `FAILED`**: don't resolve it yourself.
 
-- Ticket: resume the ticket-lead with the lander's reply, as another fix round. Then land again.
+- Ticket: count the failure with `gate job <t> landFailures=<n>`. After 2 landing failures for one ticket, ask the owner instead of trying again. Before that, resume the ticket-lead with the lander's reply, including its `Target:` line, as another fix round. Then land again.
 - Fix branch: resume the reproducer with the error. If it can't fix it, drop the fix and tell the owner in one line that the bug is still there.
 
 **`MOVED`**: the branch moved during landing. Start the lander again when nothing else is landing.
@@ -136,7 +148,7 @@ Then start the next queued reproducer.
 
 Only when the owner asks.
 
-1. Run `gate release` without `--run`, and list the open human checks. Only the owner can pass those, with the `!` lines it prints.
+1. Run `gate release` without `--run`, and list the open human checks. Only the owner can pass those, with the `!` lines it prints. It also shows FAILED ones. Send each of those to a `reproducer` with its note from `<ticketsDir>/<t>/human.json`, and tell the owner in one line.
 2. When none are open, start the `lander` in release mode, with the prompt `Release mode.`
 3. It runs the full gate and comes back with `RELEASE READY`. Ask the owner for the go-ahead. On a yes, resume it with `The owner gave the go-ahead.`
 4. Tell the owner in one line when it replies `RELEASED`, with the PR link. On `FAILED`, pass on the error.
@@ -161,7 +173,7 @@ Each output line is one event, `{"kind":"stale|blocked|failed|drift|app-down","t
 
 To judge it, look first:
 
-- `stale`: read `<worktree>/.job/<t>/status.json` and `state.md`, and run `git -C <worktree> log -3 --format='%cr %s'`. A long test run is quiet too, and so is a ticket `waiting` for the owner. **`stale` never justifies stopping a job without looking first.** Use TaskStop only when you have looked, the work is clearly dead, and the owner has agreed.
+- `stale`: read `<worktree>/.job/<t>/status.json` and `state.md`, and run `git -C <worktree> log -3 --format='%cr %s'`. A long test run is quiet too. A `waiting` ticket showing as stale is ignored, with that reason: it's waiting for the owner. **`stale` never justifies stopping a job without looking first.** Use TaskStop only when you have looked, the work is clearly dead, and the owner has agreed.
 - `blocked` or `failed`: usually the lead's final message is on its way or already here. If it isn't, resume the lead with the note.
 - `drift`: read `rd.md` and the file named. A lockfile, or a test beside a listed file, is fine. Anything under Do not touch, or in another ticket's area, goes back to the lead as a finding.
 - `app-down`: only with a configured health path. Look once more, then start a reproducer if it's real.

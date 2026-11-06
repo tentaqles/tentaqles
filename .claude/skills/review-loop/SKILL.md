@@ -60,17 +60,19 @@ Brief:
 
 **Later rounds: RESUMED** with `SendMessage` to that agent ID, with the same brief. It already knows the code.
 
-A resumed nested agent's reply never reaches you. This is verified. So after `SendMessage`, wait for the report file with a Bash poll loop, and set the Bash `timeout` parameter to `560000`, because the default is far shorter:
+A resumed nested agent's reply never reaches you. This is verified. So after `SendMessage`, wait for the done marker with a Bash poll loop, and set the Bash `timeout` parameter to `560000`, because the default is far shorter. The builder's Stop hook writes `.job/<t>/round-N/builder.done`, containing the tree hash, when it passes. `builder.md` alone can appear before that, so it isn't the signal.
 
 ```bash
-for i in $(seq 1 100); do [ -f .job/<t>/round-N/builder.md ] && break; grep -qE '"step": *"(blocked|failed)"' .job/<t>/status.json && break; sleep 5; done; grep '"step"' .job/<t>/status.json; ls .job/<t>/round-N/
+for i in $(seq 1 100); do [ -f .job/<t>/round-N/builder.done ] && break; grep -qE '"step": *"(blocked|failed)"' .job/<t>/status.json && break; sleep 5; done; grep '"step"' .job/<t>/status.json; ls .job/<t>/round-N/
 ```
 
-Write the paths out literally, with no shell variables. Each call lasts about 8 minutes. Repeat it until `builder.md` is listed, or the step is `blocked` or `failed`. If nothing comes after about 40 minutes, or the `SendMessage` itself fails, start a fresh builder with the fix list. Note that in `state.md`.
+Write the paths out literally, with no shell variables. Each call lasts about 8 minutes. Repeat it until `builder.done` is listed, or the step is `blocked` or `failed`. If nothing comes after about 40 minutes, or the `SendMessage` itself fails, start a fresh builder with the fix list. Note that in `state.md`.
+
+Start the verifier only after the done marker. The verifier and `gate record` then apply to the tree in that marker.
 
 When the builder is done, read only the **Status**, **Commit**, **Questions** and **Decisions I made** of its report, and the status file. Record the commit in `state.md`, and keep its decisions for your final message.
 
-- **`blocked`**: the note is a question only the owner can answer. Return it to the router as a STOP. When you are resumed with the answer, record it under Decisions, delete that round's `builder.md` so the wait doesn't see the old one, run `gate step <t> build --round N` to clear the block, and resume the builder with the answer.
+- **`blocked`**: the note is a question only the owner can answer. Return it to the router as a STOP. When you are resumed with the answer, record it under Decisions, delete that round's `builder.md` and any `builder.done` so neither the stop gate nor the wait sees the old one, run `gate step <t> build --round N` to clear the block, and resume the builder with the answer.
 - **`failed`**: the stop gate released this builder, and `gate check` will refuse the ticket. Return a STOP with the note.
 - **Questions in the report that block the build**: the same as `blocked`. Never answer a product question yourself.
 
@@ -138,7 +140,7 @@ More of the same fixing won't get there. Run `gate step <t> waiting`, then retur
 
 - **rethink**: a fresh builder in `rethink` mode changes the approach, not only the failing lines.
 - **keep going**: another round, as is.
-- **take over**: the owner finishes it by hand.
+- **take over**: the owner finishes it by hand. See "Take over" below.
 - **park**: run `gate step <t> done "parked"` and end.
 
 Before any STOP, run `git rev-list --count <base>..HEAD`. If it's 0, run `git commit --allow-empty -m "wip(<t>): keep the worktree"`. A worktree without changes is removed when you finish, and `.job/` is gitignored, so it wouldn't count as a change and your state would go with it.
@@ -147,7 +149,16 @@ Before any STOP, run `git rev-list --count <base>..HEAD`. If it's 0, run `git co
 
 **The router can resume you after a PASS too**, with findings from `/deep-review` or `/first-time-user`, or an error from the lander. Add them to the ledger with that source, write a fix list, and run another round from §1.
 
-If the lander reported a conflict, the builder can't merge, so you start it: `git merge --no-edit <mainBranch>`. If it stops on conflicts, leave the markers in place, and put the files on the fix list with `Resolve these conflicts using both tickets' rd.md, then commit to finish the merge.` Then run the round as usual, since the tree is new.
+On a resume with a landing failure, `CONFLICT` or `FAILED`, the builder can't merge, so you start it. Merge the target branch named in the message's `Target:` line: `git merge --no-edit <target>`. Never assume `mainBranch`. If the message names no target, return a STOP. If the merge stops on conflicts, leave the markers in place, and put the files on the fix list with `Resolve these conflicts using both tickets' rd.md, then commit to finish the merge.` Then run a fix round as usual, since the tree is new.
+
+### Take over
+
+The owner chose to finish the ticket by hand.
+
+1. Run `gate step <t> waiting "taken over by the owner"`, and return a STOP that says so. The owner works in this worktree and commits. A `waiting` ticket showing as stale is ignored with that reason.
+2. When they say they're finished, the router resumes you. Check `.job/<t>/hook-marker.json`. `gate check` still needs that marker.
+3. If it's missing, no builder hook has run yet, so a builder round comes first. Run §1 as round N+1, with a fresh builder. Add to its brief: `The code is already on this branch. Make the round gate pass, and write your report.` Then go on to §2.
+4. If it's there, run `gate step <t> verify --round N+1`, with N+1 written as the number. Run `gate run <t> round`, because the owner's tree has no stamp yet. Then start at §2, with a fresh verifier and reviewer. No builder runs unless triage gives it a fix list.
 
 ## 5. Final message
 

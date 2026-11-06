@@ -13,20 +13,17 @@ import (
 
 func dotenvSecret() string { return "pw" + strings.Repeat("Z3k", 7) }
 
-// workingBash returns a bash that runs `bash -c "exit 0"` successfully, or "" when there is
-// none. On Windows the first bash on PATH can be the WSL launcher
-// (C:\Windows\System32\bash.exe), which fails when no distribution is installed, so every
-// bash.exe on PATH is tried, then the usual Git for Windows install folders.
-func workingBash() string {
-	if runtime.GOOS != "windows" {
-		if p, err := exec.LookPath("bash"); err == nil && bashRuns(p) {
-			return p
-		}
-		return ""
-	}
+// windowsBash returns a bash that can run the masking test, or "" when this box has none. The
+// first bash on PATH can be the WSL launcher (C:\Windows\System32\bash.exe, or an alias under
+// WindowsApps), which fails without a distribution and doesn't pass the environment through
+// with one, so those never count. A bash that exists but doesn't answer fails the test: a skip
+// there would silently stop proving masking.
+func windowsBash(t *testing.T) string {
+	t.Helper()
 	var candidates []string
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if dir != "" {
+		lower := strings.ToLower(dir)
+		if dir != "" && !strings.Contains(lower, `\system32`) && !strings.Contains(lower, `\windowsapps`) {
 			candidates = append(candidates, filepath.Join(dir, "bash.exe"))
 		}
 	}
@@ -41,24 +38,30 @@ func workingBash() string {
 		candidates = append(candidates, filepath.Join(base, "Git", "bin", "bash.exe"))
 	}
 	for _, p := range candidates {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() && bashRuns(p) {
+		if st, err := os.Stat(p); err != nil || st.IsDir() {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := exec.CommandContext(ctx, p, "-c", "exit 0").Run()
+		timedOut := ctx.Err() != nil
+		cancel()
+		if timedOut {
+			t.Fatalf("%s didn't answer within 30s, so masking can't be proved here", p)
+		}
+		if err == nil {
 			return p
 		}
 	}
 	return ""
 }
 
-func bashRuns(path string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return exec.CommandContext(ctx, path, "-c", "exit 0").Run() == nil
-}
-
 func TestDotenvRunLoadsAndMasks(t *testing.T) {
 	isolateHome(t)
-	bash := workingBash()
-	if bash == "" {
-		t.Skip("no working bash found (the WSL launcher on PATH does not count); install Git for Windows to run this test")
+	bash := "bash" // Elsewhere a missing bash fails the test, as it always has.
+	if runtime.GOOS == "windows" {
+		if bash = windowsBash(t); bash == "" {
+			t.Skip("no working bash found (the WSL launcher doesn't count); install Git for Windows to run this test")
+		}
 	}
 	dir := t.TempDir()
 	env := filepath.Join(dir, ".env")

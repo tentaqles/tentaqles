@@ -96,7 +96,7 @@ async function main() {
     const t = claim.ticket;
     const status = readJson(join(p, cfg.jobDir, t, "status.json"));
     if (!status) { problems.push({ kind: "stale", ticket: t, detail: `no readable status file in ${p}` }); continue; }
-    if (status.step === "done" || status.step === "landed") continue;
+    if (status.step === "done") continue;
     if (status.step === "blocked") { problems.push({ kind: "blocked", ticket: t, detail: status.note ?? "no note" }); continue; }
     if (status.step === "failed") { problems.push({ kind: "failed", ticket: t, detail: status.note ?? "no note" }); continue; }
     const quiet = Math.round((NOW - newestActivity(p, status)) / MIN);

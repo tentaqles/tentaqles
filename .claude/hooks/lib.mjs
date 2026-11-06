@@ -92,7 +92,7 @@ export function resolveTicket(root, cfg, arg) {
 }
 
 export const ticketNumber = (t) => t.split("-")[0];
-export const treeOf = (root, rev = "HEAD") => git(root, ["rev-parse", `${rev}^{tree}`]);
+export const treeOf = (root, rev = "HEAD", timeout) => git(root, ["rev-parse", `${rev}^{tree}`], timeout);
 
 /** Parses the checks of an eval.md. */
 export function parseChecks(text) {

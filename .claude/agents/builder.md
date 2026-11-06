@@ -113,4 +113,6 @@ When you stop, the gate blocks you until all of these hold:
 
 Its message is your next instruction. Do what it says, then stop again. Blocks are limited: the limit is `limits.stopBlocks` in the profile, and past it the ticket is marked failed. So get all four right before your first stop. A round gate still running doesn't use up a block.
 
+When the gate passes, it writes `.job/<t>/round-N/builder.done`. That marker is what a ticket-lead waits for. Don't write it yourself. Your report still goes in `builder.md`.
+
 After a block, your next reply replaces your final message. So the report file is what counts, not your reply. Keep the reply to two lines pointing at the report.

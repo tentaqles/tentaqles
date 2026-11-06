@@ -12,6 +12,8 @@
   "ticketsDir": "docs/tickets",
   "jobDir": ".job",
   "mainBranch": "main",
+  "commitTrailer": "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+  "prFooter": "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
   "requirementId": "REQ-\\d+",
   "riskQuestion": "What happens to a developer's identity or secrets if this breaks?",
   "highRiskPaths": [

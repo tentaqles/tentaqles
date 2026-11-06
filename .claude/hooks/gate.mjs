@@ -146,11 +146,17 @@ function setStatus(p, patch) {
 // ---- run
 function isRunning(file, cfg) {
   const r = readJson(file);
-  if (!r) return false;
-  return Date.now() - (r.at ?? 0) < cfg.limits.runningStaleMinutes * 60000;
+  if (!r?.pid) return false;
+  if (Date.now() - (r.at ?? 0) >= cfg.limits.runningStaleMinutes * 60000) return false;
+  try {
+    process.kill(r.pid, 0); // Signal 0 only asks whether it's alive.
+    return true;
+  } catch {
+    return false; // Killed by a timeout, say. It must not hold the gate open.
+  }
 }
-function clean(root) {
-  const s = git(root, ["status", "--porcelain"]);
+function clean(root, timeout) {
+  const s = git(root, ["status", "--porcelain"], timeout);
   return s.ok && s.out === "";
 }
 function runGate(root, cfg, stampDir, kind) {
@@ -312,16 +318,22 @@ function hookStop(input) {
   if (status.step === "blocked" && status.note) return;
   if (status.released) return;
   const problem = (() => {
-    if (!clean(root)) return "uncommitted changes: commit your work so the tree is clean";
-    const ahead = git(root, ["rev-list", "--count", `${claim.base}..HEAD`], 1500);
+    if (!clean(root, 1200)) return "uncommitted changes: commit your work so the tree is clean";
+    const ahead = git(root, ["rev-list", "--count", `${claim.base}..HEAD`], 1200);
     if (!ahead.ok || Number(ahead.out) < 1) return `no commit ahead of the base ${claim.base.slice(0, 8)}`;
-    const tree = treeOf(root);
+    const tree = treeOf(root, "HEAD", 1200);
     if (!tree.ok || !stampOk(p.job, "round", tree.out)) return `the round gate hasn't passed for this tree: run \`node .claude/hooks/gate.mjs run ${claim.ticket} round\` and fix what fails`;
     const round = status.round ?? 0;
     if (!round || !existsSync(join(p.job, `round-${round}`, "builder.md"))) return `write your report to ${cfg.jobDir}/${claim.ticket}/round-${round || "N"}/builder.md`;
     return null;
   })();
-  if (!problem) return;
+  if (!problem) {
+    // What a ticket-lead waits on after resuming: builder.md alone can appear before this gate passes.
+    const round = status.round;
+    const tree = treeOf(root, "HEAD", 1200);
+    if (round && tree.ok) write(join(p.job, `round-${round}`, "builder.done"), `${tree.out}\n`);
+    return;
+  }
   // A gate still running isn't the builder's fault, so it doesn't use up a block.
   if (isRunning(join(p.job, "gate-round.running"), cfg)) return block(`the round gate is still running: wait for it. (${problem})`);
   const counts = readJson(p.blocks, { n: 0 });
@@ -455,7 +467,15 @@ function main(argv) {
       const i = rest.indexOf("--round");
       if (i >= 0) { patch.round = Number(rest[i + 1]); rest.splice(i, 2); }
       if (rest.length) patch.note = rest.join(" ");
-      setStatus(paths(root, cfg, t), patch);
+      const p = paths(root, cfg, t);
+      if (i >= 0) {
+        // A new round is a fresh start, whatever happened before: rethink or keep going
+        // after a stop must run with the gate on, and with its blocks back.
+        patch.released = false;
+        if (!rest.length) patch.note = null;
+        write(p.blocks, { n: 0 });
+      }
+      setStatus(p, patch);
       return 0;
     }
     case "block": {
@@ -516,6 +536,11 @@ function main(argv) {
       if (!id || !["pass", "fail"].includes(result)) throw new UserError("usage: gate human <ticket> <id> pass|fail [note]");
       const p = paths(root, cfg, t);
       write(p.human, { ...readJson(p.human, {}), [id]: { result, note: note.join(" "), at: new Date().toISOString() } });
+      // Committed here: the release gate names a clean tree, and this file would dirty it.
+      const rel = relative(root, p.human);
+      git(root, ["add", "--", rel]);
+      const c = git(root, ["commit", "-m", `Record human check ${t} ${id}: ${result}`, "--", rel], 15000);
+      if (!c.ok) throw new UserError(`recorded, but couldn't commit ${rel}: ${c.err || c.out}`);
       console.log(`${t} ${id}: ${result}`);
       return 0;
     }
@@ -523,7 +548,10 @@ function main(argv) {
       const open = releaseProblems(root, cfg);
       if (open.length) {
         console.log("Human checks still open. Run each one, then record it:");
-        for (const o of open) console.log(`  ! node .claude/hooks/gate.mjs human ${o.t} ${o.id} pass   # ${o.failed ? "FAILED: " : ""}${o.title}`);
+        for (const o of open) {
+          if (o.failed) console.log(`  FAILED ${o.t} ${o.id}: ${o.title}. Send it to /fix-a-bug, then pass it: node .claude/hooks/gate.mjs human ${o.t} ${o.id} pass`);
+          else console.log(`  ! node .claude/hooks/gate.mjs human ${o.t} ${o.id} pass   # ${o.title}`);
+        }
         return 1;
       }
       const job = join(root, cfg.jobDir, "release");

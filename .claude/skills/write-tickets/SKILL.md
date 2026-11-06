@@ -14,7 +14,7 @@ Workers run at the same time, each in its own worktree, and **they can't ask any
 
 This skill writes tickets. It doesn't build. Read `.claude/README.md` first: it's the contract. In the commands below, `gate` means `node .claude/hooks/gate.mjs`, run from the project root.
 
-The owner may answer in Portuguese or English. Judge what they mean by reading it, never by looking for a keyword.
+The owner may answer in any language. Judge what they mean by reading it, never by looking for a keyword.
 
 ## 1. First run: the profile
 
@@ -163,7 +163,7 @@ Compare Affected areas with every ticket that hasn't landed, including those alr
 
 ## 9. Changes after approval
 
-- Any change to an approved `rd.md`, an existing check or `mockup.html`: run `gate board <t> draft`, make the change, then lint, a new yes, `gate approve`, `gate board <t> ready` and a commit. `gate` doesn't hash the mockup, so this rule is what protects it.
+- Any change to an approved `rd.md`, an existing check or `mockup.html`: run `gate board <t> draft`, make the change, then lint, a new yes, `gate approve`, `gate board <t> ready` and a commit. `gate approve` hashes the mockup too, so a changed mockup fails the approval check until it's approved again.
 - If a worker already has the ticket, tell the owner first.
 - New checks may be appended to the end of `eval.md` without a new yes. Lint and commit them.
 

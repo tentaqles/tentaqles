@@ -45,7 +45,7 @@ Agents can't talk to you. A question comes back up to the router, which asks you
 | `.job/ticket.json` | `gate claim` | Which ticket this worktree works on, and its base commit. |
 | `.job/<t>/status.json` | `gate step`, `gate block` | `ticket, step, round, note, branch, stepStarted, updated, released`. Steps: `claimed, build, verify, triage, waiting, done, blocked, failed`. |
 | `.job/<t>/state.md` | ticket-lead | The ledger. Survives compaction. Re-read it first after any summary. |
-| `.job/<t>/round-N/` | builder, verifier, ticket-lead | Builder: `builder.md`, and `approach.md` on a rethink. Verifier: `verifier.json`, `results.md`. Ticket-lead: `fix-list.md`, and `reviewer.json`, saved from the reviewer's reply since it has no Write. |
+| `.job/<t>/round-N/` | builder, verifier, ticket-lead | Builder: `builder.md`, and `approach.md` on a rethink. The builder's Stop hook: `builder.done`, holding the tree hash, when it passes. Verifier: `verifier.json`, `results.md`. Ticket-lead: `fix-list.md`, and `reviewer.json`, saved from the reviewer's reply since it has no Write. |
 | `.job/<t>/evidence/` | verifier | `<check ID>.txt` with command, exit code and output; PNGs on web projects. |
 | `.job/<t>/results/<tree>.md` | `gate record` | One line per check, `ID \| PASS or FAIL or HUMAN \| evidence`. Keyed by tree hash, so recording doesn't move HEAD. |
 | `.job/router-state.json` | `gate job` | The router's job list. Survives compaction. |
@@ -107,4 +107,4 @@ Verified on 2.1.319 by a live spike.
 
 - Builders can't push, merge, rebase, `reset --hard` or touch PRs.
 - Nobody uses `git reset --hard` on the main branch. A failed merge never touches the branch, because it happens in a detached worktree and the branch moves only by fast-forward.
-- Agents can't read `.env` files through the Read tool, in any permission mode. On a project without a guard like `tq`, shell reads aren't covered.
+- Agents can't read `.env` files through the Read tool, in any permission mode. On a project without a separate guard, shell reads aren't covered.

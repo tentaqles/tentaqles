@@ -234,6 +234,38 @@ test("check: evidence like dir/x.js:12 means the file, without the line", () => 
   results(d, ["U-01", "F-01", "Q-01", "R-01"].map((i) => `${i} | PASS | ok`).join("\n") + "\nS-01 | PASS | see `dir/x.js:12`");
   assert.equal(gate(d, "check", T).code, 0);
 });
+test("step --round: a new round recovers a released ticket and its block count", () => {
+  const d = built();
+  writeFileSync(join(d, "dirty.txt"), "x");
+  for (let i = 0; i < 4; i++) hook(d, "stop", {});
+  assert.match(readFileSync(join(d, ".job", T, "status.json"), "utf8"), /"released": true/);
+  gate(d, "step", T, "build", "--round", "2");
+  const s = JSON.parse(readFileSync(join(d, ".job", T, "status.json"), "utf8"));
+  assert.equal(s.released, false);
+  assert.equal(hook(d, "stop", {}).code, 2, "the gate is on again");
+});
+test("stop: a dead gate process uses up blocks, so it can't loop", () => {
+  const d = built();
+  writeFileSync(join(d, "x.txt"), "x");
+  git(d, "add", "-A"); git(d, "commit", "-qm", "more");
+  writeFileSync(join(d, ".job", T, "gate-round.running"), JSON.stringify({ pid: 99999999, at: Date.now() }));
+  for (let i = 0; i < 3; i++) assert.equal(hook(d, "stop", {}).code, 2);
+  assert.equal(hook(d, "stop", {}).code, 0);
+});
+test("stop: passing writes a done marker naming the tree", () => {
+  const d = built();
+  gate(d, "step", T, "build", "--round", "1");
+  mkdirSync(join(d, ".job", T, "round-1"), { recursive: true });
+  writeFileSync(join(d, ".job", T, "round-1/builder.md"), "report");
+  const done = join(d, ".job", T, "round-1/builder.done");
+  assert.equal(hook(d, "stop", {}).code, 0);
+  assert.equal(readFileSync(done, "utf8").trim(), git(d, "rev-parse", "HEAD^{tree}"));
+});
+test("human: commits its record, so the release's clean tree holds", () => {
+  const d = project();
+  assert.equal(gate(d, "human", T, "U-01", "pass", "ok").code, 0);
+  assert.equal(git(d, "status", "--porcelain"), "");
+});
 test("stop: dirty tree blocks; report and round gate required; clean passes", () => {
   const d = built();
   writeFileSync(join(d, "dirty.txt"), "x");
@@ -389,18 +421,19 @@ test("release: lists open human checks as commands, and human closes them", () =
   const r = gate(d, "release");
   assert.equal(r.code, 1);
   assert.match(r.all, /human 001-invites U-02 pass/);
+  assert.equal(gate(d, "human", T, "U-02", "fail", "wrong prompt").code, 0);
+  assert.match(gate(d, "release").all, /FAILED/);
+  assert.match(gate(d, "release").all, /fix-a-bug/);
   assert.equal(gate(d, "human", T, "U-02", "pass", "looks right").code, 0);
-  git(d, "add", "-A"); git(d, "commit", "-qm", "human");
   assert.match(gate(d, "release").all, /release gate/);
   assert.equal(gate(d, "release", "--run").code, 0);
 });
-test("release: a failed human check blocks", () => {
+test("release: a stray human record on a check that isn't human doesn't block", () => {
   const d = built();
-  gate(d, "human", T, "U-01", "fail", "no");
   results(d);
   gate(d, "board", T, "landed");
-  // U-01 isn't a human check, so a stray record doesn't block
   git(d, "add", "-A"); git(d, "commit", "-qm", "landed");
+  gate(d, "human", T, "U-01", "fail", "no");
   assert.equal(gate(d, "release", "--run").code, 0);
 });
 

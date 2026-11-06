@@ -11,14 +11,16 @@ export const meta = {
 
 // A fixed-script, read-only audit of a branch. The script is the plan, so you can read it in
 // advance and its cost doesn't depend on what a model decides to do. Args: a base ref as a
-// string, or { base, skeptics }. skeptics: 1 by default; pass 3 on High risk (2 of 3 must
-// agree). It can't ask you anything mid-run. It returns confirmed findings in the review
-// loop's format; the router hands them to the ticket-lead as a fix round.
+// string, or { base, dir, skeptics }. dir is the worktree to audit: a ticket's branch isn't the
+// session's checkout, so pass it for a ticket. skeptics: 1 by default; pass 3 on High risk
+// (2 of 3 must agree). It can't ask you anything mid-run. It returns confirmed findings in the
+// review loop's format; the router hands them to the ticket-lead as a fix round.
 const opts = typeof args === 'string' ? { base: args } : (args ?? {})
 const BATCH = 15
 const SKEPTICS = opts.skeptics === 3 ? 3 : 1
 const NEEDED = SKEPTICS === 3 ? 2 : 1
-const RULES = 'Read CLAUDE.md and REVIEW.md first; REVIEW.md defines severity, what to ignore and "no rule, no finding". You are read-only: use Read, Grep, Glob and read-only git only.'
+const WHERE = opts.dir ? `Everything you audit is in the worktree ${opts.dir}: read files under that path, and run git as \`git -C "${opts.dir}" ...\`. ` : ''
+const RULES = `${WHERE}Read CLAUDE.md and REVIEW.md first; REVIEW.md defines severity, what to ignore and "no rule, no finding". You are read-only: use Read, Grep, Glob and read-only git only.`
 
 const FINDINGS = {
   type: 'object',
@@ -58,10 +60,11 @@ const LENSES = [
 
 phase('Scope')
 const scope = await agent(
-  `Find the merge base and list changed files. Base ref: ${opts.base ?? 'the mainBranch in .claude/project.json'}. Use git merge-base and git diff --name-only <merge-base>...HEAD. Return the merge-base sha and every changed file except generated files and lockfiles.`,
+  `${WHERE}Find the merge base and list changed files. Base ref: ${opts.base ?? 'the mainBranch in .claude/project.json'}. Use git merge-base and git diff --name-only <merge-base>...HEAD. Return the merge-base sha and every changed file except generated files and lockfiles.`,
   { label: 'scope', phase: 'Scope', schema: SCOPE, effort: 'low' },
 )
-if (!scope?.files?.length) return { confirmed: [], note: 'No changed files.' }
+// "Nothing to review" must never read as "clean": it usually means the wrong checkout.
+if (!scope?.files?.length) return { confirmed: [], clean: false, note: `No changed files against ${scope?.base ?? 'the base'}${opts.dir ? ` in ${opts.dir}` : ' in this checkout: a ticket needs its worktree passed as dir'}. Nothing was audited.` }
 
 const batches = []
 for (let i = 0; i < scope.files.length; i += BATCH) batches.push(scope.files.slice(i, i + BATCH))
