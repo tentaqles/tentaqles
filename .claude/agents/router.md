@@ -128,7 +128,7 @@ Its reply starts with one word. The branch never moves unless it says `LANDED`.
 
 **`MOVED`**: the branch moved during landing. Start the lander again when nothing else is landing.
 
-**`REFUSED`**: the main checkout has uncommitted tracked changes, or no branch checked out. Tell the owner in one line, and start the lander again when they say so.
+**`REFUSED`**: this checkout has uncommitted tracked changes, or no branch checked out. Tell the owner in one line, and start the lander again when they say so.
 
 **`NEEDS TICKET`**: see "Bugs".
 

@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash, Edit, Agent
 model: sonnet
 ---
 
-You land one thing. You run from the main checkout. A failed merge never touches the branch, because the merge happens in a detached worktree and the branch moves only by fast-forward.
+You land one thing. You run from the checkout you start in, which is the router's. It may be a linked worktree rather than the repo's primary checkout. Its branch is the target, so never go to another checkout to find one. A failed merge never touches the branch, because the merge happens in a detached worktree and the branch moves only by fast-forward.
 
 `gate` below means `node .claude/hooks/gate.mjs`, run in the directory the step names. `<t>` is the full `NNN-slug` folder name. `ticketsDir` and the other settings are in `.claude/project.json`.
 
@@ -24,7 +24,7 @@ You land one thing. You run from the main checkout. A failed merge never touches
 
 The prompt gives `<t>`, its branch and its worktree.
 
-**a.** In the main checkout, note the checked-out branch: `git branch --show-current`. Note that it has no uncommitted tracked changes: `git status --porcelain --untracked-files=no` prints nothing. Refuse otherwise, or if no branch is checked out: reply REFUSED with what you saw.
+**a.** In the checkout you started in, note the checked-out branch: `git branch --show-current`. Note that it has no uncommitted tracked changes: `git status --porcelain --untracked-files=no` prints nothing. Refuse otherwise, or if no branch is checked out: reply REFUSED with what you saw.
 
 **b.** `git worktree add --detach .claude/worktrees/land-<NNN> HEAD`. All further steps happen in that directory until (g).
 
@@ -52,7 +52,7 @@ When it replies, run `node .claude/hooks/gate.mjs record <t> .job/<t>/round-land
 2. `git add` the ticket folder and `BOARD.md` explicitly, by path. They're under `ticketsDir`.
 3. Commit with the message `Mark <t> landed`.
 4. Note the SHA: `git rev-parse HEAD`.
-5. In the main checkout: `git merge --ff-only <sha>`.
+5. In the checkout you started in: `git merge --ff-only <sha>`.
 
 If that fails, the branch moved. Remove the land worktree and retry from (b), at most twice. If it moved again, reply MOVED.
 
@@ -88,20 +88,20 @@ Waiting tickets that can start: <NNN, or none>
 The prompt gives a reproducer's branch, its worktree and its `<slug>`. It's the same detached merge. Stop at the first thing that fails.
 
 1. Step (a) as above.
-2. First, in the main checkout: `node .claude/hooks/gate.mjs risky <checked-out branch> <branch>`. Exit 1 means reply NEEDS TICKET with the files it printed, and land nothing.
+2. First, in the checkout you started in: `node .claude/hooks/gate.mjs risky <checked-out branch> <branch>`. Exit 1 means reply NEEDS TICKET with the files it printed, and land nothing.
 3. `git worktree add --detach .claude/worktrees/land-fix-<slug> HEAD`. All further steps happen there, until the fast-forward.
 4. `git merge --no-ff --no-edit -m "Merge fix (<branch>)" <branch>`. Same conflict rule.
 5. `node .claude/hooks/gate.mjs run fix-<slug> round`.
 6. `node .claude/hooks/gate.mjs stamped fix-<slug>`.
 7. Failing: remove the land worktree, reply FAILED with the first real error.
-8. Note the SHA, `git rev-parse HEAD`. In the main checkout: `git merge --ff-only <sha>`. If that fails, the branch moved: as in (g).
+8. Note the SHA, `git rev-parse HEAD`. In the checkout you started in: `git merge --ff-only <sha>`. If that fails, the branch moved: as in (g).
 9. Remove the land worktree, the fix's worktree and its branch, as in (h).
 
 Reply `LANDED fix-<slug> <sha>: <one line>`, or `NEEDS TICKET`, `CONFLICT`, `FAILED`, `MOVED`, `REFUSED` with the same detail.
 
 # Release mode
 
-Work in the main checkout.
+Work in the checkout you started in.
 
 1. If the checked-out branch is `mainBranch`, reply FAILED: a PR needs a branch of its own.
 2. `node .claude/hooks/gate.mjs release`. It lists open human checks. If there are any, reply with them as they are, and stop.
