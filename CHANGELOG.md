@@ -6,6 +6,14 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### `tentaqles reach` (ADR-0012)
+
+- `tentaqles reach [<path>]` makes a folder a client identity: the banner, the form, the manifest
+  and the trust, after one typed `yes`. It's human-only. In an existing client it shows the client.
+- The CLI's name is `tentaqles`, built from `cmd/tentaqles`; `tq` is the same program. The hook treats
+  both names alike. The release and the installers still ship `tq` only.
+- The catalog gains Discord, Zoom, Google Meet, Google Colab and Trello.
+
 ### One guard, always on (ADR-0011)
 
 - There is no `guard: v2` flag. Every trusted workspace gets the full guard: the identity PATH,

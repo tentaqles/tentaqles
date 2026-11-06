@@ -41,6 +41,11 @@ type AddOptions struct {
 	Agents       []string
 	// Cloud is the cloud block ({provider, also}); nil leaves it out. tq onboard sets it.
 	Cloud map[string]any
+	// ExtraScope, Browsers and OtherProviders are the scope:, browsers: and other_providers: blocks;
+	// empty leaves them out. tentaqles reach sets them.
+	ExtraScope     []string
+	Browsers       []manifest.Browser
+	OtherProviders []string
 }
 
 func Add(o AddOptions) (*resolve.Workspace, error) {
@@ -87,7 +92,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail, User: o.GitUser, Provider: o.GitProvider},
 		Identities: map[string]manifest.Identity{},
 		Chat:       o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents,
-		Cloud: o.Cloud,
+		Cloud: o.Cloud, ExtraScope: o.ExtraScope, Browsers: o.Browsers, OtherProviders: o.OtherProviders,
 	}
 	for _, id := range o.Identities {
 		m.Identities[id] = manifest.Identity{}

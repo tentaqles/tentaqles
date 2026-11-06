@@ -353,3 +353,20 @@ func TestHumanOnlyInvocation(t *testing.T) {
 		}
 	}
 }
+
+// TestHumanOnlyInvocation_TentaqlesName: the hook treats tentaqles as it treats tq, in every
+// spelling, and reach is human-only under both names (ADR-0012).
+func TestHumanOnlyInvocation_TentaqlesName(t *testing.T) {
+	for _, bin := range []string{"tq", "tq.exe", "tentaqles", "tentaqles.exe", `C:\tools\tentaqles.exe`, "/usr/local/bin/tentaqles", "go run ./cmd/tentaqles"} {
+		for _, verb := range []string{"reach", "reach C:/clients/acme", "allow acme", "deny acme", "login acme gh", "uninstall"} {
+			if _, ok := HumanOnlyInvocation(bin + " " + verb); !ok {
+				t.Errorf("%s %s passed the hook", bin, verb)
+			}
+		}
+	}
+	for _, free := range []string{"tentaqles status", "tentaqles version", "tentaqles reach --help", "echo tentaqles reach", "grep 'tentaqles reach' README.md"} {
+		if what, ok := HumanOnlyInvocation(free); ok {
+			t.Errorf("%q denied as %s", free, what)
+		}
+	}
+}

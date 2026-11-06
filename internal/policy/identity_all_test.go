@@ -153,8 +153,8 @@ func TestScope_EveryProvider(t *testing.T) {
 
 // The exact sizes of the catalog's match lists that TestScope_EveryProvider walks.
 const (
-	wantProvidersWithSignals = 57
-	wantEveryProviderChecks  = 585
+	wantProvidersWithSignals = 62
+	wantEveryProviderChecks  = 620
 )
 
 // TestScope_SharedCLIPrecision: azure-devops owns only the `az devops|repos|...` subcommands;

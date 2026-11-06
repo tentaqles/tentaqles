@@ -47,6 +47,7 @@ For more detail on a command, run `tq <command> --help`.
 
 | Command | What it does |
 |---|---|
+| `tentaqles reach [<path>]` | **Human-only.** Makes the current folder, or `<path>`, a client identity. It prints the banner (`--no-banner` or `TQ_NO_BANNER=1` for none), asks for the identity email and the client's providers, and after you type `yes` writes the manifest and trusts it. The folder's name is the identity's name, and every identity gets the full guard. In a folder that already is a client it shows the client and changes nothing. `tq` is the same program under its other name. |
 | `tq init <base>` | **Human-only.** Registers a base folder (for example `C:\repos`). Each first-level subfolder becomes one client identity. |
 | `tq add <name>` | **Human-only.** Creates a workspace folder with a name-only marker (`.tentaqles.yaml`), its manifest under `~/.tentaqles/identities/<name>/manifest.yaml`, identity folders and git identity, trusted once you confirm. |
 | `tq onboard` | **Human-only**, wizard and `--from` alike. A wizard that runs `tq add`, then records the company's chat, email, data platform and agent CLIs. It never asks for a token. It prints the `tq allow` and login lines for you to run. |

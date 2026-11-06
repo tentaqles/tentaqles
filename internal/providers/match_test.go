@@ -50,7 +50,7 @@ func TestCatalogMatchLists(t *testing.T) {
 		}
 		n++
 	}
-	if n != 62 {
+	if n != 67 {
 		t.Fatalf("catalog has %d files, want 62", n)
 	}
 	aws, _ := c.Get("aws")

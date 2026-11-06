@@ -871,7 +871,7 @@ func humanOnlyInvocation(command string, ps bool) (what string, ok bool) {
 		if name == "go" && len(args) >= 2 && strings.EqualFold(args[0], "run") && isTqPackage(args[1]) {
 			name, args = "tq", args[2:]
 		}
-		if name != "tq" {
+		if name != "tq" && name != "tentaqles" {
 			continue
 		}
 		if what, ok := humanOnlyVerb(args); ok {
@@ -883,7 +883,7 @@ func humanOnlyInvocation(command string, ps bool) (what string, ok bool) {
 
 func isTqPackage(a string) bool {
 	p := strings.TrimSuffix(strings.ToLower(strings.ReplaceAll(a, `\`, "/")), "/")
-	return p == "cmd/tq" || strings.HasSuffix(p, "/cmd/tq")
+	return p == "cmd/tq" || strings.HasSuffix(p, "/cmd/tq") || p == "cmd/tentaqles" || strings.HasSuffix(p, "/cmd/tentaqles")
 }
 
 // humanOnlyVerb reads tq's arguments: positional words and flags.
@@ -906,7 +906,7 @@ func humanOnlyVerb(args []string) (string, bool) {
 		sub = pos[1]
 	}
 	switch verb {
-	case "init", "add", "edit", "off", "allow", "deny", "trust", "setup", "onboard", "uninstall", "login":
+	case "reach", "init", "add", "edit", "off", "allow", "deny", "trust", "setup", "onboard", "uninstall", "login":
 		return "tq " + verb, true
 	case "hooks":
 		switch {

@@ -110,7 +110,7 @@ const (
 	NoticeStateLost = "state-lost"
 )
 
-// Want is what a workspace wants of the environment: the variables to set and, for a
+// Want is what a workspace wants of the environment: the variables to set and, for an
 // identity (ADR-0008), the variables to unset. PathSep is the shell's PATH list
 // separator, used when a PATH tq changed is restored.
 type Want struct {
