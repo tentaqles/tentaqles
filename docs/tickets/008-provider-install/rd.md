@@ -1,6 +1,6 @@
 # 008: Catalog install methods and `tentaqles install <provider>`
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: an agent-callable install that a scope bug lets through puts another client's CLI on the machine, and a wrong catalog entry runs an unintended package
 **UI:** none
 
