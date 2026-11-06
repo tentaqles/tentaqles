@@ -1,6 +1,6 @@
 # 010: `tentaqles reach`
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: reach creates an identity and signs its trust, so a bug can create a client under the wrong email or scope, or sign without a human; closing the wrong terminal loses work
 **UI:** none
 

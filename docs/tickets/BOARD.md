@@ -13,7 +13,7 @@ The build loop's board, kept by `.claude/hooks/gate.mjs`. See `.claude/README.md
 | 007 | One browser profile per identity | parked | High | waits for 003: needs the shims folder |
 | 008 | Catalog install methods and `tentaqles install <provider>` | parked | High | alongside |
 | 009 | `status --json` for the skill, and `tentaqles connect <provider>` | parked | High | waits for 002, 008: needs the render's hook and both change the catalog schema |
-| 010 | `tentaqles reach` | ready | High | waits for 006, 007, 009: reach provisions everything they build |
+| 010 | `tentaqles reach` | parked | High | waits for 006, 007, 009: reach provisions everything they build |
 | 011 | `tentaqles edit` | ready | High | waits for 010: reuses reach's prompts |
 | 012 | The onboarding skill | ready | High | waits for 010: reach starts it, and it uses status, install and connect |
 | 013 | Retire Codex support | ready | High | waits for 011: touches run, render, trust and shell hooks |
