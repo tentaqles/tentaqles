@@ -1,0 +1,62 @@
+{
+  "confirmed": true,
+  "stack": "cli",
+  "capabilities": {
+    "browser": false,
+    "mockups": false,
+    "screenshots": false,
+    "ports": false,
+    "testAccounts": false,
+    "teams": false
+  },
+  "ticketsDir": "docs/tickets",
+  "jobDir": ".job",
+  "mainBranch": "main",
+  "requirementId": "REQ-\\d+",
+  "riskQuestion": "What happens to a developer's identity or secrets if this breaks?",
+  "highRiskPaths": [
+    "internal/guard/",
+    "internal/policy/",
+    "internal/trust/",
+    "internal/humanonly/",
+    "internal/markers/",
+    "internal/protect/",
+    "internal/hooks/",
+    "plugin/hooks/",
+    "plugin/scripts/tq_hook.sh",
+    ".github/workflows/",
+    ".goreleaser.yaml",
+    ".claude-plugin/marketplace.json",
+    "installers/"
+  ],
+  "gates": {
+    "round": ["bash .claude/gates/round.sh"],
+    "release": [
+      "go build ./...",
+      "go vet ./...",
+      "go test ./... -count=1",
+      "PYTHONPATH=plugin python -m pytest plugin/tests -q",
+      "node --test .claude/tests/gate.test.mjs .claude/tests/blind-guard.test.mjs .claude/tests/check.test.mjs"
+    ]
+  },
+  "limits": {
+    "parallelTickets": 3,
+    "roundCheckpoint": 5,
+    "stopBlocks": 3,
+    "watchMinutes": 10,
+    "stepStaleMinutes": 45,
+    "commandTimeoutMinutes": 30
+  },
+  "blind": {
+    "commands": ["tq"],
+    "read": ["README.md", "docs/SETUP.md", "docs/COMMANDS.md"]
+  },
+  "app": {
+    "healthPaths": [],
+    "coreFlows": [
+      "go build ./... && go vet ./...",
+      "go run ./cmd/tq --help",
+      "go test ./internal/guard ./internal/policy ./internal/resolve -count=1"
+    ]
+  }
+}
