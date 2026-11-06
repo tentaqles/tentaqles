@@ -8,7 +8,7 @@ The build loop's board, kept by `.claude/hooks/gate.mjs`. See `.claude/README.md
 | 002 | The CLI registers the guard hook in the identity's settings | parked | High | alongside |
 | 003 | `claude` is a shim on the identity PATH | parked | High | waits for 002: both change the render and trust coverage |
 | 004 | `tentaqles` is the CLI, `tq` is its alias | parked | High | waits for 003: rewrites message text across internal/cmd and the hook script |
-| 005 | The identity terminal opens with the banner, and cmd.exe routes itself | ready | High | waits for 004: shell templates, and the banner reads tentaqles |
+| 005 | The identity terminal opens with the banner, and cmd.exe routes itself | parked | High | waits for 004: shell templates, and the banner reads tentaqles |
 | 006 | `tentaqles off` and `tentaqles on` | ready | High | waits for 005: raw sessions need the shim and the banner |
 | 007 | One browser profile per identity | ready | High | waits for 003: needs the shims folder |
 | 008 | Catalog install methods and `tentaqles install <provider>` | ready | High | alongside |

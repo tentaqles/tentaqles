@@ -1,6 +1,6 @@
 # 005: The identity terminal opens with the banner, and cmd.exe routes itself
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: a broken profile hook or AutoRun value breaks every terminal on the machine, and a banner on a scripted shell corrupts another program's output
 **UI:** none
 
