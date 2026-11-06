@@ -90,6 +90,16 @@ func TestIsHarness(t *testing.T) {
 		{"powershell.exe", `powershell -File C:\scripts\run-claude-code.ps1`, true},
 		{"zsh", `zsh -c "claude"`, true},
 		{"fish", `fish -c "ls"`, false},
+		// a folder that happens to be named claude is not a harness (ADR-0010)
+		{"powershell.exe", `powershell -ExecutionPolicy Bypass -File "C:\Users\dev\Temp\claude\abc\walk.ps1"`, false},
+		{"bash", "bash /home/dev/.cache/claude/run.sh", false},
+		{"cmd.exe", `cmd.exe /c C:\tools\codex\build.cmd`, false},
+		// the program itself, by path, still is
+		{"powershell.exe", `powershell -Command "& C:\Users\dev\.local\bin\claude.exe -p hi"`, true},
+		{"bash", `bash -c "/usr/local/bin/claude -p hi"`, true},
+		{"cmd.exe", `cmd.exe /c C:\npm\claude.cmd`, true},
+		{"node", `node /opt/bin/claude`, true},
+		{"bash", `bash -c "cd /tmp;claude"`, true},
 		// non-interpreters are not matched on their command line
 		{"WindowsTerminal.exe", `wt.exe -p claude`, false},
 		{"pwsh.exe", "pwsh.exe", false},

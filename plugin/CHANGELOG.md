@@ -6,6 +6,9 @@ Releases before 0.16.0 are described on the
 
 ## [Unreleased]
 
+- **`CLAUDE_CODE_SSE_PORT` is no longer an agent marker (ADR-0010).** `tqhome.py` and `tq_env.sh`
+  follow `internal/markers`: the IDE integration sets it in a human's integrated terminal.
+
 - **Fail closed (ADR-0006).** `tq_hook.sh` runs tq in the background under a watchdog (bash
   builtins, `sleep` and `kill`; no GNU `timeout`) that stops a tq still running after 7 s
   (KILL at 8 s), at least 5 s under the 15 s hook timeout, and denies; `TQ_HOOK_WRAPPER_DEADLINE` can only lower it. It

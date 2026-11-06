@@ -60,7 +60,7 @@ writes under `$TQ_HOME` or an identity config dir: `init`, `add`, `allow`, `deny
    the walker stubbed, refuses, and `tq doctor` says so;
 3. the environment carries a harness marker: `TENTAQLES_HEADLESS`,
    `TENTAQLES_HEADLESS_CHILD`, `CLAUDE_PLUGIN_ROOT`, `CLAUDECODE`,
-   `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `TQ_HUB_TASK`, `CODEX_SANDBOX`,
+   `CLAUDE_CODE_ENTRYPOINT`, `TQ_HUB_TASK`, `CODEX_SANDBOX`,
    `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`, `OPENCODE`, `KIMI_CODE`.
 
 A refusal appends one JSON line to `$TQ_HOME/denials.jsonl` (time, kind

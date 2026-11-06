@@ -13,10 +13,11 @@ import (
 // session: a headless tq run and its children, the Claude Code plugin and
 // Claude Code itself, a hub task of an older tq, Codex's sandbox and thread,
 // OpenCode and Kimi Code. CLAUDE_CONFIG_DIR and CODEX_HOME are not markers:
-// tq sets them in human terminals.
+// tq sets them in human terminals. Nor is CLAUDE_CODE_SSE_PORT: the IDE
+// integration sets it in a human's integrated terminal (ADR-0010).
 var Markers = []string{
 	"TENTAQLES_HEADLESS", "TENTAQLES_HEADLESS_CHILD",
-	"CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
+	"CLAUDE_PLUGIN_ROOT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
 	"TQ_HUB_TASK",
 	"CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID",
 	"OPENCODE", "KIMI_CODE",

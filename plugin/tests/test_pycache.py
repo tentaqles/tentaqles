@@ -148,7 +148,7 @@ def test_the_prefix_is_in_the_tq_home_as_paths_home_resolves_it(tmp_path):
     other = tmp_path / "other-home"
     assert _same_path(_prefix_after_sourcing(tmp_path, TQ_HOME=str(other)), other / "pycache")
     assert _same_path(_prefix_after_sourcing(tmp_path), tmp_path / ".tentaqles" / "pycache")
-    assert len(_script_markers()) == 12
+    assert len(_script_markers()) == 11
     for marker in _script_markers():
         got = _prefix_after_sourcing(tmp_path, TQ_HOME=str(other), **{marker: "1"})
         assert _same_path(got, tmp_path / ".tentaqles" / "pycache"), (marker, got)

@@ -217,13 +217,15 @@ func mentionsHarness(cmdline string) bool {
 			return true
 		}
 	}
-	// Words are split on whitespace, quotes, path separators and shell
-	// joiners; an assignment such as CLAUDE=1 stays one word and is no
-	// command.
+	// Words are split on whitespace, quotes and shell joiners; an assignment
+	// such as CLAUDE=1 stays one word and is no command. Only a path's last
+	// part counts: /usr/bin/claude is the program, and C:\x\claude\run.ps1 is
+	// a script in a folder that happens to have that name (ADR-0010).
 	words := strings.FieldsFunc(c, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == '"' || r == '\'' || r == '/' || r == '\\' || r == ';' || r == '&' || r == '|'
+		return r == ' ' || r == '\t' || r == '"' || r == '\'' || r == ';' || r == '&' || r == '|'
 	})
 	for _, w := range words {
+		w = w[strings.LastIndexAny(w, `/\`)+1:]
 		for _, ext := range []string{".exe", ".cmd", ".ps1"} {
 			w = strings.TrimSuffix(w, ext)
 		}

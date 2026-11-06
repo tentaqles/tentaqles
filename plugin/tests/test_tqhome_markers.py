@@ -26,7 +26,7 @@ def _go_markers() -> list[str]:
 
 def test_agent_markers_are_tqs_list():
     go = _go_markers()
-    assert len(go) == 12, go
+    assert len(go) == 11, go
     assert list(tqhome.AGENT_MARKERS) == go
 
 

@@ -6,6 +6,15 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### Human-only commands work in an IDE terminal (ADR-0010)
+
+- A human in a VS Code integrated terminal was refused every human-only command, because the
+  Claude Code IDE integration sets `CLAUDE_CODE_SSE_PORT` there. It is no longer a marker.
+  `CLAUDECODE` and the process tree still catch an agent running in an IDE.
+- A shell or runtime whose command line runs a script from a folder named `claude` or `codex`
+  was taken for that harness. Only a path's last part counts now.
+- The plugin's side: [`plugin/CHANGELOG.md`](plugin/CHANGELOG.md).
+
 ### Deny only, fail closed, no permission settings, the denial log (ADR-0006)
 
 - **tq never asks.** The hook has two answers, allow and deny (PRD v2 §6.3). A commit whose
