@@ -115,4 +115,4 @@ New checks go at the end of this file. Nothing else goes after the checks.
 - **Method**: test TestPreToolUse_InstallAllowed
 - **Steps**:
   1. `go test ./internal/cmd -run '^TestPreToolUse_InstallAllowed$' -count=1`
-- **Expect**: The hook allows `tentaqles install az`, and `tentaqles reach` under the same call still denies.
+- **Expect**: The hook allows `tentaqles install az` and `tq install az`, and `tq allow acme` under the same call still denies with `BLOCKED [self-protection/tq/human-only-command]`.
