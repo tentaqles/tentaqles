@@ -3,11 +3,9 @@ package cmd
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -70,42 +68,6 @@ func TestEditedManifestLosesTrust(t *testing.T) {
 				t.Fatal("tq allow trusts the edited manifest as it is now")
 			}
 		})
-	}
-}
-
-// tq allow and tq deny refuse an agent session by its environment marker:
-// a session cannot trust (or untrust) a folder itself (FR-11).
-// tq add is human-only too (PRD v2 §8.1): under an agent marker it refuses
-// before anything is written, so a session can never get a folder scaffolded,
-// let alone trusted. A human at a terminal who confirms gets it trusted.
-func TestAddDoesNotTrustFromAgent(t *testing.T) {
-	root := mkLaunchWS(t, "acme", "")
-	base := filepath.Dir(root)
-	prevRunGit := addRunGit
-	addRunGit = func(...string) (string, error) { return "", nil }
-	t.Cleanup(func() { addRunGit = prevRunGit })
-	for _, k := range agentMarkers {
-		clearAgentMarkers(t)
-		t.Setenv(k, "1")
-		name := "shadow-" + strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-		out, err := runTq(t, "add", name, "--base", base, "--git-email", "anyone@example.com", "--identities", "gh")
-		if !errors.Is(err, errHumanOnly) {
-			t.Fatalf("tq add under %s: want errHumanOnly, got %v %q", k, err, out)
-		}
-		if _, err := os.Stat(filepath.Join(base, name)); !os.IsNotExist(err) {
-			t.Fatalf("tq add under %s scaffolded the folder", k)
-		}
-		if _, err := os.Stat(filepath.Join(paths.IdentitiesRoot(), name)); !os.IsNotExist(err) {
-			t.Fatalf("tq add under %s wrote an identity dir", k)
-		}
-	}
-	clearAgentMarkers(t)
-	out, err := runTq(t, "add", "human", "--base", base, "--git-email", "anyone@example.com", "--identities", "gh")
-	if err != nil || !strings.Contains(out, "(trusted)") {
-		t.Fatalf("a human tq add: %v %q", err, out)
-	}
-	if !trust.IsTrusted("human", manifestHash(t, filepath.Join(base, "human"))) {
-		t.Fatal("a human tq add trusts the new folder")
 	}
 }
 

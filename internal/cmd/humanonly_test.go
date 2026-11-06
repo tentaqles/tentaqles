@@ -8,20 +8,17 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/bundle"
-	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/hooks"
 	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/providers"
-	"github.com/tentaqles/tentaqles/internal/setup"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
@@ -29,8 +26,7 @@ import (
 // refuses at the top of its RunE, before it resolves anything, so an empty
 // isolated home is fixture enough.
 var humanOnlyCommands = [][]string{
-	{"init", "C:/work"},
-	{"add", "acme", "--base", "C:/work", "--git-email", "a@acme.test"},
+	{"reach", "C:/work/acme"},
 	{"allow", "acme"},
 	{"deny", "acme"},
 	{"hooks", "install", "bash"},
@@ -41,18 +37,10 @@ var humanOnlyCommands = [][]string{
 	{"migrate", "--apply"},
 	{"uninstall", "--restore", "latest"},
 	{"uninstall", "--restore", "latest", "--yes"},
-	{"setup", "--from", "plan.yaml"},
-	{"setup", "--from", "plan.yaml", "--yes"},
-	{"setup", "--from", "plan.yaml", "--dry-run"},
-	{"setup"},
-	{"onboard", "acme"},
-	{"onboard", "--from", "answers.yaml"},
 	{"secret", "set", "acme", "jira"},
 	{"secret", "rm", "acme", "jira"},
 	{"providers", "add", "widget", "--name", "Widget", "--category", "other"},
 	{"login", "acme", "gh"},
-	{"run", "--off", "--", "claude"},
-	{"worktrees", "prune", "--yes"},
 	{"settings", "anchors", "add", "foo-term"},
 	{"settings", "anchors", "remove", "foo-term"},
 	{"migrate", "manifests", "--apply"},
@@ -148,7 +136,7 @@ func TestHumanOnlyCommandsRefuseWithMarkerAndLog(t *testing.T) {
 		if !errors.Is(err, errHumanOnly) {
 			t.Fatalf("tq %s: want errHumanOnly, got %v\n%s", strings.Join(args, " "), err, out)
 		}
-		if !strings.Contains(err.Error(), "env-marker: CLAUDE_CODE_ENTRYPOINT is set") || !strings.Contains(err.Error(), "tq "+args[0]) {
+		if !strings.Contains(err.Error(), "env-marker: CLAUDE_CODE_ENTRYPOINT is set") || !(strings.Contains(err.Error(), "tq "+args[0]) || strings.Contains(err.Error(), "tentaqles "+args[0])) {
 			t.Fatalf("tq %s: the error names the command and the detector: %v", strings.Join(args, " "), err)
 		}
 		if got := filesUnder(t, paths.Home()); len(got) != 1 || got[0] != "denials.jsonl" {
@@ -159,7 +147,7 @@ func TestHumanOnlyCommandsRefuseWithMarkerAndLog(t *testing.T) {
 			t.Fatalf("tq %s: want %d denials, got %d", strings.Join(args, " "), i+1, len(ds))
 		}
 		d := ds[i]
-		if d.Category != "self-protection" || d.Layer != audit.LayerHumanOnly || !strings.HasPrefix(d.Command, "tq "+args[0]) || d.Reason != "env-marker: CLAUDE_CODE_ENTRYPOINT is set" || d.PID != os.Getpid() || d.Cwd == "" {
+		if d.Category != "self-protection" || d.Layer != audit.LayerHumanOnly || !(strings.HasPrefix(d.Command, "tq "+args[0]) || strings.HasPrefix(d.Command, "tentaqles "+args[0])) || d.Reason != "env-marker: CLAUDE_CODE_ENTRYPOINT is set" || d.PID != os.Getpid() || d.Cwd == "" {
 			t.Fatalf("tq %s: denial %+v", strings.Join(args, " "), d)
 		}
 	}
@@ -247,7 +235,6 @@ func TestFreeCommandsRunUnderAMarker(t *testing.T) {
 		{"providers", "check", "gh"},
 		{"secret", "status"},
 		{"secrets", "audit"},
-		{"worktrees", "list"},
 		{"run", "acme", "--", "go", "version"},
 		{"dotenv", "run", "--file", envFile, "--", "go", "version"},
 		// Dry runs are reads (ADR-0005).
@@ -267,45 +254,6 @@ func TestFreeCommandsRunUnderAMarker(t *testing.T) {
 	}
 	if ds := readDenials(t); len(ds) != 0 {
 		t.Fatalf("a free command logged a denial: %+v", ds)
-	}
-}
-
-// The confirmation is the last step before the write: with no at the prompt
-// tq add writes nothing and exits 1; with yes it proceeds.
-func TestAddConfirmsBeforeWriting(t *testing.T) {
-	root := mkLaunchWS(t, "acme", "")
-	base := filepath.Dir(root)
-	prevRunGit := addRunGit
-	addRunGit = func(...string) (string, error) { return "", nil }
-	t.Cleanup(func() { addRunGit = prevRunGit })
-	prevConfirm := humanonly.Confirm
-	t.Cleanup(func() { humanonly.Confirm = prevConfirm })
-
-	var prompt string
-	humanonly.Confirm = func(p string) (bool, error) { prompt = p; return false, nil }
-	before := treeDigest(t, paths.Home(), base)
-	out, err := runTq(t, "add", "beta", "--base", base, "--git-email", "b@beta.test", "--identities", "gh")
-	if !errors.Is(err, humanonly.ErrAborted) || errors.Is(err, errHumanOnly) {
-		t.Fatalf("a declined confirmation aborts: %v\n%s", err, out)
-	}
-	if prompt != "Type yes to continue: " {
-		t.Fatalf("prompt %q", prompt)
-	}
-	want := "tq add: about to create " + filepath.Join(base, "beta")
-	if !strings.Contains(out, want) {
-		t.Fatalf("the line names what is written: want %q in\n%s", want, out)
-	}
-	if after := treeDigest(t, paths.Home(), base); after != before {
-		t.Fatal("a declined tq add changed the home or the base")
-	}
-
-	humanonly.Confirm = func(string) (bool, error) { return true, nil }
-	out, err = runTq(t, "add", "beta", "--base", base, "--git-email", "b@beta.test", "--identities", "gh")
-	if err != nil || !strings.Contains(out, "(trusted)") {
-		t.Fatalf("a confirmed tq add: %v\n%s", err, out)
-	}
-	if !trust.IsTrusted("beta", manifestHash(t, filepath.Join(base, "beta"))) {
-		t.Fatal("a confirmed tq add trusts the folder")
 	}
 }
 
@@ -342,11 +290,6 @@ func TestDeclinedConfirmationWritesNothing(t *testing.T) {
 		}
 	}
 	cases := []declinedCase{
-		{"init", func(t *testing.T) ([]string, []string, func(*testing.T)) {
-			isolateHome(t)
-			base := t.TempDir()
-			return []string{"init", base}, []string{paths.Home(), base}, nil
-		}},
 		{"allow", func(t *testing.T) ([]string, []string, func(*testing.T)) {
 			root := mkLaunchWS(t, "acme", "")
 			if err := trust.Deny("acme", manifestHash(t, root)); err != nil {
@@ -418,11 +361,6 @@ func TestDeclinedConfirmationWritesNothing(t *testing.T) {
 			calls := fakeExec(t)
 			return []string{"login", "acme", "gh"}, []string{paths.Home(), filepath.Dir(root)}, noLaunch(calls)
 		}},
-		{"run --off", func(t *testing.T) ([]string, []string, func(*testing.T)) {
-			isolateHome(t)
-			calls := fakeExec(t)
-			return []string{"run", "--off", "--", "claude"}, []string{paths.Home()}, noLaunch(calls)
-		}},
 		{"settings anchors add", func(t *testing.T) ([]string, []string, func(*testing.T)) {
 			isolateHome(t)
 			return []string{"settings", "anchors", "add", "foo-term"}, []string{paths.Home()}, nil
@@ -435,33 +373,6 @@ func TestDeclinedConfirmationWritesNothing(t *testing.T) {
 			return []string{"settings", "anchors", "remove", "foo-term"}, []string{paths.Home()}, func(t *testing.T) {
 				if got, _ := humanonly.LoadUserAnchors(); strings.Join(got, ",") != "foo-term" {
 					t.Fatalf("a declined remove changed anchors.yaml: %v", got)
-				}
-			}
-		}},
-		{"worktrees prune --yes", func(t *testing.T) ([]string, []string, func(*testing.T)) {
-			if _, err := exec.LookPath("git"); err != nil {
-				t.Skip("git not installed")
-			}
-			root := mkLaunchWS(t, "acme", "")
-			run := func(dir string, args ...string) {
-				t.Helper()
-				if out, err := gitcfg.RunGitIn(dir, args...); err != nil {
-					t.Fatalf("git %v: %v %s", args, err, out)
-				}
-			}
-			run(root, "init", "-q", "-b", "main")
-			run(root, "config", "user.email", "t@example.invalid")
-			run(root, "config", "user.name", "t")
-			run(root, "add", ".")
-			run(root, "commit", "-qm", "init")
-			wt := filepath.Join(filepath.Dir(root), "wt-done")
-			run(root, "worktree", "add", "-q", wt, "-b", "done")
-			return []string{"worktrees", "prune", "--yes", "--older-than", "0"}, []string{paths.Home()}, func(t *testing.T) {
-				if _, err := os.Stat(filepath.Join(wt, manifest.FileName)); err != nil {
-					t.Fatalf("a declined prune removed the worktree: %v", err)
-				}
-				if out, err := gitcfg.RunGitIn(root, "worktree", "list", "--porcelain"); err != nil || !strings.Contains(out, "wt-done") {
-					t.Fatalf("a declined prune dropped the worktree record: %v %s", err, out)
 				}
 			}
 		}},
@@ -500,42 +411,6 @@ func TestDeclinedConfirmationWritesNothing(t *testing.T) {
 	}
 }
 
-// The setup wizard creates nothing before the gate: a missing base folder is
-// created with the plan, after the typed yes, and never on a declined one.
-func TestSetupWizardCreatesTheBaseOnlyAfterTheGate(t *testing.T) {
-	isolateSetupHome(t)
-	setupTempProfiles(t)
-	base := filepath.Join(t.TempDir(), "new-base")
-	plan, err := setup.LoadPlan(writeTempPlan(t, base))
-	if err != nil {
-		t.Fatal(err)
-	}
-	prevWizard, prevRunGit, prevConfirm := setupWizard, setupRunGit, humanonly.Confirm
-	setupWizard = func(*providers.Catalog, hooks.Profiles) (*setup.SetupPlan, error) { return plan, nil }
-	setupRunGit = func(...string) (string, error) { return "", nil }
-	t.Cleanup(func() { setupWizard, setupRunGit, humanonly.Confirm = prevWizard, prevRunGit, prevConfirm })
-
-	humanonly.Confirm = func(string) (bool, error) { return false, nil }
-	before := treeDigest(t, paths.Home(), base)
-	if _, err := runTq(t, "setup"); !errors.Is(err, humanonly.ErrAborted) {
-		t.Fatalf("declined: %v", err)
-	}
-	if _, err := os.Stat(base); !os.IsNotExist(err) {
-		t.Fatal("the base folder was created before the confirmation")
-	}
-	if treeDigest(t, paths.Home(), base) != before {
-		t.Fatal("a declined wizard wrote under the home")
-	}
-
-	humanonly.Confirm = func(string) (bool, error) { return true, nil }
-	if out, err := runTq(t, "setup"); err != nil {
-		t.Fatalf("confirmed: %v\n%s", err, out)
-	}
-	if _, err := os.Stat(filepath.Join(base, "acme")); err != nil {
-		t.Fatalf("the confirmed wizard creates the base and the workspace: %v", err)
-	}
-}
-
 // Dry runs and listings ask nothing: only a write is confirmed.
 func TestDryRunsAskNoConfirmation(t *testing.T) {
 	isolateHome(t)
@@ -547,7 +422,6 @@ func TestDryRunsAskNoConfirmation(t *testing.T) {
 	t.Cleanup(func() { hooks.ProfilesFn = prev })
 	for _, args := range [][]string{
 		{"settings", "render", "--all", "--dry-run"},
-		{"worktrees", "prune"},
 	} {
 		if _, err := runTq(t, args...); errors.Is(err, humanonly.ErrAborted) {
 			t.Fatalf("tq %s: %v", strings.Join(args, " "), err)

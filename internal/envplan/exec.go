@@ -251,3 +251,6 @@ func (l *Layer) environ(desired map[string]string, cleaned []string) []string {
 	}
 	return out
 }
+
+// wsVars are the workspace markers Desired sets.
+var wsVars = []string{"TQ_WS", "TQ_WS_ROOT"}

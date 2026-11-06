@@ -6,6 +6,4 @@ end
 function tq;         "'/opt/tq/bin/tq'" $argv; end
 function claude;     "'/opt/tq/bin/tq'" run . -- claude $argv; end
 function codex;      "'/opt/tq/bin/tq'" run . -- codex $argv; end
-function claude-off; "'/opt/tq/bin/tq'" run --off -- claude $argv; end
-function codex-off;  "'/opt/tq/bin/tq'" run --off -- codex $argv; end
 __tq_hook

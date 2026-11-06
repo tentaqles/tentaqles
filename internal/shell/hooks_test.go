@@ -50,8 +50,7 @@ func TestHook_DefinesLaunchers(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"TQ_ENABLED", "run --off -- claude", "run . -- claude",
-			"run --off -- codex", "run . -- codex", "claude-off", "codex-off",
+			"TQ_ENABLED", "run . -- claude", "run . -- codex",
 		} {
 			if !strings.Contains(h, want) {
 				t.Errorf("%s hook: missing %q", sh, want)
@@ -64,7 +63,7 @@ func TestHook_DefinesLaunchers(t *testing.T) {
 		}
 	}
 	h, _ := HookFor("cmd", goldenBin)
-	if !strings.Contains(h, "tq run --off -- claude") || !strings.Contains(h, "tq run . -- claude") {
+	if !strings.Contains(h, "tq run . -- claude") {
 		t.Errorf("cmd hook must document the launchers: %q", h)
 	}
 }
@@ -100,8 +99,6 @@ exit 0
 var wantLog = []string{
 	"env --shell SH",
 	"run . -- claude x",
-	"run --off -- claude y",
-	"run --off -- codex z",
 	"version",
 }
 
@@ -229,8 +226,6 @@ func runPosixShell(t *testing.T, shellBin, sh, script string) {
 const posixScript = `. 'HOOK'
 echo "A:${TQ_WS:-}"
 claude x
-claude-off y
-codex-off z
 tq version
 `
 
@@ -258,8 +253,6 @@ func TestHook_FishFunctions(t *testing.T) {
 	runPosixShell(t, f, "fish", `source 'HOOK'
 echo "A:$TQ_WS"
 claude x
-claude-off y
-codex-off z
 tq version
 `)
 }
@@ -300,8 +293,6 @@ func TestHook_PowerShellFunctions(t *testing.T) {
 	script := "Invoke-Expression ([IO.File]::ReadAllText('" + hookPath + "'))\n" +
 		"Write-Output \"A:$($env:TQ_WS)\"\n" +
 		"claude x\n" +
-		"claude-off y\n" +
-		"codex-off z\n" +
 		"tq version\n"
 	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+log)
@@ -345,7 +336,6 @@ func TestHook_BashAliasFirstAndQuotedPath(t *testing.T) {
 		". '" + slash(hookPath) + "'\n" +
 		"echo \"S:$?:${TQ_WS:-}\"\n" +
 		"case \";$PROMPT_COMMAND;\" in *';__tq_hook;'*) echo P:ok;; esac\n" +
-		"type claude-off >/dev/null 2>&1 && echo F:ok\n" +
 		"claude x\n"
 	cmd := exec.Command(b, "-c", script)
 	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+slash(log))
@@ -355,7 +345,7 @@ func TestHook_BashAliasFirstAndQuotedPath(t *testing.T) {
 	}
 	s := string(out)
 	checkNoLeak(t, "bash", s)
-	for _, want := range []string{"S:0:acme", "P:ok", "F:ok"} {
+	for _, want := range []string{"S:0:acme", "P:ok"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %q in:\n%s", want, s)
 		}
@@ -417,7 +407,6 @@ func TestHook_PowerShellRebuildsDash(t *testing.T) {
 		"Remove-Item -ErrorAction SilentlyContinue '" + log + "'\n" +
 		"tq run . -- cmd /c echo func -p x\n" +
 		"tq run . npm test -p x\n" +
-		"tq run --off -- claude --resume\n" +
 		"tq dotenv run --file a.env -- psql -c x\n" +
 		"tq doctor --json\n"
 	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", script)
@@ -437,7 +426,6 @@ func TestHook_PowerShellRebuildsDash(t *testing.T) {
 	want := []string{
 		"run . -- cmd /c echo func -p x",
 		"run . -- npm test -p x",
-		"run --off -- claude --resume",
 		"dotenv run --file a.env -- psql -c x",
 		"doctor --json",
 	}

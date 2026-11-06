@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"errors"
 	"github.com/zalando/go-keyring"
 	"os"
 	"path/filepath"
@@ -332,92 +331,6 @@ func TestRunDotUntrustedRefuses(t *testing.T) {
 	}
 }
 
-func TestRunOff(t *testing.T) {
-	mkLaunchWS(t, "acme", "acceptEdits")
-	clearAgentMarkers(t)
-	st := envplan.State{WS: "acme", Prev: map[string]*string{"TQ_WS": nil, "CLAUDE_CONFIG_DIR": nil}}
-	t.Setenv(envplan.StateVar, st.Encode())
-	t.Setenv("TQ_WS", "acme")
-	t.Setenv("CLAUDE_CONFIG_DIR", "/id/acme/claude")
-	t.Setenv("CODEX_HOME", "/id/acme/codex")
-
-	calls := fakeExec(t)
-	out, err := runTq(t, "run", "--off", "--", "claude", "-p", "x")
-	if err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
-	if !strings.Contains(out, "tq: off") || !strings.Contains(out, "main logins") {
-		t.Fatalf("missing the off banner: %q", out)
-	}
-	c := (*calls)[0]
-	want := `--dangerously-skip-permissions --settings {"enabledPlugins":{"tentaqles@tentaqles":false}} -p x`
-	if prog(c.name) != "claude" || strings.Join(c.args, " ") != want {
-		t.Fatalf("claude off args: %q", c.args)
-	}
-	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "TQ_WS", envplan.StateVar} {
-		if _, ok := c.env[k]; ok {
-			t.Errorf("%s must be removed in off", k)
-		}
-	}
-	// An off launch sets no variable of its own: every key comes from the
-	// parent environment (no mode marker, no identity).
-	parent := map[string]bool{}
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		parent[strings.ToUpper(k)] = true
-	}
-	for k := range c.env {
-		if !parent[k] {
-			t.Errorf("an off launch sets no variable, got %s", k)
-		}
-	}
-
-	calls = fakeExec(t)
-	if _, err := runTq(t, "run", "--off", "--", "codex", "exec", "x"); err != nil {
-		t.Fatal(err)
-	}
-	if c := (*calls)[0]; strings.Join(c.args, " ") != "--dangerously-bypass-approvals-and-sandbox exec x" {
-		t.Fatalf("codex off: %+v", c)
-	}
-
-	// --off takes no workspace
-	fakeExec(t)
-	if _, err := runTq(t, "run", "acme", "--off", "--", "claude"); err == nil {
-		t.Fatal("tq run <ws> --off must be refused")
-	}
-
-	// --off starts claude or codex only; a path or an extension still
-	// names them and still gets the off flags.
-	for _, name := range []string{"bash", "pwsh", "claudex", "sh"} {
-		calls = fakeExec(t)
-		if _, err := runTq(t, "run", "--off", "--", name); err == nil || len(*calls) != 0 {
-			t.Fatalf("tq run --off -- %s must be refused, got %v %+v", name, err, *calls)
-		}
-	}
-	calls = fakeExec(t)
-	if _, err := runTq(t, "run", "--off", "--", "/opt/bin/claude.exe", "-p", "x"); err != nil {
-		t.Fatal(err)
-	}
-	if c := (*calls)[0]; c.name != "/opt/bin/claude.exe" || !strings.HasPrefix(strings.Join(c.args, " "), "--dangerously-skip-permissions --settings") {
-		t.Fatalf("claude by path: %+v", c)
-	}
-}
-
-func TestRunOffRefusesAgents(t *testing.T) {
-	mkLaunchWS(t, "acme", "")
-	for _, k := range agentMarkers {
-		t.Run(k, func(t *testing.T) {
-			clearAgentMarkers(t)
-			t.Setenv(k, "1")
-			calls := fakeExec(t)
-			_, err := runTq(t, "run", "--off", "--", "claude")
-			if !errors.Is(err, errHumanOnly) || len(*calls) != 0 {
-				t.Fatalf("%s: want ErrHumanOnly and no launch, got %v %+v", k, err, *calls)
-			}
-		})
-	}
-}
-
 // An agent's nested launch gets the identity env and no bypass flag.
 func TestRunFromAgentSession(t *testing.T) {
 	mkLaunchWS(t, "acme", "")
@@ -451,15 +364,5 @@ func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
 		if c := (*calls)[0]; prog(c.name) != "npm" || strings.Join(c.args, " ") != "test -p x --watch" {
 			t.Fatalf("%v: %v", args, c)
 		}
-	}
-	calls := fakeExec(t)
-	if _, err := runTq(t, "run", "--off", "claude", "--resume", "-p", "x"); err != nil {
-		t.Fatal(err)
-	}
-	if c := (*calls)[0]; !strings.Contains(strings.Join(c.args, " "), "--resume -p x") {
-		t.Fatalf("--off without --: %v", c)
-	}
-	if _, err := runTq(t, "run", "acme", "--off", "claude"); err == nil {
-		t.Fatal("--off after a workspace must be refused")
 	}
 }

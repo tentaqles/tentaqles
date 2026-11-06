@@ -167,6 +167,33 @@ func TestReach_NoBanner(t *testing.T) {
 	}
 }
 
+// Under every marker reach refuses before it writes; a human gets a trusted client.
+func TestReachDoesNotTrustFromAgent(t *testing.T) {
+	clients := isolateReach(t, fullAnswers())
+	for _, k := range agentMarkers {
+		clearAgentMarkers(t)
+		t.Setenv(k, "1")
+		name := "shadow-" + strings.ToLower(strings.ReplaceAll(k, "_", "-"))
+		out, err := runReach(t, filepath.Join(clients, name))
+		if !errors.Is(err, errHumanOnly) {
+			t.Fatalf("reach under %s: want errHumanOnly, got %v %q", k, err, out)
+		}
+		if _, err := os.Stat(filepath.Join(clients, name)); !os.IsNotExist(err) {
+			t.Fatalf("reach under %s wrote the folder", k)
+		}
+		if _, err := os.Stat(filepath.Join(paths.IdentitiesRoot(), name)); !os.IsNotExist(err) {
+			t.Fatalf("reach under %s wrote an identity dir", k)
+		}
+	}
+	clearAgentMarkers(t)
+	if out, err := runReach(t, filepath.Join(clients, "human")); err != nil {
+		t.Fatalf("a human reach: %v %q", err, out)
+	}
+	if !trust.IsTrusted("human", manifestHash(t, filepath.Join(clients, "human"))) {
+		t.Fatal("a human reach trusts the new folder")
+	}
+}
+
 func TestReachRefusesAgentBeforeAnything(t *testing.T) {
 	clients := isolateReach(t, fullAnswers())
 	reachForm = func() (*reach.Answers, error) { t.Fatal("the form must not start"); return nil, nil }
@@ -236,6 +263,18 @@ func TestReach_SameNameElsewhereRefused(t *testing.T) {
 	}
 	if _, err := os.Stat(other); !os.IsNotExist(err) {
 		t.Fatal("the refused folder was created")
+	}
+}
+
+// reach makes the state folder private before it writes there.
+func TestReach_EnsuresProtectedHome(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+	calls := stubProtectedHome(t)
+	if out, err := runReach(t, filepath.Join(clients, "acme")); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if *calls != 1 {
+		t.Fatalf("calls = %d", *calls)
 	}
 }
 

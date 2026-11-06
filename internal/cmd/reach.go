@@ -74,6 +74,9 @@ func newReachCmd() *cobra.Command {
 			if err := humanGate(c, "tentaqles reach", about); err != nil {
 				return err
 			}
+			if err := ensureProtectedHome(); err != nil {
+				return err
+			}
 			ws, err := workspace.Add(o)
 			if err != nil {
 				return err

@@ -9,6 +9,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/reach"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -106,36 +107,31 @@ func TestMigrateManifests_ApplyRefusesAgents(t *testing.T) {
 
 // The commands that create $TQ_HOME make it private first: init, add and the
 // manifests migration.
-func TestProtectedHomeIsEnsuredByInitAddAndMigrateManifests(t *testing.T) {
+func TestProtectedHomeIsEnsuredByReachAndMigrateManifests(t *testing.T) {
 	e := newMigEnv(t)
 	clearAgentMarkers(t)
 	calls := stubProtectedHome(t)
-	prevGit := addRunGit
-	addRunGit = func(...string) (string, error) { return "", nil }
-	t.Cleanup(func() { addRunGit = prevGit })
+	prevForm, prevGit := reachForm, reachRunGit
+	reachForm = func() (*reach.Answers, error) { return &reach.Answers{Email: "a@acme.test"}, nil }
+	reachRunGit = func(...string) (string, error) { return "", nil }
+	t.Cleanup(func() { reachForm, reachRunGit = prevForm, prevGit })
 
-	if _, _, _, err := runTQ(t, "init", e.base); err != nil {
+	if _, _, _, err := runTQ(t, "reach", filepath.Join(e.base, "acme")); err != nil {
 		t.Fatal(err)
 	}
 	if *calls != 1 {
-		t.Fatalf("tq init: calls = %d", *calls)
-	}
-	if _, _, _, err := runTQ(t, "add", "acme", "--git-email", "a@acme.test"); err != nil {
-		t.Fatal(err)
-	}
-	if *calls != 2 {
-		t.Fatalf("tq add: calls = %d", *calls)
+		t.Fatalf("tentaqles reach: calls = %d", *calls)
 	}
 	if _, _, _, err := runTQ(t, "migrate", "manifests"); err != nil {
 		t.Fatal(err)
 	}
-	if *calls != 2 {
+	if *calls != 1 {
 		t.Fatalf("a dry run must not touch the home: calls = %d", *calls)
 	}
 	if _, _, _, err := runTQ(t, "migrate", "manifests", "--apply"); err != nil {
 		t.Fatal(err)
 	}
-	if *calls != 3 {
+	if *calls != 2 {
 		t.Fatalf("tq migrate manifests --apply: calls = %d", *calls)
 	}
 }

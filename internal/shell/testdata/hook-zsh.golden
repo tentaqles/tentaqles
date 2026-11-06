@@ -9,5 +9,3 @@ __tq_hook
 function tq { '/opt/tq/bin/tq' "$@"; }
 function claude { '/opt/tq/bin/tq' run . -- claude "$@"; }
 function codex { '/opt/tq/bin/tq' run . -- codex "$@"; }
-function claude-off { '/opt/tq/bin/tq' run --off -- claude "$@"; }
-function codex-off { '/opt/tq/bin/tq' run --off -- codex "$@"; }

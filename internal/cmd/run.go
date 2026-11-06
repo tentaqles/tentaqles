@@ -47,13 +47,6 @@ func launchClaudeArgs(args []string, agent bool) []string {
 	return append([]string{"--dangerously-skip-permissions"}, args...)
 }
 
-// offClaudeSettings switches the tentaqles plugin off for an off launch
-// (--settings merges enabledPlugins per key).
-const offClaudeSettings = `{"enabledPlugins":{"tentaqles@tentaqles":false}}`
-
-// offBanner is printed on stderr by every off launch.
-const offBanner = "tq: off — main logins, no identity, no guard (git, cloud and MCP use your default accounts)"
-
 // agentProg names the agent a program is: "claude" or "codex" for those
 // names, with or without a directory and a .exe/.cmd/.bat/.ps1 extension,
 // and "" for any other program.
@@ -66,33 +59,6 @@ func agentProg(name string) string {
 		return b
 	}
 	return ""
-}
-
-// offArgs is an off launch's command line: claude in bypass with the plugin
-// switched off, codex with approvals and sandbox bypassed. A permission flag
-// the user typed replaces the bypass flag; subcommands get nothing.
-func offArgs(name string, args []string) []string {
-	switch agentProg(name) {
-	case "claude":
-		if len(args) > 0 && slices.Contains(claudeSubcommands, args[0]) {
-			return args
-		}
-		pre := []string{"--settings", offClaudeSettings}
-		if !slices.ContainsFunc(args, func(a string) bool {
-			return a == "--permission-mode" || strings.HasPrefix(a, "--permission-mode=") || a == "--dangerously-skip-permissions"
-		}) {
-			pre = append([]string{"--dangerously-skip-permissions"}, pre...)
-		}
-		return append(pre, args...)
-	case "codex":
-		if slices.ContainsFunc(args, func(a string) bool {
-			return a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo"
-		}) {
-			return args
-		}
-		return append([]string{"--dangerously-bypass-approvals-and-sandbox"}, args...)
-	}
-	return args
 }
 
 // execCommand runs name+args with env and the process's stdio, and exits
@@ -155,23 +121,6 @@ func (l launch) run() error {
 	return execCommand(name, args, env)
 }
 
-// runOff is tq run --off: the main install and logins, no tq. The plugin is
-// switched off and the identity environment cleaned; no variable marks the
-// launch. It is human-only: refused from a session, confirmed by the human.
-func runOff(c *cobra.Command, name string, args []string, errw func(string)) error {
-	if err := refuseAgent("tq run --off"); err != nil {
-		return err
-	}
-	if agentProg(name) == "" {
-		return fmt.Errorf("tq run --off starts claude or codex only, not %q: tq run --off -- <claude|codex> [args]", name)
-	}
-	if err := humanGate(c, "tq run --off", "tq run --off: about to start "+name+" with no identity and no guard (your main logins, the plugin off)"); err != nil {
-		return err
-	}
-	errw(offBanner)
-	return execCommand(name, offArgs(name, args), envplan.OffEnviron(os.Environ()))
-}
-
 // execIn runs name+args with ws's environment. applyClaudeArgs must be false for
 // flows that drive claude's own subcommands (e.g. `tq login <ws> claude`), where
 // injecting --dangerously-skip-permissions is wrong; true is the launcher
@@ -202,30 +151,21 @@ func cwdWorkspace() (*resolve.Workspace, error) {
 }
 
 func newRunCmd() *cobra.Command {
-	var off bool
 	c := &cobra.Command{
 		Use:   "run <workspace>|. -- <command> [args...]",
 		Short: "Run a command with a workspace's identity without cd-ing into it",
 		Long: "Run a command with a workspace's identity. `.` is the current folder's workspace (neutral when none).\n" +
-			"For claude, the launcher starts in bypass (tq's guard is the hook: identity drift and secrets, in every\n" +
-			"permission mode). `tq run --off -- <claude|codex>` starts it with no tq at all: the main install and\n" +
-			"logins, no identity, the plugin switched off.",
-		Example: "  tq run acme -- claude\n  tq run . -- claude -p \"...\"\n  tq run --off -- claude",
+			"For claude, the launcher starts in bypass (tq's guard is the hook, in every permission mode).",
+		Example: "  tq run acme -- claude\n  tq run . -- claude -p \"...\"",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			defer trust.MemoScope()()
-			if off {
-				if c.ArgsLenAtDash() > 0 {
-					return errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")
-				}
-				return runOff(c, args[0], args[1:], func(s string) { fmt.Fprintln(c.ErrOrStderr(), s) })
-			}
 			// Flags are not interspersed: after <workspace> only an optional
 			// -- may come before the command word, and everything after it
 			// is the command's own.
-			rest, err := runTail(args[1:])
-			if err != nil {
-				return err
+			rest := args[1:]
+			if len(rest) > 0 && rest[0] == "--" {
+				rest = rest[1:]
 			}
 			args = append(args[:1:1], rest...)
 			if len(args) < 2 {
@@ -251,21 +191,6 @@ func newRunCmd() *cobra.Command {
 			return launch{ws: ws, name: args[1], args: args[2:]}.run()
 		},
 	}
-	c.Flags().BoolVar(&off, "off", false, "start claude or codex with no tq: main install and logins, no identity, the plugin off (human only)")
 	c.Flags().SetInterspersed(false)
 	return c
-}
-
-// runTail reads what follows <workspace> in tq run: an optional --, then
-// the command and its args.
-func runTail(args []string) ([]string, error) {
-	if len(args) > 0 {
-		switch a := args[0]; {
-		case a == "--":
-			return args[1:], nil
-		case a == "--off" || strings.HasPrefix(a, "--off="):
-			return nil, errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")
-		}
-	}
-	return args, nil
 }

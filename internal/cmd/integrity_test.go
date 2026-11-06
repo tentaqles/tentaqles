@@ -696,14 +696,11 @@ func TestSigningRefusesUnderAHarnessProcessTree(t *testing.T) {
 	before, _ := os.ReadFile(trust.SignedRecordPath("acme"))
 	harnessTree(t)
 
-	prevRunGit := addRunGit
-	addRunGit = func(...string) (string, error) { return "", nil }
-	t.Cleanup(func() { addRunGit = prevRunGit })
-	if _, err := runTq(t, "add", "evil", "--base", base, "--git-email", "x@example.com", "--identities", "gh"); !errors.Is(err, errHumanOnly) {
-		t.Fatalf("tq add: %v", err)
+	if _, err := runTq(t, "reach", filepath.Join(base, "evil")); !errors.Is(err, errHumanOnly) {
+		t.Fatalf("tentaqles reach: %v", err)
 	}
 	if _, err := os.Stat(trust.SignedRecordPath("evil")); err == nil {
-		t.Fatal("tq add signed under a harness")
+		t.Fatal("tentaqles reach signed under a harness")
 	}
 
 	_, err := workspace.Add(workspace.AddOptions{Name: "evil2", Base: base, GitEmail: "x@example.com", Identities: []string{"gh"}, Trust: true,
