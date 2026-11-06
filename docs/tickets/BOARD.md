@@ -19,3 +19,9 @@ The build loop's board, kept by `.claude/hooks/gate.mjs`. See `.claude/README.md
 | 013 | Retire Codex support | parked | High | waits for 011: touches run, render, trust and shell hooks |
 | 014 | Cut the plugin down to onboarding, memory and the graph | parked | High | waits for 012: keeps the finished skill; needs 002 landed |
 | 015 | Remove the replaced v1 commands | parked | High | waits for 013: same files; reach and edit must have replaced them |
+| 016 | `tentaqles reach` installs the client's CLIs | ready | High | alongside |
+| 017 | The right browser on the right profile | ready | High | alongside |
+| 018 | `status --json` for the skill, and `tentaqles connect <provider>` | ready | High | alongside |
+| 019 | `reach` installs the plugin, and Claude won't start without the guard | ready | High | waits for 016: both add a step to reach |
+| 020 | `reach` opens the client's terminal and closes the old one | ready | High | waits for 019: the last step of reach |
+| 021 | The onboarding skill drives the logins | ready | High | waits for 016, 018: it uses install, status and connect |
