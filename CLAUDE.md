@@ -2,16 +2,16 @@
 
 One repo, one installer: an identity isolator with secrets protection for developers who
 work across several clients/companies. One folder per client; the terminal, the agent
-sessions and the external tools (git and its hosts, the cloud CLIs, the Claude and Codex
-config homes) carry that client's identity and nothing else; a command under the wrong
+sessions and the external tools (git and its hosts, the cloud CLIs, the Claude
+config home) carry that client's identity and nothing else; a command under the wrong
 identity is blocked with the reason.
 
 ## Reading path
-To work on this repo read `docs/prd.md` (requirements with status, backlog and the owner's
-decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
+`docs/IDEATION.md` is the spec: judge scope against it. Then `docs/threat-model.md` and the ADRs under
+`docs/adr/`. `docs/prd.md` and PRD v2 are history, and some docs still describe removed commands.
 
 ## Layout
-- `cmd/tq/`, `internal/` — the `tq` Go CLI. `go test ./...` must stay green.
+- `cmd/tentaqles/`, `cmd/tq/`, `internal/` — the Go CLI, one program under two names. `go test ./...` must stay green.
   - `internal/guard/` — the identity-drift block, `guard.Decide` (`blocked-command`,
     `wrong-cloud`, `neutral-remote`, `untrusted`, `env-drift`, `claude-config-drift`,
     `git-email-drift`, `gh-user`) and the shell tokenizer the hook uses.
@@ -24,10 +24,10 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     ADR-0007) and their evaluator; nothing else is a rule. Every
     rule carries its category (`identity`, `secrets`, `self-protection`); a deny reads
     `BLOCKED [<category>/<rule>]`.
-  - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `init`, `add`,
+  - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `reach`,
     `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `status`, `bundle`,
-    `providers`, `setup`, `onboard`, `secret`, `secrets`, `settings`, `statusline`,
-    `worktrees`, `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
+    `providers`, `secret`, `secrets`, `settings`, `statusline`,
+    `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
     `claudehook*.go`: `pre-tool-use` runs `guard.Decide` (identity), the provider-scope
     rules (`claudehook_scope.go`), then the secret rules
     plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
@@ -50,7 +50,7 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
   - `internal/trust/` (the signed integrity record per workspace, `trust/<name>.json`:
     manifest, marker, the enforcing keys of the Claude settings (`settings.json#tq`), the
     tentaqles entry of `installed_plugins.json`, the loaded plugin folder but its skills,
-    agents, templates, tests and caches, Codex hook files and shims, under an HMAC whose
+    agents, templates, tests and caches, and shims, under an HMAC whose
     key is in the OS keychain; only the roots are resolved; every signature passes
     `HumanCheck`; `tq deny` leaves a signed tombstone; legacy markers count only from the
     signed snapshot `trust/legacy.json`, never once `trust/.signed` exists without it;
@@ -65,23 +65,21 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     manifest, both layouts), `internal/workspace/`, `internal/paths/`,
     `internal/envplan/` (the env diff, the identity PATH, the PATH
     mask and the out-of-scope variables unset, ADR-0008), `internal/mcpscope/` (the
-    out-of-scope MCP servers removed from the identity's Claude and Codex homes),
-    `internal/shell/` (activation hooks and the `claude`/`codex` launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
-    `internal/doctor/`, `internal/setup/` and `internal/onboard/` (`tq setup`,
-    `tq onboard`), `internal/migrate/`, `internal/bundle/`, `internal/providers/` (the
-    embedded catalog), `internal/claudesettings/`, `internal/codexcfg/`,
+    out-of-scope MCP servers removed from the identity's Claude home),
+    `internal/shell/` (activation hooks and the `claude` launcher), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
+    `internal/doctor/`, `internal/reach/` and `internal/banner/` (`tentaqles reach`),
+    `internal/migrate/`, `internal/bundle/`, `internal/providers/` (the
+    embedded catalog), `internal/claudesettings/`,
     `internal/statusline/`, `internal/secret/` (`tq secret`, OS keychain via go-keyring),
     `internal/secrets/` (`tq secrets audit`), `internal/dotenv/`, `internal/commitscan/`
     (`tq/commit-secret`), `internal/audit/`, `internal/detect/`, `internal/verify/`,
     `internal/termopen/`, `internal/testutil/`.
-- `pkg/setupapi/` — the setup plan API shared by `tq setup` and `tq onboard`.
 - `test/integration/` — git identity end to end and the marketplace pin tests.
 - `providers/` — a README; the provider catalog YAML lives in `internal/providers/catalog/`.
-- `plugin/` — the Claude Code plugin (Python): hooks shell out to `tq claude-hook` for
-  identity and secrets, plus the session memory, the identity preamble, the knowledge
-  graph, 40 skills (plain checklists) and 5 read-only reviewer agents. Installed from this
-  repo's root marketplace (`.claude-plugin/marketplace.json`, git-subdir `plugin/` pinned to
-  a release tag and its sha, added after the tag in a post-release PR):
+- `plugin/` — the Claude Code plugin: the onboarding skill and the guard hook, which shells out to
+  `tq claude-hook`. No Python. Installed from this repo's root marketplace
+  (`.claude-plugin/marketplace.json`, git-subdir `plugin/` pinned to a release tag and its sha, added after
+  the tag in a post-release PR):
   `/plugin marketplace add tentaqles/tentaqles`, `/plugin install tentaqles@tentaqles`.
   Release steps in `docs/RELEASING.md`.
 - `installers/`, `.goreleaser.yaml`, `.github/workflows/` — CLI release + CI. `test.yml`
@@ -89,9 +87,9 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
   `release.yml` runs on a `v*` tag.
 - `scripts/spike-isolation.sh` — the macOS keychain-isolation spike behind the "Limitations"
   note of `README.md`.
-- `docs/` — user-facing docs: `SETUP.md` (setup plans, `tq onboard`), `CLAUDE-HOOK.md`
+- `docs/` — user-facing docs: `CLAUDE-HOOK.md`
   (the hook protocol, the identity rules, the secret rules, `tq dotenv run`),
-  `CLAUDE-SETTINGS.md` (`tq settings render`, `tq statusline`, `tq worktrees`, Codex),
+  `CLAUDE-SETTINGS.md` (`tq settings render`, `tq statusline`),
   `COMMANDS.md` (every command and skill, plus a test walkthrough), `PROVIDERS.md` (the
   catalog schema, `tq secret`), `MIGRATE.md` (`tq migrate`, the journal,
   `tq uninstall --restore`, the `TQ_ENABLED=0` kill switch, "Upgrading an existing install"),
@@ -137,14 +135,13 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   out-of-scope CLI does not resolve on the identity PATH (its folder dropped, or masked by
   a stub in a shared folder) while in-scope CLIs do, its variables are unset, leaving the
   folder restores PATH and variables exactly, `tq run` resolves on the identity PATH, the
-  render leaves no out-of-scope MCP server in the identity's Claude and Codex homes and
+  render leaves no out-of-scope MCP server in the identity's Claude home and
   never touches one that matches no provider, the mask folder is used only as tq wrote it,
   and the preamble states the scope: `TestEnv_ScopeReferenceScenario_PATH`,
   `TestSettingsRender_ScopeReferenceScenario_MCP`, `TestSessionStart_ScopeLine`,
   `TestEnv_ScopeLayerRestore`, `TestPathLayer_ScenarioAwsNotOnPath`,
   `TestPathLayer_SharedDirIsMasked`, `TestPathLayer_TamperedMaskIsNotUsed`,
-  `TestLayer_EnterAndLeaveRestoresExactly`, `TestPathSyntax_MSYS`, `TestFilterClaude`,
-  `TestFilterCodex`; round 2: the state fits cmd.exe and every shell restores byte for byte,
+  `TestLayer_EnterAndLeaveRestoresExactly`, `TestPathSyntax_MSYS`, `TestFilterClaude`; round 2: the state fits cmd.exe and every shell restores byte for byte,
   the mask answers every spelling and comes back once fixed, generic tools' variables and
   ambiguous names are left alone, MCP servers are attributed by their config entry at render
   and in the hook: `TestEnv_ScopeReferenceScenario_SharedFolder`,
@@ -157,15 +154,15 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestEntries`, `TestEntries_RemovedStillJudged`, `TestLostState_FailsClosed`,
   `TestUnrecorded`, `TestEmit_Cmd_LineBudget`, `TestPathLayer_StubIsTheTQBinary`; round 4:
   `TestEnv_UnicodePathFoldersRoundTrip`, `TestMCPVendorsHaveMCPData`,
-  `TestOutOfScopeMCPEntry_Round3Fixtures`, `TestFilterCodex_CredentialFields`,
+  `TestOutOfScopeMCPEntry_Round3Fixtures`, 
   `TestPluginServers_EveryShape`, `TestLostState_HarnessMissingStateIsLost`; the hybrid MCP
   list: `TestJudgeMCP_Hybrid`, `TestScope_MCPHybridInTheHook`, `TestJudgeMCP_FixtureKeptSets`,
   `TestSettingsRender_HybridMCP`, `TestMCPGeneral`, `TestMCPAllow`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
 - Trust is human-only, and so is every tq write under `$TQ_HOME` or an identity dir:
-  `TestAllowAndDenyRefuseAgents`, `TestAddDoesNotTrustFromAgent`,
-  `TestHumanOnlyCommandsRefuseWithMarkerAndLog`, `TestAddConfirmsBeforeWriting`, and the
+  `TestAllowAndDenyRefuseAgents`, `TestReachDoesNotTrustFromAgent`,
+  `TestHumanOnlyCommandsRefuseWithMarkerAndLog`, `TestReachConfirmsBeforeWriting`, and the
   detector tests of `internal/humanonly` (`TestTTYDetector`, `TestProcessTreeDetector`,
   `TestEnvMarkerDetector`, `TestGateConfirms`), `TestHooksVerify_ReportExitAndAccept`.
 - An edited manifest loses its trust: `TestEditedManifestLosesTrust`.
@@ -173,7 +170,7 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   plugin, the tq binary or tq's keychain entry, by any tool, nor run a human-only tq verb
   in the shell; the categories run blocked_commands → identity → secrets →
   self-protection and every deny is logged: `TestProtectedPaths_Table`,
-  `TestProtectedPaths_RuleOrder`, `TestProtectedPaths_Codex`, `TestKeychainWrite`.
+  `TestProtectedPaths_RuleOrder`, `TestKeychainWrite`.
 - The integrity record is signed and covers the hooks, the enforcing settings keys and the
   shims; a mismatch is at least as strict as untrusted (the hook denies mutating git and
   remote commands), withholds the identity and refuses the launch; a signed workspace never
@@ -183,9 +180,7 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestEnv_NoIdentityAndOneNoticeOnMismatch`, `TestLegacyDowngradeIsUntrusted`,
   `TestSigningRefusesUnderAHarnessProcessTree`.
 - The plugin hook never takes the enforcing binary from the environment:
-  `test_tq_bin_is_not_honoured`, `test_tq_hook_never_runs_a_tq_from_the_plugin_folder`;
-  Python never reads bytecode next to the plugin's sources:
-  `test_a_forged_pyc_next_to_the_sources_is_not_loaded`.
+  `test_tq_bin_is_not_honoured`, `test_tq_hook_never_runs_a_tq_from_the_plugin_folder`.
 - A batch accept signs only a plugin folder that is, byte for byte, the release tq was built
   from (the commit in the binary, never the clone's pin):
   `TestCheckReleaseComparesBytesNotLocation`, `TestARepinnedCloneIsRefused`,
@@ -203,11 +198,11 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestNoAskCodePath`, `TestNoAskVerdict`, `TestPreToolUse_MalformedPayloadDenies`,
   `TestPreToolUseGuardPanicDenies`, `TestPreToolUse_TimeoutDenies`,
   `TestPreToolUse_UnreadableRegistryDenies`, `TestPreToolUse_MissingOrBrokenManifestDenies`,
-  `TestPreToolUseIncompleteScanDeniesBothAgents`, `TestPreToolUse_FieldTypesDeny`,
+  `TestPreToolUseIncompleteScanDenies`, `TestPreToolUse_FieldTypesDeny`,
   `TestPreToolUse_GoneManifestWithEvidenceDenies`, `TestNoAskAnswerInAnyOutput`,
-  `TestRunMainHookErrorsDeny`, `TestRunMainWatchdogDenies`, `TestCodexHookResolves`,
-  `test_unreadable_payload_denies`, `test_tq_hook_turns_a_tq_without_decision_into_a_deny`,
-  `test_tq_hook_stops_a_hanging_tq_and_denies`, `test_fallback_never_answers_ask`.
+  `TestRunMainHookErrorsDeny`, `TestRunMainWatchdogDenies`,
+  `test_tq_hook_turns_a_tq_without_decision_into_a_deny`,
+  `test_tq_hook_stops_a_hanging_tq_and_denies`.
 - Every hook deadline is under the shortest harness hook timeout (a harness runs a call whose
   hook it killed): `TestHookDeadlinesUnderHarnessTimeouts`,
   `test_tq_hook_deadline_is_under_the_hook_timeout`.
@@ -219,15 +214,14 @@ From `docs/threat-model.md`; each line names the test that keeps it.
 - tq writes no permission setting of the harness, cleans the ones it wrote, and an old
   manifest with `claude.permission_mode`/`claude.permissions` still loads (PRD v2 §7.2,
   §13): `TestRenderFreshWritesNoPermissionKey`, `TestRenderCleansWhatTheOldRenderWrote`,
-  `TestRenderWritesNoConfigKeys`, `TestLoadRecordsDroppedClaudeKeys`,
+  `TestLoadRecordsDroppedClaudeKeys`,
   `TestRenderKeepsADefaultModeTheEvidenceDoesNotName`, `TestRenderCorruptStateClaimsNothing`,
-  `TestRenderMarkerVariants`, `TestNothingWrittenNamesAPermissionMode`; the Codex launcher
-  adds only the full-bypass flag: `TestLaunchArgsInjectsTheBypassFlag`.
+  `TestNothingWrittenNamesAPermissionMode`.
 
 ## Project config
 CI's `go` job runs `go vet ./...`, `go test ./... -count=1` and a build; locally run
 `go build ./...` too. The plugin suite is `PYTHONPATH=plugin python -m pytest plugin/tests -q`
-(CI job `plugin`; about 13 minutes on Windows). The changelog is `CHANGELOG.md` under
+(CI job `plugin`; seconds). The changelog is `CHANGELOG.md` under
 `[Unreleased]`; a change under `plugin/` also gets its line in `plugin/CHANGELOG.md`, and the
 root entry is then one pointer line.
 

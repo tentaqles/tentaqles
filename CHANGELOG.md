@@ -6,6 +6,16 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### Cut down to IDEATION (ADR-0013, ADR-0014)
+
+- Removed `tq add`, `tq init`, `tq onboard`, `tq setup`, `tq worktrees`, `tq run --off` and the
+  `claude-off` and `codex-off` functions. `tentaqles reach` is how a client is set up.
+- Removed Codex support. Claude Code is the only harness.
+- The plugin is the onboarding skill and the guard hook. Session memory, the knowledge graph, the
+  other skills, the agents and all the plugin's Python are gone; existing data stays on disk.
+- With no Python fallback, a missing tq denies every tool, not only shell commands.
+- After upgrading, each client needs one `tq hooks verify --accept`.
+
 ### `tentaqles reach` (ADR-0012)
 
 - `tentaqles reach [<path>]` makes a folder a client identity: the banner, the form, the manifest

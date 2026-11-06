@@ -53,7 +53,7 @@
   },
   "blind": {
     "commands": [".job/first-time-user/bin/tq"],
-    "read": ["README.md", "docs/SETUP.md", "docs/COMMANDS.md"]
+    "read": ["README.md", "docs/COMMANDS.md"]
   },
   "app": {
     "build": "go build -o .job/first-time-user/bin/ ./cmd/tq",
