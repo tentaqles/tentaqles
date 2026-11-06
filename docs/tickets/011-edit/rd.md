@@ -1,6 +1,6 @@
 # 011: `tentaqles edit`
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: edit changes an identity's scope and re-signs its trust, so a bug can widen a client's scope with no real confirmation, or lose a hand-written `blocked_commands` entry
 **UI:** none
 
