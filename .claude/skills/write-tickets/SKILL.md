@@ -171,4 +171,9 @@ Compare Affected areas with every ticket that hasn't landed, including those alr
 
 Tell the owner, in a few lines: each ticket's path and what it is, which tickets run alongside and which wait, and which are still draft. Don't paste the files.
 
-Then give the next step: open the router through their normal launcher with `claude --agent router --name router`, and tell it a ticket number, or "go".
+If at least one ticket is `ready`, ask one question with AskUserQuestion: build now, in this session? Put yes first.
+
+- **Yes:** invoke the `router` skill, naming the tickets they want built. This session becomes the router.
+- **No:** tell them that `/router` in any normal session starts the build later. If they want the router's limits enforced, with no Edit or Write and a clean context, they can open it with `claude --agent router --name router` through their normal launcher, and tell it a ticket number, or "go".
+
+If this session is already the router, skip the question. Carry on as `.claude/skills/router/SKILL.md` says.

@@ -65,8 +65,9 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
 ## Development process
 This repo is developed with the build loop in `.claude/`: read `.claude/README.md`. It's for
 working on this repo and does not ship: nothing in the release, the plugin or the installers
-depends on it. `/write-tickets` turns work into tickets under `docs/tickets/`; the router
-(`claude --agent router --name router`) builds them. Low-risk changes need no ticket.
+depends on it. `/write-tickets` turns work into tickets under `docs/tickets/`; the router builds them, in the
+same session (`/router`) or its own (`claude --agent router --name router`). Low-risk changes
+need no ticket.
 
 @REVIEW.md
 

@@ -7,8 +7,10 @@ This file is the contract every agent follows. Everything specific to a project 
 ## How you use it
 
 ```
-/write-tickets add X                  interview, risk, rd.md, eval.md. You approve.
-claude --agent router --name router   through your normal launcher, then "012" or "go"
+/write-tickets add X                  interview, risk, rd.md, eval.md. You approve, then it asks: build now?
+                                      yes: the same session becomes the router
+/router                               the same, in any normal session, later
+claude --agent router --name router   the strict router, through your normal launcher, then "012" or "go"
 /fix-a-bug the guard denies X         reproduce, verdict, cause, failing test first, fix
 /first-time-user                      a blind agent tries to use it
 /deep-review                          fixed-script audit of a branch
@@ -29,6 +31,8 @@ claude --agent router --name router   through your normal launcher, then "012" o
 | first-time-user | Blind. Uses only what a stranger would have. | its reply |
 
 Layers: `router → ticket-lead → builder / verifier / reviewer`.
+
+The router runs one of two ways. Started with `--agent router`, its tool limits are enforced and it runs on its own model, with a clean context. Started with `/router` or from `/write-tickets`, it's your normal session following the same instructions: nothing enforces the limits, it uses your session's model, and it keeps your conversation. The landing check still refuses a ticket whose tree the checkers haven't passed.
 
 Agents can't talk to you. A question comes back up to the router, which asks you and resumes the agent with your answer.
 
