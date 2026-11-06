@@ -13,3 +13,7 @@ legacy/sidecar/.ruff_cache/
 # plugin runtime
 plugin/**/__pycache__/
 plugin/.venv/
+# build loop: per-worktree job state, agent worktrees, source material
+/.job/
+/.claude/worktrees/
+/sources/

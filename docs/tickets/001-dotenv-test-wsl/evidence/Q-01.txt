@@ -1,0 +1,4 @@
+$ gofmt -l internal/cmd/dotenv_test.go
+exit code: 0
+$ go vet ./internal/cmd
+exit code: 0

@@ -1,0 +1,48 @@
+{
+  "confirmed": false,
+  "stack": "cli | web | api | library",
+  "capabilities": {
+    "browser": false,
+    "mockups": false,
+    "screenshots": false,
+    "ports": false,
+    "testAccounts": false,
+    "teams": false
+  },
+  "ticketsDir": "specs/tickets",
+  "jobDir": ".job",
+  "mainBranch": "main",
+  "commitTrailer": "",
+  "prFooter": "",
+  "requirementId": "REQ-\\d+",
+  "riskQuestion": "What happens to a customer if this breaks?",
+  "highRiskPaths": [],
+  "gates": {
+    "round": [],
+    "release": []
+  },
+  "limits": {
+    "parallelTickets": 3,
+    "roundCheckpoint": 5,
+    "stopBlocks": 3,
+    "watchMinutes": 10,
+    "stepStaleMinutes": 45,
+    "commandTimeoutMinutes": 30
+  },
+  "blind": {
+    "commands": [],
+    "read": [],
+    "port": 3000
+  },
+  "app": {
+    "build": "",
+    "start": "",
+    "readyPath": "/",
+    "env": {},
+    "testData": { "setup": "", "restore": "" },
+    "ports": { "main": 3000, "workerBase": 3100, "reproducer": 3090 },
+    "accounts": { "workerPrefix": "t", "checker": "t000", "reproducer": "t090", "team": "t050" },
+    "healthPaths": [],
+    "coreFlows": []
+  }
+}
