@@ -1,0 +1,7 @@
+$ go test -c -o .job/cmd.test.exe ./internal/cmd
+exit code: 0
+$ PATH="/c/Windows/System32:$PATH" .job/cmd.test.exe -test.run '^TestDotenvRunLoadsAndMasks$' -test.v
+=== RUN   TestDotenvRunLoadsAndMasks
+--- PASS: TestDotenvRunLoadsAndMasks (3.66s)
+PASS
+exit code: 0

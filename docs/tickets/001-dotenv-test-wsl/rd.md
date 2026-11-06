@@ -1,6 +1,6 @@
 # 001-dotenv-test-wsl: The dotenv masking test runs on a real bash
 
-**Status:** ready
+**Status:** landed
 **Risk:** Medium: the test that proves `tq dotenv run` masks secrets fails, or silently proves nothing, on a Windows box whose `bash` on PATH is the WSL launcher
 
 `TestDotenvRunLoadsAndMasks` in `internal/cmd/dotenv_test.go` looks up `bash` with `exec.LookPath`. On Windows with PowerShell that can find `C:\Windows\System32\bash.exe`, the WSL launcher, which fails with `execvpe(/bin/bash) failed` when no distribution has it. The test then fails with "exit code not propagated". This is the only failing test on the owner's box.
