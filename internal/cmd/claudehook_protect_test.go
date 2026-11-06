@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -119,6 +120,15 @@ func jsonPathLit(p string) string {
 
 func cmdIn(cmd string) string { return `{"command":` + jsonPathLit(cmd) + `}` }
 
+// psUnderHome spells a path under the home folder as PowerShell does on this OS: only Windows
+// has USERPROFILE and backslash separators.
+func psUnderHome(rel string) string {
+	if runtime.GOOS == "windows" {
+		return `$env:USERPROFILE\` + strings.ReplaceAll(rel, "/", `\`)
+	}
+	return "$env:HOME/" + rel
+}
+
 // protectedCases is the acceptance table of §8.2: one row per write route
 // and per protected path kind, the reads that are denied, and what stays
 // allowed.
@@ -149,7 +159,7 @@ func protectedCases(f protectedFixture) []protectCase {
 		{"rm trust", "Bash", cmdIn("rm -rf ~/.tentaqles/trust"), pp},
 		{"rm the state folder", "Bash", cmdIn("rm -rf ~/.tentaqles"), pp},
 		{"rm glob", "Bash", cmdIn("rm -rf ~/.tentaqles/*"), pp},
-		{"Remove-Item trust", "PowerShell", cmdIn(`Remove-Item -Recurse -Force $env:USERPROFILE\.tentaqles\trust`), pp},
+		{"Remove-Item trust", "PowerShell", cmdIn("Remove-Item -Recurse -Force " + psUnderHome(".tentaqles/trust")), pp},
 		{"Set-Content config", "PowerShell", cmdIn(`Set-Content -Path "$HOME/.tentaqles/config.yaml" -Value "x"`), pp},
 		{"Out-File settings", "PowerShell", cmdIn(`"x" | Out-File -FilePath ` + f.settings), pp},
 		{"tee config", "Bash", cmdIn("echo x | tee ~/.tentaqles/config.yaml"), pp},

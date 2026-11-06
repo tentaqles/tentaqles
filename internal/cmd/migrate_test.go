@@ -180,8 +180,18 @@ func (e *migEnv) linkIdentity(ws, id, legacy string) string {
 	migWrite(e.t, filepath.Join(legacy, "marker.txt"), ws+"/"+id)
 	dir := paths.IdentityDir(ws, id)
 	migMkdir(e.t, filepath.Dir(dir))
+	// The record covers the identity folder, so a link made after signing is a change: sign
+	// again what was trusted (a Unix symlink resolves to another covered path).
+	mp := filepath.Join(e.base, ws, ".tentaqles.yaml")
+	h, hashErr := trust.HashFile(mp)
+	wasTrusted := hashErr == nil && trust.IsTrusted(ws, h)
 	if err := migrate.MakeLink(dir, legacy); err != nil {
 		e.t.Skipf("MakeLink(%s -> %s): %v (this platform cannot create links unprivileged)", dir, legacy, err)
+	}
+	if wasTrusted {
+		if err := trust.Allow(ws, h); err != nil {
+			e.t.Fatal(err)
+		}
 	}
 	return legacy
 }

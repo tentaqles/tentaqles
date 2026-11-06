@@ -104,6 +104,29 @@ var (
 	matchPkgRe      = regexp.MustCompile(`^[@A-Za-z0-9][A-Za-z0-9@._/:+-]*$`)
 )
 
+// PkgNorm spells a package, image or URL for prefix comparison: lower case, PyPI-style (-, _
+// and . alike), a git+ or URL scheme and a git@host: form removed, a script under
+// node_modules/ by its package.
+func PkgNorm(w string) string {
+	l := strings.ToLower(strings.Trim(w, `"'`))
+	l = strings.ReplaceAll(l, `\`, "/")
+	l = strings.TrimPrefix(l, "npm:")
+	l = strings.TrimPrefix(l, "git+")
+	if i := strings.Index(l, "://"); i >= 0 {
+		l = l[i+3:]
+	} else if strings.HasPrefix(l, "git@") {
+		l = strings.Replace(strings.TrimPrefix(l, "git@"), ":", "/", 1)
+	}
+	if i := strings.LastIndex(l, "node_modules/"); i >= 0 {
+		l = l[i+len("node_modules/"):]
+	}
+	l = strings.NewReplacer("_", "-", ".", "-").Replace(l)
+	for _, reg := range []string{"docker-io/", "index-docker-io/", "registry-hub-docker-com/"} {
+		l = strings.TrimPrefix(l, reg) // docker.io/mcp/github is mcp/github
+	}
+	return l
+}
+
 // SplitHost splits a hosts entry into its host and its path prefix ("" when it has none):
 // gitlab.com/api/ -> gitlab.com, /api/.
 func SplitHost(entry string) (host, path string) {
@@ -329,6 +352,10 @@ func (m Match) Validate() error {
 	for _, p := range m.MCPPackages {
 		if strings.Contains(p, "..") {
 			return fmt.Errorf("mcp_packages: %q holds ..", p)
+		}
+		// An empty prefix would claim every package (HasPrefix(x, "") is always true).
+		if PkgNorm(p) == "" {
+			return fmt.Errorf("mcp_packages: %q names no package", p)
 		}
 	}
 	if err := check("mcp", m.MCP, matchMCPRe); err != nil {

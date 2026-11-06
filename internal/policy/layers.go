@@ -122,13 +122,3 @@ func (s *Scope) OutOfScopeMCPServer(name string) (what string, ok bool) {
 	}
 	return h.what, true
 }
-
-// OutOfScopeHost reports whether host is an out-of-scope provider's API host (the host or a
-// parent domain listed) that no in-scope provider lists. what names the provider.
-func (s *Scope) OutOfScopeHost(host string) (what string, ok bool) {
-	h, hit := s.hostHit(strings.Trim(strings.ToLower(host), "."), "")
-	if !hit {
-		return "", false
-	}
-	return h.what, true
-}

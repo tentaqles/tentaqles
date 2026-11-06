@@ -196,7 +196,8 @@ you mean "executables"?) (...); fix or delete it, then run tq providers list`.
   Other workspaces go on, with the same warning on stderr.
 - **A new id may not claim a built-in's entries**: an executable, subcommand,
   image, module, PowerShell module or cmdlet, variable, path (or one under it),
-  host (or one under it) or MCP token a built-in provider lists. An in-scope
+  host (or one under it), git host, MCP host, MCP package (or one overlapping it)
+  or MCP token a built-in provider lists. An in-scope
   provider's claims come from the built-in catalog, so such an entry would let
   an identity that scopes the new id use the built-in's CLI. To extend a
   built-in, name the file for its id instead.

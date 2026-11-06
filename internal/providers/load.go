@@ -343,6 +343,37 @@ func claimConflict(p Provider, builtin map[string]Provider) error {
 				}
 			}
 		}
+		for _, h := range m.Hosts {
+			for _, bh := range b.MCPHosts {
+				if HostsOverlap(h, bh) {
+					return refuse("hosts", h, id)
+				}
+			}
+		}
+		for _, h := range m.GitHosts {
+			for _, bh := range b.GitHosts {
+				if HostsOverlap(h, bh) {
+					return refuse("git_hosts", h, id)
+				}
+			}
+		}
+		// An in-scope mcp_hosts entry is judged before the out-of-scope API hosts.
+		for _, h := range m.MCPHosts {
+			for _, bh := range append(append([]string{}, b.MCPHosts...), b.Hosts...) {
+				if HostsOverlap(h, bh) {
+					return refuse("mcp_hosts", h, id)
+				}
+			}
+		}
+		for _, pkg := range m.MCPPackages {
+			n := PkgNorm(pkg)
+			for _, bp := range append(append([]string{}, b.MCPPackages...), b.Images...) {
+				bn := PkgNorm(bp)
+				if strings.HasPrefix(n, bn) || strings.HasPrefix(bn, n) {
+					return refuse("mcp_packages", pkg, id)
+				}
+			}
+		}
 		for _, t := range m.MCP {
 			if contains(b.MCP, t) {
 				return refuse("mcp", t, id)

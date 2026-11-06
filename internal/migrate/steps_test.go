@@ -150,8 +150,18 @@ func (e *stepEnv) linkIdentity(ws, id, legacy string) string {
 	stWrite(e.t, filepath.Join(legacy, "marker.txt"), ws+"/"+id)
 	dir := paths.IdentityDir(ws, id)
 	stMkdir(e.t, filepath.Dir(dir))
+	// The record covers the identity folder, so a link made after signing is a change: sign
+	// again what was trusted (a Unix symlink resolves to another covered path).
+	mp := filepath.Join(e.base, ws, ".tentaqles.yaml")
+	h, hashErr := trust.HashFile(mp)
+	wasTrusted := hashErr == nil && trust.IsTrusted(ws, h)
 	if err := MakeLink(dir, legacy); err != nil {
 		e.t.Fatalf("MakeLink(%s -> %s): %v", dir, legacy, err)
+	}
+	if wasTrusted {
+		if err := trust.Allow(ws, h); err != nil {
+			e.t.Fatal(err)
+		}
 	}
 	return legacy
 }

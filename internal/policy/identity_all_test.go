@@ -3,6 +3,7 @@ package policy
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -137,10 +138,12 @@ func TestScope_EveryProvider(t *testing.T) {
 
 	// Two routes the per-list loop does not spell: the LS tool on another identity's folder,
 	// and a PowerShell path with a quoted segment under %APPDATA%.
-	runScopeCases(t, scopeFixture{s: out, home: f.home, cwd: f.cwd}, []scopeCase{
-		{"Get-ChildItem of a quoted %APPDATA% segment", pwsh(`Get-ChildItem $env:APPDATA\'GitHub CLI'`), OutOfScopePathID},
-		{"Get-ChildItem of a double-quoted %APPDATA% path", pwsh(`Get-ChildItem "$env:APPDATA\GitHub CLI\hosts.yml"`), OutOfScopePathID},
-	})
+	if runtime.GOOS == "windows" { // %APPDATA% and backslash separators are Windows only
+		runScopeCases(t, scopeFixture{s: out, home: f.home, cwd: f.cwd}, []scopeCase{
+			{"Get-ChildItem of a quoted %APPDATA% segment", pwsh(`Get-ChildItem $env:APPDATA\'GitHub CLI'`), OutOfScopePathID},
+			{"Get-ChildItem of a double-quoted %APPDATA% path", pwsh(`Get-ChildItem "$env:APPDATA\GitHub CLI\hosts.yml"`), OutOfScopePathID},
+		})
+	}
 	runScopeCases(t, f, []scopeCase{
 		{"LS on another identity's folder", ToolCall{Tool: "LS", Path: f.betaRoot}, OtherIdentityID},
 		{"LS on an out-of-scope credential folder", ToolCall{Tool: "LS", Path: filepath.Join(f.home, ".aws")}, OutOfScopePathID},
@@ -333,11 +336,13 @@ func TestScope_Mutants(t *testing.T) {
 	if d := devopsOnly.Evaluate(f.cwd, ToolCall{Tool: "Read", Path: azure}); d.Action != Deny {
 		t.Error("~/.azure must deny for an azure-devops-only identity (it belongs to az)")
 	}
-	// 5. %APPDATA% expansion in mentionHit (shell mention of a credential path).
-	deny("appdata mention", bash(`type %APPDATA%\gcloud\credentials.db`))
-	// 6. MSYS spelling.
-	msysAws := "/" + strings.ToLower(filepath.VolumeName(f.home)[:1]) + filepath.ToSlash(f.home[2:]) + "/.aws/credentials"
-	deny("MSYS spelling", bash("cat "+msysAws))
+	if runtime.GOOS == "windows" {
+		// 5. %APPDATA% expansion in mentionHit (shell mention of a credential path).
+		deny("appdata mention", bash(`type %APPDATA%\gcloud\credentials.db`))
+		// 6. MSYS spelling.
+		msysAws := "/" + strings.ToLower(filepath.VolumeName(f.home)[:1]) + filepath.ToSlash(f.home[2:]) + "/.aws/credentials"
+		deny("MSYS spelling", bash("cat "+msysAws))
+	}
 	// 7. mention word boundary in the shell: a longer name is not the credential path.
 	allow("word boundary", bash("cat ~/.aws-notes/readme"))
 }

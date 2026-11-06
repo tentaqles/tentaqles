@@ -453,6 +453,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   portable to other projects: see `.claude/README.md` and `.claude/PORTING.md`.
 
 ### Fixed
+- `tq migrate` on Linux and macOS keeps a moved workspace trusted: the identity step re-signs what it moved, so the git step no longer refuses partway through.
+- A provider of your own may not claim a built-in's `git_hosts`, `mcp_hosts` or `mcp_packages`, and an `mcp_packages` entry that names no package (`npm:`) is refused.
 - The `tq dotenv run` masking test finds a working bash on Windows (Git for Windows) even
   when the WSL launcher comes first on `PATH`, and skips with a reason when none works.
 

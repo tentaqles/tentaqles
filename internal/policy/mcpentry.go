@@ -190,28 +190,7 @@ func baseFile(w string) string {
 	return w
 }
 
-// pkgNorm spells a package, image or URL for prefix comparison: lower case, PyPI-style (-, _
-// and . alike), a git+ or URL scheme and a git@host: form removed, a script under
-// node_modules/ by its package.
-func pkgNorm(w string) string {
-	l := strings.ToLower(strings.Trim(w, `"'`))
-	l = strings.ReplaceAll(l, `\`, "/")
-	l = strings.TrimPrefix(l, "npm:")
-	l = strings.TrimPrefix(l, "git+")
-	if i := strings.Index(l, "://"); i >= 0 {
-		l = l[i+3:]
-	} else if strings.HasPrefix(l, "git@") {
-		l = strings.Replace(strings.TrimPrefix(l, "git@"), ":", "/", 1)
-	}
-	if i := strings.LastIndex(l, "node_modules/"); i >= 0 {
-		l = l[i+len("node_modules/"):]
-	}
-	l = strings.NewReplacer("_", "-", ".", "-").Replace(l)
-	for _, reg := range []string{"docker-io/", "index-docker-io/", "registry-hub-docker-com/"} {
-		l = strings.TrimPrefix(l, reg) // docker.io/mcp/github is mcp/github
-	}
-	return l
-}
+func pkgNorm(w string) string { return providers.PkgNorm(w) }
 
 // packageOwner is the out-of-scope provider whose mcp_packages w starts with, unless an
 // in-scope provider lists one too.

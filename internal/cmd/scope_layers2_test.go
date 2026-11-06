@@ -64,7 +64,11 @@ func TestEnv_ScopeReferenceScenario_SharedFolder(t *testing.T) {
 		t.Fatalf("identity PATH = %q", idPath)
 	}
 	env := []string{"PATH=" + idPath, "PATHEXT=.COM;.EXE;.BAT;.CMD"}
-	for _, n := range []string{"aws", "aws.exe"} {
+	names := []string{"aws"}
+	if runtime.GOOS == "windows" {
+		names = append(names, "aws.exe")
+	}
+	for _, n := range names {
 		if p, err := envplan.LookPath(n, env); err != nil || filepath.Dir(p) != mask {
 			t.Fatalf("%s resolves to %q (%v), want the mask", n, p, err)
 		}

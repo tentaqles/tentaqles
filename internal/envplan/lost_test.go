@@ -134,7 +134,7 @@ func TestUnrecorded(t *testing.T) {
 	cxClaude := filepath.Join(filepath.Dir(MaskDir("company-x")), "claude")
 	st := State{WS: "company-x", Prev: map[string]*string{"TQ_WS": nil}}
 	base := map[string]string{"TQ_WS": "company-x", StateVar: st.Encode(), "CLAUDE_CONFIG_DIR": cxClaude,
-		"AWS_CONFIG_FILE": mine, "PATH": MaskDir("company-x") + string(filepath.ListSeparator) + "/usr/bin"}
+		"AWS_CONFIG_FILE": mine, "PATH": MaskDir("company-x") + string(filepath.ListSeparator) + testutil.TempDir(t)}
 	run := func(sh map[string]string, w *resolve.Workspace) *Notice {
 		e := Env{Lookup: env(sh), Names: names(sh), Syntax: NativeSyntax(), PathOK: true}
 		real := e

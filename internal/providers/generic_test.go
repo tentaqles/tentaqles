@@ -45,7 +45,7 @@ func TestMCPPackagesValidateAndUnion(t *testing.T) {
 	if err := good.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"", "a b", "-x", "../x"} {
+	for _, bad := range []string{"", "a b", "-x", "../x", "npm:", "git+", "docker.io/"} {
 		if err := (Match{MCPPackages: []string{bad}}).Validate(); err == nil {
 			t.Errorf("%q validates", bad)
 		}

@@ -563,7 +563,7 @@ func TestProtectedPaths_SignedRecordAndMachineMarker(t *testing.T) {
 		{"Write trust/legacy.json", "Write", pathIn("file_path", trust.LegacyListPath())},
 		{"rm the record by its ~ path", "Bash", cmdIn("rm -f ~/.tentaqles/trust/acme.json")},
 		{"rm trust/.signed", "Bash", cmdIn("rm -f " + filepath.ToSlash(marker))},
-		{"Remove-Item trust/.signed", "PowerShell", cmdIn(`Remove-Item -Force $env:USERPROFILE\.tentaqles\trust\.signed`)},
+		{"Remove-Item trust/.signed", "PowerShell", cmdIn("Remove-Item -Force " + psUnderHome(".tentaqles/trust/.signed"))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, category, rule, errOut := hookDecision(t, f.root, tc.tool, tc.input)
