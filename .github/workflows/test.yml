@@ -5,6 +5,8 @@ permissions:
 jobs:
   go:
     strategy:
+      # One OS failing does not hide another's result (ADR-0009).
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -32,10 +34,14 @@ jobs:
           GIT_CONFIG_NOSYSTEM: 1
         run: |
           export TQ_HOME=$(mktemp -d) HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=$HOME/.gitconfig
-          mkdir -p $HOME/work && ./tq init $HOME/work && ./tq add acme --git-email a@acme.com
+          mkdir -p $HOME/work
+          # A runner has no terminal: the human-only verbs refuse and write nothing (ADR-0009).
+          if ./tq init $HOME/work; then echo "tq init ran without a human"; exit 1; fi
+          if ./tq add acme --git-email a@acme.com; then echo "tq add ran without a human"; exit 1; fi
+          test ! -e "$TQ_HOME/config.yaml"
           eval "$(./tq activate bash)"
           # PROMPT_COMMAND only fires at an interactive prompt; call the hook explicitly after each cd
-          cd $HOME/work/acme; __tq_hook; test "$TQ_WS" = acme
+          cd $HOME/work; __tq_hook; test -z "${TQ_WS:-}"
           cd /; __tq_hook; test -z "${TQ_WS:-}"
       - name: smoke (pwsh hook)
         if: runner.os == 'Windows'
@@ -46,10 +52,15 @@ jobs:
           $env:TQ_HOME = Join-Path $env:RUNNER_TEMP "tqh"; $env:USERPROFILE = Join-Path $env:RUNNER_TEMP "home"
           $env:GIT_CONFIG_GLOBAL = "$env:USERPROFILE\.gitconfig"
           New-Item -ItemType Directory -Force "$env:USERPROFILE\work" | Out-Null
-          .\tq.exe init "$env:USERPROFILE\work"; .\tq.exe add acme --git-email a@acme.com
-          .\tq.exe activate pwsh | Out-String | Invoke-Expression
-          Set-Location "$env:USERPROFILE\work\acme"; prompt | Out-Null; if ($env:TQ_WS -ne 'acme') { throw "hook failed: $env:TQ_WS" }
-          Set-Location \; prompt | Out-Null; if ($env:TQ_WS) { throw "unset failed" }
+          # A runner has no terminal: the human-only verbs refuse and write nothing (ADR-0009).
+          .\tq.exe init "$env:USERPROFILE\work"; if ($LASTEXITCODE -eq 0) { throw "tq init ran without a human" }
+          .\tq.exe add acme --git-email a@acme.com; if ($LASTEXITCODE -eq 0) { throw "tq add ran without a human" }
+          if (Test-Path "$env:TQ_HOME\config.yaml") { throw "a refused verb wrote config.yaml" }
+          $tq = (Resolve-Path .\tq.exe).Path
+          & $tq activate pwsh | Out-String | Invoke-Expression
+          Set-Location "$env:USERPROFILE\work"; prompt | Out-Null; if ($env:TQ_WS) { throw "hook set $env:TQ_WS in a neutral folder" }
+          Set-Location \; prompt | Out-Null; if ($env:TQ_WS) { throw "hook set $env:TQ_WS in a neutral folder" }
+          exit 0
 
   # Known vulnerabilities in the Go code tq calls, standard library included
   # (docs/threat-model.md TM-5). setup-go takes the newest 1.26 patch, the
