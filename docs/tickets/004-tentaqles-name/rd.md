@@ -1,6 +1,6 @@
 # 004: `tentaqles` is the CLI, `tq` is its alias
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: a human-only verb spelled `tentaqles` that the guard doesn't match lets an agent reach a human-only command, and a wrong installer breaks every install
 **UI:** none
 
