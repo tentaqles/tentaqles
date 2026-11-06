@@ -12,6 +12,10 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   agents that never saw the build, and a gate keeps the checks fixed once approved. It's
   portable to other projects: see `.claude/README.md` and `.claude/PORTING.md`.
 
+### Fixed
+- The `tq dotenv run` masking test finds a working bash on Windows (Git for Windows) even
+  when the WSL launcher comes first on `PATH`, and skips with a reason when none works.
+
 ## [0.9.0] — 2026-11-04
 
 tq is an identity isolator with secrets protection for developers who work across several
