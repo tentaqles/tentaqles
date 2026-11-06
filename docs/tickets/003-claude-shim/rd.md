@@ -1,6 +1,6 @@
 # 003: `claude` is a shim on the identity PATH
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: a broken shim starts Claude Code under the wrong login or with no identity, or recurses and blocks every session
 **UI:** none
 
