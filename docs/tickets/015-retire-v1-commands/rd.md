@@ -1,6 +1,6 @@
 # 015: Remove the replaced v1 commands
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: this edits human-only lists and shell hooks, so a slip could leave a command unguarded or break every terminal, and users lose commands they may have scripted
 **UI:** none
 
