@@ -228,122 +228,14 @@ func TestKeepRemoved_CorruptFileMovedAside(t *testing.T) {
 	}
 }
 
-const codexTOML = `# >>> managed by tq: edit with tq settings render, not by hand
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
-# <<< managed by tq
-model = "gpt-5"
-# a comment that looks like a value = [
-
-[mcp_servers.aws]
-command = "uvx"
-args = [
-  "awslabs.aws-api-mcp-server@latest",
-  ["nested", "array"],
-]
-
-[mcp_servers.aws.env]
-AWS_REGION = "us-east-1"
-
-# The Azure server, kept.
-[mcp_servers.azure]
-command = "npx"
-args = ["-y", "@azure/mcp@latest"]
-
-[mcp_servers.cloud]
-command = "node"
-args = ["server.js"]
-env = { AWS_PROFILE = "prod" }
-
-[mcp_servers.helper]
-command = "node"
-args = [
-  "-y",
-  "@modelcontextprotocol/server-github",
-]
-
-[mcp_servers."cloud-api"]
-url = "https://ec2.amazonaws.com/mcp"
-
-[mcp_servers.x]
-command = "node"
-[mcp_servers.x.env]
-GITHUB_TOKEN = "t"
-
-# The inline servers.
-[mcp_servers]
-aws-docs = { command = "uvx", args = ["awslabs.aws-documentation-mcp-server"] }
-gh2 = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
-notes = { command = "notes-mcp" }
-
-[profiles.fast]
-model = "gpt-5-mini"
-`
-
-const codexWant = `# >>> managed by tq: edit with tq settings render, not by hand
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
-# <<< managed by tq
-model = "gpt-5"
-# a comment that looks like a value = [
-
-
-# The Azure server, kept.
-[mcp_servers.azure]
-command = "npx"
-args = ["-y", "@azure/mcp@latest"]
-
-
-
-
-
-# The inline servers.
-[mcp_servers]
-
-[profiles.fast]
-model = "gpt-5-mini"
-`
-
-func TestFilterCodex(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(p, []byte(codexTOML), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	j := For("company-x", companyX(true))
-	removed, err := FilterCodex(dir, j, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for _, r := range removed {
-		got = append(got, r.Name)
-	}
-	if !reflect.DeepEqual(got, []string{"aws", "cloud", "helper", "cloud-api", "x", "aws-docs", "gh2", "notes"}) {
-		t.Fatalf("removed %v", got)
-	}
-	b, _ := os.ReadFile(p)
-	if string(b) != codexWant {
-		t.Fatalf("config.toml:\n%s\n--- want\n%s", b, codexWant)
-	}
-	if again, err := FilterCodex(dir, j, false); err != nil || len(again) != 0 {
-		t.Fatalf("second pass = %v, %v", again, err)
-	}
-	kb, _ := os.ReadFile(filepath.Join(dir, RemovedFile))
-	if !strings.Contains(string(kb), `AWS_REGION = \"us-east-1\"`) {
-		t.Fatalf("removed file lacks the aws table: %s", kb)
-	}
-}
-
 // Entries is what the hook judges an mcp__ call by: the identity's .claude.json (user scope
-// and the projects holding cwd), .mcp.json from cwd up to the root, Codex's config.toml.
+// and the projects holding cwd), .mcp.json from cwd up to the root.
 func TestEntries(t *testing.T) {
 	base := t.TempDir()
 	claude := filepath.Join(base, "claude")
-	codex := filepath.Join(base, "codex")
 	root := filepath.Join(base, "ws")
 	cwd := filepath.Join(root, "sub")
-	for _, d := range []string{claude, codex, cwd} {
+	for _, d := range []string{claude, cwd} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -368,14 +260,13 @@ func TestEntries(t *testing.T) {
 	write(filepath.Join(claude, "plugins", "installed_plugins.json"), string(ij))
 	write(filepath.Join(plug, ".mcp.json"), `{"vercel-api":{"type":"http","url":"https://mcp.vercel.com"}}`)
 	write(filepath.Join(base, ".mcp.json"), `{"mcpServers":{"above":{"command":"e"}}}`)
-	write(filepath.Join(codex, "config.toml"), "[mcp_servers.cx]\ncommand = \"f\"\nargs = [\"g\"]\n")
-	e := Entries(claude, codex, cwd, root)
+	e := Entries(claude, cwd, root)
 	var got []string
 	for n := range e {
 		got = append(got, n)
 	}
 	sort.Strings(got)
-	if !reflect.DeepEqual(got, []string{"cx", "local", "plugin_deployer_vercel-api", "proj", "user"}) {
+	if !reflect.DeepEqual(got, []string{"local", "plugin_deployer_vercel-api", "proj", "user"}) {
 		t.Fatalf("entries = %v", got)
 	}
 	if len(e["user"]) != 2 {
@@ -394,9 +285,6 @@ func TestEntries(t *testing.T) {
 	if _, out := j.Out("plugin_deployer_vercel-api", e["plugin_deployer_vercel-api"][0]); !out {
 		t.Fatal("the plugin vercel server is in scope")
 	}
-	if a, _ := e["cx"][0]["args"].([]any); len(a) != 1 || a[0] != "g" {
-		t.Fatalf("codex args = %v", e["cx"])
-	}
 }
 
 // A server render removed stays judged by the hook: a session started before the render has
@@ -406,52 +294,18 @@ func TestEntries_RemovedStillJudged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`{"mcpServers":{"m14-deploy":{"type":"http","url":"https://mcp.vercel.com"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	codex := t.TempDir()
-	if err := os.WriteFile(filepath.Join(codex, "config.toml"), []byte("[mcp_servers.cx]\ncommand = \"uvx\"\nargs = [\"awslabs.core-mcp-server\"]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	j := For("company-x", companyX(true))
 	if r, err := FilterClaude(dir, j, false); err != nil || len(r) != 1 {
 		t.Fatalf("render: %v %v", r, err)
 	}
-	if r, err := FilterCodex(codex, j, false); err != nil || len(r) != 1 {
-		t.Fatalf("codex render: %v %v", r, err)
-	}
-	e := Entries(dir, codex, "", "")
-	for _, n := range []string{"m14-deploy", "cx"} {
+	e := Entries(dir, "", "")
+	for _, n := range []string{"m14-deploy"} {
 		if len(e[n]) == 0 {
 			t.Fatalf("%s not among the entries after render: %v", n, e)
 		}
 		if _, out := j.Out(n, e[n][0]); !out {
 			t.Fatalf("%s judged in scope", n)
 		}
-	}
-}
-
-// Codex names a server's credential variables in fields of their own: bearer_token_env_var,
-// env_vars, env_http_headers (inline or as a table); each is read as the server's variable.
-func TestFilterCodex_CredentialFields(t *testing.T) {
-	dir := t.TempDir()
-	toml := "model = \"gpt-5\"\n\n" +
-		"[mcp_servers.x1]\nurl = \"https://gw.example.com/mcp\"\nbearer_token_env_var = \"GITHUB_PERSONAL_ACCESS_TOKEN\"\n\n" +
-		"[mcp_servers.x2]\ncommand = \"node\"\nargs = [\"s.js\"]\nenv_vars = [\"AWS_PROFILE\", \"AWS_SECRET_ACCESS_KEY\"]\n\n" +
-		"[mcp_servers.x3]\nurl = \"https://gw.example.com/mcp\"\nenv_http_headers = { \"Authorization\" = \"SUPABASE_ACCESS_TOKEN\" }\n\n" +
-		"[mcp_servers.x4]\nurl = \"https://gw.example.com/mcp\"\n[mcp_servers.x4.env_http_headers]\nAuthorization = \"VERCEL_TOKEN\"\n\n" +
-		"[mcp_servers.x5]\ncommand = \"npx\"\nargs = [\"@playwright/mcp@latest\"]\nenv_vars = [\"HOME\"]\n\n" +
-		"[mcp_servers.'x6-quoted']\ncommand = \"uvx\"\nargs = [\"awslabs.cloudwatch-mcp-server\"]\n"
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(toml), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	removed, err := FilterCodex(dir, For("company-x", companyX(true)), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for _, r := range removed {
-		got = append(got, r.Name)
-	}
-	if !reflect.DeepEqual(got, []string{"x1", "x2", "x3", "x4", "x6-quoted"}) {
-		t.Fatalf("removed %v", got)
 	}
 }
 

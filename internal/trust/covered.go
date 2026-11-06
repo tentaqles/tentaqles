@@ -48,15 +48,13 @@ type coverage struct {
 //     tentaqles plugin from and its version;
 //   - every file of the loaded tentaqles plugin's folder (PluginRoot)
 //     outside skills/, agents/, templates/, tests/ and __pycache__;
-//   - the identity's Codex hooks.json and "config.toml#tq", the block of
-//     config.toml tq owns;
 //   - every file under $TQ_HOME/shims/ when it exists.
 //
 // The tq binary on PATH is not covered: Phase 3's shim folder decides which
 // tq the shell runs, and the binary is the OS's to protect.
 //
-// Each root (the manifest's folder, the workspace root, the Claude and
-// Codex identity dirs, the plugin folder, the shims folder) is resolved
+// Each root (the manifest's folder, the workspace root, the Claude
+// identity dir, the plugin folder, the shims folder) is resolved
 // once (Key) and the files under it are keyed by joining their relative
 // path, so the links of a root are followed and a link inside it is a
 // change. A path that does not exist is still covered: the record stores it
@@ -102,10 +100,6 @@ func computeCoverage(name string) coverage {
 			add(c.plugin, rel)
 		}
 	}
-	codexDir := paths.IdentityDir(name, "codex")
-	codex := keyUnder(id, idDir, codexDir)
-	add(codex, "hooks.json")
-	add(codex, "config.toml"+blockSuffix)
 	shimsDir := filepath.Join(home, "shims")
 	if rels := relFilesUnder(shimsDir, nil); len(rels) > 0 {
 		shims := keyUnder(homeKey, home, shimsDir)

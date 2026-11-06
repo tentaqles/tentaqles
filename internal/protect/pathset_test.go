@@ -28,7 +28,6 @@ func fixtureSet(t *testing.T) (*Set, string) {
 	s := New(Inputs{
 		Home: state, UserHome: home, Bases: []string{base}, Roots: []string{filepath.Join(base, "acme")},
 		ConfigDirs: []string{filepath.Join(home, ".claude"), filepath.Join(state, "identities", "acme", "claude")},
-		CodexDirs:  []string{filepath.Join(state, "identities", "acme", "codex")},
 		Executable: filepath.Join(home, "bin", "tq"),
 		Env:        func(k string) string { return env[k] },
 	})
@@ -109,8 +108,6 @@ func TestMatchKinds(t *testing.T) {
 		{claude, KindState},
 		{filepath.Join(claude, "settings.json"), KindState},
 		{filepath.Join(claude, "settings.local.json"), KindState},
-		{filepath.Join(state, "identities", "acme", "codex", "hooks.json"), KindState},
-		{filepath.Join(state, "identities", "acme", "codex", "config.toml"), KindState},
 		{filepath.Join(claude, "plugins"), KindPlugin},
 		{filepath.Join(claude, "plugins", "installed_plugins.json"), KindPlugin},
 		{filepath.Join(claude, "plugins", "known_marketplaces.json"), KindPlugin},

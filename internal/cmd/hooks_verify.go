@@ -28,8 +28,7 @@ func newHooksVerifyCmd() *cobra.Command {
 it covers: the protected manifest and the root marker, the enforcing keys of the
 identity's Claude settings.json (hooks, enabledPlugins, enabledMcpjsonServers,
 disableAllMcpServers, env, statusLine), the installed tentaqles plugin's
-hooks/, scripts/ and .claude-plugin/, the Codex hooks.json and the tq-owned
-block of config.toml, and every file under ~/.tentaqles/shims/. It prints the
+hooks/, scripts/ and .claude-plugin/, and every file under ~/.tentaqles/shims/. It prints the
 key id, a summary line when the plugin moved to a new version folder, and each
 change with the old and new hash, and exits 1 when anything differs, when the
 key or the signature does not verify, or when there is no record.

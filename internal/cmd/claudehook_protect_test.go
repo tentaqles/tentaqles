@@ -402,34 +402,6 @@ func TestDenyPrefixNamesTheCategory(t *testing.T) {
 	}
 }
 
-// The same rules run for Codex: a patch that updates the manifest and a
-// human-only tq command are Codex denies.
-func TestProtectedPaths_Codex(t *testing.T) {
-	f := setupProtected(t, "")
-	patch := "*** Begin Patch\n*** Update File: " + f.manifest + "\n@@\n-a\n+b\n*** End Patch\n"
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, applyPatchPayload(t, f.root, patch))
-	if dec, reason := codexAnswerJSON(t, out); code != 2 || dec != "deny" || !strings.Contains(reason, "self-protection/"+policy.ProtectedPathID) {
-		t.Fatalf("apply_patch on the manifest: code %d out %q", code, out)
-	}
-	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, hookPayloadFor(t, f.root, "tq allow acme"))
-	if dec, reason := codexAnswerJSON(t, out); code != 2 || dec != "deny" || !strings.Contains(reason, "self-protection/"+policy.HumanOnlyCommandID) {
-		t.Fatalf("tq allow under codex: code %d out %q", code, out)
-	}
-	ok := "*** Begin Patch\n*** Add File: notes.md\n+hello\n*** End Patch\n"
-	if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, applyPatchPayload(t, f.root, ok)); code != 0 || out != "" {
-		t.Fatalf("a plain patch: code %d out %q", code, out)
-	}
-	ds := readDenials(t)
-	// The log records the tool as the command and "apply_patch <file>" as
-	// the subject, never the patch text.
-	if len(ds) != 2 || ds[0].Command != "apply_patch" || ds[0].Subject != "apply_patch "+f.manifest || ds[0].Tool != "apply_patch" || strings.Contains(ds[0].Subject, "Begin Patch") {
-		t.Fatalf("the log records the file, never the patch: %+v", ds)
-	}
-	if ds[1].Subject != "tq allow" || ds[1].Command != "tq allow …" {
-		t.Fatalf("the human-only line: subject %q command %q", ds[1].Subject, ds[1].Command)
-	}
-}
-
 // An MCP input that names a protected path is denied, whatever the server.
 func TestProtectedPaths_MCPInput(t *testing.T) {
 	f := setupProtected(t, "")

@@ -49,7 +49,6 @@ type Inputs struct {
 	Bases      []string            // registered bases: <base>/<ws>/.tentaqles.yaml is a marker
 	Roots      []string            // workspace roots the caller knows (the resolved one)
 	ConfigDirs []string            // Claude config homes: the identity's, $CLAUDE_CONFIG_DIR, ~/.claude
-	CodexDirs  []string            // Codex homes: the identity's, $CODEX_HOME, ~/.codex
 	Executable string              // the running tq binary ("" when unknown)
 	Env        func(string) string // the environment, for $TQ_HOME, $CLAUDE_CONFIG_DIR, $CODEX_HOME
 }
@@ -118,13 +117,6 @@ func New(in Inputs) *Set {
 		s.add(filepath.Join(d, "plugins", "marketplaces", "tentaqles"), KindPlugin, true, "the tentaqles marketplace clone")
 		s.add(filepath.Join(d, "plugins", "installed_plugins.json"), KindPlugin, false, "the plugin registration")
 		s.add(filepath.Join(d, "plugins", "known_marketplaces.json"), KindPlugin, false, "the plugin registration")
-	}
-	for _, d := range in.CodexDirs {
-		if strings.TrimSpace(d) == "" {
-			continue
-		}
-		s.add(filepath.Join(d, "hooks.json"), KindState, false, "the Codex hook registration")
-		s.add(filepath.Join(d, "config.toml"), KindState, false, "the Codex configuration")
 	}
 	if strings.TrimSpace(in.Executable) != "" {
 		exe := s.canon(in.Executable)

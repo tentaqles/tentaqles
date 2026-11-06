@@ -14,7 +14,7 @@ import (
 )
 
 // scopeLine is layer 1 of the §6.1 scenario (advisory, never relied on; ADR-0008): the one
-// line of the session-start preamble, Claude's and Codex's, that states an
+// line of the session-start preamble that states an
 // identity's provider scope, so a well-behaved model declines or asks before it reaches for
 // another provider. Without the flag it is empty.
 func scopeLine(ws *resolve.Workspace) string {
@@ -30,7 +30,7 @@ func scopeLine(ws *resolve.Workspace) string {
 }
 
 // renderScope writes what an identity's earlier layers need on disk (ADR-0008): the
-// PATH mask folder (layer 2) and the MCP server lists of its Claude and Codex homes without
+// PATH mask folder (layer 2) and the MCP server lists of its Claude home without
 // the out-of-scope servers (layer 3). Without the flag it removes a mask folder an earlier
 // render wrote and touches nothing else. Only the human-only renders call it (tq allow, tq
 // settings render, tq hooks verify --accept): everything it writes is under the identity's
@@ -94,11 +94,6 @@ func renderScope(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
 				fmt.Fprintf(c.ErrOrStderr(), "warning: %s claude: plugin %s brings MCP server %s (%s); the hook denies its tools, disable the plugin for this identity to drop them (%s)\n", ws.Name, ps.Plugin, ps.Server, why, ps.File)
 			}
 		}
-	}
-	codexDir := paths.IdentityDir(ws.Name, "codex")
-	if fi, err := os.Stat(codexDir); err == nil && fi.IsDir() {
-		removed, err := mcpscope.FilterCodex(codexDir, j, dryRun)
-		report("codex", removed, err)
 	}
 	return changed
 }

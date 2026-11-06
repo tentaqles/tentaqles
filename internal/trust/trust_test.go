@@ -18,13 +18,13 @@ import (
 
 // fixture is a workspace with everything the integrity record covers: the
 // marker and the protected manifest, a Claude identity with settings.json
-// and an installed plugin, a Codex identity with its hook files. The OS
+// and an installed plugin. The OS
 // keychain is go-keyring's mock, emptied for each fixture.
 type fixture struct {
-	t                                    *testing.T
-	name, home, base, root, mp, hash     string
-	claude, codex, plugin, marker        string
-	settings, hooksJSON, hookSH, cfgTOML string
+	t                                *testing.T
+	name, home, base, root, mp, hash string
+	claude, plugin, marker           string
+	settings, hooksJSON, hookSH      string
 }
 
 func write(t *testing.T, p, body string) {
@@ -36,8 +36,6 @@ func write(t *testing.T, p, body string) {
 		t.Fatal(err)
 	}
 }
-
-const codexBlock = "# >>> managed by tq: edit with tq settings render, not by hand\napproval_policy = \"on-request\"\nsandbox_mode = \"workspace-write\"\n# <<< managed by tq\n"
 
 func newFixture(t *testing.T, name string) *fixture {
 	t.Helper()
@@ -75,10 +73,6 @@ func newFixture(t *testing.T, name string) *fixture {
 	f.hookSH = filepath.Join(f.plugin, "scripts", "tq_hook.sh")
 	write(t, f.hookSH, "#!/usr/bin/env bash\nexit 0\n")
 	write(t, filepath.Join(f.plugin, "skills", "x", "SKILL.md"), "not covered\n")
-	f.codex = paths.IdentityDir(name, "codex")
-	write(t, filepath.Join(f.codex, "hooks.json"), `{"hooks":{}}`)
-	f.cfgTOML = filepath.Join(f.codex, "config.toml")
-	write(t, f.cfgTOML, "model = \"one\"\n"+codexBlock)
 	h, err := HashFile(f.mp)
 	if err != nil {
 		t.Fatal(err)
@@ -164,8 +158,7 @@ func TestSignedRecordRoundTrips(t *testing.T) {
 		len(rec.KeyID) != 12 || rec.Plugin != Key(f.plugin) || rec.Revoked {
 		t.Fatalf("%+v", rec)
 	}
-	for _, p := range []string{f.mp, f.marker, f.settings + blockSuffix, f.hooksJSON, f.hookSH, filepath.Join(f.plugin, ".claude-plugin", "plugin.json"),
-		filepath.Join(f.codex, "hooks.json"), f.cfgTOML + blockSuffix} {
+	for _, p := range []string{f.mp, f.marker, f.settings + blockSuffix, f.hooksJSON, f.hookSH, filepath.Join(f.plugin, ".claude-plugin", "plugin.json")} {
 		if rec.Files[Key(p)] == "" {
 			t.Errorf("%s must be covered and present", Key(p))
 		}
@@ -388,14 +381,18 @@ func TestPluginVersionChangeIsSummarised(t *testing.T) {
 // later is a change. A file swapped for a directory is a change too.
 func TestAbsentCoveredFileAppearingIsAChange(t *testing.T) {
 	f := newFixture(t, "acme")
-	codexHooks := filepath.Join(f.codex, "hooks.json")
-	os.Remove(codexHooks)
-	f.allow()
-	if h, ok := readRec(t, "acme").Files[Key(codexHooks)]; !ok || h != "" {
-		t.Fatalf("absent hooks.json is recorded as absent: %q %v", h, ok)
+	marker := f.marker
+	body, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
 	}
-	write(t, codexHooks, "{}")
-	if c := changeFor(t, f.verify(), codexHooks); c.Kind != "added" {
+	os.Remove(marker)
+	f.allow()
+	if h, ok := readRec(t, "acme").Files[Key(marker)]; !ok || h != "" {
+		t.Fatalf("an absent marker is recorded as absent: %q %v", h, ok)
+	}
+	write(t, marker, string(body))
+	if c := changeFor(t, f.verify(), marker); c.Kind != "added" {
 		t.Fatalf("%+v", c)
 	}
 	f.allow()
@@ -615,25 +612,6 @@ func TestDeletingKeySnapshotAndRecordDoesNotRestoreLegacy(t *testing.T) {
 				t.Fatal("no marker counts")
 			}
 		})
-	}
-}
-
-// The tq-owned block of the Codex config.toml is covered, the rest of the
-// file is the user's.
-func TestCodexBlockIsCoveredNotTheRest(t *testing.T) {
-	f := newFixture(t, "acme")
-	f.allow()
-	write(t, f.cfgTOML, "model = \"two\"\n"+codexBlock)
-	if rep := f.verify(); !rep.Trusted(f.hash) {
-		t.Fatalf("the user's keys are not covered: %v", rep.Changes)
-	}
-	write(t, f.cfgTOML, "model = \"two\"\n"+strings.Replace(codexBlock, "on-request", "never", 1))
-	if c := changeFor(t, f.verify(), f.cfgTOML+blockSuffix); c.Kind != "changed" {
-		t.Fatalf("%+v", c)
-	}
-	os.Remove(f.cfgTOML)
-	if c := changeFor(t, f.verify(), f.cfgTOML+blockSuffix); c.Kind != "removed" {
-		t.Fatalf("%+v", c)
 	}
 }
 
@@ -1017,7 +995,7 @@ func TestCoveredList(t *testing.T) {
 		}
 		return false
 	}
-	for _, p := range []string{f.mp, f.marker, f.settings + blockSuffix, f.hooksJSON, f.hookSH, f.cfgTOML + blockSuffix, filepath.Join(f.codex, "hooks.json")} {
+	for _, p := range []string{f.mp, f.marker, f.settings + blockSuffix, f.hooksJSON, f.hookSH} {
 		if !has(p) {
 			t.Errorf("%s not covered: %v", Key(p), got)
 		}

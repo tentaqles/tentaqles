@@ -21,17 +21,13 @@ import (
 // PRD v2 §6.3 and §14 (Phase 2 gate): no ask verdict exists and the guard
 // fails closed. These tests pin both.
 
-// wantGuardErrorDeny runs payload through the hook for both agents and
+// wantGuardErrorDeny runs payload through the hook and
 // requires a deny of tq/guard-error whose reason contains sub.
 func wantGuardErrorDeny(t *testing.T, name, payload, sub string) {
 	t.Helper()
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, payload)
 	if code != 2 || out != "" || !strings.Contains(errOut, "BLOCKED [tq/guard-error]: ") || !strings.Contains(errOut, sub) {
 		t.Errorf("%s (claude): code=%d out=%q err=%q, want a tq/guard-error deny naming %q", name, code, out, errOut, sub)
-	}
-	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, payload)
-	if dec, reason := codexAnswerJSON(t, out); code != 2 || dec != "deny" || !strings.Contains(reason, sub) {
-		t.Errorf("%s (codex): code=%d out=%q", name, code, out)
 	}
 	code, out, _ = runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, payload)
 	if code != 2 || !strings.Contains(out, `"block":true`) || !strings.Contains(out, `"rule":"tq/guard-error"`) {
@@ -229,11 +225,11 @@ func TestPreToolUse_GoneManifestWithEvidenceDenies(t *testing.T) {
 // No code path emits an ask: the source of the hook and the rules never
 // writes a permissionDecision of "ask" and has no ask verdict (the Phase 2
 // gate). The behaviour tests above and the incomplete-scan test cover every
-// former ask case: the commit scan, a guard panic, and a Codex call.
+// former ask case: the commit scan, and a guard panic.
 func TestNoAskCodePath(t *testing.T) {
 	askRe := regexp.MustCompile(`"permissionDecision"\s*:\s*"ask"|"ask"|'ask'|policy\.Ask\b|\bAsk\s+Action\b|CONFIRM \[`)
 	src := map[string]bool{".go": true, ".py": true, ".sh": true, ".json": true}
-	for _, dir := range []string{".", "../policy", "../guard", "../commitscan", "../codexcfg", "../hooks",
+	for _, dir := range []string{".", "../policy", "../guard", "../commitscan", "../hooks",
 		"../../plugin/scripts", "../../plugin/hooks"} {
 		ents, err := os.ReadDir(dir)
 		if err != nil {
@@ -293,7 +289,6 @@ func TestNoAskAnswerInAnyOutput(t *testing.T) {
 	for _, p := range payloads {
 		for _, args := range [][]string{
 			{"claude-hook", "pre-tool-use"},
-			{"claude-hook", "pre-tool-use", "--agent", "codex"},
 			{"claude-hook", "pre-tool-use", "--json"},
 		} {
 			code, out, _ := runHook(t, args, p)
@@ -338,7 +333,7 @@ func TestDenialLogSchema(t *testing.T) {
 	}
 	// A secrets deny from a subagent.
 	sub := `{"tool_name":"Bash","agent_id":"a1","agent_type":"Explore","cwd":` + jsonPath(t, root) + `,"tool_input":{"command":"printenv"}}`
-	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, sub); code != 2 {
+	if code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, sub); code != 2 {
 		t.Fatalf("printenv: code=%d", code)
 	}
 	// A protected-path deny (layer filesystem).
@@ -365,7 +360,7 @@ func TestDenialLogSchema(t *testing.T) {
 			t.Errorf("the log carries %q: %s", leak, b)
 		}
 	}
-	if sec.Category != "secrets" || sec.Rule != "tq/env-dump" || sec.Caller != audit.CallerSubagent || sec.Harness != "codex" || sec.Command != "printenv" {
+	if sec.Category != "secrets" || sec.Rule != "tq/env-dump" || sec.Caller != audit.CallerSubagent || sec.Harness != "claude" || sec.Command != "printenv" {
 		t.Errorf("secrets denial: %+v", sec)
 	}
 	if fs.Category != "self-protection" || fs.Rule != policy.ProtectedPathID || fs.Layer != audit.LayerFilesystem || fs.Tool != "Write" || fs.Subject == "" {

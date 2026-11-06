@@ -5,5 +5,4 @@ function __tq_hook --on-variable PWD
 end
 function tq;         "'/opt/tq/bin/tq'" $argv; end
 function claude;     "'/opt/tq/bin/tq'" run . -- claude $argv; end
-function codex;      "'/opt/tq/bin/tq'" run . -- codex $argv; end
 __tq_hook

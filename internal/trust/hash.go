@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-
-	"github.com/tentaqles/tentaqles/internal/codexcfg"
 )
 
 // HashFile is the hex sha256 of path's bytes.
@@ -43,7 +41,6 @@ const irregular = "!irregular"
 const invalidJSON = "!invalid-json"
 
 // blockSuffix marks a virtual covered path, the part of a file tq covers:
-// "<dir>/config.toml#tq" is the block of a Codex config.toml tq owns,
 // "<dir>/settings.json#tq" the enforcing keys of a Claude settings.json,
 // and "<dir>/installed_plugins.json#tq" where Claude Code loads the
 // tentaqles plugin from.
@@ -73,7 +70,7 @@ func enforcingSettingsKey(k string) bool {
 // currentHash is the hash of a covered key as the record stores it: ""
 // when it is absent, irregular when it exists but is not a regular file,
 // the hex sha256 of its bytes otherwise. A "#tq" key hashes the part tq
-// covers (blockHash, settingsHash, installedHash). A file that exists but
+// covers (settingsHash, installedHash). A file that exists but
 // cannot be read is an error, which every caller treats as untrusted.
 func currentHash(key string) (string, error) {
 	if file, ok := strings.CutSuffix(key, blockSuffix); ok {
@@ -83,7 +80,10 @@ func currentHash(key string) (string, error) {
 		case "installed_plugins.json":
 			return installedHash(file)
 		}
-		return blockHash(file)
+		// A key tq no longer covers, from a record signed by an older tq, the block it kept in
+		// Codex's config.toml: it hashes as absent, so one that held anything reads as removed
+		// until a human signs again.
+		return "", nil
 	}
 	fi, err := os.Lstat(key)
 	if err != nil {
@@ -102,29 +102,6 @@ func currentHash(key string) (string, error) {
 // directory on its path, does not exist (or a path component is a file).
 func absent(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
-}
-
-func blockHash(file string) (string, error) {
-	fi, err := os.Lstat(file)
-	if err != nil {
-		if absent(err) {
-			return "", nil
-		}
-		return "", err
-	}
-	if !fi.Mode().IsRegular() {
-		return irregular, nil
-	}
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		return "", err
-	}
-	block, ok := codexcfg.ManagedBlock(string(raw))
-	if !ok {
-		return "", nil
-	}
-	sum := sha256.Sum256([]byte(block))
-	return hex.EncodeToString(sum[:]), nil
 }
 
 // settingsHash is the sha256 of the canonical JSON of the enforcing keys of

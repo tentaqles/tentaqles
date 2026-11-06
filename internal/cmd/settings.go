@@ -72,7 +72,7 @@ Human-only: a session is refused, and you confirm before the files are written
 				if !all {
 					which = strings.Join(args, ", ")
 				}
-				about := fmt.Sprintf("tq settings render: about to write settings.json and the Codex files under %s for %s", paths.IdentitiesRoot(), which)
+				about := fmt.Sprintf("tq settings render: about to write settings.json under %s for %s", paths.IdentitiesRoot(), which)
 				if err := humanGate(c, "tq settings render", about); err != nil {
 					return err
 				}
@@ -109,12 +109,11 @@ Human-only: a session is refused, and you confirm before the files are written
 				for _, ch := range res.Changes {
 					fmt.Fprintf(c.OutOrStdout(), "  %s\n", ch)
 				}
-				codexChanged := renderCodex(c, ws, dryRun)
 				// The PATH mask and the in-scope MCP lists (ADR-0008); neither is
 				// covered by the integrity record, so no re-sign.
 				renderScope(c, ws, dryRun)
-				if !dryRun && (res.Changed || codexChanged) {
-					// settings.json and the Codex files are covered by the
+				if !dryRun && res.Changed {
+					// settings.json is covered by the
 					// integrity record: a human's render signs it again,
 					// an agent session leaves it stale.
 					resignCovered(c, ws)
@@ -146,7 +145,7 @@ func statuslineExe() string {
 }
 
 // renderIdentityFiles re-renders ws's Claude identity settings (for a
-// trusted workspace) and its Codex files after a trust change, so they
+// trusted workspace) after a trust change, so they
 // match at once rather than at the next tq settings render. Errors are
 // warnings: tq doctor reports the drift.
 func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
@@ -171,11 +170,10 @@ func renderIdentityFilesFor(c *cobra.Command, ws *resolve.Workspace, force bool)
 		}
 		renderScope(c, ws, false)
 	}
-	renderCodex(c, ws, false)
 }
 
 // resignCovered signs ws's integrity record again after a tq command wrote
-// a covered file (settings.json#tq, the Codex hook files) for a workspace
+// a covered file (settings.json#tq) for a workspace
 // that was trusted when the command started. Signing is a human act and
 // takes the same gate as tq allow (refuseAgent: the three detectors); a
 // refused re-sign leaves the record stale and names what the human runs.

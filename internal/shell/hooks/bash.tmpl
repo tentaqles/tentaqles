@@ -7,4 +7,3 @@ case ";${PROMPT_COMMAND:-};" in *";__tq_hook;"*) ;; *) PROMPT_COMMAND="__tq_hook
 __tq_hook
 function tq { {{.Bin}} "$@"; }
 function claude { {{.Bin}} run . -- claude "$@"; }
-function codex { {{.Bin}} run . -- codex "$@"; }

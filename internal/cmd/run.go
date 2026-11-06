@@ -47,23 +47,21 @@ func launchClaudeArgs(args []string, agent bool) []string {
 	return append([]string{"--dangerously-skip-permissions"}, args...)
 }
 
-// agentProg names the agent a program is: "claude" or "codex" for those
-// names, with or without a directory and a .exe/.cmd/.bat/.ps1 extension,
-// and "" for any other program.
+// agentProg names the agent a program is: "claude" for that name, with or
+// without a directory and a .exe/.cmd/.bat/.ps1 extension, and "" for any other.
 func agentProg(name string) string {
 	b := strings.ToLower(filepath.Base(strings.ReplaceAll(name, `\`, "/")))
 	for _, ext := range []string{".exe", ".cmd", ".bat", ".ps1"} {
 		b = strings.TrimSuffix(b, ext)
 	}
-	if b == "claude" || b == "codex" {
+	if b == "claude" {
 		return b
 	}
 	return ""
 }
 
 // execCommand runs name+args with env and the process's stdio, and exits
-// with the child's code when it fails. Tests replace it, so no real claude or
-// codex ever runs.
+// with the child's code when it fails. Tests replace it, so no real claude ever runs.
 var execCommand = func(name string, args, env []string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Env = env
@@ -83,25 +81,14 @@ type launch struct {
 	args []string
 }
 
-// run starts the launch with ws's environment (envplan.Environ): claude
-// through launchClaudeArgs, codex with the pinned Codex flags when the
-// workspace isolates a codex identity.
+// run starts the launch with ws's environment (envplan.Environ), claude
+// through launchClaudeArgs.
 func (l launch) run() error {
 	_, agent := agentSession()
 	args := l.args
 	switch agentProg(l.name) {
 	case "claude":
 		args = launchClaudeArgs(args, agent)
-	case "codex":
-		if codexIsolated(l.ws) {
-			// Codex's hooks.json runs a bare `tq claude-hook pre-tool-use
-			// --agent codex`; a tq Codex cannot find runs no guard at all,
-			// so the launch is refused (ADR-0006).
-			if err := codexHookResolves(envplan.Environ(l.ws, os.Environ())); err != nil {
-				return err
-			}
-		}
-		args = codexArgs(l.ws, args)
 	}
 	env := envplan.Environ(l.ws, os.Environ())
 	name := l.name

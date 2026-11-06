@@ -2,7 +2,7 @@
 // workspace: a signed integrity record (trust/<name>.json) over the
 // manifest and the files that make the hook run: the root marker, the
 // enforcing keys of the identity's Claude settings, the installed plugin's
-// hooks, scripts and manifest, the Codex hook files and the shims (PRD v2
+// hooks, scripts and manifest, and the shims (PRD v2
 // §8.3, ADR-0004). A workspace is trusted when its record exists, is not
 // revoked, was signed with the key in the OS keychain and its HMAC
 // verifies, its manifest hash is the one resolve read, and every covered
@@ -64,8 +64,8 @@ func HasRecord(name, hash string) bool {
 
 // Change is one covered key whose hash is not what the record holds.
 type Change struct {
-	// Path is the covered key (Key); "<dir>/config.toml#tq" and
-	// "<dir>/settings.json#tq" are the parts of those files tq covers.
+	// Path is the covered key (Key); "<dir>/settings.json#tq" is the part of
+	// that file tq covers.
 	Path string
 	// Kind is "changed", "added" (absent when signed, present now) or
 	// "removed" (present when signed, absent now).

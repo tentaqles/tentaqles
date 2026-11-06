@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tentaqles/tentaqles/internal/codexcfg"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -20,7 +19,7 @@ import (
 )
 
 // The deadlines are ordered under the shortest harness hook timeout (Claude
-// Code 15 s in the plugin's hooks.json, Codex codexcfg.HookTimeoutSeconds):
+// Code 15 s in the plugin's hooks.json):
 // scan budget < decision deadline < process watchdog < tq_hook.sh's
 // watchdog (+1 s for its kill) < the harness timeout, with a margin. A
 // harness kills a slow hook and RUNS the call, so raising any of these past
@@ -54,9 +53,6 @@ func TestHookDeadlinesUnderHarnessTimeouts(t *testing.T) {
 		t.Fatal("no tq_hook.sh PreToolUse timeout in hooks.json")
 	}
 	harness := time.Duration(claude) * time.Second
-	if c := time.Duration(codexcfg.HookTimeoutSeconds) * time.Second; c < harness {
-		harness = c
-	}
 	sh, err := os.ReadFile(filepath.Join(root, "plugin", "scripts", "tq_hook.sh"))
 	if err != nil {
 		t.Fatal(err)
@@ -123,23 +119,18 @@ func repoRoot(t *testing.T) string {
 }
 
 // A pre-tool-use run that never reaches a decision is a deny with exit 2,
-// for both agents: an unknown flag, a stray argument.
+// an unknown flag, a stray argument.
 func TestRunMainHookErrorsDeny(t *testing.T) {
 	isolateHome(t)
 	for _, args := range [][]string{
 		{"claude-hook", "pre-tool-use", "--no-such-flag"},
-		{"claude-hook", "pre-tool-use", "--agent", "codex", "--no-such-flag"},
+		{"claude-hook", "pre-tool-use", "--agent", "codex"}, // an old Codex hook file
 		{"claude-hook", "pre-tool-use", "--json=maybe"},
 	} {
 		var out, errOut bytes.Buffer
 		code := RunMain(args, &out, &errOut)
 		if code != 2 || !strings.Contains(errOut.String(), "BLOCKED [tq/guard-error]: tq could not run the hook") {
 			t.Errorf("%v: code=%d err=%q", args, code, errOut.String())
-		}
-		if strings.Contains(strings.Join(args, " "), "codex") {
-			if dec, _ := codexAnswerJSON(t, out.String()); dec != "deny" {
-				t.Errorf("%v: codex answer %q", args, out.String())
-			}
 		}
 	}
 	// Any other command keeps exit 1 for an error.
@@ -184,14 +175,11 @@ func TestRunMainWatchdogDenies(t *testing.T) {
 	t.Cleanup(func() { os.Stdin = prevIn })
 
 	var out, errOut syncBuffer
-	go RunMain([]string{"claude-hook", "pre-tool-use", "--agent", "codex"}, &out, &errOut)
+	go RunMain([]string{"claude-hook", "pre-tool-use"}, &out, &errOut)
 	select {
 	case code := <-codes:
 		if code != 2 || !strings.Contains(errOut.String(), "tq did not answer within") {
 			t.Fatalf("code=%d err=%q", code, errOut.String())
-		}
-		if dec, _ := codexAnswerJSON(t, out.String()); dec != "deny" {
-			t.Fatalf("codex answer %q", out.String())
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the watchdog did not fire")

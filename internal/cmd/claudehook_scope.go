@@ -73,7 +73,7 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set, c
 		// An mcp__ call is judged by its server's entry in the identity's harness config too
 		// (ADR-0008); read only on the first MCP call of the run.
 		MCPEntries: func() map[string][]map[string]any {
-			return mcpscope.Entries(paths.IdentityDir(ws.Name, "claude"), paths.IdentityDir(ws.Name, "codex"), cwd, ws.Root)
+			return mcpscope.Entries(paths.IdentityDir(ws.Name, "claude"), cwd, ws.Root)
 		},
 	})
 	scopeMemo.ws, scopeMemo.prot, scopeMemo.cwd, scopeMemo.s = ws, prot, cwd, s

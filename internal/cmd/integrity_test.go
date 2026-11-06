@@ -617,7 +617,7 @@ func mkNeverTrusted(t *testing.T, name string) string {
 }
 
 // tq allow renders the identity files first, for a workspace never trusted
-// too, and signs once, after: the rendered settings.json and Codex files
+// too, and signs once, after: the rendered settings.json
 // are what the record covers.
 func TestAllow_RendersThenSignsANeverTrustedWorkspace(t *testing.T) {
 	mkNeverTrusted(t, "acme")
@@ -631,9 +631,6 @@ func TestAllow_RendersThenSignsANeverTrustedWorkspace(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(claude, "settings.json")); err != nil {
 		t.Fatal("tq allow renders settings.json for a workspace not yet trusted")
-	}
-	if _, err := os.Stat(filepath.Join(paths.IdentityDir("acme", "codex"), "hooks.json")); err != nil {
-		t.Fatal("tq allow renders the Codex hook file")
 	}
 	h, _ := trust.HashFile(paths.ManifestPath("acme"))
 	rep, err := trust.Verify("acme")

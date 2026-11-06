@@ -50,7 +50,7 @@ func TestHook_DefinesLaunchers(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"TQ_ENABLED", "run . -- claude", "run . -- codex",
+			"TQ_ENABLED", "run . -- claude",
 		} {
 			if !strings.Contains(h, want) {
 				t.Errorf("%s hook: missing %q", sh, want)

@@ -24,7 +24,7 @@ var hookExecutable = os.Executable
 // protectedSet computes the protected path set of this hook run: tq's
 // state folder, the markers of the registered workspaces, the resolved
 // identity's harness config homes (the hook registration and the installed
-// plugin), the session's $CLAUDE_CONFIG_DIR and $CODEX_HOME, the plugin in
+// plugin), the session's $CLAUDE_CONFIG_DIR, the plugin in
 // the default ~/.claude, and the running tq binary. ws may be nil (a
 // neutral or untrusted cwd): the state folder and the markers are
 // protected all the same.
@@ -41,13 +41,9 @@ func protectedSet(ws *resolve.Workspace, cfg *registry.Config) *protect.Set {
 	if ws != nil {
 		in.Roots = []string{ws.Root}
 		in.ConfigDirs = append(in.ConfigDirs, paths.IdentityDir(ws.Name, "claude"))
-		in.CodexDirs = append(in.CodexDirs, paths.IdentityDir(ws.Name, "codex"))
 	}
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
 		in.ConfigDirs = append(in.ConfigDirs, d)
-	}
-	if d := os.Getenv("CODEX_HOME"); d != "" {
-		in.CodexDirs = append(in.CodexDirs, d)
 	}
 	if exe, err := hookExecutable(); err == nil {
 		in.Executable = exe
@@ -72,8 +68,6 @@ func hookWSName(ws *resolve.Workspace) string {
 // log.
 func denialSubject(call policy.ToolCall, subject string) string {
 	switch {
-	case isApplyPatch(call):
-		return joinVerbSubject(call.Tool, subject) // apply_patch <file>
 	case call.IsShell() && call.Command != "":
 		return joinVerbSubject(audit.CommandWord(verbOf(call.Command)), subject) // the verb under the log's structural rule (ADR-0006)
 	case call.Path != "":
@@ -132,8 +126,6 @@ func denyKind(d policy.Decision) string {
 // a patch the tool name, never its input or content.
 func logCommand(call policy.ToolCall) string {
 	switch {
-	case isApplyPatch(call):
-		return call.Tool
 	case call.IsShell():
 		return call.Tool // the line itself goes through audit.RedactCommand at the deny
 	case call.Path != "":

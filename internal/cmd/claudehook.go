@@ -95,6 +95,9 @@ func dropKey(drop map[string]bool, k string) bool {
 	return false
 }
 
+// hookAgentClaude is the harness a denial names.
+const hookAgentClaude = "claude"
+
 func newClaudeHookCmd() *cobra.Command {
 	c := &cobra.Command{Use: "claude-hook", Short: "Claude Code hook adapter (reads the hook JSON on stdin)"}
 	c.AddCommand(newPreToolUseCmd(), newSessionStartCmd())
@@ -106,7 +109,6 @@ func newClaudeHookCmd() *cobra.Command {
 // stdout and the command still exits 0, because a SessionStart hook must
 // never block the session from starting.
 func newSessionStartCmd() *cobra.Command {
-	agent := hookAgentClaude
 	c := &cobra.Command{
 		Use:   "session-start",
 		Short: "SessionStart hook: print the workspace identity preamble",
@@ -144,7 +146,6 @@ func newSessionStartCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&agent, "agent", hookAgentClaude, "the agent calling the hook: claude or codex")
 	return c
 }
 
@@ -221,7 +222,6 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 
 func newPreToolUseCmd() *cobra.Command {
 	var asJSON bool
-	agent := hookAgentClaude
 	c := &cobra.Command{
 		Use:   "pre-tool-use",
 		Short: "Allow (exit 0) or deny (exit 2) the tool call in the PreToolUse payload",
@@ -246,14 +246,13 @@ registry or a workspace manifest it cannot read, and a commit whose secret
 scan cannot finish are denied (BLOCKED [tq/guard-error], or
 [secrets/tq/commit-secret] for the scan).`,
 		RunE: func(c *cobra.Command, _ []string) error {
-			if code := runPreToolUse(c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr(), asJSON, agent); code != 0 {
+			if code := runPreToolUse(c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr(), asJSON); code != 0 {
 				exitFunc(code)
 			}
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "print the decision as JSON")
-	c.Flags().StringVar(&agent, "agent", hookAgentClaude, "the agent calling the hook: claude or codex")
 	return c
 }
 
@@ -272,7 +271,6 @@ var hookDeadline = 6 * time.Second
 // name the tool, the cwd and the identity in the denial log.
 type hookRun struct {
 	asJSON bool
-	agent  string
 
 	mu       sync.Mutex
 	tool     string
@@ -287,8 +285,8 @@ type hookRun struct {
 // runs in its own goroutine and answers into buffers; the caller's writers
 // get the buffers when it finishes, or a deny when it panics or misses
 // hookDeadline. There is no other way out: every path is allow or deny.
-func runPreToolUse(in io.Reader, out, errw io.Writer, asJSON bool, agent string) int {
-	run := &hookRun{asJSON: asJSON, agent: agent, caller: audit.CallerHarness}
+func runPreToolUse(in io.Reader, out, errw io.Writer, asJSON bool) int {
+	run := &hookRun{asJSON: asJSON, caller: audit.CallerHarness}
 	var bo, be bytes.Buffer
 	done := make(chan int, 1)
 	go func() {
@@ -397,31 +395,6 @@ func (run *hookRun) decide(in io.Reader, out, errw io.Writer) int {
 	// subject is the one path/token the denial names for the log.
 	subject := ""
 	d := hookPolicyDecision(cwd, ws, cfg, call, scanDeadline)
-	// A Codex apply_patch names its files only in the patch text: the file
-	// rules run on every file it writes, and a patch tq cannot read, or one
-	// too big to judge in the budget, is denied. The rule set and the
-	// protected path set are built once.
-	if isApplyPatch(call) || (run.agent == hookAgentCodex && isFileWriteTool(call.Tool) && call.Path == "") {
-		files, err := parseApplyPatch(call.Command)
-		if err != nil {
-			return run.failClosed(out, errw, err.Error())
-		}
-		if len(files) > maxPatchFiles {
-			return run.failClosed(out, errw, fmt.Sprintf("the patch writes %d files, more than the %d tq judges in one call: split the patch", len(files), maxPatchFiles))
-		}
-		set := buildPolicy()
-		prot := protectedSet(ws, cfg)
-		for _, fc := range patchCalls(files, cwd) {
-			if time.Now().After(scanDeadline) {
-				return run.failClosed(out, errw, "the patch took longer than the hook budget to judge: split the patch")
-			}
-			fd := policyDecisionWith(set, prot, cwd, ws, cfg, fc, scanDeadline)
-			if fd.Action == policy.Deny && d.Action != policy.Deny {
-				subject = fc.Path // the first file the patch is denied on
-			}
-			d = policy.Merge(d, fd)
-		}
-	}
 	if d.Action == policy.Deny {
 		r := d.Matched[0]
 		if subject == "" {
@@ -458,21 +431,18 @@ func (run *hookRun) setIdentity(res resolve.Result) {
 	run.mu.Unlock()
 }
 
-// deny answers a deny of category/rule: the log line, the Codex deny JSON
-// under --agent codex, the --json object or the reason on stderr, exit 2.
+// deny answers a deny of category/rule: the log line, the --json object or the
+// reason on stderr, exit 2.
 func (run *hookRun) deny(out, errw io.Writer, category, rule, reason, subject, layer string) int {
 	run.mu.Lock()
 	d := audit.Denial{
-		Category: category, Layer: layer, Caller: run.caller, Harness: run.agent,
+		Category: category, Layer: layer, Caller: run.caller, Harness: hookAgentClaude,
 		Tool: run.tool, Command: run.loggedCommand(subject), Subject: subject,
 		Rule: rule, Reason: reason, Identity: run.identity, PID: os.Getpid(), Cwd: run.cwd,
 	}
 	run.mu.Unlock()
 	// A log that cannot be written changes nothing: the deny stands.
 	_ = audit.AppendDenial(d)
-	if run.agent == hookAgentCodex && !run.asJSON {
-		writeCodexDeny(out, reason)
-	}
 	emitDecision(out, errw, run.asJSON, true, category, rule, reason)
 	return 2
 }

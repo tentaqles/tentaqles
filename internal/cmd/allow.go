@@ -43,11 +43,10 @@ func newAllowCmd() *cobra.Command {
 		Long: `tq allow <name> trusts the workspace as it is now: it renders the identity's
 settings, then signs the integrity record over the manifest and the root
 marker, the enforcing keys of the identity's Claude settings.json, the
-installed tentaqles plugin's hooks, scripts and manifest, the Codex hook files
-and the shims (tq hooks verify lists them). An edit to any of them is
+installed tentaqles plugin's hooks, scripts and manifest, and the shims (tq hooks verify lists them). An edit to any of them is
 untrusted until a human signs again (tq allow, or tq hooks verify --accept).
 
-Human-only: an agent session (Claude Code, Codex, a plugin hook) is refused,
+Human-only: an agent session (Claude Code, a plugin hook) is refused,
 so a session can never trust a folder itself; you confirm before the trust
 is written.`,
 		Args: cobra.ExactArgs(1),
@@ -65,7 +64,7 @@ is written.`,
 // confirms (what names the command in the gate: tq allow, or tq hooks
 // verify --accept). The identity files are rendered first, for a workspace
 // that is not trusted yet too, because the record covers them
-// (settings.json#tq, the Codex hook files); the record is then signed once,
+// (settings.json#tq); the record is then signed once,
 // over the files as rendered; the git includes, which list only trusted
 // workspaces, are synced last.
 func trustWorkspace(c *cobra.Command, name, what string) (*resolve.Workspace, error) {

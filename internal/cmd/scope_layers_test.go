@@ -22,7 +22,7 @@ import (
 //   - layer 1 (advisory): the session-start preamble states the scope;
 //   - layer 2 (PATH): aws is not on the identity PATH tq builds, az is;
 //   - layer 3 (harness config): tq settings render leaves no AWS MCP server in the identity's
-//     Claude and Codex homes, even one configured there before.
+//     Claude home, even one configured there before.
 
 // scenarioGlobalPATH lays out a machine's global PATH with fakes: the AWS CLI's install
 // folder, the Azure CLI's, and returns it in the OS spelling.
@@ -172,13 +172,12 @@ func TestEnv_ScopeLayerRestore(t *testing.T) {
 }
 
 // TestSettingsRender_ScopeReferenceScenario_MCP is §6.1 step 3: an AWS MCP server configured
-// in company-x's Claude home (user and project scope) and Codex home is gone after tq
+// in company-x's Claude home (user and project scope) is gone after tq
 // settings render; the Azure server and an unrelated one stay, the removed ones are kept
 // beside the config, and the PATH mask is written.
 func TestSettingsRender_ScopeReferenceScenario_MCP(t *testing.T) {
 	root, _ := setupScoped(t, "company-x", companyXBody)
 	claudeDir := paths.IdentityDir("company-x", "claude")
-	codexDir := paths.IdentityDir("company-x", "codex")
 	write := func(p, s string) {
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatal(err)
@@ -192,7 +191,6 @@ func TestSettingsRender_ScopeReferenceScenario_MCP(t *testing.T) {
 		`"azure":{"command":"npx","args":["-y","@azure/mcp@latest"]},"mydb":{"command":"uvx","args":["postgres-mcp"]}},` +
 		`"projects":{` + string(rootKey) + `:{"mcpServers":{"aws":{"type":"http","url":"https://knowledge-mcp.global.api.aws"}}}}}`
 	write(filepath.Join(claudeDir, ".claude.json"), claudeJSON)
-	write(filepath.Join(codexDir, "config.toml"), "[mcp_servers.aws]\ncommand = \"uvx\"\n\n[mcp_servers.azure]\ncommand = \"npx\"\n")
 
 	out := runEnv(t, "settings", "render", "company-x")
 	if !strings.Contains(out, "removed MCP server aws-api") || !strings.Contains(out, "PATH mask written") {
@@ -221,14 +219,8 @@ func TestSettingsRender_ScopeReferenceScenario_MCP(t *testing.T) {
 			t.Fatalf("project %s keeps %v", p, pr.MCP)
 		}
 	}
-	toml, _ := os.ReadFile(filepath.Join(codexDir, "config.toml"))
-	if strings.Contains(string(toml), "mcp_servers.aws") || !strings.Contains(string(toml), "[mcp_servers.azure]") {
-		t.Fatalf("codex config.toml:\n%s", toml)
-	}
-	for _, d := range []string{claudeDir, codexDir} {
-		if _, err := os.Stat(filepath.Join(d, mcpscope.RemovedFile)); err != nil {
-			t.Fatalf("removed entries not kept in %s: %v", d, err)
-		}
+	if _, err := os.Stat(filepath.Join(claudeDir, mcpscope.RemovedFile)); err != nil {
+		t.Fatalf("removed entries not kept in %s: %v", claudeDir, err)
 	}
 	if _, err := os.Stat(filepath.Join(envplan.MaskDir("company-x"), "aws")); err != nil {
 		t.Fatalf("PATH mask not written: %v", err)

@@ -13,29 +13,16 @@ import (
 // agents: Claude gets exit 2 and the reason on stderr, Codex the deny JSON
 // as well. Neither ever gets an ask, and the reason says the scan could not
 // vouch.
-func TestPreToolUseIncompleteScanDeniesBothAgents(t *testing.T) {
+func TestPreToolUseIncompleteScanDenies(t *testing.T) {
 	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
 	gitRepo(t, root)
 	if err := os.WriteFile(filepath.Join(root, "list.txt"), []byte("a.txt\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := hookPayloadFor(t, root, `git commit --pathspec-from-file=list.txt -m "feat: x"`)
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--agent", "codex"}, cmd)
-	dec, reason := codexAnswerJSON(t, out)
-	if code != 2 || dec != "deny" || !strings.Contains(reason, "secrets/tq/commit-secret") || !strings.Contains(reason, "pathspec-from-file") {
-		t.Fatalf("codex: code %d %q %q", code, dec, reason)
-	}
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, cmd)
 	if code != 2 || out != "" || !strings.Contains(errOut, "BLOCKED [secrets/tq/commit-secret]") || !strings.Contains(errOut, "could not scan") {
 		t.Fatalf("claude: code %d out %q err %q", code, out, errOut)
-	}
-}
-
-func TestSessionStartAcceptsAgentFlag(t *testing.T) {
-	root := setupTrustedWorkspaceWithManifest(t, "acme", "")
-	code, out, _ := runHook(t, []string{"claude-hook", "session-start", "--agent", "codex"}, hookPayloadFor(t, root, "ls"))
-	if code != 0 || !strings.Contains(out, "Client:") {
-		t.Fatalf("session-start --agent codex: %d %q", code, out)
 	}
 }
 

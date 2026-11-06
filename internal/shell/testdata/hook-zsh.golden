@@ -8,4 +8,3 @@ if (( ${precmd_functions[(I)__tq_hook]} == 0 )); then precmd_functions+=(__tq_ho
 __tq_hook
 function tq { '/opt/tq/bin/tq' "$@"; }
 function claude { '/opt/tq/bin/tq' run . -- claude "$@"; }
-function codex { '/opt/tq/bin/tq' run . -- codex "$@"; }

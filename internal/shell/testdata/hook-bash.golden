@@ -7,4 +7,3 @@ case ";${PROMPT_COMMAND:-};" in *";__tq_hook;"*) ;; *) PROMPT_COMMAND="__tq_hook
 __tq_hook
 function tq { '/opt/tq/bin/tq' "$@"; }
 function claude { '/opt/tq/bin/tq' run . -- claude "$@"; }
-function codex { '/opt/tq/bin/tq' run . -- codex "$@"; }
