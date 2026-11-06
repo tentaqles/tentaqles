@@ -2,7 +2,7 @@ package providers
 
 import "testing"
 
-// The general-purpose, provider-free MCP servers (ADR-0007, the owner's hybrid list of
+// The general-purpose, provider-free MCP servers (ADR-0008, the owner's hybrid list of
 // 2026-11-05): each named server is there, validates, and carries something to match by.
 func TestMCPGeneral(t *testing.T) {
 	g, err := MCPGeneral()

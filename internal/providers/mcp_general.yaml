@@ -1,4 +1,4 @@
-# General-purpose MCP servers that belong to no provider (ADR-0007, the owner's hybrid MCP
+# General-purpose MCP servers that belong to no provider (ADR-0008, the owner's hybrid MCP
 # list, 2026-11-05). Under guard: v2 an MCP server is kept when the catalog attributes it to an
 # in-scope provider, when it matches one of these, or when its exact name is in the manifest's
 # mcp.allow; every other server is moved to mcp-out-of-scope.json at render and denied by the

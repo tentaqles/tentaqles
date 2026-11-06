@@ -77,7 +77,7 @@ type PathReport struct {
 	MaskMissing bool
 }
 
-// FilterPath is the identity PATH built from path (layer 2, ADR-0007), in syn's spelling:
+// FilterPath is the identity PATH built from path (layer 2, ADR-0008), in syn's spelling:
 //
 //   - an entry whose executables are all out-of-scope CLIs (an AWS CLI install folder for an
 //     Azure-only identity) is dropped: the CLI resolves to nothing;

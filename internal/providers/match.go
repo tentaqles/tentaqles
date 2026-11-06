@@ -75,11 +75,11 @@ type Match struct {
 	// MCPPackages are prefixes of the package, image or module an MCP server's config runs
 	// (awslabs., @aws/, public.ecr.aws/, @modelcontextprotocol/server-github): a server whose
 	// command or one of its args starts with one is the provider's, whatever its name
-	// (ADR-0007). Matched case-insensitively, a version suffix included.
+	// (ADR-0008). Matched case-insensitively, a version suffix included.
 	MCPPackages []string `yaml:"mcp_packages,omitempty"`
 	// MCPHosts are hosts of a vendor's own remote MCP endpoints (mcp.vercel.com,
 	// mcp.cloudflare.com and its subdomains): an MCP server whose url, or a URL among its args
-	// (mcp-remote <url>), is on one is the provider's (ADR-0007). Kept apart from Hosts, which
+	// (mcp-remote <url>), is on one is the provider's (ADR-0008). Kept apart from Hosts, which
 	// the hook's network rules read.
 	MCPHosts []string `yaml:"mcp_hosts,omitempty"`
 }

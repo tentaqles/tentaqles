@@ -1,4 +1,4 @@
-# ADR-0007: The identity PATH, environment and MCP list built from the provider scope, behind `guard: v2`
+# ADR-0008: The identity PATH, environment and MCP list built from the provider scope, behind `guard: v2`
 
 Status: proposed
 Date: 2026-11-05

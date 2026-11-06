@@ -64,7 +64,7 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `tq/protected-path` matches against), `internal/registry/`, `internal/resolve/` (which file is the
     manifest, both layouts), `internal/workspace/`, `internal/paths/`,
     `internal/envplan/` (the env diff, and under `guard: v2` the identity PATH, the PATH
-    mask and the out-of-scope variables unset, ADR-0007), `internal/mcpscope/` (the
+    mask and the out-of-scope variables unset, ADR-0008), `internal/mcpscope/` (the
     out-of-scope MCP servers removed from the identity's Claude and Codex homes),
     `internal/shell/` (activation hooks and the `claude`/`codex` launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
     `internal/doctor/`, `internal/setup/` and `internal/onboard/` (`tq setup`,
@@ -124,7 +124,7 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestScope_HereStringsAndHeredocsAsCode`, `TestScope_HostPaths`, `TestScope_GitTransport`,
   `TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFiles`,
   `TestPreToolUse_GuardMappingIsV1`.
-- Under `guard: v2` the §6.1 scenario also fails before the hook (ADR-0007): an
+- Under `guard: v2` the §6.1 scenario also fails before the hook (ADR-0008): an
   out-of-scope CLI does not resolve on the identity PATH (its folder dropped, or masked by
   a stub in a shared folder) while in-scope CLIs do, its variables are unset, leaving the
   folder restores PATH and variables exactly, `tq run` resolves on the identity PATH, the

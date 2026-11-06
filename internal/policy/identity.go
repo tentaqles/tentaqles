@@ -53,20 +53,20 @@ type ScopeInputs struct {
 	OtherRoots map[string]string
 	OtherDirs  map[string]string
 	// MCPEntries loads the MCP servers of the identity's harness config, by server name
-	// (ADR-0007): an mcp__<server>__ call is judged by its entry too. Called once, on the
+	// (ADR-0008): an mcp__<server>__ call is judged by its entry too. Called once, on the
 	// first MCP call; nil when the caller has none.
 	MCPEntries func() map[string][]map[string]any
 	// MCPAllow is the manifest's mcp.allow: exact MCP server names kept though no in-scope
-	// provider claims them and they are not general-purpose (the hybrid list, ADR-0007).
+	// provider claims them and they are not general-purpose (the hybrid list, ADR-0008).
 	MCPAllow []string
 }
 
 type scopedProvider struct {
 	id, name string
 	inScope  bool
-	generic  bool     // providers.Provider.GenericTool (ADR-0007)
-	packages []string // match.mcp_packages (ADR-0007)
-	mcpHosts []string // match.mcp_hosts (ADR-0007)
+	generic  bool     // providers.Provider.GenericTool (ADR-0008)
+	packages []string // match.mcp_packages (ADR-0008)
+	mcpHosts []string // match.mcp_hosts (ADR-0008)
 }
 
 // exeClaim is one provider's claim on an executable: wholesale, or a set of first subcommands.

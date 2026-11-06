@@ -10,7 +10,7 @@ func TestEnviron_ReplacesAndStripsState(t *testing.T) {
 	base := []string{"PATH=/bin", "CLAUDE_CONFIG_DIR=/old", StateVar + "=abc", "KEEP=1"}
 	got := Environ(ws("acme", "claude"), base)
 	joined := strings.Join(got, "\n")
-	// The old state is gone; the launch carries its own (ADR-0007, round 3), naming acme.
+	// The old state is gone; the launch carries its own (ADR-0008, round 3), naming acme.
 	if strings.Contains(joined, "CLAUDE_CONFIG_DIR=/old") || strings.Contains(joined, StateVar+"=abc") {
 		t.Fatalf("%v", got)
 	}

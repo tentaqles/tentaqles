@@ -16,7 +16,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The PATH and environment layer (layer 2 of the PRD v2 Â§6.1 scenario, ADR-0007): identity
+// The PATH and environment layer (layer 2 of the PRD v2 Â§6.1 scenario, ADR-0008): identity
 // company-x declares Azure as its only cloud; on the PATH tq builds for it, aws resolves to
 // nothing (its install folder is dropped) or to tq's stub (in a folder shared with other
 // tools), az and everything else resolve as before, and leaving the folder puts the shell

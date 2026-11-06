@@ -12,7 +12,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/manifest"
 )
 
-// The harness config layer (layer 3 of the PRD v2 §6.1 scenario, ADR-0007): for company-x
+// The harness config layer (layer 3 of the PRD v2 §6.1 scenario, ADR-0008): for company-x
 // (Azure only) no AWS or GitHub MCP server stays registered in its Claude or Codex home,
 // whatever its name spells, while the Azure server and servers that match no provider stay.
 

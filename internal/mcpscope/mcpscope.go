@@ -1,5 +1,5 @@
 // Package mcpscope is the harness config layer of PRD v2 §6.2 (layer 3 of the §6.1 scenario;
-// ADR-0007): for an identity whose manifest sets guard: v2, the MCP servers registered in its
+// ADR-0008): for an identity whose manifest sets guard: v2, the MCP servers registered in its
 // Claude config home (.claude.json mcpServers, top level and per project) and its Codex home
 // (config.toml [mcp_servers.<name>]) hold no server tq can attribute to a provider outside the
 // scope, so no out-of-scope MCP tool reaches the model's tool list.
@@ -199,7 +199,7 @@ func writeAtomic(p string, b []byte) error {
 }
 
 // Entries are the MCP servers the identity's harness loads that tq can read, by server name,
-// every source's entry kept (ADR-0007): .claude.json's top-level servers (user scope) and
+// every source's entry kept (ADR-0008): .claude.json's top-level servers (user scope) and
 // those of every project whose path holds cwd (local scope, in path order), the .mcp.json
 // files from cwd up to root (project scope; root is the workspace root, "" for cwd only), the
 // identity's installed plugins' servers (named plugin_<plugin>_<server>, as Claude Code

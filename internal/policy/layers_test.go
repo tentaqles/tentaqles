@@ -7,7 +7,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
-// An MCP server is attributed by its config entry, not only its name (ADR-0007): the
+// An MCP server is attributed by its config entry, not only its name (ADR-0008): the
 // package or image it runs, its command, the variables it sets and its url.
 func TestOutOfScopeMCPEntry(t *testing.T) {
 	f := newScopeFixture(t)

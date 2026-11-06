@@ -11,7 +11,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/envplan"
 )
 
-// cmd.exe through the real hook (ADR-0007, round 2): every character a Windows PATH can hold
+// cmd.exe through the real hook (ADR-0008, round 2): every character a Windows PATH can hold
 // (% ! ^ & | < > and quotes) arrives exactly, with delayed expansion off and on, and the
 // notice line is printed; a line longer than cmd.exe reads is refused, never cut.
 func TestEmit_Cmd_RoundTripsEveryCharacter(t *testing.T) {

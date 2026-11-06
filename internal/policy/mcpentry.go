@@ -7,7 +7,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
-// An MCP server judged by its config entry (ADR-0007): the harness config layer removes it at
+// An MCP server judged by its config entry (ADR-0008): the harness config layer removes it at
 // render and the hook denies its mcp__<server>__ tools, by the same rule.
 
 // OutOfScopeMCPEntry judges an MCP server by its name and its config entry (the JSON object of
@@ -323,7 +323,7 @@ func (s *Scope) mcpByEntry(server string) (scopeHit, bool) {
 	return scopeHit{}, false
 }
 
-// JudgeMCP is the owner's hybrid MCP list (ADR-0007, 2026-11-05): an MCP server with its
+// JudgeMCP is the owner's hybrid MCP list (ADR-0008, 2026-11-05): an MCP server with its
 // config entry (nil for a claude.ai connector, judged by its name) is kept when
 //
 //	(a) the catalog attributes it to an in-scope provider, or the manifest declares it

@@ -13,7 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// scopeLine is layer 1 of the §6.1 scenario (advisory, never relied on; ADR-0007): the one
+// scopeLine is layer 1 of the §6.1 scenario (advisory, never relied on; ADR-0008): the one
 // line of the session-start preamble, Claude's and Codex's, that states a guard: v2
 // identity's provider scope, so a well-behaved model declines or asks before it reaches for
 // another provider. Without the flag it is empty.
@@ -29,7 +29,7 @@ func scopeLine(ws *resolve.Workspace) string {
 	return "Scope: " + list + ". Identity " + ws.Name + " may use these providers only: any other provider's CLI, MCP server, variable, credential file or API host is out of scope and tq blocks it (a claude.ai connector of another provider stays listed, tq cannot remove it, but its tools are denied); if a task needs one, stop and tell the developer.\n"
 }
 
-// renderScope writes what a guard: v2 identity's earlier layers need on disk (ADR-0007): the
+// renderScope writes what a guard: v2 identity's earlier layers need on disk (ADR-0008): the
 // PATH mask folder (layer 2) and the MCP server lists of its Claude and Codex homes without
 // the out-of-scope servers (layer 3). Without the flag it removes a mask folder an earlier
 // render wrote and touches nothing else. Only the human-only renders call it (tq allow, tq

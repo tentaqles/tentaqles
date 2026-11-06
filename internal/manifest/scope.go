@@ -116,7 +116,7 @@ type MCPBlock struct {
 	Allow []string `yaml:"allow,omitempty"`
 }
 
-// MCPAllow is mcp.allow: the exact MCP server names a human keeps (ADR-0007), nil when none.
+// MCPAllow is mcp.allow: the exact MCP server names a human keeps (ADR-0008), nil when none.
 // The manifest is the protected copy, so only a human edits it.
 func (m *Manifest) MCPAllow() []string {
 	if m == nil || len(m.MCP.Allow) == 0 {

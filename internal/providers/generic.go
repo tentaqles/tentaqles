@@ -3,7 +3,7 @@ package providers
 import "strings"
 
 // The two catalog rules the layers before the hook apply to a provider outside an identity's
-// scope (ADR-0007), kept here as one helper each so the hook's rules (ADR-0006, P2.1) can read
+// scope (ADR-0008), kept here as one helper each so the hook's rules (ADR-0006, P2.1) can read
 // the same answer when the two are merged.
 
 // GenericTool reports a tool that talks to whatever the project configures (docker, helm,

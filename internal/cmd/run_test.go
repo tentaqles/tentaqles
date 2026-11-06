@@ -35,7 +35,7 @@ func isolateHome(t *testing.T) string {
 	// __TQ_STATE. `tq env` would then "restore" that shell's variables and
 	// emit unsets for a neutral cwd, so start every test from a clean slate.
 	unsetenv(t, envplan.StateVar)
-	// And the workspace markers it carries: TQ_WS without a state is a lost state (ADR-0007).
+	// And the workspace markers it carries: TQ_WS without a state is a lost state (ADR-0008).
 	unsetenv(t, "TQ_WS")
 	unsetenv(t, "TQ_WS_ROOT")
 	keyring.MockInit() // never the real OS keychain in tests

@@ -63,7 +63,7 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - `commitscan.AskError`/`IsAsk` are `IncompleteError`/`IsIncomplete`; `resolve.Result` gains
   `Name` and `Unreadable`; `humanonly.CheckRead` is the human-only check of a read.
 
-### The identity PATH, environment and MCP list from the scope (ADR-0007)
+### The identity PATH, environment and MCP list from the scope (ADR-0008)
 
 - **Layer 2, PATH** (`guard: v2` only): `tq env` and every launch (`tq run`) filter the
   inherited PATH. A folder whose runnable files are all out-of-scope CLIs (the AWS CLI's

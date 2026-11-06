@@ -140,7 +140,7 @@ func (l launch) run() error {
 	env := envplan.Environ(l.ws, os.Environ())
 	name := l.name
 	if layer := envplan.LayerFor(l.ws); layer != nil {
-		// guard: v2 (ADR-0007): an out-of-scope CLI is refused however it is spelled (aws,
+		// guard: v2 (ADR-0008): an out-of-scope CLI is refused however it is spelled (aws,
 		// aws.exe, its install path); anything else resolves on the identity PATH, not on tq's
 		// own, so tq run <ws> -- aws from outside the folder does not find the aws it dropped.
 		if layer.IsMasked(name) {

@@ -17,13 +17,13 @@ import (
 )
 
 // The PATH and environment layer of an identity whose manifest sets guard: v2 (PRD v2 §6.1
-// step 2, §6.2 rows PATH and Environment; ADR-0007). It is built from the same compiled scope
+// step 2, §6.2 rows PATH and Environment; ADR-0008). It is built from the same compiled scope
 // the hook judges by (policy.ScopeFor): an out-of-scope provider's CLI does not resolve by name
 // on the identity PATH, and its variables are unset in the identity environment. Without the
 // flag nothing here runs.
 
 // MaskDirName is the per-identity folder, under the identity's folder in the tq home, that
-// holds one stub per out-of-scope executable name (ADR-0007): it goes first on the identity
+// holds one stub per out-of-scope executable name (ADR-0008): it goes first on the identity
 // PATH when a PATH folder that tq cannot drop (one shared with other tools) holds an
 // out-of-scope CLI. A stub prints "<name>: command not found" and exits 127.
 const MaskDirName = "path-mask"

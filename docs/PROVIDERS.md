@@ -114,7 +114,7 @@ optional; validated at load.
 | `git_hosts` | git hosts (`github.com`, `gitlab.com`) | `ssh`/`scp`/`sftp` to the host, and a git command (`push`, `fetch`, `pull`, `ls-remote`, `clone`, `remote`, `submodule`, `archive`) with a URL on it over the ssh transport (`git@host:path`, `ssh://`), or a `git push` over https. An anonymous https clone, fetch, pull or ls-remote is allowed |
 | `mcp` | `^[a-z0-9]+$` tokens | a token of the MCP server name (split on `_ - .`, adjacent pairs joined: `google-cloud` → `googlecloud`). An MCP server is allowed only when its exact name is the identity's own `claude.bundle.mcp`; any out-of-scope token otherwise denies |
 
-The same lists drive the layers before the hook (ADR-0007), under `guard: v2`:
+The same lists drive the layers before the hook (ADR-0008), under `guard: v2`:
 
 | List | Layer | Effect for a provider outside the scope |
 |---|---|---|
@@ -122,7 +122,7 @@ The same lists drive the layers before the hook (ADR-0007), under `guard: v2`:
 | `env` | environment (`tq env`, `tq run`) | unset in the identity terminal and launches, restored on leaving (`TF_TOKEN_*` unsets every match) |
 | `mcp`, `mcp_packages`, `images`, `hosts`, `env`, `executables` | harness config (`tq settings render`) and the hook | an MCP server whose name token, package or image (`command`/`args`), `env` key, `url` host or `command` is the provider's is removed from the identity's `.claude.json` and Codex `config.toml` (kept in `mcp-out-of-scope.json`), and its `mcp__<server>__*` tools are denied |
 
-`mcp_packages` (ADR-0007) lists prefixes of what an MCP server's config runs:
+`mcp_packages` (ADR-0008) lists prefixes of what an MCP server's config runs:
 `awslabs.`, `@aws/`, `public.ecr.aws/awslabs/`, `@modelcontextprotocol/server-github`,
 `ghcr.io/github/github-mcp-server`; matched case-insensitively against the command and
 each arg (a version suffix included, a script under `node_modules/<pkg>/` by its package,
@@ -132,7 +132,7 @@ each arg (a version suffix included, a script under `node_modules/<pkg>/` by its
 its args (`mcp-remote <url>`), is on one is the provider's. It is read only by the
 MCP layer and the hook's MCP rule, never by the network rules of `hosts`.
 
-**The hybrid MCP list** (the owner's choice of 2026-11-05, ADR-0007). Under
+**The hybrid MCP list** (the owner's choice of 2026-11-05, ADR-0008). Under
 `guard: v2` an MCP server is kept only when the catalog attributes it to an
 in-scope provider, when it is a general-purpose, provider-free server of
 `internal/providers/mcp_general.yaml`, or when its exact name is in the

@@ -2,7 +2,7 @@ package policy
 
 import "testing"
 
-// The owner's hybrid MCP list (ADR-0007, 2026-11-05): a server is kept when the catalog
+// The owner's hybrid MCP list (ADR-0008, 2026-11-05): a server is kept when the catalog
 // attributes it to an in-scope provider, when it is a general-purpose provider-free server,
 // or when its exact name is in mcp.allow; anything else is removed at render and denied by
 // the hook. An out-of-scope attribution always removes.

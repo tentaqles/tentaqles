@@ -7,14 +7,14 @@ import (
 	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
-// What the layers before the hook read from a compiled Scope (PRD v2 §6.2; ADR-0007): the
+// What the layers before the hook read from a compiled Scope (PRD v2 §6.2; ADR-0008): the
 // identity PATH (layer 2) masks the executables, the identity environment unsets the
 // variables, and the harness config render (layer 3) drops the MCP servers. They read the
 // same match lists the hook judges by, with the same in-scope-wins rule, so a name an
 // earlier layer hides is a name the hook denies, and a name the hook allows is never hidden.
 
 // CatalogInputs are the catalog facts every compiled scope reads, the hook's and the layers'
-// alike, so the two share one definition (ADR-0007, ADR-0008): the merged catalog for what is
+// alike, so the two share one definition (ADR-0008, ADR-0008): the merged catalog for what is
 // denied and the embedded-only match per id for what an in-scope provider claims (a user file
 // can never widen a claim). A user file that does not load is left out (scopeCatalogError).
 func CatalogInputs() (provs []providers.Provider, embedded map[string]providers.Match) {

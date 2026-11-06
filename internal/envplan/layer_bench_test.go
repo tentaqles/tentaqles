@@ -7,7 +7,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The cost the layer adds to the prompt hook (ADR-0007), on the machine's own PATH (read,
+// The cost the layer adds to the prompt hook (ADR-0008), on the machine's own PATH (read,
 // never printed): go test ./internal/envplan -run '^$' -bench Layer.
 
 // BenchmarkLayer_Compile is LayerFor: the scope compiled from the catalog, at every prompt in

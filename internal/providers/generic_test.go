@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// GenericTool is the catalog's structural rule (ADR-0006, ADR-0007): a provider whose CLI
+// GenericTool is the catalog's structural rule (ADR-0006, ADR-0008): a provider whose CLI
 // command its match lists do not name. It is exactly the generic tools the catalog test lists.
 func TestGenericTool(t *testing.T) {
 	c, err := Embedded()

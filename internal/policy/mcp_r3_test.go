@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// The critic's MCP fixtures (round 2 of ADR-0007, genmcp.py): every vendor server below is
+// The critic's MCP fixtures (round 2 of ADR-0008, genmcp.py): every vendor server below is
 // attributed to its provider by its entry, whatever it is named; the kept set stays.
 func TestOutOfScopeMCPEntry_VendorFixtures(t *testing.T) {
 	f := newScopeFixture(t)

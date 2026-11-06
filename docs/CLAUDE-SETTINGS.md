@@ -74,7 +74,7 @@ A manifest that still carries `claude.permission_mode` or
 
 ### MCP servers and the PATH mask under `guard: v2`
 
-For a workspace whose manifest sets `guard: v2` (ADR-0007), the render also
+For a workspace whose manifest sets `guard: v2` (ADR-0008), the render also
 brings the identity's harness config in line with its provider scope:
 
 - **MCP servers.** Every server tq can tell is out of scope is removed from
@@ -87,7 +87,7 @@ brings the identity's harness config in line with its provider scope:
   run is one of an out-of-scope provider's `mcp_packages` or `images`, one of
   its `env` keys is an out-of-scope provider's variable, its `url` is an
   out-of-scope API host, or its `command` is an out-of-scope CLI. Every other
-  server is kept only when (the owner's hybrid list, ADR-0007) the catalog
+  server is kept only when (the owner's hybrid list, ADR-0008) the catalog
   attributes it to an in-scope provider or `claude.bundle.mcp` declares it,
   it is a general-purpose server of `internal/providers/mcp_general.yaml`
   (playwright, context7, memory, filesystem, fetch, git, sequential-thinking,

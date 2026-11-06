@@ -38,7 +38,7 @@ func terminalChain(pid int) (humanonly.Parent, bool) {
 // it otherwise, ADR-0002): every test points TQ_HOME at a temp dir and some
 // set a marker on purpose.
 func TestMain(m *testing.M) {
-	// The test binary is the stub program of the PATH masks the tests write (ADR-0007).
+	// The test binary is the stub program of the PATH masks the tests write (ADR-0008).
 	if ok, code := envplan.StubMain(os.Stderr); ok {
 		os.Exit(code)
 	}

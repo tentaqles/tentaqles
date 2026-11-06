@@ -14,7 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// Round 2 of ADR-0007's PATH layer: the state fits cmd.exe's line, the mask answers every
+// Round 2 of ADR-0008's PATH layer: the state fits cmd.exe's line, the mask answers every
 // spelling, comes back once fixed, and leaves ambiguous names and generic tools alone.
 
 // longPath is a realistic PATH of n entries (vendor folders, as a developer machine has).

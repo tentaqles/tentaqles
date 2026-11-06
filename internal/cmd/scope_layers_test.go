@@ -15,7 +15,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The PRD v2 §6.1 reference scenario at layers 1, 2 and 3 (ADR-0007), each in its own test:
+// The PRD v2 §6.1 reference scenario at layers 1, 2 and 3 (ADR-0008), each in its own test:
 // identity company-x declares Azure as its only cloud. Layer 4, the hook, is
 // TestPreToolUse_ScopeReferenceScenario (ADR-0006).
 //

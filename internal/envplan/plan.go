@@ -42,7 +42,7 @@ func Desired(ws *resolve.Workspace) map[string]string {
 type State struct {
 	WS   string             `json:"ws"`
 	Prev map[string]*string `json:"prev"`
-	// PathSet is the PATH tq last wrote for a guard: v2 identity (ADR-0007), in the shell's
+	// PathSet is the PATH tq last wrote for a guard: v2 identity (ADR-0008), in the shell's
 	// spelling: a PATH still equal to it needs no work at the next prompt, and one the user
 	// changed since is merged back (MergePath) on leaving.
 	PathSet string `json:"path,omitempty"`
@@ -100,7 +100,7 @@ const (
 	NoticeLegacy = "legacy"
 	// NoticeMask: a guard: v2 identity's PATH needs its mask folder (a folder
 	// shared with other tools holds an out-of-scope CLI) and the folder is
-	// missing or changed; the fix is tq settings render (ADR-0007).
+	// missing or changed; the fix is tq settings render (ADR-0008).
 	NoticeMask = "path-mask"
 	// NoticeCmdLong: the identity PATH is longer than a cmd.exe line, so cmd.exe keeps the
 	// PATH it has (out-of-scope CLIs still resolve there); the rest of the identity applies.
@@ -111,7 +111,7 @@ const (
 )
 
 // Want is what a workspace wants of the environment: the variables to set and, for a
-// guard: v2 identity (ADR-0007), the variables to unset. PathSep is the shell's PATH list
+// guard: v2 identity (ADR-0008), the variables to unset. PathSep is the shell's PATH list
 // separator, used when a PATH tq changed is restored.
 type Want struct {
 	Set     map[string]string

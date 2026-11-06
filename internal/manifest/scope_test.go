@@ -78,7 +78,7 @@ func TestGuardFlag(t *testing.T) {
 }
 
 // TestMCPAllow: mcp.allow is a list of exact MCP server names a human keeps under guard: v2
-// (the owner's hybrid list, ADR-0007); names only, each once.
+// (the owner's hybrid list, ADR-0008); names only, each once.
 func TestMCPAllow(t *testing.T) {
 	m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nmcp: { allow: [my-db, plugin_tools_srv, docs.v2] }\n"))
 	if err != nil {
