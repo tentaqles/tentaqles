@@ -28,6 +28,11 @@ func TestOutOfScopeMCPEntry(t *testing.T) {
 		{"local", map[string]any{"command": "node", "args": []any{`C:\Users\me\AppData\Roaming\npm\node_modules\@aws\mcp\dist\index.js`}}, true},
 		{"cli-in-docker", map[string]any{"command": "docker", "args": []any{"run", "-i", "amazon/aws-cli:2.17"}}, true}, // P2.1's images list
 		{"aws", nil, true}, // by name, as before
+		// a hosts entry with a path prefix judges the url's path (ADR-0007 round 3)
+		{"oauth-path", map[string]any{"type": "http", "url": "https://github.com/login/oauth/access_token"}, true},
+		{"dotted-path", map[string]any{"type": "http", "url": "https://github.com/x/../login/oauth/access_token"}, true},
+		{"arg-path", map[string]any{"command": "npx", "args": []any{"mcp-remote", "https://github.com/login/device/code"}}, true},
+		{"repo-path", map[string]any{"type": "http", "url": "https://github.com/some/repo"}, false},
 		// kept
 		{"azure", map[string]any{"command": "npx", "args": []any{"-y", "@azure/mcp@latest"}}, false},
 		{"mydb", map[string]any{"command": "uvx", "args": []any{"postgres-mcp"}, "env": map[string]any{"DATABASE_URL": "x"}}, false},
