@@ -17,6 +17,8 @@
 //   carry <t> --from <dir>   copy job state from another worktree
 //   human <t> <id> pass|fail [note]
 //   release [--run]          open human checks, then the full gate
+//   park <t>                 set parked and commit it
+//   rule <line>              append an approved rule to REVIEW.md and commit it
 //   job <key> k=v ...        the router's job list; jobs prints it
 //   status | doctor
 //   hook pre | hook stop     builder hooks
@@ -31,6 +33,8 @@ import {
 const BOARD_STATES = ["draft", "ready", "parked", "landed"];
 const METHODS = ["test", "command", "inspect", "human", "browser"];
 const REQUIRED = { Low: ["U", "F", "Q"], Medium: ["U", "F", "Q", "R", "S"], High: ["U", "F", "Q", "R", "S"] };
+// {what happens} is a template's placeholder. {"ok":true} and %{http_code} are real output.
+const PLACEHOLDER = /(?<![%$])\{[A-Za-z][\w -]*\}/;
 
 const paths = (root, cfg, t) => {
   const dir = join(root, cfg.ticketsDir, t);
@@ -59,6 +63,7 @@ export function lint(root, cfg, t) {
   const risk = riskLevel(rd);
   if (!field(rd, "Status")) bad.push("rd.md has no **Status:** line");
   if (!risk) bad.push("rd.md has no **Risk:** line starting Low, Medium or High");
+  if (PLACEHOLDER.test(rd)) bad.push("rd.md still has a {placeholder}");
   const checks = parseChecks(ev);
   if (!checks.length) bad.push("eval.md has no checks");
   const seen = new Set();
@@ -67,7 +72,7 @@ export function lint(root, cfg, t) {
     seen.add(c.id);
     for (const [name, v] of [["Covers", c.covers], ["Method", c.method], ["Steps", c.steps], ["Expect", c.expect]]) {
       if (!v) bad.push(`${c.id}: ${name} is empty`);
-      else if (/\{[^}]*\}/.test(v)) bad.push(`${c.id}: ${name} still has a {placeholder}`);
+      else if (PLACEHOLDER.test(v)) bad.push(`${c.id}: ${name} still has a {placeholder}`);
     }
     const method = (c.method ?? "").split(/\s+/)[0];
     if (c.method && !METHODS.includes(method)) bad.push(`${c.id}: Method must be one of ${METHODS.join(", ")}`);
@@ -78,7 +83,7 @@ export function lint(root, cfg, t) {
   if (risk === "High") {
     const s = checks.filter((c) => c.id.startsWith("S-"));
     if (s.length < 3) bad.push(`High risk needs at least 3 S checks, found ${s.length}`);
-    if (s.length >= 3 && !s.some((c) => !["inspect"].includes((c.method ?? "").split(/\s+/)[0]))) bad.push("High risk needs one S check that runs and attacks it, not only inspect");
+    if (s.length >= 3 && !s.some((c) => !["inspect", "human"].includes((c.method ?? "").split(/\s+/)[0]))) bad.push("High risk needs one S check that runs and attacks it, not only inspect");
   }
   const ui = field(rd, "UI") ?? "";
   if (cfg.capabilities.mockups && /mockup/i.test(ui)) {
@@ -102,6 +107,8 @@ function approvalProblems(root, cfg, t) {
   if (rdHash(readText(p.rd)) !== a.rd) bad.push("rd.md changed after approval");
   const ev = Buffer.from(readText(p.eval));
   if (ev.length < a.eval.bytes || sha256(ev.subarray(0, a.eval.bytes)) !== a.eval.sha256) bad.push("approved checks in eval.md changed; new checks may only be appended");
+  const mockup = join(p.dir, "mockup.html");
+  if ((a.mockup ?? null) !== (existsSync(mockup) ? sha256(readText(mockup)) : null)) bad.push("mockup.html changed after approval");
   return bad;
 }
 
@@ -212,7 +219,8 @@ export function checkTicket(root, cfg, t) {
       if (human) bad.push(`${c.id}: only a person can pass a human check`);
       if (!r.evidence) bad.push(`${c.id}: PASS with no evidence`);
       for (const m of r.evidence.matchAll(/`([^`]+)`/g)) {
-        if (/[\\/]/.test(m[1]) && !existsSync(resolve(root, m[1]))) bad.push(`${c.id}: evidence ${m[1]} doesn't exist`);
+        const path = m[1].replace(/:\d+(-\d+)?$/, ""); // file:line means the file
+        if (/[\\/]/.test(path) && !/\s/.test(path) && !existsSync(resolve(root, path))) bad.push(`${c.id}: evidence ${path} doesn't exist`);
       }
     }
   }
@@ -243,9 +251,9 @@ const deny = (reason) => process.stdout.write(JSON.stringify({
   hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `build loop gate: ${reason}` },
 }));
 const BLOCKED_SHELL = [
-  [/(^|[\s;&|(])git(\s+-\S+(\s+[^\s-]\S*)?)*\s+push\b/, "builders don't push: the lander does"],
-  [/(^|[\s;&|(])git(\s+-\S+(\s+[^\s-]\S*)?)*\s+merge\b/, "builders don't merge: the lander does"],
-  [/(^|[\s;&|(])git(\s+-\S+(\s+[^\s-]\S*)?)*\s+rebase\b/, "builders don't rebase: report it, and the lander decides"],
+  [/(^|[\s;&|(])git(\s+-\S+(\s+[^\s-]\S*)?)*\s+push(?![\w-])/, "builders don't push: the lander does"],
+  [/(^|[\s;&|(])git(\s+-\S+(\s+[^\s-]\S*)?)*\s+merge(?![\w-])/, "builders don't merge: the lander does"],
+  [/(^|[\s;&|(])git(\s+-\S+(\s+[^\s-]\S*)?)*\s+rebase(?![\w-])/, "builders don't rebase: report it, and the lander decides"],
   [/(^|[\s;&|(])git(\s+-\S+(\s+[^\s-]\S*)?)*\s+reset\s+--hard\b/, "builders don't reset --hard"],
   [/(^|[\s;&|(])gh\s+pr\b/, "builders don't touch PRs"],
 ];
@@ -291,7 +299,14 @@ function hookStop(input) {
     process.stderr.write(`build loop gate: ${why}\n`);
     process.exit(2);
   };
-  if (!claim) return block("no ticket is claimed in this worktree");
+  if (!claim) {
+    // No ticket to record failure against, but this still must not block forever.
+    const f = join(root, cfg.jobDir, "stop-blocks-unclaimed.json");
+    const seen = readJson(f, { n: 0 });
+    if (seen.n >= cfg.limits.stopBlocks) return;
+    write(f, { n: seen.n + 1 });
+    return block("no ticket is claimed in this worktree: the ticket-lead runs `gate claim <ticket>` first");
+  }
   const p = paths(root, cfg, claim.ticket);
   const status = readStatus(p);
   if (status.step === "blocked" && status.note) return;
@@ -365,7 +380,8 @@ function doctor(root) {
   const bash = findBash();
   const v = spawnSync(bash, ["-c", "echo ok"], { encoding: "utf8", timeout: 5000, windowsHide: true });
   say(v.stdout?.trim() === "ok", `bash runs (${bash})`);
-  const ignored = (p) => git(root, ["check-ignore", "-q", p]).ok;
+  // The trailing slash matters: a directory pattern doesn't match a path that doesn't exist yet.
+  const ignored = (p) => git(root, ["check-ignore", "-q", `${p}/`]).ok;
   say(ignored(cfg?.jobDir ?? ".job"), `${cfg?.jobDir ?? ".job"}/ is gitignored`);
   say(ignored(".claude/worktrees"), ".claude/worktrees/ is gitignored");
   console.log('Note: agent hooks only run in a trusted folder. `gate check` refuses a ticket whose builder hook never ran.');
@@ -397,7 +413,11 @@ function main(argv) {
       const bad = lint(root, cfg, t);
       if (bad.length) return report(bad, "");
       const ev = Buffer.from(readText(p.eval));
-      write(p.approval, { rd: rdHash(readText(p.rd)), eval: { bytes: ev.length, sha256: sha256(ev) }, at: new Date().toISOString() });
+      const mockup = join(p.dir, "mockup.html");
+      write(p.approval, {
+        rd: rdHash(readText(p.rd)), eval: { bytes: ev.length, sha256: sha256(ev) },
+        mockup: existsSync(mockup) ? sha256(readText(mockup)) : null, at: new Date().toISOString(),
+      });
       console.log(`${t}: approved`);
       return 0;
     }
@@ -463,7 +483,10 @@ function main(argv) {
       if (!a[0]) throw new UserError("usage: gate risky <base> [head]");
       const diff = git(root, ["diff", "--name-only", `${a[0]}...${a[1] ?? "HEAD"}`]);
       if (!diff.ok) throw new UserError(`can't diff ${a[0]}: ${diff.err}`);
-      const hits = diff.out.split("\n").filter((f) => f && cfg.highRiskPaths.some((h) => f === h || f.startsWith(h.endsWith("/") ? h : `${h}/`)));
+      const hits = diff.out.split("\n").filter((f) => f && cfg.highRiskPaths.some((h) => {
+        if (h.endsWith("*")) return f.startsWith(h.slice(0, -1));
+        return f === h || f.startsWith(h.endsWith("/") ? h : `${h}/`);
+      }));
       hits.forEach((f) => console.log(f));
       return hits.length ? 1 : 0;
     }
@@ -509,6 +532,33 @@ function main(argv) {
       if (tree.ok && stampOk(job, "release", tree.out)) { console.log("release gate passed for this tree"); return 0; }
       console.log("No human checks open. The release gate hasn't passed for this tree: run `gate release --run`.");
       return 1;
+    }
+    case "park": {
+      // The router can't edit or use git, and parking is its call to relay: this commits itself.
+      const t = ticket();
+      const p = paths(root, cfg, t);
+      setBoard(root, cfg, t, "parked");
+      const rel = [p.rd, p.board].filter(existsSync).map((f) => relative(root, f));
+      git(root, ["add", "--", ...rel]);
+      const c = git(root, ["commit", "-m", `Park ${t}`, "--", ...rel], 15000);
+      if (!c.ok) throw new UserError(`couldn't commit: ${c.err || c.out}`);
+      console.log(`${t}: parked`);
+      return 0;
+    }
+    case "rule": {
+      // A rule the owner said yes to. Appends to REVIEW.md and commits only that file.
+      const line = a.join(" ").trim();
+      if (!line) throw new UserError("usage: gate rule <one line the owner approved>");
+      const f = join(root, "REVIEW.md");
+      if (!existsSync(f)) throw new UserError("no REVIEW.md in this checkout");
+      const text = readFileSync(f, "utf8");
+      if (!/^## Rules learned over time/m.test(text)) throw new UserError('REVIEW.md has no "## Rules learned over time" section');
+      writeFileSync(f, `${text.replace(/\s*$/, "")}\n- ${line}\n`);
+      git(root, ["add", "--", "REVIEW.md"]);
+      const c = git(root, ["commit", "-m", "docs(review): add a learned rule", "--", "REVIEW.md"], 15000);
+      if (!c.ok) throw new UserError(`couldn't commit: ${c.err || c.out}`);
+      console.log("rule added");
+      return 0;
     }
     case "job": {
       if (!a[0]) throw new UserError("usage: gate job <key> field=value ...");

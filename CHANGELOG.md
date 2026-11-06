@@ -6,6 +6,12 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### Added
+- The build loop, in `.claude/`: this repo's own development process, which doesn't ship. A
+  router session dispatches tickets, each ticket is built in its own worktree and judged by
+  agents that never saw the build, and a gate keeps the checks fixed once approved. It's
+  portable to other projects: see `.claude/README.md` and `.claude/PORTING.md`.
+
 ## [0.9.0] — 2026-11-04
 
 tq is an identity isolator with secrets protection for developers who work across several

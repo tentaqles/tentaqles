@@ -17,6 +17,8 @@
   "highRiskPaths": [
     "internal/guard/",
     "internal/policy/",
+    "internal/cmd/claudehook*",
+    "internal/cmd/humanonly*",
     "internal/trust/",
     "internal/humanonly/",
     "internal/markers/",
@@ -48,10 +50,11 @@
     "commandTimeoutMinutes": 30
   },
   "blind": {
-    "commands": ["tq"],
+    "commands": [".job/first-time-user/bin/tq"],
     "read": ["README.md", "docs/SETUP.md", "docs/COMMANDS.md"]
   },
   "app": {
+    "build": "go build -o .job/first-time-user/bin/ ./cmd/tq",
     "healthPaths": [],
     "coreFlows": [
       "go build ./... && go vet ./...",

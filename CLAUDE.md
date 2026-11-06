@@ -62,6 +62,14 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
   `RELEASING.md` (release PR, tag, release workflow, post-release PR pinning ref + sha),
   `IDEATION.md` (the isolation vision), `prd.md`, `threat-model.md`, `adr/`.
 
+## Development process
+This repo is developed with the build loop in `.claude/`: read `.claude/README.md`. It's for
+working on this repo and does not ship: nothing in the release, the plugin or the installers
+depends on it. `/write-tickets` turns work into tickets under `docs/tickets/`; the router
+(`claude --agent router --name router`) builds them. Low-risk changes need no ticket.
+
+@REVIEW.md
+
 ## Must not trade off
 From `docs/threat-model.md`; each line names the test that keeps it.
 - Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.

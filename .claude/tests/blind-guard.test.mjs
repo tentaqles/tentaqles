@@ -47,6 +47,18 @@ test("cli: only listed files can be read, however they're spelled", () => {
   for (const f of ["internal/cmd/root.go", "docs/../CLAUDE.md", join(d, "CLAUDE.md"), ".claude/project.json"])
     assert.equal(run(d, "Read", { file_path: f }).blocked, true, f);
 });
+test("cli: a command with a path is that exact file, so it tests the new build", () => {
+  const d = project({ capabilities: {}, blind: { commands: [".job/first-time-user/bin/tq"] } });
+  for (const c of [".job/first-time-user/bin/tq --help", "./.job/first-time-user/bin/tq.exe add --help", `'${join(d, ".job/first-time-user/bin/tq.exe")}' --help`])
+    assert.equal(bash(d, c).blocked, false, c);
+  for (const c of ["tq --help", "./tq --help", "other/bin/tq --help", ".job/first-time-user/bin/tq allow acme"])
+    assert.equal(bash(d, c).blocked, true, c);
+});
+test("browser: screenshots follow jobDir", () => {
+  const d = project({ capabilities: { browser: true }, jobDir: ".work" });
+  assert.equal(bash(d, "agent-browser screenshot .work/first-time-user/1.png").blocked, false);
+  assert.equal(bash(d, "agent-browser screenshot .job/first-time-user/1.png").blocked, true);
+});
 test("other tools are refused", () => {
   const d = project(CLI);
   for (const t of ["Grep", "Glob", "Edit", "Write", "Agent", "PowerShell"]) assert.equal(run(d, t, {}).blocked, true, t);

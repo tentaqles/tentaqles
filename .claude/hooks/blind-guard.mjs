@@ -20,7 +20,7 @@ const INTERNAL = /^\/(_next|__nextjs|_vercel|_nuxt|__nuxt|@vite|@fs|@id|@react-r
 // The production bundle is code too, wherever a framework puts it.
 const CODE_EXT = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".map", ".css", ".vue", ".svelte", ".wasm", ".json", ".env"]);
 const IMAGE = new Set([".png", ".jpg", ".jpeg", ".webp"]);
-const SHOTS = ".job/first-time-user";
+let SHOTS = ".job/first-time-user"; // follows jobDir, set once the profile is read
 
 const deny = (reason) => {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `${reason} You only have what a stranger would have: treat anything else as out of reach, and note it in your report.` } }));
@@ -115,11 +115,16 @@ function isShot(p, cwd, root) {
   return inside(abs, resolve(root, SHOTS)) && IMAGE.has(extname(abs).toLowerCase());
 }
 
-function cliBash(cmd, commands) {
+function cliBash(cmd, commands, cwd, root) {
   const w = words(cmd.trim().replace(/\\/g, "/"));
   if (!w || !w.length) return deny("Run one plain command per call: no pipes, redirects, chaining, substitution, globs or variables.");
   const name = w[0].replace(/\.exe$/i, "");
-  if (!commands.some((c) => c === name || basename(c) === name && !name.includes("/"))) return deny(`Only ${commands.join(", ")} is available.`);
+  // An entry with a path is that exact file. A bare name is whatever is on PATH.
+  const matches = (c) => {
+    if (!c.includes("/")) return name === c;
+    return name.includes("/") && resolve(cwd, name).toLowerCase() === resolve(root, c).toLowerCase();
+  };
+  if (!commands.some(matches)) return deny(`Only ${commands.join(", ")} is available.`);
   const rest = w.slice(1);
   const help = rest.length === 0 || ["--help", "-h", "help", "--version", "version"].includes(rest[0]) ||
     (rest.at(-1) === "--help" || rest.at(-1) === "-h");
@@ -143,12 +148,13 @@ try {
   const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", timeout: 1500, windowsHide: true });
   const root = top.status === 0 ? resolve(top.stdout.trim()) : resolve(cwd);
   const cfg = loadConfig(root);
+  if (cfg.jobDir) SHOTS = `${cfg.jobDir.replace(/\/+$/, "")}/first-time-user`;
   const browser = !!cfg.capabilities?.browser;
   const tool = input.tool_name;
   const ti = input.tool_input ?? {};
   if (tool === "Bash") {
     if (browser) browserBash(String(ti.command ?? ""), cwd, root, cfg.blind?.port ?? cfg.app?.ports?.main ?? 3000);
-    else cliBash(String(ti.command ?? ""), cfg.blind?.commands ?? []);
+    else cliBash(String(ti.command ?? ""), cfg.blind?.commands ?? [], cwd, root);
   } else if (tool === "Read") {
     const file = String(ti.file_path ?? "");
     const abs = real(resolve(cwd, file.replace(/\\/g, "/")));

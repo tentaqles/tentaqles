@@ -21,7 +21,8 @@ if [ -n "$gofiles" ]; then
     bad=$(gofmt -l $existing)
     if [ -n "$bad" ]; then echo "gofmt needed: $bad"; fail=1; fi
   fi
-  pkgs=$(echo "$gofiles" | xargs -n1 dirname | sort -u | sed 's|^|./|')
+  # A package whose files were all deleted has no folder left to test.
+  pkgs=$(echo "$gofiles" | xargs -n1 dirname | sort -u | while read -r p; do [ -d "$p" ] && echo "./$p"; done)
   # internal/cmd holds the hook and every command: always in the round.
   # shellcheck disable=SC2086
   run go test $pkgs ./internal/cmd -count=1
@@ -35,7 +36,7 @@ fi
 
 packtests=$(echo "$changed" | grep -E '^\.claude/' || true)
 if [ -n "$packtests" ]; then
-  run node --test .claude/tests/gate.test.mjs
+  run node --test .claude/tests/gate.test.mjs .claude/tests/blind-guard.test.mjs .claude/tests/check.test.mjs
 fi
 
 exit $fail

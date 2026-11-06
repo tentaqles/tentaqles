@@ -19,7 +19,7 @@ claude --agent router --name router   through your normal launcher, then "012" o
 
 | Agent | Job | Writes |
 |---|---|---|
-| router | Talks to you, starts ticket-leads, lander, reproducer, tracks them. Never builds. Has no Edit or Write unless a project turns teams on. | `gate job` only |
+| router | Talks to you, starts ticket-leads, lander, reproducer, tracks them. Never builds. Has no Edit or Write unless a project turns teams on. | Only through the gate: `job`, `park`, `rule` |
 | ticket-lead | Runs the review loop for one ticket in its own worktree. Triages. Returns stops to the router. | `.job/` only |
 | builder | The only role that writes product code. Commits on the ticket branch. | code, tests, its report |
 | verifier | Fresh each round. Runs every eval check, and reads the test behind each `test` check. Reports results. | `.job/` evidence and findings |
@@ -45,8 +45,8 @@ Agents can't talk to you. A question comes back up to the router, which asks you
 | `.job/ticket.json` | `gate claim` | Which ticket this worktree works on, and its base commit. |
 | `.job/<t>/status.json` | `gate step`, `gate block` | `ticket, step, round, note, branch, stepStarted, updated, released`. Steps: `claimed, build, verify, triage, waiting, done, blocked, failed`. |
 | `.job/<t>/state.md` | ticket-lead | The ledger. Survives compaction. Re-read it first after any summary. |
-| `.job/<t>/round-N/` | builder, verifier, reviewer, ticket-lead | `builder.md`, `verifier.json`, `reviewer.json`, `fix-list.md`. |
-| `.job/<t>/evidence/` | verifier | `E-n.txt` with command, exit code and output; PNGs on web projects. |
+| `.job/<t>/round-N/` | builder, verifier, ticket-lead | Builder: `builder.md`, and `approach.md` on a rethink. Verifier: `verifier.json`, `results.md`. Ticket-lead: `fix-list.md`, and `reviewer.json`, saved from the reviewer's reply since it has no Write. |
+| `.job/<t>/evidence/` | verifier | `<check ID>.txt` with command, exit code and output; PNGs on web projects. |
 | `.job/<t>/results/<tree>.md` | `gate record` | One line per check, `ID \| PASS or FAIL or HUMAN \| evidence`. Keyed by tree hash, so recording doesn't move HEAD. |
 | `.job/router-state.json` | `gate job` | The router's job list. Survives compaction. |
 
@@ -70,18 +70,18 @@ Categories: **U** ways to use it, **F** ways it can fail, **Q** quality, **R** w
 
 ## Risk
 
-The question is in `riskQuestion` of `project.json`. Anything in `highRiskPaths` is High no matter how small.
+The question is in `riskQuestion` of `project.json`. Anything in `highRiskPaths` is High no matter how small. An entry is a file, a folder ending in `/`, or a prefix ending in `*`.
 
 | | Low | Medium | High |
 |---|---|---|---|
-| Ticket | None. Normal session, then `/code-review low`. | Yes | Yes |
+| Ticket | None. Normal session, then `/code-review low`. | Yes. A small bug fix may land without one, through the lander's fix path. | Yes, always. `gate risky` enforces it for fixes. |
 | Checks needed | | U F Q R S | U F Q R S, at least 3 S with one that runs and attacks it |
 | Each round | | builder, then verifier and reviewer | same, stronger model on the reviewer |
 | Before landing | | | `/deep-review`, `/first-time-user` if user-visible behaviour changed |
 
 ## The gate
 
-`node .claude/hooks/gate.mjs`; the top of the file lists its commands. `lint`, `approve`, `board`, `claim`, `step`, `block`, `run`, `record`, `check`, `carry`, `human`, `release`, `job`, `jobs`, `status`, `doctor`.
+`node .claude/hooks/gate.mjs`; the top of the file lists its commands. `lint`, `approve`, `approval`, `board`, `claim`, `step`, `block`, `run`, `stamped`, `risky`, `record`, `check`, `carry`, `human`, `release`, `park`, `rule`, `job`, `jobs`, `status`, `doctor`.
 
 It's a speed bump against a model's mistakes and shortcuts, not a security boundary. Hooks run only on the builder, so a normal session runs none of them.
 

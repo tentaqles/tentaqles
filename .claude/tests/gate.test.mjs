@@ -217,6 +217,23 @@ test("stop: missing claim blocks a builder", () => {
   const d = project();
   assert.equal(hook(d, "stop", { agent_type: "builder" }).code, 2);
 });
+test("stop: no claim can't block forever (a stalling hook is a P0)", () => {
+  const d = project();
+  for (let i = 0; i < 3; i++) assert.equal(hook(d, "stop", {}).code, 2);
+  assert.equal(hook(d, "stop", {}).code, 0);
+});
+test("pre: lookalike git commands aren't blocked", () => {
+  const d = built();
+  for (const c of ["git merge-base HEAD main", "git push-foo", "git rebase-x", "git log --merges", "git diff main...HEAD"])
+    assert.equal(denied(hook(d, "pre", { tool_name: "Bash", tool_input: { command: c } })), false, c);
+});
+test("check: evidence like dir/x.js:12 means the file, without the line", () => {
+  const d = built();
+  mkdirSync(join(d, "dir"));
+  writeFileSync(join(d, "dir/x.js"), "x");
+  results(d, ["U-01", "F-01", "Q-01", "R-01"].map((i) => `${i} | PASS | ok`).join("\n") + "\nS-01 | PASS | see `dir/x.js:12`");
+  assert.equal(gate(d, "check", T).code, 0);
+});
 test("stop: dirty tree blocks; report and round gate required; clean passes", () => {
   const d = built();
   writeFileSync(join(d, "dirty.txt"), "x");
@@ -407,6 +424,59 @@ test("risky: names files on High-risk paths and exits 1", () => {
   const r = gate(d, "risky", base);
   assert.equal(r.code, 1);
   assert.match(r.out, /internal\/guard\/g\.go/);
+});
+
+test("risky: a trailing star is a prefix", () => {
+  const d = project({ highRiskPaths: ["internal/cmd/claudehook*"] });
+  const base = git(d, "rev-parse", "HEAD");
+  mkdirSync(join(d, "internal/cmd"), { recursive: true });
+  writeFileSync(join(d, "internal/cmd/other.go"), "x"); git(d, "add", "-A"); git(d, "commit", "-qm", "a");
+  assert.equal(gate(d, "risky", base).code, 0);
+  writeFileSync(join(d, "internal/cmd/claudehook_x.go"), "x"); git(d, "add", "-A"); git(d, "commit", "-qm", "b");
+  assert.equal(gate(d, "risky", base).code, 1);
+});
+test("lint: a human check isn't one that runs and attacks", () => {
+  const d = project();
+  writeFileSync(join(d, "docs/tickets", T, "rd.md"), RD("High: leaks"));
+  writeFileSync(join(d, "docs/tickets", T, "eval.md"), EVAL(check("S-02", "human") + check("S-03", "inspect")).replace(check("S-01"), check("S-01", "inspect")));
+  assert.match(gate(d, "lint", T).all, /attack/);
+});
+test("lint: real braces in an Expect are fine; placeholders aren't, in rd.md either", () => {
+  const d = project();
+  const ev = join(d, "docs/tickets", T, "eval.md");
+  writeFileSync(ev, EVAL().replace("It works.", 'Prints {"ok":true} and %{http_code} 200.'));
+  assert.equal(gate(d, "lint", T).code, 0, gate(d, "lint", T).all);
+  writeFileSync(ev, EVAL().replace("It works.", "{what happens}"));
+  assert.match(gate(d, "lint", T).all, /placeholder/);
+  writeFileSync(ev, EVAL());
+  writeFileSync(join(d, "docs/tickets", T, "rd.md"), RD() + "\n## Decisions\n{decision}\n");
+  assert.match(gate(d, "lint", T).all, /placeholder/);
+});
+test("approval: a changed mockup loses the approval", () => {
+  const d = project();
+  const m = join(d, "docs/tickets", T, "mockup.html");
+  writeFileSync(m, "<p>one</p>");
+  gate(d, "approve", T);
+  assert.equal(gate(d, "approval", T).code, 0);
+  writeFileSync(m, "<p>two</p>");
+  assert.match(gate(d, "approval", T).all, /mockup/);
+});
+test("rule: appends to REVIEW.md's learned section and commits only that", () => {
+  const d = project();
+  writeFileSync(join(d, "REVIEW.md"), "# Review\n\n## Rules learned over time\n\nFormat note.\n");
+  git(d, "add", "-A"); git(d, "commit", "-qm", "review");
+  writeFileSync(join(d, "other.txt"), "untouched");
+  assert.equal(gate(d, "rule", "Always check the owner before deleting.").code, 0);
+  assert.match(readFileSync(join(d, "REVIEW.md"), "utf8"), /## Rules learned over time[\s\S]*- Always check the owner/);
+  assert.equal(git(d, "status", "--porcelain"), "?? other.txt");
+  assert.equal(gate(d, "rule", "").code, 1);
+});
+test("park: sets the board and commits it; refuses an unknown ticket", () => {
+  const d = project();
+  assert.equal(gate(d, "park", T).code, 0);
+  assert.match(readFileSync(join(d, "docs/tickets/BOARD.md"), "utf8"), /parked/);
+  assert.equal(git(d, "status", "--porcelain"), "");
+  assert.equal(gate(d, "park", "999").code, 1);
 });
 
 // ---- misc
