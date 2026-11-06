@@ -1,6 +1,6 @@
 # 002: The CLI registers the guard hook in the identity's settings
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: if the registration or its script is wrong, a Claude Code session runs with no guard, and every tool call passes under any identity
 **UI:** none
 
