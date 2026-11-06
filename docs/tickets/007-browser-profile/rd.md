@@ -1,6 +1,6 @@
 # 007: One browser profile per identity
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: a login page or automation opened in another client's browser profile acts under the wrong account, with that client's cookies
 **UI:** none
 
