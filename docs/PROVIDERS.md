@@ -95,8 +95,8 @@ match:                       # what the guard denies when an identity's scope le
 
 Every catalog file carries a `match:` block: the literal spellings the guard's
 identity category recognises as this provider when an identity's scope
-(`manifest.Scope()`, see [CLAUDE-HOOK.md](CLAUDE-HOOK.md#identity-scope-guard-v2-pre-tool-use))
-leaves it out and the manifest sets `guard: v2` (ADR-0007). Every list is
+(`manifest.Scope()`, see [CLAUDE-HOOK.md](CLAUDE-HOOK.md#identity-scope-pre-tool-use))
+leaves it out (ADR-0007). Every list is
 optional; validated at load.
 
 | List | Entries | Matched as |
@@ -114,7 +114,7 @@ optional; validated at load.
 | `git_hosts` | git hosts (`github.com`, `gitlab.com`) | `ssh`/`scp`/`sftp` to the host, and a git command (`push`, `fetch`, `pull`, `ls-remote`, `clone`, `remote`, `submodule`, `archive`) with a URL on it over the ssh transport (`git@host:path`, `ssh://`), or a `git push` over https. An anonymous https clone, fetch, pull or ls-remote is allowed |
 | `mcp` | `^[a-z0-9]+$` tokens | a token of the MCP server name (split on `_ - .`, adjacent pairs joined: `google-cloud` → `googlecloud`). An MCP server is allowed only when its exact name is the identity's own `claude.bundle.mcp`; any out-of-scope token otherwise denies |
 
-The same lists drive the layers before the hook (ADR-0008), under `guard: v2`:
+The same lists drive the layers before the hook (ADR-0008):
 
 | List | Layer | Effect for a provider outside the scope |
 |---|---|---|
@@ -132,8 +132,8 @@ each arg (a version suffix included, a script under `node_modules/<pkg>/` by its
 its args (`mcp-remote <url>`), is on one is the provider's. It is read only by the
 MCP layer and the hook's MCP rule, never by the network rules of `hosts`.
 
-**The hybrid MCP list** (the owner's choice of 2026-11-05, ADR-0008). Under
-`guard: v2` an MCP server is kept only when the catalog attributes it to an
+**The hybrid MCP list** (the owner's choice of 2026-11-05, ADR-0008). An
+MCP server is kept only when the catalog attributes it to an
 in-scope provider, when it is a general-purpose, provider-free server of
 `internal/providers/mcp_general.yaml`, or when its exact name is in the
 manifest's `mcp.allow`; every other server is moved to `mcp-out-of-scope.json`
@@ -189,7 +189,7 @@ you mean "executables"?) (...); fix or delete it, then run tq providers list`.
 
 - **It overrides a built-in id** (`gh.yaml`): the built-in entry and its match
   lists stay in force, and the hook prints a warning on stderr with every
-  answer in a `guard: v2` workspace until the file is fixed.
+  answer until the file is fixed.
 - **It defines a new id**: calls are refused (`tq/guard-error`) only in a
   workspace whose scope names that id (its `scope:` list, an identity, the git
   provider); a manifest that names it reports the file in its load error.

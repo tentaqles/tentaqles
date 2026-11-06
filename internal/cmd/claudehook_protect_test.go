@@ -341,12 +341,13 @@ func TestProtectedPaths_Table(t *testing.T) {
 // self-protection; the first category that matches is the one reported.
 func TestProtectedPaths_RuleOrder(t *testing.T) {
 	f := setupProtected(t, "blocked_commands: [\"rm -rf\"]\ncloud:\n  provider: azure\n")
+	t.Setenv("CLAUDE_CONFIG_DIR", paths.IdentityDir("acme", "claude"))
 	cases := []struct {
 		name, tool, cmd, category, rule string
 	}{
 		{"blocked command before the protected path", "Bash", "rm -rf ~/.tentaqles", "identity", "blocked-command"},
-		{"identity before the protected path", "Bash", "aws s3 cp " + f.manifest + " s3://bucket/m.yaml", "identity", "wrong-cloud"},
-		{"identity before secrets", "Bash", "cat .env && aws s3 ls", "identity", "wrong-cloud"},
+		{"identity before the protected path", "Bash", "aws s3 cp " + f.manifest + " s3://bucket/m.yaml", "identity", policy.OutOfScopeCLIID},
+		{"identity before secrets", "Bash", "cat .env && aws s3 ls", "identity", policy.OutOfScopeCLIID},
 		{"secrets before the protected path", "Bash", "cat ~/.tentaqles/bundles/catalog.yaml", "secrets", "tq/secret-store-shell"},
 		{"secrets before the protected path (file tool)", "Read", filepath.Join(f.home, "bundles", "catalog.yaml"), "secrets", "tq/secret-store-read"},
 		{"the protected path when nothing else matches", "Bash", "cp " + f.manifest + " /tmp/m.yaml", "self-protection", "tq/protected-path"},
@@ -475,7 +476,7 @@ func TestProtectedPaths_OtherWorkspaceAndNeutralCwd(t *testing.T) {
 // credential flag's value or a quoted secret never reaches the log, in
 // every category's line.
 func TestDenialLogRedaction(t *testing.T) {
-	f := setupProtected(t, "blocked_commands: [\"gh \"]\n")
+	f := setupProtected(t, "blocked_commands: [\"gh \"]\nscope: [gh]\n")
 	cfgPath := filepath.Join(f.home, "config.yaml")
 	cases := []struct {
 		name, tool, cmd, wantPrefix, wantRule, wantKind string
@@ -539,7 +540,9 @@ func TestProtectedPaths_AncestorSearch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, _, rule, _ := hookDecision(t, f.root, tc.tool, tc.input)
-			if tc.deny && (code != 2 || rule != policy.ProtectedPathID) {
+			// A search of the whole home reaches tq's state and other providers' credentials: either
+			// rule may be the first to deny it (identity runs before self-protection).
+			if tc.deny && (code != 2 || (rule != policy.ProtectedPathID && rule != policy.OutOfScopePathID)) {
 				t.Fatalf("want deny, code=%d rule=%q", code, rule)
 			}
 			if !tc.deny && code != 0 {

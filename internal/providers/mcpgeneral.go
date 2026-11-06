@@ -9,7 +9,7 @@ import (
 )
 
 // The general-purpose, provider-free MCP servers of mcp_general.yaml (ADR-0008): the second
-// leg of the owner's hybrid MCP list. A server matching one is kept under guard: v2 though no
+// leg of the owner's hybrid MCP list. A server matching one is kept though no
 // provider of the scope claims it.
 
 //go:embed mcp_general.yaml

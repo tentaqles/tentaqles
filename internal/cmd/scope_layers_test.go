@@ -64,7 +64,7 @@ func envJSON(t *testing.T, sh string) (set map[string]string, unset []string) {
 // company-x, a shell call to aws finds nothing (command-not-found) while az still resolves;
 // the AWS variables are unset. tq run from outside the folder resolves on the same PATH.
 func TestEnv_ScopeReferenceScenario_PATH(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	global, awsDir, azDir := scenarioGlobalPATH(t)
 	t.Setenv("PATH", global)
 	t.Setenv("AWS_PROFILE", "prod")
@@ -145,10 +145,9 @@ func runCmdErr(t *testing.T, args ...string) error {
 	return root.Execute()
 }
 
-// Leaving company-x restores PATH and the unset variables exactly; without guard: v2 tq env
-// leaves both alone.
-func TestEnv_ScopeLayerRestoreAndV1(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+// Leaving company-x restores PATH and the unset variables exactly.
+func TestEnv_ScopeLayerRestore(t *testing.T) {
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	global, _, _ := scenarioGlobalPATH(t)
 	t.Setenv("PATH", global)
 	t.Setenv("AWS_PROFILE", "prod")
@@ -170,23 +169,14 @@ func TestEnv_ScopeLayerRestoreAndV1(t *testing.T) {
 	if back["PATH"] != global || back["AWS_PROFILE"] != "prod" {
 		t.Fatalf("leaving: PATH %q AWS_PROFILE %q", back["PATH"], back["AWS_PROFILE"])
 	}
-
-	v1root, _ := setupScoped(t, "acme", companyXBody)
-	t.Setenv(envplan.StateVar, "")
-	t.Setenv("PATH", global)
-	chdir(t, v1root)
-	set, unset = envJSON(t, sh)
-	if _, ok := set["PATH"]; ok || len(unset) != 0 {
-		t.Fatalf("v1 tq env touches PATH or unsets: %v %v", set, unset)
-	}
 }
 
 // TestSettingsRender_ScopeReferenceScenario_MCP is §6.1 step 3: an AWS MCP server configured
 // in company-x's Claude home (user and project scope) and Codex home is gone after tq
 // settings render; the Azure server and an unrelated one stay, the removed ones are kept
-// beside the config, and the PATH mask is written. Without guard: v2 nothing is touched.
+// beside the config, and the PATH mask is written.
 func TestSettingsRender_ScopeReferenceScenario_MCP(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	claudeDir := paths.IdentityDir("company-x", "claude")
 	codexDir := paths.IdentityDir("company-x", "codex")
 	write := func(p, s string) {
@@ -247,32 +237,15 @@ func TestSettingsRender_ScopeReferenceScenario_MCP(t *testing.T) {
 	if got := runEnv(t, "settings", "render", "company-x"); strings.Contains(got, "skipped") || strings.Contains(got, "removed MCP") {
 		t.Fatalf("second render:\n%s", got)
 	}
-
-	// Without guard: v2 the same files are left as they are.
-	setupScoped(t, "acme", companyXBody)
-	acme := paths.IdentityDir("acme", "claude")
-	write(filepath.Join(acme, ".claude.json"), claudeJSON)
-	runEnv(t, "settings", "render", "acme")
-	if b, _ := os.ReadFile(filepath.Join(acme, ".claude.json")); string(b) != claudeJSON {
-		t.Fatalf("v1 render changed .claude.json:\n%s", b)
-	}
-	if _, err := os.Stat(envplan.MaskDir("acme")); err == nil {
-		t.Fatal("v1 render wrote a PATH mask")
-	}
 }
 
 // TestSessionStart_ScopeLine is §6.1 step 1 (advisory): the preamble states the scope in one
-// line under guard: v2, and says nothing new without it.
+// line.
 func TestSessionStart_ScopeLine(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	_, out, _ := runHook(t, []string{"claude-hook", "session-start"}, `{"cwd":`+jsonPath(t, root)+`}`)
 	want := "Scope: az, azure-devops, claude. Identity company-x may use these providers only"
 	if n := strings.Count(out, "\nScope: "); n != 1 || !strings.Contains(out, want) {
 		t.Fatalf("preamble lacks the scope line:\n%s", out)
-	}
-	v1, _ := setupScoped(t, "acme", companyXBody)
-	_, out, _ = runHook(t, []string{"claude-hook", "session-start"}, `{"cwd":`+jsonPath(t, v1)+`}`)
-	if strings.Contains(out, "Scope: ") {
-		t.Fatalf("v1 preamble states a scope:\n%s", out)
 	}
 }

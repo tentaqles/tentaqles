@@ -110,7 +110,7 @@ Human-only: a session is refused, and you confirm before the files are written
 					fmt.Fprintf(c.OutOrStdout(), "  %s\n", ch)
 				}
 				codexChanged := renderCodex(c, ws, dryRun)
-				// guard: v2: the PATH mask and the in-scope MCP lists (ADR-0008); neither is
+				// The PATH mask and the in-scope MCP lists (ADR-0008); neither is
 				// covered by the integrity record, so no re-sign.
 				renderScope(c, ws, dryRun)
 				if !dryRun && (res.Changed || codexChanged) {

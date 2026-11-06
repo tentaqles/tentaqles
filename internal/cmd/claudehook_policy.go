@@ -256,7 +256,7 @@ func policyDecision(cwd string, ws *resolve.Workspace, cfg *registry.Config, cal
 // policyDecisionWith is policyDecision with the rule set and the protected
 // path set already built (a patch judges many files with one of each).
 func policyDecisionWith(set *policy.Set, prot *protect.Set, cwd string, ws *resolve.Workspace, cfg *registry.Config, call policy.ToolCall, deadline time.Time) policy.Decision {
-	// The identity category's v2 rules (guard: v2, ADR-0007) come before secrets (§6.3);
+	// The identity category's rules (ADR-0007) come before secrets (§6.3);
 	// the manifest's blocked commands and the v1 identity rules ran in guard.Decide. An
 	// unreadable manifest (guard: v3, an unknown scope: id) and an unreadable provider
 	// catalog were already denied by pre-tool-use's one fail-closed path.

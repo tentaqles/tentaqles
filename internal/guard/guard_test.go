@@ -265,10 +265,9 @@ func TestExtraClouds(t *testing.T) {
 	}
 }
 
-// TestScopedSkipsWrongCloud: under guard: v2 (Input.Scoped) the provider scope judges cloud
+// TestScopedSkipsWrongCloud: with a trusted manifest (Input.Scoped) the provider scope judges cloud
 // CLIs (policy's identity/out-of-scope-cli, ADR-0007), so wrong-cloud does not run; the
-// manifest's blocked commands and the drift rules still do. Without the flag wrong-cloud
-// behaves as before.
+// manifest's blocked commands and the drift rules still do. An untrusted one keeps wrong-cloud.
 func TestScopedSkipsWrongCloud(t *testing.T) {
 	in := Input{Command: "aws ec2 run-instances", Client: "company-x", CloudProvider: "azure"}
 	if d := Decide(in); !d.Block || d.Rule != "wrong-cloud" {

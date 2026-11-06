@@ -18,7 +18,7 @@ import (
 // The PRD v2 §6.1 reference scenario at layer 4 (the hook), ADR-0007: identity company-x
 // declares Azure as its only cloud; an agent reaching AWS by any route the hook sees is
 // denied in the identity category with a message naming the scope, and the denial is
-// logged. Without guard: v2 the same identity keeps the v1 rules.
+// logged.
 
 const companyXBody = "git: { email: dev@company-x.example, provider: azure-devops }\n" +
 	"identities: { az: {}, claude: {} }\ncloud: { provider: azure }\n"
@@ -57,7 +57,7 @@ func setupScoped(t *testing.T, name, body string) (root, beta string) {
 }
 
 func TestPreToolUse_ScopeReferenceScenario(t *testing.T) {
-	root, beta := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, beta := setupScoped(t, "company-x", companyXBody)
 	home, _ := os.UserHomeDir()
 	creds := filepath.Join(home, ".aws", "credentials")
 	cases := []struct {
@@ -142,54 +142,42 @@ func TestPreToolUse_ScopeReferenceScenario(t *testing.T) {
 	}
 }
 
-// TestPreToolUse_ScopeRuleOrder: an AWS credential read under guard: v2 is the identity
-// category's (it runs before secrets, §6.3); without the flag it is the secret rule's, as
-// before.
+// TestPreToolUse_ScopeRuleOrder: an AWS credential read is the identity category's: it runs
+// before secrets (§6.3).
 func TestPreToolUse_ScopeRuleOrder(t *testing.T) {
-	for _, v2 := range []bool{true, false} {
-		body := companyXBody
-		if v2 {
-			body = "guard: v2\n" + body
-		}
-		root, _ := setupScoped(t, "company-x", body)
-		home, _ := os.UserHomeDir()
-		_, category, rule, _ := hookDecision(t, root, "Read", pathIn("file_path", filepath.Join(home, ".aws", "credentials")))
-		want := policy.CategoryIdentity + "/" + policy.OutOfScopePathID
-		if !v2 {
-			want = policy.CategorySecrets + "/tq/secret-store-read"
-		}
-		if category+"/"+rule != want {
-			t.Errorf("v2=%v: %s/%s, want %s", v2, category, rule, want)
-		}
+	root, _ := setupScoped(t, "company-x", companyXBody)
+	home, _ := os.UserHomeDir()
+	_, category, rule, _ := hookDecision(t, root, "Read", pathIn("file_path", filepath.Join(home, ".aws", "credentials")))
+	if want := policy.CategoryIdentity + "/" + policy.OutOfScopePathID; category+"/"+rule != want {
+		t.Errorf("%s/%s, want %s", category, rule, want)
 	}
 }
 
-// TestPreToolUse_ScopeV1Unchanged: without guard: v2 the identity keeps the v1 rules: an AWS
-// CLI is wrong-cloud, and nothing else of the scope is judged.
-func TestPreToolUse_ScopeV1Unchanged(t *testing.T) {
+// TestPreToolUse_ManifestNeedsNoFlag: there is one guard. A manifest with no guard key gets
+// all of it: every route to another provider, and another identity's folder, is denied.
+func TestPreToolUse_ManifestNeedsNoFlag(t *testing.T) {
 	root, beta := setupScoped(t, "company-x", companyXBody)
-	code, category, rule, _ := hookDecision(t, root, "Bash", cmdIn("aws ec2 run-instances"))
-	if code != 2 || category != "identity" || rule != "wrong-cloud" {
-		t.Fatalf("v1 aws: code=%d %s/%s", code, category, rule)
-	}
 	for _, c := range []struct{ tool, input string }{
+		{"Bash", cmdIn("aws ec2 run-instances")},
 		{"Bash", cmdIn("python -m awscli ec2 run-instances")},
 		{"Bash", cmdIn("curl https://ec2.amazonaws.com")},
 		{"mcp__aws__run_instances", `{}`},
-		{"Bash", cmdIn("gh pr list")},
 		{"Read", pathIn("file_path", filepath.Join(beta, "src", "main.go"))},
 	} {
-		if code, _, _, errOut := hookDecision(t, root, c.tool, c.input); code != 0 {
-			t.Errorf("v1 %s %s: denied: %s", c.tool, c.input, errOut)
+		if code, category, _, errOut := hookDecision(t, root, c.tool, c.input); code != 2 || category != policy.CategoryIdentity {
+			t.Errorf("%s %s: code=%d category=%q: %s", c.tool, c.input, code, category, errOut)
 		}
+	}
+	if code, _, _, errOut := hookDecision(t, root, "Bash", cmdIn("az group list")); code != 0 {
+		t.Errorf("the identity's own cloud is denied: %s", errOut)
 	}
 }
 
 // TestPreToolUse_UnreadableManifestDeniesAll: a workspace folder whose protected manifest
-// cannot be read (guard: v3, an unknown scope id, bad YAML) denies every tool with
+// cannot be read (an unknown scope id, bad YAML) denies every tool with
 // tq/guard-error, instead of falling back to neutral (ADR-0007 round 2).
 func TestPreToolUse_UnreadableManifestDeniesAll(t *testing.T) {
-	for _, bad := range []string{"guard: v3\n", "guard: true\n", "guard: v2\nscope: [awss]\n", "client: company-x\n:\n"} {
+	for _, bad := range []string{"scope: [awss]\n", "client: company-x\n:\n"} {
 		root := mkUntrusted(t, "company-x")
 		if err := os.WriteFile(filepath.Join(root, manifest.FileName), manifest.MarkerBytes("company-x"), 0o600); err != nil {
 			t.Fatal(err)
@@ -250,7 +238,7 @@ func TestPreToolUse_BadProviderFiles(t *testing.T) {
 			"Read", pathIn("file_path", "README.md"), 2, policy.GuardErrorID, false},
 	}
 	for _, c := range cases {
-		root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody+c.scopeExtra)
+		root, _ := setupScoped(t, "company-x", companyXBody+c.scopeExtra)
 		dir := filepath.Join(paths.Home(), "providers")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
@@ -351,26 +339,31 @@ func TestProviders_BadFilesReported(t *testing.T) {
 	}
 }
 
-// TestPreToolUse_GuardMappingIsV1: the dropped guard-modes mapping is not the v2 flag; the
-// workspace keeps the v1 rules and tq doctor reports the dropped block (manifest.Ignored).
-func TestPreToolUse_GuardMappingIsV1(t *testing.T) {
+// TestPreToolUse_OldGuardKeysStillGuarded: there is one guard. A manifest with an old guard key
+// (the dropped modes mapping, or guard: v1) gets it like any other, and tq doctor still reports
+// the dropped mapping (manifest.Ignored).
+func TestPreToolUse_OldGuardKeysStillGuarded(t *testing.T) {
 	root, _ := setupScoped(t, "company-x", "guard:\n  mode: strict\n"+companyXBody)
-	if code, _, _, _ := hookDecision(t, root, "Bash", cmdIn("python -m awscli s3 ls")); code != 0 {
-		t.Fatal("a guard mapping must leave the v1 rules (no v2 scope deny)")
+	if code, _, _, _ := hookDecision(t, root, "Bash", cmdIn("python -m awscli s3 ls")); code != 2 {
+		t.Fatal("a guard mapping must not switch the guard off")
 	}
 	m, err := manifest.Load(paths.ManifestPath("company-x"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.GuardV2() || len(m.Ignored) == 0 {
-		t.Fatalf("guard mapping: GuardV2=%v Ignored=%v", m.GuardV2(), m.Ignored)
+	if len(m.Ignored) == 0 {
+		t.Fatalf("guard mapping: Ignored=%v", m.Ignored)
+	}
+	root, _ = setupScoped(t, "company-y", "guard: v1\n"+companyXBody)
+	if code, _, _, _ := hookDecision(t, root, "Bash", cmdIn("python -m awscli s3 ls")); code != 2 {
+		t.Fatal("guard: v1 must not switch the guard off")
 	}
 }
 
 // TestPreToolUse_ScopeNeutralIsV1: a cwd in no workspace has no scope: the v2 rules do not
 // run there, and the v1 neutral-remote rule still refuses a cloud CLI.
 func TestPreToolUse_ScopeNeutralIsV1(t *testing.T) {
-	setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	setupScoped(t, "company-x", companyXBody)
 	neutral := t.TempDir()
 	if code, _, rule, _ := hookDecision(t, neutral, "Bash", cmdIn("aws s3 ls")); code != 2 || rule != "neutral-remote" {
 		t.Fatalf("neutral aws: code=%d rule=%q", code, rule)

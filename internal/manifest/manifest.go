@@ -100,11 +100,9 @@ type Manifest struct {
 	Email        *Service `yaml:"email,omitempty"`
 	DataPlatform *Service `yaml:"data_platform,omitempty"`
 	Agents       []string `yaml:"agents,omitempty"`
-	// Guard is the guard: v2 flag (scope.go); ExtraScope adds catalog ids to the
-	// derived provider scope (Scope).
-	Guard      GuardFlag `yaml:"guard,omitempty"`
-	ExtraScope []string  `yaml:"scope,omitempty"`
-	// MCP is the mcp: block: allow lists the exact MCP server names kept under guard: v2 though
+	// ExtraScope adds catalog ids to the derived provider scope (Scope).
+	ExtraScope []string `yaml:"scope,omitempty"`
+	// MCP is the mcp: block: allow lists the exact MCP server names kept though
 	// no in-scope provider claims them and they are not general-purpose (scope.go, ADR-0008).
 	MCP  MCPBlock `yaml:"mcp,omitempty"`
 	Path string   `yaml:"-"`
@@ -148,7 +146,7 @@ func droppedBlocksIn(raw []byte) []string {
 			continue
 		}
 		if _, scalar := v.(string); scalar && k == "guard" {
-			continue // guard: v2 is the flag of the v2 identity rules, not the dropped block
+			continue // an older manifest's guard: v2 flag: there is one guard now, so it means nothing, and nothing is dropped
 		}
 		out = append(out, k)
 	}
@@ -212,9 +210,6 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.ValidateServices(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if err := m.Guard.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.validateScope(); err != nil {
@@ -301,10 +296,10 @@ func (m *Manifest) validateCloud() error {
 }
 
 // IdentityNames returns the sorted providers this workspace isolates.
-// v1 manifests (no identities block) default to claude+gh plus the cloud CLI.
-// Every cloud.also cloud is isolated too: with an identities block, one that
-// block does not declare is added implicitly, so the guard never allows a
-// cloud CLI that has no private config home.
+// With no identities block it defaults to claude+gh. Every cloud the manifest
+// declares (cloud.provider and cloud.also) is isolated too, added when the
+// identities block leaves it out: the client's own cloud is always in scope,
+// and the guard never allows a cloud CLI that has no private config home.
 func (m *Manifest) IdentityNames() []string {
 	var out []string
 	var clouds []string
@@ -314,9 +309,9 @@ func (m *Manifest) IdentityNames() []string {
 		}
 	} else {
 		out = []string{"claude", "gh"}
-		if p, _ := m.Cloud["provider"].(string); p != "" {
-			clouds = append(clouds, p)
-		}
+	}
+	if p, _ := m.Cloud["provider"].(string); p != "" {
+		clouds = append(clouds, p)
 	}
 	// cloud.also: further clouds this workspace may use (see guard.Input.ExtraClouds).
 	if also, ok := m.Cloud["also"].([]any); ok {

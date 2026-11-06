@@ -13,8 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
-// The identity category's v2 rules (PRD v2 §6.3, §7.1; ADR-0007), on behind the manifest
-// flag guard: v2: everything an identity's provider scope leaves out is denied in every
+// The identity category's rules (PRD v2 §6.3, §7.1; ADR-0007): everything an identity's provider scope leaves out is denied in every
 // tool. The claims are the catalog's data (providers.Match); this file reads them.
 //
 // Precision (ADR-0007 round 2): a provider's CLAIMS (what being in scope allows) come from

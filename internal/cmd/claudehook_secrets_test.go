@@ -56,7 +56,9 @@ func TestPreToolUse_SecretRules(t *testing.T) {
 		}
 	}
 	t.Run("trusted workspace", func(t *testing.T) {
-		ws := setupTrustedWorkspaceWithManifest(t, "acme", "")
+		// aws is in scope: a credential read outside the scope is the identity rule's, which
+		// TestScope_OutOfScopePath covers; here the secret rules are what is judged.
+		ws := setupTrustedWorkspaceWithManifest(t, "acme", "scope: [aws]\n")
 		for _, r := range rows {
 			run(t, ws, r.name, r.tool, r.input, r.rule)
 		}

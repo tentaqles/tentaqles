@@ -63,7 +63,7 @@ func environNames(environ []string) []string {
 }
 
 // Plan is what workspace ws wants of env at this prompt, given the state the previous prompt
-// left (prev): the variables Desired sets and, for a guard: v2 identity (LayerFor), the
+// left (prev): the variables Desired sets and, for an identity (LayerFor), the
 // out-of-scope variables unset and the identity PATH (FilterPath). The notice, when not nil,
 // says the mask folder is missing.
 //

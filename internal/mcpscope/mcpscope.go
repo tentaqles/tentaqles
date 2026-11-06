@@ -1,5 +1,5 @@
 // Package mcpscope is the harness config layer of PRD v2 §6.2 (layer 3 of the §6.1 scenario;
-// ADR-0008): for an identity whose manifest sets guard: v2, the MCP servers registered in its
+// ADR-0008): for an identity, the MCP servers registered in its
 // Claude config home (.claude.json mcpServers, top level and per project) and its Codex home
 // (config.toml [mcp_servers.<name>]) hold no server tq can attribute to a provider outside the
 // scope, so no out-of-scope MCP tool reaches the model's tool list.
@@ -36,9 +36,9 @@ type Judge struct {
 	s  *policy.Scope
 }
 
-// For is ws's judge, or nil when the manifest does not set guard: v2 (nothing is filtered).
+// For is ws's judge, or nil with no manifest (nothing is filtered).
 func For(ws string, m *manifest.Manifest) *Judge {
-	if m == nil || !m.GuardV2() {
+	if m == nil {
 		return nil
 	}
 	return &Judge{ws: ws, s: policy.ScopeFor(ws, m.Scope(), m.BundleMCP(), m.MCPAllow())}

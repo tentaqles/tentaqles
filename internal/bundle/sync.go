@@ -52,7 +52,7 @@ func Sync(ws *resolve.Workspace, cat *Catalog, o Options) (Report, error) {
 	// Collected up front so they're reported even when a later step fails.
 	rep.Warnings = cat.Validate()
 
-	// guard: v2 (ADR-0008): a bundle server outside the identity's scope is not written; the
+	// ADR-0008: a bundle server outside the identity's scope is not written; the
 	// render would take it out again and the hook denies its tools.
 	if j := mcpscope.For(ws.Name, ws.Manifest); j != nil {
 		for name, e := range d.MCP {

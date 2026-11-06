@@ -29,9 +29,6 @@ func companyX(t testing.TB, v2 bool) *resolve.Workspace {
 		Identities: map[string]manifest.Identity{"az": {}, "claude": {}},
 		Git:        manifest.Git{Provider: "azure-devops", Email: "dev@company-x.example"},
 		Cloud:      map[string]any{"provider": "azure"}}
-	if v2 {
-		m.Guard = "v2"
-	}
 	return &resolve.Workspace{Name: "company-x", Root: filepath.Join(testutil.TempDir(t), "company-x"), Manifest: m}
 }
 
@@ -104,7 +101,7 @@ func TestPathLayer_ScenarioAwsNotOnPath(t *testing.T) {
 	awsDir, azDir, toolsDir := globalDirs(t)
 	l := LayerFor(companyX(t, true))
 	if l == nil {
-		t.Fatal("guard: v2 must give a layer")
+		t.Fatal("a workspace must give a layer")
 	}
 	got, rep := l.FilterPath(join(awsDir, azDir, toolsDir), NativeSyntax())
 	if want := join(azDir, toolsDir); got != want {
@@ -134,21 +131,10 @@ func TestPathLayer_ScenarioAwsNotOnPath(t *testing.T) {
 	}
 }
 
-// Without guard: v2 there is no layer: the PATH and the environment are what v1 makes them.
-func TestPathLayer_V1HasNoLayer(t *testing.T) {
-	t.Setenv("TQ_HOME", testutil.TempDir(t))
-	ws := companyX(t, false)
-	if LayerFor(ws) != nil || LayerFor(nil) != nil {
-		t.Fatal("a layer without guard: v2")
-	}
-	awsDir, azDir, _ := globalDirs(t)
-	cur := map[string]string{"PATH": join(awsDir, azDir), "AWS_PROFILE": "prod"}
-	w, n := Plan(ws, State{}, Env{Lookup: env(cur), Names: []string{"PATH", "AWS_PROFILE"}, Syntax: NativeSyntax(), PathOK: true})
-	if _, set := w.Set["PATH"]; set || len(w.Unset) != 0 || n != nil {
-		t.Fatalf("v1 plan touches PATH or unsets: %+v %v", w, n)
-	}
-	if !reflect.DeepEqual(w.Set, Desired(ws)) {
-		t.Fatalf("v1 plan = %v, want Desired", w.Set)
+// No workspace, no layer.
+func TestPathLayer_NoWorkspaceNoLayer(t *testing.T) {
+	if LayerFor(nil) != nil {
+		t.Fatal("a layer with no workspace")
 	}
 }
 
@@ -446,7 +432,7 @@ func TestLayer_SwitchIdentityRebuildsFromOriginal(t *testing.T) {
 	awsDir, azDir, _ := globalDirs(t)
 	cx := companyX(t, true)
 	awsWS := &resolve.Workspace{Name: "beta", Root: filepath.Join(testutil.TempDir(t), "beta"), Manifest: &manifest.Manifest{
-		Schema: "tentaqles-client-v2", Client: "beta", Guard: "v2", Identities: map[string]manifest.Identity{"aws": {}}}}
+		Schema: "tentaqles-client-v2", Client: "beta", Identities: map[string]manifest.Identity{"aws": {}}}}
 	sh := map[string]string{"PATH": join(awsDir, azDir), "AWS_PROFILE": "prod"}
 	syn := NativeSyntax()
 	run := func(w *resolve.Workspace, prev State) State {
@@ -497,11 +483,6 @@ func TestEnviron_V2Layer(t *testing.T) {
 	}
 	if p, err := LookPath("aws", out); err == nil {
 		t.Fatalf("aws resolves in the launch env: %s", p)
-	}
-	// v1: untouched PATH, variables kept.
-	v1 := Environ(companyX(t, false), base)
-	if !containsAll(v1, base) {
-		t.Fatalf("v1 launch env changed: %v", v1)
 	}
 }
 

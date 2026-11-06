@@ -37,7 +37,7 @@ func newEnvCmd() *cobra.Command {
 			cwd, _ := os.Getwd()
 			res := resolve.Resolve(cwd, cfg)
 			prev := envplan.DecodeState(os.Getenv(envplan.StateVar))
-			// guard: v2 adds the PATH and environment layer (ADR-0008): the identity PATH
+			// The guard adds the PATH and environment layer (ADR-0008): the identity PATH
 			// and the out-of-scope variables unset, both restored on leaving.
 			senv := envplan.ShellEnv(sh)
 			// A shell whose state is gone while TQ_WS is set fails closed (ADR-0008): tq's own

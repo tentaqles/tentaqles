@@ -117,7 +117,7 @@ func TestLostState_FailsClosed(t *testing.T) {
 		}
 		sh2[StateVar] = "hello world"
 		aws := &resolve.Workspace{Name: "awsco", Root: filepath.Join(testutil.TempDir(t), "awsco"), Manifest: &manifest.Manifest{
-			Schema: "tentaqles-client-v2", Client: "awsco", Guard: "v2", Identities: map[string]manifest.Identity{"aws": {}}}}
+			Schema: "tentaqles-client-v2", Client: "awsco", Identities: map[string]manifest.Identity{"aws": {}}}}
 		step(sh2, aws)
 		if sh2["TQ_WS"] != "awsco" || sh2["CLAUDE_CONFIG_DIR"] != "" || strings.Contains(sh2["PATH"], MaskDir("company-x")) || sh2["AZURE_CONFIG_DIR"] != "" {
 			t.Errorf("%s: awsco inherits company-x: %v", c.name, sh2)

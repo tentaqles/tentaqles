@@ -22,7 +22,7 @@ func TestEnv_UnicodePathFoldersRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Skip("no Windows PowerShell")
 	}
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	runEnv(t, "settings", "render", "company-x")
 	key, err := keyring.Get(trust.Service, trust.KeyAccount)
 	if err != nil {

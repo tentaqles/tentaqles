@@ -42,7 +42,7 @@ func Desired(ws *resolve.Workspace) map[string]string {
 type State struct {
 	WS   string             `json:"ws"`
 	Prev map[string]*string `json:"prev"`
-	// PathSet is the PATH tq last wrote for a guard: v2 identity (ADR-0008), in the shell's
+	// PathSet is the PATH tq last wrote for an identity (ADR-0008), in the shell's
 	// spelling: a PATH still equal to it needs no work at the next prompt, and one the user
 	// changed since is merged back (MergePath) on leaving.
 	PathSet string `json:"path,omitempty"`
@@ -98,7 +98,7 @@ const (
 	// NoticeLegacy: trusted through a marker of an older tq; tq allow signs
 	// the hooks and the manifest.
 	NoticeLegacy = "legacy"
-	// NoticeMask: a guard: v2 identity's PATH needs its mask folder (a folder
+	// NoticeMask: an identity's PATH needs its mask folder (a folder
 	// shared with other tools holds an out-of-scope CLI) and the folder is
 	// missing or changed; the fix is tq settings render (ADR-0008).
 	NoticeMask = "path-mask"
@@ -111,7 +111,7 @@ const (
 )
 
 // Want is what a workspace wants of the environment: the variables to set and, for a
-// guard: v2 identity (ADR-0008), the variables to unset. PathSep is the shell's PATH list
+// identity (ADR-0008), the variables to unset. PathSep is the shell's PATH list
 // separator, used when a PATH tq changed is restored.
 type Want struct {
 	Set     map[string]string
@@ -167,7 +167,7 @@ func DiffWant(want Want, current func(string) (string, bool), prev State, wsName
 		}
 		delete(next.Prev, k)
 	}
-	// 2. unset what the identity leaves out (guard: v2), remembering the value
+	// 2. unset what the identity leaves out, remembering the value
 	for _, k := range want.Unset {
 		cur, ok := current(k)
 		if !ok {

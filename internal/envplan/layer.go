@@ -16,7 +16,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
-// The PATH and environment layer of an identity whose manifest sets guard: v2 (PRD v2 §6.1
+// The PATH and environment layer of an identity (PRD v2 §6.1
 // step 2, §6.2 rows PATH and Environment; ADR-0008). It is built from the same compiled scope
 // the hook judges by (policy.ScopeFor): an out-of-scope provider's CLI does not resolve by name
 // on the identity PATH, and its variables are unset in the identity environment. Without the
@@ -40,10 +40,9 @@ type Layer struct {
 	ready    *bool // memoized MaskReady
 }
 
-// LayerFor is ws's layer, or nil when the v1 behaviour applies: no workspace, or a manifest
-// without guard: v2. ws is a trusted workspace (resolve hands an untrusted one out apart).
+// LayerFor is ws's layer, or nil with no workspace. ws is a trusted workspace (resolve hands an untrusted one out apart).
 func LayerFor(ws *resolve.Workspace) *Layer {
-	if ws == nil || ws.Manifest == nil || !ws.Manifest.GuardV2() {
+	if ws == nil || ws.Manifest == nil {
 		return nil
 	}
 	s := policy.ScopeFor(ws.Name, ws.Manifest.Scope(), ws.Manifest.BundleMCP(), ws.Manifest.MCPAllow())
@@ -96,7 +95,7 @@ func (l *Layer) UnsetNames(names []string, desired map[string]string) []string {
 	return out
 }
 
-// RemoveMask removes identity ws's mask folder (guard: v2 turned off, or nothing to mask). It
+// RemoveMask removes identity ws's mask folder (nothing to mask). It
 // reports whether there was one.
 func RemoveMask(ws string) (bool, error) {
 	if !workspace.NameRe.MatchString(ws) {

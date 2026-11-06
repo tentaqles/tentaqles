@@ -299,6 +299,7 @@ func TestRenderSessionStart_Workspace(t *testing.T) {
 		"Git: github.com as acme-bot (dev@acme.com)\n" +
 		"Cloud: azure (acme-prod subscription)\n" +
 		"Identity: acme · CLAUDE_CONFIG_DIR=/home/acme/.tentaqles/identities/acme/claude\n" +
+		scopeLine(ws) +
 		"\ntq doctor:\n" +
 		"- [ok] all checks passed\n" +
 		"\nRules: tq blocks git/gh/cloud commands on identity drift (exit 2). Run `tq doctor` for details.\n"

@@ -30,7 +30,7 @@ type Input struct {
 	ExpectedGHUser string   // manifest.Git.User (or ExpectedUser)
 	ActualGHUser   string   // from `gh api user --jq .login` ("" if unknown / not run)
 	Findings       []string // doctor codes for cwd: "untrusted","env-drift","git-email-drift","claude-config-drift",...
-	// Scoped: the manifest sets guard: v2, so the provider scope judges every provider
+	// Scoped: a trusted manifest, so the provider scope judges every provider
 	// CLI (policy.Scope, ADR-0007) and wrong-cloud, its subset, does not run here.
 	Scoped bool
 }

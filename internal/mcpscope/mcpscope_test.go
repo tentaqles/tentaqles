@@ -20,9 +20,6 @@ func companyX(v2 bool) *manifest.Manifest {
 	m := &manifest.Manifest{Schema: "tentaqles-client-v2", Client: "company-x",
 		Identities: map[string]manifest.Identity{"az": {}, "claude": {}},
 		Git:        manifest.Git{Provider: "azure-devops"}, Cloud: map[string]any{"provider": "azure"}}
-	if v2 {
-		m.Guard = "v2"
-	}
 	return m
 }
 
@@ -55,8 +52,8 @@ func TestJudge(t *testing.T) {
 			t.Errorf("%s: out=%v (%s), want %v", c.name, out, why, c.out)
 		}
 	}
-	if For("company-x", companyX(false)) != nil {
-		t.Fatal("a judge without guard: v2")
+	if For("company-x", nil) != nil {
+		t.Fatal("a judge with no manifest")
 	}
 	var nilJ *Judge
 	if _, out := nilJ.Out("aws", nil); out {

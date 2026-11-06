@@ -17,7 +17,7 @@ import (
 )
 
 // The hook's side of the identity category's v2 rules (PRD v2 §6.3, §7.1; ADR-0007): a
-// trusted workspace whose manifest sets guard: v2 has its provider scope compiled once per
+// trusted workspace has its provider scope compiled once per
 // hook run from the catalog (loaded once per process) and judged before the secret rules.
 
 // scopeNote is what an identity deny adds after its reason (PRD v2 §6.1 step 5, §7.3): the
@@ -48,12 +48,11 @@ var scopeMemo struct {
 	s    *policy.Scope
 }
 
-// hookScope is the compiled scope of ws, or nil when the v1 rules apply: no workspace (a
-// neutral cwd), an untrusted one (judged by the untrusted and neutral rules), or a manifest
-// without guard: v2. A patch judges many files with the same ws and prot: the scope is
+// hookScope is the compiled scope of ws, or nil for no workspace (a neutral cwd) or an
+// untrusted one (judged by the untrusted and neutral rules). A patch judges many files with the same ws and prot: the scope is
 // compiled once for them.
 func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set, cwd string) *policy.Scope {
-	if ws == nil || ws.Manifest == nil || !ws.Manifest.GuardV2() || prot == nil {
+	if ws == nil || ws.Manifest == nil || prot == nil {
 		return nil
 	}
 	if scopeMemo.ws == ws && scopeMemo.prot == prot && scopeMemo.cwd == cwd {
@@ -81,7 +80,7 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set, c
 	return s
 }
 
-// scopeCatalogError judges the user provider files for a guard: v2 identity (ADR-0007 round
+// scopeCatalogError judges the user provider files for an identity (ADR-0007 round
 // 3). deny is why every call must be refused, or "": a file tq did not load whose id the
 // identity's scope names (its scope: list, an identity, the git provider), or a provider
 // folder tq cannot read. warnings name every other file that did not load: an override of a
@@ -90,7 +89,7 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set, c
 // The deny goes through the same fail-closed path as an unreadable manifest
 // (resolve.Result.Unreadable): one mechanism, never a silent skip of the bad file.
 func scopeCatalogError(ws *resolve.Workspace) (deny string, warnings []string) {
-	if ws == nil || ws.Manifest == nil || !ws.Manifest.GuardV2() {
+	if ws == nil || ws.Manifest == nil {
 		return "", nil
 	}
 	_, errs := providers.LoadAll()

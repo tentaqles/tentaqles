@@ -6,6 +6,16 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### One guard, always on (ADR-0011)
+
+- There is no `guard: v2` flag. Every trusted workspace gets the full guard: the identity PATH,
+  the MCP filter and the provider-scope rules of the hook. An old `guard:` line still loads and
+  means nothing.
+- **Upgrading changes existing workspaces.** A tool the manifest does not declare is now blocked.
+  Add it to the manifest's `scope:` list and run `tq allow`.
+- A client's declared cloud (`cloud.provider`) is always in its scope and gets its own config
+  folder, also when `identities` leaves it out. Such a client logs in to that CLI again.
+
 ### Human-only commands work in an IDE terminal (ADR-0010)
 
 - A human in a VS Code integrated terminal was refused every human-only command, because the

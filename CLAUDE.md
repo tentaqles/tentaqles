@@ -18,8 +18,8 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
   - `internal/policy/` — the five secret rules of `builtin.go` (`tq/secret-store-read`,
     `tq/secret-store-shell`, `tq/env-file-read`, `tq/env-file-shell`, `tq/env-dump`), the
     two self-protection rules of `selfprotect.go` (`tq/protected-path`,
-    `tq/human-only-command`, ADR-0005), the six identity rules of `identity.go` under
-    `guard: v2` (`policy.Scope`: `out-of-scope-cli`, `-env`, `-path`, `-host`, `-mcp`,
+    `tq/human-only-command`, ADR-0005), the six identity rules of `identity.go`
+    (`policy.Scope`: `out-of-scope-cli`, `-env`, `-path`, `-host`, `-mcp`,
     `other-identity`, read from the catalog's `match:` lists and `manifest.Scope()`,
     ADR-0007) and their evaluator; nothing else is a rule. Every
     rule carries its category (`identity`, `secrets`, `self-protection`); a deny reads
@@ -29,7 +29,7 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `providers`, `setup`, `onboard`, `secret`, `secrets`, `settings`, `statusline`,
     `worktrees`, `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
     `claudehook*.go`: `pre-tool-use` runs `guard.Decide` (identity), the provider-scope
-    rules under `guard: v2` (`claudehook_scope.go`), then the secret rules
+    rules (`claudehook_scope.go`), then the secret rules
     plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
     the protected path set of the run (`claudehook_protect.go`), first category that
     denies wins; there is no ask, and a call it cannot judge (an unreadable payload, a
@@ -63,7 +63,7 @@ decisions) and `docs/threat-model.md` first, then the ADRs under `docs/adr/`.
     `protected-acl`; `pathset.go`, the protected path set of PRD v2 §8.2 the hook's
     `tq/protected-path` matches against), `internal/registry/`, `internal/resolve/` (which file is the
     manifest, both layouts), `internal/workspace/`, `internal/paths/`,
-    `internal/envplan/` (the env diff, and under `guard: v2` the identity PATH, the PATH
+    `internal/envplan/` (the env diff, the identity PATH, the PATH
     mask and the out-of-scope variables unset, ADR-0008), `internal/mcpscope/` (the
     out-of-scope MCP servers removed from the identity's Claude and Codex homes),
     `internal/shell/` (activation hooks and the `claude`/`codex` launchers), `internal/hooks/` (shell profile blocks), `internal/gitcfg/`,
@@ -110,16 +110,16 @@ need no ticket.
 ## Must not trade off
 From `docs/threat-model.md`; each line names the test that keeps it.
 - Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.
-- Under `guard: v2` everything outside the identity's provider scope is denied in every
+- Everything outside the identity's provider scope is denied in every
   tool (CLI by name, path, wrapper, `python -m`; variables; credential paths; API hosts; MCP
   servers; other identities' roots), before secrets, with a message naming the scope; the
-  same identity's in-scope CLIs and ordinary dev commands pass; without the flag the v1
-  rules are unchanged: `TestPreToolUse_ScopeReferenceScenario`, `TestPreToolUse_ScopeRuleOrder`,
-  `TestPreToolUse_ScopeV1Unchanged`, `TestScope_OutOfScopeCLI`, `TestScope_OutOfScopeEnv`,
+  same identity's in-scope CLIs and ordinary dev commands pass; a manifest needs no flag for
+  this: `TestPreToolUse_ScopeReferenceScenario`, `TestPreToolUse_ScopeRuleOrder`,
+  `TestPreToolUse_ManifestNeedsNoFlag`, `TestScope_OutOfScopeCLI`, `TestScope_OutOfScopeEnv`,
   `TestScope_OutOfScopePath`, `TestScope_OutOfScopeHost`, `TestScope_OutOfScopeMCP`,
   `TestScope_OtherIdentity`, `TestScope_InScopeWins`, `TestCatalogMatchLists`,
   `TestUserOverrideExtendsMatch`.
-- Under `guard: v2` the scope is provider-specific (a shared CLI is owned per subcommand, a
+- The scope is provider-specific (a shared CLI is owned per subcommand, a
   user file can only widen denial, a new user id may not claim a built-in's entry), a folder
   whose manifest cannot be read denies every tool with `tq/guard-error`, a bad user provider
   file keeps the built-in lists (an override) or denies only where the scope names it (a new
@@ -132,8 +132,8 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestScope_PowerShellCommandSplitting`, `TestSelfProtection_PowerShellCommandSplitting`,
   `TestScope_HereStringsAndHeredocsAsCode`, `TestScope_HostPaths`, `TestScope_GitTransport`,
   `TestPreToolUse_UnreadableManifestDeniesAll`, `TestPreToolUse_BadProviderFiles`,
-  `TestPreToolUse_GuardMappingIsV1`.
-- Under `guard: v2` the §6.1 scenario also fails before the hook (ADR-0008): an
+  `TestPreToolUse_OldGuardKeysStillGuarded`, `TestDeclaredCloudIsInScope`.
+- The §6.1 scenario also fails before the hook (ADR-0008): an
   out-of-scope CLI does not resolve on the identity PATH (its folder dropped, or masked by
   a stub in a shared folder) while in-scope CLIs do, its variables are unset, leaving the
   folder restores PATH and variables exactly, `tq run` resolves on the identity PATH, the
@@ -141,7 +141,7 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   never touches one that matches no provider, the mask folder is used only as tq wrote it,
   and the preamble states the scope: `TestEnv_ScopeReferenceScenario_PATH`,
   `TestSettingsRender_ScopeReferenceScenario_MCP`, `TestSessionStart_ScopeLine`,
-  `TestEnv_ScopeLayerRestoreAndV1`, `TestPathLayer_ScenarioAwsNotOnPath`,
+  `TestEnv_ScopeLayerRestore`, `TestPathLayer_ScenarioAwsNotOnPath`,
   `TestPathLayer_SharedDirIsMasked`, `TestPathLayer_TamperedMaskIsNotUsed`,
   `TestLayer_EnterAndLeaveRestoresExactly`, `TestPathSyntax_MSYS`, `TestFilterClaude`,
   `TestFilterCodex`; round 2: the state fits cmd.exe and every shell restores byte for byte,

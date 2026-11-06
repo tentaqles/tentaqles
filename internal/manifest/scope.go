@@ -7,39 +7,11 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/providers"
-	"gopkg.in/yaml.v3"
 )
 
 // The provider scope (PRD v2 §6, ADR-0007): the catalog ids an identity may touch. It is the
 // single source of truth the guard's identity category, the PATH, the environment and the
 // harness's MCP list are built from.
-
-// GuardFlag is the top-level `guard:` scalar that switches the guard's v2 identity rules on
-// (DISCOVERY §9: every new behaviour ships behind a manifest flag). "v2" turns them on; "",
-// absent and "v1" keep the v1 rules. The guard block tq 0.9.0 dropped was a mapping; a
-// mapping is read as no flag (Load lists it in Manifest.Ignored).
-type GuardFlag string
-
-// UnmarshalYAML reads a scalar flag and ignores the dropped mapping.
-func (g *GuardFlag) UnmarshalYAML(n *yaml.Node) error {
-	if n.Kind != yaml.ScalarNode {
-		*g = ""
-		return nil
-	}
-	*g = GuardFlag(strings.ToLower(strings.TrimSpace(n.Value)))
-	return nil
-}
-
-func (g GuardFlag) validate() error {
-	switch g {
-	case "", "v1", "v2":
-		return nil
-	}
-	return fmt.Errorf("guard: must be v1 or v2, got %q", string(g))
-}
-
-// GuardV2 reports whether the manifest turns the v2 identity rules on (guard: v2).
-func (m *Manifest) GuardV2() bool { return m.Guard == "v2" }
 
 // gitProviderIDs maps git.provider to its catalog id.
 var gitProviderIDs = map[string]string{"github": "gh", "gitlab": "glab", "azure-devops": "azure-devops", "bitbucket": "bitbucket", "gitea": "gitea"}

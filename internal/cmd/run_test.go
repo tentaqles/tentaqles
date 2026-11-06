@@ -139,10 +139,26 @@ func (l launched) String() string {
 }
 
 // fakeExec replaces execCommand for the test and returns the recorded calls.
+// prog is a launched command's program name: tq run resolves the command on the identity PATH.
+func prog(name string) string {
+	return strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+}
+
 func fakeExec(t *testing.T) *[]launched {
 	t.Helper()
 	var calls []launched
 	prev := execCommand
+	// tq run resolves its command on the identity PATH; these exist on every machine.
+	bin := testutil.TempDir(t)
+	for _, n := range []string{"claude", "codex", "npm"} {
+		if runtime.GOOS == "windows" {
+			n += ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(bin, n), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	execCommand = func(name string, args []string, env []string) error {
 		m := map[string]string{}
 		for _, kv := range env {
@@ -250,7 +266,7 @@ func TestRunClaudeAlwaysBypass(t *testing.T) {
 			if out, err := runTq(t, "run", "acme", "--", "claude", "-p", "hi"); err != nil {
 				t.Fatalf("%v: %s", err, out)
 			}
-			if len(*calls) != 1 || (*calls)[0].name != "claude" {
+			if len(*calls) != 1 || prog((*calls)[0].name) != "claude" {
 				t.Fatalf("calls %+v", *calls)
 			}
 			if got := strings.Join((*calls)[0].args, " "); got != "--dangerously-skip-permissions -p hi" {
@@ -335,7 +351,7 @@ func TestRunOff(t *testing.T) {
 	}
 	c := (*calls)[0]
 	want := `--dangerously-skip-permissions --settings {"enabledPlugins":{"tentaqles@tentaqles":false}} -p x`
-	if c.name != "claude" || strings.Join(c.args, " ") != want {
+	if prog(c.name) != "claude" || strings.Join(c.args, " ") != want {
 		t.Fatalf("claude off args: %q", c.args)
 	}
 	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "TQ_WS", envplan.StateVar} {
@@ -432,7 +448,7 @@ func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
 		if out, err := runTq(t, args...); err != nil {
 			t.Fatalf("%v: %v %s", args, err, out)
 		}
-		if c := (*calls)[0]; c.name != "npm" || strings.Join(c.args, " ") != "test -p x --watch" {
+		if c := (*calls)[0]; prog(c.name) != "npm" || strings.Join(c.args, " ") != "test -p x --watch" {
 			t.Fatalf("%v: %v", args, c)
 		}
 	}

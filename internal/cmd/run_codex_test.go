@@ -230,7 +230,7 @@ func TestLaunchCodexFlagsAreTheBypass(t *testing.T) {
 	if _, err := runTq(t, "run", "acme", "--", "codex", "exec", "x"); err != nil {
 		t.Fatal(err)
 	}
-	if c := (*calls)[0]; c.name != "codex" || strings.Join(c.args, " ") != "exec --dangerously-bypass-approvals-and-sandbox x" || c.env["TQ_WS"] != "acme" {
+	if c := (*calls)[0]; prog(c.name) != "codex" || strings.Join(c.args, " ") != "exec --dangerously-bypass-approvals-and-sandbox x" || c.env["TQ_WS"] != "acme" {
 		t.Fatalf("codex launch: %+v", c)
 	}
 	calls = fakeExec(t)

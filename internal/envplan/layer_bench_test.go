@@ -11,7 +11,7 @@ import (
 // never printed): go test ./internal/envplan -run '^$' -bench Layer.
 
 // BenchmarkLayer_Compile is LayerFor: the scope compiled from the catalog, at every prompt in
-// a guard: v2 folder.
+// an identity folder.
 func BenchmarkLayer_Compile(b *testing.B) {
 	b.Setenv("TQ_HOME", testutil.TempDir(b))
 	ws := companyX(b, true)

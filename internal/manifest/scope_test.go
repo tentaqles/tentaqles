@@ -43,41 +43,44 @@ func TestScopeRejectsUnknownIDs(t *testing.T) {
 	}
 }
 
-// TestGuardFlag: guard: v2 turns the v2 identity rules on; no flag, or v1, keeps the v1
-// rules. The guard block tq 0.9.0 dropped (a mapping) still loads, is listed in Ignored and
-// is not the flag; an unknown scalar fails the load.
-func TestGuardFlag(t *testing.T) {
-	for body, want := range map[string]bool{
-		"":              false,
-		"guard: v1\n":   false,
-		"guard: v2\n":   true,
-		"guard: V2\n":   true,
-		"guard: \"\"\n": false,
-	} {
+// TestOldGuardKeyStillLoads: there is one guard, always on. A manifest that still carries the
+// old scalar flag loads and means nothing; the block tq 0.9.0 dropped (a mapping) still loads
+// and is listed in Ignored.
+func TestOldGuardKeyStillLoads(t *testing.T) {
+	for _, body := range []string{"guard: v1\n", "guard: v2\n", "guard: V2\n", "guard: \"\"\n", "guard: strict\n"} {
 		m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"+body))
 		if err != nil {
 			t.Fatalf("%q: %v", body, err)
 		}
-		if m.GuardV2() != want {
-			t.Errorf("%q: GuardV2() = %v, want %v", body, m.GuardV2(), want)
-		}
 		if len(m.Ignored) != 0 {
-			t.Errorf("%q: Ignored = %v, a scalar guard flag is not a dropped block", body, m.Ignored)
+			t.Errorf("%q: Ignored = %v, a scalar guard key is not a dropped block", body, m.Ignored)
 		}
 	}
 	m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nguard:\n  unattended: { workspace: true }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.GuardV2() || !reflect.DeepEqual(m.Ignored, []string{"guard"}) {
-		t.Fatalf("legacy guard block: GuardV2=%v Ignored=%v", m.GuardV2(), m.Ignored)
-	}
-	if _, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nguard: strict\n")); err == nil || !strings.Contains(err.Error(), "guard") {
-		t.Fatalf("guard: strict loaded: %v", err)
+	if !reflect.DeepEqual(m.Ignored, []string{"guard"}) {
+		t.Fatalf("legacy guard block: Ignored=%v", m.Ignored)
 	}
 }
 
-// TestMCPAllow: mcp.allow is a list of exact MCP server names a human keeps under guard: v2
+// TestDeclaredCloudIsInScope: a client's own cloud is in its scope and isolated, also when the
+// identities block leaves it out.
+func TestDeclaredCloudIsInScope(t *testing.T) {
+	m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nidentities: { claude: {} }\ncloud:\n  provider: azure\n  also: [gcloud]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := m.IdentityNames(), []string{"az", "claude", "gcloud"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("IdentityNames() = %v, want %v", got, want)
+	}
+	if got, want := m.Scope(), []string{"az", "claude", "gcloud"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Scope() = %v, want %v", got, want)
+	}
+}
+
+// TestMCPAllow: mcp.allow is a list of exact MCP server names a human keeps
 // (the owner's hybrid list, ADR-0008); names only, each once.
 func TestMCPAllow(t *testing.T) {
 	m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nmcp: { allow: [my-db, plugin_tools_srv, docs.v2] }\n"))

@@ -43,7 +43,7 @@ func fakeIn(t *testing.T, dir string, names ...string) {
 // folder stays, tq settings render writes the mask, and on the identity PATH aws, aws.exe and
 // tq run all reach the stub (command not found, exit 127), never the real one.
 func TestEnv_ScopeReferenceScenario_SharedFolder(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	shared := filepath.Join(testutil.TempDir(t), "shared")
 	fakeIn(t, shared, "aws.exe", "node.exe", "git.exe")
 	runEnv(t, "settings", "render", "company-x")
@@ -107,7 +107,7 @@ func TestEnv_ScopeReferenceScenario_CmdExe(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("cmd.exe")
 	}
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	fx := testutil.TempDir(t)
 	awsOnly := filepath.Join(fx, "awsonly")
 	shared := filepath.Join(fx, "shared")
@@ -222,7 +222,7 @@ func envWithout(keys ...string) []string {
 // .claude.json: a server named cloud that runs awslabs' package, and one named gh running the
 // GitHub server, are denied; a database server is not.
 func TestPreToolUse_MCPJudgedByConfigEntry(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	claudeDir := paths.IdentityDir("company-x", "claude")
 	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -274,7 +274,7 @@ func TestPreToolUse_MCPJudgedByConfigEntry(t *testing.T) {
 // under a neutral name is moved to the backup and denied; playwright, context7, memory, the
 // in-scope Azure server and a name in the manifest's mcp.allow stay and pass.
 func TestSettingsRender_HybridMCP(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "guard: v2\nmcp: { allow: [team-tool] }\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", "mcp: { allow: [team-tool] }\n"+companyXBody)
 	claudeDir := paths.IdentityDir("company-x", "claude")
 	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
 		t.Fatal(err)

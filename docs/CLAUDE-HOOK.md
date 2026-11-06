@@ -130,8 +130,8 @@ The categories are evaluated in the order of PRD v2 §6.3 and the first one
 that denies is the one reported:
 
 1. **identity** — the manifest's `blocked_commands`, then the identity guard
-   below (shell tools only), then, when the manifest sets `guard: v2`, the
-   provider-scope rules of [Identity scope](#identity-scope-guard-v2-pre-tool-use)
+   below (shell tools only), then the
+   provider-scope rules of [Identity scope](#identity-scope-pre-tool-use)
    (every tool), and `tq/cross-client-mcp` (MCP tools);
 2. **secrets** — the secret rules, `tq/commit-secret`;
 3. **self-protection** — `tq/protected-path`, `tq/human-only-command`; run
@@ -139,7 +139,7 @@ that denies is the one reported:
 
 A command that matches both a blocked command and a protected path reports
 `blocked-command`; one that runs a wrong cloud CLI on the manifest reports
-`wrong-cloud` (under `guard: v2`, `out-of-scope-cli`).
+`out-of-scope-cli`.
 
 Inside the identity category, `internal/guard/guard.go`'s `Decide` function
 applies rules in this exact order — the **first** matching rule wins and
@@ -155,7 +155,7 @@ produces the block:
    AWS-configured workspace. Providers listed in the trusted manifest's
    `cloud.also` (e.g. `also: [aws]`; names `azure`, `aws`, `gcp`, `digitalocean` (aliases: `az`, `gcloud`, `do`, `doctl`)) are allowed too; the block message
    then names the set ("azure + aws"). A repo manifest cannot add clouds.
-   Under `guard: v2` this rule does not run: `identity/out-of-scope-cli`
+   It runs only where there is no trusted manifest: otherwise `identity/out-of-scope-cli`
    judges these CLIs and every other provider's (ADR-0007).
 3. **`neutral-remote`** — cwd resolves to **no** trusted tq workspace
    (`Neutral`), and the command is a remote mutation (`gh` anything, any
@@ -224,17 +224,16 @@ against production, an edit to the project's `.claude/settings.local.json`)
 is Claude Code's own permission settings' business, not tq's. tq's own
 files, hooks, plugin and binary are the self-protection category's (below).
 
-## Identity scope (`guard: v2`, `pre-tool-use`)
+## Identity scope (`pre-tool-use`)
 
-A trusted workspace whose manifest sets the top-level `guard: v2` has its
+A trusted workspace has its
 **provider scope** enforced in every tool (PRD v2 §6, ADR-0007). The scope is
-`manifest.Scope()`: the identities block (claude and gh for a v1 manifest),
+`manifest.Scope()`: the identities block (claude and gh when it has none),
 every cloud of the `cloud` block, the catalog id of `git.provider`, the chat,
 email and data_platform providers, `agents`, the providers whose MCP server
 `claude.bundle.mcp` lists, and the optional `scope:` list of catalog ids:
 
 ```yaml
-guard: v2
 identities: { az: {}, claude: {} }
 git: { provider: azure-devops }
 cloud: { provider: azure }
@@ -275,8 +274,8 @@ the hook warns on stderr; a new id denies every tool with `tq/guard-error`
 only in a workspace whose scope names it. Each message gives the full path,
 the first error and `fix or delete <path>, then run tq providers list`
 ([PROVIDERS.md](PROVIDERS.md#a-user-file-that-does-not-load)). A `guard:`
-mapping (the old guard-modes block) is a dropped block: the v1 rules apply and
-`tq doctor` reports it. `tq providers list` reports every provider overlap and
+mapping (the old guard-modes block) is a dropped block: `tq doctor` reports it,
+and the guard applies as usual. An old `guard: v2` line means nothing (ADR-0011). `tq providers list` reports every provider overlap and
 every bad file, and exits non-zero on a bad file.
 
 The deny names the category, the provider and, on its last line, the
@@ -293,9 +292,8 @@ It is one line in the denial log with `category` `identity`, `layer` `hook`
 it matched (`aws`, `python -m awscli`, `AWS_PROFILE`, `ec2.amazonaws.com`,
 the path, `mcp__aws`).
 
-Without `guard: v2` the v1 rules apply unchanged (`wrong-cloud` for six cloud
-CLIs, nothing else of the scope). A **neutral** cwd (no workspace) never gets
-the v2 rules: there is no scope to compare against, and `neutral-remote`
+A **neutral** cwd (no workspace) never gets
+these rules: there is no scope to compare against, and `neutral-remote`
 already refuses remote git, gh and cloud commands there. An untrusted or
 mismatched workspace is judged by `untrusted` and `neutral-remote`.
 

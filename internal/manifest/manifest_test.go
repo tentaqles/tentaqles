@@ -215,25 +215,25 @@ func TestLoad_CloudProviderValidation(t *testing.T) {
 	}
 }
 
-// With an identities block, a cloud.also cloud it does not declare is added
-// implicitly (so it still gets a private config home); a declared one is not
-// duplicated.
+// With an identities block, a cloud (cloud.provider or cloud.also) it does not
+// declare is added implicitly, so it still gets a private config home; a declared
+// one is not duplicated.
 func TestIdentityNamesCloudAlsoWithIdentitiesBlock(t *testing.T) {
 	join := func(m *Manifest) string { return strings.Join(m.IdentityNames(), ",") }
 	m := &Manifest{
 		Identities: map[string]Identity{"claude": {}, "gh": {}},
 		Cloud:      map[string]any{"provider": "azure", "also": []any{"aws", "digitalocean"}},
 	}
-	if got := join(m); got != "aws,claude,doctl,gh" {
+	if got := join(m); got != "aws,az,claude,doctl,gh" {
 		t.Fatalf("not declared: %s", got)
 	}
 	m.Identities["aws"] = Identity{Profile: "acme"}
-	if got := join(m); got != "aws,claude,doctl,gh" {
+	if got := join(m); got != "aws,az,claude,doctl,gh" {
 		t.Fatalf("declared: %s", got)
 	}
-	// The primary cloud is not added implicitly when identities are explicit.
+	// The primary cloud is added too: a client's own cloud is always in its scope.
 	m = &Manifest{Identities: map[string]Identity{"gh": {}}, Cloud: map[string]any{"provider": "azure"}}
-	if got := join(m); got != "gh" {
+	if got := join(m); got != "az,gh" {
 		t.Fatalf("primary only: %s", got)
 	}
 }

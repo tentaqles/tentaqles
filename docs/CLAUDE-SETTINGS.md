@@ -72,9 +72,9 @@ A manifest that still carries `claude.permission_mode` or
 `claude.permissions` loads; tq does not read them and `tq doctor` warns
 `manifest-dropped-block`. Remove them, then `tq allow`.
 
-### MCP servers and the PATH mask under `guard: v2`
+### MCP servers and the PATH mask
 
-For a workspace whose manifest sets `guard: v2` (ADR-0008), the render also
+For every workspace (ADR-0008), the render also
 brings the identity's harness config in line with its provider scope:
 
 - **MCP servers.** Every server tq can tell is out of scope is removed from
