@@ -1,6 +1,6 @@
 # 012: The onboarding skill
 
-**Status:** ready
+**Status:** parked
 **Risk:** High: a skill step that handles a credential badly puts a client's token in the transcript or in another identity's store
 **UI:** none
 

@@ -15,7 +15,7 @@ The build loop's board, kept by `.claude/hooks/gate.mjs`. See `.claude/README.md
 | 009 | `status --json` for the skill, and `tentaqles connect <provider>` | parked | High | waits for 002, 008: needs the render's hook and both change the catalog schema |
 | 010 | `tentaqles reach` | parked | High | waits for 006, 007, 009: reach provisions everything they build |
 | 011 | `tentaqles edit` | parked | High | waits for 010: reuses reach's prompts |
-| 012 | The onboarding skill | ready | High | waits for 010: reach starts it, and it uses status, install and connect |
+| 012 | The onboarding skill | parked | High | waits for 010: reach starts it, and it uses status, install and connect |
 | 013 | Retire Codex support | ready | High | waits for 011: touches run, render, trust and shell hooks |
 | 014 | Cut the plugin down to onboarding, memory and the graph | ready | High | waits for 012: keeps the finished skill; needs 002 landed |
 | 015 | Remove the replaced v1 commands | ready | High | waits for 013: same files; reach and edit must have replaced them |
