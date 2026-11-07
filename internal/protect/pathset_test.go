@@ -108,6 +108,9 @@ func TestMatchKinds(t *testing.T) {
 		{claude, KindState},
 		{filepath.Join(claude, "settings.json"), KindState},
 		{filepath.Join(claude, "settings.local.json"), KindState},
+		// the identity's MCP servers (ADR-0017): only `tentaqles connect` registers one
+		{filepath.Join(claude, ".claude.json"), KindState},
+		{filepath.Join(claude, ".claude.json.backup"), KindState},
 		{filepath.Join(claude, "plugins"), KindPlugin},
 		{filepath.Join(claude, "plugins", "installed_plugins.json"), KindPlugin},
 		{filepath.Join(claude, "plugins", "known_marketplaces.json"), KindPlugin},

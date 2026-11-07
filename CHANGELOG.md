@@ -6,6 +6,22 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### `status --json` and `tentaqles connect` (ADR-0017)
+
+- `tentaqles status --json` prints the client's setup as one JSON object for the onboarding skill:
+  identity, root, scope, one entry per provider in scope (CLI, credential, connection, verified),
+  browsers and other providers. It writes nothing and carries no token or value. It used to print the
+  doctor report; `tq doctor --json` still does, unchanged.
+- `tentaqles connect <provider>` registers the provider's hosted MCP server, as the catalog defines it
+  (`gh`, `linear`, `asana`, `jira`), in the client's `.claude.json`. It is the one command an agent may
+  run that writes the Claude config, so it is narrow: the provider and nothing else, in the client's
+  scope, in a trusted client, logged to `connections.jsonl`. A refusal for a provider outside the scope
+  is in the denial log.
+- The catalog schema gains `connect:`. Only the embedded catalog defines it: a user provider file with a
+  `connect:` key is not loaded.
+- An identity's `.claude.json` is now a protected path: a session can't read or write it with a file
+  tool or a shell redirect.
+
 ### Cut down to IDEATION (ADR-0013, ADR-0014)
 
 - Removed `tq add`, `tq init`, `tq onboard`, `tq setup`, `tq worktrees`, `tq run --off` and the

@@ -72,6 +72,9 @@ const (
 	LayerHook       = "hook"
 	LayerFilesystem = "filesystem"
 	LayerHumanOnly  = "human-only"
+	// LayerCommand is a tq command refusing its own request (tentaqles connect, for a provider
+	// outside the identity's scope).
+	LayerCommand = "command"
 )
 
 // Callers a Denial names.

@@ -194,6 +194,11 @@ func loadUserFile(path string, builtin map[string]Provider, c *Catalog) (Provide
 	if err != nil {
 		return fail(err)
 	}
+	// connect: is what an agent-run `tentaqles connect` writes into .claude.json: only the
+	// embedded catalog defines it (ADR-0017), so a user file that carries one is not loaded.
+	if p.Connect != nil {
+		return fail(fmt.Errorf("connect: only the embedded catalog defines the MCP server `tentaqles connect` registers; remove the key from this file"))
+	}
 	if !isBuiltin {
 		if err := claimConflict(p, builtin); err != nil {
 			return fail(err)

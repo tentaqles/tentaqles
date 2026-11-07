@@ -4,12 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/doctor"
 	"github.com/tentaqles/tentaqles/internal/humanonly"
+	"github.com/tentaqles/tentaqles/internal/identitystatus"
+	"github.com/tentaqles/tentaqles/internal/registry"
+	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/trust"
+	"github.com/tentaqles/tentaqles/internal/verify"
 )
 
 // newStatusCmd is tq status, the successor name of tq doctor (DISCOVERY.md
@@ -26,8 +34,18 @@ func newStatusCmd() *cobra.Command {
 	var last int
 	c := &cobra.Command{
 		Use:   "status",
-		Short: "The doctor report, or with --denials the last entries of the denial log",
+		Short: "The doctor report; with --json this client's setup for the onboarding skill; with --denials the denial log",
 		Long: `tq status prints what tq doctor prints (tq doctor stays).
+
+tq status --json prints one JSON object, the setup of the client the current folder
+belongs to, and writes nothing: identity, root, scope, one entry per provider in scope
+(id, category, cli, cli_resolves, credential, connection, verified), browsers and
+other_providers. It is the onboarding skill's read: the skill cannot read the manifest or
+the Claude config. credential and connection are present, missing or none; verified is true
+only when the provider's read-only verify command passed in this run (5 s each). No token,
+credential or MCP env value is in it. In a neutral folder identity is null; in an untrusted
+client it holds identity, trusted false and reason, and no provider data. The health report
+as JSON is tq doctor --json.
 
 tq status --denials reads ~/.tentaqles/denials.jsonl, where every deny is one
 line: time, identity, category, rule, layer (hook, filesystem, human-only),
@@ -40,6 +58,12 @@ prints them as a JSON array. It is human-only: a harness session is refused
 			if !denials {
 				if identity != "" || category != "" || c.Flags().Changed("last") {
 					return fmt.Errorf("--identity, --category and --last go with --denials")
+				}
+				if asJSON {
+					if c.Flags().Changed("verify") {
+						return fmt.Errorf("--verify goes with the doctor report (tq doctor --json --verify), not with tq status --json")
+					}
+					return runStatusJSON(c)
 				}
 				return runDoctor(c, asJSON, verifyMode)
 			}
@@ -75,6 +99,34 @@ prints them as a JSON array. It is human-only: a harness session is refused
 	c.Flags().StringVar(&identity, "identity", "", "with --denials: only this identity's entries")
 	c.Flags().StringVar(&category, "category", "", "with --denials: only this category (identity, secrets, self-protection, tq/guard-error)")
 	return c
+}
+
+// The seams of tq status --json: tests replace them, so no test runs a real CLI.
+var (
+	statusRunCLI      verify.Runner = runVerifyCmd
+	statusLookPath                  = exec.LookPath
+	statusVerifyLimit time.Duration // 0: identitystatus.VerifyLimit
+)
+
+// runStatusJSON prints the setup of the client the current folder belongs to
+// (internal/identitystatus). It reads and writes nothing under the tq home.
+func runStatusJSON(c *cobra.Command) error {
+	defer trust.MemoScope()()
+	cfg, err := registry.Load()
+	if err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	st := identitystatus.Build(resolve.Resolve(cwd, cfg), identitystatus.Deps{
+		LookPath: statusLookPath, RunCLI: statusRunCLI, VerifyLimit: statusVerifyLimit,
+	})
+	enc := json.NewEncoder(c.OutOrStdout())
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	return enc.Encode(st)
 }
 
 // lastDenials streams the log (audit.EachDenial) and keeps the newest last

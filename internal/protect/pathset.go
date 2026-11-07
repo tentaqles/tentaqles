@@ -520,6 +520,11 @@ func (s *Set) matchState(p, rel string) (Hit, bool) {
 			return Hit{p, KindState, "the " + parts[2] + " config home of " + parts[1]}, true
 		case len(sub) == 1 && registrationFiles[sub[0]]:
 			return Hit{p, KindState, "the hook registration of " + parts[1] + " (" + sub[0] + ")"}, true
+		case len(sub) == 1 && strings.HasPrefix(sub[0], ".claude.json"):
+			// The MCP servers the identity loads (and Claude Code's backups of the file). A
+			// session registers one only through `tentaqles connect`, which writes the catalog's
+			// entry for a provider in scope (ADR-0017); no file tool or shell redirect may.
+			return Hit{p, KindState, "the Claude config of " + parts[1] + " (" + sub[0] + ")"}, true
 		case sub[0] == "plugins":
 			switch {
 			case len(sub) == 1, len(sub) == 2 && sub[1] == "cache":

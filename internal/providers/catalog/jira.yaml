@@ -20,6 +20,12 @@ verify:
   args: ["jira", "auth", "status"]
 mcp: atlassian
 notes: "acli keeps one global login, not one per workspace: run acli jira auth login yourself. Without acli, store an API token with tq secret set <ws> jira, or name a tracker.env variable for tq dotenv."
+# connect: the hosted (Atlassian Rovo) MCP server `tentaqles connect jira` registers (ADR-0017).
+# Vendor docs: https://support.atlassian.com/rovo/docs/getting-started-with-the-atlassian-remote-mcp-server/
+connect:
+  name: atlassian
+  transport: http
+  url: https://mcp.atlassian.com/v1/mcp
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
