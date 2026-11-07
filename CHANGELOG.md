@@ -19,8 +19,12 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   is in the denial log.
 - The catalog schema gains `connect:`. Only the embedded catalog defines it: a user provider file with a
   `connect:` key is not loaded.
-- An identity's `.claude.json` is now a protected path: a session can't read or write it with a file
+- An identity's `.claude.json` and every other copy of its MCP entries (`backups/.claude.json*`,
+  `mcp-out-of-scope.json*`) are now protected paths: a session can't read or write them with a file
   tool or a shell redirect.
+- `connect` re-reads the file before its rename and warns, as `tq settings render` does, when a Claude
+  session looks open. `status --json` limits a keychain lookup to 5 s, and reads `connection` missing
+  for an identity with no Claude config.
 
 ### Cut down to IDEATION (ADR-0013, ADR-0014)
 

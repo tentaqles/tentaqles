@@ -111,6 +111,11 @@ func TestMatchKinds(t *testing.T) {
 		// the identity's MCP servers (ADR-0017): only `tentaqles connect` registers one
 		{filepath.Join(claude, ".claude.json"), KindState},
 		{filepath.Join(claude, ".claude.json.backup"), KindState},
+		{filepath.Join(claude, ".claude.json.tq-connect.lock"), KindState},
+		// the other copies of the MCP entries: render's removed list and Claude Code's backups
+		{filepath.Join(claude, "mcp-out-of-scope.json"), KindState},
+		{filepath.Join(claude, "mcp-out-of-scope.json.corrupt-20261106T101500Z"), KindState},
+		{filepath.Join(claude, "backups", ".claude.json.backup.1762424100000"), KindState},
 		{filepath.Join(claude, "plugins"), KindPlugin},
 		{filepath.Join(claude, "plugins", "installed_plugins.json"), KindPlugin},
 		{filepath.Join(claude, "plugins", "known_marketplaces.json"), KindPlugin},
@@ -135,6 +140,8 @@ func TestMatchKinds(t *testing.T) {
 		// not protected
 		{filepath.Join(claude, "projects", "C--repos-acme", "memory", "MEMORY.md"), ""},
 		{filepath.Join(claude, "todos", "x.json"), ""},
+		{filepath.Join(claude, "backups", "other.txt"), ""},
+		{filepath.Join(claude, "projects", "x", "mcp-out-of-scope.json"), ""},
 		{filepath.Join(claude, "CLAUDE.md"), ""},
 		{filepath.Join(claude, "plugins", "cache", "other", "x.md"), ""},
 		{filepath.Join(home, "bin", "other"), ""},

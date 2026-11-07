@@ -19,8 +19,6 @@ func workspace(t *testing.T) resolve.Result {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
-	paths.AllowHomeOverride = true
-	t.Cleanup(func() { paths.AllowHomeOverride = false })
 	secret.MockInit()
 	m := &manifest.Manifest{
 		Client:     "acme",

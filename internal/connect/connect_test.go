@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 var httpEntry = map[string]any{"type": "http", "url": "https://mcp.example.test/mcp"}
@@ -173,9 +171,6 @@ func TestConnect_AtomicWrite(t *testing.T) {
 }
 
 func TestLog_NoValueOfTheEntry(t *testing.T) {
-	// paths.Home ignores TQ_HOME under a harness marker unless a test allows it.
-	paths.AllowHomeOverride = true
-	t.Cleanup(func() { paths.AllowHomeOverride = false })
 	home := t.TempDir()
 	t.Setenv("TQ_HOME", home)
 	if LogPath() != filepath.Join(home, LogFile) {

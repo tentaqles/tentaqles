@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -87,6 +88,13 @@ type Deps struct {
 	Environ func(*resolve.Workspace) []string
 	// VerifyLimit overrides VerifyLimit (tests).
 	VerifyLimit time.Duration
+	// HasToken asks the keychain whether a token is stored for the client and tracker name;
+	// nil is secret.Has. It is bounded by KeychainLimit.
+	HasToken func(ws, tracker string) (bool, error)
+	// KeychainLimit overrides KeychainLimit (tests).
+	KeychainLimit time.Duration
+	// Catalog is the merged provider catalog; nil is providers.MustLoad().
+	Catalog *providers.Catalog
 }
 
 // Build describes the folder res resolved: neutral, untrusted, or a trusted client.
@@ -99,6 +107,12 @@ func Build(res resolve.Result, d Deps) Status {
 	}
 	if d.VerifyLimit <= 0 {
 		d.VerifyLimit = VerifyLimit
+	}
+	if d.HasToken == nil {
+		d.HasToken = secret.Has
+	}
+	if d.KeychainLimit <= 0 {
+		d.KeychainLimit = KeychainLimit
 	}
 	s := Status{Scope: []string{}, Providers: []Provider{}, Browsers: []Browser{}, OtherProviders: []string{}}
 	switch {
@@ -121,14 +135,28 @@ func Build(res resolve.Result, d Deps) Status {
 	}
 	s.OtherProviders = append(s.OtherProviders, m.OtherProviders...)
 
-	cat := providers.MustLoad()
+	cat := d.Catalog
+	if cat == nil {
+		cat = providers.MustLoad()
+	}
+	// connect: is defined by the embedded catalog only (a user file's is not loaded), so the
+	// merged catalog, where a user override replaced the entry, never carries it.
+	emb, err := providers.Embedded()
+	if err != nil {
+		emb = nil
+	}
 	var env []string
 	if d.Environ != nil {
 		env = d.Environ(w)
 	} else {
 		env = envplan.Environ(w, os.Environ())
 	}
-	servers := doctor.MCPServerNames(filepath.Join(paths.IdentityDir(w.Name, "claude"), ".claude.json"), w.Root)
+	// A connection lives in the identity's Claude config. An identity with no claude identity
+	// has none: nothing is read, and a provider an MCP server reaches is missing.
+	var servers []string
+	if slices.Contains(m.IdentityNames(), "claude") {
+		servers = doctor.MCPServerNames(filepath.Join(paths.IdentityDir(w.Name, "claude"), ".claude.json"), w.Root)
+	}
 
 	var ps []providers.Provider
 	for _, id := range s.Scope {
@@ -137,12 +165,17 @@ func Build(res resolve.Result, d Deps) Status {
 		}
 	}
 	verified := make([]bool, len(ps))
+	token := make([]bool, len(ps))
 	var wg sync.WaitGroup
 	for i, p := range ps {
-		wg.Add(1)
+		wg.Add(2)
 		go func() {
 			defer wg.Done()
 			verified[i] = verifyPasses(p, env, d)
+		}()
+		go func() {
+			defer wg.Done()
+			token[i] = tokenPresent(w.Name, p, d)
 		}()
 	}
 	wg.Wait()
@@ -154,8 +187,14 @@ func Build(res resolve.Result, d Deps) Status {
 			_, err := d.LookPath(c)
 			e.CLIResolves = err == nil
 		}
-		e.Credential = credential(w.Name, p, verified[i], d)
-		e.Connection = connection(p, servers)
+		e.Credential = credential(p, verified[i], token[i], d)
+		var ec *providers.Connect
+		if emb != nil {
+			if ep, ok := emb.Get(p.ID); ok {
+				ec = ep.Connect
+			}
+		}
+		e.Connection = connection(p, ec, servers)
 		s.Providers = append(s.Providers, e)
 	}
 	return s
@@ -215,36 +254,69 @@ func isTracker(id string) bool {
 	return false
 }
 
-// credential is presence only: no token, variable value or file content is returned.
-func credential(ws string, p providers.Provider, verified bool, d Deps) string {
-	vars := credentialVars(p)
-	takes := isTracker(p.ID) || len(vars) > 0 || p.Login != nil || p.Verify != nil
-	if !takes {
-		return None
+// KeychainLimit bounds each keychain lookup of status --json, like VerifyLimit bounds a verify
+// command: a keychain that blocks must not hang the read.
+const KeychainLimit = 5 * time.Second
+
+// tokenPresent asks the keychain whether the client has a token for p, bounded by
+// d.KeychainLimit. A lookup that errors, or has not answered by the limit (it is abandoned),
+// counts as no token. No lookup is made for a provider with no tracker token, or when a
+// credential variable of the provider is already set.
+func tokenPresent(ws string, p providers.Provider, d Deps) bool {
+	if !isTracker(p.ID) || envCredential(p, d) {
+		return false
 	}
-	if verified {
-		return Present
+	done := make(chan bool, 1)
+	go func() {
+		ok, err := d.HasToken(ws, trackerName(p.ID))
+		done <- ok && err == nil
+	}()
+	t := time.NewTimer(d.KeychainLimit)
+	defer t.Stop()
+	select {
+	case ok := <-done:
+		return ok
+	case <-t.C:
+		return false
 	}
-	if isTracker(p.ID) {
-		if ok, _ := secret.Has(ws, trackerName(p.ID)); ok {
-			return Present
-		}
-	}
-	for _, v := range vars {
+}
+
+// envCredential reports whether a credential variable of p is set in the environment (the
+// value is tested for being non-empty and never kept).
+func envCredential(p providers.Provider, d Deps) bool {
+	for _, v := range credentialVars(p) {
 		if val, ok := d.Env(v); ok && val != "" {
-			return Present
+			return true
 		}
+	}
+	return false
+}
+
+// credential is presence only: no token, variable value or file content is returned.
+// token is tokenPresent's answer.
+func credential(p providers.Provider, verified, token bool, d Deps) string {
+	takes := isTracker(p.ID) || len(credentialVars(p)) > 0 || p.Login != nil || p.Verify != nil
+	switch {
+	case !takes:
+		return None
+	case verified, token, envCredential(p, d):
+		return Present
 	}
 	return Missing
 }
 
-// connection says whether an MCP server for p is registered, by name.
-func connection(p providers.Provider, servers []string) string {
-	reached := p.Connect != nil || p.MCP != "" || p.Category == "chat" || p.Category == "email"
+// connection says whether an MCP server for p is registered, by name. ec is the embedded
+// catalog's connect entry for p (nil when it has none): the merged catalog's copy is gone once
+// a user file overrides the provider.
+func connection(p providers.Provider, ec *providers.Connect, servers []string) string {
+	reached := ec != nil || p.Connect != nil || p.MCP != "" || p.Category == "chat" || p.Category == "email"
 	if !reached {
 		return None
 	}
 	want := []string{p.MCPName()}
+	if ec != nil {
+		want = append(want, ec.Name)
+	}
 	if p.Connect != nil {
 		want = append(want, p.Connect.Name)
 	}

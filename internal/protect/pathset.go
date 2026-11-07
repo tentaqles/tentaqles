@@ -525,6 +525,13 @@ func (s *Set) matchState(p, rel string) (Hit, bool) {
 			// session registers one only through `tentaqles connect`, which writes the catalog's
 			// entry for a provider in scope (ADR-0017); no file tool or shell redirect may.
 			return Hit{p, KindState, "the Claude config of " + parts[1] + " (" + sub[0] + ")"}, true
+		case len(sub) == 1 && (sub[0] == "mcp-out-of-scope.json" || strings.HasPrefix(sub[0], "mcp-out-of-scope.json.")):
+			// Every entry `tq settings render` took out of .claude.json, values included, and the
+			// .corrupt-<time> files it moves a damaged list to: another copy of the MCP entries.
+			return Hit{p, KindState, "the MCP entries removed from the Claude config of " + parts[1] + " (" + sub[0] + ")"}, true
+		case len(sub) == 2 && sub[0] == "backups" && strings.HasPrefix(sub[1], ".claude.json"):
+			// Claude Code's own backups of .claude.json (backups/.claude.json.backup.<time>).
+			return Hit{p, KindState, "a backup of the Claude config of " + parts[1] + " (backups/" + sub[1] + ")"}, true
 		case sub[0] == "plugins":
 			switch {
 			case len(sub) == 1, len(sub) == 2 && sub[1] == "cache":

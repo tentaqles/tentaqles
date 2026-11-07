@@ -21,7 +21,10 @@ manifest or `.claude.json` either, so it needs a read command that carries no se
   `verified`), `browsers` and `other_providers`. `credential` and `connection` are `present`, `missing`
   or `none`, by presence and server name only; no token, environment value or MCP `env` value is read
   into it. `verified` is true only when the provider's read-only `verify` command passed in this run,
-  with a 5 s limit each. A neutral folder gives `identity: null`; an untrusted client gives `trusted:
+  with a 5 s limit each, and a keychain lookup has the same 5 s limit (a timeout reads `missing`). An
+  identity with no `claude` identity has no Claude config: its `connection` reads `missing` and no config
+  file is read. The connect entry is taken from the embedded catalog, so a user override of a provider
+  does not hide a connection. A neutral folder gives `identity: null`; an untrusted client gives `trusted:
   false` and a `reason` and no provider data. `tq doctor --json` is unchanged and stays the health report;
   `tq status --json` used to print it and no longer does.
 - `tentaqles connect <provider>` is **not** human-only. It is narrow instead:
@@ -37,12 +40,21 @@ manifest or `.claude.json` either, so it needs a read command that carries no se
     key, number and indent stays, under a lock file and an atomic rename; a file that is not JSON, or
     whose `mcpServers` is not an object, is left alone and named;
   - a server already there (by name) is `already connected` and nothing is written;
+  - Claude Code rewrites `.claude.json` while it runs and does not honour connect's lock. connect reads
+    the file again just before the rename and makes its edit again if it changed, and when a session
+    looks open (`bundle.InUse`, as for `tq settings render`) it prints a warning on stderr, apart from the
+    success line, to run `tentaqles status --json` after restarting;
   - each change is one line in `$TQ_HOME/connections.jsonl`, written before the file is replaced:
     time, identity, provider, server name, caller (`human` or `harness`), never a value of the entry.
 - `connect` re-signs nothing: `.claude.json` is not in the integrity record, and the entry can only be the
   catalog's.
-- The identity's `.claude.json` (and its backups) becomes a **protected path**, `KindState`: no file
-  tool, MCP input or shell redirect reads or writes it (`tq/protected-path`). Before this ADR it fell under
+- The identity's `.claude.json` and every other copy of its MCP entries become **protected paths**,
+  `KindState`: `<identity>/claude/.claude.json*` (the file, its lock and temporary files, Claude's
+  `.claude.json.backup`), `<identity>/claude/backups/.claude.json*` (Claude Code's timestamped
+  backups) and `<identity>/claude/mcp-out-of-scope.json*` (the entries `tq settings render` removes,
+  values included, and its `.corrupt-<time>` files). No file tool, MCP input or shell redirect reads
+  or writes them (`tq/protected-path`); `projects/`, `memory/`, `todos/` and the rest of the Claude
+  home stay writable. Before this ADR it fell under
   "the harness's own working data" and was writable by a session, which would have made `connect`'s limits
   moot: an agent could write any server by hand. `connect` runs as a process, not as a tool call, and its
   command line names no path, so the hook allows it. Claude Code reads and writes the file itself and is

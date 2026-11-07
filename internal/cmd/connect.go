@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/audit"
+	"github.com/tentaqles/tentaqles/internal/bundle"
 	"github.com/tentaqles/tentaqles/internal/connect"
 	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -120,6 +121,11 @@ func runConnect(c *cobra.Command, id string) error {
 		return nil
 	}
 	fmt.Fprintf(c.OutOrStdout(), "%s: connected as %s\n", id, name)
+	// Claude Code rewrites .claude.json while it runs and does not honour connect's lock, as with
+	// `tq settings render`: say so, and how to check.
+	if bundle.InUse(filepath.Dir(path)) {
+		fmt.Fprintf(c.ErrOrStderr(), "warning: Claude Code looks open with this config home; it may write .claude.json back and undo this. Restart the session, then run tentaqles status --json to check %s is connected, and tentaqles connect %s again if it is not\n", id, id)
+	}
 	return nil
 }
 

@@ -39,38 +39,71 @@ func Add(path, name string, entry map[string]any, before func() error) (added bo
 	}
 	defer unlock()
 
-	raw, err := os.ReadFile(path)
-	mode := os.FileMode(0o600)
-	switch {
-	case os.IsNotExist(err):
-		raw = nil
-	case err != nil:
-		return false, err
-	default:
-		if fi, serr := os.Stat(path); serr == nil {
-			mode = fi.Mode().Perm()
-		}
-	}
 	val, err := encode(entry)
 	if err != nil {
 		return false, err
 	}
-	out, added, err := insert(raw, name, val)
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", path, err)
-	}
-	if !added {
-		return false, nil
-	}
-	if !json.Valid(out) {
-		return false, fmt.Errorf("%s: the edited file is not valid JSON; nothing written", path)
-	}
-	if before != nil {
-		if err := before(); err != nil {
+	// Claude Code writes this file too, and does not honour our lock. The edit is made from
+	// what was read, so the file is read again just before the rename: if it changed, the edit
+	// is made again from the new bytes. That shrinks the window to the rename itself; it cannot
+	// close it, which is why the command warns when a session looks open.
+	logged := false
+	for try := 0; try < editTries; try++ {
+		raw, mode, err := readConfig(path)
+		if err != nil {
 			return false, err
 		}
+		out, added, err := insert(raw, name, val)
+		if err != nil {
+			return false, fmt.Errorf("%s: %w", path, err)
+		}
+		if !added {
+			return false, nil
+		}
+		if !json.Valid(out) {
+			return false, fmt.Errorf("%s: the edited file is not valid JSON; nothing written", path)
+		}
+		if before != nil && !logged {
+			if err := before(); err != nil {
+				return false, err
+			}
+			logged = true
+		}
+		if betweenReadAndRename != nil {
+			betweenReadAndRename()
+		}
+		cur, _, err := readConfig(path)
+		if err != nil {
+			return false, err
+		}
+		if bytes.Equal(cur, raw) {
+			return true, writeAtomic(path, out, mode)
+		}
 	}
-	return true, writeAtomic(path, out, mode)
+	return false, fmt.Errorf("%s kept changing while connect edited it (a running Claude session?); nothing written, run connect again once it is idle", path)
+}
+
+// editTries is how many times Add makes its edit again from a file that changed under it.
+const editTries = 5
+
+// betweenReadAndRename is a test hook: it runs after the edit is made and before the file is
+// read again. Nil in tq.
+var betweenReadAndRename func()
+
+// readConfig reads the file (nil for one that does not exist) and the mode a replacement keeps.
+func readConfig(path string) ([]byte, os.FileMode, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, 0o600, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	mode := os.FileMode(0o600)
+	if fi, serr := os.Stat(path); serr == nil {
+		mode = fi.Mode().Perm()
+	}
+	return raw, mode, nil
 }
 
 // encode is the compact JSON of v with <, > and & as written.
