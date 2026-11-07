@@ -153,6 +153,29 @@ type Result struct {
 	Version  string // the first line of the version command's output
 	Docs     string // the provider's documentation URL
 	Method   string // the method that ran (Installed)
+	// Then is a step the developer takes after the CLI is there (Azure DevOps' `az extension
+	// add`), from a catalog note that starts with "then: ". tq prints it and never runs it.
+	Then string
+}
+
+// thenPrefix marks a catalog install note as a follow-up step to print. Every other note is
+// an install alternative (a script piped to a shell, say) and is never printed.
+const thenPrefix = "then: "
+
+// thenNote is the follow-up note of one OS block, or "".
+func thenNote(o providers.InstallOS) string {
+	if strings.HasPrefix(o.Note, thenPrefix) {
+		return clean(o.Note)
+	}
+	return ""
+}
+
+// Output is what the command prints: the line, then the follow-up step when there is one.
+func (r Result) Output() string {
+	if r.Then != "" && (r.Status == Installed || r.Status == Present) {
+		return r.Line() + "\n" + r.Then
+	}
+	return r.Line()
 }
 
 // Line is the one line the command prints.
@@ -226,9 +249,15 @@ func Install(p providers.Provider, d Deps) (Result, error) {
 	if len(vargs) == 0 {
 		vargs = []string{"--version"}
 	}
-	if path, err := d.LookPath(cmdName, d.Env); err == nil {
+	res.Then = thenNote(OSHints(p, d.GOOS))
+	// Look for the CLI on the PATH a new shell would have: on Windows a package manager's PATH
+	// change is in the registry, not in this process. A CLI an earlier install put there (the
+	// same CLI under another provider in one reach, or a retry from the same terminal) is
+	// present.
+	env := d.lookupEnv()
+	if path, err := d.LookPath(cmdName, env); err == nil {
 		res.Status = Present
-		res.Version = d.version(path, vargs, d.Env)
+		res.Version = d.version(path, vargs, env)
 		return res, nil
 	}
 	plan, ok, err := Pick(p, d)
@@ -252,14 +281,8 @@ func Install(p providers.Provider, d Deps) (Result, error) {
 		return res, &Failure{Provider: p.ID, Msg: ErrorLine(stderr, stdout, runErr)}
 	}
 
-	// Verify with the PATH a new shell would have: the package manager's PATH change is in the
-	// registry, not in this process.
-	env := d.Env
-	if d.GOOS == "windows" && d.RegistryPath != nil {
-		if reg, rerr := d.RegistryPath(); rerr == nil {
-			env = AppendPath(env, reg)
-		}
-	}
+	// Verify with the PATH a new shell would have, read again: the package manager changed it.
+	env = d.lookupEnv()
 	path, lerr := d.LookPath(cmdName, env)
 	if lerr != nil {
 		return res, &Failure{Provider: p.ID, Msg: fmt.Sprintf("%s finished but %s is not on the PATH; open a new terminal and run it again", plan.Method, cmdName)}
@@ -270,6 +293,17 @@ func Install(p providers.Provider, d Deps) (Result, error) {
 	}
 	res.Status, res.Version, res.Method = Installed, ver, plan.Method
 	return res, nil
+}
+
+// lookupEnv is Env, and on Windows with the registry's PATH folders added to the end of its
+// PATH: the lookup of a CLI and its version command use it.
+func (d Deps) lookupEnv() []string {
+	if d.GOOS == "windows" && d.RegistryPath != nil {
+		if reg, err := d.RegistryPath(); err == nil && reg != "" {
+			return AppendPath(d.Env, reg)
+		}
+	}
+	return d.Env
 }
 
 // version is the first line of the version command's output, or "unknown".

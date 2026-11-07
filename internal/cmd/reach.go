@@ -129,7 +129,7 @@ func installScope(c *cobra.Command, ws *resolve.Workspace) {
 			fmt.Fprintln(w, strings.TrimSpace(err.Error()))
 			continue
 		}
-		fmt.Fprintln(w, strings.TrimSpace(res.Line()))
+		fmt.Fprintln(w, strings.TrimSpace(res.Output()))
 	}
 }
 

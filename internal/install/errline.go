@@ -23,8 +23,9 @@ var sizeRe = regexp.MustCompile(`(?i)\d+(\.\d+)?\s*(%|[kmgt]?i?b(/s)?)`)
 // ErrorLine is the line that says why a package manager failed. It looks in stderr, then in
 // stdout, for the first line that reads as an error, skipping what a package manager prints
 // before it: a progress line or bar, a spinner frame, a warning. Without such a line it takes
-// the first plain line of stderr, and then the error's own text (the exit status). Escape and
-// control characters are removed and the line is cut to 200 runes.
+// the first plain line of stderr, then the last plain line of stdout, and then the error's own
+// text (the exit status). Escape and control characters are removed and the line is cut to
+// 200 runes.
 func ErrorLine(stderr, stdout string, err error) string {
 	errLines, outLines := lines(stderr), lines(stdout)
 	for _, set := range [][]string{errLines, outLines} {
@@ -36,6 +37,13 @@ func ErrorLine(stderr, stdout string, err error) string {
 	}
 	for _, l := range errLines {
 		if !isNoise(l) && !warnRe.MatchString(l) {
+			return clip(l)
+		}
+	}
+	// winget says "No applicable installer found" or "No package found matching input
+	// criteria" on stdout, with no error word: the last plain line is its verdict.
+	for i := len(outLines) - 1; i >= 0; i-- {
+		if l := outLines[i]; !isNoise(l) && !warnRe.MatchString(l) {
 			return clip(l)
 		}
 	}

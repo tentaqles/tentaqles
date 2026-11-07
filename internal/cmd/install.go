@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"runtime"
@@ -68,17 +69,32 @@ func newInstallCmd() *cobra.Command {
 			}
 			if !slices.Contains(ws.Manifest.Scope(), id) {
 				msg := fmt.Sprintf("%s is outside the scope of identity %s: %s", id, ws.Name, identityScope(ws.Manifest))
+				// The line as REQ-4 words it, with no "tq: " in front (RunMain adds one to an
+				// error): print it, log it, exit 1. The denial is logged before the exit.
 				logInstallRefusal(ws.Name, id, msg)
-				return errors.New(msg)
+				return exitWithLine(c.ErrOrStderr(), msg)
 			}
 			res, err := installProvider(ws, p)
 			if err != nil {
+				var f *install.Failure
+				if errors.As(err, &f) {
+					return exitWithLine(c.OutOrStdout(), f.Error())
+				}
 				return err
 			}
-			fmt.Fprintln(c.OutOrStdout(), strings.TrimSpace(res.Line()))
+			fmt.Fprintln(c.OutOrStdout(), strings.TrimSpace(res.Output()))
 			return nil
 		},
 	}
+}
+
+// exitWithLine prints line, then exits 1 through exitFunc (as tq bundle check and tq providers
+// check do). Where a test stubs exitFunc with a function that returns, the line comes back as
+// the error.
+func exitWithLine(w io.Writer, line string) error {
+	fmt.Fprintln(w, strings.TrimSpace(line))
+	exitFunc(1)
+	return errors.New(line)
 }
 
 // installProvider installs p's CLI for ws, with ws's environment. The caller has checked that p

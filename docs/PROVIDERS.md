@@ -137,7 +137,15 @@ Rules:
   outside the identity's scope is refused (`<provider> is outside the scope of identity <ws>:
   <scope>`, exit 1, one `identity` line in the denial log with layer `command`).
 - An agent may run it for a provider in scope (it is not human-only; ADR-0015). Azure DevOps'
-  `az extension add --name azure-devops` stays a printed note.
+  `az extension add --name azure-devops` stays a printed note: an install `note:` that starts
+  with `then: ` is printed after the provider's line (`then: az extension add --name
+  azure-devops`) and never run; any other note is an install alternative and is not printed.
+- The failure and refusal lines are printed as they are worded (no `tq:` in front) and the
+  command exits 1. The failure reason is the package manager's error line, looked for in stderr
+  then stdout; the last 48 KiB of each stream are kept, so a verdict after a long log is found.
+- On Windows the CLI is also looked up on the registry PATH before any package manager runs, so
+  a CLI an earlier install added (the same `az` under Azure and Azure DevOps in one `reach`, or
+  a retry from the same terminal) reads `already present`.
 
 ## Match lists
 

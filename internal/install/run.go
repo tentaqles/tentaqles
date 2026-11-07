@@ -13,8 +13,8 @@ import (
 func DefaultRun(ctx context.Context, path string, args, env []string) (string, string, error) {
 	c := exec.CommandContext(ctx, path, args...)
 	c.Env = env
-	var out, errb bytes.Buffer
-	c.Stdout, c.Stderr = &limitWriter{w: &out}, &limitWriter{w: &errb}
+	out, errb := &limitWriter{}, &limitWriter{}
+	c.Stdout, c.Stderr = out, errb
 	// A grandchild that keeps the pipes open must not hold tq past the deadline.
 	c.WaitDelay = 2 * time.Second
 	tree := prepareTree(c)
@@ -27,18 +27,47 @@ func DefaultRun(ctx context.Context, path string, args, env []string) (string, s
 	return out.String(), errb.String(), err
 }
 
-// limitWriter keeps the first 64 KiB of a stream and discards the rest.
+const (
+	headMax = 16 << 10
+	tailMax = 48 << 10
+)
+
+// limitWriter keeps what a stream said at the start (the first 16 KiB: a version line) and at
+// the end (the last 48 KiB: a package manager's verdict comes last) and discards the middle.
 type limitWriter struct {
-	w *bytes.Buffer
+	head, tail []byte
+	cut        bool
 }
 
 func (l *limitWriter) Write(p []byte) (int, error) {
-	if room := 64<<10 - l.w.Len(); room > 0 {
-		if len(p) > room {
-			l.w.Write(p[:room])
-		} else {
-			l.w.Write(p)
+	n := len(p)
+	if room := headMax - len(l.head); room > 0 {
+		take := min(room, len(p))
+		l.head = append(l.head, p[:take]...)
+		p = p[take:]
+	}
+	if len(p) > 0 {
+		l.tail = append(l.tail, p...)
+		if len(l.tail) > 2*tailMax {
+			l.tail = append([]byte(nil), l.tail[len(l.tail)-tailMax:]...)
+			l.cut = true
 		}
 	}
-	return len(p), nil
+	return n, nil
+}
+
+// String is the head and the tail; when the middle was dropped the tail starts at a line start.
+func (l *limitWriter) String() string {
+	tail := l.tail
+	if len(tail) > tailMax {
+		tail = tail[len(tail)-tailMax:]
+		l.cut = true
+	}
+	if !l.cut {
+		return string(l.head) + string(tail)
+	}
+	if i := bytes.IndexByte(tail, '\n'); i >= 0 {
+		tail = tail[i+1:]
+	}
+	return string(l.head) + "\n" + string(tail)
 }

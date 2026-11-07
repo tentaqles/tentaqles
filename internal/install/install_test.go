@@ -12,17 +12,33 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 // The test binary is the fake package manager and the fake CLI the tests put on a PATH: run
 // under another name with a sidecar it behaves as the sidecar says (internal/testutil).
+//
+// The suite also points TQ_HOME, HOME and USERPROFILE at an empty folder, so nothing it loads
+// (the catalog reads the user provider folder) reaches the developer's real state. Under Claude
+// Code's marker paths.Home ignores TQ_HOME, so the override is allowed here.
 func TestMain(m *testing.M) {
 	if ok, code := testutil.FakeMain(); ok {
 		os.Exit(code)
 	}
-	os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "tq-install-")
+	if err != nil {
+		panic(err)
+	}
+	for _, k := range []string{"HOME", "USERPROFILE"} {
+		os.Setenv(k, dir)
+	}
+	os.Setenv("TQ_HOME", filepath.Join(dir, ".tentaqles"))
+	paths.AllowHomeOverride = true
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func pathEnv(dirs ...string) []string {
@@ -48,9 +64,15 @@ func tool(method string) providers.Provider {
 		o.Apt = "tool-pkg"
 	case "winget":
 		o.Winget = "Tool.Pkg"
+	case "scoop":
+		o.Scoop = "tool-pkg"
+	case "brew":
+		o.Brew = "tool-pkg"
+	case "pip":
+		o.Pip = "tool-pkg"
 	}
 	return providers.Provider{ID: "tool", Docs: "https://example.com/tool", CLI: &providers.CLI{Command: "tool", VersionArgs: []string{"--version"}},
-		Install: providers.Install{Linux: o, Windows: o}}
+		Install: providers.Install{Linux: o, Windows: o, Macos: o}}
 }
 
 func azProvider(t *testing.T) providers.Provider {
@@ -80,6 +102,38 @@ func TestInstall_FailureLineIsTheError(t *testing.T) {
 				"\r-\r\\\r|\r/\r-\r\\\r|\r/\n  ██████████████████████████████  9.00 MB / 9.00 MB\nSuccessfully verified installer hash\nStarting package install...\n" +
 				"Installer failed with exit code: 1603\n",
 			want: "tool: install failed: Installer failed with exit code: 1603",
+		},
+		{
+			name: "winget: a verdict with no error word", method: "winget", prog: "winget",
+			stdout: "Found Tool [Tool.Pkg] Version 2.0.0\nNo applicable installer found; see logs for more details.\n",
+			want:   "tool: install failed: No applicable installer found; see logs for more details.",
+		},
+		{
+			name: "winget: no package", method: "winget", prog: "winget",
+			stdout: "\r-\r\\\r|\rNo package found matching input criteria.\n",
+			want:   "tool: install failed: No package found matching input criteria.",
+		},
+		{
+			name: "winget: no upgrade", method: "winget", prog: "winget",
+			stdout: "Found Tool [Tool.Pkg] Version 2.0.0\nNo available upgrade found.\n",
+			want:   "tool: install failed: No available upgrade found.",
+		},
+		{
+			name: "scoop: ERROR after downloads", method: "scoop", prog: "scoop",
+			stdout: "Installing 'tool-pkg' (1.0.0) [64bit] from 'main' bucket\nDownloading https://example.com/tool.zip (4.2 MB)...\n" +
+				"Checking hash of tool.zip ... ok.\nERROR Could not find 'tool-pkg'.\n",
+			want: "tool: install failed: ERROR Could not find 'tool-pkg'.",
+		},
+		{
+			name: "brew: Warning first, then Error", method: "brew", prog: "brew",
+			stderr: "Warning: tool-pkg 1.0 is already installed but outdated\nError: tool-pkg: no bottle available!\n",
+			want:   "tool: install failed: Error: tool-pkg: no bottle available!",
+		},
+		{
+			name: "pip: WARNING first, then ERROR", method: "pip", prog: "pip",
+			stdout: "Collecting tool-pkg\n",
+			stderr: "WARNING: Retrying (Retry(total=4)) after connection broken\nERROR: No matching distribution found for tool-pkg\n",
+			want:   "tool: install failed: ERROR: No matching distribution found for tool-pkg",
 		},
 		{
 			name: "npm: warnings first, then npm error", method: "npm", prog: "npm",
@@ -211,6 +265,107 @@ func TestInstall_RefreshesPathFromRegistry(t *testing.T) {
 	_, err = Install(p, d)
 	if err == nil || !strings.Contains(err.Error(), "az: install failed: winget finished but az is not on the PATH") {
 		t.Fatalf("err = %v, want the CLI-not-on-PATH failure", err)
+	}
+}
+
+// The verdict comes last: an error after more than 64 KiB of status lines is still the reason.
+func TestInstall_LateErrorLineIsKept(t *testing.T) {
+	filler := strings.Repeat("resolving step of the plan, nothing wrong here\n", 2000)
+	if len(filler) < 70<<10 {
+		t.Fatalf("filler is %d bytes", len(filler))
+	}
+	t.Run("stderr", func(t *testing.T) {
+		bin := t.TempDir()
+		testutil.NewFakeProgram(t, bin, "pip", testutil.FakeSpec{Exit: 1, Stderr: filler + "ERROR: no matching distribution\n"})
+		_, err := Install(tool("pip"), realDeps("linux", pathEnv(bin)))
+		if err == nil || err.Error() != "tool: install failed: ERROR: no matching distribution" {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("stdout", func(t *testing.T) {
+		bin := t.TempDir()
+		testutil.NewFakeProgram(t, bin, "winget", testutil.FakeSpec{Exit: 1, Stdout: filler + "Installer failed with exit code: 1603\n"})
+		_, err := Install(tool("winget"), realDeps("linux", pathEnv(bin)))
+		if err == nil || err.Error() != "tool: install failed: Installer failed with exit code: 1603" {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("the writer is bounded and keeps the start and the end", func(t *testing.T) {
+		w := &limitWriter{}
+		for i := 0; i < 5000; i++ {
+			_, _ = w.Write([]byte("line " + strings.Repeat("x", 90) + "\n"))
+		}
+		_, _ = w.Write([]byte("the very last line\n"))
+		s := w.String()
+		if len(s) > headMax+tailMax+2 || !strings.HasPrefix(s, "line ") || !strings.HasSuffix(s, "the very last line\n") {
+			t.Fatalf("kept %d bytes, start %q, end %q", len(s), s[:10], s[len(s)-20:])
+		}
+	})
+}
+
+// An azure-devops style note ("then: ...") follows the line; any other note is an install
+// alternative and is not printed; a manual or no-CLI result prints no step.
+func TestResult_OutputPrintsOnlyAThenNote(t *testing.T) {
+	mk := func(note string) providers.Provider {
+		o := providers.InstallOS{Apt: "x", Note: note}
+		return providers.Provider{ID: "x", Docs: "https://example.com", CLI: &providers.CLI{Command: "x"}, Install: providers.Install{Linux: o}}
+	}
+	var ran [][]string
+	d := Deps{GOOS: "linux", LookPath: lookIn("x"), Run: recordRun(&ran)}
+	res, err := Install(mk("then: x extension add --name y"), d)
+	if err != nil || res.Output() != "x: already present tool 1.2.3\nthen: x extension add --name y" {
+		t.Fatalf("output = %q err=%v", res.Output(), err)
+	}
+	res, _ = Install(mk("curl -sL https://example.com/x | sudo bash"), d)
+	if strings.Contains(res.Output(), "curl") || strings.Contains(res.Output(), "\n") {
+		t.Fatalf("an install alternative was printed: %q", res.Output())
+	}
+	res, _ = Install(mk("then: x extension add --name y"), Deps{GOOS: "linux", LookPath: lookIn()})
+	if res.Status != Manual || strings.Contains(res.Output(), "then:") {
+		t.Fatalf("manual result = %+v, output %q", res, res.Output())
+	}
+}
+
+// After one install the CLI is found on the registry PATH before any package manager runs: the
+// same CLI under a second provider (azure-devops after az in one reach) and a retry from the
+// same terminal print "already present" and do not run winget again.
+func TestInstall_FoundOnRegistryPathBeforeRunning(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the registry PATH is Windows only")
+	}
+	c, err := providers.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	az, _ := c.Get("az")
+	devops, _ := c.Get("azure-devops")
+	bin, stage, newDir := t.TempDir(), t.TempDir(), t.TempDir()
+	log := filepath.Join(t.TempDir(), "pm.log")
+	cli := testutil.NewFakeProgram(t, stage, "az", testutil.FakeSpec{Stdout: "azure-cli 2.99.0\n"})
+	testutil.NewFakeProgram(t, bin, "winget", testutil.FakeSpec{Log: log, Copy: []testutil.FakeCopy{
+		{From: cli, To: filepath.Join(newDir, filepath.Base(cli))},
+		{From: testutil.FakeSidecar(cli), To: testutil.FakeSidecar(filepath.Join(newDir, filepath.Base(cli)))},
+	}})
+	d := realDeps(runtime.GOOS, pathEnv(bin))
+	d.RegistryPath = func() (string, error) { return newDir, nil }
+
+	res, err := Install(az, d)
+	if err != nil || res.Status != Installed {
+		t.Fatalf("az: %+v %v", res, err)
+	}
+	res, err = Install(devops, d)
+	if err != nil || res.Line() != "azure-devops: already present azure-cli 2.99.0" {
+		t.Fatalf("azure-devops: line %q err %v, want already present", res.Line(), err)
+	}
+	if res.Output() != res.Line()+"\nthen: az extension add --name azure-devops" {
+		t.Fatalf("azure-devops output = %q, want the extension note after the line", res.Output())
+	}
+	res, err = Install(az, d)
+	if err != nil || res.Status != Present {
+		t.Fatalf("a retry: %+v %v, want already present", res, err)
+	}
+	if got := testutil.ReadFakeLog(t, log); len(got) != 1 {
+		t.Fatalf("winget ran %d times, want once", len(got))
 	}
 }
 

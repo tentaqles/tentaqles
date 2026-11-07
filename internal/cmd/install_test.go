@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -75,17 +76,69 @@ func installRegistryPathOff(t *testing.T) {
 	t.Cleanup(func() { installRegistryPath = prev })
 }
 
-// runInstall runs `tentaqles install args...` and returns its output and error.
-func runInstall(t *testing.T, args ...string) (out string, err error) {
+// installExit is what the stubbed exitFunc panics with, so a test sees the exit code.
+type installExit int
+
+// runInstallCode runs `tentaqles install args...` and returns its output and error, and the
+// code the command exited with through exitFunc (0 when it did not).
+func runInstallCode(t *testing.T, args ...string) (out string, code int, err error) {
 	t.Helper()
+	prev := exitFunc
+	exitFunc = func(c int) { panic(installExit(c)) }
+	t.Cleanup(func() { exitFunc = prev })
 	var buf bytes.Buffer
 	root := NewRoot()
 	root.SetOut(&buf)
 	root.SetErr(&buf)
 	root.SetIn(strings.NewReader(""))
 	root.SetArgs(append([]string{"install"}, args...))
-	err = root.Execute()
-	return buf.String(), err
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c, ok := r.(installExit)
+				if !ok {
+					panic(r)
+				}
+				code = int(c)
+			}
+		}()
+		err = root.Execute()
+	}()
+	return buf.String(), code, err
+}
+
+// runInstall is runInstallCode for a test that only asks whether the call was refused: an exit
+// of the command reads as an error holding what it printed.
+func runInstall(t *testing.T, args ...string) (out string, err error) {
+	t.Helper()
+	out, code, err := runInstallCode(t, args...)
+	if err == nil && code != 0 {
+		err = fmt.Errorf("%s", strings.TrimSpace(out))
+	}
+	return out, err
+}
+
+// runMainInstall runs `tentaqles install args...` through RunMain, the path the binary takes,
+// and returns what it wrote to stdout and stderr and its exit code.
+func runMainInstall(t *testing.T, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	prev := exitFunc
+	exitFunc = func(c int) { panic(installExit(c)) }
+	t.Cleanup(func() { exitFunc = prev })
+	var o, e bytes.Buffer
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c, ok := r.(installExit)
+				if !ok {
+					panic(r)
+				}
+				code = int(c)
+			}
+		}()
+		code = RunMain(append([]string{"install"}, args...), &o, &e)
+	}()
+	return o.String(), e.String(), code
 }
 
 // wantArgs is the argv the catalog's az entry gives its package manager on the host OS.
@@ -223,10 +276,10 @@ func TestInstall_NoIdentity(t *testing.T) {
 func TestInstall_OutOfScopeRefused(t *testing.T) {
 	for _, guard := range []string{"", "guard: v2\n"} {
 		f := newInstallFixture(t, guard+azBody)
-		out, err := runInstall(t, "aws")
+		out, code, err := runInstallCode(t, "aws")
 		want := "aws is outside the scope of identity acme: az, claude"
-		if err == nil || err.Error() != want {
-			t.Fatalf("guard %q: err = %v (out %q), want %q", guard, err, out, want)
+		if err != nil || code != 1 || strings.TrimSpace(out) != want {
+			t.Fatalf("guard %q: err = %v, exit %d, out %q, want exit 1 and exactly %q", guard, err, code, out, want)
 		}
 		if got := testutil.ReadFakeLog(t, f.log); len(got) != 0 {
 			t.Fatalf("a package manager ran for an out-of-scope provider: %v", got)
@@ -238,6 +291,44 @@ func TestInstall_OutOfScopeRefused(t *testing.T) {
 		if len(ds) != 1 || ds[0].Category != "identity" || ds[0].Subject != "aws" || ds[0].Identity != "acme" || ds[0].Layer != audit.LayerCommand {
 			t.Fatalf("guard %q: denial log = %+v, want one identity line for aws", guard, ds)
 		}
+	}
+}
+
+// The lines REQ-4 and REQ-7 give reach the user as they are worded, with nothing in front,
+// through RunMain, and the denial is logged before the exit.
+func TestInstall_LinesThroughRunMain(t *testing.T) {
+	f := newInstallFixture(t, azBody)
+	stdout, stderr, code := runMainInstall(t, "aws")
+	if want := "aws is outside the scope of identity acme: az, claude\n"; stdout+stderr != want || code != 1 {
+		t.Fatalf("out of scope: stdout %q stderr %q exit %d, want %q and exit 1", stdout, stderr, code, want)
+	}
+	if ds, err := audit.ReadDenials(); err != nil || len(ds) != 1 || ds[0].Category != "identity" {
+		t.Fatalf("denial log = %+v %v, want one identity line", ds, err)
+	}
+
+	// The package manager fails after a warning: the line is its error line.
+	pm := filepath.Join(f.bin, testutil.FakeFile(hostPM()))
+	testutil.WriteFakeSpec(t, pm, testutil.FakeSpec{Log: f.log, Exit: 1, Stderr: "Warning: slow mirror\nError: boom\n"})
+	stdout, stderr, code = runMainInstall(t, "az")
+	if want := "az: install failed: Error: boom\n"; stdout+stderr != want || code != 1 {
+		t.Fatalf("failure: stdout %q stderr %q exit %d, want %q and exit 1", stdout, stderr, code, want)
+	}
+}
+
+// azure-devops uses az: it reports the install of az, then the extension step as a note that tq
+// prints and never runs.
+func TestInstall_AzureDevOpsNote(t *testing.T) {
+	f := newInstallFixture(t, "identities: { azure-devops: {}, claude: {} }\n")
+	out, err := runInstall(t, "azure-devops")
+	if err != nil {
+		t.Fatalf("install azure-devops: %v\n%s", err, out)
+	}
+	want := "azure-devops: installed " + azVersion + "\nthen: az extension add --name azure-devops"
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("output = %q, want %q", strings.TrimSpace(out), want)
+	}
+	if got := testutil.ReadFakeLog(t, f.log); len(got) != 1 {
+		t.Fatalf("package manager runs = %v, want one (the note is never run)", got)
 	}
 }
 
@@ -338,6 +429,47 @@ func TestPreToolUse_InstallAllowed(t *testing.T) {
 		if code != 2 || rule != "tq/human-only-command" || !strings.Contains(reason, "BLOCKED [self-protection/tq/human-only-command]") {
 			t.Errorf("%s: code=%d rule=%q reason=%q, want BLOCKED [self-protection/tq/human-only-command]", c, code, rule, reason)
 		}
+	}
+}
+
+// Azure DevOps and Azure share the az CLI: one reach installs it once, the second provider finds
+// it (on Windows through the registry PATH, since winget's PATH change is not in this process)
+// and prints the extension step after its line.
+func TestReach_SharedCLIInstallsOnce(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test", Git: "azure-devops", Clouds: []string{"azure"}})
+	reachInstall = installScope
+	logs, bin, stage, newDir := testutil.TempDir(t), testutil.TempDir(t), testutil.TempDir(t), testutil.TempDir(t)
+	log := filepath.Join(logs, "pm.log")
+	dstDir := bin
+	if runtime.GOOS == "windows" {
+		dstDir = newDir // a folder the running process's PATH does not hold
+		prev := installRegistryPath
+		installRegistryPath = func() (string, error) { return newDir, nil }
+		t.Cleanup(func() { installRegistryPath = prev })
+		t.Setenv("SystemRoot", os.Getenv("SystemRoot"))
+	} else {
+		installRegistryPathOff(t)
+	}
+	cli := testutil.NewFakeProgram(t, stage, "az", testutil.FakeSpec{Stdout: azVersion + "\n"})
+	dst := filepath.Join(dstDir, filepath.Base(cli))
+	testutil.NewFakeProgram(t, bin, hostPM(), testutil.FakeSpec{Log: log,
+		Copy: []testutil.FakeCopy{{From: cli, To: dst}, {From: testutil.FakeSidecar(cli), To: testutil.FakeSidecar(dst)}}})
+	t.Setenv("PATH", bin)
+
+	out, err := runReach(t, filepath.Join(clients, "acme"), "--no-banner")
+	if err != nil {
+		t.Fatalf("reach: %v\n%s", err, out)
+	}
+	for _, want := range []string{"az: installed " + azVersion, "azure-devops: already present " + azVersion, "then: az extension add --name azure-devops"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "install failed") {
+		t.Errorf("a provider failed:\n%s", out)
+	}
+	if got := testutil.ReadFakeLog(t, log); len(got) != 1 {
+		t.Errorf("package manager runs = %v, want one", got)
 	}
 }
 
