@@ -19,8 +19,9 @@ func doubtful(s, quotes string) bool {
 
 // splitPlain splits a command line joined from argv with plain spaces, as Linux and macOS hand it over
 // (internal/humanonly): no shell quoting is re-applied, so a quote is a literal character and a value with a
-// space becomes extra words. A doubt (an unclosed quote, a trailing backslash) makes it unsplittable. It is a
-// plain function on every OS, so the POSIX rules are tested on any host.
+// space becomes extra words, whose boundaries Interactive does not trust (joinedSessionFlags). A doubt (an
+// unclosed quote, a trailing backslash) makes it unsplittable. It is a plain function on every OS, so the POSIX
+// rules are tested on any host.
 func splitPlain(s string) ([]string, bool) {
 	if doubtful(s, `'"`) {
 		return nil, false

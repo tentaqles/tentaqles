@@ -252,21 +252,43 @@ func TestReasonLine(t *testing.T) {
 // A shell started to run something (-c, -Command, -File, /c) is not an interactive session, and
 // neither is an unreadable command line: reach then leaves the terminal open.
 func TestInteractive(t *testing.T) {
-	interactive := [][2]string{
+	// The bare session flags of each shell are interactive on every OS: a joined POSIX line and a Windows
+	// command line both read them as the session they are (joinedSessionFlags).
+	bare := [][2]string{
 		{"pwsh", "pwsh.exe -NoLogo"},
-		{"pwsh", "pwsh -NoLogo -ExecutionPolicy Bypass"},
+		{"pwsh", "pwsh -NoLogo -NoExit"},
+		{"pwsh", "pwsh -Login -l"},
 		{"powershell", "powershell.exe"},
 		{"bash", "bash"},
 		{"bash", "-bash"},
 		{"bash", "bash -l -i"},
+		{"bash", "bash --login"},
 		{"zsh", "zsh"},
+		{"zsh", "zsh -l"},
 		{"fish", "fish"},
+		{"fish", "fish -l"},
+	}
+	for _, k := range bare {
+		if !Interactive(k[0], k[1]) {
+			t.Errorf("Interactive(%q, %q) = false, want true", k[0], k[1])
+		}
+	}
+	// The rest of the Windows cases are judged on the words the OS split, where a value is a word of its own.
+	// They are not run on a joined POSIX line, whose word boundaries are not reliable (L-04).
+	interactive := [][2]string{
+		{"pwsh", "pwsh -NoLogo -ExecutionPolicy Bypass"},
 		{"cmd", "cmd.exe /k"},
 		{"cmd", "cmd"},
 		{"pwsh", "pwsh -ExecutionPolicy RemoteSigned -NoProfile"},
 		{"bash", "bash -o pipefail"},
-		{"zsh", "zsh -l"},
 		{"cmd", "cmd /d /k"},
+	}
+	if runtime.GOOS == "windows" {
+		for _, k := range interactive {
+			if !Interactive(k[0], k[1]) {
+				t.Errorf("Interactive(%q, %q) = false, want true", k[0], k[1])
+			}
+		}
 	}
 	// Windows: a quoted executable path with a space is one word, the program, so the shell after it is judged
 	// on its own arguments (L-09). The quoted line is Windows' command line, so these run on Windows only.
@@ -314,22 +336,43 @@ func TestInteractive(t *testing.T) {
 		// A quoted value with a space, joined without its quotes' meaning: the rest reads as a script.
 		{"pwsh", `pwsh -WorkingDirectory "/home/dev/quoted dir" -NoLogo`},
 	}
-	// The joined-line rules run on every OS: splitPlain is the POSIX split whatever the host, and the word
-	// rules are the same everywhere (interactiveWords).
-	for _, k := range joinedBatch {
+	// The joined-line rules run on every OS: splitPlain is the POSIX split whatever the host, and
+	// interactiveJoined judges its words (the fixed session flags only). Each of these must stay open.
+	joinedDeny := append(joinedBatch, [][2]string{
+		// A value fragment that is itself an option (L-04, round 5): the value's space makes it a word.
+		{"pwsh", "pwsh -wd /home/dev/a -wd ./setup.ps1"},
+		{"pwsh", "pwsh -wd /home/dev/a -c tq"},
+		{"bash", "bash --rcfile /x/rc -o setup.sh"},
+		{"bash", "bash --rcfile '/x/rc -o' setup.sh"},
+		{"bash", "bash --init-file /x/y -d setup.sh"},
+		{"bash", "bash --init-file '/x/y -d' setup.sh"},
+		// A value that is not a session flag: the two-apostrophe and the rcfile cases stay open too.
+		{"pwsh", "pwsh -WorkingDirectory /home/dev/O'Brien/it's -NoLogo"},
+		{"bash", "bash --rcfile /home/dev/rc -l"},
+		{"pwsh", "pwsh -NoLogo -WorkingDirectory /x"},
+		{"bash", "bash -o pipefail"},
+		{"zsh", "zsh -o pipefail -l"},
+		{"fish", "fish -C tq -l"},
+		{"pwsh", "pwsh -ExecutionPolicy RemoteSigned -NoProfile"},
+		{"bash", "bash -i -c tq"},
+		{"cmd", "cmd /k"},
+	}...)
+	for _, k := range joinedDeny {
 		words, ok := splitPlain(k[1])
-		if ok && interactiveWords(k[0], words) {
+		if ok && interactiveJoined(k[0], words) {
 			t.Errorf("joined %q = interactive, want false", k[1])
 		}
 	}
 	joinedInteractive := [][2]string{
-		// Two apostrophes in a value is no doubt: the word after the value is still a flag.
-		{"pwsh", "pwsh -WorkingDirectory /home/dev/O'Brien/it's -NoLogo"},
-		{"bash", "bash --rcfile /home/dev/rc -l"},
+		{"pwsh", "pwsh -NoLogo"},
+		{"pwsh", "pwsh -NoLogo -NoExit -Login"},
+		{"bash", "bash -l -i"},
+		{"zsh", "zsh -l"},
+		{"fish", "fish --login"},
 	}
 	for _, k := range joinedInteractive {
 		words, ok := splitPlain(k[1])
-		if !ok || !interactiveWords(k[0], words) {
+		if !ok || !interactiveJoined(k[0], words) {
 			t.Errorf("joined %q = not interactive, want true", k[1])
 		}
 	}
@@ -352,11 +395,6 @@ func TestInteractive(t *testing.T) {
 		{"cmd", "cmd /k tq reach"},
 		{"bash", ""},
 		{"pwsh", "   "},
-	}
-	for _, k := range interactive {
-		if !Interactive(k[0], k[1]) {
-			t.Errorf("Interactive(%q, %q) = false, want true", k[0], k[1])
-		}
 	}
 	for _, k := range batch {
 		if Interactive(k[0], k[1]) {

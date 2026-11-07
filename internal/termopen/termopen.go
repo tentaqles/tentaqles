@@ -200,24 +200,63 @@ func isNonInteractiveFlag(shell, a string) bool {
 // the shell non-interactive; so does an empty command line. When reach cannot tell, it leaves the
 // terminal open, so every doubt answers no.
 func Interactive(shell, cmdline string) bool {
-	// Windows splits the line as the OS does, so a quoted program path with a space is the program (L-09);
-	// Linux and macOS split on whitespace only (cmdline_other.go). A line that cannot be split keeps the shell.
+	// Windows splits the line as the OS does, so a quoted program path with a space is the program (L-09), and
+	// its words are judged by interactiveWords. Linux and macOS hand over argv joined with spaces (joinedArgv,
+	// cmdline_other.go), where no word after the program can be trusted: interactiveJoined judges them. A line
+	// that cannot be split keeps the shell open.
 	split, ok := splitCommandLine(cmdline)
 	if !ok {
 		return false
 	}
+	if joinedArgv {
+		return interactiveJoined(shell, split)
+	}
 	return interactiveWords(shell, split)
 }
 
-// interactiveWords judges the words of one shell's command line, the program first: the shell is interactive
-// when no word after the options runs something. It is the same on every OS; only the split differs.
-func interactiveWords(shell string, split []string) bool {
-	var args []string
-	for _, w := range split {
-		if w != "" {
-			args = append(args, w)
+// joinedSessionFlags are the only words a shell may carry on a joined POSIX command line and still be
+// interactive: the bare flags that start a session. Any other word (a value of an option, a script, a command,
+// an option that takes a value) is a doubt, since a space inside a value cannot be told from a word boundary
+// (L-04, ADR-0019), so the terminal stays open.
+var joinedSessionFlags = map[string]map[string]bool{
+	"bash":       {"-l": true, "--login": true, "-i": true},
+	"zsh":        {"-l": true, "--login": true, "-i": true},
+	"fish":       {"-l": true, "--login": true, "-i": true},
+	"pwsh":       {"-nologo": true, "-noexit": true, "-login": true, "-l": true},
+	"powershell": {"-nologo": true, "-noexit": true, "-login": true, "-l": true},
+}
+
+// interactiveJoined judges the words of a joined POSIX command line: interactive only when every word after
+// the program is a bare session flag of that shell. A shell not in joinedSessionFlags is not interactive.
+func interactiveJoined(shell string, split []string) bool {
+	args := nonEmptyWords(split)
+	if len(args) == 0 {
+		return false
+	}
+	allowed := joinedSessionFlags[shell]
+	for _, a := range args[1:] {
+		if !allowed[strings.ToLower(a)] {
+			return false
 		}
 	}
+	return true
+}
+
+// nonEmptyWords drops the empty words of a split.
+func nonEmptyWords(split []string) []string {
+	var out []string
+	for _, w := range split {
+		if w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// interactiveWords judges the words of one shell's command line, the program first: the shell is interactive
+// when no word after the options runs something. It is the Windows judgement, over argv the OS split.
+func interactiveWords(shell string, split []string) bool {
+	args := nonEmptyWords(split)
 	if len(args) == 0 {
 		return false
 	}

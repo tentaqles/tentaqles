@@ -57,17 +57,20 @@ shell profiles are outside the integrity record, so the block is written only af
   `zsh`, `fish`, `cmd`); `termopen.Interactive` says that shell's command line starts an interactive session; and the
   parent is not itself a child of a shell. A shell started by a shell (a nested shell, or a Git Bash stub) is not ended
   (`TestReach_KillsOnlyADirectShellParent`, `TestReach_GitBashStubNotEnded`). Only that pid is ended, never an ancestor.
-- **Interactive is read word by word, split the way the host hands the line over.** On Windows the line is split as the
-  OS does (`CommandLineToArgv`), so a quoted program path with a space, such as `"C:\Program Files\PowerShell\7\pwsh.exe"`,
-  is the program and not a script (`TestInteractive`, Windows cases). On Linux and macOS, `internal/humanonly` hands over
-  argv joined with plain spaces and no quoting, so the line is split on whitespace only and no shell quoting is re-applied:
-  an apostrophe or double quote in a value is a literal character, and a value with a space becomes extra words, which read
-  as a script. A doubt (an unclosed quote of either kind, a trailing backslash) keeps the shell open. The word rules are the
-  same on every OS and are tested on every OS (`TestInteractive`, the joined-line table). A bare word after the options is
-  a script or a command, and makes the shell non-interactive. So do `-c`, `-Command`, `-EncodedCommand` (and its prefixes `-e`, `-ec`, `-enc`), `-File`,
-  `-NonInteractive`, `--command`, and `/c` for cmd. Options known to take a value (`-ExecutionPolicy`, `-o`, `--rcfile`)
-  consume the next word. An option not on that list leaves its value counted as a script, so every doubt keeps the
-  shell open (`TestInteractive`).
+- **Interactive is judged on the words the host hands over.** On Windows the command line is split as the OS does
+  (`CommandLineToArgv`), so a quoted program path with a space, such as `"C:\Program Files\PowerShell\7\pwsh.exe"`, is the
+  program and not a script. A word after the program that runs something (`-c`, `-Command`, `-EncodedCommand` and its
+  prefixes `-e`, `-ec`, `-enc`, `-File`, `-NonInteractive`, `--command`, `/c` for cmd, or a bare script word) makes the shell
+  non-interactive, and an option that takes a value consumes the next word (`interactiveWords`, `TestInteractive`, Windows
+  cases only).
+  On Linux and macOS, `internal/humanonly` hands over argv joined with plain spaces and no quoting, so a word boundary
+  inside a value (a value with a space, such as `'/home/dev/a -wd'`) cannot be told from a real boundary. Interactive
+  therefore does not read those words at all: the shell is interactive only when every word after its name is a bare session
+  flag from a fixed list (`joinedSessionFlags`): bash and zsh `-l`, `--login`, `-i`; fish `-l`, `--login`, `-i`; pwsh
+  `-NoLogo`, `-NoExit`, `-Login`, `-l`. Any other word is a doubt, including an option that takes a value, so the terminal stays
+  open with `Close this terminal when you are ready.` (`interactiveJoined`, `TestInteractive`, the joined-line deny cases, which
+  run on every OS). No argv is read inside termopen. A doubt also covers an unclosed quote of either kind or a trailing
+  backslash (`doubtful`). A shell not in the list (cmd, sh) is not interactive on these hosts.
 - **Keys typed during the installs do not answer the pause.** Before the prompt, reach discards the input the terminal
   has buffered (`FlushInput`: the console on Windows, `TCFLSH` on Linux, `TIOCFLUSH` on macOS; nothing on other systems).
 - **The pause comes before the end, and the parent is checked again after it.** Reach prints everything it has to say,

@@ -399,7 +399,7 @@ func TestReach_ParentChangedAtPauseNotEnded(t *testing.T) {
 	}{
 		{"another pid", humanonly.Parent{PID: 4400, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true}},
 		{"same pid, another name", humanonly.Parent{PID: 4321, Name: "powershell.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true}},
-		{"same pid, another command line", humanonly.Parent{PID: 4321, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoProfile", CmdlineKnown: true}},
+		{"same pid, another command line", humanonly.Parent{PID: 4321, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoExit", CmdlineKnown: true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -702,7 +702,8 @@ func TestReach_FallbackWithTheHookEndsTheOldTerminal(t *testing.T) {
 	h := isolateHandover(t, filepath.Dir(clients))
 	h.shell = "powershell"
 	h.detect = []hooks.Shell{"powershell"}
-	reachChain(t, h, humanonly.Parent{PID: 4321, Name: "cmd.exe", Cmdline: "cmd /k", CmdlineKnown: true})
+	// A bash login shell as the parent, so the old terminal is one every host may end (joinedSessionFlags).
+	reachChain(t, h, humanonly.Parent{PID: 4321, Name: "bash", Cmdline: "bash -l", CmdlineKnown: true})
 	out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
