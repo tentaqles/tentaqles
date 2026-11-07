@@ -44,14 +44,22 @@ manifest or `.claude.json` either, so it needs a read command that carries no se
     the file again just before the rename and makes its edit again if it changed, and when a session
     looks open (`bundle.InUse`, as for `tq settings render`) it prints a warning on stderr, apart from the
     success line, to run `tentaqles status --json` after restarting;
-  - each change is one line in `$TQ_HOME/connections.jsonl`, written before the file is replaced:
-    time, identity, provider, server name, caller (`human` or `harness`), never a value of the entry.
+  - each change is one line in `$TQ_HOME/connections.jsonl`: time, identity, provider, server name,
+    caller (`human` or `harness`) and `outcome`, never a value of the entry. The line is written
+    immediately before the file is replaced, after the last check that the file did not change, so a
+    run that changes nothing (already there, a file that never settles, a failed read) writes none. If
+    the replacement then fails, a second line for the same change says `failed`: a `connected` line
+    with no `failed` line after it is the change. The replacement itself is one rename (atomic on the
+    same folder). A crash between the line and the rename leaves a `connected` line with no change:
+    `status --json` then reads the connection as missing, and running `connect` again makes the change
+    and writes its line.
 - `connect` re-signs nothing: `.claude.json` is not in the integrity record, and the entry can only be the
   catalog's.
 - The identity's `.claude.json` and every other copy of its MCP entries become **protected paths**,
   `KindState`: `<identity>/claude/.claude.json*` (the file, its lock and temporary files, Claude's
-  `.claude.json.backup`), `<identity>/claude/backups/.claude.json*` (Claude Code's timestamped
-  backups) and `<identity>/claude/mcp-out-of-scope.json*` (the entries `tq settings render` removes,
+  `.claude.json.backup`), the folder `<identity>/claude/backups/` and its `.claude.json*` files (Claude
+  Code's timestamped backups: the folder itself is protected, so a search or a copy of it is denied, and
+  a file beside them, which is not an MCP entry, is not) and `<identity>/claude/mcp-out-of-scope.json*` (the entries `tq settings render` removes,
   values included, and its `.corrupt-<time>` files). No file tool, MCP input or shell redirect reads
   or writes them (`tq/protected-path`); `projects/`, `memory/`, `todos/` and the rest of the Claude
   home stay writable. Before this ADR it fell under

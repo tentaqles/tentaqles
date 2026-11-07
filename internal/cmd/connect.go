@@ -110,8 +110,8 @@ func runConnect(c *cobra.Command, id string) error {
 		caller = connect.CallerHarness
 	}
 	path := filepath.Join(paths.IdentityDir(w.Name, "claude"), ".claude.json")
-	added, err := connect.Add(path, name, ep.Connect.Entry(), func() error {
-		return connect.Log(connect.Record{Identity: w.Name, Provider: id, Server: name, Caller: caller})
+	added, err := connect.Add(path, name, ep.Connect.Entry(), func(outcome string) error {
+		return connect.Log(connect.Record{Identity: w.Name, Provider: id, Server: name, Caller: caller, Outcome: outcome})
 	})
 	if err != nil {
 		return fmt.Errorf("connect %s: %w", id, err)

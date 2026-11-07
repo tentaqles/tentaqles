@@ -83,6 +83,35 @@ func TestPreToolUse_MCPEntryCopiesProtected(t *testing.T) {
 			}
 		}
 	}
+	// The folder that holds the backups: a search or a copy of it reads every entry in them.
+	bdir := filepath.Join(claude, "backups")
+	bslash := filepath.ToSlash(bdir)
+	for _, c := range []struct{ name, tool, input, cwd string }{
+		{"Grep tool on the folder", "Grep", `{"pattern":"token","path":` + jsonPathLit(bdir) + `}`, root},
+		{"Glob tool on the folder", "Glob", `{"pattern":"*","path":` + jsonPathLit(bdir) + `}`, root},
+		{"grep -r on the folder", "Bash", cmdIn("grep -r token " + bslash), root},
+		{"rg on the folder", "Bash", cmdIn("rg token " + bslash), root},
+		{"cp -r of the folder", "Bash", cmdIn("cp -r " + bslash + " ./x"), root},
+		{"Read on the folder", "Read", pathIn("file_path", bdir), root},
+		{"grep -r from inside the folder", "Bash", cmdIn("grep -r token ."), bdir},
+		{"grep -r with no root from inside the folder", "Bash", cmdIn("grep -r token"), bdir},
+		{"Grep tool with no path from inside the folder", "Grep", `{"pattern":"token"}`, bdir},
+	} {
+		code, category, rule, errOut := hookDecision(t, c.cwd, c.tool, c.input)
+		if code != 2 || category != policy.CategorySelfProtection || rule != policy.ProtectedPathID ||
+			!strings.Contains(errOut, "BLOCKED [self-protection/tq/protected-path]") {
+			t.Errorf("%s: code=%d %s/%s %q", c.name, code, category, rule, errOut)
+		}
+	}
+	// A file beside the backups, and a search of the project, stay allowed.
+	other := filepath.Join(bdir, "other.txt")
+	if code, _, rule, errOut := hookDecision(t, root, "Read", pathIn("file_path", other)); code != 0 {
+		t.Errorf("a file beside the backups denied (%s): %s", rule, errOut)
+	}
+	if code, _, rule, errOut := hookDecision(t, root, "Bash", cmdIn("grep -r token src")); code != 0 {
+		t.Errorf("a search of the project denied (%s): %s", rule, errOut)
+	}
+
 	// What the harness keeps for itself stays readable and writable.
 	mem := filepath.Join(claude, "projects", "C--repos-x", "memory", "MEMORY.md")
 	if err := os.MkdirAll(filepath.Dir(mem), 0o700); err != nil {

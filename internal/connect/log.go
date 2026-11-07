@@ -26,6 +26,10 @@ type Record struct {
 	Provider string    `json:"provider"`
 	Server   string    `json:"server"`
 	Caller   string    `json:"caller"`
+	// Outcome is OutcomeConnected for a change made, or OutcomeFailed when the replacement that
+	// followed a connected line did not happen. A connected line with no failed line after it is
+	// the change.
+	Outcome string `json:"outcome"`
 }
 
 // LogPath is the connection log.

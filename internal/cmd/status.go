@@ -108,6 +108,29 @@ var (
 	statusVerifyLimit time.Duration // 0: identitystatus.VerifyLimit
 )
 
+// statusResolve is resolve.Resolve; a test replaces it with one that blocks, standing in for a
+// keychain read that does not answer (internal/trust keeps its keychain seam unexported).
+var statusResolve = resolve.Resolve
+
+// statusKeyLimit bounds the resolve of status --json (the integrity key's keychain read).
+var statusKeyLimit = identitystatus.KeychainLimit
+
+// resolveWithin runs the resolve of cwd and waits at most limit for it. answered is false when
+// it did not finish in time; the resolve goroutine is then left to finish on its own (the command
+// prints and exits, and a late answer is discarded).
+func resolveWithin(cwd string, cfg *registry.Config, limit time.Duration) (res resolve.Result, answered bool) {
+	done := make(chan resolve.Result, 1)
+	go func() { done <- statusResolve(cwd, cfg) }()
+	t := time.NewTimer(limit)
+	defer t.Stop()
+	select {
+	case r := <-done:
+		return r, true
+	case <-t.C:
+		return resolve.Result{}, false
+	}
+}
+
 // runStatusJSON prints the setup of the client the current folder belongs to
 // (internal/identitystatus). It reads and writes nothing under the tq home.
 func runStatusJSON(c *cobra.Command) error {
@@ -120,9 +143,19 @@ func runStatusJSON(c *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	st := identitystatus.Build(resolve.Resolve(cwd, cfg), identitystatus.Deps{
-		LookPath: statusLookPath, RunCLI: statusRunCLI, VerifyLimit: statusVerifyLimit,
-	})
+	// Resolve reads the integrity key from the keychain, with no deadline of its own: it runs
+	// under the same limit as a keychain lookup (ADR-0017). A key that does not answer in time
+	// gives the untrusted shape, which names the timeout.
+	res, answered := resolveWithin(cwd, cfg, statusKeyLimit)
+	var st identitystatus.Status
+	if answered {
+		st = identitystatus.Build(res, identitystatus.Deps{
+			LookPath: statusLookPath, RunCLI: statusRunCLI, VerifyLimit: statusVerifyLimit,
+		})
+	} else {
+		name, root := resolve.FolderName(cwd, cfg)
+		st = identitystatus.Unanswered(name, root, statusKeyLimit)
+	}
 	enc := json.NewEncoder(c.OutOrStdout())
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")

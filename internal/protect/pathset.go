@@ -529,6 +529,11 @@ func (s *Set) matchState(p, rel string) (Hit, bool) {
 			// Every entry `tq settings render` took out of .claude.json, values included, and the
 			// .corrupt-<time> files it moves a damaged list to: another copy of the MCP entries.
 			return Hit{p, KindState, "the MCP entries removed from the Claude config of " + parts[1] + " (" + sub[0] + ")"}, true
+		case len(sub) == 1 && sub[0] == "backups":
+			// The folder holding Claude Code's backups of .claude.json: a search or a copy of it
+			// reads every MCP entry in them, so the folder itself is protected (its files too,
+			// below). Anything else in it is the harness's and stays as it is.
+			return Hit{p, KindState, "the Claude config backups of " + parts[1]}, true
 		case len(sub) == 2 && sub[0] == "backups" && strings.HasPrefix(sub[1], ".claude.json"):
 			// Claude Code's own backups of .claude.json (backups/.claude.json.backup.<time>).
 			return Hit{p, KindState, "a backup of the Claude config of " + parts[1] + " (backups/" + sub[1] + ")"}, true

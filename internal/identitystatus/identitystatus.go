@@ -97,6 +97,23 @@ type Deps struct {
 	Catalog *providers.Catalog
 }
 
+// Unanswered is the status of a folder whose trust could not be checked in time: the integrity
+// key's keychain read did not answer within limit. With the folder's name (name, root from
+// resolve.FolderName) it is the untrusted shape (REQ-4): identity, root, trusted false and a reason
+// that names the timeout, and no provider data. Without a name the folder is treated as neutral.
+func Unanswered(name, root string, limit time.Duration) Status {
+	reason := "the integrity key did not answer within " + limit.String() +
+		", so this folder's trust could not be checked; run tentaqles status --json again"
+	s := Status{Scope: []string{}, Providers: []Provider{}, Browsers: []Browser{}, OtherProviders: []string{}}
+	if name == "" {
+		s.Reason = reason
+		return s
+	}
+	f := false
+	s.Identity, s.Root, s.Trusted, s.Reason = &name, &root, &f, reason
+	return s
+}
+
 // Build describes the folder res resolved: neutral, untrusted, or a trusted client.
 func Build(res resolve.Result, d Deps) Status {
 	if d.Env == nil {

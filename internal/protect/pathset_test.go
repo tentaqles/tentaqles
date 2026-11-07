@@ -116,6 +116,7 @@ func TestMatchKinds(t *testing.T) {
 		{filepath.Join(claude, "mcp-out-of-scope.json"), KindState},
 		{filepath.Join(claude, "mcp-out-of-scope.json.corrupt-20261106T101500Z"), KindState},
 		{filepath.Join(claude, "backups", ".claude.json.backup.1762424100000"), KindState},
+		{filepath.Join(claude, "backups"), KindState}, // the folder: a search or a copy of it reads them all
 		{filepath.Join(claude, "plugins"), KindPlugin},
 		{filepath.Join(claude, "plugins", "installed_plugins.json"), KindPlugin},
 		{filepath.Join(claude, "plugins", "known_marketplaces.json"), KindPlugin},

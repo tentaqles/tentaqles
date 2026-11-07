@@ -183,7 +183,9 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestStatusAndConnect_BadStates`, `TestConnect_OutOfScopeRefused`,
   `TestConnect_NoCallerInput`, `TestConnect_SurvivesRenderAndHook`,
   `TestConnect_DamagedClaudeJson`, `TestConnect_AtomicWrite`,
-  `TestPreToolUse_ConnectAllowedFileToolsDenied`, `TestStatusJSON_NoSecrets`.
+  `TestPreToolUse_ConnectAllowedFileToolsDenied`, `TestStatusJSON_NoSecrets`,
+  `TestPreToolUse_MCPEntryCopiesProtected`, `TestConnect_ConcurrentWriterIsKept`,
+  `TestConnect_WarnsWhenClaudeIsOpen`.
 - The integrity record is signed and covers the hooks, the enforcing settings keys and the
   shims; a mismatch is at least as strict as untrusted (the hook denies mutating git and
   remote commands), withholds the identity and refuses the launch; a signed workspace never

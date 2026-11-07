@@ -111,7 +111,7 @@ func TestConnect_AlreadyThereWritesNothing(t *testing.T) {
 	body := `{"mcpServers": {"github": {"command": "a-users-own"}}}`
 	write(t, p, body)
 	logged := false
-	added, err := Add(p, "github", httpEntry, func() error { logged = true; return nil })
+	added, err := Add(p, "github", httpEntry, func(string) error { logged = true; return nil })
 	if err != nil || added || logged {
 		t.Fatalf("added=%v logged=%v err=%v", added, logged, err)
 	}
@@ -124,7 +124,7 @@ func TestConnect_FailedBeforeStopsTheWrite(t *testing.T) {
 	p := filepath.Join(t.TempDir(), ".claude.json")
 	body := `{"a":1}`
 	write(t, p, body)
-	if _, err := Add(p, "github", httpEntry, func() error { return fmt.Errorf("log full") }); err == nil {
+	if _, err := Add(p, "github", httpEntry, func(string) error { return fmt.Errorf("log full") }); err == nil {
 		t.Fatal("want the log error")
 	}
 	if string(read(t, p)) != body {

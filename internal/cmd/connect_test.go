@@ -241,7 +241,7 @@ func TestConnect_WritesCatalogEntry(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &rec); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Time.IsZero() || rec.Identity != "acme" || rec.Provider != "gh" || rec.Server != "github" || rec.Caller != connect.CallerHuman {
+	if rec.Time.IsZero() || rec.Identity != "acme" || rec.Provider != "gh" || rec.Server != "github" || rec.Caller != connect.CallerHuman || rec.Outcome != connect.OutcomeConnected {
 		t.Errorf("record: %+v", rec)
 	}
 	if strings.Contains(lines[0], "http") || strings.Contains(lines[0], "githubcopilot") {

@@ -8,6 +8,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 // terminalChain is a developer's process tree as the walker would read it:
@@ -63,5 +64,7 @@ func TestMain(m *testing.M) {
 	ensureProtectedHome = func() error { return os.MkdirAll(paths.Home(), 0o700) }
 	paths.AllowHomeOverride = true
 	envplan.StubSource = os.Executable // the mask stubs the tests run are this binary
-	os.Exit(m.Run())
+	// The run's own TQ_HOME, HOME and USERPROFILE (testutil.HomeRun): a test that never sets
+	// TQ_HOME must not reach the developer's ~/.tentaqles.
+	os.Exit(testutil.HomeRun(m))
 }

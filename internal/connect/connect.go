@@ -24,9 +24,13 @@ import (
 // path, creating the file when it does not exist. It reports added false, and writes nothing,
 // when mcpServers already holds a server of that name (whatever its entry).
 //
-// before, when not nil, runs once the edit is ready and before the file is replaced: an error
-// from it stops the write, so a change is never made without its log line (Log).
-func Add(path, name string, entry map[string]any, before func() error) (added bool, err error) {
+// logf, when not nil, is called once per change actually made, immediately before the file is
+// replaced, with OutcomeConnected: an error from it stops the write, so a change is never made
+// without its line. A run that changes nothing (already there, a file that never settles, a
+// failed read) calls it not at all. If the replacement then fails, logf is called once more with
+// OutcomeFailed, so the log says the change did not happen; the line before it is then not a
+// change.
+func Add(path, name string, entry map[string]any, logf func(outcome string) error) (added bool, err error) {
 	if name == "" {
 		return false, errors.New("connect: no server name")
 	}
@@ -47,7 +51,6 @@ func Add(path, name string, entry map[string]any, before func() error) (added bo
 	// what was read, so the file is read again just before the rename: if it changed, the edit
 	// is made again from the new bytes. That shrinks the window to the rename itself; it cannot
 	// close it, which is why the command warns when a session looks open.
-	logged := false
 	for try := 0; try < editTries; try++ {
 		raw, mode, err := readConfig(path)
 		if err != nil {
@@ -63,12 +66,6 @@ func Add(path, name string, entry map[string]any, before func() error) (added bo
 		if !json.Valid(out) {
 			return false, fmt.Errorf("%s: the edited file is not valid JSON; nothing written", path)
 		}
-		if before != nil && !logged {
-			if err := before(); err != nil {
-				return false, err
-			}
-			logged = true
-		}
 		if betweenReadAndRename != nil {
 			betweenReadAndRename()
 		}
@@ -76,15 +73,39 @@ func Add(path, name string, entry map[string]any, before func() error) (added bo
 		if err != nil {
 			return false, err
 		}
-		if bytes.Equal(cur, raw) {
-			return true, writeAtomic(path, out, mode)
+		if !bytes.Equal(cur, raw) {
+			continue // changed under the edit: make it again from the new bytes
 		}
+		if logf != nil {
+			if err := logf(OutcomeConnected); err != nil {
+				return false, err
+			}
+		}
+		if err := writeAtomic(path, out, mode); err != nil {
+			if logf != nil {
+				_ = logf(OutcomeFailed) // best effort: the change did not happen
+			}
+			return false, err
+		}
+		return true, nil
 	}
 	return false, fmt.Errorf("%s kept changing while connect edited it (a running Claude session?); nothing written, run connect again once it is idle", path)
 }
 
+// Outcomes of a change, as the connection log records them (Record.Outcome).
+const (
+	// OutcomeConnected: the file was replaced with the server in it.
+	OutcomeConnected = "connected"
+	// OutcomeFailed: the replacement after a connected line did not happen (the rename failed),
+	// so that change was not made.
+	OutcomeFailed = "failed"
+)
+
 // editTries is how many times Add makes its edit again from a file that changed under it.
 const editTries = 5
+
+// renameFile is os.Rename; a test replaces it to make the replacement fail.
+var renameFile = os.Rename
 
 // betweenReadAndRename is a test hook: it runs after the edit is made and before the file is
 // read again. Nil in tq.
@@ -206,7 +227,7 @@ func writeAtomic(p string, b []byte, mode os.FileMode) error {
 	}
 	var err error
 	for i := 0; i < 20; i++ {
-		if err = os.Rename(tmp, p); err == nil {
+		if err = renameFile(tmp, p); err == nil {
 			return nil
 		}
 		time.Sleep(25 * time.Millisecond)
