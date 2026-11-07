@@ -232,27 +232,6 @@ func TestShellName(t *testing.T) {
 	}
 }
 
-// splitWords is the POSIX reading of a command line: quotes group, backslashes escape, and an unterminated
-// quote runs to the end.
-func TestSplitWords(t *testing.T) {
-	for in, want := range map[string][]string{
-		`pwsh -NoLogo`:                        {"pwsh", "-NoLogo"},
-		`  a   b  `:                           {"a", "b"},
-		`"a b" c`:                             {"a b", "c"},
-		`'a b' "c d"`:                         {"a b", "c d"},
-		`a\ b c`:                              {"a b", "c"},
-		`"x\"y" z`:                            {`x"y`, "z"},
-		`'it''s'`:                             {"its"},
-		`"C:\Program Files\pwsh.exe" -NoLogo`: {`C:\Program Files\pwsh.exe`, "-NoLogo"},
-		`a "b c`:                              {"a", "b c"},
-		``:                                    nil,
-	} {
-		if got := splitWords(in); !reflect.DeepEqual(got, want) {
-			t.Errorf("splitWords(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // reasonLine picks the line that gives a launcher's reason (the rule install.ErrorLine follows): the first
 // line that reads as an error, else the last line. It never picks a warning-only first line.
 func TestReasonLine(t *testing.T) {
@@ -289,28 +268,69 @@ func TestInteractive(t *testing.T) {
 		{"zsh", "zsh -l"},
 		{"cmd", "cmd /d /k"},
 	}
-	// A quoted executable path with a space is one word, the program: the shell after it is judged on its
-	// own arguments (L-09). Windows (Program Files) and the POSIX quoting both read these.
-	quotedInteractive := [][2]string{
-		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe"`},
-		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo`},
-		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" -ExecutionPolicy "Remote Signed" -NoLogo`},
-		{"bash", `"C:\Program Files\Git\bin\bash.exe" --login -i`},
-		{"powershell", `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile`},
+	// Windows: a quoted executable path with a space is one word, the program, so the shell after it is judged
+	// on its own arguments (L-09). The quoted line is Windows' command line, so these run on Windows only.
+	if runtime.GOOS == "windows" {
+		quotedInteractive := [][2]string{
+			{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe"`},
+			{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo`},
+			{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" -ExecutionPolicy "Remote Signed" -NoLogo`},
+			{"bash", `"C:\Program Files\Git\bin\bash.exe" --login -i`},
+			{"powershell", `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile`},
+		}
+		for _, k := range quotedInteractive {
+			if !Interactive(k[0], k[1]) {
+				t.Errorf("Interactive(%q, %q) = false, want true", k[0], k[1])
+			}
+		}
 	}
 	quotedBatch := [][2]string{
 		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" -Command "tq reach"`},
 		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" "C:\Clients\setup script.ps1"`},
 		{"bash", `"C:\Program Files\Git\bin\bash.exe" -c "tq reach"`},
 	}
-	for _, k := range quotedInteractive {
-		if !Interactive(k[0], k[1]) {
-			t.Errorf("Interactive(%q, %q) = false, want true", k[0], k[1])
-		}
-	}
 	for _, k := range quotedBatch {
 		if Interactive(k[0], k[1]) {
 			t.Errorf("Interactive(%q, %q) = true, want false", k[0], k[1])
+		}
+	}
+	// Linux and macOS hand over argv joined with plain spaces and no quoting. An apostrophe or a double quote
+	// in a value-option's value must not hide a later -c, -Command or script: each of these is a batch shell
+	// and expects false on every OS (L-04, round 3).
+	joinedBatch := [][2]string{
+		{"pwsh", "pwsh -WorkingDirectory /home/dev/O'Brien -Command tq reach ~/clients/acme; ./more-setup.ps1"},
+		{"pwsh", "pwsh -WorkingDirectory /home/dev/O'Brien -Command tq reach"},
+		{"pwsh", "pwsh -WorkingDirectory /home/dev/O'Brien ./setup.ps1"},
+		{"pwsh", `pwsh -WorkingDirectory /home/dev/"quoted dir" -c tq`},
+		{"bash", `bash --rcfile /home/o'neil/rc -c tq reach`},
+		{"bash", `bash --rcfile "/home/o'neil/rc" -c tq reach`},
+		{"bash", `bash --init-file /home/dev/O'Brien ./setup.sh`},
+		{"zsh", `zsh -o /home/dev/O'Brien -c tq`},
+		{"pwsh", `pwsh -ExecutionPolicy Bypass -File /home/o'neil/setup.ps1`},
+		// A doubt keeps the shell open: an unclosed quote, or a trailing backslash, even after a plain flag.
+		{"pwsh", `pwsh -NoLogo "unclosed`},
+		{"pwsh", `pwsh -NoLogo \`},
+		{"bash", `bash -l /home/o'neil`},
+		// A quoted value with a space, joined without its quotes' meaning: the rest reads as a script.
+		{"pwsh", `pwsh -WorkingDirectory "/home/dev/quoted dir" -NoLogo`},
+	}
+	// The joined-line rules run on every OS: splitPlain is the POSIX split whatever the host, and the word
+	// rules are the same everywhere (interactiveWords).
+	for _, k := range joinedBatch {
+		words, ok := splitPlain(k[1])
+		if ok && interactiveWords(k[0], words) {
+			t.Errorf("joined %q = interactive, want false", k[1])
+		}
+	}
+	joinedInteractive := [][2]string{
+		// Two apostrophes in a value is no doubt: the word after the value is still a flag.
+		{"pwsh", "pwsh -WorkingDirectory /home/dev/O'Brien/it's -NoLogo"},
+		{"bash", "bash --rcfile /home/dev/rc -l"},
+	}
+	for _, k := range joinedInteractive {
+		words, ok := splitPlain(k[1])
+		if !ok || !interactiveWords(k[0], words) {
+			t.Errorf("joined %q = not interactive, want true", k[1])
 		}
 	}
 	batch := [][2]string{

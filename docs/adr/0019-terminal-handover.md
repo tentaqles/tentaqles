@@ -57,10 +57,14 @@ shell profiles are outside the integrity record, so the block is written only af
   `zsh`, `fish`, `cmd`); `termopen.Interactive` says that shell's command line starts an interactive session; and the
   parent is not itself a child of a shell. A shell started by a shell (a nested shell, or a Git Bash stub) is not ended
   (`TestReach_KillsOnlyADirectShellParent`, `TestReach_GitBashStubNotEnded`). Only that pid is ended, never an ancestor.
-- **Interactive is read word by word, with the platform's quoting.** The command line is split the way the OS splits it
-  (`CommandLineToArgv` on Windows, shell quoting elsewhere), so a quoted program path with a space, such as
-  `"C:\Program Files\PowerShell\7\pwsh.exe"`, is the program and not a script (`TestInteractive`). A bare word after the
-  options is a script or a command, and makes the shell non-interactive. So do `-c`, `-Command`, `-EncodedCommand` (and its prefixes `-e`, `-ec`, `-enc`), `-File`,
+- **Interactive is read word by word, split the way the host hands the line over.** On Windows the line is split as the
+  OS does (`CommandLineToArgv`), so a quoted program path with a space, such as `"C:\Program Files\PowerShell\7\pwsh.exe"`,
+  is the program and not a script (`TestInteractive`, Windows cases). On Linux and macOS, `internal/humanonly` hands over
+  argv joined with plain spaces and no quoting, so the line is split on whitespace only and no shell quoting is re-applied:
+  an apostrophe or double quote in a value is a literal character, and a value with a space becomes extra words, which read
+  as a script. A doubt (an unclosed quote of either kind, a trailing backslash) keeps the shell open. The word rules are the
+  same on every OS and are tested on every OS (`TestInteractive`, the joined-line table). A bare word after the options is
+  a script or a command, and makes the shell non-interactive. So do `-c`, `-Command`, `-EncodedCommand` (and its prefixes `-e`, `-ec`, `-enc`), `-File`,
   `-NonInteractive`, `--command`, and `/c` for cmd. Options known to take a value (`-ExecutionPolicy`, `-o`, `--rcfile`)
   consume the next word. An option not on that list leaves its value counted as a script, so every doubt keeps the
   shell open (`TestInteractive`).

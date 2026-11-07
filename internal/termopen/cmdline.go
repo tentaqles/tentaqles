@@ -5,59 +5,27 @@ import (
 	"strings"
 )
 
-// splitWords splits a command line into words the way a POSIX shell's quoting reads them: spaces separate
-// words, single and double quotes group them, and a backslash outside single quotes escapes the next
-// character. An unterminated quote runs to the end of the line. Windows command lines are split by
-// splitCommandLine instead (cmdline_windows.go).
-func splitWords(s string) []string {
-	var words []string
-	var cur strings.Builder
-	inWord := false
-	var quote rune
-	runes := []rune(s)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		switch {
-		case quote == '\'':
-			if r == '\'' {
-				quote = 0
-			} else {
-				cur.WriteRune(r)
-			}
-		case quote == '"':
-			// Inside double quotes a backslash escapes only a quote or another backslash; any other
-			// backslash is kept, so a Windows path in quotes keeps its separators.
-			switch {
-			case r == '"':
-				quote = 0
-			case r == '\\' && i+1 < len(runes) && (runes[i+1] == '"' || runes[i+1] == '\\'):
-				i++
-				cur.WriteRune(runes[i])
-			default:
-				cur.WriteRune(r)
-			}
-		case r == '\\' && i+1 < len(runes):
-			i++
-			cur.WriteRune(runes[i])
-			inWord = true
-		case r == '\'' || r == '"':
-			quote = r
-			inWord = true
-		case r == ' ' || r == '\t':
-			if inWord {
-				words = append(words, cur.String())
-				cur.Reset()
-				inWord = false
-			}
-		default:
-			cur.WriteRune(r)
-			inWord = true
+// doubtful reports a command line that may not have been split the way its shell read it: a quote of one of
+// the kinds in quotes that is not closed (an odd count), or a trailing backslash. Interactive keeps such a
+// shell open, since every doubt does.
+func doubtful(s, quotes string) bool {
+	for _, q := range quotes {
+		if strings.Count(s, string(q))%2 == 1 {
+			return true
 		}
 	}
-	if inWord {
-		words = append(words, cur.String())
+	return strings.HasSuffix(s, `\`)
+}
+
+// splitPlain splits a command line joined from argv with plain spaces, as Linux and macOS hand it over
+// (internal/humanonly): no shell quoting is re-applied, so a quote is a literal character and a value with a
+// space becomes extra words. A doubt (an unclosed quote, a trailing backslash) makes it unsplittable. It is a
+// plain function on every OS, so the POSIX rules are tested on any host.
+func splitPlain(s string) ([]string, bool) {
+	if doubtful(s, `'"`) {
+		return nil, false
 	}
-	return words
+	return strings.Fields(s), true
 }
 
 // reasonRe matches the stderr line that gives a launcher's reason: the same words install.ErrorLine looks for.

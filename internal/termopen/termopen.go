@@ -200,10 +200,20 @@ func isNonInteractiveFlag(shell, a string) bool {
 // the shell non-interactive; so does an empty command line. When reach cannot tell, it leaves the
 // terminal open, so every doubt answers no.
 func Interactive(shell, cmdline string) bool {
-	// The command line is split with the platform's own quoting, so a quoted executable path with a space
-	// is the program, not a script (L-09).
+	// Windows splits the line as the OS does, so a quoted program path with a space is the program (L-09);
+	// Linux and macOS split on whitespace only (cmdline_other.go). A line that cannot be split keeps the shell.
+	split, ok := splitCommandLine(cmdline)
+	if !ok {
+		return false
+	}
+	return interactiveWords(shell, split)
+}
+
+// interactiveWords judges the words of one shell's command line, the program first: the shell is interactive
+// when no word after the options runs something. It is the same on every OS; only the split differs.
+func interactiveWords(shell string, split []string) bool {
 	var args []string
-	for _, w := range splitCommandLine(cmdline) {
+	for _, w := range split {
 		if w != "" {
 			args = append(args, w)
 		}
