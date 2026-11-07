@@ -86,3 +86,4 @@ Things that need a product call. Not findings.
 Format: `- **YYYY-MM-DD, area**: the rule. *Why:* what happened.` Added with the owner's yes, newest last.
 - **2026-11-06, guard**: narrowing a rule to fix a false positive keeps a deny test for every form it used to block. *Why:* a fix for a false positive on `start` let plain forms through.
 - **2026-11-06, identity**: a new per-identity folder under `$TQ_HOME` joins the other-identity rule. *Why:* client A could run client B's browser shim by path, found only on the final review.
+- **2026-11-06, parsing**: a fix that parses output tests the lines it must not pick as well as the ones it must. *Why:* an install failure line printed progress and warnings as the reason.
