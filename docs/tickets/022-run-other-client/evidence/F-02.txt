@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestRunOtherClient_ProcessTreeUnverified$ -count=1 -v
+=== RUN   TestRunOtherClient_ProcessTreeUnverified
+--- PASS: TestRunOtherClient_ProcessTreeUnverified (0.18s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.324s
+exit code: 0

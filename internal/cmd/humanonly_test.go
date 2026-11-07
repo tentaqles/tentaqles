@@ -235,7 +235,6 @@ func TestFreeCommandsRunUnderAMarker(t *testing.T) {
 		{"providers", "check", "gh"},
 		{"secret", "status"},
 		{"secrets", "audit"},
-		{"run", "acme", "--", "go", "version"},
 		{"dotenv", "run", "--file", envFile, "--", "go", "version"},
 		// Dry runs are reads (ADR-0005).
 		{"migrate", "--steps", "manifests"},
@@ -245,6 +244,12 @@ func TestFreeCommandsRunUnderAMarker(t *testing.T) {
 		if _, err := runTq(t, args...); errors.Is(err, errHumanOnly) {
 			t.Fatalf("tq %s must run from a session: %v", strings.Join(args, " "), err)
 		}
+	}
+	// tq run <ws> is free from the workspace's own folder; from anywhere else an
+	// agent is refused (TestRunOtherClient_RefusedForAgents).
+	chdir(t, root)
+	if out, err := runTq(t, "run", "acme", "--", "claude", "-p", "hi"); err != nil {
+		t.Fatalf("tq run acme from its own folder: %v %s", err, out)
 	}
 	payload := hookPayloadFor(t, root, "ls")
 	for _, args := range [][]string{{"claude-hook", "session-start"}, {"claude-hook", "pre-tool-use"}} {

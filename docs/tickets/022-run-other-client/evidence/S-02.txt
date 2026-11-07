@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestRunOtherClient_NeutralFolderRefused$ -count=1 -v
+=== RUN   TestRunOtherClient_NeutralFolderRefused
+--- PASS: TestRunOtherClient_NeutralFolderRefused (0.14s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.264s
+exit code: 0

@@ -28,7 +28,10 @@ identity is blocked with the reason.
   - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `reach`, `open`,
     `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `status`, `bundle`,
     `providers`, `secret`, `secrets`, `settings`, `statusline`,
-    `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
+    `dotenv`, `migrate`, `uninstall`, `version`, `connect`, `claude-hook`. `connect` is the
+    one agent-callable write of the identity's `.claude.json` (catalog entry only,
+    `internal/connect`, ADR-0017); `status --json` is the onboarding skill's read
+    (`internal/identitystatus`). The hook is
     `claudehook*.go`: `pre-tool-use` runs `guard.Decide` (identity), the provider-scope
     rules (`claudehook_scope.go`), then the secret rules
     plus `tq/commit-secret` and `tq/cross-client-mcp`, then the self-protection rules on
@@ -109,6 +112,10 @@ need no ticket.
 ## Must not trade off
 From `docs/threat-model.md`; each line names the test that keeps it.
 - Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.
+- An agent session runs `tq run` only for the identity of its own folder (FR-13, ADR-0020): another
+  client's name or a neutral folder is refused: `TestRunOtherClient_RefusedForAgents`,
+  `TestRunOtherClient_NeutralFolderRefused`, `TestRunOtherClient_InheritedEnvIgnored`; a human's
+  `tq run <any client>` stays free: `TestRunOtherClient_HumanAllowed`.
 - Everything outside the identity's provider scope is denied in every
   tool (CLI by name, path, wrapper, `python -m`; variables; credential paths; API hosts; MCP
   servers; other identities' roots), before secrets, with a message naming the scope; the
@@ -181,6 +188,24 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   in the shell; the categories run blocked_commands → identity → secrets →
   self-protection and every deny is logged: `TestProtectedPaths_Table`,
   `TestProtectedPaths_RuleOrder`, `TestKeychainWrite`.
+- `tentaqles connect` is the one agent-run write of the identity's `.claude.json`, so it
+  is narrow: the provider and nothing else, the embedded catalog's entry (a user file's
+  `connect:` is not loaded), a provider in the identity's scope (a refusal is logged),
+  a trusted client, each change logged without the entry; the file itself stays a protected
+  path for every file tool and shell redirect, and `status --json` carries no secret:
+  `TestConnect_WritesCatalogEntry`, `TestConnect_IdempotentAndNoEntry`,
+  `TestStatusAndConnect_BadStates`, `TestConnect_OutOfScopeRefused`,
+  `TestConnect_NoCallerInput`, `TestConnect_SurvivesRenderAndHook`,
+  `TestConnect_DamagedClaudeJson`, `TestConnect_AtomicWrite`,
+  `TestPreToolUse_ConnectAllowedFileToolsDenied`, `TestStatusJSON_NoSecrets`,
+  `TestPreToolUse_MCPEntryCopiesProtected`, `TestConnect_ConcurrentWriterIsKept`,
+  `TestConnect_WarnsWhenClaudeIsOpen`.
+- The hook's cross-client exemption for a connected server is exactly its catalog entry: a same-named
+  server with any other entry, in `.claude.json` or a `.mcp.json` in the folder, stays denied, and so
+  does any server when the config cannot be read: `TestHook_ConnectedServerNotCrossClientDenied`,
+  `TestHook_OtherClientsBundleServerStaysDenied`, `TestHook_OutOfScopeProviderNameStaysDenied`,
+  `TestHook_ForeignSameNameInProjectMCPJSONDenied`, `TestHook_ForeignBesideCatalogEntryDenied`,
+  `TestHook_OnlyCatalogEntryPasses`, `TestHook_UnreadableConfigNoExemption`.
 - The integrity record is signed and covers the hooks, the enforcing settings keys and the
   shims; a mismatch is at least as strict as untrusted (the hook denies mutating git and
   remote commands), withholds the identity and refuses the launch; a signed workspace never

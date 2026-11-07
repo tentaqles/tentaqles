@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestRunOtherClient_InheritedEnvIgnored$ -count=1 -v
+=== RUN   TestRunOtherClient_InheritedEnvIgnored
+--- PASS: TestRunOtherClient_InheritedEnvIgnored (0.14s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.259s
+exit code: 0

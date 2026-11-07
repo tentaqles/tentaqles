@@ -1,0 +1,44 @@
+$ go build ./... && go vet ./...
+build exit: 0
+vet exit: 0
+$ go test ./internal/... ./cmd/... ./pkg/... -count=1
+# ./pkg/...
+pattern ./pkg/...: GetFileAttributesEx .\pkg\: The system cannot find the file specified.
+FAIL	./pkg/... [setup failed]
+ok  	github.com/tentaqles/tentaqles/internal/audit	0.445s
+ok  	github.com/tentaqles/tentaqles/internal/banner	0.502s
+ok  	github.com/tentaqles/tentaqles/internal/bundle	3.035s
+ok  	github.com/tentaqles/tentaqles/internal/claudesettings	0.415s
+ok  	github.com/tentaqles/tentaqles/internal/cmd	167.612s
+ok  	github.com/tentaqles/tentaqles/internal/commitscan	21.206s
+ok  	github.com/tentaqles/tentaqles/internal/connect	1.141s
+ok  	github.com/tentaqles/tentaqles/internal/detect	0.321s
+ok  	github.com/tentaqles/tentaqles/internal/doctor	4.657s
+ok  	github.com/tentaqles/tentaqles/internal/dotenv	0.154s
+ok  	github.com/tentaqles/tentaqles/internal/envplan	12.390s
+ok  	github.com/tentaqles/tentaqles/internal/gitcfg	4.026s
+ok  	github.com/tentaqles/tentaqles/internal/guard	0.489s
+ok  	github.com/tentaqles/tentaqles/internal/hooks	0.637s
+ok  	github.com/tentaqles/tentaqles/internal/humanonly	0.537s
+ok  	github.com/tentaqles/tentaqles/internal/identitystatus	1.134s
+ok  	github.com/tentaqles/tentaqles/internal/manifest	0.819s
+ok  	github.com/tentaqles/tentaqles/internal/markers	0.608s
+ok  	github.com/tentaqles/tentaqles/internal/mcpscope	0.850s
+ok  	github.com/tentaqles/tentaqles/internal/migrate	21.755s
+ok  	github.com/tentaqles/tentaqles/internal/paths	0.977s
+ok  	github.com/tentaqles/tentaqles/internal/policy	4.244s
+ok  	github.com/tentaqles/tentaqles/internal/protect	1.594s
+ok  	github.com/tentaqles/tentaqles/internal/providers	1.404s
+ok  	github.com/tentaqles/tentaqles/internal/reach	1.074s
+ok  	github.com/tentaqles/tentaqles/internal/registry	1.317s
+ok  	github.com/tentaqles/tentaqles/internal/resolve	2.331s
+ok  	github.com/tentaqles/tentaqles/internal/secret	1.071s
+ok  	github.com/tentaqles/tentaqles/internal/secrets	1.013s
+ok  	github.com/tentaqles/tentaqles/internal/shell	14.796s
+ok  	github.com/tentaqles/tentaqles/internal/statusline	0.880s
+ok  	github.com/tentaqles/tentaqles/internal/termopen	0.747s
+ok  	github.com/tentaqles/tentaqles/internal/trust	21.659s
+ok  	github.com/tentaqles/tentaqles/internal/verify	0.619s
+ok  	github.com/tentaqles/tentaqles/internal/workspace	0.983s
+FAIL
+test exit: 1

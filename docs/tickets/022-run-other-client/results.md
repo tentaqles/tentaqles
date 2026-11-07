@@ -1,0 +1,10 @@
+U-01 | PASS | `.job/022-run-other-client/evidence/U-01.txt`
+U-02 | PASS | `.job/022-run-other-client/evidence/U-02.txt`
+F-01 | PASS | `.job/022-run-other-client/evidence/F-01.txt`
+F-02 | PASS | `.job/022-run-other-client/evidence/F-02.txt`
+Q-01 | PASS | `.job/022-run-other-client/evidence/Q-01.txt`
+R-01 | PASS | `.job/022-run-other-client/evidence/R-01.txt`
+S-01 | PASS | `.job/022-run-other-client/evidence/S-01.txt`
+S-02 | PASS | `.job/022-run-other-client/evidence/S-02.txt`
+S-03 | PASS | `.job/022-run-other-client/evidence/S-03.txt`
+S-04 | PASS | `.job/022-run-other-client/evidence/S-04.txt`

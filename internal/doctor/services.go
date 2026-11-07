@@ -51,6 +51,12 @@ func mcpServiceChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix s
 	}
 }
 
+// MCPServerNames is mcpServerNames for callers outside the package (tq status --json): keys
+// only, so no value of any entry is read.
+func MCPServerNames(claudeJSON, root string, mcpJSONs ...string) []string {
+	return mcpServerNames(claudeJSON, root, mcpJSONs...)
+}
+
 // mcpServerNames is the union of MCP server names (keys only; values stay unparsed, so no env or
 // header token is ever read) from the identity's .claude.json (top-level mcpServers and
 // projects[<root or a folder under it>].mcpServers) and from each extra .mcp.json. A missing or

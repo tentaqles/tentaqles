@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestStatusAndConnect_BadStates$ -count=1 -v
+=== RUN   TestStatusAndConnect_BadStates
+--- PASS: TestStatusAndConnect_BadStates (0.32s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.411s
+exit code: 0

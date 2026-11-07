@@ -565,6 +565,14 @@ func commandTouch(set *protect.Set, cwd, base string, c guard.Command) (protect.
 	// A recursive search (grep -r, rg, findstr /s, Get-ChildItem -Recurse)
 	// rooted at an ancestor of the state folder would read it.
 	if roots, ok := recursiveSearchRoots(name, args); ok {
+		// A search reads the folder it runs in, whatever root it names (`grep -r x` with no
+		// root searches the cwd, or the folder a cd went to): from inside a protected folder
+		// it reads that folder.
+		if base != "" {
+			if h, hit := set.Match(base); hit && h.ReadDenied() {
+				return h, accessRead, true
+			}
+		}
 		for _, r := range roots {
 			if set.SearchReadsState(set.Normalize(r, base)) {
 				return protect.Hit{Path: "the home folder", What: "an ancestor of the tq state folder"}, "search", true

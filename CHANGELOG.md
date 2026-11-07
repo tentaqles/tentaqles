@@ -60,6 +60,44 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - Catalog: `postgres` has no macOS or Windows method (Homebrew's libpq is keg-only; the winget package installs a server) and `supabase` has no npm
   method (the package refuses global installs); `npm` on Linux installs the `npm` package, not `nodejs`.
 
+### `status --json` and `tentaqles connect` (ADR-0017)
+
+- `tentaqles status --json` prints the client's setup as one JSON object for the onboarding skill:
+  identity, root, scope, one entry per provider in scope (CLI, credential, connection, verified),
+  browsers and other providers. It writes nothing and carries no token or value. It used to print the
+  doctor report; `tq doctor --json` still does, unchanged.
+- `tentaqles connect <provider>` registers the provider's hosted MCP server, as the catalog defines it
+  (`gh`, `linear`, `asana`, `jira`), in the client's `.claude.json`. It is the one command an agent may
+  run that writes the Claude config, so it is narrow: the provider and nothing else, in the client's
+  scope, in a trusted client, logged to `connections.jsonl`. A refusal for a provider outside the scope
+  is in the denial log.
+- The catalog schema gains `connect:`. Only the embedded catalog defines it: a user provider file with a
+  `connect:` key is not loaded.
+- An identity's `.claude.json` and every other copy of its MCP entries (`backups/.claude.json*`,
+  `mcp-out-of-scope.json*`) are now protected paths: a session can't read or write them with a file
+  tool or a shell redirect.
+- `connect` re-reads the file before its rename and warns, as `tq settings render` does, when a Claude
+  session looks open. `status --json` limits a keychain lookup to 5 s, and reads `connection` missing
+  for an identity with no Claude config.
+- The hook's cross-client rule (`tq/cross-client-mcp`) no longer denies a server `tentaqles connect`
+  wrote for a provider in the identity's scope, when another client's bundle has the same name. Only
+  that entry is exempt: a same-named server with any other entry (in `.claude.json` or a `.mcp.json`
+  in the folder) is still denied, and so is any server when the config cannot be read (ADR-0017).
+- The hook denies a recursive search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem -Recurse`) run from
+  inside a protected folder, such as the identity's `backups/` folder, whatever root it names
+  (`tq/protected-path`).
+- `status --json`: `connection` reads `present` for a registered server under any of a provider's names
+  (az's `azure`, glab's `gitlab`). `credential` reads `none`, not `missing`, for a CLI login with no
+  verify command and no credential, since tq can't tell it from logged out.
+- `tentaqles connect <unknown>` names the provider catalog in its refusal.
+
+### `tq run` refuses another client in an agent session (ADR-0020)
+
+- In an agent session, `tq run <other> -- <cmd>` exits 1 and starts nothing when `<other>` is not
+  the client of the folder the command runs in. The refusal is one `identity` line in the denial
+  log. `tq run .` and `tq run <its own client>` still launch, and a human's `tq run <any client>`
+  is unchanged.
+
 ### Cut down to IDEATION (ADR-0013, ADR-0014)
 
 - Removed `tq add`, `tq init`, `tq onboard`, `tq setup`, `tq worktrees`, `tq run --off` and the

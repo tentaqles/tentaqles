@@ -1,19 +1,25 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/commitscan"
+	"github.com/tentaqles/tentaqles/internal/mcpscope"
+	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/protect"
+	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -289,7 +295,7 @@ func policyRules(set *policy.Set, cwd string, ws *resolve.Workspace, cfg *regist
 		}
 	}
 	if call.IsMCP() {
-		if other := mcpOwner(ws, cfg, call.MCPServer()); other != "" {
+		if other := mcpOwner(ws, cfg, call.MCPServer(), cwd); other != "" {
 			d = policy.Merge(d, ruleDecision(policy.Deny, "tq/cross-client-mcp",
 				fmt.Sprintf("MCP server %q belongs to client %q, not to this workspace", call.MCPServer(), other)))
 		}
@@ -344,10 +350,77 @@ func commitScanIncomplete(ctx context.Context, err error) string {
 	return "scan could not read what this commit records; check the repository state" + tail
 }
 
+// connectEntries are the entries the embedded catalog's connect: blocks give for server, for the
+// providers in scope: the entry `tentaqles connect` writes. The embedded catalog only: a user
+// provider file never names one of these servers.
+func connectEntries(scope []string, server string) []map[string]any {
+	emb, err := providers.Embedded()
+	if err != nil {
+		return nil
+	}
+	var out []map[string]any
+	for _, id := range scope {
+		if p, ok := emb.Get(id); ok && p.Connect != nil && p.Connect.Name == server {
+			out = append(out, p.Connect.Entry())
+		}
+	}
+	return out
+}
+
+// connectExempt reports whether server is the one entry `tentaqles connect` writes for a provider
+// in ws's scope: every entry of that name the harness loads (mcpscope.Entries: the identity's
+// .claude.json, and the .mcp.json files from cwd up to the root) equals the catalog's entry, and
+// at least one entry is there. A source that cannot be read leaves no exemption, and so does a
+// name with no catalog entry in scope or any entry that differs.
+func connectExempt(ws *resolve.Workspace, cwd, server string) bool {
+	want := connectEntries(ws.Manifest.Scope(), server)
+	if len(want) == 0 || !sourcesReadable(paths.IdentityDir(ws.Name, "claude"), cwd, ws.Root) {
+		return false
+	}
+	entries := mcpscope.Entries(paths.IdentityDir(ws.Name, "claude"), cwd, ws.Root)[server]
+	if len(entries) == 0 {
+		return false
+	}
+	for _, e := range entries {
+		if !slices.ContainsFunc(want, func(w map[string]any) bool { return reflect.DeepEqual(e, w) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// sourcesReadable reports whether every file mcpscope.Entries reads is absent or parses as JSON.
+// Entries itself leaves an unreadable file out, which would make a name look as if no entry
+// existed; connectExempt needs the whole picture.
+func sourcesReadable(claudeDir, cwd, root string) bool {
+	ok := func(p string) bool {
+		b, err := os.ReadFile(p)
+		if os.IsNotExist(err) {
+			return true
+		}
+		return err == nil && (len(bytes.TrimSpace(b)) == 0 || json.Valid(b))
+	}
+	if !ok(filepath.Join(claudeDir, ".claude.json")) {
+		return false
+	}
+	if cwd == "" {
+		return true
+	}
+	for d := filepath.Clean(cwd); ; d = filepath.Dir(d) {
+		if !ok(filepath.Join(d, ".mcp.json")) {
+			return false
+		}
+		if root == "" || strings.EqualFold(d, filepath.Clean(root)) || filepath.Dir(d) == d {
+			break
+		}
+	}
+	return true
+}
+
 // mcpOwner returns the client whose bundle declares server when the current
 // workspace's bundle does not, or "". Workspaces that don't manage MCP
 // through a bundle are never judged: there is nothing to compare against.
-func mcpOwner(ws *resolve.Workspace, cfg *registry.Config, server string) string {
+func mcpOwner(ws *resolve.Workspace, cfg *registry.Config, server, cwd string) string {
 	if ws == nil || cfg == nil || server == "" || ws.Manifest.Claude.Bundle == nil {
 		return ""
 	}
@@ -356,16 +429,27 @@ func mcpOwner(ws *resolve.Workspace, cfg *registry.Config, server string) string
 			return ""
 		}
 	}
+	owner := ""
 	all, _ := resolve.ListWorkspaces(cfg)
 	for _, other := range all {
-		if other.Manifest == nil || other.Manifest.Client == ws.Manifest.Client || other.Manifest.Claude.Bundle == nil {
+		if owner != "" || other.Manifest == nil || other.Manifest.Client == ws.Manifest.Client || other.Manifest.Claude.Bundle == nil {
 			continue
 		}
 		for _, s := range other.Manifest.Claude.Bundle.MCP {
 			if s == server {
-				return other.Manifest.Client
+				owner = other.Manifest.Client
+				break
 			}
 		}
 	}
-	return ""
+	if owner == "" {
+		return ""
+	}
+	// The server `tentaqles connect` wrote for a provider in this identity's own scope is this
+	// identity's, whatever another client's bundle lists (ADR-0017). Only that entry: a same-named
+	// server with any other entry, in any source the harness loads, is still another client's.
+	if connectExempt(ws, cwd, server) {
+		return ""
+	}
+	return owner
 }

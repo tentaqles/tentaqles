@@ -1,0 +1,6 @@
+$ go test ./internal/identitystatus -run TestStatusJSON_ConnectionSurvivesAnOverride -count=1 -v
+=== RUN   TestStatusJSON_ConnectionSurvivesAnOverride
+--- PASS: TestStatusJSON_ConnectionSurvivesAnOverride (0.06s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/identitystatus	0.168s
+exit code: 0

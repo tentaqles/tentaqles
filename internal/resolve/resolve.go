@@ -107,6 +107,27 @@ func regularFile(p string) bool {
 }
 
 func resolveCwd(cwd string, cfg *registry.Config) Result {
+	nb, root, name, reason := folder(cwd, cfg)
+	if name == "" {
+		return Result{Reason: reason}
+	}
+	r := load(nb, root, name)
+	r.Name = name
+	return r
+}
+
+// FolderName is the workspace folder cwd is in under a base and its root, read from the
+// paths alone: no manifest, no trust record and no keychain. A caller that cannot wait for
+// Resolve (status --json, with its time limit) names the folder this way. name is "" when cwd
+// is in no folder (at a base root, or under no base).
+func FolderName(cwd string, cfg *registry.Config) (name, root string) {
+	_, root, name, _ = folder(cwd, cfg)
+	return name, root
+}
+
+// folder is the workspace folder cwd is in under a base: nb is the base (normalized), root the
+// folder and name its name. name is "" when cwd is in no folder, with reason saying why.
+func folder(cwd string, cfg *registry.Config) (nb, root, name, reason string) {
 	c := norm(cwd)
 	// Case-preserving (but symlink-resolved) form of cwd, used only to recover the
 	// on-disk-cased workspace name/root — never for the containment comparison.
@@ -119,33 +140,30 @@ func resolveCwd(cwd string, cfg *registry.Config) Result {
 		// paths (AddBase normalizes), but a hand-edited config.yaml can hold a
 		// raw or trailing-separator path, and the raw length must never be used
 		// to slice cOrig.
-		nb, err := registry.Normalize(base)
+		b0, err := registry.Normalize(base)
 		if err != nil {
-			nb = filepath.Clean(base)
+			b0 = filepath.Clean(base)
 		}
-		b := nb
+		b := b0
 		if runtime.GOOS == "windows" {
 			b = strings.ToLower(b)
 		}
 		if c == b {
-			return Result{Reason: "at base root"}
+			return "", "", "", "at base root"
 		}
 		if !strings.HasPrefix(c, b+string(filepath.Separator)) {
 			continue
 		}
 		// c and cOrig differ only by case, so they have the same length; slice
 		// cOrig by the normalized base length to recover on-disk casing.
-		if len(cOrig) < len(nb) {
+		if len(cOrig) < len(b0) {
 			continue
 		}
-		rel := strings.TrimPrefix(cOrig[len(nb):], string(filepath.Separator))
-		name := strings.SplitN(rel, string(filepath.Separator), 2)[0]
-		root := filepath.Join(nb, name)
-		r := load(nb, root, name)
-		r.Name = name
-		return r
+		rel := strings.TrimPrefix(cOrig[len(b0):], string(filepath.Separator))
+		n := strings.SplitN(rel, string(filepath.Separator), 2)[0]
+		return b0, filepath.Join(b0, n), n, ""
 	}
-	return Result{Reason: "outside any base"}
+	return "", "", "", "outside any base"
 }
 
 // sameName compares a marker's client with the folder name the way the

@@ -520,6 +520,23 @@ func (s *Set) matchState(p, rel string) (Hit, bool) {
 			return Hit{p, KindState, "the " + parts[2] + " config home of " + parts[1]}, true
 		case len(sub) == 1 && registrationFiles[sub[0]]:
 			return Hit{p, KindState, "the hook registration of " + parts[1] + " (" + sub[0] + ")"}, true
+		case len(sub) == 1 && strings.HasPrefix(sub[0], ".claude.json"):
+			// The MCP servers the identity loads (and Claude Code's backups of the file). A
+			// session registers one only through `tentaqles connect`, which writes the catalog's
+			// entry for a provider in scope (ADR-0017); no file tool or shell redirect may.
+			return Hit{p, KindState, "the Claude config of " + parts[1] + " (" + sub[0] + ")"}, true
+		case len(sub) == 1 && (sub[0] == "mcp-out-of-scope.json" || strings.HasPrefix(sub[0], "mcp-out-of-scope.json.")):
+			// Every entry `tq settings render` took out of .claude.json, values included, and the
+			// .corrupt-<time> files it moves a damaged list to: another copy of the MCP entries.
+			return Hit{p, KindState, "the MCP entries removed from the Claude config of " + parts[1] + " (" + sub[0] + ")"}, true
+		case len(sub) == 1 && sub[0] == "backups":
+			// The folder holding Claude Code's backups of .claude.json: a search or a copy of it
+			// reads every MCP entry in them, so the folder itself is protected (its files too,
+			// below). Anything else in it is the harness's and stays as it is.
+			return Hit{p, KindState, "the Claude config backups of " + parts[1]}, true
+		case len(sub) == 2 && sub[0] == "backups" && strings.HasPrefix(sub[1], ".claude.json"):
+			// Claude Code's own backups of .claude.json (backups/.claude.json.backup.<time>).
+			return Hit{p, KindState, "a backup of the Claude config of " + parts[1] + " (backups/" + sub[1] + ")"}, true
 		case sub[0] == "plugins":
 			switch {
 			case len(sub) == 1, len(sub) == 2 && sub[1] == "cache":

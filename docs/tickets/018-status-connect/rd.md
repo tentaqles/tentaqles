@@ -1,6 +1,6 @@
 # 018: `status --json` for the skill, and `tentaqles connect <provider>`
 
-**Status:** ready
+**Status:** landed
 **Risk:** High: `connect` is a write an agent may call, so a bug lets an agent add an out-of-scope or attacker-chosen MCP server to a client
 **UI:** none
 

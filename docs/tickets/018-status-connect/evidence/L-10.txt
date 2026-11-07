@@ -1,0 +1,12 @@
+$ go test ./internal/cmd ./internal/connect -run TestConnect_WarnsWhenClaudeIsOpen|TestConnect_ConcurrentWriterIsKept|TestPreToolUse_MCPEntryCopiesProtected -count=1 -v
+=== RUN   TestConnect_WarnsWhenClaudeIsOpen
+--- PASS: TestConnect_WarnsWhenClaudeIsOpen (0.20s)
+=== RUN   TestPreToolUse_MCPEntryCopiesProtected
+--- PASS: TestPreToolUse_MCPEntryCopiesProtected (3.67s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	3.962s
+=== RUN   TestConnect_ConcurrentWriterIsKept
+--- PASS: TestConnect_ConcurrentWriterIsKept (0.01s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/connect	0.057s
+exit code: 0
