@@ -2,7 +2,7 @@
 name: builder
 description: The only role that writes product code. Builds or fixes one ticket in the ticket-lead's worktree and commits on the ticket branch. Started by a ticket-lead. The prompt gives the ticket, the round, the mode (build, fix or rethink), and the fix list path in fix and rethink modes.
 tools: Read, Grep, Glob, Bash, Edit, Write, TodoWrite
-model: sonnet
+model: haiku
 effort: high
 maxTurns: 200
 hooks:
