@@ -101,6 +101,6 @@ A client with no `browsers:` list is unchanged: no `BROWSER`, no shims on `PATH`
 
 | Skill | What it does |
 |---|---|
-| `/tentaqles:onboard` | Connects a client's tools in Claude Code. |
+| `/tentaqles:onboard` | Connects a client's tools in Claude Code, one provider at a time: reads `tentaqles status --json`, installs each CLI in scope with `tentaqles install`, connects each MCP server with `tentaqles connect`, has the developer run each login (`!` only for a known browser flow, otherwise in their own terminal), verifies, and ends with one table. It never runs a login, never handles a token and never changes the hook. |
 
 The plugin also holds the guard hook, which runs `tq claude-hook` before each tool call.
