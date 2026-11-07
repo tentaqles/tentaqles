@@ -82,6 +82,9 @@ const (
 	CallerHarness  = "harness"
 	CallerSubagent = "subagent"
 	CallerNoTTY    = "no-tty"
+	// CallerHuman names a refusal of a tq command that is not human-only, here the scope refusal
+	// of tentaqles install, made for a person at a terminal (the others name an agent or no tty).
+	CallerHuman = "human"
 )
 
 // DenialsPath is the denial log, <tq home>/denials.jsonl.

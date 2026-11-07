@@ -496,7 +496,7 @@ their refusals to (PRD v2 §7.3, ADR-0006):
 | `category` | `identity`, `secrets`, `self-protection`, or `tq/guard-error` for a call tq could not judge |
 | `rule` | the rule id |
 | `layer` | `hook`; `filesystem` for `tq/protected-path`; `human-only` for a tq command's own refusal; `command` for `tentaqles install` refusing a provider outside the scope |
-| `caller` | `harness` (the main session) or `subagent` (the payload carries `agent_id`/`agent_type`); for a human-only refusal `harness` or `no-tty` |
+| `caller` | `harness` (the main session) or `subagent` (the payload carries `agent_id`/`agent_type`); for a human-only refusal `harness` or `no-tty`; for the scope refusal of `tentaqles install` `harness`, `no-tty` or `human` (a person at a terminal) |
 | `harness` | `claude` or `codex` |
 | `tool` | the tool name |
 | `command` | the shell line, redacted (below); a file tool's path; for an MCP call or a patch the tool name, never the input or the content |

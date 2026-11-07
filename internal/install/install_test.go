@@ -153,14 +153,30 @@ func TestInstall_FailureLineIsTheError(t *testing.T) {
 			want:   "tool: install failed: npm error code E404",
 		},
 		{
-			name: "no error word: the first plain stderr line", method: "npm", prog: "npm",
-			stdout: "added 1 package in 2s\n", stderr: "npm warn old\nthe registry refused the request\n",
-			want: "tool: install failed: the registry refused the request",
-		},
-		{
 			name: "no output at all: the exit status", method: "npm", prog: "npm",
 			stderr: "  \r\n-\r\\\n",
 			want:   "tool: install failed: exit status 1",
+		},
+		// The negative shapes: a status line is never the reason, whichever stream holds it.
+		{
+			name: "apt: reading lists, then exit 1 with no error line", method: "apt", prog: "apt-get",
+			stdout: "Reading package lists...\nBuilding dependency tree...\n",
+			want:   "tool: install failed: exit status 1",
+		},
+		{
+			name: "winget: stopped after a download with no verdict", method: "winget", prog: "winget",
+			stdout: "Found Tool [Tool.Pkg] Version 2.0.0\nDownloading https://example.com/tool.msi\n  ██████████░░  4.00 MB / 9.00 MB\n",
+			want:   "tool: install failed: exit status 1",
+		},
+		{
+			name: "winget: stopped after starting the install", method: "winget", prog: "winget",
+			stdout: "Found Tool [Tool.Pkg] Version 2.0.0\nStarting package install...\n",
+			want:   "tool: install failed: exit status 1",
+		},
+		{
+			name: "pip: a plain stderr line with no error word is not the reason", method: "pip", prog: "pip",
+			stdout: "added 1 package in 2s\n", stderr: "npm warn old\nthe registry refused the request\n",
+			want: "tool: install failed: exit status 1",
 		},
 	}
 	for _, c := range cases {
@@ -187,6 +203,69 @@ func TestInstall_FailureLineIsTheError(t *testing.T) {
 			t.Fatalf("line has %d runes", n)
 		}
 	})
+	t.Run("a status line is never the reason: the error's own text is", func(t *testing.T) {
+		for _, out := range []string{"Starting package install...\n", "Building dependency tree...\n", "Downloading https://example.com/x.msi\n"} {
+			if got := ErrorLine("", out, errors.New("signal: killed")); got != "signal: killed" {
+				t.Errorf("status output %q: reason %q, want the error's text", out, got)
+			}
+		}
+	})
+}
+
+// A verdict that ends a long carriage-return progress run is the reason: the trimmed tail keeps
+// everything after the last line break, and the cut is made at the first one.
+func TestInstall_VerdictAfterAProgressRunIsKept(t *testing.T) {
+	progress := strings.Repeat("\r  ██████  4.00 MB / 9.00 MB", 4000)
+	stdout := "Found Tool [Tool.Pkg] Version 2.0.0\n" + progress + "\rInstaller failed with exit code: 1603\n"
+	t.Run("the install", func(t *testing.T) {
+		bin := t.TempDir()
+		testutil.NewFakeProgram(t, bin, "winget", testutil.FakeSpec{Exit: 1, Stdout: stdout})
+		_, err := Install(tool("winget"), realDeps("linux", pathEnv(bin)))
+		if err == nil || err.Error() != "tool: install failed: Installer failed with exit code: 1603" {
+			t.Fatalf("err = %v, want the verdict", err)
+		}
+	})
+	t.Run("the writer", func(t *testing.T) {
+		w := &limitWriter{}
+		_, _ = w.Write([]byte(stdout))
+		if s := w.String(); !strings.HasSuffix(s, "Installer failed with exit code: 1603\n") || len(s) > headMax+tailMax+2 {
+			t.Fatalf("the trimmed output ends %q", s[len(s)-60:])
+		}
+	})
+}
+
+// A package manager that exits 0 but leaves a child holding its output pipes is a success, for
+// the package manager and for the version check that follows it (both run through DefaultRun).
+// The fakes spawn a child that sleeps; the test stops it afterwards.
+func TestInstall_LingeringChildIsNotAFailure(t *testing.T) {
+	bin, stage := t.TempDir(), t.TempDir()
+	dir := t.TempDir()
+	npmPids, toolPids := filepath.Join(dir, "npm.pids"), filepath.Join(dir, "tool.pids")
+	t.Cleanup(func() {
+		for _, f := range []string{npmPids, toolPids} {
+			if _, err := os.Stat(f); err == nil {
+				for _, pid := range testutil.ReadPids(t, f) {
+					killPid(pid)
+				}
+			}
+		}
+	})
+	cli := testutil.NewFakeProgram(t, stage, "tool", testutil.FakeSpec{Stdout: "tool 1.2.3\n", Spawn: true, PidFile: toolPids})
+	dst := filepath.Join(bin, filepath.Base(cli))
+	testutil.NewFakeProgram(t, bin, "npm", testutil.FakeSpec{Spawn: true, PidFile: npmPids, Copy: []testutil.FakeCopy{
+		{From: cli, To: dst},
+		{From: testutil.FakeSidecar(cli), To: testutil.FakeSidecar(dst)},
+	}})
+	res, err := Install(tool("npm"), realDeps("linux", pathEnv(bin)))
+	if err != nil {
+		t.Fatalf("a package manager that exits 0 with a lingering child: %v", err)
+	}
+	if res.Status != Installed || res.Version != "tool 1.2.3" {
+		t.Fatalf("result = %+v, want installed tool 1.2.3", res)
+	}
+	if len(testutil.ReadPids(t, toolPids)) < 2 {
+		t.Fatal("the version check's fake did not run with its child")
+	}
 }
 
 // A package manager that hangs is stopped at the (lowered) limit with everything it started:

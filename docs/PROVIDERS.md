@@ -115,7 +115,7 @@ Then the catalog's `version_args` run and one line is printed:
 | `<provider>: installed <version>` | a package manager ran and the CLI now answers |
 | `<provider>: already present <version>` | the CLI already resolves on the identity's PATH: nothing runs |
 | `<provider>: manual, download from <docs URL>` | no method of this OS has a package manager here |
-| `<provider>: install failed: <reason>` | the package manager failed (exit 1); the reason is its error line, not a progress line or a warning |
+| `<provider>: install failed: <reason>` | the package manager failed (exit 1); the reason is its error line, not a progress line or a warning. With no error line (winget's known verdicts aside) it is the exit status |
 | `<provider>: no CLI, nothing to install` | `cli: null` |
 
 Rules:

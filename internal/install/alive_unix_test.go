@@ -9,6 +9,9 @@ import (
 	"syscall"
 )
 
+// killPid stops a process a test left running; a process that is gone is no error.
+func killPid(pid int) { _ = syscall.Kill(pid, syscall.SIGKILL) }
+
 // processAlive reports whether the process is still running. A zombie (killed, not yet reaped
 // by an init that is slow to do it) is gone: on Linux its state in /proc says so.
 func processAlive(pid int) bool {

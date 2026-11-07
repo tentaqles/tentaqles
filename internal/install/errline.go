@@ -20,12 +20,17 @@ var errRe = regexp.MustCompile(`(?i)\b(err|error|errors|fatal|failed|failure|den
 // sizeRe matches a size, a speed or a percentage: what a download progress line is made of.
 var sizeRe = regexp.MustCompile(`(?i)\d+(\.\d+)?\s*(%|[kmgt]?i?b(/s)?)`)
 
+// wingetVerdictRe matches winget's failure verdicts that carry no error word. They are the
+// only lines without one that count as the reason: a status line ("Downloading ...", "Starting
+// package install...") is never the reason.
+var wingetVerdictRe = regexp.MustCompile(`(?i)^(no applicable installer found|no package found|no available upgrade found)`)
+
 // ErrorLine is the line that says why a package manager failed. It looks in stderr, then in
 // stdout, for the first line that reads as an error, skipping what a package manager prints
-// before it: a progress line or bar, a spinner frame, a warning. Without such a line it takes
-// the first plain line of stderr, then the last plain line of stdout, and then the error's own
-// text (the exit status). Escape and control characters are removed and the line is cut to
-// 200 runes.
+// before it: a progress line or bar, a spinner frame, a warning. Then it looks for one of
+// winget's known verdicts, which carry no error word. Otherwise the reason is the error's own
+// text (the exit status, or "signal: killed"): a status line is never the reason. Escape and
+// control characters are removed and the line is cut to 200 runes.
 func ErrorLine(stderr, stdout string, err error) string {
 	errLines, outLines := lines(stderr), lines(stdout)
 	for _, set := range [][]string{errLines, outLines} {
@@ -35,16 +40,11 @@ func ErrorLine(stderr, stdout string, err error) string {
 			}
 		}
 	}
-	for _, l := range errLines {
-		if !isNoise(l) && !warnRe.MatchString(l) {
-			return clip(l)
-		}
-	}
-	// winget says "No applicable installer found" or "No package found matching input
-	// criteria" on stdout, with no error word: the last plain line is its verdict.
-	for i := len(outLines) - 1; i >= 0; i-- {
-		if l := outLines[i]; !isNoise(l) && !warnRe.MatchString(l) {
-			return clip(l)
+	for _, set := range [][]string{outLines, errLines} {
+		for _, l := range set {
+			if wingetVerdictRe.MatchString(l) {
+				return clip(l)
+			}
 		}
 	}
 	if err != nil {

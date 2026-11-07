@@ -17,7 +17,9 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - tq never launches an installer file and never runs a catalog `url`. It accepts the vendor's licence
   through winget's flags. A run is stopped, with its whole process tree, after 10 minutes.
 - An agent may run it for a provider in scope; a provider outside the scope is refused and logged
-  (layer `command`).
+  (layer `command`), naming its caller (`harness`, `no-tty` or `human`).
+- Catalog: `postgres` has no macOS method (Homebrew's libpq is keg-only) and `supabase` has no npm
+  method (the package refuses global installs); `npm` on Linux installs the `npm` package, not `nodejs`.
 
 ### Cut down to IDEATION (ADR-0013, ADR-0014)
 

@@ -3,6 +3,7 @@ package install
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"time"
 )
@@ -24,6 +25,12 @@ func DefaultRun(ctx context.Context, path string, args, env []string) (string, s
 	tree.attach(c)
 	err := c.Wait()
 	tree.release()
+	// Wait reports ErrWaitDelay when the process exited and a child it left kept the pipes open
+	// past WaitDelay: the run succeeded (a non-zero exit is an ExitError, not this). A run that
+	// hit its deadline keeps its error, so a timeout still reads as a failure.
+	if errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil {
+		err = nil
+	}
 	return out.String(), errb.String(), err
 }
 
@@ -56,7 +63,10 @@ func (l *limitWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// String is the head and the tail; when the middle was dropped the tail starts at a line start.
+// String is the head and the tail. When the middle was dropped, the tail's first piece may be
+// cut mid-line: it is dropped up to the first line break or carriage return, which ends it. A
+// carriage return ends a progress redraw too, so a verdict that ends a long progress run is
+// kept; nothing after the last break is ever dropped.
 func (l *limitWriter) String() string {
 	tail := l.tail
 	if len(tail) > tailMax {
@@ -66,7 +76,7 @@ func (l *limitWriter) String() string {
 	if !l.cut {
 		return string(l.head) + string(tail)
 	}
-	if i := bytes.IndexByte(tail, '\n'); i >= 0 {
+	if i := bytes.IndexAny(tail, "\r\n"); i >= 0 {
 		tail = tail[i+1:]
 	}
 	return string(l.head) + "\n" + string(tail)

@@ -4,6 +4,16 @@ package install
 
 import "golang.org/x/sys/windows"
 
+// killPid stops a process a test left running; a process that is gone is no error.
+func killPid(pid int) {
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return
+	}
+	defer windows.CloseHandle(h)
+	_ = windows.TerminateProcess(h, 1)
+}
+
 // processAlive reports whether the process is still running.
 func processAlive(pid int) bool {
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))

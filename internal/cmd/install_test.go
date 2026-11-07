@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,9 +13,11 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/audit"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/install"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/reach"
 	"github.com/tentaqles/tentaqles/internal/testutil"
@@ -291,6 +294,59 @@ func TestInstall_OutOfScopeRefused(t *testing.T) {
 		if len(ds) != 1 || ds[0].Category != "identity" || ds[0].Subject != "aws" || ds[0].Identity != "acme" || ds[0].Layer != audit.LayerCommand {
 			t.Fatalf("guard %q: denial log = %+v, want one identity line for aws", guard, ds)
 		}
+		if ds[0].Caller != audit.CallerNoTTY || ds[0].Rule != policy.OutOfScopeCLIID {
+			t.Fatalf("guard %q: denial caller %q rule %q, want no-tty and %s", guard, ds[0].Caller, ds[0].Rule, policy.OutOfScopeCLIID)
+		}
+	}
+}
+
+// Every refusal of tentaqles install names its caller, as the human-only refusals do: a harness
+// (an agent marker or a harness in the process tree), no-tty, or human (a person at a terminal).
+func TestInstall_RefusalNamesItsCaller(t *testing.T) {
+	humanStdin := func(t *testing.T) {
+		prev := stdinIsTerminal
+		stdinIsTerminal = func(io.Reader) bool { return true }
+		t.Cleanup(func() { stdinIsTerminal = prev })
+	}
+	cases := []struct {
+		name  string
+		setup func(t *testing.T)
+		want  string
+	}{
+		{"no terminal on stdin", func(t *testing.T) {}, audit.CallerNoTTY},
+		{"a person at a terminal", humanStdin, audit.CallerHuman},
+		{"an agent marker in the environment", func(t *testing.T) {
+			humanStdin(t)
+			t.Setenv("CLAUDECODE", "1")
+		}, audit.CallerHarness},
+		{"a harness in the process tree", func(t *testing.T) {
+			humanStdin(t)
+			prev := humanonly.ParentOf
+			humanonly.ParentOf = func(pid int) (humanonly.Parent, bool) {
+				if pid == os.Getpid() {
+					return humanonly.Parent{PID: 90, Name: "claude", Cmdline: "claude", CmdlineKnown: true}, true
+				}
+				return humanonly.Parent{}, false
+			}
+			t.Cleanup(func() { humanonly.ParentOf = prev })
+		}, audit.CallerHarness},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newInstallFixture(t, azBody)
+			c.setup(t)
+			out, code, err := runInstallCode(t, "aws")
+			if err != nil || code != 1 || strings.TrimSpace(out) != "aws is outside the scope of identity acme: az, claude" {
+				t.Fatalf("err %v, exit %d, out %q: want the scope line and exit 1", err, code, out)
+			}
+			if got := testutil.ReadFakeLog(t, f.log); len(got) != 0 {
+				t.Fatalf("a package manager ran: %v", got)
+			}
+			ds, rerr := audit.ReadDenials()
+			if rerr != nil || len(ds) != 1 || ds[0].Caller != c.want {
+				t.Fatalf("denial log = %+v (%v), want one line with caller %q", ds, rerr, c.want)
+			}
+		})
 	}
 }
 

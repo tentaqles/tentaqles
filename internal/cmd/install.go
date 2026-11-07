@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/install"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/providers"
@@ -71,7 +72,7 @@ func newInstallCmd() *cobra.Command {
 				msg := fmt.Sprintf("%s is outside the scope of identity %s: %s", id, ws.Name, identityScope(ws.Manifest))
 				// The line as REQ-4 words it, with no "tq: " in front (RunMain adds one to an
 				// error): print it, log it, exit 1. The denial is logged before the exit.
-				logInstallRefusal(ws.Name, id, msg)
+				logInstallRefusal(ws.Name, id, msg, installCaller(c.InOrStdin()))
 				return exitWithLine(c.ErrOrStderr(), msg)
 			}
 			res, err := installProvider(ws, p)
@@ -113,15 +114,25 @@ func installProvider(ws *resolve.Workspace, p providers.Provider) (install.Resul
 	})
 }
 
+// installCaller names the caller of a scope refusal the way internal/humanonly names one: harness
+// when an agent marker or a harness in the process tree is found, no-tty when stdin or stdout is
+// not a terminal, and human for a person at a terminal. The scope refusal is not a human-only
+// refusal, so nothing is refused here for the caller; the name only says who asked.
+func installCaller(in io.Reader) string {
+	if humanonly.DetectAgent() != nil {
+		return audit.CallerHarness
+	}
+	if !stdinIsTerminal(in) || !humanonly.IsTerminal(os.Stdout) {
+		return audit.CallerNoTTY
+	}
+	return audit.CallerHuman
+}
+
 // logInstallRefusal appends the refusal of an out-of-scope install to the denial log
 // (category identity, like the hook's deny of the same provider's CLI). A log that cannot be
 // written changes nothing: the refusal stands.
-func logInstallRefusal(identity, provider, reason string) {
+func logInstallRefusal(identity, provider, reason, caller string) {
 	cwd, _ := os.Getwd()
-	caller := ""
-	if _, agent := agentSession(); agent {
-		caller = audit.CallerHarness
-	}
 	_ = audit.AppendDenial(audit.Denial{
 		Category: "identity", Layer: audit.LayerCommand, Caller: caller,
 		Tool: "tentaqles install", Command: "tentaqles install " + provider, Subject: provider,

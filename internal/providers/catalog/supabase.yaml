@@ -6,13 +6,10 @@ cli:
   command: supabase
   version_args: ["--version"]
 install:
-  windows:
-    npm: "supabase"
+  # Only the Homebrew tap. The npm package refuses global installs ("npm install -g supabase"
+  # always fails), so Windows and Linux have no method and print the docs page.
   macos:
     brew: "supabase/tap/supabase"
-    npm: "supabase"
-  linux:
-    npm: "supabase"
 login:
   args: ["login"]
 # match: what the guard's identity category recognises as this provider when an

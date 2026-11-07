@@ -48,3 +48,23 @@ func TestCatalogInstallIDsArePlain(t *testing.T) {
 		}
 	}
 }
+
+// Two install methods that can never end in "installed" stay out of the catalog: Homebrew's
+// libpq is keg-only (psql is never linked onto the PATH), and the supabase npm package refuses
+// global installs. A provider with no method prints its docs page instead.
+func TestCatalog_NoInstallMethodThatCannotEnd(t *testing.T) {
+	c, err := loadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pg, _ := c.Get("postgres")
+	if pg.Install.Macos.Brew != "" {
+		t.Errorf("postgres: brew %q is keg-only, psql is not linked", pg.Install.Macos.Brew)
+	}
+	sb, _ := c.Get("supabase")
+	for osName, o := range map[string]InstallOS{"windows": sb.Install.Windows, "macos": sb.Install.Macos, "linux": sb.Install.Linux} {
+		if o.Npm != "" {
+			t.Errorf("supabase install.%s.npm %q: the npm package refuses global installs", osName, o.Npm)
+		}
+	}
+}
