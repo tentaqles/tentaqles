@@ -37,7 +37,8 @@ type Layer struct {
 	scope    *policy.Scope
 	exes     map[string]string // out-of-scope executable name -> provider id
 	maskDir  string
-	ready    *bool // memoized MaskReady
+	shims    string // the identity's shims folder when it lists a browser (ADR-0016), else ""
+	ready    *bool  // memoized MaskReady
 }
 
 // LayerFor is ws's layer, or nil with no workspace. ws is a trusted workspace (resolve hands an untrusted one out apart).
@@ -52,7 +53,11 @@ func LayerFor(ws *resolve.Workspace) *Layer {
 			delete(exes, n) // never dropped nor masked: another program may own the name
 		}
 	}
-	return &Layer{Identity: ws.Name, scope: s, exes: exes, maskDir: MaskDir(ws.Name)}
+	l := &Layer{Identity: ws.Name, scope: s, exes: exes, maskDir: MaskDir(ws.Name)}
+	if HasBrowsers(ws) {
+		l.shims = ShimsDir(ws.Name)
+	}
+	return l
 }
 
 // IsMasked reports whether a file or command name is one the layer hides: an out-of-scope

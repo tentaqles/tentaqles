@@ -70,6 +70,8 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set, c
 		Identity: ws.Name, Scope: ws.Manifest.Scope(), Providers: provs, Embedded: embedded,
 		BundleMCP: ws.Manifest.BundleMCP(), MCPAllow: ws.Manifest.MCPAllow(), Set: prot, UserHome: home, Env: os.Getenv,
 		OtherRoots: roots, OtherDirs: dirs,
+		// The client's browsers: the browser rule of ADR-0016 (none: it does not apply).
+		Browsers: browserProfiles(ws.Manifest), BrowserDir: paths.BrowserDir(ws.Name),
 		// An mcp__ call is judged by its server's entry in the identity's harness config too
 		// (ADR-0008); read only on the first MCP call of the run.
 		MCPEntries: func() map[string][]map[string]any {
@@ -78,6 +80,15 @@ func hookScope(ws *resolve.Workspace, cfg *registry.Config, prot *protect.Set, c
 	})
 	scopeMemo.ws, scopeMemo.prot, scopeMemo.cwd, scopeMemo.s = ws, prot, cwd, s
 	return s
+}
+
+// browserProfiles are the manifest's browsers as the browser rule reads them.
+func browserProfiles(m *manifest.Manifest) []policy.BrowserProfile {
+	var out []policy.BrowserProfile
+	for _, b := range m.Browsers {
+		out = append(out, policy.BrowserProfile{Name: b.Name, Profile: b.Profile})
+	}
+	return out
 }
 
 // scopeCatalogError judges the user provider files for an identity (ADR-0007 round

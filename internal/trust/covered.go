@@ -48,7 +48,8 @@ type coverage struct {
 //     tentaqles plugin from and its version;
 //   - every file of the loaded tentaqles plugin's folder (PluginRoot)
 //     outside skills/, agents/, templates/, tests/ and __pycache__;
-//   - every file under $TQ_HOME/shims/ when it exists.
+//   - every file under $TQ_HOME/shims/<name>/ and directly under $TQ_HOME/shims/ when they
+//     exist (ADR-0016: one shims folder per identity).
 //
 // The tq binary on PATH is not covered: Phase 3's shim folder decides which
 // tq the shell runs, and the binary is the OS's to protect.
@@ -100,8 +101,14 @@ func computeCoverage(name string) coverage {
 			add(c.plugin, rel)
 		}
 	}
+	// The shims of ADR-0016 live one folder per identity; an identity's record covers its own
+	// folder, so writing client A's shims does not change client B's record. A file directly
+	// under shims/ (the flat layout of an older tq) is covered for every identity.
 	shimsDir := filepath.Join(home, "shims")
-	if rels := relFilesUnder(shimsDir, nil); len(rels) > 0 {
+	ownShims := func(rel string, d fs.DirEntry) bool {
+		return d.IsDir() && !strings.Contains(rel, "/") && !strings.EqualFold(d.Name(), name)
+	}
+	if rels := relFilesUnder(shimsDir, ownShims); len(rels) > 0 {
 		shims := keyUnder(homeKey, home, shimsDir)
 		for _, rel := range rels {
 			add(shims, rel)

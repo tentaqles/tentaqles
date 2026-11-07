@@ -42,6 +42,16 @@ func TestMain(m *testing.M) {
 	if ok, code := envplan.StubMain(os.Stderr); ok {
 		os.Exit(code)
 	}
+	// A fake browser (open_test.go): run as a copy of the test binary named chrome-fake or
+	// msedge-fake, it records its name and argv and exits.
+	if isFakeBrowser() {
+		recordFakeBrowser()
+		os.Exit(0)
+	}
+	// The browser shims the tests write are copies of this binary (ADR-0016).
+	if ok, code := ShimMain(os.Stderr, os.Args[1:]); ok {
+		os.Exit(code)
+	}
 	// And tq itself for a test that runs a real shell hook (TQ_TEST_BE_TQ=1): the arguments
 	// are tq's.
 	if os.Getenv("TQ_TEST_BE_TQ") == "1" {

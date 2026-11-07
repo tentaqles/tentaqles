@@ -85,9 +85,11 @@ type PathReport struct {
 //     Links, /usr/local/bin, ~/.local/bin) is kept, and the mask folder goes first on the
 //     PATH, where a stub of each out-of-scope name answers "command not found", exit 127;
 //   - every other entry, an empty one, one tq cannot map to an OS path, and on Windows any
-//     folder under %SystemRoot% are kept as they are, in order.
+//     folder under %SystemRoot% are kept as they are, in order;
+//   - for a client that lists a browser, its shims folder (xdg-open, open) goes first of all
+//     (ADR-0016).
 //
-// A mask entry already there is removed before the result is built, so filtering is
+// A mask or shims entry already there is removed before the result is built, so filtering is
 // idempotent.
 func (l *Layer) FilterPath(path string, syn PathSyntax) (string, PathReport) {
 	var rep PathReport
@@ -98,7 +100,7 @@ func (l *Layer) FilterPath(path string, syn PathSyntax) (string, PathReport) {
 		if e != "" {
 			osp = syn.ToOS(e)
 		}
-		if osp != "" && l.isMaskEntry(osp) {
+		if osp != "" && (l.isMaskEntry(osp) || shimsEntry(osp, l.Identity)) {
 			continue
 		}
 		switch l.classify(osp) {
@@ -117,6 +119,11 @@ func (l *Layer) FilterPath(path string, syn PathSyntax) (string, PathReport) {
 		} else {
 			rep.MaskMissing = true
 		}
+	}
+	if l.shims != "" {
+		// ADR-0016: the client's xdg-open and open come first, so a tool that opens a page
+		// reaches the client's browser profile and not the system's default handler.
+		kept = append([]string{syn.FromOS(l.shims)}, kept...)
 	}
 	return strings.Join(kept, syn.Sep), rep
 }

@@ -21,10 +21,11 @@ identity is blocked with the reason.
     `tq/human-only-command`, ADR-0005), the six identity rules of `identity.go`
     (`policy.Scope`: `out-of-scope-cli`, `-env`, `-path`, `-host`, `-mcp`,
     `other-identity`, read from the catalog's `match:` lists and `manifest.Scope()`,
-    ADR-0007) and their evaluator; nothing else is a rule. Every
+    ADR-0007), the seventh, `other-browser-profile` (`browserprofile.go`, from the manifest's
+    `browsers:`, ADR-0016), and their evaluator; nothing else is a rule. Every
     rule carries its category (`identity`, `secrets`, `self-protection`); a deny reads
     `BLOCKED [<category>/<rule>]`.
-  - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `reach`,
+  - `internal/cmd/` — every command; `internal/cmd/root.go` registers them: `reach`, `open`,
     `allow`, `deny`, `list`, `env`, `activate`, `hooks`, `login`, `run`, `doctor`, `status`, `bundle`,
     `providers`, `secret`, `secrets`, `settings`, `statusline`,
     `dotenv`, `migrate`, `uninstall`, `version`, `claude-hook`. The hook is
@@ -158,6 +159,15 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestPluginServers_EveryShape`, `TestLostState_HarnessMissingStateIsLost`; the hybrid MCP
   list: `TestJudgeMCP_Hybrid`, `TestScope_MCPHybridInTheHook`, `TestJudgeMCP_FixtureKeptSets`,
   `TestSettingsRender_HybridMCP`, `TestMCPGeneral`, `TestMCPAllow`.
+- A client with a `browsers:` list opens pages only in its own browser profile: `tentaqles open`,
+  `BROWSER` and the client's `xdg-open` and `open` start the listed browser by install path with its
+  `--profile-directory`; the hook denies a browser started with another profile or none, the OS routes that
+  open a URL in the default browser, and Claude in Chrome when Chrome is not the client's, as
+  `identity/other-browser-profile`; the shims are protected and covered by the integrity record; without
+  `browsers:` nothing changes (ADR-0016): `TestOtherBrowserProfile_Fixtures`,
+  `TestOtherBrowserProfile_FalsePositives`, `TestPreToolUse_OtherBrowserProfileDenied`,
+  `TestPreToolUse_OsUrlOpenDenied`, `TestPreToolUse_ClaudeInChromeNeedsChrome`, `TestOpen_Refusals`,
+  `TestBrowserShims`, `TestBrowserShims_ProtectedAndSigned`, `TestBrowser_NoBlockNoChange`.
 - The secret rules fire on `.env` reads, environment dumps and secret-store reads, and a
   `.env.example` is allowed: `TestPreToolUse_SecretRules`, `TestBuiltinIsTheFiveSecretRules`.
 - Trust is human-only, and so is every tq write under `$TQ_HOME` or an identity dir:

@@ -631,6 +631,23 @@ func TestShimsAreCovered(t *testing.T) {
 	}
 }
 
+// The shims of ADR-0016 are one folder per identity: an identity's record covers its own folder
+// and not another's, so writing one client's shims does not make another client untrusted.
+func TestShimsAreCoveredPerIdentity(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	own := filepath.Join(f.home, ".tentaqles", "shims", "acme", "open")
+	other := filepath.Join(f.home, ".tentaqles", "shims", "beta", "open")
+	write(t, other, "#!/bin/sh\n")
+	if rep := f.verify(); !rep.Trusted(f.hash) {
+		t.Fatalf("another identity's shim changed this record: %v", rep.Changes)
+	}
+	write(t, own, "#!/bin/sh\n")
+	if c := changeFor(t, f.verify(), own); c.Kind != "added" {
+		t.Fatalf("%+v", c)
+	}
+}
+
 // Keys are canonical: a record signed from a shell whose TQ_HOME is spelled
 // with forward slashes, or in another case on Windows, verifies from the
 // usual spelling with no phantom change, and the reverse.

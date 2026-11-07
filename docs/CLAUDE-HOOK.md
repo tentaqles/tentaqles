@@ -252,6 +252,13 @@ Every catalog provider outside the scope is matched by its `match:` lists
 | `identity/out-of-scope-mcp` | an `mcp__<server>__*` tool whose server name, split on `_ - .` (adjacent pairs joined, so `google-cloud` → `googlecloud`), carries an out-of-scope provider's MCP token (`mcp__aws__*`, `mcp__amazon-q__*`, `mcp__aws_on_azure__*`) and whose exact name is not in the identity's own `claude.bundle.mcp` |
 | `identity/other-identity` | a path under another identity's workspace root (`<base>/<other>` for every registered base) or its folder `~/.tentaqles/identities/<other>` (its Claude and Codex homes included), by every route above |
 
+One more match of the `identity` category applies only to a client whose manifest has a `browsers:` list
+(ADR-0016); without one, nothing below changes:
+
+| Rule | What it denies |
+|---|---|
+| `identity/other-browser-profile` | a shell command that starts `chrome`, `msedge` or `google-chrome` (also `google-chrome-stable`, `microsoft-edge`), by name or path, behind `start` and `Start-Process` too, unless the browser is one the client lists and the command has the client's `--profile-directory`, or a `--user-data-dir` under `~/.tentaqles/identities/<ws>/browser`; another profile, another folder, or neither flag is denied (Chrome then picks the profile used last). Also `start <url>`, `Start-Process <url>`, `explorer <url>`, `rundll32 url.dll` and `cmd /c start <url>`, which hand a `http` or `https` URL to the system's default browser; the message names `tentaqles open <url>`. And an `mcp__claude-in-chrome__*` call when Chrome is not one of the client's browsers. A URL in a commit message, a grep pattern or an `echo` is text and stays allowed |
+
 An in-scope provider's claim is never denied because another provider lists
 the same thing; claims are provider-specific. A shared CLI is owned per
 subcommand: `az` belongs to the az provider, and `azure-devops` claims only

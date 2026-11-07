@@ -6,6 +6,27 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### The right browser on the right profile (ADR-0016)
+
+- `tentaqles open [--browser chrome|edge] <url>` opens an `http` or `https` URL in the client's browser
+  profile (the first `browsers:` entry, or `--browser`), from the browser's install path with
+  `--profile-directory`. It refuses other schemes, a value starting with `-`, a neutral folder, a client
+  with no `browsers:` and a browser that is not installed.
+- For a client with `browsers:`, the identity environment sets `BROWSER` to a program under
+  `~/.tentaqles/shims/<client>/` and puts that folder first on `PATH`, where `xdg-open` and `open` open an
+  `http` or `https` URL in the client's profile and pass anything else to the real program. `tq settings render`
+  writes the programs and signs them. The shims are copies of the tq binary: after upgrading tq, run
+  `tq settings render <client>`.
+- The hook denies, as `identity/other-browser-profile`, `chrome`, `msedge` and `google-chrome` with another
+  profile or none, `start`, `Start-Process`, `explorer`, `rundll32 url.dll` and `cmd /c start` with a URL, and
+  `mcp__claude-in-chrome__*` when Chrome is not the client's browser. Claude in Chrome attaches to a running
+  browser, so tq cannot verify its profile (`docs/COMMANDS.md`).
+- `tq settings render` sets `--user-data-dir` under `~/.tentaqles/identities/<client>/browser` on the client's
+  Playwright MCP entries.
+- `tq doctor` warns `browser-profile-missing` and `browser-shims-missing`.
+- The integrity record covers `shims/<client>/` for that client, not every client's shims folder.
+- A client with no `browsers:` is unchanged.
+
 ### Cut down to IDEATION (ADR-0013, ADR-0014)
 
 - Removed `tq add`, `tq init`, `tq onboard`, `tq setup`, `tq worktrees`, `tq run --off` and the
