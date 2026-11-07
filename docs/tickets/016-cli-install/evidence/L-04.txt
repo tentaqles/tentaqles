@@ -1,0 +1,13 @@
+L-04 re-check (round 4)
+
+Rule decided: first line that looks like an error; otherwise the last plain line of stderr; otherwise of stdout; a bare exit status only with no such output.
+
+internal/install/errline.go:32-52 (ErrorLine): loop 1 takes the first plainLine that matches errRe on stderr then stdout (lines 34-40); loop 2 takes the last plain line of stderr then stdout (lines 41-47); the error's own text (exit status) only after both (lines 48-50).
+
+Run: go test ./internal/install -run '^TestInstall_FailureLineIsTheError$' -count=1 -v  -> PASS (see F-01.txt), including these cases:
+  - winget "No applicable installer found; see logs for more details." (no error word) -> that line, not "exit status 1"
+  - winget "No package found matching input criteria." -> that line
+  - apt stdout "Reading package lists...\nBuilding dependency tree..." exit 1 -> "Building dependency tree..."
+  - pip stderr "npm warn old\nthe registry refused the request" -> "the registry refused the request"
+  - no output at all / noise only / warnings only -> "exit status 1"
+Docs: docs/PROVIDERS.md:118-128 states the same four steps.

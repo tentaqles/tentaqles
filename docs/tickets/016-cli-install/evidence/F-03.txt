@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestInstall_NoIdentity$ -count=1 -v
+=== RUN   TestInstall_NoIdentity
+--- PASS: TestInstall_NoIdentity (0.52s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.620s
+exit code: 0

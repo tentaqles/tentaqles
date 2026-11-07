@@ -1,0 +1,7 @@
+$ go test ./internal/cmd -run ^TestInstall_NoShellNoExtraArgs$ -count=1 -v
+=== RUN   TestInstall_NoShellNoExtraArgs
+--- PASS: TestInstall_NoShellNoExtraArgs (1.12s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.215s
+exit code: 0
+manual S-01/S-02 step 2 needs a trusted Azure-only identity; trust is human-only so not creatable by an agent. Neutral-folder run: 'install "aws & calc"' exit 1 (identity refusal), 'install az --source evil' exit 1 (unknown flag). Full scenarios run inside the tests (see S-01.txt, S-02.txt).

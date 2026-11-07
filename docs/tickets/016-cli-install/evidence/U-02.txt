@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestInstall_PresentManualNoCLI$ -count=1 -v
+=== RUN   TestInstall_PresentManualNoCLI
+--- PASS: TestInstall_PresentManualNoCLI (0.89s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.979s
+exit code: 0

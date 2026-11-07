@@ -1,0 +1,30 @@
+$ go test ./internal/cmd -run TestReach -count=1 -v
+=== RUN   TestReach_SharedCLIInstallsOnce
+--- PASS: TestReach_SharedCLIInstallsOnce (1.12s)
+=== RUN   TestReach_InstallsAndContinues
+--- PASS: TestReach_InstallsAndContinues (1.65s)
+=== RUN   TestReach_PathMakesATrustedClient
+--- PASS: TestReach_PathMakesATrustedClient (0.72s)
+=== RUN   TestReach_CurrentFolder
+--- PASS: TestReach_CurrentFolder (0.64s)
+=== RUN   TestReach_GuardsTheNewClient
+--- PASS: TestReach_GuardsTheNewClient (0.96s)
+=== RUN   TestReach_ExistingClientShowsAndChangesNothing
+--- PASS: TestReach_ExistingClientShowsAndChangesNothing (0.81s)
+=== RUN   TestReach_NoBanner
+--- PASS: TestReach_NoBanner (1.24s)
+=== RUN   TestReachDoesNotTrustFromAgent
+--- PASS: TestReachDoesNotTrustFromAgent (1.58s)
+=== RUN   TestReachRefusesAgentBeforeAnything
+--- PASS: TestReachRefusesAgentBeforeAnything (0.08s)
+=== RUN   TestReachConfirmsBeforeWriting
+--- PASS: TestReachConfirmsBeforeWriting (0.08s)
+=== RUN   TestReach_BadFolders
+--- PASS: TestReach_BadFolders (0.15s)
+=== RUN   TestReach_SameNameElsewhereRefused
+--- PASS: TestReach_SameNameElsewhereRefused (0.77s)
+=== RUN   TestReach_EnsuresProtectedHome
+--- PASS: TestReach_EnsuresProtectedHome (0.59s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	10.495s
+exit code: 0

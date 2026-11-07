@@ -1,0 +1,38 @@
+$ go run ./cmd/tq --help
+Tentaqles: one terminal identity per workspace folder
+
+Usage:
+  tentaqles [command]
+
+Available Commands:
+  activate    Print the hook to add to your shell profile, e.g. eval "$(tq activate bash)"
+  allow       Trust a workspace's current manifest so it can export env (human only)
+  bundle      Manage Claude bundles (plugins, skills, MCP servers) from a shared catalog
+  claude-hook Claude Code hook adapter (reads the hook JSON on stdin)
+  completion  Generate the autocompletion script for the specified shell
+  deny        Revoke trust for a workspace (human only)
+  doctor      Verify hooks, trust, git and env against the manifests (never mutates)
+  dotenv      Use a .env file without printing its values
+  env         Print the env changes for the current directory (used by the shell hook)
+  help        Help about any command
+  hooks       Manage tq's shell activation hook in your profile files (install and remove are human only)
+  install     Install a provider's CLI through a package manager the catalog names (winget, scoop, brew, apt, npm, pip)
+  list        List workspaces under all registered bases
+  login       Run a CLI's own login flow inside the workspace's private config home (human only)
+  migrate     Move a hand-rolled tentaqles setup under tq's management
+  open        Open an http or https URL in this client's browser profile
+  providers   Inspect and manage the provider catalog (CLI, install hints, identity env)
+  reach       Make a folder a client identity, or show the one it already is (human only)
+  run         Run a command with a workspace's identity without cd-ing into it
+  secret      Keep tracker tokens in the OS keychain (human-only; values are never printed)
+  secrets     Find where secrets sit in agent config (read-only)
+  settings    Manage the tq-owned part of each identity's Claude settings.json, and the terminals the human-only check accepts
+  status      The doctor report, or with --denials the last entries of the denial log
+  uninstall   Undo a tq migration by replaying its journal backwards
+  version     Print the tq version and the commit it was built from
+
+Flags:
+  -h, --help   help for tentaqles
+
+Use "tentaqles [command] --help" for more information about a command.
+exit code: 0

@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestInstall_UserProviderHasNoInstall$ -count=1 -v
+=== RUN   TestInstall_UserProviderHasNoInstall
+--- PASS: TestInstall_UserProviderHasNoInstall (0.63s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.730s
+exit code: 0

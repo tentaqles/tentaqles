@@ -1,0 +1,13 @@
+neutral folder (no trusted identity is available without a human typing yes in tq reach)
+$ tentaqles install "aws & calc"
+tq: tentaqles install needs a client identity: this folder is not inside a trusted client (a person runs tentaqles reach to make one)
+exit code: 1
+$ tentaqles install az --source evil
+tq: unknown flag: --source
+exit code: 1
+$ tentaqles install az -- --override x
+tq: accepts 1 arg(s), received 3
+exit code: 1
+$ tentaqles install aws
+tq: tentaqles install needs a client identity: this folder is not inside a trusted client (a person runs tentaqles reach to make one)
+exit code: 1

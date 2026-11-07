@@ -1,0 +1,60 @@
+$ winget show --id Amazon.AWSCLI -e --source winget --disable-interactivity
+Found AWS Command Line Interface [Amazon.AWSCLI]
+exit code: 0
+$ winget show --id Databricks.DatabricksCLI -e --source winget --disable-interactivity
+Found DatabricksCLI [Databricks.DatabricksCLI]
+exit code: 0
+$ winget show --id DigitalOcean.Doctl -e --source winget --disable-interactivity
+Found doctl [DigitalOcean.Doctl]
+exit code: 0
+$ winget show --id Fly-io.flyctl -e --source winget --disable-interactivity
+Found flyctl [Fly-io.flyctl]
+exit code: 0
+$ winget show --id GitHub.cli -e --source winget --disable-interactivity
+Found GitHub CLI [GitHub.cli]
+exit code: 0
+$ winget show --id GitHub.Copilot -e --source winget --disable-interactivity
+Found GitHub Copilot CLI [GitHub.Copilot]
+exit code: 0
+$ winget show --id GLab.GLab -e --source winget --disable-interactivity
+Found GLab [GLab.GLab]
+exit code: 0
+$ winget show --id Google.CloudSDK -e --source winget --disable-interactivity
+Found Google Cloud SDK [Google.CloudSDK]
+exit code: 0
+$ winget show --id Hashicorp.Terraform -e --source winget --disable-interactivity
+Found HashiCorp Terraform [Hashicorp.Terraform]
+exit code: 0
+$ winget show --id Helm.Helm -e --source winget --disable-interactivity
+Found Helm [Helm.Helm]
+exit code: 0
+$ winget show --id HetznerCloud.CLI -e --source winget --disable-interactivity
+Found hcloud [HetznerCloud.CLI]
+exit code: 0
+$ winget show --id IBM.Cloud.CLI -e --source winget --disable-interactivity
+Found IBM Cloud CLI [IBM.Cloud.CLI]
+exit code: 0
+$ winget show --id Kubernetes.kubectl -e --source winget --disable-interactivity
+Found Kubernetes CLI [Kubernetes.kubectl]
+exit code: 0
+$ winget show --id Microsoft.AzureCLI -e --source winget --disable-interactivity
+Found Microsoft Azure CLI [Microsoft.AzureCLI]
+exit code: 0
+$ winget show --id OpenJS.NodeJS -e --source winget --disable-interactivity
+Found Node.js [OpenJS.NodeJS]
+exit code: 0
+$ winget show --id Oracle.OCI-CLI -e --source winget --disable-interactivity
+Found Oracle Cloud Infrastructure CLI [Oracle.OCI-CLI]
+exit code: 0
+$ winget show --id PostgreSQL.PostgreSQL.17 -e --source winget --disable-interactivity
+Found PostgreSQL 17 [PostgreSQL.PostgreSQL.17]
+exit code: 0
+$ winget show --id Pulumi.Pulumi -e --source winget --disable-interactivity
+Found Pulumi [Pulumi.Pulumi]
+exit code: 0
+$ winget show --id Scaleway.cli -e --source winget --disable-interactivity
+Found cli [Scaleway.cli]
+exit code: 0
+$ winget show --id Snowflake.SnowflakeCLI -e --source winget --disable-interactivity
+Found Snowflake CLI [Snowflake.SnowflakeCLI]
+exit code: 0

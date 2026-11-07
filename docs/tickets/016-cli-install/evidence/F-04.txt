@@ -1,0 +1,6 @@
+$ go test ./internal/install -run ^TestInstall_RefreshesPathFromRegistry$ -count=1 -v
+=== RUN   TestInstall_RefreshesPathFromRegistry
+--- PASS: TestInstall_RefreshesPathFromRegistry (0.31s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/install	0.372s
+exit code: 0

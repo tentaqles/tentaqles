@@ -1,6 +1,6 @@
 # 016: `tentaqles reach` installs the client's CLIs
 
-**Status:** ready
+**Status:** landed
 **Risk:** High: a scope bug lets an agent install another client's CLI on the machine, and a wrong catalog entry runs an unintended package
 **UI:** none
 

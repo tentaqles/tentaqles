@@ -1,0 +1,70 @@
+## Installing a provider's CLI
+
+`tentaqles install <provider>` (and the last step of `tentaqles reach`, unless `--no-install`)
+puts a provider's CLI on the machine. It reads only the **embedded** catalog: a file under
+`~/.tentaqles/providers/` can add a provider or widen what the guard denies, never name a
+package tq runs.
+
+The methods of the `install:` block of the current OS are tried in this order, and the first
+whose package manager is on the identity's PATH runs:
+
+1. `winget`
+2. `scoop`
+3. `brew`
+4. `apt` (runs `apt-get install -y`, never with `sudo`: without the rights it fails and says so)
+5. `npm` (`npm install -g`)
+6. `pip` (`pip install`, or `pip3`)
+
+Then the catalog's `version_args` run and one line is printed:
+
+| Line | When |
+|---|---|
+| `<provider>: installed <version>` | a package manager ran and the CLI now answers |
+| `<provider>: already present <version>` | the CLI already resolves on the identity's PATH: nothing runs |
+| `Open a new terminal to use it.` | the line after `already present` when the CLI is found only on the registry PATH (Windows): nothing runs |
+| `<provider>: manual, download from <docs URL>` | no method of this OS has a package manager here |
+| `<provider>: install failed: <reason>` | the package manager failed (exit 1); the reason is chosen as below |
+| `<provider>: no CLI, nothing to install` | `cli: null` |
+
+The reason of a failed install, in this order:
+
+1. the first line that looks like an error, on stderr and then on stdout (`error`, `E:`, `failed`, `could not` and the like);
+2. otherwise the last line of stderr;
+3. otherwise the last line of stdout;
+4. otherwise the exit status, and only when there is no output at all.
+
+Spinner frames, bars, progress lines and warnings (`npm warn`, `WARNING:`, `W:`) are never a line for steps 2 and 3, so a run whose output is only those has no output for this rule and gives the exit status.
+
+Rules:
+
+- The package id comes from the catalog and is one argv element; there is no shell and no
+  argument of the command line reaches the package manager.
+- A value under `url` is documentation. tq never opens or runs it, and **never launches an
+  installer file (a `.msi`, an `.exe`, a script) itself**. `winget` may run a vendor installer
+  behind the scenes: that is the package manager's own work.
+- **tq accepts the vendor's licence through winget's flags** (`--accept-package-agreements`,
+  `--accept-source-agreements`, `--disable-interactivity`). Run the install only for software
+  you agree to.
+- A run lasts at most 10 minutes. At the limit the package manager and everything it started are
+  stopped, and the line reads `install failed: ... did not finish within 10m0s and was stopped`.
+- The package manager and the version check run with the identity's environment. After a Windows
+  install the CLI is looked up on the user and machine PATH read from the registry, since a
+  package manager's PATH change does not reach a running process.
+- A CLI installs machine-wide; the identity's PATH layer decides who reaches it. A provider
+  outside the identity's scope is refused (`<provider> is outside the scope of identity <ws>:
+  <scope>`, exit 1, one `identity` line in the denial log with layer `command`).
+- An agent may run it for a provider in scope (it is not human-only; ADR-0015). Azure DevOps'
+  `az extension add --name azure-devops` stays a printed note: an install `note:` that starts
+  with `then: ` is printed after the provider's line (`then: az extension add --name
+  azure-devops`) and never run; any other note is an install alternative and is not printed.
+- The failure and refusal lines are printed as they are worded (no `tq:` in front) and the
+  command exits 1. The last 48 KiB of each output stream are kept, so a reason after a long log
+  is found.
+- On Windows the CLI is also looked up on the registry PATH before any package manager runs, so
+  a CLI an earlier install added (the same `az` under Azure and Azure DevOps in one `reach`, or
+  a retry from the same terminal) reads `already present`, then `Open a new terminal to use it.`
+  No package manager runs for it.
+
+| `tentaqles reach [<path>]` | **Human-only.** Makes the current folder, or `<path>`, a client identity. It prints the banner (`--no-banner` or `TQ_NO_BANNER=1` for none), asks for the identity email and the client's providers, and after you type `yes` writes the manifest and trusts it. The folder's name is the identity's name, and its parent folder is where your clients live. In a folder that already is a client, it shows the client and changes nothing. Once the client is trusted it installs the CLI of each provider the client can use, one line each (`--no-install` skips this; a failure does not stop the rest). |
+| `tentaqles install <provider>` | Installs a provider's CLI for the current client, through the first package manager on its PATH from `winget`, `scoop`, `brew`, `apt`, `npm`, `pip`, and prints `<provider>: installed <version>`, `already present <version>`, `manual, download from <docs URL>` or `install failed: <reason>` (exit 1). It takes the provider id and nothing else, runs at most 10 minutes, and refuses a provider outside the client's scope (exit 1, logged). An agent may run it for a provider in scope. tq never launches a desktop installer, and accepts the vendor's licence through winget's flags. See [PROVIDERS.md](PROVIDERS.md#installing-a-providers-cli). |
+threat-model.md:70 row quoted present (ADR-0015 install row)

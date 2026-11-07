@@ -1,0 +1,54 @@
+$ go test ./internal/install -count=1 -v
+=== RUN   TestInstall_FailureLineIsTheError
+=== RUN   TestInstall_FailureLineIsTheError/winget:_progress_and_spinner_on_stdout,_then_the_error
+=== RUN   TestInstall_FailureLineIsTheError/winget:_a_verdict_with_no_error_word
+=== RUN   TestInstall_FailureLineIsTheError/winget:_no_package
+=== RUN   TestInstall_FailureLineIsTheError/winget:_no_upgrade
+=== RUN   TestInstall_FailureLineIsTheError/scoop:_ERROR_after_downloads
+=== RUN   TestInstall_FailureLineIsTheError/brew:_Warning_first,_then_Error
+=== RUN   TestInstall_FailureLineIsTheError/pip:_WARNING_first,_then_ERROR
+=== RUN   TestInstall_FailureLineIsTheError/npm:_warnings_first,_then_npm_error
+=== RUN   TestInstall_FailureLineIsTheError/apt:_reading_lists_on_stdout,_E:_on_stderr
+=== RUN   TestInstall_FailureLineIsTheError/an_escape_sequence_in_the_line_is_removed
+=== RUN   TestInstall_FailureLineIsTheError/no_error_word:_the_first_plain_stderr_line
+=== RUN   TestInstall_FailureLineIsTheError/no_output_at_all:_the_exit_status
+=== RUN   TestInstall_FailureLineIsTheError/a_long_line_is_cut
+--- PASS: TestInstall_FailureLineIsTheError (1.47s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_progress_and_spinner_on_stdout,_then_the_error (0.12s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_a_verdict_with_no_error_word (0.12s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_no_package (0.13s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_no_upgrade (0.13s)
+    --- PASS: TestInstall_FailureLineIsTheError/scoop:_ERROR_after_downloads (0.15s)
+    --- PASS: TestInstall_FailureLineIsTheError/brew:_Warning_first,_then_Error (0.14s)
+    --- PASS: TestInstall_FailureLineIsTheError/pip:_WARNING_first,_then_ERROR (0.11s)
+    --- PASS: TestInstall_FailureLineIsTheError/npm:_warnings_first,_then_npm_error (0.14s)
+    --- PASS: TestInstall_FailureLineIsTheError/apt:_reading_lists_on_stdout,_E:_on_stderr (0.11s)
+    --- PASS: TestInstall_FailureLineIsTheError/an_escape_sequence_in_the_line_is_removed (0.11s)
+    --- PASS: TestInstall_FailureLineIsTheError/no_error_word:_the_first_plain_stderr_line (0.10s)
+    --- PASS: TestInstall_FailureLineIsTheError/no_output_at_all:_the_exit_status (0.11s)
+    --- PASS: TestInstall_FailureLineIsTheError/a_long_line_is_cut (0.00s)
+=== RUN   TestInstall_TimeoutStopsTheProcessTree
+--- PASS: TestInstall_TimeoutStopsTheProcessTree (3.03s)
+=== RUN   TestInstall_RefreshesPathFromRegistry
+--- PASS: TestInstall_RefreshesPathFromRegistry (0.34s)
+=== RUN   TestInstall_LateErrorLineIsKept
+=== RUN   TestInstall_LateErrorLineIsKept/stderr
+=== RUN   TestInstall_LateErrorLineIsKept/stdout
+=== RUN   TestInstall_LateErrorLineIsKept/the_writer_is_bounded_and_keeps_the_start_and_the_end
+--- PASS: TestInstall_LateErrorLineIsKept (0.22s)
+    --- PASS: TestInstall_LateErrorLineIsKept/stderr (0.11s)
+    --- PASS: TestInstall_LateErrorLineIsKept/stdout (0.11s)
+    --- PASS: TestInstall_LateErrorLineIsKept/the_writer_is_bounded_and_keeps_the_start_and_the_end (0.00s)
+=== RUN   TestResult_OutputPrintsOnlyAThenNote
+--- PASS: TestResult_OutputPrintsOnlyAThenNote (0.00s)
+=== RUN   TestInstall_FoundOnRegistryPathBeforeRunning
+--- PASS: TestInstall_FoundOnRegistryPathBeforeRunning (0.46s)
+=== RUN   TestAppendPath
+--- PASS: TestAppendPath (0.00s)
+=== RUN   TestPick_OrderAndURL
+--- PASS: TestPick_OrderAndURL (0.00s)
+=== RUN   TestMethodArgs_OneIDElement
+--- PASS: TestMethodArgs_OneIDElement (0.00s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/install	5.695s
+exit code: 0

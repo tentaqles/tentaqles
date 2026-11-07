@@ -1,0 +1,21 @@
+npm cline (want bin cline): {  "cline": "bin/cline"}
+npm @openai/codex (want bin codex): {  "codex": "bin/codex.js"}
+npm @continuedev/cli (want bin cn): {  "cn": "dist/cn.js"}
+npm @github/copilot (want bin copilot): {  "copilot": "npm-loader.js"}
+npm @google/gemini-cli (want bin gemini): {  "gemini": "bundle/gemini.js"}
+npm vercel (want bin vercel): {  "vc": "dist/vc.js",  "vercel": "dist/vc.js"}
+winget Microsoft.AzureCLI: Found Microsoft Azure CLI [Microsoft.AzureCLI]|Version: 2.92.0|Publisher: Microsoft Corporation|
+winget Amazon.AWSCLI: Found AWS Command Line Interface [Amazon.AWSCLI]|Version: 2.39.5|Publisher: Amazon Web Services|
+winget PostgreSQL.PostgreSQL: No package found matching input criteria.|
+winget GitHub.cli: Found GitHub CLI [GitHub.cli]|Version: 2.103.3|Publisher: GitHub, Inc.|
+winget GLab.GLab: Found GLab [GLab.GLab]|Version: 1.128.0|Publisher: GitLab|
+winget Kubernetes.kubectl: Found Kubernetes CLI [Kubernetes.kubectl]|Version: 1.37.2|Publisher: The Kubernetes Authors|
+winget HashiCorp.Terraform: No package found matching input criteria.|
+winget Pulumi.Pulumi: Found Pulumi [Pulumi.Pulumi]|Version: 3.274.1|Publisher: Pulumi Corp|
+winget Helm.Helm: Found Helm [Helm.Helm]|Version: 4.3.1|Publisher: Helm|
+winget DigitalOcean.Doctl: Found doctl [DigitalOcean.Doctl]|Version: 2.3.0|Publisher: DigitalOcean|
+winget Databricks.DatabricksCLI: Found DatabricksCLI [Databricks.DatabricksCLI]|Version: 1.24.0|Publisher: Databricks|
+winget Google.CloudSDK: Found Google Cloud SDK [Google.CloudSDK]|Version: 592.0.0|Publisher: Google LLC|
+winget OpenJS.NodeJS: Found Node.js [OpenJS.NodeJS]|Version: 26.12.1|Publisher: Node.js Foundation|
+winget GitHub.Copilot: Found GitHub Copilot CLI [GitHub.Copilot]|Version: 1.0.106|Publisher: GitHub, Inc.|
+winget Scaleway.cli: Found cli [Scaleway.cli]|Version: 2.65.1|Publisher: Scaleway SAS|

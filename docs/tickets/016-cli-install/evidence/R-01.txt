@@ -1,0 +1,4 @@
+$ go test ./internal/providers ./internal/policy -count=1
+ok  	github.com/tentaqles/tentaqles/internal/providers	0.236s
+ok  	github.com/tentaqles/tentaqles/internal/policy	2.164s
+exit code: 0

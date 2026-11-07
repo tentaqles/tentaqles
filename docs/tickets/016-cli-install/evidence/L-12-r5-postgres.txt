@@ -1,0 +1,14 @@
+$ go test ./.job/016-cli-install/round-5/pgcheck -run TestPostgresWindowsIsManual -count=1 -v  (a throwaway test under .job: all package managers on PATH, psql absent, fake Run)
+=== RUN   TestPostgresWindowsIsManual
+windows block: {Winget: Scoop: Brew: Apt: Pip: Npm: URL: Note:}
+macos block: {Winget: Scoop: Brew: Apt: Pip: Npm: URL: Note:}
+linux block: {Winget: Scoop: Brew: Apt:postgresql-client Pip: Npm: URL: Note:}
+cli: &{Command:psql VersionArgs:[--version]}
+windows: err=<nil> ran=0 line="postgres: manual, download from https://www.postgresql.org/docs/current/app-psql.html"
+darwin: err=<nil> ran=0 line="postgres: manual, download from https://www.postgresql.org/docs/current/app-psql.html"
+  RAN /fake/apt-get [install -y postgresql-client]
+linux: err=postgres: install failed: apt finished but psql is not on the PATH; open a new terminal and run it again ran=1 line="postgres: installed "
+--- PASS: TestPostgresWindowsIsManual (0.01s)
+PASS
+ok  	github.com/tentaqles/tentaqles/.job/016-cli-install/round-5/pgcheck	0.271s
+exit code: 0

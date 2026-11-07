@@ -1,0 +1,38 @@
+$ go test ./internal/install -run ^TestInstall_FailureLineIsTheError$ -count=1 -v
+=== RUN   TestInstall_FailureLineIsTheError
+=== RUN   TestInstall_FailureLineIsTheError/winget:_progress_and_spinner_on_stdout,_then_the_error
+=== RUN   TestInstall_FailureLineIsTheError/winget:_a_verdict_with_no_error_word
+=== RUN   TestInstall_FailureLineIsTheError/winget:_no_package
+=== RUN   TestInstall_FailureLineIsTheError/winget:_no_upgrade
+=== RUN   TestInstall_FailureLineIsTheError/scoop:_ERROR_after_downloads
+=== RUN   TestInstall_FailureLineIsTheError/brew:_Warning_first,_then_Error
+=== RUN   TestInstall_FailureLineIsTheError/pip:_WARNING_first,_then_ERROR
+=== RUN   TestInstall_FailureLineIsTheError/npm:_warnings_first,_then_npm_error
+=== RUN   TestInstall_FailureLineIsTheError/apt:_reading_lists_on_stdout,_E:_on_stderr
+=== RUN   TestInstall_FailureLineIsTheError/an_escape_sequence_in_the_line_is_removed
+=== RUN   TestInstall_FailureLineIsTheError/no_output_at_all:_the_exit_status
+=== RUN   TestInstall_FailureLineIsTheError/apt:_reading_lists,_then_exit_1_with_no_error_line:_the_last_stdout_line
+=== RUN   TestInstall_FailureLineIsTheError/winget:_stopped_after_a_download:_the_bar_is_skipped,_the_last_plain_line_is_the_reason
+=== RUN   TestInstall_FailureLineIsTheError/winget:_stopped_after_starting_the_install
+=== RUN   TestInstall_FailureLineIsTheError/pip:_a_plain_stderr_line_with_no_error_word_is_the_reason
+=== RUN   TestInstall_FailureLineIsTheError/a_long_line_is_cut
+--- PASS: TestInstall_FailureLineIsTheError (1.56s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_progress_and_spinner_on_stdout,_then_the_error (0.09s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_a_verdict_with_no_error_word (0.09s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_no_package (0.21s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_no_upgrade (0.09s)
+    --- PASS: TestInstall_FailureLineIsTheError/scoop:_ERROR_after_downloads (0.09s)
+    --- PASS: TestInstall_FailureLineIsTheError/brew:_Warning_first,_then_Error (0.09s)
+    --- PASS: TestInstall_FailureLineIsTheError/pip:_WARNING_first,_then_ERROR (0.09s)
+    --- PASS: TestInstall_FailureLineIsTheError/npm:_warnings_first,_then_npm_error (0.09s)
+    --- PASS: TestInstall_FailureLineIsTheError/apt:_reading_lists_on_stdout,_E:_on_stderr (0.10s)
+    --- PASS: TestInstall_FailureLineIsTheError/an_escape_sequence_in_the_line_is_removed (0.10s)
+    --- PASS: TestInstall_FailureLineIsTheError/no_output_at_all:_the_exit_status (0.10s)
+    --- PASS: TestInstall_FailureLineIsTheError/apt:_reading_lists,_then_exit_1_with_no_error_line:_the_last_stdout_line (0.11s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_stopped_after_a_download:_the_bar_is_skipped,_the_last_plain_line_is_the_reason (0.10s)
+    --- PASS: TestInstall_FailureLineIsTheError/winget:_stopped_after_starting_the_install (0.09s)
+    --- PASS: TestInstall_FailureLineIsTheError/pip:_a_plain_stderr_line_with_no_error_word_is_the_reason (0.10s)
+    --- PASS: TestInstall_FailureLineIsTheError/a_long_line_is_cut (0.00s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/install	1.618s
+exit code: 0

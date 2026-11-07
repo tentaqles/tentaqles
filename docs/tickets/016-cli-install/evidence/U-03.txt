@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestReach_InstallsAndContinues$ -count=1 -v
+=== RUN   TestReach_InstallsAndContinues
+--- PASS: TestReach_InstallsAndContinues (1.75s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.846s
+exit code: 0

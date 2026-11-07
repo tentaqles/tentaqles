@@ -1,0 +1,3 @@
+$ go test ./internal/cmd -run Install|Reach -count=1
+ok  	github.com/tentaqles/tentaqles/internal/cmd	17.910s
+exit code: 0

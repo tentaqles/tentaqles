@@ -1,0 +1,3 @@
+$ go test ./internal/install -count=1
+ok  	github.com/tentaqles/tentaqles/internal/install	9.919s
+exit code: 0
