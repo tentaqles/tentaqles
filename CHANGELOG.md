@@ -77,6 +77,13 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   verify command and no credential, since tq can't tell it from logged out.
 - `tentaqles connect <unknown>` names the provider catalog in its refusal.
 
+### `tq run` refuses another client in an agent session (ADR-0020)
+
+- In an agent session, `tq run <other> -- <cmd>` exits 1 and starts nothing when `<other>` is not
+  the client of the folder the command runs in. The refusal is one `identity` line in the denial
+  log. `tq run .` and `tq run <its own client>` still launch, and a human's `tq run <any client>`
+  is unchanged.
+
 ### Cut down to IDEATION (ADR-0013, ADR-0014)
 
 - Removed `tq add`, `tq init`, `tq onboard`, `tq setup`, `tq worktrees`, `tq run --off` and the
