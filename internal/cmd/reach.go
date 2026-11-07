@@ -1,15 +1,20 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/banner"
+	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -27,14 +32,16 @@ var (
 )
 
 func newReachCmd() *cobra.Command {
-	var noBanner, noInstall bool
+	var noBanner, noInstall, noPlugin bool
 	c := &cobra.Command{
 		Use:   "reach [<path>]",
 		Short: "Make a folder a client identity, or show the one it already is (human only)",
 		Long: "tentaqles reach makes the current folder, or <path>, an isolated client identity. The folder's\n" +
 			"name is the identity's name, and its parent folder is where your clients live. In a folder that\n" +
 			"already is a client, it shows that client and changes nothing. Once the client is trusted it\n" +
-			"installs the CLI of each provider the client can use (--no-install skips this).\n\n" +
+			"installs the tentaqles plugin into the client's Claude config (--no-plugin skips this): the plugin\n" +
+			"holds the guard, and claude won't start a session for the client without it. Then it installs the\n" +
+			"CLI of each provider the client can use (--no-install skips this).\n\n" +
 			"Human-only: a session is refused, and you confirm before anything is written.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -88,6 +95,12 @@ func newReachCmd() *cobra.Command {
 				return fmt.Errorf("%s was created but not trusted: %w. Run tq allow %s to finish", dir, err, name)
 			}
 			w := c.OutOrStdout()
+			if noPlugin {
+				fmt.Fprintf(w, "The tentaqles plugin was not installed (--no-plugin). Claude won't start a session for %s until it is. Run:\n  %s\n",
+					name, trust.GuardPluginLine(name))
+			} else {
+				reachGuardPlugin(c, ws)
+			}
 			if !noInstall {
 				reachInstall(c, ws)
 			}
@@ -99,6 +112,7 @@ func newReachCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&noBanner, "no-banner", false, "print no banner (TQ_NO_BANNER=1 does the same)")
 	c.Flags().BoolVar(&noInstall, "no-install", false, "do not install the CLIs of the client's providers")
+	c.Flags().BoolVar(&noPlugin, "no-plugin", false, "do not install the tentaqles plugin (the guard) into the client's Claude config")
 	return c
 }
 
@@ -106,6 +120,86 @@ func newReachCmd() *cobra.Command {
 // lines of tentaqles install), and goes on past a failure: the client is trusted either way,
 // and tentaqles install <provider> retries one. A seam for tests.
 var reachInstall = installScope
+
+// reachGuardPlugin installs the tentaqles plugin into the client's Claude config once the trust is
+// signed (REQ-1), and says why and what to run when it cannot (REQ-2). It never fails reach: the
+// refusal of tq run is what keeps a session unguarded in the meantime (ADR-0018). A seam for tests.
+var reachGuardPlugin = installGuardPlugin
+
+// reachPluginTimeout bounds each `claude plugin` command of reach (REQ-1). A seam for tests.
+var reachPluginTimeout = 2 * time.Minute
+
+// reachPluginRun runs one claude command with env and returns its combined output. A seam for
+// tests, which run a fake claude.
+var reachPluginRun = func(ctx context.Context, name string, args, env []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
+	cmd.WaitDelay = 2 * time.Second
+	return cmd.CombinedOutput()
+}
+
+// The two commands that install the guard. Their arguments are constants: nothing from the
+// manifest, the environment or the folder reaches them (S-04).
+var (
+	guardMarketplaceArgs = []string{"plugin", "marketplace", "add", trust.GuardMarketplace}
+	guardInstallArgs     = []string{"plugin", "install", trust.GuardPlugin}
+)
+
+func installGuardPlugin(c *cobra.Command, ws *resolve.Workspace) {
+	w := c.OutOrStdout()
+	if err := runGuardPluginInstall(ws); err != nil {
+		fmt.Fprintf(w, "The tentaqles plugin was not installed: %v\n", err)
+		fmt.Fprintf(w, "Claude won't start a session for %s until it is. Run this line to install it:\n  %s\n",
+			ws.Name, trust.GuardPluginLine(ws.Name))
+		return
+	}
+	resignCovered(c, ws)
+	fmt.Fprintf(w, "The tentaqles plugin is installed: every session of %s runs the guard.\n", ws.Name)
+}
+
+// runGuardPluginInstall adds the marketplace and installs the plugin with ws's Claude config dir
+// (CLAUDE_CONFIG_DIR, through envplan.Environ). A failed marketplace add does not stop the install:
+// the marketplace may be there already, and the install says whether the plugin is.
+func runGuardPluginInstall(ws *resolve.Workspace) error {
+	env := envplan.Environ(ws, os.Environ())
+	claude, err := envplan.LookPath("claude", env)
+	if err != nil {
+		return errors.New("claude was not found on PATH")
+	}
+	addErr := runClaudePlugin(claude, guardMarketplaceArgs, env)
+	if err := runClaudePlugin(claude, guardInstallArgs, env); err != nil {
+		if addErr != nil {
+			return fmt.Errorf("%v; and %v", addErr, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// runClaudePlugin runs one claude plugin command under reachPluginTimeout and names it in the
+// error: the command, and the last line of its output.
+func runClaudePlugin(claude string, args, env []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), reachPluginTimeout)
+	defer cancel()
+	out, err := reachPluginRun(ctx, claude, args, env)
+	what := "claude " + strings.Join(args, " ")
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("%s did not finish within %s", what, reachPluginTimeout)
+	}
+	if err != nil {
+		if last := lastLine(out); last != "" {
+			return fmt.Errorf("%s failed: %v: %s", what, err, last)
+		}
+		return fmt.Errorf("%s failed: %v", what, err)
+	}
+	return nil
+}
+
+// lastLine is the last non-blank line of out, trimmed; "" when there is none.
+func lastLine(out []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
 
 func installScope(c *cobra.Command, ws *resolve.Workspace) {
 	w := c.OutOrStdout()

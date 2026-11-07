@@ -10,8 +10,10 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/claudesettings"
+	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // unpinnedRe matches an npx/bunx/uvx invocation of a package with no version
@@ -42,6 +44,17 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 			}
 		}
 	}
+}
+
+// guardHookCheck reports a trusted workspace whose Claude sessions would start with no tentaqles
+// guard (ADR-0018): the check tq run makes before it starts claude, on the same CLAUDE_CONFIG_DIR,
+// with the same fix line.
+func guardHookCheck(w *resolve.Workspace, add func(level, code, ws, msg, fix string)) {
+	g := trust.CheckGuardHook(envplan.Desired(w)["CLAUDE_CONFIG_DIR"])
+	if g.OK {
+		return
+	}
+	add("error", "guard-hook-missing", w.Name, "no session starts without the tentaqles guard: "+g.Why, trust.GuardHookFix(w.Name, g))
 }
 
 // commandStrings returns "command + args" for every statusLine, hook and

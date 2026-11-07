@@ -340,6 +340,40 @@ Client: none (neutral cwd: outside any base)
 Rules: remote git, gh and cloud CLI commands are blocked here until you cd into a trusted workspace (tq allow <name>).
 ```
 
+## No session without the hook
+
+The guard is the tentaqles plugin's `PreToolUse` hook, so a Claude session with no plugin has no guard at
+all. `tq run <ws> -- claude` and `tq run . -- claude` therefore start no session in an identity's folder
+unless the client's Claude config (the identity's `CLAUDE_CONFIG_DIR`) has all of:
+
+- the tentaqles plugin installed, found the way the integrity record finds it (`installed_plugins.json`, or
+  the plugin cache);
+- `enabledPlugins` with `"tentaqles@tentaqles": true` in its `settings.json`;
+- `disableAllHooks` absent or `false` in that `settings.json`;
+- a `PreToolUse` entry in the plugin's `hooks/hooks.json` whose matcher selects `Bash` and an `mcp__` tool, and
+  whose command runs `tq_hook.sh pre-tool-use`.
+
+When one is missing, the command exits non-zero, prints the reason and the fix line, and launches nothing:
+
+```
+tq: claude won't start a session for acme without the tentaqles guard: the tentaqles plugin is not installed for this client
+  fix: tq run acme -- claude plugin install tentaqles@tentaqles
+```
+
+For `disableAllHooks` the fix line names the setting instead: remove it (or set it to `false`), then
+`tq hooks verify --accept acme`. Anything the check cannot read counts as missing. `tq doctor` reports the same
+state as `guard-hook-missing`, with the same fix line.
+
+Not refused: `claude` subcommands (`claude plugin install …`, `claude mcp …`), `claude --help` and
+`claude --version`, so the fix line itself runs; any command that is not `claude` (`tq run acme -- gh pr list`);
+and `claude` in a neutral folder, which is unchanged. The refusal covers only `claude` started through tq. A
+`claude` that a person starts by its own path, in a terminal without the tq hook block, is outside it (AR1).
+
+`tentaqles reach` installs the plugin for a new client once the trust is signed: `claude plugin marketplace add
+tentaqles/tentaqles`, then `claude plugin install tentaqles@tentaqles`, two minutes at most each, and it signs the
+record again. `--no-plugin` skips that step. A failed install does not stop reach; it prints the reason and the
+fix line.
+
 ## Fallback mode (tq not installed)
 
 `plugin/scripts/tq_hook.sh` is what the plugin's hooks actually invoke. It

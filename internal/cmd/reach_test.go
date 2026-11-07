@@ -29,13 +29,18 @@ func isolateReach(t *testing.T, a *reach.Answers) string {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("TQ_NO_BANNER", "")
 	clearAgentMarkers(t)
-	prevForm, prevGit, prevInstall := reachForm, reachRunGit, reachInstall
+	prevForm, prevGit, prevInstall, prevPlugin := reachForm, reachRunGit, reachInstall, reachGuardPlugin
 	reachForm = func() (*reach.Answers, error) { return a, nil }
 	reachRunGit = func(...string) (string, error) { return "", nil }
 	// No test but the install ones runs a package manager (TestReach_InstallsAndContinues puts
 	// reachInstall back, with a fake one on the PATH).
 	reachInstall = func(*cobra.Command, *resolve.Workspace) {}
-	t.Cleanup(func() { reachForm, reachRunGit, reachInstall = prevForm, prevGit, prevInstall })
+	// No test but the plugin ones runs claude (TestReach_InstallsThePlugin puts reachGuardPlugin
+	// back, with a fake claude on the PATH).
+	reachGuardPlugin = func(*cobra.Command, *resolve.Workspace) {}
+	t.Cleanup(func() {
+		reachForm, reachRunGit, reachInstall, reachGuardPlugin = prevForm, prevGit, prevInstall, prevPlugin
+	})
 	clients := filepath.Join(home, "clients")
 	if err := os.MkdirAll(clients, 0o755); err != nil {
 		t.Fatal(err)

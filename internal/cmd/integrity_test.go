@@ -45,20 +45,17 @@ func appendTo(t *testing.T, p, extra string) {
 }
 
 // mkIntegrityWS is a trusted protected-layout workspace with claude and
-// codex identities, a settings.json with a hook and an installed tentaqles
+// codex identities, a settings.json with the guard and an installed tentaqles
 // plugin (hooks/, scripts/, .claude-plugin/) in its Claude config dir,
 // signed as it is. It returns the root and the plugin's hooks.json.
 func mkIntegrityWS(t *testing.T, name string) (root, hooksJSON string) {
 	t.Helper()
-	root, mp := mkLaunchWSLayout(t, name, "", true)
+	// The plugin is found through its cache folder (no installed_plugins.json), so a version folder
+	// added later is what claude loads: the upgrade tests depend on it.
+	root, mp := mkLaunchWSGuard(t, name, "", true, guardOpts{NoRegistration: true})
 	clearAgentMarkers(t)
-	claude := paths.IdentityDir(name, "claude")
-	plugin := filepath.Join(claude, "plugins", "cache", "tentaqles", "tentaqles", "0.16.0")
+	plugin := filepath.Join(paths.IdentityDir(name, "claude"), "plugins", "cache", "tentaqles", "tentaqles", guardVersion)
 	hooksJSON = filepath.Join(plugin, "hooks", "hooks.json")
-	mustWrite(t, filepath.Join(claude, "settings.json"), `{"hooks":{"PreToolUse":[]}}`)
-	mustWrite(t, filepath.Join(plugin, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.16.0"}`)
-	mustWrite(t, hooksJSON, `{"hooks":{}}`)
-	mustWrite(t, filepath.Join(plugin, "scripts", "tq_hook.sh"), "#!/usr/bin/env bash\nexit 0\n")
 	h, err := trust.HashFile(mp)
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +303,12 @@ func TestHooksVerify_SummarisesAPluginUpgrade(t *testing.T) {
 	_, hooksJSON := mkIntegrityWS(t, "acme")
 	next := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(hooksJSON))), "0.17.0")
 	mustWrite(t, filepath.Join(next, ".claude-plugin", "plugin.json"), `{"name":"tentaqles","version":"0.17.0"}`)
-	mustWrite(t, filepath.Join(next, "hooks", "hooks.json"), `{"hooks":{}}`)
+	// The new folder's hooks.json is the old one's (the guard, mkIntegrityWS): only two files differ.
+	hooks, err := os.ReadFile(hooksJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(next, "hooks", "hooks.json"), string(hooks))
 	mustWrite(t, filepath.Join(next, "scripts", "tq_hook.sh"), "#!/usr/bin/env bash\nexit 1\n")
 	out, err := runTq(t, "hooks", "verify", "acme")
 	if err == nil {
