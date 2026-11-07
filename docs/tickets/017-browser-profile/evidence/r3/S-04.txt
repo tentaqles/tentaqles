@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestBrowserShims_ProtectedAndSigned$ -count=1 -v
+=== RUN   TestBrowserShims_ProtectedAndSigned
+--- PASS: TestBrowserShims_ProtectedAndSigned (1.94s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	2.043s
+exit code: 0

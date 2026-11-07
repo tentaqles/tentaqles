@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestOpen_UsesTheClientsProfile$ -count=1 -v
+=== RUN   TestOpen_UsesTheClientsProfile
+--- PASS: TestOpen_UsesTheClientsProfile (0.79s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.987s
+exit code: 0

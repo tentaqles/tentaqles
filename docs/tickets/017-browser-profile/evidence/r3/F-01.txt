@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestOpen_Refusals$ -count=1 -v
+=== RUN   TestOpen_Refusals
+--- PASS: TestOpen_Refusals (1.85s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.945s
+exit code: 0

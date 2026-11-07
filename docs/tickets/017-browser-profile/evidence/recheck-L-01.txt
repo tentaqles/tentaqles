@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestBrowserShims_WebURLNeverReachesTheRealProgram$ -count=1 -v
+=== RUN   TestBrowserShims_WebURLNeverReachesTheRealProgram
+--- PASS: TestBrowserShims_WebURLNeverReachesTheRealProgram (2.01s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	2.111s
+exit code: 0

@@ -1,0 +1,60 @@
+$ go run ./.job/017-browser-profile/round-3/probe
+ok   deny=true want=true Bash start https://x [identity/other-browser-profile]
+ok   deny=true want=true Bash Start-Process https://x [identity/other-browser-profile]
+ok   deny=true want=true Bash explorer https://x [identity/other-browser-profile]
+ok   deny=true want=true Bash rundll32 url.dll,FileProtocolHandler https://x [identity/other-browser-profile]
+ok   deny=true want=true Bash cmd /c start https://x [identity/other-browser-profile]
+ok   deny=true want=true Bash Start-Process explorer https://x [identity/other-browser-profile]
+ok   deny=false want=false Bash start curl https://example.com
+ok   deny=false want=false Bash Start-Process curl https://example.com
+ok   deny=true want=true PowerShell start https://x [identity/other-browser-profile]
+ok   deny=true want=true PowerShell Start-Process https://x [identity/other-browser-profile]
+ok   deny=true want=true PowerShell explorer https://x [identity/other-browser-profile]
+ok   deny=true want=true PowerShell rundll32 url.dll,FileProtocolHandler https://x [identity/other-browser-profile]
+ok   deny=true want=true PowerShell cmd /c start https://x [identity/other-browser-profile]
+ok   deny=true want=true PowerShell Start-Process explorer https://x [identity/other-browser-profile]
+ok   deny=false want=false PowerShell start curl https://example.com
+ok   deny=false want=false PowerShell Start-Process curl https://example.com
+ok   deny=false want=false Bash start "Docs" https://x
+ok   deny=false want=false Bash start -FilePath msedge
+ok   deny=false want=false Bash chrome --version https://x
+ok   deny=false want=false Bash open -a "Google Chrome" --args --profile-directory=Default
+ok   deny=false want=false Bash chrome --version
+ok   deny=false want=false Bash chrome --help
+ok   deny=false want=false Bash chrome --headless
+ok   deny=false want=false Bash msedge --version
+ok   deny=false want=false Bash msedge --help
+ok   deny=false want=false Bash msedge --headless
+ok   deny=false want=false PowerShell start "Docs" https://x
+ok   deny=false want=false PowerShell start -FilePath msedge
+ok   deny=false want=false PowerShell chrome --version https://x
+ok   deny=false want=false PowerShell open -a "Google Chrome" --args --profile-directory=Default
+ok   deny=false want=false PowerShell chrome --version
+ok   deny=false want=false PowerShell chrome --help
+ok   deny=false want=false PowerShell chrome --headless
+ok   deny=false want=false PowerShell msedge --version
+ok   deny=false want=false PowerShell msedge --help
+ok   deny=false want=false PowerShell msedge --headless
+ok   deny=true want=true Bash chrome --headless --profile-directory=Default [identity/other-browser-profile]
+ok   deny=true want=true Bash msedge --headless --user-data-dir=/tmp/o [identity/other-browser-profile]
+ok   deny=true want=true Bash chrome --version --profile-directory=Default [identity/other-browser-profile]
+ok   deny=false want=false Bash chrome --headless --profile-directory="Profile 2"
+ok   deny=false want=false Bash open -a "Google Chrome" https://x
+ok   deny=false want=false Bash open -a Safari https://x
+ok   deny=false want=false Bash git commit -m "open chrome --profile-directory=x"
+ok   deny=false want=false Bash grep start README.md
+ok   deny=false want=false Bash echo https://x
+ok   deny=false want=false Bash npm start
+ok   deny=false want=false Bash start.sh
+ok   deny=false want=false PowerShell Start-Process notepad
+--- observed only
+obs deny=true PowerShell Start-Process -FilePath explorer -ArgumentList https://x
+obs deny=true PowerShell Start-Process "explorer" https://x
+obs deny=true PowerShell Start-Process explorer.exe https://x
+obs deny=true Bash cmd.exe /c start https://x
+obs deny=true Bash start https://x && echo done
+obs deny=true PowerShell Start-Process http://x
+obs deny=false PowerShell ii https://x
+obs deny=false PowerShell Invoke-Item https://x
+mismatches: 0
+exit code: 0

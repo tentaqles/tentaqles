@@ -1,0 +1,10 @@
+$ go test ./internal/cmd ./internal/envplan -run ^TestBrowser_NoBlockNoChange$ -count=1 -v
+=== RUN   TestBrowser_NoBlockNoChange
+--- PASS: TestBrowser_NoBlockNoChange (2.28s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	2.379s
+=== RUN   TestBrowser_NoBlockNoChange
+--- PASS: TestBrowser_NoBlockNoChange (0.10s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/envplan	0.167s
+exit code: 0

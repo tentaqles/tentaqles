@@ -1,0 +1,6 @@
+$ go test ./internal/doctor -run ^TestDoctor_BrowserProfileMissing$ -count=1 -v
+=== RUN   TestDoctor_BrowserProfileMissing
+--- PASS: TestDoctor_BrowserProfileMissing (0.09s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/doctor	0.167s
+exit code: 0

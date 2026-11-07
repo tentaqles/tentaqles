@@ -1,0 +1,6 @@
+$ go test ./internal/policy -run ^TestOtherBrowserProfile_FalsePositives$ -count=1 -v
+=== RUN   TestOtherBrowserProfile_FalsePositives
+--- PASS: TestOtherBrowserProfile_FalsePositives (0.02s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/policy	0.221s
+exit code: 0

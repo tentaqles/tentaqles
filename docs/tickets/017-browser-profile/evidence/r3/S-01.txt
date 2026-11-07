@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestPreToolUse_OtherBrowserProfileDenied$ -count=1 -v
+=== RUN   TestPreToolUse_OtherBrowserProfileDenied
+--- PASS: TestPreToolUse_OtherBrowserProfileDenied (1.10s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.239s
+exit code: 0

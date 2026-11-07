@@ -1,0 +1,6 @@
+=== RUN   TestHardLinkedShimsAreHashedOnce
+--- PASS: TestHardLinkedShimsAreHashedOnce (0.01s)
+=== RUN   TestShimRewriteWithSameSizeAndTimeLosesTrust
+--- PASS: TestShimRewriteWithSameSizeAndTimeLosesTrust (0.06s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/trust	0.132s

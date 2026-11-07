@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestPreToolUse_ClaudeInChromeNeedsChrome$ -count=1 -v
+=== RUN   TestPreToolUse_ClaudeInChromeNeedsChrome
+--- PASS: TestPreToolUse_ClaudeInChromeNeedsChrome (0.38s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.487s
+exit code: 0

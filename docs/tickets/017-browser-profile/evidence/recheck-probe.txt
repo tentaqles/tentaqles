@@ -1,0 +1,20 @@
+ok   deny=true want=true Bash "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" https://x
+ok   deny=true want=true Bash "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --profile-directory=Default
+ok   deny=false want=false Bash "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" --version
+ok   deny=true want=true Bash chrome --version --profile-directory=Default
+ok   deny=true want=true Bash chrome --headless --user-data-dir=/tmp/x
+ok   deny=false want=false Bash chrome --help
+ok   deny=false want=false Bash chrome --headless=new --dump-dom https://x
+ok   deny=false want=false Bash msedge --version
+ok   deny=true want=true Bash msedge --headless --profile-directory="Profile 2"
+ok   deny=false want=false Bash chrome --headless --profile-directory="Profile 2"
+ok   deny=true want=true Bash chrome --profile-directory=Default --headless
+ok   deny=true want=true PowerShell Start-Process -FilePath chrome -ArgumentList "--profile-directory=Default"
+ok   deny=false want=false PowerShell Start-Process npm -ArgumentList "run test -- --browser chrome"
+ok   deny=false want=false Bash start npm run dev
+ok   deny=true want=true Bash start /b chrome https://x
+ok   deny=false want=false Bash start curl -o out.html https://x.example/a
+ok   deny=false want=false PowerShell Start-Process curl -ArgumentList https://x
+ok   deny=false want=false Bash open -a "Google Chrome" https://x
+ok   deny=false want=false Bash chrome --profile-directory="Profile 2" --headless https://x
+mismatches: 0

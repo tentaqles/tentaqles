@@ -1,0 +1,8 @@
+$ go test ./internal/browser ./internal/mcpscope ./internal/doctor ./internal/policy ./internal/envplan ./internal/cmd -count=1
+ok  	github.com/tentaqles/tentaqles/internal/browser	0.058s
+ok  	github.com/tentaqles/tentaqles/internal/mcpscope	0.202s
+ok  	github.com/tentaqles/tentaqles/internal/doctor	1.715s
+ok  	github.com/tentaqles/tentaqles/internal/policy	2.243s
+ok  	github.com/tentaqles/tentaqles/internal/envplan	5.845s
+ok  	github.com/tentaqles/tentaqles/internal/cmd	143.398s
+exit code: 0

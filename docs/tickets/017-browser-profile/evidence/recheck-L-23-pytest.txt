@@ -1,0 +1,4 @@
+$ PYTHONPATH=plugin python -m pytest plugin/tests/test_tq_hook.py -q
+........................                                                 [100%]
+24 passed in 11.66s
+exit code: 0

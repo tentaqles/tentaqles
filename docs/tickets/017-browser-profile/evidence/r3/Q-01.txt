@@ -1,0 +1,6 @@
+$ go test ./internal/policy -run ^TestOtherBrowserProfile_Fixtures$ -count=1 -v
+=== RUN   TestOtherBrowserProfile_Fixtures
+--- PASS: TestOtherBrowserProfile_Fixtures (0.03s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/policy	0.098s
+exit code: 0

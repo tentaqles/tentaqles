@@ -1,6 +1,6 @@
 # 017: The right browser on the right profile
 
-**Status:** ready
+**Status:** landed
 **Risk:** High: a login page or automation opened in another client's browser profile acts under the wrong account, with that client's cookies
 **UI:** none
 
