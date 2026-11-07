@@ -117,6 +117,7 @@ Then the catalog's `version_args` run and one line is printed:
 | `Open a new terminal to use it.` | the line after `already present` when the CLI is found only on the registry PATH (Windows): nothing runs |
 | `<provider>: manual, download from <docs URL>` | no method of this OS has a package manager here |
 | `<provider>: install failed: <reason>` | the package manager failed (exit 1); the reason is chosen as below |
+| `<provider>: no CLI, nothing to install` | `cli: null` |
 
 The reason of a failed install, in this order:
 
@@ -126,7 +127,6 @@ The reason of a failed install, in this order:
 4. otherwise the exit status, and only when there is no output at all.
 
 Spinner frames, bars, progress lines and warnings (`npm warn`, `WARNING:`, `W:`) are never a line for steps 2 and 3, so a run whose output is only those has no output for this rule and gives the exit status.
-| `<provider>: no CLI, nothing to install` | `cli: null` |
 
 Rules:
 

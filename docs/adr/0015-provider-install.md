@@ -14,7 +14,8 @@ one, which providers, and what exactly runs.
 
 - `tentaqles install <provider>` is not human-only. The owner agreed an agent may call it, because the
   onboarding skill retries a failed install through it. It is not on the human-only list of the hook
-  (`internal/policy/selfprotect.go` is unchanged) and writes nothing under the state folder.
+  (`internal/policy/selfprotect.go` is unchanged) and writes nothing under the state folder, except that a
+  scope refusal appends its line to `denials.jsonl`, as REQ-4 requires.
 - Only a provider in the current identity's scope installs. Anything else is refused with exit 1, the
   scope in the message, and one line in the denial log: category `identity`, rule `tq/out-of-scope-cli`,
   layer `command` (the command's own refusal, as `human-only` is for the human-only commands). A neutral or
@@ -33,8 +34,9 @@ one, which providers, and what exactly runs.
   the vendor's licence for the person, and the docs say so.
 - A run has a 10-minute limit. At the limit the package manager and its whole process tree are stopped (a
   process group on Unix, a job object on Windows), and the result is the same failure line as any other.
-- The failure line is the package manager's error line: the first line of stderr, then stdout, that reads as an
-  error, skipping progress lines, spinner frames and warnings.
+- The failure reason is, in this order: the first line that reads as an error, on stderr then stdout; otherwise
+  the last line of stderr; otherwise the last line of stdout; otherwise the exit status, and only when there is no
+  output at all. Spinner frames, bars, progress lines and warnings are never a line for the second and third steps.
 - The package manager and the version check run with the identity's environment. After a Windows install
   the CLI is found through the user and machine PATH read from the registry.
 - `tentaqles reach` runs the same function for each provider in scope with a CLI, after the trust is
@@ -52,3 +54,4 @@ one, which providers, and what exactly runs.
 - An install orphaned because the harness killed `tentaqles install` is accepted: REQ-8's limit holds only while tq is alive.
 - The version check's PATH with registry folders added is within REQ-12.
 - A CLI found only on the registry PATH reads `already present` and prints `Open a new terminal to use it.`, with no package manager run.
+- The current identity is whatever the working folder resolves to, so an agent in client A's session that runs `cd ../b && tentaqles install aws` installs under B's scope. This is left as it is: an agent changing folder in a shell command is a text-filter matter (AR2 in `docs/threat-model.md`), and it matches every other tq command.
