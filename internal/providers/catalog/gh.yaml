@@ -32,6 +32,12 @@ verify:
   # active marker; Extract takes the first non-empty group.
   account:
     regex: 'account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)[^\n]*\n\s*- Active account: true|account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)'
+# connect: the hosted MCP server `tentaqles connect gh` registers (ADR-0017). Vendor docs:
+# https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp/set-up-the-github-mcp-server
+connect:
+  name: github
+  transport: http
+  url: https://api.githubcopilot.com/mcp/
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:

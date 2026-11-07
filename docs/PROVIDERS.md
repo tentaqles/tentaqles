@@ -57,6 +57,11 @@ verify:                      # command tq runs to check the identity is active
 blocked_commands_suggested:  # optional list of commands to warn/block on
   - "gh repo delete"
 
+connect:                     # optional, embedded catalog only: the hosted MCP server
+  name: github               #   `tentaqles connect gh` registers (the mcpServers key)
+  transport: http            #   http (url) or stdio (command and args)
+  url: https://api.githubcopilot.com/mcp/
+
 mcp: github                  # optional: the tq bundle catalog MCP entry (and mcpServers key)
                              # the agent reaches this provider through; default: the id
 notes: "..."                 # optional prose for onboarding and doctor (how it authenticates)
@@ -75,6 +80,14 @@ match:                       # what the guard denies when an identity's scope le
 - `category` must be one of `cloud, vcs, data, deploy, pm, agent, chat, email, other`.
 - `mcp`, when set, must match `^[A-Za-z0-9][A-Za-z0-9._-]*$` (a server name, never a path
   or a command). `notes` must not hold control characters.
+- `connect` is the MCP server `tentaqles connect <provider>` writes into the client's
+  `.claude.json` (ADR-0017). `name` must be an MCP server name, `transport` is `http` or
+  `stdio`; an `http` entry takes an `https` URL with a host and no credentials, a `stdio` entry
+  a `command` (and `args`). It holds no `env` or header, so no credential: a human signs the
+  server in with `/mcp`. Only the embedded catalog defines it: a user provider file that carries a
+  `connect:` key is not loaded (the built-in entry stays), so no user file can choose what an
+  agent-run `connect` writes. `gh`, `linear`, `asana` and `jira` have one, each with the vendor's
+  documentation URL in a comment beside it; adding another provider's is a catalog change.
 - Two entries may declare the same `identity.env` variable only when they are the same CLI
   with the same template (`az` and `azure-devops` both set `AZURE_CONFIG_DIR`); a workspace
   that enables both gets one directory, owned by the first id in sorted order.

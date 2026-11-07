@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/markers"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 // The test binary is the stub program of the PATH masks the tests write (ADR-0008): run as
@@ -19,5 +20,7 @@ func TestMain(m *testing.M) {
 		_ = os.Unsetenv(k)
 	}
 	StubSource = os.Executable // the stubs the tests run are this binary (StubMain above)
-	os.Exit(m.Run())
+	// The run's own TQ_HOME, HOME and USERPROFILE (testutil.HomeRun): a test that never sets
+	// TQ_HOME must not reach the developer's ~/.tentaqles.
+	os.Exit(testutil.HomeRun(m))
 }

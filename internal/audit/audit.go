@@ -72,8 +72,8 @@ const (
 	LayerHook       = "hook"
 	LayerFilesystem = "filesystem"
 	LayerHumanOnly  = "human-only"
-	// LayerCommand is a tq command refusing on its own, outside the hook (tq install of a
-	// provider outside the identity's scope).
+	// LayerCommand is a tq command refusing its own request, outside the hook (tentaqles install or
+	// tentaqles connect, for a provider outside the identity's scope).
 	LayerCommand = "command"
 )
 
