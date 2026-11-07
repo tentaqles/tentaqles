@@ -18,16 +18,27 @@ import (
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
-// handover is what reach did to the terminal seams and to its output, in order. The launcher, the
-// killer and the pause (a read of stdin) record into it, and so does every line reach prints, so a
-// test can assert the order of the whole handover (ADR-0019).
+// handover is what reach did to the terminal seams and to its output, in order. The launcher, the killer,
+// the probe and the pause (a read of stdin) record into it, and so does every line reach prints, so a test
+// can assert the order of the whole handover (ADR-0019).
 type handover struct {
-	events     []string
-	launched   bool
-	openErr    error     // what the launcher returns
-	killErr    error     // what the killer returns
-	parentGone bool      // the parent cannot be read once the new terminal has started
-	input      io.Reader // what the developer types at the pause; nil reads as a closed input
+	events   []string
+	launched bool
+	openErr  error         // what the launcher returns
+	killErr  error         // what the killer returns
+	probeErr error         // what the PowerShell probe returns
+	shell    string        // the Shell of the window the launcher opens ("powershell" for the fallback)
+	detect   []hooks.Shell // the shells tq hooks besides the one reach runs in
+	env      []string      // the environment the launcher was given
+	after    *afterLaunch  // what the parent reads as once the window has opened; nil leaves it unchanged
+	onPause  func()        // runs when the pause reads
+	input    io.Reader     // what the developer types at the pause; nil reads as a closed input
+}
+
+// afterLaunch is what reach's parent reads as once the new window has opened.
+type afterLaunch struct {
+	p  humanonly.Parent
+	ok bool
 }
 
 func (h *handover) add(e string) { h.events = append(h.events, e) }
@@ -35,6 +46,7 @@ func (h *handover) add(e string) { h.events = append(h.events, e) }
 func (h *handover) reset() {
 	h.events = nil
 	h.launched = false
+	h.env = nil
 }
 
 // at is the position of the first event with prefix, or -1.
@@ -89,15 +101,18 @@ type eventReader struct{ h *handover }
 
 func (r eventReader) Read(p []byte) (int, error) {
 	r.h.add("read")
+	if r.h.onPause != nil {
+		r.h.onPause()
+	}
 	if r.h.input == nil {
 		return 0, io.EOF
 	}
 	return r.h.input.Read(p)
 }
 
-// isolateHandover swaps the terminal seams for fakes that record into h, and the profiles for temp
-// files under home, and restores them at the end of the test. No real terminal opens or closes and
-// no real profile is touched. A test that wants the real hook check puts its own ProfilesFn back.
+// isolateHandover swaps the terminal seams for fakes that record into h, and the profiles for temp files
+// under home, and restores them at the end of the test. No real terminal opens or closes, no real profile
+// is touched and no PowerShell runs. A test that wants the real hook check puts its own ProfilesFn back.
 func isolateHandover(t *testing.T, home string) *handover {
 	t.Helper()
 	h := &handover{}
@@ -105,34 +120,34 @@ func isolateHandover(t *testing.T, home string) *handover {
 	for _, sh := range hooks.Shells {
 		profiles[sh] = filepath.Join(home, "profiles", "profile-"+string(sh))
 	}
-	prevOpen, prevKill := reachOpenTerminal, reachKill
+	prevOpen, prevKill, prevProbe := reachOpenTerminal, reachKill, reachProbe
 	prevProfiles, prevDetect := hooks.ProfilesFn, reachDetectShells
-	reachOpenTerminal = func(dir string) (termopen.Launch, error) {
+	reachOpenTerminal = func(dir string, env []string) (termopen.Launch, error) {
 		h.add("launch " + dir)
 		h.launched = true
+		h.env = env
 		if h.openErr != nil {
 			return termopen.Launch{}, h.openErr
 		}
-		return termopen.Launch{Name: "fake-terminal", Dir: dir}, nil
+		return termopen.Launch{Name: "fake-terminal", Dir: dir, Shell: h.shell}, nil
 	}
 	reachKill = func(pid int) error {
 		h.add(fmt.Sprintf("kill %d", pid))
 		return h.killErr
 	}
+	reachProbe = func(string, string) error { return h.probeErr }
 	hooks.ProfilesFn = func() hooks.Profiles { return profiles }
-	// Only the shell reach runs in gets a profile: the detection of this machine stays out.
-	reachDetectShells = func(hooks.Profiles) []hooks.Shell { return nil }
+	reachDetectShells = func(hooks.Profiles) []hooks.Shell { return h.detect }
 	t.Cleanup(func() {
-		reachOpenTerminal, reachKill = prevOpen, prevKill
+		reachOpenTerminal, reachKill, reachProbe = prevOpen, prevKill, prevProbe
 		hooks.ProfilesFn, reachDetectShells = prevProfiles, prevDetect
 	})
 	return h
 }
 
 // reachChain makes the processes above this test process: chain[0] is reach's direct parent, and each
-// one's parent is the next. Above the chain sit a WindowsTerminal and explorer, so the human check of
-// the process tree still passes. Once the new terminal has started, h.parentGone makes the parent
-// unreadable.
+// one's parent is the next. Above the chain sit a WindowsTerminal and explorer, so the human check of the
+// process tree still passes. Once the new window has opened, h.after is what the parent reads as.
 func reachChain(t *testing.T, h *handover, chain ...humanonly.Parent) {
 	t.Helper()
 	prev := humanonly.ParentOf
@@ -149,7 +164,10 @@ func reachChain(t *testing.T, h *handover, chain ...humanonly.Parent) {
 	}
 	humanonly.ParentOf = func(pid int) (humanonly.Parent, bool) {
 		if pid == os.Getpid() {
-			if len(chain) == 0 || (h.parentGone && h.launched) {
+			if h.launched && h.after != nil {
+				return h.after.p, h.after.ok
+			}
+			if len(chain) == 0 {
 				return humanonly.Parent{}, false
 			}
 			return chain[0], true
@@ -159,8 +177,8 @@ func reachChain(t *testing.T, h *handover, chain ...humanonly.Parent) {
 	}
 }
 
-// runReachH runs reach with its output and its input going through h, so the events show the order.
-// A run that waits for input fails rather than hanging the suite.
+// runReachH runs reach with its output and its input going through h, so the events show the order. A run
+// that waits for input fails rather than hanging the suite.
 func runReachH(t *testing.T, h *handover, args ...string) (string, error) {
 	t.Helper()
 	root := NewRoot()
@@ -180,12 +198,10 @@ func runReachH(t *testing.T, h *handover, args ...string) (string, error) {
 	}
 }
 
-var (
-	pwshParent = humanonly.Parent{PID: 4321, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true}
-)
+var pwshParent = humanonly.Parent{PID: 4321, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true}
 
-// TestReach_Handover is U-01: the launcher gets the client's folder, then the output is printed, then
-// the Enter prompt, then the killer gets the parent's pid, in that order.
+// TestReach_Handover is U-01: the launcher gets the client's folder, then the output is printed, then the
+// Enter prompt, then the killer gets the parent's pid, in that order.
 func TestReach_Handover(t *testing.T) {
 	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 	h := isolateHandover(t, filepath.Dir(clients))
@@ -208,8 +224,8 @@ func TestReach_Handover(t *testing.T) {
 	}
 }
 
-// TestReach_InstallsProfileHook is U-02: with a profile and no block, the block is written after the
-// yes, the confirmation says so, and a second reach writes nothing more.
+// TestReach_InstallsProfileHook is U-02: with a profile and no block, the block is written after the yes,
+// the confirmation says so, and a second reach writes nothing more.
 func TestReach_InstallsProfileHook(t *testing.T) {
 	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 	h := isolateHandover(t, filepath.Dir(clients))
@@ -248,7 +264,7 @@ func TestReach_InstallsProfileHook(t *testing.T) {
 		t.Fatalf("a second reach asks about the profile again:\n%s", out)
 	}
 	again, _ := os.ReadFile(profile)
-	if !bytes.Equal(got, again) {
+	if string(again) != string(got) {
 		t.Fatalf("a second reach changed the profile: %q", again)
 	}
 	if _, err := os.Stat(profile + ".tq-backup"); err == nil {
@@ -256,8 +272,7 @@ func TestReach_InstallsProfileHook(t *testing.T) {
 	}
 }
 
-// TestReach_NoTerminalFlag is U-03: --no-terminal opens nothing and closes nothing, and the next step
-// prints.
+// TestReach_NoTerminalFlag is U-03: --no-terminal opens nothing and closes nothing, and the next step prints.
 func TestReach_NoTerminalFlag(t *testing.T) {
 	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 	h := isolateHandover(t, filepath.Dir(clients))
@@ -267,7 +282,7 @@ func TestReach_NoTerminalFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if h.count("launch") != 0 || h.count("kill") != 0 || h.count("read") != 0 {
+	if h.seamCalls() != 0 {
 		t.Fatalf("--no-terminal reached a terminal seam: %v", h.events)
 	}
 	want := "Open a new terminal in " + dir + ", then start claude and log in with this client's account."
@@ -276,8 +291,8 @@ func TestReach_NoTerminalFlag(t *testing.T) {
 	}
 }
 
-// TestReach_TerminalWontOpen is F-01: the new terminal can't start, so the old one stays open with the
-// exact line, the killer is not called, reach exits 0, and the client is trusted.
+// TestReach_TerminalWontOpen is F-01: the new terminal can't start, so the old one stays open with the exact
+// line, the killer is not called, reach exits 0, and the client is trusted.
 func TestReach_TerminalWontOpen(t *testing.T) {
 	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 	h := isolateHandover(t, filepath.Dir(clients))
@@ -300,29 +315,47 @@ func TestReach_TerminalWontOpen(t *testing.T) {
 	}
 }
 
-// TestReach_OldTerminalNotEnded is F-02: a parent that is not a shell reach knows, an unreadable
-// parent, and a kill that fails each leave the terminal open with the line, and reach exits 0.
+// TestReach_OldTerminalNotEnded is F-02, and the guards of the kill (L-07): a parent that is not a shell
+// reach may end, an unreadable, reused or unknown-cmdline parent once the window has opened, a shell that
+// runs a command or a script, and a kill that fails each leave the terminal open with the line, and reach
+// exits 0.
 func TestReach_OldTerminalNotEnded(t *testing.T) {
+	pwshCmd := humanonly.Parent{PID: 4321, Name: "pwsh.exe", Cmdline: `pwsh.exe -Command "tq reach"`, CmdlineKnown: true}
+	bashCmd := humanonly.Parent{PID: 4321, Name: "bash", Cmdline: `bash -c "tq reach"`, CmdlineKnown: true}
+	cmdRun := humanonly.Parent{PID: 4321, Name: "cmd.exe", Cmdline: "cmd /c tq reach", CmdlineKnown: true}
 	cases := []struct {
 		name    string
 		parent  humanonly.Parent
-		gone    bool  // the parent cannot be read once the new terminal has started
-		killErr error // what the killer returns
-		kills   int   // the killer is called for the parent, when the parent is a shell
+		after   *afterLaunch // what the parent reads as once the window has opened
+		killErr error
+		kills   int // the killer is called for the parent, when the parent may be ended
 	}{
-		{"explorer", humanonly.Parent{PID: 4321, Name: "explorer.exe", Cmdline: "explorer", CmdlineKnown: true}, false, nil, 0},
-		{"node", humanonly.Parent{PID: 4321, Name: "node.exe", Cmdline: "node C:/tools/cli.js", CmdlineKnown: true}, false, nil, 0},
-		{"python", humanonly.Parent{PID: 4321, Name: "python.exe", Cmdline: "python reach.py", CmdlineKnown: true}, false, nil, 0},
-		{"unreadable", pwshParent, true, nil, 0},
-		{"kill fails", pwshParent, false, errors.New("access denied"), 1},
+		{"explorer", humanonly.Parent{PID: 4321, Name: "explorer.exe", Cmdline: "explorer", CmdlineKnown: true}, nil, nil, 0},
+		{"node", humanonly.Parent{PID: 4321, Name: "node.exe", Cmdline: "node C:/tools/cli.js", CmdlineKnown: true}, nil, nil, 0},
+		{"python", humanonly.Parent{PID: 4321, Name: "python.exe", Cmdline: "python reach.py", CmdlineKnown: true}, nil, nil, 0},
+		{"pwsh runs a command", pwshCmd, nil, nil, 0},
+		{"bash runs a command", bashCmd, nil, nil, 0},
+		{"cmd runs a command", cmdRun, nil, nil, 0},
+		{"unreadable after the window opened", pwshParent, &afterLaunch{ok: false}, nil, 0},
+		{"reused after the window opened", pwshParent, &afterLaunch{p: humanonly.Parent{PID: 4321, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true, Reused: true}, ok: true}, nil, 0},
+		{"cmdline unknown after the window opened", pwshParent, &afterLaunch{p: humanonly.Parent{PID: 4321, Name: "pwsh.exe", CmdlineKnown: false}, ok: true}, nil, 0},
+		{"kill fails", pwshParent, nil, errors.New("access denied"), 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 			h := isolateHandover(t, filepath.Dir(clients))
 			h.killErr = tc.killErr
-			h.parentGone = tc.gone
 			reachChain(t, h, tc.parent)
+			if tc.after != nil {
+				// The replacement is set once the window has opened, so the check before it sees the parent.
+				prevOpen := reachOpenTerminal
+				reachOpenTerminal = func(dir string, env []string) (termopen.Launch, error) {
+					h.after = tc.after
+					return prevOpen(dir, env)
+				}
+				t.Cleanup(func() { reachOpenTerminal = prevOpen })
+			}
 			out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
 			if err != nil {
 				t.Fatalf("exit must be 0: %v\n%s", err, out)
@@ -337,8 +370,8 @@ func TestReach_OldTerminalNotEnded(t *testing.T) {
 	}
 }
 
-// TestReach_PauseClosedInput is F-03: a closed input at the pause counts as Enter. reach proceeds and
-// ends the parent, and does not wait.
+// TestReach_PauseClosedInput is F-03: a closed input at the pause counts as Enter. reach proceeds and ends
+// the parent, and does not wait.
 func TestReach_PauseClosedInput(t *testing.T) {
 	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 	h := isolateHandover(t, filepath.Dir(clients))
@@ -353,8 +386,39 @@ func TestReach_PauseClosedInput(t *testing.T) {
 	}
 }
 
-// TestReach_NoHandoverWithoutANewClient is R-01: an existing client, a declined yes and a bad folder
-// call neither seam.
+// TestReach_ParentChangedAtPauseNotEnded: the pid reach identified is not the parent any more when the
+// developer presses Enter (the shell ended, and its pid may belong to another process). Nothing is ended.
+func TestReach_ParentChangedAtPauseNotEnded(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+	h := isolateHandover(t, filepath.Dir(clients))
+	h.input = strings.NewReader("\n")
+	h.onPause = func() {
+		h.after = &afterLaunch{p: humanonly.Parent{PID: 4400, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true}, ok: true}
+	}
+	reachChain(t, h, pwshParent)
+	// The replacement shell is a real one under a terminal, so only the changed pid can stop the kill.
+	chained := humanonly.ParentOf
+	humanonly.ParentOf = func(pid int) (humanonly.Parent, bool) {
+		if pid == 4400 {
+			return humanonly.Parent{PID: 80, Name: "WindowsTerminal.exe", Cmdline: "wt", CmdlineKnown: true}, true
+		}
+		return chained(pid)
+	}
+	t.Cleanup(func() { humanonly.ParentOf = chained })
+	out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if h.count("kill") != 0 {
+		t.Fatalf("a parent that changed during the pause was ended: %v", h.events)
+	}
+	if !strings.Contains(out, "Close this terminal when you are ready.") {
+		t.Fatalf("the line does not print:\n%s", out)
+	}
+}
+
+// TestReach_NoHandoverWithoutANewClient is R-01: an existing client, a declined yes and a bad folder call
+// neither seam.
 func TestReach_NoHandoverWithoutANewClient(t *testing.T) {
 	clients := isolateReach(t, fullAnswers())
 	h := isolateHandover(t, filepath.Dir(clients))
@@ -403,8 +467,9 @@ func TestReach_NoHandoverWithoutANewClient(t *testing.T) {
 	}
 }
 
-// TestReach_KillsOnlyADirectShellParent is S-01: under python under pwsh nothing is ended; under pwsh,
-// only that pid is.
+// TestReach_KillsOnlyADirectShellParent is S-01: under python under pwsh nothing is ended; under a terminal,
+// only the pwsh pid is; and a shell started by a shell is not ended either (it is a Git Bash stub, or a
+// nested shell, and ending it leaves the terminal open with no message).
 func TestReach_KillsOnlyADirectShellParent(t *testing.T) {
 	t.Run("python under pwsh", func(t *testing.T) {
 		clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
@@ -423,11 +488,10 @@ func TestReach_KillsOnlyADirectShellParent(t *testing.T) {
 			t.Fatalf("the line does not print:\n%s", out)
 		}
 	})
-	t.Run("pwsh under pwsh", func(t *testing.T) {
+	t.Run("pwsh under a terminal", func(t *testing.T) {
 		clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 		h := isolateHandover(t, filepath.Dir(clients))
-		reachChain(t, h, pwshParent,
-			humanonly.Parent{PID: 4322, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true})
+		reachChain(t, h, pwshParent)
 		out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
@@ -436,10 +500,47 @@ func TestReach_KillsOnlyADirectShellParent(t *testing.T) {
 			t.Fatalf("want only pid 4321 ended: %v", h.events)
 		}
 	})
+	t.Run("shell under a shell", func(t *testing.T) {
+		clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+		h := isolateHandover(t, filepath.Dir(clients))
+		reachChain(t, h, pwshParent,
+			humanonly.Parent{PID: 4322, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true})
+		out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if n := h.count("kill"); n != 0 {
+			t.Fatalf("a shell under a shell was ended: %v", h.events)
+		}
+		if !strings.Contains(out, "Close this terminal when you are ready.") {
+			t.Fatalf("the line does not print:\n%s", out)
+		}
+	})
 }
 
-// TestReach_ProfileBlockIsTqHooksInstall is S-04: the bytes reach writes equal what tq hooks install
-// writes, so tq hooks remove takes them back.
+// TestReach_GitBashStubNotEnded: a native program run from Git Bash has a bash.exe stub as its direct
+// parent, and the stub's parent is the interactive bash. Ending the stub leaves that bash open with no
+// message, so reach ends nothing and says so (REQ-5, ADR-0019).
+func TestReach_GitBashStubNotEnded(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+	h := isolateHandover(t, filepath.Dir(clients))
+	reachChain(t, h,
+		humanonly.Parent{PID: 4321, Name: "bash.exe", Cmdline: "/usr/bin/bash", CmdlineKnown: true},
+		humanonly.Parent{PID: 4322, Name: "bash.exe", Cmdline: "bash --login -i", CmdlineKnown: true})
+	out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if h.count("kill") != 0 || h.count("read") != 0 {
+		t.Fatalf("the Git Bash stub was ended or paused for: %v", h.events)
+	}
+	if !strings.Contains(out, "Close this terminal when you are ready.") {
+		t.Fatalf("the Git Bash case prints no line:\n%s", out)
+	}
+}
+
+// TestReach_ProfileBlockIsTqHooksInstall is S-04: the bytes reach writes equal what tq hooks install writes,
+// so tq hooks remove takes them back.
 func TestReach_ProfileBlockIsTqHooksInstall(t *testing.T) {
 	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 	h := isolateHandover(t, filepath.Dir(clients))
@@ -470,8 +571,8 @@ func TestReach_ProfileBlockIsTqHooksInstall(t *testing.T) {
 	}
 }
 
-// A profile that cannot take the block keeps the old terminal open, and no new one opens: a terminal
-// that would not route into the client runs under no identity. The client is still made and trusted.
+// A profile that cannot take the block keeps the old terminal open, and no new one opens: a terminal that
+// would not route into the client runs under no identity. The client is still made and trusted.
 func TestReach_HookFailureOpensNothing(t *testing.T) {
 	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
 	h := isolateHandover(t, filepath.Dir(clients))
@@ -498,5 +599,124 @@ func TestReach_HookFailureOpensNothing(t *testing.T) {
 	}
 	if !trust.IsTrusted("acme", manifestHash(t, dir)) {
 		t.Fatal("the client is not trusted")
+	}
+}
+
+// PowerShell that will not load the profile tq wrote (a Restricted policy, or a redirected Documents folder)
+// is the same case as a failed write for the shell reach runs in: nothing opens, nothing ends (Q2).
+func TestReach_PowerShellProbeFailureOpensNothing(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+	h := isolateHandover(t, filepath.Dir(clients))
+	h.probeErr = errors.New("pwsh's execution policy is Restricted, which does not run its profile")
+	reachChain(t, h, pwshParent)
+	dir := filepath.Join(clients, "acme")
+	out, err := runReachH(t, h, dir, "--no-banner")
+	if err != nil {
+		t.Fatalf("reach must exit 0: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Restricted") {
+		t.Fatalf("the policy does not print:\n%s", out)
+	}
+	if h.count("launch") != 0 || h.count("kill") != 0 {
+		t.Fatalf("a terminal was opened or ended: %v", h.events)
+	}
+	if !trust.IsTrusted("acme", manifestHash(t, dir)) {
+		t.Fatal("the client is not trusted")
+	}
+}
+
+// A failure on another detected shell is a warning naming that shell, and the handover goes on (Q2).
+func TestReach_OtherShellFailureWarnsAndHandsOver(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+	h := isolateHandover(t, filepath.Dir(clients))
+	h.detect = []hooks.Shell{"bash"}
+	reachChain(t, h, pwshParent)
+	blocker := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profiles := hooks.ProfilesFn()
+	profiles["bash"] = filepath.Join(blocker, ".bashrc")
+	prev := hooks.ProfilesFn
+	hooks.ProfilesFn = func() hooks.Profiles { return profiles }
+	t.Cleanup(func() { hooks.ProfilesFn = prev })
+
+	out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Warning: bash: the tq activation block could not be written") {
+		t.Fatalf("the bash failure does not warn:\n%s", out)
+	}
+	if h.at("launch ") < 0 || h.at("kill 4321") < 0 {
+		t.Fatalf("the handover did not go on: %v", h.events)
+	}
+}
+
+// The Windows fallback is PowerShell. When its profile is not confirmed to load, the window opens with no
+// login line, the old terminal stays open, and the next step is tq run (Q1, ADR-0019).
+func TestReach_FallbackWithoutTheHookNamesTqRun(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+	h := isolateHandover(t, filepath.Dir(clients))
+	h.shell = "powershell"
+	h.detect = []hooks.Shell{"powershell"}
+	h.probeErr = errors.New("powershell's execution policy is Restricted")
+	reachChain(t, h, humanonly.Parent{PID: 4321, Name: "cmd.exe", Cmdline: "cmd /k", CmdlineKnown: true})
+	out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "tq run acme -- claude") {
+		t.Fatalf("the next step is not tq run:\n%s", out)
+	}
+	if strings.Contains(out, "log in with this client's account") {
+		t.Fatalf("an unconfirmed window gets the login line:\n%s", out)
+	}
+	if h.count("kill") != 0 {
+		t.Fatalf("the old terminal was ended: %v", h.events)
+	}
+	if !strings.Contains(out, "Close this terminal when you are ready.") {
+		t.Fatalf("the line does not print:\n%s", out)
+	}
+}
+
+// The fallback with a confirmed hook is a normal handover: the login line, the pause, then the old terminal
+// ends.
+func TestReach_FallbackWithTheHookEndsTheOldTerminal(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+	h := isolateHandover(t, filepath.Dir(clients))
+	h.shell = "powershell"
+	h.detect = []hooks.Shell{"powershell"}
+	reachChain(t, h, humanonly.Parent{PID: 4321, Name: "cmd.exe", Cmdline: "cmd /k", CmdlineKnown: true})
+	out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "log in with this client's account") {
+		t.Fatalf("a confirmed window gets no login line:\n%s", out)
+	}
+	if h.at("kill 4321") < 0 {
+		t.Fatalf("the old terminal was not ended: %v", h.events)
+	}
+}
+
+// The new terminal starts without tq's identity: the variables a client's hook sets, and the workspace
+// markers, are not inherited from the terminal reach was run in (L-01, REQ-3).
+func TestReach_NewTerminalInheritsNoIdentity(t *testing.T) {
+	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+	h := isolateHandover(t, filepath.Dir(clients))
+	reachChain(t, h, pwshParent)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(clients, "other", "claude"))
+	t.Setenv("TQ_WS", "other")
+	if out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(h.env) == 0 {
+		t.Fatal("the new terminal got no environment at all")
+	}
+	for _, kv := range h.env {
+		if strings.HasPrefix(strings.ToUpper(kv), "CLAUDE_CONFIG_DIR=") || strings.HasPrefix(strings.ToUpper(kv), "TQ_WS=") {
+			t.Fatalf("the new terminal inherited %s", kv)
+		}
 	}
 }

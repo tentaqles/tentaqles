@@ -80,10 +80,11 @@ func TestMain(m *testing.M) {
 	ensureProtectedHome = func() error { return os.MkdirAll(paths.Home(), 0o700) }
 	// reach's terminal seams never open or end a real terminal under test: a test that checks the
 	// handover swaps in its own fakes (isolateHandover), and no shell profile is detected here.
-	reachOpenTerminal = func(dir string) (termopen.Launch, error) {
+	reachOpenTerminal = func(dir string, _ []string) (termopen.Launch, error) {
 		return termopen.Launch{Name: "test-terminal", Dir: dir}, nil
 	}
 	reachKill = func(int) error { return nil }
+	reachProbe = func(string, string) error { return nil }
 	reachDetectShells = func(hooks.Profiles) []hooks.Shell { return nil }
 	// No test reads a real stdin: a closed pipe reads as the end of input, which is an Enter at reach's pause.
 	if r, w, err := os.Pipe(); err == nil {

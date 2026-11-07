@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,7 +93,8 @@ func newReachCmd() *cobra.Command {
 			}
 			o.RunGit = reachRunGit
 			profiles := hooks.ProfilesFn()
-			shells := reachShells(profiles, reachParentShell())
+			parentShell := reachParentShell()
+			shells := reachShells(profiles, parentShell)
 			about := fmt.Sprintf("tentaqles reach: about to make %s the client %s (%s), and trust it", dir, name, strings.Join(o.Identities, ", "))
 			if missing := reachMissing(shells, profiles); len(missing) > 0 {
 				about += "; and write the tq activation block into " + profilesOf(missing, profiles)
@@ -120,8 +122,8 @@ func newReachCmd() *cobra.Command {
 			if !noInstall {
 				reachInstall(c, ws)
 			}
-			hookErr := reachHooks(c, shells, profiles)
-			reachFinish(c, ws, dir, noTerminal, hookErr)
+			hs := reachHooks(c, shells, profiles, parentShell)
+			reachFinish(c, ws, dir, noTerminal, hs)
 			return nil
 		},
 	}
@@ -288,13 +290,77 @@ func reachWarnOther(c *cobra.Command, m *manifest.Manifest) {
 		strings.Join(m.OtherProviders, ", "))
 }
 
-// The terminal seams of the handover (ADR-0019): the launcher, the killer, and the shells beyond the
-// one reach runs in whose profile reach checks (every shell tq hooks install detects). Tests replace them.
+// The terminal seams of the handover (ADR-0019): the launcher, the killer, the PowerShell probe, and the
+// shells beyond the one reach runs in whose profile reach checks (every shell tq hooks install detects).
+// Tests replace them.
 var (
 	reachOpenTerminal = termopen.Open
 	reachKill         = termopen.Kill
+	reachProbe        = powershellLoads
 	reachDetectShells = func(p hooks.Profiles) []hooks.Shell { return hooks.Detect(p, hooks.LookPath) }
 )
+
+// reachProbeTimeout bounds the PowerShell probe, a run of reach and not a hook.
+var reachProbeTimeout = 20 * time.Second
+
+// powershellProbe is the one script the probe runs. It is a constant: nothing from the folder, the
+// manifest or the environment reaches it.
+const powershellProbe = `$PROFILE.CurrentUserCurrentHost; Get-ExecutionPolicy`
+
+// powershellLoads asks the PowerShell exe on the PATH where it reads its profile and under what execution
+// policy it runs. The profile tq wrote is loaded only at that path, and only under a policy that runs an
+// unsigned local script: Restricted and AllSigned do not (ADR-0019). It runs PowerShell with no profile.
+func powershellLoads(exe, profile string) error {
+	path, err := exec.LookPath(exe)
+	if err != nil {
+		return fmt.Errorf("%s was not found on the PATH", exe)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), reachProbeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "-NoProfile", "-NonInteractive", "-Command", powershellProbe).Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("%s did not answer within %s", exe, reachProbeTimeout)
+	}
+	if err != nil {
+		return fmt.Errorf("%s did not run: %v", exe, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return fmt.Errorf("%s did not say where it reads its profile", exe)
+	}
+	read, policy := strings.TrimSpace(lines[0]), strings.TrimSpace(lines[len(lines)-1])
+	if !strings.EqualFold(filepath.Clean(read), filepath.Clean(profile)) {
+		return fmt.Errorf("%s reads its profile from %s, not from %s", exe, read, profile)
+	}
+	if policy == "Restricted" || policy == "AllSigned" {
+		return fmt.Errorf("%s's execution policy is %s, which does not run its profile (Set-ExecutionPolicy RemoteSigned -Scope CurrentUser allows it)", exe, policy)
+	}
+	return nil
+}
+
+// reachLoads says whether sh runs the profile tq wrote for it. A shell tq does not probe (bash, zsh, fish)
+// is taken to; PowerShell is taken to only when the probe confirms it.
+func reachLoads(sh hooks.Shell, p hooks.Profiles) error {
+	if sh != "powershell" && sh != "pwsh" {
+		return nil
+	}
+	return reachProbe(string(sh), p[sh])
+}
+
+// identityFreeEnv is this process's environment without tq's identity: what the tq shell hook set is
+// restored, and every catalog provider's config variable and the workspace markers are dropped. A new
+// terminal starts clean, and its own hook sets the client's variables (REQ-3, ADR-0019).
+func identityFreeEnv() []string {
+	var out []string
+	for _, kv := range envplan.Clean(os.Environ()) {
+		k, _, _ := strings.Cut(kv, "=")
+		if strings.EqualFold(k, "TQ_WS") || strings.EqualFold(k, "TQ_WS_ROOT") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
 
 // reachParentShell names the shell reach runs in, as one of the shells tq hooks know, or "" when its
 // parent is none of them: cmd.exe has no profile hook (tq run covers it), and nothing is hooked then.
@@ -336,36 +402,65 @@ func reachMissing(shells []hooks.Shell, p hooks.Profiles) []hooks.Shell {
 	return out
 }
 
+// hookState is what reach's profile step found. parentFailed: the shell reach runs in cannot take the hook,
+// so the handover does not happen (Q2). ok: the shells whose block is in place, the ones a new window in
+// that shell may route through (Q1).
+type hookState struct {
+	parentFailed bool
+	ok           map[hooks.Shell]bool
+	profiles     hooks.Profiles
+}
+
 // reachHooks writes the tq activation block into each shell's profile, after the typed yes. Install
-// leaves a profile that already has the block alone, so a second reach writes nothing. A failure is
-// printed and returned: the terminal reach would open would not route into the client, so none opens.
-func reachHooks(c *cobra.Command, shells []hooks.Shell, p hooks.Profiles) error {
+// leaves a profile that already has the block alone, so a second reach writes nothing. The shell reach
+// runs in must take the block, and PowerShell must load its profile (probed): otherwise the handover does
+// not happen. Any other shell's failure is a warning naming it, and the handover goes on (Q2).
+func reachHooks(c *cobra.Command, shells []hooks.Shell, p hooks.Profiles, parent string) hookState {
 	w := c.OutOrStdout()
-	var failed []string
+	hs := hookState{ok: map[hooks.Shell]bool{}, profiles: p}
 	for _, sh := range shells {
 		before := hooks.StatusOf(sh, p).State
 		st, err := hooks.Install(sh, p)
 		if err != nil {
-			failed = append(failed, err.Error())
+			if string(sh) == parent {
+				hs.parentFailed = true
+				fmt.Fprintf(w, "The tq activation block could not be written: %v\n", err)
+			} else {
+				fmt.Fprintf(w, "Warning: %s: the tq activation block could not be written: %v. A new %s terminal would not route into the client.\n", sh, err, sh)
+			}
 			continue
 		}
 		if (before == "missing" || before == "no profile") && st.State == "installed" {
 			fmt.Fprintf(w, "The tq activation block is in %s.\n", st.Profile)
 		}
+		if string(sh) == parent {
+			if err := reachLoads(sh, p); err != nil {
+				hs.parentFailed = true
+				fmt.Fprintf(w, "The tq activation block is in %s, but %v. The terminal reach runs in is not ended.\n", st.Profile, err)
+				continue
+			}
+		}
+		hs.ok[sh] = true
 	}
-	if len(failed) == 0 {
-		return nil
+	return hs
+}
+
+// reachRouted says whether the new window will run tq's hook for the client. A window in the system's
+// default shell is taken to (the ticket's decision for wt). The Windows fallback, PowerShell, is taken to
+// only when its block is in place and PowerShell loads it (ADR-0019).
+func reachRouted(l termopen.Launch, hs hookState) bool {
+	if l.Shell == "" {
+		return true
 	}
-	err := errors.New(strings.Join(failed, "; "))
-	fmt.Fprintf(w, "The tq activation block could not be written: %v\n", err)
-	return err
+	sh := hooks.Shell(l.Shell)
+	return hs.ok[sh] && reachLoads(sh, hs.profiles) == nil
 }
 
 // reachFinish ends reach's output with what to do next. For a new client with a terminal to hand over,
 // it opens the client's terminal, prints the rest, and then ends the terminal reach was run from
 // (reachEndOld). Otherwise it prints the next step and opens nothing. It never fails reach: the client
 // is trusted either way.
-func reachFinish(c *cobra.Command, ws *resolve.Workspace, dir string, noTerminal bool, hookErr error) {
+func reachFinish(c *cobra.Command, ws *resolve.Workspace, dir string, noTerminal bool, hs hookState) {
 	w := c.OutOrStdout()
 	summary := func() {
 		fmt.Fprintf(w, "\n%s is ready. It can use: %s\n", ws.Name, strings.Join(ws.Manifest.Scope(), ", "))
@@ -375,36 +470,76 @@ func reachFinish(c *cobra.Command, ws *resolve.Workspace, dir string, noTerminal
 	case noTerminal:
 		summary()
 		fmt.Fprintf(w, "Open a new terminal in %s, then start claude and log in with this client's account.\n", dir)
-	case hookErr != nil:
+	case hs.parentFailed:
 		summary()
-		fmt.Fprintf(w, "Once the activation block is fixed, open a new terminal in %s to start working.\n", dir)
+		fmt.Fprintf(w, "Once the activation block works, open a new terminal in %s to start working.\n", dir)
 	default:
-		_, err := reachOpenTerminal(dir)
+		l, err := reachOpenTerminal(dir, identityFreeEnv())
 		summary()
 		if err != nil {
 			fmt.Fprintf(w, "Could not open a terminal (%v). Open one in %s to start working.\n", err, dir)
 			return
 		}
+		if !reachRouted(l, hs) {
+			// The window's hook is not confirmed: no login line, the old terminal stays, and the next step
+			// is tq run, which sets the identity itself (ADR-0019).
+			fmt.Fprintf(w, "Opened a new terminal in %s, but tq's shell hook is not confirmed to load there, so it is not set up for %s. Run tq run %s -- claude in it to start claude for %s.\n", dir, ws.Name, ws.Name, ws.Name)
+			fmt.Fprintln(w, "Close this terminal when you are ready.")
+			return
+		}
 		fmt.Fprintf(w, "Opened a new terminal in %s: start claude there and log in with this client's account.\n", dir)
-		reachEndOld(c)
+		reachEndOld(c, c.InOrStdin())
 	}
 }
 
+// reachEndTarget is reach's direct parent when tq may end it, or false. It must be readable, not a reused
+// pid, with its command line known; a shell tq knows and that is interactive; and not itself a child of a
+// shell. The last rule is Git Bash: a native program run from bash, directly or in a subshell or pipeline,
+// has a bash.exe stub as its direct parent, and the stub's parent is the interactive shell. Ending the stub
+// leaves that shell open with no message (ADR-0019). An unreadable grandparent counts as a shell.
+func reachEndTarget() (humanonly.Parent, bool) {
+	p, ok := humanonly.ParentOf(os.Getpid())
+	if !ok || p.Reused || !p.CmdlineKnown {
+		return p, false
+	}
+	shell, known := termopen.ShellName(p.Name)
+	if !known || !termopen.Interactive(shell, p.Cmdline) {
+		return p, false
+	}
+	g, ok := humanonly.ParentOf(p.PID)
+	if !ok {
+		return p, false
+	}
+	if _, isShell := termopen.ShellName(g.Name); isShell {
+		return p, false
+	}
+	return p, true
+}
+
 // reachEndOld ends the terminal reach was run from (REQ-4, REQ-5, REQ-10). Only reach's direct parent is
-// ever ended, and only when it is a shell reach knows and that shell is interactive. Otherwise, or when
-// the kill fails, the terminal stays open and reach says so. Reach pauses for Enter first, so the output
-// can be read; a closed input counts as Enter.
-func reachEndOld(c *cobra.Command) {
+// ever ended, and only when reachEndTarget allows it. Otherwise, or when the parent has changed by the time
+// the developer presses Enter, or the kill fails, the terminal stays open and reach says so. Keys typed
+// while the installs ran are discarded first, so an earlier Enter does not answer the pause; a closed input
+// counts as Enter.
+func reachEndOld(c *cobra.Command, in io.Reader) {
 	w := c.OutOrStdout()
-	parent, ok := humanonly.ParentOf(os.Getpid())
-	shell, known := termopen.ShellName(parent.Name)
-	if !ok || parent.Reused || !parent.CmdlineKnown || !known || !termopen.Interactive(shell, parent.Cmdline) {
+	first, ok := reachEndTarget()
+	if !ok {
 		fmt.Fprintln(w, "Close this terminal when you are ready.")
 		return
 	}
+	if f, isFile := in.(*os.File); isFile {
+		termopen.FlushInput(f)
+	}
 	fmt.Fprintln(w, "Press Enter to close this terminal.")
-	_, _ = bufio.NewReader(c.InOrStdin()).ReadString('\n')
-	if err := reachKill(parent.PID); err != nil {
+	_, _ = bufio.NewReader(in).ReadString('\n')
+	// The pause may have lasted long: the parent is read again, and must still be the same process.
+	now, ok := reachEndTarget()
+	if !ok || now.PID != first.PID || now.Name != first.Name || now.Cmdline != first.Cmdline {
+		fmt.Fprintln(w, "Close this terminal when you are ready.")
+		return
+	}
+	if err := reachKill(now.PID); err != nil {
 		fmt.Fprintln(w, "Close this terminal when you are ready.")
 	}
 }

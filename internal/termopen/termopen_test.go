@@ -2,12 +2,14 @@ package termopen
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func look(found ...string) func(string) (string, error) {
@@ -32,9 +34,9 @@ func TestPlan_WindowsPrefersWindowsTerminal(t *testing.T) {
 	}
 }
 
-// Without wt, cmd's start opens the window; the folder travels as the child's working directory,
-// never through cmd.exe's own parsing.
-func TestPlan_WindowsFallsBackToCmdStart(t *testing.T) {
+// Without wt, cmd's start opens PowerShell in a new console (ADR-0019); the folder travels only as the
+// child's working directory, never through cmd.exe's own parsing.
+func TestPlan_WindowsFallsBackToPowerShell(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "a & calc")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -43,13 +45,13 @@ func TestPlan_WindowsFallsBackToCmdStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Name != "cmd" || !reflect.DeepEqual(l.Args, []string{"/c", "start", "", "cmd"}) || l.Dir != dir {
+	if l.Name != "cmd" || !reflect.DeepEqual(l.Args, []string{"/c", "start", "", "powershell", "-NoLogo"}) || l.Dir != dir || l.Shell != "powershell" {
 		t.Fatalf("got %+v", l)
 	}
 }
 
-// wt splits its own argv on ';' into subcommands, so a folder with ';' goes through the cmd start
-// plan, which passes it only as the working directory.
+// wt splits its own argv on ';' into subcommands, so a folder with ';' goes through the PowerShell
+// fallback, which passes it only as the working directory.
 func TestPlan_WindowsSemicolonFolderAvoidsWT(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "a; new-tab calc")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -59,8 +61,19 @@ func TestPlan_WindowsSemicolonFolderAvoidsWT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Name != "cmd" || !reflect.DeepEqual(l.Args, []string{"/c", "start", "", "cmd"}) || l.Dir != dir {
+	if l.Name != "cmd" || !reflect.DeepEqual(l.Args, []string{"/c", "start", "", "powershell", "-NoLogo"}) || l.Dir != dir || l.Shell != "powershell" {
 		t.Fatalf("got %+v", l)
+	}
+}
+
+// wt runs the window in the system's default shell, which tq does not choose: Shell stays empty.
+func TestPlan_WindowsTerminalChoosesNoShell(t *testing.T) {
+	l, err := Plan("windows", t.TempDir(), look("wt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Shell != "" {
+		t.Fatalf("wt chose shell %q", l.Shell)
 	}
 }
 
@@ -110,13 +123,52 @@ func TestOpen_StartsAndNeverWaits(t *testing.T) {
 	prev := start
 	start = func(l Launch) error { got = l; return nil }
 	t.Cleanup(func() { start = prev })
-	l, err := open("windows", dir, look("wt"))
+	l, err := open("windows", dir, []string{"A=1"}, look("wt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(l, got) || got.Name != "wt" {
+	if !reflect.DeepEqual(l, got) || got.Name != "wt" || !reflect.DeepEqual(got.Env, []string{"A=1"}) {
 		t.Fatalf("started %+v, planned %+v", got, l)
 	}
+}
+
+// The launcher is watched briefly: one that exits non-zero at once did not open a window, and the
+// error says why (L-03). One that exits 0 at once handed the window off; one still running after the
+// wait is a window.
+func TestStart_ReportsALauncherThatFailsAtOnce(t *testing.T) {
+	prev := startGrace
+	startGrace = 5 * time.Second
+	t.Cleanup(func() { startGrace = prev })
+	child := func(mode string) Launch {
+		return Launch{Name: os.Args[0], Env: append(os.Environ(), "TERMOPEN_TEST_CHILD="+mode)}
+	}
+	err := start(child("exit1"))
+	if err == nil || !strings.Contains(err.Error(), "cannot open display") {
+		t.Fatalf("a launcher that exits 1 at once: err = %v", err)
+	}
+	if err := start(child("exit0")); err != nil {
+		t.Fatalf("a launcher that hands off and exits 0: %v", err)
+	}
+	startGrace = 300 * time.Millisecond
+	if err := start(child("sleep")); err != nil {
+		t.Fatalf("a window still running after the wait: %v", err)
+	}
+}
+
+// TestMain also serves as the launcher of the start tests: a child run with TERMOPEN_TEST_CHILD set
+// behaves as the mode says, and is not a test run.
+func TestMain(m *testing.M) {
+	switch os.Getenv("TERMOPEN_TEST_CHILD") {
+	case "exit0":
+		os.Exit(0)
+	case "exit1":
+		fmt.Fprintln(os.Stderr, "cannot open display")
+		os.Exit(1)
+	case "sleep":
+		time.Sleep(3 * time.Second)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
 }
 
 // A folder name with shell metacharacters reaches the new terminal as one argv element or as the
@@ -192,17 +244,28 @@ func TestInteractive(t *testing.T) {
 		{"fish", "fish"},
 		{"cmd", "cmd.exe /k"},
 		{"cmd", "cmd"},
+		{"pwsh", "pwsh -ExecutionPolicy RemoteSigned -NoProfile"},
+		{"bash", "bash -o pipefail"},
+		{"zsh", "zsh -l"},
+		{"cmd", "cmd /d /k"},
 	}
 	batch := [][2]string{
 		{"pwsh", `pwsh -Command "tq reach"`},
 		{"pwsh", "pwsh -c tq"},
 		{"pwsh", "pwsh -NonInteractive"},
 		{"pwsh", "pwsh -EncodedCommand ZQBjAGgAbwA="},
+		{"pwsh", "pwsh -ec ZQBjAGgAbwA="},
+		{"pwsh", "pwsh -e ZQBjAGgAbwA="},
 		{"powershell", "powershell -File x.ps1"},
+		{"pwsh", "pwsh setup.ps1"},
+		{"powershell", "powershell tentaqles reach"},
+		{"pwsh", "pwsh -ExecutionPolicy Bypass setup.ps1"},
 		{"bash", "bash -c 'tq reach'"},
+		{"bash", "bash setup.sh"},
 		{"zsh", "zsh -lc tq"},
 		{"fish", "fish --command tq"},
 		{"cmd", "cmd.exe /c tq reach"},
+		{"cmd", "cmd /k tq reach"},
 		{"bash", ""},
 		{"pwsh", "   "},
 	}
