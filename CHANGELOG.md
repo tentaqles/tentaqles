@@ -9,6 +9,18 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - The onboarding skill (`/tentaqles:onboard`) drives the installs, logins and connections in order, and
   ends with a table; see [`plugin/CHANGELOG.md`](plugin/CHANGELOG.md).
 
+### `tentaqles reach` hands over a terminal (ADR-0019)
+
+- For a new client, `tentaqles reach` opens a new terminal in the client's folder, after the client is trusted
+  and its plugin and CLIs are installed. The new terminal starts the client's identity through tq's shell hook.
+- Reach writes tq's activation block into the profile of each shell tq detects and of the shell it runs in. The
+  confirmation names the profile, and the block is the one `tq hooks install` writes, so `tq hooks remove` takes it back.
+- After you press Enter, reach ends the terminal it ran in, but only when that is an interactive PowerShell, pwsh, cmd,
+  bash, zsh or fish that is reach's direct parent and no other shell started it. Otherwise, or when a terminal cannot
+  open, or a profile cannot take the block, or PowerShell will not load tq's profile, the old terminal stays open and
+  reach says what to do next. Without Windows Terminal the new window is PowerShell, and its `tq run` line is the next
+  step when its hook is not confirmed. `--no-terminal` skips the opening and the ending.
+
 ### No Claude session without the guard (ADR-0018)
 
 - `tentaqles reach` installs the tentaqles plugin into the new client's Claude config once the trust is
