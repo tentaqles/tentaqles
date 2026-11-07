@@ -25,6 +25,17 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - `connect` re-reads the file before its rename and warns, as `tq settings render` does, when a Claude
   session looks open. `status --json` limits a keychain lookup to 5 s, and reads `connection` missing
   for an identity with no Claude config.
+- The hook's cross-client rule (`tq/cross-client-mcp`) no longer denies a server `tentaqles connect`
+  wrote for a provider in the identity's scope, when another client's bundle has the same name. Only
+  that entry is exempt: a same-named server with any other entry (in `.claude.json` or a `.mcp.json`
+  in the folder) is still denied, and so is any server when the config cannot be read (ADR-0017).
+- The hook denies a recursive search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem -Recurse`) run from
+  inside a protected folder, such as the identity's `backups/` folder, whatever root it names
+  (`tq/protected-path`).
+- `status --json`: `connection` reads `present` for a registered server under any of a provider's names
+  (az's `azure`, glab's `gitlab`). `credential` reads `none`, not `missing`, for a CLI login with no
+  verify command and no credential, since tq can't tell it from logged out.
+- `tentaqles connect <unknown>` names the provider catalog in its refusal.
 
 ### Cut down to IDEATION (ADR-0013, ADR-0014)
 

@@ -55,14 +55,21 @@ manifest or `.claude.json` either, so it needs a read command that carries no se
     and writes its line.
 - `connect` re-signs nothing: `.claude.json` is not in the integrity record, and the entry can only be the
   catalog's.
-- **The hook's cross-client rule narrows (round 4).** `tq/cross-client-mcp` denied a server that another
-  client's bundle lists, even when this identity's own scope owns it. It now does not deny a server that
-  is the embedded `connect:` name of a provider in this identity's scope (`connectOfScope`, reading the
-  embedded catalog only), so the server `connect` wrote for a provider in scope is not denied because
-  another client's bundle has the same name. Every other server is judged as before: a name that no
-  in-scope provider owns, including one in another client's bundle, and a provider's name when that
-  provider is out of scope, stay denied. Tests: `TestHook_ConnectedServerNotCrossClientDenied` (all four
-  catalog entries), `TestHook_OtherClientsBundleServerStaysDenied`, `TestHook_OutOfScopeProviderNameStaysDenied`.
+- **The hook's cross-client rule narrows (rounds 4 and 5).** `tq/cross-client-mcp` denied a server that
+  another client's bundle lists, even when this identity's own scope owns it. The exception is the entry
+  `connect` writes, and only that entry: a server is exempt when every entry of its name the harness loads
+  (`mcpscope.Entries`: the identity's `.claude.json`, and the `.mcp.json` files from the cwd up to the root)
+  equals the embedded catalog's `connect:` entry for a provider in this identity's scope (`connectExempt`,
+  reading the embedded catalog only, read-only). Only when another client's bundle would otherwise deny it
+  is the check made. A same-named server with any other entry (for example a `.mcp.json` in the client's
+  root that points at another host), a server whose only entries are unlike the catalog's, a name no in-scope
+  provider owns (including one in another client's bundle), a provider's name when that provider is out of
+  scope, and any server when a config file the harness reads cannot be parsed, stay denied as before. The
+  check adds no matching beyond this comparison; it is a speed bump (AR2). Tests:
+  `TestHook_ConnectedServerNotCrossClientDenied` (all four catalog entries),
+  `TestHook_OtherClientsBundleServerStaysDenied`, `TestHook_OutOfScopeProviderNameStaysDenied`,
+  `TestHook_ForeignSameNameInProjectMCPJSONDenied`, `TestHook_ForeignBesideCatalogEntryDenied`,
+  `TestHook_OnlyCatalogEntryPasses`, `TestHook_UnreadableConfigNoExemption`.
 - **A recursive search from a protected folder (round 3, `internal/policy/selfprotect.go`).** A recursive
   search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem -Recurse`) whose run folder (the cwd, or the folder a
   `cd` went to) is a read-denied protected folder is denied as `tq/protected-path`, whatever root it names,

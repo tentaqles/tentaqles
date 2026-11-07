@@ -72,7 +72,7 @@ func runConnect(c *cobra.Command, id string) error {
 
 	cat := providers.MustLoad()
 	if _, ok := cat.Get(id); !ok {
-		return fmt.Errorf("connect: unknown provider %q (tentaqles providers list)", id)
+		return fmt.Errorf("connect: %q is not in the provider catalog (tentaqles providers list shows the catalog)", id)
 	}
 	if !containsID(m.Scope(), id) {
 		msg := fmt.Sprintf("%s is outside the scope of identity %s: %s", id, w.Name, identityScope(m))

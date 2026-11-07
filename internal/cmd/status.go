@@ -48,7 +48,7 @@ client it holds identity, trusted false and reason, and no provider data. The he
 as JSON is tq doctor --json.
 
 tq status --denials reads ~/.tentaqles/denials.jsonl, where every deny is one
-line: time, identity, category, rule, layer (hook, filesystem, human-only),
+line: time, identity, category, rule, layer (hook, filesystem, human-only, command),
 calling process (harness, subagent, no-tty), harness, tool, the redacted
 command, the subject and the reason. It prints the last --last entries (20;
 0 for all), oldest first, filtered by --identity and --category; --json

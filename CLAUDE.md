@@ -186,6 +186,12 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   `TestPreToolUse_ConnectAllowedFileToolsDenied`, `TestStatusJSON_NoSecrets`,
   `TestPreToolUse_MCPEntryCopiesProtected`, `TestConnect_ConcurrentWriterIsKept`,
   `TestConnect_WarnsWhenClaudeIsOpen`.
+- The hook's cross-client exemption for a connected server is exactly its catalog entry: a same-named
+  server with any other entry, in `.claude.json` or a `.mcp.json` in the folder, stays denied, and so
+  does any server when the config cannot be read: `TestHook_ConnectedServerNotCrossClientDenied`,
+  `TestHook_OtherClientsBundleServerStaysDenied`, `TestHook_OutOfScopeProviderNameStaysDenied`,
+  `TestHook_ForeignSameNameInProjectMCPJSONDenied`, `TestHook_ForeignBesideCatalogEntryDenied`,
+  `TestHook_OnlyCatalogEntryPasses`, `TestHook_UnreadableConfigNoExemption`.
 - The integrity record is signed and covers the hooks, the enforcing settings keys and the
   shims; a mismatch is at least as strict as untrusted (the hook denies mutating git and
   remote commands), withholds the identity and refuses the launch; a signed workspace never

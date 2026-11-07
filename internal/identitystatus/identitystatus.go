@@ -62,11 +62,15 @@ type Provider struct {
 	// CLIResolves is whether the CLI is on PATH; false when the provider has none.
 	CLIResolves bool `json:"cli_resolves"`
 	// Credential is present when a token is in the keychain for this client, a credential
-	// variable of the provider is set, or the provider's verify command passed; missing when the
-	// provider takes one and none is there; none when it takes none through tq.
+	// variable of the provider is set, or the provider's verify command passed. Missing when none
+	// of that holds and tq can check the provider: a tracker provider (its keychain token) or one
+	// with a verify command. None for any other provider: a CLI login with no verify command, which
+	// tq cannot tell from logged out, and a provider that takes no credential through tq.
 	Credential string `json:"credential"`
 	// Connection is present when an MCP server for the provider is registered in the client's
-	// .claude.json, missing when it is not, none for a provider reached by no MCP server.
+	// .claude.json under any of the names the provider is reached by (its catalog connect name, its
+	// MCP name and its match list), missing when it is not and the provider is reached by an MCP
+	// server, none for a provider no MCP server reaches.
 	Connection string `json:"connection"`
 	// Verified is true only when the provider's read-only verify command passed in this run.
 	Verified bool `json:"verified"`
@@ -312,24 +316,27 @@ func envCredential(p providers.Provider, d Deps) bool {
 // credential is presence only: no token, variable value or file content is returned.
 // token is tokenPresent's answer.
 func credential(p providers.Provider, verified, token bool, d Deps) string {
-	takes := isTracker(p.ID) || len(credentialVars(p)) > 0 || p.Login != nil || p.Verify != nil
 	switch {
-	case !takes:
-		return None
 	case verified, token, envCredential(p, d):
 		return Present
 	}
-	return Missing
+	// A provider tq can check a credential for (a tracker token in the keychain, or a verify
+	// command) and has none: missing. Any other provider, a CLI login with no verify command, is
+	// unknowable here: tq cannot tell a login from none, so the reading is none, and the skill
+	// does not log in again forever (the router's decision on this ticket). A credential variable
+	// that is set reads present above; one that is not set does not make it missing.
+	if isTracker(p.ID) || p.Verify != nil {
+		return Missing
+	}
+	return None
 }
 
 // connection says whether an MCP server for p is registered, by name. ec is the embedded
 // catalog's connect entry for p (nil when it has none): the merged catalog's copy is gone once
 // a user file overrides the provider.
 func connection(p providers.Provider, ec *providers.Connect, servers []string) string {
-	reached := ec != nil || p.Connect != nil || p.MCP != "" || p.Category == "chat" || p.Category == "email"
-	if !reached {
-		return None
-	}
+	// Every name the provider's MCP server may be registered under, the match list included: a
+	// registered server reads present whatever the catalog's reach of the provider.
 	want := []string{p.MCPName()}
 	if ec != nil {
 		want = append(want, ec.Name)
@@ -344,6 +351,10 @@ func connection(p providers.Provider, ec *providers.Connect, servers []string) s
 				return Present
 			}
 		}
+	}
+	reached := ec != nil || p.Connect != nil || p.MCP != "" || p.Category == "chat" || p.Category == "email"
+	if !reached {
+		return None
 	}
 	return Missing
 }

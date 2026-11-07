@@ -419,7 +419,7 @@ file adds or removes.
 | `tq/env-file-read`, `tq/env-file-shell` | reading or printing `.env*` (templates such as `.env.example` exempt) |
 | `tq/env-dump` | `printenv`, `env`, `set`, `export -p`, `declare -p`, `typeset -p`, `cmd /c set`, `Get-ChildItem`/`gci`/`dir`/`ls env:`, each as the command word of a segment (start, or after `;` `&` `\|` `(` a backtick or a newline, or as the first word of a quoted `-c` script: `bash -c 'set'`) with no arguments; and `[Environment]::GetEnvironmentVariables(` anywhere. `set -e`, `echo set` or `git commit -m "set the flag"` are not dumps |
 | `tq/commit-secret` | before a `git commit` runs, scans what it would record: the staged diff, plus the working tree and untracked files when the command also runs `git add` or `commit -a`, so `git add -A && git commit` is covered. Committing a `.env`, private key or `.pem` is refused by name. The reason lists `file:line (pattern)` and never the value. A known-fake fixture line can carry `tq:allow-secret` (or `gitleaks:allow`). A scan that cannot finish (the hook budget, the 1 MiB limits, an unreadable file, `--pathspec-from-file`, a repository it cannot place) denies the commit too: commit fewer files, or commit it from your own terminal |
-| `tq/cross-client-mcp` | an MCP server that another client's bundle declares, and this workspace's bundle does not |
+| `tq/cross-client-mcp` | an MCP server that another client's bundle declares, and this workspace's bundle does not. Exempt: a server whose every entry the harness loads (the identity's `.claude.json`, and the `.mcp.json` files from the cwd up to the root) equals the embedded catalog's `connect:` entry for a provider in this identity's scope; any other entry of that name, an unreadable config or no entry keeps the deny (ADR-0017) |
 | `tq/guard-error` | a call tq cannot judge, denied (see [Fail closed](#fail-closed)) |
 
 ### Limits
@@ -492,7 +492,7 @@ their refusals to (PRD v2 §7.3, ADR-0006):
 |---|---|
 | `category` | `identity`, `secrets`, `self-protection`, or `tq/guard-error` for a call tq could not judge |
 | `rule` | the rule id |
-| `layer` | `hook`; `filesystem` for `tq/protected-path`; `human-only` for a tq command's own refusal |
+| `layer` | `hook`; `filesystem` for `tq/protected-path`; `human-only` for a tq command's own refusal; `command` for a refusal by a tq command the agent ran (`tentaqles connect` outside the scope) |
 | `caller` | `harness` (the main session) or `subagent` (the payload carries `agent_id`/`agent_type`); for a human-only refusal `harness` or `no-tty` |
 | `harness` | `claude` or `codex` |
 | `tool` | the tool name |
