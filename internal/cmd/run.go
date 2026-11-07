@@ -10,7 +10,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
+	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -137,6 +140,45 @@ func cwdWorkspace() (*resolve.Workspace, error) {
 	return res.Workspace, nil
 }
 
+// refuseOtherWorkspace refuses an agent session's tq run <name> unless name is
+// the workspace of the folder the command runs in (FR-13, ADR-0020). A nested
+// agent runs the identity it is in, never another client's. Any agent detector
+// counts (humanonly.DetectAgent: a marker or the process tree, and a tree that
+// cannot be followed to a terminal); a human passes from any folder. The folder
+// decides, not an inherited TQ_WS. The name is compared before any workspace is
+// looked up, and this runs before the environment is built, so an agent learns
+// nothing about a workspace it may not run. The refusal is one identity denial
+// in the log; a log that cannot be written still refuses.
+func refuseOtherWorkspace(name string) error {
+	agent := humanonly.DetectAgent()
+	if agent == nil {
+		return nil
+	}
+	cw, err := cwdWorkspace()
+	if err == nil && cw != nil && cw.Name == name {
+		return nil
+	}
+	here, identity := "a neutral folder", ""
+	switch {
+	case err != nil:
+		here = "a folder that is not a trusted workspace"
+	case cw != nil:
+		here, identity = cw.Name+"'s folder", cw.Name
+	}
+	reason := fmt.Sprintf("agent session (%s) runs only the identity of its own folder; this is %s, not %s", agent, here, name)
+	cwd, _ := os.Getwd()
+	d := audit.Denial{
+		Category: "identity", Layer: audit.LayerHumanOnly, Caller: audit.CallerHarness,
+		Command: "tq run " + name, Rule: policy.OtherIdentityID, Subject: name, Reason: reason,
+		Identity: identity, PID: os.Getpid(), Cwd: cwd,
+	}
+	msg := "tq run: " + name + " is another client. An agent session can only run under the client of its own folder."
+	if lerr := audit.AppendDenial(d); lerr != nil {
+		return fmt.Errorf("%s (the refusal could not be logged: %v)", msg, lerr)
+	}
+	return errors.New(msg)
+}
+
 func newRunCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "run <workspace>|. -- <command> [args...]",
@@ -166,6 +208,9 @@ func newRunCmd() *cobra.Command {
 				}
 				ws = w
 			} else {
+				if err := refuseOtherWorkspace(args[0]); err != nil {
+					return err
+				}
 				w, err := findWorkspace(args[0])
 				if err != nil {
 					return err

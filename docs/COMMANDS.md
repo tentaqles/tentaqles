@@ -28,7 +28,7 @@ environment carries an agent marker. The refusal goes to `~/.tentaqles/denials.j
 | Command | What it does |
 |---|---|
 | `tq hooks install\|remove\|status` | Manages the shell-profile block that makes a terminal follow the folder. `install` and `remove` are **human-only**. |
-| `tq run <ws>\|. -- <cmd>` | Runs one command under an identity without `cd`-ing into its folder. |
+| `tq run <ws>\|. -- <cmd>` | Runs one command under an identity without `cd`-ing into its folder. In an agent session it runs only the identity of the folder it is in: `tq run <other>` is refused (ADR-0020). |
 | `tq activate <shell>` | Prints the shell hook. The profile block runs it. |
 | `tq env` | Prints the environment changes for this folder. The shell hook runs it at each prompt. cmd.exe has no prompt hook, so there you call the hook yourself or use `tq run`. |
 
