@@ -1,6 +1,6 @@
 # 022: An agent can't run a command under another client
 
-**Status:** ready
+**Status:** landed
 **Risk:** High: from one client's agent session, `tq run <other> -- <cmd>` runs under the other client's identity and credentials, which is what the product exists to prevent
 **UI:** none
 
