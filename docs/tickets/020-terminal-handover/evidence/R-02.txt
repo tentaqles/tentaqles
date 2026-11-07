@@ -1,0 +1,5 @@
+$ go test ./internal/cmd ./internal/termopen ./internal/hooks -count=1
+ok  	github.com/tentaqles/tentaqles/internal/cmd	212.945s
+ok  	github.com/tentaqles/tentaqles/internal/termopen	0.631s
+ok  	github.com/tentaqles/tentaqles/internal/hooks	0.333s
+exit code: 0

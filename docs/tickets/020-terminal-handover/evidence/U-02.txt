@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestReach_InstallsProfileHook$ -count=1 -v
+=== RUN   TestReach_InstallsProfileHook
+--- PASS: TestReach_InstallsProfileHook (1.17s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.263s
+exit code: 0

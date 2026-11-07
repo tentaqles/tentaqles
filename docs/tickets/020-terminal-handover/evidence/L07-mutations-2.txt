@@ -1,0 +1,5 @@
+MUTANT drop Interactive (compiles): killed (4 failing)
+MUTANT drop re-check Name: SURVIVED (reach tests still pass)
+# github.com/tentaqles/tentaqles/internal/cmd
+internal\cmd\reach.go:526:2: declared and not used: first
+MUTANT drop whole re-check after pause: does not compile

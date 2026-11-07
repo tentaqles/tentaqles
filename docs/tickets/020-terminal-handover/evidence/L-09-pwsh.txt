@@ -1,0 +1,26 @@
+### powershell -NoLogo (bare name)
+PS C:\repos\tentaqles\tentaqles\.claude\worktrees\agent-a51fa57898be78239> & "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-3/probe.exe"
+self pid 246716
+  level 1: pid=113392 name="powershell.exe" known=true reused=false shell=true interactive=true
+           cmdline="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo"
+  level 2: pid=327336 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/pwsh.sh"
+  level 3: pid=364608 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/pwsh.sh"
+  level 4: unreadable
+reachEndTarget => pid=113392 end=false (grandparent is a shell: bash.exe)
+PS C:\repos\tentaqles\tentaqles\.claude\worktrees\agent-a51fa57898be78239> exit
+
+
+### quoted full path WITH a space in it: C:\Users\renato\AppData\Local\Temp\claude\9afa00c4d4304694\ba457feb-5990-4ebb-b9e4-b1edac2f1351\scratchpad\Program Files x
+PS C:\repos\tentaqles\tentaqles\.claude\worktrees\agent-a51fa57898be78239> & "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-3/probe.exe"
+self pid 224408
+  level 1: pid=303352 name="powershell.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Users\\renato\\AppData\\Local\\Temp\\claude\\9afa00c4d4304694\\ba457feb-5990-4ebb-b9e4-b1edac2f1351\\scratchpad\\Program Files x\\powershell.exe\" -NoLogo"
+  level 2: pid=158000 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/pwsh.sh"
+  level 3: pid=364608 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/pwsh.sh"
+  level 4: unreadable
+reachEndTarget => pid=303352 end=false (grandparent is a shell: bash.exe)
+PS C:\repos\tentaqles\tentaqles\.claude\worktrees\agent-a51fa57898be78239> exit

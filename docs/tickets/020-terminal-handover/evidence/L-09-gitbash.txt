@@ -1,0 +1,81 @@
+### via Git\bin\bash.exe --login -i (the Windows Terminal Git Bash profile)
+bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-3/probe.exe"
+self pid 208060
+  level 1: pid=379788 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 2: pid=243988 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 3: pid=330512 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i"
+  level 4: pid=132428 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/gitbash.sh"
+  level 5: pid=284028 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/gitbash.sh"
+  level 6: unreadable
+reachEndTarget => pid=379788 end=false (grandparent is a shell: bash.exe)
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ exit
+logout
+
+### via Git\usr\bin\bash.exe --login -i (mintty's)
+bash: cannot set terminal process group (673302): Inappropriate ioctl for device
+bash: no job control in this shell
+]0;MINGW64:/c/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33m/c/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-3/probe.exe"
+self pid 342780
+  level 1: pid=346072 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" --login -i"
+  level 2: pid=184844 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" --login -i"
+  level 3: unreadable
+reachEndTarget => pid=346072 end=false (grandparent is a shell: bash.exe)
+]0;MINGW64:/c/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33m/c/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ exit
+logout
+
+### subshell and pipeline from the interactive bash
+bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ ( "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-3/probe.exe" )
+self pid 220860
+  level 1: pid=376608 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 2: pid=271356 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 3: pid=156692 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i"
+  level 4: pid=225316 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/gitbash.sh"
+  level 5: pid=284028 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/gitbash.sh"
+  level 6: unreadable
+reachEndTarget => pid=376608 end=false (grandparent is a shell: bash.exe)
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-3/probe.exe" | cat
+self pid 250232
+  level 1: pid=289748 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 2: pid=271356 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 3: pid=156692 name="bash.exe" known=true reused=false shell=true interactive=true
+           cmdline="\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i"
+  level 4: pid=225316 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/gitbash.sh"
+  level 5: pid=284028 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-3/gitbash.sh"
+  level 6: unreadable
+reachEndTarget => pid=289748 end=false (grandparent is a shell: bash.exe)
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ exit
+logout

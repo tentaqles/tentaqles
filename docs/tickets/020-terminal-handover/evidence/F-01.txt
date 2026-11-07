@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestReach_TerminalWontOpen$ -count=1 -v
+=== RUN   TestReach_TerminalWontOpen
+--- PASS: TestReach_TerminalWontOpen (0.62s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.721s
+exit code: 0

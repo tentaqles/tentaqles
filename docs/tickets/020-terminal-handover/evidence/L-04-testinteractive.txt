@@ -1,0 +1,5 @@
+=== RUN   TestInteractive
+--- PASS: TestInteractive (0.00s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/termopen	0.177s
+exit code: 0

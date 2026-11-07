@@ -1,0 +1,8 @@
+MUTANT drop !p.CmdlineKnown: SURVIVED (reach tests still pass)
+MUTANT drop p.Reused: killed (2 failing)
+# github.com/tentaqles/tentaqles/internal/cmd
+internal\cmd\reach.go:505:2: declared and not used: shell
+MUTANT drop Interactive: does not compile
+MUTANT drop grandparent shell check: killed (3 failing)
+MUTANT drop re-check after pause (pid): killed (1 failing)
+MUTANT drop re-check after pause (cmdline): SURVIVED (reach tests still pass)

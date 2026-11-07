@@ -1,0 +1,6 @@
+$ go test ./internal/termopen -run ^TestInteractive$ -count=1 -v
+=== RUN   TestInteractive
+--- PASS: TestInteractive (0.00s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/termopen	0.053s
+exit code: 0

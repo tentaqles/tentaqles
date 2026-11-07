@@ -1,0 +1,26 @@
+$ go test ./internal/cmd -run ^TestReach_OldTerminalNotEnded$ -count=1 -v
+=== RUN   TestReach_OldTerminalNotEnded
+=== RUN   TestReach_OldTerminalNotEnded/explorer
+=== RUN   TestReach_OldTerminalNotEnded/node
+=== RUN   TestReach_OldTerminalNotEnded/python
+=== RUN   TestReach_OldTerminalNotEnded/pwsh_runs_a_command
+=== RUN   TestReach_OldTerminalNotEnded/bash_runs_a_command
+=== RUN   TestReach_OldTerminalNotEnded/cmd_runs_a_command
+=== RUN   TestReach_OldTerminalNotEnded/unreadable_after_the_window_opened
+=== RUN   TestReach_OldTerminalNotEnded/reused_after_the_window_opened
+=== RUN   TestReach_OldTerminalNotEnded/cmdline_unknown_after_the_window_opened
+=== RUN   TestReach_OldTerminalNotEnded/kill_fails
+--- PASS: TestReach_OldTerminalNotEnded (8.58s)
+    --- PASS: TestReach_OldTerminalNotEnded/explorer (0.63s)
+    --- PASS: TestReach_OldTerminalNotEnded/node (2.60s)
+    --- PASS: TestReach_OldTerminalNotEnded/python (0.96s)
+    --- PASS: TestReach_OldTerminalNotEnded/pwsh_runs_a_command (0.75s)
+    --- PASS: TestReach_OldTerminalNotEnded/bash_runs_a_command (0.60s)
+    --- PASS: TestReach_OldTerminalNotEnded/cmd_runs_a_command (0.61s)
+    --- PASS: TestReach_OldTerminalNotEnded/unreadable_after_the_window_opened (0.60s)
+    --- PASS: TestReach_OldTerminalNotEnded/reused_after_the_window_opened (0.62s)
+    --- PASS: TestReach_OldTerminalNotEnded/cmdline_unknown_after_the_window_opened (0.58s)
+    --- PASS: TestReach_OldTerminalNotEnded/kill_fails (0.63s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	8.666s
+exit code: 0

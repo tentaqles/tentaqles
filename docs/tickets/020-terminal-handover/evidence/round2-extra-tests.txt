@@ -1,0 +1,49 @@
+$ go test ./internal/cmd -run '^TestReach_(HookFailureOpensNothing|PowerShellProbeFailureOpensNothing|OtherShellFailureWarnsAndHandsOver|FallbackWithoutTheHookNamesTqRun|FallbackWithTheHookEndsTheOldTerminal|NewTerminalInheritsNoIdentity|GitBashStubNotEnded|ParentChangedAtPauseNotEnded)$' -count=1 -v
+=== RUN   TestReach_ParentChangedAtPauseNotEnded
+--- PASS: TestReach_ParentChangedAtPauseNotEnded (0.57s)
+=== RUN   TestReach_GitBashStubNotEnded
+--- PASS: TestReach_GitBashStubNotEnded (0.56s)
+=== RUN   TestReach_HookFailureOpensNothing
+--- PASS: TestReach_HookFailureOpensNothing (0.61s)
+=== RUN   TestReach_PowerShellProbeFailureOpensNothing
+--- PASS: TestReach_PowerShellProbeFailureOpensNothing (0.61s)
+=== RUN   TestReach_OtherShellFailureWarnsAndHandsOver
+--- PASS: TestReach_OtherShellFailureWarnsAndHandsOver (0.61s)
+=== RUN   TestReach_FallbackWithoutTheHookNamesTqRun
+--- PASS: TestReach_FallbackWithoutTheHookNamesTqRun (0.57s)
+=== RUN   TestReach_FallbackWithTheHookEndsTheOldTerminal
+--- PASS: TestReach_FallbackWithTheHookEndsTheOldTerminal (0.60s)
+=== RUN   TestReach_NewTerminalInheritsNoIdentity
+--- PASS: TestReach_NewTerminalInheritsNoIdentity (0.59s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	4.824s
+exit code: 0
+$ go test ./internal/termopen -count=1 -v
+=== RUN   TestPlan_WindowsPrefersWindowsTerminal
+--- PASS: TestPlan_WindowsPrefersWindowsTerminal (0.00s)
+=== RUN   TestPlan_WindowsFallsBackToPowerShell
+--- PASS: TestPlan_WindowsFallsBackToPowerShell (0.00s)
+=== RUN   TestPlan_WindowsSemicolonFolderAvoidsWT
+--- PASS: TestPlan_WindowsSemicolonFolderAvoidsWT (0.00s)
+=== RUN   TestPlan_WindowsTerminalChoosesNoShell
+--- PASS: TestPlan_WindowsTerminalChoosesNoShell (0.00s)
+=== RUN   TestPlan_Darwin
+--- PASS: TestPlan_Darwin (0.00s)
+=== RUN   TestPlan_LinuxCandidates
+--- PASS: TestPlan_LinuxCandidates (0.00s)
+=== RUN   TestPlan_RefusesBadFolders
+--- PASS: TestPlan_RefusesBadFolders (0.00s)
+=== RUN   TestOpen_StartsAndNeverWaits
+--- PASS: TestOpen_StartsAndNeverWaits (0.00s)
+=== RUN   TestStart_ReportsALauncherThatFailsAtOnce
+--- PASS: TestStart_ReportsALauncherThatFailsAtOnce (0.40s)
+=== RUN   TestPlan_HostileFolderNames
+--- PASS: TestPlan_HostileFolderNames (0.01s)
+=== RUN   TestShellName
+--- PASS: TestShellName (0.00s)
+=== RUN   TestInteractive
+--- PASS: TestInteractive (0.00s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/termopen	0.469s
+go: unlinkat C:\Users\renato\AppData\Local\Temp\go-build3960348426\b001\termopen.test.exe: Access is denied.
+exit code: 1

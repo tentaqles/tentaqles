@@ -1,0 +1,6 @@
+$ go test ./internal/termopen -run ^TestPlan_HostileFolderNames$ -count=1 -v
+=== RUN   TestPlan_HostileFolderNames
+--- PASS: TestPlan_HostileFolderNames (0.01s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/termopen	0.063s
+exit code: 0

@@ -1,0 +1,81 @@
+### via Git\bin\bash.exe --login -i (the Windows Terminal Git Bash profile)
+bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-2/probe.exe"
+self pid 137324
+  level 1: pid=168332 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 2: pid=128772 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 3: pid=215888 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i"
+  level 4: pid=364740 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-2/gitbash.sh"
+  level 5: pid=127416 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-2/gitbash.sh"
+  level 6: unreadable
+reachEndTarget => pid=168332 end=false (not a known interactive shell (shell="bash" known=true))
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ exit
+logout
+
+### via Git\usr\bin\bash.exe --login -i (mintty's)
+bash: cannot set terminal process group (670415): Inappropriate ioctl for device
+bash: no job control in this shell
+]0;MINGW64:/c/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33m/c/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-2/probe.exe"
+self pid 147852
+  level 1: pid=180660 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" --login -i"
+  level 2: pid=294932 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" --login -i"
+  level 3: unreadable
+reachEndTarget => pid=180660 end=false (not a known interactive shell (shell="bash" known=true))
+]0;MINGW64:/c/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33m/c/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ exit
+logout
+
+### subshell and pipeline from the interactive bash
+bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ ( "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-2/probe.exe" )
+self pid 186624
+  level 1: pid=146036 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 2: pid=381332 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 3: pid=334584 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i"
+  level 4: pid=276412 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-2/gitbash.sh"
+  level 5: pid=127416 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-2/gitbash.sh"
+  level 6: unreadable
+reachEndTarget => pid=146036 end=false (not a known interactive shell (shell="bash" known=true))
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ "C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239/.job/020-terminal-handover/round-2/probe.exe" | cat
+self pid 6588
+  level 1: pid=166596 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 2: pid=381332 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe\" --login -i"
+  level 3: pid=334584 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i"
+  level 4: pid=276412 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-2/gitbash.sh"
+  level 5: pid=127416 name="bash.exe" known=true reused=false shell=true interactive=false
+           cmdline="\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" .job/020-terminal-handover/round-2/gitbash.sh"
+  level 6: unreadable
+reachEndTarget => pid=166596 end=false (not a known interactive shell (shell="bash" known=true))
+]0;MINGW64:C:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239
+[32mrenato@DESKTOP-553555G [35mMINGW64 [33mC:/repos/tentaqles/tentaqles/.claude/worktrees/agent-a51fa57898be78239[36m (worktree-agent-a51fa57898be78239)[0m
+$ exit
+logout

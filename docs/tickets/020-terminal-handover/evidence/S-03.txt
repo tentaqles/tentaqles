@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestReachDoesNotTrustFromAgent$ -count=1 -v
+=== RUN   TestReachDoesNotTrustFromAgent
+--- PASS: TestReachDoesNotTrustFromAgent (1.51s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.598s
+exit code: 0

@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestReach_NoHandoverWithoutANewClient$ -count=1 -v
+=== RUN   TestReach_NoHandoverWithoutANewClient
+--- PASS: TestReach_NoHandoverWithoutANewClient (1.35s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.444s
+exit code: 0

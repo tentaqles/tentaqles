@@ -1,0 +1,12 @@
+$ go test ./internal/cmd -run ^TestReach_KillsOnlyADirectShellParent$ -count=1 -v
+=== RUN   TestReach_KillsOnlyADirectShellParent
+=== RUN   TestReach_KillsOnlyADirectShellParent/python_under_pwsh
+=== RUN   TestReach_KillsOnlyADirectShellParent/pwsh_under_a_terminal
+=== RUN   TestReach_KillsOnlyADirectShellParent/shell_under_a_shell
+--- PASS: TestReach_KillsOnlyADirectShellParent (1.92s)
+    --- PASS: TestReach_KillsOnlyADirectShellParent/python_under_pwsh (0.63s)
+    --- PASS: TestReach_KillsOnlyADirectShellParent/pwsh_under_a_terminal (0.62s)
+    --- PASS: TestReach_KillsOnlyADirectShellParent/shell_under_a_shell (0.67s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	2.015s
+exit code: 0

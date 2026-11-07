@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestReach_ProfileBlockIsTqHooksInstall$ -count=1 -v
+=== RUN   TestReach_ProfileBlockIsTqHooksInstall
+--- PASS: TestReach_ProfileBlockIsTqHooksInstall (0.67s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.871s
+exit code: 0

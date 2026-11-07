@@ -1,6 +1,6 @@
 # 020: `reach` opens the client's terminal and closes the old one
 
-**Status:** ready
+**Status:** landed
 **Risk:** High: closing the wrong terminal loses a developer's work, and a new terminal that doesn't route into the client runs under no identity
 **UI:** none
 
