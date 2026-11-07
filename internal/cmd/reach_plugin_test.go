@@ -38,11 +38,17 @@ var wantPluginCalls = [][]string{
 func TestReach_InstallsThePlugin(t *testing.T) {
 	clients := isolateReach(t, fullAnswers())
 	reachGuardPlugin = installGuardPlugin
-	bin := fakeClaude(t, testutil.FakeSpec{})
+	// The install changes the covered files as a real one does (the plugin, installed_plugins.json,
+	// enabledPlugins). The re-sign after it is what keeps the record true: without it, reach's
+	// trust.Check below fails.
+	bin := fakeClaude(t, testutil.FakeSpec{CopyArg: "install", Copy: guardCopies(t, "acme")})
 	dir := filepath.Join(clients, "acme")
 	out, err := runReach(t, dir, "--no-banner")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
+	}
+	if g := trust.CheckGuardHook(paths.IdentityDir("acme", "claude")); !g.OK {
+		t.Fatalf("the installed plugin is not a guard: %s", g.Why)
 	}
 	if got := testutil.ReadFakeLog(t, filepath.Join(bin, "claude.argv.log")); !reflect.DeepEqual(got, wantPluginCalls) {
 		t.Fatalf("claude calls = %v, want %v", got, wantPluginCalls)
@@ -95,10 +101,16 @@ func TestReach_PluginInstallFails(t *testing.T) {
 		noClaude bool
 		hang     bool
 		want     string
+		// not is text the output must not hold.
+		not string
 	}{
-		{"the install exits non-zero", testutil.FakeSpec{Exit: 1, Stderr: "error: no network\n"}, false, false, "exit status 1: error: no network"},
-		{"the install hangs", testutil.FakeSpec{SleepMS: 60000}, false, true, "did not finish within"},
-		{"claude is not on the PATH", testutil.FakeSpec{}, true, false, "claude was not found on PATH"},
+		{"the install exits non-zero", testutil.FakeSpec{Exit: 1, Stderr: "error: no network\n"}, false, false, "failed: error: no network", ""},
+		// The reason is the first error line of stderr, not the last line (a tip, a progress frame).
+		{"progress and hints after the error", testutil.FakeSpec{Exit: 1,
+			Stderr: "error: marketplace not found\nWarning: slow mirror\n⠋ 45% 12 MB/s\nTip: run claude plugin --help\n"},
+			false, false, "failed: error: marketplace not found", "Tip: run"},
+		{"the install hangs", testutil.FakeSpec{SleepMS: 60000}, false, true, "did not finish within", ""},
+		{"claude is not on the PATH", testutil.FakeSpec{}, true, false, "claude was not found on PATH", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -123,10 +135,13 @@ func TestReach_PluginInstallFails(t *testing.T) {
 			if time.Since(start) > 60*time.Second {
 				t.Fatalf("reach waited %v for the plugin", time.Since(start))
 			}
-			for _, want := range []string{"The tentaqles plugin was not installed: ", c.want, "\n  " + guardFix} {
+			for _, want := range []string{"The tentaqles plugin was not installed: ", c.want, "\n  " + strings.Join(guardInstallFix, "\n  ")} {
 				if !strings.Contains(out, want) {
 					t.Errorf("missing %q in:\n%s", want, out)
 				}
+			}
+			if c.not != "" && strings.Contains(out, c.not) {
+				t.Errorf("the output holds %q, which is not the reason:\n%s", c.not, out)
 			}
 			if !strings.Contains(out, "acme is ready.") {
 				t.Errorf("reach did not finish:\n%s", out)

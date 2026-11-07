@@ -2,12 +2,15 @@ package trust
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 // The guard of a session is the tentaqles plugin's PreToolUse hook (the plugin's hooks/hooks.json
@@ -39,6 +42,13 @@ type GuardHook struct {
 	Covered bool
 	// NoConfig is set when the client has no Claude config at all (no claude identity).
 	NoConfig bool
+	// Missing is set when the tentaqles plugin is not installed for the client at all.
+	Missing bool
+	// Disabled is set when the plugin is installed but not enabled in the identity's settings.json.
+	Disabled bool
+	// Unresolved is set when the folder the session starts in cannot be resolved, so the project
+	// settings it loads cannot be read.
+	Unresolved bool
 }
 
 // CheckGuardHook reads the Claude config dir claudeDir (an identity's own) and says whether a
@@ -69,11 +79,11 @@ func CheckGuardHook(claudeDir string) GuardHook {
 	}
 	root := PluginRoot(claudeDir)
 	if root == "" {
-		return GuardHook{Why: "the tentaqles plugin is not installed for this client"}
+		return GuardHook{Why: "the tentaqles plugin is not installed for this client", Missing: true}
 	}
 	plugins, _ := doc["enabledPlugins"].(map[string]any)
 	if on, _ := plugins[GuardPlugin].(bool); !on {
-		return GuardHook{Why: fmt.Sprintf("the tentaqles plugin is not enabled (enabledPlugins in %s)", settings)}
+		return GuardHook{Why: fmt.Sprintf("the tentaqles plugin is not enabled (enabledPlugins in %s)", settings), Disabled: true}
 	}
 	hooks := filepath.Join(root, "hooks", "hooks.json")
 	raw, err = os.ReadFile(hooks)
@@ -93,11 +103,16 @@ var projectSettingsFiles = []string{filepath.Join(".claude", "settings.json"), f
 // CheckSessionGuard is CheckGuardHook for a session that runs in cwd inside the client folder root:
 // Claude Code merges the project settings of each folder from cwd up to root into the identity's,
 // so a disableAllHooks or a tentaqles entry set off there turns the guard off for that session
-// (REQ-8). A project file that cannot be read as JSON counts as off, and is named.
-func CheckSessionGuard(claudeDir string, dirs []string) GuardHook {
+// (REQ-8). A project file that cannot be read as JSON counts as off, and is named. A cwd that cannot
+// be resolved is refused: its project settings cannot be read.
+func CheckSessionGuard(claudeDir, cwd, root string) GuardHook {
 	g := CheckGuardHook(claudeDir)
 	if !g.OK {
 		return g
+	}
+	dirs, err := SessionDirs(cwd, root)
+	if err != nil {
+		return GuardHook{Why: "the folder the session starts in can't be resolved, so its project settings can't be checked: " + err.Error(), Unresolved: true}
 	}
 	for _, d := range dirs {
 		for _, rel := range projectSettingsFiles {
@@ -142,27 +157,96 @@ func checkProjectSettings(file string) GuardHook {
 }
 
 // SessionDirs are the folders whose project settings a session started in cwd loads: cwd, and each
-// parent up to the client folder root when cwd is inside it. A cwd outside root is checked alone.
-// root "" (no folder) gives cwd alone.
-func SessionDirs(cwd, root string) []string {
-	dirs := []string{cwd}
+// parent up to the client folder root when cwd is inside it. Both are resolved through their links
+// (junctions included) before they are compared, and the folders returned are the resolved ones, so
+// a cwd reached through a link still reaches the root's settings. A cwd outside root is checked
+// alone; root "" gives cwd alone. It is an error when cwd, or root, cannot be resolved: a session
+// whose project settings cannot be read is refused, not passed.
+func SessionDirs(cwd, root string) ([]string, error) {
+	c, err := resolveFolder(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("the working folder %q: %w", cwd, err)
+	}
 	if root == "" {
-		return dirs
+		return []string{c}, nil
 	}
-	if rel, err := filepath.Rel(root, cwd); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return dirs
+	r, err := resolveFolder(root)
+	if err != nil {
+		return nil, fmt.Errorf("the client folder %q: %w", root, err)
 	}
-	for cur := cwd; ; {
-		if rel, err := filepath.Rel(root, cur); err != nil || rel == "." {
-			return dirs
+	if rel, err := filepath.Rel(r, c); err != nil || paths.IsOutside(rel) {
+		return []string{c}, nil
+	}
+	dirs := []string{c}
+	for cur := c; ; {
+		if rel, err := filepath.Rel(r, cur); err != nil || rel == "." {
+			return dirs, nil
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
-			return dirs
+			return dirs, nil
 		}
 		cur = parent
 		dirs = append(dirs, cur)
 	}
+}
+
+// resolveFolder is the absolute path of an existing folder with every link on the way resolved. An
+// error when the folder is empty, does not exist, or cannot be resolved. It walks the path itself:
+// filepath.EvalSymlinks does not follow a junction on Windows (Go 1.23 on), and a junction is the
+// link that needs no privilege, so a walk that stopped at one would miss the client's own folder.
+func resolveFolder(p string) (string, error) {
+	if p == "" {
+		return "", errors.New("it is not known")
+	}
+	a, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return resolveLinks(a, 0)
+}
+
+// maxLinks bounds the links resolveLinks follows, so a loop of links cannot stall the hook.
+const maxLinks = 40
+
+// resolveLinks walks the absolute path p one element at a time. Each element must exist; a symlink
+// or junction is replaced by its target (resolved in turn), and anything else must be a folder.
+func resolveLinks(p string, depth int) (string, error) {
+	if depth > maxLinks {
+		return "", fmt.Errorf("%s: too many links", p)
+	}
+	vol := filepath.VolumeName(p)
+	cur := vol + string(filepath.Separator)
+	rest := strings.Trim(p[len(vol):], string(filepath.Separator))
+	if rest == "" {
+		return cur, nil
+	}
+	for _, part := range strings.Split(rest, string(filepath.Separator)) {
+		next := filepath.Join(cur, part)
+		fi, err := os.Lstat(next)
+		if err != nil {
+			return "", err
+		}
+		if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			tgt, err := os.Readlink(next)
+			if err != nil {
+				return "", err
+			}
+			tgt = strings.TrimPrefix(tgt, `\??\`)
+			if !filepath.IsAbs(tgt) {
+				tgt = filepath.Join(cur, tgt)
+			}
+			if cur, err = resolveLinks(tgt, depth+1); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if !fi.IsDir() {
+			return "", fmt.Errorf("%s is not a folder", next)
+		}
+		cur = next
+	}
+	return filepath.Clean(cur), nil
 }
 
 // preToolUseRunsGuard reports whether a hooks.json document has a PreToolUse entry whose matcher
@@ -216,23 +300,43 @@ func runsGuardCommand(command string) bool {
 	return path.Base(strings.ReplaceAll(fields[1], `\`, "/")) == "tq_hook.sh" && fields[2] == "pre-tool-use"
 }
 
-// GuardHookFix is the line that fixes a missing guard for workspace ws: the plugin install, or, when
-// a settings file switches the guard off, the switch to clear and what follows the edit (a re-sign
-// for the identity's settings, which the record covers; a new session for a project's).
-func GuardHookFix(ws string, g GuardHook) string {
+// GuardHookFix is the sequence of lines that gets a developer a guarded session for workspace ws,
+// each one copyable and run in order: the plugin install when it is missing (with its marketplace
+// and the record's re-sign), the enable when it is off, or, for a settings switch, the switch to
+// clear and what follows the edit (a re-sign for the identity's settings, which the record covers;
+// a new session for a project's). The plugin install line is exact (REQ-5).
+func GuardHookFix(ws string, g GuardHook) []string {
 	switch {
 	case g.NoConfig:
-		return fmt.Sprintf("add claude to the identities in %s's manifest, then: tq allow %s", ws, ws)
+		return []string{fmt.Sprintf("add claude to the identities in %s's manifest, then: tq allow %s", ws, ws)}
+	case g.Unresolved:
+		return []string{"run it from a folder whose path resolves, then: tq run " + ws + " -- claude"}
 	case g.Setting == "disableAllHooks":
 		next := "tq run " + ws + " -- claude"
 		if g.Covered {
 			next = "tq hooks verify --accept " + ws
 		}
-		return fmt.Sprintf("remove %q (or set it to false) in %s, then: %s", g.Setting, g.File, next)
+		return []string{fmt.Sprintf("remove %q (or set it to false) in %s, then: %s", g.Setting, g.File, next)}
 	case g.Setting == "enabledPlugins":
-		return fmt.Sprintf("set %q to true under enabledPlugins in %s, then: tq run %s -- claude", GuardPlugin, g.File, ws)
+		return []string{fmt.Sprintf("set %q to true under enabledPlugins in %s, then: tq run %s -- claude", GuardPlugin, g.File, ws)}
+	case g.Disabled:
+		return []string{"tq run " + ws + " -- claude plugin enable " + GuardPlugin, "tq hooks verify --accept " + ws}
+	case g.Missing:
+		return GuardInstallLines(ws)
 	}
-	return GuardPluginLine(ws)
+	return []string{GuardPluginLine(ws), "tq hooks verify --accept " + ws}
+}
+
+// GuardInstallLines are the lines that install the tentaqles plugin for workspace ws, in the order
+// to run them: the marketplace (which may be there already, and then the line says so), the install
+// (REQ-5's line, exact), then the re-sign, since the install changes what the record covers. The
+// marketplace add does not change a covered file, so the install line still runs after it.
+func GuardInstallLines(ws string) []string {
+	return []string{
+		"tq run " + ws + " -- claude plugin marketplace add " + GuardMarketplace,
+		GuardPluginLine(ws),
+		"tq hooks verify --accept " + ws,
+	}
 }
 
 // GuardPluginLine is the command that installs the tentaqles plugin for workspace ws, run through

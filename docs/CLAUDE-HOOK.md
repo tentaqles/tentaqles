@@ -357,21 +357,32 @@ unless the client's Claude config (the identity's `CLAUDE_CONFIG_DIR`) has all o
 - a `PreToolUse` entry in the plugin's `hooks/hooks.json` whose matcher selects `Bash` and an `mcp__` tool, and
   whose command runs `tq_hook.sh pre-tool-use`.
 
-When one is missing, the command exits non-zero, prints the reason and the fix line, and launches nothing:
+When one is missing, the command exits non-zero, prints the reason and the fix, and launches nothing. A missing
+plugin needs three lines, run in this order, each one copyable on its own:
 
 ```
 tq: claude won't start a session for acme without the tentaqles guard: the tentaqles plugin is not installed for this client
-  fix: tq run acme -- claude plugin install tentaqles@tentaqles
+  fix, in this order:
+    tq run acme -- claude plugin marketplace add tentaqles/tentaqles
+    tq run acme -- claude plugin install tentaqles@tentaqles
+    tq hooks verify --accept acme
 ```
 
-For `disableAllHooks` the fix line names the file and the setting instead: remove it (or set it to `false`), then
+The marketplace line may be a no-op when the marketplace is there already. The install line changes the files the
+record covers (`enabledPlugins`, `installed_plugins.json`, the plugin folder), so `tq run` refuses until the third line
+re-signs them; that is the expected state between the second and third line. A plugin that is installed but switched
+off gets `tq run acme -- claude plugin enable tentaqles@tentaqles` and the re-sign line instead.
+
+For `disableAllHooks` the fix names the file and the setting: remove it (or set it to `false`), then
 `tq hooks verify --accept acme` for the identity's `settings.json`, or `tq run acme -- claude` for a project file
-(the record does not cover project files).
+(the record does not cover project files). A working folder that cannot be resolved (a broken link, or a folder that
+no longer exists) is refused too, with the fix to run it from a folder that resolves.
 
 Limits: the check reads the project files only; no hook rule denies a write to them, so an agent that edits one
 is caught at the next session `tq run` launches, not when it writes. Managed settings (the system-wide file) and
-Claude Code's own effective settings are not read. A plain `claude` a person starts outside `tq run` is not checked. Anything the check cannot read counts as missing. `tq doctor` reports the same
-state as `guard-hook-missing`, with the same fix line.
+Claude Code's own effective settings are not read. A plain `claude` a person starts outside `tq run` is not checked.
+Anything the check cannot read counts as missing. `tq doctor` reports the same state as `guard-hook-missing`, with the
+same fix lines; a client with no claude identity gets no such finding (the refusal still covers a session in it).
 
 Not refused: `claude` subcommands (`claude plugin install …`, `claude mcp …`), `claude --help` and
 `claude --version`, so the fix line itself runs; any command that is not `claude` (`tq run acme -- gh pr list`);
@@ -380,8 +391,8 @@ and `claude` in a neutral folder, which is unchanged. The refusal covers only `c
 
 `tentaqles reach` installs the plugin for a new client once the trust is signed: `claude plugin marketplace add
 tentaqles/tentaqles`, then `claude plugin install tentaqles@tentaqles`, two minutes at most each, and it signs the
-record again. `--no-plugin` skips that step. A failed install does not stop reach; it prints the reason and the
-fix line.
+record again. `--no-plugin` skips that step. A failed install does not stop reach; it prints the reason (the first
+error line of the command's output) and the same three lines, in order, that the refusal prints.
 
 ## Fallback mode (tq not installed)
 

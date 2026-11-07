@@ -423,6 +423,8 @@ func mkWorkspacesInOneBase(t *testing.T, names ...string) map[string]string {
 		if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		// The client has its guard, as reach leaves it (ADR-0018): a session launches only with it.
+		writeGuard(t, name, guardOpts{})
 		h, err := trust.HashFile(mp)
 		if err != nil {
 			t.Fatal(err)

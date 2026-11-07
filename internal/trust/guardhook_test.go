@@ -21,15 +21,22 @@ func guardClaudeDir(t *testing.T, hooks, settings string) string {
 		filepath.Join(claude, "settings.json"):                     settings,
 	}
 	for p, body := range files {
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, p, body)
 	}
 	return claude
 }
+
+// resolvedTemp is the test's temp folder with its links resolved, as the check sees a folder.
+func resolvedTemp(t *testing.T) string {
+	t.Helper()
+	d, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+const guardHooks = `{"hooks":{"PreToolUse":[{"matcher":"^(Bash|mcp__.*)$","hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" pre-tool-use"}]}]}}`
 
 // The release's own hooks.json is a guard: the check accepts what ships.
 func TestGuardHook_ShippedHooksPass(t *testing.T) {
@@ -93,12 +100,11 @@ func TestGuardHook_Matchers(t *testing.T) {
 
 // Anything the check cannot read is no guard: it fails closed, with the reason.
 func TestGuardHook_FailsClosed(t *testing.T) {
-	hooks := `{"hooks":{"PreToolUse":[{"matcher":"^(Bash|mcp__.*)$","hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" pre-tool-use"}]}]}}`
 	cases := map[string]struct{ settings, hooks string }{
-		"settings not JSON":           {`{"enabledPlugins":`, hooks},
-		"disableAllHooks as a string": {`{"enabledPlugins":{"tentaqles@tentaqles":true},"disableAllHooks":"true"}`, hooks},
+		"settings not JSON":           {`{"enabledPlugins":`, guardHooks},
+		"disableAllHooks as a string": {`{"enabledPlugins":{"tentaqles@tentaqles":true},"disableAllHooks":"true"}`, guardHooks},
 		"hooks not JSON":              {`{"enabledPlugins":{"tentaqles@tentaqles":true}}`, `{"hooks":`},
-		"enabled as a string":         {`{"enabledPlugins":{"tentaqles@tentaqles":"true"}}`, hooks},
+		"enabled as a string":         {`{"enabledPlugins":{"tentaqles@tentaqles":"true"}}`, guardHooks},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -108,14 +114,14 @@ func TestGuardHook_FailsClosed(t *testing.T) {
 		})
 	}
 	// disableAllHooks false is not a switch; the setting is named when it is set.
-	if g := CheckGuardHook(guardClaudeDir(t, hooks, `{"enabledPlugins":{"tentaqles@tentaqles":true},"disableAllHooks":false}`)); !g.OK {
+	if g := CheckGuardHook(guardClaudeDir(t, guardHooks, `{"enabledPlugins":{"tentaqles@tentaqles":true},"disableAllHooks":false}`)); !g.OK {
 		t.Fatalf("disableAllHooks false: %+v", g)
 	}
-	if g := CheckGuardHook(guardClaudeDir(t, hooks, `{"enabledPlugins":{"tentaqles@tentaqles":true},"disableAllHooks":true}`)); g.OK || g.Setting != "disableAllHooks" {
+	if g := CheckGuardHook(guardClaudeDir(t, guardHooks, `{"enabledPlugins":{"tentaqles@tentaqles":true},"disableAllHooks":true}`)); g.OK || g.Setting != "disableAllHooks" {
 		t.Fatalf("disableAllHooks true names the setting: %+v", g)
 	}
-	// No installed plugin at all.
-	if g := CheckGuardHook(t.TempDir()); g.OK || g.Why == "" {
+	// No installed plugin at all: missing, with the three install lines.
+	if g := CheckGuardHook(t.TempDir()); g.OK || g.Why == "" || !g.Missing {
 		t.Fatalf("no plugin: %+v", g)
 	}
 	// No Claude config dir at all (a client with no claude identity): never the working directory's
@@ -123,7 +129,7 @@ func TestGuardHook_FailsClosed(t *testing.T) {
 	if g := CheckGuardHook(""); g.OK || !g.NoConfig {
 		t.Fatalf("no config dir: %+v", g)
 	}
-	if got := GuardHookFix("acme", GuardHook{NoConfig: true}); got != "add claude to the identities in acme's manifest, then: tq allow acme" {
+	if got := GuardHookFix("acme", GuardHook{NoConfig: true}); len(got) != 1 || got[0] != "add claude to the identities in acme's manifest, then: tq allow acme" {
 		t.Fatalf("no-config fix = %q", got)
 	}
 }
@@ -133,7 +139,6 @@ func TestGuardHook_FailsClosed(t *testing.T) {
 // off and is named; a file with neither switch does not.
 func TestGuardHook_ProjectSettings(t *testing.T) {
 	const ok = `{"enabledPlugins":{"tentaqles@tentaqles":true}}`
-	hooks := `{"hooks":{"PreToolUse":[{"matcher":"^(Bash|mcp__.*)$","hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" pre-tool-use"}]}]}}`
 	cases := []struct {
 		name    string
 		file    string
@@ -154,12 +159,12 @@ func TestGuardHook_ProjectSettings(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			claude := guardClaudeDir(t, hooks, ok)
-			root := t.TempDir()
+			claude := guardClaudeDir(t, guardHooks, ok)
+			root := resolvedTemp(t)
 			if c.file != "" {
 				writeFile(t, filepath.Join(root, c.file), c.body)
 			}
-			g := CheckSessionGuard(claude, []string{root})
+			g := CheckSessionGuard(claude, root, root)
 			if g.OK != c.wantOK {
 				t.Fatalf("OK = %v, want %v: %+v", g.OK, c.wantOK, g)
 			}
@@ -179,33 +184,83 @@ func TestGuardHook_ProjectSettings(t *testing.T) {
 // A project file is read only for a folder the session starts in: a sibling is not, and the folder
 // above the client root is not, while the folders between cwd and root are.
 func TestGuardHook_SessionDirs(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "acme")
+	base := resolvedTemp(t)
+	root := filepath.Join(base, "acme")
 	app := filepath.Join(root, "services", "api")
+	for _, d := range []string{app, filepath.Join(root, "other")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cases := []struct {
 		name, cwd, root string
 		want            []string
 	}{
 		{"at the root", root, root, []string{root}},
 		{"two levels down", app, root, []string{app, filepath.Join(root, "services"), root}},
-		{"outside the root", filepath.Dir(root), root, []string{filepath.Dir(root)}},
+		{"outside the root", base, root, []string{base}},
 		{"no root", app, "", []string{app}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := SessionDirs(c.cwd, c.root)
-			if strings.Join(got, "|") != strings.Join(c.want, "|") {
-				t.Fatalf("SessionDirs = %q, want %q", got, c.want)
+			got, err := SessionDirs(c.cwd, c.root)
+			if err != nil || strings.Join(got, "|") != strings.Join(c.want, "|") {
+				t.Fatalf("SessionDirs = %q, %v; want %q", got, err, c.want)
 			}
 		})
 	}
 	// A sibling's settings and the folder above the root are not read by a session in app.
-	claude := guardClaudeDir(t,
-		`{"hooks":{"PreToolUse":[{"matcher":"^(Bash|mcp__.*)$","hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" pre-tool-use"}]}]}}`,
-		`{"enabledPlugins":{"tentaqles@tentaqles":true}}`)
+	claude := guardClaudeDir(t, guardHooks, `{"enabledPlugins":{"tentaqles@tentaqles":true}}`)
 	writeFile(t, filepath.Join(root, "other", ".claude", "settings.json"), `{"disableAllHooks":true}`)
-	writeFile(t, filepath.Join(filepath.Dir(root), ".claude", "settings.json"), `{"disableAllHooks":true}`)
-	if g := CheckSessionGuard(claude, SessionDirs(app, root)); !g.OK {
+	writeFile(t, filepath.Join(base, ".claude", "settings.json"), `{"disableAllHooks":true}`)
+	if g := CheckSessionGuard(claude, app, root); !g.OK {
 		t.Fatalf("a folder the session does not start in is not read: %+v", g)
+	}
+}
+
+// S-1: a working folder reached through a link (a junction on Windows, a symlink elsewhere) is
+// resolved before the walk, so the client's own project settings are still read. Not skipped on
+// any OS: a link that cannot be made fails the test.
+func TestGuardHook_LinkedFolder(t *testing.T) {
+	base := resolvedTemp(t)
+	root := filepath.Join(base, "acme")
+	services := filepath.Join(root, "services")
+	if err := os.MkdirAll(filepath.Join(services, "api"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The project settings sit at the client's root; the session starts in a link to services/api.
+	writeFile(t, filepath.Join(root, ".claude", "settings.json"), `{"disableAllHooks":true}`)
+	link := filepath.Join(base, "link")
+	if err := makeDirLink(services, link); err != nil {
+		t.Fatalf("the link to %s could not be made: %v", services, err)
+	}
+	claude := guardClaudeDir(t, guardHooks, `{"enabledPlugins":{"tentaqles@tentaqles":true}}`)
+	g := CheckSessionGuard(claude, filepath.Join(link, "api"), root)
+	if g.OK || g.Setting != "disableAllHooks" || g.File != filepath.Join(root, ".claude", "settings.json") {
+		t.Fatalf("a session started through a link reads the client's settings: %+v", g)
+	}
+}
+
+// S-1: a working folder that cannot be resolved is refused, with the fix that runs it from a folder
+// that resolves; a root that cannot be resolved is refused the same way.
+func TestGuardHook_UnresolvedFolder(t *testing.T) {
+	base := resolvedTemp(t)
+	root := filepath.Join(base, "acme")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claude := guardClaudeDir(t, guardHooks, `{"enabledPlugins":{"tentaqles@tentaqles":true}}`)
+	for name, cwd := range map[string]string{"empty": "", "missing": filepath.Join(root, "gone")} {
+		g := CheckSessionGuard(claude, cwd, root)
+		if g.OK || !g.Unresolved || g.Why == "" {
+			t.Fatalf("%s working folder: want a refusal, got %+v", name, g)
+		}
+		if got := GuardHookFix("acme", g); len(got) != 1 || !strings.Contains(got[0], "tq run acme -- claude") {
+			t.Fatalf("%s working folder: fix = %q", name, got)
+		}
+	}
+	if g := CheckSessionGuard(claude, root, filepath.Join(base, "gone")); g.OK || !g.Unresolved {
+		t.Fatalf("a root that does not resolve is refused: %+v", g)
 	}
 }
 
@@ -213,12 +268,33 @@ func TestGuardHook_SessionDirs(t *testing.T) {
 // record covers them), a new session for a project's.
 func TestGuardHook_ProjectFixLines(t *testing.T) {
 	got := GuardHookFix("acme", GuardHook{Why: "x", Setting: "disableAllHooks", File: "/p/.claude/settings.local.json"})
-	if got != `remove "disableAllHooks" (or set it to false) in /p/.claude/settings.local.json, then: tq run acme -- claude` {
+	if len(got) != 1 || got[0] != `remove "disableAllHooks" (or set it to false) in /p/.claude/settings.local.json, then: tq run acme -- claude` {
 		t.Fatalf("project fix = %q", got)
 	}
 	got = GuardHookFix("acme", GuardHook{Why: "x", Setting: "enabledPlugins", File: "/p/.claude/settings.json"})
-	if got != `set "tentaqles@tentaqles" to true under enabledPlugins in /p/.claude/settings.json, then: tq run acme -- claude` {
+	if len(got) != 1 || got[0] != `set "tentaqles@tentaqles" to true under enabledPlugins in /p/.claude/settings.json, then: tq run acme -- claude` {
 		t.Fatalf("enabledPlugins fix = %q", got)
+	}
+}
+
+// The fix of a missing guard is the three install lines in order; a plugin that is installed and
+// switched off is enabled; for disableAllHooks the fix names the setting and the file.
+func TestGuardHook_FixLines(t *testing.T) {
+	want := []string{
+		"tq run acme -- claude plugin marketplace add tentaqles/tentaqles",
+		"tq run acme -- claude plugin install tentaqles@tentaqles",
+		"tq hooks verify --accept acme",
+	}
+	if got := GuardHookFix("acme", GuardHook{Why: "x", Missing: true}); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("missing fix = %q", got)
+	}
+	got := GuardHookFix("acme", GuardHook{Why: "x", Disabled: true})
+	if strings.Join(got, "\n") != "tq run acme -- claude plugin enable tentaqles@tentaqles\ntq hooks verify --accept acme" {
+		t.Fatalf("disabled fix = %q", got)
+	}
+	got = GuardHookFix("acme", GuardHook{Why: "x", Setting: "disableAllHooks", File: "/c/settings.json", Covered: true})
+	if len(got) != 1 || got[0] != `remove "disableAllHooks" (or set it to false) in /c/settings.json, then: tq hooks verify --accept acme` {
+		t.Fatalf("setting fix = %q", got)
 	}
 }
 
@@ -229,16 +305,5 @@ func writeFile(t *testing.T, p, body string) {
 	}
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// The fix line of a missing guard is the plugin install; for disableAllHooks it names the setting.
-func TestGuardHook_FixLines(t *testing.T) {
-	if got := GuardHookFix("acme", GuardHook{Why: "x"}); got != "tq run acme -- claude plugin install tentaqles@tentaqles" {
-		t.Fatalf("plugin fix = %q", got)
-	}
-	got := GuardHookFix("acme", GuardHook{Why: "x", Setting: "disableAllHooks", File: "/c/settings.json", Covered: true})
-	if got != `remove "disableAllHooks" (or set it to false) in /c/settings.json, then: tq hooks verify --accept acme` {
-		t.Fatalf("setting fix = %q", got)
 	}
 }

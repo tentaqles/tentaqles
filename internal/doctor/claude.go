@@ -50,11 +50,14 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 // tentaqles guard (ADR-0018): the check tq run makes before it starts claude, on the same
 // CLAUDE_CONFIG_DIR and the folder's own project settings, with the same fix line.
 func guardHookCheck(w *resolve.Workspace, add func(level, code, ws, msg, fix string)) {
-	g := trust.CheckSessionGuard(envplan.Desired(w)["CLAUDE_CONFIG_DIR"], trust.SessionDirs(w.Root, w.Root))
-	if g.OK {
+	g := trust.CheckSessionGuard(envplan.Desired(w)["CLAUDE_CONFIG_DIR"], w.Root, w.Root)
+	if g.OK || g.NoConfig {
+		// A client with no claude identity has no Claude config for tq to guard, so there is nothing
+		// for doctor to report; tq run still refuses a session in it.
 		return
 	}
-	add("error", "guard-hook-missing", w.Name, "no session starts without the tentaqles guard: "+g.Why, trust.GuardHookFix(w.Name, g))
+	add("error", "guard-hook-missing", w.Name, "no session starts without the tentaqles guard: "+g.Why,
+		strings.Join(trust.GuardHookFix(w.Name, g), "\n    "))
 }
 
 // commandStrings returns "command + args" for every statusLine, hook and

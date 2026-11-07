@@ -11,10 +11,12 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 - `tentaqles reach` installs the tentaqles plugin into the new client's Claude config once the trust is
   signed (`claude plugin marketplace add tentaqles/tentaqles`, then `claude plugin install tentaqles@tentaqles`,
   two minutes each), and signs the record again. A failed install does not fail reach: it prints the reason
-  and the line to run. `--no-plugin` skips it.
+  and the three lines to run, in order (the marketplace, the install, and `tq hooks verify --accept <ws>`).
+  `--no-plugin` skips it and prints the same lines.
 - `tq run <ws> -- claude` and `tq run . -- claude` refuse to start a session when the client's Claude config
   has no enabled tentaqles plugin with its PreToolUse guard hook, or when `disableAllHooks` is set. They exit
-  non-zero, say why, and print `tq run <ws> -- claude plugin install tentaqles@tentaqles`. The project's
+  non-zero, say why, and print the lines to run in order (for a plugin that is off, `claude plugin enable`).
+  The install line is `tq run <ws> -- claude plugin install tentaqles@tentaqles`. The project's
   `.claude/settings.json` and `settings.local.json` count too: a `disableAllHooks` or a tentaqles `enabledPlugins`
   switch set off there refuses the session, naming the file. `claude` subcommands,
   `--help` and `--version`, other programs through `tq run`, and a neutral folder are not refused.

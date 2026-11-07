@@ -10,6 +10,7 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
@@ -101,6 +102,51 @@ func writeTB(tb testing.TB, p, body string) {
 // guardFix is the exact line that installs the plugin for a client (REQ-5).
 const guardFix = "tq run acme -- claude plugin install tentaqles@tentaqles"
 
+// guardInstallFix is what a refusal for a missing plugin prints, in this order: the marketplace (it
+// may be there already), REQ-5's install line, and the re-sign, since the install changes what the
+// record covers.
+var guardInstallFix = []string{"tq run acme -- claude plugin marketplace add tentaqles/tentaqles", guardFix, "tq hooks verify --accept acme"}
+
+// fixBlockOf is the refusal's fix section for lines: the form fixBlock prints.
+func fixBlockOf(lines []string) string {
+	if len(lines) == 1 {
+		return "fix: " + lines[0]
+	}
+	return "fix, in this order:\n    " + strings.Join(lines, "\n    ")
+}
+
+// guardCopies are the files a real `claude plugin install` leaves for acme's Claude config, as a
+// fake claude copies them into place: the plugin folder, installed_plugins.json and settings.json
+// with enabledPlugins. The sources are written to a folder of their own. The copy runs only for the
+// install (CopyArg), as the marketplace add changes none of the covered files.
+func guardCopies(t *testing.T, name string) []testutil.FakeCopy {
+	t.Helper()
+	src := testutil.TempDir(t)
+	claude := paths.IdentityDir(name, "claude")
+	plugin := filepath.Join(claude, "plugins", "cache", "tentaqles", "tentaqles", guardVersion)
+	hooks, err := os.ReadFile(filepath.Join("..", "..", "plugin", "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"plugin.json":    `{"name":"tentaqles","version":"` + guardVersion + `"}`,
+		"hooks.json":     string(hooks),
+		"tq_hook.sh":     "#!/usr/bin/env bash\nexit 0\n",
+		"installed.json": fmt.Sprintf(`{"version":2,"plugins":{"tentaqles@tentaqles":[{"scope":"user","installPath":%s,"version":%q}]}}`, jsonPathLit(plugin), guardVersion),
+		"settings.json":  `{"enabledPlugins":{"tentaqles@tentaqles":true}}`,
+	}
+	for n, body := range files {
+		writeTB(t, filepath.Join(src, n), body)
+	}
+	return []testutil.FakeCopy{
+		{From: filepath.Join(src, "plugin.json"), To: filepath.Join(plugin, ".claude-plugin", "plugin.json")},
+		{From: filepath.Join(src, "hooks.json"), To: filepath.Join(plugin, "hooks", "hooks.json")},
+		{From: filepath.Join(src, "tq_hook.sh"), To: filepath.Join(plugin, "scripts", "tq_hook.sh")},
+		{From: filepath.Join(src, "installed.json"), To: filepath.Join(claude, "plugins", "installed_plugins.json")},
+		{From: filepath.Join(src, "settings.json"), To: filepath.Join(claude, "settings.json")},
+	}
+}
+
 func TestRun_StartsWithTheHook(t *testing.T) {
 	mkLaunchWS(t, "acme", "")
 	clearAgentMarkers(t)
@@ -124,14 +170,14 @@ func TestRun_RefusesWithNoGuardHook(t *testing.T) {
 	calls := fakeExec(t)
 	for _, args := range [][]string{{"run", "acme", "--", "claude"}, {"run", "acme", "--", "claude", "-p", "hi"}} {
 		_, err := runTq(t, args...)
-		if err == nil || !strings.Contains(err.Error(), "without the tentaqles guard") || !strings.Contains(err.Error(), "\n  fix: "+guardFix) {
-			t.Fatalf("%v: want the refusal with the fix line, got %v", args, err)
+		if err == nil || !strings.Contains(err.Error(), "without the tentaqles guard") || !strings.Contains(err.Error(), "\n  "+fixBlockOf(guardInstallFix)) {
+			t.Fatalf("%v: want the refusal with the fix lines in order, got %v", args, err)
 		}
 	}
 	chdir(t, root)
 	_, err := runTq(t, "run", ".", "--", "claude")
-	if err == nil || !strings.Contains(err.Error(), "\n  fix: "+guardFix) {
-		t.Fatalf("tq run . : want the refusal with the fix line, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "\n  "+fixBlockOf(guardInstallFix)) {
+		t.Fatalf("tq run . : want the refusal with the fix lines in order, got %v", err)
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("nothing may launch without the guard: %+v", *calls)
@@ -158,11 +204,15 @@ func TestRun_DisabledPluginIsNoHook(t *testing.T) {
 		name string
 		g    guardOpts
 		want []string
+		// fix is the fix section the refusal must print.
+		fix string
 	}{
-		{"enabledPlugins false", guardOpts{Disabled: true}, []string{"not enabled", "enabledPlugins"}},
-		{"disableAllHooks", guardOpts{DisableAllHooks: true}, []string{"disableAllHooks", "settings.json", "turns off every hook"}},
+		{"enabledPlugins false", guardOpts{Disabled: true}, []string{"not enabled", "enabledPlugins"},
+			"fix, in this order:\n    tq run acme -- claude plugin enable tentaqles@tentaqles\n    tq hooks verify --accept acme"},
+		{"disableAllHooks", guardOpts{DisableAllHooks: true}, []string{"disableAllHooks", "settings.json", "turns off every hook"},
+			`fix: remove "disableAllHooks" (or set it to false) in `},
 		{"no PreToolUse", guardOpts{Hooks: `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" session-start"}]}]}}`},
-			[]string{"no PreToolUse hook"}},
+			[]string{"no PreToolUse hook"}, "fix, in this order:\n    tq run acme -- claude plugin install tentaqles@tentaqles\n    tq hooks verify --accept acme"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -178,8 +228,8 @@ func TestRun_DisabledPluginIsNoHook(t *testing.T) {
 					t.Errorf("the refusal lacks %q: %v", w, err)
 				}
 			}
-			if c.g.DisableAllHooks && !strings.Contains(err.Error(), "fix: remove \"disableAllHooks\"") {
-				t.Errorf("the fix names the setting: %v", err)
+			if !strings.Contains(err.Error(), "\n  "+c.fix) {
+				t.Errorf("the fix section is %q: %v", c.fix, err)
 			}
 			if len(*calls) != 0 {
 				t.Fatalf("nothing may launch: %+v", *calls)
@@ -318,6 +368,50 @@ func TestProtectedPaths_PluginRegistration(t *testing.T) {
 				t.Fatalf("%s %s: want the protected-path deny, got code=%d rule=%q stderr=%q", tool, p, code, rule, errOut)
 			}
 		}
+	}
+}
+
+// R-1: the lines a refusal prints get a developer a guarded session when run in order, each against
+// the state the line before it leaves. The fake claude installs the plugin on `install` only; the
+// marketplace add changes no covered file, so the install line still runs after it; the install
+// changes covered files, so tq run refuses until the re-sign; the re-sign lets the session start.
+// The lines run through the real launcher (no execCommand fake), so the session really starts.
+func TestRun_FixLinesRunInOrder(t *testing.T) {
+	mkLaunchWSGuard(t, "acme", "", false, guardOpts{Absent: true})
+	clearAgentMarkers(t)
+	bin := fakeClaude(t, testutil.FakeSpec{CopyArg: "install", Copy: guardCopies(t, "acme")})
+	if _, err := runTq(t, "run", "acme", "--", "claude"); err == nil || !strings.Contains(err.Error(), "\n  "+fixBlockOf(guardInstallFix)) {
+		t.Fatalf("before any line: want the refusal with the three lines, got %v", err)
+	}
+	argv := filepath.Join(bin, "claude.argv.log")
+
+	// Line 1: the marketplace. The plugin is still missing, so the refusal is about that, not the record.
+	if out, err := runTq(t, strings.Fields(guardInstallFix[0])[1:]...); err != nil {
+		t.Fatalf("line 1 %q: %v %s", guardInstallFix[0], err, out)
+	}
+	if _, err := runTq(t, "run", "acme", "--", "claude"); err == nil || !strings.Contains(err.Error(), "not installed") || strings.Contains(err.Error(), "integrity mismatch") {
+		t.Fatalf("after line 1 the plugin is still missing (and the record still holds): %v", err)
+	}
+
+	// Line 2: the install, REQ-5's line. It changes covered files, so the next tq run refuses on the record.
+	if out, err := runTq(t, strings.Fields(guardInstallFix[1])[1:]...); err != nil {
+		t.Fatalf("line 2 %q: %v %s", guardFix, err, out)
+	}
+	if _, err := runTq(t, "run", "acme", "--", "claude"); err == nil || !strings.Contains(err.Error(), "integrity mismatch") || !strings.Contains(err.Error(), "tq hooks verify acme") {
+		t.Fatalf("after line 2 the record names the change and tq hooks verify: %v", err)
+	}
+
+	// Line 3: the re-sign by a human (the confirmation is the test's yes). The session starts.
+	if out, err := runTq(t, strings.Fields(guardInstallFix[2])[1:]...); err != nil {
+		t.Fatalf("line 3 %q: %v %s", guardInstallFix[2], err, out)
+	}
+	if _, err := runTq(t, "run", "acme", "--", "claude"); err != nil {
+		t.Fatalf("after line 3 the session starts: %v", err)
+	}
+	got := testutil.ReadFakeLog(t, argv)
+	if n := len(got); n < 3 || strings.Join(got[0], " ") != "plugin marketplace add tentaqles/tentaqles" ||
+		strings.Join(got[1], " ") != "plugin install tentaqles@tentaqles" || strings.Join(got[n-1], " ") != "--dangerously-skip-permissions" {
+		t.Fatalf("claude calls in order: %v", got)
 	}
 }
 

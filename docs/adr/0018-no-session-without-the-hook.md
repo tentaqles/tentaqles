@@ -30,8 +30,11 @@ covers (`docs/threat-model.md`, B1).
   skips the step. A marketplace add that fails does not stop the install, since the marketplace may be there already.
 - **`tq run <ws> -- claude` and `tq run . -- claude` refuse a session without the guard.** A session is claude with
   no subcommand and no `--help` or `--version`, in an identity's folder. The refusal is checked before anything
-  launches, exits non-zero, and prints the reason and the fix line `tq run <ws> -- claude plugin install
-  tentaqles@tentaqles`. The guard is present when the client's `settings.json` does not set `disableAllHooks`, the
+  launches, exits non-zero, and prints the reason and the fix as lines to run in order: for a missing plugin, `tq run
+  <ws> -- claude plugin marketplace add tentaqles/tentaqles`, then REQ-5's line `tq run <ws> -- claude plugin install
+  tentaqles@tentaqles`, then `tq hooks verify --accept <ws>`, since the install changes what the record covers (the
+  marketplace line may be a no-op). A plugin that is installed but switched off gets `tq run <ws> -- claude plugin
+  enable tentaqles@tentaqles` and the re-sign line. The guard is present when the client's `settings.json` does not set `disableAllHooks`, the
   tentaqles plugin is installed (the same plugin folder the integrity record covers, `trust.PluginRoot`), its
   `enabledPlugins` entry is `true` under the marketplace `tentaqles`, and its `hooks/hooks.json` has a
   `PreToolUse` command hook that runs `tq_hook.sh pre-tool-use` under a matcher that selects Bash and an MCP tool.
@@ -41,6 +44,11 @@ covers (`docs/threat-model.md`, B1).
   started through tq; a `claude` a person starts by its path, outside the tq hook block, is outside it (AR1).
 - **`disableAllHooks`** counts as no hook; its fix line names the setting and the `tq hooks verify --accept` that
   signs the edit, since the setting is a covered key.
+- **The working folder is resolved through its links.** `filepath.EvalSymlinks` does not follow a Windows junction on
+  Go 1.23 and later, so `trust.SessionDirs` walks the path itself (`resolveLinks`), following symlinks and junctions,
+  with a bound on the number of links. A working folder or client folder that cannot be resolved is refused with a
+  fix to run it from a folder that resolves; it is never passed. `TestGuardHook_LinkedFolder` runs the junction case on
+  every OS (a link that cannot be made fails it).
 - **Project settings count too (REQ-8).** Claude Code merges the project's settings into a session's, so a switch set
   off there turns the guard off for that session even when the identity's settings are right. The launch check
   (`trust.CheckSessionGuard`) also reads `.claude/settings.json` and `.claude/settings.local.json` in each folder from
@@ -72,8 +80,16 @@ covers (`docs/threat-model.md`, B1).
 - The install needs network access, and it installs what the root marketplace pins (`.claude-plugin/marketplace.json`,
   a release tag and its sha). The release that carries this change is cut separately, so until then a new client
   gets the release that is pinned now.
-- The fix line installs the plugin and does not add the marketplace. Reach adds it. A client whose reach could not
-  add it gets the install's own error, which names the marketplace.
+- The refusal's lines run in order against the state each one leaves: the marketplace add changes no covered file,
+  the install does (so `tq run` refuses between the second and third line, on the record), and the re-sign line
+  makes the session start. `TestRun_FixLinesRunInOrder` runs them through the real launcher against a fake claude.
+  Reach adds the marketplace itself; a reason from a failed command is the first error line of its output
+  (`install.ErrorLine`), not the last line.
+- **Limits recorded.** (Q1) `--settings '{"disableAllHooks":true}'` typed on the command line of a `claude` that tq
+  launches is accepted as AR2 (a text the owner's own command line carries) and is left alone. (Q3) reach does no
+  compare of the plugin before it re-signs: the plugin comes from the pinned marketplace, and the human typed yes at
+  reach. (Q4) `claude attach` and `claude respawn` stay exempt from the refusal: they attach to a session that is
+  already running, not start one.
 
 ## Verification
 
@@ -82,5 +98,7 @@ covers (`docs/threat-model.md`, B1).
 `TestReach_NoPluginFlag`, `TestReach_PluginInstallFails`, `TestReach_PluginSourceIsFixed`,
 `TestProtectedPaths_PluginRegistration`, `TestDoctor_GuardHookMissing`, `TestGuardHook_ShippedHooksPass`,
 `TestGuardHook_FailsClosed`, `TestRun_ProjectSettingsCountToo`, `TestGuardHook_ProjectSettings`,
-`TestGuardHook_SessionDirs`, `TestGuardHook_ProjectFixLines`, `TestDoctor_GuardHookMissing` (the project case), and the
+`TestGuardHook_SessionDirs`, `TestGuardHook_ProjectFixLines`, `TestGuardHook_LinkedFolder`, `TestGuardHook_UnresolvedFolder`,
+`TestGuardHook_FixLines`, `TestRun_FixLinesRunInOrder`, `TestDoctor_GuardHookMissing` (the project case),
+`TestDoctor_GuardHookNotForAClientWithoutClaude`, `TestReach_InstallsThePlugin` (the re-sign), `TestReach_PluginInstallFails` (the first error line), and the
 benchmark `BenchmarkGuardHookPresent`.

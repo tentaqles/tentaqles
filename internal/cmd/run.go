@@ -66,10 +66,19 @@ func claudeIsSession(args []string) bool {
 }
 
 // guardRefusal is the refusal of a session that would start with no tentaqles guard (ADR-0018):
-// the reason in one line, then the fix line to run. It is the error of tq run, not of claude.
+// the reason in one line, then the fix to run, one copyable line each, in order. It is the error of
+// tq run, not of claude.
 func guardRefusal(ws string, g trust.GuardHook) error {
-	return fmt.Errorf("claude won't start a session for %s without the tentaqles guard: %s\n  fix: %s",
-		ws, g.Why, trust.GuardHookFix(ws, g))
+	return fmt.Errorf("claude won't start a session for %s without the tentaqles guard: %s\n  %s",
+		ws, g.Why, fixBlock(trust.GuardHookFix(ws, g)))
+}
+
+// fixBlock is the fix of a refusal: one line after "fix:", or the lines after "fix, in this order:".
+func fixBlock(lines []string) string {
+	if len(lines) == 1 {
+		return "fix: " + lines[0]
+	}
+	return "fix, in this order:\n    " + strings.Join(lines, "\n    ")
 }
 
 // agentProg names the agent a program is: "claude" for that name, with or
@@ -118,8 +127,9 @@ func (l launch) run() error {
 		// environment sets it, and no project settings of the folders it starts in switching it
 		// off (ADR-0018). A neutral folder is unchanged.
 		if l.ws != nil && claudeIsSession(args) {
+			// A working folder that cannot be read (Getwd fails: cwd is "") is refused by the check itself.
 			cwd, _ := os.Getwd()
-			if g := trust.CheckSessionGuard(envplan.Desired(l.ws)["CLAUDE_CONFIG_DIR"], trust.SessionDirs(cwd, l.ws.Root)); !g.OK {
+			if g := trust.CheckSessionGuard(envplan.Desired(l.ws)["CLAUDE_CONFIG_DIR"], cwd, l.ws.Root); !g.OK {
 				return guardRefusal(l.ws.Name, g)
 			}
 		}

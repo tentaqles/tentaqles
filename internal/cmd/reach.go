@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/banner"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/install"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/providers"
@@ -96,8 +98,8 @@ func newReachCmd() *cobra.Command {
 			}
 			w := c.OutOrStdout()
 			if noPlugin {
-				fmt.Fprintf(w, "The tentaqles plugin was not installed (--no-plugin). Claude won't start a session for %s until it is. Run:\n  %s\n",
-					name, trust.GuardPluginLine(name))
+				fmt.Fprintf(w, "The tentaqles plugin was not installed (--no-plugin). Claude won't start a session for %s until it is. Run these, in this order:\n  %s\n",
+					name, strings.Join(trust.GuardInstallLines(name), "\n  "))
 			} else {
 				reachGuardPlugin(c, ws)
 			}
@@ -129,13 +131,16 @@ var reachGuardPlugin = installGuardPlugin
 // reachPluginTimeout bounds each `claude plugin` command of reach (REQ-1). A seam for tests.
 var reachPluginTimeout = 2 * time.Minute
 
-// reachPluginRun runs one claude command with env and returns its combined output. A seam for
-// tests, which run a fake claude.
-var reachPluginRun = func(ctx context.Context, name string, args, env []string) ([]byte, error) {
+// reachPluginRun runs one claude command with env and returns its stdout and stderr, apart. A seam
+// for tests, which run a fake claude.
+var reachPluginRun = func(ctx context.Context, name string, args, env []string) (stdout, stderr []byte, err error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
 	cmd.WaitDelay = 2 * time.Second
-	return cmd.CombinedOutput()
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	err = cmd.Run()
+	return out.Bytes(), errOut.Bytes(), err
 }
 
 // The two commands that install the guard. Their arguments are constants: nothing from the
@@ -149,8 +154,8 @@ func installGuardPlugin(c *cobra.Command, ws *resolve.Workspace) {
 	w := c.OutOrStdout()
 	if err := runGuardPluginInstall(ws); err != nil {
 		fmt.Fprintf(w, "The tentaqles plugin was not installed: %v\n", err)
-		fmt.Fprintf(w, "Claude won't start a session for %s until it is. Run this line to install it:\n  %s\n",
-			ws.Name, trust.GuardPluginLine(ws.Name))
+		fmt.Fprintf(w, "Claude won't start a session for %s until it is. Run these, in this order:\n  %s\n",
+			ws.Name, strings.Join(trust.GuardInstallLines(ws.Name), "\n  "))
 		return
 	}
 	resignCovered(c, ws)
@@ -176,29 +181,21 @@ func runGuardPluginInstall(ws *resolve.Workspace) error {
 	return nil
 }
 
-// runClaudePlugin runs one claude plugin command under reachPluginTimeout and names it in the
-// error: the command, and the last line of its output.
+// runClaudePlugin runs one claude plugin command under reachPluginTimeout and names it in the error:
+// the command, and the reason install.ErrorLine finds in its stderr and stdout (the first error line,
+// not the last line, which is often a tip or a progress frame).
 func runClaudePlugin(claude string, args, env []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), reachPluginTimeout)
 	defer cancel()
-	out, err := reachPluginRun(ctx, claude, args, env)
+	stdout, stderr, err := reachPluginRun(ctx, claude, args, env)
 	what := "claude " + strings.Join(args, " ")
 	if ctx.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("%s did not finish within %s", what, reachPluginTimeout)
 	}
 	if err != nil {
-		if last := lastLine(out); last != "" {
-			return fmt.Errorf("%s failed: %v: %s", what, err, last)
-		}
-		return fmt.Errorf("%s failed: %v", what, err)
+		return fmt.Errorf("%s failed: %s", what, install.ErrorLine(string(stderr), string(stdout), err))
 	}
 	return nil
-}
-
-// lastLine is the last non-blank line of out, trimmed; "" when there is none.
-func lastLine(out []byte) string {
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func installScope(c *cobra.Command, ws *resolve.Workspace) {

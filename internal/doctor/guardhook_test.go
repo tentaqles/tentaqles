@@ -27,6 +27,12 @@ func findCode(fs []Finding, code string) (Finding, bool) {
 // guardedClient writes a trusted client acme whose Claude config holds the tentaqles plugin as
 // claude plugin install leaves it (enabled, the release's hooks), unless plugin is false.
 func guardedClient(t *testing.T, plugin bool) *registry.Config {
+	return trustedClient(t, "{ claude: {} }", plugin)
+}
+
+// trustedClient writes and trusts client acme with the given identities; with plugin, the guard is
+// written into its Claude config before the signature.
+func trustedClient(t *testing.T, identities string, plugin bool) *registry.Config {
 	t.Setenv("TQ_HOME", t.TempDir())
 	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
@@ -36,7 +42,7 @@ func guardedClient(t *testing.T, plugin bool) *registry.Config {
 		t.Fatal(err)
 	}
 	mp := filepath.Join(root, manifest.FileName)
-	if err := os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: { claude: {} }\n"), 0o600); err != nil {
+	if err := os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: "+identities+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if plugin {
@@ -79,8 +85,17 @@ func put(t *testing.T, p, body string) {
 	}
 }
 
+// A client with no claude identity has no Claude config for tq to guard: doctor reports no
+// guard-hook-missing for it (Q2); the launch refusal still covers a session in it.
+func TestDoctor_GuardHookNotForAClientWithoutClaude(t *testing.T) {
+	cfg := trustedClient(t, "{ gh: {} }", false)
+	if fs := Run(cfg, deps(nil, t.TempDir(), nil)); has(fs, "guard-hook-missing") {
+		t.Fatalf("a client with no claude identity reports guard-hook-missing: %+v", fs)
+	}
+}
+
 // A trusted client with no tentaqles plugin reports guard-hook-missing as an error with the fix
-// line that installs it (REQ-7); with the plugin in place the finding is gone.
+// lines that install it (REQ-7); with the plugin in place the finding is gone.
 func TestDoctor_GuardHookMissing(t *testing.T) {
 	cfg := guardedClient(t, false)
 	fs := Run(cfg, deps(nil, t.TempDir(), nil))
@@ -88,7 +103,8 @@ func TestDoctor_GuardHookMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("no guard-hook-missing: %+v", fs)
 	}
-	if f.Level != "error" || f.Workspace != "acme" || f.Fix != "tq run acme -- claude plugin install tentaqles@tentaqles" {
+	wantFix := "tq run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tq run acme -- claude plugin install tentaqles@tentaqles\n    tq hooks verify --accept acme"
+	if f.Level != "error" || f.Workspace != "acme" || f.Fix != wantFix {
 		t.Fatalf("finding %+v", f)
 	}
 	if Exit(fs) != 1 {
