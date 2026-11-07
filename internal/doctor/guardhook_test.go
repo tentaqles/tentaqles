@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
@@ -97,5 +98,15 @@ func TestDoctor_GuardHookMissing(t *testing.T) {
 	cfg = guardedClient(t, true)
 	if fs := Run(cfg, deps(nil, t.TempDir(), nil)); has(fs, "guard-hook-missing") {
 		t.Fatalf("the plugin is installed and enabled, yet: %+v", fs)
+	}
+
+	// The client's own folder's project settings switch the guard off for a session in it: the same
+	// refusal, naming the file (REQ-8).
+	project := filepath.Join(cfg.Bases[0], "acme", ".claude", "settings.local.json")
+	put(t, project, `{"disableAllHooks":true}`)
+	fs = Run(cfg, deps(nil, t.TempDir(), nil))
+	f, ok = findCode(fs, "guard-hook-missing")
+	if !ok || !strings.Contains(f.Msg, project) || f.Fix != "remove \"disableAllHooks\" (or set it to false) in "+project+", then: tq run acme -- claude" {
+		t.Fatalf("project switch: %+v", f)
 	}
 }

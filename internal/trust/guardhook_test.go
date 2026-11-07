@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -127,13 +128,117 @@ func TestGuardHook_FailsClosed(t *testing.T) {
 	}
 }
 
+// A project's settings are merged into the session's, so a switch set off there turns the guard off
+// (REQ-8). Each file of each folder the session starts in is read; a file that is not JSON counts as
+// off and is named; a file with neither switch does not.
+func TestGuardHook_ProjectSettings(t *testing.T) {
+	const ok = `{"enabledPlugins":{"tentaqles@tentaqles":true}}`
+	hooks := `{"hooks":{"PreToolUse":[{"matcher":"^(Bash|mcp__.*)$","hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" pre-tool-use"}]}]}}`
+	cases := []struct {
+		name    string
+		file    string
+		body    string
+		wantOK  bool
+		setting string
+	}{
+		{"no project file", "", "", true, ""},
+		{"neither switch", ".claude/settings.json", `{"theme":"dark","enabledPlugins":{"other@x":false}}`, true, ""},
+		{"disableAllHooks false", ".claude/settings.json", `{"disableAllHooks":false}`, true, ""},
+		{"the tentaqles entry on", ".claude/settings.local.json", `{"enabledPlugins":{"tentaqles@tentaqles":true}}`, true, ""},
+		{"disableAllHooks in settings.json", ".claude/settings.json", `{"disableAllHooks":true}`, false, "disableAllHooks"},
+		{"disableAllHooks in settings.local.json", ".claude/settings.local.json", `{"disableAllHooks":true}`, false, "disableAllHooks"},
+		{"the tentaqles entry off", ".claude/settings.local.json", `{"enabledPlugins":{"tentaqles@tentaqles":false}}`, false, "enabledPlugins"},
+		{"the tentaqles entry as a string", ".claude/settings.json", `{"enabledPlugins":{"tentaqles@tentaqles":"true"}}`, false, "enabledPlugins"},
+		{"enabledPlugins not an object", ".claude/settings.json", `{"enabledPlugins":true}`, false, ""},
+		{"not JSON", ".claude/settings.json", `{"disableAllHooks":`, false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			claude := guardClaudeDir(t, hooks, ok)
+			root := t.TempDir()
+			if c.file != "" {
+				writeFile(t, filepath.Join(root, c.file), c.body)
+			}
+			g := CheckSessionGuard(claude, []string{root})
+			if g.OK != c.wantOK {
+				t.Fatalf("OK = %v, want %v: %+v", g.OK, c.wantOK, g)
+			}
+			if c.wantOK {
+				return
+			}
+			if g.Why == "" || g.Setting != c.setting || g.Covered {
+				t.Fatalf("the reason names the switch, and is not the identity's file: %+v", g)
+			}
+			if c.file != "" && g.File != filepath.Join(root, c.file) {
+				t.Fatalf("File = %q, want the project file", g.File)
+			}
+		})
+	}
+}
+
+// A project file is read only for a folder the session starts in: a sibling is not, and the folder
+// above the client root is not, while the folders between cwd and root are.
+func TestGuardHook_SessionDirs(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "acme")
+	app := filepath.Join(root, "services", "api")
+	cases := []struct {
+		name, cwd, root string
+		want            []string
+	}{
+		{"at the root", root, root, []string{root}},
+		{"two levels down", app, root, []string{app, filepath.Join(root, "services"), root}},
+		{"outside the root", filepath.Dir(root), root, []string{filepath.Dir(root)}},
+		{"no root", app, "", []string{app}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := SessionDirs(c.cwd, c.root)
+			if strings.Join(got, "|") != strings.Join(c.want, "|") {
+				t.Fatalf("SessionDirs = %q, want %q", got, c.want)
+			}
+		})
+	}
+	// A sibling's settings and the folder above the root are not read by a session in app.
+	claude := guardClaudeDir(t,
+		`{"hooks":{"PreToolUse":[{"matcher":"^(Bash|mcp__.*)$","hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" pre-tool-use"}]}]}}`,
+		`{"enabledPlugins":{"tentaqles@tentaqles":true}}`)
+	writeFile(t, filepath.Join(root, "other", ".claude", "settings.json"), `{"disableAllHooks":true}`)
+	writeFile(t, filepath.Join(filepath.Dir(root), ".claude", "settings.json"), `{"disableAllHooks":true}`)
+	if g := CheckSessionGuard(claude, SessionDirs(app, root)); !g.OK {
+		t.Fatalf("a folder the session does not start in is not read: %+v", g)
+	}
+}
+
+// The fix line names the file that holds the switch: a re-sign for the identity's settings (the
+// record covers them), a new session for a project's.
+func TestGuardHook_ProjectFixLines(t *testing.T) {
+	got := GuardHookFix("acme", GuardHook{Why: "x", Setting: "disableAllHooks", File: "/p/.claude/settings.local.json"})
+	if got != `remove "disableAllHooks" (or set it to false) in /p/.claude/settings.local.json, then: tq run acme -- claude` {
+		t.Fatalf("project fix = %q", got)
+	}
+	got = GuardHookFix("acme", GuardHook{Why: "x", Setting: "enabledPlugins", File: "/p/.claude/settings.json"})
+	if got != `set "tentaqles@tentaqles" to true under enabledPlugins in /p/.claude/settings.json, then: tq run acme -- claude` {
+		t.Fatalf("enabledPlugins fix = %q", got)
+	}
+}
+
+func writeFile(t *testing.T, p, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The fix line of a missing guard is the plugin install; for disableAllHooks it names the setting.
 func TestGuardHook_FixLines(t *testing.T) {
 	if got := GuardHookFix("acme", GuardHook{Why: "x"}); got != "tq run acme -- claude plugin install tentaqles@tentaqles" {
 		t.Fatalf("plugin fix = %q", got)
 	}
-	got := GuardHookFix("acme", GuardHook{Why: "x", Setting: "disableAllHooks"})
-	if got != `remove "disableAllHooks" (or set it to false) in the client's settings.json, then: tq hooks verify --accept acme` {
+	got := GuardHookFix("acme", GuardHook{Why: "x", Setting: "disableAllHooks", File: "/c/settings.json", Covered: true})
+	if got != `remove "disableAllHooks" (or set it to false) in /c/settings.json, then: tq hooks verify --accept acme` {
 		t.Fatalf("setting fix = %q", got)
 	}
 }

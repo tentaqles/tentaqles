@@ -14,7 +14,9 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   and the line to run. `--no-plugin` skips it.
 - `tq run <ws> -- claude` and `tq run . -- claude` refuse to start a session when the client's Claude config
   has no enabled tentaqles plugin with its PreToolUse guard hook, or when `disableAllHooks` is set. They exit
-  non-zero, say why, and print `tq run <ws> -- claude plugin install tentaqles@tentaqles`. `claude` subcommands,
+  non-zero, say why, and print `tq run <ws> -- claude plugin install tentaqles@tentaqles`. The project's
+  `.claude/settings.json` and `settings.local.json` count too: a `disableAllHooks` or a tentaqles `enabledPlugins`
+  switch set off there refuses the session, naming the file. `claude` subcommands,
   `--help` and `--version`, other programs through `tq run`, and a neutral folder are not refused.
 - `tq doctor` reports `guard-hook-missing` (an error) for a trusted client in that state, with the same line.
 

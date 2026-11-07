@@ -256,6 +256,51 @@ func TestRun_RefusalOnlyForASession(t *testing.T) {
 	}
 }
 
+// The project's settings are merged into a session's, so a switch set off in the folders the session
+// starts in refuses it, with the file named (REQ-8, ADR-0018). A file above the client folder is not
+// read, and a project file with neither switch starts.
+func TestRun_ProjectSettingsCountToo(t *testing.T) {
+	root, _ := mkLaunchWSGuard(t, "acme", "", false, guardOpts{})
+	clearAgentMarkers(t)
+	calls := fakeExec(t)
+	chdir(t, root)
+	project := filepath.Join(root, ".claude", "settings.local.json")
+	for _, c := range []struct{ body, want string }{
+		{`{"disableAllHooks":true}`, "disableAllHooks"},
+		{`{"enabledPlugins":{"tentaqles@tentaqles":false}}`, "turned off"},
+		{`{"disableAllHooks":`, "can't be read as JSON"},
+	} {
+		writeTB(t, project, c.body)
+		_, err := runTq(t, "run", "acme", "--", "claude")
+		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), project) {
+			t.Fatalf("%s: want the refusal naming the file, got %v", c.body, err)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("nothing may launch: %+v", *calls)
+	}
+	// A project file with neither switch starts, and so does a folder under the root when it is the cwd.
+	writeTB(t, project, `{"theme":"dark"}`)
+	if _, err := runTq(t, "run", "acme", "--", "claude"); err != nil {
+		t.Fatalf("a project with neither switch: %v", err)
+	}
+	// A project file in a folder the session starts in counts: the cwd below the root reads each folder up to it.
+	app := filepath.Join(root, "app")
+	writeTB(t, filepath.Join(app, ".claude", "settings.json"), `{"disableAllHooks":true}`)
+	chdir(t, app)
+	if _, err := runTq(t, "run", ".", "--", "claude"); err == nil || !strings.Contains(err.Error(), filepath.Join(app, ".claude", "settings.json")) {
+		t.Fatalf("a switch in the cwd: %v", err)
+	}
+	// A file above the client folder is not one of the session's.
+	if err := os.Remove(filepath.Join(app, ".claude", "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	writeTB(t, filepath.Join(filepath.Dir(root), ".claude", "settings.json"), `{"disableAllHooks":true}`)
+	if _, err := runTq(t, "run", ".", "--", "claude"); err != nil {
+		t.Fatalf("a folder above the client is not read: %v", err)
+	}
+}
+
 // The plugin's registration and its hooks are the guard: a session cannot write the settings,
 // the installed_plugins.json or the plugin's hooks.json to remove it (REQ-11).
 func TestProtectedPaths_PluginRegistration(t *testing.T) {

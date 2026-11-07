@@ -349,7 +349,11 @@ unless the client's Claude config (the identity's `CLAUDE_CONFIG_DIR`) has all o
 - the tentaqles plugin installed, found the way the integrity record finds it (`installed_plugins.json`, or
   the plugin cache);
 - `enabledPlugins` with `"tentaqles@tentaqles": true` in its `settings.json`;
-- `disableAllHooks` absent or `false` in that `settings.json`;
+- `disableAllHooks` absent or `false` in that `settings.json`, and in the project's `.claude/settings.json` and
+  `.claude/settings.local.json` for each folder from the session's working folder up to the client's folder (Claude
+  Code merges them into the session; a folder above the client's is not read);
+- the tentaqles entry of `enabledPlugins` not set off in those project files either (a project file that cannot be
+  read or is not JSON counts as no hook, and is named);
 - a `PreToolUse` entry in the plugin's `hooks/hooks.json` whose matcher selects `Bash` and an `mcp__` tool, and
   whose command runs `tq_hook.sh pre-tool-use`.
 
@@ -360,8 +364,13 @@ tq: claude won't start a session for acme without the tentaqles guard: the tenta
   fix: tq run acme -- claude plugin install tentaqles@tentaqles
 ```
 
-For `disableAllHooks` the fix line names the setting instead: remove it (or set it to `false`), then
-`tq hooks verify --accept acme`. Anything the check cannot read counts as missing. `tq doctor` reports the same
+For `disableAllHooks` the fix line names the file and the setting instead: remove it (or set it to `false`), then
+`tq hooks verify --accept acme` for the identity's `settings.json`, or `tq run acme -- claude` for a project file
+(the record does not cover project files).
+
+Limits: the check reads the project files only; no hook rule denies a write to them, so an agent that edits one
+is caught at the next session `tq run` launches, not when it writes. Managed settings (the system-wide file) and
+Claude Code's own effective settings are not read. A plain `claude` a person starts outside `tq run` is not checked. Anything the check cannot read counts as missing. `tq doctor` reports the same
 state as `guard-hook-missing`, with the same fix line.
 
 Not refused: `claude` subcommands (`claude plugin install …`, `claude mcp …`), `claude --help` and

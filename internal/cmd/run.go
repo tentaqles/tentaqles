@@ -112,9 +112,11 @@ func (l launch) run() error {
 	case "claude":
 		// A session in an identity's folder starts only with the guard: the plugin's PreToolUse
 		// hook in the Claude config the session will run with, CLAUDE_CONFIG_DIR as the identity
-		// environment sets it (ADR-0018). A neutral folder is unchanged.
+		// environment sets it, and no project settings of the folders it starts in switching it
+		// off (ADR-0018). A neutral folder is unchanged.
 		if l.ws != nil && claudeIsSession(args) {
-			if g := trust.CheckGuardHook(envplan.Desired(l.ws)["CLAUDE_CONFIG_DIR"]); !g.OK {
+			cwd, _ := os.Getwd()
+			if g := trust.CheckSessionGuard(envplan.Desired(l.ws)["CLAUDE_CONFIG_DIR"], trust.SessionDirs(cwd, l.ws.Root)); !g.OK {
 				return guardRefusal(l.ws.Name, g)
 			}
 		}

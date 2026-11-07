@@ -41,6 +41,22 @@ covers (`docs/threat-model.md`, B1).
   started through tq; a `claude` a person starts by its path, outside the tq hook block, is outside it (AR1).
 - **`disableAllHooks`** counts as no hook; its fix line names the setting and the `tq hooks verify --accept` that
   signs the edit, since the setting is a covered key.
+- **Project settings count too (REQ-8).** Claude Code merges the project's settings into a session's, so a switch set
+  off there turns the guard off for that session even when the identity's settings are right. The launch check
+  (`trust.CheckSessionGuard`) also reads `.claude/settings.json` and `.claude/settings.local.json` in each folder from
+  the session's working folder up to the client's folder root (`trust.SessionDirs`; a working folder outside the root
+  is read alone, and nothing above the root). It refuses when one sets `disableAllHooks` to anything but `false`, or
+  sets the tentaqles entry of `enabledPlugins` to anything but `true`. A file that cannot be read, or is not JSON, or
+  has an `enabledPlugins` that is not an object, counts as no hook, and the refusal names the file. The fix line names
+  the file and the setting: for the identity's `settings.json` it is followed by `tq hooks verify --accept` (the record
+  covers it), for a project's by `tq run <ws> -- claude` (the record does not). `tq doctor` reports the same check for
+  the client's own folder.
+- **Limits of the project check.** It is what catches a project switch at the next session tq launches; it is not a
+  hook rule. No hook rule denies a write to a project's `settings.json` or `settings.local.json`, because an agent may
+  need to edit a project's settings. A session started by a person with a plain `claude`, outside `tq run`, is not
+  checked (the Decision above). Two things are out of scope and are not read: managed settings (the system-wide file
+  Claude Code merges above the rest), and asking `claude` itself for the effective settings, which would need a
+  process on every launch.
 - **`tq doctor`** reports `guard-hook-missing` as an error for each trusted client that would refuse, with the same
   fix line. It runs the same check.
 - **The check** is `trust.CheckGuardHook`: a few small files and no process, so the hook path does not pay for it.
@@ -65,4 +81,6 @@ covers (`docs/threat-model.md`, B1).
 `TestRun_ForeignHookIsNoHook`, `TestRun_RefusalOnlyForASession`, `TestReach_InstallsThePlugin`,
 `TestReach_NoPluginFlag`, `TestReach_PluginInstallFails`, `TestReach_PluginSourceIsFixed`,
 `TestProtectedPaths_PluginRegistration`, `TestDoctor_GuardHookMissing`, `TestGuardHook_ShippedHooksPass`,
-`TestGuardHook_FailsClosed`, and the benchmark `BenchmarkGuardHookPresent`.
+`TestGuardHook_FailsClosed`, `TestRun_ProjectSettingsCountToo`, `TestGuardHook_ProjectSettings`,
+`TestGuardHook_SessionDirs`, `TestGuardHook_ProjectFixLines`, `TestDoctor_GuardHookMissing` (the project case), and the
+benchmark `BenchmarkGuardHookPresent`.
