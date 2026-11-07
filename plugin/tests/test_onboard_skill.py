@@ -25,7 +25,7 @@ CREDENTIAL = ("### c. Credential", "### d. Other providers")
 OTHER = ("### d. Other providers", "## 3.")
 TOKENS = ("## 3.", "## 4.")
 VERIFY = ("## 4.", "## 5.")
-TABLE = ("## 5.", "## Never")
+TABLE = ("## 5.", None)
 
 
 def body():
@@ -41,7 +41,7 @@ def section(bounds):
     src = body()
     start, end = bounds
     i = src.index(start)
-    j = src.index(end, i + len(start))
+    j = len(src) if end is None else src.index(end, i + len(start))
     return " ".join(src[i:j].split())
 
 
@@ -120,6 +120,21 @@ def test_onboard_skill_relays_every_install_line_and_checks_after():
     assert "`installed <version>`" in cli and "`already present <version>`" in cli
 
 
+def test_onboard_skill_manual_and_failed_installs_print_no_login():
+    """Each branch that leaves cli_resolves false is its own bullet: no login for it, this run."""
+    cli = section(CLI)
+    bullets = {
+        "manual": re.search(r"`manual, download from <url>`:.*?(?=`install failed|$)", cli),
+        "failed": re.search(r"`install failed: <reason>`:.*", cli),
+    }
+    for name, m in bullets.items():
+        assert m, "the %s branch is named" % name
+        text = m.group(0)
+        assert "cli_resolves" in text, "%s checks cli_resolves again" % name
+        assert "no login" in text, "%s prints no login while the CLI does not resolve" % name
+        assert "restart Claude Code" in text or "fix the install" in text, name
+
+
 def test_onboard_skill_handles_no_catalog_server():
     src = body()
     assert "no MCP server in the catalog" in src
@@ -148,7 +163,7 @@ def test_onboard_skill_is_short():
 
 def test_onboard_skill_has_no_old_flow():
     src = body()
-    for old in ("tq doctor --json", "tq bundle sync", "tq allow", "tq onboard", "tq login"):
+    for old in ("tq doctor --json", "tq bundle sync", "tq allow", "tq onboard"):
         assert old not in src, old
 
 
@@ -179,6 +194,70 @@ def test_onboard_skill_verifies_before_it_asks():
     assert "verify first" in cred and "ask only if that fails" in cred
     assert "already signed in" in cred
     assert "print no command" in cred, "a provider with no login block gets no invented command"
+
+
+def shared_login(provider):
+    """The rule the skill states: a provider with cli set and no identity env is a shared login.
+
+    provider is a dict shaped like `tentaqles providers show`: cli (or None), identity.env (or None).
+    """
+    return provider.get("cli") is not None and not (provider.get("identity") or {}).get("env")
+
+
+def test_onboard_skill_shared_login_rule_matches_only_a_cli_with_no_env():
+    cred = section(CREDENTIAL)
+    assert "A provider whose `cli` is set and whose `identity` in `tentaqles providers show` has no `env` entries" in cred
+    jira = {"cli": {"command": "acli"}, "identity": {"env": None}}
+    gh = {"cli": {"command": "gh"}, "identity": {"env": {"GH_CONFIG_DIR": "{dir}"}}}
+    linear = {"cli": None, "identity": {"env": None}}
+    assert shared_login(jira), "jira is a shared login"
+    assert not shared_login(gh), "gh has its own config home"
+    assert not shared_login(linear), "linear has no CLI, so its token is per client and no shared-login warning is given"
+
+
+def test_onboard_skill_bang_only_for_known_browser_flows():
+    allowed = {"! gh auth login --web", "! az login", "! acli jira auth login"}
+    printed = set(m.strip() for m in re.findall(r"^\s*(! \S.*?)\s*$", body(), re.M))
+    assert printed <= allowed, "a login runs under ! only when it is a known browser flow: %s" % (printed - allowed)
+    assert "known browser flow" in body(), "the rule that names the browser flows is stated"
+
+
+def test_onboard_skill_aws_login_is_not_under_bang():
+    src = body()
+    cred = section(CREDENTIAL)
+    assert "! aws" not in src, "a key prompt never runs in the session"
+    assert "`tq login <identity> <id>`" in cred, "a provider with an identity env logs in with tq login"
+    assert "`--sso`" in cred and "`--sso-session <name>`" in cred, "an SSO client gets its SSO login"
+    assert "known browser flow" in cred
+
+
+def test_onboard_skill_connector_only_providers_get_the_connector_step():
+    walk = section(WALK)
+    conn = section(CONNECTION)
+    assert "notion and trello" in walk and "connection" in walk
+    assert "the provider is notion or trello" in conn, "notion and trello run connect and get the connector step"
+    assert "`no MCP server in the catalog`" in conn
+
+
+def test_onboard_skill_sign_in_is_never_a_docs_page():
+    cred = section(CREDENTIAL)
+    assert "`docs` page" not in cred and "docs page" not in cred, "no docs page is offered to sign in"
+    assert "`notes`" in cred, "the provider's notes say how it signs in"
+    assert "step b is its sign-in" in cred
+    assert "print no command" in cred
+
+
+def test_onboard_skill_pasted_token_hint_names_tq_secret_set_only_for_a_tracker():
+    tokens = section(TOKENS)
+    assert "should not be shared here" in tokens and "do not use" in tokens
+    assert "If the provider is a tracker" in tokens
+    assert "never to `tq secret set`" in tokens, "a non-tracker is pointed to its own login or connector"
+
+
+def test_onboard_skill_table_settles_a_connector_that_passed():
+    table = section(TABLE)
+    assert "passed in this run" in table and "`present`" in table
+    assert "Connections" in table and "Credential" in table
 
 
 def test_onboard_skill_names_the_shared_login():

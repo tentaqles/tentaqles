@@ -9,11 +9,12 @@ Releases before 0.16.0 are described on the
 - **The onboarding skill drives the logins (ticket 021).** `skills/onboard/SKILL.md` is rewritten. Its
   first step is `tentaqles status --json`; it never reads the manifest, `.claude.json` or the state
   folder. It stops in a neutral or untrusted folder, walks `providers` in order (CLI, connection, then
-  credential), runs `tentaqles install` for a missing CLI and `tentaqles connect` for an MCP server,
-  prints each CLI login for the developer with the `!` prefix, asks the developer to run `tq secret set`
-  for a tracker token in their own terminal (no `!`), and ends with one table. It never picks an
-  installer, never handles a token, and refuses a provider outside `scope`. Text checks:
-  `tests/test_onboard_skill.py`.
+  credential), runs `tentaqles install` for a missing CLI and `tentaqles connect` for an MCP server.
+  A login runs under `!` only for a known browser flow (gh, az, acli jira); every other login, and
+  `tq login` and `tq secret set`, is the developer's own terminal with no `!`, since tq refuses them in a
+  session and a key prompt must not run in one. A CLI that still does not resolve after an install gets no
+  login that run. It ends with one table. It never picks an installer, never handles a token, and refuses
+  a provider outside `scope`. Text checks: `tests/test_onboard_skill.py`.
 
 - **The plugin is the onboarding skill and the guard hook (ADR-0014).** Everything else is removed, all its
   Python included. With no fallback, a missing tq denies every tool.
