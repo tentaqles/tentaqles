@@ -1,0 +1,10 @@
+$ go test ./internal/cmd ./internal/doctor -run TestRun_RefusesWithNoGuardHook|TestDoctor_GuardHookMissing -count=1 -v
+=== RUN   TestRun_RefusesWithNoGuardHook
+--- PASS: TestRun_RefusesWithNoGuardHook (0.27s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.376s
+=== RUN   TestDoctor_GuardHookMissing
+--- PASS: TestDoctor_GuardHookMissing (0.11s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/doctor	0.193s
+exit code: 0

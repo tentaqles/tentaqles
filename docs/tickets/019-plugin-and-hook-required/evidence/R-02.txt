@@ -1,0 +1,22 @@
+$ go test ./internal/cmd -run TestRunClaudeAlwaysBypass|TestLaunchClaudeArgs -count=1 -v
+=== RUN   TestLaunchClaudeArgs
+--- PASS: TestLaunchClaudeArgs (0.00s)
+=== RUN   TestRunClaudeAlwaysBypass
+=== RUN   TestRunClaudeAlwaysBypass/mode=
+=== RUN   TestRunClaudeAlwaysBypass/mode=default
+=== RUN   TestRunClaudeAlwaysBypass/mode=acceptEdits
+=== RUN   TestRunClaudeAlwaysBypass/mode=plan
+=== RUN   TestRunClaudeAlwaysBypass/mode=auto
+=== RUN   TestRunClaudeAlwaysBypass/mode=dontAsk
+=== RUN   TestRunClaudeAlwaysBypass/mode=bypass
+--- PASS: TestRunClaudeAlwaysBypass (1.05s)
+    --- PASS: TestRunClaudeAlwaysBypass/mode= (0.15s)
+    --- PASS: TestRunClaudeAlwaysBypass/mode=default (0.14s)
+    --- PASS: TestRunClaudeAlwaysBypass/mode=acceptEdits (0.14s)
+    --- PASS: TestRunClaudeAlwaysBypass/mode=plan (0.16s)
+    --- PASS: TestRunClaudeAlwaysBypass/mode=auto (0.16s)
+    --- PASS: TestRunClaudeAlwaysBypass/mode=dontAsk (0.14s)
+    --- PASS: TestRunClaudeAlwaysBypass/mode=bypass (0.15s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.147s
+exit code: 0

@@ -1,0 +1,9 @@
+$ go test ./internal/cmd -run ^$ -bench ^BenchmarkGuardHookPresent$ -benchtime=20x
+goos: windows
+goarch: amd64
+pkg: github.com/tentaqles/tentaqles/internal/cmd
+cpu: Intel(R) Core(TM) Ultra 9 185H
+BenchmarkGuardHookPresent-22    	      20	    312930 ns/op
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.119s
+exit code: 0

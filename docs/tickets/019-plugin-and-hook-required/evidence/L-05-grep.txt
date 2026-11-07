@@ -1,0 +1,2 @@
+$ grep -rnE "Q[1-5]\b" docs internal plugin .claude/README.md CHANGELOG.md (excluding .job, worktrees, docs/tickets)
+grep exit: 1

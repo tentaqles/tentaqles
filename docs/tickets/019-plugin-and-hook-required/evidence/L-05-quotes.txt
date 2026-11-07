@@ -1,0 +1,13 @@
+docs/adr/0018-no-session-without-the-hook.md:68-70
+- **`tq doctor`** reports `guard-hook-missing` as an error for each trusted client that has a claude identity and
+  would refuse, with the same fix lines. A client with no claude identity gets no such finding; the launch refusal
+  (`tq run`) still covers a session in it, with its reason in one line.
+
+internal/doctor/guardhook_test.go:88-89
+// doctor reports guard-hook-missing only for a client that has a claude identity. A client with no
+// claude identity gets no such finding; the launch refusal (tq run) still covers a session in it.
+
+internal/doctor/claude.go:54-58: `if g.OK || g.NoConfig { return }` (no finding for a client with no claude identity)
+
+Label search (evidence/L-05-grep.txt): no "Q1".."Q5" in docs (outside docs/tickets), internal, CHANGELOG.md, plugin/CHANGELOG.md; grep exit 1.
+TestDoctor_GuardHookNotForAClientWithoutClaude and TestRun_NoClaudeIdentityIsNoGuard pass (see evidence/R-1-tests.txt, evidence/F-02.txt).

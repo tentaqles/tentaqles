@@ -1,0 +1,8 @@
+# mutation A: delete resignCovered(c, ws) in installGuardPlugin (reach.go)
+161:	resignCovered(c, ws)
+--- FAIL: TestReach_InstallsThePlugin (0.85s)
+    reach_plugin_test.go:66: not trusted after the plugin install: untrusted: integrity mismatch, added c:/users/renato/appdata/local/temp/testreach_installstheplugin1200787223/001/.tentaqles/identities/acme/claude/plugins/cache/tentaqles/tentaqles/0.16.0/.claude-plugin/plugin.json and 4 more (run: tq hooks verify acme)
+FAIL
+FAIL	github.com/tentaqles/tentaqles/internal/cmd	1.237s
+FAIL
+exit: 1

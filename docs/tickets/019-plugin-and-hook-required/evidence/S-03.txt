@@ -1,0 +1,11 @@
+$ go test ./internal/trust ./internal/cmd -run TestPluginHookChangesAreNamed|TestFlippedByteFailsVerification -count=1 -v
+=== RUN   TestFlippedByteFailsVerification
+--- PASS: TestFlippedByteFailsVerification (0.04s)
+=== RUN   TestPluginHookChangesAreNamed
+--- PASS: TestPluginHookChangesAreNamed (0.10s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/trust	0.199s
+testing: warning: no tests to run
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.094s [no tests to run]
+exit code: 0

@@ -1,0 +1,6 @@
+# mutation C (on a copy): reach --no-plugin prints only REQ-5's install line, not the three lines
+102:					name, trust.GuardPluginLine(name))
+=== RUN   TestReach_NoPluginFlag
+--- PASS: TestReach_NoPluginFlag (0.74s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.230s

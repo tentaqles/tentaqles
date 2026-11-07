@@ -1,0 +1,6 @@
+inspect: internal/trust/guardhook.go imports only encoding/json, fmt, os, path, path/filepath, regexp, strings (lines 3-11).
+No os/exec import; the check uses os.ReadFile only (guardhook.go:57, 79, 116).
+CheckSessionGuard (guardhook.go:97-110) reads .claude/settings.json and .claude/settings.local.json per folder (projectSettingsFiles, line 91).
+Unparseable project file: checkProjectSettings returns OK=false with the file named (guardhook.go:124-126).
+ADR: docs/adr/0018-no-session-without-the-hook.md lines 44-59 record no hook rule covers writes, next-session catch, managed settings and asking claude out of scope.
+Doctor: internal/doctor/claude.go guardHookCheck uses trust.CheckSessionGuard and code guard-hook-missing.

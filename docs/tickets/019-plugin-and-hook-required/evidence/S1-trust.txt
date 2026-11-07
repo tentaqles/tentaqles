@@ -1,0 +1,60 @@
+$ go test ./internal/trust -run TestGuardHook -count=1 -v
+=== RUN   TestGuardHook_ShippedHooksPass
+--- PASS: TestGuardHook_ShippedHooksPass (0.01s)
+=== RUN   TestGuardHook_CommandForms
+--- PASS: TestGuardHook_CommandForms (0.00s)
+=== RUN   TestGuardHook_Matchers
+--- PASS: TestGuardHook_Matchers (0.00s)
+=== RUN   TestGuardHook_FailsClosed
+=== RUN   TestGuardHook_FailsClosed/settings_not_JSON
+=== RUN   TestGuardHook_FailsClosed/disableAllHooks_as_a_string
+=== RUN   TestGuardHook_FailsClosed/hooks_not_JSON
+=== RUN   TestGuardHook_FailsClosed/enabled_as_a_string
+--- PASS: TestGuardHook_FailsClosed (0.05s)
+    --- PASS: TestGuardHook_FailsClosed/settings_not_JSON (0.01s)
+    --- PASS: TestGuardHook_FailsClosed/disableAllHooks_as_a_string (0.01s)
+    --- PASS: TestGuardHook_FailsClosed/hooks_not_JSON (0.01s)
+    --- PASS: TestGuardHook_FailsClosed/enabled_as_a_string (0.01s)
+=== RUN   TestGuardHook_ProjectSettings
+=== RUN   TestGuardHook_ProjectSettings/no_project_file
+=== RUN   TestGuardHook_ProjectSettings/neither_switch
+=== RUN   TestGuardHook_ProjectSettings/disableAllHooks_false
+=== RUN   TestGuardHook_ProjectSettings/the_tentaqles_entry_on
+=== RUN   TestGuardHook_ProjectSettings/disableAllHooks_in_settings.json
+=== RUN   TestGuardHook_ProjectSettings/disableAllHooks_in_settings.local.json
+=== RUN   TestGuardHook_ProjectSettings/the_tentaqles_entry_off
+=== RUN   TestGuardHook_ProjectSettings/the_tentaqles_entry_as_a_string
+=== RUN   TestGuardHook_ProjectSettings/enabledPlugins_not_an_object
+=== RUN   TestGuardHook_ProjectSettings/not_JSON
+--- PASS: TestGuardHook_ProjectSettings (0.13s)
+    --- PASS: TestGuardHook_ProjectSettings/no_project_file (0.01s)
+    --- PASS: TestGuardHook_ProjectSettings/neither_switch (0.01s)
+    --- PASS: TestGuardHook_ProjectSettings/disableAllHooks_false (0.01s)
+    --- PASS: TestGuardHook_ProjectSettings/the_tentaqles_entry_on (0.01s)
+    --- PASS: TestGuardHook_ProjectSettings/disableAllHooks_in_settings.json (0.02s)
+    --- PASS: TestGuardHook_ProjectSettings/disableAllHooks_in_settings.local.json (0.01s)
+    --- PASS: TestGuardHook_ProjectSettings/the_tentaqles_entry_off (0.01s)
+    --- PASS: TestGuardHook_ProjectSettings/the_tentaqles_entry_as_a_string (0.01s)
+    --- PASS: TestGuardHook_ProjectSettings/enabledPlugins_not_an_object (0.01s)
+    --- PASS: TestGuardHook_ProjectSettings/not_JSON (0.01s)
+=== RUN   TestGuardHook_SessionDirs
+=== RUN   TestGuardHook_SessionDirs/at_the_root
+=== RUN   TestGuardHook_SessionDirs/two_levels_down
+=== RUN   TestGuardHook_SessionDirs/outside_the_root
+=== RUN   TestGuardHook_SessionDirs/no_root
+--- PASS: TestGuardHook_SessionDirs (0.02s)
+    --- PASS: TestGuardHook_SessionDirs/at_the_root (0.00s)
+    --- PASS: TestGuardHook_SessionDirs/two_levels_down (0.00s)
+    --- PASS: TestGuardHook_SessionDirs/outside_the_root (0.00s)
+    --- PASS: TestGuardHook_SessionDirs/no_root (0.00s)
+=== RUN   TestGuardHook_LinkedFolder
+--- PASS: TestGuardHook_LinkedFolder (0.09s)
+=== RUN   TestGuardHook_UnresolvedFolder
+--- PASS: TestGuardHook_UnresolvedFolder (0.01s)
+=== RUN   TestGuardHook_ProjectFixLines
+--- PASS: TestGuardHook_ProjectFixLines (0.00s)
+=== RUN   TestGuardHook_FixLines
+--- PASS: TestGuardHook_FixLines (0.00s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/trust	0.380s
+exit code: 0

@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestRun_FixLinesRunInOrder$ -count=1 -v
+=== RUN   TestRun_FixLinesRunInOrder
+--- PASS: TestRun_FixLinesRunInOrder (1.42s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.505s
+exit code: 0

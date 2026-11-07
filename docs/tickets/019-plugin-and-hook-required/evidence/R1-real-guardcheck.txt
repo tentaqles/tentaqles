@@ -1,0 +1,6 @@
+# CheckSessionGuard against the real claude 2.1.319 install in a throwaway dir (probe test in a copy)
+=== RUN   TestZZRealInstall
+    zz_real_test.go:10: real install, session guard: {OK:true Why: Setting: File: Covered:false NoConfig:false Missing:false Disabled:false Unresolved:false}
+--- PASS: TestZZRealInstall (0.00s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/trust	0.260s

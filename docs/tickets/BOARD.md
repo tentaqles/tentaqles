@@ -22,7 +22,7 @@ The build loop's board, kept by `.claude/hooks/gate.mjs`. See `.claude/README.md
 | 016 | `tentaqles reach` installs the client's CLIs | landed | High | alongside |
 | 017 | The right browser on the right profile | landed | High | alongside |
 | 018 | `status --json` for the skill, and `tentaqles connect <provider>` | landed | High | alongside |
-| 019 | `reach` installs the plugin, and Claude won't start without the guard | ready | High | waits for 016: both add a step to reach |
+| 019 | `reach` installs the plugin, and Claude won't start without the guard | landed | High | waits for 016: both add a step to reach |
 | 020 | `reach` opens the client's terminal and closes the old one | ready | High | waits for 019: the last step of reach |
 | 021 | The onboarding skill drives the logins | landed | High | waits for 016, 018: it uses install, status and connect |
 | 022 | An agent can't run a command under another client | landed | High | alongside |

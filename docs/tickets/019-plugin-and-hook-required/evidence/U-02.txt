@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestReach_NoPluginFlag$ -count=1 -v
+=== RUN   TestReach_NoPluginFlag
+--- PASS: TestReach_NoPluginFlag (0.70s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.785s
+exit code: 0

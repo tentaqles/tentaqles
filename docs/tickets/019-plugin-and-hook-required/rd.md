@@ -1,6 +1,6 @@
 # 019: `reach` installs the plugin, and Claude won't start without the guard
 
-**Status:** ready
+**Status:** landed
 **Risk:** High: a Claude Code session started with no hook has no guard at all, under any identity
 **UI:** none
 

@@ -1,0 +1,50 @@
+# real claude: install after the marketplace add (same throwaway dir)
+Installing plugin "tentaqles@tentaqles"...✔ Successfully installed plugin: tentaqles@tentaqles (scope: user)
+exit: 0
+--- files
+./.claude.json
+./backups/.claude.json.backup.1794025832939
+./plugins/.last_inuse_sweep
+./plugins/cache/tentaqles/tentaqles/0.16.0/.gitattributes
+./plugins/cache/tentaqles/tentaqles/0.16.0/.gitignore
+./plugins/cache/tentaqles/tentaqles/0.16.0/CHANGELOG.md
+./plugins/cache/tentaqles/tentaqles/0.16.0/CLAUDE.md
+./plugins/cache/tentaqles/tentaqles/0.16.0/HOW-TO.md
+./plugins/cache/tentaqles/tentaqles/0.16.0/LICENSE
+./plugins/cache/tentaqles/tentaqles/0.16.0/pyproject.toml
+./plugins/cache/tentaqles/tentaqles/0.16.0/README.md
+./plugins/cache/tentaqles/tentaqles/0.16.0/settings.json
+./plugins/cache/tentaqles/tentaqles/0.16.0/TENTAQLES_PLUGIN_ISSUES.md
+./plugins/installed_plugins.json
+./plugins/known_marketplaces.json
+./settings.json
+--- settings.json
+{
+  "extraKnownMarketplaces": {
+    "tentaqles": {
+      "source": {
+        "source": "directory",
+        "path": "C:\\repos\\tentaqles\\tentaqles\\.claude\\worktrees\\agent-a8686d6a0bef07e68"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "tentaqles@tentaqles": true
+  }
+}
+--- installed_plugins.json
+{
+  "version": 2,
+  "plugins": {
+    "tentaqles@tentaqles": [
+      {
+        "scope": "user",
+        "installPath": "C:\\Users\\renato\\AppData\\Local\\Temp\\claude\\9afa00c4d4304694\\ba457feb-5990-4ebb-b9e4-b1edac2f1351\\scratchpad\\realcfg\\plugins\\cache\\tentaqles\\tentaqles\\0.16.0",
+        "version": "0.16.0",
+        "installedAt": "2026-11-07T04:30:57.803Z",
+        "lastUpdated": "2026-11-07T04:30:57.803Z",
+        "gitCommitSha": "642dfb458723ee4373447cc80bda9c77af70daa2"
+      }
+    ]
+  }
+}
