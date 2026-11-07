@@ -162,7 +162,9 @@ func TestMain(m *testing.M) {
 	case "exit0":
 		os.Exit(0)
 	case "exit1":
+		fmt.Fprintln(os.Stderr, "warning: the locale is not set")
 		fmt.Fprintln(os.Stderr, "cannot open display")
+		fmt.Fprintln(os.Stderr, "exit status 1")
 		os.Exit(1)
 	case "sleep":
 		time.Sleep(3 * time.Second)
@@ -230,6 +232,44 @@ func TestShellName(t *testing.T) {
 	}
 }
 
+// splitWords is the POSIX reading of a command line: quotes group, backslashes escape, and an unterminated
+// quote runs to the end.
+func TestSplitWords(t *testing.T) {
+	for in, want := range map[string][]string{
+		`pwsh -NoLogo`:                        {"pwsh", "-NoLogo"},
+		`  a   b  `:                           {"a", "b"},
+		`"a b" c`:                             {"a b", "c"},
+		`'a b' "c d"`:                         {"a b", "c d"},
+		`a\ b c`:                              {"a b", "c"},
+		`"x\"y" z`:                            {`x"y`, "z"},
+		`'it''s'`:                             {"its"},
+		`"C:\Program Files\pwsh.exe" -NoLogo`: {`C:\Program Files\pwsh.exe`, "-NoLogo"},
+		`a "b c`:                              {"a", "b c"},
+		``:                                    nil,
+	} {
+		if got := splitWords(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("splitWords(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// reasonLine picks the line that gives a launcher's reason (the rule install.ErrorLine follows): the first
+// line that reads as an error, else the last line. It never picks a warning-only first line.
+func TestReasonLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                       "",
+		"just one line":                          "just one line",
+		"warning: a\nERROR: cannot open display": "ERROR: cannot open display",
+		"first line\nlast line":                  "last line",
+		"Error one\r\nexit status 1\r\n":         "Error one",
+		"\n  \n":                                 "",
+	} {
+		if got := reasonLine(in); got != want {
+			t.Errorf("reasonLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // A shell started to run something (-c, -Command, -File, /c) is not an interactive session, and
 // neither is an unreadable command line: reach then leaves the terminal open.
 func TestInteractive(t *testing.T) {
@@ -248,6 +288,30 @@ func TestInteractive(t *testing.T) {
 		{"bash", "bash -o pipefail"},
 		{"zsh", "zsh -l"},
 		{"cmd", "cmd /d /k"},
+	}
+	// A quoted executable path with a space is one word, the program: the shell after it is judged on its
+	// own arguments (L-09). Windows (Program Files) and the POSIX quoting both read these.
+	quotedInteractive := [][2]string{
+		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe"`},
+		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo`},
+		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" -ExecutionPolicy "Remote Signed" -NoLogo`},
+		{"bash", `"C:\Program Files\Git\bin\bash.exe" --login -i`},
+		{"powershell", `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile`},
+	}
+	quotedBatch := [][2]string{
+		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" -Command "tq reach"`},
+		{"pwsh", `"C:\Program Files\PowerShell\7\pwsh.exe" "C:\Clients\setup script.ps1"`},
+		{"bash", `"C:\Program Files\Git\bin\bash.exe" -c "tq reach"`},
+	}
+	for _, k := range quotedInteractive {
+		if !Interactive(k[0], k[1]) {
+			t.Errorf("Interactive(%q, %q) = false, want true", k[0], k[1])
+		}
+	}
+	for _, k := range quotedBatch {
+		if Interactive(k[0], k[1]) {
+			t.Errorf("Interactive(%q, %q) = true, want false", k[0], k[1])
+		}
 	}
 	batch := [][2]string{
 		{"pwsh", `pwsh -Command "tq reach"`},

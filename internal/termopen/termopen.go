@@ -119,18 +119,15 @@ var start = func(l Launch) error {
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("%w: %s", err, lastLine(stderr.String()))
+			if reason := reasonLine(stderr.String()); reason != "" {
+				return fmt.Errorf("%w: %s", err, reason)
+			}
+			return err
 		}
 		return nil
 	case <-time.After(startGrace):
 		return nil
 	}
-}
-
-// lastLine is the last non-empty line of a launcher's stderr, the reason it gives.
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func open(goos, dir string, env []string, lookPath func(string) (string, error)) (Launch, error) {
@@ -203,7 +200,14 @@ func isNonInteractiveFlag(shell, a string) bool {
 // the shell non-interactive; so does an empty command line. When reach cannot tell, it leaves the
 // terminal open, so every doubt answers no.
 func Interactive(shell, cmdline string) bool {
-	args := strings.Fields(cmdline)
+	// The command line is split with the platform's own quoting, so a quoted executable path with a space
+	// is the program, not a script (L-09).
+	var args []string
+	for _, w := range splitCommandLine(cmdline) {
+		if w != "" {
+			args = append(args, w)
+		}
+	}
 	if len(args) == 0 {
 		return false
 	}

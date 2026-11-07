@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -304,8 +305,9 @@ var (
 var reachProbeTimeout = 20 * time.Second
 
 // powershellProbe is the one script the probe runs. It is a constant: nothing from the folder, the
-// manifest or the environment reaches it.
-const powershellProbe = `$PROFILE.CurrentUserCurrentHost; Get-ExecutionPolicy`
+// manifest or the environment reaches it. The profile path goes out as base64 of its UTF-8 bytes, so the
+// console's code page cannot change a non-ASCII character on the way (a João folder, L-10).
+const powershellProbe = `[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($PROFILE.CurrentUserCurrentHost)); Get-ExecutionPolicy`
 
 // powershellLoads asks the PowerShell exe on the PATH where it reads its profile and under what execution
 // policy it runs. The profile tq wrote is loaded only at that path, and only under a policy that runs an
@@ -324,11 +326,27 @@ func powershellLoads(exe, profile string) error {
 	if err != nil {
 		return fmt.Errorf("%s did not run: %v", exe, err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	return checkPowerShellProbe(exe, out, profile)
+}
+
+// checkPowerShellProbe reads the probe's output: the first line is the profile path (base64 of its UTF-8
+// bytes), and the last line is the execution policy. The path must be the file tq wrote, and the policy
+// must run an unsigned local script. CRLF line ends and blank lines are ignored.
+func checkPowerShellProbe(exe string, out []byte, profile string) error {
+	var lines []string
+	for _, l := range strings.Split(string(out), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
 	if len(lines) < 2 {
 		return fmt.Errorf("%s did not say where it reads its profile", exe)
 	}
-	read, policy := strings.TrimSpace(lines[0]), strings.TrimSpace(lines[len(lines)-1])
+	raw, err := base64.StdEncoding.DecodeString(lines[0])
+	if err != nil {
+		return fmt.Errorf("%s said where it reads its profile in a form tq cannot read", exe)
+	}
+	read, policy := string(raw), lines[len(lines)-1]
 	if !strings.EqualFold(filepath.Clean(read), filepath.Clean(profile)) {
 		return fmt.Errorf("%s reads its profile from %s, not from %s", exe, read, profile)
 	}

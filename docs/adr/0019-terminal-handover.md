@@ -41,7 +41,8 @@ shell profiles are outside the integrity record, so the block is written only af
   writes no profile.
 - **Which failures stop the handover (Q2).** The shell reach runs in must take the block, and if it is PowerShell it
   must load the profile: reach probes it with `$PROFILE.CurrentUserCurrentHost` and `Get-ExecutionPolicy`, in a bounded
-  run with no profile of its own. A profile at another path, or a Restricted or AllSigned policy, is the same case as a
+  run with no profile of its own. The path comes back as base64 of its UTF-8 bytes, so a non-ASCII folder (a João
+  profile) is not garbled by the console's code page (`TestCheckPowerShellProbe`). A profile at another path, or a Restricted or AllSigned policy, is the same case as a
   failed write. Then reach prints the reason, opens nothing and ends nothing, and exits 0 (`TestReach_PowerShellProbeFailureOpensNothing`).
   A failure on any other detected shell is a warning naming that shell, and the handover goes on
   (`TestReach_OtherShellFailureWarnsAndHandsOver`).
@@ -56,8 +57,10 @@ shell profiles are outside the integrity record, so the block is written only af
   `zsh`, `fish`, `cmd`); `termopen.Interactive` says that shell's command line starts an interactive session; and the
   parent is not itself a child of a shell. A shell started by a shell (a nested shell, or a Git Bash stub) is not ended
   (`TestReach_KillsOnlyADirectShellParent`, `TestReach_GitBashStubNotEnded`). Only that pid is ended, never an ancestor.
-- **Interactive is read word by word.** A bare word after the options is a script or a command, and makes the shell
-  non-interactive. So do `-c`, `-Command`, `-EncodedCommand` (and its prefixes `-e`, `-ec`, `-enc`), `-File`,
+- **Interactive is read word by word, with the platform's quoting.** The command line is split the way the OS splits it
+  (`CommandLineToArgv` on Windows, shell quoting elsewhere), so a quoted program path with a space, such as
+  `"C:\Program Files\PowerShell\7\pwsh.exe"`, is the program and not a script (`TestInteractive`). A bare word after the
+  options is a script or a command, and makes the shell non-interactive. So do `-c`, `-Command`, `-EncodedCommand` (and its prefixes `-e`, `-ec`, `-enc`), `-File`,
   `-NonInteractive`, `--command`, and `/c` for cmd. Options known to take a value (`-ExecutionPolicy`, `-o`, `--rcfile`)
   consume the next word. An option not on that list leaves its value counted as a script, so every doubt keeps the
   shell open (`TestInteractive`).

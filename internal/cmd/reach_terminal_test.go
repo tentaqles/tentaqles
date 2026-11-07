@@ -388,32 +388,47 @@ func TestReach_PauseClosedInput(t *testing.T) {
 
 // TestReach_ParentChangedAtPauseNotEnded: the pid reach identified is not the parent any more when the
 // developer presses Enter (the shell ended, and its pid may belong to another process). Nothing is ended.
+//
+// Each replacement is a shell tq may end on its own (a shell, interactive, under a terminal), so only the
+// re-check can stop the kill: the pid, the name or the command line changed while the pause waited. A reused
+// pid is the case where the pid matches and the name or the command line does not (L-07).
 func TestReach_ParentChangedAtPauseNotEnded(t *testing.T) {
-	clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
-	h := isolateHandover(t, filepath.Dir(clients))
-	h.input = strings.NewReader("\n")
-	h.onPause = func() {
-		h.after = &afterLaunch{p: humanonly.Parent{PID: 4400, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true}, ok: true}
+	cases := []struct {
+		name  string
+		after humanonly.Parent
+	}{
+		{"another pid", humanonly.Parent{PID: 4400, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true}},
+		{"same pid, another name", humanonly.Parent{PID: 4321, Name: "powershell.exe", Cmdline: "pwsh.exe -NoLogo", CmdlineKnown: true}},
+		{"same pid, another command line", humanonly.Parent{PID: 4321, Name: "pwsh.exe", Cmdline: "pwsh.exe -NoProfile", CmdlineKnown: true}},
 	}
-	reachChain(t, h, pwshParent)
-	// The replacement shell is a real one under a terminal, so only the changed pid can stop the kill.
-	chained := humanonly.ParentOf
-	humanonly.ParentOf = func(pid int) (humanonly.Parent, bool) {
-		if pid == 4400 {
-			return humanonly.Parent{PID: 80, Name: "WindowsTerminal.exe", Cmdline: "wt", CmdlineKnown: true}, true
-		}
-		return chained(pid)
-	}
-	t.Cleanup(func() { humanonly.ParentOf = chained })
-	out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if h.count("kill") != 0 {
-		t.Fatalf("a parent that changed during the pause was ended: %v", h.events)
-	}
-	if !strings.Contains(out, "Close this terminal when you are ready.") {
-		t.Fatalf("the line does not print:\n%s", out)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clients := isolateReach(t, &reach.Answers{Email: "me@acme.test"})
+			h := isolateHandover(t, filepath.Dir(clients))
+			h.input = strings.NewReader("\n")
+			after := tc.after
+			h.onPause = func() { h.after = &afterLaunch{p: after, ok: true} }
+			reachChain(t, h, pwshParent)
+			// A pid the chain does not know sits under a terminal, as a real shell would.
+			chained := humanonly.ParentOf
+			humanonly.ParentOf = func(pid int) (humanonly.Parent, bool) {
+				if pid == 4400 {
+					return humanonly.Parent{PID: 80, Name: "WindowsTerminal.exe", Cmdline: "wt", CmdlineKnown: true}, true
+				}
+				return chained(pid)
+			}
+			t.Cleanup(func() { humanonly.ParentOf = chained })
+			out, err := runReachH(t, h, filepath.Join(clients, "acme"), "--no-banner")
+			if err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if h.count("kill") != 0 {
+				t.Fatalf("a parent that changed during the pause was ended: %v", h.events)
+			}
+			if !strings.Contains(out, "Close this terminal when you are ready.") {
+				t.Fatalf("the line does not print:\n%s", out)
+			}
+		})
 	}
 }
 
