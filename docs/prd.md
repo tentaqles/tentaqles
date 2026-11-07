@@ -273,8 +273,12 @@ parent's and the same hook runs in it; the off launchers refuse agent markers (F
 `CLAUDE_CONFIG_DIR` hits `claude-config-drift` on the first `git push` or `gh` call (AR2).
 Status: shipped (v0.9.0)
 **Acceptance checks**
-- `TestRunFromAgentSession` passes: with `CLAUDECODE=1`, `tq run --off` and `tq run` into
-  another workspace are refused.
+- `TestRunFromAgentSession` passes: with `CLAUDECODE=1`, `tq run acme` and `tq run .` from acme's
+  folder launch with its identity.
+- `TestRunOtherClient_RefusedForAgents` passes: under each agent marker and under a harness in the
+  process tree, `tq run <other>` from another client's folder or a neutral one is refused with
+  exit 1, nothing launches and one `identity` line is logged (ADR-0020). `TestRunOtherClient_HumanAllowed`
+  passes: a human's `tq run <other>` launches from any folder.
 - `TestRunForCwd_ClaudeConfigDrift` and `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`
   pass.
 

@@ -2,16 +2,21 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"github.com/zalando/go-keyring"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
@@ -331,17 +336,33 @@ func TestRunDotUntrustedRefuses(t *testing.T) {
 	}
 }
 
-// An agent's nested launch gets the identity env and no bypass flag.
+// An agent's nested launch gets the identity env and no bypass flag. The agent
+// runs from its own workspace's folder: tq run <its name> and tq run . both
+// launch with its identity. Another name is refused
+// (TestRunOtherClient_RefusedForAgents).
 func TestRunFromAgentSession(t *testing.T) {
-	mkLaunchWS(t, "acme", "")
+	root := mkLaunchWS(t, "acme", "")
 	clearAgentMarkers(t)
 	t.Setenv("CLAUDECODE", "1")
+	chdir(t, root)
 	calls := fakeExec(t)
 	if _, err := runTq(t, "run", "acme", "--", "claude", "-p", "x"); err != nil {
 		t.Fatal(err)
 	}
+	if len(*calls) != 1 {
+		t.Fatalf("tq run acme: want one launch, got %+v", *calls)
+	}
 	if c := (*calls)[0]; strings.Join(c.args, " ") != "-p x" || c.env["TQ_WS"] != "acme" {
 		t.Fatalf("agent launch: %+v", c)
+	}
+	if _, err := runTq(t, "run", ".", "--", "claude", "-p", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("tq run .: want a second launch, got %+v", *calls)
+	}
+	if c := (*calls)[1]; strings.Join(c.args, " ") != "-p x" || c.env["TQ_WS"] != "acme" {
+		t.Fatalf("agent launch by dot: %+v", c)
 	}
 }
 
@@ -364,5 +385,312 @@ func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
 		if c := (*calls)[0]; prog(c.name) != "npm" || strings.Join(c.args, " ") != "test -p x --watch" {
 			t.Fatalf("%v: %v", args, c)
 		}
+	}
+}
+
+// mkWorkspacesInOneBase writes and trusts one workspace per name in one base,
+// so they share one state folder and registry (mkLaunchWS isolates a new home
+// on each call, which would drop the first). It returns each root by name.
+func mkWorkspacesInOneBase(t *testing.T, names ...string) map[string]string {
+	t.Helper()
+	isolateHome(t)
+	base := testutil.TempDir(t)
+	cfg := &registry.Config{}
+	if _, err := cfg.AddBase(base); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	roots := map[string]string{}
+	for _, name := range names {
+		root := filepath.Join(base, name)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "schema: tentaqles-client-v2\nclient: " + name + "\ngit: { email: " + name + "@example.com }\nidentities: { claude: {} }\n"
+		mp := filepath.Join(root, manifest.FileName)
+		if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h, err := trust.HashFile(mp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := trust.Allow(name, h); err != nil {
+			t.Fatal(err)
+		}
+		roots[name] = root
+	}
+	return roots
+}
+
+// harnessChain is a process tree with claude.exe in it: this process <- bash <-
+// claude.exe <- WindowsTerminal.exe. It is the process-tree detector's agent.
+func harnessChain(pid int) (humanonly.Parent, bool) {
+	switch pid {
+	case os.Getpid():
+		return humanonly.Parent{PID: 90, Name: "bash.exe", Cmdline: "bash", CmdlineKnown: true}, true
+	case 90:
+		return humanonly.Parent{PID: 80, Name: "claude.exe", Cmdline: "claude", CmdlineKnown: true}, true
+	case 80:
+		return humanonly.Parent{PID: 70, Name: "WindowsTerminal.exe", Cmdline: "wt", CmdlineKnown: true}, true
+	}
+	return humanonly.Parent{}, false
+}
+
+// setAgentDetector makes one agent detector fire, from a human baseline: an
+// environment marker (one name of agentMarkers, alone) or the process tree
+// (humanonly.DetectorProcessTree, claude.exe in the chain, no marker). "" is
+// the human baseline. The seams are restored at cleanup.
+func setAgentDetector(t *testing.T, detector string) {
+	t.Helper()
+	clearAgentMarkers(t)
+	prev := humanonly.ParentOf
+	t.Cleanup(func() { humanonly.ParentOf = prev })
+	humanonly.ParentOf = terminalChain
+	switch {
+	case detector == "":
+	case detector == humanonly.DetectorProcessTree:
+		humanonly.ParentOf = harnessChain
+	case slices.Contains(agentMarkers, detector):
+		t.Setenv(detector, "1")
+	default:
+		t.Fatalf("unknown agent detector %q", detector)
+	}
+}
+
+// agentDetectors are every detector that finds an agent: each marker alone,
+// then the process tree.
+func agentDetectors() []string {
+	return append(append([]string(nil), agentMarkers...), humanonly.DetectorProcessTree)
+}
+
+func processTreeAvailable() bool {
+	for _, d := range humanonly.Detectors() {
+		if d.Name == humanonly.DetectorProcessTree {
+			return d.Available
+		}
+	}
+	return false
+}
+
+// otherClientRefusal is the exact refusal of an agent session's tq run <other>
+// (ADR-0020).
+func otherClientRefusal(name string) string {
+	return "tq run: " + name + " is another client. An agent session can only run under the client of its own folder."
+}
+
+func denialsOf(t *testing.T) []audit.Denial {
+	t.Helper()
+	ds, err := audit.ReadDenials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ds
+}
+
+// leaks reports whether text holds value, written as is or as a JSON string
+// (a Windows path is escaped inside the denial log).
+func leaks(t *testing.T, text, value string) bool {
+	t.Helper()
+	esc, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Contains(text, value) || strings.Contains(text, strings.Trim(string(esc), `"`))
+}
+
+// An agent session (any agent detector) launches only the identity of the
+// folder it is in (FR-13): tq run <other> refuses with exit 1 and nothing
+// launches, from another client's folder and from a neutral one. Each refusal
+// is one identity denial in the log, and names the detector that fired.
+func TestRunOtherClient_RefusedForAgents(t *testing.T) {
+	for _, det := range agentDetectors() {
+		t.Run(det, func(t *testing.T) {
+			if det == humanonly.DetectorProcessTree && !processTreeAvailable() {
+				t.Skip("no process-tree walker on this OS")
+			}
+			roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+			setAgentDetector(t, det)
+			calls := fakeExec(t)
+			for _, from := range []string{roots["alpha"], t.TempDir()} {
+				chdir(t, from)
+				before := len(denialsOf(t))
+				_, err := runTq(t, "run", "beta", "--", "gh", "pr", "list")
+				if err == nil || err.Error() != otherClientRefusal("beta") {
+					t.Fatalf("from %s: tq run beta must refuse in an agent session, got %v", from, err)
+				}
+				if len(*calls) != 0 {
+					t.Fatalf("from %s: another workspace launched: %+v", from, *calls)
+				}
+				ds := denialsOf(t)
+				if len(ds) != before+1 {
+					t.Fatalf("from %s: want one denial, log has %d more: %+v", from, len(ds)-before, ds)
+				}
+				if d := ds[len(ds)-1]; d.Category != "identity" || d.Rule != policy.OtherIdentityID ||
+					d.Layer != audit.LayerHumanOnly || d.Subject != "beta" || !strings.Contains(d.Reason, det) {
+					t.Fatalf("from %s: denial %+v", from, d)
+				}
+			}
+		})
+	}
+}
+
+// A neutral folder is no client's folder: an agent there refuses tq run of
+// any client (FR-13).
+func TestRunOtherClient_NeutralFolderRefused(t *testing.T) {
+	mkWorkspacesInOneBase(t, "alpha", "beta")
+	setAgentDetector(t, "CLAUDECODE")
+	chdir(t, t.TempDir())
+	calls := fakeExec(t)
+	_, err := runTq(t, "run", "beta", "--", "az", "group", "list")
+	if err == nil || err.Error() != otherClientRefusal("beta") {
+		t.Fatalf("tq run beta from a neutral folder must refuse, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("a neutral folder launched beta: %+v", *calls)
+	}
+}
+
+// A name that is no client is refused the same way, and the refusal names no
+// other client: an agent learns nothing about the workspaces it may not run.
+func TestRunOtherClient_UnknownName(t *testing.T) {
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	setAgentDetector(t, "CLAUDECODE")
+	calls := fakeExec(t)
+	for _, from := range []string{roots["alpha"], t.TempDir()} {
+		chdir(t, from)
+		_, err := runTq(t, "run", "ghost", "--", "claude")
+		if err == nil || err.Error() != otherClientRefusal("ghost") {
+			t.Fatalf("from %s: tq run ghost must refuse in an agent session, got %v", from, err)
+		}
+		if strings.Contains(err.Error(), "alpha") || strings.Contains(err.Error(), "beta") {
+			t.Fatalf("from %s: the refusal names another client: %v", from, err)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("an unknown name launched: %+v", *calls)
+	}
+}
+
+// With no marker and a process tree that cannot be followed to a terminal,
+// the agent check is unverified: naming another client refuses, and nothing
+// launches (ADR-0003).
+func TestRunOtherClient_ProcessTreeUnverified(t *testing.T) {
+	if !processTreeAvailable() {
+		t.Skip("no process-tree walker on this OS")
+	}
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	clearAgentMarkers(t)
+	prev := humanonly.ParentOf
+	t.Cleanup(func() { humanonly.ParentOf = prev })
+	humanonly.ParentOf = func(int) (humanonly.Parent, bool) { return humanonly.Parent{}, false }
+	chdir(t, roots["alpha"])
+	calls := fakeExec(t)
+	_, err := runTq(t, "run", "beta", "--", "claude")
+	if err == nil || err.Error() != otherClientRefusal("beta") {
+		t.Fatalf("an unverified tree must refuse tq run beta, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("an unverified tree launched beta: %+v", *calls)
+	}
+	ds := denialsOf(t)
+	if len(ds) != 1 || !strings.Contains(ds[0].Reason, humanonly.DetectorProcessTree+": cannot establish a human ancestry") {
+		t.Fatalf("want one process-tree denial, got %+v", ds)
+	}
+}
+
+// A human's tq run <other> -- <cmd> launches from any folder, with that
+// client's identity and no confirmation: the agent check adds a refusal for
+// agents and nothing else (FR-13, REQ-5).
+func TestRunOtherClient_HumanAllowed(t *testing.T) {
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	setAgentDetector(t, "")
+	prevConfirm := humanonly.Confirm
+	humanonly.Confirm = func(string) (bool, error) {
+		t.Error("tq run asked for a confirmation")
+		return false, nil
+	}
+	t.Cleanup(func() { humanonly.Confirm = prevConfirm })
+	calls := fakeExec(t)
+	for i, from := range []string{roots["alpha"], t.TempDir()} {
+		chdir(t, from)
+		if out, err := runTq(t, "run", "beta", "--", "claude", "-p", "hi"); err != nil {
+			t.Fatalf("human from %s: %v %s", from, err, out)
+		}
+		if len(*calls) != i+1 || (*calls)[i].env["TQ_WS"] != "beta" {
+			t.Fatalf("human from %s: %+v", from, *calls)
+		}
+	}
+	if ds := denialsOf(t); len(ds) != 0 {
+		t.Fatalf("a human launch logged denials: %+v", ds)
+	}
+}
+
+// The refusal reads from the process's own folder, not from a variable an
+// agent may set: TQ_WS and TQ_WS_ROOT naming beta do not help alpha's agent.
+func TestRunOtherClient_InheritedEnvIgnored(t *testing.T) {
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	setAgentDetector(t, "CLAUDECODE")
+	t.Setenv("TQ_WS", "beta")
+	t.Setenv("TQ_WS_ROOT", roots["beta"])
+	chdir(t, roots["alpha"])
+	calls := fakeExec(t)
+	_, err := runTq(t, "run", "beta", "--", "claude")
+	if err == nil || err.Error() != otherClientRefusal("beta") {
+		t.Fatalf("an inherited TQ_WS must not allow beta, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("beta launched: %+v", *calls)
+	}
+}
+
+// The refusal and its denial line hold no path under beta's identity folder
+// and none of beta's manifest values (REQ-6, S-03).
+func TestRunOtherClient_NoLeak(t *testing.T) {
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	setAgentDetector(t, "CLAUDECODE")
+	chdir(t, roots["alpha"])
+	fakeExec(t)
+	_, err := runTq(t, "run", "beta", "--", "claude")
+	if err == nil {
+		t.Fatal("tq run beta must refuse")
+	}
+	raw, rerr := os.ReadFile(audit.DenialsPath())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if n := strings.Count(string(raw), "\n"); n != 1 {
+		t.Fatalf("want one denial line, got %d: %s", n, raw)
+	}
+	betaFolder := filepath.Join(paths.IdentitiesRoot(), "beta")
+	for _, secret := range []string{betaFolder, roots["beta"], "beta@example.com"} {
+		if leaks(t, err.Error(), secret) {
+			t.Fatalf("the refusal leaks %q: %v", secret, err)
+		}
+		if leaks(t, string(raw), secret) {
+			t.Fatalf("the denial line leaks %q: %s", secret, raw)
+		}
+	}
+}
+
+// The refusal is logged before it is returned; a denial log that cannot be
+// written still refuses, and nothing launches.
+func TestRunOtherClient_LogFailureStillRefuses(t *testing.T) {
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	setAgentDetector(t, "CLAUDECODE")
+	chdir(t, roots["alpha"])
+	calls := fakeExec(t)
+	// The denial log is a directory: the refusal cannot be appended.
+	if err := os.MkdirAll(audit.DenialsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runTq(t, "run", "beta", "--", "claude")
+	if err == nil || !strings.HasPrefix(err.Error(), otherClientRefusal("beta")) {
+		t.Fatalf("an unlogged refusal must still refuse, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("beta launched: %+v", *calls)
 	}
 }

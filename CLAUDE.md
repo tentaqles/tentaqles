@@ -112,6 +112,10 @@ need no ticket.
 ## Must not trade off
 From `docs/threat-model.md`; each line names the test that keeps it.
 - Identity drift blocks git/gh/cloud commands: `TestReadOnlyGitExemptFromEnvDriftAndUntrusted`.
+- An agent session runs `tq run` only for the identity of its own folder (FR-13, ADR-0020): another
+  client's name or a neutral folder is refused: `TestRunOtherClient_RefusedForAgents`,
+  `TestRunOtherClient_NeutralFolderRefused`, `TestRunOtherClient_InheritedEnvIgnored`; a human's
+  `tq run <any client>` stays free: `TestRunOtherClient_HumanAllowed`.
 - Everything outside the identity's provider scope is denied in every
   tool (CLI by name, path, wrapper, `python -m`; variables; credential paths; API hosts; MCP
   servers; other identities' roots), before secrets, with a message naming the scope; the

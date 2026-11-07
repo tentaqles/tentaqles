@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestRunOtherClient_HumanAllowed$ -count=1 -v
+=== RUN   TestRunOtherClient_HumanAllowed
+--- PASS: TestRunOtherClient_HumanAllowed (0.44s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.720s
+exit code: 0
