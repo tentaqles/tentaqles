@@ -14,6 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/commitscan"
 	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/protect"
+	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
@@ -344,6 +345,22 @@ func commitScanIncomplete(ctx context.Context, err error) string {
 	return "scan could not read what this commit records; check the repository state" + tail
 }
 
+// connectOfScope reports whether server is the MCP server name the embedded catalog's connect:
+// entry gives a provider in scope (the entry `tentaqles connect` writes). The embedded catalog
+// only: a user provider file never names one of these servers.
+func connectOfScope(scope []string, server string) bool {
+	emb, err := providers.Embedded()
+	if err != nil {
+		return false
+	}
+	for _, id := range scope {
+		if p, ok := emb.Get(id); ok && p.Connect != nil && p.Connect.Name == server {
+			return true
+		}
+	}
+	return false
+}
+
 // mcpOwner returns the client whose bundle declares server when the current
 // workspace's bundle does not, or "". Workspaces that don't manage MCP
 // through a bundle are never judged: there is nothing to compare against.
@@ -355,6 +372,11 @@ func mcpOwner(ws *resolve.Workspace, cfg *registry.Config, server string) string
 		if s == server {
 			return ""
 		}
+	}
+	// A server `tentaqles connect` wrote for a provider in this identity's own scope is this
+	// identity's, whatever another client's bundle lists (ADR-0017).
+	if connectOfScope(ws.Manifest.Scope(), server) {
+		return ""
 	}
 	all, _ := resolve.ListWorkspaces(cfg)
 	for _, other := range all {

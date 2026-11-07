@@ -55,6 +55,19 @@ manifest or `.claude.json` either, so it needs a read command that carries no se
     and writes its line.
 - `connect` re-signs nothing: `.claude.json` is not in the integrity record, and the entry can only be the
   catalog's.
+- **The hook's cross-client rule narrows (round 4).** `tq/cross-client-mcp` denied a server that another
+  client's bundle lists, even when this identity's own scope owns it. It now does not deny a server that
+  is the embedded `connect:` name of a provider in this identity's scope (`connectOfScope`, reading the
+  embedded catalog only), so the server `connect` wrote for a provider in scope is not denied because
+  another client's bundle has the same name. Every other server is judged as before: a name that no
+  in-scope provider owns, including one in another client's bundle, and a provider's name when that
+  provider is out of scope, stay denied. Tests: `TestHook_ConnectedServerNotCrossClientDenied` (all four
+  catalog entries), `TestHook_OtherClientsBundleServerStaysDenied`, `TestHook_OutOfScopeProviderNameStaysDenied`.
+- **A recursive search from a protected folder (round 3, `internal/policy/selfprotect.go`).** A recursive
+  search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem -Recurse`) whose run folder (the cwd, or the folder a
+  `cd` went to) is a read-denied protected folder is denied as `tq/protected-path`, whatever root it names,
+  including no root. The folder itself is protected (`backups/` under the identity's Claude home, as
+  above), so a search or a copy of it is denied, while a file beside it stays readable.
 - The identity's `.claude.json` and every other copy of its MCP entries become **protected paths**,
   `KindState`: `<identity>/claude/.claude.json*` (the file, its lock and temporary files, Claude's
   `.claude.json.backup`), the folder `<identity>/claude/backups/` and its `.claude.json*` files (Claude
