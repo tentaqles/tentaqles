@@ -154,7 +154,7 @@ func fakeExec(t *testing.T) *[]launched {
 	prev := execCommand
 	// tq run resolves its command on the identity PATH; these exist on every machine.
 	bin := testutil.TempDir(t)
-	for _, n := range []string{"claude", "codex", "npm"} {
+	for _, n := range []string{"claude", "codex", "npm", "gh"} {
 		if runtime.GOOS == "windows" {
 			n += ".exe"
 		}
@@ -189,11 +189,19 @@ func mkLaunchWS(t *testing.T, name, permMode string) string {
 // mkLaunchWSLayout is mkLaunchWS with a choice of layout: protected writes
 // the name-only marker in the root and the manifest under
 // paths.ManifestPath(name) (ADR-0002). It returns the root and the file the
-// trust hash is taken from.
+// trust hash is taken from. The client has the tentaqles plugin (the guard,
+// ADR-0018) as a real install leaves it; mkLaunchWSGuard says otherwise.
 func mkLaunchWSLayout(t *testing.T, name, permMode string, protected bool) (string, string) {
 	t.Helper()
+	return mkLaunchWSGuard(t, name, permMode, protected, guardOpts{})
+}
+
+// mkLaunchWSGuard is mkLaunchWSLayout with the client's guard as g says (guardplugin_test.go).
+func mkLaunchWSGuard(t *testing.T, name, permMode string, protected bool, g guardOpts) (string, string) {
+	t.Helper()
 	root := mkUntrusted(t, name)
-	body := "schema: tentaqles-client-v2\nclient: " + name + "\ngit: { email: tester@example.com }\nidentities: { claude: {}, codex: {} }\n"
+	ids := g.identities()
+	body := "schema: tentaqles-client-v2\nclient: " + name + "\ngit: { email: tester@example.com }\nidentities: " + ids + "\n"
 	if permMode != "" {
 		body += "claude: { permission_mode: " + permMode + " }\n"
 	}
@@ -210,6 +218,8 @@ func mkLaunchWSLayout(t *testing.T, name, permMode string, protected bool) (stri
 	if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Written before the signature: the record covers the plugin's files and the settings' keys.
+	writeGuard(t, name, g)
 	h, err := trust.HashFile(mp)
 	if err != nil {
 		t.Fatal(err)
@@ -413,6 +423,8 @@ func mkWorkspacesInOneBase(t *testing.T, names ...string) map[string]string {
 		if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		// The client has its guard, as reach leaves it (ADR-0018): a session launches only with it.
+		writeGuard(t, name, guardOpts{})
 		h, err := trust.HashFile(mp)
 		if err != nil {
 			t.Fatal(err)

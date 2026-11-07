@@ -50,6 +50,37 @@ func launchClaudeArgs(args []string, agent bool) []string {
 	return append([]string{"--dangerously-skip-permissions"}, args...)
 }
 
+// claudeIsSession reports whether claude's arguments start a session: not one of its
+// subcommands, and not --help or --version. Only a session needs the guard (REQ-4, REQ-6):
+// `claude plugin install` and `claude --version` run with none, so the fix line itself runs.
+func claudeIsSession(args []string) bool {
+	if len(args) > 0 && slices.Contains(claudeSubcommands, args[0]) {
+		return false
+	}
+	for _, a := range args {
+		if a == "--help" || a == "-h" || a == "--version" || a == "-v" {
+			return false
+		}
+	}
+	return true
+}
+
+// guardRefusal is the refusal of a session that would start with no tentaqles guard (ADR-0018):
+// the reason in one line, then the fix to run, one copyable line each, in order. It is the error of
+// tq run, not of claude.
+func guardRefusal(ws string, g trust.GuardHook) error {
+	return fmt.Errorf("claude won't start a session for %s without the tentaqles guard: %s\n  %s",
+		ws, g.Why, fixBlock(trust.GuardHookFix(ws, g)))
+}
+
+// fixBlock is the fix of a refusal: one line after "fix:", or the lines after "fix, in this order:".
+func fixBlock(lines []string) string {
+	if len(lines) == 1 {
+		return "fix: " + lines[0]
+	}
+	return "fix, in this order:\n    " + strings.Join(lines, "\n    ")
+}
+
 // agentProg names the agent a program is: "claude" for that name, with or
 // without a directory and a .exe/.cmd/.bat/.ps1 extension, and "" for any other.
 func agentProg(name string) string {
@@ -91,6 +122,17 @@ func (l launch) run() error {
 	args := l.args
 	switch agentProg(l.name) {
 	case "claude":
+		// A session in an identity's folder starts only with the guard: the plugin's PreToolUse
+		// hook in the Claude config the session will run with, CLAUDE_CONFIG_DIR as the identity
+		// environment sets it, and no project settings of the folders it starts in switching it
+		// off (ADR-0018). A neutral folder is unchanged.
+		if l.ws != nil && claudeIsSession(args) {
+			// A working folder that cannot be read (Getwd fails: cwd is "") is refused by the check itself.
+			cwd, _ := os.Getwd()
+			if g := trust.CheckSessionGuard(envplan.Desired(l.ws)["CLAUDE_CONFIG_DIR"], cwd, l.ws.Root); !g.OK {
+				return guardRefusal(l.ws.Name, g)
+			}
+		}
 		args = launchClaudeArgs(args, agent)
 	}
 	env := envplan.Environ(l.ws, os.Environ())

@@ -41,6 +41,9 @@ type FakeSpec struct {
 	SleepMS int `json:"sleep_ms,omitempty"`
 	// Copy lists files copied when the fake runs, in order.
 	Copy []FakeCopy `json:"copy,omitempty"`
+	// CopyArg, when set, limits Copy to a run with this exact argument: one fake that installs for
+	// one subcommand and only registers for another.
+	CopyArg string `json:"copy_arg,omitempty"`
 	// FailArg makes the fake fail (exit 1, FailStderr on stderr, nothing copied) when one of its
 	// arguments is exactly this: one package manager that fails for one package only.
 	FailArg    string `json:"fail_arg,omitempty"`
@@ -114,15 +117,27 @@ func FakeMain() (bool, int) {
 	if spec.SleepMS > 0 {
 		time.Sleep(time.Duration(spec.SleepMS) * time.Millisecond)
 	}
-	for _, c := range spec.Copy {
-		if err := copyFile(c.From, c.To); err != nil {
-			fmt.Fprintln(os.Stderr, "fake program:", err)
-			return true, 98
+	if spec.CopyArg == "" || hasArg(spec.CopyArg) {
+		for _, c := range spec.Copy {
+			if err := copyFile(c.From, c.To); err != nil {
+				fmt.Fprintln(os.Stderr, "fake program:", err)
+				return true, 98
+			}
 		}
 	}
 	fmt.Fprint(os.Stdout, spec.Stdout)
 	fmt.Fprint(os.Stderr, spec.Stderr)
 	return true, spec.Exit
+}
+
+// hasArg reports whether the fake was started with exactly this argument.
+func hasArg(a string) bool {
+	for _, x := range os.Args[1:] {
+		if x == a {
+			return true
+		}
+	}
+	return false
 }
 
 func appendLine(path, line string) {

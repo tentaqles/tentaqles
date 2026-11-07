@@ -102,6 +102,8 @@ func TestRun_OldManifestWarnsAndExitsZero(t *testing.T) {
 	if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The client has its guard (ADR-0018): this test is about the manifest, not the plugin.
+	writeGuardFixture(t, "acme")
 	hash, err := trust.HashFile(mp)
 	if err != nil {
 		t.Fatal(err)

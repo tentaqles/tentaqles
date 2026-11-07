@@ -228,6 +228,10 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   an agent session: `TestResolve_ReplayOfATrustedManifest_Neutral`,
   `TestTrustIsKeyedByWorkspaceName`, `TestHome_IgnoresTQHomeUnderAnAgentMarker`.
 - The plugin installs from a pinned tag and sha: `TestRootMarketplacePin`.
+- No Claude session starts in an identity's folder without the tentaqles guard (the enabled plugin's
+  PreToolUse hook, ADR-0018): `TestRun_RefusesWithNoGuardHook`, `TestRun_DisabledPluginIsNoHook`,
+  `TestRun_ForeignHookIsNoHook`, `TestRun_RefusalOnlyForASession`, `TestRun_ProjectSettingsCountToo`; `tq reach` installs the plugin with
+  `TestReach_InstallsThePlugin`.
 - The hook has no ask and fails closed: a payload it cannot read, a guard panic, the
   deadline, an unreadable registry or manifest, and an incomplete commit scan all deny:
   `TestNoAskCodePath`, `TestNoAskVerdict`, `TestPreToolUse_MalformedPayloadDenies`,

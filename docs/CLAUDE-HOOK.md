@@ -340,6 +340,60 @@ Client: none (neutral cwd: outside any base)
 Rules: remote git, gh and cloud CLI commands are blocked here until you cd into a trusted workspace (tq allow <name>).
 ```
 
+## No session without the hook
+
+The guard is the tentaqles plugin's `PreToolUse` hook, so a Claude session with no plugin has no guard at
+all. `tq run <ws> -- claude` and `tq run . -- claude` therefore start no session in an identity's folder
+unless the client's Claude config (the identity's `CLAUDE_CONFIG_DIR`) has all of:
+
+- the tentaqles plugin installed, found the way the integrity record finds it (`installed_plugins.json`, or
+  the plugin cache);
+- `enabledPlugins` with `"tentaqles@tentaqles": true` in its `settings.json`;
+- `disableAllHooks` absent or `false` in that `settings.json`, and in the project's `.claude/settings.json` and
+  `.claude/settings.local.json` for each folder from the session's working folder up to the client's folder (Claude
+  Code merges them into the session; a folder above the client's is not read);
+- the tentaqles entry of `enabledPlugins` not set off in those project files either (a project file that cannot be
+  read or is not JSON counts as no hook, and is named);
+- a `PreToolUse` entry in the plugin's `hooks/hooks.json` whose matcher selects `Bash` and an `mcp__` tool, and
+  whose command runs `tq_hook.sh pre-tool-use`.
+
+When one is missing, the command exits non-zero, prints the reason and the fix, and launches nothing. A missing
+plugin needs three lines, run in this order, each one copyable on its own:
+
+```
+tq: claude won't start a session for acme without the tentaqles guard: the tentaqles plugin is not installed for this client
+  fix, in this order:
+    tq run acme -- claude plugin marketplace add tentaqles/tentaqles
+    tq run acme -- claude plugin install tentaqles@tentaqles
+    tq hooks verify --accept acme
+```
+
+The marketplace line may be a no-op when the marketplace is there already. The install line changes the files the
+record covers (`enabledPlugins`, `installed_plugins.json`, the plugin folder), so `tq run` refuses until the third line
+re-signs them; that is the expected state between the second and third line. A plugin that is installed but switched
+off gets `tq run acme -- claude plugin enable tentaqles@tentaqles` and the re-sign line instead.
+
+For `disableAllHooks` the fix names the file and the setting: remove it (or set it to `false`), then
+`tq hooks verify --accept acme` for the identity's `settings.json`, or `tq run acme -- claude` for a project file
+(the record does not cover project files). A working folder that cannot be resolved (a broken link, or a folder that
+no longer exists) is refused too, with the fix to run it from a folder that resolves.
+
+Limits: the check reads the project files only; no hook rule denies a write to them, so an agent that edits one
+is caught at the next session `tq run` launches, not when it writes. Managed settings (the system-wide file) and
+Claude Code's own effective settings are not read. A plain `claude` a person starts outside `tq run` is not checked.
+Anything the check cannot read counts as missing. `tq doctor` reports the same state as `guard-hook-missing`, with the
+same fix lines; a client with no claude identity gets no such finding (the refusal still covers a session in it).
+
+Not refused: `claude` subcommands (`claude plugin install …`, `claude mcp …`), `claude --help` and
+`claude --version`, so the fix line itself runs; any command that is not `claude` (`tq run acme -- gh pr list`);
+and `claude` in a neutral folder, which is unchanged. The refusal covers only `claude` started through tq. A
+`claude` that a person starts by its own path, in a terminal without the tq hook block, is outside it (AR1).
+
+`tentaqles reach` installs the plugin for a new client once the trust is signed: `claude plugin marketplace add
+tentaqles/tentaqles`, then `claude plugin install tentaqles@tentaqles`, two minutes at most each, and it signs the
+record again. `--no-plugin` skips that step. A failed install does not stop reach; it prints the reason (the first
+error line of the command's output) and the same three lines, in order, that the refusal prints.
+
 ## Fallback mode (tq not installed)
 
 `plugin/scripts/tq_hook.sh` is what the plugin's hooks actually invoke. It

@@ -216,6 +216,7 @@ identity guard keeps blocking.
 | Code | Meaning |
 |---|---|
 | `settings-drift` | an identity's settings.json differs from what `tq settings render` would write |
+| `guard-hook-missing` | a trusted client's Claude config has no enabled tentaqles plugin with its PreToolUse guard, or `disableAllHooks` is set: `tq run <ws> -- claude` refuses to start a session. The fix lines install the plugin (the marketplace, `tq run <ws> -- claude plugin install tentaqles@tentaqles`, then the re-sign), enable it, or name the `disableAllHooks` setting or a project's switch ([CLAUDE-HOOK.md](CLAUDE-HOOK.md#no-session-without-the-hook)) |
 | `unpinned-package` | settings.json or .claude.json runs `npx`/`uvx`/`bunx` with `@latest` or no version |
 | `plugin-version-skew` | the same plugin is installed at different versions in different identities |
 | `plugins-dir-linked` | an identity's `claude/plugins` is a symlink or junction to a shared directory (e.g. `~/.claude/plugins`, often shared with another identity): every plugin install from any identity using it rewrites the same `installed_plugins.json` and cache. Give the identity its own directory, then `tq bundle sync` |

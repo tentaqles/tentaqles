@@ -131,6 +131,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 		if trusted {
 			claudeChecks(&w, add)
+			guardHookCheck(&w, add)
 			runWorkspaceChecks(&w, d, add)
 			mcpServiceChecks(&w, add)
 		}
