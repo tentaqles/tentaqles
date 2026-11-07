@@ -6,6 +6,9 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+- The onboarding skill (`/tentaqles:onboard`) drives the installs, logins and connections in order, and
+  ends with a table; see [`plugin/CHANGELOG.md`](plugin/CHANGELOG.md).
+
 ### The right browser on the right profile (ADR-0016)
 
 - `tentaqles open [--browser chrome|edge] <url>` opens an `http` or `https` URL in the client's browser

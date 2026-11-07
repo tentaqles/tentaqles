@@ -1,128 +1,136 @@
 ---
 name: onboard
-description: Connect every company tool of this client workspace and verify it - the agent and cloud CLIs, the git host, the tracker, and the chat and email MCP connectors. Reads the workspace manifest, prints each login for the user to run in their own terminal (tq login <ws> <id>, tq secret set <ws> <provider>, acli jira auth login), guides /mcp for connectors, then verifies with tq doctor --json and read-only tool calls. It never handles tokens and never runs a login itself. Ends with a table of what is connected. Use when the user says "onboard", "connect my tools", "set up this client", "log me in", "is everything connected", or "/tentaqles:onboard".
-argument-hint: '[check]'
+description: Connects this client's tools one provider at a time - installs each CLI in scope, has you log in, connects its MCP server, verifies it, and ends with a table. Reads only tentaqles status --json. Use when the user says "onboard", "connect my tools", "log me in" or "is everything connected", and on a first session in a new client.
 ---
 
 # Onboard
 
-Run inside a client folder that `tq onboard` (or `tq add`) created. The manifest
-(`.tentaqles.yaml`, names only) says which tools this company uses. This skill walks
-through each one: it prints the login for the user, waits, then verifies. The logins
-are the user's. Never run `tq login`, `tq allow`, `tq secret set`, `tq bundle sync`
-or a CLI's own login (`az login`, `gh auth login`, `acli jira auth login`): they are
-human steps, several are refused from an agent session, and a login opens a browser
-or a hidden prompt that only the user can answer.
+Connects this client's tools one provider at a time and verifies each one. The only view of the
+client is `tentaqles status --json`.
 
-**Tokens.** Never ask for a token, an API key or a password, and never repeat or store
-one. If the user pastes one into the chat, say that it should not be shared here, do
-not use it, and point them at `tq secret set <ws> <provider>`, which reads it from a
-hidden prompt into the OS keychain.
+Never read the workspace manifest, `.claude.json` or anything under `~/.tentaqles`. They are
+protected, and the status output says what you need. If only `tq` is on PATH, use `tq` for
+`tentaqles`: it is the same program.
 
-`$ARGUMENTS` is empty (walk through everything) or `check` (skip to step 3 and the table).
+Rules for every step:
+- A login is the developer's. Print it as its own line that starts with `!`, for them to run in
+  this session, then wait for them to say done. Never run a login yourself.
+- Install and connect only providers in `scope`. A provider outside it is refused: do not install,
+  log in or connect it.
+- Never choose an installer and never download a file. Print only what `tentaqles install` prints.
+- The hook judges every command. Never work around a refusal.
 
-## 1. Find the workspace and read the manifest
+## 1. Read the client
 
-```bash
-printf 'ws=%s\nroot=%s\n' "${TQ_WS:-}" "${TQ_WS_ROOT:-}"
-```
+Run `tentaqles status --json` and read the one object.
 
-- Both set: read `<root>/.tentaqles.yaml` with the Read tool.
-- Empty: look for `.tentaqles.yaml` in this folder and its parents. None found: say
-  "This folder is not a tq workspace. Run `tq onboard` in your own terminal first."
-  and stop.
-- The manifest is not trusted yet (doctor says `untrusted` in step 3, or tq printed
-  `untrusted` when it created it): the first line the user runs is `tq allow <ws>`.
+- `identity` is null (a neutral folder), or `trusted` is false (an untrusted client): this folder is
+  not a trusted client. Say the `reason` from the output as it is. Neutral: the developer runs
+  `tentaqles reach` in their own terminal to set the folder up. Untrusted: the developer runs
+  `tq hooks verify` in their own terminal and reads what it reports. Then stop. Do not walk the
+  providers.
+- Otherwise the client is `identity`, `scope` is what it may use, and `providers` lists every
+  provider in `scope`, in order. Walk them in that order.
 
-From the manifest, list what to connect: `identities`, `git.provider`, `cloud`
-(`provider` and `also`), `data_platform`, `agents`, `tracker`, `chat`, `email`.
-A block that is missing was skipped; leave it out of the walk-through and show it as
-"skipped" in the table.
+## 2. Walk the providers, one at a time
 
-## 2. Offer each login
+Finish one provider before the next: CLI, credential, connection. Say one line before each provider
+with its id and what is left. Skip what is already in place: a provider whose CLI resolves (or has
+no `cli`), whose `credential` is `present` and whose `connection` is `present` needs no step. A
+`connection` of `none` means no MCP server reaches the provider. A re-run works the same way, so a
+CLI removed or a credential expired since the last run gets its step again.
 
-Print the lines as one numbered list for the user to run in their own terminal
-(PowerShell, Windows Terminal, or a macOS/Linux terminal), then ask them to say when
-they are done. Do not run any of them.
+A task provider (`category` `pm`) gets only its login and its connection, and the one read-only
+check in step 4.
 
-- **CLIs** (every identity, the cloud CLIs, the data platform CLI, the agent CLIs):
-  `tq login <ws> <id>` for each one, for example `tq login acme claude`.
-- **Tracker** (`tracker.provider`): a login to verify, nothing more (tq keeps no
-  tracker sync). One of cli, keychain or env:
-  - cli: GitHub uses `tq login <ws> gh`. Azure DevOps runs `az login`: use
-    `tq login <ws> azure-devops` when `identities` lists `azure-devops`, else
-    `tq login <ws> az` (the same CLI; doctor's fix line names the right one). Jira uses
-    `acli jira auth login` (acli keeps one global login, not one per workspace). Linear
-    and Asana have no CLI login.
-  - keychain: `tq secret set <ws> <provider>`, which reads the token from a hidden
-    prompt. `tq secret status` shows what is stored, never the value.
-  - env (`tracker.env` names the variable): the user puts the token where `tq dotenv`
-    resolves that variable. Never read or print a `.env` file.
-  - mcp: the tracker is reached through its MCP connector (next item); there is
-    no tq login for it.
-- **MCP connectors** (chat: Slack, Teams; email: Gmail, Outlook; and the tracker
-  connectors Linear, Asana, Atlassian, Notion when the tracker is MCP-only):
-  1. Whether the server is configured comes from doctor's names-only findings in
-     step 3 (`chat-ok` / `chat-mcp-missing`, `email-ok` / `email-mcp-missing`), and for
-     the tracker connectors from the read-only call in step 3. Do not list or open the
-     tq bundle catalog or any `.claude.json` to find out: their MCP entries can carry
-     connector tokens in `env`.
-  2. Missing: tell the user to add it to the tq bundle catalog and to
-     `claude.bundle.mcp` in the manifest, then run `tq allow <ws>` and
-     `tq bundle sync <ws>` themselves (doctor's fix line names the entry).
-  3. Then authenticate it with `/mcp` in this Claude session (or connect it on
-     claude.ai). A restart of Claude Code may be needed before a new server shows up.
+### a. CLI
 
-## 3. Verify
+When `cli` is set and `cli_resolves` is false, run `tentaqles install <id>`. Its one line says:
+- `installed <version>` or `already present <version>`: go on.
+- `manual, download from <url>`: give the developer that page. If the URL is http or https, also run
+  `tentaqles open <url>`; if that refuses, print the URL instead. Ask them to install it and say
+  done, then run `tentaqles status --json` and read this provider's `cli_resolves`.
+- `install failed: <reason>`: show the reason. Ask the developer to fix it or install it by hand,
+  and to say done; then check `cli_resolves` as above. If it still reads false, the table says
+  `missing` and you go on.
 
-When the user says they are done (or for `check`):
+### b. Credential
 
-```bash
-tq doctor --json 2>&1; echo "doctor_exit=$?"
-```
+Skip this when `credential` is `present`. When it is `none`, tq cannot tell a CLI login from
+logged out: ask the developer once whether they are signed in to that CLI, and print its login only
+if they say no. When it is `missing`, use the first method the provider supports, in this order:
 
-Read the findings for this workspace (`workspace` equal to `<ws>`, plus the global ones):
+1. **OAuth**: the provider has a `cli` with a sign-in command. Print that login as a line starting
+   with `!`, and wait for the developer. For example:
+   ```text
+   ! gh auth login --web
+   ```
+   Other examples: `! az login` for Azure, `! acli jira auth login` for Jira. For a CLI not named
+   here, run `<cli> --help` and print the sign-in subcommand it names. A CLI with no sign-in goes to
+   the next method.
+2. **Token**: the provider is a tracker (`github`, `azure-devops`, `jira`, `linear` or `asana`).
+   Print `! tq secret set <identity> <name>`, where `<name>` is the provider id, except that `gh` is
+   `github`. tq reads the token from a hidden prompt into the OS keychain. Wait for the developer.
+3. **MCP**: neither applies. The sign-in is the connector in step c.
 
-- `untrusted`: `tq allow <ws>` first.
-- `identity-logged-out`, `claude-not-logged-in`: that login did not take; repeat its line.
-- `identity-wrong-account`: signed in as someone else; the fix line says who to sign in as.
-- `cli-missing`: install it with the fix line, then log in.
-- The tracker: doctor reports its CLI login like any identity (`identity-logged-out`
-  for `gh` or `az`); for a keychain token, `tq secret status` says whether one is
-  stored (never the value); for Jira, `acli jira auth status`. A failed check means
-  the login did not take: repeat its line.
-- `chat-ok`, `email-ok`: the MCP server is configured.
-- `chat-mcp-missing`, `email-mcp-missing`: the entry is in neither the identity's
-  `.claude.json` (global or this folder's project entry) nor the folder's `.mcp.json`;
-  fine if the user connected it on claude.ai, otherwise step 2.
+After the developer says done, run `tentaqles status --json` and read `credential`. If it is still
+`missing`, say so once and go on.
 
-Then, for each MCP connector whose tools are available in this session, make one
-read-only call to prove it works: list one Slack channel, list one Teams team, list
-Gmail labels, list one Outlook folder, list Linear teams, list Asana workspaces, list
-Atlassian accessible resources, search Notion for one page. Never send, post, create,
-edit or delete anything. A tool that is not available: say "not loaded in this
-session" in the table rather than guessing.
+### c. Connection
 
-## 4. The table
+When `connection` is `missing`, run `tentaqles connect <id>`. Its line says:
+- `connected as <name>`: the server is in the client's Claude config. Tell the developer to run
+  `/mcp` in this session, sign in to `<name>`, and say done. If it is not listed, they restart
+  Claude Code and run this skill again. Wait.
+- `already connected`: nothing to do.
+- `no MCP server in the catalog`: the step is a claude.ai connector. Give the developer the exact
+  step: on claude.ai, open Settings, then Connectors, add `<id>` and sign in there, and say done.
+  Step 4 checks it afterwards, since `status --json` cannot see a claude.ai connector.
+- A refusal (outside `scope`, untrusted, neutral): show it as it is and go on.
+- A warning on stderr: relay it.
 
-End with one table, one row per service in the manifest (skipped blocks too):
+### d. Other providers
 
-| Service | Provider | Connected through | Status | Next step |
+For each name in `other_providers`, help the developer install it and log in the way the vendor
+documents: `!` lines and the vendor's page, never an installer chosen by you. Say: "This login is
+not isolated per client, and the guard cannot check it." Do not run `tentaqles install`,
+`tentaqles connect` or `tq secret set` for it: it is outside `scope`, and those refuse. Its table
+row reads `not checked`.
+
+## 3. Tokens
+
+- Never ask for a token, an API key or a password. Never repeat one, and never store one in a file,
+  a memory or the transcript.
+- If a token is pasted into the chat: say it should not be shared here, do not use it, and print the
+  `! tq secret set <identity> <name>` line for the developer to run instead.
+
+## 4. Verify
+
+When the developer says the steps are done, or at the end, run `tentaqles status --json` once more.
+- `verified` true: connected.
+- `verified` false: say what is still missing, once, and go on.
+- For each MCP connector whose tools are loaded in this session (chat, email, or a tracker's
+  connector), make one read-only call: list one Slack channel, list Gmail labels, list Linear teams.
+  A task provider gets only this one call. Never send, post, create, edit or delete. A connector
+  not loaded here is "not loaded in this session", not a guess.
+
+## 5. The table
+
+End with one table: one row per provider in `providers`, then one row per `other_providers` name.
+
+| Provider | CLI | Credential | Connections | Verified |
 |---|---|---|---|---|
-| Claude | claude | tq login | connected (tester@acme.test) | - |
-| Tracker | jira | keychain | not connected | tq secret set acme jira |
-| Chat | slack | MCP | connected (read-only call ok) | - |
-| Email | - | - | skipped | - |
+| gh | present | present | present | yes |
 
-Status is one of: connected, not connected, not loaded in this session, skipped. The
-next step is the exact line the user runs. Then stop.
+CLI is `present`, `missing` or `none` (no CLI). Credential and Connections are the last
+`status --json` values (`present`, `missing` or `none`). Verified is `yes`, `no`, `not loaded in this
+session`, or `not checked` for an other provider. Then stop.
 
 ## Never
 
 - ask for, read, repeat or store a token, key or password
-- run `tq login`, `tq allow`, `tq secret set`, `tq bundle sync` or any CLI login
-- read or print `.env` files or the whole environment
-- Read, cat or list the tq bundle catalog file or any `.claude.json` (MCP entries can
-  hold connector tokens in `env`); presence comes from doctor's findings
-- send, post or change anything through a connector while verifying
-- edit the manifest yourself; a change needs `tq allow`, which is the user's
+- run a login yourself, change trust, or run `tq secret set` yourself
+- read or print `.env` files, or the environment
+- read the manifest, the Claude config or the tq state folder
+- install, log in or connect a provider outside `scope`, or choose an installer
+- send, post, create, edit or delete anything through a connector
