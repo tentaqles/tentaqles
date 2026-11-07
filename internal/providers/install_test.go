@@ -49,6 +49,25 @@ func TestCatalogInstallIDsArePlain(t *testing.T) {
 	}
 }
 
+// The winget ids of two catalog entries are the ones `winget show --id <id> -e` finds (checked
+// on the owner's winget). A wrong id is "No package found", and the install could never end in
+// "installed": a change to either id is a change to this test as well.
+func TestCatalog_PinnedWingetIDs(t *testing.T) {
+	c, err := loadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"terraform": "Hashicorp.Terraform", "postgres": "PostgreSQL.PostgreSQL.17"} {
+		p, ok := c.Get(id)
+		if !ok {
+			t.Fatalf("%s missing from the catalog", id)
+		}
+		if p.Install.Windows.Winget != want {
+			t.Errorf("%s install.windows.winget = %q, want %q", id, p.Install.Windows.Winget, want)
+		}
+	}
+}
+
 // Two install methods that can never end in "installed" stay out of the catalog: Homebrew's
 // libpq is keg-only (psql is never linked onto the PATH), and the supabase npm package refuses
 // global installs. A provider with no method prints its docs page instead.

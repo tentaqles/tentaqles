@@ -156,7 +156,13 @@ type Result struct {
 	// Then is a step the developer takes after the CLI is there (Azure DevOps' `az extension
 	// add`), from a catalog note that starts with "then: ". tq prints it and never runs it.
 	Then string
+	// NewTerminal is set for a CLI found only on the registry PATH (Present): the line is
+	// followed by OpenTerminalLine.
+	NewTerminal bool
 }
+
+// OpenTerminalLine is printed after the line of a CLI found only on the registry PATH.
+const OpenTerminalLine = "Open a new terminal to use it."
 
 // thenPrefix marks a catalog install note as a follow-up step to print. Every other note is
 // an install alternative (a script piped to a shell, say) and is never printed.
@@ -170,12 +176,17 @@ func thenNote(o providers.InstallOS) string {
 	return ""
 }
 
-// Output is what the command prints: the line, then the follow-up step when there is one.
+// Output is what the command prints: the line, then, for a CLI found only on the registry PATH,
+// the open-terminal line, then the follow-up step when there is one.
 func (r Result) Output() string {
-	if r.Then != "" && (r.Status == Installed || r.Status == Present) {
-		return r.Line() + "\n" + r.Then
+	out := []string{r.Line()}
+	if r.NewTerminal && r.Status == Present {
+		out = append(out, OpenTerminalLine)
 	}
-	return r.Line()
+	if r.Then != "" && (r.Status == Installed || r.Status == Present) {
+		out = append(out, r.Then)
+	}
+	return strings.Join(out, "\n")
 }
 
 // Line is the one line the command prints.
@@ -254,11 +265,21 @@ func Install(p providers.Provider, d Deps) (Result, error) {
 	// change is in the registry, not in this process. A CLI an earlier install put there (the
 	// same CLI under another provider in one reach, or a retry from the same terminal) is
 	// present.
-	env := d.lookupEnv()
-	if path, err := d.LookPath(cmdName, env); err == nil {
+	if path, err := d.LookPath(cmdName, d.Env); err == nil {
 		res.Status = Present
-		res.Version = d.version(path, vargs, env)
+		res.Version = d.version(path, vargs, d.Env)
 		return res, nil
+	}
+	// Found only on the registry PATH: a package manager put it there, in an earlier run or in
+	// another provider's install of the same CLI. Nothing runs; the developer's terminal has to
+	// be reopened to see it.
+	if env := d.lookupEnv(); len(env) > 0 {
+		if path, err := d.LookPath(cmdName, env); err == nil {
+			res.Status = Present
+			res.NewTerminal = true
+			res.Version = d.version(path, vargs, env)
+			return res, nil
+		}
 	}
 	plan, ok, err := Pick(p, d)
 	if err != nil {
@@ -282,7 +303,7 @@ func Install(p providers.Provider, d Deps) (Result, error) {
 	}
 
 	// Verify with the PATH a new shell would have, read again: the package manager changed it.
-	env = d.lookupEnv()
+	env := d.lookupEnv()
 	path, lerr := d.LookPath(cmdName, env)
 	if lerr != nil {
 		return res, &Failure{Provider: p.ID, Msg: fmt.Sprintf("%s finished but %s is not on the PATH; open a new terminal and run it again", plan.Method, cmdName)}

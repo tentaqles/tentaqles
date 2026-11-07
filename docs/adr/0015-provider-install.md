@@ -45,7 +45,10 @@ one, which providers, and what exactly runs.
 - An agent in a client whose scope names a provider can have that provider's package installed. The install
   is machine-wide: the PATH layer, not the install, decides which identity reaches the CLI. The threat model
   records this as accepted, since the scope is the human's choice in a signed manifest.
-- A package manager that is out of scope itself (for example `npm` when `npm` is not in the scope) is hidden by
-  the identity's PATH layer and counts as absent.
+- A package manager is hidden by the identity's PATH layer only when a built-in match list claims it, and none
+  does (npm's match is empty), so `tentaqles install codex` runs npm for an identity whose scope does not name npm.
 - Per-identity installs, upgrades of a CLI already present, MCP entries, logins and
   `az extension add` are not part of this change.
+- An install orphaned because the harness killed `tentaqles install` is accepted: REQ-8's limit holds only while tq is alive.
+- The version check's PATH with registry folders added is within REQ-12.
+- A CLI found only on the registry PATH reads `already present` and prints `Open a new terminal to use it.`, with no package manager run.

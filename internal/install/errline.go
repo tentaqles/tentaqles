@@ -20,30 +20,28 @@ var errRe = regexp.MustCompile(`(?i)\b(err|error|errors|fatal|failed|failure|den
 // sizeRe matches a size, a speed or a percentage: what a download progress line is made of.
 var sizeRe = regexp.MustCompile(`(?i)\d+(\.\d+)?\s*(%|[kmgt]?i?b(/s)?)`)
 
-// wingetVerdictRe matches winget's failure verdicts that carry no error word. They are the
-// only lines without one that count as the reason: a status line ("Downloading ...", "Starting
-// package install...") is never the reason.
-var wingetVerdictRe = regexp.MustCompile(`(?i)^(no applicable installer found|no package found|no available upgrade found)`)
-
-// ErrorLine is the line that says why a package manager failed. It looks in stderr, then in
-// stdout, for the first line that reads as an error, skipping what a package manager prints
-// before it: a progress line or bar, a spinner frame, a warning. Then it looks for one of
-// winget's known verdicts, which carry no error word. Otherwise the reason is the error's own
-// text (the exit status, or "signal: killed"): a status line is never the reason. Escape and
-// control characters are removed and the line is cut to 200 runes.
+// ErrorLine is the reason a package manager failed, in this order:
+//  1. the first line that looks like an error, on stderr, then on stdout;
+//  2. otherwise the last line of stderr;
+//  3. otherwise the last line of stdout;
+//  4. otherwise the error's own text (the exit status), and only then.
+//
+// Spinner frames, bars, progress lines and warnings are not lines for any step: a run whose output
+// holds only those has no output for this rule. Escape and control characters are removed and the
+// line is cut to 200 runes.
 func ErrorLine(stderr, stdout string, err error) string {
 	errLines, outLines := lines(stderr), lines(stdout)
 	for _, set := range [][]string{errLines, outLines} {
 		for _, l := range set {
-			if !isNoise(l) && !warnRe.MatchString(l) && errRe.MatchString(l) {
+			if plainLine(l) && errRe.MatchString(l) {
 				return clip(l)
 			}
 		}
 	}
-	for _, set := range [][]string{outLines, errLines} {
-		for _, l := range set {
-			if wingetVerdictRe.MatchString(l) {
-				return clip(l)
+	for _, set := range [][]string{errLines, outLines} {
+		for i := len(set) - 1; i >= 0; i-- {
+			if plainLine(set[i]) {
+				return clip(set[i])
 			}
 		}
 	}
@@ -51,6 +49,12 @@ func ErrorLine(stderr, stdout string, err error) string {
 		return clip(clean(err.Error()))
 	}
 	return "it failed with no message"
+}
+
+// plainLine reports a line that can be a reason: not a spinner frame, bar or progress line, and
+// not a warning.
+func plainLine(l string) bool {
+	return !isNoise(l) && !warnRe.MatchString(l)
 }
 
 // lines splits a stream into trimmed lines with escape and control characters removed. A

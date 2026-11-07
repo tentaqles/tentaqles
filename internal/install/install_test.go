@@ -157,26 +157,26 @@ func TestInstall_FailureLineIsTheError(t *testing.T) {
 			stderr: "  \r\n-\r\\\n",
 			want:   "tool: install failed: exit status 1",
 		},
-		// The negative shapes: a status line is never the reason, whichever stream holds it.
+		// Steps 2 and 3 of the rule: with no error line, the last line of stderr, then of stdout.
 		{
-			name: "apt: reading lists, then exit 1 with no error line", method: "apt", prog: "apt-get",
+			name: "apt: reading lists, then exit 1 with no error line: the last stdout line", method: "apt", prog: "apt-get",
 			stdout: "Reading package lists...\nBuilding dependency tree...\n",
-			want:   "tool: install failed: exit status 1",
+			want:   "tool: install failed: Building dependency tree...",
 		},
 		{
-			name: "winget: stopped after a download with no verdict", method: "winget", prog: "winget",
+			name: "winget: stopped after a download: the bar is skipped, the last plain line is the reason", method: "winget", prog: "winget",
 			stdout: "Found Tool [Tool.Pkg] Version 2.0.0\nDownloading https://example.com/tool.msi\n  ██████████░░  4.00 MB / 9.00 MB\n",
-			want:   "tool: install failed: exit status 1",
+			want:   "tool: install failed: Downloading https://example.com/tool.msi",
 		},
 		{
 			name: "winget: stopped after starting the install", method: "winget", prog: "winget",
 			stdout: "Found Tool [Tool.Pkg] Version 2.0.0\nStarting package install...\n",
-			want:   "tool: install failed: exit status 1",
+			want:   "tool: install failed: Starting package install...",
 		},
 		{
-			name: "pip: a plain stderr line with no error word is not the reason", method: "pip", prog: "pip",
+			name: "pip: a plain stderr line with no error word is the reason", method: "pip", prog: "pip",
 			stdout: "added 1 package in 2s\n", stderr: "npm warn old\nthe registry refused the request\n",
-			want: "tool: install failed: exit status 1",
+			want: "tool: install failed: the registry refused the request",
 		},
 	}
 	for _, c := range cases {
@@ -203,13 +203,30 @@ func TestInstall_FailureLineIsTheError(t *testing.T) {
 			t.Fatalf("line has %d runes", n)
 		}
 	})
-	t.Run("a status line is never the reason: the error's own text is", func(t *testing.T) {
-		for _, out := range []string{"Starting package install...\n", "Building dependency tree...\n", "Downloading https://example.com/x.msi\n"} {
-			if got := ErrorLine("", out, errors.New("signal: killed")); got != "signal: killed" {
-				t.Errorf("status output %q: reason %q, want the error's text", out, got)
-			}
+	// The order of the reason, one step at a time (ErrorLine's doc).
+	exit := errors.New("exit status 1")
+	order := []struct {
+		name, stderr, stdout, want string
+	}{
+		{"step 1: an error line on stderr beats the last stderr line", "ok line\nnpm error code E404\nlast plain\n", "", "npm error code E404"},
+		{"step 1: an error line on stdout beats a plain stderr line", "plain stderr\n", "Found it\nE: boom\n", "E: boom"},
+		{"step 2: the last stderr line, with no error line", "first\nlast stderr\n", "last stdout\n", "last stderr"},
+		{"step 3: the last stdout line, with no stderr", "", "a\nb\n", "b"},
+		{"a real line before spinners, bars and progress is the reason", "the real line\n⠋\n████████\n  4.00 MB / 9.00 MB\n45%\n", "", "the real line"},
+		{"a real stdout line before spinners and bars is the reason", "", "the real stdout line\n⠙\n\r-\r\\\n  12 MB/s\n", "the real stdout line"},
+		{"warnings are not the reason on stderr", "the real stderr\nnpm warn deprecated x\nWARNING: retrying\nW: skipping\n", "", "the real stderr"},
+		{"a warning on stderr, then a real stdout line", "npm warn x\n", "Found it\n", "Found it"},
+		{"a bar that holds an error word is not an error line", "███ error ███\nthe real line\n", "", "the real line"},
+		{"a warning that holds an error word is not an error line", "npm warn error x\nthe real line\n", "", "the real line"},
+		{"noise-only output on both streams: the exit status", "⠋\n███\n4.00 MB / 9.00 MB\n", "\r-\r\\\r|\r  45%\n", "exit status 1"},
+		{"warnings-only output on both streams: the exit status", "npm warn a\n", "WARNING: b\n", "exit status 1"},
+		{"no output at all: the exit status", "", "", "exit status 1"},
+	}
+	for _, c := range order {
+		if got := ErrorLine(c.stderr, c.stdout, exit); got != c.want {
+			t.Errorf("%s: reason %q, want %q", c.name, got, c.want)
 		}
-	})
+	}
 }
 
 // A verdict that ends a long carriage-return progress run is the reason: the trimmed tail keeps
@@ -405,6 +422,88 @@ func TestResult_OutputPrintsOnlyAThenNote(t *testing.T) {
 	}
 }
 
+// The lookup through the registry seam, on any OS: a PATH is faked by the folders it holds, so
+// the cases hold on every host. A CLI on the process PATH prints the line alone; one found only on
+// the registry PATH prints the open-terminal line too and runs nothing; one this run installed
+// prints installed with no such line.
+func TestInstall_RegistryOnlyCLIOpensANewTerminal(t *testing.T) {
+	const procPath, newDir, binDir = `C:\old`, `C:\new`, `C:\pm`
+	pathHas := func(env []string, dir string) bool {
+		for _, kv := range env {
+			if k, v, ok := strings.Cut(kv, "="); ok && strings.EqualFold(k, "PATH") {
+				return strings.Contains(v, dir)
+			}
+		}
+		return false
+	}
+	type world struct {
+		onProcess, onRegistry, installs bool // where the CLI is, and whether the package manager puts it on the registry PATH
+	}
+	run := func(t *testing.T, w world, note string) (Result, [][]string, error) {
+		t.Helper()
+		var ran [][]string
+		installed := false
+		p := tool("winget")
+		p.Install.Windows.Note = note
+		d := Deps{GOOS: "windows", Env: []string{"PATH=" + procPath + ";" + binDir},
+			RegistryPath: func() (string, error) { return newDir, nil },
+			LookPath: func(name string, env []string) (string, error) {
+				switch name {
+				case "winget":
+					if pathHas(env, binDir) {
+						return binDir + `\winget.exe`, nil
+					}
+				case "tool":
+					if (w.onProcess && pathHas(env, procPath)) || (w.onRegistry && pathHas(env, newDir)) || (installed && pathHas(env, newDir)) {
+						return `tool`, nil
+					}
+				}
+				return "", errors.New("not found")
+			},
+			Run: func(ctx context.Context, path string, args, env []string) (string, string, error) {
+				ran = append(ran, append([]string{filepath.Base(path)}, args...))
+				if len(args) > 0 && args[0] == "install" {
+					installed = w.installs
+				}
+				return "tool 1.2.3\n", "", nil
+			}}
+		res, err := Install(p, d)
+		return res, ran, err
+	}
+	cases := []struct {
+		name  string
+		w     world
+		note  string
+		want  string
+		ranPM bool // the package manager ran
+	}{
+		{"on the process PATH: the line alone", world{onProcess: true}, "", "tool: already present tool 1.2.3", false},
+		{"on the registry PATH only: the open-terminal line", world{onRegistry: true}, "", "tool: already present tool 1.2.3\n" + OpenTerminalLine, false},
+		{"registry only, with a then note after it", world{onRegistry: true}, "then: tool setup", "tool: already present tool 1.2.3\n" + OpenTerminalLine + "\nthen: tool setup", false},
+		{"installed by this run: no open-terminal line", world{installs: true}, "", "tool: installed tool 1.2.3", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, ran, err := run(t, c.w, c.note)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if res.Output() != c.want {
+				t.Fatalf("output = %q, want %q", res.Output(), c.want)
+			}
+			installs := 0
+			for _, a := range ran {
+				if len(a) > 1 && a[1] == "install" {
+					installs++
+				}
+			}
+			if want := map[bool]int{true: 1, false: 0}[c.ranPM]; installs != want {
+				t.Fatalf("runs = %v: a package manager ran %d times, want %d", ran, installs, want)
+			}
+		})
+	}
+}
+
 // After one install the CLI is found on the registry PATH before any package manager runs: the
 // same CLI under a second provider (azure-devops after az in one reach) and a retry from the
 // same terminal print "already present" and do not run winget again.
@@ -436,8 +535,8 @@ func TestInstall_FoundOnRegistryPathBeforeRunning(t *testing.T) {
 	if err != nil || res.Line() != "azure-devops: already present azure-cli 2.99.0" {
 		t.Fatalf("azure-devops: line %q err %v, want already present", res.Line(), err)
 	}
-	if res.Output() != res.Line()+"\nthen: az extension add --name azure-devops" {
-		t.Fatalf("azure-devops output = %q, want the extension note after the line", res.Output())
+	if want := res.Line() + "\n" + OpenTerminalLine + "\nthen: az extension add --name azure-devops"; res.Output() != want {
+		t.Fatalf("azure-devops output = %q, want %q", res.Output(), want)
 	}
 	res, err = Install(az, d)
 	if err != nil || res.Status != Present {

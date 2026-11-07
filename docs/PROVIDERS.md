@@ -114,8 +114,18 @@ Then the catalog's `version_args` run and one line is printed:
 |---|---|
 | `<provider>: installed <version>` | a package manager ran and the CLI now answers |
 | `<provider>: already present <version>` | the CLI already resolves on the identity's PATH: nothing runs |
+| `Open a new terminal to use it.` | the line after `already present` when the CLI is found only on the registry PATH (Windows): nothing runs |
 | `<provider>: manual, download from <docs URL>` | no method of this OS has a package manager here |
-| `<provider>: install failed: <reason>` | the package manager failed (exit 1); the reason is its error line, not a progress line or a warning. With no error line (winget's known verdicts aside) it is the exit status |
+| `<provider>: install failed: <reason>` | the package manager failed (exit 1); the reason is chosen as below |
+
+The reason of a failed install, in this order:
+
+1. the first line that looks like an error, on stderr and then on stdout (`error`, `E:`, `failed`, `could not` and the like);
+2. otherwise the last line of stderr;
+3. otherwise the last line of stdout;
+4. otherwise the exit status, and only when there is no output at all.
+
+Spinner frames, bars, progress lines and warnings (`npm warn`, `WARNING:`, `W:`) are never a line for steps 2 and 3, so a run whose output is only those has no output for this rule and gives the exit status.
 | `<provider>: no CLI, nothing to install` | `cli: null` |
 
 Rules:
@@ -141,11 +151,12 @@ Rules:
   with `then: ` is printed after the provider's line (`then: az extension add --name
   azure-devops`) and never run; any other note is an install alternative and is not printed.
 - The failure and refusal lines are printed as they are worded (no `tq:` in front) and the
-  command exits 1. The failure reason is the package manager's error line, looked for in stderr
-  then stdout; the last 48 KiB of each stream are kept, so a verdict after a long log is found.
+  command exits 1. The last 48 KiB of each output stream are kept, so a reason after a long log
+  is found.
 - On Windows the CLI is also looked up on the registry PATH before any package manager runs, so
   a CLI an earlier install added (the same `az` under Azure and Azure DevOps in one `reach`, or
-  a retry from the same terminal) reads `already present`.
+  a retry from the same terminal) reads `already present`, then `Open a new terminal to use it.`
+  No package manager runs for it.
 
 ## Match lists
 

@@ -527,6 +527,16 @@ func TestReach_SharedCLIInstallsOnce(t *testing.T) {
 	if got := testutil.ReadFakeLog(t, log); len(got) != 1 {
 		t.Errorf("package manager runs = %v, want one", got)
 	}
+	// On Windows the CLI is found only on the registry PATH by azure-devops: it says to open a new
+	// terminal. az, which this run installed, does not.
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(out, "azure-devops: already present "+azVersion+"\n"+install.OpenTerminalLine) {
+			t.Errorf("azure-devops does not say to open a new terminal:\n%s", out)
+		}
+		if strings.Contains(out, "az: installed "+azVersion+"\n"+install.OpenTerminalLine) {
+			t.Errorf("an installed CLI says to open a new terminal:\n%s", out)
+		}
+	}
 }
 
 var reachAnswersAzGh = reach.Answers{Email: "me@acme.test", Git: "github", Clouds: []string{"azure"}}

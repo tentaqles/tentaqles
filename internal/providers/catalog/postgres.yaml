@@ -9,7 +9,7 @@ install:
   # No macOS method: Homebrew's libpq is keg-only, so psql is never linked onto the PATH and the
   # install could not end in "installed". macOS prints the docs page instead.
   windows:
-    winget: "PostgreSQL.PostgreSQL"
+    winget: "PostgreSQL.PostgreSQL.17"
   linux:
     apt: "postgresql-client"
 identity:
