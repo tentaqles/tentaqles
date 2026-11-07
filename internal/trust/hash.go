@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -72,7 +73,7 @@ func enforcingSettingsKey(k string) bool {
 // the hex sha256 of its bytes otherwise. A "#tq" key hashes the part tq
 // covers (settingsHash, installedHash). A file that exists but
 // cannot be read is an error, which every caller treats as untrusted.
-func currentHash(key string) (string, error) {
+func currentHash(key string, files *bigFiles) (string, error) {
 	if file, ok := strings.CutSuffix(key, blockSuffix); ok {
 		switch strings.ToLower(filepath.Base(file)) {
 		case "settings.json":
@@ -95,7 +96,55 @@ func currentHash(key string) (string, error) {
 	if !fi.Mode().IsRegular() {
 		return irregular, nil
 	}
-	return HashFile(key)
+	return files.hash(key, fi)
+}
+
+// bigFileMin is the size from which a file is looked up among the files already hashed in this
+// process: the browser shims (ADR-0016) are three names of one copy of the tq binary, and
+// reading it three times is what a hook call would pay at every tool call.
+const bigFileMin = 1 << 20
+
+// hashed counts files read by HashFile through currentHash (a test pins "once per inode").
+var hashed atomic.Int64
+
+// bigFiles hashes a large file once per Verify while it has several names: a key whose file is
+// the same inode (os.SameFile: the same volume and file index, so a hard link) as one already
+// hashed or being hashed takes that hash, because the bytes are the same bytes. Nothing else is
+// shared: no size, time or earlier run decides anything, so a file rewritten in place with the
+// same size and time is read again, and a separate copy is read in full.
+type bigFiles struct {
+	mu      sync.Mutex
+	entries []*bigEntry
+}
+
+type bigEntry struct {
+	fi   os.FileInfo
+	done chan struct{}
+	h    string
+	err  error
+}
+
+// One table lives for one hashKeys call: nothing is remembered between calls.
+func (b *bigFiles) hash(key string, fi os.FileInfo) (string, error) {
+	if fi.Size() < bigFileMin {
+		hashed.Add(1)
+		return HashFile(key)
+	}
+	b.mu.Lock()
+	for _, e := range b.entries {
+		if os.SameFile(e.fi, fi) {
+			b.mu.Unlock()
+			<-e.done
+			return e.h, e.err
+		}
+	}
+	e := &bigEntry{fi: fi, done: make(chan struct{})}
+	b.entries = append(b.entries, e)
+	b.mu.Unlock()
+	hashed.Add(1)
+	e.h, e.err = HashFile(key)
+	close(e.done)
+	return e.h, e.err
 }
 
 // absent reports a stat error that means "nothing there": the file, or a
@@ -231,6 +280,7 @@ func hashKeys(keys []string) (map[string]string, error) {
 		err       error
 	}
 	out := make(map[string]string, len(keys))
+	files := &bigFiles{}
 	jobs := make(chan string)
 	results := make(chan result)
 	workers := 8
@@ -243,7 +293,7 @@ func hashKeys(keys []string) (map[string]string, error) {
 		go func() {
 			defer wg.Done()
 			for k := range jobs {
-				h, err := currentHash(k)
+				h, err := currentHash(k, files)
 				results <- result{k, h, err}
 			}
 		}()

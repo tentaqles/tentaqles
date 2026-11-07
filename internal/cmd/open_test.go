@@ -600,3 +600,106 @@ func TestBrowserShims_ProtectedAndSigned(t *testing.T) {
 		t.Fatalf("a shim of an untrusted client opened a page: ok=%v code=%d", ok, code)
 	}
 }
+
+// An http or https URL never reaches the real xdg-open or open (round 1, L-01): it opens in the
+// client's profile or is refused, whatever else is in it. `open -a` for the two browsers goes
+// to the client's profile; for another app it passes through.
+func TestBrowserShims_WebURLNeverReachesTheRealProgram(t *testing.T) {
+	setupScoped(t, "company-x", browserBody)
+	fake := installFakeBrowsers(t)
+	runSettingsRender(t, "company-x")
+	shims := paths.ShimsDir("company-x")
+
+	realDir := filepath.Join(t.TempDir(), "fakebin")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	self, _ := os.Executable()
+	for _, n := range []string{"open", "xdg-open"} {
+		p := filepath.Join(realDir, n+exeSuffix())
+		if os.Link(self, p) != nil {
+			b, _ := os.ReadFile(self)
+			if err := os.WriteFile(p, b, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Setenv("PATH", shims+string(os.PathListSeparator)+realDir)
+
+	run := func(shim string, args ...string) int {
+		var stderr bytes.Buffer
+		ok, code := runShim(filepath.Join(shims, shim+exeSuffix()), args, &stderr)
+		if !ok {
+			t.Fatalf("%s %v: not a shim", shim, args)
+		}
+		return code
+	}
+	profile2 := "--profile-directory=Profile 2"
+	profile3 := "--profile-directory=Profile 3"
+	var want []fakeRun
+	expect := func(r ...fakeRun) {
+		t.Helper()
+		want = append(want, r...)
+		got := fake.runs(len(want))
+		if len(got) != len(want) {
+			t.Fatalf("runs = %+v, want %+v", got, want)
+		}
+		for i := range want {
+			if got[i].Exe != want[i].Exe || !slices.Equal(got[i].Args, want[i].Args) {
+				t.Fatalf("run %d = %+v, want %+v", i, got[i], want[i])
+			}
+		}
+	}
+
+	if c := run("open", "https://en.wikipedia.org/wiki/O'Reilly"); c != 0 {
+		t.Fatalf("an apostrophe: exit %d", c)
+	}
+	expect(fakeRun{"chrome-fake", []string{profile2, "https://en.wikipedia.org/wiki/O'Reilly"}})
+	if c := run("xdg-open", "https://fonts.googleapis.com/css?family=A|B"); c != 0 {
+		t.Fatalf("a pipe: exit %d", c)
+	}
+	expect(fakeRun{"chrome-fake", []string{profile2, "https://fonts.googleapis.com/css?family=A|B"}})
+	if c := run("open", "https://a.example", "https://b.example"); c != 0 {
+		t.Fatalf("two URLs: exit %d", c)
+	}
+	expect(fakeRun{"chrome-fake", []string{profile2, "https://a.example"}}, fakeRun{"chrome-fake", []string{profile2, "https://b.example"}})
+	if c := run("open", "-g", "https://a.example"); c != 0 {
+		t.Fatalf("a flag: exit %d", c)
+	}
+	expect(fakeRun{"chrome-fake", []string{profile2, "https://a.example"}})
+	if c := run("open", "HTTPS://UPPER.EXAMPLE/x"); c != 0 {
+		t.Fatalf("upper case: exit %d", c)
+	}
+	expect(fakeRun{"chrome-fake", []string{profile2, "HTTPS://UPPER.EXAMPLE/x"}})
+
+	// open -a for the two browsers: the client's profile in that browser
+	if c := run("open", "-a", "Google Chrome", "https://c.example"); c != 0 {
+		t.Fatalf("-a Google Chrome: exit %d", c)
+	}
+	expect(fakeRun{"chrome-fake", []string{profile2, "https://c.example"}})
+	if c := run("open", "-a", "Microsoft Edge", "https://e.example"); c != 0 {
+		t.Fatalf("-a Microsoft Edge: exit %d", c)
+	}
+	expect(fakeRun{"msedge-fake", []string{profile3, "https://e.example"}})
+
+	// open -a for another app is that app's business: the real program runs
+	if c := run("open", "-a", "Safari", "https://s.example"); c != 0 {
+		t.Fatalf("-a Safari: exit %d", c)
+	}
+	expect(fakeRun{"open", []string{"-a", "Safari", "https://s.example"}})
+	// a line with no URL is the real program's too
+	if c := run("open", "notes.txt"); c != 0 {
+		t.Fatalf("a file: exit %d", c)
+	}
+	expect(fakeRun{"open", []string{"notes.txt"}})
+
+	// a URL tq refuses opens nothing, and does not fall through to the real program
+	var stderr bytes.Buffer
+	ok, code := runShim(filepath.Join(shims, "open"+exeSuffix()), []string{"https://a.example", "https://b.example/a b"}, &stderr)
+	if !ok || code == 0 {
+		t.Fatalf("a refused URL: ok=%v code=%d", ok, code)
+	}
+	if got := fake.runs(0); len(got) != len(want) {
+		t.Fatalf("a refusal started something: %+v", got[len(want):])
+	}
+}

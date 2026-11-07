@@ -162,6 +162,56 @@ func TestBrowser_NoBlockNoChange(t *testing.T) {
 	}
 }
 
+// A terminal already in the client when its manifest gains a browsers: list gets the shims
+// folder on PATH at the next prompt (round 1, L-04: the fast path kept the old PATH), and
+// loses it when the list goes; leaving still restores PATH exactly.
+func TestBrowserShims_ManifestChangesUnderAnOpenTerminal(t *testing.T) {
+	t.Setenv("TQ_HOME", testutil.TempDir(t))
+	_, azDir, toolsDir := globalDirs(t)
+	plain := companyX(t, true)
+	with := browserClient(t)
+	orig := map[string]string{"PATH": join(azDir, toolsDir)}
+	sh := map[string]string{"PATH": orig["PATH"]}
+	step := func(w *resolve.Workspace, prev State) State {
+		e := Env{Lookup: env(sh), Names: names(sh), Syntax: NativeSyntax(), PathOK: true}
+		want, _ := Plan(w, prev, e)
+		name := ""
+		if w != nil {
+			name = w.Name
+		}
+		ops, _ := DiffWant(want, e.Lookup, prev, name)
+		shellSim(sh, ops)
+		return DecodeState(sh[StateVar])
+	}
+	hasShims := func() bool { return strings.Contains(sh["PATH"], ShimsDir("company-x")) }
+
+	st := step(plain, State{})
+	if hasShims() {
+		t.Fatalf("a client with no browsers has the shims on PATH: %q", sh["PATH"])
+	}
+	st = step(plain, st) // an idle prompt: the fast path
+	st = step(with, st)  // the manifest gained browsers
+	if !hasShims() || sh["BROWSER"] == "" {
+		t.Fatalf("the open terminal did not get the shims: %v", sh)
+	}
+	if first := strings.Split(sh["PATH"], string(os.PathListSeparator))[0]; !samePath(filepath.Clean(first), filepath.Clean(ShimsDir("company-x"))) {
+		t.Fatalf("the first PATH entry is %q", first)
+	}
+	st = step(with, st) // idle again: nothing to do
+	e := Env{Lookup: env(sh), Names: names(sh), Syntax: NativeSyntax(), PathOK: true}
+	if w2, _ := Plan(with, st, e); func() bool { ops, _ := DiffWant(w2, e.Lookup, st, "company-x"); return ops.Changed }() {
+		t.Fatal("an idle prompt changes something")
+	}
+	st = step(plain, st) // and the manifest lost them again
+	if hasShims() || sh["BROWSER"] != "" {
+		t.Fatalf("the shims survive the removal of the list: %v", sh)
+	}
+	step(nil, st)
+	if !reflect.DeepEqual(sh, orig) {
+		t.Fatalf("after leaving:\n got %v\nwant %v", sh, orig)
+	}
+}
+
 // A shell whose state is lost fails closed: the shim BROWSER and the shims folder on PATH go,
 // the user's own BROWSER stays.
 func TestBrowserShims_LostState(t *testing.T) {

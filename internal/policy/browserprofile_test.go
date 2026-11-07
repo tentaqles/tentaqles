@@ -74,6 +74,16 @@ func TestOtherBrowserProfile_Fixtures(t *testing.T) {
 		pwsh(`start https://x`),
 		pwsh(`cmd /c start https://x`),
 		pwsh(`Start-Process chrome`),
+		// macOS: the browsers by their app bundle path (what internal/browser launches)
+		bash(`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --profile-directory=Default`),
+		bash(`"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"`),
+		bash(`"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" --profile-directory="Profile 2"`),
+		// round 1, L-09: a headless start with another profile is still denied
+		bash(`chrome --headless --profile-directory=Default https://x`),
+		bash(`msedge --version --profile-directory=Default`),
+		bash(`google-chrome --headless=new --user-data-dir=/tmp/other`),
+		// a cmd start title is not the target
+		bash(`start "My title" https://x`),
 	}
 	if len(deny) < 15 {
 		t.Fatal("at least 15 commands must deny")
@@ -119,6 +129,16 @@ func TestOtherBrowserProfile_Fixtures(t *testing.T) {
 		pwsh(`Start-Process chrome -ArgumentList '--profile-directory="Profile 2"'`),
 		pwsh(`& "C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory="Profile 2"`),
 		pwsh(`git commit -m "start https://x"`),
+		bash(`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --profile-directory="Profile 2" https://x`),
+		// round 1, L-09 (owner): --version, --help and --headless run with no profile flag
+		bash(`chrome --version`),
+		bash(`chrome --help`),
+		bash(`chrome --headless --dump-dom https://x`),
+		bash(`google-chrome --headless=new --screenshot https://x`),
+		bash(`msedge --version`),
+		bash(`microsoft-edge --help`),
+		bash(`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version`),
+		pwsh(`& "C:\Program Files\Google\Chrome\Application\chrome.exe" --version`),
 	}
 	if len(allow) < 15 {
 		t.Fatal("at least 15 commands must allow")
@@ -140,6 +160,15 @@ func TestOtherBrowserProfile_FalsePositives(t *testing.T) {
 		bash(`npm start`),
 		pwsh(`Start-Process notepad`),
 		bash(`start.sh`),
+		// round 1, L-03: the arguments of another program are that program's
+		bash(`start npx playwright test --browser chrome`),
+		pwsh(`Start-Process npm -ArgumentList "run test -- --browser chrome"`),
+		bash(`start curl https://example.com`),
+		pwsh(`Start-Process curl -ArgumentList "https://example.com"`),
+		pwsh(`Start-Process -ArgumentList "https://example.com" -FilePath curl`),
+		// round 1, L-09 (owner)
+		bash(`chrome --version`),
+		bash(`msedge --headless https://x`),
 	} {
 		if d := s.Evaluate(cwd, c); d.Action == Deny {
 			t.Errorf("%s %q must pass: %s", c.Tool, c.Command, d.Reason())

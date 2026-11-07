@@ -146,9 +146,10 @@ func defaultUserDataRoot(name string) string {
 	return ""
 }
 
-// ValidateURL accepts an http or https URL with a host, as one word: no space, quote or control
-// character, and not a value that starts with '-' (a browser flag). It returns the URL as
-// given.
+// ValidateURL accepts an http or https URL with a host, as one word: no space, double quote,
+// backslash or control character, and not a value that starts with '-' (a browser flag). The
+// other characters a URL may hold (' | ^ < > ` &) are fine: the browser is started with the URL
+// as one argv element, never through a shell. It returns the URL as given.
 func ValidateURL(raw string) (string, error) {
 	if raw == "" {
 		return "", errors.New("no URL given")
@@ -157,7 +158,7 @@ func ValidateURL(raw string) (string, error) {
 		return "", fmt.Errorf("refused: %q starts with '-' and would be read as a browser flag", raw)
 	}
 	for _, r := range raw {
-		if r <= 0x20 || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' || r == '<' || r == '>' || r == '^' || r == '|' {
+		if r <= 0x20 || r == 0x7f || r == '"' || r == '\\' {
 			return "", fmt.Errorf("refused: %q is not a plain http or https URL", raw)
 		}
 	}
@@ -174,12 +175,6 @@ func ValidateURL(raw string) (string, error) {
 		return "", fmt.Errorf("refused: %q has no host", raw)
 	}
 	return raw, nil
-}
-
-// IsWebURL reports whether raw is a URL ValidateURL accepts.
-func IsWebURL(raw string) bool {
-	_, err := ValidateURL(raw)
-	return err == nil
 }
 
 // Pick chooses the client's browser: the first listed, or the one named by want ("" for the

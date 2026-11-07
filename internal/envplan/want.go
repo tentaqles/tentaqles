@@ -94,7 +94,7 @@ func Plan(ws *resolve.Workspace, prev State, env Env) (Want, *Notice) {
 	if !ok {
 		return w, nil
 	}
-	if prev.WS == ws.Name && prev.PathSet != "" && cur == prev.PathSet {
+	if prev.WS == ws.Name && prev.PathSet != "" && cur == prev.PathSet && l.shimsEntryCurrent(cur, env.Syntax) {
 		// The fast path: no folder is read. The mask folder is still checked (one directory
 		// read, names and sizes): on the PATH only while it is as tq wrote it, back on it as
 		// soon as it is again, and a notice at every prompt while it is wanted and missing.

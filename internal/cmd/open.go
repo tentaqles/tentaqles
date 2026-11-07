@@ -132,30 +132,86 @@ func runShim(exe string, args []string, stderr io.Writer) (bool, int) {
 	if mode == envplan.ShimNone {
 		return false, 0
 	}
-	web := len(args) == 1 && browser.IsWebURL(args[0])
-	switch {
-	case mode == envplan.ShimURL && len(args) != 1:
-		fmt.Fprintf(stderr, "%s: expects one http or https URL\n", name)
-		return true, 2
-	case mode == envplan.ShimURL || web:
-		if err := shimOpen(wsName, args[0]); err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", name, err)
-			return true, 1
+	if mode == envplan.ShimURL {
+		if len(args) != 1 {
+			fmt.Fprintf(stderr, "%s: expects one http or https URL\n", name)
+			return true, 2
 		}
-		return true, 0
+		return true, shimOpen(wsName, name, "", args, stderr)
 	}
-	return true, passThrough(exe, name, args, stderr)
+	// xdg-open and open: an http or https URL never reaches the real program (it would open
+	// the system's default profile). It opens in the client's profile, or is refused and
+	// opens nothing; what is a URL is decided by the scheme, not by whether tq likes the rest
+	// of it. The one way past is `open -a <another app>`, which is that app's business.
+	urls := webArgs(args)
+	if len(urls) == 0 {
+		return true, passThrough(exe, name, args, stderr)
+	}
+	want := ""
+	if app, ok := openApp(args); ok {
+		if want = appBrowser(app); want == "" {
+			return true, passThrough(exe, name, args, stderr)
+		}
+	}
+	return true, shimOpen(wsName, name, want, urls, stderr)
 }
 
-// shimOpen opens rawURL in the browser of workspace name: the same steps as tentaqles open,
-// for the identity the shim's folder names, which must be trusted.
-func shimOpen(name, rawURL string) error {
-	ws, err := trustedByName(name)
-	if err != nil {
-		return err
+// webArgs are the arguments that start with http:// or https:// (any case).
+func webArgs(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if l := strings.ToLower(a); strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") {
+			out = append(out, a)
+		}
 	}
-	_, err = openFor(ws, "", rawURL)
-	return err
+	return out
+}
+
+// openApp is the value of macOS `open -a <app>`.
+func openApp(args []string) (string, bool) {
+	for i, a := range args {
+		if a == "-a" && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+// appBrowser is the manifest name of the browser an `open -a` app names (Google Chrome,
+// Microsoft Edge), "" for any other app.
+func appBrowser(app string) string {
+	switch strings.TrimSuffix(strings.ToLower(strings.TrimSpace(app)), ".app") {
+	case "google chrome", "chrome":
+		return "chrome"
+	case "microsoft edge", "edge", "msedge":
+		return "edge"
+	}
+	return ""
+}
+
+// shimOpen opens every URL in the browser of workspace wsName (want "": its first listed): the
+// same steps as tentaqles open, for the identity the shim's folder names, which must be
+// trusted. Every URL is checked before the first opens, so a refusal opens nothing. It
+// returns the exit code.
+func shimOpen(wsName, name, want string, urls []string, stderr io.Writer) int {
+	for _, u := range urls {
+		if _, err := browser.ValidateURL(u); err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", name, err)
+			return 1
+		}
+	}
+	ws, err := trustedByName(wsName)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", name, err)
+		return 1
+	}
+	for _, u := range urls {
+		if _, err := openFor(ws, want, u); err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", name, err)
+			return 1
+		}
+	}
+	return 0
 }
 
 // trustedByName is workspace name when its integrity record verifies: a changed shim, manifest

@@ -105,6 +105,27 @@ func shimsEntry(p, ws string) bool {
 	return p != "" && samePath(filepath.Clean(strings.Trim(p, `"`)), filepath.Clean(ShimsDir(ws)))
 }
 
+// shimsEntryCurrent reports whether a PATH in syn's spelling already is what FilterPath would
+// make of it as far as the shims folder goes: a client with browsers has it first, a client
+// with none has no entry of it. Plan keeps a PATH equal to the one tq last wrote without
+// reading a folder; a terminal that was in the client before its manifest gained (or lost) a
+// browsers: list must leave that fast path once, or it never gets (or never drops) the folder.
+func (l *Layer) shimsEntryCurrent(path string, syn PathSyntax) bool {
+	entries := strings.Split(path, syn.Sep)
+	isShims := func(e string) bool {
+		return e != "" && shimsEntry(syn.ToOS(e), l.Identity)
+	}
+	if l.shims != "" {
+		return len(entries) > 0 && isShims(entries[0])
+	}
+	for _, e := range entries {
+		if isShims(e) {
+			return false
+		}
+	}
+	return true
+}
+
 // isAnyShims reports whether an OS path is some identity's shims folder.
 func isAnyShims(p string) bool {
 	p = filepath.Clean(strings.Trim(p, `"`))

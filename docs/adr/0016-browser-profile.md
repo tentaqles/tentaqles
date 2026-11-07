@@ -26,7 +26,9 @@ the PATH and environment of an identity (`internal/envplan/`), so it needs this 
 - **Shims.** For a client with `browsers:`, `tq settings render` (and `tq allow`) writes three programs to
   `$TQ_HOME/shims/<ws>/`: `tq-open`, `xdg-open` and `open`. `tq-open` is a copy of the tq binary and the others
   are links to it. The binary answers as a shim when it runs from such a folder (`cmd.ShimMain`, beside
-  `StubMain`): `tq-open` opens its one URL, `xdg-open` and `open` do the same for one `http` or `https` URL and
+  `StubMain`): `tq-open` opens its one URL, `xdg-open` and `open` do the same for every argument that starts with `http://` or `https://` (opened in the
+  client's profile, or refused with nothing opened, never passed on; `open -a "Google Chrome"` and
+  `open -a "Microsoft Edge"` go to the client's profile, `open -a <another app>` passes through) and
   run the real program, found on PATH outside the shims folder, for anything else. On every OS they are
   programs, not batch files: cmd.exe re-parses a batch file's arguments, and a URL with `&` in it would run the
   rest as a command. The shim resolves the client from its own folder name, and refuses unless that client's
@@ -44,7 +46,9 @@ the PATH and environment of an identity (`internal/envplan/`), so it needs this 
   - a shell command whose program is `chrome`, `msedge`, `google-chrome` (and the `-stable` and `microsoft-edge`
     spellings), by name or path, is denied unless the browser is listed and the command names the client's
     profile with `--profile-directory`, or a `--user-data-dir` under the client's own folder; with neither
-    flag it is denied, because Chrome then picks the last-used profile; behind `start` and `Start-Process`
+    flag it is denied, because Chrome then picks the last-used profile, except `--version`, `--help` and
+    `--headless`, which choose no profile (the owner's decision, round 1; a headless start with another
+    profile is still denied); behind `start` and `Start-Process`
     the same check reads the arguments;
   - `start <url>`, `Start-Process <url>`, `explorer <url>`, `rundll32 url.dll` and `cmd /c start <url>` are
     denied, and the message names `tentaqles open <url>`;
@@ -62,8 +66,11 @@ the PATH and environment of an identity (`internal/envplan/`), so it needs this 
 
 ## Consequences
 
-- The shims are copies of the tq binary, so the record hashes about 7 MB three times (one inode, three
-  names) when it is checked. A tq upgrade does not touch them: they keep running the old binary until
+- The shims are copies of the tq binary, so the record covers about 7 MB under three names. A
+  verification reads a file of 1 MiB or more once per inode (`os.SameFile`, a hard link) within one call
+  (`internal/trust/hash.go`); no size, time or earlier result decides anything, so a same-size, same-time
+  rewrite is read and a separate copy is read in full. Measured at one core: 18.7 ms for three copies, 7.0 ms
+  for three links. A tq upgrade does not touch them: they keep running the old binary until
   `tq settings render <client>` (or `tq hooks verify --accept`) writes the new copy and signs it.
 - A browser started by a script (Puppeteer, a Python `webbrowser` call that does not read `BROWSER`) is
   something the text filter cannot see into (AR2); starting Chrome by name still meets the rule.

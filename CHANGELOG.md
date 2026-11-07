@@ -23,6 +23,10 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   browser, so tq cannot verify its profile (`docs/COMMANDS.md`).
 - `tq settings render` sets `--user-data-dir` under `~/.tentaqles/identities/<client>/browser` on the client's
   Playwright MCP entries.
+- `xdg-open` and `open` send every argument that starts with `http://` or `https://` to the client's
+  profile, or refuse it; `open -a "Google Chrome"` and `open -a "Microsoft Edge"` go to the client's
+  profile, another app passes through. `chrome --version`, `--help` and `--headless` with no profile flag
+  are allowed.
 - `tq doctor` warns `browser-profile-missing` and `browser-shims-missing`.
 - The integrity record covers `shims/<client>/` for that client, not every client's shims folder.
 - A client with no `browsers:` is unchanged.

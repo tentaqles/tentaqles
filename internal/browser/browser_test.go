@@ -11,13 +11,14 @@ import (
 )
 
 func TestValidateURL(t *testing.T) {
-	for _, ok := range []string{"https://example.com", "http://example.com/a?b=1&c=2#x", "HTTPS://EXAMPLE.COM", "https://localhost:3000/"} {
+	for _, ok := range []string{"https://example.com", "http://example.com/a?b=1&c=2#x", "HTTPS://EXAMPLE.COM", "https://localhost:3000/",
+		"https://en.wikipedia.org/wiki/O'Reilly", "https://fonts.googleapis.com/css?family=A|B", "https://x/a^b<c>d`e"} {
 		if _, err := ValidateURL(ok); err != nil {
 			t.Errorf("%q: %v", ok, err)
 		}
 	}
 	for _, bad := range []string{"", "-x", "--user-data-dir=x", "file:///etc/passwd", "javascript:alert(1)", "a & calc", "ftp://x/y",
-		"https://", "https:example.com", "https://a b", "https://a\"b", "https://a\nb", "data:text/html,x", "chrome://settings", "https://x|y", "//example.com"} {
+		"https://", "https:example.com", "https://a b", "https://a\"b", "https://a\nb", "data:text/html,x", "chrome://settings", `https://x\y`, "//example.com"} {
 		if _, err := ValidateURL(bad); err == nil {
 			t.Errorf("%q must be refused", bad)
 		}

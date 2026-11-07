@@ -28,6 +28,8 @@ type BrowserProfile struct {
 var browserExes = map[string]string{
 	"chrome": "chrome", "google-chrome": "chrome", "google-chrome-stable": "chrome",
 	"msedge": "edge", "microsoft-edge": "edge", "microsoft-edge-stable": "edge",
+	// the program names inside the macOS app bundles (internal/browser launches these paths)
+	"google chrome": "chrome", "microsoft edge": "edge",
 }
 
 // browserKind is the manifest name of the browser a command word starts, "" when it is none.
@@ -107,12 +109,15 @@ func (s *Scope) browserStart(cwd, word string, args []string) (scopeHit, bool) {
 		return scopeHit{}, false
 	}
 	name := exeName(word)
+	profiles := flagValues(args, "profile-directory")
+	dirs := flagValues(args, "user-data-dir")
+	if len(profiles) == 0 && len(dirs) == 0 && infoOrHeadless(args) {
+		return scopeHit{}, false // --version, --help, --headless: no profile is chosen (owner, L-09)
+	}
 	mine, ok := s.listed(kind)
 	if !ok {
 		return s.browserHit(name, name+" is a "+kind+" browser, and "+kind+" is not one of this client's browsers"), true
 	}
-	profiles := flagValues(args, "profile-directory")
-	dirs := flagValues(args, "user-data-dir")
 	for _, p := range profiles {
 		if !s.sameProfile(p, mine.Profile) {
 			return s.browserHit(name, name+" would open profile "+quoteOrNone(p)+", not this client's profile "+mine.Profile), true
@@ -127,10 +132,24 @@ func (s *Scope) browserStart(cwd, word string, args []string) (scopeHit, bool) {
 		}
 		return scopeHit{}, false
 	}
-	if len(profiles) == 0 {
-		return s.browserHit(name, name+" started with no --profile-directory opens whichever profile was used last"), true
+	if len(profiles) == 0 && !infoOrHeadless(args) {
+		return s.browserHit(name, name+" started with no --profile-directory opens whichever profile was used last"+
+			" (only --version, --help and --headless may run without one)"), true
 	}
 	return scopeHit{}, false
+}
+
+// infoOrHeadless reports a --version, --help or --headless (also --headless=new) argument:
+// the owner lets these run with no profile flag (L-09 of the round 1 fix list). A profile flag
+// other than the client's is still judged first.
+func infoOrHeadless(args []string) bool {
+	for _, a := range args {
+		l := strings.ToLower(strings.Trim(a, `"'`))
+		if l == "--version" || l == "--help" || l == "--headless" || strings.HasPrefix(l, "--headless=") {
+			return true
+		}
+	}
+	return false
 }
 
 func quoteOrNone(v string) string {
@@ -149,12 +168,16 @@ func (s *Scope) urlRoute(cwd, verb string, words []string) (scopeHit, bool) {
 	}
 	switch verb {
 	case "start", "start-process", "saps":
-		for i, w := range words {
-			if browserKind(w) != "" {
-				return s.browserStart(cwd, w, words[i+1:])
-			}
+		// Only the target is judged, and its arguments when it is itself a browser: the
+		// arguments of another program (npx playwright test --browser chrome, curl <url>) are
+		// that program's.
+		if len(words) == 0 {
+			return scopeHit{}, false
 		}
-		if len(words) > 0 && (isWebURLWord(words[0]) || len(words) > 1 && isWebURLWord(words[1])) {
+		if browserKind(words[0]) != "" {
+			return s.browserStart(cwd, words[0], words[1:])
+		}
+		if isWebURLWord(words[0]) {
 			return s.browserHit(verb, verb+" would hand the URL to the system's default browser"), true
 		}
 	case "explorer":
@@ -180,18 +203,20 @@ func (s *Scope) routeWords(verb string, args []string) []string {
 	}
 	switch verb {
 	case "start":
-		return cmdStartTargets(args)
+		return cmdStartWords(args)
 	case "start-process", "saps":
 		return startWords(args)
 	}
 	return args
 }
 
-// startWords are the words of a Start-Process line that name what runs: -FilePath and the
-// -ArgumentList words, and the positional words, in order; switches and the values of the
-// other options are left out.
+// startWords are the words of a Start-Process line: the program first (-FilePath, else the
+// first positional word), then what it is given (the -ArgumentList words and the other
+// positional words, in order). Switches and the values of the other options are left out.
 func startWords(args []string) []string {
-	var out []string
+	var exe string
+	haveExe := false
+	var rest []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if strings.HasPrefix(a, "-") {
@@ -209,17 +234,34 @@ func startWords(args []string) []string {
 			}
 			switch kind {
 			case "exe":
-				out = append(out, val)
+				exe, haveExe = val, true
 			case "args":
-				out = append(out, splitArgList(val)...)
+				rest = append(rest, splitArgList(val)...)
 			}
 			continue
 		}
 		if strings.Trim(a, `"'`) != "" {
-			out = append(out, a)
+			rest = append(rest, a)
 		}
 	}
-	return out
+	if !haveExe {
+		if len(rest) == 0 {
+			return nil
+		}
+		exe, rest = rest[0], rest[1:]
+	}
+	return append([]string{exe}, rest...)
+}
+
+// cmdStartWords are the words of a cmd `start` line, the target first: a first word with white
+// space in it and no path separator is the window title (`start "My title" https://x`), and is
+// dropped. An empty title is already gone (cmdStartTargets).
+func cmdStartWords(args []string) []string {
+	w := cmdStartTargets(args)
+	if len(w) > 1 && strings.ContainsAny(w[0], " \t") && !strings.ContainsAny(w[0], `/\`) {
+		return w[1:]
+	}
+	return w
 }
 
 // splitArgList splits a Start-Process -ArgumentList value at commas and white space outside
