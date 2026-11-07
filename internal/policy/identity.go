@@ -58,6 +58,10 @@ type ScopeInputs struct {
 	// MCPAllow is the manifest's mcp.allow: exact MCP server names kept though no in-scope
 	// provider claims them and they are not general-purpose (the hybrid list, ADR-0008).
 	MCPAllow []string
+	// Browsers are the manifest's browsers: entries, and BrowserDir the identity's own
+	// browser user data folder (ADR-0016). With none, the browser rule does not apply.
+	Browsers   []BrowserProfile
+	BrowserDir string
 }
 
 type scopedProvider struct {
@@ -133,6 +137,9 @@ type Scope struct {
 	mcpLoaded  bool
 	mcpAllow   map[string]bool
 	general    []providers.GeneralMCP
+
+	browsers   []BrowserProfile // the client's browsers: block (ADR-0016)
+	browserDir string           // canonical: the client's own browser user data folder
 }
 
 // cmdletClaim is one provider's cmdlets entry (exact or *-NounPrefix*).
@@ -161,6 +168,8 @@ func NewScope(in ScopeInputs) *Scope {
 		s.env = func(string) string { return "" }
 	}
 	s.ci = in.Set != nil && in.Set.CaseInsensitive()
+	s.browsers = append([]BrowserProfile{}, in.Browsers...)
+	s.browserDir = browserDirFor(s, in.BrowserDir)
 	sort.Strings(s.scope)
 	inScope := map[string]bool{}
 	for _, id := range in.Scope {
@@ -363,6 +372,8 @@ func imageBase(img string) string {
 type scopeHit struct {
 	id, subject, what string
 	other             string
+	// reason is the whole deny message of a rule that words its own (the browser rule).
+	reason string
 }
 
 // Evaluate judges call against the scope; cwd is the directory it runs in.
@@ -377,7 +388,9 @@ func (s *Scope) Evaluate(cwd string, call ToolCall) Decision {
 	// The scope line itself is added by the hook (cmd.scopeNote, from Manifest.Scope()), the
 	// one place a deny message prints it.
 	var reason string
-	if h.id == OtherIdentityID {
+	if h.reason != "" {
+		reason = h.reason
+	} else if h.id == OtherIdentityID {
 		reason = h.subject + " belongs to identity " + h.other + ", not to " + s.identity +
 			": a session reads and writes only its own identity's files. tq denies it in every tool; do not retry another way: tell the developer, who works on it from that identity"
 	} else {
@@ -396,6 +409,9 @@ func (s *Scope) judge(cwd string, call ToolCall) (scopeHit, bool) {
 		}
 		return s.shell(cwd, call.Command, text, 0, call.Tool == "PowerShell")
 	case call.IsMCP():
+		if h, ok := s.browserMCP(call.MCPServer()); ok {
+			return h, true
+		}
 		if h, ok := s.mcpServer(call.MCPServer()); ok {
 			return h, true
 		}
@@ -1330,6 +1346,14 @@ func (s *Scope) shell(cwd, raw, text string, depth int, ps bool) (scopeHit, bool
 			return h, true
 		}
 		if h, ok := s.cmdletHit(verb); ok {
+			return h, true
+		}
+		// the client's browser profile (ADR-0016): a browser by name or path, and the OS
+		// routes that open a URL in the default handler
+		if h, ok := s.browserStart(base, verb, args); ok {
+			return h, true
+		}
+		if h, ok := s.urlRoute(base, name, s.routeWords(name, args)); ok {
 			return h, true
 		}
 		// env builtins

@@ -13,6 +13,46 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
+// renderShims writes the browser shims of a client that lists a browser, or removes the folder
+// of one that no longer does (ADR-0016). The folder is covered by the integrity record: a human's
+// render signs it again. It reports whether anything changed (or would, dryRun).
+func renderShims(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
+	if envplan.HasBrowsers(ws) {
+		if dryRun {
+			if !envplan.ShimsReady(ws.Name) {
+				fmt.Fprintf(c.OutOrStdout(), "%s: browser shims would be written (%s)\n", ws.Name, envplan.ShimsDir(ws.Name))
+				return true
+			}
+			return false
+		}
+		ch, err := envplan.WriteShims(ws.Name)
+		if err != nil {
+			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: browser shims not written: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
+			return false
+		}
+		if ch {
+			fmt.Fprintf(c.OutOrStdout(), "%s: browser shims written (%s)\n", ws.Name, envplan.ShimsDir(ws.Name))
+		}
+		return ch
+	}
+	if dryRun {
+		if _, err := os.Lstat(envplan.ShimsDir(ws.Name)); err == nil {
+			fmt.Fprintf(c.OutOrStdout(), "%s: browser shims would be removed\n", ws.Name)
+			return true
+		}
+		return false
+	}
+	had, err := envplan.RemoveShims(ws.Name)
+	if err != nil {
+		fmt.Fprintf(c.ErrOrStderr(), "warning: %s: browser shims not removed: %v\n", ws.Name, err)
+		return false
+	}
+	if had {
+		fmt.Fprintf(c.OutOrStdout(), "%s: browser shims removed\n", ws.Name)
+	}
+	return had
+}
+
 // scopeLine is layer 1 of the §6.1 scenario (advisory, never relied on; ADR-0008): the one
 // line of the session-start preamble that states an
 // identity's provider scope, so a well-behaved model declines or asks before it reaches for
@@ -62,6 +102,9 @@ func renderScope(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
 			changed = true
 		}
 	}
+	if renderShims(c, ws, dryRun) {
+		changed = true
+	}
 	j := mcpscope.For(ws.Name, ws.Manifest)
 	if j == nil {
 		return changed
@@ -87,6 +130,22 @@ func renderScope(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
 		}
 		removed, err := mcpscope.FilterClaude(claudeDir, j, dryRun)
 		report("claude", removed, err)
+		if envplan.HasBrowsers(ws) {
+			// ADR-0016: the Playwright MCP server cannot attach to a profile that is open, so it
+			// gets the identity's own browser folder.
+			edits, err := mcpscope.SetPlaywrightDataDir(claudeDir, paths.BrowserDir(ws.Name), dryRun)
+			if err != nil {
+				fmt.Fprintf(c.ErrOrStderr(), "warning: %s claude: Playwright MCP --user-data-dir not set: %v\n", ws.Name, err)
+			}
+			pverb := "set"
+			if dryRun {
+				pverb = "would set"
+			}
+			for _, e := range edits {
+				fmt.Fprintf(c.OutOrStdout(), "%s claude: %s %s %s on MCP server %s (%s)\n", ws.Name, pverb, mcpscope.DataDirFlag, paths.BrowserDir(ws.Name), e.Name, e.Where)
+				changed = true
+			}
+		}
 		// A plugin's MCP servers are in the plugin's own files: reported, never edited; the
 		// hook denies their tools.
 		for _, ps := range mcpscope.PluginServers(claudeDir) {

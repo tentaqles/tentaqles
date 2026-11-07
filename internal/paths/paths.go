@@ -67,6 +67,19 @@ func Audit() string                     { return filepath.Join(Home(), "audit.js
 func IdentitiesRoot() string            { return filepath.Join(Home(), "identities") }
 func IdentityDir(ws, cli string) string { return filepath.Join(IdentitiesRoot(), ws, cli) }
 
+// ShimsRoot is $TQ_HOME/shims: the programs tq puts on an identity's PATH (ADR-0016), one
+// folder per identity under it, every file of the identity's folder covered by its integrity
+// record.
+func ShimsRoot() string { return filepath.Join(Home(), "shims") }
+
+// ShimsDir is identity ws's folder of shims: $TQ_HOME/shims/<ws>.
+func ShimsDir(ws string) string { return filepath.Join(ShimsRoot(), ws) }
+
+// BrowserDir is the folder under identity ws that holds the user data of the browser tq starts
+// for it where it cannot use the browser's own profile (Playwright, ADR-0016):
+// $TQ_HOME/identities/<ws>/browser.
+func BrowserDir(ws string) string { return filepath.Join(IdentitiesRoot(), ws, "browser") }
+
 // ManifestPath is the protected manifest of workspace ws,
 // ~/.tentaqles/identities/<ws>/manifest.yaml (ADR-0002). The identity root
 // keeps only a name-only marker at <root>/.tentaqles.yaml.

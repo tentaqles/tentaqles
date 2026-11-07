@@ -109,10 +109,11 @@ Human-only: a session is refused, and you confirm before the files are written
 				for _, ch := range res.Changes {
 					fmt.Fprintf(c.OutOrStdout(), "  %s\n", ch)
 				}
-				// The PATH mask and the in-scope MCP lists (ADR-0008); neither is
-				// covered by the integrity record, so no re-sign.
-				renderScope(c, ws, dryRun)
-				if !dryRun && res.Changed {
+				// The PATH mask and the in-scope MCP lists (ADR-0008) are not covered by the
+				// integrity record; the browser shims (ADR-0016) are, so a change here is
+				// signed again too.
+				scopeChanged := renderScope(c, ws, dryRun)
+				if !dryRun && (res.Changed || scopeChanged) {
 					// settings.json is covered by the
 					// integrity record: a human's render signs it again,
 					// an agent session leaves it stale.

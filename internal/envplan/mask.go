@@ -39,15 +39,20 @@ func DefaultStubSource() (string, error) {
 	if exe, err := os.Executable(); err == nil && isTQBinary(exe) {
 		return exe, nil
 	}
-	if p, err := exec.LookPath("tq"); err == nil && isTQBinary(p) {
-		return filepath.Abs(p)
+	for _, n := range []string{"tq", "tentaqles"} {
+		if p, err := exec.LookPath(n); err == nil && isTQBinary(p) {
+			return filepath.Abs(p)
+		}
 	}
 	return "", fmt.Errorf("no tq binary to make the stub from: tq is not on PATH")
 }
 
 func isTQBinary(p string) bool {
-	b := strings.ToLower(filepath.Base(p))
-	return b == "tq" || b == "tq.exe"
+	switch strings.ToLower(filepath.Base(p)) {
+	case "tq", "tq.exe", "tentaqles", "tentaqles.exe":
+		return true
+	}
+	return false
 }
 
 // stubLine is the stub's message: fixed words and two validated names.

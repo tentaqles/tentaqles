@@ -97,6 +97,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 		manifestDroppedBlock(w.Name, w.Manifest.Ignored, add)
 		manifestLayout(&w, add)
+		browserChecks(&w, add)
 		if trusted && w.Manifest.Claude.Bundle != nil {
 			if cat == nil {
 				c, err := bundle.LoadCatalog()

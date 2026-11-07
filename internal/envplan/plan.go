@@ -19,6 +19,10 @@ func Desired(ws *resolve.Workspace) map[string]string {
 	}
 	out["TQ_WS"] = ws.Name
 	out["TQ_WS_ROOT"] = ws.Root
+	if HasBrowsers(ws) {
+		// ADR-0016: BROWSER names the client's shim, which opens a URL in the client's profile.
+		out["BROWSER"] = BrowserVar(ws.Name)
+	}
 	provs := Providers()
 	for _, id := range ws.Manifest.IdentityNames() {
 		p, ok := provs[id]

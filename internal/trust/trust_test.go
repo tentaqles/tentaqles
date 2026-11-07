@@ -631,6 +631,142 @@ func TestShimsAreCovered(t *testing.T) {
 	}
 }
 
+// The shims of ADR-0016 are one folder per identity: an identity's record covers its own folder
+// and not another's, so writing one client's shims does not make another client untrusted.
+func TestShimsAreCoveredPerIdentity(t *testing.T) {
+	f := newFixture(t, "acme")
+	f.allow()
+	own := filepath.Join(f.home, ".tentaqles", "shims", "acme", "open")
+	other := filepath.Join(f.home, ".tentaqles", "shims", "beta", "open")
+	write(t, other, "#!/bin/sh\n")
+	if rep := f.verify(); !rep.Trusted(f.hash) {
+		t.Fatalf("another identity's shim changed this record: %v", rep.Changes)
+	}
+	write(t, own, "#!/bin/sh\n")
+	if c := changeFor(t, f.verify(), own); c.Kind != "added" {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func bigBytes(fill byte) []byte {
+	b := make([]byte, bigFileMin+4096)
+	for i := range b {
+		b[i] = fill
+	}
+	return b
+}
+
+func writeBig(t *testing.T, p string, b []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, b, 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The browser shims are three names of one copy of the tq binary (ADR-0016): a verification
+// reads that copy once, and a file that only looks like one already read is read in full.
+func TestHardLinkedShimsAreHashedOnce(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "tq-open")
+	writeBig(t, main, bigBytes('a'))
+	keys := []string{main, filepath.Join(dir, "open"), filepath.Join(dir, "xdg-open")}
+	for _, k := range keys[1:] {
+		if err := os.Link(main, k); err != nil {
+			t.Skipf("hard links: %v", err)
+		}
+	}
+	before := hashed.Load()
+	got, err := hashKeys(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := hashed.Load() - before; n != 1 {
+		t.Fatalf("%d reads for three names of one file, want 1", n)
+	}
+	want, _ := HashFile(main)
+	for _, k := range keys {
+		if got[k] != want {
+			t.Fatalf("%s: %s, want %s", k, got[k], want)
+		}
+	}
+	// three separate copies are three reads
+	copies := []string{filepath.Join(dir, "c1"), filepath.Join(dir, "c2"), filepath.Join(dir, "c3")}
+	for _, k := range copies {
+		writeBig(t, k, bigBytes('a'))
+	}
+	before = hashed.Load()
+	if _, err := hashKeys(copies); err != nil {
+		t.Fatal(err)
+	}
+	if n := hashed.Load() - before; n != 3 {
+		t.Fatalf("%d reads for three copies, want 3", n)
+	}
+}
+
+// A file rewritten with the same size and the same modification time, in place or as a
+// replacement for one of the linked names, never keeps its trust.
+func TestShimRewriteWithSameSizeAndTimeLosesTrust(t *testing.T) {
+	f := newFixture(t, "acme")
+	shims := filepath.Join(f.home, ".tentaqles", "shims", "acme")
+	main, open, xdg := filepath.Join(shims, "tq-open"), filepath.Join(shims, "open"), filepath.Join(shims, "xdg-open")
+	writeBig(t, main, bigBytes('a'))
+	for _, k := range []string{open, xdg} {
+		if err := os.Link(main, k); err != nil {
+			t.Skipf("hard links: %v", err)
+		}
+	}
+	f.allow()
+	if rep := f.verify(); !rep.Trusted(f.hash) {
+		t.Fatalf("not trusted as signed: %v", rep.Changes)
+	}
+	fi, _ := os.Stat(main)
+	mtime := fi.ModTime()
+
+	// 1. the shared inode is rewritten in place: same size, same time, other bytes
+	other := bigBytes('a')
+	other[len(other)/2] = 'b'
+	if err := os.WriteFile(main, other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(main, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	rep := f.verify()
+	for _, k := range []string{main, open, xdg} {
+		if c := changeFor(t, rep, k); c.Kind != "changed" {
+			t.Fatalf("%s: %+v", k, c)
+		}
+	}
+	// back to what was signed, then 2. one link replaced by a separate file of the same size
+	// and time: only that name changes, and the others are still as signed
+	if err := os.WriteFile(main, bigBytes('a'), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(main, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	if rep := f.verify(); !rep.Trusted(f.hash) {
+		t.Fatalf("restored bytes are not trusted: %v", rep.Changes)
+	}
+	if err := os.Remove(xdg); err != nil {
+		t.Fatal(err)
+	}
+	writeBig(t, xdg, other)
+	if err := os.Chtimes(xdg, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	rep = f.verify()
+	if c := changeFor(t, rep, xdg); c.Kind != "changed" {
+		t.Fatalf("xdg-open: %+v", c)
+	}
+	if len(rep.Changes) != 1 {
+		t.Fatalf("other names changed too: %v", rep.Changes)
+	}
+}
+
 // Keys are canonical: a record signed from a shell whose TQ_HOME is spelled
 // with forward slashes, or in another case on Windows, verifies from the
 // usual spelling with no phantom change, and the reverse.

@@ -125,6 +125,47 @@ func members(b []byte, i int) ([]member, int, error) {
 	}
 }
 
+// setMember replaces the value of the member at path (keys from the root object) with value,
+// or adds the member to its parent object when only the last key is missing. Every other byte
+// stays as it was. A path whose parent is not there is an error.
+func setMember(b []byte, path []string, value []byte) ([]byte, error) {
+	obj := skipWS(b, 0)
+	for depth, k := range path {
+		ms, closeAt, err := members(b, obj)
+		if err != nil {
+			return nil, err
+		}
+		idx := -1
+		for i, m := range ms {
+			if m.key == k {
+				idx = i
+			}
+		}
+		last := depth == len(path)-1
+		switch {
+		case idx < 0 && last:
+			key, _ := json.Marshal(k)
+			add := append(append(append([]byte{}, key...), ':'), value...)
+			if len(ms) > 0 {
+				add = append([]byte{','}, add...)
+			}
+			out := make([]byte, 0, len(b)+len(add))
+			out = append(out, b[:closeAt]...)
+			out = append(out, add...)
+			return append(out, b[closeAt:]...), nil
+		case idx < 0:
+			return nil, fmt.Errorf("no member %q", k)
+		case last:
+			out := make([]byte, 0, len(b)+len(value))
+			out = append(out, b[:ms[idx].valueStart]...)
+			out = append(out, value...)
+			return append(out, b[ms[idx].valueEnd:]...), nil
+		}
+		obj = ms[idx].valueStart
+	}
+	return nil, fmt.Errorf("empty path")
+}
+
 // deleteMember removes the member at path (keys from the root object) and returns the new
 // bytes. A path that is not there is no change.
 func deleteMember(b []byte, path []string) ([]byte, error) {
