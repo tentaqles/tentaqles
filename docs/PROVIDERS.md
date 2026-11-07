@@ -91,6 +91,54 @@ match:                       # what the guard denies when an identity's scope le
   confirmed) still get an `id` field plus a `note: "unverified package id"`
   rather than being omitted.
 
+## Installing a provider's CLI
+
+`tentaqles install <provider>` (and the last step of `tentaqles reach`, unless `--no-install`)
+puts a provider's CLI on the machine. It reads only the **embedded** catalog: a file under
+`~/.tentaqles/providers/` can add a provider or widen what the guard denies, never name a
+package tq runs.
+
+The methods of the `install:` block of the current OS are tried in this order, and the first
+whose package manager is on the identity's PATH runs:
+
+1. `winget`
+2. `scoop`
+3. `brew`
+4. `apt` (runs `apt-get install -y`, never with `sudo`: without the rights it fails and says so)
+5. `npm` (`npm install -g`)
+6. `pip` (`pip install`, or `pip3`)
+
+Then the catalog's `version_args` run and one line is printed:
+
+| Line | When |
+|---|---|
+| `<provider>: installed <version>` | a package manager ran and the CLI now answers |
+| `<provider>: already present <version>` | the CLI already resolves on the identity's PATH: nothing runs |
+| `<provider>: manual, download from <docs URL>` | no method of this OS has a package manager here |
+| `<provider>: install failed: <reason>` | the package manager failed (exit 1); the reason is its error line, not a progress line or a warning |
+| `<provider>: no CLI, nothing to install` | `cli: null` |
+
+Rules:
+
+- The package id comes from the catalog and is one argv element; there is no shell and no
+  argument of the command line reaches the package manager.
+- A value under `url` is documentation. tq never opens or runs it, and **never launches an
+  installer file (a `.msi`, an `.exe`, a script) itself**. `winget` may run a vendor installer
+  behind the scenes: that is the package manager's own work.
+- **tq accepts the vendor's licence through winget's flags** (`--accept-package-agreements`,
+  `--accept-source-agreements`, `--disable-interactivity`). Run the install only for software
+  you agree to.
+- A run lasts at most 10 minutes. At the limit the package manager and everything it started are
+  stopped, and the line reads `install failed: ... did not finish within 10m0s and was stopped`.
+- The package manager and the version check run with the identity's environment. After a Windows
+  install the CLI is looked up on the user and machine PATH read from the registry, since a
+  package manager's PATH change does not reach a running process.
+- A CLI installs machine-wide; the identity's PATH layer decides who reaches it. A provider
+  outside the identity's scope is refused (`<provider> is outside the scope of identity <ws>:
+  <scope>`, exit 1, one `identity` line in the denial log with layer `command`).
+- An agent may run it for a provider in scope (it is not human-only; ADR-0015). Azure DevOps'
+  `az extension add --name azure-devops` stays a printed note.
+
 ## Match lists
 
 Every catalog file carries a `match:` block: the literal spellings the guard's

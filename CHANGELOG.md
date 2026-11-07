@@ -6,6 +6,19 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### `tentaqles install` (ADR-0015)
+
+- `tentaqles install <provider>` installs the CLI of a provider in the current client's scope,
+  through the first of `winget`, `scoop`, `brew`, `apt`, `npm`, `pip` that the catalog names for
+  this OS and the identity's PATH has, then prints `<provider>: installed <version>`,
+  `already present <version>`, `manual, download from <docs URL>` or `install failed: <reason>`.
+- `tentaqles reach` runs it for each provider in scope once the client is trusted, and goes on past a
+  failure. `--no-install` skips this.
+- tq never launches an installer file and never runs a catalog `url`. It accepts the vendor's licence
+  through winget's flags. A run is stopped, with its whole process tree, after 10 minutes.
+- An agent may run it for a provider in scope; a provider outside the scope is refused and logged
+  (layer `command`).
+
 ### Cut down to IDEATION (ADR-0013, ADR-0014)
 
 - Removed `tq add`, `tq init`, `tq onboard`, `tq setup`, `tq worktrees`, `tq run --off` and the

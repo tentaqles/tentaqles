@@ -9,10 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/reach"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 	"github.com/tentaqles/tentaqles/internal/trust"
 )
@@ -27,10 +29,13 @@ func isolateReach(t *testing.T, a *reach.Answers) string {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("TQ_NO_BANNER", "")
 	clearAgentMarkers(t)
-	prevForm, prevGit := reachForm, reachRunGit
+	prevForm, prevGit, prevInstall := reachForm, reachRunGit, reachInstall
 	reachForm = func() (*reach.Answers, error) { return a, nil }
 	reachRunGit = func(...string) (string, error) { return "", nil }
-	t.Cleanup(func() { reachForm, reachRunGit = prevForm, prevGit })
+	// No test but the install ones runs a package manager (TestReach_InstallsAndContinues puts
+	// reachInstall back, with a fake one on the PATH).
+	reachInstall = func(*cobra.Command, *resolve.Workspace) {}
+	t.Cleanup(func() { reachForm, reachRunGit, reachInstall = prevForm, prevGit, prevInstall })
 	clients := filepath.Join(home, "clients")
 	if err := os.MkdirAll(clients, 0o755); err != nil {
 		t.Fatal(err)

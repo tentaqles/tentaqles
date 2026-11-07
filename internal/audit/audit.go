@@ -48,7 +48,7 @@ type Denial struct {
 	// Category is the guard category (identity, secrets, self-protection),
 	// or tq/guard-error for a call the guard could not judge.
 	Category string `json:"category"`
-	// Layer is where it was caught: hook, filesystem (a protected path), or
+	// Layer is where it was caught: hook, command (a command's own refusal), filesystem (a protected path), or
 	// human-only (the command's own refusal).
 	Layer string `json:"layer"`
 	// Caller is the calling process: harness (the main session), subagent
@@ -72,6 +72,9 @@ const (
 	LayerHook       = "hook"
 	LayerFilesystem = "filesystem"
 	LayerHumanOnly  = "human-only"
+	// LayerCommand is a tq command refusing on its own, outside the hook (tq install of a
+	// provider outside the identity's scope).
+	LayerCommand = "command"
 )
 
 // Callers a Denial names.
