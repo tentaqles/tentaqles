@@ -10,7 +10,8 @@ Releases before 0.16.0 are described on the
   first step is `tentaqles status --json`; it never reads the manifest, `.claude.json` or the state
   folder. It stops in a neutral or untrusted folder, walks `providers` in order (CLI, connection, then
   credential), runs `tentaqles install` for a missing CLI and `tentaqles connect` for an MCP server.
-  A login runs under `!` only for a known browser flow (gh, az, acli jira); every other login, and
+  A login runs under `!` only when the repo or the ticket shows it is a browser flow (gh's `auth login --web`,
+  the one the ticket names); every other login, and
   `tq login` and `tq secret set`, is the developer's own terminal with no `!`, since tq refuses them in a
   session and a key prompt must not run in one. A CLI that still does not resolve after an install gets no
   login that run. It ends with one table. It never picks an installer, never handles a token, and refuses

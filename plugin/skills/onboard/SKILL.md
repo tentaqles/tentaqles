@@ -12,7 +12,7 @@ Never read the workspace manifest, `.claude.json`, `.env` files, the environment
 If only `tq` is on PATH, use `tq` for `tentaqles`: it is the same program.
 
 Rules for every step:
-- A login runs under `!` only when it is a known browser flow: `! gh auth login --web`, `! az login` or `! acli jira auth login`, printed as its own line that starts with `!`. Every other login runs in the developer's own terminal, with no `!`, and you wait for them to say done. Never run a login yourself.
+- A login runs under `!` only when it is a known browser flow, that is, the repo or the ticket shows it is one. That is gh alone: `! gh auth login --web`, printed as its own line that starts with `!`. Every other login runs in the developer's own terminal, with no `!`, and you wait for them to say done. Never run a login yourself.
 - `tq login` and `tq secret set` run in the developer's own terminal, with no `!`: tq refuses them inside a session.
 - Install and connect only providers in `scope`. A provider outside it is refused: do not install, log in or connect it.
 - Never choose an installer or download a file. Show every line `tentaqles install` prints.
@@ -27,13 +27,13 @@ Run `tentaqles status --json` and read the one object.
 
 ## 2. Walk the providers, one at a time
 
-For each provider, do its CLI step (a), connection (b) and credential (c), then the next provider. Before (a), read its definition with `tentaqles providers show <id>`. Say one line before each provider with its id and what is left. Skip what is in place: no `cli`, or a CLI that resolves; a `connection` that is `present` or `none`; a `credential` that is `present`. notion and trello are reached only through a claude.ai connector (tq has no catalog server for them), so their `connection` reads `none` and they always get step b. A re-run works the same way, so a CLI removed or a credential expired since the last run gets its step again.
+For each provider, do its CLI step (a), connection (b) and credential (c), then the next provider. Before (a), read its definition with `tentaqles providers show <id>`. Say one line before each provider with its id and what is left. Skip what is in place: no `cli`, or a CLI that resolves; a `connection` that is `present` or `none`; a `credential` that is `present`. notion and trello are reached only through a claude.ai connector (tq has no catalog server for them), so their `connection` reads `none` and they always get step b. Notion's catalog CLI (`ntn`) is not needed for its connector: for notion, skip step a and the CLI-login question, and a missing `ntn` is not an error. A re-run works the same way, so a CLI removed or a credential expired since the last run gets its step again.
 
 A task provider (`category` `pm`) gets its install, connection and login like any other. Its only limit is on tasks: no reading or writing beyond its one read-only check in step 4.
 
 ### a. CLI
 
-When `cli` is set and `cli_resolves` is false, run `tentaqles install <id>`. Show the developer every line it prints, `then:` lines included.
+When `cli` is set and `cli_resolves` is false, run `tentaqles install <id>` (not for notion, see section 2). Show the developer every line it prints, `then:` lines included.
 - `installed <version>` or `already present <version>`: a `then:` line is for the developer to run in their own terminal. Run `tentaqles status --json` and read `cli_resolves`: a session started before the install may not see the CLI yet. If it still reads false, tell the developer to restart Claude Code and run this skill again, and print no login for it this run.
 - `manual, download from <url>`: give the developer that page with `tentaqles open <url>`, or print the URL if that refuses. Ask them to install it and say done, then check `cli_resolves`. If it still reads false, tell the developer to restart Claude Code or fix the install and run this skill again, and print no login for it this run.
 - `install failed: <reason>`: show the reason. The developer fixes it or installs by hand, then says done; check `cli_resolves`. If it still reads false, tell the developer to fix the install and run this skill again, and print no login for it this run. The table says `missing`.
@@ -48,9 +48,9 @@ When `connection` is `missing`, or the provider is notion or trello, run `tentaq
 
 ### c. Credential
 
-Skip this when `credential` is `present`, except a shared login (below). When `credential` is `none` and `cli` is null, there is no CLI login to ask about: skip. When it is `none` and `cli` is set, tq cannot tell a CLI login from logged out: ask the developer once whether they are signed in to that CLI, and print its login only if they say no. Print no login for a CLI that did not resolve in (a).
+Skip this when `credential` is `present`, except a shared login (below). When `credential` is `none` and the provider has no CLI in use (no `cli`, or notion or trello), there is no CLI login to ask about: skip. When it is `none` and a CLI is in use, tq cannot tell a CLI login from logged out: ask the developer once whether they are signed in to that CLI, and print its login only if they say no. Print no login for a CLI that did not resolve in (a).
 
-**Shared login.** A provider whose `cli` is set and whose `identity` in `tentaqles providers show` has no `env` entries keeps one login per machine (jira is one). It is not isolated per client, and the guard cannot check it. Even when `credential` is `present` or `verified` is true, ask the developer to confirm that the signed-in account is this client's: a passing check does not prove it. Before its login, say that signing in here replaces any other client's login. A provider with no `cli` (linear, asana, trello) is not a shared login: its token is per client.
+**Shared login.** A provider whose `cli` is set (not notion or trello) and whose `identity` in `tentaqles providers show` has no `env` entries is not isolated per client by tq, and the guard cannot check its login (jira is one). Even when `credential` is `present` or `verified` is true, ask the developer to confirm that the signed-in account is this client's: a passing check does not prove it. Before its login, say that signing in here replaces any other client's login. A provider with no `cli` (linear, asana, trello) is not a shared login: its token is per client.
 
 When `credential` is `missing`, verify first, and ask only if that fails:
 - If `tentaqles providers show <id>` has a `verify` block, `status --json` already ran it and it failed: go to the login.
@@ -58,21 +58,21 @@ When `credential` is `missing`, verify first, and ask only if that fails:
 - Otherwise ask the developer once whether they are already signed in through its own tool. If so, skip.
 
 When a login is still needed, use the first method the provider supports, in this order:
-1. **OAuth**: `providers show` has a `login` block. A known browser flow from the rules is printed under `!`, as for gh:
+1. **OAuth**: `providers show` has a `login` block. A known browser flow from the rules (gh only) is printed under `!`:
    ```text
    ! gh auth login --web
    ```
-   Any other login is printed for the developer's own terminal, with no `!`: `tq login <identity> <id>` when `providers show` has an identity `env` (the login then stays in the client's private config; for aws, `--sso` for a first SSO setup or `--sso-session <name>` for an SSO client), otherwise the catalog's `<cli.command> <login.args>`.
+   Any other login is printed for the developer's own terminal, with no `!`: `tq login <identity> <id>` when `providers show` has an identity `env` (for aws, `--sso` for a first SSO setup or `--sso-session <name>` for an SSO client), otherwise the catalog's `<cli.command> <login.args>`.
 2. **Token**: the provider is a tracker (`github`, `azure-devops`, `jira`, `linear` or `asana`). Tell the developer to run `tq secret set <identity> <name>` in their own terminal, with no `!`. `<name>` is the provider id, except `gh` is `github`. Ask them to say done.
 3. **MCP**: neither applies. Its sign-in is the connector in step b.
 
-With no `login` block and no tracker token, the catalog names no login: print no command. Tell the developer what the provider's `notes` in `providers show` say about how it signs in. If a connector reaches it, step b is its sign-in. Otherwise the table reads `missing`, and you go on.
+With no `login` block and no tracker token, the catalog names no login: print no command. If a connector reaches it, step b is its sign-in. Otherwise the table reads `missing`, and you go on.
 
 After the developer says done, run `tentaqles status --json` and read `credential`. Still `missing`: say so once and go on.
 
 ### d. Other providers
 
-For each name in `other_providers`, help the developer install it and log in the way the vendor documents: the login in the developer's own terminal (`!` only for a known browser flow from the rules), and the vendor's page opened with `tentaqles open <url>`, or printed if that refuses. Never choose an installer yourself. Say: "This login is not isolated per client, and the guard cannot check it." Do not run `tentaqles install`, `tentaqles connect` or `tq secret set` for it: it is outside `scope`, and those refuse. Its table row reads `not checked`.
+For each name in `other_providers`, help the developer install it and log in the way the vendor documents: the login in the developer's own terminal (`!` only for a browser flow from the rules), and the vendor's page opened with `tentaqles open <url>`, or printed if that refuses. Never choose an installer yourself. Say: "This login is not isolated per client, and the guard cannot check it." Do not run `tentaqles install`, `tentaqles connect` or `tq secret set` for it: it is outside `scope`, and those refuse. Its table row reads `not checked`.
 
 ## 3. Tokens
 

@@ -153,7 +153,7 @@ def test_onboard_skill_connector_settles_without_asking_again():
 
 def test_onboard_skill_asks_no_cli_login_without_a_cli():
     cred = section(CREDENTIAL)
-    assert "`cli` is null" in cred and "skip" in cred, "no CLI-login question for a provider with no CLI"
+    assert "(no `cli`, or notion or trello)" in cred and "skip" in cred, "no CLI-login question for a provider with no CLI"
 
 
 def test_onboard_skill_is_short():
@@ -197,29 +197,49 @@ def test_onboard_skill_verifies_before_it_asks():
 
 
 def shared_login(provider):
-    """The rule the skill states: a provider with cli set and no identity env is a shared login.
+    """The rule the skill states: a provider with cli set (not notion or trello) and no identity env.
 
-    provider is a dict shaped like `tentaqles providers show`: cli (or None), identity.env (or None).
+    provider is a dict shaped like `tentaqles providers show`: id, cli (or None), identity.env (or None).
     """
+    if provider.get("id") in ("notion", "trello"):
+        return False
     return provider.get("cli") is not None and not (provider.get("identity") or {}).get("env")
 
 
 def test_onboard_skill_shared_login_rule_matches_only_a_cli_with_no_env():
     cred = section(CREDENTIAL)
-    assert "A provider whose `cli` is set and whose `identity` in `tentaqles providers show` has no `env` entries" in cred
-    jira = {"cli": {"command": "acli"}, "identity": {"env": None}}
-    gh = {"cli": {"command": "gh"}, "identity": {"env": {"GH_CONFIG_DIR": "{dir}"}}}
-    linear = {"cli": None, "identity": {"env": None}}
+    assert "A provider whose `cli` is set (not notion or trello) and whose `identity` in `tentaqles providers show` has no `env` entries" in cred
+    jira = {"id": "jira", "cli": {"command": "acli"}, "identity": {"env": None}}
+    gh = {"id": "gh", "cli": {"command": "gh"}, "identity": {"env": {"GH_CONFIG_DIR": "{dir}"}}}
+    linear = {"id": "linear", "cli": None, "identity": {"env": None}}
+    notion = {"id": "notion", "cli": {"command": "ntn"}, "identity": {"env": None}}
     assert shared_login(jira), "jira is a shared login"
     assert not shared_login(gh), "gh has its own config home"
     assert not shared_login(linear), "linear has no CLI, so its token is per client and no shared-login warning is given"
+    assert not shared_login(notion), "notion's CLI is not used for its connector, so no shared-login warning"
 
 
-def test_onboard_skill_bang_only_for_known_browser_flows():
-    allowed = {"! gh auth login --web", "! az login", "! acli jira auth login"}
+def test_onboard_skill_notion_skips_the_cli_step_and_the_shared_login():
+    a = section(CLI)
+    walk = section(WALK)
+    cred = section(CREDENTIAL)
+    assert "notion" in a and "skip step a" in walk, "notion skips step a"
+    assert "a missing `ntn` is not an error" in walk
+    assert "(not notion or trello)" in cred, "notion is not a shared login"
+    assert "or notion or trello" in cred, "notion has no CLI-login question"
+
+
+def test_onboard_skill_bang_only_for_the_one_browser_flow_the_repo_shows():
+    allowed = {"! gh auth login --web"}
     printed = set(m.strip() for m in re.findall(r"^\s*(! \S.*?)\s*$", body(), re.M))
-    assert printed <= allowed, "a login runs under ! only when it is a known browser flow: %s" % (printed - allowed)
+    assert printed <= allowed, "a login runs under ! only when the repo or the ticket shows it is a browser flow: %s" % (printed - allowed)
+    assert "! acli" not in body() and "! az " not in body(), "acli and az are not shown to be browser flows"
     assert "known browser flow" in body(), "the rule that names the browser flows is stated"
+
+
+def test_onboard_skill_makes_no_private_config_claim():
+    src = body().lower()
+    assert "private config" not in src and "stays in the client" not in src
 
 
 def test_onboard_skill_aws_login_is_not_under_bang():
@@ -242,9 +262,10 @@ def test_onboard_skill_connector_only_providers_get_the_connector_step():
 def test_onboard_skill_sign_in_is_never_a_docs_page():
     cred = section(CREDENTIAL)
     assert "`docs` page" not in cred and "docs page" not in cred, "no docs page is offered to sign in"
-    assert "`notes`" in cred, "the provider's notes say how it signs in"
+    assert "`notes`" not in cred, "the notes are not relayed: they can send the developer to a manifest edit"
     assert "step b is its sign-in" in cred
     assert "print no command" in cred
+    assert "the table reads `missing`" in cred, "without a connector the row reads missing and the walk goes on"
 
 
 def test_onboard_skill_pasted_token_hint_names_tq_secret_set_only_for_a_tracker():
