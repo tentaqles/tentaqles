@@ -54,6 +54,7 @@ func runReach(t *testing.T, args ...string) (string, error) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
+	root.SetIn(strings.NewReader(""))
 	root.SetArgs(append([]string{"reach"}, args...))
 	err := root.Execute()
 	return out.String(), err
@@ -180,6 +181,7 @@ func TestReach_NoBanner(t *testing.T) {
 // Under every marker reach refuses before it writes; a human gets a trusted client.
 func TestReachDoesNotTrustFromAgent(t *testing.T) {
 	clients := isolateReach(t, fullAnswers())
+	h := isolateHandover(t, filepath.Dir(clients))
 	for _, k := range agentMarkers {
 		clearAgentMarkers(t)
 		t.Setenv(k, "1")
@@ -187,6 +189,9 @@ func TestReachDoesNotTrustFromAgent(t *testing.T) {
 		out, err := runReach(t, filepath.Join(clients, name))
 		if !errors.Is(err, errHumanOnly) {
 			t.Fatalf("reach under %s: want errHumanOnly, got %v %q", k, err, out)
+		}
+		if n := h.seamCalls(); n != 0 {
+			t.Fatalf("reach under %s reached a terminal seam: %v", k, h.events)
 		}
 		if _, err := os.Stat(filepath.Join(clients, name)); !os.IsNotExist(err) {
 			t.Fatalf("reach under %s wrote the folder", k)

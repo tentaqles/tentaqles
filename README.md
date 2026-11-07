@@ -53,7 +53,8 @@ tq hooks install                     # once: terminals follow the folder
 tentaqles reach C:\clients\acme      # the banner, a short form, then a typed yes
 ```
 
-Open a new terminal in that folder and start `claude`. In it:
+reach then opens a new terminal in that folder, and ends the terminal it ran in after you press Enter (only when
+that is an interactive shell; `--no-terminal` skips both, and see ADR-0019). In the new terminal, start `claude`. In it:
 
 - Only the CLIs of that client's providers run. Another provider's CLI answers `command not found`.
 - `git`, `gh`, `az` and the other CLIs use that client's account.
@@ -68,8 +69,8 @@ See [docs/COMMANDS.md](docs/COMMANDS.md).
 
 ## Status
 
-Being rebuilt around IDEATION. Installing the CLIs during `reach`, handing over to a new terminal, browser
-profiles and the new onboarding skill are not built yet.
+Being rebuilt around IDEATION. Installing the CLIs during `reach`, browser profiles and the new onboarding skill are
+not built yet. The handover to a new terminal is built (ADR-0019).
 
 ## Security
 

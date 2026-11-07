@@ -1,15 +1,18 @@
-// Package termopen opens a new terminal window in a folder, for `tq onboard`: Windows Terminal
+// Package termopen opens a new terminal window in a folder, for `tentaqles reach`: Windows Terminal
 // (`wt -d`) when it is on PATH, else cmd's start; Terminal.app on macOS; the first emulator
 // found on Linux.
 //
-// It only ever starts a window. It never waits for one and never closes or kills a terminal:
-// closing the old one is the user's call.
+// Open only ever starts a window: it never waits for one. Kill ends one process, and reach uses it
+// on exactly one pid, the shell reach was run from, once the new terminal has started and the
+// developer has read the output (ADR-0019). ShellName and Interactive decide whether that shell is
+// one reach may end.
 package termopen
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -112,3 +115,55 @@ func open(goos, dir string, lookPath func(string) (string, error)) (Launch, erro
 
 // Open starts a new terminal window in dir and returns what it ran.
 func Open(dir string) (Launch, error) { return open(runtime.GOOS, dir, exec.LookPath) }
+
+// ShellName names the shell an executable is, when it is one reach may end: powershell, pwsh, bash,
+// zsh, fish or cmd. The directory, a .exe suffix, case and a login shell's leading dash are dropped.
+// Anything else (a terminal, a runtime, sh) is not a shell reach ends.
+func ShellName(exe string) (string, bool) {
+	n := strings.ToLower(path.Base(strings.ReplaceAll(strings.TrimSpace(exe), `\`, "/")))
+	n = strings.TrimSuffix(strings.TrimPrefix(n, "-"), ".exe")
+	switch n {
+	case "powershell", "pwsh", "bash", "zsh", "fish", "cmd":
+		return n, true
+	}
+	return "", false
+}
+
+// Interactive reports whether a shell's command line starts an interactive session. A shell started
+// to run something (-c, -Command, -EncodedCommand, -File, -NonInteractive, --command, /c) is not one,
+// and neither is an empty command line: when reach cannot tell, it leaves the terminal open. A script
+// named without a flag is not caught; reach still needs a terminal on its own stdin.
+func Interactive(shell, cmdline string) bool {
+	args := strings.Fields(cmdline)
+	if len(args) == 0 {
+		return false
+	}
+	for _, a := range args[1:] {
+		a = strings.ToLower(strings.Trim(a, `"'`))
+		switch shell {
+		case "cmd":
+			if strings.HasPrefix(a, "/c") || strings.HasPrefix(a, "/r") {
+				return false
+			}
+		case "powershell", "pwsh":
+			if strings.HasPrefix(a, "-c") || strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "-noni") || strings.HasPrefix(a, "-enc") {
+				return false
+			}
+		default:
+			if strings.HasPrefix(a, "--command") || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "c")) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Kill ends the process pid. Its one caller ends the shell reach was run from, after the output is
+// read; it never walks up the tree.
+func Kill(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Kill()
+}
