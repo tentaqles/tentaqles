@@ -1,0 +1,19 @@
+{
+  "confirmed": false,
+  "featuresDir": "specs/features",
+  "evidenceDir": "evidence",
+  "requirementId": "REQ-\\d+",
+  "mainBranch": "main",
+  "codePaths": ["src", "app", "lib", "server", "api", "scripts", "tests", "test"],
+  "gateCommands": [],
+  "app": {
+    "build": "",
+    "start": "",
+    "readyPath": "/",
+    "env": {},
+    "testData": {
+      "setup": "",
+      "restore": ""
+    }
+  }
+}

@@ -2,7 +2,7 @@
 name: reproducer
 description: Takes a bug report, reproduces it twice in its own worktree, and either fixes it on its own branch when the fix is small, or reports that there's no simple fix or that it couldn't reproduce it. Its only output is the final reply. Doesn't merge. The prompt gives the bug as reported, and the tickets being built right now.
 tools: Read, Grep, Glob, Bash, Edit, Write
-model: sonnet
+model: haiku
 effort: high
 maxTurns: 120
 isolation: worktree

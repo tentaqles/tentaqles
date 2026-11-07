@@ -3,5 +3,30 @@
   "worktree": { "baseRef": "head" },
   "permissions": {
     "deny": ["Read(./.env)", "Read(./.env.*)", "Read(**/.env)", "Read(**/.env.*)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/eval-gate.mjs hook",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/eval-gate.mjs hook",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
   }
 }
