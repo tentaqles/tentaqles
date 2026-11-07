@@ -7,7 +7,9 @@ run() { echo "+ $*"; "$@" || fail=1; }
 
 base=$(node -e 'try{process.stdout.write(JSON.parse(require("fs").readFileSync(".job/ticket.json","utf8")).base)}catch{}')
 [ -n "$base" ] || base=$(git merge-base HEAD main)
-changed=$(git diff --name-only "$base"...HEAD)
+# --diff-filter=d: a file deleted since the base is not something to run or build (the plugin cut
+# deleted its tests; with a base older than the cut, pytest was handed files that no longer exist).
+changed=$(git diff --name-only --diff-filter=d "$base"...HEAD)
 
 run go build ./...
 run go vet ./...
