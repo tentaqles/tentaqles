@@ -25,3 +25,4 @@ The build loop's board, kept by `.claude/hooks/gate.mjs`. See `.claude/README.md
 | 019 | `reach` installs the plugin, and Claude won't start without the guard | ready | High | waits for 016: both add a step to reach |
 | 020 | `reach` opens the client's terminal and closes the old one | ready | High | waits for 019: the last step of reach |
 | 021 | The onboarding skill drives the logins | ready | High | waits for 016, 018: it uses install, status and connect |
+| 022 | An agent can't run a command under another client | ready | High | alongside |
