@@ -3,6 +3,8 @@
 The skill is text, so these tests read it and check what it says. How a model reads it is not
 provable here; the owner's U-02 check proves the walk works once. The guard hook is what
 enforces, and the skill never changes it.
+
+Each rule is checked inside its own section, so removing the rule fails the test.
 """
 
 import re
@@ -15,6 +17,16 @@ SKILL = ROOT / "skills" / "onboard" / "SKILL.md"
 PROTECTED = [".tentaqles.yaml", "manifest.yaml", ".claude.json", "~/.tentaqles"]
 NEGATION = re.compile(r"\b(never|not|don't|do not|cannot)\b", re.IGNORECASE)
 
+STEP1 = ("## 1.", "## 2.")
+WALK = ("## 2.", "## 3.")
+CLI = ("### a. CLI", "### b. Connection")
+CONNECTION = ("### b. Connection", "### c. Credential")
+CREDENTIAL = ("### c. Credential", "### d. Other providers")
+OTHER = ("### d. Other providers", "## 3.")
+TOKENS = ("## 3.", "## 4.")
+VERIFY = ("## 4.", "## 5.")
+TABLE = ("## 5.", "## Never")
+
 
 def body():
     return SKILL.read_text(encoding="utf-8")
@@ -24,12 +36,13 @@ def lines():
     return body().splitlines()
 
 
-def section(start, end):
-    """The text from the heading that starts with start, up to the heading that starts with end."""
+def section(bounds):
+    """The text from the heading bounds[0] up to the heading bounds[1], line wraps joined by one space."""
     src = body()
+    start, end = bounds
     i = src.index(start)
     j = src.index(end, i + len(start))
-    return src[i:j]
+    return " ".join(src[i:j].split())
 
 
 def code_blocks(src):
@@ -56,7 +69,7 @@ def test_onboard_skill_walks_every_step():
     src = body()
     for name in ("tentaqles status --json", "tentaqles install", "tentaqles connect"):
         assert name in src, name
-    cred = section("### b. Credential", "### c. Connection")
+    cred = section(CREDENTIAL)
     positions = [cred.index(m) for m in ("OAuth", "Token", "MCP")]
     assert positions == sorted(positions), "the credential methods run in the order OAuth, token, MCP"
     assert re.search(r"^\s*! \S", src, re.M), "a login is printed with the ! prefix"
@@ -67,8 +80,23 @@ def test_onboard_skill_walks_every_step():
         assert trigger in desc, trigger
 
 
+def test_onboard_skill_walks_providers_in_order():
+    step1 = section(STEP1)
+    assert "tentaqles status --json" in step1
+    assert "`providers`" in step1 and "`scope`" in step1
+    assert "Walk them in that order." in step1, "the providers are walked in the order given"
+
+
+def test_onboard_skill_walks_one_provider_at_a_time_and_reruns():
+    walk = section(WALK)
+    assert "one at a time" in walk, "the walk is one provider at a time"
+    assert "then the next provider" in walk, "a provider is finished before the next"
+    assert "A re-run works the same way" in walk, "a re-run skips what is in place and redoes what is gone"
+    assert "Skip what is in place" in walk
+
+
 def test_onboard_skill_stops_when_not_a_client():
-    step1 = section("## 1.", "## 2.")
+    step1 = section(STEP1)
     assert "neutral" in step1 and "untrusted" in step1
     assert "tentaqles reach" in step1 and "tq hooks verify" in step1
     assert re.search(r"\bstop\b", step1, re.IGNORECASE), "it stops in both cases"
@@ -83,13 +111,34 @@ def test_onboard_skill_never_picks_an_installer():
     assert "vendor" in src and "page" in src, "a manual install gives the vendor's page"
 
 
+def test_onboard_skill_relays_every_install_line_and_checks_after():
+    cli = section(CLI)
+    assert "Show the developer every" in cli and "then:" in cli, "every install line is relayed, then: too"
+    assert "restart Claude Code" in cli and "run this skill again" in cli
+    assert "print no login" in cli, "no login is printed before the CLI resolves"
+    assert "`cli_resolves`" in cli
+    assert "`installed <version>`" in cli and "`already present <version>`" in cli
+
+
 def test_onboard_skill_handles_no_catalog_server():
     src = body()
     assert "no MCP server in the catalog" in src
     assert "claude.ai" in src and "connector" in src
-    conn = section("### c. Connection", "## 3.")
+    conn = section(CONNECTION)
     assert "claude.ai" in conn and "connector" in conn
     assert "done" in conn and "check" in conn, "the developer does the step, then it is checked"
+
+
+def test_onboard_skill_connector_settles_without_asking_again():
+    conn = section(CONNECTION)
+    assert "read-only check" in conn and "passes" in conn, "a connector whose check passes is connected"
+    cred = section(CREDENTIAL)
+    assert "passes" in cred and "skip the login and the token" in cred, "a provider signed in is not asked again"
+
+
+def test_onboard_skill_asks_no_cli_login_without_a_cli():
+    cred = section(CREDENTIAL)
+    assert "`cli` is null" in cred and "skip" in cred, "no CLI-login question for a provider with no CLI"
 
 
 def test_onboard_skill_is_short():
@@ -112,9 +161,82 @@ def test_onboard_skill_reads_no_protected_path():
         for name in PROTECTED:
             if name in line:
                 assert NEGATION.search(line), "a line names %s without forbidding it: %r" % (name, line)
-    step1 = section("## 1.", "## 2.")
+    step1 = section(STEP1)
     assert "tentaqles status --json" in step1
     assert "Never read" in src
+
+
+def test_onboard_skill_reads_the_login_from_providers_show():
+    walk = section(WALK)
+    cred = section(CREDENTIAL)
+    assert "tentaqles providers show" in walk and "tentaqles providers show" in cred
+    assert "`login` block" in cred and "<login.args>" in cred
+    assert "--help" not in body(), "no login is guessed from a CLI's help"
+
+
+def test_onboard_skill_verifies_before_it_asks():
+    cred = section(CREDENTIAL)
+    assert "verify first" in cred and "ask only if that fails" in cred
+    assert "already signed in" in cred
+    assert "print no command" in cred, "a provider with no login block gets no invented command"
+
+
+def test_onboard_skill_names_the_shared_login():
+    cred = section(CREDENTIAL)
+    assert "shared" in cred.lower() and "identity" in cred and "`env`" in cred
+    assert "not isolated per client" in cred and "the guard cannot check it" in cred
+    assert "replaces any other client's login" in cred
+    assert "jira" in cred
+    assert "confirm that the signed-in account is this client's" in cred, "the account is confirmed even when verified"
+
+
+def test_onboard_skill_task_provider_keeps_its_cli_step():
+    walk = section(WALK)
+    assert "A task provider" in walk
+    assert "install, connection and login like any other" in walk
+    assert "read-only check" in walk, "the task limit is on tasks, the one read-only check only"
+
+
+def test_onboard_skill_opens_the_connector_page_with_tentaqles_open():
+    conn = section(CONNECTION)
+    assert "tentaqles open <url>" in conn and "https://claude.ai/settings/connectors" in conn
+    assert "print that URL" in conn or "print the URL" in conn
+    other = section(OTHER)
+    assert "tentaqles open <url>" in other, "the other provider's page opens with tentaqles open"
+
+
+def test_onboard_skill_names_a_read_only_call_per_connector():
+    verify = section(VERIFY)
+    for call in ("GitHub", "Atlassian", "Linear", "Asana", "Notion", "Trello", "Slack", "Teams", "Gmail", "Outlook"):
+        assert call in verify, call
+    for name in ("discord", "zoom", "google-meet"):
+        assert name in verify and "not checked" in verify, name
+    assert "nothing else" in verify and "Never send, post, create," in verify
+
+
+def test_onboard_skill_uses_verified_and_the_named_call():
+    verify = section(VERIFY)
+    assert "`verified`" in verify and "true" in verify
+    assert "read-only" in verify
+    assert "A task provider gets only its one call" in verify
+
+
+def test_onboard_skill_prints_no_bang_before_tq_secret_or_login():
+    src = body()
+    assert not re.search(r"!\s*tq\s+(secret|login)\b", src), "tq secret and tq login are never printed with !"
+    assert "`tq secret set`" in src
+    tokens = section(TOKENS)
+    assert "own terminal" in tokens and "no `!`" in body()
+    assert "tq secret set" in body()
+
+
+def test_onboard_skill_keeps_scope_and_browser():
+    src = body()
+    assert re.search(r"outside[^\n]*\bscope\b", src), "a provider outside scope is named"
+    assert "refuse" in src.lower()
+    assert "tentaqles open" in src
+    for pat in (r"start http", r"open http", r"\bchrome\b", r"msedge"):
+        assert not re.search(pat, src, re.IGNORECASE), pat
 
 
 def test_onboard_skill_never_handles_a_token():
@@ -128,17 +250,10 @@ def test_onboard_skill_never_handles_a_token():
     assert "tq secret set" in src
 
 
-def test_onboard_skill_keeps_scope_and_browser():
-    src = body()
-    assert re.search(r"outside[^\n]*\bscope\b", src), "a provider outside scope is named"
-    assert "refuse" in src.lower()
-    assert "tentaqles open" in src
-    for pat in (r"start http", r"open http", r"\bchrome\b", r"msedge"):
-        assert not re.search(pat, src, re.IGNORECASE), pat
-
-
 def test_onboard_skill_says_other_is_not_isolated():
-    src = body()
-    assert "other_providers" in src
-    assert "not isolated per client" in src
-    assert "guard cannot check" in src
+    other = section(OTHER)
+    assert "other_providers" in body()
+    assert "not isolated per client" in other
+    assert "guard cannot check" in other
+    assert "tentaqles open" in other, "the other provider's page opens with tentaqles open"
+    assert "not checked" in other
