@@ -84,3 +84,4 @@ Things that need a product call. Not findings.
 ## Rules learned over time
 
 Format: `- **YYYY-MM-DD, area**: the rule. *Why:* what happened.` Added with the owner's yes, newest last.
+- **2026-11-06, guard**: narrowing a rule to fix a false positive keeps a deny test for every form it used to block. *Why:* a fix for a false positive on `start` let plain forms through.
