@@ -475,7 +475,10 @@ text, and a glob matches what it could expand to (`rm -rf ~/.tentaqles/*`).
 Allowed: reading the marker, the plugin's files and the binary; `ls` of the
 state folder; `tq doctor`, `tq list`, `tq env`, `tq hooks status`/`verify`,
 `tq secret status` and every other tq read; dry runs (`tq migrate`,
-`tq migrate manifests`, `tq settings render --dry-run`).
+`tq migrate manifests`, `tq settings render --dry-run`), and `tentaqles install <provider>`
+(also `tq install`): it is not a human-only verb (ADR-0015). The command itself refuses a
+provider outside the identity's scope, with a line in the denial log (category `identity`,
+layer `command`).
 
 The shell rules read the command through the guard's tokenizer
 (`guard.Commands`: quote-aware segments, wrappers, nested shells, `cd`
@@ -499,8 +502,8 @@ their refusals to (PRD v2 §7.3, ADR-0006):
 |---|---|
 | `category` | `identity`, `secrets`, `self-protection`, or `tq/guard-error` for a call tq could not judge |
 | `rule` | the rule id |
-| `layer` | `hook`; `filesystem` for `tq/protected-path`; `human-only` for a tq command's own refusal |
-| `caller` | `harness` (the main session) or `subagent` (the payload carries `agent_id`/`agent_type`); for a human-only refusal `harness` or `no-tty` |
+| `layer` | `hook`; `filesystem` for `tq/protected-path`; `human-only` for a tq command's own refusal; `command` for `tentaqles install` refusing a provider outside the scope |
+| `caller` | `harness` (the main session) or `subagent` (the payload carries `agent_id`/`agent_type`); for a human-only refusal `harness` or `no-tty`; for the scope refusal of `tentaqles install` `harness`, `no-tty` or `human` (a person at a terminal) |
 | `harness` | `claude` or `codex` |
 | `tool` | the tool name |
 | `command` | the shell line, redacted (below); a file tool's path; for an MCP call or a patch the tool name, never the input or the content |

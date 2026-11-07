@@ -8,6 +8,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/humanonly"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 // terminalChain is a developer's process tree as the walker would read it:
@@ -50,6 +51,10 @@ func TestMain(m *testing.M) {
 	}
 	// The browser shims the tests write are copies of this binary (ADR-0016).
 	if ok, code := ShimMain(os.Stderr, os.Args[1:]); ok {
+		os.Exit(code)
+	}
+	// And the fake package manager and fake CLI of the install tests (testutil.NewFakeProgram).
+	if ok, code := testutil.FakeMain(); ok {
 		os.Exit(code)
 	}
 	// And tq itself for a test that runs a real shell hook (TQ_TEST_BE_TQ=1): the arguments

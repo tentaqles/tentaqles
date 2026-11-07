@@ -7,7 +7,7 @@ cli:
   version_args: ["--version"]
 install:
   windows:
-    winget: "HashiCorp.Terraform"
+    winget: "Hashicorp.Terraform"
   macos:
     brew: "terraform"
   linux:

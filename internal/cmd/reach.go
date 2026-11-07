@@ -13,7 +13,9 @@ import (
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
+	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/reach"
+	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/trust"
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
@@ -25,13 +27,14 @@ var (
 )
 
 func newReachCmd() *cobra.Command {
-	var noBanner bool
+	var noBanner, noInstall bool
 	c := &cobra.Command{
 		Use:   "reach [<path>]",
 		Short: "Make a folder a client identity, or show the one it already is (human only)",
 		Long: "tentaqles reach makes the current folder, or <path>, an isolated client identity. The folder's\n" +
 			"name is the identity's name, and its parent folder is where your clients live. In a folder that\n" +
-			"already is a client, it shows that client and changes nothing.\n\n" +
+			"already is a client, it shows that client and changes nothing. Once the client is trusted it\n" +
+			"installs the CLI of each provider the client can use (--no-install skips this).\n\n" +
 			"Human-only: a session is refused, and you confirm before anything is written.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -85,6 +88,9 @@ func newReachCmd() *cobra.Command {
 				return fmt.Errorf("%s was created but not trusted: %w. Run tq allow %s to finish", dir, err, name)
 			}
 			w := c.OutOrStdout()
+			if !noInstall {
+				reachInstall(c, ws)
+			}
 			fmt.Fprintf(w, "\n%s is ready. It can use: %s\n", name, strings.Join(ws.Manifest.Scope(), ", "))
 			reachWarnOther(c, ws.Manifest)
 			fmt.Fprintf(w, "Open a new terminal in %s, then start claude and log in with this client's account.\n", dir)
@@ -92,7 +98,39 @@ func newReachCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&noBanner, "no-banner", false, "print no banner (TQ_NO_BANNER=1 does the same)")
+	c.Flags().BoolVar(&noInstall, "no-install", false, "do not install the CLIs of the client's providers")
 	return c
+}
+
+// reachInstall installs the CLI of each provider in the new client's scope, one line each (the
+// lines of tentaqles install), and goes on past a failure: the client is trusted either way,
+// and tentaqles install <provider> retries one. A seam for tests.
+var reachInstall = installScope
+
+func installScope(c *cobra.Command, ws *resolve.Workspace) {
+	w := c.OutOrStdout()
+	cat, err := providers.Embedded()
+	if err != nil {
+		fmt.Fprintf(w, "No CLI was installed: %v\n", err)
+		return
+	}
+	first := true
+	for _, id := range ws.Manifest.Scope() {
+		p, ok := cat.Get(id)
+		if !ok || p.CLI == nil {
+			continue
+		}
+		if first {
+			fmt.Fprintf(w, "\nInstalling the CLIs this client can use (tentaqles install <provider> retries one):\n")
+			first = false
+		}
+		res, err := installProvider(ws, p)
+		if err != nil {
+			fmt.Fprintln(w, strings.TrimSpace(err.Error()))
+			continue
+		}
+		fmt.Fprintln(w, strings.TrimSpace(res.Output()))
+	}
 }
 
 // reachDir is the absolute folder a reach acts on: the argument, or the current folder.

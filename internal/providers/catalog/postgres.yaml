@@ -6,10 +6,9 @@ cli:
   command: psql
   version_args: ["--version"]
 install:
-  windows:
-    winget: "PostgreSQL.PostgreSQL"
-  macos:
-    brew: "libpq"
+  # No macOS and no Windows method. Homebrew's libpq is keg-only, so psql is never linked onto the
+  # PATH. The winget package is the EDB server installer: it sets up a service and does not put psql
+  # on the PATH, so the install could not end in "installed". Those two systems print the docs page.
   linux:
     apt: "postgresql-client"
 identity:

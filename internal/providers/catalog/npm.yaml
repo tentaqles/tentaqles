@@ -11,7 +11,8 @@ install:
   macos:
     brew: "node"
   linux:
-    apt: "nodejs"
+    # Debian's and Ubuntu's nodejs package holds no npm binary; the npm package holds it.
+    apt: "npm"
 identity:
   env:
     NPM_CONFIG_USERCONFIG: "{dir}/npmrc"
