@@ -139,13 +139,22 @@ func scopeCatalogError(ws *resolve.Workspace) (deny string, warnings []string) {
 	return "", warnings
 }
 
-// otherIdentities names every identity but ws: the folders under ~/.tentaqles/identities and
-// the workspace folders (a child of a registered base holding the marker). It returns their
-// workspace roots under every base and their identity folders. One directory read per base,
-// one stat per base child.
+// otherIdentities names every identity but ws: the folders under ~/.tentaqles/identities, the
+// browser shims folders under ~/.tentaqles/shims (ADR-0016: a shim takes its client from its own
+// folder name, so another client's shims are that client's files), and the workspace folders (a
+// child of a registered base holding the marker). It returns their workspace roots under every
+// base and their identity and shims folders. One directory read per base, one stat per base
+// child.
 func otherIdentities(ws *resolve.Workspace, cfg *registry.Config) (roots, dirs map[string]string) {
 	names := map[string]bool{}
 	if es, err := os.ReadDir(paths.IdentitiesRoot()); err == nil {
+		for _, e := range es {
+			if e.IsDir() {
+				names[e.Name()] = true
+			}
+		}
+	}
+	if es, err := os.ReadDir(paths.ShimsRoot()); err == nil {
 		for _, e := range es {
 			if e.IsDir() {
 				names[e.Name()] = true
@@ -176,6 +185,7 @@ func otherIdentities(ws *resolve.Workspace, cfg *registry.Config) (roots, dirs m
 			roots[filepath.Join(b, n)] = n
 		}
 		dirs[filepath.Join(paths.IdentitiesRoot(), n)] = n
+		dirs[filepath.Join(paths.ShimsRoot(), n)] = n
 	}
 	return roots, dirs
 }
