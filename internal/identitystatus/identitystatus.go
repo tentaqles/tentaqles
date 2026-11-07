@@ -63,9 +63,10 @@ type Provider struct {
 	CLIResolves bool `json:"cli_resolves"`
 	// Credential is present when a token is in the keychain for this client, a credential
 	// variable of the provider is set, or the provider's verify command passed. Missing when none
-	// of that holds and tq can check the provider: a tracker provider (its keychain token) or one
-	// with a verify command. None for any other provider: a CLI login with no verify command, which
-	// tq cannot tell from logged out, and a provider that takes no credential through tq.
+	// of that holds and tq can check the provider: a tracker provider (its keychain token), one
+	// with a verify command, or one that names credential variables and has no CLI login. None for
+	// any other provider: a CLI login with no verify command, which tq cannot tell from logged out,
+	// and a provider that takes no credential through tq.
 	Credential string `json:"credential"`
 	// Connection is present when an MCP server for the provider is registered in the client's
 	// .claude.json under any of the names the provider is reached by (its catalog connect name, its
@@ -321,11 +322,16 @@ func credential(p providers.Provider, verified, token bool, d Deps) string {
 		return Present
 	}
 	// A provider tq can check a credential for (a tracker token in the keychain, or a verify
-	// command) and has none: missing. Any other provider, a CLI login with no verify command, is
+	// command) and has none: missing. A provider that names credential variables and has no CLI
+	// login (no login block) takes its credential through those variables, which tq can check:
+	// missing when none is set (L-20). A CLI login with no verify command (az, gcloud) is
 	// unknowable here: tq cannot tell a login from none, so the reading is none, and the skill
-	// does not log in again forever (the router's decision on this ticket). A credential variable
-	// that is set reads present above; one that is not set does not make it missing.
+	// does not log in again forever (the router's decision on this ticket). Any other provider
+	// takes no credential through tq: none.
 	if isTracker(p.ID) || p.Verify != nil {
+		return Missing
+	}
+	if p.Login == nil && len(credentialVars(p)) > 0 {
 		return Missing
 	}
 	return None
