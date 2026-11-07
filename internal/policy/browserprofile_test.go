@@ -74,6 +74,15 @@ func TestOtherBrowserProfile_Fixtures(t *testing.T) {
 		pwsh(`start https://x`),
 		pwsh(`cmd /c start https://x`),
 		pwsh(`Start-Process chrome`),
+		// round 3, L-11: the plain forms of REQ-9 deny exactly as written
+		bash(`start https://x`),
+		pwsh(`Start-Process https://x`),
+		bash(`explorer https://x`),
+		bash(`rundll32 url.dll,FileProtocolHandler https://x`),
+		bash(`cmd /c start https://x`),
+		pwsh(`Start-Process explorer https://x`),
+		pwsh(`Start-Process explorer -ArgumentList https://x`),
+		pwsh(`Start-Process rundll32 -ArgumentList "url.dll,FileProtocolHandler https://x"`),
 		// macOS: the browsers by their app bundle path (what internal/browser launches)
 		bash(`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --profile-directory=Default`),
 		bash(`"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"`),
@@ -166,6 +175,7 @@ func TestOtherBrowserProfile_FalsePositives(t *testing.T) {
 		bash(`start curl https://example.com`),
 		pwsh(`Start-Process curl -ArgumentList "https://example.com"`),
 		pwsh(`Start-Process -ArgumentList "https://example.com" -FilePath curl`),
+		pwsh(`Start-Process curl https://example.com`),
 		// round 1, L-09 (owner)
 		bash(`chrome --version`),
 		bash(`msedge --headless https://x`),

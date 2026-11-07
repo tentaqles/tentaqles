@@ -180,6 +180,11 @@ func (s *Scope) urlRoute(cwd, verb string, words []string) (scopeHit, bool) {
 		if isWebURLWord(words[0]) {
 			return s.browserHit(verb, verb+" would hand the URL to the system's default browser"), true
 		}
+		// `Start-Process explorer <url>` and `Start-Process rundll32 url.dll,...` run the OS route
+		// themselves: the route is judged on the words after its name.
+		if target := strings.ToLower(exeName(words[0])); target == "explorer" || target == "rundll32" {
+			return s.urlRoute(cwd, target, words[1:])
+		}
 	case "explorer":
 		for _, w := range words {
 			if isWebURLWord(w) {

@@ -55,6 +55,12 @@ the PATH and environment of an identity (`internal/envplan/`), so it needs this 
   - an `mcp__claude-in-chrome__*` call is denied when Chrome is not one of the client's browsers.
   Quoted text (a commit message, a grep pattern, an `echo`) stays text, through the same tokenizer and masking
   the rest of the category uses. Like the rest of the hook it is a text filter on literal spellings (AR2).
+  Two spellings of the plain forms are not denied, and no code or fixture covers them (round 2 ruling, AR2):
+  `start "Docs" https://x`, where the quotes are read away and `Docs` looks like the program to start, and
+  `start -FilePath msedge`, where cmd's `start` does not read the `-FilePath` flag of PowerShell.
+- `--headless` with no profile flag is allowed by the owner's decision (round 1). Which user data folder a
+  headless start uses is unconfirmed: if it is the default one, a headless page reads that profile's cookies.
+  Accepted knowingly by the owner (round 2 ruling); `docs/COMMANDS.md` says the same.
 - **Playwright.** The Playwright MCP server cannot attach to a profile that is already open, so
   `tq settings render` sets `--user-data-dir` to `$TQ_HOME/identities/<ws>/browser` on its entries in the
   client's `.claude.json` (user and project scope), replacing an existing value and keeping the other

@@ -70,6 +70,8 @@ a client that has one, tq (ADR-0016):
   it used last; `--version`, `--help` and `--headless` with no profile flag are allowed), and the routes that hand a URL to the system's default browser: `start <url>`,
   `Start-Process <url>`, `explorer <url>`, `rundll32 url.dll` and `cmd /c start <url>`. The message names
   `tentaqles open <url>`. A URL in a commit message, a grep pattern or an `echo` stays allowed.
+  `--headless` with no profile flag is allowed by the owner's decision, but which user data folder a headless
+  start uses is unconfirmed: if it is the default one, a headless page reads that profile's cookies.
 - gives the Playwright MCP server its own browser folder, `~/.tentaqles/identities/<client>/browser`, because it
   cannot attach to a profile that is already open: `tq settings render` sets `--user-data-dir` on its entries in the
   client's Claude config and keeps their other arguments. It edits the identity's `.claude.json` only: a

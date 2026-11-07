@@ -180,6 +180,8 @@ func openApp(args []string) (string, bool) {
 // appBrowser is the manifest name of the browser an `open -a` app names (Google Chrome,
 // Microsoft Edge), "" for any other app.
 func appBrowser(app string) string {
+	// An app given by its path (/Applications/Google Chrome.app) names the same app: its base name.
+	app = app[strings.LastIndexAny(app, `/\`)+1:]
 	switch strings.TrimSuffix(strings.ToLower(strings.TrimSpace(app)), ".app") {
 	case "google chrome", "chrome":
 		return "chrome"

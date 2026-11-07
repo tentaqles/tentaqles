@@ -681,6 +681,15 @@ func TestBrowserShims_WebURLNeverReachesTheRealProgram(t *testing.T) {
 		t.Fatalf("-a Microsoft Edge: exit %d", c)
 	}
 	expect(fakeRun{"msedge-fake", []string{profile3, "https://e.example"}})
+	// round 3, L-01: the app given by its path names the same app
+	if c := run("open", "-a", "/Applications/Google Chrome.app", "https://p.example"); c != 0 {
+		t.Fatalf("-a with a path to Chrome: exit %d", c)
+	}
+	expect(fakeRun{"chrome-fake", []string{profile2, "https://p.example"}})
+	if c := run("open", "-a", "/Applications/Microsoft Edge.app", "https://q.example"); c != 0 {
+		t.Fatalf("-a with a path to Edge: exit %d", c)
+	}
+	expect(fakeRun{"msedge-fake", []string{profile3, "https://q.example"}})
 
 	// open -a for another app is that app's business: the real program runs
 	if c := run("open", "-a", "Safari", "https://s.example"); c != 0 {
