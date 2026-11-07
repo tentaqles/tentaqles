@@ -1,0 +1,34 @@
+Re-check of round 1 findings against plugin/skills/onboard/SKILL.md at commit 427d784.
+Full text file: PYTHONPATH=plugin python -m pytest plugin/tests/test_onboard_skill.py -q -> 23 passed.
+Skill is 146 lines (limit 150). Frontmatter parses with yaml.safe_load.
+
+L-01 fixed. SKILL.md:15 "`tq secret set` runs in the developer's own terminal, outside Claude Code, with no `!`: it reads a hidden prompt."
+  SKILL.md:97-99 token method: "run `tq secret set <identity> <name>` in their own terminal, outside Claude Code, with no `!`."
+  SKILL.md:119 pasted token: same instruction. Grep for "! tq secret" / "! tq login" in the tree (outside .job and worktrees): no matches.
+  Test: test_onboard_skill_prints_no_bang_before_tq_secret_or_login. internal/policy/selfprotect.go:944-947 treats `tq secret set|rm` as human-only, so the skill and the hook agree.
+
+L-02 fixed. SKILL.md:46-49: after `installed`/`already present`, run `tentaqles status --json`, read `cli_resolves`; still false -> restart Claude Code, run the skill again, "print no login for it this run".
+  Test: test_onboard_skill_relays_every_install_line_and_checks_after. Install output strings match internal/install/install.go:165 (OpenTerminalLine) and :202 ("manual, download from").
+
+L-03 fixed. SKILL.md:77-81 "Shared login": a provider whose identity has no env entries keeps one login per machine (jira is one), "not isolated per client, and the guard cannot check it", confirm the account even when credential is present or verified is true, and warn before the login that signing in replaces any other client's login.
+  internal/providers/catalog/jira.yaml: no identity block (comment: "acli keeps one login per machine"). Test: test_onboard_skill_names_the_shared_login.
+
+L-04 fixed. SKILL.md:39-40 "A task provider (`category` `pm`) gets its install, connection and login like any other. Its only limit is on tasks".
+  Test: test_onboard_skill_task_provider_keeps_its_cli_step.
+
+L-05 fixed. SKILL.md:61-66: on "no MCP server in the catalog" a named read-only check is made now; if it passes the connector is connected; otherwise open the connectors page, developer adds it, say done, check again. SKILL.md:86-87: a passing check -> "skip the login and the token".
+  Tests: test_onboard_skill_connector_settles_without_asking_again, test_onboard_skill_asks_no_cli_login_without_a_cli.
+
+L-06 fixed. SKILL.md:63-64 `tentaqles open <url>` for https://claude.ai/settings/connectors (print the URL if it refuses); SKILL.md:102-104 and 112-113 the docs page for a provider with no login block and for other providers.
+  Test: test_onboard_skill_opens_the_connector_page_with_tentaqles_open.
+
+L-07 fixed. SKILL.md:126-131 names a read-only call for gh, jira, linear, asana, notion, trello, slack, teams, gmail, outlook; discord, zoom, google-meet read "not checked".
+  Catalog providers with an `mcp:` field (asana gmail jira linear outlook slack teams) are all covered. Test: test_onboard_skill_names_a_read_only_call_per_connector.
+
+L-08 fixed. Tests exist for REQ-3 (test_onboard_skill_walks_providers_in_order), REQ-9 (test_onboard_skill_uses_verified_and_the_named_call), REQ-12 (test_onboard_skill_task_provider_keeps_its_cli_step), REQ-14 (test_onboard_skill_walks_one_provider_at_a_time_and_reruns). All pass. Each asserts a phrase inside the skill's own section.
+
+L-09 fixed. SKILL.md:34 "read its definition with `tentaqles providers show <id>`", SKILL.md:92-93 "`providers show` has a `login` block. Print `! <cli.command> <login.args>`". No "--help" in the file. `providers show` exists: internal/cmd/providers.go:84-106 prints the provider as YAML.
+  Test: test_onboard_skill_reads_the_login_from_providers_show.
+
+L-10 fixed. SKILL.md:83-89: when credential is missing, verify first: a provider with a `verify` block already ran it in status --json; otherwise make the named read-only check; otherwise ask once whether already signed in through its own tool, and skip if so.
+  Test: test_onboard_skill_verifies_before_it_asks. Status credential values (present, missing, none) match internal/identitystatus/identitystatus.go:33-38.

@@ -1,0 +1,37 @@
+Round 3 re-checks, read from plugin/skills/onboard/SKILL.md at HEAD a572961 (tree clean: git status --porcelain empty).
+Cross-checked against internal/providers/catalog/*.yaml, internal/cmd/login.go, secret_cmd.go, connect.go, internal/manifest/services.go.
+
+L-12 FIXED
+  SKILL.md:15  "A login runs under `!` only when it is a known browser flow: `! gh auth login --web`, `! az login` or `! acli jira auth login` ... Every other login runs in the developer's own terminal, with no `!`"
+  SKILL.md:65  "Any other login is printed for the developer's own terminal, with no `!`: `tq login <identity> <id>` ... otherwise the catalog's `<cli.command> <login.args>`"
+  SKILL.md:66  token step: `tq secret set <identity> <name>` in own terminal, no `!`
+  grep "! aws" in SKILL.md: no match. The only lines starting with `!` are the three allowed ones (test_onboard_skill_bang_only_for_known_browser_flows passes).
+  login.go:17-22  `tq login <workspace> <identity>` with flags --sso / --sso-session; refuses an agent (refuseAgent), matching SKILL.md:16,65.
+  Not verifiable here: that `acli jira auth login` (no --web) is a browser flow. acli is not installed on this machine. Not raised as a finding (the owner's rule names the three).
+
+L-02 FIXED
+  SKILL.md:37  installed/already present, still false: "print no login for it this run."
+  SKILL.md:38  manual: "If it still reads false, tell the developer to restart Claude Code or fix the install and run this skill again, and print no login for it this run."
+  SKILL.md:39  install failed: "... print no login for it this run. The table says `missing`."
+  SKILL.md:51  "Print no login for a CLI that did not resolve in (a)."
+
+L-05 FIXED
+  SKILL.md:95  "a connector whose named check passed in this run reads `present` in Connections (and in Credential, where that check settled the credential)"
+  SKILL.md:46  step b: a passing named check means "the connector is connected".
+
+L-13 FIXED
+  SKILL.md:53  shared login = "`cli` is set and whose `identity` ... has no `env` entries ... A provider with no `cli` (linear, asana, trello) is not a shared login: its token is per client."
+  catalog: slack, teams, gmail, outlook, discord, zoom, google-meet, linear, asana, trello all have `cli: null`, so none gets the shared-login warning. jira (cli acli, no identity block) is the shared one.
+
+L-14 FIXED
+  SKILL.md:30  "notion and trello are reached only through a claude.ai connector ... their `connection` reads `none` and they always get step b."
+  SKILL.md:43  "When `connection` is `missing`, or the provider is notion or trello, run `tentaqles connect <id>`."
+  connect.go:101  prints "<id>: no MCP server in the catalog" for a provider with no connect entry (notion, trello), which SKILL.md:46 handles.
+  SKILL.md:69  no login block and no tracker token: "print no command ... what the provider's `notes` ... say"; grep -i docs SKILL.md: no match, so no docs page is offered for signing in.
+
+L-15 FIXED
+  SKILL.md:66  token method only "the provider is a tracker (`github`, `azure-devops`, `jira`, `linear` or `asana`)", equal to manifest.TrackerProviders (services.go:16).
+  SKILL.md:79  "If the provider is a tracker, tell the developer to run `tq secret set <identity> <name>` ... Otherwise point them to the provider's own login or connector, and never to `tq secret set`."
+
+S-05
+  `go test ./internal/cmd -run 'TestPreToolUse_ScopeReferenceScenario|TestInstall_OutOfScopeRefused|TestConnect_OutOfScopeRefused' -count=1` was run once as written and the harness refused it. Not retried by any other route.

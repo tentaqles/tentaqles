@@ -1,0 +1,4 @@
+$ PYTHONPATH=plugin python -m pytest plugin/tests/test_onboard_skill.py -q -k has_no_old_flow
+.                                                                        [100%]
+1 passed, 32 deselected in 0.13s
+exit code: 0

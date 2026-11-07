@@ -1,6 +1,6 @@
 # 021: The onboarding skill drives the logins
 
-**Status:** ready
+**Status:** landed
 **Risk:** High: a skill step that handles a credential badly puts a client's token in the transcript or in another client's store
 **UI:** none
 

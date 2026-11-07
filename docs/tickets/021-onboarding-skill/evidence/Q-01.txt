@@ -1,0 +1,4 @@
+$ PYTHONPATH=plugin python -m pytest plugin/tests/test_onboard_skill.py -q -k is_short
+.                                                                        [100%]
+1 passed, 32 deselected in 0.15s
+exit code: 0
