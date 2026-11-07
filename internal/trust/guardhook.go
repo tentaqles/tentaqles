@@ -49,6 +49,9 @@ type GuardHook struct {
 	// Unresolved is set when the folder the session starts in cannot be resolved, so the project
 	// settings it loads cannot be read.
 	Unresolved bool
+	// Reinstall is set when the plugin is installed and enabled but its hooks file is not the guard
+	// (unreadable, or no PreToolUse hook that runs tq_hook.sh): only a fresh install replaces it.
+	Reinstall bool
 }
 
 // CheckGuardHook reads the Claude config dir claudeDir (an identity's own) and says whether a
@@ -68,10 +71,11 @@ func CheckGuardHook(claudeDir string) GuardHook {
 	switch {
 	case err == nil:
 		if json.Unmarshal(raw, &doc) != nil {
-			return GuardHook{Why: fmt.Sprintf("%s can't be read as JSON, so the tentaqles plugin's state is unknown", settings)}
+			return GuardHook{Why: fmt.Sprintf("%s can't be read as JSON, so the tentaqles plugin's state is unknown", settings),
+				File: settings, Covered: true}
 		}
 	case !os.IsNotExist(err):
-		return GuardHook{Why: fmt.Sprintf("%s can't be read: %v", settings, err)}
+		return GuardHook{Why: fmt.Sprintf("%s can't be read: %v", settings, err), File: settings, Covered: true}
 	}
 	if v, ok := doc["disableAllHooks"]; ok && v != false {
 		return GuardHook{Why: fmt.Sprintf("disableAllHooks is set in %s, which turns off every hook, the guard's too", settings),
@@ -88,10 +92,10 @@ func CheckGuardHook(claudeDir string) GuardHook {
 	hooks := filepath.Join(root, "hooks", "hooks.json")
 	raw, err = os.ReadFile(hooks)
 	if err != nil {
-		return GuardHook{Why: fmt.Sprintf("the tentaqles plugin's hooks file can't be read: %v", err)}
+		return GuardHook{Why: fmt.Sprintf("the tentaqles plugin's hooks file can't be read: %v", err), Reinstall: true}
 	}
 	if !preToolUseRunsGuard(raw) {
-		return GuardHook{Why: "the tentaqles plugin has no PreToolUse hook that runs tq's guard (tq_hook.sh pre-tool-use for Bash and MCP tools)"}
+		return GuardHook{Why: "the tentaqles plugin has no PreToolUse hook that runs tq's guard (tq_hook.sh pre-tool-use for Bash and MCP tools)", Reinstall: true}
 	}
 	return GuardHook{OK: true}
 }
@@ -209,6 +213,19 @@ func resolveFolder(p string) (string, error) {
 // maxLinks bounds the links resolveLinks follows, so a loop of links cannot stall the hook.
 const maxLinks = 40
 
+// lstatPath is os.Lstat; a test replaces it to present a reparse point of another kind (a cloud
+// placeholder folder cannot be made in CI).
+var lstatPath = os.Lstat
+
+// isLink reports a symlink, or a reparse point that is not a folder (a junction or a mount point).
+// On Windows a folder with another reparse tag, such as a OneDrive placeholder, reports as a folder
+// and a reparse point (ModeDir|ModeIrregular): it is a real folder, and it is walked as one, not
+// handed to os.Readlink, which fails for any tag but symlink and mount point.
+func isLink(fi os.FileInfo) bool {
+	m := fi.Mode()
+	return m&os.ModeSymlink != 0 || (m&os.ModeIrregular != 0 && !fi.IsDir())
+}
+
 // resolveLinks walks the absolute path p one element at a time. Each element must exist; a symlink
 // or junction is replaced by its target (resolved in turn), and anything else must be a folder.
 func resolveLinks(p string, depth int) (string, error) {
@@ -223,11 +240,11 @@ func resolveLinks(p string, depth int) (string, error) {
 	}
 	for _, part := range strings.Split(rest, string(filepath.Separator)) {
 		next := filepath.Join(cur, part)
-		fi, err := os.Lstat(next)
+		fi, err := lstatPath(next)
 		if err != nil {
 			return "", err
 		}
-		if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		if isLink(fi) {
 			tgt, err := os.Readlink(next)
 			if err != nil {
 				return "", err
@@ -302,8 +319,9 @@ func runsGuardCommand(command string) bool {
 
 // GuardHookFix is the sequence of lines that gets a developer a guarded session for workspace ws,
 // each one copyable and run in order: the plugin install when it is missing (with its marketplace
-// and the record's re-sign), the enable when it is off, or, for a settings switch, the switch to
-// clear and what follows the edit (a re-sign for the identity's settings, which the record covers;
+// and the record's re-sign), the enable when it is off, a fresh install (uninstall, re-sign, install)
+// when its hooks file is not the guard, or, for a settings file, the switch to clear or the file to
+// repair, and what follows the edit (a re-sign for the identity's settings, which the record covers;
 // a new session for a project's). The plugin install line is exact (REQ-5).
 func GuardHookFix(ws string, g GuardHook) []string {
 	switch {
@@ -319,12 +337,25 @@ func GuardHookFix(ws string, g GuardHook) []string {
 		return []string{fmt.Sprintf("remove %q (or set it to false) in %s, then: %s", g.Setting, g.File, next)}
 	case g.Setting == "enabledPlugins":
 		return []string{fmt.Sprintf("set %q to true under enabledPlugins in %s, then: tq run %s -- claude", GuardPlugin, g.File, ws)}
+	case g.File != "" && g.Setting == "":
+		// A file that cannot be read or is not the JSON it must be: repairing it is the fix, and an
+		// install cannot repair it. The identity's file is covered, so the next step is the re-sign.
+		next := "tq run " + ws + " -- claude"
+		if g.Covered {
+			next = "tq hooks verify --accept " + ws
+		}
+		return []string{fmt.Sprintf("repair %s (it can't be read as the JSON it must be), then: %s", g.File, next)}
 	case g.Disabled:
 		return []string{"tq run " + ws + " -- claude plugin enable " + GuardPlugin, "tq hooks verify --accept " + ws}
 	case g.Missing:
 		return GuardInstallLines(ws)
+	case g.Reinstall:
+		// The plugin's hooks file is not the guard, so an install over the installed plugin may not
+		// replace it: uninstall first, re-sign what that changes, then install afresh.
+		return append([]string{"tq run " + ws + " -- claude plugin uninstall " + GuardPlugin, "tq hooks verify --accept " + ws},
+			GuardInstallLines(ws)...)
 	}
-	return []string{GuardPluginLine(ws), "tq hooks verify --accept " + ws}
+	return GuardInstallLines(ws)
 }
 
 // GuardInstallLines are the lines that install the tentaqles plugin for workspace ws, in the order

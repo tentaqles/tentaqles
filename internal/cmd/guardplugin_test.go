@@ -212,7 +212,7 @@ func TestRun_DisabledPluginIsNoHook(t *testing.T) {
 		{"disableAllHooks", guardOpts{DisableAllHooks: true}, []string{"disableAllHooks", "settings.json", "turns off every hook"},
 			`fix: remove "disableAllHooks" (or set it to false) in `},
 		{"no PreToolUse", guardOpts{Hooks: `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" session-start"}]}]}}`},
-			[]string{"no PreToolUse hook"}, "fix, in this order:\n    tq run acme -- claude plugin install tentaqles@tentaqles\n    tq hooks verify --accept acme"},
+			[]string{"no PreToolUse hook"}, "fix, in this order:\n    tq run acme -- claude plugin uninstall tentaqles@tentaqles\n    tq hooks verify --accept acme\n    tq run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tq run acme -- claude plugin install tentaqles@tentaqles\n    tq hooks verify --accept acme"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -324,6 +324,10 @@ func TestRun_ProjectSettingsCountToo(t *testing.T) {
 		_, err := runTq(t, "run", "acme", "--", "claude")
 		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), project) {
 			t.Fatalf("%s: want the refusal naming the file, got %v", c.body, err)
+		}
+		// A file that is not JSON is repaired, then tq run is tried again: the fix says so.
+		if c.want == "can't be read as JSON" && !strings.Contains(err.Error(), "fix: repair "+project+" (it can't be read as the JSON it must be), then: tq run acme -- claude") {
+			t.Fatalf("a file that is not JSON gets the repair line: %v", err)
 		}
 	}
 	if len(*calls) != 0 {

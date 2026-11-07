@@ -85,8 +85,8 @@ func put(t *testing.T, p, body string) {
 	}
 }
 
-// A client with no claude identity has no Claude config for tq to guard: doctor reports no
-// guard-hook-missing for it (Q2); the launch refusal still covers a session in it.
+// doctor reports guard-hook-missing only for a client that has a claude identity. A client with no
+// claude identity gets no such finding; the launch refusal (tq run) still covers a session in it.
 func TestDoctor_GuardHookNotForAClientWithoutClaude(t *testing.T) {
 	cfg := trustedClient(t, "{ gh: {} }", false)
 	if fs := Run(cfg, deps(nil, t.TempDir(), nil)); has(fs, "guard-hook-missing") {

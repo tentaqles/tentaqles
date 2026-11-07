@@ -298,6 +298,140 @@ func TestGuardHook_FixLines(t *testing.T) {
 	}
 }
 
+// cloudFolder is a folder that Windows reports with a reparse tag of its own, as a OneDrive
+// placeholder folder is: a folder (IsDir) and a reparse point (ModeIrregular) at once.
+type cloudFolder struct{ os.FileInfo }
+
+func (c cloudFolder) Mode() os.FileMode { return c.FileInfo.Mode() | os.ModeIrregular }
+
+// L-02: a folder with another reparse tag is a folder, not a link: the walk goes through it, so the
+// client's project settings above it are still read. The tag cannot be made in CI, so lstatPath
+// presents the real folder as Windows presents the cloud one.
+func TestGuardHook_ReparsePointIsAFolder(t *testing.T) {
+	base := resolvedTemp(t)
+	cloud := filepath.Join(base, "OneDrive", "clients", "acme")
+	app := filepath.Join(cloud, "app")
+	if err := os.MkdirAll(app, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(cloud, ".claude", "settings.json"), `{"disableAllHooks":true}`)
+	prev := lstatPath
+	lstatPath = func(p string) (os.FileInfo, error) {
+		fi, err := prev(p)
+		if err == nil && (p == filepath.Join(base, "OneDrive") || p == cloud) {
+			return cloudFolder{fi}, nil
+		}
+		return fi, err
+	}
+	t.Cleanup(func() { lstatPath = prev })
+	claude := guardClaudeDir(t, guardHooks, `{"enabledPlugins":{"tentaqles@tentaqles":true}}`)
+	if g := CheckSessionGuard(claude, app, cloud); g.Unresolved || g.OK || g.Setting != "disableAllHooks" {
+		t.Fatalf("a cloud folder is walked as a folder, and the project settings above the session are read: %+v", g)
+	}
+}
+
+// L-02: which entries count as links. A symlink, and a reparse point that is not a folder (a
+// junction, a mount point), do; a folder does not, whatever its reparse tag.
+func TestGuardHook_IsLink(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "f")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fdi, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ffi, err := os.Lstat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		fi   os.FileInfo
+		want bool
+	}{
+		"a folder":                       {fdi, false},
+		"a file":                         {ffi, false},
+		"a folder with a reparse tag":    {cloudFolder{fdi}, false},
+		"a reparse point that isn't one": {irregularFile{ffi}, true},
+	}
+	for name, c := range cases {
+		if got := isLink(c.fi); got != c.want {
+			t.Errorf("isLink(%s) = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+// irregularFile is a reparse point that is not a folder (a junction or mount point, on Windows).
+type irregularFile struct{ os.FileInfo }
+
+func (i irregularFile) Mode() os.FileMode { return i.FileInfo.Mode() | os.ModeIrregular }
+
+// R-1: every cause the fix can't name by install gets the fix for that cause, and the lines that
+// follow it. A settings file that is not the JSON it must be, or can't be read, is repaired first; a
+// plugin hooks file that is not the guard is replaced by an uninstall and a fresh install.
+func TestGuardHook_BrokenFileFixLines(t *testing.T) {
+	hooks := guardHooks
+	ok := `{"enabledPlugins":{"tentaqles@tentaqles":true}}`
+	t.Run("identity settings.json not JSON", func(t *testing.T) {
+		claude := guardClaudeDir(t, hooks, `{"enabledPlugins":`)
+		g := CheckGuardHook(claude)
+		want := fmt.Sprintf("repair %s (it can't be read as the JSON it must be), then: tq hooks verify --accept acme", filepath.Join(claude, "settings.json"))
+		if g.OK || !g.Covered || g.File != filepath.Join(claude, "settings.json") || strings.Join(GuardHookFix("acme", g), "\n") != want {
+			t.Fatalf("%+v -> %q", g, GuardHookFix("acme", g))
+		}
+	})
+	t.Run("identity settings.json unreadable", func(t *testing.T) {
+		claude := guardClaudeDir(t, hooks, ok)
+		settings := filepath.Join(claude, "settings.json")
+		if err := os.Remove(settings); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(settings, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		g := CheckGuardHook(claude)
+		if g.OK || !g.Covered || g.File != settings || len(GuardHookFix("acme", g)) != 1 || !strings.HasPrefix(GuardHookFix("acme", g)[0], "repair "+settings) {
+			t.Fatalf("%+v -> %q", g, GuardHookFix("acme", g))
+		}
+	})
+	t.Run("project settings.local.json trailing comma", func(t *testing.T) {
+		claude := guardClaudeDir(t, hooks, ok)
+		root := resolvedTemp(t)
+		project := filepath.Join(root, ".claude", "settings.local.json")
+		writeFile(t, project, `{"disableAllHooks":false,}`)
+		g := CheckSessionGuard(claude, root, root)
+		want := fmt.Sprintf("repair %s (it can't be read as the JSON it must be), then: tq run acme -- claude", project)
+		if g.OK || g.Covered || g.File != project || strings.Join(GuardHookFix("acme", g), "\n") != want {
+			t.Fatalf("%+v -> %q", g, GuardHookFix("acme", g))
+		}
+	})
+	t.Run("project enabledPlugins not an object", func(t *testing.T) {
+		claude := guardClaudeDir(t, hooks, ok)
+		root := resolvedTemp(t)
+		project := filepath.Join(root, ".claude", "settings.json")
+		writeFile(t, project, `{"enabledPlugins":true}`)
+		g := CheckSessionGuard(claude, root, root)
+		if g.OK || g.File != project || len(GuardHookFix("acme", g)) != 1 || !strings.HasPrefix(GuardHookFix("acme", g)[0], "repair "+project) {
+			t.Fatalf("%+v -> %q", g, GuardHookFix("acme", g))
+		}
+	})
+	t.Run("plugin hooks.json not the guard", func(t *testing.T) {
+		claude := guardClaudeDir(t, `{"hooks":`, ok)
+		g := CheckGuardHook(claude)
+		want := []string{
+			"tq run acme -- claude plugin uninstall tentaqles@tentaqles",
+			"tq hooks verify --accept acme",
+			"tq run acme -- claude plugin marketplace add tentaqles/tentaqles",
+			"tq run acme -- claude plugin install tentaqles@tentaqles",
+			"tq hooks verify --accept acme",
+		}
+		if g.OK || !g.Reinstall || strings.Join(GuardHookFix("acme", g), "\n") != strings.Join(want, "\n") {
+			t.Fatalf("%+v -> %q", g, GuardHookFix("acme", g))
+		}
+	})
+}
+
 func writeFile(t *testing.T, p, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {

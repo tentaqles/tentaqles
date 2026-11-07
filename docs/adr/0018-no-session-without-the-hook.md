@@ -65,8 +65,18 @@ covers (`docs/threat-model.md`, B1).
   checked (the Decision above). Two things are out of scope and are not read: managed settings (the system-wide file
   Claude Code merges above the rest), and asking `claude` itself for the effective settings, which would need a
   process on every launch.
-- **`tq doctor`** reports `guard-hook-missing` as an error for each trusted client that would refuse, with the same
-  fix line. It runs the same check.
+- **`tq doctor`** reports `guard-hook-missing` as an error for each trusted client that has a claude identity and
+  would refuse, with the same fix lines. A client with no claude identity gets no such finding; the launch refusal
+  (`tq run`) still covers a session in it, with its reason in one line.
+- **Fix lines match the cause.** A missing plugin: the three install lines. A plugin installed but off: `enable`, then
+  the re-sign. A plugin whose hooks file is not the guard: an uninstall, a re-sign, then the three install lines (an
+  install over the installed plugin may not replace the file). A settings file that is not the JSON it must be, or
+  cannot be read: the file to repair, then the re-sign for the identity's file (covered) or `tq run` for a project's
+  (not covered). `disableAllHooks` and a project's `enabledPlugins` switch name the file and the setting.
+- **Reparse points.** On Windows a folder with another reparse tag (a cloud placeholder such as OneDrive's) is a folder
+  and is walked as one. Only a symlink, or a reparse point that is not a folder (a junction, a mount point), is a link.
+  `TestGuardHook_ReparsePointIsAFolder` presents the cloud folder through the `lstatPath` seam, since the tag cannot be
+  made in CI.
 - **The check** is `trust.CheckGuardHook`: a few small files and no process, so the hook path does not pay for it.
   It is not called from the hook: the hook judges a tool call, not a launch.
 
@@ -74,7 +84,7 @@ covers (`docs/threat-model.md`, B1).
 
 - A new client gets the guard at reach, and a session in a client that lost it is refused with the line that
   restores it. A client made before this release, with no plugin, is refused until its developer runs the line
-  (`tq doctor` names it). Nothing is installed without reach or that line.
+  (`tq doctor` names it, when the client has a claude identity). Nothing is installed without reach or that line.
 - A failed install leaves the record as it was before the attempt: a claude that changed a covered file before it
   failed makes the record a mismatch, and `tq run` names that file and `tq hooks verify --accept`.
 - The install needs network access, and it installs what the root marketplace pins (`.claude-plugin/marketplace.json`,
@@ -85,11 +95,13 @@ covers (`docs/threat-model.md`, B1).
   makes the session start. `TestRun_FixLinesRunInOrder` runs them through the real launcher against a fake claude.
   Reach adds the marketplace itself; a reason from a failed command is the first error line of its output
   (`install.ErrorLine`), not the last line.
-- **Limits recorded.** (Q1) `--settings '{"disableAllHooks":true}'` typed on the command line of a `claude` that tq
-  launches is accepted as AR2 (a text the owner's own command line carries) and is left alone. (Q3) reach does no
-  compare of the plugin before it re-signs: the plugin comes from the pinned marketplace, and the human typed yes at
-  reach. (Q4) `claude attach` and `claude respawn` stay exempt from the refusal: they attach to a session that is
-  already running, not start one.
+- **Limits recorded.**
+  - `--settings '{"disableAllHooks":true}'` typed on the command line of a `claude` that tq launches is accepted as
+    AR2 (text the owner's own command line carries) and is left alone.
+  - reach does no compare of the plugin before it re-signs: the plugin comes from the pinned marketplace, and the
+    human typed yes at reach.
+  - `claude attach` and `claude respawn` stay exempt from the refusal: they attach to a session that is already
+    running, not start one.
 
 ## Verification
 
@@ -99,6 +111,7 @@ covers (`docs/threat-model.md`, B1).
 `TestProtectedPaths_PluginRegistration`, `TestDoctor_GuardHookMissing`, `TestGuardHook_ShippedHooksPass`,
 `TestGuardHook_FailsClosed`, `TestRun_ProjectSettingsCountToo`, `TestGuardHook_ProjectSettings`,
 `TestGuardHook_SessionDirs`, `TestGuardHook_ProjectFixLines`, `TestGuardHook_LinkedFolder`, `TestGuardHook_UnresolvedFolder`,
-`TestGuardHook_FixLines`, `TestRun_FixLinesRunInOrder`, `TestDoctor_GuardHookMissing` (the project case),
+`TestGuardHook_FixLines`, `TestGuardHook_BrokenFileFixLines`, `TestGuardHook_ReparsePointIsAFolder`, `TestGuardHook_IsLink`,
+`TestRun_FixLinesRunInOrder`, `TestDoctor_GuardHookMissing` (the project case),
 `TestDoctor_GuardHookNotForAClientWithoutClaude`, `TestReach_InstallsThePlugin` (the re-sign), `TestReach_PluginInstallFails` (the first error line), and the
 benchmark `BenchmarkGuardHookPresent`.
