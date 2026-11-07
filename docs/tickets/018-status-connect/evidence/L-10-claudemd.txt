@@ -1,0 +1,4 @@
+CLAUDE.md, "Must not trade off", lines 185-188:
+  `TestPreToolUse_MCPEntryCopiesProtected`, `TestConnect_ConcurrentWriterIsKept`,
+  `TestConnect_WarnsWhenClaudeIsOpen`.
+All three exist and pass (see L-10.txt in this folder).

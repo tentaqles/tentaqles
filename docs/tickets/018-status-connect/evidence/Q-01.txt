@@ -1,0 +1,6 @@
+$ go test ./internal/connect -run ^TestConnect_AtomicWrite$ -count=1 -v
+=== RUN   TestConnect_AtomicWrite
+--- PASS: TestConnect_AtomicWrite (0.08s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/connect	0.133s
+exit code: 0

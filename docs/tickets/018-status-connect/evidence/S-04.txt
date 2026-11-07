@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestPreToolUse_ConnectAllowedFileToolsDenied$ -count=1 -v
+=== RUN   TestPreToolUse_ConnectAllowedFileToolsDenied
+--- PASS: TestPreToolUse_ConnectAllowedFileToolsDenied (1.36s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	1.442s
+exit code: 0

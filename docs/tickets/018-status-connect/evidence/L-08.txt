@@ -1,0 +1,14 @@
+$ go test ./internal/connect -run TestConnect_ConcurrentWriterIsKept|TestConnect_NeverSettlingFileIsLeftAlone|TestConnect_RetryFindingItDoneLogsNothing|TestConnect_FailedRenameIsRecorded|TestConnect_AtomicWrite -count=1 -v
+=== RUN   TestConnect_AtomicWrite
+--- PASS: TestConnect_AtomicWrite (0.08s)
+=== RUN   TestConnect_ConcurrentWriterIsKept
+--- PASS: TestConnect_ConcurrentWriterIsKept (0.01s)
+=== RUN   TestConnect_NeverSettlingFileIsLeftAlone
+--- PASS: TestConnect_NeverSettlingFileIsLeftAlone (0.01s)
+=== RUN   TestConnect_RetryFindingItDoneLogsNothing
+--- PASS: TestConnect_RetryFindingItDoneLogsNothing (0.00s)
+=== RUN   TestConnect_FailedRenameIsRecorded
+--- PASS: TestConnect_FailedRenameIsRecorded (0.51s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/connect	0.663s
+exit code: 0

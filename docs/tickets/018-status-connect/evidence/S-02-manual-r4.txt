@@ -1,0 +1,12 @@
+$ tentaqles connect gh --url http://evil
+tq: unknown flag: --url
+exit code: 1
+$ tentaqles connect gh evil
+tq: accepts 1 arg(s), received 2
+exit code: 1
+$ tentaqles connect gh http://evil
+tq: accepts 1 arg(s), received 2
+exit code: 1
+$ tentaqles connect
+tq: accepts 1 arg(s), received 0
+exit code: 1

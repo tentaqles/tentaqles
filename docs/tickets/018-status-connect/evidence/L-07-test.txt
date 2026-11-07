@@ -1,0 +1,41 @@
+$ go test ./... -count=1
+?   	github.com/tentaqles/tentaqles/cmd/tentaqles	[no test files]
+?   	github.com/tentaqles/tentaqles/cmd/tq	[no test files]
+ok  	github.com/tentaqles/tentaqles/internal/audit	0.382s
+ok  	github.com/tentaqles/tentaqles/internal/banner	0.202s
+ok  	github.com/tentaqles/tentaqles/internal/bundle	3.366s
+ok  	github.com/tentaqles/tentaqles/internal/claudesettings	0.464s
+ok  	github.com/tentaqles/tentaqles/internal/cmd	154.896s
+ok  	github.com/tentaqles/tentaqles/internal/commitscan	19.191s
+ok  	github.com/tentaqles/tentaqles/internal/connect	1.210s
+ok  	github.com/tentaqles/tentaqles/internal/detect	0.189s
+ok  	github.com/tentaqles/tentaqles/internal/doctor	4.469s
+ok  	github.com/tentaqles/tentaqles/internal/dotenv	0.194s
+ok  	github.com/tentaqles/tentaqles/internal/envplan	12.659s
+ok  	github.com/tentaqles/tentaqles/internal/gitcfg	3.345s
+ok  	github.com/tentaqles/tentaqles/internal/guard	0.280s
+ok  	github.com/tentaqles/tentaqles/internal/hooks	1.124s
+ok  	github.com/tentaqles/tentaqles/internal/humanonly	0.511s
+ok  	github.com/tentaqles/tentaqles/internal/identitystatus	1.360s
+ok  	github.com/tentaqles/tentaqles/internal/manifest	0.979s
+ok  	github.com/tentaqles/tentaqles/internal/markers	0.183s
+ok  	github.com/tentaqles/tentaqles/internal/mcpscope	0.662s
+ok  	github.com/tentaqles/tentaqles/internal/migrate	19.647s
+ok  	github.com/tentaqles/tentaqles/internal/paths	0.259s
+ok  	github.com/tentaqles/tentaqles/internal/policy	5.125s
+ok  	github.com/tentaqles/tentaqles/internal/protect	2.023s
+ok  	github.com/tentaqles/tentaqles/internal/providers	0.665s
+ok  	github.com/tentaqles/tentaqles/internal/reach	0.203s
+ok  	github.com/tentaqles/tentaqles/internal/registry	0.463s
+ok  	github.com/tentaqles/tentaqles/internal/resolve	2.085s
+ok  	github.com/tentaqles/tentaqles/internal/secret	0.372s
+ok  	github.com/tentaqles/tentaqles/internal/secrets	0.363s
+ok  	github.com/tentaqles/tentaqles/internal/shell	14.358s
+ok  	github.com/tentaqles/tentaqles/internal/statusline	0.254s
+ok  	github.com/tentaqles/tentaqles/internal/termopen	0.213s
+?   	github.com/tentaqles/tentaqles/internal/testutil	[no test files]
+ok  	github.com/tentaqles/tentaqles/internal/trust	19.989s
+ok  	github.com/tentaqles/tentaqles/internal/verify	0.184s
+ok  	github.com/tentaqles/tentaqles/internal/workspace	1.094s
+ok  	github.com/tentaqles/tentaqles/test/integration	2.164s
+exit code: 0

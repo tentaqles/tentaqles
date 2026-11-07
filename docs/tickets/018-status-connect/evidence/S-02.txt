@@ -1,0 +1,6 @@
+$ go test ./internal/cmd -run ^TestConnect_NoCallerInput$ -count=1 -v
+=== RUN   TestConnect_NoCallerInput
+--- PASS: TestConnect_NoCallerInput (0.57s)
+PASS
+ok  	github.com/tentaqles/tentaqles/internal/cmd	0.656s
+exit code: 0
