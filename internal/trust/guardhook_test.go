@@ -241,6 +241,31 @@ func TestGuardHook_LinkedFolder(t *testing.T) {
 	}
 }
 
+// L-06: a client root reached through a real junction (a link, on any OS that has one) still has its
+// project settings read: the link is followed, not taken for a folder, so a disableAllHooks in
+// .claude/settings.local.json of the real folder refuses the session. Not skipped on Windows.
+func TestGuardHook_JunctionedClientRootRefuses(t *testing.T) {
+	base := resolvedTemp(t)
+	real := filepath.Join(base, "clients", "acme")
+	app := filepath.Join(real, "app")
+	if err := os.MkdirAll(app, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(real, ".claude", "settings.local.json")
+	writeFile(t, project, `{"disableAllHooks":true}`)
+	root := filepath.Join(base, "acme-link")
+	if err := makeDirLink(real, root); err != nil {
+		t.Fatalf("the junction to %s could not be made: %v", real, err)
+	}
+	claude := guardClaudeDir(t, guardHooks, `{"enabledPlugins":{"tentaqles@tentaqles":true}}`)
+	for name, cwd := range map[string]string{"at the root": root, "in a folder under it": filepath.Join(root, "app")} {
+		g := CheckSessionGuard(claude, cwd, root)
+		if g.OK || g.Unresolved || g.Setting != "disableAllHooks" || g.File != project {
+			t.Fatalf("%s: a junctioned client root refuses on its project settings, naming the real file: %+v", name, g)
+		}
+	}
+}
+
 // S-1: a working folder that cannot be resolved is refused, with the fix that runs it from a folder
 // that resolves; a root that cannot be resolved is refused the same way.
 func TestGuardHook_UnresolvedFolder(t *testing.T) {
