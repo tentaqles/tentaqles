@@ -17,7 +17,7 @@ func TestVersionPrintsVersion(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "tq 1.2.3") {
+	if !strings.Contains(out.String(), "tentaqles 1.2.3") {
 		t.Fatalf("got %q", out.String())
 	}
 }
@@ -28,11 +28,11 @@ func TestVersionPrintsTheCommit(t *testing.T) {
 	t.Cleanup(func() { Version, Commit = prevV, prevC })
 	Version, Commit = "1.2.3", "642dfb458723ee4373447cc80bda9c77af70daa2"
 	out, err := runTq(t, "version")
-	if err != nil || out != "tq 1.2.3 (commit 642dfb458723ee4373447cc80bda9c77af70daa2)\n" {
+	if err != nil || out != "tentaqles 1.2.3 (commit 642dfb458723ee4373447cc80bda9c77af70daa2)\n" {
 		t.Fatalf("%v %q", err, out)
 	}
 	Commit = ""
-	if out, _ := runTq(t, "version"); out != "tq 1.2.3 (commit unknown (dev build))\n" {
+	if out, _ := runTq(t, "version"); out != "tentaqles 1.2.3 (commit unknown (dev build))\n" {
 		t.Fatalf("%q", out)
 	}
 }

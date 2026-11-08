@@ -6,6 +6,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-08
+
 Tentaqles is now an identity isolator and nothing more. The work done on top of 0.9.0 toward an agent guard and
 tool onboarding was cut before it was released: connecting each client's tools through the agent could not keep up
 with how often vendors change their URLs and sign-in methods.

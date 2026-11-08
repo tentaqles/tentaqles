@@ -6,6 +6,8 @@ Releases before 0.16.0 are described on the
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-08
+
 - **The plugin is the identity check and nothing else.** The
   onboarding skill is removed. The PreToolUse matcher is now `^(Bash|PowerShell)$`: tq checks shell commands only
   (the wrong git email, gh user or cloud, a stale shell, a remote command outside every client folder), so file
