@@ -12,10 +12,10 @@
         "source": "git-subdir",
         "url": "https://github.com/tentaqles/tentaqles.git",
         "path": "plugin",
-        "ref": "v0.9.0",
-        "sha": "642dfb458723ee4373447cc80bda9c77af70daa2"
+        "ref": "v0.10.0",
+        "sha": "0f981a95711c042a2b4a1a1ec559ab222f391205"
       },
-      "description": "Identity isolation for developers who work across several clients: git, cloud and AI-agent identity follow the folder, secrets stay out of transcripts and commits, plus per-client session memory, knowledge graphs and skills."
+      "description": "The Tentaqles identity check for Claude Code: blocks a git, gh or cloud command that would run under another client's identity, and states the client at session start."
     }
   ]
 }
