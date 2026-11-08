@@ -6,6 +6,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-08
+
 - **`tentaqles add` and `tentaqles remove`** change one part of a client's setup without reach's menu:
   `tentaqles add git azure-devops`, `tentaqles add cloud aws`, `tentaqles remove gh`, `tentaqles add browser chrome
   "Profile 2"`, `tentaqles set email dev@acme.example`. Categories: email, git, cloud, team, data, task, mail,
