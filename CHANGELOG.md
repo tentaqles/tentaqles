@@ -6,6 +6,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-08
+
 - **`tentaqles drop <client>`** undoes a client as if it never existed: its identity folder (manifest, Claude config,
   logins), its browser shims, the marker and git identity in its folder, its git rule, and the clients folder's
   registration when no other client is left there. Your files stay; an emptied folder is deleted. It asks for the
