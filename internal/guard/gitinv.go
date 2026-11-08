@@ -14,7 +14,7 @@ import (
 //     backtick inside double quotes still starts a new command, because the
 //     shell runs it), and splits words honouring quotes, so the arguments are
 //     exact (`-m "feat(api): x" file.csv` keeps file.csv);
-//   - the older naive pass splits on every separator, quotes or not. A git
+//   - a naive pass splits on every separator, quotes or not. A git
 //     call it finds that the first pass did not (one inside a quoted string,
 //     such as `sh -c 'git commit'`) is reported with Hidden set: it may run,
 //     but its arguments and directory cannot be trusted.

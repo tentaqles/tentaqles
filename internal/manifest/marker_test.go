@@ -19,7 +19,7 @@ func TestMarkerBytes_ExactContent(t *testing.T) {
 	}
 }
 
-func TestPeek_ClassifiesMarkerManifestAndUnknown(t *testing.T) {
+func TestPeek_TellsAMarker(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) string {
 		p := filepath.Join(dir, name)
@@ -32,13 +32,9 @@ func TestPeek_ClassifiesMarkerManifestAndUnknown(t *testing.T) {
 	if err != nil || k != KindMarker || c != "acme" {
 		t.Fatalf("%v %q %v", k, c, err)
 	}
-	k, c, err = Peek(write("manifest.yaml", "schema: tentaqles-client-v2\nclient: acme\n"))
-	if err != nil || k != KindManifest || c != "acme" {
-		t.Fatalf("%v %q %v", k, c, err)
-	}
-	k, _, err = Peek(write("v1.yaml", "schema: tentaqles-client-v1\nclient: acme\n"))
-	if err != nil || k != KindManifest {
-		t.Fatalf("%v %v", k, err)
+	k, _, err = Peek(write("manifest.yaml", "schema: tentaqles-client-v2\nclient: acme\n"))
+	if err != nil || k != KindUnknown {
+		t.Fatalf("a manifest is no marker: %v %v", k, err)
 	}
 	k, _, err = Peek(write("other.yaml", "schema: nope\n"))
 	if err != nil || k != KindUnknown {

@@ -16,9 +16,9 @@ type AddFunc func(level, code, ws, msg, fix string)
 // Checks must stay cheap: no network, no subprocess (RunForCwd backs the
 // hook path; Run calls these only from tentaqles doctor).
 type Check struct {
-	// Name is unique, e.g. "launcher" or "codex".
+	// Name is unique, e.g. "launcher".
 	Name string
-	// Workspace runs once per trusted workspace.
+	// Workspace runs once per client.
 	Workspace func(w *resolve.Workspace, d Deps, add AddFunc)
 	// Global runs once per Run, after the workspace loop.
 	Global func(d Deps, add AddFunc)

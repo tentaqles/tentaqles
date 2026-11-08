@@ -191,7 +191,7 @@ func appBrowser(app string) string {
 
 // shimOpen opens every URL in the browser of workspace wsName (want "": its first listed): the
 // same steps as tentaqles open, for the identity the shim's folder names, which must be
-// trusted. Every URL is checked before the first opens, so a refusal opens nothing. It
+// a client. Every URL is checked before the first opens, so a refusal opens nothing. It
 // returns the exit code.
 func shimOpen(wsName, name, want string, urls []string, stderr io.Writer) int {
 	for _, u := range urls {

@@ -18,11 +18,13 @@ func write(t *testing.T, body string) string {
 	return p
 }
 
-func TestLoad_V1_DefaultsIdentitiesFromCloud(t *testing.T) {
+// The client's cloud is isolated even when the identities block leaves it out.
+func TestLoad_CloudAddsItsIdentity(t *testing.T) {
 	p := write(t, `
-schema: tentaqles-client-v1
+schema: tentaqles-client-v2
 client: acme
 git: { email: a@acme.com, user: acme-bot, provider: github }
+identities: { claude: {}, gh: {} }
 cloud: { provider: azure }
 `)
 	m, err := Load(p)
@@ -37,7 +39,7 @@ cloud: { provider: azure }
 	}
 }
 
-func TestLoad_V2_ExplicitIdentities(t *testing.T) {
+func TestLoad_ExplicitIdentities(t *testing.T) {
 	p := write(t, `
 schema: tentaqles-client-v2
 client: globex
@@ -98,16 +100,16 @@ func TestLoad_UnknownIdentity_Rejected(t *testing.T) {
 	}
 }
 
-// cloud.also adds its clouds to the implicit identities, so each gets a
+// cloud.also adds its clouds to the identities, so each gets a
 // private config home next to the primary cloud's.
 func TestIdentityNamesCloudAlso(t *testing.T) {
 	m := &Manifest{Cloud: map[string]any{"provider": "azure", "also": []any{"aws", "AWS"}}}
 	got := strings.Join(m.IdentityNames(), ",")
-	if got != "aws,az,claude,gh" {
-		t.Fatalf("IdentityNames = %s, want aws,az,claude,gh", got)
+	if got != "aws,az" {
+		t.Fatalf("IdentityNames = %s, want aws,az", got)
 	}
 	m = &Manifest{Cloud: map[string]any{"provider": "azure"}}
-	if got := strings.Join(m.IdentityNames(), ","); got != "az,claude,gh" {
+	if got := strings.Join(m.IdentityNames(), ","); got != "az" {
 		t.Fatalf("without also: %s", got)
 	}
 }
@@ -126,23 +128,23 @@ func TestCloudProviderName(t *testing.T) {
 
 func TestIdentityNamesCloudAliasesAndDigitalOcean(t *testing.T) {
 	names := func(c map[string]any) string { return strings.Join((&Manifest{Cloud: c}).IdentityNames(), ",") }
-	if got := names(map[string]any{"provider": "azure", "also": []any{"gcloud"}}); got != "az,claude,gcloud,gh" {
+	if got := names(map[string]any{"provider": "azure", "also": []any{"gcloud"}}); got != "az,gcloud" {
 		t.Fatalf("also gcloud: %s", got)
 	}
-	if got := names(map[string]any{"provider": "gcloud"}); got != "claude,gcloud,gh" {
+	if got := names(map[string]any{"provider": "gcloud"}); got != "gcloud" {
 		t.Fatalf("provider gcloud: %s", got)
 	}
-	if got := names(map[string]any{"provider": "aws", "also": []any{"digitalocean"}}); got != "aws,claude,doctl,gh" {
+	if got := names(map[string]any{"provider": "aws", "also": []any{"digitalocean"}}); got != "aws,doctl" {
 		t.Fatalf("also digitalocean: %s", got)
 	}
-	if got := names(map[string]any{"provider": "digitalocean"}); got != "claude,doctl,gh" {
+	if got := names(map[string]any{"provider": "digitalocean"}); got != "doctl" {
 		t.Fatalf("provider digitalocean: %s", got)
 	}
 }
 
 func TestLoad_CloudAlsoValidation(t *testing.T) {
 	load := func(cloud string) error {
-		_, err := Load(write(t, "schema: tentaqles-client-v1\nclient: acme\ncloud:\n"+cloud))
+		_, err := Load(write(t, "schema: tentaqles-client-v2\nclient: acme\ncloud:\n"+cloud))
 		return err
 	}
 	for name, cloud := range map[string]string{
@@ -172,7 +174,7 @@ func TestLoad_CloudAlsoValidation(t *testing.T) {
 
 func TestLoad_CloudProviderValidation(t *testing.T) {
 	load := func(cloud string) error {
-		_, err := Load(write(t, "schema: tentaqles-client-v1\nclient: acme\ncloud:\n"+cloud))
+		_, err := Load(write(t, "schema: tentaqles-client-v2\nclient: acme\ncloud:\n"+cloud))
 		return err
 	}
 	for name, cloud := range map[string]string{

@@ -6,24 +6,19 @@ import (
 	"testing"
 )
 
-// legacyProvider is the pre-refactor hard-coded shape, kept here only to
-// pin the contract for TestProviders_MatchesLegacyTable.
-type legacyProvider struct {
+// wantProvider is what Providers() gives an identity: its config-home variables for a folder, and
+// its login command.
+type wantProvider struct {
 	Vars      map[string]string
 	LoginCmd  string
 	LoginArgs []string
 }
 
-// TestProviders_MatchesLegacyTable pins Providers() to the values the old
-// hard-coded map produced for the original 10 identities, for Vars("/x").
-// Note: "kube" LoginCmd changes from "" (old hard-coded default) to
-// "kubectl" under the catalog-driven fallback rule (LoginCmd = Login.Command
-// if set, else CLI.Command). This is an intentional, documented behavior
-// change from the provider-catalog refactor, not a regression: kube has no
-// login block in the catalog and its CLI.Command is "kubectl".
-func TestProviders_MatchesLegacyTable(t *testing.T) {
+// TestProviders_ConfigHomesAndLogins pins Providers() for the main identities, for Vars("/x").
+// kube has no login block in the catalog, so its login command is its CLI, kubectl.
+func TestProviders_ConfigHomesAndLogins(t *testing.T) {
 	dir := filepath.FromSlash("/x")
-	legacy := map[string]legacyProvider{
+	want := map[string]wantProvider{
 		"claude": {Vars: map[string]string{"CLAUDE_CONFIG_DIR": dir}, LoginCmd: "claude", LoginArgs: []string{"auth", "login"}},
 		"codex":  {Vars: map[string]string{"CODEX_HOME": dir}, LoginCmd: "codex", LoginArgs: []string{"login"}},
 		"gemini": {Vars: map[string]string{"GEMINI_CLI_HOME": dir, "GEMINI_FORCE_FILE_STORAGE": "true"}, LoginCmd: "gemini", LoginArgs: nil},
@@ -39,23 +34,23 @@ func TestProviders_MatchesLegacyTable(t *testing.T) {
 	}
 
 	got := Providers()
-	for id, want := range legacy {
+	for id, w := range want {
 		p, ok := got[id]
 		if !ok {
-			t.Fatalf("Providers() missing legacy id %q", id)
+			t.Fatalf("Providers() has no %q", id)
 		}
 		if p.Name != id {
 			t.Errorf("%s: Name = %q, want %q", id, p.Name, id)
 		}
 		vars := p.Vars(dir)
-		if !reflect.DeepEqual(vars, want.Vars) {
-			t.Errorf("%s: Vars(%q) = %#v, want %#v", id, dir, vars, want.Vars)
+		if !reflect.DeepEqual(vars, w.Vars) {
+			t.Errorf("%s: Vars(%q) = %#v, want %#v", id, dir, vars, w.Vars)
 		}
-		if p.LoginCmd != want.LoginCmd {
-			t.Errorf("%s: LoginCmd = %q, want %q", id, p.LoginCmd, want.LoginCmd)
+		if p.LoginCmd != w.LoginCmd {
+			t.Errorf("%s: LoginCmd = %q, want %q", id, p.LoginCmd, w.LoginCmd)
 		}
-		if !reflect.DeepEqual(p.LoginArgs, want.LoginArgs) {
-			t.Errorf("%s: LoginArgs = %#v, want %#v", id, p.LoginArgs, want.LoginArgs)
+		if !reflect.DeepEqual(p.LoginArgs, w.LoginArgs) {
+			t.Errorf("%s: LoginArgs = %#v, want %#v", id, p.LoginArgs, w.LoginArgs)
 		}
 	}
 }

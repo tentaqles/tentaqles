@@ -46,7 +46,7 @@ func TestClaudeAliasShadow(t *testing.T) {
 	ps := filepath.Join("Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1")
 	ps5 := filepath.Join("Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1")
 	fish := filepath.Join(".config", "fish", "config.fish")
-	block := "# >>> tq >>>\nif ($env:TQ_ENABLED -ne '0') { tq activate pwsh | Out-String | Invoke-Expression }\n# <<< tq <<<\n"
+	block := "# >>> tq >>>\nif ($env:TQ_ENABLED -ne '0') { tentaqles activate pwsh | Out-String | Invoke-Expression }\n# <<< tq <<<\n"
 	cases := []struct {
 		file, body string
 		want       bool
@@ -54,24 +54,19 @@ func TestClaudeAliasShadow(t *testing.T) {
 	}{
 		// an alias that calls the same name only adds flags to the launcher
 		{".bashrc", "alias claude='claude --dangerously-skip-permissions'\neval \"$(tq activate bash)\"\n", true, "info", "adds flags to tq's claude launcher"},
-		{".zshrc", "  alias codex=\"codex --yolo\"\n", true, "info", "adds flags"},
 		{".bash_aliases", "alias claude=claude\n", true, "info", "adds flags"},
 		{fish, "alias claude 'claude --x'\n", true, "info", "adds flags"},
 		// one that runs something else replaces it
 		{".bashrc", "alias claude='/opt/claude/bin/claude --x'\n", true, "warn", "instead of tq's claude launcher"},
 		{ps, "Set-Alias -Name claude -Value C:\\x\\claude.exe\n", true, "warn", "PowerShell resolves aliases before functions"},
-		{ps5, "sal codex C:\\x\\codex.exe\n", true, "warn", "PowerShell resolves aliases before functions"},
+		{ps5, "sal claude C:\\x\\claude.exe\n", true, "warn", "PowerShell resolves aliases before functions"},
 		{".bashrc", "# alias claude='old'\nalias cl=claude\nalias claudex=foo\neval \"$(tq activate bash)\"\n", false, "", ""},
-		// functions after tq's activation replace the launcher (final review M2)
-		{ps, block + "\n# carried over by tq migrate; permission_mode will move into the manifest\nfunction claude { & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" --permission-mode auto @args }\n", true, "warn", "function claude, defined after tq's activation"},
-		{ps5, block + "function global:codex { codex.exe @args }\n", true, "warn", "function codex"},
+		// functions after tq's activation replace the launcher
+		{ps, block + "\n# my own wrapper\nfunction claude { & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" --permission-mode auto @args }\n", true, "warn", "function claude, defined after tq's activation"},
 		{".bashrc", "eval \"$(tq activate bash)\"\nclaude() { command claude --x \"$@\"; }\n", true, "warn", "function claude"},
-		{".zshrc", "eval \"$(tq activate zsh)\"\nfunction codex { command codex \"$@\"; }\n", true, "warn", "function codex"},
 		{fish, "tq activate fish | source\nfunction claude\n  command claude $argv\nend\n", true, "warn", "function claude"},
-		// before the activation tq's own definition wins; claude-off is not claude;
-		// the preserved tq-legacy block runs only under TQ_ENABLED=0
-		{".bashrc", "claude() { :; }\neval \"$(tq activate bash)\"\nfunction claude-off { :; }\n", false, "", ""},
-		{ps, "# >>> tq-legacy >>>\nif ($env:TQ_ENABLED -eq '0') {\nfunction claude { x }\n}\n# <<< tq-legacy <<<\n" + block + "function claude-personal { x }\n", false, "", ""},
+		// before the activation tq's own definition wins; claude-dev is not claude
+		{".bashrc", "claude() { :; }\neval \"$(tq activate bash)\"\nfunction claude-dev { :; }\n", false, "", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.file+"/"+c.msg, func(t *testing.T) {
@@ -104,11 +99,11 @@ func TestClaudeAliasShadow(t *testing.T) {
 // temp home, never real ones.
 func TestClaudeAliasShadowFixLine(t *testing.T) {
 	ps := filepath.Join("Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1")
-	block := "# >>> tq >>>\r\nif ($env:TQ_ENABLED -ne '0') { tq activate pwsh | Out-String | Invoke-Expression }\r\n# <<< tq <<<\r\n"
-	carried := "\r\n# carried over by tq migrate; permission_mode will move into the manifest\r\nif ($env:TQ_ENABLED -ne '0') {\r\nfunction claude { & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" --dangerously-skip-permissions @args }\r\n}\r\n"
+	block := "# >>> tq >>>\r\nif ($env:TQ_ENABLED -ne '0') { tentaqles activate pwsh | Out-String | Invoke-Expression }\r\n# <<< tq <<<\r\n"
+	carried := "\r\n# my own wrapper\r\nif ($env:TQ_ENABLED -ne '0') {\r\nfunction claude { & \"$env:USERPROFILE\\.local\\bin\\claude.exe\" --dangerously-skip-permissions @args }\r\n}\r\n"
 	cases := []struct{ name, body, want string }{
-		{"carried wrapper", block + carried, "delete lines 7-7 of "},
-		{"carry with another flag", block + strings.Replace(carried, "--dangerously-skip-permissions", "--permission-mode auto", 1), "delete lines 7-7 of "},
+		{"a wrapper", block + carried, "delete lines 7-7 of "},
+		{"a wrapper with another flag", block + strings.Replace(carried, "--dangerously-skip-permissions", "--permission-mode auto", 1), "delete lines 7-7 of "},
 		{"hand-written, three lines", block + "\r\nfunction claude {\r\n  & claude.exe @args\r\n}\r\n", "delete lines 5-7 of "},
 	}
 	for _, c := range cases {
@@ -120,7 +115,7 @@ func TestClaudeAliasShadowFixLine(t *testing.T) {
 			if len(*fs) != 1 {
 				t.Fatalf("findings = %+v", *fs)
 			}
-			if f := (*fs)[0]; !strings.Contains(f.fix, c.want) || strings.Contains(f.fix, "tq migrate") {
+			if f := (*fs)[0]; !strings.Contains(f.fix, c.want) {
 				t.Fatalf("fix = %q, want %q", f.fix, c.want)
 			}
 		})

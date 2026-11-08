@@ -39,7 +39,7 @@ type Layer struct {
 	ready    *bool  // memoized MaskReady
 }
 
-// LayerFor is ws's layer, or nil with no workspace. ws is a trusted workspace (resolve hands an untrusted one out apart).
+// LayerFor is ws's layer, or nil with no workspace. ws is a client resolve found.
 func LayerFor(ws *resolve.Workspace) *Layer {
 	if ws == nil || ws.Manifest == nil {
 		return nil

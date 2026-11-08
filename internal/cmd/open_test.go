@@ -387,7 +387,7 @@ func runSettingsRender(t *testing.T, names ...string) string {
 	return out.String()
 }
 
-// An http or https URL never reaches the real xdg-open or open (round 1, L-01): it opens in the
+// An http or https URL never reaches the real xdg-open or open: it opens in the
 // client's profile or is refused, whatever else is in it. `open -a` for the two browsers goes
 // to the client's profile; for another app it passes through.
 func TestBrowserShims_WebURLNeverReachesTheRealProgram(t *testing.T) {
@@ -478,7 +478,7 @@ func TestBrowserShims_WebURLNeverReachesTheRealProgram(t *testing.T) {
 		t.Fatalf("-a Microsoft Edge: exit %d", c)
 	}
 	expect(fakeRun{"msedge-fake", []string{profile3, "https://e.example"}})
-	// round 3, L-01: the app given by its path names the same app
+	// the app given by its path names the same app
 	if c := run("open", "-a", "/Applications/Google Chrome.app", "https://p.example"); c != 0 {
 		t.Fatalf("-a with a path to Chrome: exit %d", c)
 	}

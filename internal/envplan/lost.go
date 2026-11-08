@@ -21,9 +21,8 @@ func LostState(env Env) bool {
 	}
 	raw, has := env.Lookup(StateVar)
 	if !has || strings.TrimSpace(raw) == "" {
-		// No state at all, in a harness's shell too (one an older tq launched): only the
-		// values tq set under the identities folder go, and the folder's identity is
-		// applied again, so the shell loses nothing it needs.
+		// No state at all: only the values tq set under the identities folder go, and the
+		// folder's identity is applied again, so the shell loses nothing it needs.
 		return true
 	}
 	st, ok := DecodeStateOK(raw)
@@ -86,8 +85,8 @@ func stripMasks(path string, syn PathSyntax) string {
 // Forget is env as tq finds it with no state: tq's variables absent, no mask folder on PATH.
 func Forget(env Env) Env { return hide(env, func(string) bool { return true }, true) }
 
-// Unrecorded is env with the tq variables prev does not record hidden (a state of an older tq,
-// or one written by hand, that names fewer variables than tq set), and the mask folders
+// Unrecorded is env with the tq variables prev does not record hidden (a state edited by hand
+// that names fewer variables than tq set), and the mask folders
 // stripped from a PATH prev does not record. found reports whether anything was hidden; the
 // caller then completes the diff with FinishForget.
 func Unrecorded(env Env, prev State) (Env, bool) {

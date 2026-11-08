@@ -84,8 +84,8 @@ type Ops struct {
 	Notice *Notice
 }
 
-// Notice says why the cwd's workspace carries no identity, or carries it
-// through an older trust marker. Workspace is a name; shell.Emit prints it
+// Notice is what the prompt says about the cwd's identity: its PATH mask, a cmd PATH too long,
+// or a lost state. Workspace is a name; shell.Emit prints it
 // only when it is a valid workspace name.
 type Notice struct {
 	Kind      string

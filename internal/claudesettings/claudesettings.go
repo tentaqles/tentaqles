@@ -1,20 +1,11 @@
 // Package claudesettings renders the tq-managed part of a Claude identity's
 // settings.json: a few env vars and the status line. Every identity gets the
 // same baseline plus what its manifest adds, so identities stop drifting
-// apart. tq writes no permission setting (permission modes of
-// any kind are a non-goal); its hook only denies.
+// apart. tq writes no permission setting; its hook only denies.
 //
 // tq only touches what it owns. What it wrote last time is recorded in
 // <dir>/.tq-settings-state.json; on the next render that is replaced by the
 // new desired set, and everything the user added by hand is kept.
-//
-// Older renders also wrote permissions.defaultMode, permissions.allow/deny/ask
-// and skipDangerousModePermissionPrompt. The first render with this code
-// cleans them (cleanLegacyPermissions): the allow/deny/ask entries the state
-// file records as tq's are removed, entries the user added stay, and an
-// emptied permissions object goes; defaultMode and the skip flag, which the
-// old state file did not record, go only when an old render is evidenced (a
-// state file older than stateSchema) and the value is one tq wrote.
 package claudesettings
 
 import (
@@ -26,54 +17,23 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
 )
 
 const stateFile = ".tq-settings-state.json"
 
-// stateSchema is the schema of the state file this code writes. A state file
-// without it was written by a render that also wrote permission settings.
-const stateSchema = 2
-
 // Managed is the desired tq-owned content of settings.json.
 type Managed struct {
 	Env        map[string]string
 	StatusLine map[string]any // nil: leave the status line alone
-	// OldDefaultMode is the permissions.defaultMode an older render wrote
-	// for this manifest (oldModeFor of its dropped claude.permission_mode):
-	// the only value the cleaning removes. Never written.
-	OldDefaultMode string
 }
 
-// Owned records what tq wrote, so the next render can take it back. Allow,
-// Deny and Ask are only read: they are the permission entries an older
-// render recorded, and a render with this code removes them and records
-// none.
+// Owned records what tq wrote, so the next render can take it back.
 type Owned struct {
-	Schema     int      `json:"schema,omitempty"`
-	Allow      []string `json:"allow,omitempty"`
-	Deny       []string `json:"deny,omitempty"`
-	Ask        []string `json:"ask,omitempty"`
 	EnvKeys    []string `json:"env_keys,omitempty"`
 	StatusLine bool     `json:"status_line,omitempty"`
-	// LegacyDefaultMode is the permissions.defaultMode an older render is
-	// known to have written (the evidence of tq's authorship). It is carried
-	// from state file to state file until tq has removed that value, so the
-	// evidence outlives a manifest whose permission_mode the user dropped.
-	LegacyDefaultMode string `json:"legacy_default_mode,omitempty"`
-	// found is set by loadOwned when the state file exists and parses.
-	found bool
-	// untouched is set by Render when settings.json has not changed since
-	// an older render wrote it and its state file together.
-	untouched bool
 }
-
-// legacyRender reports a state file written by a render that also wrote
-// permission settings: the evidence cleanLegacyPermissions needs before it
-// removes defaultMode or skipDangerousModePermissionPrompt.
-func (o Owned) legacyRender() bool { return o.found && o.Schema < stateSchema }
 
 // baselineEnv tunes plugins that otherwise cost a lot: the security-guidance
 // plugin's Stop review ran a headless Opus session after every file-changing
@@ -106,79 +66,10 @@ func Desired(m *manifest.Manifest, tqExe string) Managed {
 	return want
 }
 
-// legacyWritten is the defaultMode tq is known to have written, from the
-// evidence, or "": the value prev carries; for an older render's state
-// file, the value settings.json holds when it has not changed since that
-// render wrote it (an older render rewrote defaultMode on every render);
-// else what that render wrote for the manifest's old permission_mode.
-func legacyWritten(current map[string]any, prev Owned, oldMode string) string {
-	if prev.LegacyDefaultMode != "" {
-		return prev.LegacyDefaultMode
-	}
-	if !prev.legacyRender() {
-		return ""
-	}
-	if perms, ok := current["permissions"].(map[string]any); ok && prev.untouched {
-		if mode, isStr := perms["defaultMode"].(string); isStr {
-			return mode
-		}
-	}
-	return oldMode
-}
-
-// cleanLegacyPermissions removes from next the permission settings an older
-// render wrote, and only those, decided from the evidence: the allow/deny/
-// ask entries prev (a state file that parsed) records as tq's (an entry the
-// user added stays); the defaultMode equal to written (legacyWritten; any
-// other value is the user's); and, for an older render's state file, a
-// skipDangerousModePermissionPrompt of true (that render wrote it on every
-// render). A permissions object this emptied is removed; one that was
-// already empty, or that still holds anything else, is left.
-func cleanLegacyPermissions(next map[string]any, prev Owned, written string) {
-	perms, ok := next["permissions"].(map[string]any)
-	removed := false
-	if ok {
-		for key, owned := range map[string][]string{"allow": prev.Allow, "deny": prev.Deny, "ask": prev.Ask} {
-			cur, present := perms[key]
-			if !present || len(owned) == 0 {
-				continue
-			}
-			list := toStrings(cur)
-			kept := minus(list, owned)
-			if len(kept) == len(list) {
-				continue
-			}
-			removed = true
-			if len(kept) == 0 {
-				delete(perms, key)
-			} else {
-				perms[key] = toAny(kept)
-			}
-		}
-		if mode, isStr := perms["defaultMode"].(string); isStr && written != "" && mode == written {
-			delete(perms, "defaultMode")
-			removed = true
-		}
-		if removed && len(perms) == 0 {
-			delete(next, "permissions")
-		}
-	}
-	if skip, isBool := next["skipDangerousModePermissionPrompt"].(bool); isBool && skip && prev.legacyRender() {
-		delete(next, "skipDangerousModePermissionPrompt")
-	}
-}
-
 // Apply merges want into current, taking back what prev says tq owned.
 func Apply(current map[string]any, want Managed, prev Owned) (map[string]any, Owned) {
 	next := deepCopy(current)
-	owned := Owned{Schema: stateSchema}
-	written := legacyWritten(current, prev, want.OldDefaultMode)
-	cleanLegacyPermissions(next, prev, written)
-	// The evidence stays in the state file while settings.json still holds
-	// the value tq wrote (a render that could not take it back yet).
-	if perms, ok := next["permissions"].(map[string]any); ok && written != "" && perms["defaultMode"] == written {
-		owned.LegacyDefaultMode = written
-	}
+	var owned Owned
 
 	env, _ := next["env"].(map[string]any)
 	if env == nil {
@@ -211,7 +102,7 @@ func Apply(current map[string]any, want Managed, prev Owned) (map[string]any, Ow
 }
 
 // replaceableStatusLine reports status lines tq takes over: unpinned npx
-// packages (they re-resolve @latest on every refresh) and older tq ones.
+// packages (they re-resolve @latest on every refresh) and tq's own.
 func replaceableStatusLine(sl map[string]any) bool {
 	cmd, _ := sl["command"].(string)
 	isTq := (strings.Contains(cmd, "tq") || strings.Contains(cmd, "tentaqles")) && strings.HasSuffix(strings.TrimSpace(cmd), " statusline")
@@ -234,60 +125,23 @@ func Render(dir string, want Managed, dryRun bool) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	prev := loadOwned(dir)
-	if prev.legacyRender() {
-		prev.untouched = writtenTogether(path, filepath.Join(dir, stateFile))
-	}
-	next, owned := Apply(current, want, prev)
+	next, owned := Apply(current, want, loadOwned(dir))
 	res.Changes = summarize(current, next)
 	res.Changed = !reflect.DeepEqual(normalize(current), normalize(next))
-	// An old state file is rewritten even when settings.json needs no
-	// change, so it stops being evidence of an older render: a defaultMode
-	// the user sets by hand afterwards is never taken for tq's.
-	if dryRun || (!res.Changed && !prev.legacyRender()) {
+	if dryRun || !res.Changed {
 		return res, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return res, err
 	}
-	if res.Changed {
-		if err := writeJSONAtomic(path, next); err != nil {
-			return res, err
-		}
+	if err := writeJSONAtomic(path, next); err != nil {
+		return res, err
 	}
 	return res, saveOwned(dir, owned)
 }
 
 func summarize(cur, next map[string]any) []string {
 	var out []string
-	cp, _ := cur["permissions"].(map[string]any)
-	np, _ := next["permissions"].(map[string]any)
-	if cp == nil {
-		cp = map[string]any{}
-	}
-	if np == nil {
-		np = map[string]any{}
-	}
-	if v, had := cp["defaultMode"]; had {
-		if _, has := np["defaultMode"]; !has {
-			out = append(out, fmt.Sprintf("permissions.defaultMode: removed (was %v)", v))
-		}
-	}
-	for _, k := range []string{"allow", "deny", "ask"} {
-		if rm := minus(toStrings(cp[k]), toStrings(np[k])); len(rm) > 0 {
-			out = append(out, fmt.Sprintf("permissions.%s: removed %d tq entries (%s)", k, len(rm), strings.Join(rm, ", ")))
-		}
-	}
-	if _, had := cur["permissions"]; had {
-		if _, has := next["permissions"]; !has {
-			out = append(out, "permissions: removed (empty)")
-		}
-	}
-	_, had := cur["skipDangerousModePermissionPrompt"]
-	_, has := next["skipDangerousModePermissionPrompt"]
-	if had && !has {
-		out = append(out, "skipDangerousModePermissionPrompt: removed")
-	}
 	if !reflect.DeepEqual(normalize(cur["env"]), normalize(next["env"])) {
 		out = append(out, "env: updated")
 	}
@@ -297,26 +151,14 @@ func summarize(cur, next map[string]any) []string {
 	return out
 }
 
-// writtenTogether reports whether settings.json has not changed since the
-// state file was written: an older render wrote both in one go, settings
-// first, so a settings.json no newer than its state file (a second of
-// slack for coarse file times) still holds what that render wrote.
-func writtenTogether(settings, state string) bool {
-	si, err1 := os.Stat(settings)
-	st, err2 := os.Stat(state)
-	return err1 == nil && err2 == nil && !si.ModTime().After(st.ModTime().Add(time.Second))
-}
-
 // loadOwned reads the state file. One that is missing, unreadable or does
-// not parse claims nothing: no entry is tq's and it is no evidence of an
-// older render.
+// not parse claims nothing.
 func loadOwned(dir string) Owned {
 	var o Owned
 	raw, err := os.ReadFile(filepath.Join(dir, stateFile))
 	if err != nil || json.Unmarshal(raw, &o) != nil {
 		return Owned{}
 	}
-	o.found = true
 	return o
 }
 
@@ -326,43 +168,6 @@ func saveOwned(dir string, o Owned) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, stateFile), append(raw, '\n'), 0o600)
-}
-
-func toStrings(v any) []string {
-	var out []string
-	switch xs := v.(type) {
-	case []any:
-		for _, x := range xs {
-			if s, ok := x.(string); ok {
-				out = append(out, s)
-			}
-		}
-	case []string:
-		out = append(out, xs...)
-	}
-	return out
-}
-
-func toAny(xs []string) []any {
-	out := make([]any, len(xs))
-	for i, x := range xs {
-		out[i] = x
-	}
-	return out
-}
-
-func minus(a, b []string) []string {
-	drop := map[string]bool{}
-	for _, x := range b {
-		drop[x] = true
-	}
-	var out []string
-	for _, x := range a {
-		if !drop[x] {
-			out = append(out, x)
-		}
-	}
-	return out
 }
 
 func deepCopy(m map[string]any) map[string]any {

@@ -209,7 +209,7 @@ func TestRunForCwd_ClaudeConfigUnsetWithTQWS(t *testing.T) {
 	}
 }
 
-// Fix round 2, finding 9: env-drift and hook-missing describe the same stale
+// Env-drift and hook-missing describe the same stale
 // shell, so hook-missing is suppressed once env-drift fired for the same cwd.
 func TestRunForCwd_HookMissingSuppressedByEnvDrift(t *testing.T) {
 	cfg, ws := setupTrustedWorkspace(t, "acme", "dev@acme.com")

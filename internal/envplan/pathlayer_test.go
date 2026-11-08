@@ -14,7 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The PATH layer, round 2: the state fits cmd.exe's line, the mask answers every
+// The PATH layer: the state fits cmd.exe's line, the mask answers every
 // spelling, comes back once fixed, and leaves ambiguous names and generic tools alone.
 
 // longPath is a realistic PATH of n entries (vendor folders, as a developer machine has).
@@ -56,13 +56,8 @@ func TestState_FitsCmdLine(t *testing.T) {
 	if got := DecodeState(s.Encode()); got.PathSet != orig {
 		t.Fatal("identical PathSet lost")
 	}
-	// The encoding of tq before round 2.
-	legacy := legacyEncode(State{WS: "acme", Prev: map[string]*string{"X": nil}})
-	if got := DecodeState(legacy); got.WS != "acme" {
-		t.Fatalf("legacy state: %+v", got)
-	}
 	// Garbage decodes to an empty state, never panics.
-	for _, g := range []string{"z1.!!!", "z1." + strings.Repeat("A", 100), "%%%"} {
+	for _, g := range []string{"z1.!!!", "z1." + strings.Repeat("A", 100), "%%%", "eyJXUyI6ImFjbWUifQ"} {
 		if got := DecodeState(g); got.WS != "" || got.Prev == nil {
 			t.Fatalf("%q: %+v", g, got)
 		}
@@ -246,7 +241,3 @@ func TestPathLayer_QuotedAndNetworkEntries(t *testing.T) {
 	}
 }
 
-// legacyEncode is the __TQ_STATE encoding before round 2: base64 JSON.
-func legacyEncode(s State) string {
-	return legacyB64(s)
-}

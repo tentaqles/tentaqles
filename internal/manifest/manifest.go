@@ -1,4 +1,4 @@
-// Package manifest parses .tentaqles.yaml (schemas v1 and v2).
+// Package manifest parses a client's manifest (~/.tentaqles/identities/<client>/manifest.yaml) and the marker in its folder.
 package manifest
 
 import (
@@ -14,10 +14,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// FileName is the marker's name in a client's folder.
 const FileName = ".tentaqles.yaml"
 
+// Schema is the manifest's schema.
+const Schema = "tentaqles-client-v2"
+
 var (
-	ErrUnsupportedSchema = errors.New("unsupported manifest schema (want tentaqles-client-v1 or -v2)")
+	ErrUnsupportedSchema = errors.New("unsupported manifest schema (want tentaqles-client-v2)")
 	ErrSecretLike        = errors.New("manifest contains a secret-looking value; manifests hold names only")
 )
 
@@ -117,7 +121,7 @@ func Parse(raw []byte, path string) (*Manifest, error) {
 	if err := yaml.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if m.Schema != "tentaqles-client-v1" && m.Schema != "tentaqles-client-v2" {
+	if m.Schema != Schema {
 		return nil, fmt.Errorf("%w: got %q in %s", ErrUnsupportedSchema, m.Schema, path)
 	}
 	if m.Client == "" {
@@ -216,20 +220,15 @@ func (m *Manifest) validateCloud() error {
 	return nil
 }
 
-// IdentityNames returns the sorted providers this workspace isolates.
-// With no identities block it defaults to claude+gh. Every cloud the manifest
-// declares (cloud.provider and cloud.also) is isolated too, added when the
-// identities block leaves it out: the client's own cloud is always in scope,
-// and the guard never allows a cloud CLI that has no private config home.
+// IdentityNames returns the sorted providers this client isolates: the identities block, and
+// every cloud the manifest declares (cloud.provider and cloud.also), added when the identities
+// block leaves it out: the client's own cloud is always in scope, and the guard never allows a
+// cloud CLI that has no private config home.
 func (m *Manifest) IdentityNames() []string {
 	var out []string
 	var clouds []string
-	if len(m.Identities) > 0 {
-		for k := range m.Identities {
-			out = append(out, k)
-		}
-	} else {
-		out = []string{"claude", "gh"}
+	for k := range m.Identities {
+		out = append(out, k)
 	}
 	if p, _ := m.Cloud["provider"].(string); p != "" {
 		clouds = append(clouds, p)

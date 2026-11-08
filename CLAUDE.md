@@ -62,7 +62,7 @@ Each line names the tests that keep it. Weakening, skipping or removing one need
 - reach writes nothing before a typed yes, and an edit changes only the keys the form owns:
   `TestReach_ConfirmsBeforeWriting`, `TestReach_ExistingClientDeclinedChangesNothing`, `TestEdit_Providers`,
   `TestEdit_NoChangeIsTheSameBytes`, `TestChange_DeclinedWritesNothing`, `TestChange_Refusals`,
-  `TestEdit_DropsAnImpliedIdentity`.
+  `TestEdit_DropsAHandListedIdentity`.
 - drop deletes nothing before the client's name is typed back, deletes nothing of another client, and keeps the
   user's files: `TestDrop_DeclinedDeletesNothing`, `TestDrop_UndoesTheClient`, `TestDrop_Refusals`.
 - A copied marker or manifest lends a folder nothing: `TestResolve_MarkerOrManifestOfAnotherClient`.

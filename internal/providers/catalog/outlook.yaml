@@ -2,6 +2,6 @@ id: outlook
 name: Outlook
 category: email
 docs: https://learn.microsoft.com/graph/outlook-mail-concept-overview
-# MCP only (spec B §3).
+# MCP only: no CLI to isolate.
 cli: null
 notes: "No CLI. A Claude session reaches Outlook through an MCP server or connector added in that client's Claude config, signed in with /mcp."

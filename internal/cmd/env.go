@@ -44,7 +44,7 @@ func newEnvCmd() *cobra.Command {
 			if lost {
 				senv, prev = envplan.Forget(senv), envplan.State{}
 			} else if prev.WS != "" {
-				// A state that names fewer variables than tq set (an older or hand-written one).
+				// A state that names fewer variables than tq set (one edited by hand).
 				if u, found := envplan.Unrecorded(senv, prev); found {
 					senv, lost = u, true
 				}

@@ -14,28 +14,24 @@ func init() {
 	Register(Check{Name: "launcher", Global: claudeAliasShadow})
 }
 
-// shellAliasRe matches an alias of claude or codex in a shell profile and
-// captures its value (posix and fish), or any PowerShell alias of them.
+// shellAliasRe matches an alias of claude in a shell profile and
+// captures its value (posix and fish), or any PowerShell alias of it.
 var shellAliasRe = map[string]*regexp.Regexp{
-	"posix":      regexp.MustCompile(`(?m)^[ \t]*alias[ \t]+(claude|codex)=['"]?([^'"\n]*)`),
-	"fish":       regexp.MustCompile(`(?m)^[ \t]*alias[ \t]+(claude|codex)(?:[ \t]+|=)['"]?([^'"\n]*)`),
-	"powershell": regexp.MustCompile(`(?mi)^[ \t]*(?:set-alias|new-alias|sal|nal)[ \t]+(?:-name[ \t]+)?["']?(claude|codex)\b`),
+	"posix":      regexp.MustCompile(`(?m)^[ \t]*alias[ \t]+(claude)=['"]?([^'"\n]*)`),
+	"fish":       regexp.MustCompile(`(?m)^[ \t]*alias[ \t]+(claude)(?:[ \t]+|=)['"]?([^'"\n]*)`),
+	"powershell": regexp.MustCompile(`(?mi)^[ \t]*(?:set-alias|new-alias|sal|nal)[ \t]+(?:-name[ \t]+)?["']?(claude)\b`),
 }
 
-// shellFuncRe matches a function named claude or codex (not claude-off and
-// the like): defined after tq's activation, it replaces tq's launcher.
+// shellFuncRe matches a function named claude (not claude-dev and the like):
+// defined after tq's activation, it replaces tq's launcher.
 var shellFuncRe = map[string]*regexp.Regexp{
-	"posix":      regexp.MustCompile(`(?m)^[ \t]*(?:function[ \t]+(claude|codex)(?:[ \t({]|$)|(claude|codex)[ \t]*\(\))`),
-	"fish":       regexp.MustCompile(`(?m)^[ \t]*function[ \t]+(claude|codex)(?:[ \t;]|$)`),
-	"powershell": regexp.MustCompile(`(?mi)^[ \t]*function[ \t]+(?:global:|script:)?(claude|codex)(?:[ \t({]|$)`),
+	"posix":      regexp.MustCompile(`(?m)^[ \t]*(?:function[ \t]+(claude)(?:[ \t({]|$)|(claude)[ \t]*\(\))`),
+	"fish":       regexp.MustCompile(`(?m)^[ \t]*function[ \t]+(claude)(?:[ \t;]|$)`),
+	"powershell": regexp.MustCompile(`(?mi)^[ \t]*function[ \t]+(?:global:|script:)?(claude)(?:[ \t({]|$)`),
 }
 
 // activationRe finds the line that runs tentaqles activate (or tq's managed block).
 var activationRe = regexp.MustCompile(`(?m)^.*(?:(?:tq|tentaqles)(?:\.exe)?["']?[ \t]+activate\b|# <<< tq <<<).*$`)
-
-// legacyBlockRe is a preserved pre-tq setup an older tq left in a profile; it runs only
-// under TQ_ENABLED=0, so its functions do not shadow the launcher.
-var legacyBlockRe = regexp.MustCompile(`(?s)# >>> tq-legacy >>>.*?# <<< tq-legacy <<<`)
 
 // profileFiles are the shell profiles under home that the check reads.
 func profileFiles(home string) [][2]string {
@@ -76,8 +72,7 @@ func homes(d Deps) []string {
 // claudeAliasShadow reports what in a shell profile stands in for the
 // claude launcher `tentaqles activate` defines:
 //   - a PowerShell alias (aliases resolve before functions): warn;
-//   - a function named claude or codex defined after tq's activation, such
-//     as a wrapper an older tq carried over: warn;
+//   - a function named claude defined after tq's activation: warn;
 //   - a posix or fish alias that runs something else (an absolute path, a
 //     different command): warn;
 //   - a posix or fish alias whose value starts with the same name (alias
@@ -94,9 +89,7 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 			if err != nil {
 				continue
 			}
-			text := legacyBlockRe.ReplaceAllStringFunc(string(raw), func(b string) string {
-				return strings.Repeat("\n", strings.Count(b, "\n"))
-			})
+			text := string(raw)
 			for _, m := range shellAliasRe[pf[1]].FindAllStringSubmatch(text, -1) {
 				name := m[1]
 				if pf[1] == "powershell" {
@@ -108,7 +101,7 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 				if f := strings.Fields(m[2]); len(f) > 0 && f[0] == name {
 					add("info", "claude-alias-shadow", "",
 						fmt.Sprintf("alias %s adds flags to tq's %s launcher, which it calls (%s)", name, name, pf[0]),
-						fmt.Sprintf("the launcher already starts %s in bypass; delete the alias from %s if its flags were for the old setup", name, pf[0]))
+						fmt.Sprintf("the launcher already starts %s in bypass; delete the alias from %s if you do not need its flags", name, pf[0]))
 					continue
 				}
 				add("warn", "claude-alias-shadow", "",

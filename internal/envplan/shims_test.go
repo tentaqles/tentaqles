@@ -166,7 +166,7 @@ func TestBrowser_NoBlockNoChange(t *testing.T) {
 }
 
 // A terminal already in the client when its manifest gains a browsers: list gets the shims
-// folder on PATH at the next prompt (round 1, L-04: the fast path kept the old PATH), and
+// folder on PATH at the next prompt, and
 // loses it when the list goes; leaving still restores PATH exactly.
 func TestBrowserShims_ManifestChangesUnderAnOpenTerminal(t *testing.T) {
 	t.Setenv("TQ_HOME", testutil.TempDir(t))

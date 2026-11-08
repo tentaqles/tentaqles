@@ -9,8 +9,7 @@ import (
 	"strings"
 )
 
-// The __TQ_STATE encoding, after direnv's gzenv (zlib, then base64 URL-safe): a prefix marks
-// it, so a state written by an older tq (plain base64 JSON) still decodes.
+// The __TQ_STATE encoding, after direnv's gzenv (zlib, then base64 URL-safe), behind a prefix.
 
 const statePrefix = "z1."
 
@@ -55,8 +54,6 @@ func decodeStateOK(enc string) (State, bool) {
 				}
 			}
 		}
-	} else if b, err := base64.RawURLEncoding.DecodeString(enc); err == nil && enc != "" {
-		ok = json.Unmarshal(b, &s) == nil
 	}
 	if !ok {
 		s = State{}

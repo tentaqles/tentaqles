@@ -241,7 +241,7 @@ func TestGuardHook_LinkedFolder(t *testing.T) {
 	}
 }
 
-// L-06: a client root reached through a real junction (a link, on any OS that has one) still has its
+// a client root reached through a real junction (a link, on any OS that has one) still has its
 // project settings read: the link is followed, not taken for a folder, so a disableAllHooks in
 // .claude/settings.local.json of the real folder refuses the session. Not skipped on Windows.
 func TestGuardHook_JunctionedClientRootRefuses(t *testing.T) {
@@ -328,7 +328,7 @@ type cloudFolder struct{ os.FileInfo }
 
 func (c cloudFolder) Mode() os.FileMode { return c.FileInfo.Mode() | os.ModeIrregular }
 
-// L-02: a folder with another reparse tag is a folder, not a link: the walk goes through it, so the
+// a folder with another reparse tag is a folder, not a link: the walk goes through it, so the
 // client's project settings above it are still read. The tag cannot be made in CI, so lstatPath
 // presents the real folder as Windows presents the cloud one.
 func TestGuardHook_ReparsePointIsAFolder(t *testing.T) {
@@ -354,7 +354,7 @@ func TestGuardHook_ReparsePointIsAFolder(t *testing.T) {
 	}
 }
 
-// L-02: which entries count as links. A symlink, and a reparse point that is not a folder (a
+// which entries count as links. A symlink, and a reparse point that is not a folder (a
 // junction, a mount point), do; a folder does not, whatever its reparse tag.
 func TestGuardHook_IsLink(t *testing.T) {
 	dir := t.TempDir()

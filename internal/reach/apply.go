@@ -88,8 +88,8 @@ func Locate(v string) (cat, val string, ok bool) {
 }
 
 // Change is the answers after `tentaqles add` (add true) or `tentaqles remove` of values in cat,
-// starting from cur. For remove of a bare provider id no answer holds (gh implied by an old manifest, an
-// identity listed by hand), it returns that id in drop, for Edit. It never changes cur.
+// starting from cur. For remove of a bare provider id no answer holds (an identity or a scope: entry
+// listed by hand), it returns that id in drop, for Edit. It never changes cur.
 func Change(cur *Answers, add bool, cat string, values []string) (next *Answers, drop []string, err error) {
 	n := *cur
 	n.Clouds, n.Team, n.Data = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data)

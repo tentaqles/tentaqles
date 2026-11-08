@@ -16,10 +16,9 @@ import (
 var gitProviderIDs = map[string]string{"github": "gh", "gitlab": "glab", "azure-devops": "azure-devops", "bitbucket": "bitbucket", "gitea": "gitea"}
 
 // Scope returns the sorted catalog ids this identity may touch: IdentityNames (the
-// identities block, or claude and gh for a v1 manifest, plus every cloud of the cloud
-// block), the git provider, the email provider, and the optional `scope:` list (providers the
-// identity uses without a private config home, such as vercel or terraform). An existing
-// manifest needs no new field: its scope is what it already declares.
+// identities block plus every cloud of the cloud block), the git provider, the email provider,
+// and the optional `scope:` list (providers the identity uses without a private config home,
+// such as vercel or terraform).
 func (m *Manifest) Scope() []string {
 	seen := map[string]bool{}
 	add := func(id string) {

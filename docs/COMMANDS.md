@@ -56,14 +56,11 @@ folder's git email, and render the client's files again. `tentaqles set` is the 
 | `other` | names tentaqles does not manage | adds | removes |
 
 A value alone finds its category: `tentaqles add aws`, `tentaqles remove slack`. `tentaqles remove <provider>`
-also takes out a provider no answer holds, such as a `gh` that an old manifest without an `identities:` list
-implies, or an identity listed by hand. With no value, `add <category>` (and `remove` of a list category) opens that
+also takes out a provider no answer holds, such as an identity listed by hand. With no value, `add <category>` (and `remove` of a list category) opens that
 category's part of the form with the current answers ticked.
 
 Adding a provider with its own login prints the next step, `tentaqles login <client> <cli>`. Removing one keeps its
-identity folder, with any login in it, and says where it is. When a manifest has no `identities:` list (the oldest
-format, which implies `claude` and `gh`), the first change writes that list out, so the git host really controls
-`gh`.
+identity folder, with any login in it, and says where it is.
 
 ```
 tentaqles add git azure-devops
@@ -108,8 +105,8 @@ runs `aws sso login --sso-session NAME`. Logging in from a client's terminal doe
 ### The shell hook: `tentaqles hooks install|remove|status`, `tentaqles activate <shell>`, `tentaqles env`
 
 `tentaqles hooks install [shell...]` (or `--all-detected`) adds the activation block to your shell profiles, and
-rewrites a block an older version wrote (`tq activate`, shown as `outdated`) to call `tentaqles activate`; a
-backup of the profile as it was is kept beside it (`.tq-backup`). `remove` takes the block out; `status` shows
+rewrites a block that differs from the current one (shown as `outdated`); a backup of the profile as it was is kept
+beside it (`.tq-backup`). `remove` takes the block out; `status` shows
 each shell's profile and state. Shells: bash, zsh, fish, PowerShell, pwsh, and cmd
 (through `tentaqles activate cmd`). `tentaqles activate <shell>` prints the block to add by hand.
 

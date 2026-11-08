@@ -60,7 +60,7 @@ func TestPluginForeignPath(t *testing.T) {
 	write("uplabs", `{"version":2,"plugins":{
 	  "tentaqles@m":[{"version":"0.11.0","installPath":"`+own+`"}],
 	  "aws@m":[{"version":"2.0.2","installPath":"`+foreign+`"}],
-	  "legacy@m":[{"version":"1.0.0","installPath":"C:/Users/x/.claude/plugins/cache/m/legacy/1.0.0"}]}}`)
+	  "shared@m":[{"version":"1.0.0","installPath":"C:/Users/x/.claude/plugins/cache/m/shared/1.0.0"}]}}`)
 	write("dirtybird", `{"version":2,"plugins":{"aws@m":[{"version":"2.0.2","installPath":"`+foreign+`"}]}}`)
 
 	var got []Finding
@@ -82,7 +82,7 @@ func TestPluginForeignPath(t *testing.T) {
 	if !strings.Contains(got[0].Msg, "aws@m") || !strings.Contains(got[0].Msg, "dirtybird") {
 		t.Fatalf("message must name the plugin and the identity it points into: %q", got[0].Msg)
 	}
-	if !strings.Contains(got[1].Msg, "legacy@m") {
+	if !strings.Contains(got[1].Msg, "shared@m") {
 		t.Fatalf("%q", got[1].Msg)
 	}
 }

@@ -28,8 +28,8 @@ func newProvidersListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List providers in the catalog",
 		RunE: func(c *cobra.Command, _ []string) error {
-			// LoadAll reports every bad user file instead of aborting on the first
-			// round 2), so a single broken file never hides the rest of the catalog.
+			// LoadAll reports every bad user file instead of aborting on the first,
+			// so a single broken file never hides the rest of the catalog.
 			cat, loadErrs := providers.LoadAll()
 			if cat == nil {
 				return fmt.Errorf("provider catalog: %v", loadErrs)

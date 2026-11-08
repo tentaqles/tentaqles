@@ -69,7 +69,7 @@ type Provider struct {
 	Identity Identity `yaml:"identity"`
 	Login    *Cmd     `yaml:"login"`
 
-	// Notes is prose for onboarding and doctor: how this provider authenticates when it has no
+	// Notes is prose for the provider list: how this provider authenticates when it has no
 	// isolatable CLI login (an env var, the keychain, an MCP connector).
 	Notes string `yaml:"notes,omitempty"`
 
