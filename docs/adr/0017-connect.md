@@ -99,9 +99,17 @@ manifest or `.claude.json` either, so it needs a read command that carries no se
   moot: an agent could write any server by hand. `connect` runs as a process, not as a tool call, and its
   command line names no path, so the hook allows it. Claude Code reads and writes the file itself and is
   not a tool call either.
-- The four providers whose vendors document a hosted MCP server (`gh`, `linear`, `asana`, `jira`) carry a
-  `connect:` entry, each with the vendor's documentation URL beside it. More are data.
-
+- The providers whose vendors document a hosted MCP server at one fixed URL with OAuth sign-in carry a
+  `connect:` entry, each with the vendor's documentation URL beside it: `gh`, `linear`, `asana`, `jira`, and
+  since 2026-11-08 `notion` (`https://mcp.notion.com/mcp`) and `trello` (`https://mcp.trello.com/v1`, which
+  Trello says is actively being developed). Checked on 2026-11-08 and left without one: `slack` (its hosted
+  server needs a registered app's client id and callback port, which an entry cannot carry), `teams` and
+  `outlook` (Microsoft documents one Work IQ server for all of Microsoft 365, behind Entra ID, with no plain
+  Claude Code entry), `gmail` (a developer preview that needs the user's own Google Cloud OAuth client),
+  `databricks` and `snowflake` (a URL per workspace or account, and an OAuth app; Snowflake has no dynamic
+  client registration) and `discord` (no hosted server). These keep the onboarding skill's CLI or token
+  login. Atlassian now documents `/v2/mcp` for jira; the entry stays `/v1/mcp`, which still answers, because
+  a changed entry ends the cross-client exemption for every client already connected. More are data.
 ## Consequences
 
 - An agent that is prompted to connect an out-of-scope provider is refused and logged. An agent that is

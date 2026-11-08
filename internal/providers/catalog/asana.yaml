@@ -6,7 +6,7 @@ cli: null
 mcp: asana
 notes: "No CLI login: store a personal access token with tq secret set <ws> asana (auth keychain), or name the variable in tracker.env for tq dotenv (auth env). The Asana MCP connector covers a Claude session."
 # connect: the hosted MCP server `tentaqles connect asana` registers (ADR-0017). Vendor docs:
-# https://developers.asana.com/docs/using-asana-mcp-server
+# https://developers.asana.com/docs/using-asanas-mcp-server
 connect:
   name: asana
   transport: http

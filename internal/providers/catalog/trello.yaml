@@ -5,6 +5,13 @@ docs: https://developer.atlassian.com/cloud/trello/
 # Trello has no official command-line client; reached through the REST API or an MCP connector only.
 cli: null
 notes: "No CLI to install or log in. An API key and token are the credential; a Claude session reaches Trello through an MCP connector added to claude.bundle.mcp."
+# connect: the hosted Trello MCP server `tentaqles connect trello` registers (ADR-0017); OAuth 2.0 sign-in
+# through /mcp (Trello takes no API token for MCP). Vendor docs, which say it is actively being developed:
+# https://support.atlassian.com/trello/docs/connect-trello-to-ai-assistants-with-trello-mcp/
+connect:
+  name: trello
+  transport: http
+  url: https://mcp.trello.com/v1
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:
@@ -12,3 +19,4 @@ match:
   hosts: [api.trello.com]
   mcp: [trello]
   mcp_packages: ["mcp-server-trello"]
+  mcp_hosts: [mcp.trello.com]

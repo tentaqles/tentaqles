@@ -36,14 +36,14 @@ func twoBundled(t *testing.T, acmeBody, betaMCP string) (root, beta string) {
 	return root, beta
 }
 
-// The four catalog entries: each provider in acme's scope, connected by `tentaqles connect`, its
+// The six catalog entries: each provider in acme's scope, connected by `tentaqles connect`, its
 // server called by name from acme, while beta's bundle lists the same server.
 func TestHook_ConnectedServerNotCrossClientDenied(t *testing.T) {
 	emb, err := providers.Embedded()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"gh", "linear", "asana", "jira"} {
+	for _, id := range []string{"gh", "linear", "asana", "jira", "notion", "trello"} {
 		p, ok := emb.Get(id)
 		if !ok || p.Connect == nil {
 			t.Fatalf("%s has no connect:", id)

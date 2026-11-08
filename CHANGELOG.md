@@ -6,6 +6,13 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### More `tentaqles connect` entries (ADR-0017)
+
+- `notion` and `trello` gain a `connect:` entry, the vendor's hosted MCP server, with the vendor's docs URL
+  beside it. Slack, Teams, Outlook, Gmail, Databricks, Snowflake and Discord have no entry: their vendors
+  document no single hosted URL that a plain entry with OAuth sign-in can use. The onboarding skill logs in to
+  those through their CLI or a token. `trello`'s match list gains its MCP host, `mcp.trello.com`.
+
 ### `tentaqles reach` changes an existing client (ADR-0012)
 
 - In a folder that already is a trusted client, `tentaqles reach` offers a menu: change the providers, the

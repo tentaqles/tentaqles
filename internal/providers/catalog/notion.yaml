@@ -10,6 +10,12 @@ cli:
 # Catalogued so tq can detect whether it is installed and a workspace can
 # record that a client uses it -- but with no identity block, because
 # claiming one tq cannot honour is worse than claiming none.
+# connect: the hosted MCP server `tentaqles connect notion` registers (ADR-0017); OAuth sign-in through /mcp.
+# Vendor docs: https://developers.notion.com/guides/mcp/get-started-with-mcp
+connect:
+  name: notion
+  transport: http
+  url: https://mcp.notion.com/mcp
 # match: what the guard's identity category recognises as this provider when an
 # identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
 match:

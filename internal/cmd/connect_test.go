@@ -434,6 +434,32 @@ func TestConnect_SurvivesRenderAndHook(t *testing.T) {
 	}
 }
 
+// Every catalog connect: entry, written by `tentaqles connect` in a client whose scope has the
+// provider, survives `tq settings render` (the render's MCP filter keeps it).
+func TestConnectEntries_SurviveRender(t *testing.T) {
+	emb, err := providers.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range emb.All() {
+		if p.Connect == nil {
+			continue
+		}
+		t.Run(p.ID, func(t *testing.T) {
+			root, _ := setupScoped(t, "acme", "identities: { claude: {} }\nscope: ["+p.ID+"]\n")
+			chdir(t, root)
+			if out, err := runTq(t, "connect", p.ID); err != nil || !strings.Contains(out, "connected as "+p.Connect.Name) {
+				t.Fatalf("connect %s: %v %q", p.ID, err, out)
+			}
+			if out := runEnv(t, "settings", "render", "acme"); strings.Contains(out, "removed MCP server "+p.Connect.Name) {
+				t.Fatalf("render removed the server: %s", out)
+			}
+			if got := fileBytes(t, claudeJSONOf("acme")); !strings.Contains(got, `"`+p.Connect.Name+`"`) || !strings.Contains(got, p.Connect.URL) {
+				t.Fatalf("the entry did not survive the render: %s", got)
+			}
+		})
+	}
+}
 // Every catalog entry passes the MCP scope rules in a client whose scope has the provider, and
 // fails them in one that does not.
 func TestConnectEntries_PassMCPRules(t *testing.T) {
@@ -460,10 +486,10 @@ func TestConnectEntries_PassMCPRules(t *testing.T) {
 			t.Errorf("%s: %+v", p.ID, p.Connect)
 		}
 	}
-	if n < 4 {
-		t.Fatalf("%d providers define connect:, want gh, linear, asana, jira", n)
+	if n < 6 {
+		t.Fatalf("%d providers define connect:, want gh, linear, asana, jira, notion, trello", n)
 	}
-	for _, id := range []string{"gh", "linear", "asana", "jira"} {
+	for _, id := range []string{"gh", "linear", "asana", "jira", "notion", "trello"} {
 		if p, _ := emb.Get(id); p.Connect == nil {
 			t.Errorf("%s has no connect:", id)
 		}

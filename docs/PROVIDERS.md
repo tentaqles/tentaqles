@@ -86,7 +86,7 @@ match:                       # what the guard denies when an identity's scope le
   a `command` (and `args`). It holds no `env` or header, so no credential: a human signs the
   server in with `/mcp`. Only the embedded catalog defines it: a user provider file that carries a
   `connect:` key is not loaded (the built-in entry stays), so no user file can choose what an
-  agent-run `connect` writes. `gh`, `linear`, `asana` and `jira` have one, each with the vendor's
+  agent-run `connect` writes. `gh`, `linear`, `asana`, `jira`, `notion` and `trello` have one, each with the vendor's
   documentation URL in a comment beside it; adding another provider's is a catalog change.
 - Two entries may declare the same `identity.env` variable only when they are the same CLI
   with the same template (`az` and `azure-devops` both set `AZURE_CONFIG_DIR`); a workspace
